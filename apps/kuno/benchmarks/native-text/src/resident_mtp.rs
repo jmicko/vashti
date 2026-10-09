@@ -8,6 +8,9 @@
 //! A failed queued step destroys the entire cache and poisons this sequence.
 #![allow(dead_code)] // Parent fixed-public registration/physical gate is separate.
 
+#[path = "mtp_private_sweeps.rs"]
+mod sweeps;
+
 use crate::{
     main_admission::{self, MainAdmission},
     mtp_resident_kernels as k,
@@ -191,6 +194,32 @@ fn integer_buffer(index: usize) -> bool {
     ]
     .iter()
     .any(|b| *b as usize == index)
+}
+
+fn sweep_role(index: usize) -> u32 {
+    if index == B::Keys as usize || index == B::Values as usize {
+        sweeps::CACHE
+    } else if integer_buffer(index) {
+        sweeps::INTEGER
+    } else {
+        sweeps::FLOAT
+    }
+}
+fn clear_roles(preserve_inputs: bool) -> ([usize; 40], usize) {
+    const { assert!(N == 42 && B::Fault as usize == 41) };
+    let mut roles = [0; 40];
+    let mut count = 0;
+    for index in 0..N {
+        let cache = index == B::Keys as usize || index == B::Values as usize;
+        let input = [B::Token, B::Carry, B::Fault]
+            .iter()
+            .any(|b| index == *b as usize);
+        if !(cache || preserve_inputs && input) {
+            roles[count] = index;
+            count += 1;
+        }
+    }
+    (roles, count)
 }
 
 #[derive(Clone, Copy)]
@@ -462,6 +491,7 @@ pub struct ResidentMtp<'g, 'f> {
     live_outputs: Arc<AtomicUsize>,
     last_forward: Option<LastForward>,
     traffic: Cell<Traffic>,
+    fused_sweeps: bool,
 }
 
 fn error(_: impl std::fmt::Display) -> Error {
@@ -724,6 +754,14 @@ pub fn validate_limits(limits: &wgpu::Limits) -> Result<()> {
     }
     Ok(())
 }
+pub fn validate_fused_sweep_limits(limits: &wgpu::Limits) -> Result<()> {
+    validate_limits(limits)?;
+    // Seven actual storage owners plus CubeCL's length/launch INFO binding.
+    if limits.max_storage_buffers_per_shader_stage < 8 {
+        return Err(Error::LimitExceeded("MTP fused full-owner sweep bindings"));
+    }
+    Ok(())
+}
 
 impl<'g, 'f> ResidentMtp<'g, 'f> {
     /// Caller must initialize required_memory_configuration and enable physical
@@ -738,7 +776,31 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         limits: &wgpu::Limits,
         retired: Arc<AtomicBool>,
     ) -> Result<Self> {
-        validate_limits(limits)?;
+        Self::construct(graph, client, limits, retired, false)
+    }
+    /// Separate fixed-public performance candidate. The mode is immutable for
+    /// this workspace, and ordinary `new` retains the accepted original path.
+    /// Ownership, source admission and conservative512 INFO plan are identical.
+    pub fn new_with_fused_sweeps(
+        graph: &'g MtpGraph<'f>,
+        client: ComputeClient<WgpuRuntime>,
+        limits: &wgpu::Limits,
+        retired: Arc<AtomicBool>,
+    ) -> Result<Self> {
+        Self::construct(graph, client, limits, retired, true)
+    }
+    fn construct(
+        graph: &'g MtpGraph<'f>,
+        client: ComputeClient<WgpuRuntime>,
+        limits: &wgpu::Limits,
+        retired: Arc<AtomicBool>,
+        fused_sweeps: bool,
+    ) -> Result<Self> {
+        if fused_sweeps {
+            validate_fused_sweep_limits(limits)?;
+        } else {
+            validate_limits(limits)?;
+        }
         if retired.load(Ordering::Acquire) {
             return Err(Error::InvalidFormat("MTP physical context retired"));
         }
@@ -804,6 +866,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             live_outputs: Arc::new(AtomicUsize::new(0)),
             last_forward: None,
             traffic: Cell::new(Traffic::default()),
+            fused_sweeps,
         };
         let result = workspace.load_public();
         match result {
@@ -1070,6 +1133,9 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         if cache_position > k::CONTEXT {
             return Err(Error::OutOfBounds);
         }
+        if self.fused_sweeps {
+            return self.guard_private_fused(cache_position);
+        }
         for (index, &logical) in WORDS.iter().enumerate() {
             let b = self.ids[index];
             let layout = self.arena.layout(b).map_err(error)?;
@@ -1095,6 +1161,114 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             );
         }
         self.tick(N)
+    }
+    fn validate_sweep_roles(&self, roles: &[usize]) -> Result<()> {
+        if N != 42 || roles.is_empty() || roles.len() > N {
+            return Err(Error::InvalidBufferLength);
+        }
+        // The original physical() before the stage still proves actual full
+        // backing extents and every private/public pair disjoint. These checks
+        // bind each batched full view to the exact original public role before
+        // the FIRST sweep enqueue; no dummy or aliased padding input is used.
+        for (i, &index) in roles.iter().enumerate() {
+            if index >= N || roles[..i].contains(&index) {
+                return Err(Error::InvalidBufferLength);
+            }
+            let expected = BufferLayout::new(WORDS[index]).map_err(error)?;
+            if self.arena.layout(self.ids[index]).map_err(error)? != expected
+                || self.arena.handle(self.ids[index]).map_err(error)?.size()
+                    != expected.owned_bytes as u64
+            {
+                return Err(Error::InvalidBufferLength);
+            }
+        }
+        Ok(())
+    }
+    fn sweep_arg(&self, index: usize) -> Result<ArrayArg<WgpuRuntime>> {
+        let layout = self.arena.layout(self.ids[index]).map_err(error)?;
+        u::raw_arg(
+            self.arena.handle(self.ids[index]).map_err(error)?.clone(),
+            layout.owned_words,
+        )
+    }
+    fn sweep_grid(&self, roles: &[usize]) -> Result<CubeCount> {
+        let mut words = 0;
+        for &index in roles {
+            words = words.max(
+                self.arena
+                    .layout(self.ids[index])
+                    .map_err(error)?
+                    .owned_words,
+            );
+        }
+        grid(words)
+    }
+    fn guard_private_fused(&mut self, cache_position: usize) -> Result<()> {
+        // Fault is last in the original42-role registry. It gets a dedicated
+        // atomic full scan AFTER these41 role guards, without u32/atomic alias.
+        let roles: [usize; 41] = std::array::from_fn(|i| i);
+        self.validate_sweep_roles(&roles)?;
+        self.validate_sweep_roles(&[B::Fault as usize])?;
+        for group in roles.chunks(6) {
+            match *group {
+                [a, b, c, d, e, f] => sweeps::guard6::launch::<WgpuRuntime>(
+                    self.client()?,
+                    self.sweep_grid(group)?,
+                    CubeDim::new_1d(64),
+                    self.sweep_arg(a)?,
+                    self.sweep_arg(b)?,
+                    self.sweep_arg(c)?,
+                    self.sweep_arg(d)?,
+                    self.sweep_arg(e)?,
+                    self.sweep_arg(f)?,
+                    self.full(B::Fault)?,
+                    cache_position,
+                    WORDS[a],
+                    sweep_role(a),
+                    WORDS[b],
+                    sweep_role(b),
+                    WORDS[c],
+                    sweep_role(c),
+                    WORDS[d],
+                    sweep_role(d),
+                    WORDS[e],
+                    sweep_role(e),
+                    WORDS[f],
+                    sweep_role(f),
+                ),
+                [a, b, c, d, e] => sweeps::guard5::launch::<WgpuRuntime>(
+                    self.client()?,
+                    self.sweep_grid(group)?,
+                    CubeDim::new_1d(64),
+                    self.sweep_arg(a)?,
+                    self.sweep_arg(b)?,
+                    self.sweep_arg(c)?,
+                    self.sweep_arg(d)?,
+                    self.sweep_arg(e)?,
+                    self.full(B::Fault)?,
+                    cache_position,
+                    WORDS[a],
+                    sweep_role(a),
+                    WORDS[b],
+                    sweep_role(b),
+                    WORDS[c],
+                    sweep_role(c),
+                    WORDS[d],
+                    sweep_role(d),
+                    WORDS[e],
+                    sweep_role(e),
+                ),
+                _ => return Err(Error::InvalidBufferLength),
+            }
+            self.tick(1)?;
+        }
+        sweeps::guard_fault::launch::<WgpuRuntime>(
+            self.client()?,
+            self.sweep_grid(&[B::Fault as usize])?,
+            CubeDim::new_1d(64),
+            self.full(B::Fault)?,
+        );
+        self.tick(1)
     }
     fn complete_fault(&mut self) -> Result<()> {
         let bits = self.read_words(B::Fault)?;
@@ -1184,6 +1358,9 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         self.clear_scratch_preserving_inputs(false)
     }
     fn clear_scratch_preserving_inputs(&mut self, preserve: bool) -> Result<()> {
+        if self.fused_sweeps {
+            return self.clear_scratch_fused(preserve);
+        }
         let mut count = 0;
         for index in 0..N {
             if index != B::Keys as usize && index != B::Values as usize {
@@ -1199,6 +1376,47 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             }
         }
         self.tick(count)
+    }
+    fn clear_scratch_fused(&mut self, preserve: bool) -> Result<()> {
+        let (roles, count) = clear_roles(preserve);
+        let roles = &roles[..count];
+        self.validate_sweep_roles(roles)?;
+        for group in roles.chunks(7) {
+            match *group {
+                [a, b, c, d, e, f, g] => sweeps::clear7::launch::<WgpuRuntime>(
+                    self.client()?,
+                    self.sweep_grid(group)?,
+                    CubeDim::new_1d(64),
+                    self.sweep_arg(a)?,
+                    self.sweep_arg(b)?,
+                    self.sweep_arg(c)?,
+                    self.sweep_arg(d)?,
+                    self.sweep_arg(e)?,
+                    self.sweep_arg(f)?,
+                    self.sweep_arg(g)?,
+                ),
+                [a, b, c, d, e] => sweeps::clear5::launch::<WgpuRuntime>(
+                    self.client()?,
+                    self.sweep_grid(group)?,
+                    CubeDim::new_1d(64),
+                    self.sweep_arg(a)?,
+                    self.sweep_arg(b)?,
+                    self.sweep_arg(c)?,
+                    self.sweep_arg(d)?,
+                    self.sweep_arg(e)?,
+                ),
+                [a, b] => sweeps::clear2::launch::<WgpuRuntime>(
+                    self.client()?,
+                    self.sweep_grid(group)?,
+                    CubeDim::new_1d(64),
+                    self.sweep_arg(a)?,
+                    self.sweep_arg(b)?,
+                ),
+                _ => return Err(Error::InvalidBufferLength),
+            }
+            self.tick(1)?;
+        }
+        Ok(())
     }
     fn start(&mut self, token: u32, carry: &[f32]) -> Result<()> {
         if self.closed || self.poisoned || self.retired.load(Ordering::Acquire) {

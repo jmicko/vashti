@@ -16,6 +16,381 @@ fn predevice_limits_cover_complete_public_pages_and_seven_bindings() {
 }
 
 #[test]
+fn fused_sweep_admission_counts_all_owners_plus_info_before_device_creation() {
+    let limits = wgpu::Limits::default();
+    assert!(validate_fused_sweep_limits(&limits).is_ok());
+    let mut short = limits;
+    short.max_storage_buffers_per_shader_stage = 7;
+    assert!(validate_limits(&short).is_ok());
+    assert!(validate_fused_sweep_limits(&short).is_err());
+    short.max_storage_buffers_per_shader_stage = 8;
+    short.max_compute_workgroups_per_dimension = 65534;
+    assert!(validate_fused_sweep_limits(&short).is_err());
+}
+
+#[test]
+fn fused_sweeps_cover_every_original_role_once_without_padding_alias_or_input_clear() {
+    let expected_all: std::collections::BTreeSet<_> = (0..42).collect();
+    let guards: Vec<_> = (0..41).collect();
+    let mut covered: std::collections::BTreeSet<_> = guards.iter().copied().collect();
+    assert_eq!(covered.len(), 41);
+    assert!(covered.insert(B::Fault as usize));
+    assert_eq!(covered, expected_all);
+    assert_eq!(
+        guards.chunks(6).map(<[usize]>::len).collect::<Vec<_>>(),
+        [6, 6, 6, 6, 6, 6, 5]
+    );
+    for group in guards.chunks(6) {
+        let largest = group
+            .iter()
+            .map(|&i| BufferLayout::new(WORDS[i]).unwrap().owned_words)
+            .max()
+            .unwrap();
+        let CubeCount::Static(x, y, 1) = grid(largest).unwrap() else {
+            panic!()
+        };
+        let threads = x as usize * y as usize * 64;
+        for &index in group {
+            let actual = BufferLayout::new(WORDS[index]).unwrap();
+            assert!(threads >= actual.owned_words && actual.owned_words >= actual.logical_words);
+            assert!(index != B::Fault as usize);
+        }
+    }
+    for preserve in [false, true] {
+        let (roles, count) = clear_roles(preserve);
+        let selected: std::collections::BTreeSet<_> = roles[..count].iter().copied().collect();
+        assert_eq!(selected.len(), count);
+        let mut expected = expected_all.clone();
+        expected.remove(&(B::Keys as usize));
+        expected.remove(&(B::Values as usize));
+        if preserve {
+            expected.remove(&(B::Carry as usize));
+            expected.remove(&(B::Token as usize));
+            expected.remove(&(B::Fault as usize));
+        }
+        assert_eq!(selected, expected);
+        assert_eq!(count, if preserve { 37 } else { 40 });
+        assert_eq!(roles[..count].chunks(7).len(), 6);
+        assert_eq!(
+            roles[..count].chunks(7).last().unwrap().len(),
+            if preserve { 2 } else { 5 }
+        );
+    }
+    assert_eq!(2 * 42 + 40 - (2 * 8 + 6), 102);
+    assert_eq!(2 * 42 + 37 - (2 * 8 + 6), 99);
+    assert_eq!(private_plan().unwrap(), 11_698_176);
+    assert_eq!(MAX_TOKEN_DISPATCHES, 512);
+}
+
+#[test]
+fn complete_sweep_fixture_includes_integer_headers_float_and_every_kv_tail_boundary() {
+    // Independent original wire roles. Integer words must not be interpreted
+    // as F32; NaN-shaped integer headers remain the original stage's concern.
+    let integer = [
+        B::Token,
+        B::Status,
+        B::Packet,
+        B::Readiness,
+        B::Candidates,
+        B::Greedy,
+        B::Fault,
+    ];
+    for (index, &logical) in WORDS.iter().enumerate() {
+        let expected = if [B::Keys, B::Values].iter().any(|b| *b as usize == index) {
+            sweeps::CACHE
+        } else if integer.iter().any(|b| *b as usize == index) {
+            sweeps::INTEGER
+        } else {
+            sweeps::FLOAT
+        };
+        assert_eq!(sweep_role(index), expected);
+        let layout = BufferLayout::new(logical).unwrap();
+        for position in [0, 1, 2047, 2048] {
+            let live = if expected == sweeps::CACHE {
+                position * 512
+            } else if index == B::Fault as usize {
+                0
+            } else {
+                logical
+            };
+            // Every logical/prefix/full-owner boundary, including the final
+            // padding word, is part of the independent malformed fixture.
+            let mut boundaries = vec![0, logical - 1, layout.owned_words - 1];
+            if live > 0 {
+                boundaries.push(live - 1);
+            }
+            if live < layout.owned_words {
+                boundaries.push(live);
+            }
+            if logical < layout.owned_words {
+                boundaries.push(logical);
+            }
+            for i in boundaries {
+                for bits in [
+                    0,
+                    0x80000000,
+                    0x7f800000,
+                    0xff800000,
+                    0x7fc00001,
+                    0x7f7fffff,
+                    0xff7fffff,
+                    u32::MAX,
+                ] {
+                    let original_error = if i >= WORDS[index] || i >= live {
+                        if bits == 0 { 0 } else { 4 }
+                    } else if expected != sweeps::INTEGER && !f32::from_bits(bits).is_finite() {
+                        1
+                    } else {
+                        0
+                    };
+                    if i >= live || i >= WORDS[index] {
+                        assert_eq!(original_error, if bits == 0 { 0 } else { 4 });
+                    } else if expected == sweeps::INTEGER {
+                        assert_eq!(original_error, 0);
+                    } else {
+                        assert_eq!(original_error == 0, f32::from_bits(bits).is_finite());
+                    }
+                }
+            }
+        }
+    }
+    // Atomic final fault scan never clears a prior bit or overlooks padding.
+    for prior in [1_u32, 4, 5, u32::MAX] {
+        assert_ne!(prior | 4, 0);
+    }
+}
+
+#[test]
+fn every_fused_role_group_lowers_checked_and_unchecked_with_full_binding_inventory() {
+    use cubecl::ir::{ElemType, UIntKind};
+    use cubecl::{Compiler, WgpuCompilationOptions, server::ExecutionMode, wgpu::WgslCompiler};
+    fn constant_u32(
+        function: &wgpu::naga::Function,
+        expression: wgpu::naga::Handle<wgpu::naga::Expression>,
+    ) -> u32 {
+        use wgpu::naga::{Expression, Literal};
+        match function.expressions[expression] {
+            Expression::Literal(Literal::U32(v)) => v,
+            Expression::Literal(Literal::I32(v)) => u32::try_from(v).unwrap(),
+            Expression::As { expr, .. } => constant_u32(function, expr),
+            Expression::Load { pointer } => {
+                let Expression::LocalVariable(local) = function.expressions[pointer] else {
+                    panic!("fault bit is not constant")
+                };
+                constant_u32(function, function.local_variables[local].init.unwrap())
+            }
+            _ => panic!("fault bit is not constant"),
+        }
+    }
+    fn atomic_bits(
+        function: &wgpu::naga::Function,
+        block: &wgpu::naga::Block,
+        bits: &mut Vec<u32>,
+    ) {
+        use wgpu::naga::{AtomicFunction, Statement};
+        for statement in block {
+            match statement {
+                Statement::Atomic { fun, value, .. } => {
+                    assert_eq!(*fun, AtomicFunction::InclusiveOr);
+                    bits.push(constant_u32(function, *value));
+                }
+                Statement::If { accept, reject, .. } => {
+                    atomic_bits(function, accept, bits);
+                    atomic_bits(function, reject, bits);
+                }
+                Statement::Block(b) => atomic_bits(function, b, bits),
+                Statement::Loop {
+                    body, continuing, ..
+                } => {
+                    atomic_bits(function, body, bits);
+                    atomic_bits(function, continuing, bits);
+                }
+                Statement::Switch { cases, .. } => {
+                    for case in cases {
+                        atomic_bits(function, &case.body, bits);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let roles: Vec<_> = (0..41).collect();
+    for mode in [ExecutionMode::Checked, ExecutionMode::Unchecked] {
+        // Seven actual guard groups, three exact clear widths and one atomic
+        // fault sweep. No extra/dead resource is registered in the builder.
+        for which in 0..11 {
+            let mut builder = KernelBuilder::default();
+            builder.runtime_properties(WgpuRuntime::target_properties());
+            AddressType::U32.register(&mut builder.scope);
+            let words = u32::as_type(&builder.scope);
+            let atomic = Atomic::<u32>::as_type(&builder.scope);
+            let owners;
+            if which < 7 {
+                let group = roles.chunks(6).nth(which).unwrap();
+                let a0 = builder.input_array(words).into();
+                let a1 = builder.input_array(words).into();
+                let a2 = builder.input_array(words).into();
+                let a3 = builder.input_array(words).into();
+                let a4 = builder.input_array(words).into();
+                if group.len() == 6 {
+                    let a5 = builder.input_array(words).into();
+                    let fault = builder.output_array(atomic).into();
+                    let position = builder
+                        .scalar(StorageType::Scalar(ElemType::UInt(UIntKind::U32)))
+                        .into();
+                    sweeps::guard6::expand(
+                        &mut builder.scope,
+                        a0,
+                        a1,
+                        a2,
+                        a3,
+                        a4,
+                        a5,
+                        fault,
+                        position,
+                        WORDS[group[0]],
+                        sweep_role(group[0]),
+                        WORDS[group[1]],
+                        sweep_role(group[1]),
+                        WORDS[group[2]],
+                        sweep_role(group[2]),
+                        WORDS[group[3]],
+                        sweep_role(group[3]),
+                        WORDS[group[4]],
+                        sweep_role(group[4]),
+                        WORDS[group[5]],
+                        sweep_role(group[5]),
+                    );
+                } else {
+                    let fault = builder.output_array(atomic).into();
+                    let position = builder
+                        .scalar(StorageType::Scalar(ElemType::UInt(UIntKind::U32)))
+                        .into();
+                    sweeps::guard5::expand(
+                        &mut builder.scope,
+                        a0,
+                        a1,
+                        a2,
+                        a3,
+                        a4,
+                        fault,
+                        position,
+                        WORDS[group[0]],
+                        sweep_role(group[0]),
+                        WORDS[group[1]],
+                        sweep_role(group[1]),
+                        WORDS[group[2]],
+                        sweep_role(group[2]),
+                        WORDS[group[3]],
+                        sweep_role(group[3]),
+                        WORDS[group[4]],
+                        sweep_role(group[4]),
+                    );
+                }
+                owners = group.len() + 1;
+            } else if which < 10 {
+                macro_rules! expand_clear {
+                    ($kernel:path, $($a:ident),+) => {
+                        { $(let $a = builder.output_array(words).into();)+
+                          $kernel(&mut builder.scope, $($a),+); }
+                    }
+                }
+                match which {
+                    7 => expand_clear!(sweeps::clear7::expand, a0, a1, a2, a3, a4, a5, a6),
+                    8 => expand_clear!(sweeps::clear5::expand, a0, a1, a2, a3, a4),
+                    _ => expand_clear!(sweeps::clear2::expand, a0, a1),
+                }
+                owners = [7, 5, 2][which - 7];
+            } else {
+                let fault = builder.output_array(atomic).into();
+                sweeps::guard_fault::expand(&mut builder.scope, fault);
+                owners = 1;
+            }
+            let source = WgslCompiler::default()
+                .compile(
+                    builder.build(
+                        KernelSettings::default()
+                            .cube_dim(CubeDim::new_1d(64))
+                            .kernel_name("fixed_mtp_fused_sweep"),
+                    ),
+                    &WgpuCompilationOptions::default(),
+                    mode,
+                    AddressType::U32.unsigned_type(),
+                )
+                .unwrap()
+                .to_string();
+            let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
+            wgpu::naga::valid::Validator::new(
+                wgpu::naga::valid::ValidationFlags::all(),
+                wgpu::naga::valid::Capabilities::empty(),
+            )
+            .validate(&module)
+            .unwrap();
+            let bindings = module
+                .global_variables
+                .iter()
+                .filter(|(_, v)| {
+                    matches!(v.space, wgpu::naga::AddressSpace::Storage { .. })
+                        && v.binding.is_some()
+                })
+                .count();
+            assert_eq!(
+                bindings,
+                owners + 1,
+                "complete owners plus INFO, case{which}"
+            );
+            let function = &module.entry_points[0].function;
+            let mut bits = Vec::new();
+            atomic_bits(function, &function.body, &mut bits);
+            if which < 7 {
+                let group = roles.chunks(6).nth(which).unwrap();
+                let finite_count = group.iter().filter(|&&i| !integer_buffer(i)).count();
+                assert_eq!(
+                    bits.iter().filter(|&&b| b == 4).count(),
+                    group.len(),
+                    "every full tail/prefix"
+                );
+                assert_eq!(
+                    bits.iter().filter(|&&b| b == 1).count(),
+                    finite_count,
+                    "every F32 owner; integer headers excluded"
+                );
+                let reinterprets = function
+                    .expressions
+                    .iter()
+                    .filter(|(_, e)| {
+                        matches!(
+                            e,
+                            wgpu::naga::Expression::As {
+                                kind: wgpu::naga::ScalarKind::Float,
+                                convert: None,
+                                ..
+                            }
+                        )
+                    })
+                    .count();
+                assert_eq!(reinterprets, finite_count);
+            } else if which == 10 {
+                assert_eq!(bits, [4]);
+            } else {
+                assert!(bits.is_empty());
+            }
+            assert!(
+                !source.contains("fma(")
+                    && !source.contains("f64")
+                    && !source.contains("workgroupBarrier")
+            );
+            if which < 7 || which == 10 {
+                assert!(source.contains("atomicOr"));
+            }
+            if which == 10 {
+                assert!(source.contains("atomicLoad"));
+            }
+        }
+    }
+}
+
+#[test]
 fn exact_original_tensor_registry_and_full_page_plan() {
     // Independent original34-role inventory: eighteen ordinary matrices, one
     // token table, three expert families, eight F32 vectors, four unused
