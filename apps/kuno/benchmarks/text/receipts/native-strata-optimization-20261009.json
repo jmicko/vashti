@@ -1,0 +1,914 @@
+{
+  "comparison_limits": [
+    "Language uses same fixed public code prompt/template/seed/200 output budget as Strata; quantized draft profile and device execution differ",
+    "First target output is selected inside prefill; primary generation rate counts199 post-prefill continuations",
+    "No independent CPU200 reference; actual target-greedy speculative acceptance and full-prefix repair checks pass",
+    "No generated text/token IDs or private content retained",
+    "No compiler ran during v131 GPU trials; source edits and a few bounded read-only inspections occurred"
+  ],
+  "language_code_v131": {
+    "chunk_io_checkpoint": true,
+    "device_dispatch": "inline",
+    "draft_card": "RTX3060",
+    "draft_close": {
+      "main_reserved": 0,
+      "private_buffers": 42,
+      "private_bytes": 11698176,
+      "public_bytes": 5011668992
+    },
+    "fixture_host_reserved_bytes": 4194304,
+    "forced_experts": false,
+    "forced_oracle_tokens": false,
+    "frequency_penalty": 0.0,
+    "full_target_packets_retained": true,
+    "fused_mtp_sweeps": true,
+    "greedy_target_verification": true,
+    "independent_cpu200_reference_accepted": false,
+    "live_member_reduction": false,
+    "max_outputs": 200,
+    "observed_inline_device_dispatch": true,
+    "prepared_verify3_experts": false,
+    "presence_penalty": 0.0,
+    "private_or_production_accepted": false,
+    "public_existing_fill": true,
+    "record": {
+      "accepted_drafts": 130,
+      "actual_target_recomputations": 5,
+      "compiled_prompt_template_file": "serve/chat_template.jinja",
+      "compiled_prompt_template_revision": "fb58e0dbc8399662c0e47c76578c6e878b14f6cf",
+      "context_capacity": 235,
+      "continuation_tokens_per_second": 4.182447090945671,
+      "draft_ns": 6333025707,
+      "draft_traffic": {
+        "explicit_dispatches": 32852,
+        "followup_copy_calls": 69,
+        "host_read_bytes": 15564800,
+        "host_read_calls": 337,
+        "minimal_packet_reads": 138,
+        "private_upload_bytes": 19562496,
+        "private_upload_calls": 398
+      },
+      "elapsed_ns": 47579800933,
+      "emitted_tokens_including_eos": 200,
+      "emitted_tokens_per_second": 4.2034644130107255,
+      "expert_hits": 87301,
+      "expert_uploads": 15419,
+      "first_output_emission_timed": true,
+      "fixture": "first-code",
+      "fixture_peak_host_bytes": 2111616,
+      "generation_physical_read_bytes": 9527840768,
+      "host_io": {
+        "inline_readback_batches": 5939,
+        "provenance": "process-global whole public dual-device timed interval",
+        "scoped_read_flush_ns": 247685759,
+        "scoped_read_map_ns": 10086751776,
+        "scoped_read_setup_ns": 10742423
+      },
+      "load_and_prefill_physical_read_bytes": 7477698560,
+      "load_ns": 6890757800,
+      "nonempty_text": true,
+      "post_prefill_target_continuations": 199,
+      "prefill_first_output_count": 1,
+      "prefill_first_output_generation_pick_timed": false,
+      "prefill_ns_including_real_teacher_kv": 21458940480,
+      "prompt_tokens": 35,
+      "proposed_drafts": 138,
+      "repair_abs_tolerance": 0.006000000052154064,
+      "repair_hidden_max_abs": 0.0,
+      "repair_logit_max_abs": 0.0,
+      "repair_ns_including_vector_checks": 2189386122,
+      "repair_rel_tolerance": 0.0003000000142492354,
+      "request_close_ns_inside_timing": 3119991,
+      "request_scope": {
+        "closing_audit_ns": 3114251,
+        "full_io_audit": true,
+        "scope_closed": true,
+        "scope_sequence": 1
+      },
+      "rounds": 69,
+      "stop_reason": "limit",
+      "target_close": {
+        "main_buffers": 1378,
+        "main_bytes": 826638336,
+        "source_buffers": 0,
+        "source_bytes": 0
+      },
+      "target_fill_counters_after": {
+        "direct_bytes": 42042214400,
+        "direct_components": 61959,
+        "direct_windows": 4122,
+        "evictions": 13741,
+        "first_touch_fills": 6912
+      },
+      "target_fill_counters_before": {
+        "direct_bytes": 10756531200,
+        "direct_components": 15702,
+        "direct_windows": 797,
+        "evictions": 91,
+        "first_touch_fills": 5143
+      },
+      "target_host_phase_ns": {
+        "native_all_family_commit": 50794129,
+        "native_all_family_preflight": 34546633,
+        "native_attention_and_gr_enqueue": 5299540765,
+        "native_completed_final_proofs": 826461136,
+        "native_ffn_gr_and_router_enqueue": 126873764,
+        "native_final_head_enqueue": 4200637,
+        "native_route_and_expert_enqueue": 23246356431,
+        "native_router_fence": 9989918686,
+        "native_shared_and_ffn_combine_enqueue": 154991902
+      },
+      "uploaded_bytes": 31285683200,
+      "verify3_dense_calls": 55648,
+      "verify3_fused_calls": 55648,
+      "verify_ns_full_packets": 39050870776,
+      "weight_read_ns": 17686456765,
+      "weight_upload_enqueue_ns": 21847043
+    },
+    "repair_original_prefix_vector_checks": true,
+    "repetition_penalty": 1.0,
+    "request_io_reuse": true,
+    "request_reuse_metadata_reserved_bytes": 4194304,
+    "scope": "compiled-public-language200-real-dual-device-greedy",
+    "seed": 424242,
+    "target_card": "B70",
+    "temperature": 0,
+    "thinking": false,
+    "tokenizer_host_cap_bytes": 201326592,
+    "verify3_dense": true,
+    "verify3_logical_finite_fused": true
+  },
+  "language_host_after": {
+    "admission": {
+      "action": "status",
+      "state": {
+        "admission": {
+          "active": false,
+          "completed": 62,
+          "paused": false,
+          "recovery_required": false,
+          "rejected": 0,
+          "waiting": 0
+        }
+      },
+      "status": 200
+    },
+    "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+    "http_statuses": {
+      "kuno": 200,
+      "ollama": 200,
+      "vashti": 200
+    },
+    "intel": {
+      "xe_memory": [
+        {
+          "total_bytes": 34242297856,
+          "used_bytes": 50688000
+        }
+      ]
+    },
+    "kernel": "7.0.0-38-generic",
+    "kernel_fault_counts": {
+      "nvidia_xid": 0,
+      "xe_memory_faults": 0,
+      "xe_reset_failures": 0,
+      "xe_timeouts": 0,
+      "xe_wedged": 0
+    },
+    "nvidia_compute_process_count": 0,
+    "nvidia_memory_mib": 426,
+    "time": "2026-10-09T18:27:50.070197+00:00"
+  },
+  "operator_host_after": {
+    "admission": {
+      "action": "status",
+      "state": {
+        "admission": {
+          "active": false,
+          "completed": 62,
+          "paused": false,
+          "recovery_required": false,
+          "rejected": 0,
+          "waiting": 0
+        }
+      },
+      "status": 200
+    },
+    "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+    "http_statuses": {
+      "kuno": 200,
+      "ollama": 200,
+      "vashti": 200
+    },
+    "intel": {
+      "xe_memory": [
+        {
+          "total_bytes": 34242297856,
+          "used_bytes": 50688000
+        }
+      ]
+    },
+    "kernel": "7.0.0-38-generic",
+    "kernel_fault_counts": {
+      "nvidia_xid": 0,
+      "xe_memory_faults": 0,
+      "xe_reset_failures": 0,
+      "xe_timeouts": 0,
+      "xe_wedged": 0
+    },
+    "nvidia_compute_process_count": 0,
+    "nvidia_memory_mib": 432,
+    "time": "2026-10-09T18:23:54.914705+00:00"
+  },
+  "routing_operator_v131": {
+    "intel": {
+      "allocator_cleanup_complete": true,
+      "cases": [
+        {
+          "complete_erasure": true,
+          "count": 1,
+          "fault_case": null,
+          "full_source_and_guards_preserved": true,
+          "groups": 10,
+          "layer": 0,
+          "max_original_probability_abs_error": 1.4901161193847656e-08,
+          "probability_bit_mismatches": 5,
+          "sticky_fault": 0
+        },
+        {
+          "complete_erasure": true,
+          "count": 2,
+          "fault_case": null,
+          "full_source_and_guards_preserved": true,
+          "groups": 12,
+          "layer": 0,
+          "max_original_probability_abs_error": 1.4901161193847656e-08,
+          "probability_bit_mismatches": 12,
+          "sticky_fault": 0
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": null,
+          "full_source_and_guards_preserved": true,
+          "groups": 14,
+          "layer": 0,
+          "max_original_probability_abs_error": 1.4901161193847656e-08,
+          "probability_bit_mismatches": 20,
+          "sticky_fault": 0
+        },
+        {
+          "complete_erasure": true,
+          "count": 1,
+          "fault_case": null,
+          "full_source_and_guards_preserved": true,
+          "groups": 10,
+          "layer": 23,
+          "max_original_probability_abs_error": 1.4901161193847656e-08,
+          "probability_bit_mismatches": 5,
+          "sticky_fault": 0
+        },
+        {
+          "complete_erasure": true,
+          "count": 2,
+          "fault_case": null,
+          "full_source_and_guards_preserved": true,
+          "groups": 12,
+          "layer": 23,
+          "max_original_probability_abs_error": 1.4901161193847656e-08,
+          "probability_bit_mismatches": 12,
+          "sticky_fault": 0
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": null,
+          "full_source_and_guards_preserved": true,
+          "groups": 14,
+          "layer": 23,
+          "max_original_probability_abs_error": 1.4901161193847656e-08,
+          "probability_bit_mismatches": 20,
+          "sticky_fault": 0
+        },
+        {
+          "complete_erasure": true,
+          "count": 1,
+          "fault_case": null,
+          "full_source_and_guards_preserved": true,
+          "groups": 10,
+          "layer": 47,
+          "max_original_probability_abs_error": 1.4901161193847656e-08,
+          "probability_bit_mismatches": 5,
+          "sticky_fault": 0
+        },
+        {
+          "complete_erasure": true,
+          "count": 2,
+          "fault_case": null,
+          "full_source_and_guards_preserved": true,
+          "groups": 12,
+          "layer": 47,
+          "max_original_probability_abs_error": 1.4901161193847656e-08,
+          "probability_bit_mismatches": 12,
+          "sticky_fault": 0
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": null,
+          "full_source_and_guards_preserved": true,
+          "groups": 14,
+          "layer": 47,
+          "max_original_probability_abs_error": 1.4901161193847656e-08,
+          "probability_bit_mismatches": 20,
+          "sticky_fault": 0
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 0,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 4
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 1,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 1
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 2,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 1
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 3,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 1
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 4,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 1
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 5,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 1
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 6,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 1
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 7,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 1
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 8,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 1
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 9,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 1
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 10,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 33
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 11,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 8
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 12,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 8
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 13,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 4
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 14,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 1
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 15,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 1
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": null,
+          "full_source_and_guards_preserved": true,
+          "groups": 14,
+          "layer": 0,
+          "max_original_probability_abs_error": 1.4901161193847656e-08,
+          "probability_bit_mismatches": 20,
+          "sticky_fault": 0
+        }
+      ],
+      "fault_cases": 16,
+      "host_cap_bytes": 16777216,
+      "info_bytes_per_chunk": 196608,
+      "info_bytes_per_layer": 4096,
+      "inline_dispatch": true,
+      "io_cap_bytes": 67108864,
+      "main_bytes": 2359296,
+      "main_cap_bytes": 4194304,
+      "max_count": 3,
+      "near_tie_margin": 9.999999747378752e-05,
+      "numeric_cases": 10,
+      "original_ID_order_exact": true,
+      "original_probability_bits_claimed": false,
+      "owned_zero_audit_buffers": 156,
+      "owned_zero_audit_bytes": 61341696,
+      "performance_accepted": false,
+      "private_request_accepted": false,
+      "probability_absolute_bound": 2e-06,
+      "probability_relative_bound": 2e-05,
+      "scope": "fixed-public-experimental-F32-batch-router-only",
+      "vendor": 32902,
+      "whole_model_accepted": false,
+      "whole_owning_erasure_accepted": false
+    },
+    "nvidia": {
+      "allocator_cleanup_complete": true,
+      "cases": [
+        {
+          "complete_erasure": true,
+          "count": 1,
+          "fault_case": null,
+          "full_source_and_guards_preserved": true,
+          "groups": 10,
+          "layer": 0,
+          "max_original_probability_abs_error": 1.4901161193847656e-08,
+          "probability_bit_mismatches": 7,
+          "sticky_fault": 0
+        },
+        {
+          "complete_erasure": true,
+          "count": 2,
+          "fault_case": null,
+          "full_source_and_guards_preserved": true,
+          "groups": 12,
+          "layer": 0,
+          "max_original_probability_abs_error": 1.4901161193847656e-08,
+          "probability_bit_mismatches": 13,
+          "sticky_fault": 0
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": null,
+          "full_source_and_guards_preserved": true,
+          "groups": 14,
+          "layer": 0,
+          "max_original_probability_abs_error": 1.4901161193847656e-08,
+          "probability_bit_mismatches": 20,
+          "sticky_fault": 0
+        },
+        {
+          "complete_erasure": true,
+          "count": 1,
+          "fault_case": null,
+          "full_source_and_guards_preserved": true,
+          "groups": 10,
+          "layer": 23,
+          "max_original_probability_abs_error": 1.4901161193847656e-08,
+          "probability_bit_mismatches": 7,
+          "sticky_fault": 0
+        },
+        {
+          "complete_erasure": true,
+          "count": 2,
+          "fault_case": null,
+          "full_source_and_guards_preserved": true,
+          "groups": 12,
+          "layer": 23,
+          "max_original_probability_abs_error": 1.4901161193847656e-08,
+          "probability_bit_mismatches": 13,
+          "sticky_fault": 0
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": null,
+          "full_source_and_guards_preserved": true,
+          "groups": 14,
+          "layer": 23,
+          "max_original_probability_abs_error": 1.4901161193847656e-08,
+          "probability_bit_mismatches": 20,
+          "sticky_fault": 0
+        },
+        {
+          "complete_erasure": true,
+          "count": 1,
+          "fault_case": null,
+          "full_source_and_guards_preserved": true,
+          "groups": 10,
+          "layer": 47,
+          "max_original_probability_abs_error": 1.4901161193847656e-08,
+          "probability_bit_mismatches": 7,
+          "sticky_fault": 0
+        },
+        {
+          "complete_erasure": true,
+          "count": 2,
+          "fault_case": null,
+          "full_source_and_guards_preserved": true,
+          "groups": 12,
+          "layer": 47,
+          "max_original_probability_abs_error": 1.4901161193847656e-08,
+          "probability_bit_mismatches": 13,
+          "sticky_fault": 0
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": null,
+          "full_source_and_guards_preserved": true,
+          "groups": 14,
+          "layer": 47,
+          "max_original_probability_abs_error": 1.4901161193847656e-08,
+          "probability_bit_mismatches": 20,
+          "sticky_fault": 0
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 0,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 4
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 1,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 1
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 2,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 1
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 3,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 1
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 4,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 1
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 5,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 1
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 6,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 1
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 7,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 1
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 8,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 1
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 9,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 1
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 10,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 33
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 11,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 8
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 12,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 8
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 13,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 4
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 14,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 1
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": 15,
+          "full_source_and_guards_preserved": true,
+          "groups": 0,
+          "layer": 47,
+          "max_original_probability_abs_error": 0.0,
+          "probability_bit_mismatches": 0,
+          "sticky_fault": 1
+        },
+        {
+          "complete_erasure": true,
+          "count": 3,
+          "fault_case": null,
+          "full_source_and_guards_preserved": true,
+          "groups": 14,
+          "layer": 0,
+          "max_original_probability_abs_error": 1.4901161193847656e-08,
+          "probability_bit_mismatches": 20,
+          "sticky_fault": 0
+        }
+      ],
+      "fault_cases": 16,
+      "host_cap_bytes": 16777216,
+      "info_bytes_per_chunk": 196608,
+      "info_bytes_per_layer": 4096,
+      "inline_dispatch": true,
+      "io_cap_bytes": 67108864,
+      "main_bytes": 2359296,
+      "main_cap_bytes": 4194304,
+      "max_count": 3,
+      "near_tie_margin": 9.999999747378752e-05,
+      "numeric_cases": 10,
+      "original_ID_order_exact": true,
+      "original_probability_bits_claimed": false,
+      "owned_zero_audit_buffers": 156,
+      "owned_zero_audit_bytes": 61341696,
+      "performance_accepted": false,
+      "private_request_accepted": false,
+      "probability_absolute_bound": 2e-06,
+      "probability_relative_bound": 2e-05,
+      "scope": "fixed-public-experimental-F32-batch-router-only",
+      "vendor": 4318,
+      "whole_model_accepted": false,
+      "whole_owning_erasure_accepted": false
+    }
+  },
+  "scope": "native Rust Strata-inspired public-only laboratory; no production/private/30 token acceptance",
+  "source": {
+    "binary_sha256": "172ab523be256b22679349c9eb09ab4bc265492110e25625e0d5e4f9fd9a948f",
+    "commit": "087477d703c5b37f66a1ee1a99d6b98e3c91ce5b",
+    "features": [
+      "direct-device"
+    ],
+    "helper_sha256": "7521c9a141e76b51e1d58fe00138ca57a2acc448bc63d5b34edbe90849bf03c2",
+    "native_30_tokens_per_second_accepted": false,
+    "ordinary_demand_performance_claimed": false,
+    "protected_launcher_sha256": "e16931328118c1702990a7a75f772bef9b079aa7d55951d366b58114203a4ed6",
+    "public_trial": "operator",
+    "seed": 424242,
+    "temperature": 0
+  },
+  "warm_router_v131_failure": {
+    "accepted": false,
+    "host_after": {
+      "admission": {
+        "action": "status",
+        "state": {
+          "admission": {
+            "active": false,
+            "completed": 62,
+            "paused": false,
+            "recovery_required": false,
+            "rejected": 0,
+            "waiting": 0
+          }
+        },
+        "status": 200
+      },
+      "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+      "http_statuses": {
+        "kuno": 200,
+        "ollama": 200,
+        "vashti": 200
+      },
+      "intel": {
+        "xe_memory": [
+          {
+            "total_bytes": 34242297856,
+            "used_bytes": 50688000
+          }
+        ]
+      },
+      "kernel": "7.0.0-38-generic",
+      "kernel_fault_counts": {
+        "nvidia_xid": 0,
+        "xe_memory_faults": 0,
+        "xe_reset_failures": 0,
+        "xe_timeouts": 0,
+        "xe_wedged": 0
+      },
+      "nvidia_compute_process_count": 0,
+      "nvidia_memory_mib": 472,
+      "time": "2026-10-09T18:24:58.161482+00:00"
+    },
+    "local_receipt_directory": "/media/jmicko/faststore/kuno-development/native-strata-v131-warm-router-20261009",
+    "static_error": "InvalidFormat(native batch owning IO)"
+  }
+}

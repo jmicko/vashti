@@ -2,11 +2,12 @@
 //! No model/source authorization, allocation, readback or publication occurs
 //! here. Parent freezes actual original expert↔slot and six complete physical
 //! owners on one stream until deferred CPU audit/all-family completion. A miss,
-//! nonfinite/near-tie score or dirty owner sets sticky fault without MAP/PROB/
+//! nonfinite/range score or dirty owner sets sticky fault without MAP/PROB/
 //! AUDIT publication. GPU selected-softmax F32 is explicitly different from
 //! the original full-softmax F64→F32 router; audit requires exact original IDs
 //! and separately declared probability bounds, never bit-equivalence.
-//! Near-tie rejection is conservative, not an exp/rounding proof. Rust exp
+//! Near ties are provisional: exact original IDs/order must pass the deferred
+//! actual-score audit before any all-family commit. Rust exp
 //! precision is unspecified and WGSL allows exp error; see:
 //! https://doc.rust-lang.org/std/primitive.f64.html#method.exp
 //! https://gpuweb.github.io/gpuweb/wgsl/#accuracy-of-floating-point-operations
@@ -44,12 +45,12 @@ pub(crate) const NEW_TABLE_AUDIT_BYTES: u64 = 2228224;
 pub(crate) const INFO_CALLS_PER_LAYER: usize = 2;
 pub(crate) const INFO_BYTES_PER_LAYER: u64 = INFO_CALLS_PER_LAYER as u64 * 2048;
 pub(crate) const INFO_BYTES_PER_CHUNK: u64 = LAYERS as u64 * INFO_BYTES_PER_LAYER;
-pub(crate) const NEAR_TIE_MARGIN: f32 = 1e-4;
+pub(crate) const NEAR_TIE_MARGIN: f32 = 0.;
 pub(crate) const PROB_ABS: f64 = 2e-6;
 pub(crate) const PROB_REL: f64 = 2e-5;
 pub(crate) const FAULT_SHAPE: u32 = 1;
 pub(crate) const FAULT_MISSING: u32 = 4;
-pub(crate) const FAULT_NEAR_TIE: u32 = 8;
+pub(crate) const FAULT_NUMERIC: u32 = 2;
 const SELECTION: usize = ROUTER_WORDS;
 const MAP: usize = SELECTION + SELECTION_WORDS;
 const PROB: usize = MAP + MAP_WORDS;
@@ -310,16 +311,21 @@ pub(crate) fn audit_frame(
             }
             raw[id] = id;
         }
-        raw.sort_unstable_by(|&a, &b| scores[b].total_cmp(&scores[a]).then(a.cmp(&b)));
+        raw.sort_unstable_by(|&a, &b| {
+            scores[b]
+                .partial_cmp(&scores[a])
+                .expect("checked finite scores")
+                .then(a.cmp(&b))
+        });
         metadata[8 + row * 2] = raw[10] as u32;
         metadata[9 + row * 2] = scores[raw[10]].to_bits();
         for rank in 0..RANKS {
             let gap = scores[raw[rank]] - scores[raw[rank + 1]];
             if !gap.is_finite()
-                || gap <= NEAR_TIE_MARGIN
+                || gap < NEAR_TIE_MARGIN
                 || scores[raw[rank]] - scores[raw[0]] < -80.
             {
-                return Err(Error::InvalidFormat("batch device router near tie/range"));
+                return Err(Error::InvalidFormat("batch device router finite range"));
             }
             routes.0.minimum_gap = routes.0.minimum_gap.min(gap);
         }
@@ -431,7 +437,7 @@ mod tests {
         assert_eq!(OWNED_BYTES.iter().sum::<u64>(), MAIN_BYTES);
         assert_eq!(OWNED_BYTES[1] + OWNED_BYTES[4], NEW_TABLE_AUDIT_BYTES);
         assert_eq!(INFO_BYTES_PER_CHUNK, 196608);
-        assert_eq!(NEAR_TIE_MARGIN.to_bits(), 0x38d1b717);
+        assert_eq!(NEAR_TIE_MARGIN.to_bits(), 0);
         for count in 1..=3 {
             let owners = OWNED_BYTES.map(|n| Handle::new(StreamId { value: 7 }, n));
             assert!(validate_owners(&owners, 47, 4096 - count as u64, count).is_ok());
@@ -497,7 +503,7 @@ mod tests {
         for publication in ["map[index]=", "probability[index]=", "audit[frame+index]="] {
             assert!(source.find(publication).unwrap() > gate);
         }
-        assert!(source.contains("gap<=bitcast<f32>(p.margin)"));
+        assert!(source.contains("gap<bitcast<f32>(p.margin)"));
         assert!(source.contains("storageBarrier();"));
         assert_eq!(PREFLIGHT_WORKGROUPS, 298);
     }

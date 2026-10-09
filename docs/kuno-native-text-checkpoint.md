@@ -11,7 +11,9 @@ language benchmark/permit `117fa12`, and experimental GPU batch routing `76b0bae
 The GPU routing experiment activates only after successful original cold CPU13
 acceptance and the real one-shot warm reset. It retains actual selected experts,
 checks original CPU IDs/order from deferred actual-score audits before all-family
-commit, and rejects missing residents or near ties. Probabilities are explicitly
+commit, and rejects missing residents or any actual original-ID/order mismatch.
+Near ties may execute provisionally; their actual original-ID audit remains
+mandatory before commit. Probabilities are explicitly
 experimental F32; full original target-vector tolerances remain unchanged. This
 is a conditional all-hit warm13 diagnostic, not normal long demand inference.
 
@@ -37,6 +39,43 @@ Next: freeze this exact source, run both-card routing operators, then full CPU13
 cold/warm control/candidate and public language benchmarks. Preserve original
 failures and recovery evidence. No driver reset, API, UI, installed production
 binary or release change; required Vashti changes:none.
+
+### First public language and device-routing physical checks
+
+Pure-direct `087477d` / v131 (SHA256
+`172ab523be256b22679349c9eb09ab4bc265492110e25625e0d5e4f9fd9a948f`)
+passes both-card GPU batch router operators:10 numeric and16 sticky-fault cases,
+complete owner zero proofs, allocator cleanup and physical memory recovery.
+The first whole warm13 candidate rejects with `native batch owning IO`; its
+terminal close restores normal services. No accepted GPU warm13 timing exists
+from that failed run. Additional static pass markers and exact-tie operator
+cases will distinguish conservative pre-rejection from actual-ID mismatch.
+
+The exact public Strata code fixture completes35 prompt tokens and200 emitted
+tokens under normal demand routing. Primary199 post-prefill continuations take
+47.5798s: **4.18245 tokens/s** (200-emitted count4.20346). Actual draft acceptance
+is130/138; five rejected-prefix recomputations pass original full logit/HC vector
+checks. There is no independent CPU200 quality reference. Full native/source
+closing audits and both-card physical memory recovery pass; all three HTTP
+services200 and classified GPU faults unchanged atzero. No output text/IDs saved.
+
+This changing-route run performs15,419 expert uploads/87,301 hits,31,285,683,200
+uploaded bytes and9,527,840,768 process disk-read bytes during generation.
+Weight reads take17.6865s and router phase9.98992s (includes queued GPU work).
+Full timed dual-device readback mapping is10.0868s/5,939 batches. These categories
+overlap queued work; do not add them as isolated kernel time. Upstream Strata's
+27.3 code/36.0 prose rates remain different-engine comparisons. No30 claim.
+
+The next normal-demand priority is an immutable explicitly host-visible,
+non-device-local Vulkan public-weight pool. Strata reads missing packed experts
+directly from pinned host RAM; it does not eliminate PCIe traffic. Ordinary
+CubeCL STORAGE or adding MAP_WRITE cannot establish the desired placement.
+A small Rust allocation/packed-math/physical-heap gate comes before full-mirror
+integration. Raw HAL imports also need truthful separate allocation/lifetime
+accounting. A frozen144-expert/layer complement is33.67GiB versus46.84GiB for
+all experts, before rounding; frozen coverage and a separate public RAM envelope
+are required. This is pending source/operator work, not a connected inference
+claim. See the [numeric receipt](../apps/kuno/benchmarks/text/receipts/native-strata-optimization-20261009.json).
 
 **User paused the goal after the overnight pass. Do not start more GPU work
 until resumed.** Latest physical model acceptance remains v129/source12f9cc7;

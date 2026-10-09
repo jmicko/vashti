@@ -12,7 +12,7 @@ struct Params { layer:u32, start:u32, count:u32, margin:u32,
 fn finite(bits:u32)->bool { return abs(bitcast<f32>(bits))<=bitcast<f32>(0x7f7fffffu); }
 fn shape()->bool {
     return p.layer<48u && p.count>=1u && p.count<=3u && p.start<4096u &&
-      p.start+p.count<=4096u && p.margin==0x38d1b717u && p.version==1u &&
+      p.start+p.count<=4096u && p.margin==0u && p.version==1u &&
       p.reserved0==0u && p.reserved1==0u && p.reserved2==0u &&
       arrayLength(&router)==8192u && arrayLength(&table)==32768u &&
       arrayLength(&map)==8192u && arrayLength(&probability)==8192u &&
@@ -65,7 +65,8 @@ fn main(@builtin(local_invocation_index) local:u32) {
         return;
     }
     // Top11 makes the inclusion boundary visible, as well as selected-order
-    // gaps. Exact raw ties use ascending IDs; all near ties are rejected later.
+    // gaps. Exact raw ties use ascending IDs. The parent must audit exact
+    // original IDs/order from actual scores before any all-family commit.
     for(var row=0u;row<p.count;row++) {
         for(var rank=0u;rank<11u;rank++) {
             var value=bitcast<f32>(0xff7fffffu);
@@ -99,7 +100,7 @@ fn main(@builtin(local_invocation_index) local:u32) {
             var denominator=0.0;
             for(var rank=0u;rank<10u;rank++) {
                 let gap=score[row*11u+rank]-score[row*11u+rank+1u];
-                if !finite(bitcast<u32>(gap)) || gap<=bitcast<f32>(p.margin) {reject(8u);}
+                if !finite(bitcast<u32>(gap)) || gap<bitcast<f32>(p.margin) {reject(2u);}
                 minimum_gap=min(minimum_gap,gap);
                 let difference=score[row*11u+rank]-score[row*11u];
                 // Prevent nonfinite subtraction/exp or underflow conversion.

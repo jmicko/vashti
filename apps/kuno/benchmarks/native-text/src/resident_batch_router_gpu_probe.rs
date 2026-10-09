@@ -203,12 +203,13 @@ fn mutate(before: &mut State, kind: usize, layer: usize, count: usize) -> Result
             32 | k::FAULT_SHAPE
         }
         11 => {
-            before[0][7] = before[0][0];
-            k::FAULT_NEAR_TIE
+            before[0][0] = f32::MAX.to_bits();
+            k::FAULT_NUMERIC
         }
         12 => {
-            before[0][70] = before[0][63];
-            k::FAULT_NEAR_TIE
+            before[0][..512].fill((-f32::MAX).to_bits());
+            before[0][0] = f32::MAX.to_bits();
+            k::FAULT_NUMERIC
         }
         13 => {
             before[1][layer * 512 + 7] = before[1][layer * 512];
@@ -236,7 +237,23 @@ fn case(
 ) -> Result<serde_json::Value> {
     let start = 4096 - count as u64;
     let mut before = fixture(count);
+    if let Some(tie) = kind.filter(|&n| n >= FAULT_CASES) {
+        match tie - FAULT_CASES {
+            0 => before[0][7] = before[0][0],
+            1 => before[0][70] = before[0][63],
+            2 => {
+                before[0][..512].fill((-4f32).to_bits());
+                for rank in 0..12 {
+                    before[0][rank * 7] = (-(rank as f32) / 8.).to_bits();
+                }
+                before[0][0] = 0f32.to_bits();
+                before[0][7] = (-0f32).to_bits();
+            }
+            _ => return Err("batch router fixed tie inventory".into()),
+        }
+    }
     let expected_fault = kind
+        .filter(|&n| n < FAULT_CASES)
         .map(|n| mutate(&mut before, n, layer, count))
         .transpose()?
         .unwrap_or(0);
@@ -253,7 +270,7 @@ fn case(
     let mut max_error = 0.;
     let mut mismatch = 0;
     let mut groups = 0;
-    if kind.is_some() {
+    if kind.is_some_and(|n| n < FAULT_CASES) {
         before[5][0] = expected_fault;
         if actual != before {
             return Err("batch router fault published or altered full owner".into());
@@ -307,7 +324,7 @@ fn case(
     cubecl::future::block_on(client.sync()).map_err(|_| "batch router reset completion failed")?;
     ledger.completed_fence(sample(client)?)?;
     Ok(
-        serde_json::json!({"layer":layer,"count":count,"fault_case":kind,"sticky_fault":expected_fault,
+        serde_json::json!({"layer":layer,"count":count,"fault_case":kind.filter(|&n|n<FAULT_CASES),"exact_tie_case":kind.filter(|&n|n>=FAULT_CASES).map(|n|n-FAULT_CASES),"sticky_fault":expected_fault,
         "groups":groups,"probability_bit_mismatches":mismatch,"max_original_probability_abs_error":max_error,
         "full_source_and_guards_preserved":true,"complete_erasure":true}),
     )
@@ -350,7 +367,7 @@ pub(crate) fn run(
     arena.enable_public_owned_zero_audit()?;
     let mut ledger = MainAdmission::new(MAIN_CAP, 0)?;
     let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<_> {
-        let mut report = Vec::with_capacity(10 + FAULT_CASES);
+        let mut report = Vec::with_capacity(13 + FAULT_CASES);
         for layer in [0, 23, 47] {
             for count in 1..=3 {
                 report.push(case(client, &mut arena, &mut ledger, layer, count, None)?);
@@ -358,6 +375,16 @@ pub(crate) fn run(
         }
         for fault in 0..FAULT_CASES {
             report.push(case(client, &mut arena, &mut ledger, 47, 3, Some(fault))?);
+        }
+        for tie in 0..3 {
+            report.push(case(
+                client,
+                &mut arena,
+                &mut ledger,
+                47,
+                3,
+                Some(FAULT_CASES + tie),
+            )?);
         }
         report.push(case(client, &mut arena, &mut ledger, 0, 3, None)?); // Fresh epoch replay.
         Ok(report)
@@ -394,7 +421,7 @@ pub(crate) fn run(
     }
     Ok(
         serde_json::json!({"scope":"fixed-public-experimental-F32-batch-router-only","cases":report,
-        "numeric_cases":10,"fault_cases":FAULT_CASES,"max_count":3,"main_bytes":k::MAIN_BYTES,"inline_dispatch":inline,
+        "numeric_cases":13,"exact_tie_cases":3,"near_ties_require_deferred_exact_original_id_audit":true,"fault_cases":FAULT_CASES,"max_count":3,"main_bytes":k::MAIN_BYTES,"inline_dispatch":inline,
         "main_cap_bytes":MAIN_CAP,"host_cap_bytes":HOST_CAP,"io_cap_bytes":IO_CAP,
         "info_bytes_per_layer":k::INFO_BYTES_PER_LAYER,"info_bytes_per_chunk":k::INFO_BYTES_PER_CHUNK,
         "near_tie_margin":k::NEAR_TIE_MARGIN,"probability_absolute_bound":k::PROB_ABS,"probability_relative_bound":k::PROB_REL,
@@ -537,7 +564,7 @@ mod tests {
         assert!(k::audit_frame(&bytes(&good[4]), &t, 47, 13, 3).is_err());
     }
     #[test]
-    fn original_numeric_audit_rejects_nonfinite_internal_and_boundary_ties() {
+    fn actual_score_changes_without_matching_original_selection_are_rejected() {
         for id in [0, 7, 63, 70] {
             let s = host_frame(3, 0, 0).unwrap();
             let mut b = bytes(&s[4]);
