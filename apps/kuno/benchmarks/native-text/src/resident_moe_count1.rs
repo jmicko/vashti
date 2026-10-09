@@ -79,6 +79,9 @@ impl GpuExecutor<'_> {
             .ok_or(err("native count1 reservation absent"))?;
         let cap = h.cap.ok_or(err("native count1 policy absent"))?;
         let overlap = h.overlap;
+        if self.q3_skip_empty_segments && !self.q3_empty_slot_fill {
+            return Err(err("native Q3 empty-segment runtime policy"));
+        }
         if self.q3_empty_slot_fill
             && (self.packed_profile != expert_banks::OriginalPackedProfile::UnslothQ3
                 || cap != 10
@@ -124,6 +127,9 @@ impl GpuExecutor<'_> {
         }
         let g = *w.layout.geometries.get(layer).ok_or(Error::OutOfBounds)?;
         g.validate_count(1).map_err(err)?;
+        if self.q3_skip_empty_segments && (g.tile() != 1 || g.capacity() != 144) {
+            return Err(err("native Q3 empty-segment count1 geometry"));
+        }
         let weights = weights(graph, layer)?;
         if [weights.gate, weights.up, weights.down]
             .iter()
@@ -139,6 +145,14 @@ impl GpuExecutor<'_> {
             .ok_or(err("native count1 original bank absent"))?;
         bank.check_names(weights)?;
         bank.check_client(arena.client().map_err(u::fault)?)?;
+        if self.q3_skip_empty_segments
+            && (bank.profile() != expert_banks::OriginalPackedProfile::UnslothQ3
+                || [bank.gate(), bank.up(), bank.down()]
+                    .iter()
+                    .any(|b| b.segments().len() != 2))
+        {
+            return Err(err("native Q3 empty-segment original banks"));
+        }
         let ids = w.ids(input, output);
         let spans = k::Spans::new([
             0,
@@ -183,6 +197,25 @@ impl GpuExecutor<'_> {
             cap,
             self.gpu_expert_limit,
         )?;
+        // prepare() has validated this exact immutable pending plan. Derive
+        // dispatch only from its GPU slots, never the live bank's reverse map.
+        // Both banks still pass physical() before and after every fill, and the
+        // original source proof is revalidated before the headers/launches.
+        let active_segments = if self.q3_skip_empty_segments {
+            let parts = [bank.gate(), bank.up(), bank.down()].map(|b| {
+                std::array::from_fn(|i| {
+                    let p = &b.segments()[i];
+                    (p.first_slot(), p.capacity())
+                })
+            });
+            Some(Zeroizing::new(q3_segment_activity(
+                bank.slots.capacity(),
+                parts,
+                &last.pending.slots,
+            )?))
+        } else {
+            None
+        };
         let mut pairs = Zeroizing::new([(0u32, 0u32); 10]);
         for (i, &id) in split.gpu().iter().enumerate() {
             pairs[i] = (id as u32, last.pending.slots[i] as u32);
@@ -444,6 +477,8 @@ impl GpuExecutor<'_> {
                             )?;
                         }
                     }
+                } else if let Some(active) = &active_segments {
+                    launch_q3_active_segments(arena, bank, g, &spans, &ids, active)?;
                 } else {
                     launch_wave(arena, bank, g, &spans, &ids, 10)?;
                 }
@@ -780,6 +815,102 @@ impl GpuExecutor<'_> {
     }
 }
 
+/// Only the fixed Q3 72+72 owner is admitted. A segment is inactive exactly
+/// when the validated frozen GPU subset contains no original slot in it.
+fn q3_segment_activity(
+    capacity: usize,
+    parts: [[(usize, usize); 2]; 3],
+    slots: &[usize],
+) -> Result<[bool; 2]> {
+    if capacity != 144 || parts != [[(0, 72), (72, 72)]; 3] || slots.len() > 10 {
+        return Err(err("native Q3 empty-segment original geometry"));
+    }
+    let mut active = Zeroizing::new([false; 2]);
+    for (rank, &slot) in slots.iter().enumerate() {
+        if slot >= capacity || slots[..rank].contains(&slot) {
+            return Err(err("native Q3 empty-segment frozen slots"));
+        }
+        active[slot / 72] = true;
+    }
+    Ok(*active)
+}
+
+/// Same original generic kernels, map, rank count and owning spans as
+/// launch_wave(). Only a wholly inactive segment's gate/down pair is omitted;
+/// its buffers remain retained and subject to every original owner audit.
+fn launch_q3_active_segments(
+    arena: &PrivateArena,
+    bank: &ExpertBanks,
+    g: k::Geometry,
+    s: &k::Spans,
+    ids: &[BufferId; 7],
+    active: &[bool; 2],
+) -> Result<()> {
+    let [gate, up, down] = g.projections();
+    let client = arena.client().map_err(u::fault)?;
+    for (shard, &enabled) in active.iter().enumerate() {
+        if !enabled {
+            continue;
+        }
+        let ga = &bank.gate().segments()[shard];
+        let u = &bank.up().segments()[shard];
+        let d = &bank.down().segments()[shard];
+        unsafe {
+            k::grouped_gate_up::launch_unchecked::<WgpuRuntime>(
+                client,
+                g.grid(10, false).map_err(err)?,
+                CubeDim::new_1d(64),
+                ArrayArg::from_raw_parts(ga.handle().clone(), ga.words()),
+                ArrayArg::from_raw_parts(u.handle().clone(), u.words()),
+                arg(arena, ids[INPUT])?,
+                arg(arena, ids[MAP])?,
+                arg(arena, ids[ACT])?,
+                arg(arena, ids[STATUS])?,
+                s.map_first(),
+                s.input_first(),
+                s.input_stride(),
+                s.act_first(),
+                s.act_stride(),
+                s.status_first(),
+                ga.first_slot(),
+                ga.capacity(),
+                g.hidden(),
+                g.ff(),
+                gate.dtype(),
+                up.dtype(),
+                gate.row_bytes(),
+                up.row_bytes(),
+                g.tile(),
+                g.gate_policy() == k::GatePolicy::Q4Block,
+            );
+            k::grouped_down::launch_unchecked::<WgpuRuntime>(
+                client,
+                g.grid(10, true).map_err(err)?,
+                CubeDim::new_1d(64),
+                ArrayArg::from_raw_parts(d.handle().clone(), d.words()),
+                arg(arena, ids[ACT])?,
+                arg(arena, ids[MAP])?,
+                arg(arena, ids[PART])?,
+                arg(arena, ids[STATUS])?,
+                s.map_first(),
+                s.act_first(),
+                s.act_stride(),
+                s.partial_first(),
+                s.partial_stride(),
+                s.status_first(),
+                d.first_slot(),
+                d.capacity(),
+                g.hidden(),
+                g.ff(),
+                down.dtype(),
+                down.row_bytes(),
+                g.tile(),
+            );
+        }
+    }
+    Ok(())
+}
+
 // Unlike the ordinary serial header helper, this seam checks actual capacity
 // against the public owning-page charge before any private header is encoded.
 fn write_gpu_header(
@@ -860,4 +991,103 @@ fn write_cpu(
             poison.store(true, Ordering::Release);
             err("native count1 actual owning upload")
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PARTS: [[(usize, usize); 2]; 3] = [[(0, 72), (72, 72)]; 3];
+
+    #[test]
+    fn q3_segment_dispatch_keeps_first_last_slots_and_original_order() {
+        let first = [71, 0, 35, 1, 70, 2, 69, 3, 68, 4];
+        let second = [143, 72, 108, 73, 142, 74, 141, 75, 140, 76];
+        assert_eq!(
+            q3_segment_activity(144, PARTS, &first).unwrap(),
+            [true, false]
+        );
+        assert_eq!(
+            q3_segment_activity(144, PARTS, &second).unwrap(),
+            [false, true]
+        );
+        assert_eq!(
+            q3_segment_activity(144, PARTS, &[143, 0, 72, 71]).unwrap(),
+            [true, true]
+        );
+        assert_eq!(first, [71, 0, 35, 1, 70, 2, 69, 3, 68, 4]);
+        assert_eq!(second, [143, 72, 108, 73, 142, 74, 141, 75, 140, 76]);
+    }
+
+    #[test]
+    fn q3_segment_dispatch_empty_gpu_subset_has_no_active_segment() {
+        assert_eq!(
+            q3_segment_activity(144, PARTS, &[]).unwrap(),
+            [false, false]
+        );
+    }
+
+    #[test]
+    fn q3_segment_dispatch_rejects_invalid_frozen_slots() {
+        for slots in [
+            &[144][..],
+            &[usize::MAX][..],
+            &[0, 0][..],
+            &[143, 143][..],
+            &[0; 11][..],
+        ] {
+            assert!(q3_segment_activity(144, PARTS, slots).is_err());
+        }
+        assert!(q3_segment_activity(144, PARTS, &(0..11).collect::<Vec<_>>()).is_err());
+    }
+
+    #[test]
+    fn q3_segment_dispatch_rejects_nonoriginal_or_mismatched_segments() {
+        for capacity in [0, 72, 143, 145, usize::MAX] {
+            assert!(q3_segment_activity(capacity, PARTS, &[0]).is_err());
+        }
+        for projection in 0..3 {
+            for replacement in [
+                [(72, 72), (0, 72)],
+                [(0, 71), (72, 72)],
+                [(0, 72), (73, 71)],
+                [(0, 72), (usize::MAX, 72)],
+            ] {
+                let mut parts = PARTS;
+                parts[projection] = replacement;
+                assert!(q3_segment_activity(144, parts, &[0]).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn q3_segment_dispatch_uses_the_validated_pending_gpu_plan() {
+        let mut source = crate::bank_slots::BankSlots::new(144, 512).unwrap();
+        let prime: Vec<_> = (100..244).collect();
+        let initial = source.plan(&prime).unwrap();
+        source.commit(initial).unwrap();
+        // Expert IDs deliberately do not equal slots. Rank order is preserved.
+        let ids = [243, 100, 172, 171, 101, 170, 173, 242, 135, 208];
+        let (proof, staged, last, split) =
+            count1::Proof::prepare_empty_slots(&source, &ids, &[0.1; 10], 10, 10).unwrap();
+        proof
+            .validate_source(&source, &staged, &last, false)
+            .unwrap();
+        assert_eq!(split.gpu(), &ids);
+        assert_eq!(
+            last.pending.slots,
+            [143, 0, 72, 71, 1, 70, 73, 142, 35, 108]
+        );
+        assert_eq!(
+            q3_segment_activity(144, PARTS, &last.pending.slots).unwrap(),
+            [true, true]
+        );
+        assert_eq!(
+            &count1::Proof::native_map(&split)[..20],
+            &[0, 0, 0, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0, 7, 0, 8, 0, 9]
+        );
+        proof
+            .validate_source(&source, &staged, &last, false)
+            .unwrap();
+    }
 }
