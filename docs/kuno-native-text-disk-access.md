@@ -103,3 +103,70 @@ source candidates are `990c52d` (trace/preload seams) and
 `0740b6bd741e8e379b2168caadd0b6ad9c6e1139` (runner controls), not yet integrated
 or device accepted. Root still needs the orchestration module and main hook.
 Do not substitute wrong experts or report that pending ceiling as measured.
+
+## Physical memory and GPU eviction follow-up
+
+Live read-only inventory confirms two32GB DIMMs configured at2667MT/s. Linux
+reports67335241728bytes of system RAM; the B70 reports34242297856bytes of device
+memory and NVIDIA reports12288MiB. Use one consistent binary unit below:
+
+| Quantity | GiB |
+| --- | ---: |
+| Main model file | 110.968 |
+| Linux-visible RAM | 62.711 |
+| B70 physical VRAM | 31.891 |
+| RTX3060 VRAM | 12.000 |
+| Combined visible RAM and VRAM | 106.602 |
+| Model exceeds combined physical capacity by | 4.366 |
+
+These are total capacities, not free bytes or a unified allocatable pool.
+Inference also needs OS/application memory, private request state, runtime
+buffers and allocation padding. Duplicate host/GPU copies consume capacity
+twice. Current selected native runs use B70 and CPU only; a tested stationary
+NVIDIA bank was slower and remains excluded. Adding16GiB RAM would increase
+raw combined capacity to roughly122.6GiB, but does not establish that the whole
+model plus current duplicates/buffers fits or runs faster at a lower RAM speed.
+
+The original routed expert payload is75GiB. Populating144 slots in each layer
+retains21.094GiB of logical expert bytes on B70. v75 reports25.205GiB for the
+whole MAIN allocator reservation, not the expert banks alone. The n-gram table
+is32.783GiB but only selected rows are required per token. Keeping all experts
+and useful table rows is a more relevant goal than preloading the whole file.
+
+Adaptive eviction overwrites a selected slot inside its retained GPU roots;
+it does not download the victim. The residency ledger changes only after
+original owning completion. Weights are immutable original quantized bytes,
+so dropping the GPU copy loses no computed model state. Original bytes remain
+on disk and may remain in the OS file cache. The temporary upload vector is
+released; there is no dedicated retained host expert payload cache in this
+configuration. Adaptive expert source pages skip explicit discard advice,
+but this neither pins them nor guarantees their continued RAM residency.
+
+GPU-to-RAM victim migration is feasible. It can preserve an expert whose host
+pages are no longer resident. It also adds readback/PCIe/completion work and
+requires an independently bounded host cache before the GPU slot is overwritten.
+If source bytes already exist in RAM, downloading a second copy is wasted work.
+A future policy could retain original host bundles when useful and demote
+GPU-only victims to RAM when retention benefit justifies the transfer. Count
+unique coverage and duplicated bytes separately; reserve OS/runtime headroom.
+No cache or eviction behavior was changed for this inventory.
+
+## Actual model-drive read speed
+
+Read-only tests used the existing model file on the Samsung990EVOPlus2TB NVMe.
+Its live link reports8GT/s×4. Aligned O_DIRECT reads bypassed Linux's page cache;
+there were no writes, cache flushes, GPU operations or service changes.
+
+| Access pattern, queue depth1 | Measured speed/latency |
+| --- | --- |
+| Two2GiB sequential samples,8MiB requests | 3.332 and3.493GB/s (3.103 and3.254GiB/s) |
+| Two256MiB scattered samples,1MiB requests | 2.209 and2.213GB/s (2.057 and2.061GiB/s) |
+| 1024 scattered4KiB requests | 25.275MB/s;132.156µs median,148.212µs95th percentile |
+
+Random offsets use seed424242 and4096-byte alignment. Sequential samples start
+at4GiB and64GiB; the two large scattered samples use successive distinct random
+offset sets. The small scattered sample resets that seed. These short samples
+measure this drive/file/link, not long thermal behavior or the engine's effective
+expert throughput. Engine reads use the page cache and overlap with CPU/GPU
+work; direct-I/O speed does not predict token rate by itself. Small sparse reads
+are latency-sensitive even when the drive has high sequential bandwidth.
