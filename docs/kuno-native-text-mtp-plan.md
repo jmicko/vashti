@@ -35,10 +35,17 @@ Publisher: `unsloth/Qwen3.8-Flash-Next-GGUF`, revision
   ordinary model remains a possible comparison; a DRAFT import alone would not
   establish supported MTP execution.
 
+**Download and import are complete.** All four full-file SHA256 values match the
+pinned publisher. The three main payloads are hardlinked into Ollama's CAS and
+registered as `qwen3.8-flash-next:125b-a6b-ud-q3_k_xl`; no merge or second payload
+copy was made. The Q8 sidecar has a stable named hardlink outside Ollama's GC
+namespace and is not registered as an unsupported Ollama draft.
+
 The public download receipt and bounded tensor inventories live under
 `/media/jmicko/faststore/kuno-development` and the model import directory. They
 contain public weight provenance only. No private content or expert histories
-belong in them. Download/import completion is recorded separately after checks.
+belong in them. Exact provenance and acceptance are recorded in the
+[foundation receipt](../apps/kuno/benchmarks/text/receipts/unsloth-q3-foundation-20261008.json).
 
 ## First native MTP reference
 
@@ -75,16 +82,84 @@ graph scheduling with a synthetic executor, cross-binding rejection, failure
 after KV publication, reset and fresh replay. It proves neither full-head
 numerical parity nor useful speculative performance.
 
+## Implemented foundation, 2026-10-08
+
+- Strict multi-shard ownership pins each original source and validates the
+  complete split inventory. Original-packed IQ3_XXS, IQ4_NL and IQ4_XS scalar
+  decoders match 8,032 independently generated upstream C values bit-for-bit.
+  The C reference is test data; no C/C++ text engine is linked.
+- Rust GPU IQ decode/projection checks pass on B70 and RTX3060: 16,064 exact
+  decoded values including unaligned prefixes, 117 projection/MAX8 cases,
+  12 cooperative finite/fault cases and 12 subgroup cases, with full private
+  owning-buffer and public-source checks. The IQ4 scalar-literal optimization
+  required explicit assignments: CubeCL incorrectly lowered a nested value
+  expression to the last lookup word. A generated-shader regression check and
+  both physical devices accept the corrected `4b29087` source.
+- The actual 1,224-tensor smaller main graph binds through its explicit
+  `UnslothQ3` profile, including its original 90-byte IQ4_NL PLE rows. Generic
+  grouped projections preserve mixed types; Q4-only shortcuts remain rejected.
+  The fixed `!` numerical diagnostic checks all 248,320 logits and exact greedy
+  IDs at each of four or 32 positions against the serial-row CPU graph. This
+  is cross-executor parity, not an independent whole-model quality oracle.
+- Q3's 144-slot banks charge 19,998,441,472 bytes. Ordinary projection pages
+  charge 5.375 GiB, exceeding the former 5 GiB cache. The explicit 8 GiB profile
+  removes repeated ordinary-weight uploads while retaining the same 31 GiB
+  device budget and checked margin. Original Q4 budgets remain unchanged.
+- Direct packed IQ CPU AVX2 math retains the original 64-lane separate
+  multiply/add order, including the IQ path under the explicit FMA backend.
+  Seven paired public microbenchmarks show 6.82/10.57/12.15x arithmetic gains
+  for IQ3_XXS/IQ4_XS/IQ4_NL. These are not whole-model throughput claims.
+- `Qwen4Exp::step_with_carry` returns guarded logits and the actual 10,240-wide
+  residual before the final HC mixer, with consumed position and binding ID.
+  The legacy `step` shares one original head and moves its logits allocation.
+  The protected real-weight CPU coupling test passes two target executions
+  and four MTP executions, using real target h0 at draft position1. Full
+  target logits and both draft hidden/logit vectors have zero fresh-replay bit
+  mismatches. Target and MTP
+  binding domains are checked separately.
+
+The compiler-idle32-position Q3 run at `4b29087` passes every full-logit and
+greedy check, all original owning closes and fresh/recovery checks. Its31 timed
+decode continuations take4250ms: **7.294tokens/s**. Ordinary weight uploads are
+zero; observed physical reads are1,323,008bytes. GPU experts cover1940 of14880
+decode selections;12940 still execute on CPU. One-token prefill seeds only ten
+of144 slots per layer and the current static CPU-miss policy leaves the rest
+empty. Explicit empty-slot filling is the next candidate, not yet accepted.
+
+The same frozen artifact's all-GPU-miss32-position control passes positions0–22
+but fails the full-logit check at position23, after greedy equality passes.
+There is no accepted performance receipt for that control. Earlier maximum
+errors stay below0.00009, far below the0.006 absolute tolerance floor; the
+failure must be diagnosed rather than described as ordinary accumulated drift.
+Acceptance tolerances are unchanged and normal admission/GPU memory recover.
+
+The first result comes from prefill: four outputs represent three timed decode
+continuations, and 32 outputs represent 31. Report that count. The diagnostic's
+generation timer includes comparisons, logging, counters and request-I/O close
+auditing; it excludes model binding, prefill and later recovery tests. Mapped
+CPU projection stages include scheduling and page faults. They are not isolated
+compute/read timings. Short-run cache, placement and SIMD results also differ
+in physical I/O; the GPU-miss control disables request/binding reuse. Preserve
+these limits when interpreting measurements.
+
+MTP's CPU reference and any nonresident GPU projection smoke remain fixed-public
+laboratory paths. Inherited scalar intermediates and the legacy nonresident
+GPU path lack whole-stack private owning-erasure acceptance. They are not
+eligible for private requests or native HTTP routing. No speculative speedup
+has been established.
+
 ## Following implementation and acceptance
 
-1. Complete native split ownership and original-packed IQ3_XXS/IQ4_NL/IQ4_XS
-   scalar/GPU operators. Preserve original Q4 gates and independent packed
-   reference fixtures. Do not expand all quant weights to F32 to claim support.
-2. Bind and validate the complete smaller main artifact and obtain its own
-   fixed public correctness fixture. Different quants cannot reuse Q4 token IDs
-   as a quality/reference oracle. Validate complete head numerical output too.
-3. Add an explicit target pre-final-mixer wide hidden tap and logits for every
-   verification position. Existing MAX8 LastLogits only projects the last row.
+1. Preserve the accepted split, original packed operators and explicit Q3
+   ownership above. Extend quality/context and meaningful throughput coverage;
+   different quants cannot reuse Q4 token IDs as a quality oracle.
+2. Validate complete MTP head numerical output against an independent graph
+   oracle. CPU fresh replay proves repeatability, not correct full-head math.
+   First check two-position GPU projections against the CPU graph using real
+   target carry; label any legacy nonresident probe public-only.
+3. Extend the implemented CPU target carry to the GPU owner and return logits
+   and wide hidden for every verification position. Existing MAX8 LastLogits
+   only projects the last row.
 4. Start with at most two drafts: confirmed token plus0–2 drafts uses a1–3-row
    target verification. Commit only the accepted prefix and produce the target
    correction/bonus token. Greedy equality first; exact sampled rejection is a

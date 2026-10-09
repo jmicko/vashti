@@ -2616,7 +2616,8 @@ supported backend exists, with ordinary Ollama fallback for unsupported models.
 Exact future routing/naming must be coordinated before changing consumers.
 No production routing or API change is implemented in this handoff.
 
-Root integration is `bb84f38`, following `ae97ac4` (bounded full scalar MTP
+Historical foundation at `bb84f38`, superseded by the accepted foundation
+handoff below. Its source followed `ae97ac4` (bounded full scalar MTP
 reference), `cd0c2a1` (original packed IQ3_XXS/IQ4_NL/IQ4_XS decode; isolated
 source `1ffd041`), and `712b605` (strict split owner; isolated `ce964280`). Read
 the [exact native MTP plan](kuno-native-text-mtp-plan.md) before further changes.
@@ -2647,3 +2648,52 @@ credential once operator source is ready. No reset, unbind, reboot, driver/clock
 change, installation or release. Model provenance and synthetic receipts only;
 private prompts, outputs and expert histories remain unpersisted.
 **Required Vashti changes: none for this internal milestone.**
+
+### Active handoff: original-packed Q3 foundation and target/MTP coupling (2026-10-08)
+
+Kuno source `4b29087` integrates strict split loading (`712b605`), scalar/GPU IQ
+operators (`cd0c2a1`/`c249ed2`), actual Q3 expert/PLE ownership (`5c231b5`),
+fixed4/32-position full-logit diagnostics (`42906b8`/`e602916`), bounded8GiB
+ordinary cache (`d682e15`), original packed CPU SIMD (`d34c837`), actual guarded
+target carry (`ff028b6`) and real CPU target/MTP coupling (`97772b3`). The IQ4
+literal candidate needed corrected CubeCL explicit assignments (`4b29087`);
+both physical GPUs accept its generated-shader and independent operator checks.
+Read the [exact MTP plan](kuno-native-text-mtp-plan.md),
+[latest checkpoint](kuno-native-text-checkpoint.md) and
+[numeric/provenance receipt](../apps/kuno/benchmarks/text/receipts/unsloth-q3-foundation-20261008.json).
+
+All four pinned Unsloth payload hashes pass. Main89,986,353,824bytes is imported
+as `qwen3.8-flash-next:125b-a6b-ud-q3_k_xl` through Ollama's local split create,
+using CAS hardlinks and no second payload. The4,137,429,120-byte Q8 sidecar is
+hardlinked outside Ollama's GC namespace; it is not registered as an unsupported
+Ollama draft. This model import does not enable native HTTP routing.
+
+Both cards pass16064 independent decoded C values,117 projection/MAX8 cases,
+12 cooperative and12 subgroup fault cases with complete operator owning audits.
+The compiler-idle32-position Q3 B70 run passes every full logit, exact greedy,
+owning/fresh/recovery gate:31 decode steps in4250ms (7.294tokens/s), no ordinary
+uploads and1,323,008 observed physical read bytes. The same-artifact cap0
+control fails full logits at position23 after greedy equality; it is rejected,
+with no accepted timing and no weakened tolerance. One-token prefill leaves
+134/144 bank slots empty per layer; explicit bounded filling is a pending
+candidate. Preserve this failure and pending status rather than claiming all
+Q3 GPU-placement paths accepted.
+
+The CPU target/MTP test uses actual pre-head h0 at draft position1. Full target
+logits and both draft hidden/logit vectors repeat exactly. This is executor
+parity/repeatability, not an independent whole-head quality oracle. The CPU MTP
+reference and generic nonresident GPU probe lack complete private error-path
+owning-erasure acceptance and remain fixed-public-only. No speculative speedup,
+native production fallback/routing, private MTP or fully GPU draft claim.
+
+Merged host checks pass157 core tests with10 intentionally ignored opt-ins,
+547 native main tests with one ignored, plus two one-test shader suites.
+The protected real target/MTP opt-in also passes. Strict featured Clippy and
+formatting passed the preceding integrated candidates; final new candidates
+must repeat relevant checks. See source-pinned receipts for exact artifacts,
+limits and test boundaries. No reset/unbind/reboot, clock/driver changes,
+installation, release, public API/config or Vashti changes in this block.
+Normal admission and all three services recover, both GPUs return to baseline,
+and classified fault counters remain unchanged after every accepted/rejected
+trial. **Required Vashti changes: none.** The future native catalog/routing
+contract still needs coordination before changing consumers.

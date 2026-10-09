@@ -1,0 +1,870 @@
+{
+  "CPU_IQ_arithmetic": {
+    "base_commit": "bebe9d7",
+    "candidate_file_sha256": {
+      "cpu_iq.rs": "70ea0c0b0b136e4aa5f12483ae2e4db64077e300d4352b0e3096576d0bc5249b",
+      "cpu_iq_tests.rs": "36cecf01d6b352716537a98b2f955b2956482a12e2572b12fe435307aab1fcf6"
+    },
+    "command": "cargo test --locked --release -p kuno-text --all-features -j2 --lib --target-dir /media/jmicko/faststore/kuno-development/quant-support-target-20261008 cpu_expert::tests::iq_tests::iq_packed_cpu_public_timing_probe -- --exact --ignored --nocapture --test-threads=1",
+    "cpu_model": "AMD Ryzen 9 5900XT 16-Core Processor",
+    "gpu_work": false,
+    "integrated_commit": "d34c83775b10e83a0d5354b1b17437bef4177c59",
+    "limitations": [
+      "CPU arithmetic microbenchmark, not whole-model decode speed",
+      "Fixed public reference blocks repeated through native-shaped matrices; no actual model payload read",
+      "This timing probe does not measure worker scheduling, disk paging, GPU upload or model load",
+      "All numeric inputs compiled public synthetic values; no prompts, output text or request histories"
+    ],
+    "matrix_passes_per_trial": 4,
+    "oracle": "llama.cpp b11232 independent compiled C fixtures;8032 exact decoder values",
+    "ordering": "one warm paired pass; then alternating old/new order across7 pairs",
+    "receipt": {
+      "path": "/media/jmicko/faststore/kuno-development/iq-cpu-avx2-public-microprobe-e61b0d5-20261008.json",
+      "sha256": "be68c44ddf09a5593a0dd5a3fb62594f6fd8a564a1cadb0c480a9324c8123ae1"
+    },
+    "results": [
+      {
+        "columns": 2560,
+        "ggml_id": 18,
+        "new_median_ns": 1113371,
+        "new_ns": [
+          1153241,
+          1152930,
+          1095070,
+          1099730,
+          1194841,
+          1082120,
+          1113371
+        ],
+        "old_median_ns": 7597212,
+        "old_ns": [
+          7597212,
+          7670113,
+          7829904,
+          7333129,
+          8082876,
+          7223349,
+          7273878
+        ],
+        "packed_bytes": 627200,
+        "paired_checksum_equal": true,
+        "rows": 640,
+        "speedup": 6.823612255034486
+      },
+      {
+        "columns": 2560,
+        "ggml_id": 23,
+        "new_median_ns": 723267,
+        "new_ns": [
+          718627,
+          723267,
+          728596,
+          727827,
+          722887,
+          718427,
+          724967
+        ],
+        "old_median_ns": 7647482,
+        "old_ns": [
+          7589452,
+          7571211,
+          8437820,
+          7647482,
+          7723533,
+          7453200,
+          7647952
+        ],
+        "packed_bytes": 870400,
+        "paired_checksum_equal": true,
+        "rows": 640,
+        "speedup": 10.573525406246933
+      },
+      {
+        "columns": 640,
+        "ggml_id": 20,
+        "new_median_ns": 818838,
+        "new_ns": [
+          818418,
+          854948,
+          813157,
+          818668,
+          822548,
+          822288,
+          818838
+        ],
+        "old_median_ns": 9950914,
+        "old_ns": [
+          9849933,
+          9857923,
+          10035765,
+          10079855,
+          9950914,
+          10018834,
+          9871923
+        ],
+        "packed_bytes": 921600,
+        "paired_checksum_equal": true,
+        "rows": 2560,
+        "speedup": 12.152481931712988
+      }
+    ],
+    "runtime": "Rust AVX2 original-packed separate mul/add64 lanes; IQ arithmetic unchanged under Avx2Fma",
+    "scope": "fixed-public-single-thread-packed-IQ-CPU-arithmetic-only",
+    "source_commit": "e61b0d5046198bee9fd37ee04515a8f901371e5a",
+    "sudo_work": false,
+    "test_executable_sha256": "64039092c1ace8e230066cab80d4aa081f1c7595b4c8ea87eb5e664d816fada1",
+    "trials": 7
+  },
+  "CPU_target_MTP": {
+    "GPU_or_speculative_speed_accepted": false,
+    "MTP_executions": 4,
+    "draft_full_logits_and_hidden_fresh_replay_bit_mismatches": 0,
+    "independent_full_head_oracle_accepted": false,
+    "log": {
+      "path": "/media/jmicko/faststore/kuno-development/mtp-coupled-reference-20261008/coupled-test.log",
+      "sha256": "f4760fb54ca7bbd4e08822595da3a44e60b3b8d4268f5632cc9f46d07a4d85b6"
+    },
+    "source": {
+      "binary_sha256": "7b5445a7dab63bc081a7787f3ffff3cf43fe91819708c9be0ed7c03467302bfd",
+      "source_commit": "97772b3ecdf2f3bb57335535bec7b2b53ecdc960",
+      "test": "real_public_target_carry_conditions_q8_mtp_at_the_next_position_and_replays"
+    },
+    "target_executions": 2,
+    "target_full_logits_fresh_replay_bit_mismatches": 0,
+    "target_hidden_fresh_replay_compared": false
+  },
+  "Q3_main_runs": [
+    {
+      "bind_group_reuse": true,
+      "completed_cpu_misses": 1180,
+      "count1_hybrid_cpu_miss_cap": 10,
+      "decode_tokens_per_second": 0.3505491937368544,
+      "expert_bank_accounted_limit_bytes": 19998441472,
+      "generation_ms": 8558,
+      "model_bind_ms": 1320,
+      "native_decode_steps": 3,
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ],
+      "prefill_ms": 3364,
+      "quiet_compilation_window": false,
+      "receipt": {
+        "path": "/media/jmicko/faststore/kuno-development/q3-main-gpu-20261008/kuno-q3-main-v78b.json",
+        "sha256": "06fc886558548b4efb9b460f9d9664b492284cc2bd8a6859f075d8c8933a1710"
+      },
+      "request_io_closed_and_audited": true,
+      "request_io_reuse": true,
+      "resident_private_owned_bytes": 818413568,
+      "run_id": "kuno-q3-main-v78b",
+      "source": {
+        "binary_sha256": "d75809702083ca826e249188179651f49d8ce450c938bc983f030438b0933369",
+        "commit": "9d38d145b10ea13c2c53aae3002b4f197fdd0b1f",
+        "profile": "unsloth-q3",
+        "public_fixed_fixture": true,
+        "reference_sha256": "3629ba9dbc6a1209d01b6e784d901cf8a71d152a71f0c3352dcea9c26aa90898"
+      },
+      "static_cache_budget_bytes": 5368709120,
+      "warm_cpu_operator_host_phase_ns": [
+        10453863,
+        1086774975,
+        257636772,
+        1355952510
+      ],
+      "warm_expert_hits": 260,
+      "warm_expert_uploads": 0,
+      "warm_host_resource_delta": {
+        "major_faults": 413,
+        "minor_faults": 473261,
+        "read_bytes": 28672,
+        "system_ticks": 364,
+        "user_ticks": 1942,
+        "write_bytes": 32768
+      },
+      "warm_upload_transfer_bytes": [
+        41287680,
+        13471104,
+        27816576
+      ],
+      "warm_uploaded_bytes": 13996431360,
+      "whole_model_numeric_accepted": true
+    },
+    {
+      "bind_group_reuse": true,
+      "completed_cpu_misses": 1180,
+      "count1_hybrid_cpu_miss_cap": 10,
+      "decode_tokens_per_second": 1.4947683109118086,
+      "expert_bank_accounted_limit_bytes": 19998441472,
+      "generation_ms": 2007,
+      "model_bind_ms": 1269,
+      "native_decode_steps": 3,
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ],
+      "prefill_ms": 5030,
+      "quiet_compilation_window": false,
+      "receipt": {
+        "path": "/media/jmicko/faststore/kuno-development/q3-main-gpu-20261008/kuno-q3-main-v80-cache8.json",
+        "sha256": "a420dd298a37760f45ccc75194b5be24e7f7f328f232c1725571d8bffa43d7a9"
+      },
+      "request_io_closed_and_audited": true,
+      "request_io_reuse": true,
+      "resident_private_owned_bytes": 818413568,
+      "run_id": "kuno-q3-main-v80-cache8",
+      "source": {
+        "binary_sha256": "b99adb5f7ff4d23af2b6bdf5e58f3c36d47b5f1bd0389042bec565f00922ee71",
+        "cache_bytes": 8589934592,
+        "commit": "d682e15950699e152a852f89f2e64daa4da15270",
+        "cpu_cap": 10,
+        "profile": "unsloth-q3",
+        "public_fixed_fixture": true,
+        "reference_sha256": "3629ba9dbc6a1209d01b6e784d901cf8a71d152a71f0c3352dcea9c26aa90898"
+      },
+      "static_cache_budget_bytes": 8589934592,
+      "warm_cpu_operator_host_phase_ns": [
+        9529306,
+        1080178579,
+        335206337,
+        1425802906
+      ],
+      "warm_expert_hits": 260,
+      "warm_expert_uploads": 0,
+      "warm_host_resource_delta": {
+        "major_faults": 3821,
+        "minor_faults": 20834,
+        "read_bytes": 802861056,
+        "system_ticks": 66,
+        "user_ticks": 1678,
+        "write_bytes": 8192
+      },
+      "warm_upload_transfer_bytes": [
+        41287680,
+        13471104,
+        27816576
+      ],
+      "warm_uploaded_bytes": 0,
+      "whole_model_numeric_accepted": true
+    },
+    {
+      "bind_group_reuse": false,
+      "completed_cpu_misses": 0,
+      "count1_hybrid_cpu_miss_cap": 0,
+      "decode_tokens_per_second": 2.892960462873674,
+      "expert_bank_accounted_limit_bytes": 19998441472,
+      "generation_ms": 1037,
+      "model_bind_ms": 1336,
+      "native_decode_steps": 3,
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ],
+      "prefill_ms": 3238,
+      "quiet_compilation_window": false,
+      "receipt": {
+        "path": "/media/jmicko/faststore/kuno-development/q3-main-gpu-20261008/kuno-q3-main-v80-cache8-gpu0b.json",
+        "sha256": "2a79c4a6f30cf54690a753944dd9ec9999a5a54c2a10d61cc0007c8e697d040c"
+      },
+      "request_io_closed_and_audited": false,
+      "request_io_reuse": false,
+      "resident_private_owned_bytes": 818413568,
+      "run_id": "kuno-q3-main-v80-cache8-gpu0b",
+      "source": {
+        "binary_sha256": "b99adb5f7ff4d23af2b6bdf5e58f3c36d47b5f1bd0389042bec565f00922ee71",
+        "cache_bytes": 8589934592,
+        "commit": "d682e15950699e152a852f89f2e64daa4da15270",
+        "cpu_cap": 0,
+        "profile": "unsloth-q3",
+        "public_fixed_fixture": true,
+        "reference_sha256": "3629ba9dbc6a1209d01b6e784d901cf8a71d152a71f0c3352dcea9c26aa90898"
+      },
+      "static_cache_budget_bytes": 8589934592,
+      "warm_cpu_operator_host_phase_ns": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "warm_expert_hits": 766,
+      "warm_expert_uploads": 674,
+      "warm_host_resource_delta": {
+        "major_faults": 23,
+        "minor_faults": 2847,
+        "read_bytes": 3424256,
+        "system_ticks": 18,
+        "user_ticks": 72,
+        "write_bytes": 20480
+      },
+      "warm_upload_transfer_bytes": [
+        0,
+        0,
+        0
+      ],
+      "warm_uploaded_bytes": 1535206400,
+      "whole_model_numeric_accepted": true
+    },
+    {
+      "bind_group_reuse": true,
+      "completed_cpu_misses": 1180,
+      "count1_hybrid_cpu_miss_cap": 10,
+      "decode_tokens_per_second": 4.8,
+      "expert_bank_accounted_limit_bytes": 19998441472,
+      "generation_ms": 625,
+      "model_bind_ms": 1470,
+      "native_decode_steps": 3,
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ],
+      "prefill_ms": 3450,
+      "quiet_compilation_window": false,
+      "receipt": {
+        "path": "/media/jmicko/faststore/kuno-development/q3-main-gpu-20261008/kuno-q3-main-v81-cache8-simd.json",
+        "sha256": "0726b248bb6771a0fcd7d4f03217a9e41b0664ab8f60701987120873080935d1"
+      },
+      "request_io_closed_and_audited": true,
+      "request_io_reuse": true,
+      "resident_private_owned_bytes": 818413568,
+      "run_id": "kuno-q3-main-v81-cache8-simd",
+      "source": {
+        "binary_sha256": "8d09b8a6c655886006942f147e9508a0d2788af86422133523a409fbd2c3a7e8",
+        "cache_bytes": 8589934592,
+        "commit": "d34c83775b10e83a0d5354b1b17437bef4177c59",
+        "cpu_cap": 10,
+        "profile": "unsloth-q3",
+        "public_fixed_fixture": true,
+        "reference_sha256": "3629ba9dbc6a1209d01b6e784d901cf8a71d152a71f0c3352dcea9c26aa90898"
+      },
+      "static_cache_budget_bytes": 8589934592,
+      "warm_cpu_operator_host_phase_ns": [
+        8404370,
+        144629913,
+        76299312,
+        230119951
+      ],
+      "warm_expert_hits": 260,
+      "warm_expert_uploads": 0,
+      "warm_host_resource_delta": {
+        "major_faults": 1067,
+        "minor_faults": 19421,
+        "read_bytes": 197910528,
+        "system_ticks": 35,
+        "user_ticks": 210,
+        "write_bytes": 24576
+      },
+      "warm_upload_transfer_bytes": [
+        41287680,
+        13471104,
+        27816576
+      ],
+      "warm_uploaded_bytes": 0,
+      "whole_model_numeric_accepted": true
+    },
+    {
+      "bind_group_reuse": true,
+      "compiler_overlap": true,
+      "completed_cpu_misses": 12940,
+      "count1_hybrid_cpu_miss_cap": 10,
+      "decode_tokens_per_second": 6.504406210658834,
+      "expert_bank_accounted_limit_bytes": 19998441472,
+      "generation_ms": 4766,
+      "model_bind_ms": 1405,
+      "native_decode_steps": 31,
+      "numeric_positions": 32,
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ],
+      "prefill_ms": 3305,
+      "quiet_compilation_window": false,
+      "receipt": {
+        "path": "/media/jmicko/faststore/kuno-development/q3-main-gpu-20261008/kuno-q3-main-v82-public32-simd.json",
+        "sha256": "0d3eaeee16b59549ba8036eafbd3088defa6101d655dd2c8a4f52bdbb567b038"
+      },
+      "request_io_closed_and_audited": true,
+      "request_io_reuse": true,
+      "resident_private_owned_bytes": 818413568,
+      "run_id": "kuno-q3-main-v82-public32-simd",
+      "source": {
+        "binary_sha256": "3cec59c0030ee30b11496b8a483474f458af7de5db4dfb483cb06983a3a832d5",
+        "cache_bytes": 8589934592,
+        "commit": "4b29087fc027d9f7619e6893ee173173b6fb567b",
+        "cpu_cap": 10,
+        "profile": "unsloth-q3",
+        "public_fixed_fixture": true,
+        "public_positions": 32,
+        "reference_sha256": "47a85029b8a8f7fa5fc9f06acca1d868c703adc530dd477173468bf3a99ee834"
+      },
+      "static_cache_budget_bytes": 8589934592,
+      "warm_cpu_operator_host_phase_ns": [
+        95695799,
+        1265587593,
+        600376203,
+        1969120051
+      ],
+      "warm_expert_hits": 1940,
+      "warm_expert_uploads": 0,
+      "warm_host_resource_delta": {
+        "major_faults": 2787,
+        "minor_faults": 124524,
+        "read_bytes": 468324352,
+        "system_ticks": 252,
+        "user_ticks": 2114,
+        "write_bytes": 36864
+      },
+      "warm_upload_transfer_bytes": [
+        426639360,
+        146690496,
+        279948864
+      ],
+      "warm_uploaded_bytes": 0,
+      "whole_model_numeric_accepted": true
+    },
+    {
+      "bind_group_reuse": true,
+      "completed_cpu_misses": 12940,
+      "count1_hybrid_cpu_miss_cap": 10,
+      "decode_tokens_per_second": 7.294117647058823,
+      "expert_bank_accounted_limit_bytes": 19998441472,
+      "generation_ms": 4250,
+      "model_bind_ms": 1301,
+      "native_decode_steps": 31,
+      "numeric_positions": 32,
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ],
+      "prefill_ms": 3095,
+      "quiet_compilation_window": true,
+      "receipt": {
+        "path": "/media/jmicko/faststore/kuno-development/q3-main-gpu-20261008/kuno-q3-main-v82-public32-quiet.json",
+        "sha256": "b47643d6b8d0abd2adf098accc1110f59245d2c7fcf296f11eb40ee58e0623eb"
+      },
+      "request_io_closed_and_audited": true,
+      "request_io_reuse": true,
+      "resident_private_owned_bytes": 818413568,
+      "run_id": "kuno-q3-main-v82-public32-quiet",
+      "source": {
+        "binary_sha256": "3cec59c0030ee30b11496b8a483474f458af7de5db4dfb483cb06983a3a832d5",
+        "cache_bytes": 8589934592,
+        "commit": "4b29087fc027d9f7619e6893ee173173b6fb567b",
+        "cpu_cap": 10,
+        "profile": "unsloth-q3",
+        "public_fixed_fixture": true,
+        "public_positions": 32,
+        "reference_sha256": "47a85029b8a8f7fa5fc9f06acca1d868c703adc530dd477173468bf3a99ee834"
+      },
+      "static_cache_budget_bytes": 8589934592,
+      "warm_cpu_operator_host_phase_ns": [
+        96073184,
+        943513670,
+        505987419,
+        1552670702
+      ],
+      "warm_expert_hits": 1940,
+      "warm_expert_uploads": 0,
+      "warm_host_resource_delta": {
+        "major_faults": 19,
+        "minor_faults": 122170,
+        "read_bytes": 1323008,
+        "system_ticks": 221,
+        "user_ticks": 2001,
+        "write_bytes": 32768
+      },
+      "warm_upload_transfer_bytes": [
+        426639360,
+        146690496,
+        279948864
+      ],
+      "warm_uploaded_bytes": 0,
+      "whole_model_numeric_accepted": true
+    }
+  ],
+  "Q3_public_references": [
+    {
+      "bytes": 3973192,
+      "path": "/media/jmicko/faststore/kuno-development/q3-main-reference-20261008/public-four-logits.bin",
+      "positions": 4,
+      "sha256": "3629ba9dbc6a1209d01b6e784d901cf8a71d152a71f0c3352dcea9c26aa90898"
+    },
+    {
+      "bytes": 31785480,
+      "path": "/media/jmicko/faststore/kuno-development/q3-main-reference32-20261008/public-32-logits.bin",
+      "positions": 32,
+      "sha256": "47a85029b8a8f7fa5fc9f06acca1d868c703adc530dd477173468bf3a99ee834"
+    }
+  ],
+  "date_local": "2026-10-08",
+  "gpu_IQ_operators": [
+    {
+      "binary_sha256": "add5a12b7ecc9f87b6d3d2f84c11d1d6c53cd8ae9c5f78e13debb15ed39e201e",
+      "card": "intel",
+      "context_retired": false,
+      "decoded_c_values": 16064,
+      "default_features": true,
+      "finite_case_count": 12,
+      "main_erased_buffers": 240,
+      "main_erased_bytes": 10420224,
+      "oracle_cases": 6,
+      "projection_case_count": 117,
+      "receipt": {
+        "path": "/media/jmicko/faststore/kuno-development/iq4-fixed-gpu-20261008/intel-iq.json",
+        "sha256": "bbfa4f985fa2013d1817e692c85634800310710a9260de0513a2802f032ae4dd"
+      },
+      "single_subgroup_case_count": 12,
+      "source_commit": "4b29087fc027d9f7619e6893ee173173b6fb567b",
+      "whole_model_or_performance_accepted": false
+    },
+    {
+      "binary_sha256": "add5a12b7ecc9f87b6d3d2f84c11d1d6c53cd8ae9c5f78e13debb15ed39e201e",
+      "card": "nvidia",
+      "context_retired": false,
+      "decoded_c_values": 16064,
+      "default_features": true,
+      "finite_case_count": 12,
+      "main_erased_buffers": 240,
+      "main_erased_bytes": 10420224,
+      "oracle_cases": 6,
+      "projection_case_count": 117,
+      "receipt": {
+        "path": "/media/jmicko/faststore/kuno-development/iq4-fixed-gpu-20261008/nvidia-iq.json",
+        "sha256": "bbfa4f985fa2013d1817e692c85634800310710a9260de0513a2802f032ae4dd"
+      },
+      "single_subgroup_case_count": 12,
+      "source_commit": "4b29087fc027d9f7619e6893ee173173b6fb567b",
+      "whole_model_or_performance_accepted": false
+    }
+  ],
+  "import": {
+    "CAS_payload_shared": true,
+    "MTP_imported_into_ollama": false,
+    "MTP_payload_shared": true,
+    "MTP_sidecar": "/media/jmicko/faststore/ollama/kuno-sidecars/unsloth-qwen3.8-flash-next/766911a6b7369840a91dbcd95f9f997acaab6cd6/mtp-Qwen3.8-Flash-Next-Q8_0.gguf",
+    "main_bytes": 89986353824,
+    "main_shards": 3,
+    "model": "qwen3.8-flash-next:125b-a6b-ud-q3_k_xl",
+    "revision": "766911a6b7369840a91dbcd95f9f997acaab6cd6",
+    "template_present": true,
+    "template_source": "Go"
+  },
+  "last_verified_recovery": {
+    "admission": {
+      "action": "status",
+      "state": {
+        "admission": {
+          "active": false,
+          "completed": 0,
+          "paused": false,
+          "recovery_required": false,
+          "rejected": 0,
+          "waiting": 0
+        }
+      },
+      "status": 200
+    },
+    "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+    "http_statuses": {
+      "kuno": 200,
+      "ollama": 200,
+      "vashti": 200
+    },
+    "intel": {
+      "xe_memory": [
+        {
+          "total_bytes": 34242297856,
+          "used_bytes": 50688000
+        }
+      ]
+    },
+    "kernel": "7.0.0-38-generic",
+    "kernel_fault_counts": {
+      "nvidia_xid": 0,
+      "xe_memory_faults": 0,
+      "xe_reset_failures": 0,
+      "xe_timeouts": 0,
+      "xe_wedged": 0
+    },
+    "nvidia_compute_process_count": 0,
+    "nvidia_memory_mib": 546,
+    "time": "2026-10-09T03:14:38.857252+00:00"
+  },
+  "limitations": [
+    "CPU/GPU graph parity uses the same Rust graph equations, not an independent whole-model quality oracle",
+    "Four outputs contain three timed continuation steps;32 contain31",
+    "The diagnostic timer includes comparisons, public logging, counters and request-I/O close auditing; binding, prefill and later recovery are excluded",
+    "Short controls differ in physical I/O and cap0 also disables request/binding reuse",
+    "CPU phase array means setup/span, gate/up/SiLU, down, total; mapped projection stages include page faults",
+    "CPU SIMD microbenchmarks do not measure whole-model throughput",
+    "MTP reference and generic nonresident GPU projection path remain fixed-public-only; no whole-stack private erasure or speculative performance acceptance",
+    "No production native routing, frontend, installation or release change"
+  ],
+  "model": {
+    "files": [
+      {
+        "bytes": 10946624,
+        "elapsed_seconds": 1.731,
+        "file": "UD-Q3_K_XL/Qwen3.8-Flash-Next-UD-Q3_K_XL-00001-of-00003.gguf",
+        "sha256": "f2ef4328929d8b8c8930e2856eef52128dd4ce3425302f04bc3c657431cc4c49"
+      },
+      {
+        "bytes": 4137429120,
+        "elapsed_seconds": 445.392,
+        "file": "MTP/mtp-Qwen3.8-Flash-Next-Q8_0.gguf",
+        "sha256": "58a47d6a216307e9b97172d5bfdc3436a8994b632f5e436b9bb6edf8951da8d1"
+      },
+      {
+        "bytes": 49983253824,
+        "elapsed_seconds": 2353.741,
+        "file": "UD-Q3_K_XL/Qwen3.8-Flash-Next-UD-Q3_K_XL-00002-of-00003.gguf",
+        "sha256": "7d230e7c9421d868b89eebaf23033af0ea1a4e046956df00fb156814fb62346e"
+      },
+      {
+        "bytes": 39992153376,
+        "elapsed_seconds": 1933.399,
+        "file": "UD-Q3_K_XL/Qwen3.8-Flash-Next-UD-Q3_K_XL-00003-of-00003.gguf",
+        "sha256": "21d4f90f9cd7b7c3a1582667c20cb22f7b03de895b88a23bb20aaeaa44f2c199"
+      }
+    ],
+    "private_content": false,
+    "repository": "unsloth/Qwen3.8-Flash-Next-GGUF",
+    "revision": "766911a6b7369840a91dbcd95f9f997acaab6cd6",
+    "total_bytes": 94123782944
+  },
+  "private_content_persisted": false,
+  "production_routing_changed": false,
+  "rejected_Q3_main_control": {
+    "accepted_performance_receipt": false,
+    "failure_position": 23,
+    "full_logits_gate_passed": false,
+    "log": {
+      "path": "/media/jmicko/faststore/kuno-development/q3-main-gpu-20261008/kuno-q3-main-v82-public32-gpu0.log",
+      "sha256": "888336c929b68525f42061ab80e41c7c3ef23265e86ddec50903dc80f89fd2a3"
+    },
+    "position23_greedy_passed": true,
+    "positions0_through22_passed": true,
+    "recovery": {
+      "admission": {
+        "action": "status",
+        "state": {
+          "admission": {
+            "active": false,
+            "completed": 0,
+            "paused": false,
+            "recovery_required": false,
+            "rejected": 0,
+            "waiting": 0
+          }
+        },
+        "status": 200
+      },
+      "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+      "http_statuses": {
+        "kuno": 200,
+        "ollama": 200,
+        "vashti": 200
+      },
+      "intel": {
+        "xe_memory": [
+          {
+            "total_bytes": 34242297856,
+            "used_bytes": 50688000
+          }
+        ]
+      },
+      "kernel": "7.0.0-38-generic",
+      "kernel_fault_counts": {
+        "nvidia_xid": 0,
+        "xe_memory_faults": 0,
+        "xe_reset_failures": 0,
+        "xe_timeouts": 0,
+        "xe_wedged": 0
+      },
+      "nvidia_compute_process_count": 0,
+      "nvidia_memory_mib": 546,
+      "time": "2026-10-09T03:14:38.857252+00:00"
+    },
+    "run_id": "kuno-q3-main-v82-public32-gpu0",
+    "source": {
+      "binary_sha256": "3cec59c0030ee30b11496b8a483474f458af7de5db4dfb483cb06983a3a832d5",
+      "cache_bytes": 8589934592,
+      "commit": "4b29087fc027d9f7619e6893ee173173b6fb567b",
+      "cpu_cap": 0,
+      "profile": "unsloth-q3",
+      "public_fixed_fixture": true,
+      "public_positions": 32,
+      "reference_sha256": "47a85029b8a8f7fa5fc9f06acca1d868c703adc530dd477173468bf3a99ee834"
+    },
+    "tolerance_relaxed": false
+  },
+  "scope": "fixed-public-original-packed-Q3-and-MTP-foundation",
+  "source_commit": "4b29087fc027d9f7619e6893ee173173b6fb567b",
+  "timezone": "America/Chicago"
+}

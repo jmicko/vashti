@@ -1,5 +1,35 @@
 # Native text checkpoint, 2026-10-08
 
+**Latest checkpoint: original-packed Unsloth Q3 foundation accepted; MTP remains
+laboratory-only.** Integrated source is `4b29087`. All three original main
+shards and Q8 sidecar pass complete publisher hashes; the main is registered in
+Ollama with same-filesystem hardlinks, without a merged or duplicated payload.
+Strict split loading, mixed IQ CPU/GPU operators, Q3 expert/PLE ownership and
+real CPU target carry are implemented in Rust.
+
+Both physical cards pass independent C IQ operator values, projection/fault
+checks and full owning audits. The fixed32-position B70 diagnostic passes all
+248320 logits and exact greedy IDs per position, original owning/fresh/recovery
+checks, and **31 decode steps in4250ms (7.294tokens/s)** with compilation idle.
+Ordinary uploads are zero. The frozen binary is
+`3cec59c0030ee30b11496b8a483474f458af7de5db4dfb483cb06983a3a832d5`.
+The cap0 GPU-miss comparison fails its full-logit gate at position23; it has no
+accepted throughput. Empty-slot filling is under development: one-token
+prefill currently leaves134/144 expert slots empty per layer.
+
+CPU packed-IQ SIMD achieves6.82–12.15x arithmetic microbenchmark gains, not
+whole-model speedups. Actual target h0 conditions the Q8 CPU MTP graph at
+position1, with full target-logit/draft-hidden/draft-logit fresh replay checks.
+No independent MTP whole-head oracle or speculative speedup is established.
+MTP and the legacy nonresident projection probe remain fixed-public-only;
+complete private erasure is not accepted. See the
+[exact plan](kuno-native-text-mtp-plan.md) and
+[source/artifact/numeric receipt](../apps/kuno/benchmarks/text/receipts/unsloth-q3-foundation-20261008.json).
+Production routing/API, installed services, Vashti and releases are unchanged.
+Normal admission and physical GPU recovery were verified after each trial.
+
+### Previous ideal-residency replay checkpoint (historical)
+
 **Latest checkpoint: exact short ideal-residency replay accepted.**
 Source `aef04f24254b6019fa3a61e1275e2bf38eeee98c` integrates trace/preload
 `d45dc4b` and runner `366d847`. Frozen v76 SHA:
