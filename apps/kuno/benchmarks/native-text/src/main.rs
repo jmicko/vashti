@@ -36,6 +36,8 @@ mod public_resources;
 mod q3_ideal_public;
 mod q3_public_reference;
 pub mod q3_router_reference;
+mod q6_integer_matvec;
+mod q6_integer_probe;
 mod qsa_chunk;
 mod qsa_chunk_probe;
 mod qsa_gpu;
@@ -890,6 +892,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mode = std::env::args().nth(2).unwrap_or("probe".into());
     let segmented_iq_probe = mode == "segmented-iq-moe-probe";
     let iq_integer_probe = mode == "iq-integer-moe-probe";
+    let q6_integer_probe = mode == "q6-integer-probe";
+    if q6_integer_probe {
+        if std::env::args_os().count() != 3 {
+            return Err("fixed public Q6 integer probe rejects additional arguments".into());
+        }
+        q6_integer_probe::validate_configuration()?;
+    } else if std::env::var_os("KUNO_LAB_Q6_INTEGER_PUBLIC_ONLY").is_some() {
+        return Err("Q6 integer gate requires its dedicated public probe".into());
+    }
     if iq_integer_probe {
         if std::env::args_os().count() != 3 {
             return Err("fixed public integer IQ probe rejects additional arguments".into());
@@ -1610,13 +1621,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if mtp_gpu_inputs.is_some() {
             mtp_gpu_probe::validate_limits(&adapter.limits())?;
         }
+        if q6_integer_probe {
+            q6_integer_probe::validate_limits(&adapter.limits())?;
+        }
         if next_shared
             && (adapter.limits().max_compute_invocations_per_workgroup < 256
                 || adapter.limits().max_compute_workgroup_size_x < 256)
         {
             return Err("shared Next router requires256 workgroup lanes".into());
         }
-        if (fast_gpu || mode == "iq-quant-probe" || segmented_iq_probe || iq_integer_probe)
+        if (fast_gpu
+            || mode == "iq-quant-probe"
+            || segmented_iq_probe
+            || iq_integer_probe
+            || q6_integer_probe)
             && (!adapter.features().contains(wgpu::Features::SUBGROUP)
                 || info.subgroup_min_size < 16
                 || info.subgroup_max_size > 32
@@ -1696,6 +1714,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         if iq_integer_probe {
             return segmented_iq_moe_probe::run_integer(&client, &grouped_limits);
+        }
+        if q6_integer_probe {
+            return q6_integer_probe::run(&client, &grouped_limits);
         }
         if kernel_profile {
             client.set_profiling_paused(true);
