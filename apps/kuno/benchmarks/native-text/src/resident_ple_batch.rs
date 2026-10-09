@@ -446,6 +446,80 @@ impl LatestPleRestore<'_> {
         self.checkpoint.armed = false;
     }
 }
+
+pub(crate) struct PublicWarmPleReset<'a> {
+    workspace: &'a mut PleBatchWorkspace,
+    conv: &'a mut CausalConvState,
+    history: &'a mut PleTokenHistory,
+    armed: bool,
+}
+impl PleBatchWorkspace {
+    /// Pins the actual host convolution/history and native cursor. No private
+    /// snapshot is copied and no generation, sequence, binding or IDs change.
+    pub(crate) fn prepare_public_warm_reset<'a>(
+        &'a mut self,
+        c: Preparation<'a, '_, '_>,
+        cancel: &AtomicBool,
+    ) -> Result<PublicWarmPleReset<'a>> {
+        u::cancel(cancel)?;
+        graph_preflight(c.graph)?;
+        self.validate_ids(c.arena)?;
+        c.admission
+            .check_client(c.arena.client().map_err(u::fault)?)?;
+        if c.position != 13
+            || c.context != 13
+            || self.next != c.position
+            || self.generation == 0
+            || self.pending
+            || c.anchor.is_some()
+            || *c.owner_poisoned
+            || c.retired.load(Ordering::Acquire)
+            || self.poison.load(Ordering::Acquire)
+            || self.binding != c.graph.binding_id()
+            || c.sequence_poison
+                .as_ref()
+                .is_none_or(|p| !Arc::ptr_eq(p, &self.poison))
+            || c.conv.history().len() != CHANNELS * 9
+            || c.conv.history().iter().any(|x| !x.is_finite())
+            || c.history.tokens().len() != 2
+            || c.history
+                .tokens()
+                .iter()
+                .any(|&t| !(0..248320).contains(&t))
+        {
+            return Err(error());
+        }
+        Ok(PublicWarmPleReset {
+            workspace: self,
+            conv: c.conv,
+            history: c.history,
+            armed: false,
+        })
+    }
+}
+impl PublicWarmPleReset<'_> {
+    pub(crate) fn arm(&mut self) {
+        self.armed = true;
+    }
+    /// Complete parent GPU/source/I/O erasure and final cancellation precede
+    /// this infallible full-capacity host wipe and cursor-only publication.
+    pub(crate) fn commit(
+        mut self,
+        _proof: &crate::resident_model::batch::public_warm_replay::CompletedReset,
+    ) {
+        self.conv.reset();
+        self.history.reset(); // Original initial sentinel [-1,-1], not [0,0].
+        self.workspace.next = 0;
+        self.armed = false;
+    }
+}
+impl Drop for PublicWarmPleReset<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.workspace.poison.store(true, Ordering::Release);
+        }
+    }
+}
 impl PleBatchWorkspace {
     pub(crate) fn allocation_requests(graph: BoundGraph<'_, '_>) -> Result<[u64; N]> {
         Self::allocation_requests_with_profile(graph, OriginalPackedProfile::Q4)

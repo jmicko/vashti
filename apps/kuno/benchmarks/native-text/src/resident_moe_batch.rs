@@ -863,6 +863,30 @@ impl Workspace {
         self.admission.active()?;
         self.validate_ids(arena)
     }
+    /// Read-only completed family gate for the construction-fixed public warm
+    /// replay. No registry, resident-route or hybrid permit may survive it.
+    pub(crate) fn validate_public_warm_boundary(
+        &self,
+        executor: &GpuExecutor<'_>,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+    ) -> Result<()> {
+        self.healthy(arena)?;
+        self.policy.completed_boundary()?;
+        executor.check_resident_admission(&self.admission)?;
+        executor.check_client(arena.client().map_err(u::fault)?)?;
+        graph.verify_unchanged()?;
+        if executor.batch_moe.is_some()
+            || self.hybrid.is_some()
+            || self.resident_router_active()
+            || self.layout.tile != 8
+            || graph.binding_id() != self.binding
+            || !arena.public_owned_zero_audit_enabled()
+        {
+            return Err(err("native public warm routed boundary"));
+        }
+        Ok(())
+    }
     fn validate_ids(&self, arena: &PrivateArena) -> Result<()> {
         if !std::ptr::eq(
             arena.client().map_err(u::fault)?.info(),

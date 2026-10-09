@@ -1857,6 +1857,76 @@ impl LatestQsaCleared<'_, '_> {
         self.checkpoint.armed = false;
     }
 }
+
+/// Fixed-public healthy cursor permit. Full cache, position and scratch pages
+/// are erased together by the parent arena; no suffix-only credit is accepted.
+pub(crate) struct PublicWarmQsaReset<'a, 'f> {
+    stage: &'a mut ResidentQsa<'f>,
+    poison: Arc<AtomicBool>,
+    armed: bool,
+}
+impl QsaBatchWorkspace {
+    pub(crate) fn prepare_public_warm_reset<'a, 'f>(
+        &self,
+        stage: &'a mut ResidentQsa<'f>,
+        arena: &PrivateArena,
+        fault_id: BufferId,
+        position: u64,
+        cancel: &AtomicBool,
+    ) -> Result<PublicWarmQsaReset<'a, 'f>> {
+        self.healthy(arena, cancel)?;
+        if position != 13
+            || self.policy.phase != ChunkPhase::Idle
+            || *self.policy.chunk == 0
+            || *self.policy.issued != 0
+            || *self.policy.committed != 0
+            || *self.policy.start != 0
+            || *self.policy.count != 0
+            || self.policy.generations.iter().any(|&v| v != 0)
+            || self.policy.stage_ids.iter().any(|&v| v != 0)
+            || stage.lifecycle.phase != Phase::Ready(position)
+            || stage.batch_pending.is_some()
+            || stage.binding != self.binding
+            || stage.sequence != self.sequence
+            || stage.layout != self.layout.stage
+            || stage.layer >= MAX_LAYERS
+            || self.policy.expected & (1u64 << stage.layer) == 0
+            || stage
+                .batch_poison
+                .as_ref()
+                .is_none_or(|p| !Arc::ptr_eq(p, &self.poison))
+            || self.fault.is_some()
+        {
+            return Err(fault("native public warm QSA boundary"));
+        }
+        latest_qsa_roots(stage, arena, fault_id)?;
+        Ok(PublicWarmQsaReset {
+            stage,
+            poison: self.poison.clone(),
+            armed: false,
+        })
+    }
+}
+impl PublicWarmQsaReset<'_, '_> {
+    pub(crate) fn arm(&mut self) {
+        self.armed = true;
+    }
+    /// Requires complete parent erasure/fault/I/O proof, then no fallible work.
+    pub(crate) fn commit(
+        mut self,
+        _proof: &crate::resident_model::batch::public_warm_replay::CompletedReset,
+    ) {
+        self.stage.lifecycle.phase = Phase::Ready(0);
+        self.armed = false;
+    }
+}
+impl Drop for PublicWarmQsaReset<'_, '_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.poison.store(true, Ordering::Release);
+        }
+    }
+}
 #[cube(launch)]
 fn clear_latest_suffix(
     cache: &mut Array<f32>,

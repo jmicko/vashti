@@ -1375,6 +1375,74 @@ impl LatestGdnRestore<'_, '_> {
     }
 }
 
+/// Sealed successful-boundary cursor permit for the fixed thirteen-row public
+/// warm replay. BOTH state/ring root pairs are erased by the model's complete
+/// arena audit before commit; pointer order and monotonic stamps are retained.
+pub(crate) struct PublicWarmGdnReset<'a, 'f> {
+    stage: &'a mut ResidentGdn<'f>,
+    poison: Arc<AtomicBool>,
+    armed: bool,
+}
+impl GdnBatchWorkspace {
+    pub(crate) fn prepare_public_warm_reset<'a, 'f>(
+        &self,
+        stage: &'a mut ResidentGdn<'f>,
+        arena: &PrivateArena,
+        position: u64,
+        cancel: &AtomicBool,
+    ) -> Result<PublicWarmGdnReset<'a, 'f>> {
+        self.healthy(arena, cancel)?;
+        self.policy.completed_boundary()?;
+        if position != 13
+            || *self.policy.start != 0
+            || *self.policy.count != 0
+            || self.policy.generations.iter().any(|&v| v != 0)
+            || self.policy.stage_ids.iter().any(|&v| v != 0)
+            || self.fault.is_some()
+            || stage.lifecycle.phase != Phase::Ready(position)
+            || stage.batch_pending.is_some()
+            || stage.binding != self.binding
+            || stage.sequence != self.sequence
+            || stage.layout != self.layout.stage
+            || stage.layer >= MAX_LAYERS
+            || self.policy.expected & (1u64 << stage.layer) == 0
+            || stage
+                .batch_poison
+                .as_ref()
+                .is_none_or(|p| !Arc::ptr_eq(p, &self.poison))
+        {
+            return Err(fault("native public warm GDN boundary"));
+        }
+        latest_gdn_roots(stage, arena)?;
+        Ok(PublicWarmGdnReset {
+            stage,
+            poison: self.poison.clone(),
+            armed: false,
+        })
+    }
+}
+impl PublicWarmGdnReset<'_, '_> {
+    pub(crate) fn arm(&mut self) {
+        self.armed = true;
+    }
+    /// All families/complete private pages and runtime I/O must be accepted
+    /// first. The model makes the remaining commits infallible as one group.
+    pub(crate) fn commit(
+        mut self,
+        _proof: &crate::resident_model::batch::public_warm_replay::CompletedReset,
+    ) {
+        self.stage.lifecycle.phase = Phase::Ready(0);
+        self.armed = false;
+    }
+}
+impl Drop for PublicWarmGdnReset<'_, '_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.poison.store(true, Ordering::Release);
+        }
+    }
+}
+
 /// Fixed owning handles/resources only; no allocation of private metadata.
 /// Original public vectors expose logical tail-trimmed views of precharged
 /// full pages. Lookup restores their FULL owning clone, while launch views stay

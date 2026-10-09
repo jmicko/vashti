@@ -480,6 +480,19 @@ fn accept_owned_zero_cleanup(
     }
     accepted
 }
+fn accept_retained_public_erasure(
+    retired: &AtomicBool,
+    expected: OwnedZeroAudit,
+    cleanup: impl FnOnce() -> Result<OwnedZeroAudit>,
+) -> Result<OwnedZeroAudit> {
+    accept_owned_zero_cleanup(retired, OwnedZeroAudit::default(), || {
+        let counts = cleanup()?;
+        if counts != expected {
+            return Err(ArenaError::Cleanup);
+        }
+        Ok(counts)
+    })
+}
 fn quarantine_failed_audit_handles<H>(handles: &mut Vec<H>, audit: bool, failed: bool) {
     if audit && failed {
         std::mem::forget(std::mem::take(handles));
@@ -864,6 +877,38 @@ impl PrivateArena {
         self.handles.clear();
         Ok(())
     }
+    /// One-shot fixed-public model replay boundary only. The caller first
+    /// proves a successfully completed healthy sequence, then reinitializes
+    /// its family cursors ONLY after this complete owning-page audit. Unlike
+    /// reset/close, no handle, epoch, MAIN charge or close receipt is changed.
+    /// This is not a recovery operation for a poisoned or retired context.
+    pub(crate) fn erase_retained_public_owners(&self) -> Result<OwnedZeroAudit> {
+        self.active()?;
+        if !self.public_owned_zero_audit_enabled() {
+            return Err(ArenaError::Cleanup);
+        }
+        let accepted = accept_retained_public_erasure(
+            &self.retired,
+            OwnedZeroAudit {
+                bytes: self.ledger.charged as u64,
+                buffers: self.handles.len() as u64,
+            },
+            || self.erase_and_verify(),
+        );
+        match accepted {
+            Ok(counts) => {
+                // Deliberately separate from cumulative reset/close receipts:
+                // these pages stay owned and will be inspected again at close.
+                Ok(counts)
+            }
+            _ => {
+                // Keep every tracked owner/ledger slot for terminal close. The
+                // atomic retirement gate prevents further arena use immediately.
+                self.retired.store(true, Ordering::Release);
+                Err(ArenaError::Cleanup)
+            }
+        }
+    }
     /// Idempotent after success. On failure the context remains retired and
     /// retained tracked handles allow a later close/Drop best-effort retry.
     pub fn close(&mut self) -> Result<()> {
@@ -906,6 +951,98 @@ impl Drop for PrivateArena {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn retained_public_erasure_audits_full_padding_without_close_credit() {
+        let retired = AtomicBool::new(false);
+        let previous_close = OwnedZeroAudit {
+            bytes: 17,
+            buffers: 9,
+        };
+        let mut backend = fake_zero_audit("none", usize::MAX);
+        let spans = backend.spans.clone();
+        let expected = OwnedZeroAudit {
+            bytes: spans.iter().map(|s| s.owned_bytes as u64).sum(),
+            buffers: spans.len() as u64,
+        };
+        let accepted = accept_retained_public_erasure(&retired, expected, || {
+            inspect_owned_zero(&mut backend, &spans)
+        })
+        .unwrap();
+        assert_eq!(accepted, expected);
+        assert_eq!(
+            previous_close,
+            OwnedZeroAudit {
+                bytes: 17,
+                buffers: 9
+            }
+        );
+        assert!(!retired.load(Ordering::Acquire));
+        assert_eq!(backend.reads, [0, 1, 2]);
+        assert_eq!(backend.cleanups, 3);
+        assert_eq!(backend.live.get(), 0);
+        // The same retained pages are audited afresh, not cumulative close
+        // credit that could mislabel a successful reset as released ownership.
+        let replay = accept_retained_public_erasure(&retired, expected, || {
+            inspect_owned_zero(&mut backend, &spans)
+        })
+        .unwrap();
+        assert_eq!(replay, expected);
+        assert_eq!(backend.cleanups, 6);
+    }
+    #[test]
+    fn retained_erasure_retires_on_tail_map_cleanup_and_exact_inventory_failure() {
+        for failure in [
+            "padding",
+            "logical",
+            "short",
+            "long",
+            "map",
+            "cleanup",
+            "view panic",
+            "cleanup panic",
+        ] {
+            let retired = AtomicBool::new(false);
+            let mut backend = fake_zero_audit(failure, 1);
+            let spans = backend.spans.clone();
+            let expected = OwnedZeroAudit {
+                bytes: spans.iter().map(|s| s.owned_bytes as u64).sum(),
+                buffers: 3,
+            };
+            assert!(
+                accept_retained_public_erasure(&retired, expected, || inspect_owned_zero(
+                    &mut backend,
+                    &spans
+                ))
+                .is_err()
+            );
+            assert!(retired.load(Ordering::Acquire));
+            assert_eq!(backend.live.get(), 0);
+        }
+        for wrong in [
+            OwnedZeroAudit {
+                bytes: 4,
+                buffers: 3,
+            },
+            OwnedZeroAudit {
+                bytes: 8,
+                buffers: 2,
+            },
+        ] {
+            let retired = AtomicBool::new(false);
+            assert!(
+                accept_retained_public_erasure(
+                    &retired,
+                    OwnedZeroAudit {
+                        bytes: 8,
+                        buffers: 3
+                    },
+                    || Ok(wrong)
+                )
+                .is_err()
+            );
+            assert!(retired.load(Ordering::Acquire));
+        }
+    }
     struct FakeAuditLease {
         bytes: Vec<u8>,
         live: Rc<std::cell::Cell<usize>>,

@@ -22,6 +22,8 @@ mod latest_checkpoint;
 #[path = "resident_target_round.rs"]
 mod latest_round;
 pub(crate) use latest_round::LatestTargetRound;
+#[path = "resident_model_public_reset.rs"]
+pub(crate) mod public_warm_replay;
 pub(crate) const TARGET_ROWS_MAX: usize = target_rows::MAX_ROWS;
 pub(crate) const TARGET_ROWS_RUNTIME_LIMIT: u64 = target_rows::RUNTIME_LIMIT;
 pub(crate) const TARGET_ROWS_PRIVATE_MAIN: u64 = TOTAL_MAIN + target_rows::MAIN_BYTES;
@@ -280,6 +282,7 @@ pub(crate) struct Config {
     latest_target_checkpoint_reserved: bool,
     prepared_verify3_experts_reserved: bool,
     public_existing_expert_fill: bool,
+    public_warm_replay: bool,
 }
 fn prepared_verify3_configuration(
     target_rows: bool,
@@ -312,7 +315,24 @@ impl Config {
             latest_target_checkpoint_reserved: false,
             prepared_verify3_experts_reserved: false,
             public_existing_expert_fill: false,
+            public_warm_replay: false,
         })
+    }
+    /// Construction-fixed, one-shot empty PRIVATE-state replay after the
+    /// successful compiled-public thirteen-row run. Public resident weights
+    /// stay owned; no ordinary request/recovery/epoch-reset API is installed.
+    #[allow(dead_code)] // Parent owns the exclusive protected public runner.
+    pub(crate) fn reserve_public_warm_replay(mut self) -> Result<Self> {
+        public_warm_replay::configuration(
+            self.target_rows_reserved,
+            self.latest_target_checkpoint_reserved,
+            self.cpu_operator.is_some(),
+            self.resident_router_reserved,
+            self.tile,
+            self.public_warm_replay,
+        )?;
+        self.public_warm_replay = true;
+        Ok(self)
     }
     pub(crate) fn with_public_existing_expert_fill(mut self) -> Result<Self> {
         prepared_verify3_configuration(
@@ -824,6 +844,7 @@ pub(super) struct Workspace {
     dense_member_capacity: usize,
     target_rows: Option<target_rows::Owners>,
     latest_target_checkpoint_reserved: bool,
+    public_warm_replay: Option<public_warm_replay::Permit>,
 }
 impl Workspace {
     fn decode_kernels(&self) -> Result<NativeDecodeKernels> {
@@ -855,6 +876,27 @@ impl Workspace {
         allocation: &crate::executor::ModelConstructionAllocation<'_>,
     ) -> Result<Self> {
         allocation.check(&model.admission)?;
+        let public_warm_replay = if config.public_warm_replay {
+            public_warm_replay::configuration(
+                config.target_rows_reserved,
+                config.latest_target_checkpoint_reserved,
+                config.cpu_operator.is_some(),
+                config.resident_router_reserved,
+                config.tile,
+                false,
+            )?;
+            Some(public_warm_replay::Permit::new(
+                model.graph.binding_id(),
+                executor.packed_profile,
+                model.context,
+                model.position,
+                model.admission.transient_io(),
+                model.arena.public_owned_zero_audit_enabled()
+                    && model.io.public_owned_zero_audit_enabled(),
+            )?)
+        } else {
+            None
+        };
         let graph = model.graph;
         let poison = model.admission.sequence_poison();
         let cancel = AtomicBool::new(false); // Idle zero-state constructor only.
@@ -938,6 +980,7 @@ impl Workspace {
             dense_member_capacity: 8,
             target_rows,
             latest_target_checkpoint_reserved: config.latest_target_checkpoint_reserved,
+            public_warm_replay,
         };
         result.prove_outer(model)?;
         Ok(result)

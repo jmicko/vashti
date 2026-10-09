@@ -16,6 +16,9 @@ pub(super) struct Hooks {
     observed: Option<Site>,
 }
 impl Hooks {
+    pub(super) fn is_unarmed(&self) -> bool {
+        self.armed.is_none() && self.observed.is_none()
+    }
     pub(super) fn arm(&mut self, site: Site) -> Result<()> {
         if self.armed.is_some() || self.observed.is_some() {
             return Err(Error::InvalidFormat("public lifecycle hook already used"));

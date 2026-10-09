@@ -326,6 +326,16 @@ pub struct ResidentMoe {
     status: BufferId,
 }
 impl ResidentMoe {
+    pub(crate) fn validate_public_warm_boundary(
+        &self,
+        binding: GraphBindingId,
+        layer: usize,
+    ) -> Result<()> {
+        if self.phase != Phase::Ready || self.binding != binding || self.layer != layer {
+            return Err(fault("resident public warm scalar routed boundary"));
+        }
+        Ok(())
+    }
     pub fn allocate(
         graph: BoundGraph<'_, '_>,
         layer: usize,

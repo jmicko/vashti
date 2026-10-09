@@ -100,6 +100,9 @@ pub(super) struct Collector {
     armed: Option<Armed>,
 }
 impl Collector {
+    pub(super) fn is_unarmed(&self) -> bool {
+        self.armed.is_none()
+    }
     fn arm(&mut self, boundary: Boundary) -> Result<()> {
         if self.armed.is_some() {
             return Err(error());
