@@ -161,12 +161,36 @@ fn check_oracle(
             OUTPUT_GAP.to_bits()
         };
         if actual != expected {
+            // This entry accepts only compiled public C records, never model
+            // or request content. Report at most the first numeric mismatch;
+            // gap/padding failures expose only the bounded owning word index.
+            if index >= owned.logical_words {
+                eprintln!("public_iq_oracle_mismatch kind=padding word={index}");
+            } else if index >= output_first && row < rows && column < columns {
+                eprintln!(
+                    "public_iq_oracle_mismatch kind=value word={index} row={row} column={column} actual_bits={actual} expected_bits={expected}"
+                );
+            } else {
+                eprintln!("public_iq_oracle_mismatch kind=gap word={index}");
+            }
             return Err(
                 "fixed IQ GPU decode differs from independent C bits or changed gap".into(),
             );
         }
     }
     Ok(())
+}
+
+// Fixed phases for this compiled-public-only probe. Never format the underlying
+// error, backend payload or any arbitrary tensor/input in failure diagnostics.
+fn oracle_stage<T>(oracle: &Oracle, phase: &'static str, result: Result<T>) -> Result<T> {
+    if result.is_err() {
+        eprintln!(
+            "public_iq_oracle_failure dtype={} prefix={} phase={phase}",
+            oracle.dtype, oracle.prefix
+        );
+    }
+    result
 }
 
 fn oracle_cases(
@@ -188,21 +212,48 @@ fn oracle_cases(
         let output_stride = oracle.columns + 7;
         let output_words = output_first + oracle.rows * output_stride + 9;
         let initial = Zeroizing::new(vec![OUTPUT_GAP; output_words]);
-        let output = arena.upload_f32(&initial)?;
-        let layout = arena.layout(output)?;
-        let retained = arena.handle(output)?.clone();
-        let public_resource = client.get_resource(oracle.handle.clone())?;
-        let private_resource = client.get_resource(retained.clone())?;
+        let output = oracle_stage(
+            oracle,
+            "upload",
+            arena.upload_f32(&initial).map_err(Into::into),
+        )?;
+        let layout = oracle_stage(oracle, "layout", arena.layout(output).map_err(Into::into))?;
+        let retained =
+            oracle_stage(oracle, "handle", arena.handle(output).map_err(Into::into))?.clone();
+        let public_resource = oracle_stage(
+            oracle,
+            "public_resource",
+            client
+                .get_resource(oracle.handle.clone())
+                .map_err(Into::into),
+        )?;
+        let private_resource = oracle_stage(
+            oracle,
+            "private_resource",
+            client.get_resource(retained.clone()).map_err(Into::into),
+        )?;
         let public = public_resource.resource();
         let private = private_resource.resource();
-        validate_physical_extent(public.offset, public.size, public.buffer.size(), false)?;
-        validate_physical_extent(private.offset, private.size, private.buffer.size(), true)?;
+        oracle_stage(
+            oracle,
+            "public_extent",
+            validate_physical_extent(public.offset, public.size, public.buffer.size(), false),
+        )?;
+        oracle_stage(
+            oracle,
+            "private_extent",
+            validate_physical_extent(private.offset, private.size, private.buffer.size(), true),
+        )?;
         if public.size != oracle.wire.len() as u64
             || private.size != layout.owned_bytes as u64
             || public.buffer == private.buffer
             || oracle.handle.stream != retained.stream
         {
-            return Err("fixed IQ oracle binding ownership".into());
+            return oracle_stage(
+                oracle,
+                "binding",
+                Err("fixed IQ oracle binding ownership".into()),
+            );
         }
         // SAFETY: fixed compiled original rows, same-client nonaliasing public
         // weights and complete private output owner were validated above.
@@ -219,32 +270,60 @@ fn oracle_cases(
             oracle.columns,
             oracle.dtype,
         );
-        let read = FusedReadLease(client.read_one(retained.clone())?);
-        check_oracle(
-            &read.0,
-            &oracle.expected,
-            oracle.rows,
-            oracle.columns,
-            layout,
+        let read = FusedReadLease(oracle_stage(
+            oracle,
+            "read",
+            client.read_one(retained.clone()).map_err(Into::into),
+        )?);
+        oracle_stage(
+            oracle,
+            "bits",
+            check_oracle(
+                &read.0,
+                &oracle.expected,
+                oracle.rows,
+                oracle.columns,
+                layout,
+            ),
         )?;
         drop(read);
-        let io = audited(client)?;
-        arena.reset()?;
+        let io = oracle_stage(oracle, "io", audited(client))?;
+        oracle_stage(oracle, "reset", arena.reset().map_err(Into::into))?;
         if arena.handle(output).is_ok() || retired.load(Ordering::Acquire) {
-            return Err("fixed IQ oracle owner invalidation".into());
+            return oracle_stage(
+                oracle,
+                "invalidation",
+                Err("fixed IQ oracle owner invalidation".into()),
+            );
         }
-        let zero = FusedReadLease(client.read_one(retained)?);
+        let zero = FusedReadLease(oracle_stage(
+            oracle,
+            "erase_read",
+            client.read_one(retained).map_err(Into::into),
+        )?);
         if zero.0.len() != layout.owned_bytes || zero.0.iter().any(|&b| b != 0) {
-            return Err("fixed IQ oracle full owner erase".into());
+            return oracle_stage(
+                oracle,
+                "erase_bits",
+                Err("fixed IQ oracle full owner erase".into()),
+            );
         }
         drop(zero);
-        audited(client)?;
-        let original = FusedReadLease(client.read_one(oracle.handle.clone())?);
+        oracle_stage(oracle, "erase_io", audited(client))?;
+        let original = FusedReadLease(oracle_stage(
+            oracle,
+            "source_read",
+            client.read_one(oracle.handle.clone()).map_err(Into::into),
+        )?);
         if &*original.0 != oracle.wire.as_slice() {
-            return Err("fixed IQ oracle packed source mutation".into());
+            return oracle_stage(
+                oracle,
+                "source_bytes",
+                Err("fixed IQ oracle packed source mutation".into()),
+            );
         }
         drop(original);
-        audited(client)?;
+        oracle_stage(oracle, "source_io", audited(client))?;
         reports.push(
             serde_json::json!({"dtype":oracle.dtype,"blocks":oracle.rows,
             "values":oracle.expected.len(),"packed_prefix_bytes":oracle.prefix,
