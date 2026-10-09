@@ -24,11 +24,11 @@
   "inventory_url": "https://huggingface.co/api/models/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF/revision/ed59f92082b1e93c0e96d60a8b11aab089b52f09?blobs=true",
   "inventory_sha256": "40e6121a841e04f355a10be51640ac87d6f535ad906f9f03a43388c46b2ddc69",
   "total_original_bytes": 83617662656,
-  "full_payload_sha256_verified": false,
+  "full_payload_sha256_verified": true,
   "download": {
     "directory": "/media/jmicko/faststore/ollama/.kuno-import/daslab-next-ed59f92082b1/IQ3_S",
     "started_utc": "2026-10-09T06:34:09.211094+00:00",
-    "updated_utc": "2026-10-09T06:56:14.363996+00:00",
+    "updated_utc": "2026-10-09T07:03:09.101478+00:00",
     "free_before_bytes": 594626777088,
     "remaining_before_bytes": 83617662656,
     "merged": false,
@@ -38,21 +38,31 @@
   },
   "download_state_path": "/media/jmicko/faststore/ollama/.kuno-import/daslab-next-ed59f92082b1/download-state-20261009.json",
   "resumable_controller_path": "/media/jmicko/faststore/kuno-development/download-daslab-iq3-20261009.py",
+  "profile_source_file": "apps/kuno/benchmarks/native-text/src/daslab_profile.rs",
+  "profile_host_validation": {
+    "standalone_tests_passed": 5,
+    "strict_standalone_clippy_passed": true,
+    "whole_crate_or_device_acceptance": false
+  },
   "shards": [
     {
       "filename": "Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
       "url": "https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF/resolve/ed59f92082b1e93c0e96d60a8b11aab089b52f09/IQ3_S/Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
       "bytes": 54817524224,
       "expected_sha256": "4c1eb2ceb4915e1192f4f386021897bde56a97f40a0bb78bb86465e0f7d2aca3",
-      "actual_sha256": null,
-      "download_status": "downloading",
-      "download_bytes_observed": 35194994688,
+      "actual_sha256": "4c1eb2ceb4915e1192f4f386021897bde56a97f40a0bb78bb86465e0f7d2aca3",
+      "download_status": "sha256_verified",
+      "download_bytes_observed": 54817524224,
       "split_no": 0,
       "tensor_count": 1223,
       "header_bytes": 11024355,
       "data_offset": 11024384,
       "header_sha256": "d17e0d2ac2dc46fba367316963e024a2ad653be065b77a30a6cc48e4c18098a6",
-      "header_inventory_path": "/media/jmicko/faststore/kuno-development/daslab-iq3-shard1-header-20261009.json"
+      "header_inventory_path": "/media/jmicko/faststore/kuno-development/daslab-iq3-shard1-header-20261009.json",
+      "download_completed_utc": "2026-10-09T07:03:09.101004+00:00",
+      "actual_source_device": 66305,
+      "actual_source_inode": 68430691,
+      "actual_source_nlink": 1
     },
     {
       "filename": "Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00002-of-00002.gguf",
@@ -67,7 +77,11 @@
       "header_bytes": 173,
       "data_offset": 192,
       "header_sha256": "49f992d94de7d687ab0042f54d72fbabb4fec16e6860181f1b5bd91e46c89a96",
-      "header_inventory_path": "/media/jmicko/faststore/kuno-development/daslab-iq3-shard2-header-20261009.json"
+      "header_inventory_path": "/media/jmicko/faststore/kuno-development/daslab-iq3-shard2-header-20261009.json",
+      "download_completed_utc": "2026-10-09T06:55:11.900760+00:00",
+      "actual_source_device": 66305,
+      "actual_source_inode": 68430692,
+      "actual_source_nlink": 1
     }
   ],
   "gguf": {
