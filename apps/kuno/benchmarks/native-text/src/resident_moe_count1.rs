@@ -202,8 +202,21 @@ impl GpuExecutor<'_> {
             bank.slots.capacity(),
         )
         .map_err(err)?;
+        let router_reference_host = self
+            .q3_router_reference
+            .as_ref()
+            .map(|reference| {
+                reference
+                    .owned_bytes()?
+                    .checked_add(16 * 1024)
+                    .ok_or(Error::ArithmeticOverflow)
+            })
+            .transpose()?
+            .unwrap_or(0);
         let live = packet
             .owned_bytes()
+            .checked_add(router_reference_host)
+            .ok_or(Error::ArithmeticOverflow)?
             .checked_add(
                 staged
                     .retained_native_metadata_bytes(&last.pending)
@@ -566,6 +579,32 @@ impl GpuExecutor<'_> {
                 || spans.partial_stride() != public_expert_oracle::HIDDEN
             {
                 return Err(err("public Q3 actual expert oracle policy"));
+            }
+            if let Some(reference) = &self.q3_router_reference {
+                let report = reference.layer(layer)?.compare(
+                    packet.logits().row(0)?,
+                    packet
+                        .gpu_selection()
+                        .ok_or(err("public Q3 GPU routes required"))?,
+                )?;
+                if !report.raw_gpu_valid {
+                    return Err(err("public Q3 raw router invalid"));
+                }
+                println!(
+                    "public_q3_router_compare position=23 layer={layer} cpu_membership_matches={} cpu_rank_matches={} same_input_ops_membership_matches={} same_input_ops_rank_matches={} max_score_difference={} max_probability_difference_by_rank={} max_same_input_ops_probability_difference_by_rank={} cpu_logit_margin={} gpu_logit_margin={} cpu_probability_margin={} gpu_probability_margin={} gpu_ops_logit_margin={}",
+                    report.cpu_membership_matches,
+                    report.cpu_rank_matches,
+                    report.ops_membership_matches,
+                    report.ops_rank_matches,
+                    report.max_score_difference,
+                    report.max_probability_difference,
+                    report.max_ops_probability_difference,
+                    report.cpu_logit_margin,
+                    report.gpu_logit_margin,
+                    report.cpu_probability_margin,
+                    report.gpu_probability_margin,
+                    report.gpu_ops_logit_margin,
+                );
             }
             if !split.gpu().is_empty() {
                 w.check(self, s, arena)?;

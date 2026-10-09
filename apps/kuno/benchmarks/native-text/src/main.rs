@@ -33,6 +33,7 @@ mod ple_chunk_probe;
 mod private_arena;
 mod public_resources;
 mod q3_public_reference;
+pub mod q3_router_reference;
 mod qsa_chunk;
 mod qsa_chunk_probe;
 mod qsa_gpu;
@@ -290,6 +291,17 @@ fn q3_empty_slot_fill(
     }
 }
 /// Diagnostic only: successful completion must never publish timing acceptance.
+fn q3_router_reference_path(
+    expert_oracle: bool,
+    raw: Option<std::ffi::OsString>,
+) -> Result<Option<std::path::PathBuf>, &'static str> {
+    match raw {
+        None => Ok(None),
+        Some(path) if expert_oracle && !path.is_empty() => Ok(Some(path.into())),
+        _ => Err("fixed public Q3 router reference requires the expert diagnostic"),
+    }
+}
+
 fn q3_expert_oracle(
     mode: &str,
     profile: expert_banks::OriginalPackedProfile,
@@ -926,6 +938,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(|raw| raw.to_str().ok_or("Q3 expert oracle encoding rejected"))
             .transpose()?,
     )?;
+    // Fixed public numeric fixture only; no request data or production path.
+    // Load and validate before opening model weights or creating a device.
+    let q3_router_reference =
+        q3_router_reference_path(q3_expert_oracle, std::env::var_os("KUNO_PUBLIC_Q3_ROUTERS"))?
+            .map(q3_router_reference::Reference::load)
+            .transpose()?
+            .map(std::sync::Arc::new);
     let q3_reference = if q3_main {
         let reference = q3_public_reference::Reference::load(
             std::env::var_os("KUNO_PUBLIC_Q3_REFERENCE")
@@ -2684,6 +2703,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             executor.gpu_expert_limit = gpu_expert_limit;
             executor.q3_empty_slot_fill = q3_empty_slot_fill;
             executor.q3_expert_oracle = q3_expert_oracle;
+            executor.q3_router_reference = q3_router_reference.clone();
             executor.fast_dense = fast_gpu;
             executor.fast_dense_fault = fast_gpu_fault;
             executor.shared_kernels = next_shared;
@@ -3563,6 +3583,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 executor.gpu_expert_limit = gpu_expert_limit;
                 executor.q3_empty_slot_fill = q3_empty_slot_fill;
                 executor.q3_expert_oracle = q3_expert_oracle;
+                executor.q3_router_reference = q3_router_reference.clone();
                 executor.fast_dense = fast_gpu;
                 executor.fast_dense_fault = fast_gpu_fault;
                 executor.shared_kernels = next_shared;
@@ -3689,6 +3710,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     executor.gpu_expert_limit = gpu_expert_limit;
                     executor.q3_empty_slot_fill = q3_empty_slot_fill;
                     executor.q3_expert_oracle = q3_expert_oracle;
+                    executor.q3_router_reference = q3_router_reference.clone();
                     executor.fast_dense = fast_gpu;
                     executor.fast_dense_fault = fast_gpu_fault;
                     executor.shared_kernels = next_shared;
@@ -4000,6 +4022,20 @@ mod transient_mode_tests {
                 .is_err()
             );
         }
+    }
+    #[test]
+    fn q3_router_reference_requires_the_explicit_expert_diagnostic() {
+        assert!(
+            super::q3_router_reference_path(false, None)
+                .unwrap()
+                .is_none()
+        );
+        assert!(super::q3_router_reference_path(false, Some("public.bin".into())).is_err());
+        assert!(super::q3_router_reference_path(true, Some("".into())).is_err());
+        assert_eq!(
+            super::q3_router_reference_path(true, Some("public.bin".into())).unwrap(),
+            Some(std::path::PathBuf::from("public.bin"))
+        );
     }
     #[test]
     fn q3_empty_slot_fill_rejects_inherited_other_modes_and_noncanonical_settings() {

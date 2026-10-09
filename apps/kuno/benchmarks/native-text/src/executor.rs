@@ -748,6 +748,7 @@ pub struct GpuExecutor<'a> {
     pub(crate) packed_profile: expert_banks::OriginalPackedProfile,
     pub(crate) q3_empty_slot_fill: bool,
     pub(crate) q3_expert_oracle: bool,
+    pub(crate) q3_router_reference: Option<std::sync::Arc<crate::q3_router_reference::Reference>>,
     pub(crate) oracle_trace: Option<crate::oracle_trace::Trace>,
     pub(crate) adaptive: Option<crate::adaptive_experts::Cache>,
     pub(crate) secondary: Option<crate::secondary_experts::Secondary>,
@@ -906,6 +907,7 @@ impl<'a> GpuExecutor<'a> {
             packed_profile,
             q3_empty_slot_fill: false,
             q3_expert_oracle: false,
+            q3_router_reference: None,
             oracle_trace: None,
             adaptive: if std::env::var("KUNO_LAB_ADAPTIVE_EXPERTS").as_deref() == Ok("1") {
                 Some(crate::adaptive_experts::Cache::new()?)
