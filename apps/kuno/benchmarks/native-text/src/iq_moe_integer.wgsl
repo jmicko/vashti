@@ -57,7 +57,7 @@ fn prepare_q8(block:u32) {
     var amax=0.0;var valid=true;
     for(var i=0u;i<32u;i++) {
         let x=cached_input[block*32u+i];
-        if !(abs(x)<=3.4028234663852886e38) {valid=false;}
+        if !(abs(x)<3.4028234663852886e38) {valid=false;}
         amax=max(amax,abs(x));
     }
     if !valid {clear_q8(block);return;}

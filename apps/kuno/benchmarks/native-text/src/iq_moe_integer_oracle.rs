@@ -37,7 +37,7 @@ impl Planes {
         if input.is_empty()
             || input.len() > 2560
             || !input.len().is_multiple_of(32)
-            || input.iter().any(|v| !v.is_finite())
+            || input.iter().any(|v| !v.is_finite() || v.abs() == f32::MAX)
         {
             return Err(rejected());
         }
