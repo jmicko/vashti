@@ -51,6 +51,7 @@ mod private_arena;
 mod public_host_expert_mirror;
 #[allow(dead_code)] // Source-only mirror planner; physical consumer is pending.
 mod public_host_expert_plan;
+mod public_host_weight_cubecl_probe;
 mod public_host_weight_pool;
 mod public_host_weight_probe;
 mod public_qsa_chronological_probe;
@@ -1115,6 +1116,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         None
     };
+    let public_host_cubecl_receipt = if mode == "public-host-weight-cubecl-probe" {
+        Some(public_host_weight_cubecl_probe::registration(
+            &std::env::args_os().collect::<Vec<_>>(),
+            std::env::vars_os(),
+            target_lab_build::Build::compiled() != target_lab_build::Build::Rejected,
+        )?)
+    } else {
+        if std::env::var_os("KUNO_LAB_PUBLIC_HOST_CUBECL_ONLY").is_some() {
+            return Err("public host CubeCL weights require their dedicated probe".into());
+        }
+        None
+    };
     let qsa_chronological_receipt = if mode == "qsa-chronological-probe" {
         let receipt = public_qsa_chronological_probe::registration(
             &std::env::args_os().collect::<Vec<_>>(),
@@ -1534,6 +1547,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .or_else(|| language_inputs.as_ref().map(|p| p.inline_dispatch))
         .or_else(|| strata_mtp_inputs.as_ref().map(|_| inline_dispatch))
         .or_else(|| public_host_weight_receipt.as_ref().map(|_| inline_dispatch))
+        .or_else(|| public_host_cubecl_receipt.as_ref().map(|_| inline_dispatch))
         .or_else(|| batch_router_receipt.as_ref().map(|_| inline_dispatch))
         .or_else(|| qsa_chronological_receipt.as_ref().map(|_| inline_dispatch));
     let device_dispatch = if let Some(selected) = public_target_dispatch {
@@ -2112,6 +2126,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if public_host_weight_receipt.is_some() {
             public_host_weight_probe::validate_limits(&adapter.limits())?;
         }
+        if public_host_cubecl_receipt.is_some() {
+            public_host_weight_cubecl_probe::validate_limits(&adapter.limits())?;
+        }
         if mtp_gpu_inputs.is_some() {
             mtp_gpu_probe::validate_limits(&adapter.limits())?;
         }
@@ -2287,6 +2304,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let grouped_limits = adapter.limits();
         let gr_storage_alignment = adapter.limits().min_storage_buffer_offset_alignment as usize;
+        // The public foreign-source probe needs the exact device that owns the
+        // initialized runtime. Ordinary model entries retain no extra clones.
+        let public_host_setup = public_host_cubecl_receipt
+            .as_ref()
+            .map(|_| (adapter.clone(), device.clone(), queue.clone()));
         let selected = init_device(
             WgpuSetup {
                 instance,
@@ -2311,6 +2333,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         );
         let client = WgpuRuntime::client(&selected);
+        if let Some(receipt) = public_host_cubecl_receipt {
+            std::panic::set_hook(Box::new(|_| {
+                eprintln!("public_host_cubecl_failure panic=true")
+            }));
+            let (adapter, device, queue) =
+                public_host_setup.ok_or("public host CubeCL device identity unavailable")?;
+            let mut value = public_host_weight_cubecl_probe::run(
+                &adapter,
+                &device,
+                &queue,
+                &client,
+                &grouped_limits,
+            )?;
+            value["vendor"] = vendor.into();
+            serde_json::to_writer_pretty(
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(receipt)?,
+                &value,
+            )?;
+            println!("public_host_cubecl_operator_complete owners_erased=true");
+            return Ok(());
+        }
         if let Some(receipt) = verify3_dense_receipt {
             std::panic::set_hook(Box::new(|_| {
                 eprintln!("public_verify3_operator_failure panic=true")
