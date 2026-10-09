@@ -8,7 +8,22 @@ use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 use zeroize::Zeroizing;
 
+fn public_positions(raw: Option<&str>) -> Result<usize, &'static str> {
+    match raw {
+        None | Some("4") => Ok(4),
+        Some("32") => Ok(32),
+        _ => Err("public Q3 positions must be4 or32"),
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let positions_raw = std::env::var_os("KUNO_LAB_Q3_PUBLIC_POSITIONS");
+    let positions = public_positions(
+        positions_raw
+            .as_ref()
+            .map(|raw| raw.to_str().ok_or("public Q3 positions encoding rejected"))
+            .transpose()?,
+    )?;
     let dir = PathBuf::from(
         std::env::var_os("KUNO_TEST_Q3_DIR").ok_or("verified Q3 directory required")?,
     );
@@ -28,7 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("public token binding".into());
     }
     let graph = Qwen4Exp::bind(&file)?;
-    let mut sequence = graph.sequence(4)?;
+    let mut sequence = graph.sequence(positions)?;
     let mut executor = ThreadedExecutor::new(16)?;
     let cancel = AtomicBool::new(false);
     let output = std::env::var_os("KUNO_PUBLIC_Q3_LOGITS")
@@ -41,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let clock = Instant::now();
     let mut input = 0;
     let mut ids = Vec::new();
-    for position in 0..4u32 {
+    for position in 0..positions as u32 {
         let logits =
             Zeroizing::new(graph.step(&mut executor, &mut sequence, input, &cancel, |_| {})?);
         if logits.len() != 248320 || !logits.iter().all(|v| v.is_finite()) {
@@ -65,4 +80,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     sequence.reset();
     println!("public_q3_reference_ids={ids:?} completed=true");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn only_default4_or_explicit4_and32_are_public_positions() {
+        assert_eq!(super::public_positions(None), Ok(4));
+        assert_eq!(super::public_positions(Some("4")), Ok(4));
+        assert_eq!(super::public_positions(Some("32")), Ok(32));
+        for raw in [
+            "", "0", "1", "3", "5", "8", "31", "33", "04", "032", "+32", "32 ",
+        ] {
+            assert!(super::public_positions(Some(raw)).is_err());
+        }
+    }
 }

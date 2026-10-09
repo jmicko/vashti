@@ -252,6 +252,24 @@ fn original_packed_profile(
         _ => Err("original packed Q3 requires the protected Intel count1 fixture"),
     }
 }
+fn q3_public_positions(
+    mode: &str,
+    profile: expert_banks::OriginalPackedProfile,
+    protected: bool,
+    raw: Option<&str>,
+) -> Result<usize, &'static str> {
+    match raw {
+        None => Ok(4),
+        Some(raw @ ("4" | "32"))
+            if mode == "resident-count1-hybrid-chat"
+                && profile == expert_banks::OriginalPackedProfile::UnslothQ3
+                && protected =>
+        {
+            raw.parse().map_err(|_| "public Q3 positions")
+        }
+        _ => Err("public Q3 positions require protected original Q3 and canonical4 or32"),
+    }
+}
 fn original_count1_setting(
     profile: expert_banks::OriginalPackedProfile,
     banks: Count1Banks,
@@ -795,14 +813,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .transpose()?,
     )?;
     let q3_main = packed_profile == expert_banks::OriginalPackedProfile::UnslothQ3;
-    let q3_reference = if q3_main {
-        Some(q3_public_reference::Reference::load(
-            std::env::var_os("KUNO_PUBLIC_Q3_REFERENCE")
-                .ok_or("fixed public Q3 scalar reference required")?,
-        )?)
-    } else {
-        None
-    };
     if mode == "iq-quant-probe" {
         matmul_probe::iq::registration(
             std::env::args().count(),
@@ -831,6 +841,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let public_owned_zero_audit =
         public_owned_zero_audit_mode(transient_resident, owned_audit_setting.as_deref())?;
     protected_model_diagnostic(&mode, transient_resident, public_owned_zero_audit)?;
+    let q3_positions_raw = std::env::var_os("KUNO_LAB_Q3_PUBLIC_POSITIONS");
+    let q3_positions = q3_public_positions(
+        &mode,
+        packed_profile,
+        transient_resident && public_owned_zero_audit,
+        q3_positions_raw
+            .as_ref()
+            .map(|raw| raw.to_str().ok_or("public Q3 positions encoding rejected"))
+            .transpose()?,
+    )?;
+    let q3_reference = if q3_main {
+        let reference = q3_public_reference::Reference::load(
+            std::env::var_os("KUNO_PUBLIC_Q3_REFERENCE")
+                .ok_or("fixed public Q3 scalar reference required")?,
+        )?;
+        reference.require_positions(q3_positions)?;
+        Some(reference)
+    } else {
+        None
+    };
     if mode == "resident-staged-hybrid-expert" {
         staged_hybrid_registration(
             std::env::args().count(),
@@ -2436,7 +2466,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 mode.strip_prefix("resident-").unwrap_or(&mode)
             };
             let (prompt, limit) = if q3_main {
-                ("!", 4usize)
+                ("!", q3_positions)
             } else {
                 match fixture_mode {
                     "bang" => ("!", 4usize),
@@ -2487,6 +2517,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let model = Qwen4Exp::bind(&file)?;
             let ids = tokenizer.encode(prompt, true)?;
+            if q3_main && ids != [0] {
+                return Err("fixed public Q3 token binding rejected".into());
+            }
             let mut sequence = model.sequence(ids.len() + limit)?;
             let device_budget = if matches!(
                 count1_banks,
@@ -2715,7 +2748,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     reference.verify(n, &logits)?;
                 }
                 let token = greedy(&logits)?;
-                if token == model.eos_token() {
+                // Q3 is a fixed-length public numerical sequence, matching the
+                // independent writer which also feeds back a possible EOS ID.
+                // Ordinary Q4 generation keeps its existing EOS behavior.
+                if token == model.eos_token() && !q3_main {
                     break;
                 }
                 generated.push(token);
@@ -2810,8 +2846,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 None
             };
-            if q3_main && generated.len() != 4 {
-                return Err("Q3 reference requires all four positions".into());
+            if q3_main && generated.len() != q3_positions {
+                return Err("Q3 reference requires all selected public positions".into());
             }
             let request_io_checkpoints =
                 resident.as_ref().map_or(0, |r| r.request_io_checkpoints());
@@ -2896,8 +2932,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if q3_main {
                     receipt["fixture"] = serde_json::json!("unsloth-q3-public-bang");
                     receipt["whole_model_numeric_accepted"] = serde_json::json!(true);
-                    receipt["numeric_scope"] =
-                        serde_json::json!("four-position-original-Q3-public-bang");
+                    receipt["numeric_scope"] = serde_json::json!(if q3_positions == 4 {
+                        "four-position-original-Q3-public-bang"
+                    } else {
+                        "32-position-original-Q3-public-bang"
+                    });
+                    receipt["numeric_positions"] = serde_json::json!(q3_positions);
                     receipt["weights"] = serde_json::json!("borrowed-unmodified-ollama-shards");
                 }
                 receipt["fused_matrix_fault"] = serde_json::json!(executor.fused_matrix_fault);
@@ -3411,6 +3451,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
+                if let Some(reference) = &q3_reference {
+                    reference.verify(0, &fresh_logits)?;
+                }
                 if greedy(&fresh_logits)? != generated[0] {
                     return Err("fresh resident sequence mismatch".into());
                 }
@@ -3439,6 +3482,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         &cancel,
                         true,
                     )?;
+                    if let Some(reference) = &q3_reference {
+                        reference.verify(1, &fresh_logits)?;
+                    }
                     if greedy(&fresh_logits)?
                         != *generated
                             .get(1)
@@ -3760,6 +3806,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod transient_mode_tests {
+    #[test]
+    fn q3_public_positions_require_exact_count_profile_mode_and_protection() {
+        use crate::expert_banks::OriginalPackedProfile as P;
+        assert_eq!(
+            super::q3_public_positions("probe", P::Q4, false, None),
+            Ok(4)
+        );
+        for raw in [None, Some("4"), Some("32")] {
+            assert_eq!(
+                super::q3_public_positions("resident-count1-hybrid-chat", P::UnslothQ3, true, raw)
+                    .unwrap(),
+                if raw == Some("32") { 32 } else { 4 }
+            );
+        }
+        for raw in ["4", "32"] {
+            for (mode, profile, protected) in [
+                ("probe", P::UnslothQ3, true),
+                ("resident-bang", P::UnslothQ3, true),
+                ("resident-count1-hybrid-chat", P::Q4, true),
+                ("resident-count1-hybrid-chat", P::UnslothQ3, false),
+            ] {
+                assert!(super::q3_public_positions(mode, profile, protected, Some(raw)).is_err());
+            }
+        }
+        for raw in [
+            "", "0", "1", "3", "5", "8", "31", "33", "04", "032", "+32", "32 ",
+        ] {
+            assert!(
+                super::q3_public_positions(
+                    "resident-count1-hybrid-chat",
+                    P::UnslothQ3,
+                    true,
+                    Some(raw)
+                )
+                .is_err()
+            );
+        }
+    }
     #[test]
     fn original_q3_profile_is_explicit_and_cannot_select_unrelated_lab_modes() {
         use crate::expert_banks::OriginalPackedProfile as P;
