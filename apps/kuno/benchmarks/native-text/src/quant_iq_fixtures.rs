@@ -5,6 +5,26 @@ use kuno_text::TensorType;
 
 pub(crate) fn records(dtype: u32) -> (&'static [u8], usize) {
     match dtype {
+        super::IQ2_S => (
+            include_bytes!(
+                "../../../../../crates/kuno-text/tests/fixtures/daslab-b11232/iq2_s.bin"
+            ),
+            32,
+        ),
+        super::IQ3_S => (
+            include_bytes!(
+                "../../../../../crates/kuno-text/tests/fixtures/daslab-b11232/iq3_s.bin"
+            ),
+            8,
+        ),
+        super::Q5_K => (
+            include_bytes!("../../../../../crates/kuno-text/tests/fixtures/daslab-b11232/q5_K.bin"),
+            8,
+        ),
+        super::Q2_0 => (
+            include_bytes!("../../../../../crates/kuno-text/tests/fixtures/daslab-b11232/q2_0.bin"),
+            4,
+        ),
         super::IQ3_XXS => (
             include_bytes!("../../../../../crates/kuno-text/tests/fixtures/iq-b11232/iq3_xxs.bin"),
             4,

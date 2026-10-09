@@ -16,6 +16,8 @@
 
 use cubecl::prelude::*;
 
+#[path = "quant_daslab.rs"]
+mod daslab;
 #[path = "quant_iq_fixtures.rs"]
 pub(crate) mod iq_fixtures;
 
@@ -24,11 +26,15 @@ pub const F16: u32 = 1;
 pub const Q5_0: u32 = 6;
 pub const Q8_0: u32 = 8;
 pub const Q4_K: u32 = 12;
+pub const Q5_K: u32 = 13;
 pub const Q6_K: u32 = 14;
 pub const IQ3_XXS: u32 = 18;
 pub const IQ4_NL: u32 = 20;
+pub const IQ3_S: u32 = 21;
+pub const IQ2_S: u32 = 22;
 pub const IQ4_XS: u32 = 23;
 pub const BF16: u32 = 30;
+pub const Q2_0: u32 = 42;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PackedLayout {
@@ -44,10 +50,14 @@ pub const fn block_layout(dtype: u32) -> Option<(usize, usize)> {
         Q5_0 => Some((32, 22)),
         Q8_0 => Some((32, 34)),
         Q4_K => Some((256, 144)),
+        Q5_K => Some((256, 176)),
         Q6_K => Some((256, 210)),
         IQ3_XXS => Some((256, 98)),
         IQ4_NL => Some((32, 18)),
         IQ4_XS => Some((256, 136)),
+        IQ2_S => Some((256, 82)),
+        IQ3_S => Some((256, 110)),
+        Q2_0 => Some((64, 18)),
         _ => None,
     }
 }
@@ -73,6 +83,14 @@ pub(crate) fn packed_row_bytes(columns: usize, #[comptime] dtype: u32) -> usize 
         bytes = (columns / 32) * 18;
     } else if comptime!(dtype == IQ4_XS) {
         bytes = (columns / 256) * 136;
+    } else if comptime!(dtype == IQ2_S) {
+        bytes = (columns / 256) * 82;
+    } else if comptime!(dtype == IQ3_S) {
+        bytes = (columns / 256) * 110;
+    } else if comptime!(dtype == Q5_K) {
+        bytes = (columns / 256) * 176;
+    } else if comptime!(dtype == Q2_0) {
+        bytes = (columns / 64) * 18;
     }
     bytes
 }
@@ -223,7 +241,15 @@ pub(crate) fn packed_value(
     #[comptime] dtype: u32,
 ) -> f32 {
     let mut value = 0.0_f32;
-    if comptime!(dtype == F32) {
+    if comptime!(dtype == IQ2_S) {
+        value = daslab::iq2_s(words, row_offset, column);
+    } else if comptime!(dtype == IQ3_S) {
+        value = daslab::iq3_s(words, row_offset, column);
+    } else if comptime!(dtype == Q5_K) {
+        value = daslab::q5_k(words, row_offset, column);
+    } else if comptime!(dtype == Q2_0) {
+        value = daslab::q2_0(words, row_offset, column);
+    } else if comptime!(dtype == F32) {
         // Original little-endian u32 word, exact bitcast; no weight arithmetic.
         value = f32::from_bits(words[row_offset / 4 + column]);
     } else if comptime!(dtype == F16) {
@@ -382,6 +408,10 @@ mod tests {
             (IQ3_XXS, 256, 98),
             (IQ4_NL, 32, 18),
             (IQ4_XS, 256, 136),
+            (IQ2_S, 256, 82),
+            (IQ3_S, 256, 110),
+            (Q5_K, 256, 176),
+            (Q2_0, 64, 18),
         ] {
             let layout = validate_layout(dtype, 3, columns, expected_row * 3, columns, 3).unwrap();
             assert_eq!(layout.row_bytes, expected_row);
@@ -406,7 +436,9 @@ mod tests {
 
     #[test]
     fn rejects_partial_blocks_mismatch_and_overflow() {
-        for dtype in [Q5_0, Q8_0, Q4_K, Q6_K, IQ3_XXS, IQ4_NL, IQ4_XS] {
+        for dtype in [
+            Q5_0, Q8_0, Q4_K, Q6_K, IQ3_XXS, IQ4_NL, IQ4_XS, IQ2_S, IQ3_S, Q5_K, Q2_0,
+        ] {
             let (n, b) = block_layout(dtype).unwrap();
             assert!(validate_layout(dtype, 1, n - 1, b, n, 1).is_err());
             assert!(validate_layout(dtype, 1, n, b - 1, n, 1).is_err());
@@ -427,6 +459,10 @@ mod tests {
             kuno_text::TensorType::Iq3Xxs,
             kuno_text::TensorType::Iq4Nl,
             kuno_text::TensorType::Iq4Xs,
+            kuno_text::TensorType::Iq2S,
+            kuno_text::TensorType::Iq3S,
+            kuno_text::TensorType::Q5K,
+            kuno_text::TensorType::Q2_0,
         ] {
             let columns = kind.block_elements() as usize;
             let bytes = kind.block_bytes() as usize;
@@ -451,7 +487,8 @@ mod tests {
     #[test]
     fn shader_row_strides_match_original_gguf_geometry_including_unaligned_rows() {
         for dtype in [
-            F32, F16, BF16, Q4_K, Q5_0, Q6_K, Q8_0, IQ3_XXS, IQ4_NL, IQ4_XS,
+            F32, F16, BF16, Q4_K, Q5_0, Q6_K, Q8_0, IQ3_XXS, IQ4_NL, IQ4_XS, IQ2_S, IQ3_S, Q5_K,
+            Q2_0,
         ] {
             let kind = kuno_text::TensorType::from_gguf_id(dtype).unwrap();
             for blocks in [1, 2, 5, 10] {

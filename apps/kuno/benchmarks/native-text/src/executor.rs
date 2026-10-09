@@ -1334,10 +1334,7 @@ impl<'a> GpuExecutor<'a> {
     }
     /// Aggregate only; never expose route-derived expert identities.
     pub(crate) fn q3_occupied_slots(&self) -> Result<usize> {
-        if self.packed_profile != expert_banks::OriginalPackedProfile::UnslothQ3
-            || self.bank_slots != 144
-            || self.banks.len() != 48
-        {
+        if !self.packed_profile.is_low_bit() || self.bank_slots != 144 || self.banks.len() != 48 {
             return Err(Error::InvalidFormat("Q3 original slot receipt geometry"));
         }
         let mut occupied = 0;
@@ -1692,7 +1689,7 @@ impl<'a> GpuExecutor<'a> {
             self.word_down,
             self.block_moe,
         )?;
-        if self.packed_profile == expert_banks::OriginalPackedProfile::UnslothQ3
+        if self.packed_profile.is_low_bit()
             && (self.secondary.is_some() || self.secondary_frequency.is_some())
         {
             return Err(Error::InvalidFormat(

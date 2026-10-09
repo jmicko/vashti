@@ -20,13 +20,17 @@ pub(crate) enum OriginalPackedProfile {
     #[default]
     Q4,
     UnslothQ3,
+    DaslabIq3,
 }
 pub(crate) const UNSLOTH_Q3_BANK_BYTES_144: usize = 19_998_441_472;
 
 impl OriginalPackedProfile {
+    pub(crate) fn is_low_bit(self) -> bool {
+        matches!(self, Self::UnslothQ3 | Self::DaslabIq3)
+    }
     pub(crate) fn validate_capacity(self, capacity: usize) -> Result<()> {
         validate_capacity(capacity)?;
-        if self == Self::UnslothQ3 && capacity != 144 {
+        if self.is_low_bit() && capacity != 144 {
             return Err(Error::InvalidFormat(
                 "Unsloth Q3 requires 144 original slots",
             ));
@@ -43,7 +47,7 @@ impl OriginalPackedProfile {
         word: bool,
         block: bool,
     ) -> Result<()> {
-        if self == Self::UnslothQ3 && (shared_moe || fused || integer || word || block) {
+        if self.is_low_bit() && (shared_moe || fused || integer || word || block) {
             return Err(Error::InvalidFormat(
                 "Unsloth Q3 requires generic original packed MoE",
             ));
@@ -53,7 +57,7 @@ impl OriginalPackedProfile {
     pub(crate) fn ple_row_bytes(self) -> usize {
         match self {
             Self::Q4 => 110,
-            Self::UnslothQ3 => 90,
+            Self::UnslothQ3 | Self::DaslabIq3 => 90,
         }
     }
     pub(crate) fn validate_ple(
@@ -64,7 +68,7 @@ impl OriginalPackedProfile {
     ) -> Result<()> {
         let expected = match self {
             Self::Q4 => TensorType::Q5_0,
-            Self::UnslothQ3 => TensorType::Iq4Nl,
+            Self::UnslothQ3 | Self::DaslabIq3 => TensorType::Iq4Nl,
         };
         if dtype != expected
             || dimensions != [160, 320001536]
@@ -82,6 +86,19 @@ impl OriginalPackedProfile {
             return Ok(());
         }
         graph.verify_unchanged()?;
+        if self == Self::DaslabIq3 {
+            if graph.geometry().layers != crate::daslab_profile::LAYER_COUNT
+                || graph.geometry().experts != crate::daslab_profile::EXPERT_COUNT
+            {
+                return Err(Error::InvalidFormat("DASLab original graph geometry"));
+            }
+            let inventory = graph
+                .tensor_names()
+                .map(|name| Ok((name, graph.tensor(name)?.info().dtype().gguf_id())))
+                .collect::<Result<Vec<_>>>()?;
+            crate::daslab_profile::validate_inventory(inventory)
+                .map_err(|_| Error::InvalidFormat("DASLab original tensor inventory"))?;
+        }
         if graph.geometry().layers != 48 {
             return Err(Error::InvalidFormat(
                 "Unsloth Q3 requires 48 original layers",
@@ -95,7 +112,14 @@ impl OriginalPackedProfile {
                 // below, before any bank allocation or source staging.
                 continue;
             }
-            let expected = q3_main_dtype(name, info.dimensions());
+            let expected = if self == Self::DaslabIq3 {
+                TensorType::from_gguf_id(
+                    crate::daslab_profile::expected_dtype(name)
+                        .ok_or(Error::InvalidFormat("DASLab original tensor name"))?,
+                )?
+            } else {
+                q3_main_dtype(name, info.dimensions())
+            };
             if info.dtype() != expected {
                 return Err(Error::InvalidFormat(
                     "Unsloth Q3 original main tensor dtype",
@@ -168,7 +192,17 @@ fn validate_profile_metadata(
     if profile == OriginalPackedProfile::Q4 {
         return validate_segmented_metadata(parts);
     }
-    let expected = q3_expert_types(layer)?;
+    let expected = if profile == OriginalPackedProfile::DaslabIq3 {
+        crate::daslab_profile::routed_types(layer)
+            .ok_or(Error::OutOfBounds)?
+            .map(TensorType::from_gguf_id)
+            .into_iter()
+            .collect::<Result<Vec<_>>>()?
+            .try_into()
+            .map_err(|_| Error::InvalidFormat("DASLab original routed triple"))?
+    } else {
+        q3_expert_types(layer)?
+    };
     for (index, (dtype, dimensions)) in parts.into_iter().enumerate() {
         if dtype != expected[index]
             || dimensions
@@ -445,7 +479,7 @@ pub(crate) fn validate_segmented_configuration_with_profile(
     profile.validate_capacity(capacity)?;
     let gate_policy = match profile {
         OriginalPackedProfile::Q4 => block,
-        OriginalPackedProfile::UnslothQ3 => !block,
+        OriginalPackedProfile::UnslothQ3 | OriginalPackedProfile::DaslabIq3 => !block,
     };
     if segmented_capacity(capacity)
         && (explicit_cache != Some(budget) || !gate_policy || batch || word_down || !resident)
@@ -454,7 +488,7 @@ pub(crate) fn validate_segmented_configuration_with_profile(
             OriginalPackedProfile::Q4 => {
                 "segmented slots require explicit static cache, resident block MoE, legacy fill and generic down"
             }
-            OriginalPackedProfile::UnslothQ3 => {
+            OriginalPackedProfile::UnslothQ3 | OriginalPackedProfile::DaslabIq3 => {
                 "Unsloth Q3 requires explicit static cache, resident generic grouped MoE and original fill"
             }
         }));
@@ -559,6 +593,11 @@ fn validate_profile_residency(
     if profile == OriginalPackedProfile::UnslothQ3 && total != UNSLOTH_Q3_BANK_BYTES_144 {
         return Err(Error::InvalidFormat("Unsloth Q3 full graph page charge"));
     }
+    if profile == OriginalPackedProfile::DaslabIq3
+        && total as u64 != crate::daslab_profile::bank_bytes_144().physical
+    {
+        return Err(Error::InvalidFormat("DASLab full graph page charge"));
+    }
     if profile == OriginalPackedProfile::Q4
         && segmented_capacity(capacity)
         && total
@@ -579,7 +618,7 @@ fn validate_profile_residency(
         // exceed the old five-GiB cache once allocator page rounding is charged.
         // Admit only the explicit measured-profile candidate, retaining Q4's
         // original envelope and the checked bank/cache/margin budget below.
-        let accepted_cache = if profile == OriginalPackedProfile::UnslothQ3 {
+        let accepted_cache = if profile.is_low_bit() {
             matches!(cache_bytes, n if n == 5 * GIB || n == 8 * GIB)
         } else {
             cache_bytes == (if capacity == 160 { 3 } else { 5 }) * GIB
@@ -608,7 +647,7 @@ impl ExpertBanks {
         profile: OriginalPackedProfile,
     ) -> Result<Vec<u64>> {
         profile.validate_capacity(capacity)?;
-        if profile == OriginalPackedProfile::UnslothQ3 {
+        if profile.is_low_bit() {
             validate_profile_weights(profile, weights)?;
         }
         if profile == OriginalPackedProfile::Q4 && segmented_capacity(capacity) {
@@ -811,7 +850,7 @@ impl ExpertBanks {
         Ok(())
     }
     pub fn check_names(&self, weights: RoutedWeights<'_>) -> Result<()> {
-        if self.profile == OriginalPackedProfile::UnslothQ3 {
+        if self.profile.is_low_bit() {
             validate_profile_weights(self.profile, weights)?;
         }
         if [weights.gate, weights.up, weights.down]
@@ -832,7 +871,7 @@ impl ExpertBanks {
         input: &[f32],
         selected: &[(usize, f32)],
     ) -> Result<()> {
-        if self.profile == OriginalPackedProfile::UnslothQ3 {
+        if self.profile.is_low_bit() {
             self.check_names(weights)?;
         }
         if [weights.gate, weights.up, weights.down]
@@ -3132,6 +3171,46 @@ mod q3_profile_tests {
         assert!(
             OriginalPackedProfile::Q4
                 .validate_ple(TensorType::Iq4Nl, &dimensions, 90)
+                .is_err()
+        );
+    }
+}
+
+#[cfg(test)]
+mod daslab_profile_tests {
+    use super::*;
+    #[test]
+    fn original_triples_use_exact_row_geometry_and_page_charge() {
+        let profile = OriginalPackedProfile::DaslabIq3;
+        let mut physical = 0usize;
+        for layer in 0..48 {
+            let raw = crate::daslab_profile::routed_types(layer).unwrap();
+            let kinds = raw.map(|id| TensorType::from_gguf_id(id).unwrap());
+            let parts = [
+                (kinds[0], &[2560, 640, 512][..]),
+                (kinds[1], &[2560, 640, 512][..]),
+                (kinds[2], &[640, 2560, 512][..]),
+            ];
+            validate_profile_metadata(profile, layer, parts).unwrap();
+            for (index, kind) in kinds.into_iter().enumerate() {
+                let (columns, rows) = if index == 2 { (640, 2560) } else { (2560, 640) };
+                let row = columns / kind.block_elements() as usize * kind.block_bytes() as usize;
+                physical += 2 * (row * rows * 72).next_power_of_two();
+            }
+            let mut wrong = parts;
+            wrong[2].0 = TensorType::Q8_0;
+            assert!(validate_profile_metadata(profile, layer, wrong).is_err());
+        }
+        assert_eq!(physical, 18_723_373_056);
+        validate_profile_residency(profile, 144, physical, 8 << 30, 31 << 30).unwrap();
+        assert!(validate_profile_residency(profile, 144, physical + 1, 8 << 30, 31 << 30).is_err());
+        assert!(validate_profile_residency(profile, 128, physical, 8 << 30, 31 << 30).is_err());
+        profile
+            .validate_ple(TensorType::Iq4Nl, &[160, 320001536], 90)
+            .unwrap();
+        assert!(
+            profile
+                .validate_shortcuts(false, true, false, false, false)
                 .is_err()
         );
     }

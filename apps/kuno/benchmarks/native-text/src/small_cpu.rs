@@ -492,7 +492,13 @@ mod tests {
                 block.extend(0x3800u16.to_le_bytes());
                 (256, block, 1.)
             }
-            TensorType::Iq3Xxs | TensorType::Iq4Nl | TensorType::Iq4Xs => {
+            TensorType::Iq3Xxs
+            | TensorType::Iq4Nl
+            | TensorType::Iq4Xs
+            | TensorType::Iq2S
+            | TensorType::Iq3S
+            | TensorType::Q5K
+            | TensorType::Q2_0 => {
                 panic!("IQ nonlinear formats require the independent quant oracle fixture")
             }
         }

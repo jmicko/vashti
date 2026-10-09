@@ -86,7 +86,7 @@ impl GpuExecutor<'_> {
             return Err(err("native Q3 subgroup runtime policy"));
         }
         if self.q3_empty_slot_fill
-            && (self.packed_profile != expert_banks::OriginalPackedProfile::UnslothQ3
+            && (!self.packed_profile.is_low_bit()
                 || cap != 10
                 || self.gpu_expert_limit != 10
                 || !overlap
@@ -149,7 +149,7 @@ impl GpuExecutor<'_> {
         bank.check_names(weights)?;
         bank.check_client(arena.client().map_err(u::fault)?)?;
         if self.q3_skip_empty_segments
-            && (bank.profile() != expert_banks::OriginalPackedProfile::UnslothQ3
+            && (!bank.profile().is_low_bit()
                 || [bank.gate(), bank.up(), bank.down()]
                     .iter()
                     .any(|b| b.segments().len() != 2))

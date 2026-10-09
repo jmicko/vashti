@@ -472,7 +472,7 @@ impl ResidentMoe {
         // This legacy scalar/segmented family has Q4-specific stride shortcuts.
         // The explicit Q3 profile is initially connected only through native
         // grouped kernels; never silently fall back to this family on failure.
-        if banks.profile() == crate::expert_banks::OriginalPackedProfile::UnslothQ3 {
+        if banks.profile().is_low_bit() {
             banks
                 .profile()
                 .validate_shortcuts(false, false, false, word_down, block_moe)?;

@@ -4,6 +4,7 @@ mod bank96_probe;
 mod bank_slots;
 pub mod cpu_gpu_expert_probe;
 mod cpu_gpu_expert_schedule;
+mod daslab_profile;
 mod executor;
 mod expert_banks;
 mod gdn_batch_pointwise;
@@ -253,6 +254,9 @@ fn original_packed_profile(
         Some("unsloth-q3") if mode == "resident-count1-hybrid-chat" && vendor == 0x8086 => {
             Ok(P::UnslothQ3)
         }
+        Some("daslab-iq3") if mode == "resident-count1-hybrid-chat" && vendor == 0x8086 => {
+            Ok(P::DaslabIq3)
+        }
         _ => Err("original packed Q3 requires the protected Intel count1 fixture"),
     }
 }
@@ -266,7 +270,8 @@ fn q3_public_positions(
         None => Ok(4),
         Some(raw @ ("4" | "23" | "32"))
             if mode == "resident-count1-hybrid-chat"
-                && profile == expert_banks::OriginalPackedProfile::UnslothQ3
+                && profile.is_low_bit()
+                && (profile != expert_banks::OriginalPackedProfile::DaslabIq3 || raw != "23")
                 && protected =>
         {
             raw.parse().map_err(|_| "public Q3 positions")
@@ -283,9 +288,7 @@ fn q3_empty_slot_fill(
     match raw {
         None => Ok(false),
         Some(raw @ ("0" | "1"))
-            if mode == "resident-count1-hybrid-chat"
-                && profile == expert_banks::OriginalPackedProfile::UnslothQ3
-                && protected =>
+            if mode == "resident-count1-hybrid-chat" && profile.is_low_bit() && protected =>
         {
             Ok(raw == "1")
         }
@@ -307,11 +310,13 @@ fn q3_speed_fixture_option(
         None => Ok(false),
         Some("1")
             if mode == "resident-count1-hybrid-chat"
-                && profile == expert_banks::OriginalPackedProfile::UnslothQ3
+                && profile.is_low_bit()
                 && protected
                 && empty_fill
                 && matches!(positions, 4 | 23 | 32)
                 && matches!(option, "skip-segments" | "subgroup-moe" | "ideal-prefix")
+                && (profile == expert_banks::OriginalPackedProfile::UnslothQ3
+                    || option == "skip-segments")
                 && (option != "ideal-prefix" || positions == 23) =>
         {
             Ok(true)
@@ -359,7 +364,7 @@ fn original_count1_setting(
     name: &str,
     raw: Option<&str>,
 ) -> Result<(), &'static str> {
-    if profile == expert_banks::OriginalPackedProfile::UnslothQ3 {
+    if profile.is_low_bit() {
         if name == "KUNO_LAB_STATIC_CACHE_BYTES" {
             return if banks == Count1Banks::Intel144
                 && matches!(raw, Some("5368709120" | "8589934592"))
@@ -915,7 +920,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             })
             .transpose()?,
     )?;
-    let q3_main = packed_profile == expert_banks::OriginalPackedProfile::UnslothQ3;
+    let q3_main = packed_profile.is_low_bit();
     if mode == "iq-quant-probe" {
         matmul_probe::iq::registration(
             std::env::args().count(),
@@ -2697,15 +2702,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     std::env::var_os("KUNO_TEST_Q3_DIR")
                         .ok_or("verified Q3 shard directory required")?,
                 );
-                let paths: Vec<_> = (1..=3)
+                let daslab = packed_profile == expert_banks::OriginalPackedProfile::DaslabIq3;
+                let paths: Vec<_> = (1..=if daslab { 2 } else { 3 })
                     .map(|i| {
-                        dir.join(format!(
-                            "Qwen3.8-Flash-Next-UD-Q3_K_XL-{i:05}-of-00003.gguf"
-                        ))
+                        dir.join(if daslab {
+                            format!("Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-{i:05}-of-00002.gguf")
+                        } else {
+                            format!("Qwen3.8-Flash-Next-UD-Q3_K_XL-{i:05}-of-00003.gguf")
+                        })
                     })
                     .collect();
                 let file = GgufFile::open_shards(&paths, GgufLimits::default())?;
-                if file.file_len() != 89_986_353_824 {
+                if file.file_len()
+                    != if daslab {
+                        83_617_662_656
+                    } else {
+                        89_986_353_824
+                    }
+                {
                     return Err("pinned original Q3 byte count".into());
                 }
                 file
@@ -3143,13 +3157,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "small_cpu_cache_bytes":executor.small_cpu.cached_bytes(),
                     "small_cpu_cache_matrices":executor.small_cpu.cached_matrices(), "resident_graph":resident_enabled,"weights":"borrowed-unmodified-ollama-blob"
                 });
-                receipt["original_packed_profile"] = serde_json::json!(if q3_main {
-                    "unsloth-ud-q3_k_xl"
-                } else {
-                    "original-q4"
+                receipt["original_packed_profile"] = serde_json::json!(match packed_profile {
+                    expert_banks::OriginalPackedProfile::UnslothQ3 => "unsloth-ud-q3_k_xl",
+                    expert_banks::OriginalPackedProfile::DaslabIq3 => "daslab-gsq-rco-iq3_s",
+                    expert_banks::OriginalPackedProfile::Q4 => "original-q4",
                 });
                 if q3_main {
-                    receipt["fixture"] = serde_json::json!("unsloth-q3-public-bang");
+                    receipt["fixture"] = serde_json::json!(if packed_profile
+                        == expert_banks::OriginalPackedProfile::DaslabIq3
+                    {
+                        "daslab-iq3-public-bang"
+                    } else {
+                        "unsloth-q3-public-bang"
+                    });
+                    if packed_profile == expert_banks::OriginalPackedProfile::DaslabIq3 {
+                        receipt["model_repository"] = serde_json::json!(daslab_profile::REPOSITORY);
+                        receipt["model_revision"] = serde_json::json!(daslab_profile::REVISION);
+                        receipt["original_header_sha256"] =
+                            serde_json::json!(daslab_profile::HEADER_SHA256);
+                    }
                     receipt["whole_model_numeric_accepted"] = serde_json::json!(true);
                     receipt["numeric_scope"] = serde_json::json!(match q3_positions {
                         4 => "four-position-original-Q3-public-bang",
@@ -3160,7 +3186,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     receipt["full32_reference_accepted"] = serde_json::json!(q3_positions == 32);
                     receipt["prefix_ends_before_known_router_divergence"] =
                         serde_json::json!(q3_positions == 23);
-                    receipt["weights"] = serde_json::json!("borrowed-unmodified-ollama-shards");
+                    receipt["weights"] = serde_json::json!("borrowed-unmodified-original-shards");
                     let pre_slots = q3_prefill_slots.ok_or("Q3 prefill slot receipt absent")?;
                     let occupied = executor.q3_occupied_slots()?;
                     receipt["q3_empty_slot_fill"] = serde_json::json!(q3_empty_slot_fill);
@@ -5086,6 +5112,49 @@ mod transient_mode_tests {
         }
         for raw in ["", "true", "01", "2"] {
             assert!(transient_resident_mode("resident-bang", Some(raw)).is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod daslab_connection_tests {
+    use super::*;
+    #[test]
+    fn own_protected_public_fixture_and_unchanged_unsloth_experiments() {
+        use expert_banks::OriginalPackedProfile as P;
+        let mode = "resident-count1-hybrid-chat";
+        assert_eq!(
+            original_packed_profile(mode, 0x8086, Some("daslab-iq3")),
+            Ok(P::DaslabIq3)
+        );
+        assert!(original_packed_profile(mode, 0x10de, Some("daslab-iq3")).is_err());
+        assert!(original_packed_profile("probe", 0x8086, Some("daslab-iq3")).is_err());
+        for positions in ["4", "32"] {
+            assert!(q3_public_positions(mode, P::DaslabIq3, true, Some(positions)).is_ok());
+        }
+        assert!(q3_public_positions(mode, P::DaslabIq3, true, Some("23")).is_err());
+        assert!(q3_public_positions(mode, P::DaslabIq3, false, Some("4")).is_err());
+        assert_eq!(
+            q3_empty_slot_fill(mode, P::DaslabIq3, true, Some("1")),
+            Ok(true)
+        );
+        assert_eq!(
+            q3_speed_fixture_option(
+                mode,
+                P::DaslabIq3,
+                true,
+                4,
+                true,
+                "skip-segments",
+                Some("1")
+            ),
+            Ok(true)
+        );
+        for option in ["subgroup-moe", "ideal-prefix"] {
+            assert!(
+                q3_speed_fixture_option(mode, P::DaslabIq3, true, 4, true, option, Some("1"))
+                    .is_err()
+            );
         }
     }
 }

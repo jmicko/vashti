@@ -4,11 +4,11 @@
 //! No prompts, tokenizers, arbitrary payloads, model rows or timing mode.
 
 use super::*;
-use crate::quant_matvec::{IQ3_XXS, IQ4_NL, IQ4_XS, iq_fixtures};
+use crate::quant_matvec::{IQ2_S, IQ3_S, IQ3_XXS, IQ4_NL, IQ4_XS, Q2_0, Q5_K, iq_fixtures};
 
-const TYPES: [u32; 3] = [IQ3_XXS, IQ4_NL, IQ4_XS];
+const TYPES: [u32; 7] = [IQ3_XXS, IQ4_NL, IQ4_XS, IQ2_S, IQ3_S, Q5_K, Q2_0];
 const ORACLE_PREFIXES: [usize; 2] = [0, 3];
-const PROJECTION_CASES: usize = 3 * 3 * (4 * 3 + 1);
+const PROJECTION_CASES: usize = TYPES.len() * 3 * (4 * 3 + 1);
 
 /// Checked before device selection/allocation. This entry only consumes its
 /// fixed compiled fixtures and produces a new numeric-only receipt.
@@ -343,9 +343,9 @@ pub fn run(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
         std::env::var_os("KUNO_PUBLIC_RECEIPT").ok_or("fixed IQ receipt destination required")?;
     // Prewarm every immutable public weight buffer before configuring the
     // owning private upload/readback path. No model file is opened anywhere.
-    let mut matrices = Vec::with_capacity(9);
-    let mut finite_matrices = Vec::with_capacity(3);
-    let mut oracles = Vec::with_capacity(6);
+    let mut matrices = Vec::with_capacity(TYPES.len() * 3);
+    let mut finite_matrices = Vec::with_capacity(TYPES.len());
+    let mut oracles = Vec::with_capacity(TYPES.len() * ORACLE_PREFIXES.len());
     for dtype in TYPES {
         for width in columns(dtype) {
             matrices.push(public_matrix(client, dtype, width, 3)?);
@@ -376,7 +376,7 @@ pub fn run(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
     let zero = arena
         .owned_zero_audit_receipt()
         .ok_or("fixed IQ owned zero receipt absent")?;
-    let public_bound = 3 * (MAX_PACKED_BYTES + 4).next_power_of_two();
+    let public_bound = TYPES.len() * (MAX_PACKED_BYTES + 4).next_power_of_two();
     let finite = fused_cases(
         client,
         &finite_matrices,
@@ -389,16 +389,18 @@ pub fn run(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
         public_bound,
         FusedProjection::SingleSubgroup,
     )?;
-    if finite["cases"].as_array().map(Vec::len) != Some(12)
-        || single["cases"].as_array().map(Vec::len) != Some(12)
+    if finite["cases"].as_array().map(Vec::len) != Some(TYPES.len() * 4)
+        || single["cases"].as_array().map(Vec::len) != Some(TYPES.len() * 4)
     {
         return Err("fixed IQ finite projection inventory incomplete".into());
     }
     let report = serde_json::json!({"scope":"fixed-public-independent-c-IQ-operators-only",
         "fixture":"iq-quant-probe","upstream":"llama.cpp b11232",
-        "format_count":3,"oracle_cases":oracle,"decoded_c_values":16064,
+        "format_count":TYPES.len(),"oracle_cases":oracle,
+        "decoded_c_values":oracles.iter().map(|o| o.expected.len()).sum::<usize>(),
         "projection_case_count":projections.len(),"projections":projections,
-        "finite_case_count":12,"finite":finite,"single_subgroup_case_count":12,"single_subgroup":single,
+        "finite_case_count":TYPES.len()*4,"finite":finite,
+        "single_subgroup_case_count":TYPES.len()*4,"single_subgroup":single,
         "main_cap_bytes":MAIN_BUDGET,"runtime_io_cap_bytes":IO_BUDGET,
         "main_erased_bytes":zero.bytes,"main_erased_buffers":zero.buffers,
         "context_retired":false,"whole_model_or_performance_accepted":false});
@@ -409,7 +411,12 @@ pub fn run(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
         .open(path)?;
     out.write_all(serde_json::to_string_pretty(&report)?.as_bytes())?;
     println!(
-        "public_iq_quant oracle_cases=6 oracle_values=16064 projection_cases=117 finite_cases=12 subgroup_cases=12"
+        "public_iq_quant oracle_cases={} oracle_values={} projection_cases={} finite_cases={} subgroup_cases={}",
+        oracles.len(),
+        oracles.iter().map(|o| o.expected.len()).sum::<usize>(),
+        PROJECTION_CASES,
+        TYPES.len() * 4,
+        TYPES.len() * 4
     );
     Ok(())
 }
@@ -475,7 +482,7 @@ mod tests {
             assert_eq!(blocks, ordinary + 9);
             total += blocks * width;
         }
-        assert_eq!(total * ORACLE_PREFIXES.len(), 16064);
+        assert_eq!(total * ORACLE_PREFIXES.len(), 56128);
     }
 
     #[test]
@@ -634,7 +641,19 @@ mod tests {
                     .map(i64::from)
                     .collect::<Vec<_>>();
                 assert_eq!(arrays, [expected]);
-            } else {
+            } else if dtype == IQ2_S {
+                let expected = kuno_text::quant::IQ2_S_GRID
+                    .into_iter()
+                    .flat_map(|word| [i64::from(word as u32), i64::from((word >> 32) as u32)])
+                    .collect::<Vec<_>>();
+                assert_eq!(arrays, [expected]);
+            } else if dtype == IQ3_S {
+                let expected = kuno_text::quant::IQ3_S_GRID
+                    .into_iter()
+                    .map(i64::from)
+                    .collect::<Vec<_>>();
+                assert_eq!(arrays, [expected]);
+            } else if matches!(dtype, IQ4_NL | IQ4_XS) {
                 // IQ4's16 signed entries use only four packed scalar literals.
                 // No value-array constant exists for a runtime nibble to index;
                 // original packed source/result/INFO bindings are unchanged.
@@ -657,6 +676,8 @@ mod tests {
                 for minimum in [4, 8, 12] {
                     assert!(source.contains(&format!(">= u32({minimum})")));
                 }
+            } else {
+                assert!(arrays.is_empty());
             }
             // Public original packed weights, private result, and original INFO.
             assert_eq!(
