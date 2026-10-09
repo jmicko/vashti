@@ -1351,6 +1351,16 @@ fn completed_proof<O, P>(
     Ok((output, prepared))
 }
 
+// Constructor hybrid owners exist before the completed count1 policy is
+// installed. They alone cannot authorize finish_prepared during token0.
+fn prepared_shared_overlap(
+    resident_router: bool,
+    cap: Option<usize>,
+    overlap: Option<bool>,
+) -> bool {
+    !resident_router && cap.is_some() && overlap == Some(true)
+}
+
 impl Workspace {
     fn run(
         &mut self,
@@ -1758,8 +1768,11 @@ impl Workspace {
                     .entry("native_route_and_expert_enqueue")
                     .or_default() += expert_start.elapsed().as_nanos();
             }
-            let overlap_shared =
-                !self.moe.resident_router_active() && self.moe.cpu_gpu_overlap() == Some(true);
+            let overlap_shared = prepared_shared_overlap(
+                self.moe.resident_router_active(),
+                self.moe.cpu_miss_cap(),
+                self.moe.cpu_gpu_overlap(),
+            );
             let shared_start = Instant::now();
             let mut projector = ResidentBatchProjection {
                 executor: e,
@@ -2016,6 +2029,24 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn constructor_overlap_owners_cannot_finish_an_unprepared_shared_projection() {
+        for cap in [None, Some(0), Some(10)] {
+            for overlap in [None, Some(false), Some(true)] {
+                for resident in [false, true] {
+                    let packet_present = cap.is_some();
+                    let original = packet_present && overlap == Some(true);
+                    assert_eq!(
+                        prepared_shared_overlap(resident, cap, overlap),
+                        !resident && original
+                    );
+                }
+            }
+        }
+        assert!(!prepared_shared_overlap(false, None, Some(true)));
+        assert!(prepared_shared_overlap(false, Some(10), Some(true)));
+        assert!(!prepared_shared_overlap(true, Some(10), Some(true)));
+    }
     #[test]
     fn resident_router_adds_full_separate_host_runtime_and_main_charges() {
         for reuse in [DEFAULT_REUSE_METADATA, 1048576, 4194304] {
