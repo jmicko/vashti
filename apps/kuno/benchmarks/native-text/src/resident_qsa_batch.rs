@@ -1709,6 +1709,10 @@ impl LatestQsaCheckpoint {
         cancel: &AtomicBool,
     ) -> Result<()> {
         workspace.healthy(arena, cancel)?;
+        // Original whole-chunk acceptance erases its temporary fault pointer.
+        // An idle completed workspace must have no live candidate pointer;
+        // the checkpoint retains the exact separately validated physical owner.
+        let completed_fault = latest_completed_fault(workspace.fault, self.metadata.fault)?;
         if !self.armed
             || workspace.policy.phase != ChunkPhase::Idle
             || *workspace.policy.issued != 0
@@ -1722,7 +1726,6 @@ impl LatestQsaCheckpoint {
                 .is_none_or(|p| !Arc::ptr_eq(p, &self.poison))
             || stage.batch_pending.is_some()
             || stage.layout != workspace.layout.stage
-            || workspace.fault != Some(self.metadata.fault)
             || stage.lifecycle.phase
                 != Phase::Ready(checked_count(
                     self.metadata.start,
@@ -1745,7 +1748,7 @@ impl LatestQsaCheckpoint {
                 chunk: *workspace.policy.chunk,
                 generation: *workspace.policy.generation,
                 owners: [stage.ids[CACHE], stage.ids[POSITIONS]],
-                fault: workspace.fault.ok_or(Error::InvalidBufferLength)?,
+                fault: completed_fault,
             },
             workspace.policy.expected.count_ones(),
         )?;
@@ -1775,6 +1778,12 @@ impl LatestQsaCheckpoint {
         self.armed = false;
         Ok(())
     }
+}
+fn latest_completed_fault(active: Option<BufferId>, pinned: BufferId) -> Result<BufferId> {
+    if active.is_some() {
+        return Err(fault("native latest QSA incomplete candidate fault owner"));
+    }
+    Ok(pinned)
 }
 impl Drop for LatestQsaCheckpoint {
     fn drop(&mut self) {
@@ -1883,6 +1892,19 @@ fn verify_latest_cleared(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn latest_checkpoint_uses_pinned_fault_after_original_candidate_pointer_erasure() {
+        let pinned = BufferId::metadata_fixture(31, 38, 2);
+        let foreign = BufferId::metadata_fixture(31, 38, 3);
+        // Original acceptance.finish clears this transient association. A
+        // completed checkpoint must retain its own exact physical owner.
+        let mut candidate = Some(pinned);
+        assert!(latest_completed_fault(candidate, pinned).is_err());
+        candidate.as_mut().unwrap().zeroize();
+        candidate = None;
+        assert!(latest_completed_fault(candidate, pinned).unwrap() == pinned);
+        assert!(latest_completed_fault(Some(foreign), pinned).is_err());
+    }
     fn latest() -> LatestQsaMetadata {
         LatestQsaMetadata {
             workspace: 7,
