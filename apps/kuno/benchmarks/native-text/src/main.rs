@@ -889,6 +889,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let mode = std::env::args().nth(2).unwrap_or("probe".into());
     let segmented_iq_probe = mode == "segmented-iq-moe-probe";
+    let iq_integer_probe = mode == "iq-integer-moe-probe";
+    if iq_integer_probe {
+        if std::env::args_os().count() != 3 {
+            return Err("fixed public integer IQ probe rejects additional arguments".into());
+        }
+        segmented_iq_moe_probe::validate_integer_configuration()?;
+    } else if std::env::var_os("KUNO_LAB_IQ_INTEGER_PUBLIC_ONLY").is_some() {
+        return Err("integer IQ gate requires its dedicated public probe".into());
+    }
     if segmented_iq_probe {
         if std::env::args_os().count() != 3 {
             return Err("fixed public segmented IQ probe rejects additional arguments".into());
@@ -1607,7 +1616,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             return Err("shared Next router requires256 workgroup lanes".into());
         }
-        if (fast_gpu || mode == "iq-quant-probe" || segmented_iq_probe)
+        if (fast_gpu || mode == "iq-quant-probe" || segmented_iq_probe || iq_integer_probe)
             && (!adapter.features().contains(wgpu::Features::SUBGROUP)
                 || info.subgroup_min_size < 16
                 || info.subgroup_max_size > 32
@@ -1684,6 +1693,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         if segmented_iq_probe {
             return segmented_iq_moe_probe::run(&client, &grouped_limits);
+        }
+        if iq_integer_probe {
+            return segmented_iq_moe_probe::run_integer(&client, &grouped_limits);
         }
         if kernel_profile {
             client.set_profiling_paused(true);
