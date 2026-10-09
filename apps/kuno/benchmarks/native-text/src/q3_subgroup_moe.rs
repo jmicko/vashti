@@ -4,7 +4,8 @@
 //! participates in its barriers/shuffles, including inactive groups and rows.
 //! Full MAX8 owners, immutable72-slot segments, original maps/status and final
 //! finite/fault/publication checks remain with the existing caller.
-//! Source-only candidate: not connected or compiled/device-accepted yet.
+//! Selection remains an explicit laboratory option; physical acceptance is
+//! separate from the geometry/compiled-source controls in this module.
 use super::{IQ3_XXS, IQ4_NL, IQ4_XS, Q8_0, fast, grouped_moe as g};
 use cubecl::{prelude::*, server::Handle, wgpu::WgpuRuntime};
 use kuno_text::{Error, Result};
@@ -39,7 +40,8 @@ pub(crate) fn gate_up(
 ) {
     let row = CUBE_POS_X as usize * fast::ROWS_PER_CUBE + fast::local_row();
     let group = CUBE_POS_Y as usize;
-    let active = g::group_active(map, map_first, group, first_slot, slot_count, 1) && row < ff;
+    let active =
+        g::group_active(map, map_first, group, first_slot, slot_count, 1_usize) && row < ff;
     // Avoid an inactive map read or subtracting a segment origin until the
     // original group guard proves the complete map, route and actual slot.
     let mut slot = 0_usize;
@@ -100,7 +102,8 @@ pub(crate) fn down(
 ) {
     let row = CUBE_POS_X as usize * fast::ROWS_PER_CUBE + fast::local_row();
     let group = CUBE_POS_Y as usize;
-    let active = g::group_active(map, map_first, group, first_slot, slot_count, 1) && row < hidden;
+    let active =
+        g::group_active(map, map_first, group, first_slot, slot_count, 1_usize) && row < hidden;
     let mut slot = 0_usize;
     let mut route = 0_usize;
     if active {
@@ -306,6 +309,119 @@ mod tests {
             }
             for groups in [0, 11, usize::MAX] {
                 assert!(grid(g, down, groups).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn actual_mixed_iq_gate_and_down_shaders_retain_subgroup_tree_and_runtime_maps() {
+        use cubecl::compute::KernelBuilder;
+        use cubecl::ir::{ElemType, FloatKind, IntKind, StorageType, Type, UIntKind};
+        use cubecl::wgpu::WgslCompiler;
+        use cubecl::{Compiler, KernelSettings, WgpuCompilationOptions};
+        for (gate, down_dtype) in [(IQ3_XXS, IQ4_NL), (IQ3_XXS, Q8_0), (IQ4_XS, Q8_0)] {
+            let g = geometry(gate, down_dtype, 1, 144);
+            for is_down in [false, true] {
+                let uint = StorageType::Scalar(ElemType::UInt(UIntKind::U32));
+                let float = StorageType::Scalar(ElemType::Float(FloatKind::F32));
+                let mut b = KernelBuilder::default();
+                b.scope.register_type::<u32>(uint);
+                b.scope.register_type::<usize>(uint);
+                b.scope.register_type::<f32>(float);
+                b.scope
+                    .register_type::<i32>(StorageType::Scalar(ElemType::Int(IntKind::I32)));
+                b.scope
+                    .register_type::<bool>(StorageType::Scalar(ElemType::Bool));
+                let weight = b.input_array(Type::new(uint)).into();
+                let input = b.input_array(Type::new(float)).into();
+                let map = b.input_array(Type::new(uint)).into();
+                let output = b.output_array(Type::new(float)).into();
+                let status = b.output_array(Type::new(uint)).into();
+                let map_first = b.scalar(uint).into();
+                let input_first = b.scalar(uint).into();
+                let input_stride = b.scalar(uint).into();
+                let output_first = b.scalar(uint).into();
+                let output_stride = b.scalar(uint).into();
+                let status_first = b.scalar(uint).into();
+                let first_slot = b.scalar(uint).into();
+                let slot_count = b.scalar(uint).into();
+                if is_down {
+                    down::expand(
+                        &mut b.scope,
+                        weight,
+                        input,
+                        map,
+                        output,
+                        status,
+                        map_first,
+                        input_first,
+                        input_stride,
+                        output_first,
+                        output_stride,
+                        status_first,
+                        first_slot,
+                        slot_count,
+                        2560,
+                        640,
+                        down_dtype,
+                        g.projections()[2].row_bytes(),
+                    );
+                } else {
+                    let up = b.input_array(Type::new(uint)).into();
+                    gate_up::expand(
+                        &mut b.scope,
+                        weight,
+                        up,
+                        input,
+                        map,
+                        output,
+                        status,
+                        map_first,
+                        input_first,
+                        input_stride,
+                        output_first,
+                        output_stride,
+                        status_first,
+                        first_slot,
+                        slot_count,
+                        2560,
+                        640,
+                        gate,
+                        gate,
+                        g.projections()[0].row_bytes(),
+                        g.projections()[1].row_bytes(),
+                    );
+                }
+                let source = WgslCompiler::default()
+                    .compile(
+                        b.build(
+                            KernelSettings::default()
+                                .cube_dim(fast::cube())
+                                .kernel_name("fixed_public_Q3_subgroup_MoE"),
+                        ),
+                        &WgpuCompilationOptions::default(),
+                        cubecl::server::ExecutionMode::Unchecked,
+                        uint,
+                    )
+                    .unwrap()
+                    .to_string();
+                let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
+                wgpu::naga::valid::Validator::new(
+                    wgpu::naga::valid::ValidationFlags::all(),
+                    wgpu::naga::valid::Capabilities::SUBGROUP,
+                )
+                .validate(&module)
+                .unwrap();
+                assert_eq!(module.entry_points[0].workgroup_size, [128, 1, 1]);
+                assert!(
+                    source.contains("subgroupShuffleDown") && source.contains("workgroupBarrier")
+                );
+                for scalar in 0..8 {
+                    assert!(source.contains(&format!("scalars_u32[{scalar}]")));
+                }
+                // Source admission is separate from the independent physical
+                // C-fixture, original-path and full-owner probe acceptance.
+                assert_eq!(source.contains("arrays_"), !is_down && gate == IQ3_XXS);
             }
         }
     }

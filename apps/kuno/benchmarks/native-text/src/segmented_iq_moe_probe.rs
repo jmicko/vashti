@@ -8,7 +8,7 @@ use crate::{
     grouped_moe_chunk as c,
     main_admission::{self, MainAdmission},
     private_arena::{BufferId, BufferLayout, PrivateArena},
-    quant_matvec::{self, grouped_moe as k, iq_fixtures},
+    quant_matvec::{self, grouped_moe as k, iq_fixtures, q3_subgroup_moe},
     token_waves,
 };
 use cubecl::{prelude::*, server::Handle, wgpu::WgpuRuntime};
@@ -393,9 +393,32 @@ fn launch_segment(
     s: &k::Spans,
     groups: usize,
     segment: usize,
+    subgroup: bool,
 ) -> Result<()> {
     let [ga, up, down] = g.projections();
     let bs = &banks[segment * 3..segment * 3 + 3];
+    if subgroup {
+        let owner = |index: usize| arena.handle(ids[index]).cloned();
+        q3_subgroup_moe::launch(
+            client,
+            g,
+            s,
+            [bs[0].view(), bs[1].view(), bs[2].view()],
+            [
+                owner(0)?,
+                owner(1)?,
+                owner(2)?,
+                owner(3)?,
+                owner(4)?,
+                owner(5)?,
+                owner(6)?,
+            ],
+            segment * SEGMENT,
+            SEGMENT,
+            groups,
+        )?;
+        return Ok(());
+    }
     let b = |i: usize| unsafe { ArrayArg::from_raw_parts(bs[i].view(), bs[i].logical / 4) };
     unsafe {
         k::grouped_gate_up::launch_unchecked::<WgpuRuntime>(
@@ -520,6 +543,62 @@ struct Oracle {
     part: Zeroizing<Vec<f32>>,
     output: Zeroizing<Vec<f32>>,
 }
+impl Oracle {
+    fn owned_bytes(&self) -> usize {
+        (self.act.capacity() + self.part.capacity() + self.output.capacity()) * 4
+    }
+}
+fn compact_original(values: &[Zeroizing<Vec<u32>>], s: &k::Spans) -> Result<Oracle> {
+    fn rows(
+        values: &[u32],
+        first: usize,
+        stride: usize,
+        width: usize,
+        count: usize,
+    ) -> Result<Zeroizing<Vec<f32>>> {
+        let length = width
+            .checked_mul(count)
+            .ok_or("segmented IQ compact row overflow")?;
+        let mut out = Zeroizing::new(Vec::with_capacity(length));
+        for row in 0..count {
+            let start = row
+                .checked_mul(stride)
+                .and_then(|n| first.checked_add(n))
+                .ok_or("segmented IQ compact offset overflow")?;
+            let end = start
+                .checked_add(width)
+                .ok_or("segmented IQ compact end overflow")?;
+            let slice = values
+                .get(start..end)
+                .ok_or("segmented IQ original snapshot extent")?;
+            out.extend(slice.iter().copied().map(f32::from_bits));
+        }
+        if out.iter().any(|v| !v.is_finite()) || out.capacity() > length {
+            return Err("segmented IQ original snapshot finite/host bound".into());
+        }
+        Ok(out)
+    }
+    if values.len() != 8 {
+        return Err("segmented IQ original snapshot owner count".into());
+    }
+    Ok(Oracle {
+        act: rows(&values[c::ACT], s.act_first(), s.act_stride(), FF, 10)?,
+        part: rows(
+            &values[c::PART],
+            s.partial_first(),
+            s.partial_stride(),
+            HIDDEN,
+            10,
+        )?,
+        output: rows(
+            &values[c::OUTPUT],
+            s.output_first(),
+            s.output_stride(),
+            HIDDEN,
+            1,
+        )?,
+    })
+}
 fn oracle(decoded: [&[f32]; 3], x: &[f32]) -> Result<Oracle> {
     let mut out = Oracle {
         act: Zeroizing::new(vec![0.; 10 * FF]),
@@ -570,6 +649,87 @@ fn snapshot(
         .collect::<Result<Vec<_>>>()?;
     c::audit(arena.client()?, retired)?;
     Ok(values)
+}
+/// Fault operands use the same complete owners. Only active math cells and
+/// the original active status regions may be written; every prefix, rank gap,
+/// inactive MAX8 region and rounded owning tail must retain its original bits.
+fn check_fault(
+    values: &[Zeroizing<Vec<u32>>],
+    before: &[Zeroizing<Vec<u32>>],
+    g: k::Geometry,
+    s: &k::Spans,
+    nonfinite: bool,
+) -> Result<()> {
+    if values.len() != 8
+        || before.len() != 8
+        || values.iter().zip(before).any(|(a, b)| a.len() != b.len())
+    {
+        return Err("segmented IQ fault owning snapshot lengths".into());
+    }
+    if k::validate_status(g, 1, s.status_first(), &values[c::STATUS]).is_ok() {
+        return Err("segmented IQ subgroup public fault accepted".into());
+    }
+    for i in [c::MAP, c::INPUT, c::PROB, 7] {
+        if values[i] != before[i] {
+            return Err("segmented IQ subgroup fault readonly owner changed".into());
+        }
+    }
+    for (i, first, stride, width, count) in [
+        (c::ACT, s.act_first(), s.act_stride(), FF, 10),
+        (c::PART, s.partial_first(), s.partial_stride(), HIDDEN, 10),
+        (c::OUTPUT, s.output_first(), s.output_stride(), HIDDEN, 1),
+    ] {
+        for index in 0..values[i].len() {
+            let offset = index.saturating_sub(first);
+            let active = index >= first && offset / stride < count && offset % stride < width;
+            if (!nonfinite || !active) && values[i][index] != before[i][index] {
+                return Err("segmented IQ subgroup fault changed inactive math owner".into());
+            }
+        }
+    }
+    let d = HIDDEN.div_ceil(k::LANES);
+    let f = FF.div_ceil(k::LANES);
+    let regions = [
+        (k::MAX_ROUTES, 10),
+        (k::MAX_ROUTES, 10),
+        (k::MAX_BATCH * d, d),
+        (k::MAX_ROUTES * f, 10 * f),
+        (k::MAX_ROUTES * d, 10 * d),
+        (k::MAX_BATCH * d, d),
+    ];
+    let status = &values[c::STATUS];
+    let end = s
+        .status_first()
+        .checked_add(g.status_words())
+        .filter(|&end| end <= status.len())
+        .ok_or("segmented IQ fault status extent")?;
+    if status[..s.status_first()] != before[c::STATUS][..s.status_first()]
+        || status[end..] != before[c::STATUS][end..]
+    {
+        return Err("segmented IQ fault status owning guard".into());
+    }
+    let mut first = s.status_first();
+    for (region, (length, active)) in regions.into_iter().enumerate() {
+        for index in 0..length {
+            let value = status[first + index];
+            if index < active {
+                if region < 2 {
+                    if value != u32::from(nonfinite) {
+                        return Err("segmented IQ fault producer readiness".into());
+                    }
+                } else if value > 1 {
+                    return Err("segmented IQ fault finite flag invalid".into());
+                }
+            } else if value != before[c::STATUS][first + index] {
+                return Err("segmented IQ fault inactive status changed".into());
+            }
+        }
+        first += length;
+    }
+    if nonfinite && status[s.status_first() + k::MAX_ROUTES * 2] != 0 {
+        return Err("segmented IQ subgroup active NaN finite flag missing".into());
+    }
+    Ok(())
 }
 fn check(
     values: &[Zeroizing<Vec<u32>>],
@@ -691,7 +851,8 @@ fn one(
         .into_iter()
         .collect::<std::result::Result<Vec<_>, _>>()?;
     // Before/previous/current owners plus one raw readback lease, row seeds,
-    // complete CPU oracle and bounded route metadata. No full bank host copy.
+    // complete CPU oracle and compact original output oracle (combined<512KiB),
+    // and bounded route metadata in the1MiB frame. No full bank host copy.
     let host_upper = 4 * private_pages.iter().sum::<u64>()
         + payloads
             .iter()
@@ -814,31 +975,100 @@ fn one(
     for (rank, &p) in map.probabilities().iter().enumerate() {
         before[c::PROB][s.prob_first() + rank] = p.to_bits();
     }
-    for (i, &id) in ids.iter().enumerate() {
-        c::write(arena, id, &before[i][..words[i]], retired)?;
-    }
-    let mut errors = [0f32; 3];
-    let mut previous: Option<Vec<Zeroizing<Vec<u32>>>> = None;
-    for segment in 0..2 {
-        pin.validate()?;
-        physical(client, arena, &ids, &seeds, &banks, g)?;
-        launch_segment(client, arena, &ids, &banks, g, &s, map.groups(), segment)?;
+    let mut errors = [[0f32; 3]; 2];
+    let mut between_errors = [0f32; 3];
+    let mut original = None;
+    for subgroup in [false, true] {
+        let case = usize::from(subgroup);
+        for (i, &id) in ids.iter().enumerate() {
+            c::write(arena, id, &before[i][..words[i]], retired)?;
+        }
+        let mut previous: Option<Vec<Zeroizing<Vec<u32>>>> = None;
+        for segment in 0..2 {
+            pin.validate()?;
+            physical(client, arena, &ids, &seeds, &banks, g)?;
+            launch_segment(
+                client,
+                arena,
+                &ids,
+                &banks,
+                g,
+                &s,
+                map.groups(),
+                segment,
+                subgroup,
+            )?;
+            let got = snapshot(arena, &ids, retired)?;
+            if let Some(prior) = &previous {
+                inactive_preserved(&got, prior, &s)?;
+            }
+            let e = check(&got, &before, g, &s, &expected, segment == 1, false)?;
+            for (maximum, error) in errors[case].iter_mut().zip(e) {
+                *maximum = maximum.max(error);
+            }
+            ledger.completed_fence(c::sample(client)?)?;
+            previous = Some(got);
+        }
+        drop(previous);
+        finish_math(client, arena, &ids, g, &s)?;
         let got = snapshot(arena, &ids, retired)?;
-        if let Some(prior) = &previous {
-            inactive_preserved(&got, prior, &s)?;
+        let e = check(&got, &before, g, &s, &expected, true, true)?;
+        for (maximum, error) in errors[case].iter_mut().zip(e) {
+            *maximum = maximum.max(error);
         }
-        let e = check(&got, &before, g, &s, &expected, segment == 1, false)?;
-        for i in 0..3 {
-            errors[i] = errors[i].max(e[i]);
+        if subgroup {
+            between_errors = check(
+                &got,
+                &before,
+                g,
+                &s,
+                original
+                    .as_ref()
+                    .ok_or("segmented IQ original oracle absent")?,
+                true,
+                true,
+            )?;
+        } else {
+            original = Some(compact_original(&got, &s)?);
+            if original.as_ref().unwrap().owned_bytes() + expected.owned_bytes() > 512 * 1024 {
+                return Err("segmented IQ combined compact oracle host bound".into());
+            }
         }
+        pin.validate()?;
         ledger.completed_fence(c::sample(client)?)?;
-        previous = Some(got);
     }
-    finish_math(client, arena, &ids, g, &s)?;
-    let got = snapshot(arena, &ids, retired)?;
-    let e = check(&got, &before, g, &s, &expected, true, true)?;
-    for i in 0..3 {
-        errors[i] = errors[i].max(e[i]);
+    drop(original);
+    for nonfinite in [true, false] {
+        // Compiled public fault operands only; preserve the original pin and
+        // physical owners while testing actual producer/finite guard behavior.
+        let mut fault_before = before.clone();
+        if nonfinite {
+            fault_before[c::INPUT][s.input_first()] = f32::NAN.to_bits();
+        } else {
+            fault_before[c::MAP][s.map_first() + 3] = 0; // No valid group.
+        }
+        for (i, &id) in ids.iter().enumerate() {
+            c::write(arena, id, &fault_before[i][..words[i]], retired)?;
+        }
+        for segment in 0..2 {
+            pin.validate()?;
+            physical(client, arena, &ids, &seeds, &banks, g)?;
+            launch_segment(
+                client,
+                arena,
+                &ids,
+                &banks,
+                g,
+                &s,
+                map.groups(),
+                segment,
+                true,
+            )?;
+        }
+        finish_math(client, arena, &ids, g, &s)?;
+        let got = snapshot(arena, &ids, retired)?;
+        check_fault(&got, &fault_before, g, &s, nonfinite)?;
+        ledger.completed_fence(c::sample(client)?)?;
     }
     pin.validate()?;
     staged.validate_origin(&bank_slots)?;
@@ -860,7 +1090,11 @@ fn one(
         serde_json::json!({"gate_up_dtype":profile.0.gguf_id(),"down_dtype":profile.1.gguf_id(),
         "hidden":HIDDEN,"ff":FF,"capacity":CAP,"segment_capacity":SEGMENT,"count":1,"groups":10,
         "bank_physical_bytes":pages.iter().sum::<u64>(),"private_owned_bytes":private_pages.iter().sum::<u64>(),
-        "max_abs_activation_error":errors[0],"max_abs_partial_error":errors[1],"max_abs_rank_merge_error":errors[2],
+        "max_abs_activation_error":errors[0][0],"max_abs_partial_error":errors[0][1],"max_abs_rank_merge_error":errors[0][2],
+        "subgroup_count1_original64":true,"subgroup_rows_per_cube":4,"subgroup_physical_lanes":128,
+        "subgroup_max_abs_activation_error":errors[1][0],"subgroup_max_abs_partial_error":errors[1][1],"subgroup_max_abs_rank_merge_error":errors[1][2],
+        "subgroup_original_activation_max_difference":between_errors[0],"subgroup_original_partial_max_difference":between_errors[1],"subgroup_original_merge_max_difference":between_errors[2],
+        "subgroup_active_nonfinite_input_rejected":true,"subgroup_invalid_group_rejected_without_output_writes":true,
         "intermediate_inactive_rank_status_and_gap_checks":true,"original_global_local_slot_mapping":true,
         "full_public_bank_and_source_padding_preserved_after_private_reset":true}),
     )
@@ -973,6 +1207,114 @@ mod tests {
         assert!(compare(2., 1.).is_err());
         assert!(compare(f32::NAN, 1.).is_err());
         assert!(compare(1., f32::INFINITY).is_err());
+    }
+    #[test]
+    fn compact_original_keeps_every_rank_and_edge_without_owning_gaps() {
+        let (s, words) = spans(geometry(TensorType::Iq3Xxs, TensorType::Iq4Nl).unwrap()).unwrap();
+        let mut values: Vec<_> = words
+            .into_iter()
+            .map(|n| {
+                Zeroizing::new(vec![
+                    f32::NAN.to_bits();
+                    BufferLayout::new(n).unwrap().owned_words
+                ])
+            })
+            .collect();
+        for (i, first, stride, width, count, tag) in [
+            (c::ACT, s.act_first(), s.act_stride(), FF, 10, 1000usize),
+            (
+                c::PART,
+                s.partial_first(),
+                s.partial_stride(),
+                HIDDEN,
+                10,
+                20000,
+            ),
+            (
+                c::OUTPUT,
+                s.output_first(),
+                s.output_stride(),
+                HIDDEN,
+                1,
+                60000,
+            ),
+        ] {
+            for rank in 0..count {
+                for col in 0..width {
+                    values[i][first + rank * stride + col] =
+                        ((tag + rank * width + col) as f32).to_bits();
+                }
+            }
+        }
+        let actual = compact_original(&values, &s).unwrap();
+        assert_eq!(actual.act.len(), 6400);
+        assert_eq!(actual.part.len(), 25600);
+        assert_eq!(actual.output.len(), 2560);
+        for rank in 0..10 {
+            assert_eq!(actual.act[rank * FF], (1000 + rank * FF) as f32);
+            assert_eq!(
+                actual.act[(rank + 1) * FF - 1],
+                (1000 + (rank + 1) * FF - 1) as f32
+            );
+            assert_eq!(actual.part[rank * HIDDEN], (20000 + rank * HIDDEN) as f32);
+            assert_eq!(
+                actual.part[(rank + 1) * HIDDEN - 1],
+                (20000 + (rank + 1) * HIDDEN - 1) as f32
+            );
+        }
+        assert_eq!(
+            (actual.output[0], actual.output[HIDDEN - 1]),
+            (60000., 62559.)
+        );
+        assert_eq!(actual.owned_bytes(), (6400 + 25600 + 2560) * 4);
+        assert!(compact_original(&values[..7], &s).is_err());
+        values[c::ACT][s.act_first() + 9 * s.act_stride() + FF - 1] = f32::INFINITY.to_bits();
+        assert!(compact_original(&values, &s).is_err());
+        values[c::ACT][s.act_first() + 9 * s.act_stride() + FF - 1] = 1f32.to_bits();
+        values[c::PART].truncate(s.partial_first() + 9 * s.partial_stride() + HIDDEN - 1);
+        assert!(compact_original(&values, &s).is_err());
+    }
+    #[test]
+    fn fault_owning_gate_rejects_prefix_gaps_inactive_ranks_and_readonly_changes() {
+        let g = geometry(TensorType::Iq3Xxs, TensorType::Iq4Nl).unwrap();
+        let (s, words) = spans(g).unwrap();
+        let before: Vec<_> = words
+            .into_iter()
+            .map(|n| Zeroizing::new(vec![0u32; BufferLayout::new(n).unwrap().owned_words]))
+            .collect();
+        let mut actual = before.clone();
+        for rank in 0..10 {
+            actual[c::STATUS][s.status_first() + rank] = 1;
+            actual[c::STATUS][s.status_first() + k::MAX_ROUTES + rank] = 1;
+            actual[c::ACT][s.act_first() + rank * s.act_stride()] = f32::NAN.to_bits();
+            actual[c::PART][s.partial_first() + rank * s.partial_stride()] = f32::NAN.to_bits();
+        }
+        actual[c::OUTPUT][s.output_first()] = f32::NAN.to_bits();
+        check_fault(&actual, &before, g, &s, true).unwrap();
+        for (owner, index) in [
+            (c::ACT, 0),
+            (c::ACT, s.act_first() + FF),
+            (c::ACT, s.act_first() + 10 * s.act_stride()),
+            (c::PART, s.partial_first() + HIDDEN),
+            (c::OUTPUT, s.output_first() + HIDDEN),
+            (c::STATUS, 0),
+            (c::STATUS, s.status_first() + 10),
+            (c::STATUS, s.status_first() + g.status_words()),
+            (c::MAP, s.map_first()),
+            (c::INPUT, s.input_first()),
+            (c::PROB, s.prob_first()),
+            (7, 0),
+        ] {
+            let mut damaged = actual.clone();
+            damaged[owner][index] ^= 1;
+            assert!(
+                check_fault(&damaged, &before, g, &s, true).is_err(),
+                "owner{owner} index{index}"
+            );
+        }
+        check_fault(&before, &before, g, &s, false).unwrap();
+        assert!(check_fault(&actual, &before, g, &s, false).is_err());
+        assert!(check_fault(&actual[..7], &before, g, &s, true).is_err());
     }
     #[test]
     fn actual_shape_cpu_tree_oracles_are_finite_and_nonzero_for_all_profiles() {

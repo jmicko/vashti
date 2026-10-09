@@ -82,6 +82,9 @@ impl GpuExecutor<'_> {
         if self.q3_skip_empty_segments && !self.q3_empty_slot_fill {
             return Err(err("native Q3 empty-segment runtime policy"));
         }
+        if self.q3_subgroup_moe && (!self.q3_empty_slot_fill || !self.q3_skip_empty_segments) {
+            return Err(err("native Q3 subgroup runtime policy"));
+        }
         if self.q3_empty_slot_fill
             && (self.packed_profile != expert_banks::OriginalPackedProfile::UnslothQ3
                 || cap != 10
@@ -410,7 +413,12 @@ impl GpuExecutor<'_> {
             write_gpu_header(arena, ids[PROB], &*probs, &w.poison)?;
             physical(arena, bank, g, &ids, s.stamp.fault, w)?;
             if !split.gpu().is_empty() {
-                if self.shared_kernels
+                if self.q3_subgroup_moe {
+                    let active = active_segments
+                        .as_ref()
+                        .ok_or(err("native Q3 subgroup segment proof absent"))?;
+                    launch_q3_subgroup_segments(arena, bank, g, &spans, &ids, active)?;
+                } else if self.shared_kernels
                     && bank.profile() == crate::expert_banks::OriginalPackedProfile::Q4
                 {
                     let owner = |i| arena.handle(ids[i]).cloned().map_err(u::fault);
@@ -907,6 +915,53 @@ fn launch_q3_active_segments(
                 g.tile(),
             );
         }
+    }
+    Ok(())
+}
+
+/// Same frozen original plan/physical owners as the generic dispatch above.
+/// Only the explicit Q3 count1 option chooses the already validated subgroup
+/// arithmetic. Finite/fault/merge and all-family publication remain unchanged.
+fn launch_q3_subgroup_segments(
+    arena: &PrivateArena,
+    bank: &ExpertBanks,
+    g: k::Geometry,
+    s: &k::Spans,
+    ids: &[BufferId; 7],
+    active: &[bool; 2],
+) -> Result<()> {
+    let client = arena.client().map_err(u::fault)?;
+    let owner = |index: usize| arena.handle(ids[index]).cloned().map_err(u::fault);
+    let owners = [
+        owner(0)?,
+        owner(1)?,
+        owner(2)?,
+        owner(3)?,
+        owner(4)?,
+        owner(5)?,
+        owner(6)?,
+    ];
+    for (shard, &enabled) in active.iter().enumerate() {
+        if !enabled {
+            continue;
+        }
+        let ga = &bank.gate().segments()[shard];
+        let up = &bank.up().segments()[shard];
+        let down = &bank.down().segments()[shard];
+        crate::quant_matvec::q3_subgroup_moe::launch(
+            client,
+            g,
+            s,
+            [
+                ga.handle().clone(),
+                up.handle().clone(),
+                down.handle().clone(),
+            ],
+            owners.clone(),
+            ga.first_slot(),
+            ga.capacity(),
+            10,
+        )?;
     }
     Ok(())
 }
