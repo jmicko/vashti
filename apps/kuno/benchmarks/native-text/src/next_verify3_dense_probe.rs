@@ -69,6 +69,8 @@ pub(crate) fn registration(
 
 const NORMAL_CASES: usize = TYPES.len() * WIDTHS.len() * 3;
 const FAULT_CASES: usize = TYPES.len() * 2;
+const FUSED_FAULT_KINDS: [usize; 7] = [1, 2, 3, 4, 5, 7, 8];
+const FUSED_FAULT_CASES: usize = TYPES.len() * 3 * FUSED_FAULT_KINDS.len();
 
 #[derive(Clone, Copy)]
 struct Layout {
@@ -229,8 +231,12 @@ fn input(x: Layout, columns: usize, count: usize, bad: usize) -> Zeroizing<Vec<f
                 ((col * 17 + token * 13) % 97) as f32 / 64. - 0.75;
         }
     }
-    if bad == 1 {
-        values[x.input_first + (count - 1) * x.input_stride + columns - 1] = f32::NAN;
+    if matches!(bad, 1 | 7 | 8) {
+        values[x.input_first + (count - 1) * x.input_stride + columns - 1] = match bad {
+            7 => f32::INFINITY,
+            8 => f32::NEG_INFINITY,
+            _ => f32::NAN,
+        };
     }
     values
 }
@@ -300,8 +306,8 @@ fn check_output(
         if i >= x.output_first && token < count && row < ROWS {
             let actual = f32::from_bits(word(bytes, i));
             let reference = references[token * ROWS + row];
-            if bad == 1 && token == count - 1 {
-                if !actual.is_nan() {
+            if matches!(bad, 1 | 7 | 8) && token == count - 1 {
+                if actual.is_finite() || bad == 1 && !actual.is_nan() {
                     return Err("Verify3 active NaN input escaped finite gate".into());
                 }
             } else {
@@ -316,17 +322,27 @@ fn check_output(
             }
             active[token * ROWS + row] = actual;
         } else {
-            let required = if bad == 2 && i == x.output_words - 1 {
-                f32::NAN.to_bits()
-            } else {
-                0
-            };
+            let required = bad_output_marker(x, count, bad)
+                .filter(|&(at, _)| at == i)
+                .map_or(0, |(_, bits)| bits);
             if word(bytes, i) != required {
                 return Err("Verify3 output prefix/inactive/gap/full padding changed".into());
             }
         }
     }
     Ok((active, maximum))
+}
+fn bad_output_marker(x: Layout, count: usize, bad: usize) -> Option<(usize, u32)> {
+    match bad {
+        2 => Some((x.output_words - 1, f32::NAN.to_bits())),
+        3 => Some((0, f32::NAN.to_bits())),
+        4 => Some((x.output_first + ROWS, f32::INFINITY.to_bits())),
+        5 => Some((
+            x.output_first + count * x.output_stride,
+            f32::NEG_INFINITY.to_bits(),
+        )),
+        _ => None,
+    }
 }
 fn check_fault(bytes: &[u8], owned: BufferLayout, bad: usize) -> Result<()> {
     if bytes.len() != owned.owned_bytes
@@ -378,6 +394,7 @@ fn case(
     m: &Fixture,
     count: usize,
     bad: usize,
+    fused: bool,
 ) -> Result<serde_json::Value> {
     if bad > 2 || bad != 0 && (count != 3 || m.columns != 2560) {
         return Err("Verify3 fixed fault inventory".into());
@@ -386,8 +403,8 @@ fn case(
     let values = input(x, m.columns, count, bad);
     let references = Zeroizing::new(expected(&m.decoded, m.columns, x, &values, count));
     let mut initial = Zeroizing::new(vec![0.; x.output_words]);
-    if bad == 2 {
-        initial[x.output_words - 1] = f32::NAN;
+    if let Some((index, bits)) = bad_output_marker(x, count, bad) {
+        initial[index] = f32::from_bits(bits);
     }
     let plans = [x.input_words, x.output_words, x.output_words, 1, 1]
         .map(BufferLayout::new)
@@ -459,24 +476,84 @@ fn case(
         return Err("Verify3 logical fault escaped full owner".into());
     }
     let spec = MatrixSpec::new(ROWS, m.columns, m.dtype)?;
-    next_shared::matrix_verify3(
-        client,
-        spec,
-        m.view.clone(),
-        handles[0].clone(),
-        handles[1].clone(),
-        fault,
-        x.input_words,
-        x.output_words,
-        &BatchSpans::new(
-            count,
-            0,
-            x.input_first,
-            x.input_stride,
-            x.output_first,
-            x.output_stride,
-        ),
-    )?;
+    let spans = BatchSpans::new(
+        count,
+        0,
+        x.input_first,
+        x.input_stride,
+        x.output_first,
+        x.output_stride,
+    );
+    if fused {
+        // Exact logical output binding, retaining the complete physical root
+        // for its independent read/padding/erasure checks below. No external
+        // finite scan is allowed to hide a missing candidate logical fault.
+        let output = handles[1]
+            .clone()
+            .offset_end((plans[1].owned_bytes - x.output_words * 4) as u64);
+        if m.dtype == 0 {
+            // F32 row offsets are256-byte aligned for both compiled widths.
+            // Two original tiles prove the final complement excludes active
+            // earlier-tile words; no new public source or owner is introduced.
+            let row_bytes = m.columns * 4;
+            for (first, rows) in [(0usize, 4usize), (4, ROWS - 4)] {
+                let weights = m
+                    .view
+                    .clone()
+                    .offset_start((first * row_bytes) as u64)
+                    .offset_end(((ROWS - first - rows) * row_bytes) as u64);
+                let tile = MatrixSpec::new(rows, m.columns, m.dtype)?;
+                next_shared::matrix_verify3_finite(
+                    client,
+                    tile,
+                    weights,
+                    handles[0].clone(),
+                    output.clone(),
+                    fault.clone(),
+                    x.input_words,
+                    x.output_words,
+                    &BatchSpans::new(
+                        count,
+                        0,
+                        x.input_first,
+                        x.input_stride,
+                        x.output_first + first,
+                        x.output_stride,
+                    ),
+                    ROWS,
+                    x.output_first,
+                    first + rows == ROWS,
+                )?;
+            }
+        } else {
+            next_shared::matrix_verify3_finite(
+                client,
+                spec,
+                m.view.clone(),
+                handles[0].clone(),
+                output,
+                fault,
+                x.input_words,
+                x.output_words,
+                &spans,
+                ROWS,
+                x.output_first,
+                true,
+            )?;
+        }
+    } else {
+        next_shared::matrix_verify3(
+            client,
+            spec,
+            m.view.clone(),
+            handles[0].clone(),
+            handles[1].clone(),
+            fault,
+            x.input_words,
+            x.output_words,
+            &spans,
+        )?;
+    }
     // Old original control uses the same frozen packed bytes, active input rows
     // and output slots. No candidate/default selection changes during a case.
     for token in 0..count {
@@ -493,6 +570,9 @@ fn case(
         )?;
     }
     for (output, fault) in [(1, 3), (2, 4)] {
+        if fused && output == 1 {
+            continue;
+        }
         crate::resident_util::verify_finite::launch::<WgpuRuntime>(
             client,
             CubeCount::Static(plans[output].owned_words.div_ceil(64) as u32, 1, 1),
@@ -519,7 +599,7 @@ fn case(
         audit(client)?;
     }
     for (&a, &b) in outputs[0].iter().zip(outputs[1].iter()) {
-        if a.is_nan() && b.is_nan() {
+        if a.is_nan() && b.is_nan() || matches!(bad, 7 | 8) && !a.is_finite() && !b.is_finite() {
             continue;
         }
         let error = (f64::from(a) - f64::from(b)).abs();
@@ -548,6 +628,8 @@ fn case(
     Ok(
         serde_json::json!({"dtype":m.dtype,"columns":m.columns,"rows":ROWS,
         "count":count,"fault_case":bad,"source_prefix_bytes":m.prefix,
+        "logical_finite_fused":fused,"external_candidate_finite_scan":!fused,
+        "projection_tiles":if fused && m.dtype==0 {2}else{1},
         "max_cpu_f64_abs_error":maximum,"max_old_gpu_abs_error":baseline_error,
         "full_private_bytes":full,"active_values":count*ROWS,
         "full_owner_guards_preserved":true,"normal_unused_regions_zero":bad==0,
@@ -561,6 +643,23 @@ pub(crate) fn run(
     client: &ComputeClient<WgpuRuntime>,
     limits: &wgpu::Limits,
 ) -> Result<serde_json::Value> {
+    run_inner(client, limits, false)
+}
+
+/// Separate parent-registered fixed public candidate, no ENV/config changes.
+#[allow(dead_code)] // Parent owns the canonical protected selector.
+pub(crate) fn run_fused(
+    client: &ComputeClient<WgpuRuntime>,
+    limits: &wgpu::Limits,
+) -> Result<serde_json::Value> {
+    run_inner(client, limits, true)
+}
+
+fn run_inner(
+    client: &ComputeClient<WgpuRuntime>,
+    limits: &wgpu::Limits,
+    fused: bool,
+) -> Result<serde_json::Value> {
     if cfg!(any(
         feature = "direct-device",
         feature = "cpu-fma",
@@ -573,6 +672,9 @@ pub(crate) fn run(
     // Actual enabled features/subgroup interval must already have passed the
     // parent's adapter gate; this checks the same resource ceilings again.
     next_shared::validate_verify3_limits(limits, true, 16, 32)?;
+    if fused {
+        next_shared::validate_verify3_finite_limits(limits, true, 16, 32)?;
+    }
     if limits.max_compute_workgroup_storage_size < 16 * 1024 {
         return Err("Verify3 original Q4 GPU control storage limit".into());
     }
@@ -623,21 +725,29 @@ pub(crate) fn run(
         PrivateArena::new_transient_on_configured(client.clone(), PRIVATE_CAP, retired.clone())?;
     arena.enable_public_owned_zero_audit()?;
     let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<_> {
-        let mut reports = Vec::with_capacity(NORMAL_CASES + FAULT_CASES);
+        let faults = if fused {
+            FUSED_FAULT_CASES
+        } else {
+            FAULT_CASES
+        };
+        let mut reports = Vec::with_capacity(NORMAL_CASES + faults);
         for m in &sources {
             for count in 1..=3 {
-                reports.push(case(client, &mut arena, &mut ledger, m, count, 0)?);
+                reports.push(case(client, &mut arena, &mut ledger, m, count, 0, fused)?);
                 client.memory_cleanup();
                 cubecl::future::block_on(client.sync()).map_err(|_| "Verify3 case completion")?;
                 ledger.completed_fence(sample(client)?)?;
             }
             if m.columns == 2560 {
-                for bad in 1..=2 {
-                    reports.push(case(client, &mut arena, &mut ledger, m, 3, bad)?);
-                    client.memory_cleanup();
-                    cubecl::future::block_on(client.sync())
-                        .map_err(|_| "Verify3 fault case completion")?;
-                    ledger.completed_fence(sample(client)?)?;
+                for count in if fused { 1..=3 } else { 3..=3 } {
+                    let kinds: &[usize] = if fused { &FUSED_FAULT_KINDS } else { &[1, 2] };
+                    for &bad in kinds {
+                        reports.push(case(client, &mut arena, &mut ledger, m, count, bad, fused)?);
+                        client.memory_cleanup();
+                        cubecl::future::block_on(client.sync())
+                            .map_err(|_| "Verify3 fault case completion")?;
+                        ledger.completed_fence(sample(client)?)?;
+                    }
                 }
             }
         }
@@ -645,7 +755,17 @@ pub(crate) fn run(
     }));
     let closed = arena.close();
     let reports = match (attempt, closed, retired.load(Ordering::Acquire)) {
-        (Ok(Ok(r)), Ok(()), false) if r.len() == NORMAL_CASES + FAULT_CASES => r,
+        (Ok(Ok(r)), Ok(()), false)
+            if r.len()
+                == NORMAL_CASES
+                    + if fused {
+                        FUSED_FAULT_CASES
+                    } else {
+                        FAULT_CASES
+                    } =>
+        {
+            r
+        }
         _ => return Err("Verify3 fixed public operators failed; no accepted receipt".into()),
     };
     let zero = arena
@@ -683,8 +803,11 @@ pub(crate) fn run(
         return Err("Verify3 allocator release not accepted".into());
     }
     Ok(
-        serde_json::json!({"scope":"compiled-public-original-packed-Verify3-projection-only",
-        "format_count":TYPES.len(),"numeric_cases":NORMAL_CASES,"fault_cases":FAULT_CASES,
+        serde_json::json!({"scope":if fused {"compiled-public-original-packed-Verify3-logical-finite-only"}
+            else {"compiled-public-original-packed-Verify3-projection-only"},
+        "logical_finite_fused":fused,"external_candidate_finite_scan":!fused,
+        "format_count":TYPES.len(),"numeric_cases":NORMAL_CASES,
+        "fault_cases":if fused {FUSED_FAULT_CASES} else {FAULT_CASES},
         "max_runtime_count":3,"owning_member_capacity":MAX8,"cases":reports,
         "absolute_tolerance":ABS,"relative_tolerance":REL,"cpu_decoded_f64_reference":true,
         "old_original_gpu_control":true,"prior_fault_preserved":true,
@@ -883,6 +1006,37 @@ mod tests {
             check_fault(&b, f, bad).unwrap();
             b[4] = 1;
             assert!(check_fault(&b, f, bad).is_err());
+        }
+    }
+
+    #[test]
+    fn fused_fault_inventory_covers_every_count_and_unwritten_logical_region() {
+        assert_eq!(FUSED_FAULT_CASES, 210);
+        for count in 1..=3 {
+            let x = layout(2560, count).unwrap();
+            let owned = BufferLayout::new(x.output_words).unwrap();
+            for bad in FUSED_FAULT_KINDS {
+                let mut values = vec![0.; x.output_words];
+                if let Some((index, bits)) = bad_output_marker(x, count, bad) {
+                    assert!(index < x.output_words);
+                    let relative = index.saturating_sub(x.output_first);
+                    assert!(
+                        !(index >= x.output_first
+                            && relative / x.output_stride < count
+                            && relative % x.output_stride < ROWS)
+                    );
+                    values[index] = f32::from_bits(bits);
+                } else {
+                    for row in 0..ROWS {
+                        values[x.output_first + (count - 1) * x.output_stride + row] = f32::NAN;
+                    }
+                }
+                let wire = bytes(&values, owned.owned_bytes);
+                check_output(&wire, x, count, bad, &vec![0.; count * ROWS], owned).unwrap();
+                assert!(check_output(&wire, x, count, 0, &vec![0.; count * ROWS], owned).is_err());
+                let f = BufferLayout::new(1).unwrap();
+                check_fault(&bytes(&[f32::from_bits(SEED | 1)], f.owned_bytes), f, bad).unwrap();
+            }
         }
     }
 }

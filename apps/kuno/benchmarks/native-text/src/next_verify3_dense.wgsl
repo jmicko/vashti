@@ -38,6 +38,7 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(subgroup_id) sg:u32,
         if local==0u {atomicOr(&fault[0],8u);}
         return;
     }
+    // VERIFY3_COMPLETE_INTERVAL_GUARD
     let row=group.x*(128u/width)+sg;
     let base=row*ROW_BYTES;let input=p.input_first;
     var sum=vec3<f32>(0.0);
@@ -133,4 +134,5 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(subgroup_id) sg:u32,
             if !(abs(total.z)<=3.4028234663852886e38) {atomicOr(&fault[0],1u);}
         }
     }
+    // VERIFY3_LOGICAL_COMPLEMENT_SCAN
 }

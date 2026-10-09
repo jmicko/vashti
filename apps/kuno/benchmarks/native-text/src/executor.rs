@@ -71,6 +71,24 @@ fn validate_target_verify3_policy(
     Ok(())
 }
 
+fn validate_target_verify3_fused_policy(
+    selected: bool,
+    frozen: Option<bool>,
+    verify3: bool,
+    target_rows: bool,
+    members: usize,
+    tile: usize,
+) -> Result<()> {
+    if frozen.is_some_and(|old| old != selected)
+        || selected && (!verify3 || !target_rows || members != 8 || tile != 8)
+    {
+        return Err(Error::InvalidFormat(
+            "native Verify3 finite construction policy",
+        ));
+    }
+    Ok(())
+}
+
 fn cleanup_failure_category(code: &str) -> Option<&'static str> {
     // Forward fixed infrastructure categories only, never backend descriptions,
     // shader source, metadata values or request content.
@@ -356,6 +374,7 @@ pub(crate) struct ResidentAdmission {
     request_io_nonce: Arc<AtomicU64>,
     request_io_checkpoints: Arc<AtomicU64>,
     target_verify3_dense: bool,
+    target_verify3_fused: bool,
 }
 /// Borrowed only inside the existing guarded model allocation callback. This
 /// proves that its MAIN lock is already held; constructor checks must not
@@ -774,6 +793,8 @@ pub struct GpuExecutor<'a> {
     pub(crate) target_rows_reserved: bool,
     pub(crate) target_verify3_dense: bool,
     pub(crate) target_verify3_dense_calls: u64,
+    pub(crate) target_verify3_fused: bool,
+    pub(crate) target_verify3_fused_calls: u64,
     pub(crate) resident_banks_frozen: bool,
     pub(crate) resident_router_audits: u64,
     pub q6_integer_head_prepares: u64,
@@ -1003,6 +1024,8 @@ impl<'a> GpuExecutor<'a> {
             target_rows_reserved: false,
             target_verify3_dense: false,
             target_verify3_dense_calls: 0,
+            target_verify3_fused: false,
+            target_verify3_fused_calls: 0,
             resident_banks_frozen: false,
             resident_router_audits: 0,
             q6_integer_head_prepares: 0,
@@ -1805,6 +1828,16 @@ impl<'a> GpuExecutor<'a> {
             self.native_projection_member_capacity(),
             self.native_projection_tile(),
         )?;
+        validate_target_verify3_fused_policy(
+            self.target_verify3_fused,
+            self.resident_admission
+                .as_ref()
+                .map(|a| a.target_verify3_fused),
+            self.target_verify3_dense,
+            self.target_rows_reserved,
+            self.native_projection_member_capacity(),
+            self.native_projection_tile(),
+        )?;
         if self.target_rows_reserved
             && (self.resident_router_reserved
                 || !self.packed_profile.is_low_bit()
@@ -1958,6 +1991,7 @@ impl<'a> GpuExecutor<'a> {
         .map_err(admission_error)?;
         let admission = ResidentAdmission {
             target_verify3_dense: self.target_verify3_dense,
+            target_verify3_fused: self.target_verify3_fused,
             deferred_router_reads: Arc::new(AtomicU64::new(0)),
             request_io_nonce: Arc::new(AtomicU64::new(0)),
             request_io_checkpoints: Arc::new(AtomicU64::new(0)),
@@ -2567,13 +2601,15 @@ impl<'a> GpuExecutor<'a> {
             || fault.size_in_used() != 4
             || x.size_in_used() < (input_words as u64) * 4
             || y.size_in_used() < (output_words as u64) * 4
+            || self.target_verify3_fused && y.size_in_used() != (output_words as u64) * 4
         {
             return Err(Error::InvalidBufferLength);
         }
-        let fused = self.fast_dense_fault
-            && self.fast_dense
-            && self.native_projection_members == 1
-            && self.native_projection_tile() == 1;
+        let fused = self.target_verify3_fused
+            || self.fast_dense_fault
+                && self.fast_dense
+                && self.native_projection_members == 1
+                && self.native_projection_tile() == 1;
         let row_bytes =
             usize::try_from(tensor.info().row_bytes()).map_err(|_| Error::ArithmeticOverflow)?;
         if row_bytes == 0 || row_bytes > TILE_BYTES {
@@ -2646,17 +2682,39 @@ impl<'a> GpuExecutor<'a> {
                         .target_verify3_dense_calls
                         .checked_add(1)
                         .ok_or(Error::ArithmeticOverflow)?;
-                    crate::next_shared::matrix_verify3(
-                        &self.client,
-                        spec,
-                        weights,
-                        x.clone(),
-                        y.clone(),
-                        fault.clone(),
-                        input_words,
-                        output_words,
-                        &packet,
-                    )?;
+                    if self.target_verify3_fused {
+                        let fused_calls = self
+                            .target_verify3_fused_calls
+                            .checked_add(1)
+                            .ok_or(Error::ArithmeticOverflow)?;
+                        crate::next_shared::matrix_verify3_finite(
+                            &self.client,
+                            spec,
+                            weights,
+                            x.clone(),
+                            y.clone(),
+                            fault.clone(),
+                            input_words,
+                            output_words,
+                            &packet,
+                            m.outputs(),
+                            spans.output_first(),
+                            first + rows == m.outputs(),
+                        )?;
+                        self.target_verify3_fused_calls = fused_calls;
+                    } else {
+                        crate::next_shared::matrix_verify3(
+                            &self.client,
+                            spec,
+                            weights,
+                            x.clone(),
+                            y.clone(),
+                            fault.clone(),
+                            input_words,
+                            output_words,
+                            &packet,
+                        )?;
+                    }
                     self.target_verify3_dense_calls = calls;
                     self.shared_dense_calls += 1;
                     self.fast_dense_calls += 1;
@@ -4087,6 +4145,41 @@ mod target_verify3_tests {
                     for frozen in [None, Some(false)] {
                         validate_target_verify3_policy(false, frozen, rows, shared, members, tile)
                             .unwrap();
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn complete_verify3_finite_mode_is_separately_frozen_before_mutation() {
+        for frozen in [None, Some(true)] {
+            validate_target_verify3_fused_policy(true, frozen, true, true, 8, 8).unwrap();
+        }
+        for (selected, frozen, verify3, rows, members, tile) in [
+            (true, Some(false), true, true, 8, 8),
+            (false, Some(true), true, true, 8, 8),
+            (true, None, false, true, 8, 8),
+            (true, None, true, false, 8, 8),
+            (true, None, true, true, 1, 8),
+            (true, None, true, true, 8, 1),
+            (true, None, true, true, 8, 4),
+        ] {
+            assert!(
+                validate_target_verify3_fused_policy(
+                    selected, frozen, verify3, rows, members, tile
+                )
+                .is_err()
+            );
+        }
+        for verify3 in [false, true] {
+            for rows in [false, true] {
+                for (members, tile) in [(1, 1), (8, 1), (8, 4), (8, 8)] {
+                    for frozen in [None, Some(false)] {
+                        validate_target_verify3_fused_policy(
+                            false, frozen, verify3, rows, members, tile,
+                        )
+                        .unwrap();
                     }
                 }
             }
