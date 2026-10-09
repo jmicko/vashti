@@ -6,6 +6,9 @@ import sys
 
 def selected_target_policy(environment, mtp=False):
     selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
+    if "KUNO_LAB_MTP_PROFILE" in selected:
+        if not mtp or selected.pop("KUNO_LAB_MTP_PROFILE") != "strata-q2":
+            raise ValueError("Alternate draft requires the explicit original Q2 profile")
     if "KUNO_LAB_TARGET_ROUTER" in selected:
         if (not mtp or selected.pop("KUNO_LAB_TARGET_ROUTER") != "device-warm-public"
                 or selected.get("KUNO_LAB_WARM_REPLAY") != "once"
@@ -45,6 +48,17 @@ def selected_target_policy(environment, mtp=False):
     return selected
 
 def memory_limit(environment, arguments):
+    if "KUNO_LAB_STRATA_MTP_PUBLIC_ONLY" in environment or (len(arguments) > 2 and arguments[2] == "strata-mtp-probe"):
+        selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
+        if "KUNO_LAB_MTP_SWEEPS" in selected and selected.pop("KUNO_LAB_MTP_SWEEPS") != "fused":
+            raise ValueError("Q2 draft requires canonical fused sweeps")
+        permitted = {"KUNO_LAB_STRATA_MTP_PUBLIC_ONLY", "KUNO_TEST_STRATA_MTP", "KUNO_TEST_DASLAB_DIR", "KUNO_PUBLIC_DASLAB_CARRY", "KUNO_PUBLIC_STRATA_MTP_REFERENCE", "KUNO_PUBLIC_RECEIPT"}
+        if (set(selected) != permitted or any(not value for value in selected.values())
+                or selected["KUNO_LAB_STRATA_MTP_PUBLIC_ONLY"] != "1"
+                or len(arguments) != 3 or arguments[1] not in ("intel", "nvidia") or arguments[2] != "strata-mtp-probe"):
+            raise ValueError("Q2 draft requires the fixed independent public reference")
+        return 8 * 1024**3
+
     if "KUNO_LAB_LANGUAGE_PUBLIC_ONLY" in environment:
         selected = selected_target_policy(environment, mtp=True)
         required = {"KUNO_LAB_LANGUAGE_PUBLIC_ONLY","KUNO_LAB_LANGUAGE_FIXTURE","KUNO_TEST_Q3_DIR","KUNO_TEST_MTP","KUNO_PUBLIC_RECEIPT","KUNO_LAB_STATIC_CACHE_BYTES"}

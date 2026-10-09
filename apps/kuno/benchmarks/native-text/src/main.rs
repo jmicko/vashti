@@ -81,6 +81,9 @@ mod segmented_iq_moe_probe;
 mod small_cpu;
 mod status_fold_batch;
 mod steady_public;
+mod strata_mtp_gpu_probe;
+#[allow(dead_code)] // Shared independent public CPU oracle wire.
+mod strata_mtp_public_reference;
 mod target_lab_build;
 mod token_waves;
 mod transient_probe;
@@ -1160,6 +1163,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         None
     };
+    let strata_mtp_inputs = if mode == "strata-mtp-probe" {
+        Some(strata_mtp_gpu_probe::registration(
+            &std::env::args_os().collect::<Vec<_>>(),
+            std::env::vars_os(),
+            target_lab_build::Build::compiled() != target_lab_build::Build::Rejected,
+        )?)
+    } else {
+        if std::env::var_os("KUNO_LAB_STRATA_MTP_PUBLIC_ONLY").is_some() {
+            return Err("Q2 draft public gate requires its dedicated probe".into());
+        }
+        None
+    };
     let resident_mtp_inputs = if mode == "resident-mtp-probe" {
         Some(resident_mtp_probe::registration(
             &std::env::args_os().collect::<Vec<_>>(),
@@ -2052,6 +2067,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 resident_mtp::validate_fused_sweep_limits(&adapter.limits())?;
             }
         }
+        if let Some(input) = &strata_mtp_inputs {
+            resident_mtp::validate_limits(&adapter.limits())?;
+            if input.fused_sweeps {
+                resident_mtp::validate_fused_sweep_limits(&adapter.limits())?;
+            }
+        }
         if target_rows_inputs
             .as_ref()
             .is_some_and(|i| i.prepared_experts)
@@ -2260,6 +2281,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         if let Some(inputs) = resident_mtp_inputs {
             return resident_mtp_probe::run(&client, &grouped_limits, vendor, inputs);
+        }
+        if let Some(inputs) = strata_mtp_inputs {
+            return strata_mtp_gpu_probe::run(&client, &grouped_limits, vendor, inputs);
         }
         if let Some(inputs) = target_rows_inputs {
             return daslab_target_rows_probe::run(&client, &grouped_limits, inputs);

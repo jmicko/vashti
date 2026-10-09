@@ -1676,6 +1676,23 @@ class StrataInspiredGuards(unittest.TestCase):
         guard=importlib.util.module_from_spec(spec);spec.loader.exec_module(guard)
         return guard
 
+    def test_q2_draft_requires_independent_reference_and_exact_profile(self):
+        guard=self.guard()
+        env={"KUNO_LAB_STRATA_MTP_PUBLIC_ONLY":"1", "KUNO_TEST_STRATA_MTP":"/original/q2", "KUNO_TEST_DASLAB_DIR":"/original/target", "KUNO_PUBLIC_DASLAB_CARRY":"/public/carry", "KUNO_PUBLIC_STRATA_MTP_REFERENCE":"/public/q2-reference", "KUNO_PUBLIC_RECEIPT":"/public/numeric", "KUNO_LAB_MTP_SWEEPS":"fused"}
+        for card in ("intel","nvidia"):
+            args=["/frozen/binary",card,"strata-mtp-probe"]
+            self.assertEqual(guard.memory_limit(env,args),8*1024**3)
+            for key in ("KUNO_PUBLIC_STRATA_MTP_REFERENCE", "KUNO_TEST_DASLAB_DIR"):
+                bad=dict(env);bad.pop(key)
+                with self.assertRaises(ValueError):guard.memory_limit(bad,args)
+            for key in ("KUNO_LAB_MTP_PROFILE", "KUNO_LAB_TARGET_ROUTER", "KUNO_LAB_PROMPT"):
+                with self.assertRaises(ValueError):guard.memory_limit(dict(env,**{key:"strata-q2"}),args)
+        env={"KUNO_LAB_LANGUAGE_PUBLIC_ONLY":"1","KUNO_LAB_LANGUAGE_FIXTURE":"first-code","KUNO_LAB_STATIC_CACHE_BYTES":"8589934592","KUNO_TEST_Q3_DIR":"/original","KUNO_TEST_MTP":"/original/sidecar","KUNO_PUBLIC_RECEIPT":"/public/numeric","KUNO_LAB_MTP_PROFILE":"strata-q2"}
+        args=["/frozen/binary","intel","daslab-language-probe"]
+        self.assertEqual(guard.memory_limit(env,args),48*1024**3+196*1024**2)
+        for value in ("", "q2", "q8", "STRATA-Q2"):
+            with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_MTP_PROFILE=value),args)
+
     def test_batch_router_kernel_is_model_free_and_card_specific(self):
         guard=self.guard()
         env={"KUNO_LAB_BATCH_ROUTER_PUBLIC_ONLY":"1","KUNO_PUBLIC_RECEIPT":"/public/numeric"}
