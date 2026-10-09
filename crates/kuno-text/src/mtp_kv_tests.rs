@@ -108,6 +108,8 @@ fn graph(file: &GgufFile, binding: u64) -> MtpGraph<'_> {
         vectors,
         names: file.tensors().keys().cloned().collect(),
         binding,
+        profile: MtpProfile::SelfContainedQ8,
+        target: None,
     }
 }
 

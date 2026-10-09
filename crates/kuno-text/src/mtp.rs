@@ -1,4 +1,4 @@
-//! Strict, sequential Rust reference for the self-contained Qwen4Exp MTP head.
+//! Strict, sequential Rust references for explicit Qwen4Exp MTP artifacts.
 //!
 //! This is an internal laboratory graph, not an HTTP model or speculative
 //! controller. It takes the preceding *wide* target/draft residual and current
@@ -10,6 +10,9 @@
 //! prototype's per-stream conditioning norm is not the publisher's equation.
 //! The pinned Unsloth Q8 sidecar has one dense-attention block at index48.
 //! Its four stored indexer tensors are inspected but deliberately not executed.
+//! The alternate Strata profile admits31 original-packed tensors and borrows a
+//! compatible bound target's embedding/head. Its split input projections and
+//! raw Gemma norm convention remain distinct from the self-contained sidecar.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -17,7 +20,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::cpu::Matrix;
-use crate::model::MatrixExecutor;
+use crate::model::{BoundGraph, GraphBindingId, MatrixExecutor};
 use crate::ops::{self, GatedResidualShape};
 use crate::{Error, GgufFile, MetadataValue, Result, TensorType, TensorView};
 
@@ -29,6 +32,19 @@ const EPS: f32 = 1e-6;
 const MAX_CONTEXT: usize = 2048;
 static NEXT_BINDING: AtomicU64 = AtomicU64::new(1);
 type Private = Zeroizing<Vec<f32>>;
+
+#[path = "mtp_strata.rs"]
+mod strata;
+
+/// Explicit source/arithmetic profile. Neither profile is selected by filename.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MtpProfile {
+    /// Self-contained Unsloth Q8 GGUF with already folded/direct norm vectors.
+    SelfContainedQ8,
+    /// Strata's original BF16/F32 dense, Q2_0 routed-expert GGUF. Norm vectors
+    /// are raw Gemma weights and the embedding/head belong to a bound target.
+    StrataQ2,
+}
 
 fn op<T>(value: std::result::Result<T, ops::OpsError>) -> Result<T> {
     value.map_err(|_| Error::InvalidFormat("MTP graph operator"))
@@ -46,12 +62,14 @@ fn private(values: Vec<f32>) -> Private {
 }
 
 /// Original sidecar weights only. No sequence, prompt, draft or cache is shared.
-/// Admission is deliberately limited to the inspected self-contained Q8 head.
+/// Each explicit profile preserves its own source packing and conditioning.
 pub struct MtpGraph<'a> {
     file: &'a GgufFile,
     vectors: BTreeMap<String, Vec<f32>>,
     names: BTreeSet<String>,
     binding: u64,
+    profile: MtpProfile,
+    target: Option<BoundGraph<'a, 'a>>,
 }
 
 impl<'a> MtpGraph<'a> {
@@ -141,6 +159,8 @@ impl<'a> MtpGraph<'a> {
             vectors: BTreeMap::new(),
             names: BTreeSet::new(),
             binding,
+            profile: MtpProfile::SelfContainedQ8,
+            target: None,
         };
         use TensorType::{Bf16, F32, Q8_0};
         for (name, dims, dtype) in [
@@ -212,10 +232,18 @@ impl<'a> MtpGraph<'a> {
         Ok(())
     }
 
+    /// Original source names, including the two borrowed target names for
+    /// Strata. Canonical aliases accepted by `tensor` are not duplicate owners.
     pub fn tensor_names(&self) -> impl Iterator<Item = &str> {
         self.names.iter().map(String::as_str)
     }
     pub fn tensor(&self, name: &str) -> Result<TensorView<'a>> {
+        if let Some(target) = self.target
+            && matches!(name, "token_embd.weight" | "output.weight")
+        {
+            return target.tensor(name);
+        }
+        let name = self.source_name(name)?;
         if !self.names.contains(name) {
             return Err(Error::InvalidFormat("unbound MTP tensor"));
         }
@@ -224,10 +252,55 @@ impl<'a> MtpGraph<'a> {
             .ok_or(Error::InvalidFormat("missing bound MTP tensor"))
     }
     fn vector(&self, name: &str) -> Result<&[f32]> {
+        let name = self.source_name(name)?;
         self.vectors
             .get(name)
             .map(Vec::as_slice)
             .ok_or(Error::InvalidFormat("unbound MTP vector"))
+    }
+
+    fn source_name<'n>(&self, name: &'n str) -> Result<&'n str> {
+        if self.profile == MtpProfile::StrataQ2 {
+            // A canonical separate gate/up or concatenated EH matrix does not
+            // exist in this profile. Never return the combined tensor under a
+            // misleading per-projection name.
+            if matches!(
+                name,
+                "blk.48.ffn_gate_exps.weight"
+                    | "blk.48.ffn_up_exps.weight"
+                    | "blk.48.nextn.eh_proj.weight"
+            ) {
+                return Err(Error::InvalidFormat("MTP role absent from source profile"));
+            }
+            return Ok(strata::source_name(name).unwrap_or(name));
+        }
+        Ok(name)
+    }
+
+    pub fn profile(&self) -> MtpProfile {
+        self.profile
+    }
+
+    /// Transient identity of the actual borrowed target; not a source digest.
+    pub fn target_binding_id(&self) -> Option<GraphBindingId> {
+        self.target.map(BoundGraph::binding_id)
+    }
+
+    /// Public static vectors in the convention used by this graph. Strata
+    /// GGUF Gemma weights have already received exactly one `1 + w` here.
+    /// Tensor views always expose original bytes, including unfurled norms.
+    pub fn static_vector(&self, name: &str) -> Result<&[f32]> {
+        self.vector(name)
+    }
+
+    /// Cached projections must guard both original descriptors. Borrowing the
+    /// target avoids a second disk copy, not a source-identity check.
+    pub fn verify_unchanged(&self) -> Result<()> {
+        self.file.verify_file_unchanged()?;
+        if let Some(target) = self.target {
+            target.verify_unchanged()?;
+        }
+        Ok(())
     }
 
     pub fn sequence(&self, context_limit: usize) -> Result<MtpSequence> {
@@ -304,9 +377,19 @@ impl<'a> MtpGraph<'a> {
             EPS,
         ))?);
         let h = condition_hidden(hidden, self.vector("blk.48.nextn.hnorm.weight")?)?;
-        project_conditioned(&e, &h, |concat| {
-            self.project(executor, "blk.48.nextn.eh_proj.weight", 0, concat, cancel)
-        })
+        match self.profile {
+            MtpProfile::SelfContainedQ8 => project_conditioned(&e, &h, |concat| {
+                self.project(executor, "blk.48.nextn.eh_proj.weight", 0, concat, cancel)
+            }),
+            MtpProfile::StrataQ2 => strata::project_conditioned(&e, &h, |hidden, input| {
+                let name = if hidden {
+                    "mtp.fc_hidden.weight"
+                } else {
+                    "mtp.fc_embedding.weight"
+                };
+                self.project(executor, name, 0, input, cancel)
+            }),
+        }
     }
 
     fn attention(
@@ -368,6 +451,23 @@ impl<'a> MtpGraph<'a> {
         shared: bool,
         cancel: &AtomicBool,
     ) -> Result<Private> {
+        if !shared && self.profile == MtpProfile::StrataQ2 {
+            let gate_up = self.project(
+                executor,
+                "blk.48.ffn_gate_up_exps.weight",
+                expert,
+                input,
+                cancel,
+            )?;
+            let activation = strata::activate_gate_up(&gate_up)?;
+            return self.project(
+                executor,
+                "blk.48.ffn_down_exps.weight",
+                expert,
+                &activation,
+                cancel,
+            );
+        }
         let suffix = if shared { "shexp" } else { "exps" };
         let gate = self.project(
             executor,
@@ -412,12 +512,21 @@ impl<'a> MtpGraph<'a> {
             }
         }
         let shared = self.expert(executor, input, 0, true, cancel)?;
-        let scalar: f32 = self
-            .vector("blk.48.ffn_gate_inp_shexp.weight")?
-            .iter()
-            .zip(input)
-            .map(|(w, x)| w * x)
-            .sum();
+        let scalar: f32 = match self.profile {
+            MtpProfile::SelfContainedQ8 => self
+                .vector("blk.48.ffn_gate_inp_shexp.weight")?
+                .iter()
+                .zip(input)
+                .map(|(w, x)| w * x)
+                .sum(),
+            MtpProfile::StrataQ2 => self.project(
+                executor,
+                "blk.48.ffn_gate_inp_shexp.weight",
+                0,
+                input,
+                cancel,
+            )?[0],
+        };
         if !scalar.is_finite() {
             return Err(Error::InvalidFormat("non-finite MTP shared gate"));
         }
@@ -447,7 +556,7 @@ impl<'a> MtpGraph<'a> {
         self.validate_input(sequence, token, preceding_hidden)?;
         sequence.poisoned = true;
         let result = (|| {
-            self.file.verify_file_unchanged()?;
+            self.verify_unchanged()?;
             let gr = op(GatedResidualShape::new(HC, D))?;
             let mut residual = self.condition(executor, token, preceding_hidden, cancel)?;
             let (input, inject) = self.mix(executor, &residual, "blk.48.hc_attn", true, cancel)?;
@@ -459,6 +568,9 @@ impl<'a> MtpGraph<'a> {
             let (mixed, _) =
                 self.mix(executor, &residual, "blk.48.nextn.hc_head", false, cancel)?;
             let logits = self.project(executor, "output.weight", 0, &mixed, cancel)?;
+            if self.profile == MtpProfile::StrataQ2 {
+                self.verify_unchanged()?;
+            }
             if cancel.load(Ordering::Relaxed) {
                 return Err(Error::InvalidFormat("MTP cancelled"));
             }
@@ -493,11 +605,14 @@ impl<'a> MtpGraph<'a> {
         self.validate_input(sequence, token, preceding_hidden)?;
         sequence.poisoned = true;
         let result = (|| {
-            self.file.verify_file_unchanged()?;
+            self.verify_unchanged()?;
             let residual = self.condition(executor, token, preceding_hidden, cancel)?;
             let (input, _) = self.mix(executor, &residual, "blk.48.hc_attn", false, cancel)?;
             let (mut key, value) = self.key_value(executor, &input, cancel)?;
             append_key_value(sequence, &mut key, &value)?;
+            if self.profile == MtpProfile::StrataQ2 {
+                self.verify_unchanged()?;
+            }
             if cancel.load(Ordering::Relaxed) {
                 return Err(Error::InvalidFormat("MTP cancelled"));
             }

@@ -28,6 +28,13 @@ future native implementation reference; its code is not linked or copied into
 Kuno's execution path. Exact source locations and outstanding owner gates are
 recorded in docs/kuno-native-mtp-prefix-notes.md at the repository root.
 
+The explicit Strata Q2 MTP GGUF profile's tensor inventory, fused gate/up row
+order, Gemma norm convention and split input projections were checked against
+the same MIT Strata v0.1.41 revision, tools/mtp_pack.py, tools/mtp_rt.py and
+sycl/src/core/mtp.cpp. Kuno's original-packed reader, equations and tests are
+Rust; neither Strata's runtime engine nor its Python tools execute here. The
+GGUF source manifest field is provenance, not a whole-artifact integrity hash.
+
 Qwen35 pretokenizer/special-token semantics were checked against llama.cpp
 revision 806eee9841de5f2c20f9d43914117f157d2baacc, src/llama-vocab.cpp, and
 Strata revision 6f32ec070f23ced9f50e704d854d775da52591ab,

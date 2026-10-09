@@ -305,6 +305,27 @@ impl<'model, 'file> BoundGraph<'model, 'file> {
     }
 }
 
+// Only compiled public MTP admission tests use this miniature target binding.
+// It admits real packed head/embedding views, but is not a full 48-layer target
+// oracle or a way for production callers to forge BoundGraph.
+#[cfg(test)]
+pub(crate) fn mtp_test_target(file: &GgufFile) -> Result<Qwen4Exp<'_>> {
+    let mut model = Qwen4Exp {
+        file,
+        vectors: BTreeMap::new(),
+        ple_hash: PleHashConfig::qwen38(),
+        eos: 248046,
+        binding_id: NEXT_BINDING_ID
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_add(1))
+            .map_err(|_| Error::ArithmeticOverflow)?,
+        bound_tensors: BTreeSet::new(),
+    };
+    for name in ["token_embd.weight", "output.weight"] {
+        model.matrix(name, &[D as u64, VOCAB as u64])?;
+    }
+    Ok(model)
+}
+
 impl<'a> Qwen4Exp<'a> {
     pub fn bind(file: &'a GgufFile) -> Result<Self> {
         if file
