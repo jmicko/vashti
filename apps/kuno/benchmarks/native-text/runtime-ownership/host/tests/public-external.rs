@@ -416,3 +416,10 @@ fn custom_selected_nested_atomic_rejects_but_unselected_fault_atomic_is_allowed(
     let nested = "struct A{v:atomic<u32>} @group(0) @binding(0) var<storage,read> a:array<A>; @compute @workgroup_size(1) fn main(){let x=atomicLoad(&a[0].v);}";
     assert!(subject::check_readonly_source(nested, 1).is_err());
 }
+
+#[test]
+fn external_owner_stream_is_frozen_once_even_for_the_same_identity() {
+    assert!(subject::configure_stream(None).is_ok());
+    assert!(subject::configure_stream(Some(STREAM)).is_err());
+    assert!(subject::configure_stream(Some(StreamId { value: 999 })).is_err());
+}

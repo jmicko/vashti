@@ -15,6 +15,15 @@ pub(super) fn fault(reason: &'static str) -> cubecl_runtime::server::ServerError
     }
 }
 
+/// One immutable-source pool per server; otherwise one Buffer could acquire
+/// consumers in two pools and a single-stream detach could not join both.
+pub(super) fn configure_stream(existing: Option<StreamId>) -> Result<(), &'static str> {
+    if existing.is_some() {
+        return Err("public external owner stream already fixed");
+    }
+    Ok(())
+}
+
 /// External consumers stay on the owning stream so detach joins every queued use.
 pub(super) fn validate_stream(
     args: &KernelArguments,

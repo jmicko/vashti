@@ -67,7 +67,10 @@ impl<R> PublicExternalHostSource<R> {
     /// No prompt, image, activation, private key or other private bytes may enter.
     /// The resource and backing must belong to the selected target device. The
     /// caller must retain backing+device and prohibit CPU/raw GPU mutation until
-    /// successful detach. On failed detach/channel/queue join it MUST retain them
+    /// successful detach. This must be the allocation's SOLE external registry:
+    /// no other server, raw/wgpu queue or alias may consume it while registered.
+    /// All consumers must use this one owning stream through the checked backend.
+    /// On failed detach/channel/queue join it MUST retain them
     /// (including on Drop); a failed operation grants no free/recovery authority.
     pub unsafe fn from_initialized_public_host(
         resource: R,

@@ -47,6 +47,7 @@ pub struct WgpuServer {
     streams_pool: Vec<StreamId>,
     pipelines: HashMap<KernelId, Arc<ComputePipeline>>,
     public_external_pipeline_count: usize,
+    public_external_stream: Option<StreamId>,
     scheduler: SchedulerMultiStream<ScheduledWgpuBackend>,
     #[cfg(feature = "spirv")]
     pub(crate) spirv_cache:
@@ -134,6 +135,7 @@ impl WgpuServer {
             device,
             pipelines: HashMap::new(),
             public_external_pipeline_count: 0,
+            public_external_stream: None,
             scheduler: SchedulerMultiStream::new(
                 utilities.logger.clone(),
                 backend_scheduler,
@@ -332,6 +334,8 @@ impl ComputeServer for WgpuServer {
         budget: cubecl_runtime::public_external::PublicExternalBudget,
         stream_id: StreamId,
     ) -> Result<(), ServerError> {
+        super::public_external::configure_stream(self.public_external_stream)
+            .map_err(super::public_external::fault)?;
         if self.backend != wgpu::Backend::Vulkan {
             return Err(super::public_external::fault(
                 "public external Vulkan stream required",
@@ -347,6 +351,7 @@ impl ComputeServer for WgpuServer {
             cubecl_runtime::public_external::PublicExternalPool::new(budget, stream_id)
                 .map_err(super::public_external::fault)?,
         );
+        self.public_external_stream = Some(stream_id);
         Ok(())
     }
 
