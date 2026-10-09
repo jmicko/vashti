@@ -11,6 +11,64 @@ const RECORD_BYTES: usize = 16 + 4 * VOCAB;
 const DEFAULT_POSITIONS: usize = 4;
 const LONG_POSITIONS: usize = 32;
 
+/// Numeric diagnostics are reachable only through this fixed-public fixture.
+/// Keep the original f32 acceptance equation: the f64 summaries below are
+/// explanatory, and never decide whether a vector is accepted.
+struct LogitDiagnostics {
+    first_bad: Option<(usize, u32, u32)>,
+    nonfinite_class: u8,
+    max_abs_error: f64,
+    max_normalized_error: f64,
+}
+
+impl LogitDiagnostics {
+    fn inspect(actual: &[f32], reference: &[f32]) -> Self {
+        let mut out = Self {
+            first_bad: None,
+            nonfinite_class: 0,
+            max_abs_error: 0.,
+            max_normalized_error: 0.,
+        };
+        for (index, (&a, &r)) in actual.iter().zip(reference.iter()).enumerate() {
+            let limit = 0.006 + 0.0003 * r.abs();
+            if !a.is_finite() {
+                if out.nonfinite_class == 0 {
+                    out.nonfinite_class = if a.is_nan() {
+                        1
+                    } else if a.is_sign_positive() {
+                        2
+                    } else {
+                        3
+                    };
+                }
+            } else {
+                // Finite f32 subtraction can overflow. The diagnostic remains
+                // finite, while the unchanged f32 gate below still rejects it.
+                let error = (f64::from(a) - f64::from(r)).abs();
+                out.max_abs_error = out.max_abs_error.max(error);
+                out.max_normalized_error = out.max_normalized_error.max(error / f64::from(limit));
+            }
+            if (!a.is_finite() || (a - r).abs() > limit) && out.first_bad.is_none() {
+                out.first_bad = Some((index, r.to_bits(), a.to_bits()));
+            }
+        }
+        out
+    }
+
+    fn report_failure(&self, position: usize, class: &'static str, greedy_matches: bool) {
+        // VOCAB is the bounded absent-index sentinel; no sampled token IDs,
+        // vocabulary text, model rows or backend errors are formatted.
+        let (index, expected, actual) = self.first_bad.unwrap_or((VOCAB, 0, 0));
+        println!(
+            "public_q3_full_logits_failure position={position} class={class} values={VOCAB} first_bad_present={} first_bad_index={index} expected_bits=0x{expected:08x} actual_bits=0x{actual:08x} max_abs_error={} max_normalized_error={} nonfinite_class={} greedy_matches={greedy_matches}",
+            self.first_bad.is_some(),
+            self.max_abs_error,
+            self.max_normalized_error,
+            self.nonfinite_class,
+        );
+    }
+}
+
 fn positions_for_length(bytes: u64) -> Result<usize> {
     match bytes {
         n if n == (8 + DEFAULT_POSITIONS * RECORD_BYTES) as u64 => Ok(DEFAULT_POSITIONS),
@@ -89,16 +147,30 @@ impl Reference {
     }
     pub(crate) fn verify(&self, position: usize, actual: &[f32]) -> Result<()> {
         let reference = self.logits.get(position).ok_or(Error::OutOfBounds)?;
-        if actual.len() != VOCAB || greedy(actual)? != self.tokens[position] {
+        if actual.len() != VOCAB {
+            println!(
+                "public_q3_full_logits_failure position={position} class=width expected_values={VOCAB} actual_values={} greedy_matches=false",
+                actual.len(),
+            );
             return Err(Error::InvalidFormat("public Q3 greedy mismatch"));
         }
-        let mut max_error = 0f32;
-        for (&a, &r) in actual.iter().zip(reference.iter()) {
-            if !a.is_finite() || (a - r).abs() > 0.006 + 0.0003 * r.abs() {
-                return Err(Error::InvalidFormat("public Q3 full logits mismatch"));
+        let diagnostics = LogitDiagnostics::inspect(actual, reference);
+        let selected = match greedy(actual) {
+            Ok(selected) => selected,
+            Err(error) => {
+                diagnostics.report_failure(position, "nonfinite", false);
+                return Err(error);
             }
-            max_error = max_error.max((a - r).abs());
+        };
+        if selected != self.tokens[position] {
+            diagnostics.report_failure(position, "greedy", false);
+            return Err(Error::InvalidFormat("public Q3 greedy mismatch"));
         }
+        if diagnostics.first_bad.is_some() {
+            diagnostics.report_failure(position, "logits", true);
+            return Err(Error::InvalidFormat("public Q3 full logits mismatch"));
+        }
+        let max_error = diagnostics.max_abs_error as f32;
         println!(
             "public_q3_full_logits position={position} values={VOCAB} max_abs_error={max_error} greedy_matches=true"
         );
@@ -215,5 +287,88 @@ mod tests {
             values[index] = original;
         }
         reference.verify(31, &values).unwrap();
+    }
+
+    #[test]
+    fn diagnostics_find_first_failed_lane_but_measure_the_complete_vector() {
+        let expected = [0., 2., -3., 0.];
+        let actual = [0.005, 2.1, -3., 10.];
+        let diagnostics = LogitDiagnostics::inspect(&actual, &expected);
+        assert_eq!(
+            diagnostics.first_bad,
+            Some((1, 2f32.to_bits(), 2.1f32.to_bits()))
+        );
+        assert_eq!(diagnostics.max_abs_error, 10.);
+        assert_eq!(diagnostics.max_normalized_error, 10. / f64::from(0.006f32));
+        assert_eq!(diagnostics.nonfinite_class, 0);
+    }
+
+    #[test]
+    fn diagnostics_keep_the_original_f32_boundary_and_reject_overflow() {
+        let boundary = 0.006f32;
+        let below = f32::from_bits(boundary.to_bits() - 1);
+        let above = f32::from_bits(boundary.to_bits() + 1);
+        for accepted in [below, boundary] {
+            assert!(
+                LogitDiagnostics::inspect(&[accepted], &[0.])
+                    .first_bad
+                    .is_none()
+            );
+        }
+        assert_eq!(
+            LogitDiagnostics::inspect(&[above], &[0.]).first_bad,
+            Some((0, 0f32.to_bits(), above.to_bits()))
+        );
+        let overflow = LogitDiagnostics::inspect(&[f32::MAX], &[-f32::MAX]);
+        assert_eq!(
+            overflow.first_bad,
+            Some((0, (-f32::MAX).to_bits(), f32::MAX.to_bits()))
+        );
+        assert!(overflow.max_abs_error.is_finite());
+        assert!(overflow.max_normalized_error.is_finite());
+        assert!(overflow.max_normalized_error > 1.);
+        assert_eq!(overflow.nonfinite_class, 0);
+    }
+
+    #[test]
+    fn diagnostics_classify_nonfinite_bits_without_losing_later_finite_error() {
+        for (value, class) in [(f32::NAN, 1), (f32::INFINITY, 2), (f32::NEG_INFINITY, 3)] {
+            let diagnostics = LogitDiagnostics::inspect(&[0., value, 10.], &[0., 0., 0.]);
+            assert_eq!(
+                diagnostics.first_bad,
+                Some((1, 0f32.to_bits(), value.to_bits()))
+            );
+            assert_eq!(diagnostics.nonfinite_class, class);
+            assert_eq!(diagnostics.max_abs_error, 10.);
+            assert!(diagnostics.max_normalized_error.is_finite());
+        }
+    }
+
+    #[test]
+    fn diagnostics_do_not_relax_greedy_or_sampling_error_precedence() {
+        let reference = Reference {
+            logits: vec![Zeroizing::new(vec![0.; VOCAB])],
+            tokens: vec![0],
+        };
+        let mut actual = vec![0.; VOCAB];
+        actual[1] = 0.001;
+        assert!(
+            LogitDiagnostics::inspect(&actual, &reference.logits[0])
+                .first_bad
+                .is_none()
+        );
+        assert!(matches!(
+            reference.verify(0, &actual),
+            Err(Error::InvalidFormat("public Q3 greedy mismatch"))
+        ));
+        actual[VOCAB - 1] = f32::NAN;
+        assert!(matches!(
+            reference.verify(0, &actual),
+            Err(Error::InvalidFormat("invalid sampling logits"))
+        ));
+        assert!(matches!(
+            reference.verify(0, &actual[..VOCAB - 1]),
+            Err(Error::InvalidFormat("public Q3 greedy mismatch"))
+        ));
     }
 }
