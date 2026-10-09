@@ -71,6 +71,9 @@ impl GpuExecutor<'_> {
         // private CPU fills. There is no scalar-cache or GPU-only fallback.
         u::cancel(cancel)?;
         w.check(self, s, arena)?;
+        if w.resident_router_active() {
+            return Err(err("resident router cannot use hybrid path"));
+        }
         graph.verify_unchanged()?;
         self.model.verify_file_unchanged()?;
         let h = w
@@ -817,6 +820,7 @@ impl GpuExecutor<'_> {
             staged: Some(staged),
             last: Some(last),
             count1: Some(proof),
+            deferred_router: None,
             waves: Zeroizing::new(1),
             poison: w.poison.clone(),
             armed: true,

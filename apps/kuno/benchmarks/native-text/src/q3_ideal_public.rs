@@ -78,6 +78,7 @@ pub(crate) fn run<'m, 'f: 'm>(
     mut make: impl FnMut(usize) -> Result<(ResidentModel<'m, 'f>, GpuExecutor<'f>)>,
     reference: &Reference,
     fixture: Fixture,
+    resident_router: bool,
     cancel: &AtomicBool,
 ) -> Result<serde_json::Value> {
     let selected = FixtureRun::new(fixture)?;
@@ -116,6 +117,9 @@ pub(crate) fn run<'m, 'f: 'm>(
     drop(initial);
     let preload = replay.preload_lab_oracle(&mut executor, &trace, cancel)?;
     replay.begin_lab_oracle_replay(&mut executor, trace)?;
+    if resident_router {
+        replay.begin_lab_resident_router(&mut executor)?;
+    }
     let before = (
         executor.expert_hits,
         replay.completed_cpu_misses(&executor)?,
@@ -126,6 +130,7 @@ pub(crate) fn run<'m, 'f: 'm>(
         executor.q6_integer_head_prepares,
         executor.q6_integer_head_tiles,
     );
+    let resident_router_audits_before = executor.resident_router_audits;
     let resources = crate::public_resources::snapshot();
     let phase_before = replay.phase_ns.clone();
     let bindings_before = cubecl::wgpu::transient_binding_cache_stats();
@@ -194,6 +199,13 @@ pub(crate) fn run<'m, 'f: 'm>(
     if work != [decode as u64 * 48 * 10, 0, 0, 0] {
         return Err("Q3 ideal timed execution was not entirely resident".into());
     }
+    let resident_router_audits = delta(
+        executor.resident_router_audits,
+        resident_router_audits_before,
+    )?;
+    if resident_router_audits != if resident_router { decode as u64 } else { 0 } {
+        return Err("Q3 ideal complete per-token resident router audits".into());
+    }
     let head_work = [
         delta(executor.q6_integer_head_prepares, head_before.0)?,
         delta(executor.q6_integer_head_tiles, head_before.1)?,
@@ -219,6 +231,9 @@ pub(crate) fn run<'m, 'f: 'm>(
         "full32_reference_accepted":selected.full32,"ends_before_known_router_divergence":!selected.full32,
         "expert_union_counts":counts,"preload_original_bytes":preload.bytes,
         "q6_integer_head":q6_integer_head,"q6_integer_head_prepares":head_work[0],"q6_integer_head_tiles":head_work[1],
+        "resident_gpu_routing":resident_router,"resident_gpu_routing_default":false,
+        "resident_router_owning_audits":resident_router_audits,
+        "resident_router_audited_layers":resident_router_audits*48,
         "q3_integer_moe":q3_integer_moe,"q3_shared_original_moe":q3_shared_original_moe,
         "elapsed_ns":elapsed_ns,"gpu_hits":work[0],"cpu_misses":work[1],
         "expert_uploads":work[2],"public_weight_upload_bytes":work[3],"resources":resources,

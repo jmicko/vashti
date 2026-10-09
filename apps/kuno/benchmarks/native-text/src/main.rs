@@ -51,6 +51,7 @@ mod resident_model;
 mod resident_moe;
 mod resident_probe;
 mod resident_qsa;
+mod resident_router_gpu;
 mod resident_util;
 mod residual_batch_gpu;
 mod residual_gpu;
@@ -209,6 +210,28 @@ fn count1_hybrid_registration(
         _ => Err("count1 hybrid cap must be a canonical integer 0 through 10"),
     }
 }
+fn resident_router_scope(
+    enabled: bool,
+    ideal: bool,
+    profile: expert_banks::OriginalPackedProfile,
+    positions: usize,
+    protected: bool,
+    original: bool,
+) -> Result<(), &'static str> {
+    if !enabled {
+        return Ok(());
+    }
+    let exact_window = match profile {
+        expert_banks::OriginalPackedProfile::UnslothQ3 => positions == 23,
+        expert_banks::OriginalPackedProfile::DaslabIq3 => matches!(positions, 13 | 32),
+        _ => false,
+    };
+    if !ideal || !protected || !original || !exact_window {
+        return Err("resident GPU router requires exclusive original protected ideal replay");
+    }
+    Ok(())
+}
+
 fn count1_worker_pool(mode: &str, raw: Option<&str>) -> Result<bool, &'static str> {
     match (mode, raw) {
         (_, None) => Ok(false),
@@ -1128,6 +1151,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         speed_option("KUNO_LAB_Q3_SHARED_ORIGINAL_MOE", "shared-original-moe")?;
     let q6_integer_head = speed_option("KUNO_LAB_Q6_INTEGER_HEAD", "integer-head")?;
     let q3_ideal_public = speed_option("KUNO_LAB_Q3_IDEAL_PUBLIC", "ideal-prefix")?;
+    let resident_gpu_router = count1_environment_opt_in(&mode, "KUNO_LAB_RESIDENT_GPU_ROUTER")?;
+    let resident_runtime_limit = if resident_gpu_router {
+        executor::batch_moe::RESIDENT_ROUTER_RUNTIME_LIMIT
+    } else {
+        executor::RESIDENT_RUNTIME_IO_MAX
+    };
     let q3_oracle_raw = std::env::var_os("KUNO_LAB_Q3_EXPERT_ORACLE");
     let q3_expert_oracle = q3_expert_oracle(
         &mode,
@@ -1506,7 +1535,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Q3 ideal prefix requires exclusive original protected cap10 execution".into());
     }
 
+    resident_router_scope(
+        resident_gpu_router,
+        q3_ideal_public,
+        packed_profile,
+        q3_positions,
+        q3_main && transient_resident && public_owned_zero_audit,
+        gpu_router
+            && fast_gpu
+            && !q3_subgroup_moe
+            && !q3_integer_moe
+            && !q3_shared_original_moe
+            && !q6_integer_head
+            && !q3_expert_oracle
+            && !cpu_q8
+            && !cpu_q8_residual
+            && q3_empty_slot_fill,
+    )?;
     let integer_experts = count1_environment_opt_in(&mode, "KUNO_LAB_INTEGER_EXPERTS")?;
+    if resident_gpu_router && (fused_experts || integer_experts) {
+        return Err("resident GPU routing requires original unfused F32 experts".into());
+    }
     if integer_experts
         && (!fused_experts || gpu_expert_limit != 10 || count1_hybrid_cap != Some(10))
     {
@@ -1574,9 +1623,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         request_io_reuse,
         bind_group_reuse,
     )?;
-    let native_aggregate_host_plan = resident_model::batch::host_reservation(
+    let native_aggregate_host_plan = resident_model::batch::host_reservation_with_router(
         count1_hybrid_cap.is_some(),
         request_reuse_metadata_charge,
+        resident_gpu_router,
     )?;
     if bind_group_reuse && !request_io_reuse {
         return Err("binding reuse requires request I/O reuse".into());
@@ -1955,7 +2005,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         if let Some(retired) = &transient_context {
             let configured = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                client.configure_transient_io(executor::RESIDENT_RUNTIME_IO_MAX)
+                client.configure_transient_io(resident_runtime_limit)
             }));
             if !matches!(configured, Ok(Ok(()))) {
                 retired.store(true, std::sync::atomic::Ordering::Release);
@@ -2885,6 +2935,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     config
                 };
+                let config = if resident_gpu_router {
+                    config.reserve_resident_router()?
+                } else {
+                    config
+                };
                 Some(config.reserve_request_reuse_metadata(request_reuse_metadata_charge)?)
             } else {
                 None
@@ -3022,6 +3077,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             executor.q3_integer_moe = q3_integer_moe;
             executor.q3_shared_original_moe = q3_shared_original_moe;
             executor.q6_integer_head = q6_integer_head;
+            executor.resident_router_reserved = resident_gpu_router;
             executor.q3_expert_oracle = q3_expert_oracle;
             executor.q3_router_reference = q3_router_reference.clone();
             executor.fast_dense = fast_gpu;
@@ -3875,9 +3931,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     serde_json::json!(public_owned_zero_audit);
                 receipt["io_token_checkpoint"] =
                     serde_json::json!(token_checkpoint || defer_router_io);
-                receipt["resident_runtime_io_limit_bytes"] = serde_json::json!(
-                    transient_resident.then_some(executor::RESIDENT_RUNTIME_IO_MAX)
-                );
+                receipt["resident_runtime_io_limit_bytes"] =
+                    serde_json::json!(transient_resident.then_some(resident_runtime_limit));
+                receipt["resident_gpu_router_ideal_only"] = serde_json::json!(resident_gpu_router);
                 receipt["ordered_public_upload"] = serde_json::json!(ordered_public_upload);
                 receipt["ordered_public_source_limit_bytes"] = serde_json::json!(
                     ordered_public_upload.then_some(ordered_public::SOURCE_LIMIT)
@@ -3958,6 +4014,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 executor.q3_integer_moe = q3_integer_moe;
                 executor.q3_shared_original_moe = q3_shared_original_moe;
                 executor.q6_integer_head = q6_integer_head;
+                executor.resident_router_reserved = resident_gpu_router;
                 executor.q3_expert_oracle = q3_expert_oracle;
                 executor.q3_router_reference = q3_router_reference.clone();
                 executor.fast_dense = fast_gpu;
@@ -4090,6 +4147,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     executor.q3_integer_moe = q3_integer_moe;
                     executor.q3_shared_original_moe = q3_shared_original_moe;
                     executor.q6_integer_head = q6_integer_head;
+                    executor.resident_router_reserved = resident_gpu_router;
                     executor.q3_expert_oracle = q3_expert_oracle;
                     executor.q3_router_reference = q3_router_reference.clone();
                     executor.fast_dense = fast_gpu;
@@ -4368,6 +4426,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             e.q3_integer_moe = q3_integer_moe;
                             e.q3_shared_original_moe = q3_shared_original_moe;
                             e.q6_integer_head = q6_integer_head;
+                            e.resident_router_reserved = resident_gpu_router;
                             e.gpu_router = gpu_router;
                             e.fused_experts = fused_experts;
                             e.integer_experts = integer_experts;
@@ -4399,6 +4458,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         } else {
                             oracle_trace::Fixture::Q3Prefix23
                         },
+                        resident_gpu_router,
                         &cancel,
                     )?;
                 }
@@ -4421,6 +4481,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod transient_mode_tests {
+    #[test]
+    fn resident_router_is_exact_original_protected_ideal_only() {
+        use crate::expert_banks::OriginalPackedProfile as P;
+        for (profile, positions) in [(P::UnslothQ3, 23), (P::DaslabIq3, 13), (P::DaslabIq3, 32)] {
+            assert!(
+                super::resident_router_scope(true, true, profile, positions, true, true).is_ok()
+            );
+            for (ideal, protected, original) in [
+                (false, true, true),
+                (true, false, true),
+                (true, true, false),
+            ] {
+                assert!(
+                    super::resident_router_scope(
+                        true, ideal, profile, positions, protected, original
+                    )
+                    .is_err()
+                );
+            }
+        }
+        for (profile, positions) in [
+            (P::Q4, 23),
+            (P::UnslothQ3, 13),
+            (P::UnslothQ3, 32),
+            (P::DaslabIq3, 4),
+            (P::DaslabIq3, 23),
+        ] {
+            assert!(
+                super::resident_router_scope(true, true, profile, positions, true, true).is_err()
+            );
+        }
+        assert!(super::resident_router_scope(false, false, P::Q4, 0, false, false).is_ok());
+    }
+
     #[test]
     fn extended_binding_scope_requires_its_actual_profile_window_and_owner_policy() {
         use crate::expert_banks::OriginalPackedProfile as P;

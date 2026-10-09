@@ -16,6 +16,12 @@ use zeroize::Zeroizing;
 mod count1;
 #[path = "resident_moe_count1.rs"]
 mod count1_executor;
+#[path = "resident_router.rs"]
+mod resident_router;
+pub(crate) use resident_router::{
+    RESIDENT_ROUTER_HOST, RESIDENT_ROUTER_MAIN, RESIDENT_ROUTER_RUNTIME,
+    RESIDENT_ROUTER_RUNTIME_LIMIT,
+};
 #[path = "count1_hybrid_moe.rs"]
 mod hybrid_k;
 const MAX_LAYERS: usize = 64;
@@ -184,6 +190,10 @@ impl Registry {
     }
 }
 pub(super) fn reject_scalar(e: &GpuExecutor<'_>) -> Result<()> {
+    if e.resident_banks_frozen {
+        e.poison_resident();
+        return Err(err("resident router forbids scalar bank mutation"));
+    }
     if let Some(r) = &e.batch_moe {
         r.abort();
         e.poison_resident();
@@ -366,6 +376,7 @@ pub(crate) struct Workspace {
     poison: Arc<AtomicBool>,
     policy: Policy,
     hybrid: Option<HybridOwners>,
+    resident_router: Option<resident_router::RouterOwners>,
 }
 struct HybridOwners {
     ids: Zeroizing<[BufferId; 2]>,
@@ -471,6 +482,9 @@ impl Workspace {
     ) -> Result<usize> {
         self.healthy(arena)?;
         self.policy.completed_boundary()?;
+        if self.resident_router_active() {
+            return Err(err("resident router policy is frozen"));
+        }
         executor.check_resident_admission(&self.admission)?;
         executor.check_client(arena.client().map_err(u::fault)?)?;
         graph.verify_unchanged()?;
@@ -552,6 +566,9 @@ impl Workspace {
     ) -> Result<usize> {
         self.healthy(arena)?;
         self.policy.completed_boundary()?;
+        if self.resident_router_active() {
+            return Err(err("resident router policy is frozen"));
+        }
         executor.check_resident_admission(&self.admission)?;
         executor.check_client(arena.client().map_err(u::fault)?)?;
         if executor.batch_moe.is_some() || !arena.public_owned_zero_audit_enabled() {
@@ -579,6 +596,9 @@ impl Workspace {
     ) -> Result<usize> {
         self.healthy(arena)?;
         self.policy.completed_boundary()?;
+        if self.resident_router_active() {
+            return Err(err("resident router policy is frozen"));
+        }
         executor.check_resident_admission(&self.admission)?;
         executor.check_client(arena.client().map_err(u::fault)?)?;
         if executor.batch_moe.is_some() || !arena.public_owned_zero_audit_enabled() {
@@ -663,6 +683,7 @@ impl Workspace {
                 poison: poison.clone(),
                 policy: Policy::new(graph.geometry().layers)?,
                 hybrid: None,
+                resident_router: None,
             };
             out.validate_ids(arena)?;
             u::cancel(cancel)?;
@@ -699,6 +720,24 @@ impl Workspace {
                         != BufferLayout::new([CPU_WORDS, OWNER_WORDS][i]).map_err(u::fault)?
                 {
                     return Err(err("native count1 stale owning pages"));
+                }
+            }
+        }
+        if let Some(ids) = self.resident_router_ids() {
+            for (i, &id) in ids.iter().enumerate() {
+                if self.ids.contains(&id)
+                    || ids[..i].contains(&id)
+                    || self.hybrid.as_ref().is_some_and(|h| h.ids.contains(&id))
+                    || arena.layout(id).map_err(u::fault)?
+                        != BufferLayout::new(
+                            [
+                                48 * 512,
+                                crate::resident_model::batch_io::RESIDENT_AUDIT_WORDS,
+                            ][i],
+                        )
+                        .map_err(u::fault)?
+                {
+                    return Err(err("resident router stale owning pages"));
                 }
             }
         }
@@ -766,6 +805,7 @@ pub(crate) struct Pending {
     staged: Option<StagedSlots>,
     last: Option<Last>,
     count1: Option<count1::Proof>,
+    deferred_router: Option<Zeroizing<u64>>,
     waves: Zeroizing<usize>,
     poison: Arc<AtomicBool>,
     armed: bool,
@@ -872,6 +912,7 @@ impl GpuExecutor<'_> {
                 return Err(err("native routed session configuration"));
             }
             self.check_segmented_resident(true)?;
+            w.begin_resident_router_token(self, graph, arena, start, count, cancel)?;
             w.policy.begin(start, count)?;
             let stamp = Zeroizing::new(Stamp {
                 workspace: w.identity,
@@ -938,6 +979,9 @@ impl GpuExecutor<'_> {
     ) -> Result<Pending> {
         u::cancel(cancel)?;
         w.check(self, s, arena)?;
+        if w.resident_router_active() {
+            return Err(err("resident router cannot use demand path"));
+        }
         graph.verify_unchanged()?;
         self.model.verify_file_unchanged()?;
         if graph.binding_id() != w.binding
@@ -1267,6 +1311,7 @@ impl GpuExecutor<'_> {
             staged: Some(staged),
             last: final_last,
             count1: None,
+            deferred_router: None,
             waves: Zeroizing::new(routes.wave_count()),
             poison: w.poison.clone(),
             armed: true,
@@ -1355,13 +1400,41 @@ fn physical(
     fault: BufferId,
     w: &Workspace,
 ) -> Result<()> {
+    physical_with_packet(arena, bank, g, ids, fault, w, None)
+}
+
+/// The deferred mapper also lends the shared original packet. Include it in
+/// the same complete physical disjointness proof as the consumed headers,
+/// new table/audit owners and six original packed bank pages.
+fn physical_with_packet(
+    arena: &PrivateArena,
+    bank: &ExpertBanks,
+    g: k::Geometry,
+    ids: &[BufferId; 7],
+    fault: BufferId,
+    w: &Workspace,
+    packet: Option<BufferId>,
+) -> Result<()> {
+    if packet.is_some() && !w.resident_router_active() {
+        return Err(err("resident mapper packet requires sealed authorization"));
+    }
     let client = arena.client().map_err(u::fault)?;
     bank.check_client(client)?;
-    let mut all = Zeroizing::new(Vec::with_capacity(10));
+    let mut all = Zeroizing::new(Vec::with_capacity(if w.resident_router.is_some() {
+        13
+    } else {
+        10
+    }));
     all.extend_from_slice(ids);
     all.push(fault);
     if let Some(h) = &w.hybrid {
         all.extend_from_slice(&*h.ids);
+    }
+    if let Some(ids) = w.resident_router_ids() {
+        all.extend_from_slice(&ids);
+    }
+    if let Some(packet) = packet {
+        all.push(packet);
     }
     let banks = [bank.gate(), bank.up(), bank.down()];
     let count = original_shard_count(w.layout.capacity, banks.map(|b| b.segments().len()))?;
@@ -1381,14 +1454,14 @@ fn physical(
         .len()
         .checked_add(public.len())
         .ok_or(Error::ArithmeticOverflow)?;
-    if extent_count > 16 {
+    if extent_count > if w.resident_router.is_some() { 19 } else { 16 } {
         return Err(err("native routed metadata cardinality"));
     }
     let mut handles = Vec::new();
     handles
         .try_reserve_exact(extent_count)
         .map_err(|_| Error::LimitExceeded("native routed physical metadata"))?;
-    let mut extents = Zeroizing::new([(0u64, 0u64); 16]);
+    let mut extents = Zeroizing::new([(0u64, 0u64); 19]);
     for (i, &id) in all.iter().enumerate() {
         if all[..i].contains(&id) {
             return Err(err("native routed owning alias"));
@@ -1805,7 +1878,8 @@ impl Workspace {
         p: &Pending,
     ) -> Result<()> {
         self.check(e, s, arena)?;
-        if !p.armed
+        if p.deferred_router.is_some()
+            || !p.armed
             || *p.stamp != *s.stamp
             || *p.layer >= self.layout.geometries.len()
             || !Arc::ptr_eq(&p.poison, &self.poison)
@@ -2307,6 +2381,7 @@ mod tests {
             staged: None,
             last: None,
             count1: None,
+            deferred_router: None,
             waves: Zeroizing::new(0),
             poison: poison.clone(),
             armed: true,

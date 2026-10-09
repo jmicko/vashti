@@ -40,18 +40,40 @@ const DEFAULT_REUSE_METADATA: usize = 256 * 1024;
 /// Complete separate runtime metadata reservation, added to the existing
 /// application component plan. Only fixed public laboratory configurations can
 /// select the larger ceilings; device owners and family metadata remain intact.
+#[allow(dead_code)] // Original independent envelope remains directly tested.
 pub(crate) fn host_reservation(hybrid: bool, reuse_metadata: usize) -> Result<(usize, usize)> {
+    host_reservation_with_router(hybrid, reuse_metadata, false)
+}
+pub(crate) fn host_reservation_with_router(
+    hybrid: bool,
+    reuse_metadata: usize,
+    router: bool,
+) -> Result<(usize, usize)> {
     if !matches!(reuse_metadata, DEFAULT_REUSE_METADATA | 1048576 | 4194304)
-        || reuse_metadata > DEFAULT_REUSE_METADATA && !hybrid
+        || (reuse_metadata > DEFAULT_REUSE_METADATA || router) && !hybrid
     {
         return Err(error());
     }
     let reserved = HOST_COMPONENTS
         .checked_add(if hybrid { HYBRID_HOST } else { 0 })
         .and_then(|n| n.checked_add(reuse_metadata))
+        .and_then(|n| {
+            n.checked_add(if router {
+                batch_moe::RESIDENT_ROUTER_HOST
+            } else {
+                0
+            })
+        })
         .ok_or(Error::ArithmeticOverflow)?;
     let limit = HOST_CAP
         .checked_add(reuse_metadata - DEFAULT_REUSE_METADATA)
+        .and_then(|n| {
+            n.checked_add(if router {
+                batch_moe::RESIDENT_ROUTER_HOST
+            } else {
+                0
+            })
+        })
         .ok_or(Error::ArithmeticOverflow)?;
     if reserved > limit {
         return Err(Error::LimitExceeded(
@@ -157,6 +179,7 @@ pub(crate) struct Config {
     cpu_operator: Option<Arc<kuno_text::cpu_expert::ExpertOperator>>,
     cpu_gpu_overlap: bool,
     request_reuse_metadata: usize,
+    resident_router_reserved: bool,
 }
 impl Config {
     pub(crate) fn new(
@@ -172,10 +195,27 @@ impl Config {
             cpu_operator: None,
             cpu_gpu_overlap: false,
             request_reuse_metadata: DEFAULT_REUSE_METADATA,
+            resident_router_reserved: false,
         })
     }
+    pub(crate) fn reserve_resident_router(mut self) -> Result<Self> {
+        if self.cpu_operator.is_none()
+            || !self.cpu_gpu_overlap
+            || self.tile != 8
+            || self.resident_router_reserved
+        {
+            return Err(error());
+        }
+        host_reservation_with_router(true, self.request_reuse_metadata, true)?;
+        self.resident_router_reserved = true;
+        Ok(self)
+    }
     pub(crate) fn reserve_request_reuse_metadata(mut self, bytes: usize) -> Result<Self> {
-        host_reservation(self.cpu_operator.is_some(), bytes)?;
+        host_reservation_with_router(
+            self.cpu_operator.is_some(),
+            bytes,
+            self.resident_router_reserved,
+        )?;
         self.request_reuse_metadata = bytes;
         Ok(self)
     }
@@ -347,12 +387,33 @@ impl Plan {
             requests.push(BufferLayout::new(words).map_err(u::fault)?.owned_bytes as u64);
         }
         let hybrid = config.cpu_operator.is_some();
-        host_reservation(hybrid, config.request_reuse_metadata)?;
+        host_reservation_with_router(
+            hybrid,
+            config.request_reuse_metadata,
+            config.resident_router_reserved,
+        )?;
         if hybrid {
             requests.extend(batch_moe::Workspace::count1_hybrid_allocation_requests()?);
         }
-        let extra = if hybrid { HYBRID_MAIN } else { 0 };
-        if requests.len() != 90 + usize::from(hybrid) * 2
+        let router = config.resident_router_reserved;
+        if router != executor.resident_router_reserved
+            || router
+                && (!hybrid
+                    || !executor.packed_profile.is_low_bit()
+                    || executor.resident_bank_capacity() != 144)
+        {
+            return Err(error());
+        }
+        if router {
+            requests.extend(batch_moe::Workspace::resident_router_allocation_requests());
+        }
+        let extra = if hybrid { HYBRID_MAIN } else { 0 }
+            + if router {
+                batch_moe::RESIDENT_ROUTER_MAIN
+            } else {
+                0
+            };
+        if requests.len() != 90 + usize::from(hybrid) * 2 + usize::from(router) * 2
             || sum(&requests)? != NEW_MAIN + extra
             || OLD_MAIN.checked_add(sum(&requests)?) != Some(TOTAL_MAIN + extra)
         {
@@ -370,8 +431,15 @@ impl Plan {
         let head_tiles = (g.vocabulary as u64).div_ceil(tile_rows);
         let runtime = runtime_bytes(head_tiles)?
             .checked_add(if hybrid { HYBRID_RUNTIME } else { 0 })
+            .and_then(|n| {
+                n.checked_add(if router {
+                    batch_moe::RESIDENT_ROUTER_RUNTIME
+                } else {
+                    0
+                })
+            })
             .ok_or(Error::ArithmeticOverflow)?;
-        if runtime > crate::executor::RESIDENT_RUNTIME_IO_MAX
+        if runtime > executor.resident_runtime_io_limit()
             || HOST_COMPONENTS + if hybrid { HYBRID_HOST } else { 0 } > HOST_CAP
             || metadata_bytes() > META_CAP
         {
@@ -530,6 +598,9 @@ impl Workspace {
                 allocation,
             )?;
         }
+        if config.resident_router_reserved {
+            moe.reserve_resident_router(&mut model.arena, allocation)?;
+        }
         let shared = shared_batch::Workspace::allocate(graph, &mut model.arena)?;
         let mut alloc = |n| model.arena.allocate_zeroed(n).map_err(u::fault);
         let outer = Zeroizing::new(Outer {
@@ -576,6 +647,14 @@ impl Workspace {
         }
         if let Some(ids) = self.moe.count1_hybrid_owner_ids() {
             for (id, words) in ids.into_iter().zip([10 * D, 4 + 80 * 3]) {
+                handles.push(gr::full_private(&model.arena, id, words)?);
+            }
+        }
+        if let Some(ids) = self.moe.resident_router_ids() {
+            for (id, words) in ids
+                .into_iter()
+                .zip([48 * 512, batch_io::RESIDENT_AUDIT_WORDS])
+            {
                 handles.push(gr::full_private(&model.arena, id, words)?);
             }
         }
@@ -818,6 +897,23 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             executor.check_lab_oracle_preloaded(&boundary, &trace)?;
             executor.oracle_trace = Some(trace);
             Ok(())
+        })
+    }
+
+    pub(crate) fn begin_lab_resident_router(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+    ) -> Result<()> {
+        self.lab_oracle_attempt(executor, |model, executor| {
+            let trace = executor.oracle_trace.as_ref().ok_or(error())?;
+            if !trace.is_replay() {
+                return Err(error());
+            }
+            let boundary = model.lab_oracle_boundary(executor, trace.start(), trace.fixture())?;
+            let native = model.native_batch.as_mut().ok_or(error())?;
+            native
+                .moe
+                .enable_resident_router(executor, model.graph, &model.arena, &boundary)
         })
     }
 
@@ -1471,9 +1567,8 @@ impl Workspace {
             *m.phase_ns
                 .entry("native_ffn_gr_and_router_enqueue")
                 .or_default() += router_enqueue_start.elapsed().as_nanos();
-            let router_fence_start = Instant::now();
-            let hybrid_packet = if self.moe.cpu_miss_cap().is_some() {
-                Some(batch_io::read_count1_router_input(
+            if self.moe.resident_router_active() {
+                batch_io::enqueue_count1_router_input(
                     m.graph,
                     &m.arena,
                     &m.admission,
@@ -1495,126 +1590,176 @@ impl Workspace {
                     cancel,
                     layer,
                     *start as u64,
-                    e.gpu_router,
-                    e.shared_kernels,
-                )?)
-            } else {
-                None
-            };
-            let ordinary_logits = if hybrid_packet.is_none() {
-                Some(batch_io::read_router(
+                    true,
+                    true,
+                )?;
+                let expert_start = Instant::now();
+                pending.moe[layer] = Some(e.enqueue_resident_router_moe(
                     m.graph,
                     &m.arena,
-                    &m.admission,
-                    self.outer.router,
+                    &mut self.moe,
+                    &session,
+                    layer,
+                    prepared.mixed(),
+                    self.outer.block[0],
                     self.outer.packet,
-                    m.b.fault,
-                    batch_io::RouterView {
-                        first: 0,
-                        stride: ROUTER,
-                        words: MAX_BATCH * ROUTER,
-                    },
-                    *count,
+                    &spans,
                     cancel,
-                )?)
+                )?);
+                *m.phase_ns
+                    .entry("native_route_and_expert_enqueue")
+                    .or_default() += expert_start.elapsed().as_nanos();
             } else {
-                None
-            };
-            let logits = match (&hybrid_packet, &ordinary_logits) {
-                (Some(packet), None) => packet.logits(),
-                (None, Some(logits)) => logits,
-                _ => return Err(error()),
-            };
-            *m.phase_ns.entry("native_router_fence").or_default() +=
-                router_fence_start.elapsed().as_nanos();
-            let use_gpu_router = e.gpu_router && hybrid_packet.is_some();
-            if use_gpu_router {
-                if hybrid_packet
-                    .as_ref()
-                    .and_then(|packet| packet.gpu_selection())
-                    .is_none()
-                {
-                    return Err(error());
-                }
-                e.gpu_router_calls = e
-                    .gpu_router_calls
-                    .checked_add(1)
-                    .ok_or(Error::ArithmeticOverflow)?;
-            }
-            let expert_start = Instant::now();
-            let mut routes = token_waves::Input::new(*count, self.moe.capacity(), ROUTER)
-                .map_err(|_| error())?;
-            for token in 0..*count {
-                let selection = if use_gpu_router {
-                    None
+                let router_fence_start = Instant::now();
+                let hybrid_packet = if self.moe.cpu_miss_cap().is_some() {
+                    Some(batch_io::read_count1_router_input(
+                        m.graph,
+                        &m.arena,
+                        &m.admission,
+                        prepared.mixed(),
+                        self.outer.router,
+                        self.outer.packet,
+                        m.b.fault,
+                        batch_io::InputView {
+                            first: 0,
+                            stride: D,
+                            words: BLOCK_WORDS,
+                        },
+                        batch_io::RouterView {
+                            first: 0,
+                            stride: ROUTER,
+                            words: MAX_BATCH * ROUTER,
+                        },
+                        *count,
+                        cancel,
+                        layer,
+                        *start as u64,
+                        e.gpu_router,
+                        e.shared_kernels,
+                    )?)
                 } else {
-                    Some(ops::router_topk_guarded(logits.row(token)?, 10, true).map_err(u::fault)?)
+                    None
                 };
-                let selected = match (&selection, &hybrid_packet) {
-                    (Some(selection), _) => selection.as_slice(),
-                    (None, Some(packet)) => packet.gpu_selection().ok_or(error())?.as_slice(),
+                let ordinary_logits = if hybrid_packet.is_none() {
+                    Some(batch_io::read_router(
+                        m.graph,
+                        &m.arena,
+                        &m.admission,
+                        self.outer.router,
+                        self.outer.packet,
+                        m.b.fault,
+                        batch_io::RouterView {
+                            first: 0,
+                            stride: ROUTER,
+                            words: MAX_BATCH * ROUTER,
+                        },
+                        *count,
+                        cancel,
+                    )?)
+                } else {
+                    None
+                };
+                let logits = match (&hybrid_packet, &ordinary_logits) {
+                    (Some(packet), None) => packet.logits(),
+                    (None, Some(logits)) => logits,
                     _ => return Err(error()),
                 };
-                for (rank, &(expert, probability)) in selected.iter().enumerate() {
-                    routes
-                        .set(token, rank, expert, probability)
-                        .map_err(|_| error())?;
+                *m.phase_ns.entry("native_router_fence").or_default() +=
+                    router_fence_start.elapsed().as_nanos();
+                let use_gpu_router = e.gpu_router && hybrid_packet.is_some();
+                if use_gpu_router {
+                    if hybrid_packet
+                        .as_ref()
+                        .and_then(|packet| packet.gpu_selection())
+                        .is_none()
+                    {
+                        return Err(error());
+                    }
+                    e.gpu_router_calls = e
+                        .gpu_router_calls
+                        .checked_add(1)
+                        .ok_or(Error::ArithmeticOverflow)?;
                 }
+                let expert_start = Instant::now();
+                let mut routes = token_waves::Input::new(*count, self.moe.capacity(), ROUTER)
+                    .map_err(|_| error())?;
+                for token in 0..*count {
+                    let selection = if use_gpu_router {
+                        None
+                    } else {
+                        Some(
+                            ops::router_topk_guarded(logits.row(token)?, 10, true)
+                                .map_err(u::fault)?,
+                        )
+                    };
+                    let selected = match (&selection, &hybrid_packet) {
+                        (Some(selection), _) => selection.as_slice(),
+                        (None, Some(packet)) => packet.gpu_selection().ok_or(error())?.as_slice(),
+                        _ => return Err(error()),
+                    };
+                    for (rank, &(expert, probability)) in selected.iter().enumerate() {
+                        routes
+                            .set(token, rank, expert, probability)
+                            .map_err(|_| error())?;
+                    }
+                }
+                let waves = token_waves::Plan::build(&routes, cancel).map_err(|_| error())?;
+                let overlap_shared =
+                    hybrid_packet.is_some() && self.moe.cpu_gpu_overlap() == Some(true);
+                if overlap_shared {
+                    let mut projector = ResidentBatchProjection {
+                        executor: e,
+                        fault: m.b.fault,
+                    };
+                    self.shared.prepare(
+                        m.graph,
+                        layer,
+                        &m.arena,
+                        &mut m.public,
+                        &mut projector,
+                        prepared.mixed(),
+                        self.outer.block[0],
+                        self.outer.block[1],
+                        m.b.fault,
+                        *count,
+                        cancel,
+                    )?;
+                }
+                pending.moe[layer] = Some(if let Some(packet) = &hybrid_packet {
+                    e.enqueue_routed_moe_count1_hybrid(
+                        m.graph,
+                        &m.arena,
+                        &mut self.moe,
+                        &session,
+                        layer,
+                        prepared.mixed(),
+                        self.outer.block[0],
+                        &spans,
+                        &waves,
+                        packet,
+                        cancel,
+                    )?
+                } else {
+                    e.enqueue_routed_moe_batch(
+                        m.graph,
+                        &m.arena,
+                        &mut self.moe,
+                        &session,
+                        layer,
+                        prepared.mixed(),
+                        self.outer.block[0],
+                        &spans,
+                        &waves,
+                        cancel,
+                    )?
+                });
+                e.check_original_bank_metadata(LAYERS, ORIGINAL_BANK_HOST)?;
+                *m.phase_ns
+                    .entry("native_route_and_expert_enqueue")
+                    .or_default() += expert_start.elapsed().as_nanos();
             }
-            let waves = token_waves::Plan::build(&routes, cancel).map_err(|_| error())?;
             let overlap_shared =
-                hybrid_packet.is_some() && self.moe.cpu_gpu_overlap() == Some(true);
-            if overlap_shared {
-                let mut projector = ResidentBatchProjection {
-                    executor: e,
-                    fault: m.b.fault,
-                };
-                self.shared.prepare(
-                    m.graph,
-                    layer,
-                    &m.arena,
-                    &mut m.public,
-                    &mut projector,
-                    prepared.mixed(),
-                    self.outer.block[0],
-                    self.outer.block[1],
-                    m.b.fault,
-                    *count,
-                    cancel,
-                )?;
-            }
-            pending.moe[layer] = Some(if let Some(packet) = &hybrid_packet {
-                e.enqueue_routed_moe_count1_hybrid(
-                    m.graph,
-                    &m.arena,
-                    &mut self.moe,
-                    &session,
-                    layer,
-                    prepared.mixed(),
-                    self.outer.block[0],
-                    &spans,
-                    &waves,
-                    packet,
-                    cancel,
-                )?
-            } else {
-                e.enqueue_routed_moe_batch(
-                    m.graph,
-                    &m.arena,
-                    &mut self.moe,
-                    &session,
-                    layer,
-                    prepared.mixed(),
-                    self.outer.block[0],
-                    &spans,
-                    &waves,
-                    cancel,
-                )?
-            });
-            e.check_original_bank_metadata(LAYERS, ORIGINAL_BANK_HOST)?;
-            *m.phase_ns
-                .entry("native_route_and_expert_enqueue")
-                .or_default() += expert_start.elapsed().as_nanos();
+                !self.moe.resident_router_active() && self.moe.cpu_gpu_overlap() == Some(true);
             let shared_start = Instant::now();
             let mut projector = ResidentBatchProjection {
                 executor: e,
@@ -1735,6 +1880,20 @@ impl Workspace {
         *m.phase_ns
             .entry("native_completed_final_proofs")
             .or_default() += final_proof_start.elapsed().as_nanos();
+        let resident_router_audit_start = Instant::now();
+        self.moe.resolve_resident_router_token(
+            e,
+            m.graph,
+            &m.arena,
+            &session,
+            &mut pending.moe,
+            cancel,
+        )?;
+        if self.moe.resident_router_active() {
+            *m.phase_ns
+                .entry("native_resident_router_audit")
+                .or_default() += resident_router_audit_start.elapsed().as_nanos();
+        }
         let family_start = Instant::now();
         let mut ga = {
             let (first_stage, first_receipt) = match (&m.layers[0], pending.gdn[0].as_ref()) {
@@ -1836,6 +1995,7 @@ impl Workspace {
         ga.finish(&m.arena, cancel)?;
         qa.finish(&m.arena, cancel)?;
         ma.finish(&m.arena, cancel)?;
+        self.moe.finish_resident_router_token()?;
         ple.commit(cancel)?;
         if *count == 1 {
             e.promote_adaptive(&CompletedAdaptiveBoundary(()), &m.arena, m.b.fault, cancel)?;
@@ -1856,6 +2016,29 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn resident_router_adds_full_separate_host_runtime_and_main_charges() {
+        for reuse in [DEFAULT_REUSE_METADATA, 1048576, 4194304] {
+            let old = host_reservation(true, reuse).unwrap();
+            let new = host_reservation_with_router(true, reuse, true).unwrap();
+            assert_eq!(
+                new,
+                (
+                    old.0 + batch_moe::RESIDENT_ROUTER_HOST,
+                    old.1 + batch_moe::RESIDENT_ROUTER_HOST
+                )
+            );
+        }
+        assert!(host_reservation_with_router(false, DEFAULT_REUSE_METADATA, true).is_err());
+        for head in [16, 38] {
+            let old = runtime_bytes(head).unwrap() + HYBRID_RUNTIME;
+            let new = old + batch_moe::RESIDENT_ROUTER_RUNTIME;
+            assert!(old <= crate::executor::RESIDENT_RUNTIME_IO_MAX);
+            assert!(new > crate::executor::RESIDENT_RUNTIME_IO_MAX);
+            assert!(new < batch_moe::RESIDENT_ROUTER_RUNTIME_LIMIT);
+        }
+    }
+
     #[test]
     fn reuse_metadata_has_a_separate_complete_and_explicit_host_charge() {
         for bytes in [DEFAULT_REUSE_METADATA, 1048576, 4194304] {

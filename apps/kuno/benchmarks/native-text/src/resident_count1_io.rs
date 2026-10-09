@@ -284,8 +284,10 @@ fn count1_packet(
     }
 }
 
+/// Original producer without a CPU map. Only the sealed resident router calls
+/// this independently; ordinary read_count1_router_input immediately maps it.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn read_count1_router_input(
+pub(crate) fn enqueue_count1_router_input(
     graph: BoundGraph<'_, '_>,
     arena: &PrivateArena,
     admission: &ResidentAdmission,
@@ -301,15 +303,8 @@ pub(crate) fn read_count1_router_input(
     start: u64,
     gpu_router: bool,
     shared_router: bool,
-) -> Result<Count1RouterInput> {
-    let fixed_public_diagnostic = std::env::var("KUNO_LAB_ORIGINAL_PACKED").as_deref()
-        == Ok("daslab-iq3")
-        && matches!(
-            std::env::var("KUNO_LAB_Q3_PUBLIC_POSITIONS").as_deref(),
-            Ok("4" | "32")
-        )
-        && std::env::var_os("KUNO_PUBLIC_Q3_REFERENCE").is_some();
-    let result = guarded(admission, || {
+) -> Result<()> {
+    guarded(admission, || {
         active(arena, admission, cancel)?;
         shape(graph)?;
         if count != 1 || layer >= 48 || start >= 4096 {
@@ -370,6 +365,176 @@ pub(crate) fn read_count1_router_input(
                 );
             }
         }
+        Ok(())
+    })
+}
+
+pub(crate) const RESIDENT_PACKET_WORDS: usize = ROUTER_BYTES / 4;
+pub(crate) const RESIDENT_WIRE_WORDS: usize =
+    crate::quant_matvec::grouped_moe::MAP_WORDS + 80 + 244;
+pub(crate) const RESIDENT_FRAME_WORDS: usize = RESIDENT_PACKET_WORDS + RESIDENT_WIRE_WORDS + 2;
+pub(crate) const RESIDENT_AUDIT_WORDS: usize = 48 * RESIDENT_FRAME_WORDS;
+pub(crate) const RESIDENT_AUDIT_BYTES: usize = 2 * 1024 * 1024;
+pub(crate) const RESIDENT_AUDIT_HOST: usize = 4 * 1024 * 1024;
+
+pub(crate) struct ResidentRouterAudit {
+    pub(crate) input: Count1RouterInput,
+    pub(crate) wires: Zeroizing<[u32; RESIDENT_WIRE_WORDS]>,
+}
+impl ResidentRouterAudit {
+    fn owned_bytes(&self) -> usize {
+        std::mem::size_of::<Self>() + self.input.owned_bytes()
+    }
+}
+
+fn decode_resident_router_audit(bytes: &[u8], start: u64) -> Result<Vec<ResidentRouterAudit>> {
+    if bytes.len() != RESIDENT_AUDIT_BYTES
+        || start >= 4096
+        || bytes[RESIDENT_AUDIT_WORDS * 4..].iter().any(|&v| v != 0)
+    {
+        return Err(error());
+    }
+    let mut result = Vec::new();
+    result.try_reserve_exact(48).map_err(|_| error())?;
+    if result.capacity() != 48 {
+        return Err(error());
+    }
+    for layer in 0..48 {
+        let base = layer * RESIDENT_FRAME_WORDS * 4;
+        if word(
+            bytes,
+            layer * RESIDENT_FRAME_WORDS + RESIDENT_PACKET_WORDS + RESIDENT_WIRE_WORDS,
+        )? != layer as u32
+            || word(
+                bytes,
+                layer * RESIDENT_FRAME_WORDS + RESIDENT_PACKET_WORDS + RESIDENT_WIRE_WORDS + 1,
+            )? != start as u32
+        {
+            return Err(error());
+        }
+        // Move only zero values into the reserved final owner. Filled inline
+        // selected pairs/headers never move through a temporary entry or a
+        // populated Vec reallocation on success or a later-layer failure.
+        result.push(ResidentRouterAudit {
+            input: Count1RouterInput::zero()?,
+            wires: Zeroizing::new([0; RESIDENT_WIRE_WORDS]),
+        });
+        let capacity = result.capacity();
+        let entry = result.last_mut().ok_or(error())?;
+        entry
+            .input
+            .accept(&bytes[base..base + ROUTER_BYTES], true)?;
+        for (i, target) in entry.wires.iter_mut().enumerate() {
+            *target = word(
+                bytes,
+                layer * RESIDENT_FRAME_WORDS + RESIDENT_PACKET_WORDS + i,
+            )?;
+        }
+        if bytes
+            .len()
+            .checked_add(capacity * std::mem::size_of::<ResidentRouterAudit>())
+            .and_then(|n| {
+                n.checked_add(
+                    (layer + 1)
+                        * (entry.owned_bytes() - std::mem::size_of::<ResidentRouterAudit>()),
+                )
+            })
+            .and_then(|n| n.checked_add(4096))
+            .is_none_or(|n| n > RESIDENT_AUDIT_HOST)
+        {
+            return Err(error());
+        }
+    }
+    Ok(result)
+}
+
+/// One complete owning map for all48 packets. Each entry uses the unchanged
+/// packet acceptance, including mixed finiteness, raw top10 and every gap.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn read_resident_router_audit(
+    graph: BoundGraph<'_, '_>,
+    arena: &PrivateArena,
+    admission: &ResidentAdmission,
+    audit: BufferId,
+    mixed: &[BufferId; 48],
+    fault: BufferId,
+    start: u64,
+    cancel: &AtomicBool,
+) -> Result<Vec<ResidentRouterAudit>> {
+    guarded(admission, || {
+        active(arena, admission, cancel)?;
+        shape(graph)?;
+        let [handle] = physical(
+            arena,
+            [audit],
+            [RESIDENT_AUDIT_WORDS],
+            [RESIDENT_AUDIT_BYTES],
+        )?;
+        let retired = admission.retired_context();
+        admission.readback_audited(cancel, || {
+            let mut result = completed_map(
+                || read(arena, handle, &retired),
+                |bytes| decode_resident_router_audit(bytes, start),
+            )?;
+            for (layer, entry) in result.iter_mut().enumerate() {
+                entry.input.origin = Some(Origin {
+                    binding: graph.binding_id(),
+                    ids: Zeroizing::new([mixed[layer], fault]),
+                    view: Zeroizing::new([layer, 0, EMBEDDING]),
+                    start: Zeroizing::new(start),
+                });
+            }
+            active(arena, admission, cancel)?;
+            Ok(result)
+        })
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn read_count1_router_input(
+    graph: BoundGraph<'_, '_>,
+    arena: &PrivateArena,
+    admission: &ResidentAdmission,
+    mixed: BufferId,
+    router: BufferId,
+    packet: BufferId,
+    fault: BufferId,
+    input_view: InputView,
+    router_view: RouterView,
+    count: usize,
+    cancel: &AtomicBool,
+    layer: usize,
+    start: u64,
+    gpu_router: bool,
+    shared_router: bool,
+) -> Result<Count1RouterInput> {
+    let fixed_public_diagnostic = std::env::var("KUNO_LAB_ORIGINAL_PACKED").as_deref()
+        == Ok("daslab-iq3")
+        && matches!(
+            std::env::var("KUNO_LAB_Q3_PUBLIC_POSITIONS").as_deref(),
+            Ok("4" | "32")
+        )
+        && std::env::var_os("KUNO_PUBLIC_Q3_REFERENCE").is_some();
+    let result = guarded(admission, || {
+        enqueue_count1_router_input(
+            graph,
+            arena,
+            admission,
+            mixed,
+            router,
+            packet,
+            fault,
+            input_view,
+            router_view,
+            count,
+            cancel,
+            layer,
+            start,
+            gpu_router,
+            shared_router,
+        )?;
+        let iv = Zeroizing::new(input_view);
+        let packet_handle = full_private(arena, packet, MAX_BATCH * EXPERTS + 1)?;
         let retired = admission.retired_context();
         admission.readback_count1_bridge(cancel, || {
             let mut out = Count1RouterInput::zero()?;
@@ -425,6 +590,60 @@ pub(crate) fn read_count1_router_input(
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn resident_audit_bytes(start: u32) -> Vec<u8> {
+        let mut bytes = vec![0u8; RESIDENT_AUDIT_BYTES];
+        for layer in 0..48 {
+            let base = layer * RESIDENT_FRAME_WORDS;
+            for rank in 0..10 {
+                let at = base + crate::router_gpu::FIRST + rank * 2;
+                bytes[at * 4..at * 4 + 4].copy_from_slice(&(rank as u32).to_le_bytes());
+                bytes[at * 4 + 4..at * 4 + 8].copy_from_slice(&0.1_f32.to_bits().to_le_bytes());
+            }
+            let identity = base + RESIDENT_PACKET_WORDS + RESIDENT_WIRE_WORDS;
+            bytes[identity * 4..identity * 4 + 4].copy_from_slice(&(layer as u32).to_le_bytes());
+            bytes[identity * 4 + 4..identity * 4 + 8].copy_from_slice(&start.to_le_bytes());
+        }
+        bytes
+    }
+    #[test]
+    fn resident_audit_has_exact48_original_packets_and_complete_owner_padding() {
+        let bytes = resident_audit_bytes(1);
+        let entries = decode_resident_router_audit(&bytes, 1).unwrap();
+        assert_eq!(entries.len(), 48);
+        assert!(
+            entries
+                .iter()
+                .all(|e| e.input.gpu_selection().unwrap()[9] == (9, 0.1))
+        );
+        let owned: usize = entries.capacity() * std::mem::size_of::<ResidentRouterAudit>()
+            + entries
+                .iter()
+                .map(|e| e.owned_bytes() - std::mem::size_of::<ResidentRouterAudit>())
+                .sum::<usize>();
+        assert!(owned + bytes.len() + 4096 < RESIDENT_AUDIT_HOST);
+        assert!(decode_resident_router_audit(&bytes[..bytes.len() - 4], 1).is_err());
+        assert!(decode_resident_router_audit(&bytes, 2).is_err());
+    }
+    #[test]
+    fn resident_audit_rejects_late_layer_fault_gap_nonfinite_selection_and_identity() {
+        let bytes = resident_audit_bytes(1);
+        for (index, value) in [
+            (23 * RESIDENT_FRAME_WORDS + FAULT_FIRST, 4u32),
+            (47 * RESIDENT_FRAME_WORDS + 4000, 1),
+            (15 * RESIDENT_FRAME_WORDS, f32::NAN.to_bits()),
+            (19 * RESIDENT_FRAME_WORDS + crate::router_gpu::FIRST + 2, 0),
+            (
+                32 * RESIDENT_FRAME_WORDS + RESIDENT_PACKET_WORDS + RESIDENT_WIRE_WORDS,
+                31,
+            ),
+            (RESIDENT_AUDIT_BYTES / 4 - 1, 1),
+        ] {
+            let mut changed = bytes.clone();
+            changed[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes());
+            assert!(decode_resident_router_audit(&changed, 1).is_err());
+        }
+    }
+
     #[test]
     fn gpu_packet_selection_is_typed_sorted_unique_normalized_and_fully_bounded() {
         let mut bytes = vec![0_u8; ROUTER_BYTES];

@@ -753,6 +753,9 @@ pub struct GpuExecutor<'a> {
     #[allow(dead_code)] // Inert until parent wires the separate original-MoE leaf.
     pub(crate) q3_shared_original_moe: bool,
     pub(crate) q6_integer_head: bool,
+    pub(crate) resident_router_reserved: bool,
+    pub(crate) resident_banks_frozen: bool,
+    pub(crate) resident_router_audits: u64,
     pub q6_integer_head_prepares: u64,
     pub q6_integer_head_tiles: u64,
     pub(crate) q3_expert_oracle: bool,
@@ -976,6 +979,9 @@ impl<'a> GpuExecutor<'a> {
             q3_integer_moe: false,
             q3_shared_original_moe: false,
             q6_integer_head: false,
+            resident_router_reserved: false,
+            resident_banks_frozen: false,
+            resident_router_audits: 0,
             q6_integer_head_prepares: 0,
             q6_integer_head_tiles: 0,
             q3_expert_oracle: false,
@@ -1122,6 +1128,7 @@ impl<'a> GpuExecutor<'a> {
         self.cache.clear();
         self.cache_bytes = 0;
         self.banks.clear();
+        self.resident_banks_frozen = false;
         self.batch_moe = None;
         self.bank_reserved = 0;
         // All previous commands completed before public cache handles release.
@@ -1164,7 +1171,8 @@ impl<'a> GpuExecutor<'a> {
         &self,
         _boundary: &crate::resident_model::batch::CompletedNativeProjectionBoundary,
     ) -> Result<()> {
-        if self.oracle_trace.is_some()
+        if self.resident_banks_frozen
+            || self.oracle_trace.is_some()
             || self.adaptive.is_some()
             || self.secondary.is_some()
             || self.secondary_frequency.is_some()
@@ -1751,6 +1759,16 @@ impl<'a> GpuExecutor<'a> {
         }
         expert_banks::check_ordered_segmented(self.bank_slots, self.ordered_public_upload)
     }
+    pub(crate) fn resident_bank_capacity(&self) -> usize {
+        self.bank_slots
+    }
+    pub(crate) fn resident_runtime_io_limit(&self) -> u64 {
+        if self.resident_router_reserved {
+            batch_moe::RESIDENT_ROUTER_RUNTIME_LIMIT
+        } else {
+            RESIDENT_RUNTIME_IO_MAX
+        }
+    }
     /// Before ANY owner allocation, admit all static full pages and every
     /// simultaneously queued source page. Capacity plan is distinct from the
     /// actual baseline ledger; this laboratory executor binds only one owner.
@@ -1761,6 +1779,19 @@ impl<'a> GpuExecutor<'a> {
         public_pages: u64,
     ) -> Result<ResidentAdmission> {
         self.check_segmented_resident(true)?;
+        if self.resident_router_reserved
+            && (!self.packed_profile.is_low_bit()
+                || self.bank_slots != 144
+                || self.transient_resident.is_none()
+                || !self.model.weights_mapped()
+                || self.adaptive.is_some()
+                || self.secondary.is_some()
+                || self.ordered_public_upload)
+        {
+            return Err(Error::InvalidFormat(
+                "resident router explicit construction policy",
+            ));
+        }
         if self.resident_admission.is_some() || !self.cache.is_empty() || !self.banks.is_empty() {
             return Err(Error::InvalidFormat("resident executor already used"));
         }
@@ -1832,7 +1863,7 @@ impl<'a> GpuExecutor<'a> {
                 private_owned,
                 RESIDENT_IO_MAX,
                 if self.transient_resident.is_some() {
-                    RESIDENT_RUNTIME_IO_MAX
+                    self.resident_runtime_io_limit()
                 } else {
                     0
                 },
@@ -3088,6 +3119,7 @@ impl Drop for GpuExecutor<'_> {
         self.cache.clear();
         self.cache_bytes = 0;
         self.banks.clear();
+        self.resident_banks_frozen = false;
         self.bank_reserved = 0;
         self.client.memory_cleanup();
         let _ = cubecl::future::block_on(self.client.sync());
