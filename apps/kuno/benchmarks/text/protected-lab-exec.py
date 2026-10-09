@@ -14,7 +14,8 @@ def selected_target_policy(environment, mtp=False):
                 or spec and selected.get("KUNO_LAB_WARM_REPLAY") != "once"
                 or selected.get("KUNO_LAB_TARGET_REUSE") != "request"
                 or selected.get("KUNO_LAB_TARGET_FILL") != "direct-public"
-                or any(key in selected for key in ("KUNO_LAB_TARGET_ROUTER", "KUNO_LAB_TARGET_EXPERTS", "KUNO_LAB_TARGET_MOE"))):
+                or selected.get("KUNO_LAB_TARGET_ROUTER") not in (None, "device-frozen-public")
+                or any(key in selected for key in ("KUNO_LAB_TARGET_EXPERTS", "KUNO_LAB_TARGET_MOE"))):
             raise ValueError("Frozen host sources require the fixed original public target scope")
     if "KUNO_LAB_TARGET_QSA" in selected:
         if not mtp or selected.pop("KUNO_LAB_TARGET_QSA") != "chronological-public":
@@ -23,11 +24,18 @@ def selected_target_policy(environment, mtp=False):
         if not mtp or selected.pop("KUNO_LAB_MTP_PROFILE") != "strata-q2":
             raise ValueError("Alternate draft requires the explicit original Q2 profile")
     if "KUNO_LAB_TARGET_ROUTER" in selected:
-        if (not mtp or selected.pop("KUNO_LAB_TARGET_ROUTER") != "device-warm-public"
-                or selected.get("KUNO_LAB_WARM_REPLAY") != "once"
+        router = selected.pop("KUNO_LAB_TARGET_ROUTER")
+        frozen = router == "device-frozen-public"
+        spec = selected.get("KUNO_LAB_SPECULATIVE_PUBLIC_ONLY") == "1"
+        language = selected.get("KUNO_LAB_LANGUAGE_PUBLIC_ONLY") == "1"
+        if (not mtp or router not in ("device-warm-public", "device-frozen-public")
+                or not frozen and selected.get("KUNO_LAB_WARM_REPLAY") != "once"
+                or frozen and (environment.get("KUNO_LAB_TARGET_SOURCES") != "frozen-host-public"
+                               or spec == language
+                               or spec and selected.get("KUNO_LAB_WARM_REPLAY") != "once")
                 or selected.get("KUNO_LAB_TARGET_REUSE") != "request"
                 or "KUNO_LAB_TARGET_EXPERTS" in selected):
-            raise ValueError("Device router requires the fixed original warm public request")
+            raise ValueError("Device router requires the fixed original public request")
     if "KUNO_LAB_TARGET_REUSE" in selected:
         if (selected.pop("KUNO_LAB_TARGET_REUSE") != "request"
                 or selected.get("KUNO_LAB_DEVICE_DISPATCH") != "inline"
@@ -106,7 +114,8 @@ def memory_limit(environment, arguments):
                 or selected["KUNO_LAB_LANGUAGE_FIXTURE"] not in ("first-code","warm-prose")
                 or selected["KUNO_LAB_STATIC_CACHE_BYTES"] != "8589934592"
                 or len(arguments)!=3 or arguments[1:]!=["intel","daslab-language-probe"]
-                or "KUNO_LAB_WARM_REPLAY" in environment or "KUNO_LAB_TARGET_ROUTER" in environment):
+                or "KUNO_LAB_WARM_REPLAY" in environment
+                or environment.get("KUNO_LAB_TARGET_ROUTER") not in (None, "device-frozen-public")):
             raise ValueError("Language benchmark requires the frozen public fixture")
         # Includes separately declared192MiB tokenizer and4MiB fixture owners;
         # these are never borrowed from GPU/staging/runtime reservations.

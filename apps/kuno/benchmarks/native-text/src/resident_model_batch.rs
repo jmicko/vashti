@@ -293,6 +293,7 @@ pub(crate) struct Config {
     public_warm_batch_router: bool,
     public_gpu_qsa_selector: bool,
     public_frozen_host_sources: bool,
+    public_frozen_host_router: bool,
 }
 fn prepared_verify3_configuration(
     target_rows: bool,
@@ -357,6 +358,19 @@ fn frozen_host_source_configuration(
 }
 impl Config {
     fn qsa_host_reservation(&self) -> Result<(usize, usize)> {
+        if self.public_frozen_host_router
+            && (!self.public_frozen_host_sources
+                || !self.target_rows_reserved
+                || !(self.public_target_request_io || self.public_language_request_io.is_some())
+                || self.public_warm_batch_router
+                || self.cpu_operator.is_some()
+                || self.resident_router_reserved
+                || self.prepared_verify3_experts_reserved
+                || self.live_member_reduction
+                || self.tile != 8)
+        {
+            return Err(error());
+        }
         let (reserved, limit) = host_reservation_with_verify3(
             self.cpu_operator.is_some(),
             self.request_reuse_metadata,
@@ -377,6 +391,13 @@ impl Config {
                     .map_err(|_| Error::ArithmeticOverflow)?
             } else {
                 0
+            })
+            .and_then(|n| {
+                n.checked_add(if self.public_frozen_host_router {
+                    usize::try_from(batch_moe::frozen_sources::ROUTER_HOST_BYTES).ok()?
+                } else {
+                    0
+                })
             })
             .ok_or(Error::ArithmeticOverflow)?;
         Ok((
@@ -411,6 +432,7 @@ impl Config {
             public_warm_batch_router: false,
             public_gpu_qsa_selector: false,
             public_frozen_host_sources: false,
+            public_frozen_host_router: false,
         })
     }
     /// Construction-fixed, one-shot empty PRIVATE-state replay after the
@@ -476,6 +498,25 @@ impl Config {
         self.public_frozen_host_sources = true;
         Ok(self)
     }
+    /// Source-bound GPU routing uses the authenticated full512 source table.
+    /// Construction grants no activation authority before complete attachment.
+    pub(crate) fn reserve_public_frozen_host_batch_router(mut self) -> Result<Self> {
+        if self.public_frozen_host_router
+            || !self.public_frozen_host_sources
+            || !self.target_rows_reserved
+            || !(self.public_target_request_io || self.public_language_request_io.is_some())
+            || self.public_warm_batch_router
+            || self.cpu_operator.is_some()
+            || self.resident_router_reserved
+            || self.prepared_verify3_experts_reserved
+            || self.live_member_reduction
+            || self.tile != 8
+        {
+            return Err(error());
+        }
+        self.public_frozen_host_router = true;
+        Ok(self)
+    }
     /// Construction-fixed original-F32 reduction of actual grouped members.
     /// The complete MAX8 roots, original ranks, INFO charges and all owning
     /// finite/status/padding proofs remain unchanged. Parent owns the fixed
@@ -504,6 +545,8 @@ impl Config {
             || self.cpu_operator.is_some()
             || self.resident_router_reserved
             || self.prepared_verify3_experts_reserved
+            || self.public_frozen_host_sources
+            || self.public_frozen_host_router
             || self.tile != 8
         {
             return Err(error());
@@ -998,10 +1041,21 @@ impl Plan {
             }
             requests.extend(batch_moe::Workspace::batch_router_allocation_requests());
         }
-        if config.public_warm_batch_router != executor.target_batch_router_reserved {
+        if config.public_frozen_host_router {
+            if !config.public_frozen_host_sources || config.public_warm_batch_router {
+                return Err(error());
+            }
+            requests.extend(batch_moe::Workspace::batch_router_allocation_requests());
+        }
+        if (config.public_warm_batch_router || config.public_frozen_host_router)
+            != executor.target_batch_router_reserved
+            || config.public_frozen_host_router != executor.target_frozen_host_router_reserved
+        {
             return Err(error());
         }
-        let extra = if config.public_warm_batch_router {
+        let extra = if config.public_frozen_host_router {
+            batch_moe::frozen_sources::ROUTER_MAIN_BYTES
+        } else if config.public_warm_batch_router {
             batch_moe::batch_router::MAIN_BYTES
         } else {
             0
@@ -1027,7 +1081,8 @@ impl Plan {
                 + usize::from(router) * 2
                 + usize::from(target_rows) * 2
                 + usize::from(prepared_verify3)
-                + usize::from(config.public_warm_batch_router) * 2
+                + usize::from(config.public_warm_batch_router || config.public_frozen_host_router)
+                    * 2
             || sum(&requests)? != NEW_MAIN + extra
             || OLD_MAIN.checked_add(sum(&requests)?) != Some(TOTAL_MAIN + extra)
         {
@@ -1074,7 +1129,9 @@ impl Plan {
                 })
             })
             .and_then(|n| {
-                n.checked_add(if config.public_warm_batch_router {
+                n.checked_add(if config.public_frozen_host_router {
+                    batch_moe::frozen_sources::ROUTER_RUNTIME_BYTES
+                } else if config.public_warm_batch_router {
                     batch_moe::batch_router::RUNTIME_BYTES
                 } else {
                     0
@@ -1201,6 +1258,7 @@ pub(super) struct Workspace {
     public_language_request_io: Option<public_language_request_io::Permit>,
     public_gpu_qsa_selector: bool,
     public_frozen_host_sources: bool,
+    public_frozen_host_router: bool,
 }
 impl Workspace {
     fn decode_kernels(&self) -> Result<NativeDecodeKernels> {
@@ -1393,6 +1451,9 @@ impl Workspace {
         if config.public_warm_batch_router {
             moe.reserve_batch_router(&mut model.arena, allocation)?;
         }
+        if config.public_frozen_host_router {
+            moe.reserve_frozen_host_batch_router(&mut model.arena, allocation, model.context)?;
+        }
         if config.prepared_verify3_experts_reserved {
             moe.reserve_prepared_verify3(&mut model.arena, allocation)?;
         }
@@ -1433,6 +1494,7 @@ impl Workspace {
             public_language_request_io,
             public_gpu_qsa_selector: config.public_gpu_qsa_selector,
             public_frozen_host_sources: config.public_frozen_host_sources,
+            public_frozen_host_router: config.public_frozen_host_router,
         };
         result.prove_outer(model)?;
         Ok(result)
@@ -1988,10 +2050,13 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         {
             return Err(error());
         }
-        let boundary = self.completed_native_projection_boundary(executor)?;
+        let boundary = self
+            .completed_native_projection_boundary(executor)
+            .map_err(|_| Error::InvalidFormat("public host prepare initial completed boundary"))?;
         native
             .moe
-            .validate_public_warm_boundary(executor, self.graph, &self.arena)?;
+            .validate_public_warm_boundary(executor, self.graph, &self.arena)
+            .map_err(|_| Error::InvalidFormat("public host prepare routed completed boundary"))?;
         let fills = if self.context == 13 && native.public_warm_replay.is_some() {
             // Deterministic PHYSICAL placement exercises both actual tiers in
             // the complete CPU13 numerical gate. It never changes routing.
@@ -2011,7 +2076,8 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 cancel,
             )?
         };
-        self.completed_native_projection_boundary(executor)?;
+        self.completed_native_projection_boundary(executor)
+            .map_err(|_| Error::InvalidFormat("public host prepare filled completed boundary"))?;
         let prepared = crate::public_host_expert_attachment::PreparedPlan::new(
             self.graph,
             executor.public_host_model(),
@@ -2019,8 +2085,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             65536,
             crate::public_host_expert_plan::METADATA_HOST_CAP,
             cancel,
-        )
-        .map_err(|_| error())?;
+        )?;
         Ok((prepared, fills))
     }
     /// The parent retains exact public hash/source proofs and PreparedPlan.
@@ -2088,6 +2153,47 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             return Err(error());
         }
         Ok(native.moe.frozen_source_counters())
+    }
+
+    pub(crate) fn activate_public_frozen_host_batch_router(
+        &mut self,
+        executor: &GpuExecutor<'f>,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        u::cancel(cancel)?;
+        if self.poisoned
+            || self.retired.load(Ordering::Acquire)
+            || self.admission.request_io_reuse_active()
+            || !executor.target_frozen_host_router_reserved
+            || !executor.target_batch_router_reserved
+            || executor.target_frozen_host_source_identity.is_none()
+            || !executor.resident_banks_frozen
+        {
+            return Err(error());
+        }
+        if self.position == 0 {
+            if self.context != 13
+                || self
+                    .native_batch
+                    .as_ref()
+                    .and_then(|n| n.public_warm_replay.as_ref())
+                    .is_none_or(|p| !p.reset_consumed())
+            {
+                return Err(error());
+            }
+        } else {
+            self.completed_native_projection_boundary(executor)?;
+        }
+        let native = self.native_batch.as_mut().ok_or(error())?;
+        if !native.public_frozen_host_sources
+            || !native.public_frozen_host_router
+            || !native.moe.frozen_host_sources_enabled()
+        {
+            return Err(error());
+        }
+        native
+            .moe
+            .activate_frozen_host_batch_router(executor, self.graph, &self.arena)
     }
 
     pub(crate) fn activate_public_warm_batch_router(
@@ -2728,18 +2834,39 @@ impl Workspace {
                 .or_default() += router_enqueue_start.elapsed().as_nanos();
             if self.moe.batch_router_active() {
                 let expert_start = Instant::now();
-                pending.moe[layer] = Some(e.enqueue_batch_router_moe(
-                    m.graph,
-                    &m.arena,
-                    &mut self.moe,
-                    &session,
-                    layer,
-                    prepared.mixed(),
-                    self.outer.block[0],
-                    self.outer.router,
-                    &spans,
-                    cancel,
-                )?);
+                pending.moe[layer] = Some(if self.moe.frozen_host_batch_router_active() {
+                    if !self.public_frozen_host_router || !self.public_frozen_host_sources {
+                        return Err(error());
+                    }
+                    e.enqueue_frozen_host_batch_router_moe(
+                        m.graph,
+                        &m.arena,
+                        &mut self.moe,
+                        &session,
+                        layer,
+                        prepared.mixed(),
+                        self.outer.block[0],
+                        self.outer.router,
+                        &spans,
+                        cancel,
+                    )?
+                } else {
+                    if self.public_frozen_host_router {
+                        return Err(error());
+                    }
+                    e.enqueue_batch_router_moe(
+                        m.graph,
+                        &m.arena,
+                        &mut self.moe,
+                        &session,
+                        layer,
+                        prepared.mixed(),
+                        self.outer.block[0],
+                        self.outer.router,
+                        &spans,
+                        cancel,
+                    )?
+                });
                 *m.phase_ns
                     .entry("native_device_router_and_expert_enqueue")
                     .or_default() += expert_start.elapsed().as_nanos();

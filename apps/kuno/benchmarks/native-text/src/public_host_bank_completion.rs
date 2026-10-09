@@ -211,7 +211,7 @@ impl GpuExecutor<'_> {
             || self.banks.len() != LAYERS
             || self.resident_banks_frozen
             || self.target_frozen_host_source_identity.is_some()
-            || self.target_batch_router_reserved
+            || (self.target_batch_router_reserved && !self.target_frozen_host_router_reserved)
             || self.batch_moe.is_some()
             || self.oracle_trace.is_some()
             || self.adaptive.is_some()

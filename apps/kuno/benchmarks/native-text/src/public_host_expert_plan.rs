@@ -490,9 +490,12 @@ impl<'model, 'file> Plan<'model, 'file> {
         let mut generations = 0usize;
         for (layer, bank) in banks.iter().enumerate() {
             let sources = sources(graph, layer)?;
-            check_bank(bank, sources)?;
-            let maps = Maps::from_bank(&bank.slots)?;
-            let (origin, generation_bytes) = generation_snapshot(&bank.slots)?;
+            check_bank(bank, sources)
+                .map_err(|_| Error::InvalidFormat("public host plan bank geometry"))?;
+            let maps = Maps::from_bank(&bank.slots)
+                .map_err(|_| Error::InvalidFormat("public host plan full resident map"))?;
+            let (origin, generation_bytes) = generation_snapshot(&bank.slots)
+                .map_err(|_| Error::InvalidFormat("public host plan generation snapshot"))?;
             generations = generations
                 .checked_add(generation_bytes)
                 .ok_or(Error::ArithmeticOverflow)?;
@@ -515,7 +518,8 @@ impl<'model, 'file> Plan<'model, 'file> {
                     info.row_bytes(),
                     info.byte_len(),
                     allocation_alignment,
-                )?;
+                )
+                .map_err(|_| Error::InvalidFormat("public host plan complementary role pages"))?;
                 for page in rp[role.index()] {
                     logical = logical
                         .checked_add(page.logical_bytes)
@@ -562,7 +566,8 @@ impl<'model, 'file> Plan<'model, 'file> {
                 allocation_alignment,
             },
         };
-        plan.check_frozen(graph, model, banks)?;
+        plan.check_frozen(graph, model, banks)
+            .map_err(|_| Error::InvalidFormat("public host plan final immutable identity"))?;
         Ok(plan)
     }
     pub(crate) fn identity(&self) -> PlanIdentity {

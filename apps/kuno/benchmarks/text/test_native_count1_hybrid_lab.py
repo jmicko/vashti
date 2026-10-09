@@ -1851,6 +1851,11 @@ class StrataInspiredGuards(unittest.TestCase):
                 mode="daslab-speculative-probe";limit=48*1024**3
             args=["/frozen/binary","intel",mode]
             self.assertEqual(guard.memory_limit(env,args),limit)
+            routed=dict(env,KUNO_LAB_TARGET_ROUTER="device-frozen-public")
+            self.assertEqual(guard.memory_limit(routed,args),limit)
+            bad=dict(routed);bad.pop("KUNO_LAB_TARGET_SOURCES")
+            with self.assertRaises(ValueError):guard.memory_limit(bad,args)
+            with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_TARGET_ROUTER="device-warm-public"),args)
             for key in ("KUNO_LAB_TARGET_REUSE","KUNO_LAB_TARGET_FILL","KUNO_LAB_DEVICE_DISPATCH"):
                 bad=dict(env);bad.pop(key)
                 with self.assertRaises(ValueError):guard.memory_limit(bad,args)
