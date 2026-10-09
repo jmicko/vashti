@@ -78,6 +78,8 @@ impl LocalArray {
 
 #[derive(Debug, Clone)]
 pub struct ComputeShader {
+    /// Default-zero, explicit immutable PUBLIC external-buffer lowering only.
+    pub public_external_readonly_mask: u32,
     pub buffers: Vec<KernelArg>,
     pub scalars: Vec<(Elem, usize)>,
     pub shared_arrays: Vec<SharedArray>,
@@ -107,6 +109,21 @@ pub struct ComputeShader {
 }
 
 impl ComputeShader {
+    /// Admit only originally read-only, non-atomic arguments. Ordinary source
+    /// and formatting remain byte-for-byte unchanged with the default zero mask.
+    pub fn set_public_external_readonly_mask(&mut self, mask: u32) -> Result<(), &'static str> {
+        if self.buffers.len() > 32
+            || (self.buffers.len() < 32 && mask >> self.buffers.len() != 0)
+            || self.buffers.iter().enumerate().any(|(i, binding)| {
+                mask & (1 << i) != 0
+                    && (binding.visibility != Visibility::Read || binding.item.elem().is_atomic())
+            })
+        {
+            return Err("public external original readonly argument rejected");
+        }
+        self.public_external_readonly_mask = mask;
+        Ok(())
+    }
     pub fn shared_memory_bytes(&self) -> usize {
         self.shared_arrays
             .iter()
@@ -129,7 +146,13 @@ impl Display for ComputeShader {
             f.write_str("enable f16;")?;
         }
 
-        Self::format_bindings(f, "buffer", &self.buffers, 0)?;
+        Self::format_bindings(
+            f,
+            "buffer",
+            &self.buffers,
+            0,
+            self.public_external_readonly_mask,
+        )?;
 
         let offset = self.buffers.len();
 
@@ -288,6 +311,7 @@ impl ComputeShader {
         prefix: &str,
         bindings: &[KernelArg],
         num_entry: usize,
+        readonly_mask: u32,
     ) -> core::fmt::Result {
         for (i, binding) in bindings.iter().enumerate() {
             Self::format_binding(
@@ -295,6 +319,7 @@ impl ComputeShader {
                 format!("{prefix}_{i}_global").as_str(),
                 binding,
                 num_entry + i,
+                readonly_mask.checked_shr(i as u32).unwrap_or(0) & 1 != 0,
             )?;
         }
 
@@ -306,16 +331,21 @@ impl ComputeShader {
         name: &str,
         binding: &KernelArg,
         num_entry: usize,
+        force_readonly: bool,
     ) -> core::fmt::Result {
         let ty = match binding.size {
             Some(size) => format!("array<{}, {}>", binding.item, size),
             None => format!("array<{}>", binding.item),
         };
 
-        let visibility = match binding.visibility {
-            #[cfg(exclusive_memory_only)]
-            Visibility::Read if !binding.item.elem().is_atomic() => "read",
-            _ => "read_write",
+        let visibility = if force_readonly {
+            "read"
+        } else {
+            match binding.visibility {
+                #[cfg(exclusive_memory_only)]
+                Visibility::Read if !binding.item.elem().is_atomic() => "read",
+                _ => "read_write",
+            }
         };
 
         write!(

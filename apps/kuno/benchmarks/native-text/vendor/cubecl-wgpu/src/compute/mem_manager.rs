@@ -21,6 +21,10 @@ pub(crate) struct WgpuMemManager {
     memory_uniforms: MemoryManagement<WgpuStorage>,
     memory_pool_staging: MemoryManagement<WgpuStorage>,
     uniforms: Vec<ManagedMemoryHandle>,
+    // Separate caller-owned PUBLIC host sources; ordinary allocators never
+    // allocate, reuse, erase, free, or account their backing.
+    pub(crate) public_external:
+        Option<cubecl_runtime::public_external::PublicExternalPool<WgpuResource>>,
 }
 
 impl WgpuMemManager {
@@ -81,6 +85,7 @@ impl WgpuMemManager {
             memory_pool_staging: memory_staging,
             memory_uniforms,
             uniforms: vec![],
+            public_external: None,
         }
     }
 
@@ -110,6 +115,19 @@ impl WgpuMemManager {
     }
 
     pub(crate) fn get_resource(&mut self, binding: Binding) -> Result<WgpuResource, IoError> {
+        if cubecl_runtime::public_external::is_public_external_binding(&binding) {
+            let mut resource = self
+                .public_external
+                .as_ref()
+                .ok_or_else(|| public_external_error("public external unconfigured registry"))?
+                .resolve(&binding)
+                .map_err(public_external_error)?;
+            let first = binding.offset_start.unwrap_or(0);
+            let end = binding.offset_end.unwrap_or(0);
+            resource.offset = first;
+            resource.size = binding.size - first - end;
+            return Ok(resource);
+        }
         self.memory_pool
             .get_resource(binding.memory, binding.offset_start, binding.offset_end)
     }
@@ -142,5 +160,12 @@ impl WgpuMemManager {
 
     pub(crate) fn release_uniforms(&mut self) {
         self.uniforms.clear();
+    }
+}
+
+fn public_external_error(reason: &'static str) -> IoError {
+    IoError::NotFound {
+        reason: reason.into(),
+        backtrace: cubecl_common::backtrace::BackTrace::capture(),
     }
 }

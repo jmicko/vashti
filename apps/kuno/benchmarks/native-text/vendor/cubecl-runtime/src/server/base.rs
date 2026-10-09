@@ -361,6 +361,61 @@ where
     /// Wait for the completion of every task in the server.
     fn sync(&mut self, stream_id: StreamId) -> DynFut<Result<(), ServerError>>;
 
+    /// Reserve a separate, non-reused PUBLIC host-resource registry.
+    fn configure_public_external_host(
+        &mut self,
+        _budget: crate::public_external::PublicExternalBudget,
+        _stream_id: StreamId,
+    ) -> Result<(), ServerError> {
+        Err(IoError::UnsupportedIoOperation {
+            backtrace: BackTrace::capture(),
+        }
+        .into())
+    }
+
+    /// Register caller-owned, immutable authenticated PUBLIC host backing.
+    fn register_public_external_host(
+        &mut self,
+        _source: crate::public_external::PublicExternalHostSource<
+            <Self::Storage as ComputeStorage>::Resource,
+        >,
+        _stream_id: StreamId,
+    ) -> Result<crate::public_external::PublicExternalHandle, ServerError> {
+        Err(IoError::UnsupportedIoOperation {
+            backtrace: BackTrace::capture(),
+        }
+        .into())
+    }
+
+    /// Revoke lookup, join scheduled consumers, destroy safe clones, then join
+    /// again. Only success permits the caller to release its backing.
+    fn detach_public_external_host(
+        &mut self,
+        _handle: crate::public_external::PublicExternalHandle,
+        _stream_id: StreamId,
+    ) -> Result<
+        crate::public_external::PublicExternalDetachReceipt<
+            <Self::Storage as ComputeStorage>::Resource,
+        >,
+        ServerError,
+    > {
+        Err(IoError::UnsupportedIoOperation {
+            backtrace: BackTrace::capture(),
+        }
+        .into())
+    }
+
+    /// Content-free ownership independent from managed MAIN/runtime pools.
+    fn public_external_host_usage(
+        &mut self,
+        _stream_id: StreamId,
+    ) -> Result<crate::public_external::PublicExternalUsage, ServerError> {
+        Err(IoError::UnsupportedIoOperation {
+            backtrace: BackTrace::capture(),
+        }
+        .into())
+    }
+
     /// Opt-in bounded private I/O for one serialized stream. Unsupported
     /// backends must reject it; never silently use ordinary upload staging.
     fn configure_transient_io(

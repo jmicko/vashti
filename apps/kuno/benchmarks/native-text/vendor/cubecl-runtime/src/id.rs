@@ -152,6 +152,23 @@ impl KernelId {
         self
     }
 
+    /// Separate immutable PUBLIC external-buffer lowering from ordinary kernel
+    /// and disk-cache identities. Zero preserves the original identity exactly.
+    pub fn public_external_read_mask(mut self, mask: u32) -> Self {
+        #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+        struct ExternalRead {
+            original: Option<Info>,
+            mask: u32,
+        }
+        if mask != 0 {
+            self.info = Some(Info::new(ExternalRead {
+                original: self.info.take(),
+                mask,
+            }));
+        }
+        self
+    }
+
     /// Set the [execution mode](ExecutionMode).
     pub fn mode(&mut self, mode: ExecutionMode) {
         self.mode = mode;

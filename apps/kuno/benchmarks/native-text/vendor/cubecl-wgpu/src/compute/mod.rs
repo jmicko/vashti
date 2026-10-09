@@ -1,6 +1,7 @@
 // Modified for Kuno's laboratory transient-I/O ownership/erasure patch (2026-10-05).
 pub(crate) mod controller;
 
+mod public_external;
 mod storage;
 
 mod binding_cache;

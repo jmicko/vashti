@@ -46,6 +46,7 @@ pub struct WgpuServer {
     // A buffer that can be used to store stream id without extra allocations.
     streams_pool: Vec<StreamId>,
     pipelines: HashMap<KernelId, Arc<ComputePipeline>>,
+    public_external_pipeline_count: usize,
     scheduler: SchedulerMultiStream<ScheduledWgpuBackend>,
     #[cfg(feature = "spirv")]
     pub(crate) spirv_cache:
@@ -67,6 +68,14 @@ impl WgpuServer {
         private: bool,
     ) {
         for (desc, data) in descriptors {
+            if cubecl_runtime::public_external::is_public_external_binding(&desc.handle) {
+                self.scheduler
+                    .stream(&stream_id)
+                    .error(super::public_external::fault(
+                        "public external source cannot be written",
+                    ));
+                return;
+            }
             let stream = self.scheduler.stream(&desc.handle.stream);
 
             if contiguous_strides(&desc.shape) != desc.strides {
@@ -124,6 +133,7 @@ impl WgpuServer {
             streams_pool: Vec::new(),
             device,
             pipelines: HashMap::new(),
+            public_external_pipeline_count: 0,
             scheduler: SchedulerMultiStream::new(
                 utilities.logger.clone(),
                 backend_scheduler,
@@ -176,12 +186,33 @@ impl WgpuServer {
     ) -> Result<Arc<ComputePipeline>, LaunchError> {
         let mut kernel_id = kernel.id();
         kernel_id.mode(mode);
+        let external_mask = super::public_external::external_mask(bindings).map_err(|reason| {
+            LaunchError::Unknown {
+                reason: reason.into(),
+                backtrace: BackTrace::capture(),
+            }
+        })?;
+        kernel_id = kernel_id.public_external_read_mask(external_mask);
 
         if let Some(pipeline) = self.pipelines.get(&kernel_id) {
             return Ok(pipeline.clone());
         }
+        if external_mask != 0
+            && self.public_external_pipeline_count >= cubecl_runtime::public_external::MAX_BUFFERS
+        {
+            return Err(LaunchError::Unknown {
+                reason: "public external pipeline metadata capacity".into(),
+                backtrace: BackTrace::capture(),
+            });
+        }
 
-        let cached = self.load_cached_pipeline(&kernel_id, bindings, mode)?;
+        // External imports require actual WGSL reflection, so do not accept a
+        // disk/SPIRV cache entry without the original readonly declaration.
+        let cached = if external_mask == 0 {
+            self.load_cached_pipeline(&kernel_id, bindings, mode)?
+        } else {
+            None
+        };
 
         if let Some(Ok(pipeline)) = cached {
             self.pipelines.insert(kernel_id, pipeline.clone());
@@ -193,6 +224,12 @@ impl WgpuServer {
 
         let mut compiler = compiler(self.backend, &self.compilation_options);
         let mut compiled = compiler.compile(self, kernel, mode)?;
+        super::public_external::lower(&mut compiled, external_mask).map_err(|reason| {
+            LaunchError::Unknown {
+                reason: reason.into(),
+                backtrace: BackTrace::capture(),
+            }
+        })?;
 
         if self.scheduler.logger.compilation_activated() {
             compiled.debug_info = Some(DebugInformation::new(
@@ -229,8 +266,19 @@ impl WgpuServer {
         // }
         let repr = compiled.repr.as_ref().map(|it| it.as_ref());
         let module = self.create_module(&compiled.entrypoint_name, repr, &compiled.source, mode)?;
-        let pipeline = self.create_pipeline(&compiled.entrypoint_name, repr, module, bindings);
+        // Original generated layouts conservatively allow writes for aliased
+        // slices. This explicit immutable-source variant uses the actually
+        // reflected WGSL layout; ordinary kernels keep the exact old path.
+        let pipeline = self.create_pipeline(
+            &compiled.entrypoint_name,
+            if external_mask == 0 { repr } else { None },
+            module,
+            bindings,
+        );
         self.pipelines.insert(kernel_id.clone(), pipeline.clone());
+        if external_mask != 0 {
+            self.public_external_pipeline_count += 1;
+        }
 
         #[cfg(feature = "spirv")]
         if let Some(Err(key)) = cached
@@ -279,6 +327,115 @@ impl ComputeServer for WgpuServer {
     type MemoryLayoutPolicy = ContiguousMemoryLayoutPolicy;
     type Info = wgpu::Backend;
 
+    fn configure_public_external_host(
+        &mut self,
+        budget: cubecl_runtime::public_external::PublicExternalBudget,
+        stream_id: StreamId,
+    ) -> Result<(), ServerError> {
+        if self.backend != wgpu::Backend::Vulkan {
+            return Err(super::public_external::fault(
+                "public external Vulkan stream required",
+            ));
+        }
+        let stream = self.scheduler.stream(&stream_id);
+        if !stream.errors.is_empty() || stream.mem_manage.public_external.is_some() {
+            return Err(super::public_external::fault(
+                "public external unhealthy/already configured stream",
+            ));
+        }
+        stream.mem_manage.public_external = Some(
+            cubecl_runtime::public_external::PublicExternalPool::new(budget, stream_id)
+                .map_err(super::public_external::fault)?,
+        );
+        Ok(())
+    }
+
+    fn register_public_external_host(
+        &mut self,
+        source: cubecl_runtime::public_external::PublicExternalHostSource<WgpuResource>,
+        stream_id: StreamId,
+    ) -> Result<cubecl_runtime::public_external::PublicExternalHandle, ServerError> {
+        let stream = self.scheduler.stream(&stream_id);
+        if !stream.errors.is_empty() {
+            return Err(super::public_external::fault(
+                "public external unhealthy stream",
+            ));
+        }
+        let pool =
+            stream.mem_manage.public_external.as_mut().ok_or_else(|| {
+                super::public_external::fault("public external unconfigured stream")
+            })?;
+        if pool
+            .resources()
+            .any(|resource| resource.buffer == source.resource().buffer)
+        {
+            return Err(super::public_external::fault(
+                "public external duplicate buffer rejected",
+            ));
+        }
+        super::public_external::check_source(&stream.device, &source)
+            .map_err(super::public_external::fault)?;
+        pool.register(source).map_err(super::public_external::fault)
+    }
+
+    fn detach_public_external_host(
+        &mut self,
+        handle: cubecl_runtime::public_external::PublicExternalHandle,
+        stream_id: StreamId,
+    ) -> Result<
+        cubecl_runtime::public_external::PublicExternalDetachReceipt<WgpuResource>,
+        ServerError,
+    > {
+        if handle.handle().stream != stream_id {
+            return Err(super::public_external::fault(
+                "public external cross-stream detach",
+            ));
+        }
+        // Existing serialized server/channel owns this complete operation. First
+        // revoke new lookups, retaining the resource on EVERY failure.
+        let resource = self
+            .scheduler
+            .stream(&stream_id)
+            .mem_manage
+            .public_external
+            .as_mut()
+            .ok_or_else(|| super::public_external::fault("public external unconfigured stream"))?
+            .begin_detach(&handle)
+            .map_err(super::public_external::fault)?;
+        self.scheduler.execute_streams(vec![stream_id]);
+        let stream = self.scheduler.stream(&stream_id);
+        // Scheduled tasks already own validated resource clones, so they can
+        // finish after lookup is revoked; do not destroy before their flush.
+        cubecl_common::future::block_on(stream.sync())?;
+        resource.buffer.destroy();
+        // All safe clones now reject future queue submissions. This second join
+        // also covers actual queue work submitted just before destruction.
+        cubecl_common::future::block_on(stream.sync())?;
+        // SAFETY: both joins succeeded and destroy invalidated safe clones.
+        unsafe {
+            stream
+                .mem_manage
+                .public_external
+                .as_mut()
+                .unwrap()
+                .finish_detach(handle)
+        }
+        .map_err(super::public_external::fault)
+    }
+
+    fn public_external_host_usage(
+        &mut self,
+        stream_id: StreamId,
+    ) -> Result<cubecl_runtime::public_external::PublicExternalUsage, ServerError> {
+        self.scheduler
+            .stream(&stream_id)
+            .mem_manage
+            .public_external
+            .as_ref()
+            .map(cubecl_runtime::public_external::PublicExternalPool::usage)
+            .ok_or_else(|| super::public_external::fault("public external unconfigured stream"))
+    }
+
     fn logger(&self) -> Arc<ServerLogger> {
         self.scheduler.logger.clone()
     }
@@ -301,6 +458,12 @@ impl ComputeServer for WgpuServer {
 
     fn initialize_memory(&mut self, memory: ManagedMemoryHandle, size: u64, stream_id: StreamId) {
         let stream = self.scheduler.stream(&stream_id);
+        if cubecl_runtime::public_external::is_public_external_memory(&memory.clone().binding()) {
+            stream.error(super::public_external::fault(
+                "public external source cannot be initialized/rebound",
+            ));
+            return;
+        }
         let reserved = stream.empty(size).unwrap();
         stream.mem_manage.bind(reserved, memory);
     }
@@ -310,6 +473,16 @@ impl ComputeServer for WgpuServer {
         descriptors: Vec<CopyDescriptor>,
         stream_id: StreamId,
     ) -> DynFut<Result<Vec<Bytes>, ServerError>> {
+        if descriptors
+            .iter()
+            .any(|desc| cubecl_runtime::public_external::is_public_external_binding(&desc.handle))
+        {
+            return Box::pin(async {
+                Err(super::public_external::fault(
+                    "public external source cannot enter ordinary/private readback",
+                ))
+            });
+        }
         let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
         // Private ownership is stream-local; never read another stream's
         // bindings under this ledger (ordinary public read remains unchanged).
@@ -410,6 +583,13 @@ impl ComputeServer for WgpuServer {
         descriptors: Vec<(CopyDescriptor, Bytes)>,
         stream_id: StreamId,
     ) -> Result<(), ServerError> {
+        if descriptors.iter().any(|(desc, _)| {
+            cubecl_runtime::public_external::is_public_external_binding(&desc.handle)
+        }) {
+            return Err(super::public_external::fault(
+                "public external source cannot enter private upload",
+            ));
+        }
         self.scheduler.stream(&stream_id).private_io_active()?;
         let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
         if descriptors
@@ -432,6 +612,11 @@ impl ComputeServer for WgpuServer {
         descriptor: CopyDescriptor,
         stream_id: StreamId,
     ) -> Result<Bytes, ServerError> {
+        if cubecl_runtime::public_external::is_public_external_binding(&descriptor.handle) {
+            return Err(super::public_external::fault(
+                "public external source cannot enter private cleanup read",
+            ));
+        }
         // Enter BEFORE scheduler execution can invoke the ordinary regulator.
         // Live lease rejection precedes every scheduler/resource mutation.
         let guard = self
@@ -663,6 +848,13 @@ impl ComputeServer for WgpuServer {
         mode: ExecutionMode,
         stream_id: StreamId,
     ) {
+        if let Err(reason) = super::public_external::validate_stream(&args, stream_id) {
+            self.scheduler
+                .stream(&stream_id)
+                .errors
+                .push(super::public_external::fault(reason));
+            return;
+        }
         let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
         let pipeline = match self.pipeline(kernel, &args, mode) {
             Ok(val) => val,

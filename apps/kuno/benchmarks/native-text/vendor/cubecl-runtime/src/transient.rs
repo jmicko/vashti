@@ -91,6 +91,7 @@ pub fn clear_owner_bindings(
 ) -> Result<(), crate::server::ServerError> {
     retained_metadata_bindings(bindings, stream)?;
     if bindings.len() > 16
+        || bindings.iter().any(|b| b.memory.is_public_external())
         || bindings.iter().any(|b| !b.size.is_multiple_of(4))
         || bindings
             .iter()

@@ -23,6 +23,8 @@ pub mod stream;
 
 /// Compute client module.
 pub mod client;
+/// Separately owned immutable PUBLIC host-buffer laboratory registrations.
+pub mod public_external;
 /// Laboratory private upload/transient-I/O ownership.
 pub mod transient;
 

@@ -38,6 +38,8 @@ impl Clone for ManagedMemoryHandle {
 /// `unsafe impl Sync` at the cost of a lock on every access.
 pub(crate) struct ManagedMemoryDescriptor {
     pub(crate) id: ManagedMemoryId,
+    // Immutable allocation class, independent of recyclable ordinary locations.
+    public_external: bool,
     location: Cell<MemoryLocation>,
 }
 
@@ -145,11 +147,21 @@ impl MemoryLocation {
 impl ManagedMemoryHandle {
     /// Creates a new managed memory handle.
     pub fn new() -> Self {
+        Self::new_with_class(false)
+    }
+
+    /// Dedicated non-reused PUBLIC registration identity; not an allocator ID.
+    pub(crate) fn new_public_external() -> Self {
+        Self::new_with_class(true)
+    }
+
+    fn new_with_class(public_external: bool) -> Self {
         let value = Self::gen_id();
 
         Self {
             descriptor: Arc::new(ManagedMemoryDescriptor {
                 id: ManagedMemoryId { value },
+                public_external,
                 location: Cell::new(MemoryLocation::uninit()),
             }),
             handle_count: Arc::new(()),
@@ -163,7 +175,7 @@ impl ManagedMemoryHandle {
 
     /// Return whether the current handle can be modified in-place.
     pub fn can_mut(&self) -> bool {
-        Arc::strong_count(&self.handle_count) <= 2
+        !self.descriptor.public_external && Arc::strong_count(&self.handle_count) <= 2
     }
 
     /// Return whether the current handle is free.
@@ -189,6 +201,11 @@ impl ManagedMemoryHandle {
 }
 
 impl ManagedMemoryBinding {
+    /// Reserved non-reused immutable PUBLIC external source class. Ordinary
+    /// allocators, private uploads and private clears must reject this class.
+    pub fn is_public_external(&self) -> bool {
+        self.descriptor.public_external
+    }
     /// Retrieves the descriptor for the current binding.
     pub(crate) fn descriptor(&self) -> &ManagedMemoryDescriptor {
         &self.descriptor

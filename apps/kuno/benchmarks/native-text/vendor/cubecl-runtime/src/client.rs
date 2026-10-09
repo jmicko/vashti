@@ -210,6 +210,81 @@ impl<R: Runtime> ComputeClient<R> {
             .unwrap()
     }
 
+    /// Explicit laboratory PUBLIC host metadata/backing reservation. This
+    /// configures no ordinary/private allocator and changes no environment.
+    pub fn configure_public_external_host(
+        &self,
+        budget: crate::public_external::PublicExternalBudget,
+    ) -> Result<(), ServerError> {
+        budget.validate().map_err(|reason| ServerError::Generic {
+            reason: reason.into(),
+            backtrace: BackTrace::capture(),
+        })?;
+        let stream = self.stream_id();
+        self.device
+            .submit_blocking(move |server| server.configure_public_external_host(budget, stream))
+            .map_err(|_| ServerError::Generic {
+                reason: "public external channel unavailable".into(),
+                backtrace: BackTrace::capture(),
+            })?
+    }
+
+    /// Register a source whose unsafe constructor already establishes the
+    /// caller's immutable PUBLIC provenance and retained-backing obligations.
+    pub fn register_public_external_host(
+        &self,
+        source: crate::public_external::PublicExternalHostSource<
+            <<R::Server as ComputeServer>::Storage as ComputeStorage>::Resource,
+        >,
+    ) -> Result<crate::public_external::PublicExternalHandle, ServerError>
+    where
+        <<R::Server as ComputeServer>::Storage as ComputeStorage>::Resource: 'static,
+    {
+        let stream = self.stream_id();
+        self.device
+            .submit_blocking(move |server| server.register_public_external_host(source, stream))
+            .map_err(|_| ServerError::Generic {
+                reason: "public external channel unavailable".into(),
+                backtrace: BackTrace::capture(),
+            })?
+    }
+
+    /// Consuming release authority. On ANY failure backing must remain alive;
+    /// no retry, erased-pool credit, or ordinary allocator reset is implied.
+    pub fn detach_public_external_host(
+        &self,
+        handle: crate::public_external::PublicExternalHandle,
+    ) -> Result<
+        crate::public_external::PublicExternalDetachReceipt<
+            <<R::Server as ComputeServer>::Storage as ComputeStorage>::Resource,
+        >,
+        ServerError,
+    >
+    where
+        <<R::Server as ComputeServer>::Storage as ComputeStorage>::Resource: 'static,
+    {
+        let stream = self.stream_id();
+        self.device
+            .submit_blocking(move |server| server.detach_public_external_host(handle, stream))
+            .map_err(|_| ServerError::Generic {
+                reason: "public external channel unavailable; retain backing".into(),
+                backtrace: BackTrace::capture(),
+            })?
+    }
+
+    /// Public host ownership numbers; excludes managed MAIN/runtime counts.
+    pub fn public_external_host_usage(
+        &self,
+    ) -> Result<crate::public_external::PublicExternalUsage, ServerError> {
+        let stream = self.stream_id();
+        self.device
+            .submit_blocking(move |server| server.public_external_host_usage(stream))
+            .map_err(|_| ServerError::Generic {
+                reason: "public external channel unavailable".into(),
+                backtrace: BackTrace::capture(),
+            })?
+    }
+
     /// Inspect only already initialized, retained FULL same-stream allocations.
     /// Channel ordering completes prior initialization calls; queued consumers
     /// need not run for immutable allocation identity/extent to be inspected.

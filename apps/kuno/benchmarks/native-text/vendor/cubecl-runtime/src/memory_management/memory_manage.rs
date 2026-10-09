@@ -399,6 +399,12 @@ impl<Storage: ComputeStorage> MemoryManagement<Storage> {
 
     /// Returns the storage from the specified binding
     fn find(&self, binding: ManagedMemoryBinding) -> Result<&Slice, IoError> {
+        if crate::public_external::is_public_external_memory(&binding) {
+            return Err(IoError::NotFound {
+                backtrace: BackTrace::capture(),
+                reason: "public external source is outside ordinary pools".into(),
+            });
+        }
         let id = binding.descriptor();
 
         if id.location().pool >= self.pools.len() as u8 {
@@ -562,6 +568,14 @@ impl<Storage: ComputeStorage> MemoryManagement<Storage> {
         assigned: ManagedMemoryHandle,
         cursor: u64,
     ) -> Result<(), IoError> {
+        if crate::public_external::is_public_external_memory(&reserved.clone().binding())
+            || crate::public_external::is_public_external_memory(&assigned.clone().binding())
+        {
+            return Err(IoError::NotFound {
+                backtrace: BackTrace::capture(),
+                reason: "public external source cannot be rebound".into(),
+            });
+        }
         let descriptor = reserved.descriptor();
 
         if descriptor.location().init == 0 {

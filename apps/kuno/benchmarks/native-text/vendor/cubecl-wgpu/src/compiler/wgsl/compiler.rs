@@ -132,6 +132,7 @@ impl WgslCompiler {
         };
 
         Ok(wgsl::ComputeShader {
+            public_external_readonly_mask: 0,
             address_type,
             buffers: value
                 .buffers
