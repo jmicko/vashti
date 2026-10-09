@@ -363,19 +363,58 @@ fn mutate(before: &mut State, kind: usize, layer: usize, count: usize) -> Result
     };
     Ok(expected)
 }
+fn selected_fault_experts(
+    before: &State,
+    layer: usize,
+    count: usize,
+) -> Result<Zeroizing<[usize; 2]>> {
+    if layer >= 48
+        || !(1..=3).contains(&count)
+        || before
+            .iter()
+            .zip(WORDS)
+            .any(|(owner, words)| owner.len() != words)
+    {
+        return Err("batch router fixed selected fault geometry".into());
+    }
+    k::validate_frozen_source_table(&before[1])?;
+    let scores = Zeroizing::new(std::array::from_fn::<_, 512, _>(|id| {
+        f32::from_bits(before[0][id])
+    }));
+    let original = kuno_text::ops::router_topk_guarded(&*scores, 10, true)?;
+    let ids = Zeroizing::new([
+        original.as_slice()[0].0 as usize,
+        original.as_slice()[1].0 as usize,
+    ]);
+    if ids[0] >= 512
+        || ids[1] >= 512
+        || ids[0] == ids[1]
+        || before[1][layer * 512 + ids[0]] >= 512
+        || before[1][layer * 512 + ids[1]] >= 512
+        || before[1][layer * 512 + ids[0]] == before[1][layer * 512 + ids[1]]
+    {
+        return Err("batch router fixed selected fault source identity".into());
+    }
+    Ok(ids)
+}
 fn mutate_frozen(before: &mut State, kind: usize, layer: usize, count: usize) -> Result<u32> {
     match kind {
         0 => {
-            before[1][layer * 512] = u32::MAX;
-            // Unlike partial144, a frozen original512 source has no sentinel.
-            Ok(k::FAULT_SHAPE)
+            let selected = selected_fault_experts(before, layer, count)?;
+            before[1][layer * 512 + selected[0]] = u32::MAX;
+            // The unchanged GPU preflight exempts UINT_MAX in both modes;
+            // an ACTUALLY selected sentinel fails the numeric mapper with4.
+            // The stricter full512 host validator still rejects any sentinel.
+            Ok(k::FAULT_MISSING)
         }
         13 => {
-            before[1][layer * 512 + 1] = before[1][layer * 512];
+            let selected = selected_fault_experts(before, layer, count)?;
+            before[1][layer * 512 + selected[1]] = before[1][layer * 512 + selected[0]];
             Ok(k::FAULT_MISSING)
         }
         14 => {
-            before[1][layer * 512] = 512;
+            let selected = selected_fault_experts(before, layer, count)?;
+            before[1][layer * 512 + selected[0]] = 512;
             Ok(k::FAULT_SHAPE)
         }
         16 => {
@@ -385,6 +424,23 @@ fn mutate_frozen(before: &mut State, kind: usize, layer: usize, count: usize) ->
         }
         _ => mutate(before, kind, layer, count),
     }
+}
+fn first_owner_difference(before: &State, actual: &State) -> Option<(usize, usize)> {
+    before
+        .iter()
+        .zip(actual)
+        .enumerate()
+        .find_map(|(owner, (expected, found))| {
+            expected
+                .iter()
+                .zip(found.iter())
+                .position(|(a, b)| a != b)
+                .map(|word| (owner, word))
+                .or_else(|| {
+                    (expected.len() != found.len())
+                        .then_some((owner, expected.len().min(found.len())))
+                })
+        })
 }
 fn require_late_exact_id_rejection(
     wire: &[u8],
@@ -498,6 +554,12 @@ fn case_body(
     if kind.is_some_and(|n| n < fault_kinds) {
         before[5][0] = expected_fault;
         if actual != before {
+            let (owner, word) = first_owner_difference(&before, &actual)
+                .ok_or("batch router full owner comparison classification")?;
+            eprintln!(
+                "batch_router_fault_difference expected_fault={expected_fault} actual_fault={} owner={owner} word={word}",
+                actual[5][0]
+            );
             return Err("batch router fault published or altered full owner".into());
         }
     } else {
@@ -1258,7 +1320,7 @@ mod tests {
                     expected,
                     match kind {
                         10 => 32 | k::FAULT_SHAPE,
-                        13 => k::FAULT_MISSING,
+                        0 | 13 => k::FAULT_MISSING,
                         _ => k::FAULT_SHAPE,
                     }
                 );
@@ -1278,6 +1340,72 @@ mod tests {
         assert!(frozen_fixture(1, 2).is_err());
         assert_eq!(TOTAL_CASES, 80);
         assert_eq!(FROZEN_FAULT_CASES, 23);
+    }
+    #[test]
+    fn frozen_slot_faults_target_authenticated_selected_ids_after_score_relocation() {
+        for count in 1..=3 {
+            let mut good = frozen_fixture(count, 1).unwrap();
+            for (id, score) in good[0].iter_mut().take(512).enumerate() {
+                *score = (-4. - id as f32 / 1024.).to_bits();
+            }
+            for rank in 0..12 {
+                good[0][(197 + rank * 31) % 512] = (8. - rank as f32 / 8.).to_bits();
+            }
+            let selected = selected_fault_experts(&good, 47, count).unwrap();
+            assert_eq!(*selected, [197, 228]);
+            assert_ne!(selected[0], 0);
+            for kind in [0, 13, 14] {
+                let mut bad = good.clone();
+                assert_eq!(
+                    mutate_frozen(&mut bad, kind, 47, count).unwrap(),
+                    if kind == 14 {
+                        k::FAULT_SHAPE
+                    } else {
+                        k::FAULT_MISSING
+                    }
+                );
+                let changed = if kind == 13 { selected[1] } else { selected[0] };
+                let value = match kind {
+                    0 => u32::MAX,
+                    13 => good[1][47 * 512 + selected[0]],
+                    _ => 512,
+                };
+                assert_eq!(bad[1][47 * 512 + changed], value);
+                for (index, (&before, &after)) in good[1].iter().zip(bad[1].iter()).enumerate() {
+                    if index != 47 * 512 + changed {
+                        assert_eq!(before, after);
+                    }
+                }
+                for owner in [0, 2, 3, 4, 5] {
+                    assert_eq!(good[owner], bad[owner]);
+                }
+                assert!(k::validate_frozen_source_table(&bad[1]).is_err());
+            }
+        }
+        let good = frozen_fixture(1, 0).unwrap();
+        assert_eq!(*selected_fault_experts(&good, 47, 1).unwrap(), [0, 1]);
+        assert!(selected_fault_experts(&good, 48, 1).is_err());
+        assert!(selected_fault_experts(&good, 0, 0).is_err());
+        let shader = include_str!("resident_batch_router_gpu.wgsl");
+        assert!(shader.contains("if slot!=0xffffffffu && slot>=SOURCE_CAPACITY"));
+        assert!(shader.contains("if slot>=SOURCE_CAPACITY {reject(4u);}"));
+    }
+    #[test]
+    fn fault_owner_diagnostics_identify_coordinates_without_returning_word_payloads() {
+        let before = state();
+        let mut actual = state();
+        assert_eq!(first_owner_difference(&before, &actual), None);
+        actual[5][0] = k::FAULT_MISSING;
+        assert_eq!(first_owner_difference(&before, &actual), Some((5, 0)));
+        actual[2][17] = 123;
+        assert_eq!(first_owner_difference(&before, &actual), Some((2, 17)));
+        actual[2][17] = 0;
+        actual[5][0] = 0;
+        actual[4].pop();
+        assert_eq!(
+            first_owner_difference(&before, &actual),
+            Some((4, WORDS[4] - 1))
+        );
     }
     #[test]
     fn both_source_capacity_specializations_preserve_readonly_input_and_dense_reflection() {
