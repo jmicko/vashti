@@ -27,6 +27,7 @@ const DEVICE: usize = 31 * 1024 * 1024 * 1024;
 const RUNTIME: u64 = 128 * 1024 * 1024;
 
 pub(crate) struct Inputs {
+    pub(crate) inline_dispatch: bool,
     pub(crate) verify3_dense: bool,
     pub(crate) verify3_fused: bool,
     pub(crate) prepared_experts: bool,
@@ -40,10 +41,10 @@ pub(crate) struct Inputs {
 pub(crate) fn registration(
     args: &[OsString],
     env: impl IntoIterator<Item = (OsString, OsString)>,
-    default: bool,
+    build: crate::target_lab_build::Build,
 ) -> std::result::Result<Inputs, &'static str> {
-    if !default || args.len() != 3 || args[1] != "intel" || args[2] != "daslab-target-rows-probe" {
-        return Err("fixed target rows require default build and B70 public probe");
+    if args.len() != 3 || args[1] != "intel" || args[2] != "daslab-target-rows-probe" {
+        return Err("fixed target rows require B70 public probe");
     }
     let mut selected = BTreeMap::new();
     for (key, value) in env {
@@ -61,6 +62,7 @@ pub(crate) fn registration(
                     | "KUNO_PUBLIC_TARGET_ROWS_REFERENCE"
                     | "KUNO_PUBLIC_RECEIPT"
                     | "KUNO_LAB_STATIC_CACHE_BYTES"
+                    | "KUNO_LAB_DEVICE_DISPATCH"
                     | "KUNO_LAB_TARGET_DENSE"
                     | "KUNO_LAB_TARGET_EXPERTS"
                     | "KUNO_LAB_TARGET_FILL"
@@ -81,6 +83,8 @@ pub(crate) fn registration(
     {
         return Err("target rows require explicit original 8GiB static cache");
     }
+    let raw_dispatch = selected.remove(OsStr::new("KUNO_LAB_DEVICE_DISPATCH"));
+    let inline_dispatch = build.selected(raw_dispatch.as_deref())?;
     let prepared_experts = match selected.remove(OsStr::new("KUNO_LAB_TARGET_EXPERTS")) {
         None => false,
         Some(value) if value == "prepared-verify3" => true,
@@ -104,6 +108,7 @@ pub(crate) fn registration(
         _ => return Err("target dense policy requires canonical verify3 or verify3-fused"),
     };
     Ok(Inputs {
+        inline_dispatch,
         verify3_dense,
         verify3_fused,
         prepared_experts,
@@ -142,6 +147,7 @@ pub(crate) fn run(
     limits: &wgpu::Limits,
     input: Inputs,
 ) -> Result<()> {
+    crate::target_lab_build::validate_runtime(input.inline_dispatch)?;
     std::panic::set_hook(Box::new(|_| {
         eprintln!("public_target_rows_failure panic=true")
     }));
@@ -284,7 +290,8 @@ pub(crate) fn run(
         reports.push(report);
     }
     file.verify_file_unchanged()?;
-    let receipt = serde_json::json!({"scope":"fixed-public-DASLab-target-rows-and-carry-only",
+    crate::target_lab_build::validate_runtime(input.inline_dispatch)?;
+    let receipt = serde_json::json!({"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"scope":"fixed-public-DASLab-target-rows-and-carry-only",
         "model_repository":daslab_profile::REPOSITORY,"model_revision":daslab_profile::REVISION,
         "verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"public_token0":0,"seed":424242,"temperature":0,"complete_cpu_reference_rows":4,
         "logits_width":reference::VOCAB,"carry_width":reference::HIDDEN,"max_chunk":3,
@@ -326,67 +333,107 @@ mod tests {
     }
     #[test]
     fn exclusive_fixed_public_registration() {
-        assert!(registration(&args(), env(), true).is_ok());
+        assert!(registration(&args(), env(), crate::target_lab_build::Build::Threaded).is_ok());
+        let mut inline = env();
+        inline.push(("KUNO_LAB_DEVICE_DISPATCH".into(), "inline".into()));
+        assert!(
+            registration(
+                &args(),
+                inline.clone(),
+                crate::target_lab_build::Build::Inline
+            )
+            .unwrap()
+            .inline_dispatch
+        );
+        assert!(
+            registration(
+                &args(),
+                inline.clone(),
+                crate::target_lab_build::Build::Threaded
+            )
+            .is_err()
+        );
+        assert!(registration(&args(), inline, crate::target_lab_build::Build::Rejected).is_err());
+        assert!(registration(&args(), env(), crate::target_lab_build::Build::Inline).is_err());
+        for bad in ["", "auto", "threaded", "1", "inline "] {
+            let mut value = env();
+            value.push(("KUNO_LAB_DEVICE_DISPATCH".into(), bad.into()));
+            assert!(registration(&args(), value, crate::target_lab_build::Build::Inline).is_err());
+        }
+
         let mut fused = env();
         fused.push(("KUNO_LAB_TARGET_DENSE".into(), "verify3-fused".into()));
-        let selected = registration(&args(), fused, true).unwrap();
+        let selected =
+            registration(&args(), fused, crate::target_lab_build::Build::Threaded).unwrap();
         assert!(selected.verify3_dense && selected.verify3_fused);
         let mut candidate = env();
         candidate.push(("KUNO_LAB_TARGET_DENSE".into(), "verify3".into()));
         assert!(
-            registration(&args(), candidate, true)
+            registration(&args(), candidate, crate::target_lab_build::Build::Threaded)
                 .unwrap()
                 .verify3_dense
         );
         let mut direct = env();
         direct.push(("KUNO_LAB_TARGET_FILL".into(), "direct-public".into()));
         assert!(
-            registration(&args(), direct, true)
+            registration(&args(), direct, crate::target_lab_build::Build::Threaded)
                 .unwrap()
                 .public_existing_fill
         );
         for invalid in ["", "auto", "0", "1", "direct-public "] {
             let mut values = env();
             values.push(("KUNO_LAB_TARGET_FILL".into(), invalid.into()));
-            assert!(registration(&args(), values, true).is_err());
+            assert!(
+                registration(&args(), values, crate::target_lab_build::Build::Threaded).is_err()
+            );
         }
         let mut candidate = env();
         candidate.push(("KUNO_LAB_TARGET_EXPERTS".into(), "prepared-verify3".into()));
         assert!(
-            registration(&args(), candidate, true)
+            registration(&args(), candidate, crate::target_lab_build::Build::Threaded)
                 .unwrap()
                 .prepared_experts
         );
         for invalid in ["", "auto", "0", "1", "prepared-verify3 "] {
             let mut candidate = env();
             candidate.push(("KUNO_LAB_TARGET_EXPERTS".into(), invalid.into()));
-            assert!(registration(&args(), candidate, true).is_err());
+            assert!(
+                registration(&args(), candidate, crate::target_lab_build::Build::Threaded).is_err()
+            );
         }
         let mut candidate = env();
         candidate.push(("KUNO_LAB_TARGET_IO".into(), "chunk".into()));
-        assert!(registration(&args(), candidate, true).unwrap().chunk_io);
+        assert!(
+            registration(&args(), candidate, crate::target_lab_build::Build::Threaded)
+                .unwrap()
+                .chunk_io
+        );
         for invalid in ["", "auto", "0", "1", "chunk "] {
             let mut candidate = env();
             candidate.push(("KUNO_LAB_TARGET_IO".into(), invalid.into()));
-            assert!(registration(&args(), candidate, true).is_err());
+            assert!(
+                registration(&args(), candidate, crate::target_lab_build::Build::Threaded).is_err()
+            );
         }
         for invalid in ["", "auto", "0", "1", "verify3 "] {
             let mut candidate = env();
             candidate.push(("KUNO_LAB_TARGET_DENSE".into(), invalid.into()));
-            assert!(registration(&args(), candidate, true).is_err());
+            assert!(
+                registration(&args(), candidate, crate::target_lab_build::Build::Threaded).is_err()
+            );
         }
-        assert!(registration(&args(), env(), false).is_err());
+        assert!(registration(&args(), env(), crate::target_lab_build::Build::Rejected).is_err());
         let mut a = args();
         a[1] = "nvidia".into();
-        assert!(registration(&a, env(), true).is_err());
+        assert!(registration(&a, env(), crate::target_lab_build::Build::Threaded).is_err());
         let mut e = env();
         e.push(("KUNO_LAB_Q3_INTEGER_MOE".into(), "0".into()));
-        assert!(registration(&args(), e, true).is_err());
+        assert!(registration(&args(), e, crate::target_lab_build::Build::Threaded).is_err());
         let mut e = env();
         e[0].1 = "0".into();
-        assert!(registration(&args(), e, true).is_err());
+        assert!(registration(&args(), e, crate::target_lab_build::Build::Threaded).is_err());
         let mut e = env();
         e.pop();
-        assert!(registration(&args(), e, true).is_err());
+        assert!(registration(&args(), e, crate::target_lab_build::Build::Threaded).is_err());
     }
 }

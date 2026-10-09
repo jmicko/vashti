@@ -77,6 +77,7 @@ mod segmented_iq_moe_probe;
 mod small_cpu;
 mod status_fold_batch;
 mod steady_public;
+mod target_lab_build;
 mod token_waves;
 mod transient_probe;
 use cubecl::prelude::*;
@@ -1074,7 +1075,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(daslab_speculative_probe::registration(
             &std::env::args_os().collect::<Vec<_>>(),
             std::env::vars_os(),
-            mtp_gpu_probe::default_build(),
+            target_lab_build::Build::compiled(),
         )?)
     } else {
         if std::env::var_os("KUNO_LAB_SPECULATIVE_PUBLIC_ONLY").is_some() {
@@ -1086,7 +1087,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(daslab_target_repair_probe::registration(
             &std::env::args_os().collect::<Vec<_>>(),
             std::env::vars_os(),
-            mtp_gpu_probe::default_build(),
+            target_lab_build::Build::compiled(),
         )?)
     } else {
         if std::env::var_os("KUNO_LAB_TARGET_REPAIR_PUBLIC_ONLY").is_some() {
@@ -1110,7 +1111,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(daslab_target_rows_probe::registration(
             &std::env::args_os().collect::<Vec<_>>(),
             std::env::vars_os(),
-            mtp_gpu_probe::default_build(),
+            target_lab_build::Build::compiled(),
         )?)
     } else {
         if std::env::var_os("KUNO_LAB_TARGET_ROWS_PUBLIC_ONLY").is_some() {
@@ -1391,7 +1392,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if inline_dispatch != cfg!(feature = "direct-device") {
         return Err("Compiled GPU dispatch does not match the original runtime type".into());
     }
-    let device_dispatch = if resident_expert_calibration && inline_dispatch {
+    let public_target_dispatch = speculative_inputs
+        .as_ref()
+        .map(|p| p.inline_dispatch)
+        .or_else(|| target_repair_inputs.as_ref().map(|p| p.inline_dispatch))
+        .or_else(|| target_rows_inputs.as_ref().map(|p| p.inline_dispatch));
+    let device_dispatch = if let Some(selected) = public_target_dispatch {
+        target_lab_build::validate_runtime(selected)?;
+        target_lab_build::name(selected)
+    } else if resident_expert_calibration && inline_dispatch {
         if raw_dispatch.as_deref() != Some(std::ffi::OsStr::new("inline"))
             || count1_hybrid_cap.is_some()
         {
