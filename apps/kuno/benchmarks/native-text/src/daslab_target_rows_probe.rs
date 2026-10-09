@@ -29,6 +29,7 @@ const RUNTIME: u64 = 128 * 1024 * 1024;
 pub(crate) struct Inputs {
     pub(crate) verify3_dense: bool,
     pub(crate) prepared_experts: bool,
+    public_existing_fill: bool,
     chunk_io: bool,
     directory: PathBuf,
     reference: PathBuf,
@@ -61,6 +62,7 @@ pub(crate) fn registration(
                     | "KUNO_LAB_STATIC_CACHE_BYTES"
                     | "KUNO_LAB_TARGET_DENSE"
                     | "KUNO_LAB_TARGET_EXPERTS"
+                    | "KUNO_LAB_TARGET_FILL"
                     | "KUNO_LAB_TARGET_IO"
             )
         ) || value.is_empty()
@@ -83,6 +85,11 @@ pub(crate) fn registration(
         Some(value) if value == "prepared-verify3" => true,
         _ => return Err("target expert policy requires canonical prepared-verify3"),
     };
+    let public_existing_fill = match selected.remove(OsStr::new("KUNO_LAB_TARGET_FILL")) {
+        None => false,
+        Some(value) if value == "direct-public" => true,
+        _ => return Err("target fill policy requires canonical direct-public"),
+    };
     let chunk_io = match selected.remove(OsStr::new("KUNO_LAB_TARGET_IO")) {
         None => false,
         Some(value) if value == "chunk" => true,
@@ -96,6 +103,7 @@ pub(crate) fn registration(
     Ok(Inputs {
         verify3_dense,
         prepared_experts,
+        public_existing_fill,
         chunk_io,
         directory: selected
             .remove(OsStr::new("KUNO_TEST_Q3_DIR"))
@@ -188,6 +196,9 @@ pub(crate) fn run(
         if input.prepared_experts {
             config = config.reserve_prepared_verify3_experts()?;
         }
+        if input.public_existing_fill {
+            config = config.with_public_existing_expert_fill()?;
+        }
         let mut resident = ResidentModel::new_with_native_batch(
             model.bound_graph(),
             client.clone(),
@@ -265,7 +276,7 @@ pub(crate) fn run(
     file.verify_file_unchanged()?;
     let receipt = serde_json::json!({"scope":"fixed-public-DASLab-target-rows-and-carry-only",
         "model_repository":daslab_profile::REPOSITORY,"model_revision":daslab_profile::REVISION,
-        "verify3_dense":input.verify3_dense,"prepared_verify3_experts":input.prepared_experts,"chunk_io_checkpoint":input.chunk_io,"public_token0":0,"seed":424242,"temperature":0,"complete_cpu_reference_rows":4,
+        "verify3_dense":input.verify3_dense,"prepared_verify3_experts":input.prepared_experts,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"public_token0":0,"seed":424242,"temperature":0,"complete_cpu_reference_rows":4,
         "logits_width":reference::VOCAB,"carry_width":reference::HIDDEN,"max_chunk":3,
         "absolute_tolerance":reference::ABS_TOLERANCE,"relative_tolerance":reference::REL_TOLERANCE,
         "carry_tap":"layer47 FFN HC residual before output_hc",
@@ -313,6 +324,18 @@ mod tests {
                 .unwrap()
                 .verify3_dense
         );
+        let mut direct = env();
+        direct.push(("KUNO_LAB_TARGET_FILL".into(), "direct-public".into()));
+        assert!(
+            registration(&args(), direct, true)
+                .unwrap()
+                .public_existing_fill
+        );
+        for invalid in ["", "auto", "0", "1", "direct-public "] {
+            let mut values = env();
+            values.push(("KUNO_LAB_TARGET_FILL".into(), invalid.into()));
+            assert!(registration(&args(), values, true).is_err());
+        }
         let mut candidate = env();
         candidate.push(("KUNO_LAB_TARGET_EXPERTS".into(), "prepared-verify3".into()));
         assert!(

@@ -279,6 +279,7 @@ pub(crate) struct Config {
     target_rows_reserved: bool,
     latest_target_checkpoint_reserved: bool,
     prepared_verify3_experts_reserved: bool,
+    public_existing_expert_fill: bool,
 }
 fn prepared_verify3_configuration(
     target_rows: bool,
@@ -310,7 +311,19 @@ impl Config {
             target_rows_reserved: false,
             latest_target_checkpoint_reserved: false,
             prepared_verify3_experts_reserved: false,
+            public_existing_expert_fill: false,
         })
+    }
+    pub(crate) fn with_public_existing_expert_fill(mut self) -> Result<Self> {
+        prepared_verify3_configuration(
+            self.target_rows_reserved,
+            self.public_existing_expert_fill,
+            self.cpu_operator.is_some(),
+            self.resident_router_reserved,
+            self.tile,
+        )?;
+        self.public_existing_expert_fill = true;
+        Ok(self)
     }
     pub(crate) fn reserve_resident_router(mut self) -> Result<Self> {
         if self.cpu_operator.is_none()
@@ -628,6 +641,20 @@ impl Plan {
             batch_moe::prepared_verify3::validate_limits(&config.limits)?;
             requests.push(batch_moe::prepared_verify3::MAIN_BYTES);
         }
+        if config.public_existing_expert_fill
+            && (!target_rows
+                || hybrid
+                || router
+                || config.tile != 8
+                || executor.packed_profile != crate::expert_banks::OriginalPackedProfile::DaslabIq3
+                || executor.resident_bank_capacity() != 144
+                || executor.resident_banks_frozen
+                || executor.adaptive.is_some()
+                || executor.secondary.is_some()
+                || executor.secondary_frequency.is_some())
+        {
+            return Err(error());
+        }
         let extra = if hybrid { HYBRID_MAIN } else { 0 }
             + if router {
                 batch_moe::RESIDENT_ROUTER_MAIN
@@ -853,7 +880,7 @@ impl Workspace {
         )?;
         let qsa =
             qsa::QsaBatchWorkspace::allocate(graph, sequence, &mut model.arena, poison.clone())?;
-        let mut moe = batch_moe::Workspace::allocate(
+        let mut moe = batch_moe::Workspace::allocate_with_public_existing(
             executor,
             graph,
             sequence,
@@ -863,6 +890,7 @@ impl Workspace {
             &config.limits,
             config.tile,
             &cancel,
+            config.public_existing_expert_fill,
         )?;
         if let Some(operator) = config.cpu_operator {
             moe.reserve_count1_hybrid(
@@ -1319,6 +1347,17 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .ok_or(error())?
             .moe
             .cpu_phase_ns())
+    }
+    pub(crate) fn native_public_fill_counters(
+        &self,
+        executor: &GpuExecutor<'f>,
+    ) -> Result<(bool, batch_moe::PublicFillCounters)> {
+        self.completed_native_projection_boundary(executor)?;
+        let moe = &self.native_batch.as_ref().ok_or(error())?.moe;
+        Ok((
+            moe.public_existing_fill_enabled(),
+            moe.public_fill_counters(),
+        ))
     }
     pub(crate) fn native_cpu_buffered_weights(
         &self,

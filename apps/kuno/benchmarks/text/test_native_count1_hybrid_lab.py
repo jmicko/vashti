@@ -1307,6 +1307,9 @@ class HybridLabTests(unittest.TestCase):
             self.assertEqual(guard.memory_limit(env,args),48*1024**3)
             self.assertEqual(guard.memory_limit(dict(env,KUNO_LAB_TARGET_IO="chunk"),args),48*1024**3)
             self.assertEqual(guard.memory_limit(dict(env,KUNO_LAB_TARGET_EXPERTS="prepared-verify3"),args),48*1024**3)
+            self.assertEqual(guard.memory_limit(dict(env,KUNO_LAB_TARGET_FILL="direct-public"),args),48*1024**3)
+            for invalid in ("", "auto", "0", "1", "direct-public ", True):
+                with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_TARGET_FILL=invalid),args)
             for invalid in ("", "auto", "0", "1", "prepared-verify3 ", True):
                 with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_TARGET_EXPERTS=invalid),args)
             if gate=="KUNO_LAB_SPECULATIVE_PUBLIC_ONLY":

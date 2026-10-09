@@ -15,6 +15,9 @@ def selected_target_policy(environment, mtp=False):
     if "KUNO_LAB_TARGET_EXPERTS" in selected:
         if selected.pop("KUNO_LAB_TARGET_EXPERTS") != "prepared-verify3":
             raise ValueError("Target expert policy requires canonical prepared-verify3")
+    if "KUNO_LAB_TARGET_FILL" in selected:
+        if selected.pop("KUNO_LAB_TARGET_FILL") != "direct-public":
+            raise ValueError("Target fill policy requires canonical direct-public")
     if mtp and "KUNO_LAB_MTP_SWEEPS" in selected:
         if selected.pop("KUNO_LAB_MTP_SWEEPS") != "fused":
             raise ValueError("MTP sweep policy requires canonical fused")

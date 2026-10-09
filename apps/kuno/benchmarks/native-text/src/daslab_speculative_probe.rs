@@ -35,6 +35,7 @@ pub(crate) struct Inputs {
     pub(crate) fused_sweeps: bool,
     pub(crate) verify3_dense: bool,
     pub(crate) prepared_experts: bool,
+    public_existing_fill: bool,
     chunk_io: bool,
     directory: PathBuf,
     mtp: PathBuf,
@@ -69,6 +70,7 @@ pub(crate) fn registration(
                     | "KUNO_LAB_MTP_SWEEPS"
                     | "KUNO_LAB_TARGET_DENSE"
                     | "KUNO_LAB_TARGET_EXPERTS"
+                    | "KUNO_LAB_TARGET_FILL"
                     | "KUNO_LAB_TARGET_IO"
             )
         ) || value.is_empty()
@@ -86,6 +88,11 @@ pub(crate) fn registration(
         None => false,
         Some(value) if value == "prepared-verify3" => true,
         _ => return Err("target expert policy requires canonical prepared-verify3"),
+    };
+    let public_existing_fill = match values.remove(OsStr::new("KUNO_LAB_TARGET_FILL")) {
+        None => false,
+        Some(value) if value == "direct-public" => true,
+        _ => return Err("target fill policy requires canonical direct-public"),
     };
     let chunk_io = match values.remove(OsStr::new("KUNO_LAB_TARGET_IO")) {
         None => false,
@@ -112,6 +119,7 @@ pub(crate) fn registration(
         fused_sweeps,
         verify3_dense,
         prepared_experts,
+        public_existing_fill,
         chunk_io,
         directory: path("KUNO_TEST_Q3_DIR")?,
         mtp: path("KUNO_TEST_MTP")?,
@@ -205,6 +213,12 @@ fn process_disk_read_bytes() -> Result<u64> {
         .map_err(Into::into)
 }
 
+fn fill_counter_record(c: crate::executor::batch_moe::PublicFillCounters) -> serde_json::Value {
+    serde_json::json!({"first_touch_fills":c.first_touch_fills,"evictions":c.evictions,
+        "direct_windows":c.direct_windows,"direct_components":c.direct_components,
+        "direct_bytes":c.direct_bytes})
+}
+
 pub(crate) fn run(
     client: &ComputeClient<WgpuRuntime>,
     limits: &wgpu::Limits,
@@ -294,6 +308,9 @@ pub(crate) fn run(
             if input.prepared_experts {
                 config = config.reserve_prepared_verify3_experts()?;
             }
+            if input.public_existing_fill {
+                config = config.with_public_existing_expert_fill()?;
+            }
             let mut target = ResidentModel::new_with_native_batch(
                 graph.bound_graph(),
                 client.clone(),
@@ -325,6 +342,11 @@ pub(crate) fn run(
                 let before_weight_reads = executor.weight_read_ns;
                 let before_weight_uploads = executor.weight_upload_ns;
                 let before_phases = target.phase_ns.clone();
+                let (actual_direct, before_fills) =
+                    target.native_public_fill_counters(&executor)?;
+                if actual_direct != input.public_existing_fill {
+                    return Err("public fill frozen selection rejected".into());
+                }
                 let start = Instant::now();
                 while target.completed_target_rows_cursor(&executor)? < reference::POSITIONS {
                     let position = target.completed_target_rows_cursor(&executor)?;
@@ -441,8 +463,12 @@ pub(crate) fn run(
                     .checked_sub(load_disk_after)
                     .ok_or("public process read counter regressed")?;
                 let after = draft.traffic();
+                let (actual_direct, after_fills) = target.native_public_fill_counters(&executor)?;
+                if actual_direct != input.public_existing_fill {
+                    return Err("public fill frozen selection changed".into());
+                }
                 Ok(
-                    serde_json::json!({"replay":replay,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"target_host_phase_ns":host_phase_ns,"load_and_initial_prefill_physical_read_bytes":load_disk_after.checked_sub(load_disk_before).ok_or("public process read counter regressed")?,"timed_physical_read_bytes":timed_physical_read_bytes,"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"timing_scope":"original normal routing/demand uploads; public checks and actual repair included","load_and_initial_prefill_cumulative_ns":load_ns,"accepted_tokens":accepted_tokens,"elapsed_ns":elapsed_ns,"accepted_tokens_per_second":accepted_tokens as f64*1e9/elapsed_ns as f64,"proposed_drafts":proposed_tokens,"accepted_drafts":accepted_drafts,"rounds":rounds,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"draft_traffic":{"host_read_calls":after.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after.host_read_bytes-before_traffic.host_read_bytes,"explicit_dispatches":after.explicit_dispatches-before_traffic.explicit_dispatches,"private_upload_calls":after.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after.followup_copy_calls-before_traffic.followup_copy_calls}}),
+                    serde_json::json!({"replay":replay,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"target_host_phase_ns":host_phase_ns,"load_and_initial_prefill_physical_read_bytes":load_disk_after.checked_sub(load_disk_before).ok_or("public process read counter regressed")?,"timed_physical_read_bytes":timed_physical_read_bytes,"target_fill_counters_before":fill_counter_record(before_fills),"target_fill_counters_after":fill_counter_record(after_fills),"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"timing_scope":"original normal routing/demand uploads; public checks and actual repair included","load_and_initial_prefill_cumulative_ns":load_ns,"accepted_tokens":accepted_tokens,"elapsed_ns":elapsed_ns,"accepted_tokens_per_second":accepted_tokens as f64*1e9/elapsed_ns as f64,"proposed_drafts":proposed_tokens,"accepted_drafts":accepted_drafts,"rounds":rounds,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"draft_traffic":{"host_read_calls":after.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after.host_read_bytes-before_traffic.host_read_bytes,"explicit_dispatches":after.explicit_dispatches-before_traffic.explicit_dispatches,"private_upload_calls":after.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after.followup_copy_calls-before_traffic.followup_copy_calls}}),
                 )
             })();
             let close = target.close();
@@ -468,7 +494,7 @@ pub(crate) fn run(
     }
     file.verify_file_unchanged()?;
     sidecar.verify_file_unchanged()?;
-    let value = serde_json::json!({"scope":"fixed-public-DASLab13-real-dual-GPU-greedy-speculation","target_card":"B70","draft_card":"RTX3060","verify3_dense":input.verify3_dense,"prepared_verify3_experts":input.prepared_experts,"chunk_io_checkpoint":input.chunk_io,"fused_mtp_sweeps":input.fused_sweeps,"compiled_token0":0,"seed":424242,"temperature":0,"oracle_forcing":false,"expert_route_forcing":false,"passes":passes,"draft_close":{"private_buffers":draft_close.private.buffers,"private_bytes":draft_close.private.bytes,"public_bytes":draft_close.public_bytes,"main_reserved":draft_close.main_reserved},"private_or_production_accepted":false});
+    let value = serde_json::json!({"scope":"fixed-public-DASLab13-real-dual-GPU-greedy-speculation","target_card":"B70","draft_card":"RTX3060","verify3_dense":input.verify3_dense,"prepared_verify3_experts":input.prepared_experts,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"fused_mtp_sweeps":input.fused_sweeps,"compiled_token0":0,"seed":424242,"temperature":0,"oracle_forcing":false,"expert_route_forcing":false,"passes":passes,"draft_close":{"private_buffers":draft_close.private.buffers,"private_bytes":draft_close.private.bytes,"public_bytes":draft_close.public_bytes,"main_reserved":draft_close.main_reserved},"private_or_production_accepted":false});
     serde_json::to_writer_pretty(
         std::fs::OpenOptions::new()
             .write(true)
@@ -528,6 +554,18 @@ mod tests {
         let mut candidate = env();
         candidate.push(("KUNO_LAB_TARGET_DENSE".into(), "verify3".into()));
         assert!(registration(&args, candidate, true).unwrap().verify3_dense);
+        let mut direct = env();
+        direct.push(("KUNO_LAB_TARGET_FILL".into(), "direct-public".into()));
+        assert!(
+            registration(&args, direct, true)
+                .unwrap()
+                .public_existing_fill
+        );
+        for invalid in ["", "auto", "0", "1", "direct-public "] {
+            let mut values = env();
+            values.push(("KUNO_LAB_TARGET_FILL".into(), invalid.into()));
+            assert!(registration(&args, values, true).is_err());
+        }
         let mut candidate = env();
         candidate.push(("KUNO_LAB_TARGET_EXPERTS".into(), "prepared-verify3".into()));
         assert!(
