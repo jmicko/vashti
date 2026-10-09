@@ -12,6 +12,7 @@ name = "flash-kernel-lab"
 path = "src/flash_fast_main.rs"
 
 [dependencies]
+ash = "=0.38.0"
 cubecl-common = "=0.10.0"
 cubecl-runtime = "=0.10.0"
 serde_json = "1"

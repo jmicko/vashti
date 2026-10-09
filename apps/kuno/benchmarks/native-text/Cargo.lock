@@ -1156,6 +1156,7 @@ dependencies = [
 name = "kuno-text-lab"
 version = "0.1.0"
 dependencies = [
+ "ash",
  "cubecl",
  "cubecl-common",
  "cubecl-runtime",
