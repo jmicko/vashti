@@ -2862,3 +2862,22 @@ Target-prefix repair source `f3899b6` and public consumer `211b282` pass
 [native checkpoint](kuno-native-text-checkpoint.md) and
 [foundation receipt](../apps/kuno/benchmarks/text/receipts/daslab-target-mtp-foundation-20261009.json).
 No public contract/install/release change. **Required Vashti changes:none.**
+
+#### Backend-only speculative foundation checkpoint (2026-10-09,13:08UTC)
+
+Actualtarget prefixrepair1/2/3 passes at `54c846b` (v118); minimalQ8draft and
+GPUfollow pass bothcards at `241415b`/`da69fe0` (v119), keeping fullchecks.
+Separate13-row CPUcarry `d6a7df7` matches oldCPUlogits bitwise. First actual
+dualGPUpubliccontroller `66c1078` passes12targetcontinuations,6/10draft
+acceptance, originalstate repair/realKVrebuild and fullcloses. FrozenSHA
+`de3120b39f366914fecb96515c55154a13d314356d38a7377d3108a4074f1ce5`.
+Cold normal-demand run1.1326tokens/s includes2,311expertfills/4.777GB and
+allactualdraft/verification/repair/publicchecks; this distinctscope doesnot
+establish a speedup over selected12.728conditionalidealpreparedcount1.
+762native+2aux tests, strictClippy/fmt and82launchercontrols pass. Actual
+memory/HTTP/admission recover, classifiedfaults remainzero. Details, all
+source/artifact/hash provenance and preservedfailure are in the
+[native checkpoint](kuno-native-text-checkpoint.md) and
+[foundation receipt](../apps/kuno/benchmarks/text/receipts/daslab-target-mtp-foundation-20261009.json).
+Packedthree-column dense and preparedbatch expert candidates are inprogress.
+No publicAPI/config/catalog/install/release change. **Required Vashti changes:none.**

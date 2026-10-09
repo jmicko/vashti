@@ -2650,3 +2650,38 @@ desktop-only with no compute process, all HTTP services200, normal admission
 and zero classified GPU faults. No API/frontend/install/release change.
 Target-prefix repair source `f3899b6` and root public fixture `211b282` are
 implemented with747+2 tests/strict Clippy; their physical gate is next.
+
+### Actual target repair, minimal MTP and first dual-GPU run,13:08UTC
+
+`54c846b` fixes the new QSA checkpoint's completed-pointer mismatch while
+retaining exact captured physicalowner and originalfaultaudit. Protectedv118
+passes wrongfutureinput cases accepting1/2/3tokens and allCPUvectors/greedies
+through actualposition4 continuation and complete owningcloses. OneMiBhost/
+49,152INFO/zero additionalGPUstate remain the reserved repaircost. Preserved
+v117failure fullyrestored the host.
+
+Minimaldraft/follow `241415b`/`da69fe0` passes bothGPUs: allCPUhidden/greedies,
+realGPUfollow, exact64KiBpacket/onehostread perforward and nofollowupinput
+upload. Existingfullvectorpath and fullowner/fault/padding checks pass too.
+Teacher4-row checks take~100–119ms includingpublicchecks, correctness-only.
+
+Separate13-row CPUoracle `d6a7df7` preserves old4/header unchanged; everyfull
+legacyCPUlogit vector is bitwiseequal, with actualpreheadHC. Bothshards are
+rehashverified. Payload13,445,592bytes SHA256
+`80650af818ae00344af5b4b3979e9272cc833c641ea4f80d2934cdb6ffa67e02`.
+Native762+2 tests, strictdefaultClippy/fmt and82launchercontrols pass at
+`66c1078`. First frozen dualGPUcontroller defaultSHA256
+`de3120b39f366914fecb96515c55154a13d314356d38a7377d3108a4074f1ce5`
+passes all12actualtarget outputs,6/10actualdraft acceptance, realtarget/draft
+state repair and completecloses. Coldnormaldemand speed is1.132565581tokens/s,
+10.595412929s,2,311expertfills/4,776,960,000uploadedbytes. Initialprefill/load
+is separately10.555s. Targetverification dominates; last fullyaccepted
+3-output round is.945s (.816verify/.083draft/.046repair). This isnot a
+matchedcontrol or warmedceiling, and30tokens/s remains unmet. Do not replace
+the selected12.728conditionalideal preparedcount1 speed with this distinctscope.
+No privateinput/API/catalog/frontend/install/release readiness is claimed.
+
+At13:08:29UTC, actualB70memory50,688,000bytes/NVIDIA571MiBdesktop-only,
+no compute process, normaladmission and allHTTP200, allclassifiedfaults zero.
+The next candidates are fixedthree-column packed dense and prepared expert
+inputs; no source timings should be claimed before their physicalgates.

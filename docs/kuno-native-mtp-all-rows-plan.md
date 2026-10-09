@@ -9,8 +9,10 @@ erase1,378 owners/826,638,336bytes. See the
 [numeric foundation receipt](../apps/kuno/benchmarks/text/receipts/daslab-target-mtp-foundation-20261009.json).
 
 This acceptance is for the compiled public original-arithmetic target fixture
-only. All supplied rows commit. Speculative throughput, a controller, accepted
-prefix repair, GPU MTP parity and private production integration remain pending.
+only. This basic method commits all supplied rows. A separate one-latest-chunk
+repair coordinator and the dual-GPU public controller now pass the physical
+gates below. Full resident Q8 MTP passes both GPUs. Private production
+integration and30tokens/s remain pending.
 Whole-model acceptance is B70-only; the full main bank does not fit the3060.
 The requirements below describe the implemented target-output contract.
 
@@ -185,17 +187,41 @@ position3. Verify full owners, both proofs, cleanup, failure retirement and
 physical recovery on both cards. This is coupled target-output correctness;
 it is neither independent full MTP-head parity nor a speculative speedup.
 
-## Missing accepted-prefix seam
+## Accepted-prefix seam: implemented and physically checked
 
-This method commits **all supplied rows** through the existing transaction.
-It cannot yet commit only the accepted speculative prefix. MTP verification
-needs per-prefix GDN recurrent **and raw convolution** states, QSA cache/cursor
-handling, PLE convolution/history and consistent routed-family publication.
-The existing plan estimates two additional GDN recurrent snapshots alone at
-216 MiB logical memory; that does not account for every prefix owner. Merely
-rewinding `position`, retaining provisional draft hidden or selecting a prefix
-of the returned logits is incorrect. Define and admit that separate state seam
-before connecting a speculative controller or making accepted-token/s claims.
+The original method still commits **all supplied rows**. `LatestTargetRound`
+adds an explicit construction-reserved transaction: one immutable tokenpacket,
+one exclusive target/executor borrow, original full-row execution, then drop
+its output lease before selecting the accepted input prefix. Allaccept consumes
+without another forward. Rejection restores actual GDN recurrent AND rawconv
+roots, clears exact QSA appended KV/indexer/positions under the original sticky
+fault/audit proof, restores real PLE convolution/history, then reruns onlythe
+accepted prefix. No generation, poison or ledger resets are permitted.
+
+`87049e4`/`f3899b6` implement the families/coordinator. The completed QSA
+temporaryfault association is correctlyNone after originalacceptance; narrow
+fix `54c846b` retains the checkpoint's exact captured physical fault owner
+while rejecting any live candidate association. OneMiBhost and49,152runtime
+INFO bytes are admitted; noadditionalGPUstate is allocated. The old216MiB
+per-prefix GDN snapshot estimate is superseded by this one-latest-root restore
+and original-prefix recompute approach.
+
+Default artifact `4448591135f69e99576d285ebdc2993b2c11255c9039d99b70a5cdd22b9091c0`
+passes actual wrong-future-token cases accepting1/2/3inputs, all completeCPU
+accepted-prefix vectors/greedies and furthercorrectcontinuation toposition4.
+Full1,378-owner/826,638,336-byte erasure passes. The initial QSA pointer
+mismatch run is preserved; physicalmemory/faults/services recover in bothruns.
+
+DualGPUcontroller `66c1078` uses B70target and3060nativeQ8MTP, correct
+T(c+1)/R(c) pairing, actualGPU second draft, greedy prefixchecking, real
+repair and target-conditioned draftKV rebuilding. The first compiler-idle
+13-row run passes all12 accepted output vectors and closes. Sixof10drafts
+accept;12outputs/10.595s=1.1326tokens/s undercold normal demand routing,
+including2,311expertfills/4.777GB, draft/verification/repair andpublicchecks.
+This isnot a speedgain and isnot directlycomparable with the earlier
+12.728tokens/s conditionalideal preparedcount1 result. Packedthree-column
+dense and preparedexpert candidates remain inprogress. See numericreceipt
+for artifact/source hashes and per-round phase clocks.
 
 See `kuno-native-text-mtp-plan.md`, `kuno-native-text-model-batching.md` and
 `kuno-native-resident-router.md` for the current causal/owning contracts.
