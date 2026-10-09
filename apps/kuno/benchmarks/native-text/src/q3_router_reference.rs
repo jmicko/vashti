@@ -22,6 +22,26 @@ pub const FILE_BYTES: usize = HEADER_BYTES + LAYERS * RECORD_BYTES;
 pub const OWNER_HOST_CAP: usize = 128 * 1024;
 pub const LOAD_HOST_CAP: usize = 256 * 1024;
 const PARSE_SCRATCH_CAP: usize = 16 * 1024;
+pub const COMPARE_SCRATCH_CAP: usize = 16 * 1024;
+
+/// Numeric-only diagnostic for this fixed public fixture. Matching counts are
+/// in 0..=10; probability differences compare equal selected rank positions.
+/// No expert IDs, score vectors or hidden states are retained in this report.
+pub struct Report {
+    pub raw_gpu_valid: bool,
+    pub cpu_membership_matches: usize,
+    pub cpu_rank_matches: usize,
+    pub ops_membership_matches: usize,
+    pub ops_rank_matches: usize,
+    pub max_score_difference: f64,
+    pub max_probability_difference: f64,
+    pub max_ops_probability_difference: f64,
+    pub cpu_logit_margin: f32,
+    pub gpu_logit_margin: f32,
+    pub cpu_probability_margin: f32,
+    pub gpu_probability_margin: f32,
+    pub gpu_ops_logit_margin: f32,
+}
 
 fn err() -> Error {
     Error::InvalidFormat("fixed public Q3 router fixture rejected")
@@ -83,6 +103,150 @@ impl Layer {
     pub fn probability_margin(&self) -> f32 {
         self.probability_margin
     }
+    /// Diagnostic only: original GPU admission ranks raw logits, whereas the
+    /// original CPU operation ranks rounded global softmax probabilities. Both
+    /// comparisons are reported separately, so a rounded tie is not mistaken
+    /// for a difference in router inputs or a new acceptance failure.
+    pub fn compare(&self, actual_scores: &[f32], actual_selected: &[(u32, f32)]) -> Result<Report> {
+        validate_raw_gpu(actual_scores, actual_selected)?;
+        let actual_canonical =
+            ops::router_topk_guarded(actual_scores, TOP_K, true).map_err(|_| err())?;
+        let canonical = actual_canonical.as_slice();
+        let matches = |expected: &[(u32, f32)]| {
+            let membership = actual_selected
+                .iter()
+                .filter(|&&(id, _)| expected.iter().any(|&(other, _)| other == id))
+                .count();
+            let ranks = actual_selected
+                .iter()
+                .zip(expected)
+                .filter(|&(&(id, _), &(other, _))| id == other)
+                .count();
+            (membership, ranks)
+        };
+        let (cpu_membership_matches, cpu_rank_matches) = matches(&*self.selected);
+        let (ops_membership_matches, ops_rank_matches) = matches(canonical);
+        let probability_difference = |expected: &[(u32, f32)]| {
+            actual_selected
+                .iter()
+                .zip(expected)
+                .map(|(&(_, actual), &(_, expected))| {
+                    (f64::from(actual) - f64::from(expected)).abs()
+                })
+                .fold(0., f64::max)
+        };
+        let max_probability_difference = probability_difference(&*self.selected);
+        let max_ops_probability_difference = probability_difference(canonical);
+        // Release the bounded guarded-router scratch before the original
+        // eleven-rank operation allocates its fixed-512 softmax/sort scratch.
+        drop(actual_canonical);
+        let boundary =
+            Zeroizing::new(ops::router_topk(actual_scores, TOP_K + 1, false).map_err(|_| err())?);
+        let boundary_owned = boundary
+            .capacity()
+            .checked_mul(std::mem::size_of::<(usize, f32)>())
+            .ok_or(Error::ArithmeticOverflow)?;
+        // softmax holds at most 512 f32s and the sort at most 512 usize IDs;
+        // no source-sized matrix, expert weights or additional vectors exist.
+        let scratch = EXPERTS
+            .checked_mul(std::mem::size_of::<f32>() + std::mem::size_of::<usize>())
+            .and_then(|n| n.checked_add(boundary_owned))
+            .and_then(|n| n.checked_add(std::mem::size_of::<Report>()))
+            .ok_or(Error::ArithmeticOverflow)?;
+        if scratch > COMPARE_SCRATCH_CAP
+            || ops::GUARDED_ROUTER_CAPACITY_BYTES + std::mem::size_of::<Report>()
+                > COMPARE_SCRATCH_CAP
+        {
+            return Err(err());
+        }
+        let mut first_unselected = None;
+        for (id, &score) in actual_scores.iter().enumerate() {
+            if actual_selected
+                .iter()
+                .any(|&(chosen, _)| chosen as usize == id)
+            {
+                continue;
+            }
+            if first_unselected
+                .is_none_or(|(old, previous)| score > previous || (score == previous && id < old))
+            {
+                first_unselected = Some((id, score));
+            }
+        }
+        let gpu_logit_margin = actual_scores[actual_selected[TOP_K - 1].0 as usize]
+            - first_unselected.ok_or_else(err)?.1;
+        let gpu_ops_logit_margin =
+            actual_scores[boundary[TOP_K - 1].0] - actual_scores[boundary[TOP_K].0];
+        let gpu_probability_margin = boundary[TOP_K - 1].1 - boundary[TOP_K].1;
+        if !gpu_logit_margin.is_finite()
+            || !gpu_ops_logit_margin.is_finite()
+            || !gpu_probability_margin.is_finite()
+            || gpu_logit_margin < 0.
+            || gpu_probability_margin < 0.
+        {
+            return Err(err());
+        }
+        Ok(Report {
+            raw_gpu_valid: true,
+            cpu_membership_matches,
+            cpu_rank_matches,
+            ops_membership_matches,
+            ops_rank_matches,
+            max_score_difference: actual_scores
+                .iter()
+                .zip(self.scores.iter())
+                .map(|(&actual, &expected)| (f64::from(actual) - f64::from(expected)).abs())
+                .fold(0., f64::max),
+            max_probability_difference,
+            max_ops_probability_difference,
+            cpu_logit_margin: self.logit_margin,
+            gpu_logit_margin,
+            cpu_probability_margin: self.probability_margin,
+            gpu_probability_margin,
+            gpu_ops_logit_margin,
+        })
+    }
+}
+
+/// Same raw-logit, ascending-ID tie and probability checks as the original
+/// Count1RouterInput validator. This does not enforce rounded CPU selection.
+fn validate_raw_gpu(scores: &[f32], selected: &[(u32, f32)]) -> Result<()> {
+    if scores.len() != EXPERTS
+        || selected.len() != TOP_K
+        || scores.iter().any(|value| !value.is_finite())
+    {
+        return Err(err());
+    }
+    let mut sum = 0.0_f32;
+    for (rank, &(id, probability)) in selected.iter().enumerate() {
+        let id = id as usize;
+        if id >= EXPERTS
+            || !probability.is_finite()
+            || !(0. ..=1.).contains(&probability)
+            || selected[..rank].iter().any(|&(old, _)| old as usize == id)
+        {
+            return Err(err());
+        }
+        if rank > 0 {
+            let previous = selected[rank - 1].0 as usize;
+            if scores[previous] < scores[id] || (scores[previous] == scores[id] && previous > id) {
+                return Err(err());
+            }
+        }
+        sum += probability;
+    }
+    if (sum - 1.).abs() > 2e-5 {
+        return Err(err());
+    }
+    let last = selected[TOP_K - 1].0 as usize;
+    for (id, &value) in scores.iter().enumerate() {
+        if !selected.iter().any(|&(chosen, _)| chosen as usize == id)
+            && (value > scores[last] || (value == scores[last] && id < last))
+        {
+            return Err(err());
+        }
+    }
+    Ok(())
 }
 impl Drop for Layer {
     fn drop(&mut self) {
@@ -314,5 +478,126 @@ mod tests {
         excessive.extend(fixture().layers);
         assert!(Reference::new(excessive).is_err());
         assert!(Reference::new(Vec::new()).is_err());
+    }
+    fn cpu_layer(scores: &[f32; EXPERTS]) -> Layer {
+        let selected = ops::router_topk(scores, TOP_K, true).unwrap();
+        Layer::new(scores, &selected).unwrap()
+    }
+    fn gpu_from_cpu(scores: &[f32; EXPERTS]) -> Vec<(u32, f32)> {
+        ops::router_topk(scores, TOP_K, true)
+            .unwrap()
+            .into_iter()
+            .map(|(id, probability)| (id as u32, probability))
+            .collect()
+    }
+    #[test]
+    fn identical_routes_report_all_matches_and_zero_differences() {
+        let scores = [0.; EXPERTS];
+        let layer = cpu_layer(&scores);
+        let report = layer.compare(&scores, layer.selected()).unwrap();
+        assert!(report.raw_gpu_valid);
+        assert_eq!(report.cpu_membership_matches, TOP_K);
+        assert_eq!(report.cpu_rank_matches, TOP_K);
+        assert_eq!(report.ops_membership_matches, TOP_K);
+        assert_eq!(report.ops_rank_matches, TOP_K);
+        assert_eq!(report.max_score_difference, 0.);
+        assert_eq!(report.max_probability_difference, 0.);
+        assert_eq!(report.max_ops_probability_difference, 0.);
+        assert_eq!(report.cpu_logit_margin, 0.);
+        assert_eq!(report.gpu_logit_margin, 0.);
+        assert_eq!(report.cpu_probability_margin, 0.);
+        assert_eq!(report.gpu_probability_margin, 0.);
+        assert_eq!(report.gpu_ops_logit_margin, 0.);
+        assert_eq!(COMPARE_SCRATCH_CAP, 16 * 1024);
+        assert!(
+            ops::GUARDED_ROUTER_CAPACITY_BYTES + std::mem::size_of::<Report>()
+                <= COMPARE_SCRATCH_CAP
+        );
+    }
+    #[test]
+    fn rounded_softmax_cutoff_tie_is_distinguished_from_changed_inputs() {
+        let mut scores = [-10.; EXPERTS];
+        scores[..TOP_K - 1].fill(1.);
+        scores[9] = 0.;
+        scores[10] = 1e-8;
+        let layer = cpu_layer(&scores);
+        assert_eq!(layer.selected()[9].0, 9);
+        assert_eq!(layer.probability_margin(), 0.);
+        assert!(layer.logit_margin() < 0.);
+        // Raw top-k legitimately picks the slightly larger score even though
+        // the original CPU softmax has rounded these two probabilities equal.
+        let mut selected = layer.selected().to_vec();
+        selected[9].0 = 10;
+        let report = layer.compare(&scores, &selected).unwrap();
+        assert!(report.raw_gpu_valid);
+        assert_eq!(report.cpu_membership_matches, TOP_K - 1);
+        assert_eq!(report.cpu_rank_matches, TOP_K - 1);
+        assert_eq!(report.ops_membership_matches, TOP_K - 1);
+        assert_eq!(report.ops_rank_matches, TOP_K - 1);
+        assert_eq!(report.max_score_difference, 0.);
+        assert_eq!(report.max_probability_difference, 0.);
+        assert_eq!(report.max_ops_probability_difference, 0.);
+        assert!(report.gpu_logit_margin > 0.);
+        assert!(report.gpu_ops_logit_margin < 0.);
+        assert_eq!(report.gpu_probability_margin, 0.);
+        // The rounded CPU route is not a valid raw-logit GPU route here.
+        assert!(layer.compare(&scores, layer.selected()).is_err());
+    }
+    #[test]
+    fn input_selection_divergence_and_rank_only_changes_have_distinct_counts() {
+        let mut original = [-10.; EXPERTS];
+        original[..9].fill(1.);
+        original[9] = 0.5;
+        original[10] = 0.25;
+        let layer = cpu_layer(&original);
+        let mut actual = original;
+        actual[10] = 0.75;
+        let report = layer.compare(&actual, &gpu_from_cpu(&actual)).unwrap();
+        assert_eq!(report.cpu_membership_matches, 9);
+        assert_eq!(report.cpu_rank_matches, 9);
+        assert_eq!(report.ops_membership_matches, TOP_K);
+        assert_eq!(report.ops_rank_matches, TOP_K);
+        assert_eq!(report.max_score_difference, 0.5);
+        assert!(report.max_probability_difference > 0.);
+        assert_eq!(report.max_ops_probability_difference, 0.);
+        assert_eq!(report.cpu_logit_margin, 0.25);
+        assert_eq!(report.gpu_logit_margin, 0.25);
+        assert!(report.gpu_probability_margin > 0.);
+        actual = original;
+        actual[1] = 1.125;
+        let report = layer.compare(&actual, &gpu_from_cpu(&actual)).unwrap();
+        assert_eq!(report.cpu_membership_matches, TOP_K);
+        assert_eq!(report.cpu_rank_matches, TOP_K - 2);
+        assert_eq!(report.ops_membership_matches, TOP_K);
+        assert_eq!(report.ops_rank_matches, TOP_K);
+    }
+    #[test]
+    fn compare_rejects_malformed_or_nonadmitted_raw_gpu_routes() {
+        let scores = [0.; EXPERTS];
+        let layer = cpu_layer(&scores);
+        let selected = layer.selected();
+        assert!(layer.compare(&scores[..EXPERTS - 1], selected).is_err());
+        assert!(layer.compare(&scores, &selected[..TOP_K - 1]).is_err());
+        for bad_score in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut bad = scores;
+            bad[511] = bad_score;
+            assert!(layer.compare(&bad, selected).is_err());
+        }
+        for (rank, id, probability) in [
+            (0, 512, 0.1),
+            (1, 0, 0.1),
+            (9, 10, 0.1),
+            (0, 0, -0.1),
+            (0, 0, f32::NAN),
+            (0, 0, f32::INFINITY),
+            (0, 0, 0.2),
+        ] {
+            let mut bad = *selected;
+            bad[rank] = (id, probability);
+            assert!(layer.compare(&scores, &bad).is_err());
+        }
+        let mut bad = *selected;
+        bad.swap(0, 1);
+        assert!(layer.compare(&scores, &bad).is_err());
     }
 }
