@@ -1283,6 +1283,21 @@ class HybridLabTests(unittest.TestCase):
             with self.assertRaises(ValueError):guard.memory_limit(env,[*args[:2],mode])
         with self.assertRaises(ValueError):guard.memory_limit(env,[args[0],"nvidia",args[2]])
 
+    def test_verify3_dense_is_canonical_optional_and_remains_inside_public_target_modes(self):
+        spec=importlib.util.spec_from_file_location("protected_verify3",HERE/"protected-lab-exec.py")
+        guard=importlib.util.module_from_spec(spec);spec.loader.exec_module(guard)
+        for gate,mode in (("KUNO_LAB_SPECULATIVE_PUBLIC_ONLY","daslab-speculative-probe"), ("KUNO_LAB_TARGET_ROWS_PUBLIC_ONLY","daslab-target-rows-probe"), ("KUNO_LAB_TARGET_REPAIR_PUBLIC_ONLY","daslab-target-repair-probe")):
+            env={gate:"1", "KUNO_LAB_STATIC_CACHE_BYTES":"8589934592", "KUNO_TEST_Q3_DIR":"/original", "KUNO_PUBLIC_RECEIPT":"/public/receipt", "KUNO_LAB_TARGET_DENSE":"verify3"}
+            if gate=="KUNO_LAB_SPECULATIVE_PUBLIC_ONLY":
+                env.update(KUNO_TEST_MTP="/original/sidecar", KUNO_PUBLIC_TARGET_CARRY13_REFERENCE="/public/reference")
+            else:
+                env["KUNO_PUBLIC_TARGET_ROWS_REFERENCE"]="/public/reference"
+            args=["/frozen/binary","intel",mode]
+            self.assertEqual(guard.memory_limit(env,args),48*1024**3)
+            for invalid in ("", "auto", "0", "1", "verify3 ", True):
+                with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_TARGET_DENSE=invalid),args)
+            with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_OTHER="1"),args)
+
     def test_fast_gpu_requires_actual_dispatches_and_separate_long_selection(self):
         value = receipt("intel",10)
         value.update(fast_gpu=True,observed_fast_dense_calls=5264,long_fixture=False)

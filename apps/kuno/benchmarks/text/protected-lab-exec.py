@@ -4,10 +4,17 @@ import pathlib
 import resource
 import sys
 
+def selected_target_policy(environment):
+    selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
+    if "KUNO_LAB_TARGET_DENSE" in selected:
+        if selected.pop("KUNO_LAB_TARGET_DENSE") != "verify3":
+            raise ValueError("Target dense policy requires canonical verify3")
+    return selected
+
 def memory_limit(environment, arguments):
     if "KUNO_LAB_SPECULATIVE_PUBLIC_ONLY" in environment:
         permitted = {"KUNO_LAB_SPECULATIVE_PUBLIC_ONLY", "KUNO_LAB_STATIC_CACHE_BYTES", "KUNO_TEST_Q3_DIR", "KUNO_TEST_MTP", "KUNO_PUBLIC_TARGET_CARRY13_REFERENCE", "KUNO_PUBLIC_RECEIPT"}
-        selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
+        selected = selected_target_policy(environment)
         if (set(selected) != permitted or any(not value for value in selected.values())
                 or selected["KUNO_LAB_SPECULATIVE_PUBLIC_ONLY"] != "1"
                 or selected["KUNO_LAB_STATIC_CACHE_BYTES"] != "8589934592"
@@ -18,7 +25,7 @@ def memory_limit(environment, arguments):
     target_gate = next((key for key in target_modes if key in environment), None)
     if target_gate is not None:
         permitted = {target_gate, "KUNO_LAB_STATIC_CACHE_BYTES", "KUNO_TEST_Q3_DIR", "KUNO_PUBLIC_TARGET_ROWS_REFERENCE", "KUNO_PUBLIC_RECEIPT"}
-        selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
+        selected = selected_target_policy(environment)
         if (set(selected) != permitted or any(not value for value in selected.values())
                 or selected[target_gate] != "1"
                 or selected["KUNO_LAB_STATIC_CACHE_BYTES"] != "8589934592"

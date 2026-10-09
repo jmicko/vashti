@@ -1943,6 +1943,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if resident_mtp_inputs.is_some() {
             resident_mtp::validate_limits(&adapter.limits())?;
         }
+        if target_rows_inputs.as_ref().is_some_and(|i| i.verify3_dense)
+            || target_repair_inputs
+                .as_ref()
+                .is_some_and(|i| i.verify3_dense)
+            || speculative_inputs.as_ref().is_some_and(|i| i.verify3_dense)
+        {
+            next_shared::validate_verify3_limits(
+                &adapter.limits(),
+                adapter.features().contains(wgpu::Features::SUBGROUP),
+                info.subgroup_min_size,
+                info.subgroup_max_size,
+            )?;
+        }
         if q6_integer_probe {
             q6_integer_probe::validate_limits(&adapter.limits())?;
         }

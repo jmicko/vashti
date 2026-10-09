@@ -23,6 +23,7 @@ use std::{
 use zeroize::Zeroizing;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub(crate) struct Inputs {
+    pub(crate) verify3_dense: bool,
     directory: PathBuf,
     reference: PathBuf,
     receipt: PathBuf,
@@ -52,6 +53,7 @@ pub(crate) fn registration(
                     | "KUNO_PUBLIC_TARGET_ROWS_REFERENCE"
                     | "KUNO_PUBLIC_RECEIPT"
                     | "KUNO_LAB_STATIC_CACHE_BYTES"
+                    | "KUNO_LAB_TARGET_DENSE"
             )
         ) || value.is_empty()
             || values.insert(key, value).is_some()
@@ -64,6 +66,11 @@ pub(crate) fn registration(
     {
         return Err("target repair fixed public/cache gates missing");
     }
+    let verify3_dense = match values.remove(OsStr::new("KUNO_LAB_TARGET_DENSE")) {
+        None => false,
+        Some(value) if value == "verify3" => true,
+        _ => return Err("target dense policy requires canonical verify3"),
+    };
     let mut path = |name: &str| {
         values
             .remove(OsStr::new(name))
@@ -71,6 +78,7 @@ pub(crate) fn registration(
             .ok_or("target repair public path missing")
     };
     Ok(Inputs {
+        verify3_dense,
         directory: path("KUNO_TEST_Q3_DIR")?,
         reference: path("KUNO_PUBLIC_TARGET_ROWS_REFERENCE")?,
         receipt: path("KUNO_PUBLIC_RECEIPT")?,
@@ -123,6 +131,7 @@ pub(crate) fn run(
             OriginalPackedProfile::DaslabIq3,
         )?;
         executor.target_rows_reserved = true;
+        executor.target_verify3_dense = input.verify3_dense;
         executor.enable_transient_resident(retired.clone())?;
         executor.fast_dense = true;
         executor.fast_dense_fault = true;
@@ -214,6 +223,7 @@ pub(crate) fn run(
                 serde_json::json!({"accepted_input_prefix":accepted,"proposed_count":3,"wrong_future_inputs":3-accepted,"accepted_prefix_and_continuation_all_vectors":true,"actual_completed_cursor":4,"logits_max_abs_error":max_logit,"hidden_max_abs_error":max_hidden}),
             )
         })();
+        let actual_verify3_dense_calls = executor.target_verify3_dense_calls;
         let close = resident.close();
         let audit = resident.public_owned_zero_audit_receipt();
         drop(resident);
@@ -226,11 +236,15 @@ pub(crate) fn run(
         }
         let (main, sources) = audit.ok_or("target repair full erasure not accepted")?;
         let mut report = attempt?;
+        if input.verify3_dense && actual_verify3_dense_calls == 0 {
+            return Err("target Verify3 actual dispatch evidence missing".into());
+        }
+        report["verify3_dense_calls"] = actual_verify3_dense_calls.into();
         report["owner_audit"] = serde_json::json!({"main_bytes":main.bytes,"main_buffers":main.buffers,"source_bytes":sources.bytes,"source_buffers":sources.buffers});
         reports.push(report);
     }
     file.verify_file_unchanged()?;
-    let value = serde_json::json!({"scope":"fixed-public-DASLab-actual-target-prefix-repair-only","public_token0":0,"seed":424242,"temperature":0,"max_chunk":3,"runtime_io_limit_bytes":128*1024*1024,"complete_cpu_reference_rows":4,"cases":reports,"speculative_controller":false,"accepted_speculative_tokens_per_second":null,"private_or_production_accepted":false});
+    let value = serde_json::json!({"scope":"fixed-public-DASLab-actual-target-prefix-repair-only","verify3_dense":input.verify3_dense,"public_token0":0,"seed":424242,"temperature":0,"max_chunk":3,"runtime_io_limit_bytes":128*1024*1024,"complete_cpu_reference_rows":4,"cases":reports,"speculative_controller":false,"accepted_speculative_tokens_per_second":null,"private_or_production_accepted":false});
     let out = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -262,6 +276,14 @@ mod tests {
             .to_vec()
         };
         assert!(registration(&args, env(), true).is_ok());
+        let mut candidate = env();
+        candidate.push(("KUNO_LAB_TARGET_DENSE".into(), "verify3".into()));
+        assert!(registration(&args, candidate, true).unwrap().verify3_dense);
+        for invalid in ["", "auto", "0", "1", "verify3 "] {
+            let mut candidate = env();
+            candidate.push(("KUNO_LAB_TARGET_DENSE".into(), invalid.into()));
+            assert!(registration(&args, candidate, true).is_err());
+        }
         assert!(registration(&args, env(), false).is_err());
         let mut wrong = args.clone();
         wrong[1] = "nvidia".into();
