@@ -170,7 +170,10 @@ impl Geometry {
                 && matches!(down.dtype, super::Q5_0 | super::Q8_0)
                 || matches!(gate.dtype, super::IQ3_XXS | super::IQ4_XS)
                     && up.dtype == gate.dtype
-                    && matches!(down.dtype, super::IQ4_NL | super::Q8_0))
+                    && matches!(down.dtype, super::IQ4_NL | super::Q8_0)
+                || matches!(gate.dtype, super::IQ3_XXS | super::IQ2_S | super::IQ3_S)
+                    && up.dtype == gate.dtype
+                    && matches!(down.dtype, super::IQ4_NL | super::Q2_0))
                 || gate.columns != 2560
                 || gate.rows != 640)
         {
@@ -331,6 +334,22 @@ impl Geometry {
             sum.checked_add(page.owned_bytes)
                 .ok_or("grouped owner sum overflow")
         })
+    }
+}
+
+#[cfg(test)]
+mod daslab_geometry_tests {
+    use super::*;
+    #[test]
+    fn all_actual_pinned_daslab_routed_triples_admit_original72_plus72_views() {
+        for layer in 0..48 {
+            let types = crate::daslab_profile::routed_types(layer).unwrap();
+            let gate = Projection::new(types[0], 2560, 640, 512).unwrap();
+            let up = Projection::new(types[1], 2560, 640, 512).unwrap();
+            let down = Projection::new(types[2], 640, 2560, 512).unwrap();
+            let geometry = Geometry::new([gate, up, down], 1, 144).unwrap();
+            assert_eq!(geometry.gate_policy, GatePolicy::Generic);
+        }
     }
 }
 
