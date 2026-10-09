@@ -8,7 +8,7 @@ use crate::{
     grouped_moe_chunk as c,
     main_admission::{self, MainAdmission},
     private_arena::{BufferId, BufferLayout, PrivateArena},
-    quant_matvec::{self, grouped_moe as k, iq_fixtures, q3_subgroup_moe},
+    quant_matvec::{self, grouped_moe as k, iq_fixtures, iq_moe_integer, q3_subgroup_moe},
     token_waves,
 };
 use cubecl::{prelude::*, server::Handle, wgpu::WgpuRuntime};
@@ -37,6 +37,12 @@ const PROFILES: [(TensorType, TensorType); 3] = [
 ];
 
 pub fn validate_configuration() -> std::result::Result<(), &'static str> {
+    validate_mode(false)
+}
+pub fn validate_integer_configuration() -> std::result::Result<(), &'static str> {
+    validate_mode(true)
+}
+fn validate_mode(integer: bool) -> std::result::Result<(), &'static str> {
     if cfg!(any(
         feature = "direct-device",
         feature = "cpu-fma",
@@ -46,8 +52,12 @@ pub fn validate_configuration() -> std::result::Result<(), &'static str> {
     )) {
         return Err("segmented IQ probe requires default features");
     }
-    if std::env::var_os("KUNO_LAB_SEGMENTED_IQ_PUBLIC_ONLY").as_deref()
-        != Some(std::ffi::OsStr::new("1"))
+    let gate = if integer {
+        "KUNO_LAB_IQ_INTEGER_PUBLIC_ONLY"
+    } else {
+        "KUNO_LAB_SEGMENTED_IQ_PUBLIC_ONLY"
+    };
+    if std::env::var_os(gate).as_deref() != Some(std::ffi::OsStr::new("1"))
         || std::env::var_os("KUNO_PUBLIC_RECEIPT").is_none_or(|v| v.is_empty())
     {
         return Err("segmented IQ fixed public gate and new receipt required");
@@ -57,10 +67,8 @@ pub fn validate_configuration() -> std::result::Result<(), &'static str> {
         if (name.starts_with("KUNO_LAB_")
             || name.starts_with("KUNO_TEST_")
             || name.starts_with("KUNO_PUBLIC_"))
-            && !matches!(
-                key.to_str(),
-                Some("KUNO_LAB_SEGMENTED_IQ_PUBLIC_ONLY" | "KUNO_PUBLIC_RECEIPT")
-            )
+            && key.to_str() != Some(gate)
+            && key.to_str() != Some("KUNO_PUBLIC_RECEIPT")
         {
             return Err("segmented IQ inherited setting rejected");
         }
@@ -394,12 +402,18 @@ fn launch_segment(
     groups: usize,
     segment: usize,
     subgroup: bool,
+    integer: bool,
 ) -> Result<()> {
     let [ga, up, down] = g.projections();
     let bs = &banks[segment * 3..segment * 3 + 3];
-    if subgroup {
+    if subgroup || integer {
         let owner = |index: usize| arena.handle(ids[index]).cloned();
-        q3_subgroup_moe::launch(
+        let launch = if integer {
+            iq_moe_integer::launch
+        } else {
+            q3_subgroup_moe::launch
+        };
+        launch(
             client,
             g,
             s,
@@ -631,12 +645,178 @@ fn oracle(decoded: [&[f32]; 3], x: &[f32]) -> Result<Oracle> {
     }
     Ok(out)
 }
+/// Separate scalar original-byte/integer/Q8-plane oracle. Four public seed
+/// rows are evaluated once and selected by the independently checked global
+/// slot/phase formula; this is not a production weight cache.
+fn integer_oracle(g: k::Geometry, wire: [&[u8]; 3], x: &[f32]) -> Result<Oracle> {
+    use iq_moe_integer::oracle::{Planes, project};
+    let input = Planes::new(x)?;
+    if input.owned_bytes() > 5760 || input.relative_l2_error(x)? >= 1e-4 {
+        return Err("segmented IQ integer input host bound".into());
+    }
+    let projections = g.projections();
+    let mut gu = Zeroizing::new([[0f32; SEED_ROWS]; 2]);
+    for component in 0..2 {
+        let p = projections[component];
+        let kind = TensorType::from_gguf_id(p.dtype())?;
+        for row in 0..SEED_ROWS {
+            let bytes = wire[component]
+                .get(row * p.row_bytes()..(row + 1) * p.row_bytes())
+                .ok_or("segmented IQ integer seed extent")?;
+            gu[component][row] = project(kind, bytes, &input)?;
+        }
+    }
+    let mut out = Oracle {
+        act: Zeroizing::new(vec![0.; 10 * FF]),
+        part: Zeroizing::new(vec![0.; 10 * HIDDEN]),
+        output: Zeroizing::new(vec![0.; HIDDEN]),
+    };
+    let p = projections[2];
+    let down = TensorType::from_gguf_id(p.dtype())?;
+    for (rank, &slot) in EXPERTS.iter().enumerate() {
+        for row in 0..FF {
+            out.act[rank * FF + row] = kuno_text::ops::silu(gu[0][seed_index(slot, row, 0)])
+                * gu[1][seed_index(slot, row, 1)];
+        }
+        let act = Planes::new(&out.act[rank * FF..(rank + 1) * FF])?;
+        if act.owned_bytes() > 1440 {
+            return Err("segmented IQ integer activation host bound".into());
+        }
+        let mut results = Zeroizing::new([0f32; SEED_ROWS]);
+        for row in 0..SEED_ROWS {
+            let bytes = wire[2]
+                .get(row * p.row_bytes()..(row + 1) * p.row_bytes())
+                .ok_or("segmented IQ integer down seed extent")?;
+            results[row] = project(down, bytes, &act)?;
+        }
+        for row in 0..HIDDEN {
+            out.part[rank * HIDDEN + row] = results[seed_index(slot, row, 2)];
+        }
+    }
+    for row in 0..HIDDEN {
+        for (rank, &p) in PROB.iter().enumerate() {
+            out.output[row] += p * out.part[rank * HIDDEN + row];
+        }
+    }
+    if [&out.act, &out.part, &out.output]
+        .iter()
+        .any(|v| v.iter().any(|x| !x.is_finite()) || !v.iter().any(|x| *x != 0.))
+    {
+        return Err("segmented IQ integer complete oracle finite/nonzero gate".into());
+    }
+    Ok(out)
+}
 fn compare(actual: f32, expected: f32) -> Result<f32> {
     let error = (actual - expected).abs();
     if !actual.is_finite() || !expected.is_finite() || error > 1e-4 + 3e-4 * expected.abs() {
         return Err("segmented IQ complete projection mismatch".into());
     }
     Ok(error)
+}
+/// Public alternative-arithmetic diagnostics, never an original F32 gate.
+/// The denominator floor is explicit so all-zero references remain finite.
+#[derive(Clone, Copy, Default)]
+struct Difference {
+    max_abs: f64,
+    relative_l2: f64,
+    rms: f64,
+    relative_peak: f64,
+    max_scaled_error: f64,
+    original_pointwise_failures: usize,
+}
+impl Difference {
+    fn new(actual: impl Iterator<Item = f32>, expected: &[f32]) -> Result<Self> {
+        if expected.is_empty() {
+            return Err("integer IQ difference empty reference".into());
+        }
+        let mut out = Self::default();
+        let mut error_energy = 0f64;
+        let mut reference_energy = 0f64;
+        let mut peak = 0f64;
+        let mut count = 0;
+        for value in actual {
+            let reference = *expected
+                .get(count)
+                .ok_or("integer IQ difference output length")?;
+            if !value.is_finite() || !reference.is_finite() {
+                return Err("integer IQ difference nonfinite value".into());
+            }
+            let error = (f64::from(value) - f64::from(reference)).abs();
+            out.max_abs = out.max_abs.max(error);
+            out.max_scaled_error = out
+                .max_scaled_error
+                .max(error / (1e-4 + 3e-4 * f64::from(reference).abs()));
+            out.original_pointwise_failures += usize::from(compare(value, reference).is_err());
+            error_energy += error * error;
+            reference_energy += f64::from(reference).powi(2);
+            peak = peak.max(f64::from(reference).abs());
+            count += 1;
+        }
+        if count != expected.len() {
+            return Err("integer IQ difference reference length".into());
+        }
+        out.relative_l2 = error_energy.sqrt() / reference_energy.sqrt().max(1e-12);
+        out.rms = (error_energy / count as f64).sqrt();
+        out.relative_peak = out.max_abs / peak.max(1e-12);
+        Ok(out)
+    }
+    fn report(self) -> serde_json::Value {
+        serde_json::json!({"max_abs":self.max_abs,"relative_l2":self.relative_l2,
+            "rms":self.rms,"relative_peak":self.relative_peak,
+            "max_original_scaled_error":self.max_scaled_error,
+            "original_pointwise_failures":self.original_pointwise_failures,
+            "reference_norm_denominator_floor":1e-12,"quality_accepted":false})
+    }
+}
+fn differences(
+    values: &[Zeroizing<Vec<u32>>],
+    s: &k::Spans,
+    expected: &Oracle,
+) -> Result<[Difference; 3]> {
+    if values.len() != 8 {
+        return Err("integer IQ difference owner count".into());
+    }
+    let mut out = [Difference::default(); 3];
+    for (which, (i, first, stride, width, count, reference)) in [
+        (c::ACT, s.act_first(), s.act_stride(), FF, 10, &expected.act),
+        (
+            c::PART,
+            s.partial_first(),
+            s.partial_stride(),
+            HIDDEN,
+            10,
+            &expected.part,
+        ),
+        (
+            c::OUTPUT,
+            s.output_first(),
+            s.output_stride(),
+            HIDDEN,
+            1,
+            &expected.output,
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let end = first
+            .checked_add((count - 1) * stride)
+            .and_then(|v| v.checked_add(width))
+            .ok_or("integer IQ difference owning extent")?;
+        if end > values[i].len() || reference.len() != count * width {
+            return Err("integer IQ difference original rank extent".into());
+        }
+        out[which] = Difference::new(
+            (0..count).flat_map(|rank| {
+                values[i][first + rank * stride..first + rank * stride + width]
+                    .iter()
+                    .copied()
+                    .map(f32::from_bits)
+            }),
+            reference,
+        )?;
+    }
+    Ok(out)
 }
 fn snapshot(
     arena: &PrivateArena,
@@ -659,6 +839,7 @@ fn check_fault(
     g: k::Geometry,
     s: &k::Spans,
     nonfinite: bool,
+    producer_ready: bool,
 ) -> Result<()> {
     if values.len() != 8
         || before.len() != 8
@@ -682,7 +863,7 @@ fn check_fault(
         for index in 0..values[i].len() {
             let offset = index.saturating_sub(first);
             let active = index >= first && offset / stride < count && offset % stride < width;
-            if (!nonfinite || !active) && values[i][index] != before[i][index] {
+            if (!producer_ready || !active) && values[i][index] != before[i][index] {
                 return Err("segmented IQ subgroup fault changed inactive math owner".into());
             }
         }
@@ -714,7 +895,7 @@ fn check_fault(
             let value = status[first + index];
             if index < active {
                 if region < 2 {
-                    if value != u32::from(nonfinite) {
+                    if value != u32::from(producer_ready) {
                         return Err("segmented IQ fault producer readiness".into());
                     }
                 } else if value > 1 {
@@ -835,9 +1016,13 @@ fn one(
     arena: &mut PrivateArena,
     retired: &AtomicBool,
     profile: (TensorType, TensorType),
+    integer: bool,
 ) -> Result<serde_json::Value> {
     let g = geometry(profile.0, profile.1)?;
     limits(g, l)?;
+    if integer && l.max_compute_workgroup_storage_size < iq_moe_integer::MAX_SHARED_BYTES as u32 {
+        return Err("segmented IQ integer workgroup storage limit".into());
+    }
     let (s, words) = spans(g)?;
     let pages = bank_pages(g)?;
     let payloads = g
@@ -968,6 +1153,15 @@ fn one(
             .collect::<Vec<_>>(),
     );
     let expected = oracle(seeds.each_ref().map(|v| v.decoded.as_slice()), &x)?;
+    let integer_expected = if integer {
+        Some(integer_oracle(
+            g,
+            seeds.each_ref().map(|v| v.wire.as_slice()),
+            &x,
+        )?)
+    } else {
+        None
+    };
     for (i, &v) in x.iter().enumerate() {
         before[c::INPUT][s.input_first() + i] = v.to_bits();
     }
@@ -975,11 +1169,25 @@ fn one(
     for (rank, &p) in map.probabilities().iter().enumerate() {
         before[c::PROB][s.prob_first() + rank] = p.to_bits();
     }
-    let mut errors = [[0f32; 3]; 2];
+    let mut errors = [[0f32; 3]; 3];
     let mut between_errors = [0f32; 3];
+    let mut integer_original_errors = None;
+    let mut integer_float_errors = None;
     let mut original = None;
-    for subgroup in [false, true] {
-        let case = usize::from(subgroup);
+    for (case, case_errors) in errors
+        .iter_mut()
+        .enumerate()
+        .take(if integer { 3 } else { 2 })
+    {
+        let subgroup = case == 1;
+        let integer_case = case == 2;
+        let reference = if integer_case {
+            integer_expected
+                .as_ref()
+                .ok_or("segmented IQ integer reference absent")?
+        } else {
+            &expected
+        };
         for (i, &id) in ids.iter().enumerate() {
             c::write(arena, id, &before[i][..words[i]], retired)?;
         }
@@ -997,13 +1205,14 @@ fn one(
                 map.groups(),
                 segment,
                 subgroup,
+                integer_case,
             )?;
             let got = snapshot(arena, &ids, retired)?;
             if let Some(prior) = &previous {
                 inactive_preserved(&got, prior, &s)?;
             }
-            let e = check(&got, &before, g, &s, &expected, segment == 1, false)?;
-            for (maximum, error) in errors[case].iter_mut().zip(e) {
+            let e = check(&got, &before, g, &s, reference, segment == 1, false)?;
+            for (maximum, error) in case_errors.iter_mut().zip(e) {
                 *maximum = maximum.max(error);
             }
             ledger.completed_fence(c::sample(client)?)?;
@@ -1012,25 +1221,30 @@ fn one(
         drop(previous);
         finish_math(client, arena, &ids, g, &s)?;
         let got = snapshot(arena, &ids, retired)?;
-        let e = check(&got, &before, g, &s, &expected, true, true)?;
-        for (maximum, error) in errors[case].iter_mut().zip(e) {
+        let e = check(&got, &before, g, &s, reference, true, true)?;
+        for (maximum, error) in case_errors.iter_mut().zip(e) {
             *maximum = maximum.max(error);
         }
-        if subgroup {
-            between_errors = check(
-                &got,
-                &before,
-                g,
-                &s,
-                original
-                    .as_ref()
-                    .ok_or("segmented IQ original oracle absent")?,
-                true,
-                true,
-            )?;
+        if case != 0 {
+            let original_reference = original
+                .as_ref()
+                .ok_or("segmented IQ original oracle absent")?;
+            if integer_case {
+                // The completed independent integer check above already proves
+                // every original owner/status/finite guard. These F32 deltas
+                // are explicit diagnostics, not a relaxed original gate.
+                integer_original_errors = Some(differences(&got, &s, original_reference)?);
+                integer_float_errors = Some(differences(&got, &s, &expected)?);
+            } else {
+                between_errors = check(&got, &before, g, &s, original_reference, true, true)?;
+            }
         } else {
             original = Some(compact_original(&got, &s)?);
-            if original.as_ref().unwrap().owned_bytes() + expected.owned_bytes() > 512 * 1024 {
+            if original.as_ref().unwrap().owned_bytes()
+                + expected.owned_bytes()
+                + integer_expected.as_ref().map_or(0, Oracle::owned_bytes)
+                > 512 * 1024
+            {
                 return Err("segmented IQ combined compact oracle host bound".into());
             }
         }
@@ -1038,14 +1252,17 @@ fn one(
         ledger.completed_fence(c::sample(client)?)?;
     }
     drop(original);
-    for nonfinite in [true, false] {
+    for fault in 0..if integer { 3 } else { 2 } {
+        let nonfinite = fault == 0;
         // Compiled public fault operands only; preserve the original pin and
         // physical owners while testing actual producer/finite guard behavior.
         let mut fault_before = before.clone();
         if nonfinite {
             fault_before[c::INPUT][s.input_first()] = f32::NAN.to_bits();
-        } else {
+        } else if fault == 1 {
             fault_before[c::MAP][s.map_first() + 3] = 0; // No valid group.
+        } else {
+            fault_before[c::INPUT][s.input_first()] = f32::MAX.to_bits();
         }
         for (i, &id) in ids.iter().enumerate() {
             c::write(arena, id, &fault_before[i][..words[i]], retired)?;
@@ -1062,12 +1279,13 @@ fn one(
                 &s,
                 map.groups(),
                 segment,
-                true,
+                !integer,
+                integer,
             )?;
         }
         finish_math(client, arena, &ids, g, &s)?;
         let got = snapshot(arena, &ids, retired)?;
-        check_fault(&got, &fault_before, g, &s, nonfinite)?;
+        check_fault(&got, &fault_before, g, &s, nonfinite, nonfinite && !integer)?;
         ledger.completed_fence(c::sample(client)?)?;
     }
     pin.validate()?;
@@ -1086,21 +1304,57 @@ fn one(
     verify_public(client, arena, verify, &seeds, &banks, retired)?;
     ledger.completed_fence(c::sample(client)?)?;
     arena.reset()?;
-    Ok(
-        serde_json::json!({"gate_up_dtype":profile.0.gguf_id(),"down_dtype":profile.1.gguf_id(),
+    let mut report = serde_json::json!({"gate_up_dtype":profile.0.gguf_id(),"down_dtype":profile.1.gguf_id(),
         "hidden":HIDDEN,"ff":FF,"capacity":CAP,"segment_capacity":SEGMENT,"count":1,"groups":10,
         "bank_physical_bytes":pages.iter().sum::<u64>(),"private_owned_bytes":private_pages.iter().sum::<u64>(),
         "max_abs_activation_error":errors[0][0],"max_abs_partial_error":errors[0][1],"max_abs_rank_merge_error":errors[0][2],
         "subgroup_count1_original64":true,"subgroup_rows_per_cube":4,"subgroup_physical_lanes":128,
         "subgroup_max_abs_activation_error":errors[1][0],"subgroup_max_abs_partial_error":errors[1][1],"subgroup_max_abs_rank_merge_error":errors[1][2],
         "subgroup_original_activation_max_difference":between_errors[0],"subgroup_original_partial_max_difference":between_errors[1],"subgroup_original_merge_max_difference":between_errors[2],
-        "subgroup_active_nonfinite_input_rejected":true,"subgroup_invalid_group_rejected_without_output_writes":true,
+        "subgroup_active_nonfinite_input_rejected":!integer,"subgroup_invalid_group_rejected_without_output_writes":!integer,
         "intermediate_inactive_rank_status_and_gap_checks":true,"original_global_local_slot_mapping":true,
-        "full_public_bank_and_source_padding_preserved_after_private_reset":true}),
-    )
+        "full_public_bank_and_source_padding_preserved_after_private_reset":true});
+    if integer {
+        report["integer_policy"] = serde_json::json!(
+            "two-residual-Q8-planes-original-packed-weights-subgroup-integer-dot"
+        );
+        report["integer_f32_identical"] = serde_json::json!(false);
+        report["integer_reference_max_abs_errors"] = serde_json::json!(errors[2]);
+        report["integer_original_gpu_differences"] = serde_json::json!(
+            integer_original_errors
+                .ok_or("integer IQ original diagnostics absent")?
+                .map(Difference::report)
+        );
+        report["integer_independent_C_float_differences"] = serde_json::json!(
+            integer_float_errors
+                .ok_or("integer IQ C float diagnostics absent")?
+                .map(Difference::report)
+        );
+        report["integer_active_nonfinite_input_rejected"] = serde_json::json!(true);
+        report["integer_invalid_group_rejected_without_output_writes"] = serde_json::json!(true);
+        report["integer_finite_max_residual_rejected_without_output_writes"] =
+            serde_json::json!(true);
+        report["integer_max_workgroup_bytes"] = serde_json::json!(iq_moe_integer::MAX_SHARED_BYTES);
+        report["integer_shared_codebook_bytes"] =
+            serde_json::json!(if profile.0 == TensorType::Iq3Xxs {
+                1024
+            } else {
+                0
+            });
+    }
+    Ok(report)
 }
 pub fn run(client: &ComputeClient<WgpuRuntime>, l: &wgpu::Limits) -> Result<()> {
-    validate_configuration()?;
+    run_mode(client, l, false)
+}
+pub fn run_integer(client: &ComputeClient<WgpuRuntime>, l: &wgpu::Limits) -> Result<()> {
+    run_mode(client, l, true)
+}
+fn run_mode(client: &ComputeClient<WgpuRuntime>, l: &wgpu::Limits, integer: bool) -> Result<()> {
+    validate_mode(integer)?;
+    if integer && l.max_compute_workgroup_storage_size < iq_moe_integer::MAX_SHARED_BYTES as u32 {
+        return Err("segmented IQ integer workgroup storage limit".into());
+    }
     for (gate, down) in PROFILES {
         limits(geometry(gate, down)?, l)?;
     }
@@ -1112,7 +1366,7 @@ pub fn run(client: &ComputeClient<WgpuRuntime>, l: &wgpu::Limits) -> Result<()> 
     let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<_> {
         let mut reports = Vec::new();
         for profile in PROFILES {
-            reports.push(one(client, l, &mut arena, &retired, profile)?);
+            reports.push(one(client, l, &mut arena, &retired, profile, integer)?);
             client.memory_cleanup();
         }
         Ok(reports)
@@ -1125,7 +1379,12 @@ pub fn run(client: &ComputeClient<WgpuRuntime>, l: &wgpu::Limits) -> Result<()> 
     let audit = arena
         .owned_zero_audit_receipt()
         .ok_or("segmented IQ full owner erasure absent")?;
-    let report = serde_json::json!({"scope":"fixed-public-synthetic-original-packed-segmented-IQ-MoE-only","cases":reports,
+    let scope = if integer {
+        "fixed-public-synthetic-original-packed-IQ-two-Q8-plane-integer-MoE-only"
+    } else {
+        "fixed-public-synthetic-original-packed-segmented-IQ-MoE-only"
+    };
+    let report = serde_json::json!({"scope":scope,"cases":reports,
         "main_limit_bytes":c::MAIN_CAP,"bank_pages_max_bytes":512u64*1024*1024,"private_limit_bytes":c::PRIVATE_CAP,
         "runtime_io_limit_bytes":c::IO_CAP,"main_erased_buffers":audit.buffers,"main_erased_bytes":audit.bytes,
         "whole_model_accepted":false,"private_request_accepted":false,"performance_accepted":false,"physical_recovery_accepted":false});
@@ -1135,7 +1394,13 @@ pub fn run(client: &ComputeClient<WgpuRuntime>, l: &wgpu::Limits) -> Result<()> 
         .create_new(true)
         .open(path)?;
     file.write_all(serde_json::to_string_pretty(&report)?.as_bytes())?;
-    println!("public_segmented_iq_moe profiles=3 segments=2 ranks=10 accepted=1");
+    if integer {
+        println!(
+            "public_integer_iq_moe profiles=3 segments=2 ranks=10 alternative_arithmetic=1 accepted=1"
+        );
+    } else {
+        println!("public_segmented_iq_moe profiles=3 segments=2 ranks=10 accepted=1");
+    }
     Ok(())
 }
 
@@ -1290,7 +1555,7 @@ mod tests {
             actual[c::PART][s.partial_first() + rank * s.partial_stride()] = f32::NAN.to_bits();
         }
         actual[c::OUTPUT][s.output_first()] = f32::NAN.to_bits();
-        check_fault(&actual, &before, g, &s, true).unwrap();
+        check_fault(&actual, &before, g, &s, true, true).unwrap();
         for (owner, index) in [
             (c::ACT, 0),
             (c::ACT, s.act_first() + FF),
@@ -1308,13 +1573,15 @@ mod tests {
             let mut damaged = actual.clone();
             damaged[owner][index] ^= 1;
             assert!(
-                check_fault(&damaged, &before, g, &s, true).is_err(),
+                check_fault(&damaged, &before, g, &s, true, true).is_err(),
                 "owner{owner} index{index}"
             );
         }
-        check_fault(&before, &before, g, &s, false).unwrap();
-        assert!(check_fault(&actual, &before, g, &s, false).is_err());
-        assert!(check_fault(&actual[..7], &before, g, &s, true).is_err());
+        check_fault(&before, &before, g, &s, false, false).unwrap();
+        check_fault(&before, &before, g, &s, true, false).unwrap();
+        assert!(check_fault(&actual, &before, g, &s, false, false).is_err());
+        assert!(check_fault(&actual, &before, g, &s, true, false).is_err());
+        assert!(check_fault(&actual[..7], &before, g, &s, true, true).is_err());
     }
     #[test]
     fn actual_shape_cpu_tree_oracles_are_finite_and_nonzero_for_all_profiles() {
@@ -1324,15 +1591,55 @@ mod tests {
                 .collect::<Vec<_>>(),
         );
         for (gate, down) in PROFILES {
-            let rows = geometry(gate, down)
-                .unwrap()
-                .projections()
-                .map(|p| seed_payload(p).unwrap().1);
-            let expected = oracle(rows.each_ref().map(|v| v.as_slice()), &x).unwrap();
+            let g = geometry(gate, down).unwrap();
+            let payloads = g.projections().map(|p| seed_payload(p).unwrap());
+            let rows = payloads.each_ref().map(|v| v.1.as_slice());
+            let expected = oracle(rows, &x).unwrap();
             assert_eq!(expected.act.len(), 10 * FF);
             assert_eq!(expected.part.len(), 10 * HIDDEN);
             assert_eq!(expected.output.len(), HIDDEN);
+            let integer =
+                integer_oracle(g, payloads.each_ref().map(|v| v.0.as_slice()), &x).unwrap();
+            for (stage, (actual, reference)) in [
+                (&integer.act, &expected.act),
+                (&integer.part, &expected.part),
+                (&integer.output, &expected.output),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let difference = Difference::new(actual.iter().copied(), reference).unwrap();
+                println!(
+                    "public_host_iq_integer gate={} down={} stage={} differences={}",
+                    gate.gguf_id(),
+                    down.gguf_id(),
+                    stage,
+                    difference.report()
+                );
+            }
         }
+    }
+    #[test]
+    fn alternate_difference_diagnostics_are_complete_finite_and_not_an_original_gate() {
+        let reference = [0., 1., -2.];
+        let stats = Difference::new([0., 1.01, -2.02].into_iter(), &reference).unwrap();
+        assert_eq!(stats.original_pointwise_failures, 2);
+        assert!(stats.relative_l2 > 0.009 && stats.relative_l2 < 0.011);
+        assert!(stats.max_scaled_error > 1.);
+        assert!(!stats.report()["quality_accepted"].as_bool().unwrap());
+        assert!(Difference::new([0.; 2].into_iter(), &reference).is_err());
+        assert!(Difference::new([0.; 4].into_iter(), &reference).is_err());
+        assert!(Difference::new([f32::NAN].into_iter(), &[0.]).is_err());
+        assert!(Difference::new([0.].into_iter(), &[f32::INFINITY]).is_err());
+        assert!(Difference::new([].into_iter(), &[]).is_err());
+        let extreme = Difference::new([f32::MAX].into_iter(), &[-f32::MAX]).unwrap();
+        assert!(
+            extreme.max_abs.is_finite()
+                && extreme.relative_l2.is_finite()
+                && extreme.rms.is_finite()
+                && extreme.max_scaled_error.is_finite()
+        );
+        assert_eq!(extreme.original_pointwise_failures, 1);
     }
     #[test]
     fn completed_first_segment_bits_must_survive_second_segment_exactly() {

@@ -1,0 +1,40 @@
+The explicit native Rust-emitted WGSL IQ integer-dot operator uses original
+GGML IQ3_XXS/IQ4_NL/IQ4_XS packing and codebooks from llama.cpp tag b11232.
+The independent C fixture source/hashes are recorded in
+crates/kuno-text/tests/fixtures/iq-b11232/receipt.json. No C/CUDA engine is linked.
+
+Its original-code integer factorization was studied against Strata revision
+fb58e0dbc8399662c0e47c76578c6e878b14f6cf,
+src/prefill/moe_fused_iq.cu (load_unit/convert) and
+src/kernels/cuda/native_mmvq.cu (iq4_xs_q8_dot), which adapts llama.cpp
+3cf03257f219afbe7334045ff7c6a06ac68c627d. Strata uses native CUDA/HIP matrix
+instructions, not this WGSL implementation. No host-mapped doorbell, device
+reset, route prediction or source paging mechanism is copied here.
+
+Two residual Q8 activation planes build on Kuno's existing explicit
+next_moe_integer.wgsl experiment. This changes activation precision and F32
+reduction/scale order. It does not replace the ordinary original64 F32 policy
+or establish original model quality, private inference, or speed acceptance.
+
+MIT License
+
+Copyright (c) 2023-2026 The ggml authors
+Copyright (c) 2026 Niko1221 and the Strata contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
