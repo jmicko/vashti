@@ -726,6 +726,9 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 crate::oracle_trace::Fixture::Q3Prefix23 => {
                     crate::oracle_trace::Trace::q3_prefix23_training()?
                 }
+                crate::oracle_trace::Fixture::DaslabPrefix13 => {
+                    crate::oracle_trace::Trace::daslab_prefix13_training()?
+                }
                 crate::oracle_trace::Fixture::Daslab32 => {
                     crate::oracle_trace::Trace::daslab32_training()?
                 }

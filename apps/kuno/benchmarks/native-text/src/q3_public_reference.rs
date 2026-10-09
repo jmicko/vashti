@@ -1,5 +1,5 @@
 //! Four or 32 fixed public original-Q3 positions from the independent CPU path.
-//! An explicit 23-position prefix uses the complete validated 32-position file;
+//! An explicit 13/23-position prefix uses the complete validated 32-position file;
 //! it ends before the known router discontinuity and is not 32-position acceptance.
 //! No request-derived input, vocabulary text or expert history is persisted.
 use kuno_text::model::greedy;
@@ -13,6 +13,7 @@ const RECORD_BYTES: usize = 16 + 4 * VOCAB;
 const DEFAULT_POSITIONS: usize = 4;
 const LONG_POSITIONS: usize = 32;
 const PREFIX_POSITIONS: usize = 23;
+const DASLAB_PREFIX_POSITIONS: usize = 13;
 
 /// Numeric diagnostics are reachable only through this fixed-public fixture.
 /// Keep the original f32 acceptance equation: the f64 summaries below are
@@ -147,7 +148,7 @@ impl Reference {
     pub(crate) fn require_positions(&self, positions: usize) -> Result<()> {
         let required = match positions {
             DEFAULT_POSITIONS | LONG_POSITIONS => positions,
-            PREFIX_POSITIONS => LONG_POSITIONS,
+            PREFIX_POSITIONS | DASLAB_PREFIX_POSITIONS => LONG_POSITIONS,
             _ => return Err(Error::InvalidFormat("public Q3 selected position count")),
         };
         if self.len() != required {
@@ -306,6 +307,34 @@ mod tests {
             values[index] = original;
         }
         reference.verify(31, &values).unwrap();
+    }
+
+    #[test]
+    fn explicit13_prefix_uses_complete32_and_keeps_all_unused_vector_validation() {
+        let bytes = public_bytes(LONG_POSITIONS);
+        let reference = Reference::parse(&bytes, LONG_POSITIONS).unwrap();
+        reference
+            .require_positions(DASLAB_PREFIX_POSITIONS)
+            .unwrap();
+        assert_eq!(reference.len(), LONG_POSITIONS);
+        for position in 0..DASLAB_PREFIX_POSITIONS {
+            reference
+                .verify(position, &reference.logits[position])
+                .unwrap();
+        }
+        let short = Reference::parse(&public_bytes(DEFAULT_POSITIONS), DEFAULT_POSITIONS).unwrap();
+        assert!(short.require_positions(DASLAB_PREFIX_POSITIONS).is_err());
+        assert!(
+            Reference::parse(
+                &public_bytes(DASLAB_PREFIX_POSITIONS),
+                DASLAB_PREFIX_POSITIONS
+            )
+            .is_err()
+        );
+        let mut corrupt = bytes;
+        let last = corrupt.len() - 4;
+        corrupt[last..].copy_from_slice(&f32::NAN.to_le_bytes());
+        assert!(Reference::parse(&corrupt, LONG_POSITIONS).is_err());
     }
 
     #[test]

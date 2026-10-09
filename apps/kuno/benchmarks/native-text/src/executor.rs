@@ -829,6 +829,9 @@ fn oracle_fixture_profile_matches(
             crate::oracle_trace::Fixture::Q3Prefix23,
             expert_banks::OriginalPackedProfile::UnslothQ3
         ) | (
+            crate::oracle_trace::Fixture::DaslabPrefix13,
+            expert_banks::OriginalPackedProfile::DaslabIq3
+        ) | (
             crate::oracle_trace::Fixture::Daslab32,
             expert_banks::OriginalPackedProfile::DaslabIq3
         )
@@ -2916,7 +2919,12 @@ mod admission_tests {
     fn fixed_oracle_fixtures_cannot_cross_original_quant_profiles() {
         use crate::expert_banks::OriginalPackedProfile as P;
         use crate::oracle_trace::Fixture as F;
-        for fixture in [F::Q4Rainwater, F::Q3Prefix23, F::Daslab32] {
+        for fixture in [
+            F::Q4Rainwater,
+            F::Q3Prefix23,
+            F::DaslabPrefix13,
+            F::Daslab32,
+        ] {
             for profile in [P::Q4, P::UnslothQ3, P::DaslabIq3] {
                 assert_eq!(
                     super::oracle_fixture_profile_matches(fixture, profile),
@@ -2924,6 +2932,7 @@ mod admission_tests {
                         (fixture, profile),
                         (F::Q4Rainwater, P::Q4)
                             | (F::Q3Prefix23, P::UnslothQ3)
+                            | (F::DaslabPrefix13, P::DaslabIq3)
                             | (F::Daslab32, P::DaslabIq3)
                     )
                 );

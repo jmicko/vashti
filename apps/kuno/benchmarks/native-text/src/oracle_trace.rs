@@ -15,24 +15,27 @@ const ALL_LAYERS: u64 = (1u64 << LAYERS) - 1;
 
 /// Fixed public fixtures only. START is the completed prefill cursor, so Q3's
 /// token0 prefill ends at cursor1; the selected fixed window then covers either
-/// cursors2..23 (Unsloth prefix) or cursors2..32 (DASLab complete reference).
+/// cursors2..23 (Unsloth prefix), cursors2..13 (DASLab accepted prefix),
+/// or cursors2..32 (DASLab complete reference). Prefixes never claim full32.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Fixture {
     Q4Rainwater,
     Q3Prefix23,
+    DaslabPrefix13,
     Daslab32,
 }
 impl Fixture {
     pub(crate) fn start(self) -> usize {
         match self {
             Self::Q4Rainwater => START,
-            Self::Q3Prefix23 | Self::Daslab32 => 1,
+            Self::Q3Prefix23 | Self::DaslabPrefix13 | Self::Daslab32 => 1,
         }
     }
     pub(crate) fn decode(self) -> usize {
         match self {
             Self::Q4Rainwater => DECODE,
             Self::Q3Prefix23 => 22,
+            Self::DaslabPrefix13 => 12,
             Self::Daslab32 => 31,
         }
     }
@@ -43,6 +46,7 @@ impl Fixture {
         match self {
             Self::Q4Rainwater => CONTEXT,
             Self::Q3Prefix23 => 24,
+            Self::DaslabPrefix13 => 14,
             Self::Daslab32 => 33,
         }
     }
@@ -54,6 +58,7 @@ impl Fixture {
 enum Coverage {
     Q4(Zeroizing<[u64; DECODE]>),
     Q3(Zeroizing<[u64; 22]>),
+    DaslabPrefix(Zeroizing<[u64; 12]>),
     Daslab(Zeroizing<[u64; 31]>),
 }
 impl Coverage {
@@ -61,6 +66,7 @@ impl Coverage {
         match fixture {
             Fixture::Q4Rainwater => Self::Q4(Zeroizing::new([0; DECODE])),
             Fixture::Q3Prefix23 => Self::Q3(Zeroizing::new([0; 22])),
+            Fixture::DaslabPrefix13 => Self::DaslabPrefix(Zeroizing::new([0; 12])),
             Fixture::Daslab32 => Self::Daslab(Zeroizing::new([0; 31])),
         }
     }
@@ -68,6 +74,7 @@ impl Coverage {
         match self {
             Self::Q4(_) => Fixture::Q4Rainwater,
             Self::Q3(_) => Fixture::Q3Prefix23,
+            Self::DaslabPrefix(_) => Fixture::DaslabPrefix13,
             Self::Daslab(_) => Fixture::Daslab32,
         }
     }
@@ -78,6 +85,7 @@ impl std::ops::Deref for Coverage {
         match self {
             Self::Q4(masks) => masks.as_slice(),
             Self::Q3(masks) => masks.as_slice(),
+            Self::DaslabPrefix(masks) => masks.as_slice(),
             Self::Daslab(masks) => masks.as_slice(),
         }
     }
@@ -87,6 +95,7 @@ impl std::ops::DerefMut for Coverage {
         match self {
             Self::Q4(masks) => masks.as_mut_slice(),
             Self::Q3(masks) => masks.as_mut_slice(),
+            Self::DaslabPrefix(masks) => masks.as_mut_slice(),
             Self::Daslab(masks) => masks.as_mut_slice(),
         }
     }
@@ -96,6 +105,7 @@ impl Zeroize for Coverage {
         match self {
             Self::Q4(masks) => masks.zeroize(),
             Self::Q3(masks) => masks.zeroize(),
+            Self::DaslabPrefix(masks) => masks.zeroize(),
             Self::Daslab(masks) => masks.zeroize(),
         }
     }
@@ -120,6 +130,10 @@ impl Trace {
 
     pub(crate) fn q3_prefix23_training() -> Result<Self> {
         Self::training_for(Fixture::Q3Prefix23)
+    }
+
+    pub(crate) fn daslab_prefix13_training() -> Result<Self> {
+        Self::training_for(Fixture::DaslabPrefix13)
     }
 
     pub(crate) fn daslab32_training() -> Result<Self> {
@@ -599,6 +613,47 @@ mod tests {
             }
         }
         trace
+    }
+
+    #[test]
+    fn daslab_prefix13_ends_before_divergence_and_replays_exact_coverage() {
+        let mut trace = Trace::daslab_prefix13_training().unwrap();
+        assert!(trace.fixture() == Fixture::DaslabPrefix13);
+        assert_eq!(
+            (
+                trace.start(),
+                trace.decode(),
+                trace.prefix(),
+                trace.context()
+            ),
+            (1, 12, 13, 14)
+        );
+        let ids = std::array::from_fn::<_, RANKS, _>(|rank| rank);
+        for cursor in [0, 1, 14, 32, u64::MAX] {
+            assert!(trace.record(0, cursor, &ids).is_err());
+        }
+        for cursor in 2..=13 {
+            for layer in 0..LAYERS {
+                trace.record(layer, cursor, &ids).unwrap();
+            }
+        }
+        trace.complete().unwrap();
+        let mut replay = trace.validated_replay_copy().unwrap();
+        assert!(replay.fixture() == Fixture::DaslabPrefix13);
+        replay.validate_ready_replay().unwrap();
+        assert_eq!(replay.coverage.len(), 12);
+        for cursor in 2..=13 {
+            for layer in 0..LAYERS {
+                replay.record(layer, cursor, &ids).unwrap();
+            }
+        }
+        replay.complete().unwrap();
+        for owner in [&mut trace, &mut replay] {
+            owner.erase();
+            assert!(owner.bits.is_empty());
+            assert_eq!(*owner.coverage, [0; 12]);
+            assert!(!owner.is_replay());
+        }
     }
 
     #[test]

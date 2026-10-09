@@ -270,15 +270,21 @@ fn q3_public_positions(
 ) -> Result<usize, &'static str> {
     match raw {
         None => Ok(4),
-        Some(raw @ ("4" | "23" | "32"))
+        Some(raw @ ("4" | "13" | "23" | "32"))
             if mode == "resident-count1-hybrid-chat"
                 && profile.is_low_bit()
-                && (profile != expert_banks::OriginalPackedProfile::DaslabIq3 || raw != "23")
+                && match (profile, raw) {
+                    (expert_banks::OriginalPackedProfile::DaslabIq3, "23") => false,
+                    (expert_banks::OriginalPackedProfile::UnslothQ3, "13") => false,
+                    _ => true,
+                }
                 && protected =>
         {
             raw.parse().map_err(|_| "public Q3 positions")
         }
-        _ => Err("public Q3 positions require protected original Q3 and canonical4,23-prefix or32"),
+        _ => Err(
+            "public Q3 positions require protected original Q3 and canonical4, profile-specific13/23-prefix or32",
+        ),
     }
 }
 fn q3_empty_slot_fill(
@@ -315,7 +321,7 @@ fn q3_speed_fixture_option(
                 && profile.is_low_bit()
                 && protected
                 && empty_fill
-                && matches!(positions, 4 | 23 | 32)
+                && matches!(positions, 4 | 13 | 23 | 32)
                 && matches!(option, "skip-segments" | "subgroup-moe" | "ideal-prefix")
                 && match option {
                     "skip-segments" => true,
@@ -323,7 +329,7 @@ fn q3_speed_fixture_option(
                     "ideal-prefix" => matches!(
                         (profile, positions),
                         (expert_banks::OriginalPackedProfile::UnslothQ3, 23)
-                            | (expert_banks::OriginalPackedProfile::DaslabIq3, 32)
+                            | (expert_banks::OriginalPackedProfile::DaslabIq3, 13 | 32)
                     ),
                     _ => false,
                 } =>
@@ -3219,13 +3225,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     receipt["whole_model_numeric_accepted"] = serde_json::json!(true);
                     receipt["numeric_scope"] = serde_json::json!(match q3_positions {
                         4 => "four-position-original-Q3-public-bang",
+                        13 => "13-position-prefix-of-32-original-DASLab-public-bang",
                         23 => "23-position-prefix-of-32-original-Q3-public-bang",
                         _ => "32-position-original-Q3-public-bang",
                     });
                     receipt["numeric_positions"] = serde_json::json!(q3_positions);
                     receipt["full32_reference_accepted"] = serde_json::json!(q3_positions == 32);
                     receipt["prefix_ends_before_known_router_divergence"] =
-                        serde_json::json!(q3_positions == 23);
+                        serde_json::json!(matches!(q3_positions, 13 | 23));
                     receipt["weights"] = serde_json::json!("borrowed-unmodified-original-shards");
                     let pre_slots = q3_prefill_slots.ok_or("Q3 prefill slot receipt absent")?;
                     let occupied = executor.q3_occupied_slots()?;
@@ -4165,7 +4172,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .as_ref()
                             .ok_or("Q3 original reference absent")?,
                         if packed_profile == expert_banks::OriginalPackedProfile::DaslabIq3 {
-                            oracle_trace::Fixture::Daslab32
+                            match q3_positions {
+                                13 => oracle_trace::Fixture::DaslabPrefix13,
+                                32 => oracle_trace::Fixture::Daslab32,
+                                _ => return Err("DASLab ideal fixture window".into()),
+                            }
                         } else {
                             oracle_trace::Fixture::Q3Prefix23
                         },
@@ -5174,7 +5185,7 @@ mod daslab_connection_tests {
         );
         assert!(original_packed_profile(mode, 0x10de, Some("daslab-iq3")).is_err());
         assert!(original_packed_profile("probe", 0x8086, Some("daslab-iq3")).is_err());
-        for positions in ["4", "32"] {
+        for positions in ["4", "13", "32"] {
             assert!(q3_public_positions(mode, P::DaslabIq3, true, Some(positions)).is_ok());
         }
         assert!(q3_public_positions(mode, P::DaslabIq3, true, Some("23")).is_err());
@@ -5202,6 +5213,42 @@ mod daslab_connection_tests {
             );
         }
     }
+    #[test]
+    fn daslab_prefix13_is_explicit_profile_scoped_and_never_unsloth() {
+        use expert_banks::OriginalPackedProfile as P;
+        let mode = "resident-count1-hybrid-chat";
+        assert_eq!(
+            q3_public_positions(mode, P::DaslabIq3, true, Some("13")),
+            Ok(13)
+        );
+        assert!(q3_public_positions(mode, P::UnslothQ3, true, Some("13")).is_err());
+        assert!(q3_public_positions(mode, P::DaslabIq3, false, Some("13")).is_err());
+        assert_eq!(
+            q3_speed_fixture_option(
+                mode,
+                P::DaslabIq3,
+                true,
+                13,
+                true,
+                "ideal-prefix",
+                Some("1")
+            ),
+            Ok(true)
+        );
+        assert!(
+            q3_speed_fixture_option(
+                mode,
+                P::UnslothQ3,
+                true,
+                13,
+                true,
+                "ideal-prefix",
+                Some("1")
+            )
+            .is_err()
+        );
+    }
+
     #[test]
     fn full_daslab_ideal_replay_requires_its_exact_protected32_position_window() {
         use expert_banks::OriginalPackedProfile as P;

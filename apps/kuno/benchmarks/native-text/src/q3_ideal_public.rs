@@ -24,6 +24,10 @@ impl FixtureRun {
                 "fixed-public-Q3-prefix23-conditional-ideal-residency",
                 false,
             ),
+            Fixture::DaslabPrefix13 => (
+                "fixed-public-DASLab-prefix13-conditional-ideal-residency",
+                false,
+            ),
             Fixture::Daslab32 => ("fixed-public-DASLab32-conditional-ideal-residency", true),
             Fixture::Q4Rainwater => return Err("Q3 ideal fixture selection".into()),
         };
@@ -192,6 +196,16 @@ mod tests {
             "fixed-public-Q3-prefix23-conditional-ideal-residency"
         );
         assert!(!prefix.full32);
+        let das_prefix = FixtureRun::new(Fixture::DaslabPrefix13).unwrap();
+        assert_eq!(
+            (das_prefix.positions, das_prefix.decode, das_prefix.context),
+            (13, 12, 14)
+        );
+        assert_eq!(
+            das_prefix.scope,
+            "fixed-public-DASLab-prefix13-conditional-ideal-residency"
+        );
+        assert!(!das_prefix.full32);
         let full = FixtureRun::new(Fixture::Daslab32).unwrap();
         assert_eq!((full.positions, full.decode, full.context), (32, 31, 33));
         assert_eq!(
