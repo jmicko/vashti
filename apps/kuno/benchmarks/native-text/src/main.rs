@@ -324,12 +324,17 @@ fn q3_speed_fixture_option(
                 && matches!(positions, 4 | 13 | 23 | 32)
                 && matches!(
                     option,
-                    "skip-segments" | "subgroup-moe" | "integer-moe" | "ideal-prefix"
+                    "skip-segments"
+                        | "subgroup-moe"
+                        | "integer-moe"
+                        | "shared-original-moe"
+                        | "integer-head"
+                        | "ideal-prefix"
                 )
                 && match option {
                     "skip-segments" => true,
                     "subgroup-moe" => profile == expert_banks::OriginalPackedProfile::UnslothQ3,
-                    "integer-moe" => matches!(
+                    "integer-moe" | "shared-original-moe" | "integer-head" => matches!(
                         (profile, positions),
                         (expert_banks::OriginalPackedProfile::UnslothQ3, 4 | 23 | 32)
                             | (expert_banks::OriginalPackedProfile::DaslabIq3, 4 | 13 | 32)
@@ -1089,6 +1094,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let q3_skip_empty_segments = speed_option("KUNO_LAB_Q3_SKIP_EMPTY_SEGMENTS", "skip-segments")?;
     let q3_subgroup_moe = speed_option("KUNO_LAB_Q3_SUBGROUP_MOE", "subgroup-moe")?;
     let q3_integer_moe = speed_option("KUNO_LAB_Q3_INTEGER_MOE", "integer-moe")?;
+    let q3_shared_original_moe =
+        speed_option("KUNO_LAB_Q3_SHARED_ORIGINAL_MOE", "shared-original-moe")?;
+    let q6_integer_head = speed_option("KUNO_LAB_Q6_INTEGER_HEAD", "integer-head")?;
     let q3_ideal_public = speed_option("KUNO_LAB_Q3_IDEAL_PUBLIC", "ideal-prefix")?;
     let q3_oracle_raw = std::env::var_os("KUNO_LAB_Q3_EXPERT_ORACLE");
     let q3_expert_oracle = q3_expert_oracle(
@@ -1650,8 +1658,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         packed_profile,
     )?;
     if q3_main {
+        if q3_integer_moe && q3_shared_original_moe {
+            return Err("Q3 expert arithmetic choices are exclusive".into());
+        }
         q3_integer_moe_policy(
-            q3_integer_moe,
+            q3_integer_moe || q3_shared_original_moe || q6_integer_head,
             q3_empty_slot_fill,
             q3_skip_empty_segments,
             fast_gpu,
@@ -1718,6 +1729,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             q3_integer_moe,
             adapter.limits().max_compute_workgroup_storage_size,
         )?;
+        if q3_shared_original_moe
+            && (adapter.limits().max_compute_workgroup_storage_size as usize)
+                < quant_matvec::iq_moe_shared_original::MAX_SHARED_BYTES
+        {
+            return Err(
+                "Q3 original shared MoE requires its complete workgroup storage limit".into(),
+            );
+        }
         if mtp_gpu_inputs.is_some() {
             mtp_gpu_probe::validate_limits(&adapter.limits())?;
         }
@@ -2943,6 +2962,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             executor.q3_skip_empty_segments = q3_skip_empty_segments;
             executor.q3_subgroup_moe = q3_subgroup_moe;
             executor.q3_integer_moe = q3_integer_moe;
+            executor.q3_shared_original_moe = q3_shared_original_moe;
+            executor.q6_integer_head = q6_integer_head;
             executor.q3_expert_oracle = q3_expert_oracle;
             executor.q3_router_reference = q3_router_reference.clone();
             executor.fast_dense = fast_gpu;
@@ -3338,8 +3359,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     receipt["q3_skip_empty_segments"] = serde_json::json!(q3_skip_empty_segments);
                     receipt["q3_subgroup_moe"] = serde_json::json!(q3_subgroup_moe);
                     receipt["q3_integer_moe"] = serde_json::json!(q3_integer_moe);
+                    receipt["q3_shared_original_moe"] = serde_json::json!(q3_shared_original_moe);
+                    if q6_integer_head
+                        && (executor.q6_integer_head_prepares == 0
+                            || executor.q6_integer_head_tiles
+                                != 16 * executor.q6_integer_head_prepares)
+                    {
+                        return Err("Q6 integer head observed complete tile contract".into());
+                    }
+                    receipt["q6_integer_head"] = serde_json::json!(q6_integer_head);
+                    receipt["q6_integer_head_prepares"] =
+                        serde_json::json!(executor.q6_integer_head_prepares);
+                    receipt["q6_integer_head_tiles"] =
+                        serde_json::json!(executor.q6_integer_head_tiles);
+                    receipt["head_alternative_activation_arithmetic"] =
+                        serde_json::json!(q6_integer_head);
                     receipt["moe_arithmetic"] = serde_json::json!(if q3_integer_moe {
                         "original-packed-IQ-two-residual-Q8-planes-integer-candidate"
+                    } else if q3_shared_original_moe {
+                        "original64-F32-shared-codebook"
                     } else {
                         "original64-F32"
                     });
@@ -3854,6 +3892,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 executor.q3_skip_empty_segments = q3_skip_empty_segments;
                 executor.q3_subgroup_moe = q3_subgroup_moe;
                 executor.q3_integer_moe = q3_integer_moe;
+                executor.q3_shared_original_moe = q3_shared_original_moe;
+                executor.q6_integer_head = q6_integer_head;
                 executor.q3_expert_oracle = q3_expert_oracle;
                 executor.q3_router_reference = q3_router_reference.clone();
                 executor.fast_dense = fast_gpu;
@@ -3984,6 +4024,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     executor.q3_skip_empty_segments = q3_skip_empty_segments;
                     executor.q3_subgroup_moe = q3_subgroup_moe;
                     executor.q3_integer_moe = q3_integer_moe;
+                    executor.q3_shared_original_moe = q3_shared_original_moe;
+                    executor.q6_integer_head = q6_integer_head;
                     executor.q3_expert_oracle = q3_expert_oracle;
                     executor.q3_router_reference = q3_router_reference.clone();
                     executor.fast_dense = fast_gpu;
@@ -4260,6 +4302,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             e.q3_skip_empty_segments = q3_skip_empty_segments;
                             e.q3_subgroup_moe = q3_subgroup_moe;
                             e.q3_integer_moe = q3_integer_moe;
+                            e.q3_shared_original_moe = q3_shared_original_moe;
+                            e.q6_integer_head = q6_integer_head;
                             e.gpu_router = gpu_router;
                             e.fused_experts = fused_experts;
                             e.integer_experts = integer_experts;
@@ -5603,6 +5647,78 @@ mod shared_original_iq_registration_tests {
         ] {
             assert_eq!(selected(mode, 3, false), Ok(false));
             assert!(selected(mode, 3, true).is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod shared_iq_and_head_fixture_tests {
+    use super::{expert_banks::OriginalPackedProfile as P, q3_speed_fixture_option as option};
+    #[test]
+    fn new_choices_are_scoped_to_exact_public_lowbit_windows() {
+        for selected in ["shared-original-moe", "integer-head"] {
+            for (profile, positions) in [
+                (P::DaslabIq3, 4),
+                (P::DaslabIq3, 13),
+                (P::DaslabIq3, 32),
+                (P::UnslothQ3, 4),
+                (P::UnslothQ3, 23),
+                (P::UnslothQ3, 32),
+            ] {
+                assert_eq!(
+                    option(
+                        "resident-count1-hybrid-chat",
+                        profile,
+                        true,
+                        positions,
+                        true,
+                        selected,
+                        Some("1")
+                    ),
+                    Ok(true)
+                );
+                assert!(
+                    option(
+                        "resident-count1-hybrid-chat",
+                        profile,
+                        false,
+                        positions,
+                        true,
+                        selected,
+                        Some("1")
+                    )
+                    .is_err()
+                );
+                assert!(
+                    option(
+                        "resident-count1-hybrid-chat",
+                        profile,
+                        true,
+                        positions,
+                        false,
+                        selected,
+                        Some("1")
+                    )
+                    .is_err()
+                );
+                assert!(
+                    option("probe", profile, true, positions, true, selected, Some("1")).is_err()
+                );
+            }
+            for (profile, positions) in [(P::Q4, 4), (P::UnslothQ3, 13), (P::DaslabIq3, 23)] {
+                assert!(
+                    option(
+                        "resident-count1-hybrid-chat",
+                        profile,
+                        true,
+                        positions,
+                        true,
+                        selected,
+                        Some("1")
+                    )
+                    .is_err()
+                );
+            }
         }
     }
 }

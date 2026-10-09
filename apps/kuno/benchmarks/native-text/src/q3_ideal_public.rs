@@ -122,6 +122,10 @@ pub(crate) fn run<'m, 'f: 'm>(
         executor.expert_uploads,
         executor.uploaded_bytes,
     );
+    let head_before = (
+        executor.q6_integer_head_prepares,
+        executor.q6_integer_head_tiles,
+    );
     let resources = crate::public_resources::snapshot();
     let mut replayed_ids = Zeroizing::new(Vec::with_capacity(positions));
     replayed_ids.push(first);
@@ -162,6 +166,21 @@ pub(crate) fn run<'m, 'f: 'm>(
     if work != [decode as u64 * 48 * 10, 0, 0, 0] {
         return Err("Q3 ideal timed execution was not entirely resident".into());
     }
+    let head_work = [
+        delta(executor.q6_integer_head_prepares, head_before.0)?,
+        delta(executor.q6_integer_head_tiles, head_before.1)?,
+    ];
+    let expected_head = if executor.q6_integer_head {
+        [decode as u64, decode as u64 * 16]
+    } else {
+        [0, 0]
+    };
+    if head_work != expected_head {
+        return Err("Q6 ideal replay complete prepared head contract".into());
+    }
+    let q6_integer_head = executor.q6_integer_head;
+    let q3_integer_moe = executor.q3_integer_moe;
+    let q3_shared_original_moe = executor.q3_shared_original_moe;
     let replay_audit = close(&mut replay, &mut executor)?;
     println!("public_q3_ideal_probe_closed=true decode_steps={decode} elapsed_ns={elapsed_ns}");
     Ok(serde_json::json!({
@@ -171,6 +190,8 @@ pub(crate) fn run<'m, 'f: 'm>(
         "trace_membership_verified":true,"owned_io_cleanup_accepted":true,
         "full32_reference_accepted":selected.full32,"ends_before_known_router_divergence":!selected.full32,
         "expert_union_counts":counts,"preload_original_bytes":preload.bytes,
+        "q6_integer_head":q6_integer_head,"q6_integer_head_prepares":head_work[0],"q6_integer_head_tiles":head_work[1],
+        "q3_integer_moe":q3_integer_moe,"q3_shared_original_moe":q3_shared_original_moe,
         "elapsed_ns":elapsed_ns,"gpu_hits":work[0],"cpu_misses":work[1],
         "expert_uploads":work[2],"public_weight_upload_bytes":work[3],"resources":resources,
         "train_greedy_ids":&*trained_ids,"replay_greedy_ids":&*replayed_ids,

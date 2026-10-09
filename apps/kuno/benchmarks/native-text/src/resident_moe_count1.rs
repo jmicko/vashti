@@ -85,7 +85,7 @@ impl GpuExecutor<'_> {
         if self.q3_subgroup_moe && (!self.q3_empty_slot_fill || !self.q3_skip_empty_segments) {
             return Err(err("native Q3 subgroup runtime policy"));
         }
-        if self.q3_integer_moe
+        if (self.q3_integer_moe || self.q3_shared_original_moe)
             && (!self.packed_profile.is_low_bit()
                 || !self.q3_empty_slot_fill
                 || !self.q3_skip_empty_segments
@@ -93,6 +93,7 @@ impl GpuExecutor<'_> {
                 || !self.gpu_router
                 || !self.shared_kernels
                 || self.q3_subgroup_moe
+                || (self.q3_integer_moe && self.q3_shared_original_moe)
                 || self.fused_experts
                 || self.integer_experts
                 || w.cpu_q8_activations() != Some(false)
@@ -428,7 +429,7 @@ impl GpuExecutor<'_> {
             write_gpu_header(arena, ids[PROB], &*probs, &w.poison)?;
             physical(arena, bank, g, &ids, s.stamp.fault, w)?;
             if !split.gpu().is_empty() {
-                if self.q3_subgroup_moe || self.q3_integer_moe {
+                if self.q3_subgroup_moe || self.q3_integer_moe || self.q3_shared_original_moe {
                     let active = active_segments
                         .as_ref()
                         .ok_or(err("native Q3 selected segment proof absent"))?;
@@ -439,7 +440,13 @@ impl GpuExecutor<'_> {
                         &spans,
                         &ids,
                         active,
-                        self.q3_integer_moe,
+                        if self.q3_integer_moe {
+                            SelectedIqKernel::Integer
+                        } else if self.q3_shared_original_moe {
+                            SelectedIqKernel::SharedOriginal
+                        } else {
+                            SelectedIqKernel::SubgroupOriginal
+                        },
                     )?;
                 } else if self.shared_kernels
                     && bank.profile() == crate::expert_banks::OriginalPackedProfile::Q4
@@ -946,6 +953,12 @@ fn launch_q3_active_segments(
 /// Only explicit fixed-public Q3 options select subgroup original64 or the
 /// alternative integer arithmetic. Finite/fault/merge and all-family
 /// publication remain unchanged; no failure selects an alternative leaf.
+#[derive(Clone, Copy)]
+enum SelectedIqKernel {
+    Integer,
+    SharedOriginal,
+    SubgroupOriginal,
+}
 fn launch_q3_selected_segments(
     arena: &PrivateArena,
     bank: &ExpertBanks,
@@ -953,7 +966,7 @@ fn launch_q3_selected_segments(
     s: &k::Spans,
     ids: &[BufferId; 7],
     active: &[bool; 2],
-    integer: bool,
+    choice: SelectedIqKernel,
 ) -> Result<()> {
     let client = arena.client().map_err(u::fault)?;
     let owner = |index: usize| arena.handle(ids[index]).cloned().map_err(u::fault);
@@ -973,10 +986,10 @@ fn launch_q3_selected_segments(
         let ga = &bank.gate().segments()[shard];
         let up = &bank.up().segments()[shard];
         let down = &bank.down().segments()[shard];
-        let launch = if integer {
-            crate::quant_matvec::iq_moe_integer::launch
-        } else {
-            crate::quant_matvec::q3_subgroup_moe::launch
+        let launch = match choice {
+            SelectedIqKernel::Integer => crate::quant_matvec::iq_moe_integer::launch,
+            SelectedIqKernel::SharedOriginal => crate::quant_matvec::iq_moe_shared_original::launch,
+            SelectedIqKernel::SubgroupOriginal => crate::quant_matvec::q3_subgroup_moe::launch,
         };
         launch(
             client,
