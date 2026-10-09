@@ -33,6 +33,7 @@ fn valid_group(group:u32)->bool {
     if slot<FIRST_SLOT || slot-FIRST_SLOT>=SLOTS {return false;}
     return map[p.a+84u+group]==1u && map[p.a+164u+group*8u]<10u;
 }
+// Q8_PREPARE_BEGIN
 fn q8_code(x:f32,d:f32)->i32 {
     if d==0.0 {return 0;}
     let value=clamp(x/d,-127.0,127.0);
@@ -82,6 +83,7 @@ fn prepare_q8(block:u32) {
         packed_first[block*8u+word]=first;packed_second[block*8u+word]=second;
     }
 }
+// Q8_PREPARE_END
 fn iq4_byte(code:u32)->u32 {
     var word=0xbfad9881u;
     if code>=4u {word=0xf6eaddcfu;}

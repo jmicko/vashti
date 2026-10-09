@@ -104,6 +104,11 @@ fn fixed_failure_class(error: &(dyn std::error::Error + 'static)) -> &'static st
         "segmented IQ fixed route geometry" => "route-geometry",
         "segmented IQ host fixture bound" => "host-budget",
         "segmented IQ physical stream" => "physical-stream",
+        "segmented IQ prepared scratch flag/gap/full owning tail" => "prepared-owning-guard",
+        "segmented IQ prepared independent packed plane mismatch" => "prepared-plane-code",
+        "segmented IQ prepared independent plane scale mismatch" => "prepared-plane-scale",
+        "segmented IQ prepared compact rank" => "prepared-plane-rank",
+        "segmented IQ prepared independent plane host bound" => "prepared-host-bound",
         _ => "unclassified",
     }
 }
@@ -573,6 +578,109 @@ fn launch_segment(
             down.row_bytes(),
             1,
         );
+    }
+    Ok(())
+}
+#[allow(clippy::too_many_arguments)]
+fn launch_prepared_pair(
+    client: &ComputeClient<WgpuRuntime>,
+    arena: &PrivateArena,
+    ids: &[BufferId; 8],
+    banks: &[Bank],
+    g: k::Geometry,
+    s: &k::Spans,
+    groups: usize,
+    scratch: BufferId,
+) -> Result<()> {
+    let owner = |index| arena.handle(ids[index]).cloned();
+    iq_moe_integer::prepared::launch_pair(
+        client,
+        g,
+        s,
+        std::array::from_fn(|segment| {
+            std::array::from_fn(|component| banks[segment * 3 + component].view())
+        }),
+        [
+            owner(0)?,
+            owner(1)?,
+            owner(2)?,
+            owner(3)?,
+            owner(4)?,
+            owner(5)?,
+            owner(6)?,
+        ],
+        arena.handle(scratch)?.clone(),
+        [true, true],
+        groups,
+    )?;
+    Ok(())
+}
+
+fn check_prepared_scratch(
+    planes: &[u32],
+    values: &[Zeroizing<Vec<u32>>],
+    s: &k::Spans,
+    valid: bool,
+) -> Result<()> {
+    use iq_moe_integer::prepared::{
+        DOWN_FIRST, DOWN_WORDS, GATE_WORDS, HEADER_WORDS, SCRATCH_WORDS,
+    };
+    if planes.len() != BufferLayout::new(SCRATCH_WORDS)?.owned_words
+        || values.len() != 8
+        || planes[..11].iter().any(|&v| v != u32::from(valid))
+        || planes[11..HEADER_WORDS].iter().any(|&v| v != GUARD)
+        || planes[SCRATCH_WORDS..].iter().any(|&v| v != 0)
+    {
+        return Err("segmented IQ prepared scratch flag/gap/full owning tail".into());
+    }
+    if !valid {
+        return Ok(());
+    }
+    // Independently generate each stored plane from the actual corresponding
+    // complete F32 input. Down uses compact map group -> original ACT rank.
+    // No decoded GPU weight or producer output is substituted into the model
+    // oracle: the original independent integer projection gate remains intact.
+    for group in 0..=10 {
+        let (input_first, columns, frame, frame_words, input) = if group == 0 {
+            (s.input_first(), HIDDEN, HEADER_WORDS, GATE_WORDS, c::INPUT)
+        } else {
+            let rank = values[c::MAP][s.map_first() + 164 + (group - 1) * 8] as usize;
+            if rank >= 10 {
+                return Err("segmented IQ prepared compact rank".into());
+            }
+            (
+                s.act_first() + rank * s.act_stride(),
+                FF,
+                DOWN_FIRST + (group - 1) * DOWN_WORDS,
+                DOWN_WORDS,
+                c::ACT,
+            )
+        };
+        let input = Zeroizing::new(
+            values[input][input_first..input_first + columns]
+                .iter()
+                .copied()
+                .map(f32::from_bits)
+                .collect::<Vec<_>>(),
+        );
+        let expected = iq_moe_integer::oracle::Planes::new(&input)?.packed_words()?;
+        if expected.len() != frame_words || input.capacity() != columns {
+            return Err("segmented IQ prepared independent plane host bound".into());
+        }
+        let codes = columns / 2;
+        if planes[frame..frame + codes] != expected[..codes] {
+            return Err("segmented IQ prepared independent packed plane mismatch".into());
+        }
+        for (&actual, &expected) in planes[frame + codes..frame + frame_words]
+            .iter()
+            .zip(&expected[codes..])
+        {
+            let a = f32::from_bits(actual);
+            let b = f32::from_bits(expected);
+            if !a.is_finite() || !b.is_finite() || (a - b).abs() > 1e-7 + 1e-6 * b.abs() {
+                return Err("segmented IQ prepared independent plane scale mismatch".into());
+            }
+        }
     }
     Ok(())
 }
@@ -1110,6 +1218,10 @@ fn one(
     integer_stage(integer, profile, "profile-start", 0, 0);
     let g = geometry(profile.0, profile.1)?;
     limits(g, l)?;
+    if integer && (l.max_storage_buffers_per_shader_stage < 7 || l.max_bindings_per_bind_group < 8)
+    {
+        return Err("segmented IQ prepared binding limit".into());
+    }
     if integer && l.max_compute_workgroup_storage_size < iq_moe_integer::MAX_SHARED_BYTES as u32 {
         return Err("segmented IQ integer workgroup storage limit".into());
     }
@@ -1126,10 +1238,20 @@ fn one(
         .into_iter()
         .collect::<Result<Vec<_>>>()?;
     let mut ledger = MainAdmission::new(c::MAIN_CAP, c::sample(client)?)?;
-    let private_pages = words
+    let mut private_pages = words
         .map(|n| BufferLayout::new(n).map(|v| v.owned_bytes as u64))
         .into_iter()
         .collect::<std::result::Result<Vec<_>, _>>()?;
+    if integer {
+        // A separately tracked private owner, never id7's public fault owner
+        // or an uncharged rounded tail. Model integration reuses its existing
+        // complete CPU owner only within the explicit prior GPU scratch phase.
+        private_pages
+            .push(BufferLayout::new(iq_moe_integer::prepared::SCRATCH_WORDS)?.owned_bytes as u64);
+    }
+    if private_pages.iter().sum::<u64>() > c::PRIVATE_CAP as u64 {
+        return Err("segmented IQ prepared private page cap".into());
+    }
     // Before/previous/current owners plus one raw readback lease, row seeds,
     // complete CPU oracle and compact original output oracle (combined<512KiB),
     // and bounded route metadata in the1MiB frame. No full bank host copy.
@@ -1164,6 +1286,16 @@ fn one(
         .collect::<std::result::Result<Vec<_>, _>>()?
         .try_into()
         .map_err(|_| "segmented IQ owner count")?;
+    let prepared_scratch = if integer {
+        Some(arena.allocate_zeroed(iq_moe_integer::prepared::SCRATCH_WORDS)?)
+    } else {
+        None
+    };
+    let physical_ids = ids
+        .iter()
+        .copied()
+        .chain(prepared_scratch)
+        .collect::<Vec<_>>();
     let mut banks = Vec::new();
     for segment in 0..2 {
         for (component, p) in g.projections().into_iter().enumerate() {
@@ -1179,7 +1311,7 @@ fn one(
             });
         }
     }
-    physical(client, arena, &ids, &seeds, &banks, g)?;
+    physical(client, arena, &physical_ids, &seeds, &banks, g)?;
     for b in &banks {
         initialize_bank::launch::<WgpuRuntime>(
             client,
@@ -1271,6 +1403,7 @@ fn one(
     let mut shared_between_errors = [0f32; 3];
     let mut integer_original_errors = None;
     let mut integer_float_errors = None;
+    let mut integer_control = None;
     let mut original = None;
     let subgroup_supported = q3_subgroup_moe::validate_geometry(g, 0, 72).is_ok();
     for (case, case_errors) in errors
@@ -1299,7 +1432,7 @@ fn one(
         for segment in 0..2 {
             integer_stage(integer, profile, "segment-launch", case, segment);
             pin.validate()?;
-            physical(client, arena, &ids, &seeds, &banks, g)?;
+            physical(client, arena, &physical_ids, &seeds, &banks, g)?;
             launch_segment(
                 client,
                 arena,
@@ -1343,6 +1476,18 @@ fn one(
                 // are explicit diagnostics, not a relaxed original gate.
                 integer_original_errors = Some(differences(&got, &s, original_reference)?);
                 integer_float_errors = Some(differences(&got, &s, &expected)?);
+                // Keep only three compact oracles live (<512KiB). The F32
+                // diagnostics above are retained as aggregates; the old integer
+                // result now becomes the paired prepared-path control.
+                original = None;
+                integer_control = Some(compact_original(&got, &s)?);
+                if integer_control.as_ref().unwrap().owned_bytes()
+                    + expected.owned_bytes()
+                    + integer_expected.as_ref().map_or(0, Oracle::owned_bytes)
+                    > 512 * 1024
+                {
+                    return Err("segmented IQ combined compact oracle host bound".into());
+                }
             } else if shared_case {
                 shared_between_errors =
                     check(&got, &before, g, &s, original_reference, true, true)?;
@@ -1363,6 +1508,50 @@ fn one(
         ledger.completed_fence(c::sample(client)?)?;
     }
     drop(original);
+    let mut prepared_errors = [0f32; 3];
+    let mut prepared_between_errors = [0f32; 3];
+    if let Some(scratch) = prepared_scratch {
+        integer_stage(true, profile, "prepared-case-start", 3, 0);
+        let scratch_before = Zeroizing::new(vec![GUARD; iq_moe_integer::prepared::SCRATCH_WORDS]);
+        c::write(arena, scratch, &scratch_before, retired)?;
+        for (i, &id) in ids.iter().enumerate() {
+            c::write(arena, id, &before[i][..words[i]], retired)?;
+        }
+        pin.validate()?;
+        physical(client, arena, &physical_ids, &seeds, &banks, g)?;
+        launch_prepared_pair(client, arena, &ids, &banks, g, &s, map.groups(), scratch)?;
+        finish_math(client, arena, &ids, g, &s)?;
+        let got = snapshot(arena, &ids, retired)?;
+        prepared_errors = check(
+            &got,
+            &before,
+            g,
+            &s,
+            integer_expected
+                .as_ref()
+                .ok_or("prepared IQ independent reference absent")?,
+            true,
+            true,
+        )?;
+        prepared_between_errors = check(
+            &got,
+            &before,
+            g,
+            &s,
+            integer_control
+                .as_ref()
+                .ok_or("prepared IQ integer control absent")?,
+            true,
+            true,
+        )?;
+        let scratch_got = c::read(arena, scratch, retired)?;
+        check_prepared_scratch(&scratch_got, &got, &s, true)?;
+        c::audit(client, retired)?;
+        integer_stage(true, profile, "prepared-case-final-check", 3, 2);
+        pin.validate()?;
+        ledger.completed_fence(c::sample(client)?)?;
+    }
+    drop(integer_control);
     for fault in 0..if integer { 3 } else { 2 } {
         integer_stage(integer, profile, "fault-start", fault, 0);
         let nonfinite = fault == 0;
@@ -1376,38 +1565,55 @@ fn one(
         } else {
             fault_before[c::INPUT][s.input_first()] = f32::MAX.to_bits();
         }
-        for (i, &id) in ids.iter().enumerate() {
-            c::write(arena, id, &fault_before[i][..words[i]], retired)?;
-        }
-        for segment in 0..2 {
+        for prepared in [false, true].into_iter().take(if integer { 2 } else { 1 }) {
+            for (i, &id) in ids.iter().enumerate() {
+                c::write(arena, id, &fault_before[i][..words[i]], retired)?;
+            }
             pin.validate()?;
-            physical(client, arena, &ids, &seeds, &banks, g)?;
-            launch_segment(
-                client,
-                arena,
-                &ids,
-                &banks,
+            physical(client, arena, &physical_ids, &seeds, &banks, g)?;
+            if prepared {
+                integer_stage(true, profile, "prepared-fault-start", fault, 0);
+                let scratch = prepared_scratch.ok_or("prepared IQ fault scratch absent")?;
+                let scratch_before =
+                    Zeroizing::new(vec![GUARD; iq_moe_integer::prepared::SCRATCH_WORDS]);
+                c::write(arena, scratch, &scratch_before, retired)?;
+                launch_prepared_pair(client, arena, &ids, &banks, g, &s, map.groups(), scratch)?;
+            } else {
+                for segment in 0..2 {
+                    launch_segment(
+                        client,
+                        arena,
+                        &ids,
+                        &banks,
+                        g,
+                        &s,
+                        map.groups(),
+                        segment,
+                        !integer && !shared_original,
+                        integer,
+                        shared_original,
+                    )?;
+                }
+            }
+            finish_math(client, arena, &ids, g, &s)?;
+            let got = snapshot(arena, &ids, retired)?;
+            integer_stage(integer, profile, "fault-final-check", fault, 2);
+            check_fault(
+                &got,
+                &fault_before,
                 g,
                 &s,
-                map.groups(),
-                segment,
-                !integer && !shared_original,
-                integer,
-                shared_original,
+                nonfinite,
+                nonfinite && !integer && !shared_original,
             )?;
+            if prepared {
+                let scratch_got = c::read(arena, prepared_scratch.unwrap(), retired)?;
+                check_prepared_scratch(&scratch_got, &got, &s, false)?;
+                c::audit(client, retired)?;
+                integer_stage(true, profile, "prepared-fault-final-check", fault, 2);
+            }
+            ledger.completed_fence(c::sample(client)?)?;
         }
-        finish_math(client, arena, &ids, g, &s)?;
-        let got = snapshot(arena, &ids, retired)?;
-        integer_stage(integer, profile, "fault-final-check", fault, 2);
-        check_fault(
-            &got,
-            &fault_before,
-            g,
-            &s,
-            nonfinite,
-            nonfinite && !integer && !shared_original,
-        )?;
-        ledger.completed_fence(c::sample(client)?)?;
     }
     pin.validate()?;
     staged.validate_origin(&bank_slots)?;
@@ -1415,7 +1621,7 @@ fn one(
     verify_public(client, arena, ids[7], &seeds, &banks, retired)?;
     ledger.completed_fence(c::sample(client)?)?;
     arena.reset()?; // Audited complete PRIVATE owners; immutable sources retained.
-    if ids.iter().any(|&id| arena.handle(id).is_ok()) {
+    if physical_ids.iter().any(|&id| arena.handle(id).is_ok()) {
         return Err("segmented IQ stale private owner accepted".into());
     }
     ledger.completed_fence(c::sample(client)?)?;
@@ -1441,6 +1647,21 @@ fn one(
         );
         report["integer_f32_identical"] = serde_json::json!(false);
         report["integer_reference_max_abs_errors"] = serde_json::json!(errors[2]);
+        report["integer_prepared_once"] = serde_json::json!(true);
+        report["integer_prepared_reference_max_abs_errors"] = serde_json::json!(prepared_errors);
+        report["integer_prepared_original_integer_max_abs_differences"] =
+            serde_json::json!(prepared_between_errors);
+        report["integer_prepared_scratch_logical_bytes"] =
+            serde_json::json!(iq_moe_integer::prepared::SCRATCH_WORDS * 4);
+        report["integer_prepared_scratch_owning_bytes"] = serde_json::json!(
+            BufferLayout::new(iq_moe_integer::prepared::SCRATCH_WORDS)?.owned_bytes
+        );
+        report["integer_prepared_projection_shared_max_bytes"] =
+            serde_json::json!(iq_moe_integer::prepared::MAX_PROJECT_SHARED_BYTES);
+        report["integer_prepared_compact_rank_planes_and_complete_scratch_guards"] =
+            serde_json::json!(true);
+        report["integer_prepared_faults_nan_invalid_group_finite_max_no_math_writes"] =
+            serde_json::json!(true);
         report["integer_original_gpu_differences"] = serde_json::json!(
             integer_original_errors
                 .ok_or("integer IQ original diagnostics absent")?
@@ -1593,6 +1814,96 @@ fn run_mode(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn prepared_planes_follow_compact_group_original_rank_and_reject_corruption() {
+        use iq_moe_integer::prepared::{DOWN_FIRST, DOWN_WORDS, HEADER_WORDS, SCRATCH_WORDS};
+        let (s, words) = spans(geometry(TensorType::Iq3Xxs, TensorType::Iq4Nl).unwrap()).unwrap();
+        let mut values = words
+            .into_iter()
+            .map(|n| Zeroizing::new(vec![0u32; n]))
+            .collect::<Vec<_>>();
+        let mut planes = vec![0u32; BufferLayout::new(SCRATCH_WORDS).unwrap().owned_words];
+        planes[..11].fill(1);
+        planes[11..HEADER_WORDS].fill(GUARD);
+        let input = [-127f32, -1., 0., 127.].repeat(HIDDEN / 4);
+        for (out, v) in values[c::INPUT][s.input_first()..s.input_first() + HIDDEN]
+            .iter_mut()
+            .zip(&input)
+        {
+            *out = v.to_bits();
+        }
+        let gate = iq_moe_integer::oracle::Planes::new(&input)
+            .unwrap()
+            .packed_words()
+            .unwrap();
+        planes[HEADER_WORDS..DOWN_FIRST].copy_from_slice(&gate);
+        for rank in 0..10 {
+            let act = [-127., -(rank as f32 + 1.), rank as f32 + 1., 127.].repeat(FF / 4);
+            for (out, v) in values[c::ACT]
+                [s.act_first() + rank * s.act_stride()..s.act_first() + rank * s.act_stride() + FF]
+                .iter_mut()
+                .zip(&act)
+            {
+                *out = v.to_bits();
+            }
+        }
+        for group in 0..10 {
+            let rank = 9 - group;
+            values[c::MAP][s.map_first() + 164 + group * 8] = rank as u32;
+            let act = values[c::ACT]
+                [s.act_first() + rank * s.act_stride()..s.act_first() + rank * s.act_stride() + FF]
+                .iter()
+                .copied()
+                .map(f32::from_bits)
+                .collect::<Vec<_>>();
+            let down = iq_moe_integer::oracle::Planes::new(&act)
+                .unwrap()
+                .packed_words()
+                .unwrap();
+            planes[DOWN_FIRST + group * DOWN_WORDS..DOWN_FIRST + (group + 1) * DOWN_WORDS]
+                .copy_from_slice(&down);
+        }
+        check_prepared_scratch(&planes, &values, &s, true).unwrap();
+        planes[DOWN_FIRST] ^= 0x0100;
+        assert!(check_prepared_scratch(&planes, &values, &s, true).is_err());
+        planes[DOWN_FIRST] ^= 0x0100;
+        values[c::MAP][s.map_first() + 164] = 0;
+        assert!(check_prepared_scratch(&planes, &values, &s, true).is_err());
+    }
+    #[test]
+    fn prepared_scratch_is_separately_charged_and_guarded_from_owning_tail() {
+        let g = geometry(TensorType::Iq3Xxs, TensorType::Iq4Nl).unwrap();
+        let (s, words) = spans(g).unwrap();
+        let page = BufferLayout::new(iq_moe_integer::prepared::SCRATCH_WORDS).unwrap();
+        assert_eq!(page.owned_bytes, 32768);
+        let total = words
+            .into_iter()
+            .map(|n| BufferLayout::new(n).unwrap().owned_bytes)
+            .sum::<usize>()
+            + page.owned_bytes;
+        assert_eq!(total, 1_736_704);
+        assert!(total <= c::PRIVATE_CAP);
+        let values = words
+            .into_iter()
+            .map(|n| Zeroizing::new(vec![0u32; n]))
+            .collect::<Vec<_>>();
+        let mut planes = vec![0u32; page.owned_words];
+        planes[11..iq_moe_integer::prepared::HEADER_WORDS].fill(GUARD);
+        check_prepared_scratch(&planes, &values, &s, false).unwrap();
+        for index in [
+            0,
+            10,
+            11,
+            31,
+            iq_moe_integer::prepared::SCRATCH_WORDS,
+            page.owned_words - 1,
+        ] {
+            let original = planes[index];
+            planes[index] ^= 1;
+            assert!(check_prepared_scratch(&planes, &values, &s, false).is_err());
+            planes[index] = original;
+        }
+    }
     #[test]
     fn integer_profiles_cover_all_actual_das_triples_and_keep_default_original3() {
         assert_eq!(profiles(false, false), &PROFILES);

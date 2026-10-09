@@ -14,6 +14,8 @@ use kuno_text::{Error, Result};
 
 #[path = "iq_moe_integer_oracle.rs"]
 pub(crate) mod oracle;
+#[path = "iq_moe_integer_prepared.rs"]
+pub(crate) mod prepared;
 
 pub(crate) const MAX_SHARED_BYTES: usize = 24_196;
 pub(crate) fn workgroup_bytes(dtype: u32) -> usize {
@@ -160,6 +162,9 @@ fn NAME_project(row:u32,lane:u32,width:u32)->f32 {{
 
 impl Kernel {
     fn source(self) -> String {
+        self.source_variant(false)
+    }
+    fn source_variant(self, prepared: bool) -> String {
         let columns = if self.down { 640 } else { 2560 };
         let rows = if self.down { 2560 } else { 640 };
         let (bindings, helpers, input_offset, epilogue) = if self.down {
@@ -181,25 +186,53 @@ impl Kernel {
                 "var a=0.0;var b=0.0;if valid && row<ROWS {let base=(slot*ROWS+row)*ROW_BYTES;a=gate_project(base,lane,width);b=up_project(base,lane,width);}\nif valid && row<ROWS && lane==0u {var sig=0.0;if a>=0.0 {sig=1.0/(1.0+exp(-a));}else{let e=exp(a);sig=e/(1.0+e);}\noutput[p.d+route*p.e+row]=a*sig*b;if row==0u {status[p.f+route]=1u;}}",
             )
         };
+        let bindings = if prepared {
+            let uniform = if self.down { 5 } else { 6 };
+            bindings.replace(
+                &format!("@binding({uniform}) var<uniform> p"),
+                &format!("@binding({uniform}) var<storage,read> planes:array<u32>;\n@group(0) @binding({}) var<uniform> p", uniform + 1),
+            )
+        } else {
+            bindings.to_string()
+        };
         let (grid, initialize) = grid_source(&original_grid_words(self.dtype));
-        let mut source = include_str!("iq_moe_integer.wgsl")
-            .replace("BINDINGS_VALUE", bindings)
-            .replace("PROJECTION_HELPERS_VALUE", &helpers)
-            .replace("INPUT_OFFSET_VALUE", input_offset)
-            .replace(
-                "INPUT_READY_VALUE",
-                if self.down {
-                    "if valid && status[p.f+route]!=1u {valid=false;}"
-                } else {
-                    ""
-                },
-            )
-            .replace(
-                "EPILOGUE_VALUE",
-                &epilogue.replace("valid && row<ROWS", "ready && row<ROWS"),
-            )
-            .replace("GRID_DECLARATION_VALUE", &grid)
-            .replace("GRID_INITIALIZE_VALUE", &initialize);
+        let decode_helpers = include_str!("iq_moe_integer.wgsl")
+            .split_once("fn iq4_byte")
+            .unwrap()
+            .1
+            .split_once("// Original byte-addressed")
+            .unwrap()
+            .0;
+        let mut source = (if prepared {
+            include_str!("iq_moe_integer_prepared_project.wgsl")
+        } else {
+            include_str!("iq_moe_integer.wgsl")
+        })
+        .replace("BINDINGS_VALUE", &bindings)
+        .replace("PROJECTION_HELPERS_VALUE", &helpers)
+        .replace("INPUT_OFFSET_VALUE", input_offset)
+        .replace(
+            "INPUT_READY_VALUE",
+            if self.down {
+                "if valid && status[p.f+route]!=1u {valid=false;}"
+            } else {
+                ""
+            },
+        )
+        .replace(
+            "EPILOGUE_VALUE",
+            &epilogue.replace("valid && row<ROWS", "ready && row<ROWS"),
+        )
+        .replace("GRID_DECLARATION_VALUE", &grid)
+        .replace("GRID_INITIALIZE_VALUE", &initialize)
+        .replace(
+            "DECODE_HELPERS_VALUE",
+            &format!("fn iq4_byte{decode_helpers}"),
+        )
+        .replace(
+            "PREPARED_DOWN_VALUE",
+            if self.down { "true" } else { "false" },
+        );
         for (key, value) in [
             ("COLUMNS_VALUE", columns.to_string()),
             ("ROWS_VALUE", rows.to_string()),

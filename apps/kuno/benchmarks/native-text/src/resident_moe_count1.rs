@@ -439,6 +439,7 @@ impl GpuExecutor<'_> {
                         g,
                         &spans,
                         &ids,
+                        owner_ids[0],
                         active,
                         if self.q3_integer_moe {
                             SelectedIqKernel::Integer
@@ -634,8 +635,10 @@ impl GpuExecutor<'_> {
         {
             return Err(Error::LimitExceeded("native count1 joined bridge host"));
         }
-        // CPU readiness/results enter distinct owners only AFTER all CPU jobs
-        // finish. The original rank0..9 merge is ordered after both producers.
+        // CPU readiness/results enter this complete owner only AFTER all CPU
+        // jobs finish and the prepared integer GPU scratch phase has queued
+        // every consumer. This complete overwrite on the same stream ends that
+        // phase; the original rank0..9 merge follows both producers.
         write_cpu(arena, owner_ids[0], partials.as_ref(), live, &w.poison)?;
         write_words(arena, owner_ids[1], map.owner_words(), &w.poison)?;
         drop(partials);
@@ -959,12 +962,14 @@ enum SelectedIqKernel {
     SharedOriginal,
     SubgroupOriginal,
 }
+#[allow(clippy::too_many_arguments)]
 fn launch_q3_selected_segments(
     arena: &PrivateArena,
     bank: &ExpertBanks,
     g: k::Geometry,
     s: &k::Spans,
     ids: &[BufferId; 7],
+    cpu_scratch: BufferId,
     active: &[bool; 2],
     choice: SelectedIqKernel,
 ) -> Result<()> {
@@ -979,6 +984,52 @@ fn launch_q3_selected_segments(
         owner(5)?,
         owner(6)?,
     ];
+    if matches!(choice, SelectedIqKernel::Integer) {
+        // Workspace/physical() already prove the complete CPU owner, its
+        // disjoint physical page and original arena epoch. This owner is idle
+        // during the GPU phase; concurrent CPU experts own host-only partials.
+        // launch_pair consumes its private phased capability before returning.
+        let layout = arena.layout(cpu_scratch).map_err(u::fault)?;
+        if layout.logical_words != CPU_WORDS
+            || layout.logical_words < crate::quant_matvec::iq_moe_integer::prepared::SCRATCH_WORDS
+            || bank.gate().segments().len() != 2
+            || bank.up().segments().len() != 2
+            || bank.down().segments().len() != 2
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        for shard in 0..2 {
+            let ga = &bank.gate().segments()[shard];
+            let up = &bank.up().segments()[shard];
+            let down = &bank.down().segments()[shard];
+            if ga.first_slot() != shard * 72
+                || ga.capacity() != 72
+                || up.first_slot() != ga.first_slot()
+                || up.capacity() != ga.capacity()
+                || down.first_slot() != ga.first_slot()
+                || down.capacity() != ga.capacity()
+            {
+                return Err(err("native Q3 prepared paired bank geometry"));
+            }
+        }
+        let banks = std::array::from_fn(|shard| {
+            [
+                bank.gate().segments()[shard].handle().clone(),
+                bank.up().segments()[shard].handle().clone(),
+                bank.down().segments()[shard].handle().clone(),
+            ]
+        });
+        return crate::quant_matvec::iq_moe_integer::prepared::launch_pair(
+            client,
+            g,
+            s,
+            banks,
+            owners,
+            arena.handle(cpu_scratch).cloned().map_err(u::fault)?,
+            *active,
+            10,
+        );
+    }
     for (shard, &enabled) in active.iter().enumerate() {
         if !enabled {
             continue;
@@ -987,7 +1038,7 @@ fn launch_q3_selected_segments(
         let up = &bank.up().segments()[shard];
         let down = &bank.down().segments()[shard];
         let launch = match choice {
-            SelectedIqKernel::Integer => crate::quant_matvec::iq_moe_integer::launch,
+            SelectedIqKernel::Integer => unreachable!("integer phase handled before serial leaves"),
             SelectedIqKernel::SharedOriginal => crate::quant_matvec::iq_moe_shared_original::launch,
             SelectedIqKernel::SubgroupOriginal => crate::quant_matvec::q3_subgroup_moe::launch,
         };

@@ -84,6 +84,33 @@ impl Planes {
     pub(crate) fn owned_bytes(&self) -> usize {
         self.blocks.capacity() * std::mem::size_of::<Block>()
     }
+    /// Independent storage-layout oracle for the once-prepared GPU candidate.
+    /// Plane bytes are little-endian signed codes; the final two arrays retain
+    /// each original F32 scale's exact bits. The complete temporary is erased.
+    pub(crate) fn packed_words(&self) -> Result<Zeroizing<Vec<u32>>> {
+        let packed = self.columns() / 4;
+        let count = 2 * packed + 2 * self.blocks.len();
+        let mut words = Zeroizing::new(Vec::with_capacity(count));
+        if words.capacity() != count {
+            return Err(rejected());
+        }
+        words.resize(count, 0);
+        for (block, codes) in self.blocks.iter().enumerate() {
+            for (plane, bytes) in [&codes.first, &codes.second].into_iter().enumerate() {
+                for (quartet, values) in bytes.chunks_exact(4).enumerate() {
+                    words[plane * packed + block * 8 + quartet] = u32::from_le_bytes([
+                        values[0] as u8,
+                        values[1] as u8,
+                        values[2] as u8,
+                        values[3] as u8,
+                    ]);
+                }
+            }
+            words[2 * packed + block] = codes.scale.to_bits();
+            words[2 * packed + self.blocks.len() + block] = codes.residual_scale.to_bits();
+        }
+        Ok(words)
+    }
     /// Independent diagnostic of the two-plane representation, not a bound
     /// on later weight projections or nonlinear whole-model amplification.
     pub(crate) fn relative_l2_error(&self, input: &[f32]) -> Result<f64> {
@@ -559,4 +586,15 @@ mod tests {
         assert!(unpack_iq2_s16(&row, 128, 0).is_err());
         assert!(unpack_iq2_s16(&row, usize::MAX, 0).is_err());
     }
+}
+#[test]
+fn independent_prepared_storage_keeps_signed_codes_plane_order_and_scales() {
+    let input = [-127., -1., 0., 127.].repeat(16);
+    let planes = Planes::new(&input).unwrap();
+    let words = planes.packed_words().unwrap();
+    assert_eq!(words.len(), 36);
+    assert_eq!(words.capacity(), words.len());
+    assert!(words[..16].iter().all(|&v| v == 0x7f00_ff81));
+    assert!(words[16..32].iter().all(|&v| v == 0));
+    assert_eq!(&words[32..], &[1f32.to_bits(), 1f32.to_bits(), 0, 0]);
 }
