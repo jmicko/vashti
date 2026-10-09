@@ -378,6 +378,23 @@ fn q3_integer_moe_policy(
     Ok(())
 }
 
+fn shared_original_iq_probe_registration(
+    mode: &str,
+    args: usize,
+    gate_present: bool,
+) -> Result<bool, &'static str> {
+    if mode == "iq-shared-original-moe-probe" {
+        if args != 3 {
+            return Err("fixed shared-original IQ probe rejects additional arguments");
+        }
+        Ok(true)
+    } else if gate_present {
+        Err("shared-original IQ gate requires its dedicated public probe")
+    } else {
+        Ok(false)
+    }
+}
+
 fn q3_integer_moe_shared_limit(enabled: bool, available: u32) -> Result<(), &'static str> {
     if enabled && (available as usize) < quant_matvec::iq_moe_integer::MAX_SHARED_BYTES {
         return Err("Q3 integer MoE requires its complete workgroup storage limit");
@@ -950,6 +967,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mode = std::env::args().nth(2).unwrap_or("probe".into());
     let segmented_iq_probe = mode == "segmented-iq-moe-probe";
     let iq_integer_probe = mode == "iq-integer-moe-probe";
+    let shared_original_iq_probe = shared_original_iq_probe_registration(
+        &mode,
+        std::env::args_os().count(),
+        std::env::var_os("KUNO_LAB_IQ_SHARED_ORIGINAL_PUBLIC_ONLY").is_some(),
+    )?;
+    if shared_original_iq_probe {
+        segmented_iq_moe_probe::validate_shared_original_configuration()?;
+    }
     let q6_integer_probe = mode == "q6-integer-probe";
     if q6_integer_probe {
         if std::env::args_os().count() != 3 {
@@ -1699,6 +1724,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if q6_integer_probe {
             q6_integer_probe::validate_limits(&adapter.limits())?;
         }
+        if shared_original_iq_probe
+            && (adapter.limits().max_compute_workgroup_storage_size as usize)
+                < quant_matvec::iq_moe_shared_original::MAX_SHARED_BYTES
+        {
+            return Err("shared-original IQ requires its complete workgroup storage limit".into());
+        }
         if next_shared
             && (adapter.limits().max_compute_invocations_per_workgroup < 256
                 || adapter.limits().max_compute_workgroup_size_x < 256)
@@ -1709,6 +1740,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             || mode == "iq-quant-probe"
             || segmented_iq_probe
             || iq_integer_probe
+            || shared_original_iq_probe
             || q6_integer_probe)
             && (!adapter.features().contains(wgpu::Features::SUBGROUP)
                 || info.subgroup_min_size < 16
@@ -1789,6 +1821,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         if iq_integer_probe {
             return segmented_iq_moe_probe::run_integer(&client, &grouped_limits);
+        }
+        if shared_original_iq_probe {
+            return segmented_iq_moe_probe::run_shared_original(&client, &grouped_limits);
         }
         if q6_integer_probe {
             return q6_integer_probe::run(&client, &grouped_limits);
@@ -5548,5 +5583,26 @@ mod q3_integer_model_policy_tests {
         assert!(q3_integer_moe_shared_limit(true, required - 1).is_err());
         assert!(q3_integer_moe_shared_limit(true, required).is_ok());
         assert!(q3_integer_moe_shared_limit(true, 32_768).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod shared_original_iq_registration_tests {
+    use super::shared_original_iq_probe_registration as selected;
+    #[test]
+    fn exact_mode_and_argument_count_own_the_public_gate() {
+        assert_eq!(selected("iq-shared-original-moe-probe", 3, true), Ok(true));
+        for args in [0, 2, 4, 5, usize::MAX] {
+            assert!(selected("iq-shared-original-moe-probe", args, true).is_err());
+        }
+        for mode in [
+            "probe",
+            "iq-integer-moe-probe",
+            "segmented-iq-moe-probe",
+            "resident-count1-hybrid-chat",
+        ] {
+            assert_eq!(selected(mode, 3, false), Ok(false));
+            assert!(selected(mode, 3, true).is_err());
+        }
     }
 }
