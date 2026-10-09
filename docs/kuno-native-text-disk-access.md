@@ -98,11 +98,10 @@ to the short zero-read samples, not all requests or the longer diagnostic.
 
 Source and artifact hashes, all windows, original acceptance and cleanup are
 recorded in [the numeric receipt](../apps/kuno/benchmarks/text/receipts/next-adaptive-steady-20261008.json).
-The user also approved an exact short expert-trace/replay ceiling. Its isolated
-source candidates are `990c52d` (trace/preload seams) and
-`0740b6bd741e8e379b2168caadd0b6ad9c6e1139` (runner controls), not yet integrated
-or device accepted. Root still needs the orchestration module and main hook.
-Do not substitute wrong experts or report that pending ceiling as measured.
+The user also approved an exact short expert-trace/replay ceiling. Trace/preload
+and runner candidates `990c52d`/`0740b6b` are integrated as `d45dc4b`/`366d847`;
+orchestration is `aef04f2`. Device acceptance is pending. Do not substitute wrong
+experts or report that pending ceiling as measured.
 
 ## Physical memory and GPU eviction follow-up
 
@@ -170,3 +169,43 @@ measure this drive/file/link, not long thermal behavior or the engine's effectiv
 expert throughput. Engine reads use the page cache and overlap with CPU/GPU
 work; direct-I/O speed does not predict token rate by itself. Small sparse reads
 are latency-sensitive even when the drive has high sequential bandwidth.
+
+## Bidirectional cache transfer and published fast reports
+
+GPU-to-RAM demotion adds real traffic. PCIe can carry opposite-direction
+traffic concurrently, and independent copies/computation can overlap when
+queues, copy engines, dependencies and host buffers permit it. Intel describes
+these conditions in its
+[GPU overlap guide](https://www.intel.com/content/www/us/en/docs/oneapi/optimization-guide-gpu/2025-0/asynchronous-and-overlapping-data-transfers.html).
+That is a capability, not proof of simultaneous sustained transfer on this B70.
+The current promotion path waits for owning completion before the following
+token; it exposes one WGPU queue. Merely adding a victim download would not
+remove that dependency. Downloads/uploads can also compete for GPU and host
+memory bandwidth. No paired bidirectional benchmark or bandwidth-saturation
+attribution has been performed here.
+
+A two-way cache should retain an already available original host bundle rather
+than download it again. Demotion of a GPU-only bundle must complete into a
+bounded RAM owner before slot overwrite. Compare complete promotion/demotion
+wall time and effective token rate against a one-way control before selecting
+it. Hiding DMA requires explicit scheduling and independent ownership, not an
+assumption that full duplex makes downloads free.
+
+The following are original maintainer measurements checked2026-10-08. They have
+not been reproduced on this machine. MTP verifies several proposed tokens in
+one pass; its gain depends on how many proposals the model accepts.
+
+| Source | Reported setup and decode | Important difference from our run |
+| --- | --- | --- |
+| [Strata0.1.26 matrix](https://github.com/Niko1221/Strata/blob/main/bench/results/2026-09-29-speed-0126/README.md) | RTX5070 12GB, Ryzen7600,64GB DDR5-5200; IQ3_XXS61.6 / IQ3_S53.3tokens/s at4K,49.0 /45.5 at128K | MTP spec4, greedy256 output tokens, one sample/cell; loading excluded. Smaller quantizations; Coder rows are excluded because they prune experts. |
+| [Strata Intel port](https://github.com/Niko1221/Strata/blob/main/docs/INTEL.md#arc-pro-b70-with-a-model-that-does-not-fit-flash-next-iq3_s-2026-10-07-branch-f-141-intel) | B70, SYCL/xe/kernel7; IQ3_S30.5 prose /40.8 code tokens/s,200 output tokens,32K capacity | MTP spec4; medians of3–5 interleaved pairs. Pinned host mirror, PLE in RAM, measured H2D13.3GB/s; experimental port on another host. |
+| [FreeToken-Kai](https://github.com/yuuki-net/FreeToken-Kai#measured-results), [host details](https://github.com/yuuki-net/FreeToken-Kai/blob/kai/docs/kai.md#test-hardware) | Two RTX3060 12GB, i5-12600KF,128GB DDR5-4000, WSL2; NVFP4 experts/FP8 dense:18–20 ordinary decode,30–36 MTP code/tool calls,11–14 MTP prose | Different packed weights, host residency and decode machinery. MTP can also be slower; figures are workload-specific. |
+| [Closest Strata four-bit comparison](https://github.com/Niko1221/Strata/blob/main/docs/UNSLOTH_Q4.md#what-to-expect-rtx-5070-12-gb-64-gb-ram-windows-one-short-greedy-prompt) | RTX5070 12GB,64GB RAM, UD-Q4_K_XL111.3GB;40GiB host budget:6.7–8.6tokens/s, mean7.9 across six short greedy runs | MTP enabled; physical expert reads dominate at550–750ms per roughly3.5-token verify round. OS file-cache state changes the result. Still a different quantization/host. |
+
+The reports establish plausible optimization opportunities, including on B70,
+but do not establish30–50tokens/s for our119.15GB Q4_K_M artifact. Our current
+75GiB expert payload and ordinary single-token decode are materially different.
+The four-bit disk-limited report is the closest memory-footprint comparison.
+Measure ideal correct GPU residency first. Then compare exposed CPU/I/O time,
+remaining GPU/dispatch time and multi-token execution; no cache-only speed
+promise follows from these reports.
