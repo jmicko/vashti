@@ -269,3 +269,39 @@ Target4 partitions and real accepted-prefix1/2/3 continuation gates pass v126.
 The dedicated both-card operator gate is pending corrected inventory acceptance
 at `5eb8e82`; no finite-fusion speed selection or30token/s acceptance yet.
 These are isolated public lab contracts. Production/Vashti API is unchanged.
+
+
+## Fixed-public target request I/O reuse (source implementation in progress)
+
+Only the three public DASLab target fixture registrations may select
+`KUNO_LAB_TARGET_REUSE=request`, with exact `KUNO_LAB_DEVICE_DISPATCH=inline`
+and `KUNO_LAB_TARGET_IO=chunk`. The pure direct-device build is required;
+default and arithmetic-feature combinations, inherited generic cache flags and
+other fixtures reject. Existing absent selectors preserve their behavior.
+
+Configure only the B70 target stream through a dedicated programmatic runtime
+constructor before model admission:128MiB original I/O ceiling,4096-byte INFO
+slabs, batched INFO, inline readback,4096 FIFO bindings and fully charged4MiB
+request metadata. No process environment mutation, clean-readback pool or
+GPU-upload-clear selector. Nvidia MTP retains64MiB I/O/16MiB HOST/default
+configuration. The original generic cap10 request scope remains separate and
+rejects fixed-target activation.
+
+The native Config freezes and charges the separate metadata before allocation.
+A scope may start only after completed real public token0 prefill at cursor1,
+with actual context4 or13, no live output and the approved original native
+DAS144-bank MAX8 graph. End only after actual full context completion, perform
+the original full fault/I/O ownership audit, and close the scope before warm
+reset/final owning close. At most two scopes for the approved once-warm replay;
+new prefill/cursor1 must be proved again. Failures remain terminal; no ledger/
+epoch/poison reset or cancellation cleanup bypass.
+
+Target4 request-mode tests use the real token0 prelude then the original five
+partitions over remaining three rows. Repair4 starts at actual row1/count3 and
+checks actual accepted prefix1/2/3 plus original continuations. Controller13
+checks the same complete CPU logits/carries and actual target/draft repairs.
+Request begin and full closing I/O audit are included in the12-accepted-token
+throughput interval. Numerical receipts record actual active/closed proofs,
+reserved capacities and checked process-global content-free binding/INFO
+counter deltas; no runtime nonce/key or private content is saved. Physical
+acceptance and a speed gain are not established by this source contract.

@@ -29,6 +29,7 @@ pub(crate) struct Inputs {
     pub(crate) prepared_experts: bool,
     public_existing_fill: bool,
     chunk_io: bool,
+    request_reuse: bool,
     directory: PathBuf,
     reference: PathBuf,
     receipt: PathBuf,
@@ -62,6 +63,7 @@ pub(crate) fn registration(
                     | "KUNO_LAB_TARGET_EXPERTS"
                     | "KUNO_LAB_TARGET_FILL"
                     | "KUNO_LAB_TARGET_IO"
+                    | "KUNO_LAB_TARGET_REUSE"
             )
         ) || value.is_empty()
             || values.insert(key, value).is_some()
@@ -91,6 +93,9 @@ pub(crate) fn registration(
         Some(value) if value == "chunk" => true,
         _ => return Err("target I/O policy requires canonical chunk"),
     };
+    let raw_reuse = values.remove(OsStr::new("KUNO_LAB_TARGET_REUSE"));
+    let request_reuse =
+        crate::target_lab_build::request_reuse(raw_reuse.as_deref(), inline_dispatch, chunk_io)?;
     let (verify3_dense, verify3_fused) = match values.remove(OsStr::new("KUNO_LAB_TARGET_DENSE")) {
         None => (false, false),
         Some(value) if value == "verify3" => (true, false),
@@ -110,6 +115,7 @@ pub(crate) fn registration(
         prepared_experts,
         public_existing_fill,
         chunk_io,
+        request_reuse,
         directory: path("KUNO_TEST_Q3_DIR")?,
         reference: path("KUNO_PUBLIC_TARGET_ROWS_REFERENCE")?,
         receipt: path("KUNO_PUBLIC_RECEIPT")?,
@@ -149,7 +155,11 @@ pub(crate) fn run(
     let graph = Qwen4Exp::bind(&file)?;
     crate::resident_util::select_retained_metadata(true);
     crate::resident_util::select_compute_scratch_clear(true);
-    client.configure_transient_io(128 * 1024 * 1024)?;
+    if input.request_reuse {
+        client.configure_public_target_request_io()?;
+    } else {
+        client.configure_transient_io(128 * 1024 * 1024)?;
+    }
     let retired = Arc::new(AtomicBool::new(false));
     let cancel = AtomicBool::new(false);
     let mut reports = Vec::with_capacity(3);
@@ -177,6 +187,9 @@ pub(crate) fn run(
         if input.prepared_experts {
             config = config.reserve_prepared_verify3_experts()?;
         }
+        if input.request_reuse {
+            config = config.reserve_public_target_request_io()?;
+        }
         if input.public_existing_fill {
             config = config.with_public_existing_expert_fill()?;
         }
@@ -189,10 +202,28 @@ pub(crate) fn run(
             true,
         )?;
         let attempt = (|| -> Result<serde_json::Value> {
+            let proposed_start = if input.request_reuse {
+                let initial = resident.prefill_chunk_with_carry(&mut executor, &[0], &cancel)?;
+                if initial.start() != 0
+                    || initial.count() != 1
+                    || initial.binding_id() != graph.bound_graph().binding_id()
+                {
+                    return Err("target reuse actual prefill identity rejected".into());
+                }
+                expected.verify(0, initial.logits(0)?, initial.hidden(0)?)?;
+                drop(initial);
+                resident.begin_public_target_request_io(&mut executor, &cancel)?;
+                if !resident.public_target_request_io_active()? {
+                    return Err("target repair request scope did not activate".into());
+                }
+                1
+            } else {
+                0
+            };
             let mut tokens = Zeroizing::new(Vec::with_capacity(3));
             for row in 0..3 {
                 tokens.push(if row < accepted {
-                    expected.input_token(row)?
+                    expected.input_token(proposed_start + row)?
                 } else {
                     17 + row as u32
                 });
@@ -201,7 +232,7 @@ pub(crate) fn run(
                 LatestTargetRound::begin(&mut resident, &mut executor, &tokens, &cancel)?;
             let rows = round.verify(&cancel)?;
             if rows.binding_id() != graph.bound_graph().binding_id()
-                || rows.start() != 0
+                || rows.start() != proposed_start
                 || rows.count() != 3
             {
                 return Err("target proposed output identity rejected".into());
@@ -209,10 +240,11 @@ pub(crate) fn run(
             let mut max_logit = 0f64;
             let mut max_hidden = 0f64;
             for row in 0..accepted {
-                if rows.position(row)? != row {
+                if rows.position(row)? != proposed_start + row {
                     return Err("target proposed row order rejected".into());
                 }
-                let report = expected.verify(row, rows.logits(row)?, rows.hidden(row)?)?;
+                let report =
+                    expected.verify(proposed_start + row, rows.logits(row)?, rows.hidden(row)?)?;
                 max_logit = max_logit.max(report.logits_max_abs_error);
                 max_hidden = max_hidden.max(report.hidden_max_abs_error);
             }
@@ -221,13 +253,17 @@ pub(crate) fn run(
             if let Some(rows) = repaired {
                 if accepted == 3
                     || rows.binding_id() != graph.bound_graph().binding_id()
-                    || rows.start() != 0
+                    || rows.start() != proposed_start
                     || rows.count() != accepted
                 {
                     return Err("target repaired output identity rejected".into());
                 }
                 for row in 0..accepted {
-                    let report = expected.verify(row, rows.logits(row)?, rows.hidden(row)?)?;
+                    let report = expected.verify(
+                        proposed_start + row,
+                        rows.logits(row)?,
+                        rows.hidden(row)?,
+                    )?;
                     max_logit = max_logit.max(report.logits_max_abs_error);
                     max_hidden = max_hidden.max(report.hidden_max_abs_error);
                 }
@@ -235,10 +271,10 @@ pub(crate) fn run(
             } else if accepted != 3 {
                 return Err("target rejected prefix was not recomputed".into());
             }
-            if resident.completed_target_rows_cursor(&executor)? != accepted {
+            if resident.completed_target_rows_cursor(&executor)? != proposed_start + accepted {
                 return Err("target repaired actual cursor rejected".into());
             }
-            for position in accepted..4 {
+            for position in proposed_start + accepted..4 {
                 let rows = resident.prefill_chunk_with_carry(
                     &mut executor,
                     &[expected.input_token(position)?],
@@ -259,8 +295,17 @@ pub(crate) fn run(
                     return Err("target continued actual cursor rejected".into());
                 }
             }
+            let mut request_scope_receipt = None;
+            if input.request_reuse {
+                request_scope_receipt = Some(crate::target_lab_build::reuse_record(
+                    resident.end_public_target_request_io(&mut executor, &cancel)?,
+                ));
+                if resident.public_target_request_io_active()? {
+                    return Err("target repair request scope did not close".into());
+                }
+            }
             Ok(
-                serde_json::json!({"accepted_input_prefix":accepted,"proposed_count":3,"wrong_future_inputs":3-accepted,"accepted_prefix_and_continuation_all_vectors":true,"actual_completed_cursor":4,"logits_max_abs_error":max_logit,"hidden_max_abs_error":max_hidden}),
+                serde_json::json!({"accepted_input_prefix":accepted,"proposed_start":proposed_start,"request_scope_closed_and_audited":input.request_reuse,"request_scope":request_scope_receipt,"proposed_count":3,"wrong_future_inputs":3-accepted,"accepted_prefix_and_continuation_all_vectors":true,"actual_completed_cursor":4,"logits_max_abs_error":max_logit,"hidden_max_abs_error":max_hidden}),
             )
         })();
         let actual_verify3_dense_calls = executor.target_verify3_dense_calls;
@@ -290,7 +335,10 @@ pub(crate) fn run(
     }
     file.verify_file_unchanged()?;
     crate::target_lab_build::validate_runtime(input.inline_dispatch)?;
-    let value = serde_json::json!({"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"scope":"fixed-public-DASLab-actual-target-prefix-repair-only","verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"public_token0":0,"seed":424242,"temperature":0,"max_chunk":3,"runtime_io_limit_bytes":128*1024*1024,"complete_cpu_reference_rows":4,"cases":reports,"speculative_controller":false,"accepted_speculative_tokens_per_second":null,"private_or_production_accepted":false});
+    if client.public_target_request_io_configured()? != input.request_reuse {
+        return Err("target request stream frozen configuration mismatch".into());
+    }
+    let value = serde_json::json!({"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"scope":"fixed-public-DASLab-actual-target-prefix-repair-only","verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"request_reuse_metadata_reserved_bytes":if input.request_reuse {4*1024*1024}else{0},"request_binding_capacity":if input.request_reuse {4096}else{0},"public_token0":0,"seed":424242,"temperature":0,"max_chunk":3,"runtime_io_limit_bytes":128*1024*1024,"complete_cpu_reference_rows":4,"cases":reports,"speculative_controller":false,"accepted_speculative_tokens_per_second":null,"private_or_production_accepted":false});
     let out = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -322,6 +370,43 @@ mod tests {
             .to_vec()
         };
         assert!(registration(&args, env(), crate::target_lab_build::Build::Threaded).is_ok());
+        let mut reusable = env();
+        reusable.extend([
+            ("KUNO_LAB_DEVICE_DISPATCH".into(), "inline".into()),
+            ("KUNO_LAB_TARGET_IO".into(), "chunk".into()),
+            ("KUNO_LAB_TARGET_REUSE".into(), "request".into()),
+        ]);
+        assert!(
+            registration(
+                &args,
+                reusable.clone(),
+                crate::target_lab_build::Build::Inline
+            )
+            .unwrap()
+            .request_reuse
+        );
+        assert!(
+            registration(
+                &args,
+                reusable.clone(),
+                crate::target_lab_build::Build::Threaded
+            )
+            .is_err()
+        );
+        for key in ["KUNO_LAB_DEVICE_DISPATCH", "KUNO_LAB_TARGET_IO"] {
+            let mut missing = reusable.clone();
+            missing.retain(|(k, _)| k != key);
+            assert!(registration(&args, missing, crate::target_lab_build::Build::Inline).is_err());
+        }
+        for raw in ["", "auto", "1", "request ", "chunk"] {
+            let mut wrong = reusable.clone();
+            for (k, v) in &mut wrong {
+                if k == "KUNO_LAB_TARGET_REUSE" {
+                    *v = raw.into();
+                }
+            }
+            assert!(registration(&args, wrong, crate::target_lab_build::Build::Inline).is_err());
+        }
         let mut inline = env();
         inline.push(("KUNO_LAB_DEVICE_DISPATCH".into(), "inline".into()));
         assert!(

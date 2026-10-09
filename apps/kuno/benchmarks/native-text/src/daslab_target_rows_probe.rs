@@ -33,6 +33,7 @@ pub(crate) struct Inputs {
     pub(crate) prepared_experts: bool,
     public_existing_fill: bool,
     chunk_io: bool,
+    request_reuse: bool,
     directory: PathBuf,
     reference: PathBuf,
     receipt: PathBuf,
@@ -67,6 +68,7 @@ pub(crate) fn registration(
                     | "KUNO_LAB_TARGET_EXPERTS"
                     | "KUNO_LAB_TARGET_FILL"
                     | "KUNO_LAB_TARGET_IO"
+                    | "KUNO_LAB_TARGET_REUSE"
             )
         ) || value.is_empty()
             || selected.insert(key, value).is_some()
@@ -100,6 +102,9 @@ pub(crate) fn registration(
         Some(value) if value == "chunk" => true,
         _ => return Err("target I/O policy requires canonical chunk"),
     };
+    let raw_reuse = selected.remove(OsStr::new("KUNO_LAB_TARGET_REUSE"));
+    let request_reuse =
+        crate::target_lab_build::request_reuse(raw_reuse.as_deref(), inline_dispatch, chunk_io)?;
     let (verify3_dense, verify3_fused) = match selected.remove(OsStr::new("KUNO_LAB_TARGET_DENSE"))
     {
         None => (false, false),
@@ -114,6 +119,7 @@ pub(crate) fn registration(
         prepared_experts,
         public_existing_fill,
         chunk_io,
+        request_reuse,
         directory: selected
             .remove(OsStr::new("KUNO_TEST_Q3_DIR"))
             .ok_or("original DAS shards required")?
@@ -183,7 +189,11 @@ pub(crate) fn run(
     // Configuration/retirement belong to this physical stream, across every
     // fresh logical sequence. Cleanup drains the same configuration.
     let retired = Arc::new(AtomicBool::new(false));
-    client.configure_transient_io(RUNTIME)?;
+    if input.request_reuse {
+        client.configure_public_target_request_io()?;
+    } else {
+        client.configure_transient_io(RUNTIME)?;
+    }
     let mut reports = Vec::with_capacity(5);
     for partition in [&[1usize, 1, 1][..], &[1, 2], &[2, 1], &[3], &[3]] {
         let mut executor = GpuExecutor::new_with_profile(
@@ -207,6 +217,9 @@ pub(crate) fn run(
         if input.prepared_experts {
             config = config.reserve_prepared_verify3_experts()?;
         }
+        if input.request_reuse {
+            config = config.reserve_public_target_request_io()?;
+        }
         if input.public_existing_fill {
             config = config.with_public_existing_expert_fill()?;
         }
@@ -224,7 +237,20 @@ pub(crate) fn run(
             let mut checks = Vec::with_capacity(4);
             let mut logits_error = 0f64;
             let mut hidden_error = 0f64;
-            for &count in partition.iter().chain(std::iter::once(&1usize)) {
+            let counts: Vec<usize> = if input.request_reuse {
+                // Activate only after real token0 prefill/drop. The same five
+                // partitions then cover all remaining three original rows.
+                std::iter::once(1)
+                    .chain(partition.iter().copied())
+                    .collect()
+            } else {
+                partition
+                    .iter()
+                    .copied()
+                    .chain(std::iter::once(1))
+                    .collect()
+            };
+            for count in counts {
                 let mut tokens = zeroize::Zeroizing::new(Vec::with_capacity(count));
                 for row in start..start + count {
                     tokens.push(expected.input_token(row)?);
@@ -253,12 +279,27 @@ pub(crate) fn run(
                 checks.push(serde_json::json!({"start":start,"count":count,"completed_cursor":cursor,
                     "whole_chunk_and_all_rows_accepted":true,"elapsed_ns_including_full_vector_checks":duration_ns}));
                 start = cursor;
+                if input.request_reuse && start == 1 {
+                    resident.begin_public_target_request_io(&mut executor, &cancel)?;
+                    if !resident.public_target_request_io_active()? {
+                        return Err("target request scope did not activate".into());
+                    }
+                }
             }
             if start != 4 {
                 return Err("target continuation incomplete".into());
             }
+            let mut request_scope_receipt = None;
+            if input.request_reuse {
+                request_scope_receipt = Some(crate::target_lab_build::reuse_record(
+                    resident.end_public_target_request_io(&mut executor, &cancel)?,
+                ));
+                if resident.public_target_request_io_active()? {
+                    return Err("target request scope did not close".into());
+                }
+            }
             Ok(
-                serde_json::json!({"partition":partition,"continuation_at_position3":true,
+                serde_json::json!({"partition":partition,"compiled_token0_prelude_before_partition":input.request_reuse,"request_scope_closed_and_audited":input.request_reuse,"request_scope":request_scope_receipt,"continuation_at_position3":!input.request_reuse,"complete_position3_checked":true,
                 "logits_max_abs_error":logits_error,"hidden_max_abs_error":hidden_error,
                 "checks":checks,"private_main_bytes":owned_bytes}),
             )
@@ -291,9 +332,12 @@ pub(crate) fn run(
     }
     file.verify_file_unchanged()?;
     crate::target_lab_build::validate_runtime(input.inline_dispatch)?;
+    if client.public_target_request_io_configured()? != input.request_reuse {
+        return Err("target request stream frozen configuration mismatch".into());
+    }
     let receipt = serde_json::json!({"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"scope":"fixed-public-DASLab-target-rows-and-carry-only",
         "model_repository":daslab_profile::REPOSITORY,"model_revision":daslab_profile::REVISION,
-        "verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"public_token0":0,"seed":424242,"temperature":0,"complete_cpu_reference_rows":4,
+        "verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"request_reuse_metadata_reserved_bytes":if input.request_reuse {4*1024*1024}else{0},"request_binding_capacity":if input.request_reuse {4096}else{0},"public_token0":0,"seed":424242,"temperature":0,"complete_cpu_reference_rows":4,
         "logits_width":reference::VOCAB,"carry_width":reference::HIDDEN,"max_chunk":3,
         "absolute_tolerance":reference::ABS_TOLERANCE,"relative_tolerance":reference::REL_TOLERANCE,
         "carry_tap":"layer47 FFN HC residual before output_hc",
@@ -334,6 +378,45 @@ mod tests {
     #[test]
     fn exclusive_fixed_public_registration() {
         assert!(registration(&args(), env(), crate::target_lab_build::Build::Threaded).is_ok());
+        let mut reusable = env();
+        reusable.extend([
+            ("KUNO_LAB_DEVICE_DISPATCH".into(), "inline".into()),
+            ("KUNO_LAB_TARGET_IO".into(), "chunk".into()),
+            ("KUNO_LAB_TARGET_REUSE".into(), "request".into()),
+        ]);
+        assert!(
+            registration(
+                &args(),
+                reusable.clone(),
+                crate::target_lab_build::Build::Inline
+            )
+            .unwrap()
+            .request_reuse
+        );
+        assert!(
+            registration(
+                &args(),
+                reusable.clone(),
+                crate::target_lab_build::Build::Threaded
+            )
+            .is_err()
+        );
+        for key in ["KUNO_LAB_DEVICE_DISPATCH", "KUNO_LAB_TARGET_IO"] {
+            let mut missing = reusable.clone();
+            missing.retain(|(k, _)| k != key);
+            assert!(
+                registration(&args(), missing, crate::target_lab_build::Build::Inline).is_err()
+            );
+        }
+        for raw in ["", "auto", "1", "request ", "chunk"] {
+            let mut wrong = reusable.clone();
+            for (k, v) in &mut wrong {
+                if k == "KUNO_LAB_TARGET_REUSE" {
+                    *v = raw.into();
+                }
+            }
+            assert!(registration(&args(), wrong, crate::target_lab_build::Build::Inline).is_err());
+        }
         let mut inline = env();
         inline.push(("KUNO_LAB_DEVICE_DISPATCH".into(), "inline".into()));
         assert!(

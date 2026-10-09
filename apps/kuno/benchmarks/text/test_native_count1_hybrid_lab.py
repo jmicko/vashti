@@ -1301,6 +1301,26 @@ class HybridLabTests(unittest.TestCase):
         env={"KUNO_LAB_VERIFY3_FINITE_PUBLIC_ONLY":"1", "KUNO_PUBLIC_RECEIPT":"/public/receipt", "KUNO_LAB_DEVICE_DISPATCH":"inline"}
         with self.assertRaises(ValueError):guard.memory_limit(env,["/frozen/binary","intel","verify3-finite-probe"])
 
+    def test_target_request_reuse_requires_its_complete_public_inline_chunk_envelope(self):
+        spec=importlib.util.spec_from_file_location("protected_target_reuse",HERE/"protected-lab-exec.py")
+        guard=importlib.util.module_from_spec(spec);spec.loader.exec_module(guard)
+        for gate,mode in (("KUNO_LAB_SPECULATIVE_PUBLIC_ONLY","daslab-speculative-probe"), ("KUNO_LAB_TARGET_ROWS_PUBLIC_ONLY","daslab-target-rows-probe"), ("KUNO_LAB_TARGET_REPAIR_PUBLIC_ONLY","daslab-target-repair-probe")):
+            env={gate:"1", "KUNO_LAB_STATIC_CACHE_BYTES":"8589934592", "KUNO_TEST_Q3_DIR":"/original", "KUNO_PUBLIC_RECEIPT":"/public/receipt", "KUNO_LAB_DEVICE_DISPATCH":"inline", "KUNO_LAB_TARGET_IO":"chunk", "KUNO_LAB_TARGET_REUSE":"request"}
+            if gate=="KUNO_LAB_SPECULATIVE_PUBLIC_ONLY":
+                env.update(KUNO_TEST_MTP="/original/sidecar",KUNO_PUBLIC_TARGET_CARRY13_REFERENCE="/public/reference")
+            else:
+                env["KUNO_PUBLIC_TARGET_ROWS_REFERENCE"]="/public/reference"
+            args=["/frozen/binary","intel",mode]
+            self.assertEqual(guard.memory_limit(env,args),48*1024**3)
+            for key in ("KUNO_LAB_DEVICE_DISPATCH","KUNO_LAB_TARGET_IO"):
+                missing=dict(env);missing.pop(key)
+                with self.assertRaises(ValueError):guard.memory_limit(missing,args)
+            for raw in ("", "auto", "1", "request ", "chunk", True):
+                with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_TARGET_REUSE=raw),args)
+            for extra in ("KUNO_LAB_INFO_BATCH_UPLOAD", "KUNO_LAB_INLINE_READBACK", "KUNO_LAB_BIND_GROUP_REUSE", "KUNO_LAB_BIND_GROUP_CAPACITY", "KUNO_LAB_REQUEST_REUSE_METADATA_BYTES"):
+                with self.assertRaises(ValueError):guard.memory_limit(dict(env,**{extra:"1"}),args)
+            with self.assertRaises(ValueError):guard.memory_limit(env,[args[0],"nvidia",mode])
+
     def test_verify3_operator_keeps_exact_small_public_envelope(self):
         spec=importlib.util.spec_from_file_location("protected_verify3_operator",HERE/"protected-lab-exec.py")
         guard=importlib.util.module_from_spec(spec);spec.loader.exec_module(guard)

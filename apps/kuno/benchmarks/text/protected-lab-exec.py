@@ -6,6 +6,11 @@ import sys
 
 def selected_target_policy(environment, mtp=False):
     selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
+    if "KUNO_LAB_TARGET_REUSE" in selected:
+        if (selected.pop("KUNO_LAB_TARGET_REUSE") != "request"
+                or selected.get("KUNO_LAB_DEVICE_DISPATCH") != "inline"
+                or selected.get("KUNO_LAB_TARGET_IO") != "chunk"):
+            raise ValueError("Target request reuse requires direct dispatch and chunk I/O")
     if "KUNO_LAB_DEVICE_DISPATCH" in selected:
         if selected.pop("KUNO_LAB_DEVICE_DISPATCH") != "inline":
             raise ValueError("Target dispatch requires canonical inline")
