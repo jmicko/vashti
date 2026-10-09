@@ -380,6 +380,85 @@ pub(crate) struct Workspace {
     hybrid: Option<HybridOwners>,
     resident_router: Option<resident_router::RouterOwners>,
     prepared_verify3: Option<BufferId>,
+    // Constructor-frozen public experiment; never read from ambient settings.
+    public_existing_fill: bool,
+    public_fill_counters: PublicFillCounters,
+}
+
+/// Aggregate successfully queued demand-fill diagnostics, not publication or
+/// physical-disk counters. Rejected/aborted model transactions are not receipts.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct PublicFillCounters {
+    pub first_touch_fills: u64,
+    pub evictions: u64,
+    pub direct_windows: u64,
+    pub direct_components: u64,
+    pub direct_bytes: u64,
+}
+impl PublicFillCounters {
+    fn add(self, next: Self) -> Result<Self> {
+        let add = |a: u64, b: u64| a.checked_add(b).ok_or(Error::ArithmeticOverflow);
+        Ok(Self {
+            first_touch_fills: add(self.first_touch_fills, next.first_touch_fills)?,
+            evictions: add(self.evictions, next.evictions)?,
+            direct_windows: add(self.direct_windows, next.direct_windows)?,
+            direct_components: add(self.direct_components, next.direct_components)?,
+            direct_bytes: add(self.direct_bytes, next.direct_bytes)?,
+        })
+    }
+}
+
+fn public_existing_policy(
+    enabled: bool,
+    profile: expert_banks::OriginalPackedProfile,
+    capacity: usize,
+    tile: usize,
+    hybrid: bool,
+    router: bool,
+) -> Result<()> {
+    if enabled
+        && (profile != expert_banks::OriginalPackedProfile::DaslabIq3
+            || capacity != 144
+            || tile != 8
+            || hybrid
+            || router)
+    {
+        return Err(err("public existing expert construction policy"));
+    }
+    Ok(())
+}
+
+fn public_existing_count(enabled: bool, count: usize, waves: usize) -> Result<()> {
+    if enabled && (!(1..=3).contains(&count) || waves != 1) {
+        return Err(err("public existing expert count policy"));
+    }
+    Ok(())
+}
+
+/// Valid canonical single-wave misses read the untouched committed ledger.
+/// No staged advance intervenes for the admitted count1..3 /144-slot geometry.
+fn classify_public_fills(
+    slots: &crate::bank_slots::BankSlots,
+    uploads: &[(usize, usize)],
+) -> Result<PublicFillCounters> {
+    if slots.capacity() != 144 || slots.experts() != 512 || uploads.len() > 30 {
+        return Err(err("public expert fill counter geometry"));
+    }
+    let mut counts = PublicFillCounters::default();
+    for (i, &(expert, slot)) in uploads.iter().enumerate() {
+        if expert >= 512 || uploads[..i].iter().any(|&(e, s)| e == expert || s == slot) {
+            return Err(err("public expert fill counter canonical uploads"));
+        }
+        match slots
+            .resident_expert(slot)
+            .map_err(|_| err("public expert fill counter slot"))?
+        {
+            None => counts.first_touch_fills += 1,
+            Some(old) if old != expert => counts.evictions += 1,
+            Some(_) => return Err(err("public expert fill counter is not a miss")),
+        }
+    }
+    Ok(counts)
 }
 struct HybridOwners {
     ids: Zeroizing<[BufferId; 2]>,
@@ -391,6 +470,12 @@ fn hybrid_worker_geometry(count: usize, pooled: bool) -> bool {
     matches!(count, 4 | 8 | 16) && (count == 16 || pooled)
 }
 impl Workspace {
+    pub(crate) fn public_existing_fill_enabled(&self) -> bool {
+        self.public_existing_fill
+    }
+    pub(crate) fn public_fill_counters(&self) -> PublicFillCounters {
+        self.public_fill_counters
+    }
     pub(crate) fn prepared_verify3_owner_id(&self) -> Option<BufferId> {
         self.prepared_verify3
     }
@@ -441,6 +526,7 @@ impl Workspace {
             return Err(err("native routed sequence poisoned"));
         }
         if self.hybrid.is_some()
+            || self.public_existing_fill
             || self.prepared_verify3.is_some()
             || self.policy.phase != Phase::Idle
             || *self.policy.chunk != 0
@@ -662,6 +748,26 @@ impl Workspace {
         tile: usize,
         cancel: &AtomicBool,
     ) -> Result<Self> {
+        Self::allocate_with_public_existing(
+            executor, graph, sequence, arena, admission, poison, limits, tile, cancel, false,
+        )
+    }
+    /// Parent Config/Plan must capture this opt-in before model construction and
+    /// restrict supplied chunks to1..3. The ordinary constructor remains false.
+    /// No owners, source-page requests or IO ceilings change with this policy.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn allocate_with_public_existing(
+        executor: &GpuExecutor<'_>,
+        graph: BoundGraph<'_, '_>,
+        sequence: SequenceKey,
+        arena: &mut PrivateArena,
+        admission: ResidentAdmission,
+        poison: Arc<AtomicBool>,
+        limits: &wgpu::Limits,
+        tile: usize,
+        cancel: &AtomicBool,
+        public_existing_fill: bool,
+    ) -> Result<Self> {
         guarded(&poison.clone(), || {
             u::cancel(cancel)?;
             if poison.load(Ordering::Acquire) {
@@ -671,6 +777,22 @@ impl Workspace {
                 return Err(err("native routed admission poison owner"));
             }
             configuration(executor, graph)?;
+            public_existing_policy(
+                public_existing_fill,
+                executor.packed_profile,
+                executor.bank_slots,
+                tile,
+                false,
+                executor.resident_router_reserved,
+            )?;
+            if public_existing_fill
+                && (executor.adaptive.is_some()
+                    || executor.secondary.is_some()
+                    || executor.secondary_frequency.is_some()
+                    || executor.resident_banks_frozen)
+            {
+                return Err(err("public existing expert demand policy"));
+            }
             let capacity = executor.bank_slots;
             if executor
                 .resident_admission
@@ -726,6 +848,8 @@ impl Workspace {
                 hybrid: None,
                 resident_router: None,
                 prepared_verify3: None,
+                public_existing_fill,
+                public_fill_counters: PublicFillCounters::default(),
             };
             out.validate_ids(arena)?;
             u::cancel(cancel)?;
@@ -796,6 +920,14 @@ impl Workspace {
     }
     fn check(&self, e: &GpuExecutor<'_>, s: &Session, arena: &PrivateArena) -> Result<()> {
         self.healthy(arena)?;
+        public_existing_policy(
+            self.public_existing_fill,
+            e.packed_profile,
+            e.bank_slots,
+            self.layout.tile,
+            self.hybrid.is_some(),
+            self.resident_router.is_some() || e.resident_router_reserved,
+        )?;
         e.check_resident_admission(&self.admission)?;
         let r = e
             .batch_moe
@@ -836,6 +968,8 @@ impl Drop for Workspace {
         self.sequence.zeroize();
         self.identity.zeroize();
         self.prepared_verify3.zeroize();
+        self.public_existing_fill.zeroize();
+        self.public_fill_counters = PublicFillCounters::default();
     }
 }
 struct Views {
@@ -945,6 +1079,15 @@ impl GpuExecutor<'_> {
             self.model.verify_file_unchanged()?;
             w.healthy(arena)?;
             w.layout.geometries[0].validate_count(count).map_err(err)?;
+            public_existing_policy(
+                w.public_existing_fill,
+                self.packed_profile,
+                self.bank_slots,
+                w.layout.tile,
+                w.hybrid.is_some(),
+                w.resident_router.is_some() || self.resident_router_reserved,
+            )?;
+            public_existing_count(w.public_existing_fill, count, 1)?;
             if w.prepared_verify3.is_some() {
                 prepared_verify3::validate_count(
                     count,
@@ -1058,6 +1201,7 @@ impl GpuExecutor<'_> {
         }
         let g = *w.layout.geometries.get(layer).ok_or(Error::OutOfBounds)?;
         g.validate_count(routes.count()).map_err(err)?;
+        public_existing_count(w.public_existing_fill, routes.count(), routes.wave_count())?;
         let weights = weights(graph, layer)?;
         if [weights.gate, weights.up, weights.down]
             .into_iter()
@@ -1180,6 +1324,11 @@ impl GpuExecutor<'_> {
         }
         let mut final_last = None;
         let mut stats = expert_banks::FillStats::default();
+        let mut fill_counters = PublicFillCounters::default();
+        let classify = self.packed_profile == expert_banks::OriginalPackedProfile::DaslabIq3
+            && w.layout.capacity == 144
+            && (1..=3).contains(&routes.count())
+            && routes.wave_count() == 1;
         for index in 0..routes.wave_count() {
             u::cancel(cancel)?;
             let wave = routes.wave(index).ok_or(Error::InvalidBufferLength)?;
@@ -1203,6 +1352,10 @@ impl GpuExecutor<'_> {
             }
             .map_err(|_| err("native routed real pending plan"))?;
             let pin = Pin::new(wave, &pending, &staged, bank)?;
+            if classify {
+                fill_counters =
+                    fill_counters.add(classify_public_fills(&bank.slots, &pending.uploads)?)?;
+            }
             for (wi, window) in pending.uploads.chunks(10).enumerate() {
                 pin.validate()?;
                 u::cancel(cancel)?;
@@ -1221,6 +1374,12 @@ impl GpuExecutor<'_> {
                 }
                 let add = w.admission.allocate(&requests, || {
                     let mut add = expert_banks::FillStats::default();
+                    let mut writes = Vec::new();
+                    if w.public_existing_fill {
+                        writes
+                            .try_reserve_exact(window.len() * 3)
+                            .map_err(|_| Error::LimitExceeded("public expert write metadata"))?;
+                    }
                     for &(e, slot) in window {
                         pin.validate()?;
                         if w.poison.load(Ordering::Acquire) {
@@ -1232,8 +1391,15 @@ impl GpuExecutor<'_> {
                             (bank.down(), weights.down),
                         ] {
                             pin.validate()?;
-                            let (bytes, read, upload) =
-                                expert_banks::fill(&self.client, b, t, e, slot, cancel)?;
+                            let (bytes, read, upload) = if w.public_existing_fill {
+                                let (view, data, read) =
+                                    expert_banks::prepare_public_existing(b, t, e, slot, cancel)?;
+                                let bytes = data.len() as u64;
+                                writes.push((view, data));
+                                (bytes, read, 0)
+                            } else {
+                                expert_banks::fill(&self.client, b, t, e, slot, cancel)?
+                            };
                             add.bytes = add
                                 .bytes
                                 .checked_add(bytes)
@@ -1249,8 +1415,35 @@ impl GpuExecutor<'_> {
                         }
                         add.experts += 1;
                     }
+                    if w.public_existing_fill {
+                        // Revalidate the unchanged pending identity immediately
+                        // before any write; ordinary PUBLIC server.write retains
+                        // the original stream ordering and staging policy.
+                        pin.validate()?;
+                        if w.poison.load(Ordering::Acquire) {
+                            return Err(err("native routed aborted source fill"));
+                        }
+                        let (bytes, upload) = expert_banks::write_public_existing(
+                            &self.client,
+                            writes,
+                            charged,
+                            cancel,
+                        )?;
+                        if bytes != add.bytes {
+                            return Err(Error::InvalidBufferLength);
+                        }
+                        add.upload_ns = upload;
+                    }
                     Ok(add)
                 })?;
+                if w.public_existing_fill {
+                    fill_counters = fill_counters.add(PublicFillCounters {
+                        direct_windows: 1,
+                        direct_components: (window.len() * 3) as u64,
+                        direct_bytes: add.bytes,
+                        ..PublicFillCounters::default()
+                    })?;
+                }
                 stats.bytes = stats
                     .bytes
                     .checked_add(add.bytes)
@@ -1466,6 +1659,7 @@ impl GpuExecutor<'_> {
             .moe_calls
             .checked_add(1)
             .ok_or(Error::ArithmeticOverflow)?;
+        w.public_fill_counters = w.public_fill_counters.add(fill_counters)?;
         Ok(out)
     }
 }
@@ -2285,6 +2479,114 @@ impl Drop for Acceptance<'_, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn public_existing_policy_is_explicit_daslab144_max8_count1_to3_only() {
+        use expert_banks::OriginalPackedProfile as P;
+        public_existing_policy(true, P::DaslabIq3, 144, 8, false, false).unwrap();
+        for (profile, cap, tile, hybrid, router) in [
+            (P::Q4, 144, 8, false, false),
+            (P::UnslothQ3, 144, 8, false, false),
+            (P::DaslabIq3, 160, 8, false, false),
+            (P::DaslabIq3, 144, 1, false, false),
+            (P::DaslabIq3, 144, 8, true, false),
+            (P::DaslabIq3, 144, 8, false, true),
+        ] {
+            assert!(public_existing_policy(true, profile, cap, tile, hybrid, router).is_err());
+            public_existing_policy(false, profile, cap, tile, hybrid, router).unwrap();
+        }
+        for count in 1..=3 {
+            public_existing_count(true, count, 1).unwrap();
+        }
+        for (count, waves) in [(0, 1), (4, 1), (8, 1), (3, 0), (3, 2)] {
+            assert!(public_existing_count(true, count, waves).is_err());
+            public_existing_count(false, count, waves).unwrap();
+        }
+    }
+    #[test]
+    fn public_fill_counts_distinguish_first_touch_from_real_protected_victims() {
+        let mut slots = crate::bank_slots::BankSlots::new(144, 512).unwrap();
+        let initial: Vec<_> = (0..72).collect();
+        let p = slots.plan(&initial).unwrap();
+        assert_eq!(
+            classify_public_fills(&slots, &p.uploads[..30])
+                .unwrap()
+                .first_touch_fills,
+            30
+        );
+        slots.commit(p).unwrap();
+        let p = slots.plan(&[0, 71, 400, 401]).unwrap();
+        assert_eq!(p.uploads, [(400, 72), (401, 73)]);
+        let counts = classify_public_fills(&slots, &p.uploads).unwrap();
+        assert_eq!((counts.first_touch_fills, counts.evictions), (2, 0));
+        drop(p);
+        // Classification neither installs weights nor publishes slot metadata.
+        assert_eq!(slots.resident_expert(72).unwrap(), None);
+        let all: Vec<_> = (0..144).collect();
+        let p = slots.plan(&all).unwrap();
+        slots.commit(p).unwrap();
+        let p = slots.plan(&[0, 71, 72, 143, 400, 401]).unwrap();
+        let counts = classify_public_fills(&slots, &p.uploads).unwrap();
+        assert_eq!((counts.first_touch_fills, counts.evictions), (0, 2));
+        assert!(
+            p.uploads
+                .iter()
+                .all(|&(_, s)| ![0, 71, 72, 143].contains(&s))
+        );
+        let hits = slots.plan(&[0, 71, 72, 143]).unwrap();
+        assert!(
+            classify_public_fills(&slots, &hits.uploads).unwrap() == PublicFillCounters::default()
+        );
+        for uploads in [
+            &[(0, 0)][..],
+            &[(400, 144)][..],
+            &[(512, 1)][..],
+            &[(400, 1), (401, 1)][..],
+            &[(400, 1), (400, 2)][..],
+        ] {
+            assert!(classify_public_fills(&slots, uploads).is_err());
+        }
+        assert!(classify_public_fills(&slots, &[(400, 1); 31]).is_err());
+    }
+    #[test]
+    fn public_fill_counter_updates_are_checked_and_never_credit_sources() {
+        let initial = PublicFillCounters {
+            first_touch_fills: 10,
+            direct_windows: 1,
+            direct_components: 30,
+            direct_bytes: 100,
+            ..PublicFillCounters::default()
+        };
+        let next = initial
+            .add(PublicFillCounters {
+                evictions: 2,
+                ..initial
+            })
+            .unwrap();
+        assert_eq!(
+            (next.first_touch_fills, next.evictions, next.direct_windows),
+            (20, 2, 2)
+        );
+        assert_eq!((next.direct_components, next.direct_bytes), (60, 200));
+        assert!(
+            PublicFillCounters {
+                direct_bytes: u64::MAX,
+                ..initial
+            }
+            .add(initial)
+            .is_err()
+        );
+        assert!(
+            PublicFillCounters {
+                evictions: u64::MAX,
+                ..initial
+            }
+            .add(PublicFillCounters {
+                evictions: 1,
+                ..PublicFillCounters::default()
+            })
+            .is_err()
+        );
+    }
     use crate::bank_slots::BankSlots;
     #[test]
     fn constructed_hybrid_worker_geometry_admits_only_checked_public_pools() {

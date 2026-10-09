@@ -1102,6 +1102,77 @@ pub(crate) fn prepare_public_existing(
     Ok((view, packed, read_ns))
 }
 
+/// Ten original expert triples share the unchanged source-window allowance.
+/// This bound is PUBLIC geometry; no route or slot appears in an allocation key.
+pub(crate) const PUBLIC_EXISTING_MAX_COMPONENTS: usize = 30;
+const PUBLIC_EXISTING_METADATA: usize = 8192;
+
+fn public_existing_batch_bounds(
+    components: usize,
+    metadata_bytes: usize,
+    capacities: impl IntoIterator<Item = (usize, usize)>,
+    source_precharge: u64,
+) -> Result<u64> {
+    if components == 0
+        || components > PUBLIC_EXISTING_MAX_COMPONENTS
+        || metadata_bytes > PUBLIC_EXISTING_METADATA
+        || source_precharge > 40 * 1024 * 1024
+    {
+        return Err(Error::LimitExceeded("public existing expert window"));
+    }
+    let mut count = 0usize;
+    let mut logical = 0u64;
+    let mut charged = 0u64;
+    for (len, capacity) in capacities {
+        let page = crate::main_admission::page_bytes(len as u64)
+            .map_err(|_| Error::InvalidBufferLength)?;
+        if len == 0 || !len.is_multiple_of(4) || capacity < len || capacity as u64 > page {
+            return Err(Error::InvalidBufferLength);
+        }
+        count = count.checked_add(1).ok_or(Error::ArithmeticOverflow)?;
+        logical = logical
+            .checked_add(len as u64)
+            .ok_or(Error::ArithmeticOverflow)?;
+        charged = charged.checked_add(page).ok_or(Error::ArithmeticOverflow)?;
+    }
+    if count != components || charged != source_precharge {
+        return Err(Error::InvalidBufferLength);
+    }
+    Ok(logical)
+}
+
+/// Schedule immutable original PUBLIC weights into already checked slot views.
+/// The caller retains full roots and the canonical pin, and holds the ORIGINAL
+/// per-component source precharge through its audited owning read_fault. No
+/// absent GPU source, smaller dispatch count or ordinary staging grants credit.
+/// Actual public Vec capacities fit those same pages; descriptor metadata fits
+/// the original workspace's separate 512-KiB temporary-host allowance.
+pub(crate) fn write_public_existing(
+    client: &ComputeClient<WgpuRuntime>,
+    writes: Vec<(Handle, Vec<u8>)>,
+    source_precharge: u64,
+    cancel: &AtomicBool,
+) -> Result<(u64, u128)> {
+    let metadata = writes
+        .capacity()
+        .checked_mul(std::mem::size_of::<(Handle, Vec<u8>)>())
+        .ok_or(Error::ArithmeticOverflow)?;
+    let bytes = public_existing_batch_bounds(
+        writes.len(),
+        metadata,
+        writes.iter().map(|(_, data)| (data.len(), data.capacity())),
+        source_precharge,
+    )?;
+    if cancel.load(Ordering::Relaxed) {
+        return Err(Error::InvalidFormat("GPU execution cancelled"));
+    }
+    let upload = Instant::now();
+    client
+        .write_public_owned_batch(writes)
+        .map_err(|_| Error::InvalidFormat("direct original expert upload"))?;
+    Ok((bytes, upload.elapsed().as_nanos()))
+}
+
 // One-dimensional portable grid; stay one 256-lane workgroup below 64 MiB.
 const MAX_BATCH_BYTES: usize = 65_535 * 256 * 4;
 const MIN_CONFIG_BATCH_BYTES: usize = 4 * 1024 * 1024;
@@ -2691,6 +2762,76 @@ mod segmented_tests {
             assert!(public_slot_span(bytes, 0, 1, 1, 4).is_err());
         }
         assert!(public_slot_span(4, 0, usize::MAX, usize::MAX, u64::MAX).is_err());
+    }
+    #[test]
+    fn daslab_existing_views_cover_both72_segments_without_their_page_tails() {
+        // Independent pinned original expert byte counts, including Q2_0 and
+        // the rare IQ4_XS gate/up. Every projection preserves a full root tail.
+        for bytes in [627200usize, 704000, 524800, 870400, 921600, 460800] {
+            let logical = bytes * 72;
+            let page = (logical.max(32768)).next_power_of_two() as u64;
+            for global in [0usize, 71, 72, 143] {
+                let shard = resolve_segment([(0, 72), (72, 72)], global).unwrap();
+                let local = global - shard * 72;
+                let (first, trim) = public_slot_span(bytes, local, 72, logical / 4, page).unwrap();
+                assert_eq!(first, (local * bytes) as u64);
+                assert_eq!(page - first - trim, bytes as u64);
+                assert_eq!(first + bytes as u64 + trim, page);
+                assert!(trim >= page - logical as u64);
+                assert!(first.is_multiple_of(4));
+                assert!(first + bytes as u64 <= logical as u64);
+            }
+        }
+    }
+    #[test]
+    fn public_existing_window_keeps_original_source_precharge_and_bounded_host_capacities() {
+        for count in [1usize, 2, 10] {
+            for down in [460800usize, 921600] {
+                let capacities: Vec<_> = (0..count)
+                    .flat_map(|_| [524800usize, 524800, down])
+                    .map(|n| (n, n))
+                    .collect();
+                let charge: u64 = capacities
+                    .iter()
+                    .map(|&(n, _)| crate::main_admission::page_bytes(n as u64).unwrap())
+                    .sum();
+                let logical: u64 = capacities.iter().map(|&(n, _)| n as u64).sum();
+                let metadata = count * 3 * std::mem::size_of::<(Handle, Vec<u8>)>();
+                assert_eq!(
+                    public_existing_batch_bounds(
+                        count * 3,
+                        metadata,
+                        capacities.iter().copied(),
+                        charge,
+                    )
+                    .unwrap(),
+                    logical
+                );
+                assert!(charge <= 30 * 1024 * 1024);
+                assert!(
+                    public_existing_batch_bounds(
+                        count * 3,
+                        metadata,
+                        capacities.iter().copied(),
+                        charge - 1,
+                    )
+                    .is_err()
+                );
+            }
+        }
+        for (count, metadata, entries, charge) in [
+            (0, 0, vec![], 0),
+            (31, 0, vec![(4, 4); 31], 31 * 32768),
+            (1, PUBLIC_EXISTING_METADATA + 1, vec![(4, 4)], 32768),
+            (1, 0, vec![(4, 4)], 40 * 1024 * 1024 + 1),
+            (1, 0, vec![(0, 0)], 32768),
+            (1, 0, vec![(3, 3)], 32768),
+            (1, 0, vec![(4, 3)], 32768),
+            (1, 0, vec![(4, 32769)], 32768),
+            (2, 0, vec![(4, 4)], 32768),
+        ] {
+            assert!(public_existing_batch_bounds(count, metadata, entries, charge).is_err());
+        }
     }
     #[test]
     fn global_slots_resolve_once_across_boundary_and_failure_is_transactional() {
