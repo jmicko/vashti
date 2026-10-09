@@ -1,5 +1,14 @@
 # Native DASLab/Strata checkpoint — 2026-10-09
 
+**Current active pass:** standalone Strata is removed; original models, draft and
+comparison receipts remain. v136/`f868437` accepts both-card Q2 draft and small
+host-source operators, combined original CPU13 and real code200 target generation.
+Q2 reduces memory but has no accepted speed improvement. Normal code200 is
+3.39 continuation tokens/s in this trial; no30 claim. Parallel next source work:
+full host-only expert mirror/import and a bounded GPU attention selector.
+Installed Kuno/Ollama/Vashti, public API and release selection are unchanged.
+The old paused checkpoint below is historical and superseded by this active pass.
+
 ## Resumed native source, after standalone Strata teardown
 
 The user authorized the new native optimization pass. Comparison teardown and
@@ -104,6 +113,72 @@ no Strata runtime payload or pruned vocabulary is substituted. GPU parity and
 throughput remain pending. CPU fixture execution has swap/core disabled and
 no private-runtime claim. The GPU adapter and host-memory placement probe are
 parallel isolated source work; neither is installed or promoted here.
+
+### Smaller draft and direct host-source physical follow-up
+
+Original-packed Q2 MTP GPU source `9f66226`, independent probe `bedc06f`
+and dispatch connection `f12a252` (v135, SHA256
+`a84032473f6f78e9f74ce97678c11f50c8b019317c59d7f66bb48913ca15383b`)
+pass both B70 and3060. Each card uses two fresh workspaces: six complete
+independent CPU-conditioned vectors, exact greedy choices, actual KV repair,
+minimal packets and GPU-follow copies pass. B70 maximum logit/HC errors are
+8.49e-5/4.73e-5;3060 7.13e-5/4.39e-5. Each workspace closes42 private owners/
+11,698,176bytes and2,539,257,856 public bytes, with reserved MAIN0. This is
+standalone draft correctness, not private/production or whole-model speed.
+The first two v134 attempts fail before GPU access (helper paths, then dedicated
+dispatch admission); both failures and normal recovery are preserved.
+
+Explicit selection `9d99d0d` plus main `f868437` retains absent=original Q8 and
+accepts only `KUNO_LAB_MTP_PROFILE=strata-q2`, using `KUNO_TEST_MTP` for the
+verified original Q2 file. Both public target controllers identify their selected
+profile and validate actual complete close bytes. Fused/ordinary constructors
+borrow the actual target graph, never a filename-inferred replacement. Runtime,
+private and source-window caps stay unchanged; this is internal lab selection.
+
+Frozen v136 `f868437` / SHA256
+`b81e695a6ee22933e93f3db7749487ad3cca5c1060293291a665d403029113d3`
+passes Q2 combined cold/warm original CPU13 target vectors, exact greedy picks,
+actual repair and complete erasure. Warm12 continuations take2.04545s =
+**5.86668 tokens/s**, draft acceptance6/11,480 GPU routers andzero uploads.
+This is slower than the earlier Q8 6.83 ordered result; no matched ABBA or speed
+improvement is claimed. Actual regulation waits are37.9867ms/74, while
+attention/GR enqueue is1.18929s and full dual-device map time978.946ms/281.
+The large attention phase includes its own readback barriers; guessed queue-depth
+changes are not justified by the regulation counter.
+
+The same real public35-token code fixture completes200 outputs with129/140
+drafts accepted, nine original-prefix recomputations (full repair logit/HC error0),
+and full closing proofs. Primary199 continuations take58.6855s =
+**3.39096 tokens/s**. Load3.78102s, prefill24.9270s, weight reads24.8943s,
+15,935 uploads/32,328,524,800bytes and13,107,712,000 process disk-read bytes.
+There is no independent CPU200 reference and this is not a matched file-cache
+comparison with v131. Q2 preserves memory savings, not an accepted speed gain.
+Default Q8 remains available and no private output/text/IDs are saved.
+
+Host-placement source `ceb5315`, connection `740cd91` and v136 pass both-card
+original Q2 host-buffer operator acceptance:512 exact decoded values/eight dots,
+two normal plusfive full-owner fault fixtures, explicit nonDEVICE_LOCAL heap flags0 and HOST_VISIBLE/COHERENT/CACHED type14, each physical allocation64KiB.
+There are no explicit weight uploads; all immutable sources/complete allocation
+CPU zero and separate host ledgers pass. HAL counters are unavailable in this
+build, so their zero deltas are not physical counter evidence. This only proves
+small direct Vulkan host allocation/math. CubeCL registration, the full expert
+mirror, portable permanent pinning and throughput remain unaccepted.
+
+Both-card and whole-model trials use swap/core0, recover B70 to50,688,000bytes,
+leave zero NVIDIA compute owners, all three HTTP services200 and all classified
+GPU faults0. Normal Kuno admission is restored after every trial.
+Source checks include94 protected launcher tests, ten focused host-placement
+and eight Q2 GPU wire/operator tests plus strict integrated pure-direct Clippy.
+Agent default/direct/all-feature profile suites and strict checks pass;
+final expanded root integration checks remain a separate gate.
+
+Next highest-potential connections: immutable host-only missing-expert pages
+with separate nonreuse CubeCL source ownership, and GPU chronological attention
+selection for start+count<=2048 token positions (<=512 complete blocks) after complete score/status validation.
+The latter removes the existing two per-layer readbacks without changing selected
+IDs; longer contexts keep the exact original CPU fallback. Both are parallel
+source work, not a measured full-model optimization yet. No install, public API,
+Vashti changes or release promotion occurs here.
 
 **User paused the goal after the overnight pass. Do not start more GPU work
 until resumed.** Latest physical model acceptance remains v129/source12f9cc7;

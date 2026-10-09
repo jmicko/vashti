@@ -220,6 +220,272 @@
     "nvidia_memory_mib": 432,
     "time": "2026-10-09T18:23:54.914705+00:00"
   },
+  "public_host_weight_operator": {
+    "artifact": {
+      "binary_sha256": "b81e695a6ee22933e93f3db7749487ad3cca5c1060293291a665d403029113d3",
+      "commit": "f868437ffb147d7dff84fef713caef8006f16edc",
+      "features": [
+        "direct-device"
+      ],
+      "helper_sha256": "516f0124df78ab99f3d78e4c0cb198b4f82fc5469122704456fca131091a561f",
+      "native_30_tokens_per_second_accepted": false,
+      "ordinary_demand_performance_claimed": false,
+      "protected_launcher_sha256": "027afbecd70f8fa946afe61593d9901d91930b6d13345491d11a3132abc96494",
+      "public_trial": "host-weight",
+      "seed": 424242,
+      "temperature": 0
+    },
+    "cards": {
+      "intel": {
+        "all_full_source_gpu_padding_checked": true,
+        "all_host_allocations_cpu_zero_verified": true,
+        "all_host_weight_ledgers_closed": true,
+        "all_sources_immutable_after_gpu": true,
+        "columns": 64,
+        "cubecl_registered": false,
+        "exact_decoded_values": 512,
+        "exact_original64_dots": 8,
+        "explicit_weight_upload_bytes": 0,
+        "fault_cases": 5,
+        "hal_buffer_count_deltas_live": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "hal_buffer_memory_excludes_external_host_pool": true,
+        "hal_counters_available": false,
+        "hal_counters_restored": true,
+        "heap_indices": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "hidden_ordinary_buffer_padding_erasure_claim": false,
+        "host_weight_buffer_bytes": 65536,
+        "host_weight_bytes_freed": 458752,
+        "host_weight_ledger_cap_bytes": 1048576,
+        "memory_heap_flags": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "memory_property_flags": [
+          14,
+          14,
+          14,
+          14,
+          14,
+          14,
+          14
+        ],
+        "memory_type_indices": [
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2
+        ],
+        "normal_cases": 2,
+        "opaque_driver_host_metadata_bounded": false,
+        "original_dtype": 42,
+        "performance_accepted": false,
+        "physical_allocation_bytes": [
+          65536,
+          65536,
+          65536,
+          65536,
+          65536,
+          65536,
+          65536
+        ],
+        "portable_permanent_pinning_proved": false,
+        "private_requests_accepted": false,
+        "rows": 4,
+        "scope": "compiled_public_nonlocal_host_q2_operator_only",
+        "vendor": 32902,
+        "whole_model_or_expert_mirror": false
+      },
+      "nvidia": {
+        "all_full_source_gpu_padding_checked": true,
+        "all_host_allocations_cpu_zero_verified": true,
+        "all_host_weight_ledgers_closed": true,
+        "all_sources_immutable_after_gpu": true,
+        "columns": 64,
+        "cubecl_registered": false,
+        "exact_decoded_values": 512,
+        "exact_original64_dots": 8,
+        "explicit_weight_upload_bytes": 0,
+        "fault_cases": 5,
+        "hal_buffer_count_deltas_live": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "hal_buffer_memory_excludes_external_host_pool": true,
+        "hal_counters_available": false,
+        "hal_counters_restored": true,
+        "heap_indices": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "hidden_ordinary_buffer_padding_erasure_claim": false,
+        "host_weight_buffer_bytes": 65536,
+        "host_weight_bytes_freed": 458752,
+        "host_weight_ledger_cap_bytes": 1048576,
+        "memory_heap_flags": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "memory_property_flags": [
+          14,
+          14,
+          14,
+          14,
+          14,
+          14,
+          14
+        ],
+        "memory_type_indices": [
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4
+        ],
+        "normal_cases": 2,
+        "opaque_driver_host_metadata_bounded": false,
+        "original_dtype": 42,
+        "performance_accepted": false,
+        "physical_allocation_bytes": [
+          65536,
+          65536,
+          65536,
+          65536,
+          65536,
+          65536,
+          65536
+        ],
+        "portable_permanent_pinning_proved": false,
+        "private_requests_accepted": false,
+        "rows": 4,
+        "scope": "compiled_public_nonlocal_host_q2_operator_only",
+        "vendor": 4318,
+        "whole_model_or_expert_mirror": false
+      }
+    },
+    "host_after": {
+      "admission": {
+        "action": "status",
+        "state": {
+          "admission": {
+            "active": false,
+            "completed": 62,
+            "paused": false,
+            "recovery_required": false,
+            "rejected": 0,
+            "waiting": 0
+          }
+        },
+        "status": 200
+      },
+      "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+      "http_statuses": {
+        "kuno": 200,
+        "ollama": 200,
+        "vashti": 200
+      },
+      "intel": {
+        "xe_memory": [
+          {
+            "total_bytes": 34242297856,
+            "used_bytes": 50688000
+          }
+        ]
+      },
+      "kernel": "7.0.0-38-generic",
+      "kernel_fault_counts": {
+        "nvidia_xid": 0,
+        "xe_memory_faults": 0,
+        "xe_reset_failures": 0,
+        "xe_timeouts": 0,
+        "xe_wedged": 0
+      },
+      "nvidia_compute_process_count": 0,
+      "nvidia_memory_mib": 449,
+      "time": "2026-10-09T19:06:02.852929+00:00"
+    },
+    "host_before": {
+      "admission": {
+        "action": "status",
+        "state": {
+          "admission": {
+            "active": false,
+            "completed": 62,
+            "paused": false,
+            "recovery_required": false,
+            "rejected": 0,
+            "waiting": 0
+          }
+        },
+        "status": 200
+      },
+      "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+      "http_statuses": {
+        "kuno": 200,
+        "ollama": 200,
+        "vashti": 200
+      },
+      "intel": {
+        "xe_memory": [
+          {
+            "total_bytes": 34242297856,
+            "used_bytes": 50688000
+          }
+        ]
+      },
+      "kernel": "7.0.0-38-generic",
+      "kernel_fault_counts": {
+        "nvidia_xid": 0,
+        "xe_memory_faults": 0,
+        "xe_reset_failures": 0,
+        "xe_timeouts": 0,
+        "xe_wedged": 0
+      },
+      "nvidia_compute_process_count": 0,
+      "nvidia_memory_mib": 449,
+      "time": "2026-10-09T19:06:01.297213+00:00"
+    }
+  },
   "routing_operator_v131": {
     "intel": {
       "allocator_cleanup_complete": true,
@@ -1680,6 +1946,493 @@
     "seed": 424242,
     "temperature": 0
   },
+  "strata_q2_combined_warm13": {
+    "artifact": {
+      "binary_sha256": "b81e695a6ee22933e93f3db7749487ad3cca5c1060293291a665d403029113d3",
+      "commit": "f868437ffb147d7dff84fef713caef8006f16edc",
+      "features": [
+        "direct-device"
+      ],
+      "helper_sha256": "516f0124df78ab99f3d78e4c0cb198b4f82fc5469122704456fca131091a561f",
+      "native_30_tokens_per_second_accepted": false,
+      "ordinary_demand_performance_claimed": false,
+      "protected_launcher_sha256": "027afbecd70f8fa946afe61593d9901d91930b6d13345491d11a3132abc96494",
+      "public_trial": "warm-router-q2",
+      "seed": 424242,
+      "temperature": 0
+    },
+    "cards": {
+      "intel": {
+        "chunk_io_checkpoint": true,
+        "compiled_token0": 0,
+        "device_dispatch": "inline",
+        "draft_card": "RTX3060",
+        "draft_close": {
+          "main_reserved": 0,
+          "private_buffers": 42,
+          "private_bytes": 11698176,
+          "public_bytes": 2539257856
+        },
+        "draft_profile": "strata-q2",
+        "draft_public_reserved_bytes": 2539257856,
+        "expert_route_forcing": false,
+        "fused_mtp_sweeps": true,
+        "live_member_reduction": false,
+        "observed_inline_device_dispatch": true,
+        "oracle_forcing": false,
+        "passes": [
+          {
+            "accepted_drafts": 6,
+            "accepted_tokens": 12,
+            "accepted_tokens_per_second": 0.8470652556646205,
+            "device_router": false,
+            "device_router_scope": "conditional actual all-hit warm13; strict original IDs and full vectors, experimental F32 probabilities",
+            "draft_traffic": {
+              "explicit_dispatches": 2303,
+              "followup_copy_calls": 5,
+              "host_read_bytes": 1114112,
+              "host_read_calls": 23,
+              "minimal_packet_reads": 11,
+              "private_upload_bytes": 1179648,
+              "private_upload_calls": 24
+            },
+            "elapsed_ns": 14166559093,
+            "expert_hits": 9110,
+            "expert_uploads": 2410,
+            "gpu_router_calls": 0,
+            "host_io": {
+              "gpu_submission_wait_ns": 351783,
+              "gpu_submission_waits": 81,
+              "inline_readback_batches": 844,
+              "provenance": "process-global whole public dual-device timed interval",
+              "scoped_read_flush_ns": 43170183,
+              "scoped_read_map_ns": 3172235461,
+              "scoped_read_setup_ns": 2356160
+            },
+            "initial_prefill_ns": 7682181555,
+            "load_and_initial_prefill_cumulative_ns": 11604370233,
+            "load_and_initial_prefill_physical_read_bytes": 4445401088,
+            "model_weights_warm": false,
+            "proposed_drafts": 11,
+            "replay": 0,
+            "request_close_ns_inside_timing": 4751811,
+            "request_scope": {
+              "binding_capacity": 4096,
+              "binding_stats": [
+                6,
+                45,
+                45,
+                684217,
+                13540
+              ],
+              "closing_audit_ns": 4739541,
+              "counter_provenance": "admission-local request checkpoints; checked process-global binding/INFO/request-reuse deltas",
+              "full_io_audit": true,
+              "info_stats": [
+                25756,
+                4852,
+                364
+              ],
+              "metadata_reserved_bytes": 4194304,
+              "request_checkpoints": 515,
+              "request_io_reuses": 1609,
+              "runtime_limit_bytes": 134217728,
+              "scope_closed": true,
+              "scope_sequence": 1,
+              "target_stream_configured": true
+            },
+            "request_scope_closed_and_audited": true,
+            "rounds": [
+              {
+                "accepted_drafts": 0,
+                "accepted_outputs": 1,
+                "draft_completed_cell": 1,
+                "draft_ns": 1084592055,
+                "proposed_drafts": 2,
+                "repair_ns": 381434948,
+                "target_completed_cursor": 2,
+                "target_start": 1,
+                "total_ns": 4499042762,
+                "verify_ns_including_public_vector_checks": 3033015369
+              },
+              {
+                "accepted_drafts": 1,
+                "accepted_outputs": 2,
+                "draft_completed_cell": 3,
+                "draft_ns": 237630344,
+                "proposed_drafts": 2,
+                "repair_ns": 424274939,
+                "target_completed_cursor": 4,
+                "target_start": 2,
+                "total_ns": 2458345167,
+                "verify_ns_including_public_vector_checks": 1796439514
+              },
+              {
+                "accepted_drafts": 1,
+                "accepted_outputs": 2,
+                "draft_completed_cell": 5,
+                "draft_ns": 239359010,
+                "proposed_drafts": 2,
+                "repair_ns": 213106272,
+                "target_completed_cursor": 6,
+                "target_start": 4,
+                "total_ns": 2432529777,
+                "verify_ns_including_public_vector_checks": 1980064105
+              },
+              {
+                "accepted_drafts": 2,
+                "accepted_outputs": 3,
+                "draft_completed_cell": 8,
+                "draft_ns": 227458797,
+                "proposed_drafts": 2,
+                "repair_ns": 12292003,
+                "target_completed_cursor": 9,
+                "target_start": 6,
+                "total_ns": 1950725305,
+                "verify_ns_including_public_vector_checks": 1710974155
+              },
+              {
+                "accepted_drafts": 1,
+                "accepted_outputs": 2,
+                "draft_completed_cell": 10,
+                "draft_ns": 57359432,
+                "proposed_drafts": 2,
+                "repair_ns": 467679546,
+                "target_completed_cursor": 11,
+                "target_start": 9,
+                "total_ns": 1834408147,
+                "verify_ns_including_public_vector_checks": 1309368809
+              },
+              {
+                "accepted_drafts": 1,
+                "accepted_outputs": 2,
+                "draft_completed_cell": 12,
+                "draft_ns": 87656209,
+                "proposed_drafts": 1,
+                "repair_ns": 8608594,
+                "target_completed_cursor": 13,
+                "target_start": 11,
+                "total_ns": 986539203,
+                "verify_ns_including_public_vector_checks": 890274000
+              }
+            ],
+            "target_fill_counters_after": {
+              "direct_bytes": 5962521600,
+              "direct_components": 8670,
+              "direct_windows": 421,
+              "evictions": 0,
+              "first_touch_fills": 2890
+            },
+            "target_fill_counters_before": {
+              "direct_bytes": 982272000,
+              "direct_components": 1440,
+              "direct_windows": 48,
+              "evictions": 0,
+              "first_touch_fills": 480
+            },
+            "target_host_phase_ns": {
+              "native_all_family_commit": 6184277,
+              "native_all_family_preflight": 4277606,
+              "native_attention_and_gr_enqueue": 1025725344,
+              "native_completed_final_proofs": 196067978,
+              "native_ffn_gr_and_router_enqueue": 18525547,
+              "native_final_head_enqueue": 605295,
+              "native_route_and_expert_enqueue": 7976372025,
+              "native_router_fence": 2849406271,
+              "native_shared_and_ffn_combine_enqueue": 24377994
+            },
+            "timed_physical_read_bytes": 4342325248,
+            "timing_scope": "original normal routing/demand uploads; public checks and actual repair included",
+            "uploaded_bytes": 4980249600,
+            "verify3_dense_calls": 7520,
+            "verify3_fused_calls": 7520,
+            "weight_read_ns": 6882350404,
+            "weight_upload_enqueue_ns": 3906691
+          },
+          {
+            "accepted_drafts": 6,
+            "accepted_tokens": 12,
+            "accepted_tokens_per_second": 5.866681545092548,
+            "device_router": true,
+            "device_router_scope": "conditional actual all-hit warm13; strict original IDs and full vectors, experimental F32 probabilities",
+            "draft_traffic": {
+              "explicit_dispatches": 2303,
+              "followup_copy_calls": 5,
+              "host_read_bytes": 1114112,
+              "host_read_calls": 23,
+              "minimal_packet_reads": 11,
+              "private_upload_bytes": 1179648,
+              "private_upload_calls": 24
+            },
+            "elapsed_ns": 2045449358,
+            "expert_hits": 11520,
+            "expert_uploads": 0,
+            "gpu_router_calls": 480,
+            "host_io": {
+              "gpu_submission_wait_ns": 37986700,
+              "gpu_submission_waits": 74,
+              "inline_readback_batches": 281,
+              "provenance": "process-global whole public dual-device timed interval",
+              "scoped_read_flush_ns": 12513407,
+              "scoped_read_map_ns": 978946473,
+              "scoped_read_setup_ns": 847058
+            },
+            "initial_prefill_ns": 112089032,
+            "load_and_initial_prefill_cumulative_ns": 27466960381,
+            "load_and_initial_prefill_physical_read_bytes": 28672,
+            "model_weights_warm": true,
+            "proposed_drafts": 11,
+            "replay": 1,
+            "request_close_ns_inside_timing": 13288844,
+            "request_scope": {
+              "binding_capacity": 4096,
+              "binding_stats": [
+                28708,
+                6630,
+                6630,
+                29984550,
+                9004141
+              ],
+              "closing_audit_ns": 13279673,
+              "counter_provenance": "admission-local request checkpoints; checked process-global binding/INFO/request-reuse deltas",
+              "full_io_audit": true,
+              "info_stats": [
+                28938,
+                2160,
+                228
+              ],
+              "metadata_reserved_bytes": 4194304,
+              "request_checkpoints": 45,
+              "request_io_reuses": 987,
+              "runtime_limit_bytes": 134217728,
+              "scope_closed": true,
+              "scope_sequence": 2,
+              "target_stream_configured": true
+            },
+            "request_scope_closed_and_audited": true,
+            "rounds": [
+              {
+                "accepted_drafts": 0,
+                "accepted_outputs": 1,
+                "draft_completed_cell": 1,
+                "draft_ns": 179558093,
+                "proposed_drafts": 2,
+                "repair_ns": 108330991,
+                "target_completed_cursor": 2,
+                "target_start": 1,
+                "total_ns": 455965472,
+                "verify_ns_including_public_vector_checks": 168076018
+              },
+              {
+                "accepted_drafts": 1,
+                "accepted_outputs": 2,
+                "draft_completed_cell": 3,
+                "draft_ns": 57093738,
+                "proposed_drafts": 2,
+                "repair_ns": 143828586,
+                "target_completed_cursor": 4,
+                "target_start": 2,
+                "total_ns": 397800223,
+                "verify_ns_including_public_vector_checks": 196877569
+              },
+              {
+                "accepted_drafts": 1,
+                "accepted_outputs": 2,
+                "draft_completed_cell": 5,
+                "draft_ns": 57228579,
+                "proposed_drafts": 2,
+                "repair_ns": 149578328,
+                "target_completed_cursor": 6,
+                "target_start": 4,
+                "total_ns": 382056332,
+                "verify_ns_including_public_vector_checks": 175248995
+              },
+              {
+                "accepted_drafts": 2,
+                "accepted_outputs": 3,
+                "draft_completed_cell": 8,
+                "draft_ns": 56154797,
+                "proposed_drafts": 2,
+                "repair_ns": 12048060,
+                "target_completed_cursor": 9,
+                "target_start": 6,
+                "total_ns": 246928809,
+                "verify_ns_including_public_vector_checks": 178725602
+              },
+              {
+                "accepted_drafts": 1,
+                "accepted_outputs": 2,
+                "draft_completed_cell": 10,
+                "draft_ns": 57393400,
+                "proposed_drafts": 2,
+                "repair_ns": 147177071,
+                "target_completed_cursor": 11,
+                "target_start": 9,
+                "total_ns": 371352334,
+                "verify_ns_including_public_vector_checks": 166781473
+              },
+              {
+                "accepted_drafts": 1,
+                "accepted_outputs": 2,
+                "draft_completed_cell": 12,
+                "draft_ns": 28906672,
+                "proposed_drafts": 1,
+                "repair_ns": 9151779,
+                "target_completed_cursor": 13,
+                "target_start": 11,
+                "total_ns": 177865313,
+                "verify_ns_including_public_vector_checks": 139806332
+              }
+            ],
+            "target_close": {
+              "main_buffers": 1380,
+              "main_bytes": 828866560,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "target_fill_counters_after": {
+              "direct_bytes": 5962521600,
+              "direct_components": 8670,
+              "direct_windows": 421,
+              "evictions": 0,
+              "first_touch_fills": 2890
+            },
+            "target_fill_counters_before": {
+              "direct_bytes": 5962521600,
+              "direct_components": 8670,
+              "direct_windows": 421,
+              "evictions": 0,
+              "first_touch_fills": 2890
+            },
+            "target_host_phase_ns": {
+              "native_all_family_commit": 5864464,
+              "native_all_family_preflight": 3170326,
+              "native_attention_and_gr_enqueue": 1189287690,
+              "native_completed_final_proofs": 144777904,
+              "native_device_router_and_expert_enqueue": 16393858,
+              "native_device_router_audit": 97148200,
+              "native_ffn_gr_and_router_enqueue": 17862342,
+              "native_final_head_enqueue": 570656,
+              "native_route_and_expert_enqueue": 0,
+              "native_router_fence": 0,
+              "native_shared_and_ffn_combine_enqueue": 15233333
+            },
+            "timed_physical_read_bytes": 233472,
+            "timing_scope": "conditional actual all-hit GPU routing; deferred original-route audit, public checks and actual repair included",
+            "uploaded_bytes": 0,
+            "verify3_dense_calls": 7520,
+            "verify3_fused_calls": 7520,
+            "weight_read_ns": 0,
+            "weight_upload_enqueue_ns": 0
+          }
+        ],
+        "prepared_verify3_experts": false,
+        "private_or_production_accepted": false,
+        "public_existing_fill": true,
+        "request_binding_capacity": 4096,
+        "request_io_reuse": true,
+        "request_reuse_metadata_reserved_bytes": 4194304,
+        "scope": "fixed-public-DASLab13-real-dual-GPU-greedy-speculation",
+        "seed": 424242,
+        "target_card": "B70",
+        "temperature": 0,
+        "verify3_dense": true,
+        "verify3_logical_finite_fused": true,
+        "warm_replay": true,
+        "warm_reset": {
+          "admission_and_public_banks_retained": true,
+          "ledger_epoch_or_poison_reset": false,
+          "main_buffers": 1380,
+          "main_bytes": 828866560,
+          "source_buffers": 0,
+          "source_bytes": 0,
+          "transient_binding_info_caches_retained": false
+        }
+      }
+    },
+    "host_after": {
+      "admission": {
+        "action": "status",
+        "state": {
+          "admission": {
+            "active": false,
+            "completed": 62,
+            "paused": false,
+            "recovery_required": false,
+            "rejected": 0,
+            "waiting": 0
+          }
+        },
+        "status": 200
+      },
+      "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+      "http_statuses": {
+        "kuno": 200,
+        "ollama": 200,
+        "vashti": 200
+      },
+      "intel": {
+        "xe_memory": [
+          {
+            "total_bytes": 34242297856,
+            "used_bytes": 50688000
+          }
+        ]
+      },
+      "kernel": "7.0.0-38-generic",
+      "kernel_fault_counts": {
+        "nvidia_xid": 0,
+        "xe_memory_faults": 0,
+        "xe_reset_failures": 0,
+        "xe_timeouts": 0,
+        "xe_wedged": 0
+      },
+      "nvidia_compute_process_count": 0,
+      "nvidia_memory_mib": 443,
+      "time": "2026-10-09T19:07:58.611860+00:00"
+    },
+    "host_before": {
+      "admission": {
+        "action": "status",
+        "state": {
+          "admission": {
+            "active": false,
+            "completed": 62,
+            "paused": false,
+            "recovery_required": false,
+            "rejected": 0,
+            "waiting": 0
+          }
+        },
+        "status": 200
+      },
+      "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+      "http_statuses": {
+        "kuno": 200,
+        "ollama": 200,
+        "vashti": 200
+      },
+      "intel": {
+        "xe_memory": [
+          {
+            "total_bytes": 34242297856,
+            "used_bytes": 50688000
+          }
+        ]
+      },
+      "kernel": "7.0.0-38-generic",
+      "kernel_fault_counts": {
+        "nvidia_xid": 0,
+        "xe_memory_faults": 0,
+        "xe_reset_failures": 0,
+        "xe_timeouts": 0,
+        "xe_wedged": 0
+      },
+      "nvidia_compute_process_count": 0,
+      "nvidia_memory_mib": 448,
+      "time": "2026-10-09T19:07:25.844534+00:00"
+    }
+  },
   "strata_q2_cpu_reference": {
     "binary_sha256": "079a8d0274a6caf03e8c0f52e94538ac708ef2de6ca56d7c6eea406cece058af",
     "features": [],
@@ -1696,6 +2449,633 @@
     "target_carry_sha256": "18788aee8ccb1defdbba624df3ae914c3cf574ab719c3d2a5f375e4048c67c20",
     "teacher_rows": 4,
     "temperature": 0
+  },
+  "strata_q2_mtp_gpu_acceptance": {
+    "artifact": {
+      "binary_sha256": "a84032473f6f78e9f74ce97678c11f50c8b019317c59d7f66bb48913ca15383b",
+      "commit": "f12a252d6fc81d393af71d936d211af4dbb8fad2",
+      "features": [
+        "direct-device"
+      ],
+      "helper_sha256": "ae861475315b5fdab559bd236ff3faa47a7f77d26e5bcd934941d7528d1716d1",
+      "native_30_tokens_per_second_accepted": false,
+      "ordinary_demand_performance_claimed": false,
+      "protected_launcher_sha256": "49467762ea17f5acfbd45d7a99575dfe87e43e71ab7383c28d0a9785fc27f02e",
+      "public_trial": "mtp-q2",
+      "seed": 424242,
+      "temperature": 0
+    },
+    "host_after": {
+      "admission": {
+        "action": "status",
+        "state": {
+          "admission": {
+            "active": false,
+            "completed": 62,
+            "paused": false,
+            "recovery_required": false,
+            "rejected": 0,
+            "waiting": 0
+          }
+        },
+        "status": 200
+      },
+      "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+      "http_statuses": {
+        "kuno": 200,
+        "ollama": 200,
+        "vashti": 200
+      },
+      "intel": {
+        "xe_memory": [
+          {
+            "total_bytes": 34242297856,
+            "used_bytes": 50688000
+          }
+        ]
+      },
+      "kernel": "7.0.0-38-generic",
+      "kernel_fault_counts": {
+        "nvidia_xid": 0,
+        "xe_memory_faults": 0,
+        "xe_reset_failures": 0,
+        "xe_timeouts": 0,
+        "xe_wedged": 0
+      },
+      "nvidia_compute_process_count": 0,
+      "nvidia_memory_mib": 458,
+      "time": "2026-10-09T18:57:24.797146+00:00"
+    },
+    "host_before": {
+      "admission": {
+        "action": "status",
+        "state": {
+          "admission": {
+            "active": false,
+            "completed": 62,
+            "paused": false,
+            "recovery_required": false,
+            "rejected": 0,
+            "waiting": 0
+          }
+        },
+        "status": 200
+      },
+      "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+      "http_statuses": {
+        "kuno": 200,
+        "ollama": 200,
+        "vashti": 200
+      },
+      "intel": {
+        "xe_memory": [
+          {
+            "total_bytes": 34242297856,
+            "used_bytes": 50688000
+          }
+        ]
+      },
+      "kernel": "7.0.0-38-generic",
+      "kernel_fault_counts": {
+        "nvidia_xid": 0,
+        "xe_memory_faults": 0,
+        "xe_reset_failures": 0,
+        "xe_timeouts": 0,
+        "xe_wedged": 0
+      },
+      "nvidia_compute_process_count": 0,
+      "nvidia_memory_mib": 458,
+      "time": "2026-10-09T18:57:07.861005+00:00"
+    },
+    "intel": {
+      "accepted_speculative_tokens_per_second": null,
+      "borrowed_target_tensors": 2,
+      "dispatch": "inline",
+      "full_vocab": 248320,
+      "fused_mtp_sweeps": true,
+      "passes": [
+        {
+          "acceptance": {
+            "checks": [
+              {
+                "all_vectors_accepted": true,
+                "cursor": 1,
+                "teacher_forced": 0
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 2,
+                "teacher_forced": 1
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 3,
+                "teacher_forced": 2
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 4,
+                "teacher_forced": 3
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 2,
+                "provisional_rows": 2
+              },
+              {
+                "actual_target_KV_repair": true,
+                "all_vectors_accepted": true,
+                "continued_cursor": 4
+              },
+              {
+                "complete_hidden_and_real_greedy": true,
+                "elapsed_ns_including_public_checks": 76843280,
+                "explicit_dispatches": 648,
+                "host_read_bytes": 262144,
+                "host_reads": 4,
+                "minimal_teacher_rows": 4
+              },
+              {
+                "GPU_follow_draft": true,
+                "actual_GPU_copy_dispatches": 1,
+                "actual_GPU_roles_copied": 2,
+                "complete_hidden_and_real_greedy": true,
+                "host_read_bytes": 65536,
+                "private_upload_bytes": 0
+              }
+            ],
+            "hidden_max_abs_error": 4.7206878662109375e-05,
+            "logits_max_abs_error": 8.487701416015625e-05,
+            "replay": 0
+          },
+          "close": {
+            "main_reserved": 0,
+            "private_buffers": 42,
+            "private_bytes": 11698176,
+            "public_bytes": 2539257856
+          }
+        },
+        {
+          "acceptance": {
+            "checks": [
+              {
+                "all_vectors_accepted": true,
+                "cursor": 1,
+                "teacher_forced": 0
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 2,
+                "teacher_forced": 1
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 3,
+                "teacher_forced": 2
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 4,
+                "teacher_forced": 3
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 2,
+                "provisional_rows": 2
+              },
+              {
+                "actual_target_KV_repair": true,
+                "all_vectors_accepted": true,
+                "continued_cursor": 4
+              },
+              {
+                "complete_hidden_and_real_greedy": true,
+                "elapsed_ns_including_public_checks": 72794493,
+                "explicit_dispatches": 648,
+                "host_read_bytes": 262144,
+                "host_reads": 4,
+                "minimal_teacher_rows": 4
+              },
+              {
+                "GPU_follow_draft": true,
+                "actual_GPU_copy_dispatches": 1,
+                "actual_GPU_roles_copied": 2,
+                "complete_hidden_and_real_greedy": true,
+                "host_read_bytes": 65536,
+                "private_upload_bytes": 0
+              }
+            ],
+            "hidden_max_abs_error": 4.7206878662109375e-05,
+            "logits_max_abs_error": 8.487701416015625e-05,
+            "replay": 1
+          },
+          "close": {
+            "main_reserved": 0,
+            "private_buffers": 42,
+            "private_bytes": 11698176,
+            "public_bytes": 2539257856
+          }
+        }
+      ],
+      "private_or_production_accepted": false,
+      "public_token0": 0,
+      "raw_gemma_norm_fold_count": 1,
+      "runtime_bin_conversion": false,
+      "scope": "fixed-public-original-GGUF-Strata-Q2-resident-MTP-only",
+      "seed": 424242,
+      "separate_publisher_FCs": 2,
+      "source_payload_authentication": "protected runner full hashes",
+      "speculative_controller": false,
+      "target_model_on_this_card": false,
+      "temperature": 0,
+      "vendor": 32902,
+      "vocabulary_pruning": false
+    },
+    "nvidia": {
+      "accepted_speculative_tokens_per_second": null,
+      "borrowed_target_tensors": 2,
+      "dispatch": "inline",
+      "full_vocab": 248320,
+      "fused_mtp_sweeps": true,
+      "passes": [
+        {
+          "acceptance": {
+            "checks": [
+              {
+                "all_vectors_accepted": true,
+                "cursor": 1,
+                "teacher_forced": 0
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 2,
+                "teacher_forced": 1
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 3,
+                "teacher_forced": 2
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 4,
+                "teacher_forced": 3
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 2,
+                "provisional_rows": 2
+              },
+              {
+                "actual_target_KV_repair": true,
+                "all_vectors_accepted": true,
+                "continued_cursor": 4
+              },
+              {
+                "complete_hidden_and_real_greedy": true,
+                "elapsed_ns_including_public_checks": 103099825,
+                "explicit_dispatches": 648,
+                "host_read_bytes": 262144,
+                "host_reads": 4,
+                "minimal_teacher_rows": 4
+              },
+              {
+                "GPU_follow_draft": true,
+                "actual_GPU_copy_dispatches": 1,
+                "actual_GPU_roles_copied": 2,
+                "complete_hidden_and_real_greedy": true,
+                "host_read_bytes": 65536,
+                "private_upload_bytes": 0
+              }
+            ],
+            "hidden_max_abs_error": 4.38690185546875e-05,
+            "logits_max_abs_error": 7.128715515136719e-05,
+            "replay": 0
+          },
+          "close": {
+            "main_reserved": 0,
+            "private_buffers": 42,
+            "private_bytes": 11698176,
+            "public_bytes": 2539257856
+          }
+        },
+        {
+          "acceptance": {
+            "checks": [
+              {
+                "all_vectors_accepted": true,
+                "cursor": 1,
+                "teacher_forced": 0
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 2,
+                "teacher_forced": 1
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 3,
+                "teacher_forced": 2
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 4,
+                "teacher_forced": 3
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 2,
+                "provisional_rows": 2
+              },
+              {
+                "actual_target_KV_repair": true,
+                "all_vectors_accepted": true,
+                "continued_cursor": 4
+              },
+              {
+                "complete_hidden_and_real_greedy": true,
+                "elapsed_ns_including_public_checks": 110221122,
+                "explicit_dispatches": 648,
+                "host_read_bytes": 262144,
+                "host_reads": 4,
+                "minimal_teacher_rows": 4
+              },
+              {
+                "GPU_follow_draft": true,
+                "actual_GPU_copy_dispatches": 1,
+                "actual_GPU_roles_copied": 2,
+                "complete_hidden_and_real_greedy": true,
+                "host_read_bytes": 65536,
+                "private_upload_bytes": 0
+              }
+            ],
+            "hidden_max_abs_error": 4.38690185546875e-05,
+            "logits_max_abs_error": 7.128715515136719e-05,
+            "replay": 1
+          },
+          "close": {
+            "main_reserved": 0,
+            "private_buffers": 42,
+            "private_bytes": 11698176,
+            "public_bytes": 2539257856
+          }
+        }
+      ],
+      "private_or_production_accepted": false,
+      "public_token0": 0,
+      "raw_gemma_norm_fold_count": 1,
+      "runtime_bin_conversion": false,
+      "scope": "fixed-public-original-GGUF-Strata-Q2-resident-MTP-only",
+      "seed": 424242,
+      "separate_publisher_FCs": 2,
+      "source_payload_authentication": "protected runner full hashes",
+      "speculative_controller": false,
+      "target_model_on_this_card": false,
+      "temperature": 0,
+      "vendor": 4318,
+      "vocabulary_pruning": false
+    },
+    "preserved_predevice_failures": {
+      "v134_initial": "protected helper reference paths corrected; no GPU work",
+      "v134_rerun": "dedicated pure-direct mode registration corrected; no GPU work"
+    },
+    "whole_model_or_performance_accepted": false
+  },
+  "strata_q2_normal_public_code200": {
+    "artifact": {
+      "binary_sha256": "b81e695a6ee22933e93f3db7749487ad3cca5c1060293291a665d403029113d3",
+      "commit": "f868437ffb147d7dff84fef713caef8006f16edc",
+      "features": [
+        "direct-device"
+      ],
+      "helper_sha256": "516f0124df78ab99f3d78e4c0cb198b4f82fc5469122704456fca131091a561f",
+      "native_30_tokens_per_second_accepted": false,
+      "ordinary_demand_performance_claimed": true,
+      "protected_launcher_sha256": "027afbecd70f8fa946afe61593d9901d91930b6d13345491d11a3132abc96494",
+      "public_trial": "language-code-q2",
+      "seed": 424242,
+      "temperature": 0
+    },
+    "cards": {
+      "intel": {
+        "chunk_io_checkpoint": true,
+        "device_dispatch": "inline",
+        "draft_card": "RTX3060",
+        "draft_close": {
+          "main_reserved": 0,
+          "private_buffers": 42,
+          "private_bytes": 11698176,
+          "public_bytes": 2539257856
+        },
+        "draft_profile": "strata-q2",
+        "draft_public_reserved_bytes": 2539257856,
+        "fixture_host_reserved_bytes": 4194304,
+        "forced_experts": false,
+        "forced_oracle_tokens": false,
+        "frequency_penalty": 0.0,
+        "full_target_packets_retained": true,
+        "fused_mtp_sweeps": true,
+        "greedy_target_verification": true,
+        "independent_cpu200_reference_accepted": false,
+        "live_member_reduction": false,
+        "max_outputs": 200,
+        "observed_inline_device_dispatch": true,
+        "prepared_verify3_experts": false,
+        "presence_penalty": 0.0,
+        "private_or_production_accepted": false,
+        "public_existing_fill": true,
+        "record": {
+          "accepted_drafts": 129,
+          "actual_target_recomputations": 9,
+          "compiled_prompt_template_file": "serve/chat_template.jinja",
+          "compiled_prompt_template_revision": "fb58e0dbc8399662c0e47c76578c6e878b14f6cf",
+          "context_capacity": 235,
+          "continuation_tokens_per_second": 3.390958595574817,
+          "draft_ns": 6780965745,
+          "draft_traffic": {
+            "explicit_dispatches": 32959,
+            "followup_copy_calls": 70,
+            "host_read_bytes": 15695872,
+            "host_read_calls": 339,
+            "minimal_packet_reads": 140,
+            "private_upload_bytes": 19562496,
+            "private_upload_calls": 398
+          },
+          "elapsed_ns": 58685470315,
+          "emitted_tokens_including_eos": 200,
+          "emitted_tokens_per_second": 3.407998588517404,
+          "expert_hits": 92545,
+          "expert_uploads": 15935,
+          "first_output_emission_timed": true,
+          "fixture": "first-code",
+          "fixture_peak_host_bytes": 2111616,
+          "generation_physical_read_bytes": 13107712000,
+          "host_io": {
+            "gpu_submission_wait_ns": 2888578,
+            "gpu_submission_waits": 695,
+            "inline_readback_batches": 6355,
+            "provenance": "process-global whole public dual-device timed interval",
+            "scoped_read_flush_ns": 267710749,
+            "scoped_read_map_ns": 11445961140,
+            "scoped_read_setup_ns": 12166243
+          },
+          "load_and_prefill_physical_read_bytes": 8845066240,
+          "load_ns": 3781021471,
+          "nonempty_text": true,
+          "post_prefill_target_continuations": 199,
+          "prefill_first_output_count": 1,
+          "prefill_first_output_generation_pick_timed": false,
+          "prefill_ns_including_real_teacher_kv": 24927046036,
+          "prompt_tokens": 35,
+          "proposed_drafts": 140,
+          "repair_abs_tolerance": 0.006000000052154064,
+          "repair_hidden_max_abs": 0.0,
+          "repair_logit_max_abs": 0.0,
+          "repair_ns_including_vector_checks": 2724267820,
+          "repair_rel_tolerance": 0.0003000000142492354,
+          "request_close_ns_inside_timing": 3163523,
+          "request_scope": {
+            "closing_audit_ns": 3157483,
+            "full_io_audit": true,
+            "scope_closed": true,
+            "scope_sequence": 1
+          },
+          "rounds": 70,
+          "stop_reason": "limit",
+          "target_close": {
+            "main_buffers": 1378,
+            "main_bytes": 826638336,
+            "source_buffers": 0,
+            "source_bytes": 0
+          },
+          "target_fill_counters_after": {
+            "direct_bytes": 43085056000,
+            "direct_components": 63507,
+            "direct_windows": 4208,
+            "evictions": 14257,
+            "first_touch_fills": 6912
+          },
+          "target_fill_counters_before": {
+            "direct_bytes": 10756531200,
+            "direct_components": 15702,
+            "direct_windows": 797,
+            "evictions": 91,
+            "first_touch_fills": 5143
+          },
+          "target_host_phase_ns": {
+            "native_all_family_commit": 54447135,
+            "native_all_family_preflight": 36993343,
+            "native_attention_and_gr_enqueue": 5552218200,
+            "native_completed_final_proofs": 906010928,
+            "native_ffn_gr_and_router_enqueue": 143382190,
+            "native_final_head_enqueue": 4622958,
+            "native_route_and_expert_enqueue": 32645184254,
+            "native_router_fence": 11115618594,
+            "native_shared_and_ffn_combine_enqueue": 174236631
+          },
+          "uploaded_bytes": 32328524800,
+          "verify3_dense_calls": 59408,
+          "verify3_fused_calls": 59408,
+          "verify_ns_full_packets": 49172053195,
+          "weight_read_ns": 24894325426,
+          "weight_upload_enqueue_ns": 24174839
+        },
+        "repair_original_prefix_vector_checks": true,
+        "repetition_penalty": 1.0,
+        "request_io_reuse": true,
+        "request_reuse_metadata_reserved_bytes": 4194304,
+        "scope": "compiled-public-language200-real-dual-device-greedy",
+        "seed": 424242,
+        "target_card": "B70",
+        "temperature": 0,
+        "thinking": false,
+        "tokenizer_host_cap_bytes": 201326592,
+        "verify3_dense": true,
+        "verify3_logical_finite_fused": true
+      }
+    },
+    "host_after": {
+      "admission": {
+        "action": "status",
+        "state": {
+          "admission": {
+            "active": false,
+            "completed": 62,
+            "paused": false,
+            "recovery_required": false,
+            "rejected": 0,
+            "waiting": 0
+          }
+        },
+        "status": 200
+      },
+      "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+      "http_statuses": {
+        "kuno": 200,
+        "ollama": 200,
+        "vashti": 200
+      },
+      "intel": {
+        "xe_memory": [
+          {
+            "total_bytes": 34242297856,
+            "used_bytes": 50688000
+          }
+        ]
+      },
+      "kernel": "7.0.0-38-generic",
+      "kernel_fault_counts": {
+        "nvidia_xid": 0,
+        "xe_memory_faults": 0,
+        "xe_reset_failures": 0,
+        "xe_timeouts": 0,
+        "xe_wedged": 0
+      },
+      "nvidia_compute_process_count": 0,
+      "nvidia_memory_mib": 498,
+      "time": "2026-10-09T19:10:03.629314+00:00"
+    },
+    "host_before": {
+      "admission": {
+        "action": "status",
+        "state": {
+          "admission": {
+            "active": false,
+            "completed": 62,
+            "paused": false,
+            "recovery_required": false,
+            "rejected": 0,
+            "waiting": 0
+          }
+        },
+        "status": 200
+      },
+      "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+      "http_statuses": {
+        "kuno": 200,
+        "ollama": 200,
+        "vashti": 200
+      },
+      "intel": {
+        "xe_memory": [
+          {
+            "total_bytes": 34242297856,
+            "used_bytes": 50688000
+          }
+        ]
+      },
+      "kernel": "7.0.0-38-generic",
+      "kernel_fault_counts": {
+        "nvidia_xid": 0,
+        "xe_memory_faults": 0,
+        "xe_reset_failures": 0,
+        "xe_timeouts": 0,
+        "xe_wedged": 0
+      },
+      "nvidia_compute_process_count": 0,
+      "nvidia_memory_mib": 445,
+      "time": "2026-10-09T19:08:32.887594+00:00"
+    }
   },
   "warm_router_v131_failure": {
     "accepted": false,

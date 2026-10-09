@@ -3039,3 +3039,28 @@ then real public language-generation benchmarks. No API/frontend/catalogue/
 release change is included. **Required Vashti changes: none.** Existing full
 CPU13/actual-repair correctness gates remain controls; conditional all-hit GPU
 results must not be presented as ordinary demand inference performance.
+
+### Native Strata follow-up source and physical checkpoint, 2026-10-09
+
+Backend-only active native work now integrates original Q2 GPU draft `9f66226`,
+independent probe `bedc06f`, host-placement probe `ceb5315`/`740cd91`, profile
+selection `9d99d0d` and main `f868437` in the isolated native-text worktree.
+Frozen v135 passes both-card full Q2 draft CPU-reference/repair/owning closes.
+v136 passes both-card small direct host-allocation original math, combined
+CPU13 and actual public code200 generation. The Q2 public owner plan falls
+5,011,668,992→2,539,257,856bytes; its cold-code200 result is3.39096 continuation
+tokens/s and short all-hit warm13 is5.86668, so no speed improvement/30 claim.
+
+Explicit internal opt-in is `KUNO_LAB_MTP_PROFILE=strata-q2`; absent preserves
+Q8. Verified sidecar path remains `KUNO_TEST_MTP`. Both profiles retain actual
+target verification and original source ownership. No production engine, API,
+catalogue, installation, frontend or release selection is changed. Every trial
+restores physical memory, normal admission, all three HTTP200 and fault counts0.
+**Required Vashti changes:none.**
+
+Next source work: separately budgeted immutable host-only expert pages and
+nonreuse external CubeCL ownership; bounded GPU chronological attention selection
+for <=2048 token positions, exact original CPU fallback above that boundary.
+Neither connection has whole-model acceptance yet. Numeric receipts, exact
+artifacts/tests/limitations and preserved startup failures are in the
+[current checkpoint](kuno-native-text-checkpoint.md#smaller-draft-and-direct-host-source-physical-follow-up).
