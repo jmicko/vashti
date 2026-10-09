@@ -12,6 +12,30 @@ use std::{
 use zeroize::Zeroizing;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+fn verify_minimal(
+    expected: &mtp_public_reference::Row,
+    output: &resident_mtp::DraftOutput,
+    binding: u64,
+    cursor: usize,
+) -> Result<f64> {
+    if output.binding() != binding
+        || output.start() != expected.position()
+        || cursor != expected.completed_cursor()
+        || output.greedy() != expected.token()
+        || output.hidden().len() != expected.hidden().len()
+    {
+        return Err("resident minimal MTP actual identity/greedy rejected".into());
+    }
+    let mut error = 0f64;
+    for (&actual, &original) in output.hidden().iter().zip(expected.hidden()) {
+        let delta = (actual as f64 - original as f64).abs();
+        if !actual.is_finite() || delta > 0.006 + 0.0003 * (original as f64).abs() {
+            return Err("resident minimal MTP complete hidden rejected".into());
+        }
+        error = error.max(delta);
+    }
+    Ok(error)
+}
 pub(crate) struct Inputs {
     mtp: PathBuf,
     carry: PathBuf,
@@ -182,6 +206,59 @@ pub(crate) fn run(
                 drop(output);
             }
             checks.push(serde_json::json!({"actual_target_KV_repair":true,"continued_cursor":workspace.position(),"all_vectors_accepted":true}));
+
+            workspace.rewind(0)?;
+            let before = workspace.traffic();
+            let minimal_start = std::time::Instant::now();
+            for position in 0..4 {
+                let expected = reference.teacher_forced(position)?;
+                let output = workspace.step_draft(
+                    expected.input_token(),
+                    carry.hidden(position)?,
+                    &cancel,
+                )?;
+                hidden_error = hidden_error.max(verify_minimal(
+                    expected,
+                    &output,
+                    binding,
+                    workspace.position(),
+                )?);
+                drop(output);
+            }
+            let minimal_ns = minimal_start.elapsed().as_nanos() as u64;
+            let after = workspace.traffic();
+            if after.host_read_calls - before.host_read_calls != 4
+                || after.host_read_bytes - before.host_read_bytes != 4 * 65536
+                || after.private_upload_calls - before.private_upload_calls != 8
+                || after.private_upload_bytes - before.private_upload_bytes != 4 * 98304
+            {
+                return Err("resident minimal MTP actual traffic rejected".into());
+            }
+            checks.push(serde_json::json!({"minimal_teacher_rows":4,"complete_hidden_and_real_greedy":true,"host_reads":after.host_read_calls-before.host_read_calls,"host_read_bytes":after.host_read_bytes-before.host_read_bytes,"elapsed_ns_including_public_checks":minimal_ns}));
+            workspace.rewind(0)?;
+            let expected = reference.provisional(0)?;
+            let output = workspace.step_draft(expected.input_token(), carry.hidden(0)?, &cancel)?;
+            verify_minimal(expected, &output, binding, workspace.position())?;
+            drop(output);
+            let before = workspace.traffic();
+            let output = workspace.follow_draft(&cancel)?;
+            verify_minimal(
+                reference.provisional(1)?,
+                &output,
+                binding,
+                workspace.position(),
+            )?;
+            drop(output);
+            let after = workspace.traffic();
+            if after.host_read_calls - before.host_read_calls != 1
+                || after.host_read_bytes - before.host_read_bytes != 65536
+                || after.private_upload_calls != before.private_upload_calls
+                || after.private_upload_bytes != before.private_upload_bytes
+                || after.followup_copy_calls - before.followup_copy_calls != 1
+            {
+                return Err("resident GPU follow MTP actual traffic rejected".into());
+            }
+            checks.push(serde_json::json!({"GPU_follow_draft":true,"complete_hidden_and_real_greedy":true,"host_read_bytes":65536,"private_upload_bytes":0,"actual_GPU_copy_dispatches":1,"actual_GPU_roles_copied":2}));
             Ok(
                 serde_json::json!({"replay":replay,"checks":checks,"logits_max_abs_error":logits_error,"hidden_max_abs_error":hidden_error}),
             )
