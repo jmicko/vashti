@@ -8,7 +8,10 @@ use crate::{
     grouped_moe_chunk as c,
     main_admission::{self, MainAdmission},
     private_arena::{BufferId, BufferLayout, PrivateArena},
-    quant_matvec::{self, grouped_moe as k, iq_fixtures, iq_moe_integer, q3_subgroup_moe},
+    quant_matvec::{
+        self, grouped_moe as k, iq_fixtures, iq_moe_integer, iq_moe_shared_original,
+        q3_subgroup_moe,
+    },
     token_waves,
 };
 use cubecl::{prelude::*, server::Handle, wgpu::WgpuRuntime};
@@ -36,7 +39,7 @@ const PROFILES: [(TensorType, TensorType); 3] = [
     (TensorType::Iq4Xs, TensorType::Q8_0),
 ];
 // Original segmented acceptance remains exactly the three profiles above.
-// Integer-only acceptance additionally covers every actual pinned DAS triple.
+// Integer/shared-original acceptance also covers every actual pinned DAS triple.
 const INTEGER_PROFILES: [(TensorType, TensorType); 9] = [
     (TensorType::Iq3Xxs, TensorType::Iq4Nl),
     (TensorType::Iq3Xxs, TensorType::Q8_0),
@@ -48,8 +51,8 @@ const INTEGER_PROFILES: [(TensorType, TensorType); 9] = [
     (TensorType::Iq3S, TensorType::Q2_0),
     (TensorType::Iq4Xs, TensorType::Iq4Nl),
 ];
-fn profiles(integer: bool) -> &'static [(TensorType, TensorType)] {
-    if integer {
+fn profiles(integer: bool, shared_original: bool) -> &'static [(TensorType, TensorType)] {
+    if integer || shared_original {
         &INTEGER_PROFILES
     } else {
         &PROFILES
@@ -106,12 +109,28 @@ fn fixed_failure_class(error: &(dyn std::error::Error + 'static)) -> &'static st
 }
 
 pub fn validate_configuration() -> std::result::Result<(), &'static str> {
-    validate_mode(false)
+    validate_mode(false, false)
 }
 pub fn validate_integer_configuration() -> std::result::Result<(), &'static str> {
-    validate_mode(true)
+    validate_mode(true, false)
 }
-fn validate_mode(integer: bool) -> std::result::Result<(), &'static str> {
+// Main owns registration and must call this before device creation.
+#[allow(dead_code)]
+pub fn validate_shared_original_configuration() -> std::result::Result<(), &'static str> {
+    validate_mode(false, true)
+}
+fn public_gate(
+    integer: bool,
+    shared_original: bool,
+) -> std::result::Result<&'static str, &'static str> {
+    match (integer, shared_original) {
+        (false, false) => Ok("KUNO_LAB_SEGMENTED_IQ_PUBLIC_ONLY"),
+        (true, false) => Ok("KUNO_LAB_IQ_INTEGER_PUBLIC_ONLY"),
+        (false, true) => Ok("KUNO_LAB_IQ_SHARED_ORIGINAL_PUBLIC_ONLY"),
+        (true, true) => Err("segmented IQ arithmetic modes are exclusive"),
+    }
+}
+fn validate_mode(integer: bool, shared_original: bool) -> std::result::Result<(), &'static str> {
     if cfg!(any(
         feature = "direct-device",
         feature = "cpu-fma",
@@ -121,11 +140,7 @@ fn validate_mode(integer: bool) -> std::result::Result<(), &'static str> {
     )) {
         return Err("segmented IQ probe requires default features");
     }
-    let gate = if integer {
-        "KUNO_LAB_IQ_INTEGER_PUBLIC_ONLY"
-    } else {
-        "KUNO_LAB_SEGMENTED_IQ_PUBLIC_ONLY"
-    };
+    let gate = public_gate(integer, shared_original)?;
     if std::env::var_os(gate).as_deref() != Some(std::ffi::OsStr::new("1"))
         || std::env::var_os("KUNO_PUBLIC_RECEIPT").is_none_or(|v| v.is_empty())
     {
@@ -472,12 +487,16 @@ fn launch_segment(
     segment: usize,
     subgroup: bool,
     integer: bool,
+    shared_original: bool,
 ) -> Result<()> {
+    public_gate(integer, shared_original)?;
     let [ga, up, down] = g.projections();
     let bs = &banks[segment * 3..segment * 3 + 3];
-    if subgroup || integer {
+    if subgroup || integer || shared_original {
         let owner = |index: usize| arena.handle(ids[index]).cloned();
-        let launch = if integer {
+        let launch = if shared_original {
+            iq_moe_shared_original::launch
+        } else if integer {
             iq_moe_integer::launch
         } else {
             q3_subgroup_moe::launch
@@ -1086,12 +1105,18 @@ fn one(
     retired: &AtomicBool,
     profile: (TensorType, TensorType),
     integer: bool,
+    shared_original: bool,
 ) -> Result<serde_json::Value> {
     integer_stage(integer, profile, "profile-start", 0, 0);
     let g = geometry(profile.0, profile.1)?;
     limits(g, l)?;
     if integer && l.max_compute_workgroup_storage_size < iq_moe_integer::MAX_SHARED_BYTES as u32 {
         return Err("segmented IQ integer workgroup storage limit".into());
+    }
+    if shared_original
+        && l.max_compute_workgroup_storage_size < iq_moe_shared_original::MAX_SHARED_BYTES as u32
+    {
+        return Err("segmented IQ shared-original workgroup storage limit".into());
     }
     let (s, words) = spans(g)?;
     let pages = bank_pages(g)?;
@@ -1243,6 +1268,7 @@ fn one(
     }
     let mut errors = [[0f32; 3]; 3];
     let mut between_errors = [0f32; 3];
+    let mut shared_between_errors = [0f32; 3];
     let mut integer_original_errors = None;
     let mut integer_float_errors = None;
     let mut original = None;
@@ -1250,14 +1276,15 @@ fn one(
     for (case, case_errors) in errors
         .iter_mut()
         .enumerate()
-        .take(if integer { 3 } else { 2 })
+        .take(if integer || shared_original { 3 } else { 2 })
     {
         if case == 1 && !subgroup_supported {
             continue;
         }
         integer_stage(integer, profile, "case-start", case, 0);
         let subgroup = case == 1;
-        let integer_case = case == 2;
+        let integer_case = case == 2 && integer;
+        let shared_case = case == 2 && shared_original;
         let reference = if integer_case {
             integer_expected
                 .as_ref()
@@ -1284,6 +1311,7 @@ fn one(
                 segment,
                 subgroup,
                 integer_case,
+                shared_case,
             )?;
             let got = snapshot(arena, &ids, retired)?;
             integer_stage(integer, profile, "segment-readback", case, segment);
@@ -1315,6 +1343,9 @@ fn one(
                 // are explicit diagnostics, not a relaxed original gate.
                 integer_original_errors = Some(differences(&got, &s, original_reference)?);
                 integer_float_errors = Some(differences(&got, &s, &expected)?);
+            } else if shared_case {
+                shared_between_errors =
+                    check(&got, &before, g, &s, original_reference, true, true)?;
             } else {
                 between_errors = check(&got, &before, g, &s, original_reference, true, true)?;
             }
@@ -1360,14 +1391,22 @@ fn one(
                 &s,
                 map.groups(),
                 segment,
-                !integer,
+                !integer && !shared_original,
                 integer,
+                shared_original,
             )?;
         }
         finish_math(client, arena, &ids, g, &s)?;
         let got = snapshot(arena, &ids, retired)?;
         integer_stage(integer, profile, "fault-final-check", fault, 2);
-        check_fault(&got, &fault_before, g, &s, nonfinite, nonfinite && !integer)?;
+        check_fault(
+            &got,
+            &fault_before,
+            g,
+            &s,
+            nonfinite,
+            nonfinite && !integer && !shared_original,
+        )?;
         ledger.completed_fence(c::sample(client)?)?;
     }
     pin.validate()?;
@@ -1393,7 +1432,7 @@ fn one(
         "subgroup_count1_original64":subgroup_supported,"subgroup_rows_per_cube":if subgroup_supported {4}else{0},"subgroup_physical_lanes":if subgroup_supported {128}else{0},
         "subgroup_max_abs_activation_error":errors[1][0],"subgroup_max_abs_partial_error":errors[1][1],"subgroup_max_abs_rank_merge_error":errors[1][2],
         "subgroup_original_activation_max_difference":between_errors[0],"subgroup_original_partial_max_difference":between_errors[1],"subgroup_original_merge_max_difference":between_errors[2],
-        "subgroup_active_nonfinite_input_rejected":!integer,"subgroup_invalid_group_rejected_without_output_writes":!integer,
+        "subgroup_active_nonfinite_input_rejected":!integer && !shared_original,"subgroup_invalid_group_rejected_without_output_writes":!integer && !shared_original,
         "intermediate_inactive_rank_status_and_gap_checks":true,"original_global_local_slot_mapping":true,
         "full_public_bank_and_source_padding_preserved_after_private_reset":true});
     if integer {
@@ -1426,20 +1465,51 @@ fn one(
         report["integer_actual_workgroup_bytes"] =
             serde_json::json!(iq_moe_integer::workgroup_bytes(profile.0.gguf_id()));
     }
+    if shared_original {
+        report["shared_original_policy"] = serde_json::json!(
+            "original64-F32-activations-original-packed-weights-workgroup-codebooks"
+        );
+        report["shared_original_activation_quantization"] = serde_json::json!(false);
+        report["shared_original_reference_max_abs_errors"] = serde_json::json!(errors[2]);
+        report["shared_original_gpu_max_abs_differences"] =
+            serde_json::json!(shared_between_errors);
+        report["shared_original_active_nonfinite_input_rejected_without_output_writes"] =
+            serde_json::json!(true);
+        report["shared_original_invalid_group_rejected_without_output_writes"] =
+            serde_json::json!(true);
+        report["shared_original_max_workgroup_bytes"] =
+            serde_json::json!(iq_moe_shared_original::MAX_SHARED_BYTES);
+        report["shared_original_actual_workgroup_bytes"] =
+            serde_json::json!(iq_moe_shared_original::workgroup_bytes(profile.0.gguf_id()));
+    }
     Ok(report)
 }
 pub fn run(client: &ComputeClient<WgpuRuntime>, l: &wgpu::Limits) -> Result<()> {
-    run_mode(client, l, false)
+    run_mode(client, l, false, false)
 }
 pub fn run_integer(client: &ComputeClient<WgpuRuntime>, l: &wgpu::Limits) -> Result<()> {
-    run_mode(client, l, true)
+    run_mode(client, l, true, false)
 }
-fn run_mode(client: &ComputeClient<WgpuRuntime>, l: &wgpu::Limits, integer: bool) -> Result<()> {
-    validate_mode(integer)?;
+#[allow(dead_code)]
+pub fn run_shared_original(client: &ComputeClient<WgpuRuntime>, l: &wgpu::Limits) -> Result<()> {
+    run_mode(client, l, false, true)
+}
+fn run_mode(
+    client: &ComputeClient<WgpuRuntime>,
+    l: &wgpu::Limits,
+    integer: bool,
+    shared_original: bool,
+) -> Result<()> {
+    validate_mode(integer, shared_original)?;
     if integer && l.max_compute_workgroup_storage_size < iq_moe_integer::MAX_SHARED_BYTES as u32 {
         return Err("segmented IQ integer workgroup storage limit".into());
     }
-    for &(gate, down) in profiles(integer) {
+    if shared_original
+        && l.max_compute_workgroup_storage_size < iq_moe_shared_original::MAX_SHARED_BYTES as u32
+    {
+        return Err("segmented IQ shared-original workgroup storage limit".into());
+    }
+    for &(gate, down) in profiles(integer, shared_original) {
         limits(geometry(gate, down)?, l)?;
     }
     let path = std::env::var_os("KUNO_PUBLIC_RECEIPT").ok_or("segmented IQ receipt required")?;
@@ -1449,25 +1519,38 @@ fn run_mode(client: &ComputeClient<WgpuRuntime>, l: &wgpu::Limits, integer: bool
     arena.enable_public_owned_zero_audit()?;
     let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<_> {
         let mut reports = Vec::new();
-        for &profile in profiles(integer) {
-            reports.push(one(client, l, &mut arena, &retired, profile, integer)?);
+        for &profile in profiles(integer, shared_original) {
+            reports.push(one(
+                client,
+                l,
+                &mut arena,
+                &retired,
+                profile,
+                integer,
+                shared_original,
+            )?);
             client.memory_cleanup();
         }
         Ok(reports)
     }));
-    if integer {
+    let failure_marker = if shared_original {
+        "public_iq_shared_original_failure"
+    } else {
+        "public_iq_integer_failure"
+    };
+    if integer || shared_original {
         match &attempt {
             Ok(Err(error)) => println!(
-                "public_iq_integer_failure class={}",
+                "{failure_marker} class={}",
                 fixed_failure_class(error.as_ref())
             ),
-            Err(_) => println!("public_iq_integer_failure class=panic"),
+            Err(_) => println!("{failure_marker} class=panic"),
             _ => {}
         }
     }
     let closed = arena.close();
-    if integer && closed.is_err() {
-        println!("public_iq_integer_failure class=owner-close");
+    if (integer || shared_original) && closed.is_err() {
+        println!("{failure_marker} class=owner-close");
     }
     let reports = match (attempt, closed, retired.load(Ordering::Acquire)) {
         (Ok(Ok(v)), Ok(()), false) => v,
@@ -1476,7 +1559,9 @@ fn run_mode(client: &ComputeClient<WgpuRuntime>, l: &wgpu::Limits, integer: bool
     let audit = arena
         .owned_zero_audit_receipt()
         .ok_or("segmented IQ full owner erasure absent")?;
-    let scope = if integer {
+    let scope = if shared_original {
+        "fixed-public-synthetic-original64-F32-workgroup-codebook-IQ-MoE-only"
+    } else if integer {
         "fixed-public-synthetic-original-packed-IQ-two-Q8-plane-integer-MoE-only"
     } else {
         "fixed-public-synthetic-original-packed-segmented-IQ-MoE-only"
@@ -1491,7 +1576,11 @@ fn run_mode(client: &ComputeClient<WgpuRuntime>, l: &wgpu::Limits, integer: bool
         .create_new(true)
         .open(path)?;
     file.write_all(serde_json::to_string_pretty(&report)?.as_bytes())?;
-    if integer {
+    if shared_original {
+        println!(
+            "public_shared_original_iq_moe profiles=9 segments=2 ranks=10 original64=1 activation_quantization=0 accepted=1"
+        );
+    } else if integer {
         println!(
             "public_integer_iq_moe profiles=9 segments=2 ranks=10 alternative_arithmetic=1 accepted=1"
         );
@@ -1506,8 +1595,9 @@ mod tests {
     use super::*;
     #[test]
     fn integer_profiles_cover_all_actual_das_triples_and_keep_default_original3() {
-        assert_eq!(profiles(false), &PROFILES);
-        assert_eq!(profiles(true), &INTEGER_PROFILES);
+        assert_eq!(profiles(false, false), &PROFILES);
+        assert_eq!(profiles(true, false), &INTEGER_PROFILES);
+        assert_eq!(profiles(false, true), &INTEGER_PROFILES);
         for &profile in &INTEGER_PROFILES {
             assert_eq!(
                 INTEGER_PROFILES.iter().filter(|&&v| v == profile).count(),
@@ -1530,6 +1620,35 @@ mod tests {
             }
         }
         assert_eq!(actual.len(), 7);
+    }
+    #[test]
+    fn shared_original_public_gate_is_exclusive_and_all_nine_shapes_are_admitted() {
+        assert_eq!(
+            public_gate(false, true).unwrap(),
+            "KUNO_LAB_IQ_SHARED_ORIGINAL_PUBLIC_ONLY"
+        );
+        assert_eq!(
+            public_gate(false, false).unwrap(),
+            "KUNO_LAB_SEGMENTED_IQ_PUBLIC_ONLY"
+        );
+        assert_eq!(
+            public_gate(true, false).unwrap(),
+            "KUNO_LAB_IQ_INTEGER_PUBLIC_ONLY"
+        );
+        assert!(public_gate(true, true).is_err());
+        assert_eq!(profiles(false, false).len(), 3);
+        assert_eq!(profiles(false, true).len(), 9);
+        for &(gate, down) in profiles(false, true) {
+            let g = geometry(gate, down).unwrap();
+            for first in [0, SEGMENT] {
+                iq_moe_shared_original::validate_geometry(g, first, SEGMENT).unwrap();
+            }
+            assert!(
+                iq_moe_shared_original::workgroup_bytes(gate.gguf_id())
+                    <= iq_moe_shared_original::MAX_SHARED_BYTES
+            );
+        }
+        assert_eq!(iq_moe_shared_original::MAX_SHARED_BYTES, 19_460);
     }
     #[test]
     fn exact_mixed_profiles_original_strides_and_full_page_budget() {

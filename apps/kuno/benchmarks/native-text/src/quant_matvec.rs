@@ -24,6 +24,9 @@ pub(crate) mod iq_fixtures;
 #[path = "iq_moe_integer.rs"]
 pub(crate) mod iq_moe_integer;
 
+#[path = "iq_moe_shared_original.rs"]
+pub(crate) mod iq_moe_shared_original;
+
 pub const F32: u32 = 0;
 pub const F16: u32 = 1;
 pub const Q5_0: u32 = 6;
