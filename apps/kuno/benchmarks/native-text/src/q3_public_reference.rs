@@ -1,4 +1,6 @@
-//! Four or32 fixed public original-Q3 positions from the independent CPU path.
+//! Four or 32 fixed public original-Q3 positions from the independent CPU path.
+//! An explicit 23-position prefix uses the complete validated 32-position file;
+//! it ends before the known router discontinuity and is not 32-position acceptance.
 //! No request-derived input, vocabulary text or expert history is persisted.
 use kuno_text::model::greedy;
 use kuno_text::{Error, Result};
@@ -10,6 +12,7 @@ const VOCAB: usize = 248320;
 const RECORD_BYTES: usize = 16 + 4 * VOCAB;
 const DEFAULT_POSITIONS: usize = 4;
 const LONG_POSITIONS: usize = 32;
+const PREFIX_POSITIONS: usize = 23;
 
 /// Numeric diagnostics are reachable only through this fixed-public fixture.
 /// Keep the original f32 acceptance equation: the f64 summaries below are
@@ -142,7 +145,12 @@ impl Reference {
         self.logits.len()
     }
     pub(crate) fn require_positions(&self, positions: usize) -> Result<()> {
-        if !matches!(positions, DEFAULT_POSITIONS | LONG_POSITIONS) || self.len() != positions {
+        let required = match positions {
+            DEFAULT_POSITIONS | LONG_POSITIONS => positions,
+            PREFIX_POSITIONS => LONG_POSITIONS,
+            _ => return Err(Error::InvalidFormat("public Q3 selected position count")),
+        };
+        if self.len() != required {
             return Err(Error::InvalidFormat("public Q3 selected position count"));
         }
         Ok(())
@@ -222,7 +230,7 @@ mod tests {
     fn exact4_and32_lengths_bound_every_other_reference_size() {
         assert_eq!(positions_for_length(3_973_192).unwrap(), 4);
         assert_eq!(positions_for_length(31_785_480).unwrap(), 32);
-        for positions in [0, 1, 3, 5, 8, 31, 33, 64] {
+        for positions in [0, 1, 3, 5, 8, 23, 31, 33, 64] {
             assert!(positions_for_length((8 + positions * RECORD_BYTES) as u64).is_err());
         }
         for positions in [4, 32] {
@@ -298,6 +306,54 @@ mod tests {
             values[index] = original;
         }
         reference.verify(31, &values).unwrap();
+    }
+
+    #[test]
+    fn explicit23_prefix_requires_the_complete32_reference_not_a_prefix_file() {
+        let reference = Reference::parse(&public_bytes(LONG_POSITIONS), LONG_POSITIONS).unwrap();
+        reference.require_positions(PREFIX_POSITIONS).unwrap();
+        reference.require_positions(LONG_POSITIONS).unwrap();
+        assert!(reference.require_positions(DEFAULT_POSITIONS).is_err());
+        for position in 0..PREFIX_POSITIONS {
+            reference
+                .verify(position, &reference.logits[position])
+                .unwrap();
+        }
+        let short = Reference::parse(&public_bytes(DEFAULT_POSITIONS), DEFAULT_POSITIONS).unwrap();
+        assert!(short.require_positions(PREFIX_POSITIONS).is_err());
+        short.require_positions(DEFAULT_POSITIONS).unwrap();
+        assert!(short.require_positions(LONG_POSITIONS).is_err());
+        assert!(Reference::parse(&public_bytes(PREFIX_POSITIONS), PREFIX_POSITIONS).is_err());
+        for positions in [0, 1, 8, 22, 24, 31, 33] {
+            assert!(reference.require_positions(positions).is_err());
+        }
+    }
+
+    #[test]
+    fn prefix_keeps_original_full_vector_gates_and_validates_the_unused_suffix() {
+        let original = public_bytes(LONG_POSITIONS);
+        let reference = Reference::parse(&original, LONG_POSITIONS).unwrap();
+        reference.require_positions(PREFIX_POSITIONS).unwrap();
+        // Last prefix vector and first omitted vector retain identical gates;
+        // selecting a prefix does not mutate or truncate the reference owner.
+        for position in [PREFIX_POSITIONS - 1, PREFIX_POSITIONS, LONG_POSITIONS - 1] {
+            let mut actual = reference.logits[position].to_vec();
+            actual[VOCAB - 1] = 0.007;
+            assert!(matches!(
+                reference.verify(position, &actual),
+                Err(Error::InvalidFormat("public Q3 full logits mismatch"))
+            ));
+            actual[VOCAB - 1] = f32::NAN;
+            assert!(reference.verify(position, &actual).is_err());
+        }
+        reference.require_positions(LONG_POSITIONS).unwrap();
+        for position in [PREFIX_POSITIONS, LONG_POSITIONS - 1] {
+            let mut malformed = original.clone();
+            let final_lane = 8 + (position + 1) * RECORD_BYTES - 4;
+            malformed[final_lane..final_lane + 4].copy_from_slice(&f32::NAN.to_le_bytes());
+            assert!(Reference::parse(&malformed, LONG_POSITIONS).is_err());
+        }
+        assert!(Reference::parse(&original[..original.len() - 1], LONG_POSITIONS).is_err());
     }
 
     #[test]
