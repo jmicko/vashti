@@ -2103,6 +2103,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         prepared: &'plan crate::public_host_expert_attachment::PreparedPlan<'m, 'f>,
         device: &wgpu::Device,
         reserved: u64,
+        inactive_partition_exit: bool,
         cancel: &AtomicBool,
     ) -> Result<crate::public_host_expert_attachment::Attachment<'plan, 'm, 'f>> {
         u::cancel(cancel)?;
@@ -2145,6 +2146,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 &mut self.native_batch.as_mut().ok_or(error())?.moe,
                 &self.arena,
                 reserved,
+                inactive_partition_exit,
                 cancel,
             )
         }
@@ -2159,6 +2161,18 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             return Err(error());
         }
         Ok(native.moe.frozen_source_counters())
+    }
+
+    pub(crate) fn native_frozen_source_partition_exit(
+        &self,
+        executor: &GpuExecutor<'f>,
+    ) -> Result<bool> {
+        self.completed_native_projection_boundary(executor)?;
+        let native = self.native_batch.as_ref().ok_or(error())?;
+        if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
+            return Err(error());
+        }
+        native.moe.frozen_host_source_partition_exit()
     }
 
     pub(crate) fn activate_public_frozen_host_batch_router(

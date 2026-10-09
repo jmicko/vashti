@@ -156,6 +156,7 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
         workspace: &mut batch_moe::Workspace,
         arena: &PrivateArena,
         exact_reserved_host: u64,
+        inactive_partition_exit: bool,
         cancel: &AtomicBool,
     ) -> Result<Attachment<'plan, 'model, 'file>> {
         u::cancel(cancel)?;
@@ -268,13 +269,23 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
         if owners.len() != mirror::PAGES || registered.len() != mirror::PAGES {
             return Err(rejected());
         }
-        let sources = Sources::new(
-            executor,
-            self.graph,
-            &self.plan,
-            registered,
-            self.budget.shared_model_source_host_bytes,
-        )?;
+        let sources = if inactive_partition_exit {
+            Sources::new_with_inactive_partition_exit(
+                executor,
+                self.graph,
+                &self.plan,
+                registered,
+                self.budget.shared_model_source_host_bytes,
+            )
+        } else {
+            Sources::new(
+                executor,
+                self.graph,
+                &self.plan,
+                registered,
+                self.budget.shared_model_source_host_bytes,
+            )
+        }?;
         let registry = client
             .public_external_host_usage()
             .map_err(|_| backend_error())?;
