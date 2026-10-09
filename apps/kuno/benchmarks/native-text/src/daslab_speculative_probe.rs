@@ -1,0 +1,454 @@
+//! Fixed public greedy target/MTP on two original devices. No HTTP path.
+//! Only real target-verified continuations enter the accepted-token count.
+use crate::{
+    daslab_carry_reference13 as reference, daslab_profile,
+    executor::GpuExecutor,
+    expert_banks::OriginalPackedProfile,
+    resident_model::{
+        ResidentModel,
+        batch::{Config, LatestTargetRound},
+    },
+    resident_mtp,
+};
+use cubecl::{
+    prelude::*,
+    wgpu::{RuntimeOptions, WgpuRuntime, WgpuSetup, init_device},
+};
+use kuno_text::{
+    GgufFile, GgufLimits,
+    model::{Qwen4Exp, greedy},
+    mtp::MtpGraph,
+};
+use std::{
+    collections::BTreeMap,
+    ffi::{OsStr, OsString},
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Instant,
+};
+use zeroize::Zeroizing;
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+pub(crate) struct Inputs {
+    directory: PathBuf,
+    mtp: PathBuf,
+    reference: PathBuf,
+    receipt: PathBuf,
+}
+pub(crate) fn registration(
+    args: &[OsString],
+    env: impl IntoIterator<Item = (OsString, OsString)>,
+    default: bool,
+) -> std::result::Result<Inputs, &'static str> {
+    if !default || args.len() != 3 || args[1] != "intel" || args[2] != "daslab-speculative-probe" {
+        return Err("speculative lab requires default fixed public B70 target");
+    }
+    let mut values = BTreeMap::new();
+    for (key, value) in env {
+        if ![b"KUNO_LAB_".as_slice(), b"KUNO_TEST_", b"KUNO_PUBLIC_"]
+            .iter()
+            .any(|p| key.as_encoded_bytes().starts_with(p))
+        {
+            continue;
+        }
+        if !matches!(
+            key.to_str(),
+            Some(
+                "KUNO_LAB_SPECULATIVE_PUBLIC_ONLY"
+                    | "KUNO_TEST_Q3_DIR"
+                    | "KUNO_TEST_MTP"
+                    | "KUNO_PUBLIC_TARGET_CARRY13_REFERENCE"
+                    | "KUNO_PUBLIC_RECEIPT"
+                    | "KUNO_LAB_STATIC_CACHE_BYTES"
+            )
+        ) || value.is_empty()
+            || values.insert(key, value).is_some()
+        {
+            return Err("speculative lab rejects inherited experiments");
+        }
+    }
+    if values.remove(OsStr::new("KUNO_LAB_SPECULATIVE_PUBLIC_ONLY")) != Some("1".into())
+        || values.remove(OsStr::new("KUNO_LAB_STATIC_CACHE_BYTES")) != Some("8589934592".into())
+    {
+        return Err("speculative fixed public/cache gates missing");
+    }
+    let mut path = |name: &str| {
+        values
+            .remove(OsStr::new(name))
+            .map(PathBuf::from)
+            .ok_or("speculative public path missing")
+    };
+    Ok(Inputs {
+        directory: path("KUNO_TEST_Q3_DIR")?,
+        mtp: path("KUNO_TEST_MTP")?,
+        reference: path("KUNO_PUBLIC_TARGET_CARRY13_REFERENCE")?,
+        receipt: path("KUNO_PUBLIC_RECEIPT")?,
+    })
+}
+
+/// All rows are real target outputs. A first mismatch contributes only the
+/// target correction; later provisional tokens are discarded.
+fn accepted_prefix(inputs: &[u32], predicted: &[u32]) -> std::result::Result<usize, &'static str> {
+    if !(1..=3).contains(&inputs.len())
+        || predicted.len() != inputs.len()
+        || inputs.iter().chain(predicted).any(|&t| t >= 248320)
+    {
+        return Err("speculative acceptance geometry");
+    }
+    for row in 1..inputs.len() {
+        if inputs[row] != predicted[row - 1] {
+            return Ok(row);
+        }
+    }
+    Ok(inputs.len())
+}
+
+async fn draft_client() -> Result<(ComputeClient<WgpuRuntime>, wgpu::Limits)> {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::VULKAN,
+        ..wgpu::InstanceDescriptor::new_without_display_handle()
+    });
+    let mut adapters: Vec<_> = instance
+        .enumerate_adapters(wgpu::Backends::VULKAN)
+        .await
+        .into_iter()
+        .filter(|a| {
+            a.get_info().vendor == 0x10de
+                && a.get_info().device_type == wgpu::DeviceType::DiscreteGpu
+        })
+        .collect();
+    if adapters.len() != 1 {
+        return Err("speculative draft GPU ambiguous".into());
+    }
+    let adapter = adapters.remove(0);
+    let info = adapter.get_info();
+    let limits = adapter.limits();
+    resident_mtp::validate_limits(&limits)?;
+    if !adapter.features().contains(wgpu::Features::SUBGROUP)
+        || info.subgroup_min_size < 16
+        || info.subgroup_max_size > 32
+    {
+        return Err("speculative draft subgroups rejected".into());
+    }
+    let (device, queue) = adapter
+        .request_device(&wgpu::DeviceDescriptor {
+            label: Some("Kuno fixed public native MTP"),
+            required_features: wgpu::Features::SUBGROUP,
+            required_limits: limits.clone(),
+            memory_hints: wgpu::MemoryHints::MemoryUsage,
+            trace: wgpu::Trace::Off,
+            ..Default::default()
+        })
+        .await
+        .map_err(|_| "speculative draft device setup failed")?;
+    let selected = init_device(
+        WgpuSetup {
+            instance,
+            adapter,
+            device,
+            queue,
+            backend: wgpu::Backend::Vulkan,
+        },
+        RuntimeOptions {
+            tasks_max: 256,
+            memory_config: crate::private_arena::required_memory_configuration(),
+        },
+    );
+    Ok((WgpuRuntime::client(&selected), limits))
+}
+
+pub(crate) fn run(
+    client: &ComputeClient<WgpuRuntime>,
+    limits: &wgpu::Limits,
+    input: Inputs,
+) -> Result<()> {
+    std::panic::set_hook(Box::new(|_| {
+        eprintln!("public_speculative_failure panic=true")
+    }));
+    let expected = reference::Reference::load(&input.reference)?;
+    let paths: Vec<_> = (1..=2)
+        .map(|i| {
+            input.directory.join(format!(
+                "Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-{i:05}-of-00002.gguf"
+            ))
+        })
+        .collect();
+    let file = GgufFile::open_shards(&paths, GgufLimits::default())?;
+    if file.file_len() != 83_617_662_656 {
+        return Err("original DAS extent rejected".into());
+    }
+    daslab_profile::validate_inventory(
+        file.tensors()
+            .iter()
+            .map(|(name, tensor)| (name.as_str(), tensor.dtype().gguf_id())),
+    )
+    .map_err(|_| "original DAS inventory rejected")?;
+    let sidecar = GgufFile::open(&input.mtp, GgufLimits::default())?;
+    if sidecar.file_len() != 4_137_429_120 || sidecar.tensors().len() != 34 {
+        return Err("original draft artifact rejected".into());
+    }
+    // SAFETY: exclusive protected runner verifies immutable static artifacts.
+    unsafe {
+        file.enable_mapped_weights()?;
+        sidecar.enable_mapped_weights()?;
+    }
+    let graph = Qwen4Exp::bind(&file)?;
+    let draft_graph = MtpGraph::bind(&sidecar)?;
+    crate::resident_util::select_retained_metadata(true);
+    crate::resident_util::select_compute_scratch_clear(true);
+    client.configure_transient_io(128 * 1024 * 1024)?;
+    let (draft_client, draft_limits) = cubecl::future::block_on(draft_client())?;
+    draft_client.configure_transient_io(64 * 1024 * 1024)?;
+    let target_retired = Arc::new(AtomicBool::new(false));
+    let draft_retired = Arc::new(AtomicBool::new(false));
+    let cancel = AtomicBool::new(false);
+    let loading = Instant::now();
+    let mut draft = resident_mtp::ResidentMtp::new(
+        &draft_graph,
+        draft_client,
+        &draft_limits,
+        draft_retired.clone(),
+    )?;
+    let mut executor = GpuExecutor::new_with_profile(
+        &file,
+        client.clone(),
+        8 * 1024 * 1024 * 1024,
+        144,
+        31 * 1024 * 1024 * 1024,
+        OriginalPackedProfile::DaslabIq3,
+    )?;
+    executor.target_rows_reserved = true;
+    executor.enable_transient_resident(target_retired.clone())?;
+    executor.fast_dense = true;
+    executor.fast_dense_fault = true;
+    executor.shared_kernels = true;
+    executor.shared_gdn = true;
+    let mut passes = Vec::with_capacity(1);
+    let attempt = (|| -> Result<()> {
+        // A target admission binds one owner and close permanently poisons it.
+        // Never reset that ledger to manufacture a warm second sequence.
+        for replay in 0..1 {
+            let config = Config::new(client, limits, 8)?
+                .reserve_target_rows()?
+                .reserve_latest_target_checkpoint()?;
+            let mut target = ResidentModel::new_with_native_batch(
+                graph.bound_graph(),
+                client.clone(),
+                reference::CONTEXT,
+                &mut executor,
+                config,
+                true,
+            )?;
+            let pass = (|| -> Result<serde_json::Value> {
+                let initial = target.prefill_chunk_with_carry(&mut executor, &[0], &cancel)?;
+                expected.verify(0, initial.logits(0)?, initial.hidden(0)?)?;
+                let mut confirmed = greedy(initial.logits(0)?)?;
+                let mut carry = Zeroizing::new(initial.hidden(0)?.to_vec());
+                drop(initial);
+                if target.completed_target_rows_cursor(&executor)? != 1 || draft.position() != 0 {
+                    return Err("speculative initial real cursor rejected".into());
+                }
+                let load_ns = loading.elapsed().as_nanos() as u64;
+                let mut accepted_tokens = 0usize;
+                let mut proposed_tokens = 0usize;
+                let mut accepted_drafts = 0usize;
+                let mut rounds = Vec::new();
+                let before_traffic = draft.traffic();
+                let before_uploads = executor.expert_uploads;
+                let before_hits = executor.expert_hits;
+                let before_bytes = executor.uploaded_bytes;
+                let start = Instant::now();
+                while target.completed_target_rows_cursor(&executor)? < reference::POSITIONS {
+                    let position = target.completed_target_rows_cursor(&executor)?;
+                    let count = (reference::POSITIONS - position).min(3);
+                    if confirmed != expected.input_token(position)?
+                        || draft.position() != position - 1
+                    {
+                        return Err("speculative actual input/cell alignment rejected".into());
+                    }
+                    let round_start = Instant::now();
+                    let mut inputs = Zeroizing::new(vec![confirmed]);
+                    let drafting = Instant::now();
+                    if count > 1 {
+                        let output = draft.step_draft(confirmed, &carry, &cancel)?;
+                        if output.start() != position - 1 {
+                            return Err("speculative first draft cell rejected".into());
+                        }
+                        inputs.push(output.greedy());
+                        drop(output);
+                        if count > 2 {
+                            let output = draft.follow_draft(&cancel)?;
+                            if output.start() != position {
+                                return Err("speculative second draft cell rejected".into());
+                            }
+                            inputs.push(output.greedy());
+                            drop(output);
+                        }
+                    }
+                    let draft_ns = drafting.elapsed().as_nanos() as u64;
+                    let verifying = Instant::now();
+                    let mut round =
+                        LatestTargetRound::begin(&mut target, &mut executor, &inputs, &cancel)?;
+                    let rows = round.verify(&cancel)?;
+                    if rows.start() != position
+                        || rows.count() != count
+                        || rows.binding_id() != graph.bound_graph().binding_id()
+                    {
+                        return Err("speculative verification identity rejected".into());
+                    }
+                    let mut predicted = Zeroizing::new(Vec::with_capacity(count));
+                    for row in 0..count {
+                        predicted.push(greedy(rows.logits(row)?)?);
+                    }
+                    let accepted = accepted_prefix(&inputs, &predicted)?;
+                    let mut real_carries =
+                        Zeroizing::new(Vec::with_capacity(accepted * reference::HIDDEN));
+                    for row in 0..accepted {
+                        expected.verify(position + row, rows.logits(row)?, rows.hidden(row)?)?;
+                        real_carries.extend_from_slice(rows.hidden(row)?);
+                    }
+                    let next_confirmed = predicted[accepted - 1];
+                    drop(rows);
+                    let verify_ns = verifying.elapsed().as_nanos() as u64;
+                    let repair = Instant::now();
+                    if let Some(recomputed) = round.finish(accepted, &cancel)? {
+                        if recomputed.start() != position || recomputed.count() != accepted {
+                            return Err("speculative repaired range rejected".into());
+                        }
+                        for row in 0..accepted {
+                            expected.verify(
+                                position + row,
+                                recomputed.logits(row)?,
+                                recomputed.hidden(row)?,
+                            )?;
+                        }
+                        drop(recomputed);
+                    }
+                    if target.completed_target_rows_cursor(&executor)? != position + accepted {
+                        return Err("speculative repaired actual cursor rejected".into());
+                    }
+                    if count > 1 {
+                        // First cell used real target carry. Keep that exact KV;
+                        // replace only subsequent provisional cells with reality.
+                        draft.rewind(position)?;
+                        for row in 1..accepted {
+                            draft.append_kv(
+                                inputs[row],
+                                &real_carries
+                                    [(row - 1) * reference::HIDDEN..row * reference::HIDDEN],
+                                &cancel,
+                            )?;
+                        }
+                    } else {
+                        draft.append_kv(confirmed, &carry, &cancel)?;
+                    }
+                    if draft.position() != position + accepted - 1 {
+                        return Err("speculative corrected draft cursor rejected".into());
+                    }
+                    carry.copy_from_slice(
+                        &real_carries
+                            [(accepted - 1) * reference::HIDDEN..accepted * reference::HIDDEN],
+                    );
+                    confirmed = next_confirmed;
+                    accepted_tokens += accepted;
+                    proposed_tokens += count - 1;
+                    accepted_drafts += accepted - 1;
+                    rounds.push(serde_json::json!({"target_start":position,"proposed_drafts":count-1,"accepted_drafts":accepted-1,"accepted_outputs":accepted,"draft_ns":draft_ns,"verify_ns_including_public_vector_checks":verify_ns,"repair_ns":repair.elapsed().as_nanos() as u64,"total_ns":round_start.elapsed().as_nanos() as u64,"target_completed_cursor":position+accepted,"draft_completed_cell":draft.position()}));
+                }
+                let elapsed_ns = start.elapsed().as_nanos() as u64;
+                if accepted_tokens != 12 {
+                    return Err("speculative actual accepted token count rejected".into());
+                }
+                let after = draft.traffic();
+                Ok(
+                    serde_json::json!({"replay":replay,"timing_scope":"original normal routing/demand uploads; public checks and actual repair included","load_and_initial_prefill_cumulative_ns":load_ns,"accepted_tokens":accepted_tokens,"elapsed_ns":elapsed_ns,"accepted_tokens_per_second":accepted_tokens as f64*1e9/elapsed_ns as f64,"proposed_drafts":proposed_tokens,"accepted_drafts":accepted_drafts,"rounds":rounds,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"draft_traffic":{"host_read_calls":after.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after.host_read_bytes-before_traffic.host_read_bytes,"private_upload_calls":after.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after.followup_copy_calls-before_traffic.followup_copy_calls}}),
+                )
+            })();
+            let close = target.close();
+            let audit = target.public_owned_zero_audit_receipt();
+            drop(target);
+            close?;
+            let (main, sources) = audit.ok_or("speculative target full owning erasure rejected")?;
+            let mut record = pass?;
+            record["target_close"] = serde_json::json!({"main_buffers":main.buffers,"main_bytes":main.bytes,"source_buffers":sources.buffers,"source_bytes":sources.bytes});
+            passes.push(record);
+        }
+        Ok(())
+    })();
+    let target_close = executor.close_transient_resident();
+    drop(executor);
+    let draft_close = draft.close();
+    drop(draft);
+    target_close?;
+    let draft_close = draft_close?;
+    attempt?;
+    if target_retired.load(Ordering::Acquire) || draft_retired.load(Ordering::Acquire) {
+        return Err("speculative physical stream retired".into());
+    }
+    file.verify_file_unchanged()?;
+    sidecar.verify_file_unchanged()?;
+    let value = serde_json::json!({"scope":"fixed-public-DASLab13-real-dual-GPU-greedy-speculation","target_card":"B70","draft_card":"RTX3060","compiled_token0":0,"seed":424242,"temperature":0,"oracle_forcing":false,"expert_route_forcing":false,"passes":passes,"draft_close":{"private_buffers":draft_close.private.buffers,"private_bytes":draft_close.private.bytes,"public_bytes":draft_close.public_bytes,"main_reserved":draft_close.main_reserved},"private_or_production_accepted":false});
+    serde_json::to_writer_pretty(
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(input.receipt)?,
+        &value,
+    )?;
+    println!("public_speculative_complete all_accepted_vectors=true owners_erased=true");
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn real_greedy_acceptance_keeps_only_prefix_and_target_correction() {
+        assert_eq!(accepted_prefix(&[7, 8, 9], &[8, 9, 10]), Ok(3));
+        assert_eq!(accepted_prefix(&[7, 8, 9], &[8, 11, 12]), Ok(2));
+        assert_eq!(accepted_prefix(&[7, 8, 9], &[11, 9, 12]), Ok(1));
+        assert_eq!(accepted_prefix(&[7, 8], &[8, 9]), Ok(2));
+        assert_eq!(accepted_prefix(&[7], &[8]), Ok(1));
+        for (x, y) in [
+            (vec![], vec![]),
+            (vec![1, 2, 3, 4], vec![1, 2, 3, 4]),
+            (vec![1, 2], vec![1]),
+            (vec![1, 248320], vec![1, 2]),
+        ] {
+            assert!(accepted_prefix(&x, &y).is_err());
+        }
+    }
+    #[test]
+    fn registration_is_exclusive_default_public_dual_gpu() {
+        let args: Vec<OsString> = ["binary", "intel", "daslab-speculative-probe"]
+            .map(Into::into)
+            .to_vec();
+        let env = || {
+            [
+                ("KUNO_LAB_SPECULATIVE_PUBLIC_ONLY", "1"),
+                ("KUNO_LAB_STATIC_CACHE_BYTES", "8589934592"),
+                ("KUNO_TEST_Q3_DIR", "/original"),
+                ("KUNO_TEST_MTP", "/original/sidecar"),
+                ("KUNO_PUBLIC_TARGET_CARRY13_REFERENCE", "/public/carry"),
+                ("KUNO_PUBLIC_RECEIPT", "/public/receipt"),
+            ]
+            .map(|(k, v)| (k.into(), v.into()))
+            .to_vec()
+        };
+        assert!(registration(&args, env(), true).is_ok());
+        assert!(registration(&args, env(), false).is_err());
+        for index in 0..6 {
+            let mut values = env();
+            values.remove(index);
+            assert!(registration(&args, values, true).is_err());
+        }
+        let mut values = env();
+        values.push(("KUNO_LAB_TARGET_REPAIR_PUBLIC_ONLY".into(), "1".into()));
+        assert!(registration(&args, values, true).is_err());
+        let mut wrong = args.clone();
+        wrong[1] = "nvidia".into();
+        assert!(registration(&wrong, env(), true).is_err());
+    }
+}

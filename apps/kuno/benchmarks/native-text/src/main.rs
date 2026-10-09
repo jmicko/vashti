@@ -7,7 +7,10 @@ mod cpu_gpu_expert_schedule;
 // Shared with the standalone CPU writer; writer-only methods are inert here.
 #[allow(dead_code)]
 mod daslab_carry_reference;
+#[allow(dead_code)] // Separate numeric-only public CPU writer shares this parser.
+mod daslab_carry_reference13;
 mod daslab_profile;
+mod daslab_speculative_probe;
 mod daslab_target_repair_probe;
 mod daslab_target_rows_probe;
 mod executor;
@@ -1051,6 +1054,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => return Err("expected intel or nvidia".into()),
     };
     let mode = std::env::args().nth(2).unwrap_or("probe".into());
+    let speculative_inputs = if mode == "daslab-speculative-probe" {
+        Some(daslab_speculative_probe::registration(
+            &std::env::args_os().collect::<Vec<_>>(),
+            std::env::vars_os(),
+            mtp_gpu_probe::default_build(),
+        )?)
+    } else {
+        if std::env::var_os("KUNO_LAB_SPECULATIVE_PUBLIC_ONLY").is_some() {
+            return Err("speculative public gate requires its dedicated probe".into());
+        }
+        None
+    };
     let target_repair_inputs = if mode == "daslab-target-repair-probe" {
         Some(daslab_target_repair_probe::registration(
             &std::env::args_os().collect::<Vec<_>>(),
@@ -1919,7 +1934,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if mtp_gpu_inputs.is_some() {
             mtp_gpu_probe::validate_limits(&adapter.limits())?;
         }
-        if target_rows_inputs.is_some() || target_repair_inputs.is_some() {
+        if target_rows_inputs.is_some()
+            || target_repair_inputs.is_some()
+            || speculative_inputs.is_some()
+        {
             daslab_target_rows_probe::validate_limits(&adapter.limits())?;
         }
         if resident_mtp_inputs.is_some() {
@@ -2020,6 +2038,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tasks_max: if batch_tasks
                     || target_rows_inputs.is_some()
                     || target_repair_inputs.is_some()
+                    || speculative_inputs.is_some()
                     || resident_mtp_inputs.is_some()
                 {
                     256
@@ -2030,6 +2049,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         );
         let client = WgpuRuntime::client(&selected);
+        if let Some(inputs) = speculative_inputs {
+            return daslab_speculative_probe::run(&client, &grouped_limits, inputs);
+        }
         if let Some(inputs) = target_repair_inputs {
             return daslab_target_repair_probe::run(&client, &grouped_limits, inputs);
         }
