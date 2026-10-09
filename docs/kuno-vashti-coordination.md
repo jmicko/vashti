@@ -2993,3 +2993,31 @@ zero classified Xe/NVIDIA faults pass. No benchmark GPU process remains.
 No API/frontend/config/catalog/install/release/reset change. **Required Vashti
 changes:none.** Preserve the canonical checkout and its coordination/application
 work; resume source/benchmarks in the isolated native-text worktree only.
+
+
+### Standalone Strata Intel comparison, 2026-10-09
+
+The user explicitly authorized a separate upstream Strata installation while the
+native Rust optimization goal remains paused, and requested leaving Strata running
+for hands-on use. MIT source v0.1.41/fb58e0d, AOT bmg-g31/oneAPI 2026.1, original
+DASLab IQ3_S hard-linked in place, new pinned Q2_0 MTP conversion. No native engine,
+API, Vashti integration, production model catalogue, driver or release change.
+
+Actual B70 OpenAI API checks return the correct integer sanity result and
+27.3/36.0 decode tokens/s on two 200-token public fixtures (seed 424242, greedy,
+no-thinking, PLE direct). This is upstream Strata application inference; it does
+not establish native Rust 30 tokens/s or a matched Ollama comparison. Core/swap
+protection and no persistent inference logging are checked; corrected rootless
+Podman containment requires service Delegate=yes. Actual shutdown returns B70 to
+50,688,000 B, admission unpaused and all three HTTP services 200 with zero classified
+GPU faults. Final protected restart/streaming and health/web checks pass; sampled streaming
+at temperature 0.7 produces 45 tokens at 16.4 decode tokens/s. Strata is left running
+on loopback port 8085 for the user; Kuno inference admission stays intentionally paused
+until the documented stop control releases the GPU and restores it. No private
+inference output is persisted; upstream browser history uses localStorage.
+
+Exact format notes, source hashes, numeric receipts, local installation/control
+paths and limitations: [standalone comparison](kuno-strata-comparison.md).
+That document includes the user-requested Q2_0 MTP runtime importer notes for
+future Rust work. **Required Vashti changes: none.** Preserve canonical application
+work. Native goal and pending live-member kernel gates remain paused.
