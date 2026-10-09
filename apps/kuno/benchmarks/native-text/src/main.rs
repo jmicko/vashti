@@ -53,6 +53,7 @@ mod residual_gpu;
 mod router_gpu;
 mod scratch_clear_batch;
 mod secondary_experts;
+mod segmented_iq_moe_probe;
 mod small_cpu;
 mod status_fold_batch;
 mod steady_public;
@@ -262,14 +263,14 @@ fn q3_public_positions(
 ) -> Result<usize, &'static str> {
     match raw {
         None => Ok(4),
-        Some(raw @ ("4" | "32"))
+        Some(raw @ ("4" | "23" | "32"))
             if mode == "resident-count1-hybrid-chat"
                 && profile == expert_banks::OriginalPackedProfile::UnslothQ3
                 && protected =>
         {
             raw.parse().map_err(|_| "public Q3 positions")
         }
-        _ => Err("public Q3 positions require protected original Q3 and canonical4 or32"),
+        _ => Err("public Q3 positions require protected original Q3 and canonical4,23-prefix or32"),
     }
 }
 fn q3_empty_slot_fill(
@@ -854,6 +855,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => return Err("expected intel or nvidia".into()),
     };
     let mode = std::env::args().nth(2).unwrap_or("probe".into());
+    let segmented_iq_probe = mode == "segmented-iq-moe-probe";
+    if segmented_iq_probe {
+        if std::env::args_os().count() != 3 {
+            return Err("fixed public segmented IQ probe rejects additional arguments".into());
+        }
+        segmented_iq_moe_probe::validate_configuration()?;
+    } else if std::env::var_os("KUNO_LAB_SEGMENTED_IQ_PUBLIC_ONLY").is_some() {
+        return Err("segmented IQ gate requires its dedicated public probe".into());
+    }
     let mtp_gpu_inputs = if mode == "mtp-gpu-probe" {
         let inputs = mtp_gpu_probe::registration(
             &std::env::args_os().collect::<Vec<_>>(),
@@ -1598,6 +1608,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let client = WgpuRuntime::client(&selected);
         if let Some(inputs) = mtp_gpu_inputs {
             return mtp_gpu_probe::run(&client, vendor, inputs);
+        }
+        if segmented_iq_probe {
+            return segmented_iq_moe_probe::run(&client, &grouped_limits);
         }
         if kernel_profile {
             client.set_profiling_paused(true);
@@ -3068,12 +3081,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if q3_main {
                     receipt["fixture"] = serde_json::json!("unsloth-q3-public-bang");
                     receipt["whole_model_numeric_accepted"] = serde_json::json!(true);
-                    receipt["numeric_scope"] = serde_json::json!(if q3_positions == 4 {
-                        "four-position-original-Q3-public-bang"
-                    } else {
-                        "32-position-original-Q3-public-bang"
+                    receipt["numeric_scope"] = serde_json::json!(match q3_positions {
+                        4 => "four-position-original-Q3-public-bang",
+                        23 => "23-position-prefix-of-32-original-Q3-public-bang",
+                        _ => "32-position-original-Q3-public-bang",
                     });
                     receipt["numeric_positions"] = serde_json::json!(q3_positions);
+                    receipt["full32_reference_accepted"] = serde_json::json!(q3_positions == 32);
+                    receipt["prefix_ends_before_known_router_divergence"] =
+                        serde_json::json!(q3_positions == 23);
                     receipt["weights"] = serde_json::json!("borrowed-unmodified-ollama-shards");
                     let pre_slots = q3_prefill_slots.ok_or("Q3 prefill slot receipt absent")?;
                     let occupied = executor.q3_occupied_slots()?;
@@ -4083,14 +4099,18 @@ mod transient_mode_tests {
             super::q3_public_positions("probe", P::Q4, false, None),
             Ok(4)
         );
-        for raw in [None, Some("4"), Some("32")] {
+        for raw in [None, Some("4"), Some("23"), Some("32")] {
             assert_eq!(
                 super::q3_public_positions("resident-count1-hybrid-chat", P::UnslothQ3, true, raw)
                     .unwrap(),
-                if raw == Some("32") { 32 } else { 4 }
+                match raw {
+                    Some("23") => 23,
+                    Some("32") => 32,
+                    _ => 4,
+                }
             );
         }
-        for raw in ["4", "32"] {
+        for raw in ["4", "23", "32"] {
             for (mode, profile, protected) in [
                 ("probe", P::UnslothQ3, true),
                 ("resident-bang", P::UnslothQ3, true),
@@ -4101,7 +4121,7 @@ mod transient_mode_tests {
             }
         }
         for raw in [
-            "", "0", "1", "3", "5", "8", "31", "33", "04", "032", "+32", "32 ",
+            "", "0", "1", "3", "5", "8", "31", "33", "04", "023", "032", "+23", "+32", "23 ", "32 ",
         ] {
             assert!(
                 super::q3_public_positions(
