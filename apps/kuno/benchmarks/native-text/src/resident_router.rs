@@ -11,10 +11,48 @@ pub(crate) const RESIDENT_ROUTER_HOST: usize = batch_io::RESIDENT_AUDIT_HOST;
 // Count both complete owners' runtime source/target/inspection mirrors even
 // though only the table is uploaded and the audit is mapped. Keep extra INFO
 // and slab rollover separate; no reclaimed old bridge credit is assumed.
-pub(crate) const RESIDENT_ROUTER_PREFLIGHT_INFO: u64 = 48 * 2048;
+pub(crate) const RESIDENT_ROUTER_PREFLIGHT_INFO: u64 =
+    crate::resident_router_gpu::EXTRA_INFO_BYTES_PER_TOKEN;
+pub(crate) const RESIDENT_ROUTER_INTEGER_CLEAR_INFO: u64 = 48 * 2048;
 pub(crate) const RESIDENT_ROUTER_RUNTIME: u64 =
     4 * RESIDENT_ROUTER_MAIN + (48 * 2 + 4) * 2048 + 65536 + RESIDENT_ROUTER_PREFLIGHT_INFO;
 pub(crate) const RESIDENT_ROUTER_RUNTIME_LIMIT: u64 = 128 * 1024 * 1024;
+pub(crate) fn resident_router_runtime(prepared_integer: bool) -> u64 {
+    RESIDENT_ROUTER_RUNTIME
+        + if prepared_integer {
+            RESIDENT_ROUTER_INTEGER_CLEAR_INFO
+        } else {
+            0
+        }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Arithmetic {
+    OriginalF32,
+    PreparedTwoQ8,
+}
+impl Arithmetic {
+    fn from_policy(prepared_integer: bool, requested_skip: bool) -> Result<Self> {
+        if prepared_integer && !requested_skip {
+            return Err(err(
+                "resident prepared integer requires declared segment policy",
+            ));
+        }
+        Ok(if prepared_integer {
+            Self::PreparedTwoQ8
+        } else {
+            Self::OriginalF32
+        })
+    }
+    fn validate(self, prepared_integer: bool, requested_skip: bool) -> Result<()> {
+        if self != Self::from_policy(prepared_integer, requested_skip)? {
+            return Err(err(
+                "resident router arithmetic changed after authorization",
+            ));
+        }
+        Ok(())
+    }
+}
 
 struct FrozenBank {
     instance: expert_banks::BankInstance,
@@ -25,6 +63,8 @@ struct Authorization {
     binding: GraphBindingId,
     workspace: Zeroizing<u64>,
     fixture: crate::oracle_trace::Fixture,
+    arithmetic: Arithmetic,
+    requested_skip: bool,
     next: Zeroizing<u64>,
     table: Zeroizing<Vec<u32>>,
     banks: Vec<FrozenBank>,
@@ -156,8 +196,8 @@ impl Authorization {
             || e.integer_experts
             || e.q6_integer_head
             || e.q3_subgroup_moe
-            || e.q3_integer_moe
             || e.q3_shared_original_moe
+            || e.q3_skip_empty_segments != self.requested_skip
             || e.q3_expert_oracle
             || e.q3_router_reference.is_some()
             || !e.q3_empty_slot_fill
@@ -175,6 +215,8 @@ impl Authorization {
         {
             return Err(err("resident router immutable configured authorization"));
         }
+        self.arithmetic
+            .validate(e.q3_integer_moe, e.q3_skip_empty_segments)?;
         graph.verify_unchanged()?;
         e.model.verify_file_unchanged()?;
         e.check_lab_oracle_fixture(self.fixture)?;
@@ -324,6 +366,8 @@ impl Workspace {
             binding: graph.binding_id(),
             workspace: Zeroizing::new(self.identity),
             fixture: trace.fixture(),
+            arithmetic: Arithmetic::from_policy(e.q3_integer_moe, e.q3_skip_empty_segments)?,
+            requested_skip: e.q3_skip_empty_segments,
             next: Zeroizing::new(trace.start() as u64),
             table,
             banks,
@@ -595,7 +639,24 @@ impl GpuExecutor<'_> {
                 layer,
                 s.stamp.start,
             )?;
-            launch_wave(arena, bank, g, &spans, &ids, 10)?;
+            match a.arithmetic {
+                Arithmetic::OriginalF32 => launch_wave(arena, bank, g, &spans, &ids, 10)?,
+                Arithmetic::PreparedTwoQ8 => {
+                    count1_executor::launch_resident_prepared_pair(
+                        arena,
+                        bank,
+                        g,
+                        &spans,
+                        &ids,
+                        hybrid_ids[0],
+                    )?;
+                    // Every gate/down consumer was queued before launch_pair
+                    // returned. The same stream now ends that private scratch
+                    // phase with a full owning clear, before original rank
+                    // merge/fold lends CPU_PART as its entirely zero CPU owner.
+                    u::zero(arena, hybrid_ids[0])?;
+                }
+            }
             launch_finite(arena, g, &spans, &ids)?;
             hybrid_k::merge(
                 arena,
@@ -761,7 +822,25 @@ mod tests {
         );
         const { assert!(RESIDENT_ROUTER_RUNTIME > 4 * RESIDENT_ROUTER_MAIN) };
         const { assert!(RESIDENT_ROUTER_RUNTIME + 67108864 < RESIDENT_ROUTER_RUNTIME_LIMIT) };
+        assert_eq!(crate::resident_router_gpu::EXTRA_INFO_CALLS_PER_TOKEN, 48);
         assert_eq!(RESIDENT_ROUTER_PREFLIGHT_INFO, 98_304);
-        assert_eq!(RESIDENT_ROUTER_RUNTIME, 9_281_536);
+        assert_eq!(RESIDENT_ROUTER_INTEGER_CLEAR_INFO, 98304);
+        assert_eq!(resident_router_runtime(false), 9_281_536);
+        assert_eq!(resident_router_runtime(true), 9_379_840);
+    }
+    #[test]
+    fn prepared_arithmetic_and_required_segment_policy_are_immutable_after_authorization() {
+        for requested in [false, true] {
+            let f32 = Arithmetic::from_policy(false, requested).unwrap();
+            assert_eq!(f32, Arithmetic::OriginalF32);
+            assert!(f32.validate(false, requested).is_ok());
+            assert!(f32.validate(true, requested).is_err());
+        }
+        assert!(Arithmetic::from_policy(true, false).is_err());
+        let prepared = Arithmetic::from_policy(true, true).unwrap();
+        assert_eq!(prepared, Arithmetic::PreparedTwoQ8);
+        assert!(prepared.validate(true, true).is_ok());
+        assert!(prepared.validate(false, true).is_err());
+        assert!(prepared.validate(true, false).is_err());
     }
 }

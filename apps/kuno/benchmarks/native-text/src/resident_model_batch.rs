@@ -433,7 +433,7 @@ impl Plan {
             .checked_add(if hybrid { HYBRID_RUNTIME } else { 0 })
             .and_then(|n| {
                 n.checked_add(if router {
-                    batch_moe::RESIDENT_ROUTER_RUNTIME
+                    batch_moe::resident_router_runtime(executor.q3_integer_moe)
                 } else {
                     0
                 })
@@ -2063,10 +2063,22 @@ mod tests {
         assert!(host_reservation_with_router(false, DEFAULT_REUSE_METADATA, true).is_err());
         for head in [16, 38] {
             let old = runtime_bytes(head).unwrap() + HYBRID_RUNTIME;
-            let new = old + batch_moe::RESIDENT_ROUTER_RUNTIME;
             assert!(old <= crate::executor::RESIDENT_RUNTIME_IO_MAX);
-            assert!(new > crate::executor::RESIDENT_RUNTIME_IO_MAX);
-            assert!(new < batch_moe::RESIDENT_ROUTER_RUNTIME_LIMIT);
+            for prepared in [false, true] {
+                let selected = batch_moe::resident_router_runtime(prepared);
+                assert_eq!(
+                    selected,
+                    9_281_536
+                        + if prepared {
+                            batch_moe::RESIDENT_ROUTER_INTEGER_CLEAR_INFO
+                        } else {
+                            0
+                        }
+                );
+                let new = old + selected;
+                assert!(new > crate::executor::RESIDENT_RUNTIME_IO_MAX);
+                assert!(new < batch_moe::RESIDENT_ROUTER_RUNTIME_LIMIT);
+            }
         }
     }
 

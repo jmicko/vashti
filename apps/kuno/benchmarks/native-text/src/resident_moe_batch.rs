@@ -19,8 +19,8 @@ mod count1_executor;
 #[path = "resident_router.rs"]
 mod resident_router;
 pub(crate) use resident_router::{
-    RESIDENT_ROUTER_HOST, RESIDENT_ROUTER_MAIN, RESIDENT_ROUTER_RUNTIME,
-    RESIDENT_ROUTER_RUNTIME_LIMIT,
+    RESIDENT_ROUTER_HOST, RESIDENT_ROUTER_INTEGER_CLEAR_INFO, RESIDENT_ROUTER_MAIN,
+    RESIDENT_ROUTER_PREFLIGHT_INFO, RESIDENT_ROUTER_RUNTIME_LIMIT, resident_router_runtime,
 };
 #[path = "count1_hybrid_moe.rs"]
 mod hybrid_k;

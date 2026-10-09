@@ -15,8 +15,10 @@ an opaque authorization to the graph, original file, workspace/arena, bank
 instances, complete bank handles and the actual expert-to-slot maps. Only the
 original packed low-bit profiles, 48 layers, 512 experts, ten selected ranks,
 144 resident slots, count1 and the explicit compiled fixture are admitted.
-Adaptive/secondary banks, Q8 activation arithmetic, alternative MoE kernels,
-fills, evictions and bank replacement are forbidden while active.
+Adaptive/secondary banks, CPU Q8 activation arithmetic, unselected MoE kernels,
+fills, evictions and bank replacement are forbidden while active. The sealed
+authorization snapshots the selected expert arithmetic and requested segment
+policy; changing either after activation fails rather than changing kernels.
 
 Each layer keeps the existing full owning mixed/router fold and original GPU
 top10 implementation. The selected raw scores, lower-ID tie rule and chosen-ten
@@ -26,7 +28,18 @@ MAP/PROB/owner headers. An absent expert, malformed rank, duplicate slot,
 nonfinite probability or changed source/owner is a terminal fault; no forced
 expert or fallback is permitted. Both original bank segments may execute;
 their existing group/status predicates ignore inactive groups. The existing
-F32 gate/down and original rank0..9 merge remain unchanged.
+default F32 gate/down and original rank 0..9 merge remain unchanged.
+
+The separate KUNO_LAB_Q3_INTEGER_MOE opt-in composes the already accepted
+two-residual-Q8 expert arithmetic. Its existing paired 72+72 launch uses the
+same full CPU_PART owner only during its private GPU scratch phase, with
+active=[true,true] and groups=10. Every gate/down consumer is queued before
+the complete CPU_PART owner is zeroed on the same stream. Only then do the
+unchanged finite/merge/fold kernels consume that owner as an entirely zero
+CPU result. STATUS and the whole-token fault are never cleared at this phase
+boundary. This choice changes both training and replay; their configuration
+must match. It preserves original routing and acceptance gates, but does not
+claim bit-identical F32 expert arithmetic or general model quality.
 
 The layer's routing packet and the exact consumed MAP/PROB/OWNER logical wires
 are copied to a separate bounded audit owner before the shared scratch is
@@ -55,9 +68,13 @@ holds 48*512 logical u32 entries; absent experts use u32::MAX. Both complete
 pages, including zero padding, are separate roots disjoint from the original
 model/scratch/CPU owners and original public banks. Every source/target/map/
 inspection mirror is charged conservatively. This adds 2,228,224 main bytes
-and 9,183,232 runtime bytes, including extra INFO/slab credit, without reclaiming
-the old runtime plan. Only this explicit mode admits the rounded 128MiB runtime
-ceiling; the ordinary path keeps its 64MiB ceiling.
+and a conservative runtime base of 9,183,232 bytes, including extra INFO/slab
+credit, without reclaiming the old runtime plan. The parallel mapper preflight
+adds a separately charged 48*2048=98,304 INFO bytes, yielding 9,281,536 bytes.
+The selected integer composition adds another separate 48*2048=98,304 INFO
+bytes for full CPU_PART clears, yielding 9,379,840 bytes. Only this explicit
+mode admits the rounded 128MiB runtime ceiling; the ordinary path keeps its
+64MiB ceiling.
 
 The separately added 4MiB host reservation contains the simultaneous full 2MiB
 owning readback lease, the complete decoded Vec48 audit (original mixed/router
@@ -72,9 +89,12 @@ preloads cannot be used after activation.
 
 The opt-in is KUNO_LAB_RESIDENT_GPU_ROUTER=1, and requires the already protected
 ideal mode, mapped Intel144 banks, cap10/GPU10, GPU routing, shared/fast dense
-kernels and original unfused F32 experts. Its exact compiled windows are
-Unsloth prefix23 or DASLab prefix13/full32; Q4, ordinary demand mode, adaptive/
-secondary banks and alternative expert/Q6-head arithmetic are rejected before
+kernels and either original unfused F32 or explicit prepared integer experts.
+Prepared integer requires the declared skip-empty-segments flag for the
+ordinary training policy, but resident replay always launches both original
+72-slot segments; that distinction is recorded in the receipt. Its exact
+compiled windows are Unsloth prefix23 or DASLab prefix13/full32; Q4, ordinary demand mode, adaptive/
+secondary banks and other expert/Q6-head arithmetic are rejected before
 device creation. Only content-free aggregate counters are reported. No expert
 IDs, scores, prompts or outputs are persisted or logged by this path.
 

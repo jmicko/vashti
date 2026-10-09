@@ -86,6 +86,10 @@ pub(crate) fn run<'m, 'f: 'm>(
     let decode = selected.decode;
     reference.require_positions(positions)?;
     let (mut training, mut train_executor) = make(selected.context)?;
+    let training_arithmetic = (
+        train_executor.q3_integer_moe,
+        train_executor.q3_skip_empty_segments,
+    );
     let mut logits = prepare(&mut training, &mut train_executor, cancel)?;
     training.begin_lab_oracle_trace_for(&mut train_executor, fixture)?;
     let mut trained_ids = Zeroizing::new(Vec::with_capacity(positions));
@@ -111,6 +115,11 @@ pub(crate) fn run<'m, 'f: 'm>(
     drop(train_executor);
 
     let (mut replay, mut executor) = make(selected.context)?;
+    if resident_router
+        && training_arithmetic != (executor.q3_integer_moe, executor.q3_skip_empty_segments)
+    {
+        return Err("Q3 ideal resident training and replay arithmetic policies differ".into());
+    }
     let initial = prepare(&mut replay, &mut executor, cancel)?;
     reference.verify(0, &initial)?;
     let first = greedy(&initial)?;
@@ -220,7 +229,17 @@ pub(crate) fn run<'m, 'f: 'm>(
     }
     let q6_integer_head = executor.q6_integer_head;
     let q3_integer_moe = executor.q3_integer_moe;
+    let requested_skip_empty_segments = executor.q3_skip_empty_segments;
     let q3_shared_original_moe = executor.q3_shared_original_moe;
+    let resident_router_policy = serde_json::json!({
+        "arithmetic":if resident_router {Some(if q3_integer_moe {"prepared-two-residual-Q8"} else {"original-F32"})} else {None},
+        "training_arithmetic":if resident_router {Some(if training_arithmetic.0 {"prepared-two-residual-Q8"} else {"original-F32"})} else {None},
+        "requested_skip_empty_segments":resident_router.then_some(requested_skip_empty_segments),
+        "replay_segment_policy":resident_router.then_some("both-original-72-slot-segments"),
+        "mapper_preflight_info_charge_bytes":resident_router.then_some(crate::executor::batch_moe::RESIDENT_ROUTER_PREFLIGHT_INFO),
+        "integer_clear_info_charge_bytes":if resident_router && q3_integer_moe {crate::executor::batch_moe::RESIDENT_ROUTER_INTEGER_CLEAR_INFO} else {0},
+        "runtime_plan_bytes":resident_router.then_some(crate::executor::batch_moe::resident_router_runtime(q3_integer_moe)),
+    });
     let replay_audit = close(&mut replay, &mut executor)?;
     println!("public_q3_ideal_probe_closed=true decode_steps={decode} elapsed_ns={elapsed_ns}");
     Ok(serde_json::json!({
@@ -234,6 +253,7 @@ pub(crate) fn run<'m, 'f: 'm>(
         "resident_gpu_routing":resident_router,"resident_gpu_routing_default":false,
         "resident_router_owning_audits":resident_router_audits,
         "resident_router_audited_layers":resident_router_audits*48,
+        "resident_router_policy":resident_router_policy,
         "q3_integer_moe":q3_integer_moe,"q3_shared_original_moe":q3_shared_original_moe,
         "elapsed_ns":elapsed_ns,"gpu_hits":work[0],"cpu_misses":work[1],
         "expert_uploads":work[2],"public_weight_upload_bytes":work[3],"resources":resources,

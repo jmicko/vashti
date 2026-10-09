@@ -217,7 +217,7 @@ fn resident_router_scope(
     profile: expert_banks::OriginalPackedProfile,
     positions: usize,
     protected: bool,
-    original: bool,
+    arithmetic_compatible: bool,
 ) -> Result<(), &'static str> {
     if !enabled {
         return Ok(());
@@ -227,8 +227,8 @@ fn resident_router_scope(
         expert_banks::OriginalPackedProfile::DaslabIq3 => matches!(positions, 13 | 32),
         _ => false,
     };
-    if !ideal || !protected || !original || !exact_window {
-        return Err("resident GPU router requires exclusive original protected ideal replay");
+    if !ideal || !protected || !arithmetic_compatible || !exact_window {
+        return Err("resident GPU router requires exclusive supported protected ideal replay");
     }
     Ok(())
 }
@@ -1570,7 +1570,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         gpu_router
             && fast_gpu
             && !q3_subgroup_moe
-            && !q3_integer_moe
+            && (!q3_integer_moe || q3_skip_empty_segments)
             && !q3_shared_original_moe
             && !q6_integer_head
             && !q3_expert_oracle
@@ -1580,7 +1580,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let integer_experts = count1_environment_opt_in(&mode, "KUNO_LAB_INTEGER_EXPERTS")?;
     if resident_gpu_router && (fused_experts || integer_experts) {
-        return Err("resident GPU routing requires original unfused F32 experts".into());
+        return Err("resident GPU routing excludes legacy fused expert arithmetic".into());
     }
     if integer_experts
         && (!fused_experts || gpu_expert_limit != 10 || count1_hybrid_cap != Some(10))
@@ -3967,6 +3967,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["resident_runtime_io_limit_bytes"] =
                     serde_json::json!(transient_resident.then_some(resident_runtime_limit));
                 receipt["resident_gpu_router_ideal_only"] = serde_json::json!(resident_gpu_router);
+                receipt["resident_router_runtime_plan_bytes"] = serde_json::json!(
+                    resident_gpu_router
+                        .then_some(executor::batch_moe::resident_router_runtime(q3_integer_moe))
+                );
                 receipt["ordered_public_upload"] = serde_json::json!(ordered_public_upload);
                 receipt["ordered_public_source_limit_bytes"] = serde_json::json!(
                     ordered_public_upload.then_some(ordered_public::SOURCE_LIMIT)
@@ -4541,7 +4545,7 @@ mod transient_mode_tests {
         }
     }
     #[test]
-    fn resident_router_is_exact_original_protected_ideal_only() {
+    fn resident_router_is_exact_supported_protected_ideal_only() {
         use crate::expert_banks::OriginalPackedProfile as P;
         for (profile, positions) in [(P::UnslothQ3, 23), (P::DaslabIq3, 13), (P::DaslabIq3, 32)] {
             assert!(

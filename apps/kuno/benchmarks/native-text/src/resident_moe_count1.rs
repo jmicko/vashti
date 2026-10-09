@@ -966,6 +966,25 @@ enum SelectedIqKernel {
     SharedOriginal,
     SubgroupOriginal,
 }
+pub(super) fn launch_resident_prepared_pair(
+    arena: &PrivateArena,
+    bank: &ExpertBanks,
+    g: k::Geometry,
+    s: &k::Spans,
+    ids: &[BufferId; 7],
+    cpu_scratch: BufferId,
+) -> Result<()> {
+    launch_q3_selected_segments(
+        arena,
+        bank,
+        g,
+        s,
+        ids,
+        cpu_scratch,
+        &[true, true],
+        SelectedIqKernel::Integer,
+    )
+}
 #[allow(clippy::too_many_arguments)]
 fn launch_q3_selected_segments(
     arena: &PrivateArena,
