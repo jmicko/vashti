@@ -1,6 +1,7 @@
 //! Unconnected native MAX8 adapter into actual ResidentQsa cache owners.
 //! Uses original cache-backed projections/public shared gammas/Rust RoPE.
-//! One mandatory guarded chunk selector dependency fence precedes attention;
+//! Original CPU selection uses a guarded chunk dependency fence. An explicit
+//! public-target alternative keeps exact all-retained selection on the GPU;
 //! no diagnostic/acceptance readback or state commit occurs in enqueue.
 //! Cursor acceptance below requires a FUTURE whole-model completed fault,
 //! dropped leases, checked cleanup/admission, health and cancellation proof.
@@ -15,6 +16,12 @@ use crate::{
 };
 use std::sync::Arc;
 use zeroize::{Zeroize, Zeroizing};
+#[path = "qsa_chronological_probe.rs"]
+pub(crate) mod chronological_probe;
+#[path = "qsa_chronological_select.rs"]
+pub(crate) mod chronological_select;
+#[allow(unused_imports)] // Parent constructor consumes these fixed reservations.
+pub(crate) use chronological_select::{EXTRA_HOST_BYTES_PER_CHUNK, EXTRA_INFO_BYTES_PER_CHUNK};
 const S: usize = 29;
 const MAX_LAYERS: usize = 64;
 const RQ: usize = 0;
@@ -746,12 +753,13 @@ fn append_batch(
     }
 }
 
-/// Exact stable selector and owning upload only. Implementations must retain
-/// the existing completed dependency read seam and guarded full-page leases;
-/// they cannot turn dependency completion into state acceptance.
+/// Exact original stable selection. CPU implementations retain their completed
+/// owning maps; the admitted all-retained GPU implementation validates complete
+/// sources before publication. Neither path constitutes state acceptance.
 pub(crate) trait QsaBatchSelector {
     /// Real admission identity/owned-I/O proof before ANY candidate mutation.
     fn validate_owner(&self, arena: &PrivateArena, poison: &Arc<AtomicBool>) -> Result<()>;
+    #[allow(clippy::too_many_arguments)]
     fn select_upload(
         &mut self,
         arena: &PrivateArena,
@@ -759,6 +767,7 @@ pub(crate) trait QsaBatchSelector {
         scores: BufferId,
         status: BufferId,
         target: BufferId,
+        fault: BufferId,
         cancel: &AtomicBool,
     ) -> Result<()>;
 }
@@ -872,6 +881,7 @@ impl QsaBatchSelector for AdmittedBatchSelector<'_> {
         }
         Ok(())
     }
+    #[allow(clippy::too_many_arguments)]
     fn select_upload(
         &mut self,
         arena: &PrivateArena,
@@ -879,6 +889,7 @@ impl QsaBatchSelector for AdmittedBatchSelector<'_> {
         scores: BufferId,
         status: BufferId,
         target: BufferId,
+        _fault: BufferId,
         cancel: &AtomicBool,
     ) -> Result<()> {
         cancelled(cancel)?;
@@ -917,6 +928,84 @@ impl QsaBatchSelector for AdmittedBatchSelector<'_> {
                 std::mem::take(&mut *upload),
             )
             .map_err(|_| fault("native QSA owned selection upload"))?;
+        cancelled(cancel)
+    }
+}
+
+/// Construction-fixed public-target selection. The ordinary selector above
+/// remains unchanged; contexts outside the conservative original all-retained
+/// range execute that same completed CPU read/select/upload path.
+pub(crate) struct BatchSelector<'a> {
+    original: AdmittedBatchSelector<'a>,
+    gpu_chronological: bool,
+}
+impl<'a> BatchSelector<'a> {
+    pub(crate) fn new(admission: &'a ResidentAdmission, gpu_chronological: bool) -> Self {
+        Self {
+            original: AdmittedBatchSelector { admission },
+            gpu_chronological,
+        }
+    }
+}
+impl QsaBatchSelector for BatchSelector<'_> {
+    fn validate_owner(&self, arena: &PrivateArena, poison: &Arc<AtomicBool>) -> Result<()> {
+        self.original.validate_owner(arena, poison)
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn select_upload(
+        &mut self,
+        arena: &PrivateArena,
+        layout: SelectionLayout,
+        scores: BufferId,
+        status: BufferId,
+        target: BufferId,
+        fault_id: BufferId,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        let geometry = chronological_select::Geometry {
+            start: layout.start,
+            count: layout.count,
+            blocks: layout.blocks,
+        };
+        if !self.gpu_chronological || !geometry.supported()? {
+            return self
+                .original
+                .select_upload(arena, layout, scores, status, target, fault_id, cancel);
+        }
+        cancelled(cancel)?;
+        self.original
+            .validate_owner(arena, &self.original.admission.sequence_poison())?;
+        if layout.stride != chronological_select::SELECT_STRIDE
+            || layout.words != MAX_BATCH * layout.stride
+            || arena.layout(fault_id).map_err(arena_fault)?
+                != BufferLayout::new(1).map_err(arena_fault)?
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        let ids = [scores, status, target, fault_id];
+        let logical = [
+            MAX_BATCH * layout.blocks,
+            MAX_BATCH * layout.blocks,
+            layout.words,
+            1,
+        ];
+        for (index, (&id, words)) in ids.iter().zip(logical).enumerate() {
+            if ids[..index].contains(&id)
+                || arena.layout(id).map_err(arena_fault)?
+                    != BufferLayout::new(words).map_err(arena_fault)?
+            {
+                return Err(Error::InvalidBufferLength);
+            }
+        }
+        let owners = ids
+            .map(|id| arena.handle(id).map_err(arena_fault).cloned())
+            .into_iter()
+            .collect::<Result<Vec<_>>>()?;
+        chronological_select::launch(
+            arena.client().map_err(arena_fault)?,
+            owners.try_into().map_err(|_| Error::InvalidBufferLength)?,
+            geometry,
+        )?;
         cancelled(cancel)
     }
 }
@@ -1359,6 +1448,7 @@ impl ResidentQsa<'_> {
                     ids[SCORE],
                     ids[FLAGS + 7],
                     ids[SELECT],
+                    fault_id,
                     cancel,
                 )?,
                 Operation::Logits => c::logits_batch::launch::<WgpuRuntime>(
