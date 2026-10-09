@@ -187,11 +187,15 @@ impl Kernel {
             )
         };
         let bindings = if prepared {
-            let uniform = if self.down { 5 } else { 6 };
-            bindings.replace(
-                &format!("@binding({uniform}) var<uniform> p"),
-                &format!("@binding({uniform}) var<storage,read> planes:array<u32>;\n@group(0) @binding({}) var<uniform> p", uniform + 1),
-            )
+            // Custom CubeTask repr=None uses auto-reflected wgpu layouts.
+            // Do not supply obsolete input bindings: prepared projection reads
+            // only planes, and an entirely unused global is absent from its
+            // entrypoint layout. All remaining resources are densely numbered.
+            if self.down {
+                "@group(0) @binding(0) var<storage,read> down:array<u32>;\n@group(0) @binding(1) var<storage,read> map:array<u32>;\n@group(0) @binding(2) var<storage,read_write> output:array<f32>;\n@group(0) @binding(3) var<storage,read_write> status:array<u32>;\n@group(0) @binding(4) var<storage,read> planes:array<u32>;\n@group(0) @binding(5) var<uniform> p:Params;"
+            } else {
+                "@group(0) @binding(0) var<storage,read> gate:array<u32>;\n@group(0) @binding(1) var<storage,read> up:array<u32>;\n@group(0) @binding(2) var<storage,read> map:array<u32>;\n@group(0) @binding(3) var<storage,read_write> output:array<f32>;\n@group(0) @binding(4) var<storage,read_write> status:array<u32>;\n@group(0) @binding(5) var<storage,read> planes:array<u32>;\n@group(0) @binding(6) var<uniform> p:Params;"
+            }.to_string()
         } else {
             bindings.to_string()
         };

@@ -89,6 +89,17 @@ fn fixed_failure_class(error: &(dyn std::error::Error + 'static)) -> &'static st
             _ => "core-other",
         };
     }
+    if let Some(error) = error.downcast_ref::<crate::private_arena::ArenaError>() {
+        use crate::private_arena::ArenaError;
+        return match error {
+            ArenaError::Retired => "private-owner-retired",
+            ArenaError::Closed => "private-owner-closed",
+            ArenaError::StaleHandle => "private-owner-stale",
+            ArenaError::BudgetExceeded => "private-owner-budget",
+            ArenaError::Initialization | ArenaError::Cleanup => "private-owner-runtime",
+            _ => "private-owner-other",
+        };
+    }
     // The displayed error is compared ONLY with this closed source-controlled
     // list. Unknown/backend messages never leave this function.
     match error.to_string().as_str() {
@@ -104,6 +115,10 @@ fn fixed_failure_class(error: &(dyn std::error::Error + 'static)) -> &'static st
         "segmented IQ fixed route geometry" => "route-geometry",
         "segmented IQ host fixture bound" => "host-budget",
         "segmented IQ physical stream" => "physical-stream",
+        "grouped owning write extent" => "owning-write-extent",
+        "grouped owning write failed; context retired" => "owning-write-retired",
+        "grouped owning read failed; context retired" => "owning-read-retired",
+        "grouped checked I/O cleanup failed; context retired" => "owning-io-retired",
         "segmented IQ prepared scratch flag/gap/full owning tail" => "prepared-owning-guard",
         "segmented IQ prepared independent packed plane mismatch" => "prepared-plane-code",
         "segmented IQ prepared independent plane scale mismatch" => "prepared-plane-scale",
@@ -1218,10 +1233,6 @@ fn one(
     integer_stage(integer, profile, "profile-start", 0, 0);
     let g = geometry(profile.0, profile.1)?;
     limits(g, l)?;
-    if integer && (l.max_storage_buffers_per_shader_stage < 7 || l.max_bindings_per_bind_group < 8)
-    {
-        return Err("segmented IQ prepared binding limit".into());
-    }
     if integer && l.max_compute_workgroup_storage_size < iq_moe_integer::MAX_SHARED_BYTES as u32 {
         return Err("segmented IQ integer workgroup storage limit".into());
     }
@@ -1514,14 +1525,20 @@ fn one(
         integer_stage(true, profile, "prepared-case-start", 3, 0);
         let scratch_before = Zeroizing::new(vec![GUARD; iq_moe_integer::prepared::SCRATCH_WORDS]);
         c::write(arena, scratch, &scratch_before, retired)?;
+        integer_stage(true, profile, "prepared-scratch-written", 3, 0);
         for (i, &id) in ids.iter().enumerate() {
             c::write(arena, id, &before[i][..words[i]], retired)?;
         }
+        integer_stage(true, profile, "prepared-owners-written", 3, 0);
         pin.validate()?;
         physical(client, arena, &physical_ids, &seeds, &banks, g)?;
+        integer_stage(true, profile, "prepared-physical-validated", 3, 0);
         launch_prepared_pair(client, arena, &ids, &banks, g, &s, map.groups(), scratch)?;
+        integer_stage(true, profile, "prepared-pair-enqueued", 3, 0);
         finish_math(client, arena, &ids, g, &s)?;
+        integer_stage(true, profile, "prepared-finite-enqueued", 3, 0);
         let got = snapshot(arena, &ids, retired)?;
+        integer_stage(true, profile, "prepared-math-readback", 3, 0);
         prepared_errors = check(
             &got,
             &before,
@@ -1545,6 +1562,7 @@ fn one(
             true,
         )?;
         let scratch_got = c::read(arena, scratch, retired)?;
+        integer_stage(true, profile, "prepared-scratch-readback", 3, 0);
         check_prepared_scratch(&scratch_got, &got, &s, true)?;
         c::audit(client, retired)?;
         integer_stage(true, profile, "prepared-case-final-check", 3, 2);
@@ -1814,6 +1832,33 @@ fn run_mode(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn prepared_failure_classes_are_closed_static_owner_categories() {
+        assert_eq!(
+            fixed_failure_class(&crate::private_arena::ArenaError::Retired),
+            "private-owner-retired"
+        );
+        assert_eq!(
+            fixed_failure_class(&crate::private_arena::ArenaError::StaleHandle),
+            "private-owner-stale"
+        );
+        assert_eq!(
+            fixed_failure_class(&std::io::Error::other(
+                "grouped owning write failed; context retired"
+            )),
+            "owning-write-retired"
+        );
+        assert_eq!(
+            fixed_failure_class(&std::io::Error::other(
+                "grouped owning read failed; context retired"
+            )),
+            "owning-read-retired"
+        );
+        assert_eq!(
+            fixed_failure_class(&std::io::Error::other("unrecognized backend payload")),
+            "unclassified"
+        );
+    }
     #[test]
     fn prepared_planes_follow_compact_group_original_rank_and_reject_corruption() {
         use iq_moe_integer::prepared::{DOWN_FIRST, DOWN_WORDS, HEADER_WORDS, SCRATCH_WORDS};

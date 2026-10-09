@@ -29,11 +29,20 @@ impl PrepareKernel {
             .unwrap()
             .0;
         include_str!("iq_moe_integer_prepare.wgsl")
+            .replace("PREP_BINDINGS_VALUE", if self.down {
+                "@group(0) @binding(0) var<storage,read> input:array<f32>;\n@group(0) @binding(1) var<storage,read> map:array<u32>;\n@group(0) @binding(2) var<storage,read> status:array<u32>;\n@group(0) @binding(3) var<storage,read_write> planes:array<u32>;\n@group(0) @binding(4) var<uniform> p:Params;"
+            } else {
+                "@group(0) @binding(0) var<storage,read> input:array<f32>;\n@group(0) @binding(1) var<storage,read> map:array<u32>;\n@group(0) @binding(2) var<storage,read_write> planes:array<u32>;\n@group(0) @binding(3) var<uniform> p:Params;"
+            })
+            .replace("FRAME_SELECT_VALUE", if self.down {
+                "frame=p.d+1472u+g.y*360u;flag=p.d+1u+g.y;offset=route*p.c;\nif valid && status[p.e+route]!=1u {valid=false;}"
+            } else {
+                "// Every down flag starts invalid until its distinct ACT stage.\nif local<11u {planes[p.d+local]=0u;}"
+            })
             .replace("Q8_PREPARE_VALUE", body)
             .replace("COLUMNS_VALUE", &columns.to_string())
             .replace("PACKED_VALUE", &(columns / 4).to_string())
             .replace("BLOCKS_VALUE", &(columns / 32).to_string())
-            .replace("DOWN_VALUE", if self.down { "true" } else { "false" })
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -166,13 +175,18 @@ impl<'a, State> Phase<'a, State> {
             0,
         ];
         let mut args = KernelArguments::new();
-        for handle in [
-            &self.owners[if down { 2 } else { 1 }],
-            &self.owners[0],
-            &self.owners[6],
-            &self.scratch,
-        ] {
-            args = args.with_buffer(handle.clone().binding());
+        let handles: &[&Handle] = if down {
+            &[
+                &self.owners[2],
+                &self.owners[0],
+                &self.owners[6],
+                &self.scratch,
+            ]
+        } else {
+            &[&self.owners[1], &self.owners[0], &self.scratch]
+        };
+        for handle in handles {
+            args = args.with_buffer((*handle).clone().binding());
         }
         args = args.with_info(info_binding(info));
         // SAFETY: launch_pair validates the complete map/inputs/status/scratch
@@ -219,7 +233,6 @@ impl<'a, State> Phase<'a, State> {
             let handles: &[&Handle] = if down {
                 &[
                     &banks[2],
-                    &self.owners[2],
                     &self.owners[0],
                     &self.owners[3],
                     &self.owners[6],
@@ -229,7 +242,6 @@ impl<'a, State> Phase<'a, State> {
                 &[
                     &banks[0],
                     &banks[1],
-                    &self.owners[1],
                     &self.owners[0],
                     &self.owners[2],
                     &self.owners[6],
@@ -363,6 +375,23 @@ mod tests {
         )
         .validate(&module)
         .unwrap();
+        // CubeTask repr=None uses wgpu's entrypoint reflection. Merely parsing
+        // and validating the WGSL does not prove the host's dense bind group is
+        // accepted: an unused declaration has no auto-layout binding.
+        let mut reflected = Vec::new();
+        for (handle, global) in module.global_variables.iter() {
+            if let Some(binding) = &global.binding {
+                assert!(
+                    !info.get_entry_point(0)[handle].is_empty(),
+                    "unused auto-reflected resource {}",
+                    binding.binding
+                );
+                assert_eq!(binding.group, 0);
+                reflected.push(binding.binding);
+            }
+        }
+        reflected.sort_unstable();
+        assert_eq!(reflected, (0..reflected.len() as u32).collect::<Vec<_>>());
         wgpu::naga::back::spv::write_vec(
             &module,
             &info,
@@ -377,6 +406,24 @@ mod tests {
         )
         .unwrap();
         module
+    }
+    #[test]
+    #[should_panic(expected = "unused auto-reflected resource")]
+    fn obsolete_unused_input_is_rejected_by_the_reflection_regression_gate() {
+        let source = Kernel {
+            down: false,
+            dtype: crate::quant_matvec::IQ3_XXS,
+            row_bytes: 980,
+            first: 0,
+            slots: 72,
+        }
+        .source_variant(true);
+        // The old prepared source parsed and lowered successfully but retained
+        // exactly this kind of entirely unused input resource. Auto reflection
+        // omits it, so a host bind group containing it cannot match the layout.
+        compile(&format!(
+            "{source}\n@group(0) @binding(7) var<storage,read> obsolete_input:array<f32>;"
+        ));
     }
     #[test]
     fn preparation_preserves_accepted_quantizer_and_compiles_both_phases() {
@@ -395,6 +442,10 @@ mod tests {
                 source.contains("planes[flag]=select(0u,1u,valid && atomicLoad(&quant_fault)==0u)")
             );
             compile(&source);
+            assert_eq!(
+                source.matches("@binding(").count(),
+                if down { 5 } else { 4 }
+            );
         }
     }
     #[test]
@@ -420,6 +471,10 @@ mod tests {
                 assert!(!source.contains("fn prepare_q8") && !source.contains("cached_input"));
                 assert!(source.contains("dot4I8Packed") && source.contains("planes[flag]==1u"));
                 let module = compile(&source);
+                assert_eq!(
+                    source.matches("@binding(").count(),
+                    if down { 6 } else { 7 }
+                );
                 let shared = module
                     .global_variables
                     .iter()
