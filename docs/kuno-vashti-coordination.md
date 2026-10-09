@@ -3064,3 +3064,24 @@ for <=2048 token positions, exact original CPU fallback above that boundary.
 Neither connection has whole-model acceptance yet. Numeric receipts, exact
 artifacts/tests/limitations and preserved startup failures are in the
 [current checkpoint](kuno-native-text-checkpoint.md#smaller-draft-and-direct-host-source-physical-follow-up).
+
+
+### Native attention/host-source checkpoint, 2026-10-09
+
+Backend-only native source`cc4b8aa`+`597039d` passes both-card chronological QSA
+operator, original full CPU13/exactgreedy/actualrepair and normal code200 gates.
+Internal opt-in`KUNO_LAB_TARGET_QSA=chronological-public` uses exact chronological
+original IDs for end<=2048tokens, retains original guarded CPU selector above;
+extra49,152INFO+4,096host bytes, no newMAIN owners. Absent/default unchanged.
+Warm7.26311tokens/s/maps51; normal code200candidate2.08246/control2.01633 with
+~49s weight-reading/35GB physical reads. No matchedABBA/30/production acceptance.
+Parent897+2aux native tests (one ignored), strict direct Clippy/focusedQSA58 and
+96launcher controls pass. Exact sources/artifacts/numeric recovery evidence and
+limits are in the [native checkpoint](kuno-native-text-checkpoint.md#chronological-attention-and-immutable-host-registration-follow-up).
+
+Immutable external public host runtime`dd0db6b`+`139075e` has source/ownership
+acceptance; actual CubeCL host operator and full mirror consumers remain pending.
+The user-visible API/configuration/native catalogue and installed services are
+unchanged. All physical trials restore memory/admission/allthree HTTP200 and
+fault counts0. Required Vashti changes:none; no release/install/reset authorization
+is inferred from this internal performance checkpoint. Preserve canonical work.

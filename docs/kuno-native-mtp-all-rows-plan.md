@@ -344,3 +344,45 @@ setup/flush/map and inline readback batch deltas over the public dual-device
 timed interval. These are attribution diagnostics, not isolated GPU kernel
 timings or per-stream counters. No prompts, generated content or private IDs
 are persisted. Production API, Vashti and installed services remain unchanged.
+
+
+## Bounded chronological attention selector, 2026-10-09
+
+Internal source `cc4b8aa` and public controller connection `597039d` add
+`KUNO_LAB_TARGET_QSA=chronological-public` to the fixed speculative13 and
+language200 labs only. Absence preserves the guarded CPU selector. The selector
+is constructor-fixed: actual target rows, tile8, no CPU hybrid or resident
+router. Duplicate, malformed and unrelated mode selection rejects before device
+access. This is not a production setting or public inference API.
+
+For a chunk whose final visible position is at most2048 tokens, all original
+four-token blocks fit the QSA budget. The exact retained IDs are chronological;
+original indexer/score equations still execute. Two ordered GPU dispatches
+validate complete SCORE/status/SELECT/global-Fault owners and then publish IDs
+only if the actual sticky global fault remains clear. Finite nonnegative active
+scores, status1, inactive/logical-gap/full-owner zero tails, initial empty SELECT
+and global-Fault tail are checked. No expert or target token is forced.
+Chunks above the conservative2048-token boundary retain the exact original CPU
+read/select/upload path, including its score-dependent selection.
+
+There are no new private MAIN owners. Additional full INFO ownership is24×2048
+=49,152bytes per MAX8 chunk; temporary handle/resource metadata has a separate
+4,096byte host reservation. Both actual device limits and physical full-span/
+client/alias proofs precede launches. State acceptance remains the existing
+original all-family completed fault/finite/tail checks and actual prefix repair.
+The standalone `qsa-chronological-probe` requires exactly its public-only gate
+and a new numeric receipt, with swap/core disabled; default or pure direct-device
+builds only. No private input/model path is admitted.
+
+Frozen v137/`597039d` passes both physical cards'21 independent numerical cases,
+25 no-publication faults and full original owner erasure. Full CPU13 target
+vectors/exact greedies/actual MTP repair and cold/warm closes pass on B70 with the
+3060 draft. Short all-hit warm replay is7.26311 tokens/s with51 readback batches,
+versus prior6.83366/219 in an earlier artifact; this is an ordered diagnostic,
+not a matched performance selection or normal-demand30tokens/s claim.
+Same-artifact ordered language200 candidate/control both pass real target greedy,
+actual original prefix repairs and full owning closes: candidate199/95.5603s=
+2.08246tokens/s, control199/98.6940s=2.01633. Both spend about49s on weight reads
+and physically read35.2/34.95GB; map batches4163/5939. This modest ordered result
+is not matchedABBA, general quality acceptance or a30tokens/s selection. Physical
+memory/admission/all threeHTTP200/fault counts0 recover after every trial.

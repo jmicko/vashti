@@ -5,7 +5,9 @@ comparison receipts remain. v136/`f868437` accepts both-card Q2 draft and small
 host-source operators, combined original CPU13 and real code200 target generation.
 Q2 reduces memory but has no accepted speed improvement. Normal code200 is
 3.39 continuation tokens/s in this trial; no30 claim. Parallel next source work:
-full host-only expert mirror/import and a bounded GPU attention selector.
+full frozen host-only expert mirror/import. The bounded GPU attention selector
+now passes both-card/fullCPU13 and code200 checks; normal code200 is2.08 versus
+sameartifact control2.02tokens/s under~35GB disk reads. No30claim.
 Installed Kuno/Ollama/Vashti, public API and release selection are unchanged.
 The old paused checkpoint below is historical and superseded by this active pass.
 
@@ -256,6 +258,46 @@ the B70 physical gate below. Whole resident GPU MTP now passes both cards;
 controller and accepted-prefix target state repair remain pending. The active goal continues;
 if sudo expires and effective protected work cannot continue, save a tested
 checkpoint and restore normal GPU/service access.
+
+### Chronological attention and immutable host registration follow-up
+
+Attention leaf`cc4b8aa`, protected/public connection`597039d`, and independent
+review pass. Integrated897native+2auxiliary tests (one ignored), focused58QSA,
+strict pure-direct all-target Clippy,96 protected launcher controls, fmt/diff pass.
+The standalone operator's exact gating accepts default/pure-direct builds only;
+an initial parent return-type compile mismatch was fixed before any device use.
+Frozenv137 SHA256`7d90d1aa3e9a08501ad938ee8b7c2a9c6c5c3035afa0ebc4ffd201c52c668fe0`
+passes both-card21numerical/25fault cases with complete229,376byte owners and
+458,752byte reset+close zero proofs. Full CPU13 vectors/exactgreedy/actualrepair
+and cold/warm closing gates pass. Warm12/1.65218s=7.26311tokens/s,51readback batches
+and zero expert uploads/weight reads/physical read bytes. Previous6.83366/219 is
+an ordered earlier artifact, not matchedABBA. Actual GPU submission regulation
+now accounts549.4ms/59 waits; removing maps did not remove queued computation.
+
+Sameartifact normal code200 candidate(control absentQSA flag) both pass:
+199/95.5603s=2.08246 versus199/98.6940s=2.01633tokens/s. Both perform15,419 uploads
+and31,285,683,200bytes,130/138draft acceptance and five original prefix
+recomputations with zero recomputed vector difference. Both spend~49s reading
+weights, with35,230,142,464/34,949,844,992physical disk bytes. Candidate/control
+maps4163/5939; no significant general speed selection or30claim. Timing excludes
+initial loading/prefill and includes actual request closing audit. No output
+text/token IDs persist and no independent CPU200 quality claim is made.
+
+New immutable nonreuse external-source runtime`dd0db6b` plus one-server/one-stream
+restriction`139075e` passes independent source review and checked child ownership
+suite133tests/strictClippy. Actual foreign storage-only Buffer identity/class,
+complete span/physical RAM/metadata limits, LOAD-only non-atomic shader reflection,
+separate mask/cache variants, original ordinary behavior and typed completed
+detach are checked. Parent CPU13/language trials do not import foreign pages,
+so they do not establish physical CubeCL host consumption. The next tiny both-card
+CubeCL operator and full frozen144VRAM+368host sources are source work in progress.
+Original source identities and full owning/prefix checks remain mandatory.
+
+Every physical trial restores B70 to50,688,000bytes, zero NVIDIA compute owners,
+unpaused healthy admission, allthree HTTP200 and classified faults0. No GPU reset,
+installed service/API/catalogue/driver/frontend/release change. Required Vashti
+changes:none. Exact pertrial source/artifact/helper/numeric recovery evidence is
+in the [optimization receipt](../apps/kuno/benchmarks/text/receipts/native-strata-optimization-20261009.json).
 
 ### Original target all-row and actual carry acceptance, 2026-10-09
 
