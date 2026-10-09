@@ -104,3 +104,35 @@ fn downloaded_head_binds_and_runs_bounded_synthetic_graph_and_recovery() {
         .unwrap();
     assert_eq!(&*out.logits, &*fresh.logits);
 }
+
+#[test]
+#[ignore = "requires public Q8 sidecar via KUNO_TEST_MTP; executes real CPU weights on compiled synthetic input"]
+fn public_weight_mtp_cpu_smoke_repeats_exactly_after_cache_rewind() {
+    let path = std::env::var_os("KUNO_TEST_MTP").expect("KUNO_TEST_MTP is required");
+    let file = GgufFile::open(path, GgufLimits::default()).unwrap();
+    let graph = MtpGraph::bind(&file).unwrap();
+    let mut executor = kuno_text::threaded::ThreadedExecutor::new(8).unwrap();
+    let mut sequence = graph.sequence(2).unwrap();
+    let hidden = vec![0.; 10240]; // fixed public synthetic conditioning, not target output
+    let cancel = AtomicBool::new(false);
+    let first = graph
+        .step(&mut executor, &mut sequence, 0, &hidden, &cancel)
+        .unwrap();
+    assert_eq!((first.logits.len(), first.hidden.len()), (248320, 10240));
+    assert!(
+        first
+            .logits
+            .iter()
+            .chain(first.hidden.iter())
+            .all(|v| v.is_finite())
+    );
+    assert!(first.logits.iter().any(|v| v.abs() > 1e-6));
+    sequence.rewind(0).unwrap();
+    let repeated = graph
+        .step(&mut executor, &mut sequence, 0, &hidden, &cancel)
+        .unwrap();
+    assert_eq!(&*first.logits, &*repeated.logits);
+    assert_eq!(&*first.hidden, &*repeated.hidden);
+    // This is execution/repeatability acceptance, not an independent full-head
+    // numerical oracle, target/draft integration or speculative speed evidence.
+}
