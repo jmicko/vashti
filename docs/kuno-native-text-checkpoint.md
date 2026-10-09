@@ -1,6 +1,7 @@
 # Active DASLab/Strata pass — 2026-10-09
 
-Latest model-tested engine source is `6a32b11` (parallel mapper probe: `416f889`) on `codex/kuno-native-text`, in the
+Latest model-tested target-output source is `38c0e52` (launcher `ef2cf9e`);
+latest timed engine source remains `6a32b11` (parallel mapper probe: `416f889`) on `codex/kuno-native-text`, in the
 existing isolated Kuno worktree. The user approved full DASLab IQ3_S, Strata
 source study and30 accepted-token/s work. Canonical Vashti source is preserved;
 installed services, public API/catalog/configuration and release selection are
@@ -64,10 +65,44 @@ Parallel complete-owner preflight and prepared integer composition now pass
 physical numerical/owner checks. Their performance is variable; keep both
 optional and prepared-only v109 selected. See the latest result below.
 MTP KV-only append
-`2dea140` has focused host acceptance, but target all-row verification, controller
-and accepted-prefix state repair remain pending. The active goal continues;
+`2dea140` has focused host acceptance. Target all-row verification now passes
+the B70 physical gate below; GPU MTP, controller and accepted-prefix state
+repair remain pending. The active goal continues;
 if sudo expires and effective protected work cannot continue, save a tested
 checkpoint and restore normal GPU/service access.
+
+### Original target all-row and actual carry acceptance, 2026-10-09
+
+CPU oracle `68e2c33` preserves all four complete old CPU logit vectors bit-for-bit
+and records actual pre-output_hc10,240-wide residuals. Both original83.6GB
+shards are independently rehashed against publisher hashes in this run. The
+4,137,216-byte public oracle SHA256 is
+`18788aee8ccb1defdbba624df3ae914c3cf574ab719c3d2a5f375e4048c67c20`.
+
+Original all-row implementation `d12b96b`, registration `38c0e52`, frozen
+default artifact SHA256
+`fc4c9f346c67b571585749d5164b391bcdd21ec6d101e28d3fa32e151f172ab7`,
+passes partitions [1,1,1], [1,2], [2,1], [3], fresh [3] and each position3
+continuation. Every complete248,320-logit/10,240-carry row, exact greedy,
+graph identity, actual cursor and owning close passes. Maximum absolute
+logit/carry errors are0.000067711/0.000028134 under unchanged0.006+0.0003
+bounds. All1,378 owners/826,638,336bytes erase at each close. Added MAIN is
+8,388,608bytes; runtime ceiling is explicitly128MiB; ordinary defaults remain.
+
+An initial pre-model cgroup mismatch is preserved. `ef2cf9e` narrowly admits
+the exact public target fixture's48GiB host cache/no-swap/core-free launch;
+80 launcher controls pass. Default source passes717 native plus two auxiliary
+tests (one opt-in ignored), strict all-target release Clippy, fmt and diff.
+This is correctness acceptance with ordinary CPU routing, original packed
+expert math and F32 activations. Cold durations include uploads and checks;
+no speculative speed claim is made. All rows commit; prefix repair and the
+native GPU Q8 MTP workspace remain in development. Detailed provenance and
+limitations are in the [foundation receipt](../apps/kuno/benchmarks/text/receipts/daslab-target-mtp-foundation-20261009.json).
+
+At12:08:23UTC, same-boot physical B70 memory is50,688,000bytes, NVIDIA554MiB
+desktop-only, no compute process. Admission is resumed with no active/queued
+work or recovery latch; all three HTTP services respond200. Classified Xe and
+NVIDIA faults remain zero. No reset, reboot, installation, API or Vashti change.
 
 ### Parallel routing and prepared combination, 2026-10-09
 

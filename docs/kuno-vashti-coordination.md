@@ -2826,3 +2826,20 @@ source/artifact hashes and all failures are in the native checkpoint/DASLab
 aggregate. Native MTP target/draft leaves are in progress, not performance
 accepted. Public services/admission/memory/fault counts recover after all runs;
 no install/reset/driver/API/Vashti/release change. **Required Vashti changes:none.**
+
+#### Backend-only target rows/carry checkpoint (2026-10-09,12:08UTC)
+
+Original all-row target `d12b96b` and public registration `38c0e52` pass the B70:
+complete CPU logits/actual pre-head carries for all four rows across five
+partitions and continuation, exact greedies/graph/cursor checks and full owning
+closes. Frozen default artifact is `fc4c9f346c67b571585749d5164b391bcdd21ec6d101e28d3fa32e151f172ab7`.
+CPU oracle `68e2c33` matches existing CPU logits bit-for-bit and rehashes both
+original shards. Root717 native plus2 auxiliary tests, strict default Clippy,
+fmt/diff and80 launcher controls pass. The narrow protected launcher correction
+is `ef2cf9e`; initial pre-model rejection is preserved. See the
+[foundation receipt](../apps/kuno/benchmarks/text/receipts/daslab-target-mtp-foundation-20261009.json)
+and [implemented target contract](kuno-native-mtp-all-rows-plan.md).
+All supplied rows commit; accepted-prefix repair, whole GPU MTP and speculative
+speed remain pending. No new throughput claim. Physical memory/admission/HTTPs
+recover and classified faults stay zero. No install/API/Vashti/release change.
+**Required Vashti changes:none.**

@@ -1,0 +1,340 @@
+{
+  "schema": 1,
+  "date": "2026-10-09",
+  "scope": "fixed-public-DASLab-target-carry-and-MTP-foundation",
+  "compiled_prompt_token": 0,
+  "seed": 424242,
+  "temperature": 0,
+  "accepted_speculative_tokens_per_second": null,
+  "thirty_tokens_per_second_achieved": false,
+  "private_or_production_accepted": false,
+  "CPU_target_reference": {
+    "path": "/media/jmicko/faststore/kuno-development/daslab-target-carry-reference4-20261009/reference-receipt.json",
+    "sha256": "540cab27b4ec2118b851830ead1de7d6a2af572ea8ff656dd52ce75d31a624f0",
+    "record": {
+      "source": "68e2c33347b3d3ffaba8d13c8556b7283cd8f010",
+      "binary_sha256": "92cc79314d2e344c50dcfd1d0995cc28b320d48eea55abfdb010ac15552bc85e",
+      "shard_sha256": [
+        "4c1eb2ceb4915e1192f4f386021897bde56a97f40a0bb78bb86465e0f7d2aca3",
+        "316b46f3a2dbd68c900f43136ab9449f9dcc3725dfd8c794847c204bc161e113"
+      ],
+      "positions": 4,
+      "public_token0": 0,
+      "seed": 424242,
+      "temperature": 0,
+      "all_old_CPU_logits_bitwise_equal": true,
+      "carry_tap": "actual pre-output_hc residual",
+      "bytes": 4137216,
+      "output_sha256": "18788aee8ccb1defdbba624df3ae914c3cf574ab719c3d2a5f375e4048c67c20",
+      "full_model_CPU_reference_only": true,
+      "GPU_or_MTP_throughput_accepted": false
+    }
+  },
+  "GPU_target_rows": {
+    "path": "/media/jmicko/faststore/kuno-development/daslab-target-rows-v115-r2-20261009/intel-target-rows.json",
+    "sha256": "2030fac8beb1e030ae8bcd1d46a65bae9c4d4698b0b252b9c52eb9afdfa507ac",
+    "record": {
+      "absolute_tolerance": 0.006000000052154064,
+      "accepted_prefix_supported": false,
+      "all_supplied_rows_committed": true,
+      "carry_tap": "layer47 FFN HC residual before output_hc",
+      "carry_width": 10240,
+      "complete_cpu_reference_rows": 4,
+      "extra_fixture_host_owner_bound_bytes": 16777216,
+      "full_model_card": "B70",
+      "logits_width": 248320,
+      "max_chunk": 3,
+      "model_repository": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
+      "model_revision": "ed59f92082b1e93c0e96d60a8b11aab089b52f09",
+      "mtp_throughput_accepted": false,
+      "partitions": [
+        {
+          "checks": [
+            {
+              "completed_cursor": 1,
+              "count": 1,
+              "elapsed_ns_including_full_vector_checks": 3207758511,
+              "start": 0,
+              "whole_chunk_and_all_rows_accepted": true
+            },
+            {
+              "completed_cursor": 2,
+              "count": 1,
+              "elapsed_ns_including_full_vector_checks": 895793178,
+              "start": 1,
+              "whole_chunk_and_all_rows_accepted": true
+            },
+            {
+              "completed_cursor": 3,
+              "count": 1,
+              "elapsed_ns_including_full_vector_checks": 679904843,
+              "start": 2,
+              "whole_chunk_and_all_rows_accepted": true
+            },
+            {
+              "completed_cursor": 4,
+              "count": 1,
+              "elapsed_ns_including_full_vector_checks": 600950960,
+              "start": 3,
+              "whole_chunk_and_all_rows_accepted": true
+            }
+          ],
+          "continuation_at_position3": true,
+          "hidden_max_abs_error": 2.765655517578125e-05,
+          "logits_max_abs_error": 6.771087646484375e-05,
+          "owner_audit": {
+            "main_buffers": 1378,
+            "main_bytes": 826638336,
+            "source_buffers": 0,
+            "source_bytes": 0
+          },
+          "partition": [
+            1,
+            1,
+            1
+          ],
+          "private_main_bytes": 826638336
+        },
+        {
+          "checks": [
+            {
+              "completed_cursor": 1,
+              "count": 1,
+              "elapsed_ns_including_full_vector_checks": 2872579026,
+              "start": 0,
+              "whole_chunk_and_all_rows_accepted": true
+            },
+            {
+              "completed_cursor": 3,
+              "count": 2,
+              "elapsed_ns_including_full_vector_checks": 1120160972,
+              "start": 1,
+              "whole_chunk_and_all_rows_accepted": true
+            },
+            {
+              "completed_cursor": 4,
+              "count": 1,
+              "elapsed_ns_including_full_vector_checks": 609116909,
+              "start": 3,
+              "whole_chunk_and_all_rows_accepted": true
+            }
+          ],
+          "continuation_at_position3": true,
+          "hidden_max_abs_error": 2.765655517578125e-05,
+          "logits_max_abs_error": 6.771087646484375e-05,
+          "owner_audit": {
+            "main_buffers": 1378,
+            "main_bytes": 826638336,
+            "source_buffers": 0,
+            "source_bytes": 0
+          },
+          "partition": [
+            1,
+            2
+          ],
+          "private_main_bytes": 826638336
+        },
+        {
+          "checks": [
+            {
+              "completed_cursor": 2,
+              "count": 2,
+              "elapsed_ns_including_full_vector_checks": 3192265447,
+              "start": 0,
+              "whole_chunk_and_all_rows_accepted": true
+            },
+            {
+              "completed_cursor": 3,
+              "count": 1,
+              "elapsed_ns_including_full_vector_checks": 723315043,
+              "start": 2,
+              "whole_chunk_and_all_rows_accepted": true
+            },
+            {
+              "completed_cursor": 4,
+              "count": 1,
+              "elapsed_ns_including_full_vector_checks": 597353836,
+              "start": 3,
+              "whole_chunk_and_all_rows_accepted": true
+            }
+          ],
+          "continuation_at_position3": true,
+          "hidden_max_abs_error": 2.8133392333984375e-05,
+          "logits_max_abs_error": 6.580352783203125e-05,
+          "owner_audit": {
+            "main_buffers": 1378,
+            "main_bytes": 826638336,
+            "source_buffers": 0,
+            "source_bytes": 0
+          },
+          "partition": [
+            2,
+            1
+          ],
+          "private_main_bytes": 826638336
+        },
+        {
+          "checks": [
+            {
+              "completed_cursor": 3,
+              "count": 3,
+              "elapsed_ns_including_full_vector_checks": 3306280531,
+              "start": 0,
+              "whole_chunk_and_all_rows_accepted": true
+            },
+            {
+              "completed_cursor": 4,
+              "count": 1,
+              "elapsed_ns_including_full_vector_checks": 626182162,
+              "start": 3,
+              "whole_chunk_and_all_rows_accepted": true
+            }
+          ],
+          "continuation_at_position3": true,
+          "hidden_max_abs_error": 2.8133392333984375e-05,
+          "logits_max_abs_error": 6.580352783203125e-05,
+          "owner_audit": {
+            "main_buffers": 1378,
+            "main_bytes": 826638336,
+            "source_buffers": 0,
+            "source_bytes": 0
+          },
+          "partition": [
+            3
+          ],
+          "private_main_bytes": 826638336
+        },
+        {
+          "checks": [
+            {
+              "completed_cursor": 3,
+              "count": 3,
+              "elapsed_ns_including_full_vector_checks": 3291035460,
+              "start": 0,
+              "whole_chunk_and_all_rows_accepted": true
+            },
+            {
+              "completed_cursor": 4,
+              "count": 1,
+              "elapsed_ns_including_full_vector_checks": 631405976,
+              "start": 3,
+              "whole_chunk_and_all_rows_accepted": true
+            }
+          ],
+          "continuation_at_position3": true,
+          "hidden_max_abs_error": 2.8133392333984375e-05,
+          "logits_max_abs_error": 6.580352783203125e-05,
+          "owner_audit": {
+            "main_buffers": 1378,
+            "main_bytes": 826638336,
+            "source_buffers": 0,
+            "source_bytes": 0
+          },
+          "partition": [
+            3
+          ],
+          "private_main_bytes": 826638336
+        }
+      ],
+      "private_or_production_accepted": false,
+      "public_token0": 0,
+      "relative_tolerance": 0.0003000000142492354,
+      "runtime_io_limit_bytes": 134217728,
+      "scope": "fixed-public-DASLab-target-rows-and-carry-only",
+      "seed": 424242,
+      "speculative_controller": false,
+      "temperature": 0
+    }
+  },
+  "GPU_target_source": {
+    "path": "/media/jmicko/faststore/kuno-development/daslab-target-rows-v115-r2-20261009/source.json",
+    "sha256": "bfc59227114ea80a3da8dcc4909c2d7e3981feb29ac29eb49329a606a4cb893c",
+    "record": {
+      "commit": "38c0e52cd1e87ddd5799add3e9dd4a80224ba3ee",
+      "binary_sha256": "fc4c9f346c67b571585749d5164b391bcdd21ec6d101e28d3fa32e151f172ab7",
+      "features": [],
+      "protected_launcher_source": "ef2cf9e",
+      "protected_launcher_sha256": "840ce849d8614b6c15c1e5fb0ca8bfee0daa2a111bcbae3d18e6f6fea184b8d9",
+      "reference_sha256": "18788aee8ccb1defdbba624df3ae914c3cf574ab719c3d2a5f375e4048c67c20",
+      "pinned_profile": "DASLabIQ3_S",
+      "public_token0": 0,
+      "seed": 424242,
+      "temperature": 0,
+      "context": 4,
+      "max_chunk": 3,
+      "all_supplied_rows_committed": true,
+      "speculative_throughput_accepted": false,
+      "helper_sha256": "d8a140c3e22620e36383aa50b1d566d69b54e3a001ded692f6302d5188135eae"
+    }
+  },
+  "host_after": {
+    "path": "/media/jmicko/faststore/kuno-development/daslab-target-rows-v115-r2-20261009/host-after.json",
+    "sha256": "c1afd0c9149a2e6e7fe776e7bde9d00875aa53223ef4e6d77290f0337376d322",
+    "record": {
+      "admission": {
+        "action": "status",
+        "state": {
+          "admission": {
+            "active": false,
+            "completed": 62,
+            "paused": false,
+            "recovery_required": false,
+            "rejected": 0,
+            "waiting": 0
+          }
+        },
+        "status": 200
+      },
+      "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+      "http_statuses": {
+        "kuno": 200,
+        "ollama": 200,
+        "vashti": 200
+      },
+      "intel": {
+        "xe_memory": [
+          {
+            "total_bytes": 34242297856,
+            "used_bytes": 50688000
+          }
+        ]
+      },
+      "kernel": "7.0.0-38-generic",
+      "kernel_fault_counts": {
+        "nvidia_xid": 0,
+        "xe_memory_faults": 0,
+        "xe_reset_failures": 0,
+        "xe_timeouts": 0,
+        "xe_wedged": 0
+      },
+      "nvidia_compute_process_count": 0,
+      "nvidia_memory_mib": 554,
+      "time": "2026-10-09T12:08:23.086639+00:00"
+    }
+  },
+  "checks": {
+    "source": "38c0e52cd1e87ddd5799add3e9dd4a80224ba3ee",
+    "default_native_tests": 717,
+    "auxiliary_tests": 2,
+    "ignored_opt_in": 1,
+    "default_all_target_strict_clippy": true,
+    "fmt": true,
+    "whitespace": true,
+    "protected_launcher_source": "ef2cf9e",
+    "protected_launcher_tests": 80
+  },
+  "preserved_failure": {
+    "directory": "/media/jmicko/faststore/kuno-development/daslab-target-rows-v115-20261009",
+    "reason": "launcher expected8GiB but explicitly selected public target cache requires48GiB",
+    "pre_model_execution": true,
+    "normal_admission_restored": true,
+    "corrected_by": "ef2cf9e"
+  },
+  "limitations": [
+    "all supplied rows commit; accepted prefix repair pending",
+    "whole target B70 only; full main bank does not fitRTX3060",
+    "GPU MTP and speculative controller not accepted",
+    "cold correctness durations include full-vector checks and expert uploads; no performance claim",
+    "known original32-position GPUlogit discontinuity still unresolved"
+  ]
+}

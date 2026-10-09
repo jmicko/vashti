@@ -1,10 +1,18 @@
 # Native target logits and HC carry for one to three rows
 
-Design only, based on `d6b53ce9bb9c7c9d132854d4a7045617f4446ae1`.
-No implementation, numerical acceptance, throughput result, speculative
-controller, private production route or accepted-prefix support is established
-by this document. The initial scope is a compiled public target-output fixture,
-using the original packed model and the existing native MAX8 owners.
+Implemented by `d12b96b`, with fixed-public registration `38c0e52` and
+protected launcher `ef2cf9e`. The B70 passes complete CPU logit and actual HC
+carry comparison for partitions [1,1,1], [1,2], [2,1], [3] and fresh [3], each
+followed by real continuation at position3. All four rows and exact greedy
+tokens pass; maximum logit/carry errors are0.000067711/0.000028134. Full closes
+erase1,378 owners/826,638,336bytes. See the
+[numeric foundation receipt](../apps/kuno/benchmarks/text/receipts/daslab-target-mtp-foundation-20261009.json).
+
+This acceptance is for the compiled public original-arithmetic target fixture
+only. All supplied rows commit. Speculative throughput, a controller, accepted
+prefix repair, GPU MTP parity and private production integration remain pending.
+Whole-model acceptance is B70-only; the full main bank does not fit the3060.
+The requirements below describe the implemented target-output contract.
 
 ## Output contract
 
