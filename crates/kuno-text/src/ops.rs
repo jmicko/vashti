@@ -777,6 +777,9 @@ pub struct PleOutput {
 #[path = "ops_ple_transition.rs"]
 pub mod ple_transition;
 
+#[path = "ops_ple_checkpoint.rs"]
+pub mod ple_checkpoint;
+
 /// PLE projections are performed by the graph. This operator receives projected
 /// key/value and stores only normalized gated values in its dilated convolution.
 #[allow(clippy::too_many_arguments)]

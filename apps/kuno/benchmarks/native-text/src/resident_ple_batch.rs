@@ -209,6 +209,243 @@ impl Drop for PleBatchWorkspace {
         self.next.zeroize();
     }
 }
+
+pub(crate) struct LatestPleCheckpoint {
+    snapshot: Option<ops::ple_checkpoint::Checkpoint>,
+    metadata: Zeroizing<LatestPleMetadata>,
+    binding: Option<GraphBindingId>,
+    poison: Arc<AtomicBool>,
+    armed: bool,
+}
+#[derive(Clone, PartialEq, Eq)]
+struct LatestPleMetadata {
+    owner: u64,
+    generation: u64,
+    sequence: SequenceKey,
+    start: usize,
+    count: usize,
+    ids: [BufferId; N],
+    tokens: [u32; 3],
+    old_tokens: [i32; 2],
+}
+impl Zeroize for LatestPleMetadata {
+    fn zeroize(&mut self) {
+        self.owner.zeroize();
+        self.generation.zeroize();
+        self.sequence.zeroize();
+        self.start.zeroize();
+        self.count.zeroize();
+        self.ids.zeroize();
+        self.tokens.zeroize();
+        self.old_tokens.zeroize();
+    }
+}
+impl PleBatchWorkspace {
+    pub(crate) fn checkpoint_latest(
+        &self,
+        model: &ResidentModel<'_, '_>,
+        tokens: &[u32],
+        cancel: &AtomicBool,
+    ) -> Result<LatestPleCheckpoint> {
+        self.healthy(model, cancel)?;
+        graph_preflight(model.graph)?;
+        if !(1..=3).contains(&tokens.len())
+            || tokens.iter().any(|&t| t >= 248320)
+            || self.pending
+            || model.ple_batch_pending.is_some()
+            || self.next != model.position
+            || model
+                .position
+                .checked_add(tokens.len())
+                .is_none_or(|end| end > model.context)
+        {
+            return Err(error());
+        }
+        self.generation
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow)?;
+        let snapshot = ops::ple_checkpoint::Checkpoint::capture(
+            &model.ple_conv,
+            &model.ple_history,
+            ops::ple_checkpoint::MAX_OWNED_BYTES,
+        )
+        .map_err(u::fault)?;
+        let mut packet = Zeroizing::new([0; 3]);
+        packet[..tokens.len()].copy_from_slice(tokens);
+        Ok(LatestPleCheckpoint {
+            snapshot: Some(snapshot),
+            metadata: Zeroizing::new(LatestPleMetadata {
+                owner: self.identity,
+                generation: self.generation,
+                sequence: self.sequence,
+                start: model.position,
+                count: tokens.len(),
+                ids: *self.ids,
+                tokens: *packet,
+                old_tokens: [model.ple_history.tokens()[0], model.ple_history.tokens()[1]],
+            }),
+            binding: Some(self.binding),
+            poison: self.poison.clone(),
+            armed: true,
+        })
+    }
+}
+impl LatestPleCheckpoint {
+    pub(crate) fn start(&self) -> usize {
+        self.metadata.start
+    }
+    pub(crate) fn count(&self) -> usize {
+        self.metadata.count
+    }
+    pub(crate) fn binding(&self) -> Option<GraphBindingId> {
+        self.binding
+    }
+    pub(crate) fn owned_bytes(&self) -> Result<usize> {
+        self.snapshot
+            .as_ref()
+            .ok_or(error())?
+            .owned_bytes()
+            .map_err(u::fault)?
+            .checked_add(std::mem::size_of::<Self>())
+            .ok_or(Error::ArithmeticOverflow)
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn validate_parts(
+        &self,
+        workspace: &PleBatchWorkspace,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+        position: usize,
+        conv: &CausalConvState,
+        history: &PleTokenHistory,
+        pending: bool,
+        poisoned: bool,
+        retired: &AtomicBool,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        u::cancel(cancel)?;
+        graph_preflight(graph)?;
+        workspace.validate_ids(arena)?;
+        let m = &self.metadata;
+        if !self.armed
+            || pending
+            || workspace.pending
+            || poisoned
+            || retired.load(Ordering::Acquire)
+            || self.poison.load(Ordering::Acquire)
+            || !Arc::ptr_eq(&self.poison, &workspace.poison)
+            || self.binding != Some(graph.binding_id())
+            || workspace.binding != graph.binding_id()
+            || workspace.identity != m.owner
+            || workspace.sequence != m.sequence
+            || *workspace.ids != m.ids
+            || workspace.generation
+                != m.generation
+                    .checked_add(1)
+                    .ok_or(Error::ArithmeticOverflow)?
+            || position
+                != m.start
+                    .checked_add(m.count)
+                    .ok_or(Error::ArithmeticOverflow)?
+            || workspace.next != position
+        {
+            return Err(error());
+        }
+        let mut next_tokens = Zeroizing::new(m.old_tokens);
+        for &token in &m.tokens[..m.count] {
+            next_tokens[0] = next_tokens[1];
+            next_tokens[1] = token as i32;
+        }
+        if history.tokens() != *next_tokens {
+            return Err(error());
+        }
+        self.snapshot
+            .as_ref()
+            .ok_or(error())?
+            .preflight(conv, history, cancel)
+            .map_err(u::fault)
+    }
+    pub(crate) fn validate_completed(
+        &self,
+        workspace: &PleBatchWorkspace,
+        model: &ResidentModel<'_, '_>,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        self.validate_parts(
+            workspace,
+            model.graph,
+            &model.arena,
+            model.position,
+            &model.ple_conv,
+            &model.ple_history,
+            model.ple_batch_pending.is_some(),
+            model.poisoned,
+            &model.retired,
+            cancel,
+        )
+    }
+    pub(crate) fn prepare_restore<'a>(
+        mut self,
+        workspace: &'a mut PleBatchWorkspace,
+        c: Preparation<'a, '_, '_>,
+        cancel: &AtomicBool,
+    ) -> Result<LatestPleRestore<'a>> {
+        self.validate_parts(
+            workspace,
+            c.graph,
+            c.arena,
+            c.position,
+            c.conv,
+            c.history,
+            c.anchor.is_some(),
+            *c.owner_poisoned,
+            c.retired,
+            cancel,
+        )?;
+        let restore = self
+            .snapshot
+            .take()
+            .ok_or(error())?
+            .prepare_restore(c.conv, c.history, cancel)
+            .map_err(u::fault)?;
+        Ok(LatestPleRestore {
+            checkpoint: self,
+            workspace,
+            restore,
+        })
+    }
+    pub(crate) fn accept_completed(
+        mut self,
+        workspace: &PleBatchWorkspace,
+        model: &ResidentModel<'_, '_>,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        self.validate_completed(workspace, model, cancel)?;
+        self.armed = false;
+        Ok(())
+    }
+}
+impl Drop for LatestPleCheckpoint {
+    fn drop(&mut self) {
+        if self.armed {
+            self.poison.store(true, Ordering::Release);
+        }
+        self.armed.zeroize();
+        self.binding = None;
+    }
+}
+pub(crate) struct LatestPleRestore<'a> {
+    checkpoint: LatestPleCheckpoint,
+    workspace: &'a mut PleBatchWorkspace,
+    restore: ops::ple_checkpoint::Restore<'a>,
+}
+impl LatestPleRestore<'_> {
+    pub(crate) fn commit(mut self) {
+        self.restore.commit();
+        self.workspace.next = self.checkpoint.metadata.start;
+        self.checkpoint.armed = false;
+    }
+}
 impl PleBatchWorkspace {
     pub(crate) fn allocation_requests(graph: BoundGraph<'_, '_>) -> Result<[u64; N]> {
         Self::allocation_requests_with_profile(graph, OriginalPackedProfile::Q4)

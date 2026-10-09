@@ -1119,6 +1119,262 @@ impl ResidentGdn<'_> {
     }
 }
 
+/// Actual prechunk roots retained by the ordinary old/next state swap. The
+/// external exclusive round allows exactly one completed chunk before consume.
+pub(crate) struct LatestGdnCheckpoint {
+    metadata: Zeroizing<LatestGdnMetadata>,
+    binding: Option<GraphBindingId>,
+    poison: Arc<AtomicBool>,
+    armed: bool,
+}
+#[derive(Clone, PartialEq, Eq)]
+struct LatestGdnMetadata {
+    workspace: u64,
+    stage: u64,
+    public: u64,
+    sequence: u64,
+    layer: usize,
+    start: u64,
+    count: usize,
+    chunk: u64,
+    generation: u64,
+    state: [BufferId; 4],
+}
+impl Zeroize for LatestGdnMetadata {
+    fn zeroize(&mut self) {
+        self.workspace.zeroize();
+        self.stage.zeroize();
+        self.public.zeroize();
+        self.sequence.zeroize();
+        self.layer.zeroize();
+        self.start.zeroize();
+        self.count.zeroize();
+        self.chunk.zeroize();
+        self.generation.zeroize();
+        self.state.zeroize();
+    }
+}
+fn latest_gdn_order(old: &LatestGdnMetadata, next: &LatestGdnMetadata, stages: u32) -> Result<()> {
+    let mut expected = Zeroizing::new(old.clone());
+    expected.chunk = old.chunk.checked_add(1).ok_or(Error::ArithmeticOverflow)?;
+    expected.generation = old
+        .generation
+        .checked_add(stages as u64)
+        .ok_or(Error::ArithmeticOverflow)?;
+    expected.state.swap(0, 1);
+    expected.state.swap(2, 3);
+    if *expected != *next {
+        return Err(fault("native latest GDN checkpoint identity"));
+    }
+    Ok(())
+}
+fn latest_gdn_roots(stage: &ResidentGdn<'_>, arena: &PrivateArena) -> Result<()> {
+    let ids = state_ids(stage);
+    let sizes = [stage.layout.recurrence.state_elements; 2]
+        .into_iter()
+        .chain([stage.layout.pointwise.ring_elements; 2]);
+    let mut handles = Vec::with_capacity(4);
+    for (i, (id, words)) in ids.into_iter().zip(sizes).enumerate() {
+        if ids[..i].contains(&id) {
+            return Err(fault("native latest GDN root alias"));
+        }
+        let layout = arena.layout(id).map_err(arena_fault)?;
+        let handle = arena.handle(id).map_err(arena_fault)?;
+        if layout != BufferLayout::new(words).map_err(arena_fault)?
+            || handle.offset_start.unwrap_or(0) != 0
+            || handle.offset_end.unwrap_or(0) != 0
+            || handle.size() != layout.owned_bytes as u64
+            || handle.size_in_used() != layout.owned_bytes as u64
+            || handles
+                .first()
+                .is_some_and(|h: &Handle| h.stream != handle.stream)
+        {
+            return Err(fault("native latest GDN full roots"));
+        }
+        handles.push(handle.clone());
+    }
+    let resources = u::resources(arena.client().map_err(arena_fault)?, handles)?;
+    if resources.len() != 4 {
+        return Err(Error::InvalidBufferLength);
+    }
+    for (i, r) in resources.iter().enumerate() {
+        let page = r.resource();
+        let bytes = arena.layout(ids[i]).map_err(arena_fault)?.owned_bytes as u64;
+        validate_page(page.offset, page.size, page.buffer.size(), bytes, bytes)?;
+        if resources[..i]
+            .iter()
+            .any(|old| old.resource().buffer == page.buffer)
+        {
+            return Err(fault("native latest GDN backing alias"));
+        }
+    }
+    Ok(())
+}
+impl GdnBatchWorkspace {
+    pub(crate) fn checkpoint_latest(
+        &self,
+        stage: &ResidentGdn<'_>,
+        arena: &PrivateArena,
+        start: u64,
+        count: usize,
+        cancel: &AtomicBool,
+    ) -> Result<LatestGdnCheckpoint> {
+        self.healthy(arena, cancel)?;
+        checked_count(start, count, stage.layout.max_context)?;
+        if !(1..=3).contains(&count)
+            || self.policy.phase != ChunkPhase::Idle
+            || *self.policy.issued != 0
+            || *self.policy.committed != 0
+            || stage.lifecycle.phase != Phase::Ready(start)
+            || stage.batch_pending.is_some()
+            || stage.sequence != self.sequence
+            || stage.binding != self.binding
+            || stage.layout != self.layout.stage
+            || stage.layer >= MAX_LAYERS
+            || self.policy.expected & (1u64 << stage.layer) == 0
+            || stage
+                .batch_poison
+                .as_ref()
+                .is_some_and(|p| !Arc::ptr_eq(p, &self.poison))
+        {
+            return Err(fault("native latest GDN checkpoint boundary"));
+        }
+        latest_gdn_roots(stage, arena)?;
+        self.policy
+            .chunk
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow)?;
+        self.policy
+            .generation
+            .checked_add(self.policy.expected.count_ones() as u64)
+            .ok_or(Error::ArithmeticOverflow)?;
+        Ok(LatestGdnCheckpoint {
+            metadata: Zeroizing::new(LatestGdnMetadata {
+                workspace: self.identity,
+                stage: stage.identity,
+                public: stage.public_identity,
+                sequence: stage.sequence.0,
+                layer: stage.layer,
+                start,
+                count,
+                chunk: *self.policy.chunk,
+                generation: *self.policy.generation,
+                state: state_ids(stage),
+            }),
+            binding: Some(self.binding),
+            poison: self.poison.clone(),
+            armed: true,
+        })
+    }
+}
+impl LatestGdnCheckpoint {
+    pub(crate) fn layer(&self) -> usize {
+        self.metadata.layer
+    }
+    pub(crate) fn start(&self) -> usize {
+        self.metadata.start as usize
+    }
+    pub(crate) fn count(&self) -> usize {
+        self.metadata.count
+    }
+    pub(crate) fn binding(&self) -> Option<GraphBindingId> {
+        self.binding
+    }
+    pub(crate) fn validate_completed(
+        &self,
+        stage: &ResidentGdn<'_>,
+        workspace: &GdnBatchWorkspace,
+        arena: &PrivateArena,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        workspace.healthy(arena, cancel)?;
+        workspace.policy.completed_boundary()?;
+        if !self.armed
+            || self.binding != Some(stage.binding)
+            || stage.binding != workspace.binding
+            || !Arc::ptr_eq(&self.poison, &workspace.poison)
+            || stage
+                .batch_poison
+                .as_ref()
+                .is_none_or(|p| !Arc::ptr_eq(p, &self.poison))
+            || stage.batch_pending.is_some()
+            || stage.layout != workspace.layout.stage
+            || stage.lifecycle.phase
+                != Phase::Ready(checked_count(
+                    self.metadata.start,
+                    self.metadata.count,
+                    stage.layout.max_context,
+                )?)
+        {
+            return Err(fault("native latest GDN completed checkpoint"));
+        }
+        latest_gdn_order(
+            &self.metadata,
+            &LatestGdnMetadata {
+                workspace: workspace.identity,
+                stage: stage.identity,
+                public: stage.public_identity,
+                sequence: stage.sequence.0,
+                layer: stage.layer,
+                start: self.metadata.start,
+                count: self.metadata.count,
+                chunk: *workspace.policy.chunk,
+                generation: *workspace.policy.generation,
+                state: state_ids(stage),
+            },
+            workspace.policy.expected.count_ones(),
+        )?;
+        latest_gdn_roots(stage, arena)
+    }
+    pub(crate) fn prepare_restore<'a, 'f>(
+        self,
+        stage: &'a mut ResidentGdn<'f>,
+        workspace: &GdnBatchWorkspace,
+        arena: &PrivateArena,
+        cancel: &AtomicBool,
+    ) -> Result<LatestGdnRestore<'a, 'f>> {
+        self.validate_completed(stage, workspace, arena, cancel)?;
+        Ok(LatestGdnRestore {
+            checkpoint: self,
+            stage,
+        })
+    }
+    pub(crate) fn accept_completed(
+        mut self,
+        stage: &ResidentGdn<'_>,
+        workspace: &GdnBatchWorkspace,
+        arena: &PrivateArena,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        self.validate_completed(stage, workspace, arena, cancel)?;
+        self.armed = false;
+        Ok(())
+    }
+}
+impl Drop for LatestGdnCheckpoint {
+    fn drop(&mut self) {
+        if self.armed {
+            self.poison.store(true, Ordering::Release);
+        }
+        self.armed.zeroize();
+        self.binding = None;
+    }
+}
+pub(crate) struct LatestGdnRestore<'a, 'f> {
+    checkpoint: LatestGdnCheckpoint,
+    stage: &'a mut ResidentGdn<'f>,
+}
+impl LatestGdnRestore<'_, '_> {
+    /// Requires every family preflight and completed suffix clear first. There
+    /// is no fallible work here and no poison/generation reset.
+    pub(crate) fn commit(mut self) {
+        self.stage.buffers.recurrent.swap(0, 1);
+        self.stage.buffers.raw_conv.swap(0, 1);
+        self.stage.lifecycle.phase = Phase::Ready(self.checkpoint.metadata.start);
+        self.checkpoint.armed = false;
+    }
+}
+
 /// Fixed owning handles/resources only; no allocation of private metadata.
 /// Original public vectors expose logical tail-trimmed views of precharged
 /// full pages. Lookup restores their FULL owning clone, while launch views stay
@@ -1248,6 +1504,74 @@ fn validate_page(offset: u64, size: u64, physical: u64, owned: u64, bound: u64) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn latest() -> LatestGdnMetadata {
+        LatestGdnMetadata {
+            workspace: 7,
+            stage: 11,
+            public: 13,
+            sequence: 17,
+            layer: 0,
+            start: 23,
+            count: 3,
+            chunk: 29,
+            generation: 100,
+            state: std::array::from_fn(|i| BufferId::metadata_fixture(31, 37, i)),
+        }
+    }
+    #[test]
+    fn latest_gdn_requires_one_real_swap_of_both_root_pairs_and_monotonic_generation() {
+        let old = latest();
+        let mut completed = old.clone();
+        completed.chunk += 1;
+        completed.generation += 36;
+        completed.state.swap(0, 1);
+        completed.state.swap(2, 3);
+        latest_gdn_order(&old, &completed, 36).unwrap();
+        let mut wrong = completed.clone();
+        wrong.state.swap(2, 3);
+        assert!(latest_gdn_order(&old, &wrong, 36).is_err());
+        for field in 0..10 {
+            let mut wrong = completed.clone();
+            match field {
+                0 => wrong.workspace += 1,
+                1 => wrong.stage += 1,
+                2 => wrong.public += 1,
+                3 => wrong.sequence += 1,
+                4 => wrong.layer += 1,
+                5 => wrong.start += 1,
+                6 => wrong.count -= 1,
+                7 => wrong.chunk += 1,
+                8 => wrong.generation -= 1,
+                _ => wrong.state[1] = BufferId::metadata_fixture(31, 38, 0),
+            }
+            assert!(latest_gdn_order(&old, &wrong, 36).is_err());
+        }
+        assert!(latest_gdn_order(&old, &old, 36).is_err());
+        let mut overflow = old.clone();
+        overflow.generation = u64::MAX;
+        assert!(latest_gdn_order(&overflow, &completed, 36).is_err());
+    }
+    #[test]
+    fn latest_gdn_abandoned_and_consumed_tickets_do_not_reset_poison() {
+        for armed in [false, true] {
+            let poison = Arc::new(AtomicBool::new(false));
+            drop(LatestGdnCheckpoint {
+                metadata: Zeroizing::new(latest()),
+                binding: None,
+                poison: poison.clone(),
+                armed,
+            });
+            assert_eq!(poison.load(Ordering::Acquire), armed);
+        }
+        let poison = Arc::new(AtomicBool::new(true));
+        drop(LatestGdnCheckpoint {
+            metadata: Zeroizing::new(latest()),
+            binding: None,
+            poison: poison.clone(),
+            armed: false,
+        });
+        assert!(poison.load(Ordering::Acquire));
+    }
     use kuno_text::model::PleGeometry;
     use kuno_text::ops::{GatedResidualShape, GdnShape, QsaShape};
 

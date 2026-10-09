@@ -1533,9 +1533,486 @@ impl ResidentQsa<'_> {
     }
 }
 
+/// One exact committed raw KV/raw-indexer suffix, never a position-only rewind.
+pub(crate) struct LatestQsaCheckpoint {
+    metadata: Zeroizing<LatestQsaMetadata>,
+    binding: Option<GraphBindingId>,
+    poison: Arc<AtomicBool>,
+    armed: bool,
+}
+#[derive(Clone, PartialEq, Eq)]
+struct LatestQsaMetadata {
+    workspace: u64,
+    stage: u64,
+    public: u64,
+    sequence: SequenceKey,
+    layer: usize,
+    start: u64,
+    count: usize,
+    chunk: u64,
+    generation: u64,
+    owners: [BufferId; 2],
+    fault: BufferId,
+}
+impl Zeroize for LatestQsaMetadata {
+    fn zeroize(&mut self) {
+        self.workspace.zeroize();
+        self.stage.zeroize();
+        self.public.zeroize();
+        self.sequence.zeroize();
+        self.layer.zeroize();
+        self.start.zeroize();
+        self.count.zeroize();
+        self.chunk.zeroize();
+        self.generation.zeroize();
+        self.owners.zeroize();
+        self.fault.zeroize();
+    }
+}
+fn latest_qsa_order(old: &LatestQsaMetadata, next: &LatestQsaMetadata, stages: u32) -> Result<()> {
+    let mut expected = Zeroizing::new(old.clone());
+    expected.chunk = old.chunk.checked_add(1).ok_or(Error::ArithmeticOverflow)?;
+    expected.generation = old
+        .generation
+        .checked_add(stages as u64)
+        .ok_or(Error::ArithmeticOverflow)?;
+    if *expected != *next {
+        return Err(fault("native latest QSA checkpoint identity"));
+    }
+    Ok(())
+}
+fn latest_qsa_roots(
+    stage: &ResidentQsa<'_>,
+    arena: &PrivateArena,
+    fault_id: BufferId,
+) -> Result<()> {
+    let ids = [stage.ids[CACHE], stage.ids[POSITIONS], fault_id];
+    let words = [
+        stage.layout.max_context * qsa::TOKEN,
+        stage.layout.max_context,
+        1,
+    ];
+    let mut handles = Vec::with_capacity(3);
+    for (i, (id, words)) in ids.into_iter().zip(words).enumerate() {
+        if ids[..i].contains(&id) {
+            return Err(fault("native latest QSA root alias"));
+        }
+        let layout = arena.layout(id).map_err(arena_fault)?;
+        let handle = arena.handle(id).map_err(arena_fault)?;
+        if layout != BufferLayout::new(words).map_err(arena_fault)?
+            || handle.offset_start.unwrap_or(0) != 0
+            || handle.offset_end.unwrap_or(0) != 0
+            || handle.size() != layout.owned_bytes as u64
+            || handle.size_in_used() != layout.owned_bytes as u64
+            || handles
+                .first()
+                .is_some_and(|h: &Handle| h.stream != handle.stream)
+        {
+            return Err(fault("native latest QSA full roots"));
+        }
+        handles.push(handle.clone());
+    }
+    let resources = u::resources(arena.client().map_err(arena_fault)?, handles)?;
+    if resources.len() != 3 {
+        return Err(Error::InvalidBufferLength);
+    }
+    for (i, r) in resources.iter().enumerate() {
+        let page = r.resource();
+        let bytes = arena.layout(ids[i]).map_err(arena_fault)?.owned_bytes as u64;
+        validate_page(page.offset, page.size, page.buffer.size(), bytes)?;
+        if resources[..i]
+            .iter()
+            .any(|old| old.resource().buffer == page.buffer)
+        {
+            return Err(fault("native latest QSA backing alias"));
+        }
+    }
+    Ok(())
+}
+impl QsaBatchWorkspace {
+    pub(crate) fn checkpoint_latest(
+        &self,
+        stage: &ResidentQsa<'_>,
+        arena: &PrivateArena,
+        start: u64,
+        count: usize,
+        fault_id: BufferId,
+        cancel: &AtomicBool,
+    ) -> Result<LatestQsaCheckpoint> {
+        self.healthy(arena, cancel)?;
+        checked_count(start, count, stage.layout.max_context)?;
+        if !(1..=3).contains(&count)
+            || self.policy.phase != ChunkPhase::Idle
+            || *self.policy.issued != 0
+            || *self.policy.committed != 0
+            || stage.lifecycle.phase != Phase::Ready(start)
+            || stage.batch_pending.is_some()
+            || stage.sequence != self.sequence
+            || stage.binding != self.binding
+            || stage.layout != self.layout.stage
+            || stage.layer >= MAX_LAYERS
+            || self.policy.expected & (1u64 << stage.layer) == 0
+            || stage
+                .batch_poison
+                .as_ref()
+                .is_some_and(|p| !Arc::ptr_eq(p, &self.poison))
+        {
+            return Err(fault("native latest QSA checkpoint boundary"));
+        }
+        latest_qsa_roots(stage, arena, fault_id)?;
+        self.policy
+            .chunk
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow)?;
+        self.policy
+            .generation
+            .checked_add(self.policy.expected.count_ones() as u64)
+            .ok_or(Error::ArithmeticOverflow)?;
+        Ok(LatestQsaCheckpoint {
+            metadata: Zeroizing::new(LatestQsaMetadata {
+                workspace: self.identity,
+                stage: stage.identity,
+                public: stage.public_identity,
+                sequence: stage.sequence,
+                layer: stage.layer,
+                start,
+                count,
+                chunk: *self.policy.chunk,
+                generation: *self.policy.generation,
+                owners: [stage.ids[CACHE], stage.ids[POSITIONS]],
+                fault: fault_id,
+            }),
+            binding: Some(self.binding),
+            poison: self.poison.clone(),
+            armed: true,
+        })
+    }
+}
+impl LatestQsaCheckpoint {
+    pub(crate) fn layer(&self) -> usize {
+        self.metadata.layer
+    }
+    pub(crate) fn start(&self) -> usize {
+        self.metadata.start as usize
+    }
+    pub(crate) fn count(&self) -> usize {
+        self.metadata.count
+    }
+    pub(crate) fn binding(&self) -> Option<GraphBindingId> {
+        self.binding
+    }
+    pub(crate) fn validate_completed(
+        &self,
+        stage: &ResidentQsa<'_>,
+        workspace: &QsaBatchWorkspace,
+        arena: &PrivateArena,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        workspace.healthy(arena, cancel)?;
+        if !self.armed
+            || workspace.policy.phase != ChunkPhase::Idle
+            || *workspace.policy.issued != 0
+            || *workspace.policy.committed != 0
+            || self.binding != Some(stage.binding)
+            || stage.binding != workspace.binding
+            || !Arc::ptr_eq(&self.poison, &workspace.poison)
+            || stage
+                .batch_poison
+                .as_ref()
+                .is_none_or(|p| !Arc::ptr_eq(p, &self.poison))
+            || stage.batch_pending.is_some()
+            || stage.layout != workspace.layout.stage
+            || workspace.fault != Some(self.metadata.fault)
+            || stage.lifecycle.phase
+                != Phase::Ready(checked_count(
+                    self.metadata.start,
+                    self.metadata.count,
+                    stage.layout.max_context,
+                )?)
+        {
+            return Err(fault("native latest QSA completed checkpoint"));
+        }
+        latest_qsa_order(
+            &self.metadata,
+            &LatestQsaMetadata {
+                workspace: workspace.identity,
+                stage: stage.identity,
+                public: stage.public_identity,
+                sequence: stage.sequence,
+                layer: stage.layer,
+                start: self.metadata.start,
+                count: self.metadata.count,
+                chunk: *workspace.policy.chunk,
+                generation: *workspace.policy.generation,
+                owners: [stage.ids[CACHE], stage.ids[POSITIONS]],
+                fault: workspace.fault.ok_or(Error::InvalidBufferLength)?,
+            },
+            workspace.policy.expected.count_ones(),
+        )?;
+        latest_qsa_roots(stage, arena, self.metadata.fault)
+    }
+    pub(crate) fn prepare_restore<'a, 'f>(
+        self,
+        stage: &'a mut ResidentQsa<'f>,
+        workspace: &QsaBatchWorkspace,
+        arena: &PrivateArena,
+        cancel: &AtomicBool,
+    ) -> Result<LatestQsaRestore<'a, 'f>> {
+        self.validate_completed(stage, workspace, arena, cancel)?;
+        Ok(LatestQsaRestore {
+            checkpoint: self,
+            stage,
+        })
+    }
+    pub(crate) fn accept_completed(
+        mut self,
+        stage: &ResidentQsa<'_>,
+        workspace: &QsaBatchWorkspace,
+        arena: &PrivateArena,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        self.validate_completed(stage, workspace, arena, cancel)?;
+        self.armed = false;
+        Ok(())
+    }
+}
+impl Drop for LatestQsaCheckpoint {
+    fn drop(&mut self) {
+        if self.armed {
+            self.poison.store(true, Ordering::Release);
+        }
+        self.armed.zeroize();
+        self.binding = None;
+    }
+}
+pub(crate) struct LatestQsaRestore<'a, 'f> {
+    checkpoint: LatestQsaCheckpoint,
+    stage: &'a mut ResidentQsa<'f>,
+}
+pub(crate) struct LatestQsaCleared<'a, 'f> {
+    checkpoint: LatestQsaCheckpoint,
+    stage: &'a mut ResidentQsa<'f>,
+}
+pub(crate) const LATEST_QSA_RUNTIME_INFO: u64 = 12 * 2 * 2048;
+impl<'a, 'f> LatestQsaRestore<'a, 'f> {
+    /// Caller must preflight ALL state families before the first call. Two
+    /// runtime INFO records per QSA stage: clear and exact cleared-suffix fold.
+    /// No new MAIN owner, full clear of previous prefix or fault reset.
+    pub(crate) fn enqueue_clear(
+        self,
+        arena: &PrivateArena,
+        fault_id: BufferId,
+        cancel: &AtomicBool,
+    ) -> Result<LatestQsaCleared<'a, 'f>> {
+        cancelled(cancel)?;
+        latest_qsa_roots(self.stage, arena, self.checkpoint.metadata.fault)?;
+        let ids = self.checkpoint.metadata.owners;
+        if fault_id != self.checkpoint.metadata.fault
+            || ids.contains(&fault_id)
+            || arena.layout(fault_id).map_err(arena_fault)?.logical_words != 1
+        {
+            return Err(fault("native latest QSA clear fault owner"));
+        }
+        let words = self.checkpoint.metadata.count * qsa::TOKEN;
+        clear_latest_suffix::launch::<WgpuRuntime>(
+            arena.client().map_err(arena_fault)?,
+            u::grid(words)?,
+            CubeDim::new_1d(64),
+            u::arg(arena, ids[0])?,
+            u::arg(arena, ids[1])?,
+            self.checkpoint.metadata.start as usize,
+            self.checkpoint.metadata.count,
+        );
+        verify_latest_cleared::launch::<WgpuRuntime>(
+            arena.client().map_err(arena_fault)?,
+            u::grid(words)?,
+            CubeDim::new_1d(64),
+            u::arg(arena, ids[0])?,
+            u::arg(arena, ids[1])?,
+            u::arg(arena, fault_id)?,
+            self.checkpoint.metadata.start as usize,
+            self.checkpoint.metadata.count,
+        );
+        cancelled(cancel)?;
+        Ok(LatestQsaCleared {
+            checkpoint: self.checkpoint,
+            stage: self.stage,
+        })
+    }
+}
+impl LatestQsaCleared<'_, '_> {
+    /// External completed original fault/audit proof is required first. All
+    /// fallible work precedes this cursor publication; monotonic policy stays.
+    pub(crate) fn commit(mut self) {
+        self.stage.lifecycle.phase = Phase::Ready(self.checkpoint.metadata.start);
+        self.checkpoint.armed = false;
+    }
+}
+#[cube(launch)]
+fn clear_latest_suffix(
+    cache: &mut Array<f32>,
+    positions: &mut Array<u32>,
+    start: usize,
+    count: usize,
+) {
+    let i = ABSOLUTE_POS;
+    if i < count * qsa::TOKEN {
+        cache[start * qsa::TOKEN + i] = 0.;
+    }
+    if i < count {
+        positions[start + i] = 0;
+    }
+}
+#[cube(launch)]
+fn verify_latest_cleared(
+    cache: &Array<f32>,
+    positions: &Array<u32>,
+    fault: &mut Array<Atomic<u32>>,
+    start: usize,
+    count: usize,
+) {
+    let i = ABSOLUTE_POS;
+    if i < count * qsa::TOKEN && u32::reinterpret(cache[start * qsa::TOKEN + i]) != 0 {
+        fault[0].fetch_or(4);
+    }
+    if i < count && positions[start + i] != 0 {
+        fault[0].fetch_or(4);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn latest() -> LatestQsaMetadata {
+        LatestQsaMetadata {
+            workspace: 7,
+            stage: 11,
+            public: 13,
+            sequence: SequenceKey::new().unwrap(),
+            layer: 3,
+            start: 23,
+            count: 3,
+            chunk: 29,
+            generation: 100,
+            owners: std::array::from_fn(|i| BufferId::metadata_fixture(31, 37, i)),
+            fault: BufferId::metadata_fixture(31, 37, 2),
+        }
+    }
+    #[test]
+    fn latest_qsa_rejects_foreign_roots_stale_epochs_and_more_than_one_chunk() {
+        let old = latest();
+        let mut completed = old.clone();
+        completed.chunk += 1;
+        completed.generation += 12;
+        latest_qsa_order(&old, &completed, 12).unwrap();
+        for field in 0..11 {
+            let mut wrong = completed.clone();
+            match field {
+                0 => wrong.workspace += 1,
+                1 => wrong.stage += 1,
+                2 => wrong.public += 1,
+                3 => wrong.sequence = SequenceKey::new().unwrap(),
+                4 => wrong.layer += 1,
+                5 => wrong.start += 1,
+                6 => wrong.count -= 1,
+                7 => wrong.chunk += 1,
+                8 => wrong.generation -= 1,
+                9 => wrong.owners[0] = BufferId::metadata_fixture(31, 38, 0),
+                _ => wrong.fault = BufferId::metadata_fixture(31, 38, 2),
+            }
+            assert!(latest_qsa_order(&old, &wrong, 12).is_err());
+        }
+        assert!(latest_qsa_order(&old, &old, 12).is_err());
+    }
+    #[test]
+    fn latest_qsa_suffix_clear_and_strict_zero_fold_compile_without_touching_prefix() {
+        use cubecl::compute::KernelBuilder;
+        use cubecl::ir::{ElemType, FloatKind, StorageType, Type, UIntKind};
+        use cubecl::server::ExecutionMode;
+        use cubecl::wgpu::WgslCompiler;
+        use cubecl::{Compiler, KernelSettings, WgpuCompilationOptions};
+        for mode in [ExecutionMode::Checked, ExecutionMode::Unchecked] {
+            for verify in [false, true] {
+                let mut b = KernelBuilder::default();
+                let u = StorageType::Scalar(ElemType::UInt(UIntKind::U32));
+                let f = StorageType::Scalar(ElemType::Float(FloatKind::F32));
+                b.scope.register_type::<u32>(u);
+                b.scope.register_type::<usize>(u);
+                b.scope.register_type::<f32>(f);
+                b.scope
+                    .register_type::<bool>(StorageType::Scalar(ElemType::Bool));
+                let start: NativeExpand<usize> = b.scalar(u).into();
+                let count: NativeExpand<usize> = b.scalar(u).into();
+                if verify {
+                    let cache = b.input_array(Type::new(f)).into();
+                    let positions = b.input_array(Type::new(u)).into();
+                    let fault = b
+                        .output_array(Type::new(StorageType::Atomic(ElemType::UInt(
+                            UIntKind::U32,
+                        ))))
+                        .into();
+                    verify_latest_cleared::expand(
+                        &mut b.scope,
+                        cache,
+                        positions,
+                        fault,
+                        start,
+                        count,
+                    );
+                } else {
+                    let cache = b.output_array(Type::new(f)).into();
+                    let positions = b.output_array(Type::new(u)).into();
+                    clear_latest_suffix::expand(&mut b.scope, cache, positions, start, count);
+                }
+                let source = WgslCompiler::default()
+                    .compile(
+                        b.build(
+                            KernelSettings::default()
+                                .cube_dim(CubeDim::new_1d(64))
+                                .kernel_name("latest_qsa"),
+                        ),
+                        &WgpuCompilationOptions::default(),
+                        mode,
+                        u,
+                    )
+                    .unwrap()
+                    .to_string();
+                let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
+                let info = wgpu::naga::valid::Validator::new(
+                    wgpu::naga::valid::ValidationFlags::all(),
+                    wgpu::naga::valid::Capabilities::empty(),
+                )
+                .validate(&module)
+                .unwrap();
+                let words = wgpu::naga::back::spv::write_vec(
+                    &module,
+                    &info,
+                    &wgpu::naga::back::spv::Options::default(),
+                    None,
+                )
+                .unwrap();
+                assert!(!words.is_empty());
+                assert!(source.contains("scalars_u32[0]"));
+                assert!(source.contains("scalars_u32[1]"));
+                if verify {
+                    assert!(source.contains("atomicOr"));
+                } else {
+                    assert!(!source.contains("atomicStore"));
+                }
+            }
+        }
+        // Runtime offset bounds match all current chunk sizes, including last
+        // context rows. No whole-cache scan exceeds portable dispatch limits.
+        for count in 1..=3 {
+            for start in [0, 1, 23, 4096 - count] {
+                let from = start * qsa::TOKEN;
+                let end = (start + count) * qsa::TOKEN;
+                assert!(from <= end && end <= 4096 * qsa::TOKEN);
+                assert!(u::grid(count * qsa::TOKEN).is_ok());
+            }
+        }
+        assert_eq!(LATEST_QSA_RUNTIME_INFO, 49_152);
+    }
     fn layout() -> Layout {
         Layout::new(StageLayout {
             input_words: 2560,
