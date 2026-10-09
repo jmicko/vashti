@@ -1849,23 +1849,23 @@ fn live_cases(
                             "segmented IQ live inactive segment rewrote complete owner".into()
                         );
                     }
-                    if segment == 1 {
-                        if let Some(prior) = &previous {
-                            for (i, first, stride, width) in [
-                                (c::ACT, s.act_first(), s.act_stride(), FF),
-                                (c::PART, s.partial_first(), s.partial_stride(), HIDDEN),
-                            ] {
-                                for rank in 0..count * 10 {
-                                    if packet.experts[rank] < (SEGMENT as u32) {
-                                        let start = first + rank * stride;
-                                        if got[i][start..start + width]
-                                            != prior[i][start..start + width]
-                                        {
-                                            return Err(
-                                                "segmented IQ inactive completed rank bits changed"
-                                                    .into(),
-                                            );
-                                        }
+                    if segment == 1
+                        && let Some(prior) = &previous
+                    {
+                        for (i, first, stride, width) in [
+                            (c::ACT, s.act_first(), s.act_stride(), FF),
+                            (c::PART, s.partial_first(), s.partial_stride(), HIDDEN),
+                        ] {
+                            for rank in 0..count * 10 {
+                                if packet.experts[rank] < (SEGMENT as u32) {
+                                    let start = first + rank * stride;
+                                    if got[i][start..start + width]
+                                        != prior[i][start..start + width]
+                                    {
+                                        return Err(
+                                            "segmented IQ inactive completed rank bits changed"
+                                                .into(),
+                                        );
                                     }
                                 }
                             }
