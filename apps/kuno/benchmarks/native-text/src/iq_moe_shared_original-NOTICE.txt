@@ -1,0 +1,42 @@
+The explicit Rust-emitted WGSL shared-codebook projection uses original GGML
+IQ3_XXS/IQ4_NL/IQ4_XS/IQ2_S/IQ3_S/Q2_0 packing and magnitude tables from
+llama.cpp tag b11232. Independent C source SHA256 pins are recorded in
+crates/kuno-text/tests/fixtures/{iq-b11232,daslab-b11232}/receipt.json.
+No C/CUDA engine is linked or used to execute this Rust candidate.
+
+The ordinary original64 F32 column assignment and32/16/8/4/2/1 reduction are
+adapted from Kuno's fast_matvec.rs and q3_subgroup_moe.rs. Gate/up have separate
+128-cell reduction storage; no activation quantization, FMA instruction,
+reordered sum, router substitution or expanded weight buffer is introduced.
+Public immutable IQ grids are initialized in workgroup storage by literal
+selection. Request activations remain F32 in ephemeral workgroup memory.
+
+Offline generated WGSL/SPIR-V checks establish absence of Function array
+variables and explicit FMA instructions, not the physical driver machine code
+or a performance gain. A driver may optimize the ordinary constant-array
+copies already; shared initialization and barriers also cost work. Independent
+both-card numeric/fault/full-owner acceptance and whole-model timing remain
+required. This isolated laboratory leaf does not authorize private inference,
+whole owning erasure, production routing or speculative-controller acceptance.
+
+MIT License
+
+Copyright (c) 2023-2026 The ggml authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
