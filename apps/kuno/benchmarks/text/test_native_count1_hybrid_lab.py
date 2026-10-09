@@ -1283,6 +1283,17 @@ class HybridLabTests(unittest.TestCase):
             with self.assertRaises(ValueError):guard.memory_limit(env,[*args[:2],mode])
         with self.assertRaises(ValueError):guard.memory_limit(env,[args[0],"nvidia",args[2]])
 
+    def test_verify3_operator_keeps_exact_small_public_envelope(self):
+        spec=importlib.util.spec_from_file_location("protected_verify3_operator",HERE/"protected-lab-exec.py")
+        guard=importlib.util.module_from_spec(spec);spec.loader.exec_module(guard)
+        env={"KUNO_LAB_VERIFY3_DENSE_PUBLIC_ONLY":"1", "KUNO_PUBLIC_RECEIPT":"/public/numeric"}
+        for card in ("intel", "nvidia"):
+            args=["/frozen/binary",card,"verify3-dense-probe"]
+            self.assertEqual(guard.memory_limit(env,args),8*1024**3)
+            for wrong in (dict(env,KUNO_TEST_Q3_DIR="/model"), dict(env,KUNO_LAB_VERIFY3_DENSE_PUBLIC_ONLY="0"), dict(env,KUNO_PUBLIC_RECEIPT="")):
+                with self.assertRaises(ValueError):guard.memory_limit(wrong,args)
+            with self.assertRaises(ValueError):guard.memory_limit(env,[*args,"extra"])
+
     def test_verify3_dense_is_canonical_optional_and_remains_inside_public_target_modes(self):
         spec=importlib.util.spec_from_file_location("protected_verify3",HERE/"protected-lab-exec.py")
         guard=importlib.util.module_from_spec(spec);spec.loader.exec_module(guard)

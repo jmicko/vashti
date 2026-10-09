@@ -15,6 +15,14 @@ def selected_target_policy(environment):
     return selected
 
 def memory_limit(environment, arguments):
+    if "KUNO_LAB_VERIFY3_DENSE_PUBLIC_ONLY" in environment:
+        selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
+        if (set(selected) != {"KUNO_LAB_VERIFY3_DENSE_PUBLIC_ONLY", "KUNO_PUBLIC_RECEIPT"}
+                or any(not value for value in selected.values())
+                or selected["KUNO_LAB_VERIFY3_DENSE_PUBLIC_ONLY"] != "1"
+                or len(arguments) != 3 or arguments[1] not in ("intel", "nvidia") or arguments[2] != "verify3-dense-probe"):
+            raise ValueError("Verify3 operator requires the fixed public fixture")
+        return 8 * 1024**3
     if "KUNO_LAB_SPECULATIVE_PUBLIC_ONLY" in environment:
         permitted = {"KUNO_LAB_SPECULATIVE_PUBLIC_ONLY", "KUNO_LAB_STATIC_CACHE_BYTES", "KUNO_TEST_Q3_DIR", "KUNO_TEST_MTP", "KUNO_PUBLIC_TARGET_CARRY13_REFERENCE", "KUNO_PUBLIC_RECEIPT"}
         selected = selected_target_policy(environment)

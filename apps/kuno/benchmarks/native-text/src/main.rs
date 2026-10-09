@@ -36,6 +36,7 @@ mod mtp_public_reference;
 mod mtp_resident_kernels;
 mod next_shared;
 mod next_shared_moe;
+mod next_verify3_dense_probe;
 mod oracle_public;
 mod oracle_trace;
 mod ordered_public;
@@ -1054,6 +1055,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => return Err("expected intel or nvidia".into()),
     };
     let mode = std::env::args().nth(2).unwrap_or("probe".into());
+    let verify3_dense_receipt = if mode == "verify3-dense-probe" {
+        Some(next_verify3_dense_probe::registration(
+            &std::env::args_os().collect::<Vec<_>>(),
+            std::env::vars_os(),
+            mtp_gpu_probe::default_build(),
+        )?)
+    } else {
+        if std::env::var_os("KUNO_LAB_VERIFY3_DENSE_PUBLIC_ONLY").is_some() {
+            return Err("Verify3 operator public gate requires its dedicated probe".into());
+        }
+        None
+    };
     let speculative_inputs = if mode == "daslab-speculative-probe" {
         Some(daslab_speculative_probe::registration(
             &std::env::args_os().collect::<Vec<_>>(),
@@ -1943,7 +1956,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if resident_mtp_inputs.is_some() {
             resident_mtp::validate_limits(&adapter.limits())?;
         }
-        if target_rows_inputs.as_ref().is_some_and(|i| i.verify3_dense)
+        if verify3_dense_receipt.is_some()
+            || target_rows_inputs.as_ref().is_some_and(|i| i.verify3_dense)
             || target_repair_inputs
                 .as_ref()
                 .is_some_and(|i| i.verify3_dense)
@@ -1955,6 +1969,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 info.subgroup_min_size,
                 info.subgroup_max_size,
             )?;
+        }
+        if verify3_dense_receipt.is_some()
+            && adapter.limits().max_compute_workgroup_storage_size < 16 * 1024
+        {
+            return Err("Verify3 original Q4 operator control storage limit".into());
         }
         if q6_integer_probe {
             q6_integer_probe::validate_limits(&adapter.limits())?;
@@ -2062,6 +2081,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         );
         let client = WgpuRuntime::client(&selected);
+        if let Some(receipt) = verify3_dense_receipt {
+            std::panic::set_hook(Box::new(|_| {
+                eprintln!("public_verify3_operator_failure panic=true")
+            }));
+            let mut value = next_verify3_dense_probe::run(&client, &grouped_limits)?;
+            value["vendor"] = vendor.into();
+            serde_json::to_writer_pretty(
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(receipt)?,
+                &value,
+            )?;
+            println!("public_verify3_operator_complete normal=60 fault=20 owners_erased=true");
+            return Ok(());
+        }
         if let Some(inputs) = speculative_inputs {
             return daslab_speculative_probe::run(&client, &grouped_limits, inputs);
         }

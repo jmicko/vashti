@@ -28,6 +28,45 @@ const IO_CAP: u64 = 64 * 1024 * 1024;
 const HOST_CAP: u64 = 32 * 1024 * 1024;
 const ABS: f64 = 1e-4;
 const REL: f64 = 3e-4;
+pub(crate) fn registration(
+    args: &[std::ffi::OsString],
+    env: impl IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+    default: bool,
+) -> std::result::Result<std::path::PathBuf, &'static str> {
+    use std::{collections::BTreeMap, ffi::OsStr};
+    if !default
+        || args.len() != 3
+        || !matches!(args[1].to_str(), Some("intel" | "nvidia"))
+        || args[2] != "verify3-dense-probe"
+    {
+        return Err("Verify3 operator requires fixed default public card fixture");
+    }
+    let mut selected = BTreeMap::new();
+    for (key, value) in env {
+        if ![b"KUNO_LAB_".as_slice(), b"KUNO_TEST_", b"KUNO_PUBLIC_"]
+            .iter()
+            .any(|prefix| key.as_encoded_bytes().starts_with(prefix))
+        {
+            continue;
+        }
+        if !matches!(
+            key.to_str(),
+            Some("KUNO_LAB_VERIFY3_DENSE_PUBLIC_ONLY" | "KUNO_PUBLIC_RECEIPT")
+        ) || value.is_empty()
+            || selected.insert(key, value).is_some()
+        {
+            return Err("Verify3 operator rejects inherited experiments");
+        }
+    }
+    if selected.remove(OsStr::new("KUNO_LAB_VERIFY3_DENSE_PUBLIC_ONLY")) != Some("1".into()) {
+        return Err("Verify3 operator public gate missing");
+    }
+    selected
+        .remove(OsStr::new("KUNO_PUBLIC_RECEIPT"))
+        .map(Into::into)
+        .ok_or("Verify3 operator numeric receipt missing")
+}
+
 const NORMAL_CASES: usize = TYPES.len() * WIDTHS.len() * 3;
 const FAULT_CASES: usize = TYPES.len() * 2;
 
@@ -662,6 +701,33 @@ pub(crate) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn registration_is_exact_default_public_only_and_has_no_model_inputs() {
+        let env = || {
+            [
+                ("KUNO_LAB_VERIFY3_DENSE_PUBLIC_ONLY", "1"),
+                ("KUNO_PUBLIC_RECEIPT", "/public/numeric"),
+            ]
+            .map(|(k, v)| (k.into(), v.into()))
+            .to_vec()
+        };
+        for card in ["intel", "nvidia"] {
+            let args: Vec<_> = ["binary", card, "verify3-dense-probe"]
+                .map(Into::into)
+                .to_vec();
+            assert!(registration(&args, env(), true).is_ok());
+            assert!(registration(&args, env(), false).is_err());
+            let mut values = env();
+            values.push(("KUNO_TEST_Q3_DIR".into(), "/model".into()));
+            assert!(registration(&args, values, true).is_err());
+            for index in 0..2 {
+                let mut values = env();
+                values.remove(index);
+                assert!(registration(&args, values, true).is_err());
+            }
+        }
+    }
+
     fn bytes(values: &[f32], full: usize) -> Vec<u8> {
         let mut result = vec![0; full];
         for (chunk, value) in result.chunks_exact_mut(4).zip(values) {
