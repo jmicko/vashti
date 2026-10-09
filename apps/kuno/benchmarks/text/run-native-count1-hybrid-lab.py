@@ -21,6 +21,9 @@ GUARD = "verified_lab_limits swap_max=0 core_soft=0 core_hard=0 memory_max=85899
 STEADY_BEGIN = "public_steady_probe_begin=true"
 STEADY_CLOSED = "public_steady_probe_closed=true"
 ADAPTIVE_CLOSED = "public_adaptive_closed=true host_reservation=196608"
+ORACLE_BEGIN = "public_oracle_probe_begin=true"
+ORACLE_CLOSED = "public_oracle_probe_closed=true"
+ORACLE_TRACE_CLOSED = "public_oracle_trace_closed=true"
 
 
 def validate_steady_selection(selected, *, long, banks, mapped, workers, overlap, shared,
@@ -101,6 +104,88 @@ def validate_steady_probe(receipt, selected, output, *, adaptive_experts=False,
     audits = [line for line in extra if line.startswith("public_resident_owned_zero_audit ")]
     if audits != [audit_marker] or extra.count(ADAPTIVE_CLOSED) != int(adaptive_experts):
         raise ValueError("Steady probe must close and audit its separate full owner exactly once")
+    return "\n".join(original)
+
+
+def validate_oracle_selection(selected, *, steady_public=False, adaptive_experts=False,
+                              adaptive_direct_upload=False, **mode):
+    if type(selected) is not bool:
+        raise ValueError("Oracle public selection must be an explicit boolean")
+    if not selected:
+        return
+    if any(value is not False for value in (steady_public, adaptive_experts, adaptive_direct_upload)):
+        raise ValueError("Oracle public probe excludes steady and adaptive expert probes")
+    try:
+        validate_steady_selection(True, **mode)
+    except ValueError as error:
+        raise ValueError("Oracle public probe requires the protected long Intel fixed expert mode") from error
+
+
+def validate_oracle_probe(receipt, selected, output):
+    if type(selected) is not bool:
+        raise ValueError("Oracle probe selection must be an explicit boolean")
+    lines = output.splitlines()
+    if not selected:
+        if ("oracle_probe" in receipt
+            or any(line in (ORACLE_BEGIN, ORACLE_CLOSED, ORACLE_TRACE_CLOSED) for line in lines)):
+            raise ValueError("Unselected oracle probe cannot report work or delimiters")
+        return output
+    if ("steady_probe" in receipt or any(line in (STEADY_BEGIN, STEADY_CLOSED) for line in lines)
+        or lines.count(ORACLE_BEGIN) != 1):
+        raise ValueError("Oracle probe requires its one exclusive original-fixture delimiter")
+    at = lines.index(ORACLE_BEGIN)
+    original, extra = lines[:at], lines[at + 1:]
+    if (any(line in (ORACLE_CLOSED, ORACLE_TRACE_CLOSED) for line in original)
+        or extra.count(ORACLE_CLOSED) != 1 or extra.count(ORACLE_TRACE_CLOSED) != 2
+        or any(line.startswith("public_adaptive_closed=") for line in extra)):
+        raise ValueError("Oracle probe requires two separate trace closes after the original fixture")
+    probe = receipt.get("oracle_probe")
+    expected = {"scope": "fixed-public-exact-expert-replay-ceiling", "prompt_tokens": 75,
+                "prefix_tokens": 8, "decode_steps": 7, "context_tokens": 203, "seed": 424242,
+                "train_prefix_matches": True, "replay_prefix_matches": True,
+                "trace_membership_verified": True, "owned_io_cleanup_accepted": True,
+                "gpu_hits": 3360, "cpu_misses": 0, "expert_uploads": 0,
+                "public_weight_upload_bytes": 0, "adaptive_promotions": 0}
+    keys = set(expected) | {"expert_union_counts", "preload_original_bytes", "elapsed_ns",
+        "train_greedy_ids", "replay_greedy_ids", "resources", "training_owned_zero_audit",
+        "replay_owned_zero_audit"}
+    if (type(probe) is not dict or set(probe) != keys
+        or any(type(probe.get(key)) is not type(value) or probe[key] != value
+               for key, value in expected.items())):
+        raise ValueError("Oracle fixed-public schema and completed replay counters must match exactly")
+    counts = probe["expert_union_counts"]
+    if (type(counts) is not list or len(counts) != 48
+        or any(type(count) is not int or not 10 <= count <= 70 for count in counts)
+        or type(probe["preload_original_bytes"]) is not int
+        or not 0 <= probe["preload_original_bytes"] <= 3360 * 6 * 1024**2
+        or type(probe["elapsed_ns"]) is not int or probe["elapsed_ns"] <= 0):
+        raise ValueError("Oracle coverage requires all 48 bounded layer unions and typed transfer/timing counts")
+    original_ids = receipt.get("public_generated_ids")
+    if (type(original_ids) is not list or len(original_ids) < 8
+        or any(type(token) is not int or not 0 <= token < 2**32 for token in original_ids[:8])):
+        raise ValueError("Oracle comparison requires the original public prefix")
+    for field in ("train_greedy_ids", "replay_greedy_ids"):
+        ids = probe[field]
+        if (type(ids) is not list or len(ids) != 8 or ids != original_ids[:8]
+            or any(type(token) is not int for token in ids)):
+            raise ValueError("Oracle training and replay must match every original public prefix ID")
+    resources = probe["resources"]
+    resource_keys = {"minor_faults", "major_faults", "user_ticks", "system_ticks", "read_bytes", "write_bytes"}
+    if (type(resources) is not dict or set(resources) != resource_keys
+        or any(type(value) is not int or value < 0 for value in resources.values())):
+        raise ValueError("Oracle replay resources require the exact six nonnegative counters")
+    expected_audit = {"main_buffers": 1378, "main_bytes": 818413568,
+                      "source_buffers": 0, "source_bytes": 0}
+    for field in ("training_owned_zero_audit", "replay_owned_zero_audit"):
+        audit = probe[field]
+        if (type(audit) is not dict or set(audit) != set(expected_audit)
+            or any(type(audit.get(key)) is not int or audit[key] != value
+                   for key, value in expected_audit.items())):
+            raise ValueError("Oracle training and replay require separate full original owner audits")
+    audit_marker = ("public_resident_owned_zero_audit main_buffers={main_buffers} main_bytes={main_bytes} "
+                    "source_buffers={source_buffers} source_bytes={source_bytes}").format(**expected_audit)
+    if [line for line in extra if line.startswith("public_resident_owned_zero_audit ")] != [audit_marker] * 2:
+        raise ValueError("Oracle probe requires exactly two full owner audit stdout records")
     return "\n".join(original)
 
 
@@ -240,12 +325,18 @@ def validate_private_upload_phases(receipt):
             raise ValueError("Private upload phases require original/copied/cleared byte conservation")
 
 
-def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded", cpu_fma=False, reclaim_gpu_sources=False, native_scratch_clear=False, cpu_q8_residual=False, cpu_mapped_prefetch=False, pageout_gpu_sources=False, cpu_threads=16, cpu_q8_two_pass=False, cpu_buffered_weights=False, compute_scratch_clear=False, grouped_status=False, readback_reuse=False, gpu_upload_clear=False, inline_readback=False, cpu_work_stealing=False, request_io_reuse=False, bind_group_reuse=False, fused_experts=False, gpu_expert_limit=10, integer_experts=False, binding_cache_capacity=256, secondary_experts=False, adaptive_experts=False, adaptive_direct_upload=False, steady_public=False):
+def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded", cpu_fma=False, reclaim_gpu_sources=False, native_scratch_clear=False, cpu_q8_residual=False, cpu_mapped_prefetch=False, pageout_gpu_sources=False, cpu_threads=16, cpu_q8_two_pass=False, cpu_buffered_weights=False, compute_scratch_clear=False, grouped_status=False, readback_reuse=False, gpu_upload_clear=False, inline_readback=False, cpu_work_stealing=False, request_io_reuse=False, bind_group_reuse=False, fused_experts=False, gpu_expert_limit=10, integer_experts=False, binding_cache_capacity=256, secondary_experts=False, adaptive_experts=False, adaptive_direct_upload=False, steady_public=False, oracle_public=False):
     validate_cap(cap)
     validate_steady_selection(steady_public, long=long, banks=banks, mapped=mapped, workers=workers,
         overlap=overlap, shared=shared, dispatch=dispatch, request_io_reuse=request_io_reuse,
         deferred=deferred, secondary_experts=secondary_experts, gpu_expert_limit=gpu_expert_limit,
         card=card, cap=cap)
+    validate_oracle_selection(oracle_public, steady_public=steady_public, adaptive_experts=adaptive_experts,
+        adaptive_direct_upload=adaptive_direct_upload, long=long, banks=banks, mapped=mapped,
+        workers=workers, overlap=overlap, shared=shared, dispatch=dispatch,
+        request_io_reuse=request_io_reuse, deferred=deferred, secondary_experts=secondary_experts,
+        gpu_expert_limit=gpu_expert_limit, card=card, cap=cap)
+    output = validate_oracle_probe(receipt, oracle_public, output)
     output = validate_steady_probe(receipt, steady_public, output, adaptive_experts=adaptive_experts,
                                   adaptive_direct_upload=adaptive_direct_upload)
     validate_secondary(receipt, secondary_experts, output, long)
@@ -488,10 +579,15 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
         raise ValueError("Hybrid continuation and both cancellation proofs required")
 
 
-def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded", reclaim_gpu_sources=False, native_scratch_clear=False, cpu_q8_residual=False, cpu_mapped_prefetch=False, pageout_gpu_sources=False, cpu_threads=16, cpu_q8_two_pass=False, compute_scratch_clear=False, grouped_status=False, readback_reuse=False, gpu_upload_clear=False, inline_readback=False, cpu_work_stealing=False, request_io_reuse=False, bind_group_reuse=False, fused_experts=False, gpu_expert_limit=10, integer_experts=False, binding_cache_capacity=256, secondary_experts=False, adaptive_experts=False, adaptive_direct_upload=False, steady_public=False):
+def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded", reclaim_gpu_sources=False, native_scratch_clear=False, cpu_q8_residual=False, cpu_mapped_prefetch=False, pageout_gpu_sources=False, cpu_threads=16, cpu_q8_two_pass=False, compute_scratch_clear=False, grouped_status=False, readback_reuse=False, gpu_upload_clear=False, inline_readback=False, cpu_work_stealing=False, request_io_reuse=False, bind_group_reuse=False, fused_experts=False, gpu_expert_limit=10, integer_experts=False, binding_cache_capacity=256, secondary_experts=False, adaptive_experts=False, adaptive_direct_upload=False, steady_public=False, oracle_public=False):
     validate_steady_selection(steady_public, long=long, banks=banks, mapped=mapped, workers=workers,
         overlap=overlap, shared=shared, dispatch=dispatch, request_io_reuse=request_io_reuse,
         deferred=deferred, secondary_experts=secondary_experts, gpu_expert_limit=gpu_expert_limit)
+    validate_oracle_selection(oracle_public, steady_public=steady_public, adaptive_experts=adaptive_experts,
+        adaptive_direct_upload=adaptive_direct_upload, long=long, banks=banks, mapped=mapped,
+        workers=workers, overlap=overlap, shared=shared, dispatch=dispatch,
+        request_io_reuse=request_io_reuse, deferred=deferred, secondary_experts=secondary_experts,
+        gpu_expert_limit=gpu_expert_limit)
     if type(cpu_threads) is not int or cpu_threads not in (4,8,16):
         raise ValueError("Explicit public CPU threads must be4,8,16")
     if cpu_threads!=16 and workers!="pooled":
@@ -594,6 +690,7 @@ def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=F
     if (type(adaptive_experts) is not bool or type(adaptive_direct_upload) is not bool
         or adaptive_direct_upload and not adaptive_experts):
         raise ValueError("Adaptive direct upload requires explicitly selected adaptive experts")
+    env["KUNO_LAB_ORACLE_PUBLIC"] = "1" if oracle_public else "0"
     env["KUNO_LAB_STEADY_PUBLIC"] = "1" if steady_public else "0"
     env["KUNO_LAB_ADAPTIVE_EXPERTS"] = "1" if adaptive_experts else "0"
     env["KUNO_LAB_ADAPTIVE_DIRECT_UPLOAD"] = "1" if adaptive_direct_upload else "0"
@@ -629,6 +726,7 @@ def main():
     parser.add_argument("--next-shared-gdn", action="store_true")
     parser.add_argument("--long-fixture", action="store_true")
     parser.add_argument("--steady-public", action="store_true", help="Run a separate 1024-step fixed public steady diagnostic after original long-fixture acceptance")
+    parser.add_argument("--oracle-public", action="store_true", help="Measure a separate exact expert replay ceiling after the original long fixture; excludes steady and adaptive modes")
     parser.add_argument("--cpu-q8", action="store_true")
     parser.add_argument("--cpu-fma", action="store_true")
     parser.add_argument("--cpu-buffered-weights", action="store_true")
@@ -668,6 +766,13 @@ def main():
             request_io_reuse=args.request_io_reuse, deferred=args.defer_router_io,
             secondary_experts=args.secondary_experts, gpu_expert_limit=args.gpu_expert_limit,
             card=args.card, cap=args.cpu_miss_cap)
+        validate_oracle_selection(args.oracle_public, steady_public=args.steady_public,
+            adaptive_experts=args.adaptive_experts, adaptive_direct_upload=args.adaptive_direct_upload,
+            long=args.long_fixture, banks=args.bank_profile, mapped=args.mapped_weights,
+            workers=args.cpu_workers, overlap=args.cpu_gpu_overlap, shared=args.next_shared_kernels,
+            dispatch=args.device_dispatch, request_io_reuse=args.request_io_reuse,
+            deferred=args.defer_router_io, secondary_experts=args.secondary_experts,
+            gpu_expert_limit=args.gpu_expert_limit, card=args.card, cap=args.cpu_miss_cap)
     except ValueError as error:
         parser.error(str(error))
     if args.adaptive_direct_upload and not args.adaptive_experts:
@@ -748,7 +853,7 @@ def main():
         ("KUNO_LAB_STATIC_CACHE_BYTES " if args.bank_profile not in ("intel96","intel128","intel144","intel160") else "") + "KUNO_LAB_EXPERT_BATCH_BYTES KUNO_LAB_EXPERT_SCATTER",
     ]
     command.extend("--setenv=" + key + "=" + value
-                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch,args.reclaim_gpu_sources,args.native_scratch_clear,args.cpu_q8_residual,args.cpu_mapped_prefetch,args.pageout_gpu_sources,args.cpu_threads,args.cpu_q8_two_pass,compute_scratch_clear=args.compute_scratch_clear,grouped_status=args.grouped_status,readback_reuse=args.readback_reuse,gpu_upload_clear=args.gpu_upload_clear,inline_readback=args.inline_readback,cpu_work_stealing=args.cpu_work_stealing,request_io_reuse=args.request_io_reuse,bind_group_reuse=args.bind_group_reuse,fused_experts=args.fused_experts,gpu_expert_limit=args.gpu_expert_limit,integer_experts=args.integer_experts,binding_cache_capacity=args.binding_cache_capacity,secondary_experts=args.secondary_experts,adaptive_experts=args.adaptive_experts,adaptive_direct_upload=args.adaptive_direct_upload,steady_public=args.steady_public).items())
+                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch,args.reclaim_gpu_sources,args.native_scratch_clear,args.cpu_q8_residual,args.cpu_mapped_prefetch,args.pageout_gpu_sources,args.cpu_threads,args.cpu_q8_two_pass,compute_scratch_clear=args.compute_scratch_clear,grouped_status=args.grouped_status,readback_reuse=args.readback_reuse,gpu_upload_clear=args.gpu_upload_clear,inline_readback=args.inline_readback,cpu_work_stealing=args.cpu_work_stealing,request_io_reuse=args.request_io_reuse,bind_group_reuse=args.bind_group_reuse,fused_experts=args.fused_experts,gpu_expert_limit=args.gpu_expert_limit,integer_experts=args.integer_experts,binding_cache_capacity=args.binding_cache_capacity,secondary_experts=args.secondary_experts,adaptive_experts=args.adaptive_experts,adaptive_direct_upload=args.adaptive_direct_upload,steady_public=args.steady_public,oracle_public=args.oracle_public).items())
     command.extend([sys.executable, str(HERE / "protected-lab-exec.py"), str(frozen),
                     args.card, MODE, str(args.cpu_miss_cap)])
     print("verified_cargo_executable_sha256=" + identity, flush=True)
@@ -763,7 +868,7 @@ def main():
         raise SystemExit("Missing whole-model hybrid receipt")
     snapshot = target.read_bytes()
     receipt = json.loads(snapshot)
-    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch,args.cpu_fma,args.reclaim_gpu_sources,args.native_scratch_clear,args.cpu_q8_residual,args.cpu_mapped_prefetch,args.pageout_gpu_sources,args.cpu_threads,args.cpu_q8_two_pass,args.cpu_buffered_weights,compute_scratch_clear=args.compute_scratch_clear,grouped_status=args.grouped_status,readback_reuse=args.readback_reuse,gpu_upload_clear=args.gpu_upload_clear,inline_readback=args.inline_readback,cpu_work_stealing=args.cpu_work_stealing,request_io_reuse=args.request_io_reuse,bind_group_reuse=args.bind_group_reuse,fused_experts=args.fused_experts,gpu_expert_limit=args.gpu_expert_limit,integer_experts=args.integer_experts,binding_cache_capacity=args.binding_cache_capacity,secondary_experts=args.secondary_experts,adaptive_experts=args.adaptive_experts,adaptive_direct_upload=args.adaptive_direct_upload,steady_public=args.steady_public)
+    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch,args.cpu_fma,args.reclaim_gpu_sources,args.native_scratch_clear,args.cpu_q8_residual,args.cpu_mapped_prefetch,args.pageout_gpu_sources,args.cpu_threads,args.cpu_q8_two_pass,args.cpu_buffered_weights,compute_scratch_clear=args.compute_scratch_clear,grouped_status=args.grouped_status,readback_reuse=args.readback_reuse,gpu_upload_clear=args.gpu_upload_clear,inline_readback=args.inline_readback,cpu_work_stealing=args.cpu_work_stealing,request_io_reuse=args.request_io_reuse,bind_group_reuse=args.bind_group_reuse,fused_experts=args.fused_experts,gpu_expert_limit=args.gpu_expert_limit,integer_experts=args.integer_experts,binding_cache_capacity=args.binding_cache_capacity,secondary_experts=args.secondary_experts,adaptive_experts=args.adaptive_experts,adaptive_direct_upload=args.adaptive_direct_upload,steady_public=args.steady_public,oracle_public=args.oracle_public)
     record = {
         "scope": "fixed-public-count1-hybrid-output-and-lifecycle-only",
         "requested_cpu_fma_arithmetic": args.cpu_fma,
@@ -790,6 +895,7 @@ def main():
         "adaptive_experts": args.adaptive_experts,
         "adaptive_direct_upload": args.adaptive_direct_upload,
         "steady_public": args.steady_public,
+        "oracle_public": args.oracle_public,
         "fast_gpu": args.fast_gpu, "next_shared_kernels": args.next_shared_kernels, "next_shared_gdn": args.next_shared_gdn,
         "long_fixture": args.long_fixture,
         "cpu_q8_activations": args.cpu_q8,

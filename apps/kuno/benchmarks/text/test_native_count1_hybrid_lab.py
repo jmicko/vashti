@@ -505,6 +505,245 @@ class SteadyControls(unittest.TestCase):
                 self.assertIs(record["steady_public"], selected)
 
 
+def oracle_probe():
+    ids = json.loads((HERE / "receipts/rust-full-resident-rainwater-intel-20261005.json").read_text())["public_generated_ids"][:8]
+    audit = {"main_buffers": 1378, "main_bytes": 818413568, "source_buffers": 0, "source_bytes": 0}
+    return {"scope": "fixed-public-exact-expert-replay-ceiling", "prompt_tokens": 75, "prefix_tokens": 8,
+            "decode_steps": 7, "context_tokens": 203, "seed": 424242, "train_prefix_matches": True,
+            "replay_prefix_matches": True, "trace_membership_verified": True, "owned_io_cleanup_accepted": True,
+            "expert_union_counts": [40] * 48, "preload_original_bytes": 1000000, "elapsed_ns": 100000000,
+            "gpu_hits": 3360, "cpu_misses": 0, "expert_uploads": 0, "public_weight_upload_bytes": 0,
+            "adaptive_promotions": 0, "train_greedy_ids": list(ids), "replay_greedy_ids": list(ids),
+            "resources": {key: 0 for key in ("minor_faults", "major_faults", "user_ticks", "system_ticks", "read_bytes", "write_bytes")},
+            "training_owned_zero_audit": dict(audit), "replay_owned_zero_audit": dict(audit)}
+
+
+def oracle_receipt():
+    probe = oracle_probe()
+    return {"public_generated_ids": list(probe["train_greedy_ids"]), "oracle_probe": probe}
+
+
+def oracle_output(original="original fixture"):
+    audit = "public_resident_owned_zero_audit main_buffers=1378 main_bytes=818413568 source_buffers=0 source_bytes=0"
+    return "\n".join([original, LAB.ORACLE_BEGIN, audit, LAB.ORACLE_TRACE_CLOSED,
+                       audit, LAB.ORACLE_TRACE_CLOSED, LAB.ORACLE_CLOSED])
+
+
+class OracleControls(unittest.TestCase):
+    def test_fixed_ceiling_has_exact_work_and_two_separate_closes(self):
+        value = oracle_receipt()
+        self.assertEqual(LAB.validate_oracle_probe(value, True, oracle_output()), "original fixture")
+        LAB.validate_oracle_probe({}, False, "ordinary output")
+        for bad in (None, 1, "true"):
+            with self.assertRaises(ValueError):
+                LAB.validate_oracle_probe(value, bad, oracle_output())
+        for field in value["oracle_probe"]:
+            wrong = copy.deepcopy(value)
+            del wrong["oracle_probe"][field]
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                LAB.validate_oracle_probe(wrong, True, oracle_output())
+        wrong = copy.deepcopy(value)
+        wrong["oracle_probe"]["private_trace"] = []
+        with self.assertRaises(ValueError):
+            LAB.validate_oracle_probe(wrong, True, oracle_output())
+
+    def test_typed_original_geometry_completed_flags_and_zero_work_counters(self):
+        value = oracle_receipt()
+        fields = ("prompt_tokens", "prefix_tokens", "decode_steps", "context_tokens", "seed", "gpu_hits",
+                  "cpu_misses", "expert_uploads", "public_weight_upload_bytes", "adaptive_promotions")
+        for field in fields:
+            for bad in (None, True, "0", 0.0, -1, value["oracle_probe"][field] + 1):
+                wrong = copy.deepcopy(value)
+                wrong["oracle_probe"][field] = bad
+                with self.subTest(field=field, bad=bad), self.assertRaises(ValueError):
+                    LAB.validate_oracle_probe(wrong, True, oracle_output())
+        for field in ("train_prefix_matches", "replay_prefix_matches", "trace_membership_verified", "owned_io_cleanup_accepted"):
+            for bad in (False, 1, "true", None):
+                wrong = copy.deepcopy(value)
+                wrong["oracle_probe"][field] = bad
+                with self.subTest(field=field, bad=bad), self.assertRaises(ValueError):
+                    LAB.validate_oracle_probe(wrong, True, oracle_output())
+        wrong = copy.deepcopy(value)
+        wrong["oracle_probe"]["scope"] = "estimated ceiling"
+        with self.assertRaises(ValueError):
+            LAB.validate_oracle_probe(wrong, True, oracle_output())
+
+    def test_union_covers_every_layer_and_uploads_and_elapsed_have_typed_bounds(self):
+        value = oracle_receipt()
+        for bad in (None, [], [10] * 47, [10] * 49, [9] * 48, [71] * 48, [True] * 48, ["10"] * 48):
+            wrong = copy.deepcopy(value)
+            wrong["oracle_probe"]["expert_union_counts"] = bad
+            with self.subTest(bad=type(bad)), self.assertRaises(ValueError):
+                LAB.validate_oracle_probe(wrong, True, oracle_output())
+        for field, bads in (("elapsed_ns", (None, True, -1, 0, 1.0, "1")),
+                           ("preload_original_bytes", (None, True, -1, "1", 1.0, 3360 * 6 * 1024**2 + 1))):
+            for bad in bads:
+                wrong = copy.deepcopy(value)
+                wrong["oracle_probe"][field] = bad
+                with self.subTest(field=field, bad=bad), self.assertRaises(ValueError):
+                    LAB.validate_oracle_probe(wrong, True, oracle_output())
+        for count, byte_count in ((10, 0), (70, 3360 * 6 * 1024**2)):
+            good = copy.deepcopy(value)
+            good["oracle_probe"].update(expert_union_counts=[count] * 48, preload_original_bytes=byte_count)
+            LAB.validate_oracle_probe(good, True, oracle_output())
+
+    def test_training_and_replay_match_original_ids_with_no_boolean_substitution(self):
+        value = oracle_receipt()
+        for field in ("train_greedy_ids", "replay_greedy_ids"):
+            for bad in (None, [], value["public_generated_ids"][:-1], [0] * 8, [True] * 8, ["1"] * 8):
+                wrong = copy.deepcopy(value)
+                wrong["oracle_probe"][field] = bad
+                with self.subTest(field=field, bad=bad), self.assertRaises(ValueError):
+                    LAB.validate_oracle_probe(wrong, True, oracle_output())
+        for bad in (None, [], [True] * 8, [-1] * 8, [2**32] * 8):
+            with self.subTest(original=bad), self.assertRaises(ValueError):
+                LAB.validate_oracle_probe(dict(value, public_generated_ids=bad), True, oracle_output())
+
+    def test_resources_and_both_owner_audits_require_exact_fields_and_integers(self):
+        original = oracle_receipt()
+        for group in ("resources", "training_owned_zero_audit", "replay_owned_zero_audit"):
+            for field in original["oracle_probe"][group]:
+                wrong = copy.deepcopy(original)
+                del wrong["oracle_probe"][group][field]
+                with self.subTest(group=group, field=field), self.assertRaises(ValueError):
+                    LAB.validate_oracle_probe(wrong, True, oracle_output())
+                for bad in (None, True, -1, "0", 0.0):
+                    wrong = copy.deepcopy(original)
+                    wrong["oracle_probe"][group][field] = bad
+                    with self.subTest(group=group, field=field, bad=bad), self.assertRaises(ValueError):
+                        LAB.validate_oracle_probe(wrong, True, oracle_output())
+                if group != "resources":
+                    wrong = copy.deepcopy(original)
+                    wrong["oracle_probe"][group][field] += 1
+                    with self.assertRaises(ValueError):
+                        LAB.validate_oracle_probe(wrong, True, oracle_output())
+            wrong = copy.deepcopy(original)
+            wrong["oracle_probe"][group]["unexpected"] = 0
+            with self.assertRaises(ValueError):
+                LAB.validate_oracle_probe(wrong, True, oracle_output())
+
+    def test_probe_delimiter_and_inventory_are_exclusive_after_original_gates(self):
+        value = oracle_receipt()
+        output = oracle_output()
+        audit = "public_resident_owned_zero_audit main_buffers=1378 main_bytes=818413568 source_buffers=0 source_bytes=0"
+        malformed = [output.replace(LAB.ORACLE_BEGIN, ""), output + "\n" + LAB.ORACLE_BEGIN,
+            output.replace(LAB.ORACLE_CLOSED, ""), output + "\n" + LAB.ORACLE_CLOSED,
+            LAB.ORACLE_CLOSED + "\n" + output, LAB.ORACLE_TRACE_CLOSED + "\n" + output,
+            output.replace(LAB.ORACLE_TRACE_CLOSED, "", 1), output + "\n" + LAB.ORACLE_TRACE_CLOSED,
+            output.replace(audit, "", 1), output + "\n" + audit,
+            output.replace("main_buffers=1378", "main_buffers=1377", 1),
+            output + "\n" + LAB.ADAPTIVE_CLOSED, output + "\npublic_adaptive_closed=false",
+            output + "\n" + LAB.STEADY_BEGIN, output + "\n" + LAB.STEADY_CLOSED]
+        for bad in malformed:
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                LAB.validate_oracle_probe(value, True, bad)
+        with self.assertRaises(ValueError):
+            LAB.validate_oracle_probe(dict(value, steady_probe=steady_probe()), True, output)
+        for receipt_value, text in ((value, ""), ({}, LAB.ORACLE_BEGIN), ({}, LAB.ORACLE_CLOSED), ({}, LAB.ORACLE_TRACE_CLOSED)):
+            with self.assertRaises(ValueError):
+                LAB.validate_oracle_probe(receipt_value, False, text)
+
+    def test_original_128_ids_and_lifecycle_cannot_be_satisfied_by_oracle_records(self):
+        value = receipt("intel", 10)
+        expected = json.loads((HERE / "receipts/rust-full-resident-rainwater-intel-20261005.json").read_text())["public_generated_ids"]
+        value.update(fixture="resident-count1-hybrid-rainwater", prompt_tokens=75,
+                     native_public_chunk_partition=[8] * 9 + [3], public_generated_ids=expected,
+                     native_decode_steps=127, long_fixture=True, oracle_probe=oracle_probe())
+        output = oracle_output(completion(10))
+        # Selection geometry is covered independently; keep all existing model
+        # acceptance gates live with the historical synthetic owner inventory.
+        with mock.patch.object(LAB, "validate_oracle_selection"):
+            LAB.validate_receipt(value, "intel", 10, output, long=True, oracle_public=True)
+            wrong = copy.deepcopy(value)
+            wrong["public_generated_ids"][9] += 1
+            with self.assertRaises(ValueError):
+                LAB.validate_receipt(wrong, "intel", 10, output, long=True, oracle_public=True)
+            marker = LAB.completion(10)[0]
+            displaced = output.replace(marker, "") + "\n" + marker
+            with self.assertRaises(ValueError):
+                LAB.validate_receipt(value, "intel", 10, displaced, long=True, oracle_public=True)
+            wrong = copy.deepcopy(value)
+            wrong["owned_zero_audits"] = []
+            with self.assertRaises(ValueError):
+                LAB.validate_receipt(wrong, "intel", 10, output, long=True, oracle_public=True)
+
+    def test_selection_excludes_other_probes_and_environment_is_always_explicit(self):
+        LAB.validate_oracle_selection(True, **STEADY_SELECTION)
+        for field, bad in (("steady_public", True), ("adaptive_experts", True), ("adaptive_direct_upload", True),
+            ("long", False), ("banks", "intel128"), ("mapped", False), ("workers", "scoped"),
+            ("overlap", False), ("shared", False), ("dispatch", "threaded"), ("request_io_reuse", False),
+            ("deferred", False), ("secondary_experts", True), ("gpu_expert_limit", 9), ("card", "nvidia"), ("cap", 9)):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                LAB.validate_oracle_selection(True, **dict(STEADY_SELECTION, **{field: bad}))
+        for bad in (None, 1, "true"):
+            with self.assertRaises(ValueError):
+                LAB.validate_oracle_selection(bad, **STEADY_SELECTION)
+        settings = dict(STEADY_SELECTION, fast=True, gpu_router=True, compact_info=True,
+                        info_batch_upload=True, inline_readback=True)
+        with mock.patch.dict(os.environ, {"KUNO_LAB_ORACLE_PUBLIC": "1"}):
+            self.assertEqual(LAB.worker_environment("/original", "/receipt")["KUNO_LAB_ORACLE_PUBLIC"], "0")
+            env = LAB.worker_environment("/original", "/receipt", oracle_public=True, **settings)
+            self.assertEqual(env["KUNO_LAB_ORACLE_PUBLIC"], "1")
+            self.assertEqual(env["KUNO_LAB_STEADY_PUBLIC"], "0")
+        for extra in ({"steady_public": True}, {"adaptive_experts": True}, {"adaptive_direct_upload": True}):
+            with self.assertRaises(ValueError):
+                LAB.worker_environment("/original", "/receipt", oracle_public=True, **dict(settings, **extra))
+
+    def test_cli_rejects_wrong_or_mutually_exclusive_mode_before_launch(self):
+        base = ["lab", "--cargo-artifacts", "/absent/build", "--model", "/original/model", "--card", "intel",
+                "--cpu-miss-cap", "10", "--run-id", "test", "--receipt", "/absent/receipt", "--oracle-public"]
+        protected = ["--long-fixture", "--bank-profile", "intel144", "--cpu-workers", "pooled", "--cpu-gpu-overlap",
+                     "--mapped-weights", "--next-shared-kernels", "--fast-gpu", "--gpu-router", "--device-dispatch", "inline",
+                     "--request-io-reuse", "--defer-router-io", "--compact-info", "--info-batch-upload", "--inline-readback"]
+        for additions in ([], protected + ["--steady-public"], protected + ["--adaptive-experts"],
+                          protected + ["--adaptive-direct-upload"], protected + ["--secondary-experts"]):
+            with mock.patch.object(LAB.sys, "argv", base + additions), \
+                 mock.patch.object(LAB.BASE, "cargo_binary") as load, \
+                 mock.patch.object(LAB.subprocess, "Popen") as launch, \
+                 mock.patch("sys.stderr", new_callable=io.StringIO):
+                with self.assertRaises(SystemExit) as error:
+                    LAB.main()
+            self.assertEqual(error.exception.code, 2)
+            load.assert_not_called()
+            launch.assert_not_called()
+
+    def test_runner_forwards_selection_to_environment_gate_and_run_record(self):
+        for selected in (False, True):
+            with self.subTest(selected=selected), tempfile.TemporaryDirectory() as directory:
+                target = pathlib.Path(directory) / "receipt.json"
+                build = pathlib.Path(directory) / "build.jsonl"
+                build.write_text(json.dumps({"reason": "compiler-artifact", "target": {"name": "kuno-text-lab"},
+                                             "executable": "/frozen", "features": []}) + "\n")
+                value = oracle_receipt() if selected else {}
+                output = oracle_output() if selected else "ordinary output"
+                command_seen = []
+
+                def launch(command, **options):
+                    command_seen.extend(command)
+                    target.write_text(json.dumps(value))
+                    return SimpleNamespace(stdout=io.StringIO(output), wait=lambda: 0)
+
+                def validate(*args, **selection):
+                    LAB.validate_oracle_probe(args[0], selection["oracle_public"], args[3])
+
+                args = ["lab", "--cargo-artifacts", str(build), "--model", "/original/model", "--card", "intel",
+                        "--cpu-miss-cap", "10", "--run-id", "test", "--receipt", str(target)]
+                if selected:
+                    args.extend(["--oracle-public", "--long-fixture", "--bank-profile", "intel144",
+                        "--cpu-workers", "pooled", "--cpu-gpu-overlap", "--mapped-weights", "--next-shared-kernels",
+                        "--fast-gpu", "--gpu-router", "--device-dispatch", "inline", "--request-io-reuse",
+                        "--defer-router-io", "--compact-info", "--info-batch-upload", "--inline-readback"])
+                with mock.patch.object(LAB.BASE, "cargo_binary", return_value=(pathlib.Path("/frozen"), "binary", "build")), \
+                     mock.patch.object(LAB.subprocess, "Popen", side_effect=launch), \
+                     mock.patch.object(LAB, "validate_receipt", side_effect=validate) as gate, \
+                     mock.patch.object(LAB.sys, "argv", args), mock.patch("sys.stdout", new_callable=io.StringIO):
+                    LAB.main()
+                self.assertIs(gate.call_args.kwargs["oracle_public"], selected)
+                self.assertIn("--setenv=KUNO_LAB_ORACLE_PUBLIC=" + ("1" if selected else "0"), command_seen)
+                record = json.loads(target.with_suffix(".json.run.json").read_text())
+                self.assertIs(record["oracle_public"], selected)
+
+
 def receipt(card, cap):
     # Historical real native inventory, altered solely for validator tests.
     # No test output is saved as a hybrid device acceptance receipt.
