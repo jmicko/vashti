@@ -1999,6 +1999,23 @@ impl Acceptance<'_, '_> {
                     proof.ids().iter().copied(),
                 )?;
             }
+            if let Some(trace) = &mut self.executor.oracle_trace {
+                let proof = p
+                    .count1
+                    .as_ref()
+                    .ok_or(err("public oracle accepted count1 owner"))?;
+                if proof.cap() != 10 || proof.gpu_limit() != 10 {
+                    return Err(err("public oracle accepted miss policy"));
+                }
+                trace.record(
+                    *p.layer,
+                    p.stamp
+                        .start
+                        .checked_add(1)
+                        .ok_or(Error::ArithmeticOverflow)?,
+                    proof.ids(),
+                )?;
+            }
             p.armed = false;
             u::cancel(cancel)
         });

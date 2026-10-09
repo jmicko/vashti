@@ -646,6 +646,122 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         Ok(CompletedNativeProjectionBoundary { _private: () })
     }
 
+    /// Every oracle operation requires the unchanged complete native boundary,
+    /// exact compiled-public context, and accepted cap10 count1 execution.
+    fn lab_oracle_boundary(
+        &self,
+        executor: &GpuExecutor<'f>,
+        position: usize,
+    ) -> Result<CompletedNativeProjectionBoundary> {
+        let boundary = self.completed_native_projection_boundary(executor)?;
+        if self.position != position
+            || self.context != crate::oracle_trace::CONTEXT
+            || self.native_cpu_miss_cap()? != Some(10)
+        {
+            return Err(error());
+        }
+        Ok(boundary)
+    }
+
+    fn lab_oracle_attempt<T>(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+        operation: impl FnOnce(&mut Self, &mut GpuExecutor<'f>) -> Result<T>,
+    ) -> Result<T> {
+        let attempt =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| operation(self, executor)));
+        match attempt {
+            Ok(Ok(value)) => Ok(value),
+            _ => {
+                self.admission
+                    .sequence_poison()
+                    .store(true, Ordering::Release);
+                self.poisoned = true;
+                executor.poison_resident();
+                let _ = self.close();
+                let _ = executor.close_transient_resident();
+                Err(error())
+            }
+        }
+    }
+
+    pub(crate) fn begin_lab_oracle_trace(&mut self, executor: &mut GpuExecutor<'f>) -> Result<()> {
+        self.lab_oracle_attempt(executor, |model, executor| {
+            let boundary = model.lab_oracle_boundary(executor, crate::oracle_trace::START)?;
+            executor.check_lab_oracle_policy(&boundary)?;
+            executor.oracle_trace = Some(crate::oracle_trace::Trace::training()?);
+            Ok(())
+        })
+    }
+
+    pub(crate) fn finish_lab_oracle_training(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+    ) -> Result<crate::oracle_trace::Trace> {
+        self.lab_oracle_attempt(executor, |model, executor| {
+            model.lab_oracle_boundary(
+                executor,
+                crate::oracle_trace::START + crate::oracle_trace::DECODE,
+            )?;
+            executor
+                .oracle_trace
+                .as_ref()
+                .ok_or(error())?
+                .validated_replay_copy()
+        })
+    }
+
+    pub(crate) fn preload_lab_oracle(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+        trace: &crate::oracle_trace::Trace,
+        cancel: &AtomicBool,
+    ) -> Result<crate::expert_banks::FillStats> {
+        self.lab_oracle_attempt(executor, |model, executor| {
+            u::cancel(cancel)?;
+            let boundary = model.lab_oracle_boundary(executor, crate::oracle_trace::START)?;
+            let stats = executor.preload_lab_oracle(
+                &boundary,
+                trace,
+                &model.arena,
+                model.b.fault,
+                cancel,
+            )?;
+            u::cancel(cancel)?;
+            Ok(stats)
+        })
+    }
+
+    pub(crate) fn begin_lab_oracle_replay(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+        trace: crate::oracle_trace::Trace,
+    ) -> Result<()> {
+        self.lab_oracle_attempt(executor, |model, executor| {
+            let boundary = model.lab_oracle_boundary(executor, crate::oracle_trace::START)?;
+            executor.check_lab_oracle_preloaded(&boundary, &trace)?;
+            executor.oracle_trace = Some(trace);
+            Ok(())
+        })
+    }
+
+    pub(crate) fn finish_lab_oracle_replay(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+    ) -> Result<()> {
+        self.lab_oracle_attempt(executor, |model, executor| {
+            model.lab_oracle_boundary(
+                executor,
+                crate::oracle_trace::START + crate::oracle_trace::DECODE,
+            )?;
+            let trace = executor.oracle_trace.as_ref().ok_or(error())?;
+            if !trace.is_replay() {
+                return Err(error());
+            }
+            trace.complete()
+        })
+    }
+
     /// Read the actual installed family policies rather than echoing an env
     /// selection. No private metadata or model state is exposed.
     pub(crate) fn native_decode_kernels(&self) -> Result<NativeDecodeKernels> {

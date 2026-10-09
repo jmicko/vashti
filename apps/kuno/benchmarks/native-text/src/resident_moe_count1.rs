@@ -220,6 +220,13 @@ impl GpuExecutor<'_> {
                     0
                 })
             })
+            .and_then(|n| {
+                n.checked_sub(if self.oracle_trace.is_some() {
+                    crate::oracle_trace::Trace::HOST
+                } else {
+                    0
+                })
+            })
             .filter(|&n| n > 0)
             .ok_or(Error::LimitExceeded("native count1 shared CPU host"))?;
         w.policy.issue(layer)?;
@@ -503,6 +510,13 @@ impl GpuExecutor<'_> {
             .map_err(err)?;
         let live = live
             .checked_add(self.adaptive.as_ref().map_or(0, |c| c.owned_bytes()))
+            .and_then(|n| {
+                n.checked_add(
+                    self.oracle_trace
+                        .as_ref()
+                        .map_or(0, |trace| trace.owned_bytes()),
+                )
+            })
             .ok_or(Error::ArithmeticOverflow)?;
         let partial_bytes = partials.as_ref().map_or(0, |p| p.owned_bytes());
         let encoding = arena.layout(owner_ids[0]).map_err(u::fault)?.owned_bytes

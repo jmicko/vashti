@@ -745,6 +745,7 @@ struct Cached {
 /// The lifetime of this executor is one fixed synthetic experiment. Its cache
 /// keys/ranks must never be persisted or reused as private request history.
 pub struct GpuExecutor<'a> {
+    pub(crate) oracle_trace: Option<crate::oracle_trace::Trace>,
     pub(crate) adaptive: Option<crate::adaptive_experts::Cache>,
     pub(crate) secondary: Option<crate::secondary_experts::Secondary>,
     pub(crate) secondary_frequency: Option<crate::secondary_experts::Frequency>,
@@ -866,6 +867,7 @@ impl<'a> GpuExecutor<'a> {
             std::env::var("KUNO_LAB_BATCH_EXPERTS").as_deref() == Ok("1"),
         )?;
         Ok(Self {
+            oracle_trace: None,
             adaptive: if std::env::var("KUNO_LAB_ADAPTIVE_EXPERTS").as_deref() == Ok("1") {
                 Some(crate::adaptive_experts::Cache::new()?)
             } else {
@@ -976,6 +978,10 @@ impl<'a> GpuExecutor<'a> {
     /// Checked fixed-fixture shutdown. No ordinary sync on owned-runtime I/O;
     /// failure keeps the context retired and the admission ledger poisoned.
     pub(crate) fn close_transient_resident(&mut self) -> Result<()> {
+        if let Some(mut trace) = self.oracle_trace.take() {
+            trace.erase();
+            println!("public_oracle_trace_closed=true");
+        }
         if let Some(secondary) = &mut self.secondary {
             secondary.close()?;
         }
@@ -1027,6 +1033,226 @@ impl<'a> GpuExecutor<'a> {
     }
     pub fn cache_bytes(&self) -> usize {
         self.cache_bytes + self.bank_reserved
+    }
+    /// The model issues the sole completed-boundary proof. This diagnostic has
+    /// no adaptive/secondary policy and never admits an arbitrary route trace.
+    pub(crate) fn check_lab_oracle_policy(
+        &self,
+        _boundary: &crate::resident_model::batch::CompletedNativeProjectionBoundary,
+    ) -> Result<()> {
+        if self.oracle_trace.is_some()
+            || self.adaptive.is_some()
+            || self.secondary.is_some()
+            || self.secondary_frequency.is_some()
+            || self.bank_slots != 144
+            || self.banks.len() != 48
+            || self.gpu_expert_limit != 10
+            || self.batch_moe.is_some()
+            || self.transient_resident.is_none()
+        {
+            return Err(Error::InvalidFormat("public oracle original bank policy"));
+        }
+        self.resident_admission
+            .as_ref()
+            .ok_or(Error::InvalidFormat("public oracle resident admission"))?
+            .active()?;
+        for bank in self.banks.values() {
+            bank.check_client(&self.client)?;
+            if bank.slots.capacity() != 144 || bank.slots.experts() != 512 {
+                return Err(Error::InvalidFormat("public oracle original bank geometry"));
+            }
+        }
+        self.model.verify_file_unchanged()
+    }
+
+    pub(crate) fn check_lab_oracle_preloaded(
+        &self,
+        boundary: &crate::resident_model::batch::CompletedNativeProjectionBoundary,
+        trace: &crate::oracle_trace::Trace,
+    ) -> Result<()> {
+        self.check_lab_oracle_policy(boundary)?;
+        trace.validate_ready_replay()?;
+        for layer in 0..48 {
+            let bank = self
+                .banks
+                .get(&format!("blk.{layer}.ffn_gate_exps.weight"))
+                .ok_or(Error::InvalidFormat("public oracle preloaded bank"))?;
+            let union = trace.union(layer)?;
+            for &expert in union.iter() {
+                if bank
+                    .slots
+                    .resident_slot(expert)
+                    .map_err(|_| Error::InvalidFormat("public oracle preloaded slot"))?
+                    .is_none()
+                {
+                    return Err(Error::InvalidFormat("public oracle exact preload missing"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Exact PUBLIC original weights only. Every layer retains one protected
+    /// complete-union plan while bounded original copy windows finish. There is
+    /// no ledger publication before the last audited owning completion.
+    pub(crate) fn preload_lab_oracle(
+        &mut self,
+        boundary: &crate::resident_model::batch::CompletedNativeProjectionBoundary,
+        trace: &crate::oracle_trace::Trace,
+        arena: &crate::private_arena::PrivateArena,
+        fault: crate::private_arena::BufferId,
+        cancel: &AtomicBool,
+    ) -> Result<expert_banks::FillStats> {
+        self.check_lab_oracle_policy(boundary)?;
+        trace.validate_ready_replay()?;
+        self.check_client(arena.client().map_err(crate::resident_util::fault)?)?;
+        let admission = self
+            .resident_admission
+            .as_ref()
+            .ok_or(Error::InvalidFormat("public oracle preload admission"))?
+            .clone();
+        let mut total = expert_banks::FillStats::default();
+        for layer in 0..48 {
+            if cancel.load(Ordering::Acquire) {
+                return Err(Error::InvalidFormat("GPU execution cancelled"));
+            }
+            let selected = trace.union(layer)?;
+            let bank = self
+                .banks
+                .get_mut(&format!("blk.{layer}.ffn_gate_exps.weight"))
+                .ok_or(Error::InvalidFormat("public oracle preload original bank"))?;
+            let plan = bank
+                .slots
+                .plan(&selected)
+                .map_err(|_| Error::InvalidFormat("public oracle complete union plan"))?;
+            bank.slots
+                .validate_pending(&plan, &selected)
+                .map_err(|_| Error::InvalidFormat("public oracle union pending proof"))?;
+            let private = trace
+                .owned_bytes()
+                .checked_add(
+                    selected
+                        .capacity()
+                        .checked_mul(std::mem::size_of::<usize>())
+                        .ok_or(Error::ArithmeticOverflow)?,
+                )
+                .and_then(|n| n.checked_add(plan.owned_metadata_bytes().ok()?))
+                .and_then(|n| n.checked_add(4096))
+                .ok_or(Error::ArithmeticOverflow)?;
+            if private > 192 * 1024 {
+                return Err(Error::LimitExceeded("public oracle preload private host"));
+            }
+            bank.check_client(&self.client)?;
+            let [gate, up, down] = bank.source_names().map(|name| {
+                self.model
+                    .tensor(name)
+                    .ok_or(Error::InvalidFormat("public oracle original tensor"))
+            });
+            let weights = RoutedWeights {
+                gate: gate?,
+                up: up?,
+                down: down?,
+            };
+            bank.check_names(weights)?;
+            for window in plan.uploads.chunks(10) {
+                if cancel.load(Ordering::Acquire) {
+                    return Err(Error::InvalidFormat("GPU execution cancelled"));
+                }
+                bank.slots
+                    .validate_pending(&plan, &selected)
+                    .map_err(|_| Error::InvalidFormat("public oracle window protected proof"))?;
+                let requests = fill_requests(
+                    [bank.gate(), bank.up(), bank.down()].map(|b| b.expert_bytes() as u64),
+                    window.len(),
+                    false,
+                    self.expert_batch_bytes,
+                )?;
+                let charged = requests.iter().try_fold(0u64, |sum, &bytes| {
+                    sum.checked_add(main_admission::page_bytes(bytes).map_err(admission_error)?)
+                        .ok_or(Error::ArithmeticOverflow)
+                })?;
+                if charged > 40 * 1024 * 1024 {
+                    return Err(Error::LimitExceeded("public oracle original source window"));
+                }
+                let add = admission.allocate(&requests, || {
+                    let mut add = expert_banks::FillStats::default();
+                    for &(expert, slot) in window {
+                        for (packed, tensor) in [
+                            (bank.gate(), weights.gate),
+                            (bank.up(), weights.up),
+                            (bank.down(), weights.down),
+                        ] {
+                            let (bytes, read, upload) = expert_banks::fill(
+                                &self.client,
+                                packed,
+                                tensor,
+                                expert,
+                                slot,
+                                cancel,
+                            )?;
+                            add.bytes = add
+                                .bytes
+                                .checked_add(bytes)
+                                .ok_or(Error::ArithmeticOverflow)?;
+                            add.read_ns = add
+                                .read_ns
+                                .checked_add(read)
+                                .ok_or(Error::ArithmeticOverflow)?;
+                            add.upload_ns = add
+                                .upload_ns
+                                .checked_add(upload)
+                                .ok_or(Error::ArithmeticOverflow)?;
+                        }
+                        add.experts += 1;
+                    }
+                    Ok(add)
+                })?;
+                crate::resident_model::batch_io::read_fault(arena, fault, &admission)?;
+                if cancel.load(Ordering::Acquire) {
+                    return Err(Error::InvalidFormat("GPU execution cancelled"));
+                }
+                total.bytes = total
+                    .bytes
+                    .checked_add(add.bytes)
+                    .ok_or(Error::ArithmeticOverflow)?;
+                total.read_ns = total
+                    .read_ns
+                    .checked_add(add.read_ns)
+                    .ok_or(Error::ArithmeticOverflow)?;
+                total.upload_ns = total
+                    .upload_ns
+                    .checked_add(add.upload_ns)
+                    .ok_or(Error::ArithmeticOverflow)?;
+                total.experts = total
+                    .experts
+                    .checked_add(add.experts)
+                    .ok_or(Error::ArithmeticOverflow)?;
+            }
+            bank.slots
+                .validate_pending(&plan, &selected)
+                .map_err(|_| Error::InvalidFormat("public oracle completed union proof"))?;
+            bank.slots
+                .commit(plan)
+                .map_err(|_| Error::InvalidFormat("public oracle completed union publication"))?;
+        }
+        self.model.verify_file_unchanged()?;
+        self.expert_uploads = self
+            .expert_uploads
+            .checked_add(total.experts)
+            .ok_or(Error::ArithmeticOverflow)?;
+        self.uploaded_bytes = self
+            .uploaded_bytes
+            .checked_add(total.bytes)
+            .ok_or(Error::ArithmeticOverflow)?;
+        self.weight_read_ns = self
+            .weight_read_ns
+            .checked_add(total.read_ns)
+            .ok_or(Error::ArithmeticOverflow)?;
+        self.weight_upload_ns = self
+            .weight_upload_ns
+            .checked_add(total.upload_ns)
+            .ok_or(Error::ArithmeticOverflow)?;
+        Ok(total)
     }
     pub(crate) fn enable_adaptive_after_prefill(&mut self) -> Result<()> {
         if std::env::var("KUNO_LAB_ADAPTIVE_EXPERTS").as_deref() != Ok("1") {
