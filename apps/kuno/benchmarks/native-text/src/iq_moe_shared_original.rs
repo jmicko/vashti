@@ -178,6 +178,24 @@ fn NAME_project(base:u32,enabled:bool,row:u32,lane:u32,sub_lane:u32,width:u32,sc
     .replace("NAME", name)
 }
 
+// Every physical lane executes one branch and stores its own immutable words.
+// This replaces repeated 256/512/2048-way value lookups with a single 128-way
+// dispatch. Indices and values are compile-time literals, with no new owner.
+fn initialize_grid(words: &[u32]) -> String {
+    use std::fmt::Write;
+    assert!(matches!(words.len(), 256 | 512 | 2048));
+    let mut source = String::from("switch local {\n");
+    for lane in 0..128 {
+        writeln!(source, "case {lane}u: {{").unwrap();
+        for index in (lane..words.len()).step_by(128) {
+            writeln!(source, "iq_grid[{index}u]=0x{:08x}u;", words[index]).unwrap();
+        }
+        source.push_str("}\n");
+    }
+    source.push_str("default: {}\n}\n");
+    source
+}
+
 impl Kernel {
     fn source(self) -> String {
         let columns = if self.down { 640 } else { 2560 };
@@ -214,22 +232,8 @@ impl Kernel {
         let mut grid = String::new();
         let mut initialize = String::new();
         if !words.is_empty() {
-            writeln!(
-                grid,
-                "var<workgroup> iq_grid:array<u32,{}>;\nfn iq_literal(i:u32)->u32 {{switch i {{",
-                words.len()
-            )
-            .unwrap();
-            for (i, word) in words.iter().enumerate() {
-                writeln!(grid, "case {i}u: {{return 0x{word:08x}u;}}").unwrap();
-            }
-            grid.push_str("default: {return 0u;}\n}}\n");
-            write!(
-                initialize,
-                "for(var i=local;i<{}u;i+=128u) {{iq_grid[i]=iq_literal(i);}}",
-                words.len()
-            )
-            .unwrap();
+            writeln!(grid, "var<workgroup> iq_grid:array<u32,{}>;", words.len()).unwrap();
+            initialize = initialize_grid(&words);
         }
         let mut source = include_str!("iq_moe_shared_original.wgsl")
             .replace("BINDINGS_VALUE", bindings)
@@ -769,6 +773,88 @@ mod tests {
         }
     }
 
+    fn assert_grid_stores(module: &wgpu::naga::Module, expected: &[u32]) {
+        use wgpu::naga::{Expression, Literal, Statement, SwitchValue};
+        let function = &module.entry_points[0].function;
+        let grid = module
+            .global_variables
+            .iter()
+            .find_map(|(handle, variable)| {
+                (variable.name.as_deref() == Some("iq_grid")).then_some(handle)
+            })
+            .unwrap();
+        let cases = function
+            .body
+            .iter()
+            .find_map(|statement| match statement {
+                Statement::Switch { selector, cases }
+                    if matches!(
+                        function.expressions[*selector],
+                        Expression::FunctionArgument(1)
+                    ) =>
+                {
+                    Some(cases)
+                }
+                _ => None,
+            })
+            .expect("one top-level physical-lane switch");
+        assert_eq!(cases.len(), 129);
+        let mut actual = vec![None; expected.len()];
+        for case in cases {
+            assert!(!case.fall_through);
+            let lane = match case.value {
+                SwitchValue::U32(lane) => lane as usize,
+                SwitchValue::Default => {
+                    assert!(case.body.is_empty());
+                    continue;
+                }
+                _ => panic!("only unsigned lane literals"),
+            };
+            assert!(lane < 128);
+            assert_eq!(
+                case.body
+                    .iter()
+                    .filter(|statement| matches!(statement, Statement::Store { .. }))
+                    .count(),
+                expected.len() / 128
+            );
+            for statement in case.body.iter() {
+                // Naga emits each constant pointer expression before its store.
+                // Emit has no side effects; all memory-writing statements below
+                // must still be exact constant-index/constant-value stores.
+                if matches!(statement, Statement::Emit(_)) {
+                    continue;
+                }
+                let Statement::Store { pointer, value } = *statement else {
+                    panic!("initializer contains only literal stores and their pure expressions");
+                };
+                let (base, index) = match function.expressions[pointer] {
+                    Expression::AccessIndex { base, index } => (base, index as usize),
+                    Expression::Access { base, index } => {
+                        let Expression::Literal(Literal::U32(index)) = function.expressions[index]
+                        else {
+                            panic!("compile-time grid index required");
+                        };
+                        (base, index as usize)
+                    }
+                    _ => panic!("direct grid access required"),
+                };
+                assert!(
+                    matches!(function.expressions[base], Expression::GlobalVariable(handle) if handle == grid)
+                );
+                let Expression::Literal(Literal::U32(word)) = function.expressions[value] else {
+                    panic!("compile-time codebook word required");
+                };
+                assert_eq!(index % 128, lane);
+                assert!(actual[index].replace(word).is_none(), "no duplicate store");
+            }
+        }
+        assert_eq!(
+            actual,
+            expected.iter().copied().map(Some).collect::<Vec<_>>()
+        );
+    }
+
     #[test]
     fn all14_shaders_keep_workgroup_codebooks_original_tree_and_no_function_array_or_fma() {
         for (down, dtype, columns) in [
@@ -808,7 +894,22 @@ mod tests {
                 } else {
                     assert!(source.contains("sub_lane,width,128u"));
                 }
+                assert!(!source.contains("iq_literal"));
                 let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
+                let expected_grid = match dtype {
+                    IQ3_XXS => quant::IQ3_XXS_GRID.to_vec(),
+                    IQ3_S => quant::IQ3_S_GRID.to_vec(),
+                    IQ2_S => quant::IQ2_S_GRID
+                        .into_iter()
+                        .flat_map(|word| [word as u32, (word >> 32) as u32])
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                if !expected_grid.is_empty() {
+                    assert_grid_stores(&module, &expected_grid);
+                } else {
+                    assert!(!source.contains("switch local"));
+                }
                 let info = wgpu::naga::valid::Validator::new(
                     wgpu::naga::valid::ValidationFlags::all(),
                     wgpu::naga::valid::Capabilities::SUBGROUP,
@@ -869,6 +970,7 @@ mod tests {
                 let mut variables = Vec::new();
                 let mut mul = 0;
                 let mut add = 0;
+                let mut switches = 0;
                 let mut at = 5;
                 while at < spv.len() {
                     let length = (spv[at] >> 16) as usize;
@@ -883,6 +985,12 @@ mod tests {
                             pointers.insert(args[0], args[2]);
                         }
                         59 => variables.push((args[0], args[2])),
+                        251 => {
+                            switches += 1;
+                            // U32 selector, default target, then literal/target pairs.
+                            assert_eq!((args.len() - 2) / 2, 128);
+                            assert_eq!((args.len() - 2) % 2, 0);
+                        }
                         133 => mul += 1,
                         129 => add += 1,
                         12 => assert_ne!(args[3], 50, "GLSL.std.450 Fma is forbidden"),
@@ -891,6 +999,7 @@ mod tests {
                     at += length;
                 }
                 assert!(mul > 0 && add > 0);
+                assert_eq!(switches, usize::from(!expected_grid.is_empty()));
                 assert!(
                     variables
                         .iter()
