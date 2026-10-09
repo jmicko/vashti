@@ -22,6 +22,8 @@ mod latest_checkpoint;
 #[path = "resident_target_round.rs"]
 mod latest_round;
 pub(crate) use latest_round::LatestTargetRound;
+#[path = "resident_target_request_io.rs"]
+pub(crate) mod public_target_request_io;
 #[path = "resident_model_public_reset.rs"]
 pub(crate) mod public_warm_replay;
 pub(crate) const TARGET_ROWS_MAX: usize = target_rows::MAX_ROWS;
@@ -283,6 +285,7 @@ pub(crate) struct Config {
     prepared_verify3_experts_reserved: bool,
     public_existing_expert_fill: bool,
     public_warm_replay: bool,
+    public_target_request_io: bool,
 }
 fn prepared_verify3_configuration(
     target_rows: bool,
@@ -316,6 +319,7 @@ impl Config {
             prepared_verify3_experts_reserved: false,
             public_existing_expert_fill: false,
             public_warm_replay: false,
+            public_target_request_io: false,
         })
     }
     /// Construction-fixed, one-shot empty PRIVATE-state replay after the
@@ -384,6 +388,22 @@ impl Config {
             self.prepared_verify3_experts_reserved,
         )?;
         self.request_reuse_metadata = bytes;
+        Ok(self)
+    }
+    /// Fixed PUBLIC target stream only. The backend is configured separately
+    /// before construction; no process setting or draft stream is changed.
+    #[allow(dead_code)] // Protected registration and GPU acceptance are parent-owned.
+    pub(crate) fn reserve_public_target_request_io(mut self) -> Result<Self> {
+        public_target_request_io::configuration(
+            self.target_rows_reserved,
+            self.public_target_request_io,
+            self.cpu_operator.is_some(),
+            self.resident_router_reserved,
+            self.tile,
+        )?;
+        public_target_request_io::check_runtime(&self.client)?;
+        self = self.reserve_request_reuse_metadata(public_target_request_io::METADATA_BYTES)?;
+        self.public_target_request_io = true;
         Ok(self)
     }
     /// One latest-chunk host checkpoint plus exact QSA suffix-clear/fold INFO.
@@ -596,6 +616,7 @@ impl Plan {
             requests.push(BufferLayout::new(words).map_err(u::fault)?.owned_bytes as u64);
         }
         let hybrid = config.cpu_operator.is_some();
+        public_target_request_io::check_plan(&config, executor)?;
         host_reservation_with_verify3(
             hybrid,
             config.request_reuse_metadata,
@@ -845,6 +866,7 @@ pub(super) struct Workspace {
     target_rows: Option<target_rows::Owners>,
     latest_target_checkpoint_reserved: bool,
     public_warm_replay: Option<public_warm_replay::Permit>,
+    public_target_request_io: Option<public_target_request_io::Permit>,
 }
 impl Workspace {
     fn decode_kernels(&self) -> Result<NativeDecodeKernels> {
@@ -876,6 +898,21 @@ impl Workspace {
         allocation: &crate::executor::ModelConstructionAllocation<'_>,
     ) -> Result<Self> {
         allocation.check(&model.admission)?;
+        let public_target_request_io = if config.public_target_request_io {
+            Some(public_target_request_io::Permit::new(
+                model.graph.binding_id(),
+                executor.packed_profile,
+                model.context,
+                model.position,
+                model.admission.transient_io(),
+                model.arena.public_owned_zero_audit_enabled()
+                    && model.io.public_owned_zero_audit_enabled(),
+                config.public_warm_replay,
+                model.admission.request_io_reuse_active(),
+            )?)
+        } else {
+            None
+        };
         let public_warm_replay = if config.public_warm_replay {
             public_warm_replay::configuration(
                 config.target_rows_reserved,
@@ -981,6 +1018,7 @@ impl Workspace {
             target_rows,
             latest_target_checkpoint_reserved: config.latest_target_checkpoint_reserved,
             public_warm_replay,
+            public_target_request_io,
         };
         result.prove_outer(model)?;
         Ok(result)
@@ -1834,6 +1872,16 @@ impl Workspace {
             {
                 return Err(error());
             }
+        }
+        if let Some(permit) = &self.public_target_request_io {
+            public_target_request_io::check_execution(self, m, e)?;
+            permit.validate_run(
+                m.graph.binding_id(),
+                m.context,
+                m.position,
+                tokens.len(),
+                m.admission.request_io_reuse_active(),
+            )?;
         }
         if self.moe.prepared_verify3_owner_id().is_some() {
             if self.target_rows.is_none()

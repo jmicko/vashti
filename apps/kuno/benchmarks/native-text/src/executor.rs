@@ -419,6 +419,14 @@ impl ResidentAdmission {
     /// The model obtains this capability only at a completed public laboratory
     /// boundary. Clones share the nonce; a different model cannot recycle it.
     pub(crate) fn begin_request_io_reuse(&self) -> Result<()> {
+        self.begin_request_io_reuse_for(false)
+    }
+    /// Separate construction-sealed PUBLIC target capability. The backend
+    /// rejects its fixed target stream through the ordinary count1 entry.
+    pub(crate) fn begin_public_target_request_io_reuse(&self) -> Result<()> {
+        self.begin_request_io_reuse_for(true)
+    }
+    fn begin_request_io_reuse_for(&self, public_target: bool) -> Result<()> {
         self.active()?;
         if !self.transient_io || !self.token_io_checkpoint {
             return Err(Error::InvalidFormat(
@@ -430,10 +438,12 @@ impl ResidentAdmission {
                 if self.request_io_nonce.load(Ordering::Acquire) != 0 {
                     return Err(Error::InvalidFormat("request I/O scope already active"));
                 }
-                let nonce = self
-                    .client
-                    .begin_transient_io_reuse()
-                    .map_err(|_| Error::InvalidFormat("request I/O scope rejected"))?;
+                let nonce = if public_target {
+                    self.client.begin_public_target_request_io_reuse()
+                } else {
+                    self.client.begin_transient_io_reuse()
+                }
+                .map_err(|_| Error::InvalidFormat("request I/O scope rejected"))?;
                 if nonce == 0 {
                     self.retired.store(true, Ordering::Release);
                     return Err(Error::InvalidFormat("request I/O scope missing"));
@@ -442,6 +452,10 @@ impl ResidentAdmission {
                 Ok(())
             })
         })
+    }
+    /// Actual admission capability state only; never expose its nonce.
+    pub(crate) fn request_io_reuse_active(&self) -> bool {
+        self.request_io_nonce.load(Ordering::Acquire) != 0
     }
     pub(crate) fn request_io_checkpoints(&self) -> u64 {
         self.request_io_checkpoints.load(Ordering::Relaxed)
