@@ -2458,7 +2458,9 @@ impl<'a> GpuExecutor<'a> {
                     if !packet.packed_first().is_multiple_of(4) {
                         return Err(Error::InvalidBufferLength);
                     }
-                    if self.shared_kernels {
+                    if self.shared_kernels
+                        && crate::next_shared::MatrixSpec::supports_dtype(g.dtype())
+                    {
                         if packet.packed_first() != 0 {
                             return Err(Error::InvalidFormat("shared count1 projection contract"));
                         }

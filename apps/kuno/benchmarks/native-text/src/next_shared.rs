@@ -20,7 +20,15 @@ pub(crate) struct MatrixSpec {
     row_bytes: usize,
 }
 impl MatrixSpec {
+    /// Exact decoder set in ornith/matrix_vector.wgsl. The generic packed
+    /// decoder supports additional types, but that does not add shader support.
+    pub(crate) const fn supports_dtype(dtype: u32) -> bool {
+        matches!(dtype, 0 | 1 | 6 | 8 | 12 | 14 | 30)
+    }
     pub(crate) fn new(rows: usize, columns: usize, dtype: u32) -> Result<Self> {
+        if !Self::supports_dtype(dtype) {
+            return Err(Error::InvalidFormat("shared packed dtype"));
+        }
         let (block, bytes) = crate::quant_matvec::block_layout(dtype)
             .ok_or(Error::InvalidFormat("shared packed dtype"))?;
         if rows == 0
@@ -792,6 +800,22 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn shared_matrix_dispatch_rejects_types_without_a_shader_decoder() {
+        for dtype in [0, 1, 30, 6, 8, 12, 14] {
+            assert!(MatrixSpec::supports_dtype(dtype));
+            assert!(MatrixSpec::new(7, 256, dtype).is_ok());
+        }
+        // These remain valid generic packed formats. Their presence in
+        // block_layout must never opt them into the shader's F32 else branch.
+        for dtype in [13, 18, 20, 21, 22, 23, 42] {
+            assert!(crate::quant_matvec::block_layout(dtype).is_some());
+            assert!(!MatrixSpec::supports_dtype(dtype));
+            assert!(MatrixSpec::new(7, 256, dtype).is_err());
+        }
+        assert!(!MatrixSpec::supports_dtype(u32::MAX));
     }
 
     #[test]
