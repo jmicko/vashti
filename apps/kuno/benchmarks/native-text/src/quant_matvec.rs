@@ -196,17 +196,19 @@ fn iq4_value(index: usize) -> f32 {
     // The packed nibble caller proves index<16. Select only scalar integers:
     // dynamic value-array indexing otherwise requires a Naga SPIR-V Function
     // spill even when WGSL declares the complete table as a module constant.
-    let word = if index < 8 {
-        if index < 4 {
-            0xbfad_9881_u32
-        } else {
-            0xf6ea_ddcf_u32
-        }
-    } else if index < 12 {
-        0x2619_0d01_u32
-    } else {
-        0x7159_4535_u32
-    };
+    // CubeCL0.10 does not join a value-producing nested if expression: it
+    // emitted empty branches and the last literal unconditionally. Explicit
+    // scalar assignments keep all four runtime-selected words in the shader.
+    let mut word = 0xbfad_9881_u32;
+    if index >= 4 {
+        word = 0xf6ea_ddcf_u32;
+    }
+    if index >= 8 {
+        word = 0x2619_0d01_u32;
+    }
+    if index >= 12 {
+        word = 0x7159_4535_u32;
+    }
     signed_byte((word >> (((index & 3) * 8) as u32)) & 255) as f32
 }
 

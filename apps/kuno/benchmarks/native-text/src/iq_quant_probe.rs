@@ -646,6 +646,17 @@ mod tests {
                     )
                 }));
                 assert!(!source.contains("arrays_"));
+                // A value-producing nested CubeCL if previously emitted EMPTY
+                // branches and retained only the final quartet. Host Rust
+                // lookup equality did not catch that expansion defect. Require
+                // all four literal words and their runtime threshold guards in
+                // the actual generated decoder, not just the source function.
+                for word in [0xbfad_9881_u32, 0xf6ea_ddcf, 0x2619_0d01, 0x7159_4535] {
+                    assert!(source.contains(&format!("u32({word})")));
+                }
+                for minimum in [4, 8, 12] {
+                    assert!(source.contains(&format!(">= u32({minimum})")));
+                }
             }
             // Public original packed weights, private result, and original INFO.
             assert_eq!(
