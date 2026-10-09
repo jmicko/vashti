@@ -21,6 +21,7 @@ mod grouped_moe_chunk_probe;
 mod info_slab_probe;
 mod main_admission;
 mod matmul_probe;
+mod mtp_gpu_probe;
 mod next_shared;
 mod next_shared_moe;
 mod oracle_public;
@@ -800,6 +801,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => return Err("expected intel or nvidia".into()),
     };
     let mode = std::env::args().nth(2).unwrap_or("probe".into());
+    let mtp_gpu_inputs = if mode == "mtp-gpu-probe" {
+        let inputs = mtp_gpu_probe::registration(
+            &std::env::args_os().collect::<Vec<_>>(),
+            std::env::vars_os(),
+            mtp_gpu_probe::default_build(),
+        )?;
+        mtp_gpu_probe::content_free_panic_hook();
+        Some(inputs)
+    } else {
+        None
+    };
     let packed_raw = std::env::var_os("KUNO_LAB_ORIGINAL_PACKED");
     let packed_profile = original_packed_profile(
         &mode,
@@ -983,7 +995,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             inline_dispatch,
         )?
     };
-    println!("gpu_device_dispatch mode={device_dispatch} blocking={inline_dispatch}");
+    if mtp_gpu_inputs.is_none() {
+        println!("gpu_device_dispatch mode={device_dispatch} blocking={inline_dispatch}");
+    }
     let kernel_profile = count1_environment_opt_in(&mode, "KUNO_LAB_KERNEL_PROFILE")?;
     let fast_gpu = count1_environment_opt_in(&mode, "KUNO_LAB_FAST_GPU")?;
     let fast_gpu_fault = count1_environment_opt_in(&mode, "KUNO_LAB_FAST_GPU_FAULT")?;
@@ -1404,6 +1418,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let adapter = candidates.remove(0);
         let info = adapter.get_info();
+        if mtp_gpu_inputs.is_some() {
+            mtp_gpu_probe::validate_limits(&adapter.limits())?;
+        }
         if next_shared
             && (adapter.limits().max_compute_invocations_per_workgroup < 256
                 || adapter.limits().max_compute_workgroup_size_x < 256)
@@ -1428,33 +1445,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             return Err("GPU upload clear requires native primary mapping support".into());
         }
-        println!(
-            "adapter={} vendor={:04x} device={:04x} backend={:?}",
-            info.name, info.vendor, info.device, info.backend
-        );
-        let (device, queue) = adapter
+        if mtp_gpu_inputs.is_none() {
+            println!(
+                "adapter={} vendor={:04x} device={:04x} backend={:?}",
+                info.name, info.vendor, info.device, info.backend
+            );
+        }
+        let device_result = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("Kuno public synthetic Rust kernel"),
-                required_features: adapter.features()
-                    & (wgpu::Features::SHADER_F16
-                        | if gpu_upload_clear {
-                            wgpu::Features::MAPPABLE_PRIMARY_BUFFERS
-                        } else {
-                            wgpu::Features::empty()
-                        }
-                        | wgpu::Features::SUBGROUP
-                        | if kernel_profile {
-                            wgpu::Features::TIMESTAMP_QUERY
-                                | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES
-                        } else {
-                            wgpu::Features::empty()
-                        }),
+                required_features: if mtp_gpu_inputs.is_some() {
+                    wgpu::Features::empty()
+                } else {
+                    adapter.features()
+                        & (wgpu::Features::SHADER_F16
+                            | if gpu_upload_clear {
+                                wgpu::Features::MAPPABLE_PRIMARY_BUFFERS
+                            } else {
+                                wgpu::Features::empty()
+                            }
+                            | wgpu::Features::SUBGROUP
+                            | if kernel_profile {
+                                wgpu::Features::TIMESTAMP_QUERY
+                                    | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES
+                            } else {
+                                wgpu::Features::empty()
+                            })
+                },
                 required_limits: adapter.limits(),
                 memory_hints: wgpu::MemoryHints::MemoryUsage,
                 trace: wgpu::Trace::Off,
                 ..Default::default()
             })
-            .await?;
+            .await;
+        let (device, queue) = if mtp_gpu_inputs.is_some() {
+            device_result.map_err(|_| "fixed public MTP GPU device setup failed")?
+        } else {
+            device_result?
+        };
         let grouped_limits = adapter.limits();
         let gr_storage_alignment = adapter.limits().min_storage_buffer_offset_alignment as usize;
         let selected = init_device(
@@ -1471,6 +1499,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         );
         let client = WgpuRuntime::client(&selected);
+        if let Some(inputs) = mtp_gpu_inputs {
+            return mtp_gpu_probe::run(&client, vendor, inputs);
+        }
         if kernel_profile {
             client.set_profiling_paused(true);
         }
