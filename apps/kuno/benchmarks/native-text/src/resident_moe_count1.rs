@@ -77,6 +77,17 @@ impl GpuExecutor<'_> {
             .ok_or(err("native count1 reservation absent"))?;
         let cap = h.cap.ok_or(err("native count1 policy absent"))?;
         let overlap = h.overlap;
+        if self.q3_empty_slot_fill
+            && (self.packed_profile != expert_banks::OriginalPackedProfile::UnslothQ3
+                || cap != 10
+                || self.gpu_expert_limit != 10
+                || !overlap
+                || !self.model.weights_mapped()
+                || self.adaptive.is_some()
+                || self.secondary.is_some())
+        {
+            return Err(err("native Q3 empty-slot runtime policy"));
+        }
         if cap > 10
             || self.gpu_expert_limit > 10
             || self.gpu_expert_limit < 10 && (cap != 10 || !overlap || !self.model.weights_mapped())
@@ -158,7 +169,12 @@ impl GpuExecutor<'_> {
             experts[rank] = v.expert() as usize;
             probabilities[rank] = v.probability();
         }
-        let (mut proof, staged, last, split) = count1::Proof::prepare(
+        let prepare = if self.q3_empty_slot_fill {
+            count1::Proof::prepare_empty_slots
+        } else {
+            count1::Proof::prepare
+        };
+        let (mut proof, staged, last, split) = prepare(
             &bank.slots,
             &experts,
             &probabilities,

@@ -1876,6 +1876,7 @@ impl Workspace {
                 || *p.waves != 1
                 || self.cpu_miss_cap() != Some(proof.cap())
                 || proof.gpu_limit() != e.gpu_expert_limit
+                || proof.empty_slot_fill() != e.q3_empty_slot_fill
             {
                 return Err(err("native count1 foreign pending policy"));
             }

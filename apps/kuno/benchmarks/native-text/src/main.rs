@@ -271,6 +271,24 @@ fn q3_public_positions(
         _ => Err("public Q3 positions require protected original Q3 and canonical4 or32"),
     }
 }
+fn q3_empty_slot_fill(
+    mode: &str,
+    profile: expert_banks::OriginalPackedProfile,
+    protected: bool,
+    raw: Option<&str>,
+) -> Result<bool, &'static str> {
+    match raw {
+        None => Ok(false),
+        Some(raw @ ("0" | "1"))
+            if mode == "resident-count1-hybrid-chat"
+                && profile == expert_banks::OriginalPackedProfile::UnslothQ3
+                && protected =>
+        {
+            Ok(raw == "1")
+        }
+        _ => Err("Q3 empty-slot fill requires explicit protected original Q3 and0 or1"),
+    }
+}
 fn original_count1_setting(
     profile: expert_banks::OriginalPackedProfile,
     banks: Count1Banks,
@@ -863,6 +881,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(|raw| raw.to_str().ok_or("public Q3 positions encoding rejected"))
             .transpose()?,
     )?;
+    let q3_empty_raw = std::env::var_os("KUNO_LAB_Q3_EMPTY_SLOT_FILL");
+    let q3_empty_slot_fill = q3_empty_slot_fill(
+        &mode,
+        packed_profile,
+        transient_resident && public_owned_zero_audit,
+        q3_empty_raw
+            .as_ref()
+            .map(|raw| raw.to_str().ok_or("Q3 empty-slot fill encoding rejected"))
+            .transpose()?,
+    )?;
     let q3_reference = if q3_main {
         let reference = q3_public_reference::Reference::load(
             std::env::var_os("KUNO_PUBLIC_Q3_REFERENCE")
@@ -1135,6 +1163,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     if adaptive_experts && gpu_expert_limit != 10 {
         return Err("adaptive requires GPU limit10".into());
+    }
+    if q3_empty_slot_fill
+        && (count1_banks != Count1Banks::Intel144
+            || count1_hybrid_cap != Some(10)
+            || gpu_expert_limit != 10
+            || !mapped_weights
+            || !count1_pooled
+            || !count1_overlap
+            || adaptive_experts
+            || adaptive_direct_upload
+            || secondary_experts)
+    {
+        return Err(
+            "Q3 empty-slot fill requires original intel144 mapped pooled overlap cap10".into(),
+        );
     }
     if gpu_expert_limit < 10
         && (count1_hybrid_cap != Some(10) || !mapped_weights || !count1_pooled || !count1_overlap)
@@ -2604,6 +2647,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             executor.fused_experts = fused_experts;
             executor.integer_experts = integer_experts;
             executor.gpu_expert_limit = gpu_expert_limit;
+            executor.q3_empty_slot_fill = q3_empty_slot_fill;
             executor.fast_dense = fast_gpu;
             executor.fast_dense_fault = fast_gpu_fault;
             executor.shared_kernels = next_shared;
@@ -2669,6 +2713,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             let prefill = start.elapsed();
+            let q3_prefill_slots = if q3_main {
+                Some(executor.q3_occupied_slots()?)
+            } else {
+                None
+            };
             let after_prefill_uploads = cubecl::wgpu::transient_unscoped_upload_transfer_stats();
             if kernel_profile {
                 client.sync().await?;
@@ -2869,7 +2918,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if r.native_cpu_miss_cap()? != Some(cap)
                     || completed > native_decode_steps * 480
                     || (cap == 0 && completed != 0)
-                    || (cap > 0 && completed == 0)
+                    || (cap > 0 && completed == 0 && !q3_empty_slot_fill)
                 {
                     return Err("count1 hybrid did not complete actual CPU miss work".into());
                 }
@@ -2970,6 +3019,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     });
                     receipt["numeric_positions"] = serde_json::json!(q3_positions);
                     receipt["weights"] = serde_json::json!("borrowed-unmodified-ollama-shards");
+                    let pre_slots = q3_prefill_slots.ok_or("Q3 prefill slot receipt absent")?;
+                    let occupied = executor.q3_occupied_slots()?;
+                    receipt["q3_empty_slot_fill"] = serde_json::json!(q3_empty_slot_fill);
+                    receipt["expert_slots_reserved"] = serde_json::json!(48 * 144);
+                    receipt["expert_slots_occupied_after_prefill"] = serde_json::json!(pre_slots);
+                    receipt["expert_slots_occupied_after_decode"] = serde_json::json!(occupied);
+                    receipt["expert_slots_filled_during_decode"] = serde_json::json!(
+                        occupied
+                            .checked_sub(pre_slots)
+                            .ok_or("Q3 slot receipt regressed")?
+                    );
+                    if q3_empty_slot_fill {
+                        let cpu = completed_cpu_misses.ok_or("Q3 CPU rank receipt absent")?;
+                        let gpu = native_decode_steps
+                            .checked_mul(480)
+                            .and_then(|ranks| ranks.checked_sub(cpu))
+                            .ok_or("Q3 expert rank receipt overflow")?;
+                        if (executor.expert_hits - pre_stats.7)
+                            .checked_add(executor.expert_uploads - pre_stats.8)
+                            != Some(gpu)
+                            || u64::try_from(occupied - pre_slots)?
+                                != executor.expert_uploads - pre_stats.8
+                        {
+                            return Err("Q3 empty-slot rank and upload receipt mismatch".into());
+                        }
+                        receipt["q3_decode_cpu_expert_ranks"] = serde_json::json!(cpu);
+                        receipt["q3_decode_gpu_expert_ranks"] = serde_json::json!(gpu);
+                    }
                 }
                 receipt["fused_matrix_fault"] = serde_json::json!(executor.fused_matrix_fault);
                 receipt["mapped_weights"] = serde_json::json!(mapped_weights);
@@ -3448,6 +3525,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 executor.fused_experts = fused_experts;
                 executor.integer_experts = integer_experts;
                 executor.gpu_expert_limit = gpu_expert_limit;
+                executor.q3_empty_slot_fill = q3_empty_slot_fill;
                 executor.fast_dense = fast_gpu;
                 executor.fast_dense_fault = fast_gpu_fault;
                 executor.shared_kernels = next_shared;
@@ -3532,7 +3610,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if fresh.native_cpu_miss_cap()? != Some(cap)
                         || completed > 480
                         || (cap == 0 && completed != 0)
-                        || (cap > 0 && completed == 0)
+                        || (cap > 0 && completed == 0 && !q3_empty_slot_fill)
                     {
                         return Err("fresh count1 hybrid actual completion missing".into());
                     }
@@ -3572,6 +3650,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     executor.fused_experts = fused_experts;
                     executor.integer_experts = integer_experts;
                     executor.gpu_expert_limit = gpu_expert_limit;
+                    executor.q3_empty_slot_fill = q3_empty_slot_fill;
                     executor.fast_dense = fast_gpu;
                     executor.fast_dense_fault = fast_gpu_fault;
                     executor.shared_kernels = next_shared;
@@ -3837,6 +3916,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod transient_mode_tests {
+    #[test]
+    fn q3_empty_slot_fill_rejects_inherited_other_modes_and_noncanonical_settings() {
+        use crate::expert_banks::OriginalPackedProfile as P;
+        assert_eq!(
+            super::q3_empty_slot_fill("probe", P::Q4, false, None),
+            Ok(false)
+        );
+        for raw in ["0", "1"] {
+            assert_eq!(
+                super::q3_empty_slot_fill(
+                    "resident-count1-hybrid-chat",
+                    P::UnslothQ3,
+                    true,
+                    Some(raw),
+                ),
+                Ok(raw == "1")
+            );
+            for (mode, profile, protected) in [
+                ("probe", P::UnslothQ3, true),
+                ("resident-chat", P::UnslothQ3, true),
+                ("iq-quant-probe", P::UnslothQ3, true),
+                ("resident-count1-hybrid-chat", P::Q4, true),
+                ("resident-count1-hybrid-chat", P::UnslothQ3, false),
+            ] {
+                assert!(super::q3_empty_slot_fill(mode, profile, protected, Some(raw)).is_err());
+            }
+        }
+        for raw in ["", "2", "01", "+1", "true", "1 "] {
+            assert!(
+                super::q3_empty_slot_fill(
+                    "resident-count1-hybrid-chat",
+                    P::UnslothQ3,
+                    true,
+                    Some(raw),
+                )
+                .is_err()
+            );
+        }
+    }
     #[test]
     fn q3_public_positions_require_exact_count_profile_mode_and_protection() {
         use crate::expert_banks::OriginalPackedProfile as P;

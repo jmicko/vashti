@@ -10,6 +10,7 @@ pub(super) struct Proof {
     probabilities: Zeroizing<[u32; 10]>,
     cap: Zeroizing<usize>,
     gpu_limit: Zeroizing<usize>,
+    empty_slot_fill: Zeroizing<bool>,
     misses: Zeroizing<u16>,
     hit_slots: Zeroizing<[usize; 10]>,
     cpu_count: Zeroizing<usize>,
@@ -24,6 +25,54 @@ impl Proof {
         probabilities: &[f32; 10],
         cap: usize,
         gpu_limit: usize,
+    ) -> Result<(Self, StagedSlots, Last, Split)> {
+        Self::prepare_with_policy(source, ids, probabilities, cap, gpu_limit, false)
+    }
+    /// Fixed-public original-Q3 experiment: admit current misses only into
+    /// genuinely unused slots. Full banks retain the existing CPU-miss policy.
+    pub(super) fn prepare_empty_slots(
+        source: &crate::bank_slots::BankSlots,
+        ids: &[usize; 10],
+        probabilities: &[f32; 10],
+        cap: usize,
+        gpu_limit: usize,
+    ) -> Result<(Self, StagedSlots, Last, Split)> {
+        Self::prepare_with_policy(source, ids, probabilities, cap, gpu_limit, true)
+    }
+    fn effective_cpu_cap(
+        source: &crate::bank_slots::BankSlots,
+        misses: usize,
+        cap: usize,
+        gpu_limit: usize,
+        empty_slot_fill: bool,
+    ) -> Result<usize> {
+        if !empty_slot_fill {
+            return Ok(cap);
+        }
+        if cap != 10 || gpu_limit != 10 || source.capacity() != 144 || source.experts() != 512 {
+            return Err(err("native Q3 empty-slot policy"));
+        }
+        let mut empty = Zeroizing::new(0usize);
+        for slot in 0..source.capacity() {
+            if source
+                .resident_expert(slot)
+                .map_err(|_| err("native Q3 original empty slots"))?
+                .is_none()
+            {
+                *empty += 1;
+            }
+        }
+        // Existing Split preserves every original rank/probability. Overflow
+        // misses take CPU in rank order; the remaining misses can all fit.
+        Ok(misses.saturating_sub(*empty))
+    }
+    fn prepare_with_policy(
+        source: &crate::bank_slots::BankSlots,
+        ids: &[usize; 10],
+        probabilities: &[f32; 10],
+        cap: usize,
+        gpu_limit: usize,
+        empty_slot_fill: bool,
     ) -> Result<(Self, StagedSlots, Last, Split)> {
         if cap > 10 || probabilities.iter().any(|p| !p.is_finite() || *p < 0.) {
             return Err(err("native count1 fixed miss policy"));
@@ -42,12 +91,16 @@ impl Proof {
         for (i, &(id, _)) in all.uploads.iter().enumerate() {
             misses[i] = id;
         }
-        let split = Split::with_gpu_limit(ids, &misses[..all.uploads.len()], cap, gpu_limit)?;
+        let effective_cap =
+            Self::effective_cpu_cap(source, all.uploads.len(), cap, gpu_limit, empty_slot_fill)?;
+        let split =
+            Split::with_gpu_limit(ids, &misses[..all.uploads.len()], effective_cap, gpu_limit)?;
         let mut proof = Self {
             ids: Zeroizing::new(*ids),
             probabilities: Zeroizing::new(probabilities.map(f32::to_bits)),
             cap: Zeroizing::new(cap),
             gpu_limit: Zeroizing::new(gpu_limit),
+            empty_slot_fill: Zeroizing::new(empty_slot_fill),
             misses: Zeroizing::new(0),
             hit_slots: Zeroizing::new([0; 10]),
             cpu_count: Zeroizing::new(split.cpu().len()),
@@ -97,7 +150,11 @@ impl Proof {
         self.misses.count_ones() as usize
     }
     pub(super) fn cpu_miss_count(&self) -> usize {
-        self.misses().min(*self.cap) - self.secondary_mask.count_ones() as usize
+        if *self.empty_slot_fill {
+            *self.cpu_count
+        } else {
+            self.misses().min(*self.cap) - self.secondary_mask.count_ones() as usize
+        }
     }
     pub(super) fn cpu_count(&self) -> usize {
         *self.cpu_count - self.secondary_mask.count_ones() as usize
@@ -107,7 +164,12 @@ impl Proof {
         ids: &[usize],
         instance: expert_banks::BankInstance,
     ) -> Result<()> {
-        if !*self.joined || *self.cap != 10 || *self.gpu_limit != 10 || *self.secondary_mask != 0 {
+        if !*self.joined
+            || *self.cap != 10
+            || *self.gpu_limit != 10
+            || *self.secondary_mask != 0
+            || *self.empty_slot_fill
+        {
             return Err(err("native secondary completion policy"));
         }
         for (i, id) in ids.iter().enumerate() {
@@ -151,6 +213,9 @@ impl Proof {
     }
     pub(super) fn cap(&self) -> usize {
         *self.cap
+    }
+    pub(super) fn empty_slot_fill(&self) -> bool {
+        *self.empty_slot_fill
     }
     pub(super) fn complete(&mut self, partials: Option<&Partials>) -> Result<()> {
         if *self.joined {
@@ -208,10 +273,17 @@ impl Proof {
         for (i, &(id, _)) in all.uploads.iter().enumerate() {
             misses[i] = id;
         }
+        let effective_cap = Self::effective_cpu_cap(
+            source,
+            all.uploads.len(),
+            *self.cap,
+            *self.gpu_limit,
+            *self.empty_slot_fill,
+        )?;
         let split = Split::with_gpu_limit(
             &self.ids,
             &misses[..all.uploads.len()],
-            *self.cap,
+            effective_cap,
             *self.gpu_limit,
         )?;
         let cpu_misses = split
@@ -225,6 +297,20 @@ impl Proof {
             || last.pending.uploads.len() != all.uploads.len() - cpu_misses
         {
             return Err(err("native count1 actual miss ownership changed"));
+        }
+        if *self.empty_slot_fill {
+            if *self.secondary_mask != 0 || self.secondary_instance.is_some() {
+                return Err(err("native Q3 empty slots exclude secondary owners"));
+            }
+            for &(_, slot) in &last.pending.uploads {
+                if source
+                    .resident_expert(slot)
+                    .map_err(|_| err("native Q3 pending empty slot"))?
+                    .is_some()
+                {
+                    return Err(err("native Q3 empty-slot fill cannot evict"));
+                }
+            }
         }
         let mut mask = Zeroizing::new(0u16);
         for (rank, &id) in self.ids.iter().enumerate() {
@@ -250,6 +336,137 @@ impl Proof {
 mod tests {
     use super::*;
     use crate::bank_slots::BankSlots;
+    #[test]
+    fn empty_slots_admit_all_ten_original_ranks_and_publish_only_after_staging() {
+        let mut source = BankSlots::new(144, 512).unwrap();
+        let ids = std::array::from_fn(|rank| rank * 3 + 1);
+        let probabilities = std::array::from_fn(|rank| (rank + 1) as f32 / 55.);
+        let (mut proof, mut staged, last, split) =
+            Proof::prepare_empty_slots(&source, &ids, &probabilities, 10, 10).unwrap();
+        assert_eq!(proof.misses(), 10);
+        assert_eq!(proof.cpu_miss_count(), 0);
+        assert_eq!(proof.cpu_count(), 0);
+        assert!(proof.empty_slot_fill());
+        assert!(split.cpu().is_empty());
+        assert_eq!(split.gpu(), &ids);
+        assert_eq!(last.pending.uploads.len(), 10);
+        for (rank, &id) in ids.iter().enumerate() {
+            assert_eq!(split.map()[rank * 2..rank * 2 + 2], [0, rank as u32]);
+            assert_eq!(last.pending.uploads[rank], (id, rank));
+            assert_eq!(source.resident_slot(id).unwrap(), None);
+            assert_eq!(
+                proof.probabilities()[rank].to_bits(),
+                probabilities[rank].to_bits()
+            );
+        }
+        proof.complete(None).unwrap();
+        proof
+            .validate_source(&source, &staged, &last, true)
+            .unwrap();
+        staged
+            .advance_after_completed_consumers(&source, last.pending, &last.selected[..*last.len])
+            .unwrap();
+        // Host policy test only; production obtains the original all-family
+        // owning completion before calling this publication seam.
+        staged
+            .publish_after_whole_model_acceptance(&mut source, 1)
+            .unwrap();
+        for (rank, &id) in ids.iter().enumerate() {
+            assert_eq!(source.resident_slot(id).unwrap(), Some(rank));
+        }
+    }
+    #[test]
+    fn partial_bank_fills_only_unused_slots_and_full_bank_retains_cpu_misses() {
+        let mut source = BankSlots::new(144, 512).unwrap();
+        let prime: Vec<_> = (0..142).collect();
+        let initial = source.plan(&prime).unwrap();
+        source.commit(initial).unwrap();
+        let ids = [0, 145, 2, 147, 4, 149, 6, 151, 8, 153];
+        let (proof, mut staged, last, split) =
+            Proof::prepare_empty_slots(&source, &ids, &[0.1; 10], 10, 10).unwrap();
+        assert_eq!(proof.misses(), 5);
+        assert_eq!(proof.cpu_miss_count(), 3);
+        assert_eq!(split.cpu(), &[145, 147, 149]);
+        assert_eq!(split.gpu(), &[0, 2, 4, 6, 151, 8, 153]);
+        assert_eq!(last.pending.uploads, [(151, 142), (153, 143)]);
+        proof
+            .validate_source(&source, &staged, &last, false)
+            .unwrap();
+        for (rank, &id) in ids.iter().enumerate() {
+            let cpu = split.cpu().contains(&id);
+            assert_eq!(split.map()[rank * 2], u32::from(cpu));
+            if !cpu {
+                assert_eq!(Proof::native_map(&split)[rank * 2 + 1], rank as u32);
+            }
+        }
+        staged
+            .advance_after_completed_consumers(&source, last.pending, &last.selected[..*last.len])
+            .unwrap();
+        staged
+            .publish_after_whole_model_acceptance(&mut source, 1)
+            .unwrap();
+        for id in prime {
+            assert_eq!(source.resident_slot(id).unwrap(), Some(id));
+        }
+        assert_eq!(source.resident_slot(151).unwrap(), Some(142));
+        assert_eq!(source.resident_slot(153).unwrap(), Some(143));
+        let misses = std::array::from_fn(|rank| rank + 200);
+        let (full, staged, last, split) =
+            Proof::prepare_empty_slots(&source, &misses, &[0.1; 10], 10, 10).unwrap();
+        assert_eq!(split.cpu(), &misses);
+        assert!(split.gpu().is_empty());
+        assert!(last.pending.uploads.is_empty());
+        assert_eq!(full.cpu_miss_count(), 10);
+        full.validate_source(&source, &staged, &last, false)
+            .unwrap();
+        for id in 0..142 {
+            assert_eq!(source.resident_slot(id).unwrap(), Some(id));
+        }
+    }
+    #[test]
+    fn empty_fill_policy_origin_geometry_and_every_canonical_upload_are_bound() {
+        let source = BankSlots::new(144, 512).unwrap();
+        let ids = std::array::from_fn(|rank| rank);
+        let (mut proof, staged, mut last, _) =
+            Proof::prepare_empty_slots(&source, &ids, &[0.1; 10], 10, 10).unwrap();
+        *proof.empty_slot_fill = false;
+        assert!(
+            proof
+                .validate_source(&source, &staged, &last, false)
+                .is_err()
+        );
+        *proof.empty_slot_fill = true;
+        for index in 0..10 {
+            let original = last.pending.uploads[index];
+            last.pending.uploads[index] = (original.0, (original.1 + 1) % 144);
+            assert!(
+                proof
+                    .validate_source(&source, &staged, &last, false)
+                    .is_err()
+            );
+            last.pending.uploads[index] = original;
+        }
+        proof
+            .validate_source(&source, &staged, &last, false)
+            .unwrap();
+        for (cap, gpu_limit) in [(0, 10), (9, 10), (10, 0), (10, 9), (10, 11)] {
+            assert!(Proof::prepare_empty_slots(&source, &ids, &[0.1; 10], cap, gpu_limit).is_err());
+        }
+        for capacity in [10, 16, 72, 128, 160] {
+            let foreign = BankSlots::new(capacity, 512).unwrap();
+            assert!(Proof::prepare_empty_slots(&foreign, &ids, &[0.1; 10], 10, 10).is_err());
+        }
+        let foreign = BankSlots::new(144, 256).unwrap();
+        assert!(Proof::prepare_empty_slots(&foreign, &ids, &[0.1; 10], 10, 10).is_err());
+        let mut changed = source;
+        let update = changed.plan(&[511]).unwrap();
+        changed.commit(update).unwrap();
+        assert!(
+            proof
+                .validate_source(&changed, &staged, &last, false)
+                .is_err()
+        );
+    }
     #[test]
     fn resident_balancing_keeps_actual_misses_and_canonical_bank_separate() {
         let mut source = BankSlots::new(16, 512).unwrap();

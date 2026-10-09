@@ -746,6 +746,7 @@ struct Cached {
 /// keys/ranks must never be persisted or reused as private request history.
 pub struct GpuExecutor<'a> {
     pub(crate) packed_profile: expert_banks::OriginalPackedProfile,
+    pub(crate) q3_empty_slot_fill: bool,
     pub(crate) oracle_trace: Option<crate::oracle_trace::Trace>,
     pub(crate) adaptive: Option<crate::adaptive_experts::Cache>,
     pub(crate) secondary: Option<crate::secondary_experts::Secondary>,
@@ -902,6 +903,7 @@ impl<'a> GpuExecutor<'a> {
         )?;
         Ok(Self {
             packed_profile,
+            q3_empty_slot_fill: false,
             oracle_trace: None,
             adaptive: if std::env::var("KUNO_LAB_ADAPTIVE_EXPERTS").as_deref() == Ok("1") {
                 Some(crate::adaptive_experts::Cache::new()?)
@@ -1288,6 +1290,33 @@ impl<'a> GpuExecutor<'a> {
             .checked_add(total.upload_ns)
             .ok_or(Error::ArithmeticOverflow)?;
         Ok(total)
+    }
+    /// Aggregate only; never expose route-derived expert identities.
+    pub(crate) fn q3_occupied_slots(&self) -> Result<usize> {
+        if self.packed_profile != expert_banks::OriginalPackedProfile::UnslothQ3
+            || self.bank_slots != 144
+            || self.banks.len() != 48
+        {
+            return Err(Error::InvalidFormat("Q3 original slot receipt geometry"));
+        }
+        let mut occupied = 0;
+        for bank in self.banks.values() {
+            if bank.profile() != self.packed_profile
+                || bank.slots.capacity() != 144
+                || bank.slots.experts() != 512
+            {
+                return Err(Error::InvalidFormat("Q3 original slot receipt owner"));
+            }
+            for slot in 0..bank.slots.capacity() {
+                occupied += usize::from(
+                    bank.slots
+                        .resident_expert(slot)
+                        .map_err(|_| Error::InvalidFormat("Q3 original slot receipt"))?
+                        .is_some(),
+                );
+            }
+        }
+        Ok(occupied)
     }
     pub(crate) fn enable_adaptive_after_prefill(&mut self) -> Result<()> {
         if std::env::var("KUNO_LAB_ADAPTIVE_EXPERTS").as_deref() != Ok("1") {
