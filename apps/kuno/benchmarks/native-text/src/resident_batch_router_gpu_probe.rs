@@ -22,6 +22,31 @@ const MAIN_CAP: u64 = 4 * 1024 * 1024;
 const HOST_CAP: u64 = 16 * 1024 * 1024;
 const IO_CAP: u64 = 64 * 1024 * 1024;
 const FAULT_CASES: usize = 16;
+const FROZEN_FAULT_KINDS: usize = 17;
+const FROZEN_FAULT_CASES: usize = FROZEN_FAULT_KINDS + 6;
+const FROZEN_NUMERIC_CASES: usize = 28; // 18 patterns + 9 ties + fresh epoch.
+const TOTAL_CASES: usize = 13 + FAULT_CASES + FROZEN_NUMERIC_CASES + FROZEN_FAULT_CASES;
+const VIRTUAL_BOUNDARIES: [u32; 8] = [0, 143, 144, 287, 288, 431, 432, 511];
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SourceFixture {
+    Resident144,
+    Frozen512 { pattern: usize },
+}
+impl SourceFixture {
+    fn capacity(self) -> usize {
+        match self {
+            Self::Resident144 => 144,
+            Self::Frozen512 { .. } => 512,
+        }
+    }
+    fn fault_kinds(self) -> usize {
+        match self {
+            Self::Resident144 => FAULT_CASES,
+            Self::Frozen512 { .. } => FROZEN_FAULT_KINDS,
+        }
+    }
+}
 fn state() -> State {
     WORDS.map(|n| Zeroizing::new(vec![0; n]))
 }
@@ -46,6 +71,81 @@ fn fixture(count: usize) -> State {
         }
     }
     out
+}
+fn frozen_geometry(layer: usize) -> Result<crate::quant_matvec::grouped_moe::Geometry> {
+    use crate::quant_matvec::grouped_moe::{Geometry, Projection};
+    let [gate, up, down] = crate::daslab_profile::routed_types(layer)
+        .ok_or("batch router fixed DAS layer geometry")?;
+    Ok(Geometry::new(
+        [
+            Projection::new(gate, 2560, 640, 512)?,
+            Projection::new(up, 2560, 640, 512)?,
+            Projection::new(down, 640, 2560, 512)?,
+        ],
+        8,
+        144,
+    )?
+    .with_frozen_host_sources()?)
+}
+fn frozen_fixture(count: usize, pattern: usize) -> Result<State> {
+    if !(1..=3).contains(&count) || pattern > 1 {
+        return Err("batch router fixed frozen fixture geometry".into());
+    }
+    let mut out = state();
+    // Full original512 source addressing, not a larger VRAM BankSlots owner.
+    // Each row is a bijection; the first ten selected IDs span all five pages.
+    for layer in 0..48 {
+        let table = &mut out[1][layer * 512..(layer + 1) * 512];
+        for (id, slot) in table.iter_mut().enumerate() {
+            *slot = id as u32;
+        }
+        for (id, slot) in VIRTUAL_BOUNDARIES.into_iter().chain([71, 72]).enumerate() {
+            let old = table
+                .iter()
+                .position(|&x| x == slot)
+                .ok_or("batch router fixed frozen bijection")?;
+            table.swap(id, old);
+        }
+    }
+    for row in 0..count {
+        for id in 0..512 {
+            out[0][row * 512 + id] = (-4. - id as f32 / 1024.).to_bits();
+        }
+        for rank in 0..12 {
+            // Pattern0 repeats experts in different rank orders; pattern1
+            // creates a thirty-expert union without changing the map format.
+            let id = if pattern == 0 {
+                (rank + row * 3) % 12
+            } else {
+                row * 12 + rank
+            };
+            out[0][row * 512 + id] = (8. - rank as f32 / 8.).to_bits();
+        }
+    }
+    k::validate_frozen_source_table(&out[1])?;
+    Ok(out)
+}
+fn frozen_tie(before: &mut State, count: usize, tie: usize) -> Result<()> {
+    for row in 0..count {
+        let scores = &mut before[0][row * 512..(row + 1) * 512];
+        scores.fill((-4f32).to_bits());
+        for (rank, score) in scores.iter_mut().take(12).enumerate() {
+            *score = (8. - rank as f32 / 8.).to_bits();
+        }
+        match tie {
+            0 => scores[1] = scores[0],
+            1 => scores[10] = scores[9],
+            2 => {
+                for (rank, score) in scores.iter_mut().take(12).enumerate() {
+                    *score = (-(rank as f32) / 8.).to_bits();
+                }
+                scores[0] = 0f32.to_bits();
+                scores[1] = (-0f32).to_bits();
+            }
+            _ => return Err("batch router fixed frozen tie inventory".into()),
+        }
+    }
+    Ok(())
 }
 fn bytes(words: &[u32]) -> Zeroizing<Vec<u8>> {
     let mut out = Zeroizing::new(Vec::with_capacity(words.len() * 4));
@@ -227,6 +327,60 @@ fn mutate(before: &mut State, kind: usize, layer: usize, count: usize) -> Result
     };
     Ok(expected)
 }
+fn mutate_frozen(before: &mut State, kind: usize, layer: usize, count: usize) -> Result<u32> {
+    match kind {
+        0 => {
+            before[1][layer * 512] = u32::MAX;
+            // Unlike partial144, a frozen original512 source has no sentinel.
+            Ok(k::FAULT_SHAPE)
+        }
+        13 => {
+            before[1][layer * 512 + 1] = before[1][layer * 512];
+            Ok(k::FAULT_MISSING)
+        }
+        14 => {
+            before[1][layer * 512] = 512;
+            Ok(k::FAULT_SHAPE)
+        }
+        16 => {
+            // Even an unselected entry in a different layer is range-checked.
+            before[1][((layer + 1) % 48) * 512 + 511] = 512;
+            Ok(k::FAULT_SHAPE)
+        }
+        _ => mutate(before, kind, layer, count),
+    }
+}
+fn require_late_exact_id_rejection(
+    wire: &[u8],
+    table: &[u32],
+    layer: usize,
+    start: u64,
+    count: usize,
+) -> Result<()> {
+    // Equal probabilities and equal score magnitudes cannot authorize changing
+    // actual expert IDs. Copy the full selected triples so rejection is the
+    // exact original-ID gate, rather than a malformed probability field.
+    if wire.len() != k::AUDIT_OWNED_WORDS * 4 || layer >= 48 || !(1..=3).contains(&count) {
+        return Err("batch router fixed late-rejection geometry".into());
+    }
+    let mut bad = Zeroizing::new(wire.to_vec());
+    let select = layer * k::FRAME_WORDS + k::ROUTER_WORDS + 4;
+    if wire[(select + 1) * 4..(select + 2) * 4] != wire[(select + 4) * 4..(select + 5) * 4] {
+        return Err("batch router fixed equal-probability rejection fixture".into());
+    }
+    for byte in 0..12 {
+        bad.swap(select * 4 + byte, (select + 3) * 4 + byte);
+    }
+    if !matches!(
+        k::audit_frame_frozen_sources(&bad, table, layer, start, count, frozen_geometry(layer)?),
+        Err(kuno_text::Error::InvalidFormat(
+            "batch device router original IDs/selection"
+        ))
+    ) {
+        return Err("batch router late exact original ID audit accepted".into());
+    }
+    Ok(())
+}
 fn case(
     client: &ComputeClient<WgpuRuntime>,
     arena: &mut PrivateArena,
@@ -234,27 +388,39 @@ fn case(
     layer: usize,
     count: usize,
     kind: Option<usize>,
+    source: SourceFixture,
 ) -> Result<serde_json::Value> {
     let start = 4096 - count as u64;
-    let mut before = fixture(count);
-    if let Some(tie) = kind.filter(|&n| n >= FAULT_CASES) {
-        match tie - FAULT_CASES {
-            0 => before[0][7] = before[0][0],
-            1 => before[0][70] = before[0][63],
-            2 => {
-                before[0][..512].fill((-4f32).to_bits());
-                for rank in 0..12 {
-                    before[0][rank * 7] = (-(rank as f32) / 8.).to_bits();
+    let mut before = match source {
+        SourceFixture::Resident144 => fixture(count),
+        SourceFixture::Frozen512 { pattern } => frozen_fixture(count, pattern)?,
+    };
+    let fault_kinds = source.fault_kinds();
+    if let Some(tie) = kind.filter(|&n| n >= fault_kinds) {
+        if matches!(source, SourceFixture::Frozen512 { .. }) {
+            frozen_tie(&mut before, count, tie - fault_kinds)?;
+        } else {
+            match tie - fault_kinds {
+                0 => before[0][7] = before[0][0],
+                1 => before[0][70] = before[0][63],
+                2 => {
+                    before[0][..512].fill((-4f32).to_bits());
+                    for rank in 0..12 {
+                        before[0][rank * 7] = (-(rank as f32) / 8.).to_bits();
+                    }
+                    before[0][0] = 0f32.to_bits();
+                    before[0][7] = (-0f32).to_bits();
                 }
-                before[0][0] = 0f32.to_bits();
-                before[0][7] = (-0f32).to_bits();
+                _ => return Err("batch router fixed tie inventory".into()),
             }
-            _ => return Err("batch router fixed tie inventory".into()),
         }
     }
     let expected_fault = kind
-        .filter(|&n| n < FAULT_CASES)
-        .map(|n| mutate(&mut before, n, layer, count))
+        .filter(|&n| n < fault_kinds)
+        .map(|n| match source {
+            SourceFixture::Resident144 => mutate(&mut before, n, layer, count),
+            SourceFixture::Frozen512 { .. } => mutate_frozen(&mut before, n, layer, count),
+        })
         .transpose()?
         .unwrap_or(0);
     let ids = upload(arena, &before, ledger)?;
@@ -264,13 +430,20 @@ fn case(
         .collect::<std::result::Result<Vec<_>, _>>()?
         .try_into()
         .map_err(|_| "batch router six owner handles")?;
-    k::launch(client, handles.clone(), layer, start, count)?;
+    match source {
+        SourceFixture::Resident144 => k::launch(client, handles.clone(), layer, start, count)?,
+        SourceFixture::Frozen512 { .. } => {
+            k::launch_frozen_sources(client, handles.clone(), layer, start, count)?
+        }
+    }
     let actual = snapshot(arena, &ids)?;
     ledger.completed_fence(sample(client)?)?;
     let mut max_error = 0.;
     let mut mismatch = 0;
     let mut groups = 0;
-    if kind.is_some_and(|n| n < FAULT_CASES) {
+    let mut late_exact_id_rejections = 0;
+    let mut late_unselected_duplicate_rejections = 0;
+    if kind.is_some_and(|n| n < fault_kinds) {
         before[5][0] = expected_fault;
         if actual != before {
             return Err("batch router fault published or altered full owner".into());
@@ -282,10 +455,51 @@ fn case(
             }
         }
         let wire = bytes(&actual[4]);
-        let routes = k::audit_frame(&wire, &before[1], layer, start, count)?;
+        let routes = match source {
+            SourceFixture::Resident144 => k::audit_frame(&wire, &before[1], layer, start, count)?,
+            SourceFixture::Frozen512 { .. } => k::audit_frame_frozen_sources(
+                &wire,
+                &before[1],
+                layer,
+                start,
+                count,
+                frozen_geometry(layer)?,
+            )?,
+        };
         groups = routes.groups();
         mismatch = routes.probability_bit_mismatches();
         max_error = routes.max_probability_abs_error();
+        if matches!(source, SourceFixture::Frozen512 { .. }) {
+            if kind.is_none()
+                && !VIRTUAL_BOUNDARIES
+                    .iter()
+                    .all(|slot| routes.pairs().iter().any(|&(_, found)| found == *slot))
+            {
+                return Err("batch router virtual source boundary coverage absent".into());
+            }
+            // The constructor/deferred gate authenticates the WHOLE bijection;
+            // this is not claimed as GPU duplicate scanning/no publication.
+            let mut bad_table = before[1].clone();
+            let other = ((layer + 1) % 48) * 512;
+            bad_table[other + 510] = bad_table[other + 511];
+            if k::audit_frame_frozen_sources(
+                &wire,
+                &bad_table,
+                layer,
+                start,
+                count,
+                frozen_geometry(layer)?,
+            )
+            .is_ok()
+            {
+                return Err("batch router unselected duplicate deferred audit accepted".into());
+            }
+            late_unselected_duplicate_rejections = 1;
+            if kind == Some(fault_kinds + 2) {
+                require_late_exact_id_rejection(&wire, &before[1], layer, start, count)?;
+                late_exact_id_rejections = 1;
+            }
+        }
         let frame = layer * k::FRAME_WORDS;
         let map = frame + k::ROUTER_WORDS + k::SELECTION_WORDS;
         let prob = map + k::MAP_WORDS;
@@ -324,8 +538,9 @@ fn case(
     cubecl::future::block_on(client.sync()).map_err(|_| "batch router reset completion failed")?;
     ledger.completed_fence(sample(client)?)?;
     Ok(
-        serde_json::json!({"layer":layer,"count":count,"fault_case":kind.filter(|&n|n<FAULT_CASES),"exact_tie_case":kind.filter(|&n|n>=FAULT_CASES).map(|n|n-FAULT_CASES),"sticky_fault":expected_fault,
+        serde_json::json!({"layer":layer,"count":count,"source_capacity":source.capacity(),"frozen_route_pattern":match source { SourceFixture::Resident144=>None, SourceFixture::Frozen512{pattern}=>Some(pattern)},"fault_case":kind.filter(|&n|n<fault_kinds),"exact_tie_case":kind.filter(|&n|n>=fault_kinds).map(|n|n-fault_kinds),"sticky_fault":expected_fault,
         "groups":groups,"probability_bit_mismatches":mismatch,"max_original_probability_abs_error":max_error,
+        "late_exact_original_id_rejections":late_exact_id_rejections,"late_unselected_duplicate_rejections":late_unselected_duplicate_rejections,
         "full_source_and_guards_preserved":true,"complete_erasure":true}),
     )
 }
@@ -344,7 +559,13 @@ pub(crate) fn run(
     };
     crate::target_lab_build::validate_runtime(inline)?;
     k::validate_limits(limits)?;
-    crate::main_admission::check_capacity(HOST_CAP, &[3 * k::MAIN_BYTES, 2 * 1024 * 1024])?;
+    // Full source/current snapshots, readback or late copied audit, one table
+    // corruption copy and bounded eighty-case numeric JSON metadata. No model
+    // or host-weight payload is introduced by virtual source addressing.
+    crate::main_admission::check_capacity(
+        HOST_CAP,
+        &[3 * k::MAIN_BYTES, 2 * 1024 * 1024, 1024 * 1024],
+    )?;
     let baseline = client
         .memory_usage()
         .map_err(|_| "batch router fresh telemetry failed")?;
@@ -367,14 +588,30 @@ pub(crate) fn run(
     arena.enable_public_owned_zero_audit()?;
     let mut ledger = MainAdmission::new(MAIN_CAP, 0)?;
     let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<_> {
-        let mut report = Vec::with_capacity(13 + FAULT_CASES);
+        let mut report = Vec::with_capacity(TOTAL_CASES);
         for layer in [0, 23, 47] {
             for count in 1..=3 {
-                report.push(case(client, &mut arena, &mut ledger, layer, count, None)?);
+                report.push(case(
+                    client,
+                    &mut arena,
+                    &mut ledger,
+                    layer,
+                    count,
+                    None,
+                    SourceFixture::Resident144,
+                )?);
             }
         }
         for fault in 0..FAULT_CASES {
-            report.push(case(client, &mut arena, &mut ledger, 47, 3, Some(fault))?);
+            report.push(case(
+                client,
+                &mut arena,
+                &mut ledger,
+                47,
+                3,
+                Some(fault),
+                SourceFixture::Resident144,
+            )?);
         }
         for tie in 0..3 {
             report.push(case(
@@ -384,9 +621,85 @@ pub(crate) fn run(
                 47,
                 3,
                 Some(FAULT_CASES + tie),
+                SourceFixture::Resident144,
             )?);
         }
-        report.push(case(client, &mut arena, &mut ledger, 0, 3, None)?); // Fresh epoch replay.
+        for layer in [0, 23, 47] {
+            for count in 1..=3 {
+                for pattern in 0..2 {
+                    report.push(case(
+                        client,
+                        &mut arena,
+                        &mut ledger,
+                        layer,
+                        count,
+                        None,
+                        SourceFixture::Frozen512 { pattern },
+                    )?);
+                }
+            }
+        }
+        for count in 1..=3 {
+            for tie in 0..3 {
+                report.push(case(
+                    client,
+                    &mut arena,
+                    &mut ledger,
+                    47,
+                    count,
+                    Some(FROZEN_FAULT_KINDS + tie),
+                    SourceFixture::Frozen512 { pattern: 0 },
+                )?);
+            }
+        }
+        for fault in 0..FROZEN_FAULT_KINDS {
+            report.push(case(
+                client,
+                &mut arena,
+                &mut ledger,
+                47,
+                3,
+                Some(fault),
+                SourceFixture::Frozen512 { pattern: 0 },
+            )?);
+        }
+        for count in 1..=2 {
+            for fault in [10, 13, 14] {
+                report.push(case(
+                    client,
+                    &mut arena,
+                    &mut ledger,
+                    0,
+                    count,
+                    Some(fault),
+                    SourceFixture::Frozen512 { pattern: 0 },
+                )?);
+            }
+        }
+        // Return to the original addressing specialization on this same
+        // client to exercise distinct kernel/pipeline identities, then replay
+        // the frozen specialization on another freshly wiped arena epoch.
+        report.push(case(
+            client,
+            &mut arena,
+            &mut ledger,
+            0,
+            3,
+            None,
+            SourceFixture::Resident144,
+        )?); // Original fresh epoch replay.
+        report.push(case(
+            client,
+            &mut arena,
+            &mut ledger,
+            0,
+            3,
+            None,
+            SourceFixture::Frozen512 { pattern: 1 },
+        )?);
+        if report.len() != TOTAL_CASES {
+            return Err("batch router fixed case count".into());
+        }
         Ok(report)
     }));
     let close = arena.close();
@@ -421,7 +734,13 @@ pub(crate) fn run(
     }
     Ok(
         serde_json::json!({"scope":"fixed-public-experimental-F32-batch-router-only","cases":report,
-        "numeric_cases":13,"exact_tie_cases":3,"near_ties_require_deferred_exact_original_id_audit":true,"fault_cases":FAULT_CASES,"max_count":3,"main_bytes":k::MAIN_BYTES,"inline_dispatch":inline,
+        "numeric_cases":13+FROZEN_NUMERIC_CASES,"exact_tie_cases":12,"near_ties_require_deferred_exact_original_id_audit":true,"fault_cases":FAULT_CASES+FROZEN_FAULT_CASES,
+        "resident144_numeric_cases":13,"resident144_exact_tie_cases":3,"resident144_fault_cases":FAULT_CASES,
+        "frozen512_numeric_cases":FROZEN_NUMERIC_CASES,"frozen512_exact_tie_cases":9,"frozen512_fault_cases":FROZEN_FAULT_CASES,
+        "frozen512_late_exact_original_id_rejections":3,"frozen512_late_unselected_duplicate_rejections":FROZEN_NUMERIC_CASES,
+        "virtual_source_boundary_slots":VIRTUAL_BOUNDARIES,"full512_is_source_addressing_not_vram_residency":true,
+        "host_weight_memory_or_math_accepted":false,
+        "max_count":3,"main_bytes":k::MAIN_BYTES,"inline_dispatch":inline,
         "main_cap_bytes":MAIN_CAP,"host_cap_bytes":HOST_CAP,"io_cap_bytes":IO_CAP,
         "info_bytes_per_layer":k::INFO_BYTES_PER_LAYER,"info_bytes_per_chunk":k::INFO_BYTES_PER_CHUNK,
         "near_tie_margin":k::NEAR_TIE_MARGIN,"probability_absolute_bound":k::PROB_ABS,"probability_relative_bound":k::PROB_REL,
@@ -435,7 +754,22 @@ pub(crate) fn run(
 mod tests {
     use super::*;
     fn host_frame(count: usize, layer: usize, start: u64) -> Result<State> {
-        let mut out = fixture(count);
+        host_frame_source(count, layer, start, SourceFixture::Resident144, None)
+    }
+    fn host_frame_source(
+        count: usize,
+        layer: usize,
+        start: u64,
+        source: SourceFixture,
+        tie: Option<usize>,
+    ) -> Result<State> {
+        let mut out = match source {
+            SourceFixture::Resident144 => fixture(count),
+            SourceFixture::Frozen512 { pattern } => frozen_fixture(count, pattern)?,
+        };
+        if let Some(tie) = tie {
+            frozen_tie(&mut out, count, tie)?;
+        }
         let mut ids = Zeroizing::new([0u32; 80]);
         let mut probs = Zeroizing::new([0f32; 80]);
         let mut pairs = Zeroizing::new(Vec::with_capacity(30));
@@ -446,10 +780,14 @@ mod tests {
         let prob = map + k::MAP_WORDS;
         let meta = prob + k::PROB_WORDS;
         for row in 0..count {
-            let logits = scores(row);
-            let original = kuno_text::ops::router_topk_guarded(&logits, 10, true)?;
+            let logits = Zeroizing::new(std::array::from_fn::<_, 512, _>(|id| {
+                f32::from_bits(out[0][row * 512 + id])
+            }));
+            let original = kuno_text::ops::router_topk_guarded(&*logits, 10, true)?;
             let mut order = std::array::from_fn::<_, 512, _>(|id| id);
-            order.sort_unstable_by(|&a, &b| logits[b].total_cmp(&logits[a]).then(a.cmp(&b)));
+            order.sort_unstable_by(|&a, &b| {
+                logits[b].partial_cmp(&logits[a]).unwrap().then(a.cmp(&b))
+            });
             out[4][meta + 8 + row * 2] = order[10] as u32;
             out[4][meta + 9 + row * 2] = logits[order[10]].to_bits();
             for (rank, &(id, p)) in original.as_slice().iter().enumerate() {
@@ -465,15 +803,26 @@ mod tests {
                 gap = gap.min(logits[order[rank]] - logits[order[rank + 1]]);
             }
         }
-        let canonical = crate::quant_matvec::grouped_moe::GroupMap::new(
-            count,
-            0,
-            count,
-            &ids[..count * 10],
-            &probs[..count * 10],
-            &pairs,
-            144,
-        )?;
+        let canonical = match source {
+            SourceFixture::Resident144 => crate::quant_matvec::grouped_moe::GroupMap::new(
+                count,
+                0,
+                count,
+                &ids[..count * 10],
+                &probs[..count * 10],
+                &pairs,
+                144,
+            )?,
+            SourceFixture::Frozen512 { .. } => {
+                crate::quant_matvec::grouped_moe::GroupMap::new_frozen_sources(
+                    count,
+                    &ids[..count * 10],
+                    &probs[..count * 10],
+                    &pairs,
+                    frozen_geometry(layer)?,
+                )?
+            }
+        };
         out[2][..k::MAP_WORDS].copy_from_slice(canonical.words());
         for (dst, p) in out[3].iter_mut().zip(canonical.probabilities()) {
             *dst = p.to_bits();
@@ -494,7 +843,7 @@ mod tests {
             layer as u32,
             start as u32,
             count as u32,
-            144,
+            source.capacity() as u32,
             pairs.len() as u32,
             0,
         ]);
@@ -595,5 +944,281 @@ mod tests {
             b[index * 4..index * 4 + 4].copy_from_slice(&0.9f32.to_le_bytes());
         }
         assert!(k::audit_frame(&b, &s[1], 0, 0, 1).is_err());
+    }
+    #[test]
+    fn frozen_actual_das_geometry_full512_bijection_and_original_rank_wires() {
+        use crate::quant_matvec::grouped_moe::Geometry;
+        for layer in 0..48 {
+            let g = frozen_geometry(layer).unwrap();
+            assert!(g.frozen_host_sources());
+            assert_eq!(g.capacity(), 512);
+            assert!(Geometry::new(g.projections(), 8, 512).is_err());
+        }
+        for count in 1..=3 {
+            for pattern in 0..2 {
+                for layer in [0, 23, 47] {
+                    let source = SourceFixture::Frozen512 { pattern };
+                    let s =
+                        host_frame_source(count, layer, 4096 - count as u64, source, None).unwrap();
+                    k::validate_frozen_source_table(&s[1]).unwrap();
+                    assert!(k::validate_table(&s[1]).is_err());
+                    let r = k::audit_frame_frozen_sources(
+                        &bytes(&s[4]),
+                        &s[1],
+                        layer,
+                        4096 - count as u64,
+                        count,
+                        frozen_geometry(layer).unwrap(),
+                    )
+                    .unwrap();
+                    assert_eq!(
+                        r.groups(),
+                        if pattern == 1 {
+                            count * 10
+                        } else if count == 1 {
+                            10
+                        } else {
+                            12
+                        }
+                    );
+                    assert!(
+                        VIRTUAL_BOUNDARIES
+                            .iter()
+                            .all(|&slot| r.pairs().iter().any(|&(_, actual)| actual == slot))
+                    );
+                    for row in 0..count {
+                        let logits = Zeroizing::new(std::array::from_fn::<_, 512, _>(|id| {
+                            f32::from_bits(s[0][row * 512 + id])
+                        }));
+                        let original =
+                            kuno_text::ops::router_topk_guarded(&*logits, 10, true).unwrap();
+                        for (rank, &(id, p)) in original.as_slice().iter().enumerate() {
+                            assert_eq!(r.experts()[row * 10 + rank], id);
+                            assert_eq!(r.probabilities()[row * 10 + rank].to_bits(), p.to_bits());
+                        }
+                    }
+                    assert!(r.experts()[count * 10..].iter().all(|&x| x == 0));
+                    assert!(
+                        r.probabilities()[count * 10..]
+                            .iter()
+                            .all(|x| x.to_bits() == 0)
+                    );
+                    assert!(
+                        k::audit_frame(&bytes(&s[4]), &s[1], layer, 4096 - count as u64, count)
+                            .is_err()
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn frozen_complete_audit_rejects_all_wire_families_and_unselected_table_corruption() {
+        let good =
+            host_frame_source(3, 47, 4093, SourceFixture::Frozen512 { pattern: 1 }, None).unwrap();
+        let frame = 47 * k::FRAME_WORDS;
+        let selection = frame + k::ROUTER_WORDS;
+        let map = selection + k::SELECTION_WORDS;
+        let prob = map + k::MAP_WORDS;
+        for index in [
+            frame,
+            frame + 3 * 512,
+            frame + k::ROUTER_WORDS - 1,
+            selection,
+            selection + 4,
+            selection + 5,
+            selection + 6,
+            selection + k::SELECTION_WORDS - 1,
+            map,
+            map + 4,
+            map + k::MAP_WORDS - 1,
+            prob,
+            prob + 79,
+            prob + 80,
+            prob + k::PROB_WORDS + 5,
+            k::AUDIT_WORDS,
+            k::AUDIT_OWNED_WORDS - 1,
+        ] {
+            let mut wire = bytes(&good[4]);
+            let old = u32::from_le_bytes(wire[index * 4..index * 4 + 4].try_into().unwrap());
+            wire[index * 4..index * 4 + 4].copy_from_slice(&(old ^ 1).to_le_bytes());
+            assert!(
+                k::audit_frame_frozen_sources(
+                    &wire,
+                    &good[1],
+                    47,
+                    4093,
+                    3,
+                    frozen_geometry(47).unwrap()
+                )
+                .is_err(),
+                "index {index}"
+            );
+        }
+        for index in [0, 511, 47 * 512 + 511, 48 * 512, k::TABLE_WORDS - 1] {
+            for bad in [512, u32::MAX] {
+                let mut table = good[1].clone();
+                table[index] = bad;
+                assert!(
+                    k::audit_frame_frozen_sources(
+                        &bytes(&good[4]),
+                        &table,
+                        47,
+                        4093,
+                        3,
+                        frozen_geometry(47).unwrap()
+                    )
+                    .is_err()
+                );
+            }
+        }
+        let mut table = good[1].clone();
+        table[510] = table[511]; // Different layer, entirely unselected.
+        assert!(
+            k::audit_frame_frozen_sources(
+                &bytes(&good[4]),
+                &table,
+                47,
+                4093,
+                3,
+                frozen_geometry(47).unwrap()
+            )
+            .is_err()
+        );
+    }
+    #[test]
+    fn frozen_equal_probabilities_and_signed_zero_do_not_relax_late_exact_expert_ids() {
+        for count in 1..=3 {
+            for tie in 0..3 {
+                let s = host_frame_source(
+                    count,
+                    47,
+                    4096 - count as u64,
+                    SourceFixture::Frozen512 { pattern: 0 },
+                    Some(tie),
+                )
+                .unwrap();
+                k::audit_frame_frozen_sources(
+                    &bytes(&s[4]),
+                    &s[1],
+                    47,
+                    4096 - count as u64,
+                    count,
+                    frozen_geometry(47).unwrap(),
+                )
+                .unwrap();
+                if tie == 2 {
+                    assert_eq!(s[0][0], 0f32.to_bits());
+                    assert_eq!(s[0][1], (-0f32).to_bits());
+                    require_late_exact_id_rejection(
+                        &bytes(&s[4]),
+                        &s[1],
+                        47,
+                        4096 - count as u64,
+                        count,
+                    )
+                    .unwrap();
+                }
+            }
+        }
+        assert!(require_late_exact_id_rejection(&[], &[], 0, 0, 1).is_err());
+    }
+    #[test]
+    fn frozen_fault_inventory_retains_original144_sentinel_and_fullowner_semantics() {
+        let mut old = fixture(3);
+        assert_eq!(mutate(&mut old, 0, 47, 3).unwrap(), k::FAULT_MISSING);
+        k::validate_table(&old[1]).unwrap();
+        for count in 1..=3 {
+            for kind in [0, 10, 13, 14, 16] {
+                let mut f = frozen_fixture(count, 0).unwrap();
+                let prior = f.clone();
+                let expected = mutate_frozen(&mut f, kind, 47, count).unwrap();
+                assert_eq!(
+                    expected,
+                    match kind {
+                        10 => 32 | k::FAULT_SHAPE,
+                        13 => k::FAULT_MISSING,
+                        _ => k::FAULT_SHAPE,
+                    }
+                );
+                if kind == 10 {
+                    assert_eq!(f[5][0], 32);
+                    assert_eq!(f[..5], prior[..5]);
+                } else {
+                    assert!(k::validate_frozen_source_table(&f[1]).is_err());
+                    for owner in [0, 2, 3, 4, 5] {
+                        assert_eq!(f[owner], prior[owner]);
+                    }
+                }
+            }
+        }
+        assert!(frozen_fixture(0, 0).is_err());
+        assert!(frozen_fixture(4, 0).is_err());
+        assert!(frozen_fixture(1, 2).is_err());
+        assert_eq!(TOTAL_CASES, 80);
+        assert_eq!(FROZEN_FAULT_CASES, 23);
+    }
+    #[test]
+    fn both_source_capacity_specializations_preserve_readonly_input_and_dense_reflection() {
+        use wgpu::naga::{AddressSpace, StorageAccess};
+        let ordinary = include_str!("resident_batch_router_gpu.wgsl");
+        assert_eq!(
+            ordinary.matches("const SOURCE_CAPACITY:u32=144u;").count(),
+            1
+        );
+        let frozen = ordinary.replace(
+            "const SOURCE_CAPACITY:u32=144u;",
+            "const SOURCE_CAPACITY:u32=512u;",
+        );
+        assert_eq!(
+            frozen.replace(
+                "const SOURCE_CAPACITY:u32=512u;",
+                "const SOURCE_CAPACITY:u32=144u;"
+            ),
+            ordinary
+        );
+        for source in [ordinary, frozen.as_str()] {
+            let module = wgpu::naga::front::wgsl::parse_str(source).unwrap();
+            let info = wgpu::naga::valid::Validator::new(
+                wgpu::naga::valid::ValidationFlags::all(),
+                wgpu::naga::valid::Capabilities::all(),
+            )
+            .validate(&module)
+            .unwrap();
+            assert_eq!(module.entry_points.len(), 2);
+            for (entry, ep) in module.entry_points.iter().enumerate() {
+                let mut bindings = Vec::new();
+                for (handle, var) in module.global_variables.iter() {
+                    if let Some(binding) = &var.binding {
+                        assert_eq!(binding.group, 0);
+                        bindings.push(binding.binding);
+                        assert!(!info.get_entry_point(entry)[handle].is_empty());
+                        if binding.binding < 2 {
+                            assert_eq!(
+                                var.space,
+                                AddressSpace::Storage {
+                                    access: StorageAccess::LOAD
+                                }
+                            );
+                        }
+                    }
+                }
+                bindings.sort_unstable();
+                assert_eq!(bindings, [0, 1, 2, 3, 4, 5, 6]);
+                let spv = wgpu::naga::back::spv::write_vec(
+                    &module,
+                    &info,
+                    &wgpu::naga::back::spv::Options {
+                        lang_version: (1, 3),
+                        ..Default::default()
+                    },
+                    Some(&wgpu::naga::back::spv::PipelineOptions {
+                        shader_stage: wgpu::naga::ShaderStage::Compute,
+                        entry_point: ep.name.clone(),
+                    }),
+                )
+                .unwrap();
+                assert!(!spv.is_empty());
+            }
+        }
     }
 }
