@@ -23,6 +23,7 @@ pub use transient_io::transient_request_io_reuses;
 pub use transient_io::transient_request_reuse_metadata_charge;
 
 pub use transient_io::transient_scoped_read_ns;
+pub use stream::transient_gpu_submission_wait_stats;
 
 pub use transient_io::transient_info_cache_stats;
 pub use transient_io::transient_unscoped_upload_transfer_stats;

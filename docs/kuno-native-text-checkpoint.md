@@ -77,6 +77,34 @@ all experts, before rounding; frozen coverage and a separate public RAM envelope
 are required. This is pending source/operator work, not a connected inference
 claim. See the [numeric receipt](../apps/kuno/benchmarks/text/receipts/native-strata-optimization-20261009.json).
 
+The revised `b2269ab` / v132 GPU router admits close scores provisionally but
+retains exact original CPU IDs/order and probability bounds from actual-score
+deferred audits before all-family commit. Both-card13 numeric cases now include
+exact internal/boundary ties and signed zero;16 full-owner sticky-fault cases
+pass. Whole warm13 then passes full CPU vectors, exact greedy picks, actual
+speculative prefix repairs and complete erasure. Warm12 accepted continuations
+take1.75601s = **6.83366 tokens/s**, with384 actual device-router calls andzero
+expert uploads. This is only a small ordered difference from the older6.64
+control, not matchedABBA or normal-demand throughput. Actual target erasure is
+1,380 owners/828,866,560bytes. All services/memory recover, classified faultszero.
+
+The router phase is removed, but0.94596s appears in attention/GR enqueue;
+whole dual-device map time remains0.74467s/219 readback batches. This suggests
+queued compute/backpressure, not pure routing cost. New content-free saturating
+submission-wait counters measure actual512-task regulation without changing
+queue limits or math. Interpretation awaits a new frozen run; no guessed queue
+policy is selected.
+
+The distinct original-packed Q2 CPU oracle writer/parser `e6635a8` passes real
+weights:12 scalar executions,2 KV appends,534 projections, zero bit differences
+on independent replay. Six complete logit/10,240HC records are6,206,016bytes,
+SHA256 `4aef325a3b53b762ab7ebaa663874926ed0dc57ece3446ecad402f1e2e8f3909`.
+Source remains BF16 dense/fusedQ2 plus actual borrowed DAS IQ4_XS/Q6 head;
+no Strata runtime payload or pruned vocabulary is substituted. GPU parity and
+throughput remain pending. CPU fixture execution has swap/core disabled and
+no private-runtime claim. The GPU adapter and host-memory placement probe are
+parallel isolated source work; neither is installed or promoted here.
+
 **User paused the goal after the overnight pass. Do not start more GPU work
 until resumed.** Latest physical model acceptance remains v129/source12f9cc7;
 the new live-member kernels and model/operator connection are source-only.

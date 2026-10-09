@@ -65,20 +65,23 @@ pub(crate) fn live_member_reduction(
     }
 }
 
-pub(crate) fn host_io_snapshot() -> [u64; 4] {
+pub(crate) fn host_io_snapshot() -> [u64; 6] {
     let (setup, flush, map) = cubecl::wgpu::transient_scoped_read_ns();
+    let (wait_ns, waits) = cubecl::wgpu::transient_gpu_submission_wait_stats();
     [
         setup,
         flush,
         map,
         cubecl::wgpu::transient_inline_readback_batches(),
+        wait_ns,
+        waits,
     ]
 }
 pub(crate) fn host_io_delta(
-    before: [u64; 4],
-    after: [u64; 4],
+    before: [u64; 6],
+    after: [u64; 6],
 ) -> Result<serde_json::Value, &'static str> {
-    let mut delta = [0; 4];
+    let mut delta = [0; 6];
     for (out, (after, before)) in delta.iter_mut().zip(after.into_iter().zip(before)) {
         if before == u64::MAX || after == u64::MAX {
             return Err("public host I/O counter saturated");
@@ -90,7 +93,8 @@ pub(crate) fn host_io_delta(
     Ok(
         serde_json::json!({"provenance":"process-global whole public dual-device timed interval",
         "scoped_read_setup_ns":delta[0],"scoped_read_flush_ns":delta[1],
-        "scoped_read_map_ns":delta[2],"inline_readback_batches":delta[3]}),
+        "scoped_read_map_ns":delta[2],"inline_readback_batches":delta[3],
+        "gpu_submission_wait_ns":delta[4],"gpu_submission_waits":delta[5]}),
     )
 }
 
@@ -185,14 +189,14 @@ mod tests {
     }
     #[test]
     fn host_io_deltas_reject_unusable_counter_samples() {
-        assert!(host_io_delta([1, 2, 3, 4], [2, 4, 6, 8]).is_ok());
-        for n in 0..4 {
-            let mut regressed = [1; 4];
+        assert!(host_io_delta([1, 2, 3, 4, 5, 6], [2, 4, 6, 8, 10, 12]).is_ok());
+        for n in 0..6 {
+            let mut regressed = [1; 6];
             regressed[n] = 0;
-            assert!(host_io_delta([1; 4], regressed).is_err());
-            let mut saturated = [1; 4];
+            assert!(host_io_delta([1; 6], regressed).is_err());
+            let mut saturated = [1; 6];
             saturated[n] = u64::MAX;
-            assert!(host_io_delta([1; 4], saturated).is_err());
+            assert!(host_io_delta([1; 6], saturated).is_err());
             assert!(host_io_delta(saturated, saturated).is_err());
         }
     }

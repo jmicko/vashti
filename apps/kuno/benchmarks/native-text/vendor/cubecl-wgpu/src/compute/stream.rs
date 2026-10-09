@@ -20,6 +20,23 @@ use cubecl_runtime::{
 use std::{future::Future, num::NonZero, pin::Pin, sync::Arc};
 use wgpu::ComputePipeline;
 
+static SUBMISSION_WAIT_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static SUBMISSION_WAITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Content-free process-global attribution, not an isolated GPU kernel timer.
+pub fn transient_gpu_submission_wait_stats() -> (u64, u64) {
+    use std::sync::atomic::Ordering::Relaxed;
+    (SUBMISSION_WAIT_NS.load(Relaxed), SUBMISSION_WAITS.load(Relaxed))
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn record_submission_wait(elapsed: std::time::Duration) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let ns = elapsed.as_nanos().min(u64::MAX as u128) as u64;
+    let _ = SUBMISSION_WAIT_NS.fetch_update(Relaxed, Relaxed, |old| Some(old.saturating_add(ns)));
+    let _ = SUBMISSION_WAITS.fetch_update(Relaxed, Relaxed, |old| Some(old.saturating_add(1)));
+}
+
 #[derive(Debug)]
 enum Timings {
     Device(QueryProfiler),
@@ -1244,6 +1261,7 @@ mod __submission_load {
 
                     if *tasks_count_submitted >= MAX_TOTAL_TASKS {
                         core::mem::swap(last_index, &mut index);
+                        let started = std::time::Instant::now();
                         if let Err(e) = device.poll(wgpu::PollType::Wait {
                             submission_index: Some(index),
                             timeout: None,
@@ -1252,6 +1270,7 @@ mod __submission_load {
                                 "wgpu: requested wait timed out before the submission was completed during sync. ({e})"
                             )
                         }
+                        super::record_submission_wait(started.elapsed());
                         *tasks_count_submitted = 0;
                     }
                 }
