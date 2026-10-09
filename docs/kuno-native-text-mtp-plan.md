@@ -4,6 +4,8 @@ The user approved the Unsloth UD-Q3_K_XL main model and self-contained Q8_0 MTP
 head, and explicitly chose our Rust implementation. No replacement C/C++ text
 engine is being introduced. This is internal laboratory work; production routing
 and Vashti consumers are unchanged.
+The current approved main model is DASLab IQ3_S; the Unsloth main-model trials
+below are historical. The original self-contained Q8 MTP sidecar remains useful.
 
 ## Backend direction approved by the user
 
@@ -57,7 +59,7 @@ types are whitelisted. Metadata requires49 blocks, one NextN block, four
 256-wide heads,64 rotary dimensions, theta1e7 and RMS epsilon1e-6. All34 stored
 tensors are checked, including four unused indexer tensors.
 
-For each token, normalize the preceding10240-wide residual per HC stream,
+For each token, normalize the preceding10240-wide residual as one global RMS,
 normalize its2560-wide embedding, concatenate embedding then that stream's
 hidden state, and apply the same5120→2560 EH projection four times. Perform
 HC mixer → dense causal GQA → HC combine → HC mixer → routed and shared MoE →
@@ -81,6 +83,36 @@ An opt-in downloaded-head test checks strict real artifact binding, complete
 graph scheduling with a synthetic executor, cross-binding rejection, failure
 after KV publication, reset and fresh replay. It proves neither full-head
 numerical parity nor useful speculative performance.
+
+### Publisher conditioning correction, 2026-10-09
+
+`724ca2f` corrects only input hidden normalization from four2560-wide RMS groups
+to one10240-wide RMS before the shared EH projection. Attention/FFN/head HC
+mixers retain their original per-stream norms. The analytic host test preserves
+different amplitudes across all four streams; full core117 tests pass (two
+opt-in ignored), as do strict library Clippy and formatting. GPU acceptance of
+the corrected resident MTP workspace and a new full-vector oracle is pending.
+
+The original pinned llama prototype differs from the publisher here. Official
+[vLLM0.30 NVIDIA MTP](https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/models/qwen4_exp/nvidia/mtp.py)
+and [AMD MTP](https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/models/qwen4_exp/amd/mtp.py)
+flatten all four HC streams for `pre_fc_norm_hidden`. Its
+[base proposer](https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/v1/spec_decode/llm_base_proposer.py)
+shifts token IDs while retaining target positions and hidden states. Thus MTP
+cell c consumes token T(c+1) with target residual R(c), at RoPE position c,
+and predicts T(c+2). A next provisional cell consumes the draft token and the
+draft's own residual. Strata's
+[pinned cell contract](https://github.com/Niko1221/Strata/blob/fb58e0dbc8399662c0e47c76578c6e878b14f6cf/include/strata/core/mtp.hpp)
+independently follows this convention. Normal coupled inference starts from
+real target R0 and T1; it does not insert a dummy T0/zero-hidden KV entry.
+
+Historical zero-hidden-first/per-stream fixtures below remain exact records of
+cross-executor repeatability under the old convention. They do not establish
+publisher-compatible conditioning or draft quality. The preserved six-row CPU
+fixture at `0c1cbfb` is likewise historical: its first two provisional greedies
+miss the DAS target. Do not reuse that binary reference for the corrected
+global-norm/aligned-cell graph. The replacement header must explicitly version
+both conditioning and math before numerical or speculative speed acceptance.
 
 ## Implemented foundation, 2026-10-08
 
@@ -244,12 +276,18 @@ has been established.
    target verification. Commit only the accepted prefix and produce the target
    correction/bonus token. Greedy equality first; exact sampled rejection is a
    separate milestone. Never substitute resident experts to manufacture speed.
-5. Add device-owned accepted-prefix GDN recurrent **and raw convolution** states;
-   preserve PLE history and QSA cursors. Merely changing sequence.position is
-   wrong. Two additional GDN recurrent snapshots cost216MiB logical memory.
-   Avoid whole-state host checkpoint copies on every speculative round.
+5. Restore the latest pre-proposal GDN recurrent **and raw convolution** roots,
+   clear only the appended QSA suffix, and restore PLE history/cursors before
+   recomputing an accepted prefix when a draft is rejected. The original double
+   state owners retain the prior GDN roots until another chunk. Bounded latest
+   tickets cost1MiB host/49,152bytes INFO with no extra GPU state; exclusive
+   round coordination and physical repair acceptance remain pending. Merely
+   changing sequence.position is wrong. Extra per-prefix recurrent snapshots
+   would cost216MiB logical memory before other families and are unnecessary
+   for this initial rollback/recompute strategy.
 6. Repair draft KV with real target hidden states after acceptance. Pair token
-   at positionp with target hidden atp−1. A provisional draft's own hidden state
+   T(c+1) with target R(c) at MTP cell c, not at target token position c+1.
+   A provisional draft's own hidden state
    must not remain authoritative in accepted catch-up history.
 7. Build dedicated dense-attention and all-resident Q8 draft owners, explicit
    expert-buffer sharding and cross-device bridges. The existing main/secondary

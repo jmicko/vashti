@@ -32,9 +32,10 @@ check exact capacities and wipe payload capacity and scalar metadata on drop.
 The carry is the real 10,240-wide residual after layer47 FFN HC combine and
 before `output_hc` normalization/mixing: four contiguous 2,560-wide streams.
 This matches `Qwen4Exp::step_with_carry` in `crates/kuno-text/src/model.rs`.
-Row p consumes token p, predicts token p+1 and supplies the preceding hidden
-for MTP token p+1. The defined zero preceding-hidden initialization remains
-necessary for MTP position0. Never substitute the normalized HC owner or the
+Target row p consumes token p, predicts token p+1 and supplies R(p) for MTP
+cell p paired with T(p+1), predicting T(p+2). Normal coupled MTP has no extra
+zero-hidden/dummy-token cache cell; see the publisher conditioning correction
+in `kuno-native-text-mtp-plan.md`. Never substitute the normalized HC owner or the
 2,560-wide mixed head input for this carry.
 
 ## Smallest source changes
