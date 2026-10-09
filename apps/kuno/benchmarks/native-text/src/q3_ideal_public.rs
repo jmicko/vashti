@@ -6,7 +6,7 @@ use crate::{
     resident_model::ResidentModel,
 };
 use kuno_text::model::greedy;
-use std::{sync::atomic::AtomicBool, time::Instant};
+use std::{collections::BTreeMap, sync::atomic::AtomicBool, time::Instant};
 use zeroize::Zeroizing;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -127,6 +127,10 @@ pub(crate) fn run<'m, 'f: 'm>(
         executor.q6_integer_head_tiles,
     );
     let resources = crate::public_resources::snapshot();
+    let phase_before = replay.phase_ns.clone();
+    let bindings_before = cubecl::wgpu::transient_binding_cache_stats();
+    let mut reference_check_ns = 0u128;
+    let mut greedy_check_ns = 0u128;
     let mut replayed_ids = Zeroizing::new(Vec::with_capacity(positions));
     replayed_ids.push(first);
     let clock = Instant::now();
@@ -138,8 +142,12 @@ pub(crate) fn run<'m, 'f: 'm>(
             cancel,
             true,
         )?;
+        let check_start = Instant::now();
         reference.verify(position, &output)?;
+        reference_check_ns += check_start.elapsed().as_nanos();
+        let check_start = Instant::now();
         let token = greedy(&output)?;
+        greedy_check_ns += check_start.elapsed().as_nanos();
         if token != trained_ids[position] {
             return Err("Q3 ideal replay original prefix mismatch".into());
         }
@@ -148,6 +156,26 @@ pub(crate) fn run<'m, 'f: 'm>(
     replay.finish_lab_oracle_replay(&mut executor)?;
     replay.end_lab_request_io_reuse()?;
     let elapsed_ns = clock.elapsed().as_nanos();
+    let phase_ns: BTreeMap<_, _> = replay
+        .phase_ns
+        .iter()
+        .map(|(&key, &value)| {
+            value
+                .checked_sub(*phase_before.get(key).unwrap_or(&0))
+                .map(|delta| (key, delta))
+                .ok_or("Q3 ideal phase counter regression")
+        })
+        .collect::<std::result::Result<_, _>>()?;
+    let bindings_after = cubecl::wgpu::transient_binding_cache_stats();
+    let binding_stats = bindings_after
+        .iter()
+        .zip(bindings_before)
+        .map(|(&after, before)| {
+            after
+                .checked_sub(before)
+                .ok_or("Q3 ideal binding counter regression")
+        })
+        .collect::<std::result::Result<Vec<_>, _>>()?;
     let resources = crate::public_resources::delta(resources, crate::public_resources::snapshot())
         .ok_or("Q3 ideal resource counters unavailable")?;
     let after = (
@@ -194,6 +222,9 @@ pub(crate) fn run<'m, 'f: 'm>(
         "q3_integer_moe":q3_integer_moe,"q3_shared_original_moe":q3_shared_original_moe,
         "elapsed_ns":elapsed_ns,"gpu_hits":work[0],"cpu_misses":work[1],
         "expert_uploads":work[2],"public_weight_upload_bytes":work[3],"resources":resources,
+        "host_phase_ns":phase_ns,"binding_cache_stats":binding_stats,
+        "reference_check_ns":reference_check_ns,"greedy_check_ns":greedy_check_ns,
+        "phase_counters_are_host_wall_time_not_gpu_kernel_time":true,
         "train_greedy_ids":&*trained_ids,"replay_greedy_ids":&*replayed_ids,
         "training_owned_zero_audit":training_audit,"replay_owned_zero_audit":replay_audit,
         "timing_includes":"full-vector checks, original trace membership and audited request I/O close",
