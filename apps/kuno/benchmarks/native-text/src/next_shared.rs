@@ -118,6 +118,30 @@ impl MatrixSpec {
             self.dtype, self.rows, self.columns, self.row_bytes
         )
     }
+    fn source_verify3(self) -> String {
+        let common = include_str!("ornith/common.wgsl")
+            .split_once("fn sigmoid")
+            .expect("shared packed helper boundary")
+            .1;
+        let helpers = include_str!("ornith/matrix_vector.wgsl")
+            .split_once("@compute")
+            .expect("shared packed main boundary")
+            .0;
+        format!(
+            "const DTYPE:u32={}u;const ROWS:u32={}u;const COLUMNS:u32={}u;const ROW_BYTES:u32={}u;\n\
+             struct Params {{input_first:u32,output_first:u32,count:u32,input_stride:u32,output_stride:u32,input_words:u32,output_words:u32,reserved:u32}}\n\
+             @group(0) @binding(0) var<storage,read> weight:array<u32>;\n\
+             @group(0) @binding(1) var<storage,read> input4:array<vec4<f32>>;\n\
+             @group(0) @binding(2) var<storage,read_write> output:array<f32>;\n\
+             @group(0) @binding(3) var<storage,read_write> fault:array<atomic<u32>>;\n\
+             @group(0) @binding(4) var<uniform> p:Params;\nfn sigmoid{common}\n{helpers}\n{}",
+            self.dtype,
+            self.rows,
+            self.columns,
+            self.row_bytes,
+            include_str!("next_verify3_dense.wgsl"),
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -125,6 +149,7 @@ enum Kernel {
     PublicValues(MatrixSpec),
     Matrix(MatrixSpec),
     MatrixFault(MatrixSpec, bool),
+    MatrixVerify3(MatrixSpec),
     Router,
     Gdn([usize; 3]),
     GrNorm(usize),
@@ -135,7 +160,10 @@ impl Kernel {
             Self::Router => 256,
             Self::Gdn(_) => 128,
             Self::GrNorm(_) => 64,
-            Self::Matrix(_) | Self::MatrixFault(_, _) | Self::PublicValues(_) => 128,
+            Self::Matrix(_)
+            | Self::MatrixFault(_, _)
+            | Self::MatrixVerify3(_)
+            | Self::PublicValues(_) => 128,
         })
     }
     fn source(self) -> String {
@@ -147,6 +175,7 @@ impl Kernel {
             ),
             Self::Matrix(spec) => spec.source(),
             Self::MatrixFault(spec, tail) => spec.source_fault(tail),
+            Self::MatrixVerify3(spec) => spec.source_verify3(),
             Self::Gdn([head, key, value]) => format!(
                 "const HEAD_DIM:u32={head}u; const KEY_HEADS:u32={key}u; const VALUE_HEADS:u32={value}u;\n{}",
                 include_str!("next_gdn.wgsl")
@@ -179,6 +208,7 @@ impl KernelMetadata for Kernel {
                 _ => "NextDenseFloat",
             },
             Self::Router => "NextRouter",
+            Self::MatrixVerify3(_) => "NextVerify3Dense",
             Self::PublicValues(_) => "NextPublicPackedValues",
             Self::Gdn(_) => "NextGdn",
             Self::GrNorm(_) => "NextGrRms",
@@ -210,6 +240,123 @@ impl CubeTask<AutoCompiler> for Kernel {
             debug_info: None,
         })
     }
+}
+
+/// Parent calls this before device/model construction for the fixed public
+/// candidate. No workgroup arrays/new private owners; existing INFO is32 bytes.
+#[allow(dead_code)] // Protected registration/actual adapter gate is parent-owned.
+pub(crate) fn validate_verify3_limits(
+    limits: &wgpu::Limits,
+    subgroups: bool,
+    subgroup_min: u32,
+    subgroup_max: u32,
+) -> Result<()> {
+    if !subgroups
+        || !matches!(subgroup_min, 16 | 32)
+        || !matches!(subgroup_max, 16 | 32)
+        || subgroup_min > subgroup_max
+        || limits.max_compute_invocations_per_workgroup < 128
+        || limits.max_compute_workgroup_size_x < 128
+        || limits.max_storage_buffers_per_shader_stage < 4
+        || limits.max_bindings_per_bind_group < 5
+        || limits.max_bind_groups < 1
+        || limits.max_uniform_buffer_binding_size < 32
+        || limits.max_compute_workgroups_per_dimension < 4096
+        || limits.max_storage_buffer_binding_size < 64 * 1024 * 1024
+        || limits.max_buffer_size < 64 * 1024 * 1024
+    {
+        return Err(Error::LimitExceeded("Verify3 dense device policy"));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_verify3_spans(
+    spec: MatrixSpec,
+    spans: &crate::quant_matvec::matmul::BatchSpans,
+    weight_bytes: u64,
+    input_words: usize,
+    output_words: usize,
+) -> Result<()> {
+    if !(1..=3).contains(&spans.count())
+        || spans.packed_first() != 0
+        || !input_words.is_multiple_of(4)
+        || !spans.input_first().is_multiple_of(4)
+        || !spans.input_stride().is_multiple_of(4)
+        || weight_bytes < (spec.rows * spec.row_bytes).div_ceil(4) as u64 * 4
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    crate::resident_batch_projection::validate_view(
+        spans.count(),
+        spans.input_first(),
+        spans.input_stride(),
+        spec.columns,
+        input_words,
+    )?;
+    crate::resident_batch_projection::validate_view(
+        spans.count(),
+        spans.output_first(),
+        spans.output_stride(),
+        spec.rows,
+        output_words,
+    )?;
+    Ok(())
+}
+
+/// Fixed public Verify3 arithmetic candidate. Caller retains original source
+/// identity, disjoint MAX8 owners and the complete output finite/padding/fault
+/// gates. Same one INFO/dispatch as original projection; never claim its inline
+/// active finite bits replace the following full owning validation dispatch.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn matrix_verify3(
+    client: &ComputeClient<WgpuRuntime>,
+    spec: MatrixSpec,
+    weights: Handle,
+    input: Handle,
+    output: Handle,
+    fault: Handle,
+    input_words: usize,
+    output_words: usize,
+    spans: &crate::quant_matvec::matmul::BatchSpans,
+) -> Result<()> {
+    validate_verify3_spans(
+        spec,
+        spans,
+        weights.size_in_used(),
+        input_words,
+        output_words,
+    )?;
+    if input.size_in_used() < input_words as u64 * 4
+        || output.size_in_used() < output_words as u64 * 4
+        || fault.size_in_used() != 4
+        || weights.stream != input.stream
+        || output.stream != input.stream
+        || fault.stream != input.stream
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    let info = MetadataBindingInfo::custom(vec![
+        spans.input_first() as u64 | ((spans.output_first() as u64) << 32),
+        spans.count() as u64 | ((spans.input_stride() as u64) << 32),
+        spans.output_stride() as u64 | ((input_words as u64) << 32),
+        output_words as u64,
+    ]);
+    let args = KernelArguments::new()
+        .with_buffer(weights.binding())
+        .with_buffer(input.binding())
+        .with_buffer(output.binding())
+        .with_buffer(fault.binding())
+        .with_info(info);
+    // SAFETY: original checked packed tile/runtime spans; parent owns disjoint
+    // MAX8 backing roots and original full model completion/erasure acceptance.
+    unsafe {
+        client.launch_unchecked(
+            Box::new(Kernel::MatrixVerify3(spec)),
+            CubeCount::Static(spec.rows.div_ceil(4) as u32, 1, 1),
+            args,
+        );
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -779,6 +926,180 @@ pub(crate) fn probe_gdn(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::quant_matvec::matmul::{BatchSpans, MAX_BATCH};
+
+    #[test]
+    fn verify3_spans_keep_max8_views_and_reject_partial_unaligned_or_oversized_inputs() {
+        for (dtype, columns) in [(0, 260), (20, 160), (23, 2560), (13, 2560), (14, 2560)] {
+            let spec = MatrixSpec::new(7, columns, dtype).unwrap();
+            let weight_bytes = (spec.rows * spec.row_bytes).div_ceil(4) as u64 * 4;
+            let input_stride = columns + 12;
+            let output_stride = spec.rows + 9;
+            let input_words = 4 + MAX_BATCH * input_stride;
+            let output_words = 3 + MAX_BATCH * output_stride;
+            for count in 1..=3 {
+                let spans = BatchSpans::new(count, 0, 4, input_stride, 3, output_stride);
+                validate_verify3_spans(spec, &spans, weight_bytes, input_words, output_words)
+                    .unwrap();
+                let end_input = 4 + (count - 1) * input_stride + columns;
+                let end_output = 3 + (count - 1) * output_stride + spec.rows;
+                assert!(
+                    validate_verify3_spans(spec, &spans, weight_bytes, end_input - 1, output_words)
+                        .is_err()
+                );
+                assert!(
+                    validate_verify3_spans(spec, &spans, weight_bytes, input_words, end_output - 1)
+                        .is_err()
+                );
+                assert!(
+                    validate_verify3_spans(
+                        spec,
+                        &spans,
+                        weight_bytes - 4,
+                        input_words,
+                        output_words
+                    )
+                    .is_err()
+                );
+            }
+            for spans in [
+                BatchSpans::new(0, 0, 4, input_stride, 3, output_stride),
+                BatchSpans::new(4, 0, 4, input_stride, 3, output_stride),
+                BatchSpans::new(usize::MAX, 0, 4, input_stride, 3, output_stride),
+                BatchSpans::new(1, 4, 4, input_stride, 3, output_stride),
+                BatchSpans::new(1, 0, 3, input_stride, 3, output_stride),
+                BatchSpans::new(3, 0, 4, input_stride + 1, 3, output_stride),
+                BatchSpans::new(3, 0, 4, columns - 4, 3, output_stride),
+                BatchSpans::new(3, 0, 4, input_stride, 3, spec.rows - 1),
+                BatchSpans::new(3, 0, usize::MAX, input_stride, 3, output_stride),
+                BatchSpans::new(3, 0, 4, input_stride, usize::MAX, output_stride),
+            ] {
+                assert!(
+                    validate_verify3_spans(spec, &spans, weight_bytes, input_words, output_words)
+                        .is_err()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn verify3_subgroups_write_exact_active_rows_without_touching_full_max8_gaps() {
+        for width in [16, 32] {
+            for rows in [1usize, 7, 8, 9, 2560, 16_384] {
+                for count in 1..=3 {
+                    let first = 3;
+                    let stride = rows + 11;
+                    let mut seen = vec![0u8; first + MAX_BATCH * stride + 9];
+                    for group in 0..rows.div_ceil(4) {
+                        for sg in 0..128 / width {
+                            let row = group * (128 / width) + sg;
+                            if row < rows {
+                                for token in 0..count {
+                                    seen[first + token * stride + row] += 1;
+                                }
+                            }
+                        }
+                    }
+                    for (i, writes) in seen.into_iter().enumerate() {
+                        let active = i >= first
+                            && (i - first) / stride < count
+                            && (i - first) % stride < rows;
+                        assert_eq!(writes, u8::from(active));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn verify3_all_packed_formats_compile_checked_and_unchecked_with_runtime_only_columns() {
+        for dtype in [0, 1, 30, 6, 8, 12, 13, 14, 20, 23] {
+            let kernel = Kernel::MatrixVerify3(MatrixSpec::new(7, 256, dtype).unwrap());
+            assert_ne!(
+                kernel.id(),
+                Kernel::Matrix(MatrixSpec::new(7, 256, dtype).unwrap()).id()
+            );
+            for mode in [ExecutionMode::Checked, ExecutionMode::Unchecked] {
+                let compiled = kernel
+                    .compile(
+                        &mut AutoCompiler::Wgsl(cubecl::wgpu::WgslCompiler::default()),
+                        &cubecl::WgpuCompilationOptions::default(),
+                        mode,
+                        kernel.address_type(),
+                    )
+                    .unwrap();
+                let module = wgpu::naga::front::wgsl::parse_str(&compiled.source).unwrap();
+                let info = wgpu::naga::valid::Validator::new(
+                    wgpu::naga::valid::ValidationFlags::all(),
+                    wgpu::naga::valid::Capabilities::SUBGROUP
+                        | wgpu::naga::valid::Capabilities::SHADER_FLOAT16_IN_FLOAT32,
+                )
+                .validate(&module)
+                .unwrap();
+                let words = wgpu::naga::back::spv::write_vec(
+                    &module,
+                    &info,
+                    &wgpu::naga::back::spv::Options::default(),
+                    None,
+                )
+                .unwrap();
+                assert!(!words.is_empty());
+                assert_eq!(module.global_variables.len(), 5);
+                assert_eq!(kernel.dimension(), CubeDim::new_1d(128));
+                assert!(compiled.source.contains("p.count<=3u"));
+                assert!(compiled.source.contains("p.input_stride/4u"));
+                assert!(compiled.source.contains("let total=subgroupAdd(sum)"));
+                assert!(compiled.source.contains("if p.count>=3u"));
+                assert!(!compiled.source.contains("workgroupBarrier"));
+                assert!(!compiled.source.contains("var<workgroup>"));
+                assert!(!compiled.source.contains("dot4I8Packed"));
+                assert!(!compiled.source.contains("fma("));
+            }
+        }
+    }
+
+    #[test]
+    fn verify3_device_policy_requires_accepted_subgroups_and_existing_resource_ceilings() {
+        let limits = wgpu::Limits {
+            max_compute_invocations_per_workgroup: 128,
+            max_compute_workgroup_size_x: 128,
+            max_storage_buffers_per_shader_stage: 4,
+            max_bindings_per_bind_group: 5,
+            max_bind_groups: 1,
+            max_uniform_buffer_binding_size: 32,
+            max_compute_workgroups_per_dimension: 4096,
+            max_storage_buffer_binding_size: 64 * 1024 * 1024,
+            max_buffer_size: 64 * 1024 * 1024,
+            ..Default::default()
+        };
+        for (min, max) in [(16, 16), (16, 32), (32, 32)] {
+            validate_verify3_limits(&limits, true, min, max).unwrap();
+        }
+        for (subgroups, min, max) in [
+            (false, 16, 32),
+            (true, 8, 32),
+            (true, 16, 64),
+            (true, 32, 16),
+        ] {
+            assert!(validate_verify3_limits(&limits, subgroups, min, max).is_err());
+        }
+        for field in 0..9 {
+            let mut short = limits.clone();
+            match field {
+                0 => short.max_compute_invocations_per_workgroup = 127,
+                1 => short.max_compute_workgroup_size_x = 127,
+                2 => short.max_storage_buffers_per_shader_stage = 3,
+                3 => short.max_bindings_per_bind_group = 4,
+                4 => short.max_bind_groups = 0,
+                5 => short.max_uniform_buffer_binding_size = 31,
+                6 => short.max_compute_workgroups_per_dimension = 4095,
+                7 => short.max_storage_buffer_binding_size -= 1,
+                _ => short.max_buffer_size -= 1,
+            }
+            assert!(validate_verify3_limits(&short, true, 16, 32).is_err());
+        }
+    }
+
     #[test]
     fn partitioned_gdn_writes_every_state_column_once() {
         let mut seen = vec![0u32; 128 * 128];

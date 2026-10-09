@@ -55,6 +55,22 @@ impl NativeProjectionTile {
     }
 }
 
+fn validate_target_verify3_policy(
+    selected: bool,
+    frozen: Option<bool>,
+    target_rows: bool,
+    shared_dense: bool,
+    members: usize,
+    tile: usize,
+) -> Result<()> {
+    if frozen.is_some_and(|old| old != selected)
+        || selected && (!target_rows || !shared_dense || members != 8 || tile != 8)
+    {
+        return Err(Error::InvalidFormat("native Verify3 construction policy"));
+    }
+    Ok(())
+}
+
 fn cleanup_failure_category(code: &str) -> Option<&'static str> {
     // Forward fixed infrastructure categories only, never backend descriptions,
     // shader source, metadata values or request content.
@@ -339,6 +355,7 @@ pub(crate) struct ResidentAdmission {
     deferred_router_reads: Arc<AtomicU64>,
     request_io_nonce: Arc<AtomicU64>,
     request_io_checkpoints: Arc<AtomicU64>,
+    target_verify3_dense: bool,
 }
 /// Borrowed only inside the existing guarded model allocation callback. This
 /// proves that its MAIN lock is already held; constructor checks must not
@@ -755,6 +772,8 @@ pub struct GpuExecutor<'a> {
     pub(crate) q6_integer_head: bool,
     pub(crate) resident_router_reserved: bool,
     pub(crate) target_rows_reserved: bool,
+    pub(crate) target_verify3_dense: bool,
+    pub(crate) target_verify3_dense_calls: u64,
     pub(crate) resident_banks_frozen: bool,
     pub(crate) resident_router_audits: u64,
     pub q6_integer_head_prepares: u64,
@@ -982,6 +1001,8 @@ impl<'a> GpuExecutor<'a> {
             q6_integer_head: false,
             resident_router_reserved: false,
             target_rows_reserved: false,
+            target_verify3_dense: false,
+            target_verify3_dense_calls: 0,
             resident_banks_frozen: false,
             resident_router_audits: 0,
             q6_integer_head_prepares: 0,
@@ -1774,6 +1795,16 @@ impl<'a> GpuExecutor<'a> {
         }
     }
     pub(crate) fn check_target_rows_policy(&self) -> Result<()> {
+        validate_target_verify3_policy(
+            self.target_verify3_dense,
+            self.resident_admission
+                .as_ref()
+                .map(|a| a.target_verify3_dense),
+            self.target_rows_reserved,
+            self.fast_dense && self.fast_dense_fault && self.shared_kernels,
+            self.native_projection_member_capacity(),
+            self.native_projection_tile(),
+        )?;
         if self.target_rows_reserved
             && (self.resident_router_reserved
                 || !self.packed_profile.is_low_bit()
@@ -1922,6 +1953,7 @@ impl<'a> GpuExecutor<'a> {
         )
         .map_err(admission_error)?;
         let admission = ResidentAdmission {
+            target_verify3_dense: self.target_verify3_dense,
             deferred_router_reads: Arc::new(AtomicU64::new(0)),
             request_io_nonce: Arc::new(AtomicU64::new(0)),
             request_io_checkpoints: Arc::new(AtomicU64::new(0)),
@@ -2491,6 +2523,12 @@ impl<'a> GpuExecutor<'a> {
     ) -> Result<bool> {
         // Reject before weights/cache mutation or any launch. The public model
         // policy is fixed between completed chunks, never chosen from count.
+        self.check_target_rows_policy()?;
+        if self.target_verify3_dense
+            && (!(1..=3).contains(&spans.count()) || self.resident_admission.is_none())
+        {
+            return Err(Error::InvalidFormat("native Verify3 projection count"));
+        }
         if self.native_projection_members == 1 && spans.count() != 1 {
             return Err(Error::InvalidFormat("native single projection count"));
         }
@@ -2575,6 +2613,19 @@ impl<'a> GpuExecutor<'a> {
                 output_words,
             )
             .map_err(|_| Error::InvalidBufferLength)?;
+            let verify3 = if self.target_verify3_dense {
+                let spec = crate::next_shared::MatrixSpec::new(g.rows(), g.columns(), g.dtype())?;
+                crate::next_shared::validate_verify3_spans(
+                    spec,
+                    &packet,
+                    g.total_bytes().div_ceil(4) as u64 * 4,
+                    input_words,
+                    output_words,
+                )?;
+                Some(spec)
+            } else {
+                None
+            };
             let (weights, words) = self.weight(tensor, 0, first, rows)?;
             if self.resident_admission.is_none()
                 && self.reserved_bytes()? > self.reserved_limit as u64
@@ -2586,7 +2637,29 @@ impl<'a> GpuExecutor<'a> {
             // SAFETY: same original packed row proof as scalar enqueue; caller
             // owns disjoint x/y, and the exact runtime spans passed validation.
             unsafe {
-                if self.fast_dense && self.native_projection_members == 1 && g.tile_tokens() == 1 {
+                if let Some(spec) = verify3 {
+                    let calls = self
+                        .target_verify3_dense_calls
+                        .checked_add(1)
+                        .ok_or(Error::ArithmeticOverflow)?;
+                    crate::next_shared::matrix_verify3(
+                        &self.client,
+                        spec,
+                        weights,
+                        x.clone(),
+                        y.clone(),
+                        fault.clone(),
+                        input_words,
+                        output_words,
+                        &packet,
+                    )?;
+                    self.target_verify3_dense_calls = calls;
+                    self.shared_dense_calls += 1;
+                    self.fast_dense_calls += 1;
+                } else if self.fast_dense
+                    && self.native_projection_members == 1
+                    && g.tile_tokens() == 1
+                {
                     if !packet.packed_first().is_multiple_of(4) {
                         return Err(Error::InvalidBufferLength);
                     }
@@ -3977,6 +4050,43 @@ mod admission_tests {
         assert!(fill_requests([0, 4, 4], 1, false, 8 * 1024 * 1024).is_err());
         assert!(fill_requests([u64::MAX - 3, 4, 4], 1, true, 8 * 1024 * 1024).is_err());
         assert!(fill_requests([4, 4, 4], 1, true, 3 * 1024 * 1024).is_err());
+    }
+}
+
+#[cfg(test)]
+mod target_verify3_tests {
+    use super::*;
+
+    #[test]
+    fn verify3_is_fixed_at_construction_and_requires_original_target_batch_policy() {
+        for frozen in [None, Some(true)] {
+            validate_target_verify3_policy(true, frozen, true, true, 8, 8).unwrap();
+        }
+        for (selected, frozen, rows, shared, members, tile) in [
+            (true, Some(false), true, true, 8, 8),
+            (false, Some(true), true, true, 8, 8),
+            (true, None, false, true, 8, 8),
+            (true, None, true, false, 8, 8),
+            (true, None, true, true, 1, 8),
+            (true, None, true, true, 8, 1),
+            (true, None, true, true, 8, 4),
+        ] {
+            assert!(
+                validate_target_verify3_policy(selected, frozen, rows, shared, members, tile)
+                    .is_err()
+            );
+        }
+        // Off preserves every original tile/member/target/control choice.
+        for rows in [false, true] {
+            for shared in [false, true] {
+                for (members, tile) in [(1, 1), (8, 1), (8, 4), (8, 8)] {
+                    for frozen in [None, Some(false)] {
+                        validate_target_verify3_policy(false, frozen, rows, shared, members, tile)
+                            .unwrap();
+                    }
+                }
+            }
+        }
     }
 }
 
