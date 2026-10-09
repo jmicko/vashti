@@ -460,6 +460,36 @@ fn classify_public_fills(
     }
     Ok(counts)
 }
+/// Whole-model public policy validation before owner allocation or mutation.
+/// The kernel changes only unused workgroup scratch reductions, never the
+/// original packed weights, active arithmetic, route map or acceptance domains.
+pub(crate) fn live_member_reduction_policy(
+    selected: bool,
+    profile: crate::expert_banks::OriginalPackedProfile,
+    capacity: usize,
+    tile: usize,
+    hybrid: bool,
+    router: bool,
+    prepared_verify3: bool,
+) -> Result<()> {
+    if selected
+        && (profile != crate::expert_banks::OriginalPackedProfile::DaslabIq3
+            || capacity != 144
+            || tile != 8
+            || hybrid
+            || router
+            || prepared_verify3)
+    {
+        return Err(err("native live-member original public policy"));
+    }
+    Ok(())
+}
+fn live_member_reduction_count(selected: bool, count: usize) -> Result<()> {
+    if selected && !(1..=3).contains(&count) {
+        return Err(err("native live-member target count"));
+    }
+    Ok(())
+}
 struct HybridOwners {
     ids: Zeroizing<[BufferId; 2]>,
     operator: Arc<kuno_text::cpu_expert::ExpertOperator>,
@@ -470,6 +500,9 @@ fn hybrid_worker_geometry(count: usize, pooled: bool) -> bool {
     matches!(count, 4 | 8 | 16) && (count == 16 || pooled)
 }
 impl Workspace {
+    pub(crate) fn live_member_reduction_enabled(&self) -> bool {
+        self.layout.geometries[0].live_member_reduction()
+    }
     pub(crate) fn public_existing_fill_enabled(&self) -> bool {
         self.public_existing_fill
     }
@@ -488,6 +521,7 @@ impl Workspace {
         self.validate_ids(arena)?;
         if self.poison.load(Ordering::Acquire)
             || self.prepared_verify3.is_some()
+            || self.live_member_reduction_enabled()
             || self.hybrid.is_some()
             || self.resident_router.is_some()
             || self.policy.phase != Phase::Idle
@@ -527,6 +561,7 @@ impl Workspace {
         }
         if self.hybrid.is_some()
             || self.public_existing_fill
+            || self.live_member_reduction_enabled()
             || self.prepared_verify3.is_some()
             || self.policy.phase != Phase::Idle
             || *self.policy.chunk != 0
@@ -602,6 +637,9 @@ impl Workspace {
         self.policy.completed_boundary()?;
         if self.resident_router_active() {
             return Err(err("resident router policy is frozen"));
+        }
+        if self.live_member_reduction_enabled() {
+            return Err(err("live-member construction policy is frozen"));
         }
         if self.prepared_verify3.is_some() {
             return Err(err("Verify3 prepared construction policy is frozen"));
@@ -690,6 +728,9 @@ impl Workspace {
         if self.resident_router_active() {
             return Err(err("resident router policy is frozen"));
         }
+        if self.live_member_reduction_enabled() {
+            return Err(err("live-member construction policy is frozen"));
+        }
         if self.prepared_verify3.is_some() {
             return Err(err("Verify3 prepared construction policy is frozen"));
         }
@@ -722,6 +763,9 @@ impl Workspace {
         self.policy.completed_boundary()?;
         if self.resident_router_active() {
             return Err(err("resident router policy is frozen"));
+        }
+        if self.live_member_reduction_enabled() {
+            return Err(err("live-member construction policy is frozen"));
         }
         if self.prepared_verify3.is_some() {
             return Err(err("Verify3 prepared construction policy is frozen"));
@@ -768,6 +812,36 @@ impl Workspace {
         cancel: &AtomicBool,
         public_existing_fill: bool,
     ) -> Result<Self> {
+        Self::allocate_with_policies(
+            executor,
+            graph,
+            sequence,
+            arena,
+            admission,
+            poison,
+            limits,
+            tile,
+            cancel,
+            public_existing_fill,
+            false,
+        )
+    }
+    /// Both public policies are captured by the model Config/Plan. Live-member
+    /// reduction uses the same geometry, owner inventory and INFO dispatches.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn allocate_with_policies(
+        executor: &GpuExecutor<'_>,
+        graph: BoundGraph<'_, '_>,
+        sequence: SequenceKey,
+        arena: &mut PrivateArena,
+        admission: ResidentAdmission,
+        poison: Arc<AtomicBool>,
+        limits: &wgpu::Limits,
+        tile: usize,
+        cancel: &AtomicBool,
+        public_existing_fill: bool,
+        live_member_reduction: bool,
+    ) -> Result<Self> {
         guarded(&poison.clone(), || {
             u::cancel(cancel)?;
             if poison.load(Ordering::Acquire) {
@@ -777,6 +851,21 @@ impl Workspace {
                 return Err(err("native routed admission poison owner"));
             }
             configuration(executor, graph)?;
+            live_member_reduction_policy(
+                live_member_reduction,
+                executor.packed_profile,
+                executor.bank_slots,
+                tile,
+                false,
+                executor.resident_router_reserved,
+                false,
+            )?;
+            if live_member_reduction {
+                if !executor.target_rows_reserved || !arena.public_owned_zero_audit_enabled() {
+                    return Err(err("live-member public target construction"));
+                }
+                executor.check_target_rows_policy()?;
+            }
             public_existing_policy(
                 public_existing_fill,
                 executor.packed_profile,
@@ -801,7 +890,12 @@ impl Workspace {
             {
                 return Err(err("native routed actual admission binding"));
             }
-            let layout = Layout::new(graph, capacity, tile)?;
+            let mut layout = Layout::new(graph, capacity, tile)?;
+            if live_member_reduction {
+                for geometry in &mut layout.geometries {
+                    *geometry = geometry.with_live_member_reduction().map_err(err)?;
+                }
+            }
             layout.limits(limits)?;
             let metadata = StagedSlots::bounded_native_metadata_bytes(capacity)
                 .map_err(|_| Error::LimitExceeded("native routed candidate metadata"))?;
@@ -888,6 +982,20 @@ impl Workspace {
         Ok(())
     }
     fn validate_ids(&self, arena: &PrivateArena) -> Result<()> {
+        let live = self.live_member_reduction_enabled();
+        if self.layout.geometries.iter().any(|g| {
+            g.live_member_reduction() != live
+                || live && (g.tile() != 8 || g.gate_policy() != k::GatePolicy::Generic)
+        }) || live
+            && (self.layout.geometries.len() != 48
+                || self.layout.tile != 8
+                || self.layout.gate_policy != k::GatePolicy::Generic
+                || self.hybrid.is_some()
+                || self.resident_router.is_some()
+                || self.prepared_verify3.is_some())
+        {
+            return Err(err("native live-member frozen workspace"));
+        }
         if !std::ptr::eq(
             arena.client().map_err(u::fault)?.info(),
             self.admission.client.info(),
@@ -1103,6 +1211,22 @@ impl GpuExecutor<'_> {
             self.model.verify_file_unchanged()?;
             w.healthy(arena)?;
             w.layout.geometries[0].validate_count(count).map_err(err)?;
+            live_member_reduction_policy(
+                w.live_member_reduction_enabled(),
+                self.packed_profile,
+                self.bank_slots,
+                w.layout.tile,
+                w.hybrid.is_some(),
+                w.resident_router.is_some() || self.resident_router_reserved,
+                w.prepared_verify3.is_some(),
+            )?;
+            live_member_reduction_count(w.live_member_reduction_enabled(), count)?;
+            if w.live_member_reduction_enabled() {
+                if !self.target_rows_reserved {
+                    return Err(err("live-member target reservation changed"));
+                }
+                self.check_target_rows_policy()?;
+            }
             public_existing_policy(
                 w.public_existing_fill,
                 self.packed_profile,
@@ -1225,6 +1349,22 @@ impl GpuExecutor<'_> {
         }
         let g = *w.layout.geometries.get(layer).ok_or(Error::OutOfBounds)?;
         g.validate_count(routes.count()).map_err(err)?;
+        live_member_reduction_policy(
+            g.live_member_reduction(),
+            self.packed_profile,
+            self.bank_slots,
+            g.tile(),
+            w.hybrid.is_some(),
+            w.resident_router.is_some() || self.resident_router_reserved,
+            w.prepared_verify3.is_some(),
+        )?;
+        live_member_reduction_count(g.live_member_reduction(), routes.count())?;
+        if g.live_member_reduction() {
+            if !self.target_rows_reserved {
+                return Err(err("live-member target reservation changed"));
+            }
+            self.check_target_rows_policy()?;
+        }
         public_existing_count(w.public_existing_fill, routes.count(), routes.wave_count())?;
         let weights = weights(graph, layer)?;
         if [weights.gate, weights.up, weights.down]
@@ -1921,57 +2061,66 @@ fn launch_wave(
         let ga = &bank.gate().segments()[shard];
         let u = &bank.up().segments()[shard];
         let d = &bank.down().segments()[shard];
-        unsafe {
-            k::grouped_gate_up::launch_unchecked::<WgpuRuntime>(
-                client,
-                g.grid(groups, false).map_err(err)?,
-                CubeDim::new_1d(64),
-                ArrayArg::from_raw_parts(ga.handle().clone(), ga.words()),
-                ArrayArg::from_raw_parts(u.handle().clone(), u.words()),
-                arg(arena, ids[INPUT])?,
-                arg(arena, ids[MAP])?,
-                arg(arena, ids[ACT])?,
-                arg(arena, ids[STATUS])?,
-                s.map_first(),
-                s.input_first(),
-                s.input_stride(),
-                s.act_first(),
-                s.act_stride(),
-                s.status_first(),
-                ga.first_slot(),
-                ga.capacity(),
-                g.hidden(),
-                g.ff(),
-                gate.dtype(),
-                up.dtype(),
-                gate.row_bytes(),
-                up.row_bytes(),
-                g.tile(),
-                g.gate_policy() == k::GatePolicy::Q4Block,
-            );
-            k::grouped_down::launch_unchecked::<WgpuRuntime>(
-                client,
-                g.grid(groups, true).map_err(err)?,
-                CubeDim::new_1d(64),
-                ArrayArg::from_raw_parts(d.handle().clone(), d.words()),
-                arg(arena, ids[ACT])?,
-                arg(arena, ids[MAP])?,
-                arg(arena, ids[PART])?,
-                arg(arena, ids[STATUS])?,
-                s.map_first(),
-                s.act_first(),
-                s.act_stride(),
-                s.partial_first(),
-                s.partial_stride(),
-                s.status_first(),
-                d.first_slot(),
-                d.capacity(),
-                g.hidden(),
-                g.ff(),
-                down.dtype(),
-                down.row_bytes(),
-                g.tile(),
-            );
+        macro_rules! launch_pair {
+            ($gate_up:ident, $down:ident) => {
+                unsafe {
+                    k::$gate_up::launch_unchecked::<WgpuRuntime>(
+                        client,
+                        g.grid(groups, false).map_err(err)?,
+                        CubeDim::new_1d(64),
+                        ArrayArg::from_raw_parts(ga.handle().clone(), ga.words()),
+                        ArrayArg::from_raw_parts(u.handle().clone(), u.words()),
+                        arg(arena, ids[INPUT])?,
+                        arg(arena, ids[MAP])?,
+                        arg(arena, ids[ACT])?,
+                        arg(arena, ids[STATUS])?,
+                        s.map_first(),
+                        s.input_first(),
+                        s.input_stride(),
+                        s.act_first(),
+                        s.act_stride(),
+                        s.status_first(),
+                        ga.first_slot(),
+                        ga.capacity(),
+                        g.hidden(),
+                        g.ff(),
+                        gate.dtype(),
+                        up.dtype(),
+                        gate.row_bytes(),
+                        up.row_bytes(),
+                        g.tile(),
+                        g.gate_policy() == k::GatePolicy::Q4Block,
+                    );
+                    k::$down::launch_unchecked::<WgpuRuntime>(
+                        client,
+                        g.grid(groups, true).map_err(err)?,
+                        CubeDim::new_1d(64),
+                        ArrayArg::from_raw_parts(d.handle().clone(), d.words()),
+                        arg(arena, ids[ACT])?,
+                        arg(arena, ids[MAP])?,
+                        arg(arena, ids[PART])?,
+                        arg(arena, ids[STATUS])?,
+                        s.map_first(),
+                        s.act_first(),
+                        s.act_stride(),
+                        s.partial_first(),
+                        s.partial_stride(),
+                        s.status_first(),
+                        d.first_slot(),
+                        d.capacity(),
+                        g.hidden(),
+                        g.ff(),
+                        down.dtype(),
+                        down.row_bytes(),
+                        g.tile(),
+                    );
+                }
+            };
+        }
+        if g.live_member_reduction() {
+            launch_pair!(grouped_gate_up_live, grouped_down_live);
+        } else {
+            launch_pair!(grouped_gate_up, grouped_down);
         }
     }
     Ok(())
@@ -3066,5 +3215,141 @@ mod tests {
             assert!(storage == 6 || storage == 7);
             assert!(!source.contains("array<u32, 80>"));
         }
+    }
+}
+
+#[cfg(test)]
+mod live_member_reduction_tests {
+    use super::*;
+    use crate::expert_banks::OriginalPackedProfile;
+
+    #[test]
+    fn live_member_policy_is_exact_and_default_preserves_old_profiles() {
+        live_member_reduction_policy(
+            true,
+            OriginalPackedProfile::DaslabIq3,
+            144,
+            8,
+            false,
+            false,
+            false,
+        )
+        .unwrap();
+        for (profile, capacity, tile, hybrid, router, prepared) in [
+            (OriginalPackedProfile::Q4, 144, 8, false, false, false),
+            (
+                OriginalPackedProfile::UnslothQ3,
+                144,
+                8,
+                false,
+                false,
+                false,
+            ),
+            (
+                OriginalPackedProfile::DaslabIq3,
+                160,
+                8,
+                false,
+                false,
+                false,
+            ),
+            (
+                OriginalPackedProfile::DaslabIq3,
+                144,
+                4,
+                false,
+                false,
+                false,
+            ),
+            (
+                OriginalPackedProfile::DaslabIq3,
+                144,
+                1,
+                false,
+                false,
+                false,
+            ),
+            (OriginalPackedProfile::DaslabIq3, 144, 8, true, false, false),
+            (OriginalPackedProfile::DaslabIq3, 144, 8, false, true, false),
+            (OriginalPackedProfile::DaslabIq3, 144, 8, false, false, true),
+        ] {
+            assert!(
+                live_member_reduction_policy(
+                    true, profile, capacity, tile, hybrid, router, prepared
+                )
+                .is_err()
+            );
+            live_member_reduction_policy(false, profile, capacity, tile, hybrid, router, prepared)
+                .unwrap();
+        }
+        for count in 1..=3 {
+            live_member_reduction_count(true, count).unwrap();
+        }
+        for count in [0, 4, 8, 9, usize::MAX] {
+            assert!(live_member_reduction_count(true, count).is_err());
+            live_member_reduction_count(false, count).unwrap();
+        }
+    }
+
+    #[test]
+    fn all_actual_das_geometries_preserve_grids_and_full_original_owner_spans() {
+        for layer in 0..48 {
+            let [gate, up, down] = crate::daslab_profile::routed_types(layer).unwrap();
+            let projections = [
+                k::Projection::new(gate, 2560, 640, 512).unwrap(),
+                k::Projection::new(up, 2560, 640, 512).unwrap(),
+                k::Projection::new(down, 640, 2560, 512).unwrap(),
+            ];
+            let old = k::Geometry::new(projections, 8, 144).unwrap();
+            let live = old.with_live_member_reduction().unwrap();
+            assert!(!old.live_member_reduction());
+            assert!(live.live_member_reduction());
+            assert_eq!(old.tile(), live.tile());
+            assert_eq!(old.capacity(), live.capacity());
+            assert_eq!(old.status_words(), live.status_words());
+            assert_eq!(old.projections(), live.projections());
+            for count in 1..=3 {
+                for groups in [10, count * 10] {
+                    for down in [false, true] {
+                        let CubeCount::Static(x, y, z) = old.grid(groups, down).unwrap() else {
+                            panic!()
+                        };
+                        let CubeCount::Static(lx, ly, lz) = live.grid(groups, down).unwrap() else {
+                            panic!()
+                        };
+                        assert_eq!((x, y, z), (lx, ly, lz));
+                    }
+                }
+                for (a, b) in [
+                    (
+                        old.reduce_grid_for_count(count).unwrap(),
+                        live.reduce_grid_for_count(count).unwrap(),
+                    ),
+                    (
+                        old.finite_grid_for_count(count).unwrap(),
+                        live.finite_grid_for_count(count).unwrap(),
+                    ),
+                ] {
+                    let CubeCount::Static(x, y, z) = a else {
+                        panic!()
+                    };
+                    let CubeCount::Static(lx, ly, lz) = b else {
+                        panic!()
+                    };
+                    assert_eq!((x, y, z), (lx, ly, lz));
+                }
+            }
+            for first in [0, 72] {
+                let words = projections.map(|p| p.segment_words(72).unwrap());
+                old.validate_shard(first, 72, words).unwrap();
+                live.validate_shard(first, 72, words).unwrap();
+                let mut short = words;
+                short[2] -= 1;
+                assert!(live.validate_shard(first, 72, short).is_err());
+            }
+        }
+        assert_eq!(Workspace::runtime_io_increment(), IO_INCREMENT);
+        assert_eq!(PRIVATE_BYTES, 1_409_024);
+        assert_eq!(HOST_PRIVATE, 2 * 1024 * 1024);
     }
 }

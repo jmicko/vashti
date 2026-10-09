@@ -286,6 +286,7 @@ pub(crate) struct Config {
     public_existing_expert_fill: bool,
     public_warm_replay: bool,
     public_target_request_io: bool,
+    live_member_reduction: bool,
 }
 fn prepared_verify3_configuration(
     target_rows: bool,
@@ -295,6 +296,19 @@ fn prepared_verify3_configuration(
     tile: usize,
 ) -> Result<()> {
     if !target_rows || already_reserved || hybrid || router || tile != 8 {
+        return Err(error());
+    }
+    Ok(())
+}
+fn live_member_reduction_configuration(
+    selected: bool,
+    target_rows: bool,
+    hybrid: bool,
+    router: bool,
+    prepared_verify3: bool,
+    tile: usize,
+) -> Result<()> {
+    if selected && (!target_rows || hybrid || router || prepared_verify3 || tile != 8) {
         return Err(error());
     }
     Ok(())
@@ -320,6 +334,7 @@ impl Config {
             public_existing_expert_fill: false,
             public_warm_replay: false,
             public_target_request_io: false,
+            live_member_reduction: false,
         })
     }
     /// Construction-fixed, one-shot empty PRIVATE-state replay after the
@@ -347,6 +362,26 @@ impl Config {
             self.tile,
         )?;
         self.public_existing_expert_fill = true;
+        Ok(self)
+    }
+    /// Construction-fixed original-F32 reduction of actual grouped members.
+    /// The complete MAX8 roots, original ranks, INFO charges and all owning
+    /// finite/status/padding proofs remain unchanged. Parent owns the fixed
+    /// public DASLab registration and physical numerical/performance gates.
+    #[allow(dead_code)]
+    pub(crate) fn with_live_member_reduction(mut self) -> Result<Self> {
+        if self.live_member_reduction {
+            return Err(error());
+        }
+        live_member_reduction_configuration(
+            true,
+            self.target_rows_reserved,
+            self.cpu_operator.is_some(),
+            self.resident_router_reserved,
+            self.prepared_verify3_experts_reserved,
+            self.tile,
+        )?;
+        self.live_member_reduction = true;
         Ok(self)
     }
     pub(crate) fn reserve_resident_router(mut self) -> Result<Self> {
@@ -432,6 +467,9 @@ impl Config {
     /// target rows. No global count1 integer flag or hybrid/router fallback.
     #[allow(dead_code)] // Protected flag/physical acceptance are parent-owned.
     pub(crate) fn reserve_prepared_verify3_experts(mut self) -> Result<Self> {
+        if self.live_member_reduction {
+            return Err(error());
+        }
         prepared_verify3_configuration(
             self.target_rows_reserved,
             self.prepared_verify3_experts_reserved,
@@ -556,6 +594,23 @@ impl Plan {
             return Err(error());
         }
         validate_limits(&config.limits, config.tile)?;
+        live_member_reduction_configuration(
+            config.live_member_reduction,
+            config.target_rows_reserved,
+            config.cpu_operator.is_some(),
+            config.resident_router_reserved,
+            config.prepared_verify3_experts_reserved,
+            config.tile,
+        )?;
+        batch_moe::live_member_reduction_policy(
+            config.live_member_reduction,
+            executor.packed_profile,
+            executor.resident_bank_capacity(),
+            config.tile,
+            config.cpu_operator.is_some(),
+            config.resident_router_reserved,
+            config.prepared_verify3_experts_reserved,
+        )?;
         executor.check_original_bank_metadata(LAYERS, ORIGINAL_BANK_HOST)?;
         let g = graph.geometry();
         if g.layers != LAYERS
@@ -898,6 +953,26 @@ impl Workspace {
         allocation: &crate::executor::ModelConstructionAllocation<'_>,
     ) -> Result<Self> {
         allocation.check(&model.admission)?;
+        live_member_reduction_configuration(
+            config.live_member_reduction,
+            config.target_rows_reserved,
+            config.cpu_operator.is_some(),
+            config.resident_router_reserved,
+            config.prepared_verify3_experts_reserved,
+            config.tile,
+        )?;
+        batch_moe::live_member_reduction_policy(
+            config.live_member_reduction,
+            executor.packed_profile,
+            executor.resident_bank_capacity(),
+            config.tile,
+            config.cpu_operator.is_some(),
+            config.resident_router_reserved,
+            config.prepared_verify3_experts_reserved,
+        )?;
+        if config.live_member_reduction {
+            executor.check_target_rows_policy()?;
+        }
         let public_target_request_io = if config.public_target_request_io {
             Some(public_target_request_io::Permit::new(
                 model.graph.binding_id(),
@@ -959,7 +1034,7 @@ impl Workspace {
         )?;
         let qsa =
             qsa::QsaBatchWorkspace::allocate(graph, sequence, &mut model.arena, poison.clone())?;
-        let mut moe = batch_moe::Workspace::allocate_with_public_existing(
+        let mut moe = batch_moe::Workspace::allocate_with_policies(
             executor,
             graph,
             sequence,
@@ -970,6 +1045,7 @@ impl Workspace {
             config.tile,
             &cancel,
             config.public_existing_expert_fill,
+            config.live_member_reduction,
         )?;
         if let Some(operator) = config.cpu_operator {
             moe.reserve_count1_hybrid(
@@ -1440,6 +1516,22 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             moe.public_fill_counters(),
         ))
     }
+    /// Actual construction-fixed public MoE policy at the original completed
+    /// all-family boundary; no requested flag is credited as dispatch evidence.
+    #[allow(dead_code)] // Parent owns the protected public receipt.
+    pub(crate) fn native_live_member_reduction(&self, executor: &GpuExecutor<'f>) -> Result<bool> {
+        self.completed_native_projection_boundary(executor)?;
+        let native = self.native_batch.as_ref().ok_or(error())?;
+        if native.target_rows.is_none() || !executor.target_rows_reserved {
+            return Err(error());
+        }
+        executor.check_target_rows_policy()?;
+        native
+            .moe
+            .validate_public_warm_boundary(executor, self.graph, &self.arena)?;
+        Ok(native.moe.live_member_reduction_enabled())
+    }
+
     pub(crate) fn native_cpu_buffered_weights(
         &self,
         executor: &GpuExecutor<'f>,
@@ -1598,6 +1690,16 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         u::cancel(cancel)?;
         let boundary = self.completed_native_projection_boundary(executor)?;
         let observed = self.native_decode_kernels()?;
+        if self
+            .native_batch
+            .as_ref()
+            .ok_or(error())?
+            .moe
+            .live_member_reduction_enabled()
+            && policy != NativeDecodeKernels::Chunk
+        {
+            return Err(error());
+        }
         // Each fixture has one public continuation policy. Repeated same-policy
         // selection is allowed; a fresh owner is required for another sample.
         if observed != NativeDecodeKernels::Chunk && observed != policy
@@ -1882,6 +1984,28 @@ impl Workspace {
                 tokens.len(),
                 m.admission.request_io_reuse_active(),
             )?;
+        }
+        if self.moe.live_member_reduction_enabled() {
+            live_member_reduction_configuration(
+                true,
+                self.target_rows.is_some(),
+                self.moe.count1_hybrid_owner_ids().is_some(),
+                self.moe.resident_router_ids().is_some() || e.resident_router_reserved,
+                self.moe.prepared_verify3_owner_id().is_some(),
+                self.moe.projection_tile(),
+            )?;
+            batch_moe::live_member_reduction_policy(
+                true,
+                e.packed_profile,
+                e.resident_bank_capacity(),
+                self.moe.projection_tile(),
+                self.moe.count1_hybrid_owner_ids().is_some(),
+                self.moe.resident_router_ids().is_some() || e.resident_router_reserved,
+                self.moe.prepared_verify3_owner_id().is_some(),
+            )?;
+            if self.decode_kernels()? != NativeDecodeKernels::Chunk {
+                return Err(error());
+            }
         }
         if self.moe.prepared_verify3_owner_id().is_some() {
             if self.target_rows.is_none()
@@ -3027,5 +3151,62 @@ mod prepared_verify3_plan_tests {
             + batch_moe::prepared_verify3::RUNTIME_INCREMENT;
         assert_eq!(runtime, 71_004_160);
         assert!(runtime < TARGET_ROWS_RUNTIME_LIMIT);
+    }
+}
+
+#[cfg(test)]
+mod live_member_reduction_plan_tests {
+    use super::*;
+
+    #[test]
+    fn live_member_configuration_is_target_only_and_excludes_prepared_arithmetic() {
+        live_member_reduction_configuration(true, true, false, false, false, 8).unwrap();
+        for (rows, hybrid, router, prepared, tile) in [
+            (false, false, false, false, 8),
+            (true, true, false, false, 8),
+            (true, false, true, false, 8),
+            (true, false, false, true, 8),
+            (true, false, false, false, 4),
+            (true, false, false, false, 1),
+        ] {
+            assert!(
+                live_member_reduction_configuration(true, rows, hybrid, router, prepared, tile,)
+                    .is_err()
+            );
+            // The additive gate must not change any old construction policy.
+            live_member_reduction_configuration(false, rows, hybrid, router, prepared, tile)
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn live_member_reduction_spends_no_existing_or_reuse_owner_credit() {
+        // There is no alternate MAIN/runtime/host plan for live reductions.
+        // Full owners and INFO records stay charged under the original plan.
+        assert_eq!(TARGET_ROWS_PRIVATE_MAIN, 826_638_336);
+        assert_eq!(
+            runtime_bytes(16).unwrap() + target_rows::RUNTIME_INCREMENT,
+            70_295_552
+        );
+        for reuse in [DEFAULT_REUSE_METADATA, 1048576, 4194304] {
+            live_member_reduction_configuration(true, true, false, false, false, 8).unwrap();
+            assert_eq!(
+                host_reservation_with_outputs(false, reuse, false, true).unwrap(),
+                (
+                    HOST_COMPONENTS + reuse + target_rows::HOST_INCREMENT,
+                    HOST_CAP + reuse - DEFAULT_REUSE_METADATA + target_rows::HOST_INCREMENT
+                )
+            );
+            assert_eq!(
+                host_reservation_with_checkpoint(false, reuse, false, true, true).unwrap(),
+                (
+                    HOST_COMPONENTS
+                        + reuse
+                        + target_rows::HOST_INCREMENT
+                        + latest_checkpoint::HOST_INCREMENT,
+                    HOST_CAP + reuse - DEFAULT_REUSE_METADATA + target_rows::HOST_INCREMENT
+                )
+            );
+        }
     }
 }
