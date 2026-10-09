@@ -271,7 +271,7 @@ at `5eb8e82`; no finite-fusion speed selection or30token/s acceptance yet.
 These are isolated public lab contracts. Production/Vashti API is unchanged.
 
 
-## Fixed-public target request I/O reuse (source implementation in progress)
+## Fixed-public target request I/O reuse (implemented and public-fixture accepted)
 
 Only the three public DASLab target fixture registrations may select
 `KUNO_LAB_TARGET_REUSE=request`, with exact `KUNO_LAB_DEVICE_DISPATCH=inline`
@@ -304,4 +304,43 @@ Request begin and full closing I/O audit are included in the12-accepted-token
 throughput interval. Numerical receipts record actual active/closed proofs,
 reserved capacities and checked process-global content-free binding/INFO
 counter deltas; no runtime nonce/key or private content is saved. Physical
-acceptance and a speed gain are not established by this source contract.
+target4, actual prefix repair and fullCPU13 cold/warm controller acceptance now
+passes at source `12f9cc7` (v129). Warm original-F32 throughput is6.63953 accepted
+tokens/s, with zero expert uploads/weight reads and4096 process disk bytes.
+This ordered public fixture is not a matchedABBA, private-request or30token/s
+acceptance. See the exact receipt and checkpoint.
+
+## Original-F32 live expert-member reductions (source accepted, GPU pending)
+
+Kernel `7ab49b8` and immutable graph integration `13d9929` are default-off.
+Only the three fixed-public target registrations accept canonical
+`KUNO_LAB_TARGET_MOE=live`. It requires original F32 Generic expert arithmetic,
+DAS144-bank MAX8 target-row geometry, and native chunk execution. Prepared
+integer experts, CPU/hybrid placement and count1-specific execution selectors
+cannot compose with this choice. Absent selection preserves the original path.
+The constructor freezes the flag before admission/allocation; all48 layer
+geometries must agree. Completed-boundary getters check actual healthy/idle
+geometry, rather than echoing an environment value.
+
+For each active expert group the gate/up/down kernels retain the original
+packed weights,64-lane reduction tree, operation order, both segment launches,
+INFO layout, status/fault/padding proofs, rank fold and owners. Only unused
+member-plane shared stores/reduction additions are skipped. Every workgroup
+barrier remains unconditional. No GPU owner, capacity, private lifetime or
+erasure gate changes. This does not eliminate packed decoding or barriers.
+
+The dedicated default-build `iq-live-members-moe-probe` requires exact
+`KUNO_LAB_IQ_LIVE_MEMBERS_PUBLIC_ONLY=1` and a fresh public receipt; inherited
+experiments and extra arguments reject before device access. It compares old
+and new full ACT/PART/rank merge bits against independent CPU results for all
+nine DAS mixed profiles, counts1/2/3 and mixed/single-segment maps. Malformed
+maps, nonfinite inputs, inactive planes, full gaps/tails/status and owning closes
+are checked under the original2MiB private/64MiB I/O/32MiB HOST/1GiB MAIN bounds.
+Source tests and shader validation pass; physical both-card operator acceptance,
+target4/repair4 and same-artifact fullCPU13 control/live timing remain pending.
+
+The controller also records checked, nonsaturated process-global scoped-read
+setup/flush/map and inline readback batch deltas over the public dual-device
+timed interval. These are attribution diagnostics, not isolated GPU kernel
+timings or per-stream counters. No prompts, generated content or private IDs
+are persisted. Production API, Vashti and installed services remain unchanged.

@@ -41,6 +41,7 @@ pub(crate) struct Inputs {
     public_existing_fill: bool,
     chunk_io: bool,
     request_reuse: bool,
+    live_member_reduction: bool,
     directory: PathBuf,
     mtp: PathBuf,
     reference: PathBuf,
@@ -79,6 +80,7 @@ pub(crate) fn registration(
                     | "KUNO_LAB_TARGET_FILL"
                     | "KUNO_LAB_TARGET_IO"
                     | "KUNO_LAB_TARGET_REUSE"
+                    | "KUNO_LAB_TARGET_MOE"
             )
         ) || value.is_empty()
             || values.insert(key, value).is_some()
@@ -98,6 +100,9 @@ pub(crate) fn registration(
         Some(value) if value == "prepared-verify3" => true,
         _ => return Err("target expert policy requires canonical prepared-verify3"),
     };
+    let raw_moe = values.remove(OsStr::new("KUNO_LAB_TARGET_MOE"));
+    let live_member_reduction =
+        crate::target_lab_build::live_member_reduction(raw_moe.as_deref(), prepared_experts)?;
     let public_existing_fill = match values.remove(OsStr::new("KUNO_LAB_TARGET_FILL")) {
         None => false,
         Some(value) if value == "direct-public" => true,
@@ -143,6 +148,7 @@ pub(crate) fn registration(
         public_existing_fill,
         chunk_io,
         request_reuse,
+        live_member_reduction,
         directory: path("KUNO_TEST_Q3_DIR")?,
         mtp: path("KUNO_TEST_MTP")?,
         reference: path("KUNO_PUBLIC_TARGET_CARRY13_REFERENCE")?,
@@ -342,6 +348,9 @@ pub(crate) fn run(
         if input.request_reuse {
             config = config.reserve_public_target_request_io()?;
         }
+        if input.live_member_reduction {
+            config = config.with_live_member_reduction()?;
+        }
         if input.public_existing_fill {
             config = config.with_public_existing_expert_fill()?;
         }
@@ -380,6 +389,11 @@ pub(crate) fn run(
                     {
                         return Err("speculative initial real cursor rejected".into());
                     }
+                    if target.native_live_member_reduction(&executor)?
+                        != input.live_member_reduction
+                    {
+                        return Err("target initial live reduction geometry mismatch".into());
+                    }
                     let load_ns = loading.elapsed().as_nanos() as u64;
                     let initial_prefill_ns = replay_prefill.elapsed().as_nanos() as u64;
                     let mut accepted_tokens = 0usize;
@@ -401,6 +415,7 @@ pub(crate) fn run(
                     if actual_direct != input.public_existing_fill {
                         return Err("public fill frozen selection rejected".into());
                     }
+                    let before_host_io = crate::target_lab_build::host_io_snapshot();
                     let start = Instant::now();
                     if input.request_reuse {
                         target.begin_public_target_request_io(&mut executor, &cancel)?;
@@ -509,6 +524,11 @@ pub(crate) fn run(
                         accepted_drafts += accepted - 1;
                         rounds.push(serde_json::json!({"target_start":position,"proposed_drafts":count-1,"accepted_drafts":accepted-1,"accepted_outputs":accepted,"draft_ns":draft_ns,"verify_ns_including_public_vector_checks":verify_ns,"repair_ns":repair.elapsed().as_nanos() as u64,"total_ns":round_start.elapsed().as_nanos() as u64,"target_completed_cursor":position+accepted,"draft_completed_cell":draft.position()}));
                     }
+                    if target.native_live_member_reduction(&executor)?
+                        != input.live_member_reduction
+                    {
+                        return Err("target completed live reduction geometry mismatch".into());
+                    }
                     let request_close = Instant::now();
                     let mut request_scope_receipt = None;
                     if input.request_reuse {
@@ -527,6 +547,10 @@ pub(crate) fn run(
                         0
                     };
                     let elapsed_ns = start.elapsed().as_nanos() as u64;
+                    let host_io = crate::target_lab_build::host_io_delta(
+                        before_host_io,
+                        crate::target_lab_build::host_io_snapshot(),
+                    )?;
                     if accepted_tokens != 12 {
                         return Err("speculative actual accepted token count rejected".into());
                     }
@@ -553,7 +577,7 @@ pub(crate) fn run(
                         return Err("public fill frozen selection changed".into());
                     }
                     Ok(
-                        serde_json::json!({"replay":replay,"request_scope_closed_and_audited":input.request_reuse,"request_scope":request_scope_receipt,"request_close_ns_inside_timing":request_close_ns,"model_weights_warm":replay==1,"initial_prefill_ns":initial_prefill_ns,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"verify3_fused_calls":executor.target_verify3_fused_calls-before_fused,"target_host_phase_ns":host_phase_ns,"load_and_initial_prefill_physical_read_bytes":load_disk_after.checked_sub(replay_disk_before).ok_or("public process read counter regressed")?,"timed_physical_read_bytes":timed_physical_read_bytes,"target_fill_counters_before":fill_counter_record(before_fills),"target_fill_counters_after":fill_counter_record(after_fills),"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"timing_scope":"original normal routing/demand uploads; public checks and actual repair included","load_and_initial_prefill_cumulative_ns":load_ns,"accepted_tokens":accepted_tokens,"elapsed_ns":elapsed_ns,"accepted_tokens_per_second":accepted_tokens as f64*1e9/elapsed_ns as f64,"proposed_drafts":proposed_tokens,"accepted_drafts":accepted_drafts,"rounds":rounds,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"draft_traffic":{"host_read_calls":after.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after.host_read_bytes-before_traffic.host_read_bytes,"explicit_dispatches":after.explicit_dispatches-before_traffic.explicit_dispatches,"private_upload_calls":after.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after.followup_copy_calls-before_traffic.followup_copy_calls}}),
+                        serde_json::json!({"replay":replay,"request_scope_closed_and_audited":input.request_reuse,"request_scope":request_scope_receipt,"request_close_ns_inside_timing":request_close_ns,"host_io":host_io,"model_weights_warm":replay==1,"initial_prefill_ns":initial_prefill_ns,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"verify3_fused_calls":executor.target_verify3_fused_calls-before_fused,"target_host_phase_ns":host_phase_ns,"load_and_initial_prefill_physical_read_bytes":load_disk_after.checked_sub(replay_disk_before).ok_or("public process read counter regressed")?,"timed_physical_read_bytes":timed_physical_read_bytes,"target_fill_counters_before":fill_counter_record(before_fills),"target_fill_counters_after":fill_counter_record(after_fills),"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"timing_scope":"original normal routing/demand uploads; public checks and actual repair included","load_and_initial_prefill_cumulative_ns":load_ns,"accepted_tokens":accepted_tokens,"elapsed_ns":elapsed_ns,"accepted_tokens_per_second":accepted_tokens as f64*1e9/elapsed_ns as f64,"proposed_drafts":proposed_tokens,"accepted_drafts":accepted_drafts,"rounds":rounds,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"draft_traffic":{"host_read_calls":after.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after.host_read_bytes-before_traffic.host_read_bytes,"explicit_dispatches":after.explicit_dispatches-before_traffic.explicit_dispatches,"private_upload_calls":after.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after.followup_copy_calls-before_traffic.followup_copy_calls}}),
                     )
                 })()?;
                 passes.push(pass);
@@ -603,7 +627,7 @@ pub(crate) fn run(
     if client.public_target_request_io_configured()? != input.request_reuse {
         return Err("target request stream frozen configuration mismatch".into());
     }
-    let value = serde_json::json!({"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"scope":"fixed-public-DASLab13-real-dual-GPU-greedy-speculation","target_card":"B70","draft_card":"RTX3060","verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"request_reuse_metadata_reserved_bytes":if input.request_reuse {4*1024*1024}else{0},"request_binding_capacity":if input.request_reuse {4096}else{0},"fused_mtp_sweeps":input.fused_sweeps,"warm_replay":input.warm_replay,"warm_reset":warm_reset,"compiled_token0":0,"seed":424242,"temperature":0,"oracle_forcing":false,"expert_route_forcing":false,"passes":passes,"draft_close":{"private_buffers":draft_close.private.buffers,"private_bytes":draft_close.private.bytes,"public_bytes":draft_close.public_bytes,"main_reserved":draft_close.main_reserved},"private_or_production_accepted":false});
+    let value = serde_json::json!({"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"scope":"fixed-public-DASLab13-real-dual-GPU-greedy-speculation","target_card":"B70","draft_card":"RTX3060","verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"live_member_reduction":input.live_member_reduction,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"request_reuse_metadata_reserved_bytes":if input.request_reuse {4*1024*1024}else{0},"request_binding_capacity":if input.request_reuse {4096}else{0},"fused_mtp_sweeps":input.fused_sweeps,"warm_replay":input.warm_replay,"warm_reset":warm_reset,"compiled_token0":0,"seed":424242,"temperature":0,"oracle_forcing":false,"expert_route_forcing":false,"passes":passes,"draft_close":{"private_buffers":draft_close.private.buffers,"private_bytes":draft_close.private.bytes,"public_bytes":draft_close.public_bytes,"main_reserved":draft_close.main_reserved},"private_or_production_accepted":false});
     serde_json::to_writer_pretty(
         std::fs::OpenOptions::new()
             .write(true)
@@ -652,6 +676,26 @@ mod tests {
             .to_vec()
         };
         assert!(registration(&args, env(), crate::target_lab_build::Build::Threaded).is_ok());
+        let mut live = env();
+        live.push(("KUNO_LAB_TARGET_MOE".into(), "live".into()));
+        assert!(
+            registration(
+                &args,
+                live.clone(),
+                crate::target_lab_build::Build::Threaded
+            )
+            .unwrap()
+            .live_member_reduction
+        );
+        live.push(("KUNO_LAB_TARGET_EXPERTS".into(), "prepared-verify3".into()));
+        assert!(registration(&args, live, crate::target_lab_build::Build::Threaded).is_err());
+        for value in ["", "auto", "1", "live "] {
+            let mut invalid = env();
+            invalid.push(("KUNO_LAB_TARGET_MOE".into(), value.into()));
+            assert!(
+                registration(&args, invalid, crate::target_lab_build::Build::Threaded).is_err()
+            );
+        }
         let mut reusable = env();
         reusable.extend([
             ("KUNO_LAB_DEVICE_DISPATCH".into(), "inline".into()),

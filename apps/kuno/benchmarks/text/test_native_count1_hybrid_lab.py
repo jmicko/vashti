@@ -1321,6 +1321,30 @@ class HybridLabTests(unittest.TestCase):
                 with self.assertRaises(ValueError):guard.memory_limit(dict(env,**{extra:"1"}),args)
             with self.assertRaises(ValueError):guard.memory_limit(env,[args[0],"nvidia",mode])
 
+    def test_live_member_reductions_are_original_target_only_with_dedicated_operator_gate(self):
+        spec=importlib.util.spec_from_file_location("protected_live_members",HERE/"protected-lab-exec.py")
+        guard=importlib.util.module_from_spec(spec);spec.loader.exec_module(guard)
+        gate="KUNO_LAB_IQ_LIVE_MEMBERS_PUBLIC_ONLY"
+        env={gate:"1","KUNO_PUBLIC_RECEIPT":"/public/numeric"}
+        for card in ("intel","nvidia"):
+            args=["/frozen/binary",card,"iq-live-members-moe-probe"]
+            self.assertEqual(guard.memory_limit(env,args),8*1024**3)
+            for key in ("KUNO_LAB_TARGET_MOE","KUNO_LAB_DEVICE_DISPATCH","KUNO_LAB_TARGET_ROWS_PUBLIC_ONLY","KUNO_TEST_MODEL"):
+                with self.assertRaises(ValueError):guard.memory_limit(dict(env,**{key:"1"}),args)
+            for wrong in (args[:-1],args+["extra"],[args[0],"cpu",args[2]],[args[0],card,"segmented-iq-moe-probe"]):
+                with self.assertRaises(ValueError):guard.memory_limit(env,wrong)
+            for raw in ("","auto","0","1 ",True):
+                with self.assertRaises(ValueError):guard.memory_limit(dict(env,**{gate:raw}),args)
+        for gate,mode in (("KUNO_LAB_SPECULATIVE_PUBLIC_ONLY","daslab-speculative-probe"),("KUNO_LAB_TARGET_ROWS_PUBLIC_ONLY","daslab-target-rows-probe"),("KUNO_LAB_TARGET_REPAIR_PUBLIC_ONLY","daslab-target-repair-probe")):
+            env={gate:"1","KUNO_LAB_STATIC_CACHE_BYTES":"8589934592","KUNO_TEST_Q3_DIR":"/original","KUNO_PUBLIC_RECEIPT":"/public/numeric","KUNO_LAB_TARGET_MOE":"live"}
+            if gate=="KUNO_LAB_SPECULATIVE_PUBLIC_ONLY":env.update(KUNO_TEST_MTP="/original/sidecar",KUNO_PUBLIC_TARGET_CARRY13_REFERENCE="/public/reference")
+            else:env["KUNO_PUBLIC_TARGET_ROWS_REFERENCE"]="/public/reference"
+            args=["/frozen/binary","intel",mode]
+            self.assertEqual(guard.memory_limit(env,args),48*1024**3)
+            with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_TARGET_EXPERTS="prepared-verify3"),args)
+            for raw in ("","auto","1","live ",True):
+                with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_TARGET_MOE=raw),args)
+
     def test_verify3_operator_keeps_exact_small_public_envelope(self):
         spec=importlib.util.spec_from_file_location("protected_verify3_operator",HERE/"protected-lab-exec.py")
         guard=importlib.util.module_from_spec(spec);spec.loader.exec_module(guard)

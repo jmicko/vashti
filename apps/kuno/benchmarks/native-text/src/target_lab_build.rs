@@ -54,6 +54,46 @@ pub(crate) fn request_reuse(
     }
 }
 
+pub(crate) fn live_member_reduction(
+    raw: Option<&OsStr>,
+    prepared: bool,
+) -> Result<bool, &'static str> {
+    match raw {
+        None => Ok(false),
+        Some(value) if value == "live" && !prepared => Ok(true),
+        _ => Err("public target live reductions require original F32 experts and canonical live"),
+    }
+}
+
+pub(crate) fn host_io_snapshot() -> [u64; 4] {
+    let (setup, flush, map) = cubecl::wgpu::transient_scoped_read_ns();
+    [
+        setup,
+        flush,
+        map,
+        cubecl::wgpu::transient_inline_readback_batches(),
+    ]
+}
+pub(crate) fn host_io_delta(
+    before: [u64; 4],
+    after: [u64; 4],
+) -> Result<serde_json::Value, &'static str> {
+    let mut delta = [0; 4];
+    for (out, (after, before)) in delta.iter_mut().zip(after.into_iter().zip(before)) {
+        if before == u64::MAX || after == u64::MAX {
+            return Err("public host I/O counter saturated");
+        }
+        *out = after
+            .checked_sub(before)
+            .ok_or("public host I/O counter regressed")?;
+    }
+    Ok(
+        serde_json::json!({"provenance":"process-global whole public dual-device timed interval",
+        "scoped_read_setup_ns":delta[0],"scoped_read_flush_ns":delta[1],
+        "scoped_read_map_ns":delta[2],"inline_readback_batches":delta[3]}),
+    )
+}
+
 pub(crate) fn reuse_record(
     r: crate::resident_model::batch::public_target_request_io::Receipt,
 ) -> serde_json::Value {
@@ -129,6 +169,31 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+    #[test]
+    fn live_member_selection_keeps_original_default_and_rejects_prepared_math() {
+        for prepared in [false, true] {
+            assert_eq!(live_member_reduction(None, prepared), Ok(false));
+            for raw in ["live", "", "auto", "1", "live "] {
+                assert_eq!(
+                    live_member_reduction(Some(OsStr::new(raw)), prepared).is_ok(),
+                    raw == "live" && !prepared
+                );
+            }
+        }
+    }
+    #[test]
+    fn host_io_deltas_reject_unusable_counter_samples() {
+        assert!(host_io_delta([1, 2, 3, 4], [2, 4, 6, 8]).is_ok());
+        for n in 0..4 {
+            let mut regressed = [1; 4];
+            regressed[n] = 0;
+            assert!(host_io_delta([1; 4], regressed).is_err());
+            let mut saturated = [1; 4];
+            saturated[n] = u64::MAX;
+            assert!(host_io_delta([1; 4], saturated).is_err());
+            assert!(host_io_delta(saturated, saturated).is_err());
         }
     }
     #[test]

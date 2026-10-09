@@ -456,6 +456,23 @@ fn shared_original_iq_probe_registration(
     }
 }
 
+fn live_member_iq_probe_registration(
+    mode: &str,
+    args: usize,
+    gate_present: bool,
+) -> Result<bool, &'static str> {
+    if mode == "iq-live-members-moe-probe" {
+        if args != 3 {
+            return Err("fixed live-member IQ probe rejects additional arguments");
+        }
+        Ok(true)
+    } else if gate_present {
+        Err("live-member IQ gate requires its dedicated public probe")
+    } else {
+        Ok(false)
+    }
+}
+
 fn q3_integer_moe_shared_limit(enabled: bool, available: u32) -> Result<(), &'static str> {
     if enabled && (available as usize) < quant_matvec::iq_moe_integer::MAX_SHARED_BYTES {
         return Err("Q3 integer MoE requires its complete workgroup storage limit");
@@ -1136,6 +1153,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     if shared_original_iq_probe {
         segmented_iq_moe_probe::validate_shared_original_configuration()?;
+    }
+    let live_member_iq_probe = live_member_iq_probe_registration(
+        &mode,
+        std::env::args_os().count(),
+        std::env::var_os("KUNO_LAB_IQ_LIVE_MEMBERS_PUBLIC_ONLY").is_some(),
+    )?;
+    if live_member_iq_probe {
+        segmented_iq_moe_probe::validate_live_members_configuration()?;
     }
     let q6_integer_probe = mode == "q6-integer-probe";
     if q6_integer_probe {
@@ -2044,6 +2069,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             || segmented_iq_probe
             || iq_integer_probe
             || shared_original_iq_probe
+            || live_member_iq_probe
             || q6_integer_probe
             || resident_mtp_inputs.is_some()
             || resident_router_probe)
@@ -2173,6 +2199,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         if shared_original_iq_probe {
             return segmented_iq_moe_probe::run_shared_original(&client, &grouped_limits);
+        }
+        if live_member_iq_probe {
+            return segmented_iq_moe_probe::run_live_members(&client, &grouped_limits);
         }
         if q6_integer_probe {
             return q6_integer_probe::run(&client, &grouped_limits);
@@ -6178,6 +6207,28 @@ mod shared_iq_and_head_fixture_tests {
                     .is_err()
                 );
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod live_member_iq_registration_tests {
+    use super::live_member_iq_probe_registration as selected;
+    #[test]
+    fn dedicated_public_gate_rejects_other_modes_and_variable_arguments() {
+        assert_eq!(selected("iq-live-members-moe-probe", 3, true), Ok(true));
+        for count in [0, 1, 2, 4, 5, usize::MAX] {
+            assert!(selected("iq-live-members-moe-probe", count, true).is_err());
+        }
+        for mode in [
+            "probe",
+            "segmented-iq-moe-probe",
+            "iq-integer-moe-probe",
+            "iq-shared-original-moe-probe",
+            "daslab-speculative-probe",
+        ] {
+            assert_eq!(selected(mode, 3, false), Ok(false));
+            assert!(selected(mode, 3, true).is_err());
         }
     }
 }

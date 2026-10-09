@@ -30,6 +30,7 @@ pub(crate) struct Inputs {
     public_existing_fill: bool,
     chunk_io: bool,
     request_reuse: bool,
+    live_member_reduction: bool,
     directory: PathBuf,
     reference: PathBuf,
     receipt: PathBuf,
@@ -64,6 +65,7 @@ pub(crate) fn registration(
                     | "KUNO_LAB_TARGET_FILL"
                     | "KUNO_LAB_TARGET_IO"
                     | "KUNO_LAB_TARGET_REUSE"
+                    | "KUNO_LAB_TARGET_MOE"
             )
         ) || value.is_empty()
             || values.insert(key, value).is_some()
@@ -83,6 +85,9 @@ pub(crate) fn registration(
         Some(value) if value == "prepared-verify3" => true,
         _ => return Err("target expert policy requires canonical prepared-verify3"),
     };
+    let raw_moe = values.remove(OsStr::new("KUNO_LAB_TARGET_MOE"));
+    let live_member_reduction =
+        crate::target_lab_build::live_member_reduction(raw_moe.as_deref(), prepared_experts)?;
     let public_existing_fill = match values.remove(OsStr::new("KUNO_LAB_TARGET_FILL")) {
         None => false,
         Some(value) if value == "direct-public" => true,
@@ -116,6 +121,7 @@ pub(crate) fn registration(
         public_existing_fill,
         chunk_io,
         request_reuse,
+        live_member_reduction,
         directory: path("KUNO_TEST_Q3_DIR")?,
         reference: path("KUNO_PUBLIC_TARGET_ROWS_REFERENCE")?,
         receipt: path("KUNO_PUBLIC_RECEIPT")?,
@@ -189,6 +195,9 @@ pub(crate) fn run(
         }
         if input.request_reuse {
             config = config.reserve_public_target_request_io()?;
+        }
+        if input.live_member_reduction {
+            config = config.with_live_member_reduction()?;
         }
         if input.public_existing_fill {
             config = config.with_public_existing_expert_fill()?;
@@ -295,6 +304,9 @@ pub(crate) fn run(
                     return Err("target continued actual cursor rejected".into());
                 }
             }
+            if resident.native_live_member_reduction(&executor)? != input.live_member_reduction {
+                return Err("target actual live reduction geometry mismatch".into());
+            }
             let mut request_scope_receipt = None;
             if input.request_reuse {
                 request_scope_receipt = Some(crate::target_lab_build::reuse_record(
@@ -338,7 +350,7 @@ pub(crate) fn run(
     if client.public_target_request_io_configured()? != input.request_reuse {
         return Err("target request stream frozen configuration mismatch".into());
     }
-    let value = serde_json::json!({"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"scope":"fixed-public-DASLab-actual-target-prefix-repair-only","verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"request_reuse_metadata_reserved_bytes":if input.request_reuse {4*1024*1024}else{0},"request_binding_capacity":if input.request_reuse {4096}else{0},"public_token0":0,"seed":424242,"temperature":0,"max_chunk":3,"runtime_io_limit_bytes":128*1024*1024,"complete_cpu_reference_rows":4,"cases":reports,"speculative_controller":false,"accepted_speculative_tokens_per_second":null,"private_or_production_accepted":false});
+    let value = serde_json::json!({"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"scope":"fixed-public-DASLab-actual-target-prefix-repair-only","verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"live_member_reduction":input.live_member_reduction,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"request_reuse_metadata_reserved_bytes":if input.request_reuse {4*1024*1024}else{0},"request_binding_capacity":if input.request_reuse {4096}else{0},"public_token0":0,"seed":424242,"temperature":0,"max_chunk":3,"runtime_io_limit_bytes":128*1024*1024,"complete_cpu_reference_rows":4,"cases":reports,"speculative_controller":false,"accepted_speculative_tokens_per_second":null,"private_or_production_accepted":false});
     let out = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -370,6 +382,26 @@ mod tests {
             .to_vec()
         };
         assert!(registration(&args, env(), crate::target_lab_build::Build::Threaded).is_ok());
+        let mut live = env();
+        live.push(("KUNO_LAB_TARGET_MOE".into(), "live".into()));
+        assert!(
+            registration(
+                &args,
+                live.clone(),
+                crate::target_lab_build::Build::Threaded
+            )
+            .unwrap()
+            .live_member_reduction
+        );
+        live.push(("KUNO_LAB_TARGET_EXPERTS".into(), "prepared-verify3".into()));
+        assert!(registration(&args, live, crate::target_lab_build::Build::Threaded).is_err());
+        for value in ["", "auto", "1", "live "] {
+            let mut invalid = env();
+            invalid.push(("KUNO_LAB_TARGET_MOE".into(), value.into()));
+            assert!(
+                registration(&args, invalid, crate::target_lab_build::Build::Threaded).is_err()
+            );
+        }
         let mut reusable = env();
         reusable.extend([
             ("KUNO_LAB_DEVICE_DISPATCH".into(), "inline".into()),

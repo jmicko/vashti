@@ -34,6 +34,7 @@ pub(crate) struct Inputs {
     public_existing_fill: bool,
     chunk_io: bool,
     request_reuse: bool,
+    live_member_reduction: bool,
     directory: PathBuf,
     reference: PathBuf,
     receipt: PathBuf,
@@ -69,6 +70,7 @@ pub(crate) fn registration(
                     | "KUNO_LAB_TARGET_FILL"
                     | "KUNO_LAB_TARGET_IO"
                     | "KUNO_LAB_TARGET_REUSE"
+                    | "KUNO_LAB_TARGET_MOE"
             )
         ) || value.is_empty()
             || selected.insert(key, value).is_some()
@@ -92,6 +94,9 @@ pub(crate) fn registration(
         Some(value) if value == "prepared-verify3" => true,
         _ => return Err("target expert policy requires canonical prepared-verify3"),
     };
+    let raw_moe = selected.remove(OsStr::new("KUNO_LAB_TARGET_MOE"));
+    let live_member_reduction =
+        crate::target_lab_build::live_member_reduction(raw_moe.as_deref(), prepared_experts)?;
     let public_existing_fill = match selected.remove(OsStr::new("KUNO_LAB_TARGET_FILL")) {
         None => false,
         Some(value) if value == "direct-public" => true,
@@ -120,6 +125,7 @@ pub(crate) fn registration(
         public_existing_fill,
         chunk_io,
         request_reuse,
+        live_member_reduction,
         directory: selected
             .remove(OsStr::new("KUNO_TEST_Q3_DIR"))
             .ok_or("original DAS shards required")?
@@ -220,6 +226,9 @@ pub(crate) fn run(
         if input.request_reuse {
             config = config.reserve_public_target_request_io()?;
         }
+        if input.live_member_reduction {
+            config = config.with_live_member_reduction()?;
+        }
         if input.public_existing_fill {
             config = config.with_public_existing_expert_fill()?;
         }
@@ -289,6 +298,9 @@ pub(crate) fn run(
             if start != 4 {
                 return Err("target continuation incomplete".into());
             }
+            if resident.native_live_member_reduction(&executor)? != input.live_member_reduction {
+                return Err("target actual live reduction geometry mismatch".into());
+            }
             let mut request_scope_receipt = None;
             if input.request_reuse {
                 request_scope_receipt = Some(crate::target_lab_build::reuse_record(
@@ -337,7 +349,7 @@ pub(crate) fn run(
     }
     let receipt = serde_json::json!({"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"scope":"fixed-public-DASLab-target-rows-and-carry-only",
         "model_repository":daslab_profile::REPOSITORY,"model_revision":daslab_profile::REVISION,
-        "verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"request_reuse_metadata_reserved_bytes":if input.request_reuse {4*1024*1024}else{0},"request_binding_capacity":if input.request_reuse {4096}else{0},"public_token0":0,"seed":424242,"temperature":0,"complete_cpu_reference_rows":4,
+        "verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"live_member_reduction":input.live_member_reduction,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"request_reuse_metadata_reserved_bytes":if input.request_reuse {4*1024*1024}else{0},"request_binding_capacity":if input.request_reuse {4096}else{0},"public_token0":0,"seed":424242,"temperature":0,"complete_cpu_reference_rows":4,
         "logits_width":reference::VOCAB,"carry_width":reference::HIDDEN,"max_chunk":3,
         "absolute_tolerance":reference::ABS_TOLERANCE,"relative_tolerance":reference::REL_TOLERANCE,
         "carry_tap":"layer47 FFN HC residual before output_hc",
@@ -378,6 +390,26 @@ mod tests {
     #[test]
     fn exclusive_fixed_public_registration() {
         assert!(registration(&args(), env(), crate::target_lab_build::Build::Threaded).is_ok());
+        let mut live = env();
+        live.push(("KUNO_LAB_TARGET_MOE".into(), "live".into()));
+        assert!(
+            registration(
+                &args(),
+                live.clone(),
+                crate::target_lab_build::Build::Threaded
+            )
+            .unwrap()
+            .live_member_reduction
+        );
+        live.push(("KUNO_LAB_TARGET_EXPERTS".into(), "prepared-verify3".into()));
+        assert!(registration(&args(), live, crate::target_lab_build::Build::Threaded).is_err());
+        for value in ["", "auto", "1", "live "] {
+            let mut invalid = env();
+            invalid.push(("KUNO_LAB_TARGET_MOE".into(), value.into()));
+            assert!(
+                registration(&args(), invalid, crate::target_lab_build::Build::Threaded).is_err()
+            );
+        }
         let mut reusable = env();
         reusable.extend([
             ("KUNO_LAB_DEVICE_DISPATCH".into(), "inline".into()),
