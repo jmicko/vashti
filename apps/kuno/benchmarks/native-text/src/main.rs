@@ -258,12 +258,19 @@ fn original_count1_setting(
     name: &str,
     raw: Option<&str>,
 ) -> Result<(), &'static str> {
-    if profile == expert_banks::OriginalPackedProfile::UnslothQ3 && name == "KUNO_LAB_BLOCK_MOE" {
-        return if banks == Count1Banks::Intel144 && raw == Some("0") {
-            Ok(())
-        } else {
-            Err("original Q3 requires explicit generic MoE")
+    if profile == expert_banks::OriginalPackedProfile::UnslothQ3 {
+        let expected = match name {
+            "KUNO_LAB_BLOCK_MOE" => Some("0"),
+            "KUNO_LAB_NATIVE_DECODE_KERNELS" => Some("single-all"),
+            _ => None,
         };
+        if let Some(expected) = expected {
+            return if banks == Count1Banks::Intel144 && raw == Some(expected) {
+                Ok(())
+            } else {
+                Err("original Q3 requires explicit generic MoE and SingleAll")
+            };
+        }
     }
     banks.setting(name, raw)
 }
@@ -3787,6 +3794,33 @@ mod transient_mode_tests {
                 Some("0")
             )
             .is_ok()
+        );
+        assert!(
+            super::original_count1_setting(
+                P::UnslothQ3,
+                super::Count1Banks::Intel144,
+                "KUNO_LAB_NATIVE_DECODE_KERNELS",
+                Some("single-all")
+            )
+            .is_ok()
+        );
+        assert!(
+            super::original_count1_setting(
+                P::UnslothQ3,
+                super::Count1Banks::Intel144,
+                "KUNO_LAB_NATIVE_DECODE_KERNELS",
+                Some("single-q4-all")
+            )
+            .is_err()
+        );
+        assert!(
+            super::original_count1_setting(
+                P::Q4,
+                super::Count1Banks::Intel144,
+                "KUNO_LAB_NATIVE_DECODE_KERNELS",
+                Some("single-all")
+            )
+            .is_err()
         );
         assert!(
             super::original_count1_setting(
