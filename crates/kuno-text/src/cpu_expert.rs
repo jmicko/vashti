@@ -1,6 +1,6 @@
 //! Explicit, bounded packed Rust CPU experts for a source-only decode experiment.
 //!
-//! By default all seven original formats retain F32 activations and the GPU's
+//! By default all supported original formats retain F32 activations and the GPU's
 //! 64-lane dot schedule. Explicit pooled Q8 activation arithmetic is a separate
 //! approximate experiment. Returns unweighted original-rank partials; routing, probability
 //! multiplication, shared experts and whole-model acceptance remain the caller's.
@@ -31,8 +31,9 @@ mod quantized;
 pub enum Backend {
     Portable,
     Avx2,
-    /// Explicit original-weight FMA/32-lane candidate. Floating reduction
-    /// order differs; never selected automatically or used as a fallback.
+    /// Explicit original-weight FMA/32-lane candidate for Q4_K/Q5_0/Q8_0.
+    /// Other layouts retain the exact64-lane path. Never selected automatically
+    /// or used as a fallback.
     Avx2Fma,
 }
 
@@ -1520,6 +1521,10 @@ mod avx {
     #[cfg(target_arch = "x86_64")]
     use std::arch::x86_64::*;
 
+    mod iq {
+        include!("cpu_iq.rs");
+    }
+
     struct Sums([__m256; 8]);
     impl Zeroize for Sums {
         fn zeroize(&mut self) {
@@ -1600,6 +1605,28 @@ mod avx {
             // original block geometry. Each helper load is bounded by its block.
             return unsafe { packed_dot(dtype, packed, input, scratch, cancel) };
         }
+        if matches!(
+            dtype,
+            TensorType::Iq3Xxs | TensorType::Iq4Nl | TensorType::Iq4Xs
+        ) {
+            // SAFETY: AVX2 is enabled and dot_row proved the original packed
+            // row geometry. IQ retains the same64-lane separate mul/add tree,
+            // including when called by the explicit FMA backend.
+            return unsafe { iq::dot(dtype, packed, input, cancel) };
+        }
+        // SAFETY: same validated geometry and ISA; the fallback preserves its
+        // bounded scalar block decode for the remaining original formats.
+        unsafe { decoded_dot(dtype, packed, input, scratch, cancel) }
+    }
+
+    #[target_feature(enable = "avx2")]
+    unsafe fn decoded_dot(
+        dtype: TensorType,
+        packed: &[u8],
+        input: &[f32],
+        scratch: &mut Scratch,
+        cancel: &AtomicBool,
+    ) -> Result<f32> {
         let mut sums = Zeroizing::new(Sums([_mm256_setzero_ps(); 8]));
         let chunk = (dtype.block_elements() as usize).max(LANES);
         let row_bytes = usize::try_from(dtype.row_bytes(input.len() as u64)?)
@@ -1671,6 +1698,31 @@ mod avx {
         }
         // SAFETY: run has AVX2 enabled; sums owns all original64 lane results.
         unsafe { finish(&sums) }
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_iq_decode(dtype: TensorType, packed: &[u8], out: &mut [f32]) -> Result<()> {
+        iq::test_decode(dtype, packed, out)
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_decoded_dot(
+        dtype: TensorType,
+        packed: &[u8],
+        input: &[f32],
+        scratch: &mut Scratch,
+        cancel: &AtomicBool,
+    ) -> Result<f32> {
+        if !avx2_available() {
+            return Err(Error::InvalidFormat("CPU expert AVX2 unavailable"));
+        }
+        if dtype.row_bytes(input.len() as u64)? != packed.len() as u64
+            || input.len() > scratch.logical_width
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        // SAFETY: detected AVX2 and complete original row/input geometry above.
+        unsafe { decoded_dot(dtype, packed, input, scratch, cancel) }
     }
 
     #[target_feature(enable = "avx2")]
@@ -2262,6 +2314,11 @@ mod affinity {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    mod iq_tests {
+        use super::*;
+        include!("cpu_iq_tests.rs");
+    }
     use crate::{GgufFile, GgufLimits};
     use std::sync::atomic::{AtomicU64, AtomicUsize};
 
