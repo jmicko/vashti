@@ -6,6 +6,10 @@ import sys
 
 def selected_target_policy(environment, mtp=False):
     selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
+    if "KUNO_LAB_FROZEN_PARTITION_EXIT" in selected:
+        if (not mtp or selected.pop("KUNO_LAB_FROZEN_PARTITION_EXIT") != "1"
+                or selected.get("KUNO_LAB_TARGET_SOURCES") != "frozen-host-public"):
+            raise ValueError("Partition exit requires explicit frozen public target sources")
     if "KUNO_LAB_TARGET_SOURCES" in selected:
         spec = selected.get("KUNO_LAB_SPECULATIVE_PUBLIC_ONLY") == "1"
         language = selected.get("KUNO_LAB_LANGUAGE_PUBLIC_ONLY") == "1"

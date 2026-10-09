@@ -95,6 +95,7 @@ pub(crate) struct Inputs {
     pub(crate) gpu_qsa_selector: bool,
     pub(crate) frozen_host_sources: bool,
     pub(crate) frozen_host_router: bool,
+    pub(crate) frozen_partition_exit: bool,
     pub(crate) verify3_dense: bool,
     pub(crate) verify3_fused: bool,
     pub(crate) prepared_experts: bool,
@@ -137,6 +138,7 @@ pub(crate) fn registration(
                     | "KUNO_LAB_MTP_PROFILE"
                     | "KUNO_LAB_TARGET_QSA"
                     | "KUNO_LAB_TARGET_SOURCES"
+                    | "KUNO_LAB_FROZEN_PARTITION_EXIT"
                     | "KUNO_LAB_TARGET_ROUTER"
                     | "KUNO_LAB_TARGET_DENSE"
                     | "KUNO_LAB_TARGET_EXPERTS"
@@ -176,6 +178,11 @@ pub(crate) fn registration(
         None => false,
         Some(v) if v == "frozen-host-public" => true,
         _ => return Err("target sources require canonical frozen-host-public"),
+    };
+    let frozen_partition_exit = match values.remove(OsStr::new("KUNO_LAB_FROZEN_PARTITION_EXIT")) {
+        None => false,
+        Some(v) if v == "1" && frozen_host_sources => true,
+        _ => return Err("partition exit requires explicit frozen public sources"),
     };
     let frozen_host_router = match values.remove(OsStr::new("KUNO_LAB_TARGET_ROUTER")) {
         None => false,
@@ -220,6 +227,7 @@ pub(crate) fn registration(
         gpu_qsa_selector,
         frozen_host_sources,
         frozen_host_router,
+        frozen_partition_exit,
         verify3_dense,
         verify3_fused,
         prepared_experts,
@@ -645,6 +653,7 @@ pub(crate) fn run(
                         prepared,
                         host_device.ok_or("public exact device absent")?,
                         reserved,
+                        input.frozen_partition_exit,
                         &cancel,
                     )?
                 });
@@ -880,6 +889,14 @@ pub(crate) fn run(
             } else {
                 None
             };
+            let frozen_partition_exit = if executor.target_frozen_host_source_identity.is_some() {
+                target.native_frozen_source_partition_exit(&executor)?
+            } else {
+                false
+            };
+            if frozen_partition_exit != input.frozen_partition_exit {
+                return Err("frozen source partition exit policy changed".into());
+            }
             if actual_direct != input.public_existing_fill
                 || target.native_live_member_reduction(&executor)? != input.live_member_reduction
             {
@@ -889,7 +906,7 @@ pub(crate) fn run(
                 .checked_sub(load_disk_after)
                 .ok_or("language process read counter regressed")?;
             Ok(
-                serde_json::json!({"fixture":input.fixture.name(),"prompt_tokens":prompt.len(),"context_capacity":input.fixture.context(),"compiled_prompt_template_revision":TEMPLATE_REVISION,"compiled_prompt_template_file":TEMPLATE_FILE,"load_ns":load_ns,"prefill_ns_including_real_teacher_kv":prefill_ns,"prefill_first_output_count":1,"prefill_first_output_generation_pick_timed":false,"first_output_emission_timed":true,"emitted_tokens_including_eos":emitted.len(),"post_prefill_target_continuations":stats.continuations,"stop_reason":if confirmed==graph.eos_token(){"eos"}else{"limit"},"nonempty_text":nonempty_text,"elapsed_ns":elapsed_ns,"continuation_tokens_per_second":stats.continuations as f64*1e9/elapsed_ns as f64,"emitted_tokens_per_second":emitted.len()as f64*1e9/elapsed_ns as f64,"rounds":stats.rounds,"frozen_host_gpu_router":input.frozen_host_router,"gpu_router_calls":executor.gpu_router_calls-before_gpu_routers,"proposed_drafts":stats.proposed,"accepted_drafts":stats.accepted_drafts,"draft_ns":stats.draft_ns,"verify_ns_full_packets":stats.verify_ns,"repair_ns_including_vector_checks":stats.repair_ns,"actual_target_recomputations":stats.repairs,"repair_logit_max_abs":stats.repair_logit_max,"repair_hidden_max_abs":stats.repair_hidden_max,"repair_abs_tolerance":ABS,"repair_rel_tolerance":REL,"fixture_peak_host_bytes":fixture_peak,"request_scope":request_scope,"request_close_ns_inside_timing":request_close_ns,"host_io":host_io,"target_host_phase_ns":phase_ns,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"verify3_fused_calls":executor.target_verify3_fused_calls-before_fused,"load_and_prefill_physical_read_bytes":load_disk_after.checked_sub(load_disk_before).ok_or("language process read counter regressed")?,"generation_physical_read_bytes":physical_read_bytes,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"target_fill_counters_before":fill_counter_record(before_fills),"target_fill_counters_after":fill_counter_record(after_fills),"frozen_source_routes":frozen_routes,"draft_traffic":{"host_read_calls":after_traffic.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after_traffic.host_read_bytes-before_traffic.host_read_bytes,"explicit_dispatches":after_traffic.explicit_dispatches-before_traffic.explicit_dispatches,"private_upload_calls":after_traffic.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after_traffic.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after_traffic.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after_traffic.followup_copy_calls-before_traffic.followup_copy_calls}}),
+                serde_json::json!({"fixture":input.fixture.name(),"prompt_tokens":prompt.len(),"context_capacity":input.fixture.context(),"compiled_prompt_template_revision":TEMPLATE_REVISION,"compiled_prompt_template_file":TEMPLATE_FILE,"load_ns":load_ns,"prefill_ns_including_real_teacher_kv":prefill_ns,"prefill_first_output_count":1,"prefill_first_output_generation_pick_timed":false,"first_output_emission_timed":true,"emitted_tokens_including_eos":emitted.len(),"post_prefill_target_continuations":stats.continuations,"stop_reason":if confirmed==graph.eos_token(){"eos"}else{"limit"},"nonempty_text":nonempty_text,"elapsed_ns":elapsed_ns,"continuation_tokens_per_second":stats.continuations as f64*1e9/elapsed_ns as f64,"emitted_tokens_per_second":emitted.len()as f64*1e9/elapsed_ns as f64,"rounds":stats.rounds,"frozen_host_gpu_router":input.frozen_host_router,"frozen_host_inactive_partition_exit":frozen_partition_exit,"gpu_router_calls":executor.gpu_router_calls-before_gpu_routers,"proposed_drafts":stats.proposed,"accepted_drafts":stats.accepted_drafts,"draft_ns":stats.draft_ns,"verify_ns_full_packets":stats.verify_ns,"repair_ns_including_vector_checks":stats.repair_ns,"actual_target_recomputations":stats.repairs,"repair_logit_max_abs":stats.repair_logit_max,"repair_hidden_max_abs":stats.repair_hidden_max,"repair_abs_tolerance":ABS,"repair_rel_tolerance":REL,"fixture_peak_host_bytes":fixture_peak,"request_scope":request_scope,"request_close_ns_inside_timing":request_close_ns,"host_io":host_io,"target_host_phase_ns":phase_ns,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"verify3_fused_calls":executor.target_verify3_fused_calls-before_fused,"load_and_prefill_physical_read_bytes":load_disk_after.checked_sub(load_disk_before).ok_or("language process read counter regressed")?,"generation_physical_read_bytes":physical_read_bytes,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"target_fill_counters_before":fill_counter_record(before_fills),"target_fill_counters_after":fill_counter_record(after_fills),"frozen_source_routes":frozen_routes,"draft_traffic":{"host_read_calls":after_traffic.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after_traffic.host_read_bytes-before_traffic.host_read_bytes,"explicit_dispatches":after_traffic.explicit_dispatches-before_traffic.explicit_dispatches,"private_upload_calls":after_traffic.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after_traffic.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after_traffic.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after_traffic.followup_copy_calls-before_traffic.followup_copy_calls}}),
             )
         })();
         let close = target.close();
@@ -1052,6 +1069,73 @@ mod tests {
             "frozen-host-public".into(),
         ));
         assert!(registration(&args(), selected, build).is_err());
+    }
+    #[test]
+    fn partition_exit_is_explicit_original_frozen_only_and_rejects_duplicate_flags() {
+        let args = ["lab", "intel", "daslab-language-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        let mut selected = env();
+        for (key, value) in [
+            ("KUNO_LAB_DEVICE_DISPATCH", "inline"),
+            ("KUNO_LAB_TARGET_FILL", "direct-public"),
+            ("KUNO_LAB_TARGET_IO", "chunk"),
+            ("KUNO_LAB_TARGET_REUSE", "request"),
+            ("KUNO_LAB_TARGET_SOURCES", "frozen-host-public"),
+        ] {
+            selected.push((key.into(), value.into()));
+        }
+        assert!(
+            !registration(&args, selected.clone(), build)
+                .unwrap()
+                .frozen_partition_exit
+        );
+        let flag = ("KUNO_LAB_FROZEN_PARTITION_EXIT".into(), "1".into());
+        selected.push(flag.clone());
+        for router in [None, Some("device-frozen-public")] {
+            let mut valid = selected.clone();
+            if let Some(router) = router {
+                valid.push(("KUNO_LAB_TARGET_ROUTER".into(), router.into()));
+            }
+            assert!(
+                registration(&args, valid, build)
+                    .unwrap()
+                    .frozen_partition_exit
+            );
+        }
+        for raw in ["", "0", "true", "01", "1 ", "-1"] {
+            let mut invalid = selected.clone();
+            invalid
+                .iter_mut()
+                .find(|(k, _)| k == "KUNO_LAB_FROZEN_PARTITION_EXIT")
+                .unwrap()
+                .1 = raw.into();
+            assert!(registration(&args, invalid, build).is_err());
+        }
+        for key in [
+            "KUNO_LAB_TARGET_SOURCES",
+            "KUNO_LAB_TARGET_FILL",
+            "KUNO_LAB_TARGET_IO",
+            "KUNO_LAB_TARGET_REUSE",
+            "KUNO_LAB_DEVICE_DISPATCH",
+        ] {
+            let mut invalid = selected.clone();
+            invalid.retain(|(k, _)| k != key);
+            assert!(registration(&args, invalid, build).is_err());
+        }
+        for (key, value) in [
+            ("KUNO_LAB_TARGET_EXPERTS", "prepared-verify3"),
+            ("KUNO_LAB_TARGET_MOE", "live"),
+            ("KUNO_LAB_PROMPT", "private"),
+        ] {
+            let mut invalid = selected.clone();
+            invalid.push((key.into(), value.into()));
+            assert!(registration(&args, invalid, build).is_err());
+        }
+        let mut inherited = env();
+        inherited.push(flag.clone());
+        assert!(registration(&args, inherited, build).is_err());
+        selected.push(flag);
+        assert!(registration(&args, selected, build).is_err());
     }
     #[test]
     fn qsa_gpu_selection_is_explicit_and_rejects_malformed_or_duplicate_policy() {
