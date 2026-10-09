@@ -52,6 +52,7 @@ mod resident_moe;
 mod resident_probe;
 mod resident_qsa;
 mod resident_router_gpu;
+mod resident_router_gpu_probe;
 mod resident_util;
 mod residual_batch_gpu;
 mod residual_gpu;
@@ -230,6 +231,23 @@ fn resident_router_scope(
         return Err("resident GPU router requires exclusive original protected ideal replay");
     }
     Ok(())
+}
+
+fn resident_router_probe_registration(
+    mode: &str,
+    argc: usize,
+    gate_present: bool,
+) -> Result<bool, &'static str> {
+    if mode == "resident-router-gpu-probe" {
+        if argc != 3 {
+            return Err("resident mapper probe rejects additional arguments");
+        }
+        return Ok(true);
+    }
+    if gate_present {
+        return Err("resident mapper gate requires its dedicated public probe");
+    }
+    Ok(false)
 }
 
 fn count1_worker_pool(mode: &str, raw: Option<&str>) -> Result<bool, &'static str> {
@@ -1023,6 +1041,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => return Err("expected intel or nvidia".into()),
     };
     let mode = std::env::args().nth(2).unwrap_or("probe".into());
+    let resident_router_probe = resident_router_probe_registration(
+        &mode,
+        std::env::args_os().count(),
+        std::env::var_os("KUNO_LAB_RESIDENT_ROUTER_PUBLIC_ONLY").is_some(),
+    )?;
+    if resident_router_probe {
+        resident_router_gpu_probe::validate_configuration()?;
+    }
     let segmented_iq_probe = mode == "segmented-iq-moe-probe";
     let iq_integer_probe = mode == "iq-integer-moe-probe";
     let shared_original_iq_probe = shared_original_iq_probe_registration(
@@ -1850,6 +1876,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if q6_integer_probe {
             q6_integer_probe::validate_limits(&adapter.limits())?;
         }
+        if resident_router_probe {
+            resident_router_gpu_probe::validate_limits(&adapter.limits())?;
+        }
         if shared_original_iq_probe
             && (adapter.limits().max_compute_workgroup_storage_size as usize)
                 < quant_matvec::iq_moe_shared_original::MAX_SHARED_BYTES
@@ -1867,7 +1896,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             || segmented_iq_probe
             || iq_integer_probe
             || shared_original_iq_probe
-            || q6_integer_probe)
+            || q6_integer_probe
+            || resident_router_probe)
             && (!adapter.features().contains(wgpu::Features::SUBGROUP)
                 || info.subgroup_min_size < 16
                 || info.subgroup_max_size > 32
@@ -1953,6 +1983,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         if q6_integer_probe {
             return q6_integer_probe::run(&client, &grouped_limits);
+        }
+        if resident_router_probe {
+            return resident_router_gpu_probe::run(&client, &grouped_limits);
         }
         if kernel_profile {
             client.set_profiling_paused(true);
@@ -4481,6 +4514,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod transient_mode_tests {
+    #[test]
+    fn resident_mapper_probe_registration_is_exclusive_and_has_no_fixture_arguments() {
+        for gate in [false, true] {
+            assert_eq!(
+                super::resident_router_probe_registration("resident-router-gpu-probe", 3, gate),
+                Ok(true)
+            );
+            for argc in [0, 1, 2, 4, usize::MAX] {
+                assert!(
+                    super::resident_router_probe_registration(
+                        "resident-router-gpu-probe",
+                        argc,
+                        gate
+                    )
+                    .is_err()
+                );
+            }
+        }
+        for mode in ["probe", "resident-count1-hybrid-chat", "iq-quant-probe"] {
+            assert_eq!(
+                super::resident_router_probe_registration(mode, 3, false),
+                Ok(false)
+            );
+            assert!(super::resident_router_probe_registration(mode, 3, true).is_err());
+        }
+    }
     #[test]
     fn resident_router_is_exact_original_protected_ideal_only() {
         use crate::expert_banks::OriginalPackedProfile as P;
