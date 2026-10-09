@@ -6,6 +6,12 @@ import sys
 
 def selected_target_policy(environment, mtp=False):
     selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
+    if "KUNO_LAB_TARGET_ROUTER" in selected:
+        if (not mtp or selected.pop("KUNO_LAB_TARGET_ROUTER") != "device-warm-public"
+                or selected.get("KUNO_LAB_WARM_REPLAY") != "once"
+                or selected.get("KUNO_LAB_TARGET_REUSE") != "request"
+                or "KUNO_LAB_TARGET_EXPERTS" in selected):
+            raise ValueError("Device router requires the fixed original warm public request")
     if "KUNO_LAB_TARGET_REUSE" in selected:
         if (selected.pop("KUNO_LAB_TARGET_REUSE") != "request"
                 or selected.get("KUNO_LAB_DEVICE_DISPATCH") != "inline"
@@ -39,6 +45,29 @@ def selected_target_policy(environment, mtp=False):
     return selected
 
 def memory_limit(environment, arguments):
+    if "KUNO_LAB_LANGUAGE_PUBLIC_ONLY" in environment:
+        selected = selected_target_policy(environment, mtp=True)
+        required = {"KUNO_LAB_LANGUAGE_PUBLIC_ONLY","KUNO_LAB_LANGUAGE_FIXTURE","KUNO_TEST_Q3_DIR","KUNO_TEST_MTP","KUNO_PUBLIC_RECEIPT","KUNO_LAB_STATIC_CACHE_BYTES"}
+        if (set(selected) != required or any(not value for value in selected.values())
+                or selected["KUNO_LAB_LANGUAGE_PUBLIC_ONLY"] != "1"
+                or selected["KUNO_LAB_LANGUAGE_FIXTURE"] not in ("first-code","warm-prose")
+                or selected["KUNO_LAB_STATIC_CACHE_BYTES"] != "8589934592"
+                or len(arguments)!=3 or arguments[1:]!=["intel","daslab-language-probe"]
+                or "KUNO_LAB_WARM_REPLAY" in environment or "KUNO_LAB_TARGET_ROUTER" in environment):
+            raise ValueError("Language benchmark requires the frozen public fixture")
+        # Includes separately declared192MiB tokenizer and4MiB fixture owners;
+        # these are never borrowed from GPU/staging/runtime reservations.
+        return 48*1024**3 + 196*1024**2
+
+    if "KUNO_LAB_BATCH_ROUTER_PUBLIC_ONLY" in environment:
+        selected = {key:value for key,value in environment.items() if key.startswith(("KUNO_LAB_","KUNO_TEST_","KUNO_PUBLIC_"))}
+        if (set(selected) != {"KUNO_LAB_BATCH_ROUTER_PUBLIC_ONLY","KUNO_PUBLIC_RECEIPT"}
+                or any(not value for value in selected.values())
+                or selected["KUNO_LAB_BATCH_ROUTER_PUBLIC_ONLY"] != "1"
+                or len(arguments)!=3 or arguments[1] not in ("intel","nvidia") or arguments[2]!="batch-router-gpu-probe"):
+            raise ValueError("Batch router requires the fixed public fixture")
+        return 8*1024**3
+
     if "KUNO_LAB_IQ_LIVE_MEMBERS_PUBLIC_ONLY" in environment:
         selected = {key:value for key,value in environment.items() if key.startswith(("KUNO_LAB_","KUNO_TEST_","KUNO_PUBLIC_"))}
         if (set(selected) != {"KUNO_LAB_IQ_LIVE_MEMBERS_PUBLIC_ONLY","KUNO_PUBLIC_RECEIPT"}

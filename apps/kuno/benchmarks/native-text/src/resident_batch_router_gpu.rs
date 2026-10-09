@@ -48,7 +48,6 @@ pub(crate) const NEAR_TIE_MARGIN: f32 = 1e-4;
 pub(crate) const PROB_ABS: f64 = 2e-6;
 pub(crate) const PROB_REL: f64 = 2e-5;
 pub(crate) const FAULT_SHAPE: u32 = 1;
-pub(crate) const FAULT_NUMERIC: u32 = 2;
 pub(crate) const FAULT_MISSING: u32 = 4;
 pub(crate) const FAULT_NEAR_TIE: u32 = 8;
 const SELECTION: usize = ROUTER_WORDS;

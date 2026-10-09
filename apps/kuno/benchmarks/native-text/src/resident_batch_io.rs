@@ -341,7 +341,7 @@ fn read(arena: &PrivateArena, handle: Handle, retired: &AtomicBool) -> Result<By
 }
 /// The additive target-row packet keeps exactly the ordinary completed-map
 /// lease destruction, forced audit and final telemetry/MAIN fence ordering.
-pub(super) fn read_target_output<T>(
+pub(crate) fn read_target_output<T>(
     arena: &PrivateArena,
     admission: &ResidentAdmission,
     packet: Handle,

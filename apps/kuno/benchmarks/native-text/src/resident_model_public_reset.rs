@@ -50,6 +50,9 @@ pub(super) struct Permit {
     authority: Authority,
 }
 impl Permit {
+    pub(super) fn reset_consumed(&self) -> bool {
+        self.authority.consumed
+    }
     pub(super) fn new(
         binding: GraphBindingId,
         profile: OriginalPackedProfile,

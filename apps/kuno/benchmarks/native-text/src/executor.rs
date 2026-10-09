@@ -805,6 +805,7 @@ pub struct GpuExecutor<'a> {
     pub(crate) q6_integer_head: bool,
     pub(crate) resident_router_reserved: bool,
     pub(crate) target_rows_reserved: bool,
+    pub(crate) target_batch_router_reserved: bool,
     pub(crate) target_verify3_dense: bool,
     pub(crate) target_verify3_dense_calls: u64,
     pub(crate) target_verify3_fused: bool,
@@ -1036,6 +1037,7 @@ impl<'a> GpuExecutor<'a> {
             q6_integer_head: false,
             resident_router_reserved: false,
             target_rows_reserved: false,
+            target_batch_router_reserved: false,
             target_verify3_dense: false,
             target_verify3_dense_calls: 0,
             target_verify3_fused: false,
@@ -1898,13 +1900,27 @@ impl<'a> GpuExecutor<'a> {
     ) -> Result<ResidentAdmission> {
         self.check_segmented_resident(true)?;
         self.check_target_rows_policy()?;
-        if self.target_rows_reserved
-            && ![
+        let target_private = if self.target_batch_router_reserved {
+            if !self.target_rows_reserved
+                || self.packed_profile != expert_banks::OriginalPackedProfile::DaslabIq3
+                || self.bank_slots != 144
+                || self.resident_banks_frozen
+            {
+                return Err(Error::InvalidFormat(
+                    "public batch router construction policy",
+                ));
+            }
+            private_owned
+                == crate::resident_model::batch::TARGET_ROWS_PRIVATE_MAIN
+                    + batch_moe::batch_router::MAIN_BYTES
+        } else {
+            [
                 crate::resident_model::batch::TARGET_ROWS_PRIVATE_MAIN,
                 crate::resident_model::batch::TARGET_ROWS_PREPARED_VERIFY3_MAIN,
             ]
             .contains(&private_owned)
-        {
+        };
+        if self.target_rows_reserved && !target_private {
             return Err(Error::InvalidFormat(
                 "native target rows explicit construction policy",
             ));

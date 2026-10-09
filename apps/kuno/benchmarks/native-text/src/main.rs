@@ -1,3 +1,4 @@
+#![recursion_limit = "256"]
 //! Public synthetic Rust-authored kernel probe, not a model engine wrapper.
 mod adaptive_experts;
 mod bank96_probe;
@@ -9,6 +10,7 @@ mod cpu_gpu_expert_schedule;
 mod daslab_carry_reference;
 #[allow(dead_code)] // Separate numeric-only public CPU writer shares this parser.
 mod daslab_carry_reference13;
+mod daslab_language_probe;
 mod daslab_profile;
 mod daslab_speculative_probe;
 mod daslab_target_repair_probe;
@@ -57,6 +59,8 @@ mod qsa_layer_batch;
 mod qsa_layer_batch_probe;
 mod quant_matvec;
 mod resident_batch_projection;
+mod resident_batch_router_gpu;
+mod resident_batch_router_gpu_probe;
 mod resident_gdn;
 mod resident_gr;
 mod resident_model;
@@ -1088,6 +1092,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         None
     };
+    let batch_router_receipt = if mode == "batch-router-gpu-probe" {
+        let selected: std::collections::BTreeMap<_, _> = std::env::vars_os()
+            .filter(|(k, _)| {
+                [b"KUNO_LAB_".as_slice(), b"KUNO_TEST_", b"KUNO_PUBLIC_"]
+                    .iter()
+                    .any(|prefix| k.as_encoded_bytes().starts_with(prefix))
+            })
+            .collect();
+        if std::env::args_os().count() != 3
+            || selected.len() != 2
+            || selected.get(std::ffi::OsStr::new("KUNO_LAB_BATCH_ROUTER_PUBLIC_ONLY"))
+                != Some(&"1".into())
+            || selected
+                .get(std::ffi::OsStr::new("KUNO_PUBLIC_RECEIPT"))
+                .is_none_or(|v| v.is_empty())
+        {
+            return Err("batch router probe requires exclusive fixed public fixture".into());
+        }
+        Some(std::path::PathBuf::from(
+            selected
+                .get(std::ffi::OsStr::new("KUNO_PUBLIC_RECEIPT"))
+                .ok_or("batch router receipt missing")?,
+        ))
+    } else {
+        if std::env::var_os("KUNO_LAB_BATCH_ROUTER_PUBLIC_ONLY").is_some() {
+            return Err("batch router gate requires dedicated probe".into());
+        }
+        None
+    };
     let speculative_inputs = if mode == "daslab-speculative-probe" {
         Some(daslab_speculative_probe::registration(
             &std::env::args_os().collect::<Vec<_>>(),
@@ -1097,6 +1130,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         if std::env::var_os("KUNO_LAB_SPECULATIVE_PUBLIC_ONLY").is_some() {
             return Err("speculative public gate requires its dedicated probe".into());
+        }
+        None
+    };
+    let language_inputs = if mode == "daslab-language-probe" {
+        Some(daslab_language_probe::registration(
+            &std::env::args_os().collect::<Vec<_>>(),
+            std::env::vars_os(),
+            target_lab_build::Build::compiled(),
+        )?)
+    } else {
+        if std::env::var_os("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").is_some()
+            || std::env::var_os("KUNO_LAB_LANGUAGE_FIXTURE").is_some()
+        {
+            return Err("language public gate requires dedicated probe".into());
         }
         None
     };
@@ -1421,7 +1468,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .as_ref()
         .map(|p| p.inline_dispatch)
         .or_else(|| target_repair_inputs.as_ref().map(|p| p.inline_dispatch))
-        .or_else(|| target_rows_inputs.as_ref().map(|p| p.inline_dispatch));
+        .or_else(|| target_rows_inputs.as_ref().map(|p| p.inline_dispatch))
+        .or_else(|| language_inputs.as_ref().map(|p| p.inline_dispatch));
     let device_dispatch = if let Some(selected) = public_target_dispatch {
         target_lab_build::validate_runtime(selected)?;
         target_lab_build::name(selected)
@@ -1981,6 +2029,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "Q3 original shared MoE requires its complete workgroup storage limit".into(),
             );
         }
+        if language_inputs.is_some() {
+            daslab_language_probe::validate_limits(&adapter.limits())?;
+        }
+        if batch_router_receipt.is_some() {
+            resident_batch_router_gpu::validate_limits(&adapter.limits())?;
+        }
         if mtp_gpu_inputs.is_some() {
             mtp_gpu_probe::validate_limits(&adapter.limits())?;
         }
@@ -2005,6 +2059,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             || speculative_inputs
                 .as_ref()
                 .is_some_and(|i| i.prepared_experts)
+            || language_inputs.as_ref().is_some_and(|i| i.prepared_experts)
         {
             executor::batch_moe::prepared_verify3::validate_subgroups(
                 adapter.features().contains(wgpu::Features::SUBGROUP),
@@ -2019,6 +2074,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .as_ref()
                 .is_some_and(|i| i.verify3_dense)
             || speculative_inputs.as_ref().is_some_and(|i| i.verify3_dense)
+            || language_inputs.as_ref().is_some_and(|i| i.verify3_dense)
         {
             next_shared::validate_verify3_limits(
                 &adapter.limits(),
@@ -2033,6 +2089,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .as_ref()
                 .is_some_and(|i| i.verify3_fused)
             || speculative_inputs.as_ref().is_some_and(|i| i.verify3_fused)
+            || language_inputs.as_ref().is_some_and(|i| i.verify3_fused)
         {
             next_shared::validate_verify3_finite_limits(
                 &adapter.limits(),
@@ -2143,6 +2200,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     || target_rows_inputs.is_some()
                     || target_repair_inputs.is_some()
                     || speculative_inputs.is_some()
+                    || language_inputs.is_some()
                     || resident_mtp_inputs.is_some()
                 {
                     256
@@ -2175,6 +2233,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if verify3_finite_probe { 210 } else { 20 }
             );
             return Ok(());
+        }
+        if let Some(receipt) = batch_router_receipt {
+            let mut value = resident_batch_router_gpu_probe::run(&client, &grouped_limits)?;
+            value["vendor"] = vendor.into();
+            serde_json::to_writer_pretty(
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(receipt)?,
+                &value,
+            )?;
+            println!("public_batch_router_operator_complete owners_erased=true");
+            return Ok(());
+        }
+        if let Some(inputs) = language_inputs {
+            return daslab_language_probe::run(&client, &grouped_limits, inputs);
         }
         if let Some(inputs) = speculative_inputs {
             return daslab_speculative_probe::run(&client, &grouped_limits, inputs);

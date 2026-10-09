@@ -1,4 +1,42 @@
-# Paused DASLab/Strata checkpoint — 2026-10-09
+# Native DASLab/Strata checkpoint — 2026-10-09
+
+## Resumed native source, after standalone Strata teardown
+
+The user authorized the new native optimization pass. Comparison teardown and
+retained evidence/draft paths are in [the Strata receipt](kuno-strata-comparison.md).
+This supersedes the paused/running comparison states below.
+
+Source integrates bound-target alternate Q2 MTP core `ac8cf41`, exact public
+language benchmark/permit `117fa12`, and experimental GPU batch routing `76b0bae`.
+The GPU routing experiment activates only after successful original cold CPU13
+acceptance and the real one-shot warm reset. It retains actual selected experts,
+checks original CPU IDs/order from deferred actual-score audits before all-family
+commit, and rejects missing residents or near ties. Probabilities are explicitly
+experimental F32; full original target-vector tolerances remain unchanged. This
+is a conditional all-hit warm13 diagnostic, not normal long demand inference.
+
+Construction reserves two complete private owners (+2,228,224 MAIN bytes),
+9,175,040 runtime bytes and5 MiB host. Every outer-owner proof and final erasure
+includes both. Deferred route owners reserve all48 entries before decoding;
+no vector growth may leave un-wiped copies. Independent source review passes.
+Integrated pure-direct tests pass849 native tests plus2 auxiliary shader tests
+with one existing opt-in ignored. Protected launcher tests pass92; formatting,
+whitespace and strict pure-direct all-target Clippy pass. No new GPU speed result
+is established by this source checkpoint.
+
+The separate language harness tokenizes the exact pinned Strata ChatML public
+code/prose fixtures (35/30 prompt tokens), uses normal demand routing and actual
+target-greedy acceptance/repair, and stops at EOS or200 emitted tokens. The first
+output is picked inside prefill; timing explicitly distinguishes post-prefill
+continuations from total emitted tokens. This is not an independent CPU200
+quality comparison. Tokenizer/fixture host owners have their own196 MiB process
+reservation; swap/core protection is unchanged. The smaller MTP GPU adapter is
+still separate source work; the original Q8 GPU draft remains the control.
+
+Next: freeze this exact source, run both-card routing operators, then full CPU13
+cold/warm control/candidate and public language benchmarks. Preserve original
+failures and recovery evidence. No driver reset, API, UI, installed production
+binary or release change; required Vashti changes:none.
 
 **User paused the goal after the overnight pass. Do not start more GPU work
 until resumed.** Latest physical model acceptance remains v129/source12f9cc7;

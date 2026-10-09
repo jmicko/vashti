@@ -22,6 +22,8 @@ mod latest_checkpoint;
 #[path = "resident_target_round.rs"]
 mod latest_round;
 pub(crate) use latest_round::LatestTargetRound;
+#[path = "resident_language_request_io.rs"]
+pub(crate) mod public_language_request_io;
 #[path = "resident_target_request_io.rs"]
 pub(crate) mod public_target_request_io;
 #[path = "resident_model_public_reset.rs"]
@@ -286,7 +288,9 @@ pub(crate) struct Config {
     public_existing_expert_fill: bool,
     public_warm_replay: bool,
     public_target_request_io: bool,
+    public_language_request_io: Option<public_language_request_io::Geometry>,
     live_member_reduction: bool,
+    public_warm_batch_router: bool,
 }
 fn prepared_verify3_configuration(
     target_rows: bool,
@@ -334,7 +338,9 @@ impl Config {
             public_existing_expert_fill: false,
             public_warm_replay: false,
             public_target_request_io: false,
+            public_language_request_io: None,
             live_member_reduction: false,
+            public_warm_batch_router: false,
         })
     }
     /// Construction-fixed, one-shot empty PRIVATE-state replay after the
@@ -382,6 +388,21 @@ impl Config {
             self.tile,
         )?;
         self.live_member_reduction = true;
+        Ok(self)
+    }
+    pub(crate) fn reserve_public_warm_batch_router(mut self) -> Result<Self> {
+        if self.public_warm_batch_router
+            || !self.target_rows_reserved
+            || !self.public_warm_replay
+            || !self.public_target_request_io
+            || self.cpu_operator.is_some()
+            || self.resident_router_reserved
+            || self.prepared_verify3_experts_reserved
+            || self.tile != 8
+        {
+            return Err(error());
+        }
+        self.public_warm_batch_router = true;
         Ok(self)
     }
     pub(crate) fn reserve_resident_router(mut self) -> Result<Self> {
@@ -439,6 +460,26 @@ impl Config {
         public_target_request_io::check_runtime(&self.client)?;
         self = self.reserve_request_reuse_metadata(public_target_request_io::METADATA_BYTES)?;
         self.public_target_request_io = true;
+        Ok(self)
+    }
+    pub(crate) fn reserve_public_language_request_io(
+        mut self,
+        prompt: usize,
+        outputs: usize,
+    ) -> Result<Self> {
+        public_language_request_io::configuration(
+            self.target_rows_reserved,
+            self.latest_target_checkpoint_reserved,
+            self.public_language_request_io.is_some() || self.public_target_request_io,
+            self.cpu_operator.is_some(),
+            self.resident_router_reserved,
+            self.public_warm_replay,
+            self.tile,
+        )?;
+        let geometry = public_language_request_io::Geometry::new(prompt, outputs)?;
+        public_language_request_io::check_runtime(&self.client)?;
+        self = self.reserve_request_reuse_metadata(public_language_request_io::METADATA_BYTES)?;
+        self.public_language_request_io = Some(geometry);
         Ok(self)
     }
     /// One latest-chunk host checkpoint plus exact QSA suffix-clear/fold INFO.
@@ -611,6 +652,25 @@ impl Plan {
             config.resident_router_reserved,
             config.prepared_verify3_experts_reserved,
         )?;
+        if config.public_warm_batch_router {
+            let (host, limit) = host_reservation_with_verify3(
+                false,
+                config.request_reuse_metadata,
+                false,
+                true,
+                true,
+                false,
+            )?;
+            let host = host
+                .checked_add(batch_moe::batch_router::HOST_BYTES)
+                .ok_or(Error::ArithmeticOverflow)?;
+            let limit = limit
+                .checked_add(batch_moe::batch_router::HOST_BYTES)
+                .ok_or(Error::ArithmeticOverflow)?;
+            if host > limit {
+                return Err(error());
+            }
+        }
         executor.check_original_bank_metadata(LAYERS, ORIGINAL_BANK_HOST)?;
         let g = graph.geometry();
         if g.layers != LAYERS
@@ -672,6 +732,28 @@ impl Plan {
         }
         let hybrid = config.cpu_operator.is_some();
         public_target_request_io::check_plan(&config, executor)?;
+        if config.public_language_request_io.is_some() {
+            public_language_request_io::configuration(
+                config.target_rows_reserved,
+                config.latest_target_checkpoint_reserved,
+                config.public_target_request_io,
+                hybrid,
+                config.resident_router_reserved,
+                config.public_warm_replay,
+                config.tile,
+            )?;
+            public_language_request_io::check_runtime(client)?;
+            if config.request_reuse_metadata != public_language_request_io::METADATA_BYTES
+                || !executor.target_rows_reserved
+                || !executor.token_io_checkpoint
+                || executor.packed_profile != crate::expert_banks::OriginalPackedProfile::DaslabIq3
+                || executor.resident_bank_capacity() != 144
+                || executor.resident_runtime_io_limit() != public_language_request_io::RUNTIME_BYTES
+            {
+                return Err(error());
+            }
+        }
+
         host_reservation_with_verify3(
             hybrid,
             config.request_reuse_metadata,
@@ -680,6 +762,25 @@ impl Plan {
             config.latest_target_checkpoint_reserved,
             config.prepared_verify3_experts_reserved,
         )?;
+        if config.public_warm_batch_router {
+            let (host, limit) = host_reservation_with_verify3(
+                false,
+                config.request_reuse_metadata,
+                false,
+                true,
+                true,
+                false,
+            )?;
+            let host = host
+                .checked_add(batch_moe::batch_router::HOST_BYTES)
+                .ok_or(Error::ArithmeticOverflow)?;
+            let limit = limit
+                .checked_add(batch_moe::batch_router::HOST_BYTES)
+                .ok_or(Error::ArithmeticOverflow)?;
+            if host > limit {
+                return Err(error());
+            }
+        }
         if hybrid {
             requests.extend(batch_moe::Workspace::count1_hybrid_allocation_requests()?);
         }
@@ -751,7 +852,28 @@ impl Plan {
         {
             return Err(error());
         }
-        let extra = if hybrid { HYBRID_MAIN } else { 0 }
+        if config.public_warm_batch_router {
+            if !config.public_warm_replay
+                || !config.public_target_request_io
+                || !target_rows
+                || hybrid
+                || router
+                || prepared_verify3
+                || executor.packed_profile != crate::expert_banks::OriginalPackedProfile::DaslabIq3
+                || executor.resident_bank_capacity() != 144
+            {
+                return Err(error());
+            }
+            requests.extend(batch_moe::Workspace::batch_router_allocation_requests());
+        }
+        if config.public_warm_batch_router != executor.target_batch_router_reserved {
+            return Err(error());
+        }
+        let extra = if config.public_warm_batch_router {
+            batch_moe::batch_router::MAIN_BYTES
+        } else {
+            0
+        } + if hybrid { HYBRID_MAIN } else { 0 }
             + if router {
                 batch_moe::RESIDENT_ROUTER_MAIN
             } else {
@@ -773,6 +895,7 @@ impl Plan {
                 + usize::from(router) * 2
                 + usize::from(target_rows) * 2
                 + usize::from(prepared_verify3)
+                + usize::from(config.public_warm_batch_router) * 2
             || sum(&requests)? != NEW_MAIN + extra
             || OLD_MAIN.checked_add(sum(&requests)?) != Some(TOTAL_MAIN + extra)
         {
@@ -814,6 +937,13 @@ impl Plan {
             .and_then(|n| {
                 n.checked_add(if prepared_verify3 {
                     batch_moe::prepared_verify3::RUNTIME_INCREMENT
+                } else {
+                    0
+                })
+            })
+            .and_then(|n| {
+                n.checked_add(if config.public_warm_batch_router {
+                    batch_moe::batch_router::RUNTIME_BYTES
                 } else {
                     0
                 })
@@ -922,6 +1052,7 @@ pub(super) struct Workspace {
     latest_target_checkpoint_reserved: bool,
     public_warm_replay: Option<public_warm_replay::Permit>,
     public_target_request_io: Option<public_target_request_io::Permit>,
+    public_language_request_io: Option<public_language_request_io::Permit>,
 }
 impl Workspace {
     fn decode_kernels(&self) -> Result<NativeDecodeKernels> {
@@ -970,6 +1101,25 @@ impl Workspace {
             config.resident_router_reserved,
             config.prepared_verify3_experts_reserved,
         )?;
+        if config.public_warm_batch_router {
+            let (host, limit) = host_reservation_with_verify3(
+                false,
+                config.request_reuse_metadata,
+                false,
+                true,
+                true,
+                false,
+            )?;
+            let host = host
+                .checked_add(batch_moe::batch_router::HOST_BYTES)
+                .ok_or(Error::ArithmeticOverflow)?;
+            let limit = limit
+                .checked_add(batch_moe::batch_router::HOST_BYTES)
+                .ok_or(Error::ArithmeticOverflow)?;
+            if host > limit {
+                return Err(error());
+            }
+        }
         if config.live_member_reduction {
             executor.check_target_rows_policy()?;
         }
@@ -988,6 +1138,22 @@ impl Workspace {
         } else {
             None
         };
+        let public_language_request_io = config
+            .public_language_request_io
+            .map(|geometry| {
+                public_language_request_io::Permit::new(
+                    model.graph.binding_id(),
+                    executor.packed_profile,
+                    geometry,
+                    model.context,
+                    model.position,
+                    model.admission.transient_io(),
+                    model.arena.public_owned_zero_audit_enabled()
+                        && model.io.public_owned_zero_audit_enabled(),
+                    model.admission.request_io_reuse_active(),
+                )
+            })
+            .transpose()?;
         let public_warm_replay = if config.public_warm_replay {
             public_warm_replay::configuration(
                 config.target_rows_reserved,
@@ -1058,6 +1224,9 @@ impl Workspace {
         if config.resident_router_reserved {
             moe.reserve_resident_router(&mut model.arena, allocation)?;
         }
+        if config.public_warm_batch_router {
+            moe.reserve_batch_router(&mut model.arena, allocation)?;
+        }
         if config.prepared_verify3_experts_reserved {
             moe.reserve_prepared_verify3(&mut model.arena, allocation)?;
         }
@@ -1095,6 +1264,7 @@ impl Workspace {
             latest_target_checkpoint_reserved: config.latest_target_checkpoint_reserved,
             public_warm_replay,
             public_target_request_io,
+            public_language_request_io,
         };
         result.prove_outer(model)?;
         Ok(result)
@@ -1123,6 +1293,14 @@ impl Workspace {
             for (id, words) in ids
                 .into_iter()
                 .zip([48 * 512, batch_io::RESIDENT_AUDIT_WORDS])
+            {
+                handles.push(gr::full_private(&model.arena, id, words)?);
+            }
+        }
+        if let Some(ids) = self.moe.batch_router_ids() {
+            for (id, words) in ids
+                .into_iter()
+                .zip([48 * 512, crate::resident_batch_router_gpu::AUDIT_WORDS])
             {
                 handles.push(gr::full_private(&model.arena, id, words)?);
             }
@@ -1624,6 +1802,30 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .shared_vector_calls)
     }
 
+    pub(crate) fn activate_public_warm_batch_router(
+        &mut self,
+        executor: &GpuExecutor<'f>,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        u::cancel(cancel)?;
+        if self.context != 13
+            || self.position != 0
+            || !executor.target_batch_router_reserved
+            || self
+                .native_batch
+                .as_ref()
+                .and_then(|n| n.public_warm_replay.as_ref())
+                .is_none_or(|p| !p.reset_consumed())
+        {
+            return Err(error());
+        }
+        self.native_batch
+            .as_mut()
+            .ok_or(error())?
+            .moe
+            .activate_batch_router(executor, self.graph, &self.arena)
+    }
+
     pub(crate) fn begin_lab_request_io_reuse(&self, executor: &GpuExecutor<'f>) -> Result<()> {
         self.completed_native_projection_boundary(executor)?;
         if self.native_cpu_miss_cap()? != Some(10) {
@@ -1985,6 +2187,16 @@ impl Workspace {
                 m.admission.request_io_reuse_active(),
             )?;
         }
+        if let Some(permit) = &self.public_language_request_io {
+            public_target_request_io::check_execution(self, m, e)?;
+            permit.validate_run(
+                m.graph.binding_id(),
+                m.context,
+                m.position,
+                tokens.len(),
+                m.admission.request_io_reuse_active(),
+            )?;
+        }
         if self.moe.live_member_reduction_enabled() {
             live_member_reduction_configuration(
                 true,
@@ -2227,7 +2439,24 @@ impl Workspace {
             *m.phase_ns
                 .entry("native_ffn_gr_and_router_enqueue")
                 .or_default() += router_enqueue_start.elapsed().as_nanos();
-            if self.moe.resident_router_active() {
+            if self.moe.batch_router_active() {
+                let expert_start = Instant::now();
+                pending.moe[layer] = Some(e.enqueue_batch_router_moe(
+                    m.graph,
+                    &m.arena,
+                    &mut self.moe,
+                    &session,
+                    layer,
+                    prepared.mixed(),
+                    self.outer.block[0],
+                    self.outer.router,
+                    &spans,
+                    cancel,
+                )?);
+                *m.phase_ns
+                    .entry("native_device_router_and_expert_enqueue")
+                    .or_default() += expert_start.elapsed().as_nanos();
+            } else if self.moe.resident_router_active() {
                 batch_io::enqueue_count1_router_input(
                     m.graph,
                     &m.arena,
@@ -2573,6 +2802,19 @@ impl Workspace {
         *m.phase_ns
             .entry("native_completed_final_proofs")
             .or_default() += final_proof_start.elapsed().as_nanos();
+        let batch_router_audit_start = Instant::now();
+        self.moe.resolve_batch_router_chunk(
+            e,
+            m.graph,
+            &m.arena,
+            &session,
+            &mut pending.moe,
+            cancel,
+        )?;
+        if self.moe.batch_router_active() {
+            *m.phase_ns.entry("native_device_router_audit").or_default() +=
+                batch_router_audit_start.elapsed().as_nanos();
+        }
         let resident_router_audit_start = Instant::now();
         self.moe.resolve_resident_router_token(
             e,

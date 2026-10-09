@@ -3021,3 +3021,21 @@ paths and limitations: [standalone comparison](kuno-strata-comparison.md).
 That document includes the user-requested Q2_0 MTP runtime importer notes for
 future Rust work. **Required Vashti changes: none.** Preserve canonical application
 work. Native goal and pending live-member kernel gates remain paused.
+
+### Native Strata-inspired pass resumed, 2026-10-09
+
+The user authorized teardown of the comparison installation and resumed native
+Rust engine optimization with a new goal. The historical Strata-running state
+above is superseded: Strata is stopped and its specifically owned build/image
+removed, while numeric receipts and the alternate Q2_0 draft files are retained.
+Protected 17:43 UTC host checks confirm actual GPU memory recovery, unpaused Kuno
+admission, all three HTTP services 200 and zero classified GPU faults. Exact
+retained paths and limitations are in [the comparison receipt](kuno-strata-comparison.md).
+
+Native source starts from `de6269d` in the isolated native-text worktree; parallel
+backend source work uses separate worktrees at that commit. Priorities are
+device-side routing/group maps and a strict alternate bound-target MTP graph,
+then real public language-generation benchmarks. No API/frontend/catalogue/
+release change is included. **Required Vashti changes: none.** Existing full
+CPU13/actual-repair correctness gates remain controls; conditional all-hit GPU
+results must not be presented as ordinary demand inference performance.

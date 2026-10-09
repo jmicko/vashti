@@ -1,5 +1,32 @@
 # Standalone Intel Strata comparison, 2026-10-09
 
+## Current state: comparison installation removed
+
+The user authorized teardown on 2026-10-09 after trying Strata. Its service was
+stopped before removing the temporary checkout, build, virtual environment,
+prepared dense arena and the specifically owned `localhost/strata-sycl-dev`
+container image. Other containers and the original DASLab model shards were
+preserved. Installation paths below describe the historical comparison.
+
+Retained content-free receipts, installer/control source copies and public build
+log are at
+`/media/jmicko/faststore/kuno-development/strata-comparison-evidence-20261009`.
+The verified draft sources, `mtp-q2_0.gguf`, runtime files and vocabulary subset
+were moved without duplication to
+`/media/jmicko/faststore/kuno-development/kuno-strata-mtp-q2-20261009` for the
+native Rust implementation. The separate pinned research checkout remains.
+
+Protected host check at 17:43 UTC verified B70 usage 50,688,000 bytes, no NVIDIA
+compute process, Kuno admission unpaused with no recovery requirement, Kuno,
+Ollama and Vashti HTTP 200, and zero classified Xe/NVIDIA faults. Strata is no
+longer available on port 8085. No driver reset or production binary update was
+performed.
+
+The new native goal targets at least 30 accepted tokens/s. First work is GPU
+expert routing and the alternate bound-target Q2_0 draft graph. The upstream
+27.3/36.0 measurements remain separate from native performance and do not
+establish a matched native comparison.
+
 The user authorized installing upstream Strata to compare its experimental Intel
 backend and asked to leave it running afterward. The native Rust optimization
 goal stays paused. This installation is outside Kuno and changes no Kuno API,

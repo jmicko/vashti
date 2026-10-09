@@ -12,6 +12,8 @@ use crate::{
 use kuno_text::model::{BoundGraph, GraphBindingId};
 use std::sync::atomic::AtomicU64;
 use zeroize::Zeroizing;
+#[path = "resident_batch_router.rs"]
+pub(crate) mod batch_router;
 #[path = "native_count1_selection.rs"]
 mod count1;
 #[path = "resident_moe_count1.rs"]
@@ -379,6 +381,7 @@ pub(crate) struct Workspace {
     policy: Policy,
     hybrid: Option<HybridOwners>,
     resident_router: Option<resident_router::RouterOwners>,
+    batch_router: Option<batch_router::Owners>,
     prepared_verify3: Option<BufferId>,
     // Constructor-frozen public experiment; never read from ambient settings.
     public_existing_fill: bool,
@@ -941,6 +944,7 @@ impl Workspace {
                 policy: Policy::new(graph.geometry().layers)?,
                 hybrid: None,
                 resident_router: None,
+                batch_router: None,
                 prepared_verify3: None,
                 public_existing_fill,
                 public_fill_counters: PublicFillCounters::default(),
@@ -1008,6 +1012,22 @@ impl Workspace {
                     != BufferLayout::new(self.layout.words[i]).map_err(u::fault)?
             {
                 return Err(err("native routed stale workspace"));
+            }
+        }
+        if let Some(ids) = self.batch_router_ids() {
+            for (i, &id) in ids.iter().enumerate() {
+                if self.ids.contains(&id)
+                    || ids[..i].contains(&id)
+                    || self.hybrid.is_some()
+                    || self.resident_router.is_some()
+                    || arena.layout(id).map_err(u::fault)?
+                        != BufferLayout::new(
+                            [48 * 512, crate::resident_batch_router_gpu::AUDIT_WORDS][i],
+                        )
+                        .map_err(u::fault)?
+                {
+                    return Err(err("public batch router complete owner layout"));
+                }
             }
         }
         if let Some(id) = self.prepared_verify3
@@ -1263,6 +1283,7 @@ impl GpuExecutor<'_> {
             }
             self.check_segmented_resident(true)?;
             w.begin_resident_router_token(self, graph, arena, start, count, cancel)?;
+            w.begin_batch_router_chunk(arena, start, count)?;
             w.policy.begin(start, count)?;
             let stamp = Zeroizing::new(Stamp {
                 workspace: w.identity,
@@ -1899,7 +1920,7 @@ fn physical_with_packet(
     w: &Workspace,
     packet: Option<BufferId>,
 ) -> Result<()> {
-    if packet.is_some() && !w.resident_router_active() {
+    if packet.is_some() && !w.resident_router_active() && !w.batch_router_active() {
         return Err(err("resident mapper packet requires sealed authorization"));
     }
     let client = arena.client().map_err(u::fault)?;
@@ -1915,6 +1936,9 @@ fn physical_with_packet(
         all.extend_from_slice(&*h.ids);
     }
     if let Some(ids) = w.resident_router_ids() {
+        all.extend_from_slice(&ids);
+    }
+    if let Some(ids) = w.batch_router_ids() {
         all.extend_from_slice(&ids);
     }
     if let Some(owner) = w.prepared_verify3 {
@@ -1941,7 +1965,13 @@ fn physical_with_packet(
         .len()
         .checked_add(public.len())
         .ok_or(Error::ArithmeticOverflow)?;
-    if extent_count > if w.resident_router.is_some() { 19 } else { 16 } {
+    if extent_count
+        > if w.resident_router.is_some() || w.batch_router.is_some() {
+            19
+        } else {
+            16
+        }
+    {
         return Err(err("native routed metadata cardinality"));
     }
     let mut handles = Vec::new();

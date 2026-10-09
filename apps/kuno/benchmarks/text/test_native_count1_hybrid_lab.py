@@ -1669,5 +1669,40 @@ class HybridLabTests(unittest.TestCase):
                     self.assertFalse(data["adaptive_direct_upload"])
 
 
+class StrataInspiredGuards(unittest.TestCase):
+    @staticmethod
+    def guard():
+        spec=importlib.util.spec_from_file_location("protected_strata",HERE/"protected-lab-exec.py")
+        guard=importlib.util.module_from_spec(spec);spec.loader.exec_module(guard)
+        return guard
+
+    def test_batch_router_kernel_is_model_free_and_card_specific(self):
+        guard=self.guard()
+        env={"KUNO_LAB_BATCH_ROUTER_PUBLIC_ONLY":"1","KUNO_PUBLIC_RECEIPT":"/public/numeric"}
+        for card in ("intel","nvidia"):
+            args=["/frozen/binary",card,"batch-router-gpu-probe"]
+            self.assertEqual(guard.memory_limit(env,args),8*1024**3)
+            for key in ("KUNO_TEST_MODEL","KUNO_LAB_LANGUAGE_PUBLIC_ONLY","KUNO_LAB_TARGET_ROUTER"):
+                with self.assertRaises(ValueError):guard.memory_limit(dict(env,**{key:"1"}),args)
+
+    def test_device_router_cannot_enter_cold_integer_or_other_model_modes(self):
+        guard=self.guard()
+        env={"KUNO_LAB_SPECULATIVE_PUBLIC_ONLY":"1","KUNO_LAB_STATIC_CACHE_BYTES":"8589934592","KUNO_TEST_Q3_DIR":"/original","KUNO_TEST_MTP":"/original/sidecar","KUNO_PUBLIC_TARGET_CARRY13_REFERENCE":"/public/reference","KUNO_PUBLIC_RECEIPT":"/public/numeric","KUNO_LAB_DEVICE_DISPATCH":"inline","KUNO_LAB_TARGET_IO":"chunk","KUNO_LAB_TARGET_REUSE":"request","KUNO_LAB_WARM_REPLAY":"once","KUNO_LAB_TARGET_ROUTER":"device-warm-public"}
+        args=["/frozen/binary","intel","daslab-speculative-probe"]
+        self.assertEqual(guard.memory_limit(env,args),48*1024**3)
+        for key in ("KUNO_LAB_TARGET_REUSE","KUNO_LAB_TARGET_IO","KUNO_LAB_DEVICE_DISPATCH","KUNO_LAB_WARM_REPLAY"):
+            bad=dict(env);bad.pop(key)
+            with self.assertRaises(ValueError):guard.memory_limit(bad,args)
+        with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_TARGET_EXPERTS="prepared-verify3"),args)
+
+    def test_language_geometry_has_separate_host_charge_and_no_arbitrary_prompt(self):
+        guard=self.guard()
+        env={"KUNO_LAB_LANGUAGE_PUBLIC_ONLY":"1","KUNO_LAB_LANGUAGE_FIXTURE":"first-code","KUNO_LAB_STATIC_CACHE_BYTES":"8589934592","KUNO_TEST_Q3_DIR":"/original","KUNO_TEST_MTP":"/original/sidecar","KUNO_PUBLIC_RECEIPT":"/public/numeric","KUNO_LAB_DEVICE_DISPATCH":"inline","KUNO_LAB_TARGET_IO":"chunk","KUNO_LAB_TARGET_REUSE":"request"}
+        args=["/frozen/binary","intel","daslab-language-probe"]
+        self.assertEqual(guard.memory_limit(env,args),48*1024**3+196*1024**2)
+        for key,value in [("KUNO_LAB_LANGUAGE_FIXTURE","private"),("KUNO_LAB_PROMPT","secret"),("KUNO_LAB_WARM_REPLAY","once"),("KUNO_LAB_TARGET_ROUTER","device-warm-public"),("KUNO_PUBLIC_TARGET_CARRY13_REFERENCE","/public/reference")]:
+            with self.assertRaises(ValueError):guard.memory_limit(dict(env,**{key:value}),args)
+
+
 if __name__ == "__main__":
     unittest.main()
