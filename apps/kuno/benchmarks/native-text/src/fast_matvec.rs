@@ -52,9 +52,12 @@ pub fn reduce_original64(low: f32, high: f32) -> f32 {
     // Exactly the original stride32 add, followed by stride16,8,4,2,1.
     let mut value = low + high;
     let mut shared = SharedMemory::<f32>::new(ROWS_PER_CUBE * PHYSICAL_LANES);
-    shared[row * PHYSICAL_LANES + logical_lane] = value;
-    sync_cube();
     if PLANE_DIM == 16 {
+        // Only16-wide subgroups need the other half of the original32-lane
+        // partition.32-wide subgroups reduce it directly with shuffles, so
+        // shared stores and the workgroup barrier contribute no arithmetic.
+        shared[row * PHYSICAL_LANES + logical_lane] = value;
+        sync_cube();
         if logical_lane < 16 {
             value += shared[row * PHYSICAL_LANES + logical_lane + 16];
         }
@@ -250,75 +253,153 @@ pub fn fault_grid(rows: usize, output_words: usize, check_tail: bool) -> CubeCou
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::quant_matvec::{BF16, F16, IQ3_XXS, IQ4_NL, IQ4_XS, Q5_0, Q6_K, Q8_0};
+    use crate::quant_matvec::{
+        BF16, F16, IQ2_S, IQ3_S, IQ3_XXS, IQ4_NL, IQ4_XS, Q2_0, Q5_0, Q5_K, Q6_K, Q8_0,
+    };
+
+    fn assert_shared_reduction_is_only_for16(module: &wgpu::naga::Module) {
+        use wgpu::naga::{AddressSpace, BinaryOperator, Expression, Literal, Statement};
+        fn subgroup_size(
+            module: &wgpu::naga::Module,
+            f: &wgpu::naga::Function,
+            expression: wgpu::naga::Handle<Expression>,
+        ) -> bool {
+            match f.expressions[expression] {
+                Expression::Load { pointer } | Expression::As { expr: pointer, .. } => {
+                    subgroup_size(module, f, pointer)
+                }
+                Expression::FunctionArgument(index) => {
+                    f.arguments[index as usize].binding
+                        == Some(wgpu::naga::Binding::BuiltIn(
+                            wgpu::naga::BuiltIn::SubgroupSize,
+                        ))
+                }
+                Expression::GlobalVariable(index) => {
+                    module.global_variables[index].name.as_deref() == Some("subgroup_size")
+                }
+                _ => false,
+            }
+        }
+        fn sixteen(f: &wgpu::naga::Function, expression: wgpu::naga::Handle<Expression>) -> bool {
+            match f.expressions[expression] {
+                Expression::Literal(Literal::U32(16) | Literal::I32(16)) => true,
+                Expression::As { expr, .. } => sixteen(f, expr),
+                _ => false,
+            }
+        }
+        fn is16(
+            module: &wgpu::naga::Module,
+            f: &wgpu::naga::Function,
+            expression: wgpu::naga::Handle<Expression>,
+        ) -> bool {
+            if let Expression::Binary {
+                op: BinaryOperator::Equal,
+                left,
+                right,
+            } = f.expressions[expression]
+            {
+                (subgroup_size(module, f, left) && sixteen(f, right))
+                    || (subgroup_size(module, f, right) && sixteen(f, left))
+            } else {
+                false
+            }
+        }
+        fn workgroup_pointer(
+            module: &wgpu::naga::Module,
+            f: &wgpu::naga::Function,
+            expression: wgpu::naga::Handle<Expression>,
+        ) -> bool {
+            match f.expressions[expression] {
+                Expression::Access { base, .. } | Expression::AccessIndex { base, .. } => {
+                    workgroup_pointer(module, f, base)
+                }
+                Expression::GlobalVariable(index) => {
+                    module.global_variables[index].space == AddressSpace::WorkGroup
+                }
+                _ => false,
+            }
+        }
+        fn visit(
+            module: &wgpu::naga::Module,
+            f: &wgpu::naga::Function,
+            block: &wgpu::naga::Block,
+            inside16: bool,
+            counts: &mut [usize; 3],
+        ) {
+            for statement in block {
+                match statement {
+                    Statement::Store { pointer, .. } if workgroup_pointer(module, f, *pointer) => {
+                        assert!(
+                            inside16,
+                            "32-wide path must not store shared reduction data"
+                        );
+                        counts[0] += 1;
+                    }
+                    Statement::ControlBarrier(_) => {
+                        assert!(
+                            inside16,
+                            "32-wide path must not execute a workgroup barrier"
+                        );
+                        counts[1] += 1;
+                    }
+                    Statement::SubgroupGather { .. } => {
+                        assert!(
+                            !inside16,
+                            "original shuffle tree remains shared by both widths"
+                        );
+                        counts[2] += 1;
+                    }
+                    Statement::If {
+                        condition,
+                        accept,
+                        reject,
+                    } => {
+                        visit(
+                            module,
+                            f,
+                            accept,
+                            inside16 || is16(module, f, *condition),
+                            counts,
+                        );
+                        visit(module, f, reject, inside16, counts);
+                    }
+                    Statement::Loop {
+                        body, continuing, ..
+                    } => {
+                        visit(module, f, body, inside16, counts);
+                        visit(module, f, continuing, inside16, counts);
+                    }
+                    Statement::Block(block) => visit(module, f, block, inside16, counts),
+                    Statement::Switch { cases, .. } => {
+                        for case in cases {
+                            visit(module, f, &case.body, inside16, counts);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let entry = &module.entry_points[0].function;
+        let mut counts = [0; 3];
+        visit(module, entry, &entry.body, false, &mut counts);
+        assert_eq!(counts, [1, 1, 1]);
+    }
     #[test]
     fn all_original_formats_lower_to_valid_subgroup_wgsl_with_runtime_spans() {
         use cubecl::compute::KernelBuilder;
         use cubecl::ir::{ElemType, FloatKind, IntKind, StorageType, Type, UIntKind};
         use cubecl::wgpu::WgslCompiler;
         use cubecl::{Compiler, KernelSettings, WgpuCompilationOptions};
-        for dtype in [
-            0, F16, BF16, Q4_K, Q5_0, Q8_0, Q6_K, IQ3_XXS, IQ4_NL, IQ4_XS,
+        for mode in [
+            cubecl::server::ExecutionMode::Checked,
+            cubecl::server::ExecutionMode::Unchecked,
         ] {
-            let uint = StorageType::Scalar(ElemType::UInt(UIntKind::U32));
-            let float = StorageType::Scalar(ElemType::Float(FloatKind::F32));
-            let mut b = KernelBuilder::default();
-            b.scope.register_type::<u32>(uint);
-            b.scope.register_type::<usize>(uint);
-            b.scope.register_type::<f32>(float);
-            b.scope
-                .register_type::<i32>(StorageType::Scalar(ElemType::Int(IntKind::I32)));
-            b.scope
-                .register_type::<bool>(StorageType::Scalar(ElemType::Bool));
-            let packed = b.input_array(Type::new(uint)).into();
-            let input = b.input_array(Type::new(float)).into();
-            let output = b.output_array(Type::new(float)).into();
-            let count = b.scalar(uint).into();
-            let first = b.scalar(uint).into();
-            let x = b.scalar(uint).into();
-            let y = b.scalar(uint).into();
-            packed_single::expand(
-                &mut b.scope,
-                packed,
-                input,
-                output,
-                count,
-                first,
-                x,
-                y,
-                7,
-                if dtype == F16 { 4 } else { 256 },
-                dtype,
-                kuno_text::TensorType::from_gguf_id(dtype)
-                    .unwrap()
-                    .row_bytes(if dtype == F16 { 4 } else { 256 })
-                    .unwrap() as usize,
-            );
-            let source = WgslCompiler::default()
-                .compile(
-                    b.build(
-                        KernelSettings::default()
-                            .cube_dim(cube())
-                            .kernel_name("fixed_public_subgroup"),
-                    ),
-                    &WgpuCompilationOptions::default(),
-                    cubecl::server::ExecutionMode::Unchecked,
-                    uint,
-                )
-                .unwrap()
-                .to_string();
-            let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
-            if dtype == F16 {
-                assert!(source.contains("* u32(8)"));
-            }
-            wgpu::naga::valid::Validator::new(
-                wgpu::naga::valid::ValidationFlags::all(),
-                wgpu::naga::valid::Capabilities::SUBGROUP,
-            )
-            .validate(&module)
-            .unwrap();
-            assert!(source.contains("subgroupShuffleDown") && source.contains("workgroupBarrier"));
-            for check_tail in [false, true] {
+            for dtype in [
+                0, F16, BF16, Q4_K, Q5_0, Q8_0, Q6_K, IQ3_XXS, IQ4_NL, IQ4_XS, IQ2_S, IQ3_S, Q5_K,
+                Q2_0,
+            ] {
+                let uint = StorageType::Scalar(ElemType::UInt(UIntKind::U32));
+                let float = StorageType::Scalar(ElemType::Float(FloatKind::F32));
                 let mut b = KernelBuilder::default();
                 b.scope.register_type::<u32>(uint);
                 b.scope.register_type::<usize>(uint);
@@ -330,58 +411,120 @@ mod tests {
                 let packed = b.input_array(Type::new(uint)).into();
                 let input = b.input_array(Type::new(float)).into();
                 let output = b.output_array(Type::new(float)).into();
-                let fault = b
-                    .output_array(Type::new(StorageType::Atomic(ElemType::UInt(
-                        UIntKind::U32,
-                    ))))
-                    .into();
                 let count = b.scalar(uint).into();
                 let first = b.scalar(uint).into();
                 let x = b.scalar(uint).into();
                 let y = b.scalar(uint).into();
-                let mf = b.scalar(uint).into();
-                packed_single_fault::expand(
+                packed_single::expand(
                     &mut b.scope,
                     packed,
                     input,
                     output,
-                    fault,
                     count,
                     first,
                     x,
                     y,
-                    mf,
                     7,
-                    256,
+                    if dtype == F16 { 4 } else { 256 },
                     dtype,
                     kuno_text::TensorType::from_gguf_id(dtype)
                         .unwrap()
-                        .row_bytes(256)
+                        .row_bytes(if dtype == F16 { 4 } else { 256 })
                         .unwrap() as usize,
-                    11,
-                    check_tail,
                 );
                 let source = WgslCompiler::default()
                     .compile(
                         b.build(
                             KernelSettings::default()
                                 .cube_dim(cube())
-                                .kernel_name("fixed_public_fused_subgroup"),
+                                .kernel_name("fixed_public_subgroup"),
                         ),
                         &WgpuCompilationOptions::default(),
-                        cubecl::server::ExecutionMode::Unchecked,
+                        mode,
                         uint,
                     )
                     .unwrap()
                     .to_string();
                 let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
+                if dtype == F16 {
+                    assert!(source.contains("* u32(8)"));
+                }
                 wgpu::naga::valid::Validator::new(
                     wgpu::naga::valid::ValidationFlags::all(),
                     wgpu::naga::valid::Capabilities::SUBGROUP,
                 )
                 .validate(&module)
                 .unwrap();
-                assert!(source.contains("atomicOr") && source.contains("subgroupShuffleDown"));
+                assert_shared_reduction_is_only_for16(&module);
+                assert!(
+                    source.contains("subgroupShuffleDown") && source.contains("workgroupBarrier")
+                );
+                for check_tail in [false, true] {
+                    let mut b = KernelBuilder::default();
+                    b.scope.register_type::<u32>(uint);
+                    b.scope.register_type::<usize>(uint);
+                    b.scope.register_type::<f32>(float);
+                    b.scope
+                        .register_type::<i32>(StorageType::Scalar(ElemType::Int(IntKind::I32)));
+                    b.scope
+                        .register_type::<bool>(StorageType::Scalar(ElemType::Bool));
+                    let packed = b.input_array(Type::new(uint)).into();
+                    let input = b.input_array(Type::new(float)).into();
+                    let output = b.output_array(Type::new(float)).into();
+                    let fault = b
+                        .output_array(Type::new(StorageType::Atomic(ElemType::UInt(
+                            UIntKind::U32,
+                        ))))
+                        .into();
+                    let count = b.scalar(uint).into();
+                    let first = b.scalar(uint).into();
+                    let x = b.scalar(uint).into();
+                    let y = b.scalar(uint).into();
+                    let mf = b.scalar(uint).into();
+                    packed_single_fault::expand(
+                        &mut b.scope,
+                        packed,
+                        input,
+                        output,
+                        fault,
+                        count,
+                        first,
+                        x,
+                        y,
+                        mf,
+                        7,
+                        256,
+                        dtype,
+                        kuno_text::TensorType::from_gguf_id(dtype)
+                            .unwrap()
+                            .row_bytes(256)
+                            .unwrap() as usize,
+                        11,
+                        check_tail,
+                    );
+                    let source = WgslCompiler::default()
+                        .compile(
+                            b.build(
+                                KernelSettings::default()
+                                    .cube_dim(cube())
+                                    .kernel_name("fixed_public_fused_subgroup"),
+                            ),
+                            &WgpuCompilationOptions::default(),
+                            mode,
+                            uint,
+                        )
+                        .unwrap()
+                        .to_string();
+                    let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
+                    wgpu::naga::valid::Validator::new(
+                        wgpu::naga::valid::ValidationFlags::all(),
+                        wgpu::naga::valid::Capabilities::SUBGROUP,
+                    )
+                    .validate(&module)
+                    .unwrap();
+                    assert_shared_reduction_is_only_for16(&module);
+                    assert!(source.contains("atomicOr") && source.contains("subgroupShuffleDown"));
+                }
             }
         }
     }
@@ -422,19 +565,39 @@ mod tests {
                 }
             }
             assert!(seen.iter().flatten().all(|v| *v));
-            for seed in 0..37 {
+            for seed in 0..101 {
                 let mut original = [0f32; 64];
                 for (i, value) in original.iter_mut().enumerate() {
-                    *value = ((i * 13 + seed * 31) % 57) as f32 / 23. - 1.;
+                    // Fixed finite mixed scales/cancellation, not a monotone
+                    // sum whose rounding happens to hide a changed tree.
+                    let magnitude = ((i * 13 + seed * 31) % 57) as f32 / 23. - 1.;
+                    *value = magnitude * 2.0_f32.powi(((i * 7 + seed) % 53) as i32 - 26);
                 }
                 let mut candidate = [0f32; 32];
                 for i in 0..32 {
                     candidate[i] = original[i] + original[i + 32];
                 }
-                for stride in [16, 8, 4, 2, 1] {
-                    for i in 0..stride {
-                        candidate[i] += candidate[i + stride];
+                if width == 16 {
+                    // Snapshot represents the complete shared stores +fence;
+                    // only the lower16 subgroup adds its sibling half.
+                    let shared = candidate;
+                    for i in 0..16 {
+                        candidate[i] += shared[i + 16];
                     }
+                }
+                let mut stride = width / 2;
+                while stride > 0 {
+                    // Native subgroup shuffle samples all lanes before the
+                    // original predicate adds: model both16-wide subgroups,
+                    // including the discarded high subgroup, independently.
+                    let previous = candidate;
+                    for subgroup in 0..32 / width {
+                        for i in 0..stride {
+                            let lane = subgroup * width + i;
+                            candidate[lane] += previous[lane + stride];
+                        }
+                    }
+                    stride /= 2;
                 }
                 for stride in [32, 16, 8, 4, 2, 1] {
                     for i in 0..stride {
