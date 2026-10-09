@@ -45392,5 +45392,1290 @@
         }
       }
     }
+  },
+  "public_target_request_reuse_v129": {
+    "runtime_leaf": "0cfdbe0",
+    "native_permit_leaf": "9f3b8cc",
+    "registration_source": "12f9cc729afe61126758ad465794a2e6a94a9abb",
+    "binary_sha256": "70ce929d488a5aea1892f51b3016156de69096225db48fad09fbdcba3e617cda",
+    "features": [
+      "direct-device"
+    ],
+    "root_source_checks": {
+      "default_native_passed": 814,
+      "auxiliary_passed": 2,
+      "ignored_opt_in": 1,
+      "strict_default_and_direct_all_target_clippy": true,
+      "pure_direct_build_runtime_policy_tests": 3,
+      "protected_launcher_tests": 88,
+      "source_review_accepted": true
+    },
+    "target_client_only": true,
+    "draft_default_64MiB_IO_and_16MiB_HOST_unchanged": true,
+    "old_cap10_mode_unchanged": true,
+    "request_metadata_fully_reserved_bytes": 4194304,
+    "binding_capacity": 4096,
+    "target_original_runtime_ceiling_bytes": 134217728,
+    "target_complete_native_HOST_limit_bytes": 22806528,
+    "new_MAIN_or_GPU_owner": false,
+    "whole_original_CPU_bounds_actual_repairs_and_all_owner_gates_unchanged": true,
+    "timing_compilers_idle": true,
+    "request_begin_and_original_full_scope_close_inside_timing": true,
+    "cold_tokens_per_second": 1.5436433040292659,
+    "warm_tokens_per_second": 6.639527729861412,
+    "warm_expert_uploads": 0,
+    "warm_weight_read_ns": 0,
+    "warm_actual_physical_process_read_bytes": 4096,
+    "ordered_gain_over_v128_percent": 108.44249546862189,
+    "matched_ABBA_selection": false,
+    "production_or_private_accepted": false,
+    "thirty_tokens_per_second_achieved": false,
+    "runs": {
+      "target_rows": {
+        "source": {
+          "path": "/media/jmicko/faststore/kuno-development/daslab-target-rows-inline-reuse-v129-20261009/source.json",
+          "sha256": "e34987346bf32c1316c3b6578c528674f755a7501100dab38c58cc4aa47fbf6b",
+          "record": {
+            "commit": "12f9cc729afe61126758ad465794a2e6a94a9abb",
+            "binary_sha256": "70ce929d488a5aea1892f51b3016156de69096225db48fad09fbdcba3e617cda",
+            "features": [
+              "direct-device"
+            ],
+            "protected_launcher_source": "12f9cc7",
+            "protected_launcher_sha256": "baa4721eda9f949edf9682f1086b193c1a55556a52580c76dbf877c67015abe4",
+            "reference_sha256": "18788aee8ccb1defdbba624df3ae914c3cf574ab719c3d2a5f375e4048c67c20",
+            "pinned_profile": "DASLabIQ3_S",
+            "public_token0": 0,
+            "seed": 424242,
+            "temperature": 0,
+            "context": 4,
+            "max_chunk": 3,
+            "all_supplied_rows_committed": true,
+            "speculative_throughput_accepted": false,
+            "helper_sha256": "c306f62add664ba07ebb82d4f3f1b468acbb130e43ed2f9fb8d49b07bd306217"
+          }
+        },
+        "numeric": {
+          "path": "/media/jmicko/faststore/kuno-development/daslab-target-rows-inline-reuse-v129-20261009/intel-target-rows.json",
+          "sha256": "3850a063aa967afda756e5894ec397870e266918cbdca112af6a2aef37f0e77f",
+          "record": {
+            "absolute_tolerance": 0.006000000052154064,
+            "accepted_prefix_supported": false,
+            "all_supplied_rows_committed": true,
+            "carry_tap": "layer47 FFN HC residual before output_hc",
+            "carry_width": 10240,
+            "chunk_io_checkpoint": true,
+            "complete_cpu_reference_rows": 4,
+            "device_dispatch": "inline",
+            "extra_fixture_host_owner_bound_bytes": 16777216,
+            "full_model_card": "B70",
+            "logits_width": 248320,
+            "max_chunk": 3,
+            "model_repository": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
+            "model_revision": "ed59f92082b1e93c0e96d60a8b11aab089b52f09",
+            "mtp_throughput_accepted": false,
+            "observed_inline_device_dispatch": true,
+            "partitions": [
+              {
+                "checks": [
+                  {
+                    "completed_cursor": 1,
+                    "count": 1,
+                    "elapsed_ns_including_full_vector_checks": 5713330569,
+                    "start": 0,
+                    "whole_chunk_and_all_rows_accepted": true
+                  },
+                  {
+                    "completed_cursor": 2,
+                    "count": 1,
+                    "elapsed_ns_including_full_vector_checks": 853103322,
+                    "start": 1,
+                    "whole_chunk_and_all_rows_accepted": true
+                  },
+                  {
+                    "completed_cursor": 3,
+                    "count": 1,
+                    "elapsed_ns_including_full_vector_checks": 285441579,
+                    "start": 2,
+                    "whole_chunk_and_all_rows_accepted": true
+                  },
+                  {
+                    "completed_cursor": 4,
+                    "count": 1,
+                    "elapsed_ns_including_full_vector_checks": 209934584,
+                    "start": 3,
+                    "whole_chunk_and_all_rows_accepted": true
+                  }
+                ],
+                "compiled_token0_prelude_before_partition": true,
+                "complete_position3_checked": true,
+                "continuation_at_position3": false,
+                "hidden_max_abs_error": 2.7418136596679688e-05,
+                "logits_max_abs_error": 6.389617919921875e-05,
+                "owner_audit": {
+                  "main_buffers": 1378,
+                  "main_bytes": 826638336,
+                  "source_buffers": 0,
+                  "source_bytes": 0
+                },
+                "partition": [
+                  1,
+                  1,
+                  1
+                ],
+                "private_main_bytes": 826638336,
+                "request_scope": {
+                  "binding_capacity": 4096,
+                  "binding_stats": [
+                    8474,
+                    1732,
+                    1732,
+                    9581177,
+                    3719854
+                  ],
+                  "closing_audit_ns": 5175913,
+                  "counter_provenance": "admission-local request checkpoints; checked process-global binding/INFO/request-reuse deltas",
+                  "full_io_audit": true,
+                  "info_stats": [
+                    8812,
+                    122,
+                    13
+                  ],
+                  "metadata_reserved_bytes": 4194304,
+                  "request_checkpoints": 154,
+                  "request_io_reuses": 515,
+                  "runtime_limit_bytes": 134217728,
+                  "scope_closed": true,
+                  "scope_sequence": 1,
+                  "target_stream_configured": true
+                },
+                "request_scope_closed_and_audited": true,
+                "verify3_dense_calls": 3008,
+                "verify3_fused_calls": 3008
+              },
+              {
+                "checks": [
+                  {
+                    "completed_cursor": 1,
+                    "count": 1,
+                    "elapsed_ns_including_full_vector_checks": 4084926948,
+                    "start": 0,
+                    "whole_chunk_and_all_rows_accepted": true
+                  },
+                  {
+                    "completed_cursor": 2,
+                    "count": 1,
+                    "elapsed_ns_including_full_vector_checks": 785836462,
+                    "start": 1,
+                    "whole_chunk_and_all_rows_accepted": true
+                  },
+                  {
+                    "completed_cursor": 4,
+                    "count": 2,
+                    "elapsed_ns_including_full_vector_checks": 415184159,
+                    "start": 2,
+                    "whole_chunk_and_all_rows_accepted": true
+                  }
+                ],
+                "compiled_token0_prelude_before_partition": true,
+                "complete_position3_checked": true,
+                "continuation_at_position3": false,
+                "hidden_max_abs_error": 2.7418136596679688e-05,
+                "logits_max_abs_error": 6.4849853515625e-05,
+                "owner_audit": {
+                  "main_buffers": 1378,
+                  "main_bytes": 826638336,
+                  "source_buffers": 0,
+                  "source_bytes": 0
+                },
+                "partition": [
+                  1,
+                  2
+                ],
+                "private_main_bytes": 826638336,
+                "request_scope": {
+                  "binding_capacity": 4096,
+                  "binding_stats": [
+                    1976,
+                    1465,
+                    1465,
+                    10616230,
+                    1395420
+                  ],
+                  "closing_audit_ns": 3185893,
+                  "counter_provenance": "admission-local request checkpoints; checked process-global binding/INFO/request-reuse deltas",
+                  "full_io_audit": true,
+                  "info_stats": [
+                    5725,
+                    255,
+                    20
+                  ],
+                  "metadata_reserved_bytes": 4194304,
+                  "request_checkpoints": 103,
+                  "request_io_reuses": 338,
+                  "runtime_limit_bytes": 134217728,
+                  "scope_closed": true,
+                  "scope_sequence": 1,
+                  "target_stream_configured": true
+                },
+                "request_scope_closed_and_audited": true,
+                "verify3_dense_calls": 2256,
+                "verify3_fused_calls": 2256
+              },
+              {
+                "checks": [
+                  {
+                    "completed_cursor": 1,
+                    "count": 1,
+                    "elapsed_ns_including_full_vector_checks": 5140293732,
+                    "start": 0,
+                    "whole_chunk_and_all_rows_accepted": true
+                  },
+                  {
+                    "completed_cursor": 3,
+                    "count": 2,
+                    "elapsed_ns_including_full_vector_checks": 1058457698,
+                    "start": 1,
+                    "whole_chunk_and_all_rows_accepted": true
+                  },
+                  {
+                    "completed_cursor": 4,
+                    "count": 1,
+                    "elapsed_ns_including_full_vector_checks": 239404866,
+                    "start": 3,
+                    "whole_chunk_and_all_rows_accepted": true
+                  }
+                ],
+                "compiled_token0_prelude_before_partition": true,
+                "complete_position3_checked": true,
+                "continuation_at_position3": false,
+                "hidden_max_abs_error": 2.7418136596679688e-05,
+                "logits_max_abs_error": 6.29425048828125e-05,
+                "owner_audit": {
+                  "main_buffers": 1378,
+                  "main_bytes": 826638336,
+                  "source_buffers": 0,
+                  "source_bytes": 0
+                },
+                "partition": [
+                  2,
+                  1
+                ],
+                "private_main_bytes": 826638336,
+                "request_scope": {
+                  "binding_capacity": 4096,
+                  "binding_stats": [
+                    6,
+                    45,
+                    45,
+                    441935,
+                    9550
+                  ],
+                  "closing_audit_ns": 3368675,
+                  "counter_provenance": "admission-local request checkpoints; checked process-global binding/INFO/request-reuse deltas",
+                  "full_io_audit": true,
+                  "info_stats": [
+                    4118,
+                    1862,
+                    133
+                  ],
+                  "metadata_reserved_bytes": 4194304,
+                  "request_checkpoints": 103,
+                  "request_io_reuses": 259,
+                  "runtime_limit_bytes": 134217728,
+                  "scope_closed": true,
+                  "scope_sequence": 1,
+                  "target_stream_configured": true
+                },
+                "request_scope_closed_and_audited": true,
+                "verify3_dense_calls": 2256,
+                "verify3_fused_calls": 2256
+              },
+              {
+                "checks": [
+                  {
+                    "completed_cursor": 1,
+                    "count": 1,
+                    "elapsed_ns_including_full_vector_checks": 3819867544,
+                    "start": 0,
+                    "whole_chunk_and_all_rows_accepted": true
+                  },
+                  {
+                    "completed_cursor": 4,
+                    "count": 3,
+                    "elapsed_ns_including_full_vector_checks": 612280440,
+                    "start": 1,
+                    "whole_chunk_and_all_rows_accepted": true
+                  }
+                ],
+                "compiled_token0_prelude_before_partition": true,
+                "complete_position3_checked": true,
+                "continuation_at_position3": false,
+                "hidden_max_abs_error": 2.7418136596679688e-05,
+                "logits_max_abs_error": 6.389617919921875e-05,
+                "owner_audit": {
+                  "main_buffers": 1378,
+                  "main_bytes": 826638336,
+                  "source_buffers": 0,
+                  "source_bytes": 0
+                },
+                "partition": [
+                  3
+                ],
+                "private_main_bytes": 826638336,
+                "request_scope": {
+                  "binding_capacity": 4096,
+                  "binding_stats": [
+                    6,
+                    45,
+                    45,
+                    405342,
+                    8721
+                  ],
+                  "closing_audit_ns": 2742548,
+                  "counter_provenance": "admission-local request checkpoints; checked process-global binding/INFO/request-reuse deltas",
+                  "full_io_audit": true,
+                  "info_stats": [
+                    1090,
+                    1936,
+                    135
+                  ],
+                  "metadata_reserved_bytes": 4194304,
+                  "request_checkpoints": 52,
+                  "request_io_reuses": 61,
+                  "runtime_limit_bytes": 134217728,
+                  "scope_closed": true,
+                  "scope_sequence": 1,
+                  "target_stream_configured": true
+                },
+                "request_scope_closed_and_audited": true,
+                "verify3_dense_calls": 1504,
+                "verify3_fused_calls": 1504
+              },
+              {
+                "checks": [
+                  {
+                    "completed_cursor": 1,
+                    "count": 1,
+                    "elapsed_ns_including_full_vector_checks": 2156037915,
+                    "start": 0,
+                    "whole_chunk_and_all_rows_accepted": true
+                  },
+                  {
+                    "completed_cursor": 4,
+                    "count": 3,
+                    "elapsed_ns_including_full_vector_checks": 648961637,
+                    "start": 1,
+                    "whole_chunk_and_all_rows_accepted": true
+                  }
+                ],
+                "compiled_token0_prelude_before_partition": true,
+                "complete_position3_checked": true,
+                "continuation_at_position3": false,
+                "hidden_max_abs_error": 2.7418136596679688e-05,
+                "logits_max_abs_error": 6.389617919921875e-05,
+                "owner_audit": {
+                  "main_buffers": 1378,
+                  "main_bytes": 826638336,
+                  "source_buffers": 0,
+                  "source_bytes": 0
+                },
+                "partition": [
+                  3
+                ],
+                "private_main_bytes": 826638336,
+                "request_scope": {
+                  "binding_capacity": 4096,
+                  "binding_stats": [
+                    6,
+                    45,
+                    45,
+                    412682,
+                    8330
+                  ],
+                  "closing_audit_ns": 2685167,
+                  "counter_provenance": "admission-local request checkpoints; checked process-global binding/INFO/request-reuse deltas",
+                  "full_io_audit": true,
+                  "info_stats": [
+                    1090,
+                    1936,
+                    135
+                  ],
+                  "metadata_reserved_bytes": 4194304,
+                  "request_checkpoints": 52,
+                  "request_io_reuses": 61,
+                  "runtime_limit_bytes": 134217728,
+                  "scope_closed": true,
+                  "scope_sequence": 1,
+                  "target_stream_configured": true
+                },
+                "request_scope_closed_and_audited": true,
+                "verify3_dense_calls": 1504,
+                "verify3_fused_calls": 1504
+              }
+            ],
+            "prepared_verify3_experts": false,
+            "private_or_production_accepted": false,
+            "public_existing_fill": true,
+            "public_token0": 0,
+            "relative_tolerance": 0.0003000000142492354,
+            "request_binding_capacity": 4096,
+            "request_io_reuse": true,
+            "request_reuse_metadata_reserved_bytes": 4194304,
+            "runtime_io_limit_bytes": 134217728,
+            "scope": "fixed-public-DASLab-target-rows-and-carry-only",
+            "seed": 424242,
+            "speculative_controller": false,
+            "temperature": 0,
+            "verify3_dense": true,
+            "verify3_logical_finite_fused": true
+          }
+        },
+        "host_before": {
+          "path": "/media/jmicko/faststore/kuno-development/daslab-target-rows-inline-reuse-v129-20261009/host-before.json",
+          "sha256": "397fcd5e6c571eb64e3bccff6d932f64df4faa89aac47748ddea418ab2366259",
+          "record": {
+            "admission": {
+              "action": "status",
+              "state": {
+                "admission": {
+                  "active": false,
+                  "completed": 62,
+                  "paused": false,
+                  "recovery_required": false,
+                  "rejected": 0,
+                  "waiting": 0
+                }
+              },
+              "status": 200
+            },
+            "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+            "http_statuses": {
+              "kuno": 200,
+              "ollama": 200,
+              "vashti": 200
+            },
+            "intel": {
+              "xe_memory": [
+                {
+                  "total_bytes": 34242297856,
+                  "used_bytes": 50688000
+                }
+              ]
+            },
+            "kernel": "7.0.0-38-generic",
+            "kernel_fault_counts": {
+              "nvidia_xid": 0,
+              "xe_memory_faults": 0,
+              "xe_reset_failures": 0,
+              "xe_timeouts": 0,
+              "xe_wedged": 0
+            },
+            "nvidia_compute_process_count": 0,
+            "nvidia_memory_mib": 534,
+            "time": "2026-10-09T15:51:25.045806+00:00"
+          }
+        },
+        "host_after": {
+          "path": "/media/jmicko/faststore/kuno-development/daslab-target-rows-inline-reuse-v129-20261009/host-after.json",
+          "sha256": "9833260c4f14c2e30a8edfc26e08fc4f9bbbd46cb9fe05ca5e0ed8082a6fe86e",
+          "record": {
+            "admission": {
+              "action": "status",
+              "state": {
+                "admission": {
+                  "active": false,
+                  "completed": 62,
+                  "paused": false,
+                  "recovery_required": false,
+                  "rejected": 0,
+                  "waiting": 0
+                }
+              },
+              "status": 200
+            },
+            "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+            "http_statuses": {
+              "kuno": 200,
+              "ollama": 200,
+              "vashti": 200
+            },
+            "intel": {
+              "xe_memory": [
+                {
+                  "total_bytes": 34242297856,
+                  "used_bytes": 50688000
+                }
+              ]
+            },
+            "kernel": "7.0.0-38-generic",
+            "kernel_fault_counts": {
+              "nvidia_xid": 0,
+              "xe_memory_faults": 0,
+              "xe_reset_failures": 0,
+              "xe_timeouts": 0,
+              "xe_wedged": 0
+            },
+            "nvidia_compute_process_count": 0,
+            "nvidia_memory_mib": 548,
+            "time": "2026-10-09T15:52:03.027384+00:00"
+          }
+        }
+      },
+      "target_repair": {
+        "source": {
+          "path": "/media/jmicko/faststore/kuno-development/daslab-target-repair-inline-reuse-v129-20261009/source.json",
+          "sha256": "b22687e768365e25574f0695f8659da173bc39d96b3ae31acf9a635a8ef76ca3",
+          "record": {
+            "commit": "12f9cc729afe61126758ad465794a2e6a94a9abb",
+            "binary_sha256": "70ce929d488a5aea1892f51b3016156de69096225db48fad09fbdcba3e617cda",
+            "features": [
+              "direct-device"
+            ],
+            "protected_launcher_source": "f652d53",
+            "protected_launcher_sha256": "baa4721eda9f949edf9682f1086b193c1a55556a52580c76dbf877c67015abe4",
+            "reference_sha256": "18788aee8ccb1defdbba624df3ae914c3cf574ab719c3d2a5f375e4048c67c20",
+            "pinned_profile": "DASLabIQ3_S",
+            "public_token0": 0,
+            "seed": 424242,
+            "temperature": 0,
+            "context": 4,
+            "max_chunk": 3,
+            "actual_accepted_prefix_repair": true,
+            "speculative_throughput_accepted": false,
+            "helper_sha256": "d2d0558df219f83cc1c8ae096af37e451dfcdafc6af3d2435457b5aaff243cab"
+          }
+        },
+        "numeric": {
+          "path": "/media/jmicko/faststore/kuno-development/daslab-target-repair-inline-reuse-v129-20261009/intel-target-repair.json",
+          "sha256": "fa0cbd9b035d72cd56df157a365c0ac8832110c9f1593eb29359203c67363911",
+          "record": {
+            "accepted_speculative_tokens_per_second": null,
+            "cases": [
+              {
+                "accepted_input_prefix": 1,
+                "accepted_prefix_and_continuation_all_vectors": true,
+                "actual_completed_cursor": 4,
+                "hidden_max_abs_error": 2.5272369384765625e-05,
+                "logits_max_abs_error": 6.389617919921875e-05,
+                "owner_audit": {
+                  "main_buffers": 1378,
+                  "main_bytes": 826638336,
+                  "source_buffers": 0,
+                  "source_bytes": 0
+                },
+                "proposed_count": 3,
+                "proposed_start": 1,
+                "request_scope": {
+                  "binding_capacity": 4096,
+                  "binding_stats": [
+                    6,
+                    45,
+                    45,
+                    355883,
+                    8260
+                  ],
+                  "closing_audit_ns": 3413525,
+                  "counter_provenance": "admission-local request checkpoints; checked process-global binding/INFO/request-reuse deltas",
+                  "full_io_audit": true,
+                  "info_stats": [
+                    9765,
+                    2219,
+                    157
+                  ],
+                  "metadata_reserved_bytes": 4194304,
+                  "request_checkpoints": 206,
+                  "request_io_reuses": 570,
+                  "runtime_limit_bytes": 134217728,
+                  "scope_closed": true,
+                  "scope_sequence": 1,
+                  "target_stream_configured": true
+                },
+                "request_scope_closed_and_audited": true,
+                "verify3_dense_calls": 3760,
+                "verify3_fused_calls": 3760,
+                "wrong_future_inputs": 2
+              },
+              {
+                "accepted_input_prefix": 2,
+                "accepted_prefix_and_continuation_all_vectors": true,
+                "actual_completed_cursor": 4,
+                "hidden_max_abs_error": 2.5272369384765625e-05,
+                "logits_max_abs_error": 6.29425048828125e-05,
+                "owner_audit": {
+                  "main_buffers": 1378,
+                  "main_bytes": 826638336,
+                  "source_buffers": 0,
+                  "source_bytes": 0
+                },
+                "proposed_count": 3,
+                "proposed_start": 1,
+                "request_scope": {
+                  "binding_capacity": 4096,
+                  "binding_stats": [
+                    6,
+                    45,
+                    45,
+                    418544,
+                    8450
+                  ],
+                  "closing_audit_ns": 3453526,
+                  "counter_provenance": "admission-local request checkpoints; checked process-global binding/INFO/request-reuse deltas",
+                  "full_io_audit": true,
+                  "info_stats": [
+                    6762,
+                    2268,
+                    158
+                  ],
+                  "metadata_reserved_bytes": 4194304,
+                  "request_checkpoints": 155,
+                  "request_io_reuses": 405,
+                  "runtime_limit_bytes": 134217728,
+                  "scope_closed": true,
+                  "scope_sequence": 1,
+                  "target_stream_configured": true
+                },
+                "request_scope_closed_and_audited": true,
+                "verify3_dense_calls": 3008,
+                "verify3_fused_calls": 3008,
+                "wrong_future_inputs": 1
+              },
+              {
+                "accepted_input_prefix": 3,
+                "accepted_prefix_and_continuation_all_vectors": true,
+                "actual_completed_cursor": 4,
+                "hidden_max_abs_error": 2.5272369384765625e-05,
+                "logits_max_abs_error": 6.389617919921875e-05,
+                "owner_audit": {
+                  "main_buffers": 1378,
+                  "main_bytes": 826638336,
+                  "source_buffers": 0,
+                  "source_bytes": 0
+                },
+                "proposed_count": 3,
+                "proposed_start": 1,
+                "request_scope": {
+                  "binding_capacity": 4096,
+                  "binding_stats": [
+                    6,
+                    45,
+                    45,
+                    425194,
+                    8660
+                  ],
+                  "closing_audit_ns": 2826759,
+                  "counter_provenance": "admission-local request checkpoints; checked process-global binding/INFO/request-reuse deltas",
+                  "full_io_audit": true,
+                  "info_stats": [
+                    1090,
+                    1936,
+                    135
+                  ],
+                  "metadata_reserved_bytes": 4194304,
+                  "request_checkpoints": 52,
+                  "request_io_reuses": 61,
+                  "runtime_limit_bytes": 134217728,
+                  "scope_closed": true,
+                  "scope_sequence": 1,
+                  "target_stream_configured": true
+                },
+                "request_scope_closed_and_audited": true,
+                "verify3_dense_calls": 1504,
+                "verify3_fused_calls": 1504,
+                "wrong_future_inputs": 0
+              }
+            ],
+            "chunk_io_checkpoint": true,
+            "complete_cpu_reference_rows": 4,
+            "device_dispatch": "inline",
+            "max_chunk": 3,
+            "observed_inline_device_dispatch": true,
+            "prepared_verify3_experts": false,
+            "private_or_production_accepted": false,
+            "public_existing_fill": true,
+            "public_token0": 0,
+            "request_binding_capacity": 4096,
+            "request_io_reuse": true,
+            "request_reuse_metadata_reserved_bytes": 4194304,
+            "runtime_io_limit_bytes": 134217728,
+            "scope": "fixed-public-DASLab-actual-target-prefix-repair-only",
+            "seed": 424242,
+            "speculative_controller": false,
+            "temperature": 0,
+            "verify3_dense": true,
+            "verify3_logical_finite_fused": true
+          }
+        },
+        "host_before": {
+          "path": "/media/jmicko/faststore/kuno-development/daslab-target-repair-inline-reuse-v129-20261009/host-before.json",
+          "sha256": "d92502c370e302a2ce65026cda84522acbba0510219599b0c3160dc2d365076a",
+          "record": {
+            "admission": {
+              "action": "status",
+              "state": {
+                "admission": {
+                  "active": false,
+                  "completed": 62,
+                  "paused": false,
+                  "recovery_required": false,
+                  "rejected": 0,
+                  "waiting": 0
+                }
+              },
+              "status": 200
+            },
+            "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+            "http_statuses": {
+              "kuno": 200,
+              "ollama": 200,
+              "vashti": 200
+            },
+            "intel": {
+              "xe_memory": [
+                {
+                  "total_bytes": 34242297856,
+                  "used_bytes": 50688000
+                }
+              ]
+            },
+            "kernel": "7.0.0-38-generic",
+            "kernel_fault_counts": {
+              "nvidia_xid": 0,
+              "xe_memory_faults": 0,
+              "xe_reset_failures": 0,
+              "xe_timeouts": 0,
+              "xe_wedged": 0
+            },
+            "nvidia_compute_process_count": 0,
+            "nvidia_memory_mib": 525,
+            "time": "2026-10-09T15:52:19.895617+00:00"
+          }
+        },
+        "host_after": {
+          "path": "/media/jmicko/faststore/kuno-development/daslab-target-repair-inline-reuse-v129-20261009/host-after.json",
+          "sha256": "6da45d5f2cad265998acdbc844e3b5fdfeaa00c0b6d33f8f07eb4e477c70be5f",
+          "record": {
+            "admission": {
+              "action": "status",
+              "state": {
+                "admission": {
+                  "active": false,
+                  "completed": 62,
+                  "paused": false,
+                  "recovery_required": false,
+                  "rejected": 0,
+                  "waiting": 0
+                }
+              },
+              "status": 200
+            },
+            "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+            "http_statuses": {
+              "kuno": 200,
+              "ollama": 200,
+              "vashti": 200
+            },
+            "intel": {
+              "xe_memory": [
+                {
+                  "total_bytes": 34242297856,
+                  "used_bytes": 50688000
+                }
+              ]
+            },
+            "kernel": "7.0.0-38-generic",
+            "kernel_fault_counts": {
+              "nvidia_xid": 0,
+              "xe_memory_faults": 0,
+              "xe_reset_failures": 0,
+              "xe_timeouts": 0,
+              "xe_wedged": 0
+            },
+            "nvidia_compute_process_count": 0,
+            "nvidia_memory_mib": 525,
+            "time": "2026-10-09T15:52:42.609011+00:00"
+          }
+        }
+      },
+      "controller": {
+        "source": {
+          "path": "/media/jmicko/faststore/kuno-development/daslab-speculative-inline-reuse-warm-v129-20261009/source.json",
+          "sha256": "e1501161bd03a49f4fb692261d6dd266e83f14351e0f28b8dc03a398ac757d70",
+          "record": {
+            "commit": "12f9cc729afe61126758ad465794a2e6a94a9abb",
+            "binary_sha256": "70ce929d488a5aea1892f51b3016156de69096225db48fad09fbdcba3e617cda",
+            "features": [
+              "direct-device"
+            ],
+            "protected_launcher_source": "12f9cc7",
+            "protected_launcher_sha256": "baa4721eda9f949edf9682f1086b193c1a55556a52580c76dbf877c67015abe4",
+            "reference_sha256": "80650af818ae00344af5b4b3979e9272cc833c641ea4f80d2934cdb6ffa67e02",
+            "pinned_profile": "DASLabIQ3_S",
+            "public_token0": 0,
+            "seed": 424242,
+            "temperature": 0,
+            "context": 13,
+            "max_chunk": 3,
+            "actual_accepted_prefix_repair": true,
+            "normal_demand_routing": true,
+            "speculative_throughput_accepted": false,
+            "sidecar_sha256_full_verified_this_segment": "58a47d6a216307e9b97172d5bfdc3436a8994b632f5e436b9bb6edf8951da8d1",
+            "helper_sha256": "2ec68a700704f5c15ecebe965d3bbf21fff7987b963c72bb81521b3cf8cd8c98"
+          }
+        },
+        "numeric": {
+          "path": "/media/jmicko/faststore/kuno-development/daslab-speculative-inline-reuse-warm-v129-20261009/intel-speculative.json",
+          "sha256": "ec59ea452e9e62abb9cc91ce51ab4c2316888706a93b6b758522845abdbd0e26",
+          "record": {
+            "chunk_io_checkpoint": true,
+            "compiled_token0": 0,
+            "device_dispatch": "inline",
+            "draft_card": "RTX3060",
+            "draft_close": {
+              "main_reserved": 0,
+              "private_buffers": 42,
+              "private_bytes": 11698176,
+              "public_bytes": 5011668992
+            },
+            "expert_route_forcing": false,
+            "fused_mtp_sweeps": true,
+            "observed_inline_device_dispatch": true,
+            "oracle_forcing": false,
+            "passes": [
+              {
+                "accepted_drafts": 6,
+                "accepted_tokens": 12,
+                "accepted_tokens_per_second": 1.5436433040292659,
+                "draft_traffic": {
+                  "explicit_dispatches": 2216,
+                  "followup_copy_calls": 5,
+                  "host_read_bytes": 1048576,
+                  "host_read_calls": 22,
+                  "minimal_packet_reads": 10,
+                  "private_upload_bytes": 1179648,
+                  "private_upload_calls": 24
+                },
+                "elapsed_ns": 7773816638,
+                "expert_hits": 6329,
+                "expert_uploads": 2311,
+                "initial_prefill_ns": 4682049722,
+                "load_and_initial_prefill_cumulative_ns": 11590732090,
+                "load_and_initial_prefill_physical_read_bytes": 1218756608,
+                "model_weights_warm": false,
+                "proposed_drafts": 10,
+                "replay": 0,
+                "request_close_ns_inside_timing": 3509756,
+                "request_scope": {
+                  "binding_capacity": 4096,
+                  "binding_stats": [
+                    6,
+                    45,
+                    45,
+                    49359044,
+                    22301
+                  ],
+                  "closing_audit_ns": 3496436,
+                  "counter_provenance": "admission-local request checkpoints; checked process-global binding/INFO/request-reuse deltas",
+                  "full_io_audit": true,
+                  "info_stats": [
+                    20395,
+                    4005,
+                    305
+                  ],
+                  "metadata_reserved_bytes": 4194304,
+                  "request_checkpoints": 411,
+                  "request_io_reuses": 1275,
+                  "runtime_limit_bytes": 134217728,
+                  "scope_closed": true,
+                  "scope_sequence": 1,
+                  "target_stream_configured": true
+                },
+                "request_scope_closed_and_audited": true,
+                "rounds": [
+                  {
+                    "accepted_drafts": 0,
+                    "accepted_outputs": 1,
+                    "draft_completed_cell": 1,
+                    "draft_ns": 1308454282,
+                    "proposed_drafts": 2,
+                    "repair_ns": 343611342,
+                    "target_completed_cursor": 2,
+                    "target_start": 1,
+                    "total_ns": 3675414113,
+                    "verify_ns_including_public_vector_checks": 2023347979
+                  },
+                  {
+                    "accepted_drafts": 2,
+                    "accepted_outputs": 3,
+                    "draft_completed_cell": 4,
+                    "draft_ns": 139459779,
+                    "proposed_drafts": 2,
+                    "repair_ns": 30249730,
+                    "target_completed_cursor": 5,
+                    "target_start": 2,
+                    "total_ns": 993290571,
+                    "verify_ns_including_public_vector_checks": 823580702
+                  },
+                  {
+                    "accepted_drafts": 0,
+                    "accepted_outputs": 1,
+                    "draft_completed_cell": 5,
+                    "draft_ns": 160818388,
+                    "proposed_drafts": 2,
+                    "repair_ns": 165681808,
+                    "target_completed_cursor": 6,
+                    "target_start": 5,
+                    "total_ns": 1614656289,
+                    "verify_ns_including_public_vector_checks": 1288155733
+                  },
+                  {
+                    "accepted_drafts": 2,
+                    "accepted_outputs": 3,
+                    "draft_completed_cell": 8,
+                    "draft_ns": 54787782,
+                    "proposed_drafts": 2,
+                    "repair_ns": 17858163,
+                    "target_completed_cursor": 9,
+                    "target_start": 6,
+                    "total_ns": 720201872,
+                    "verify_ns_including_public_vector_checks": 647555627
+                  },
+                  {
+                    "accepted_drafts": 2,
+                    "accepted_outputs": 3,
+                    "draft_completed_cell": 11,
+                    "draft_ns": 79948920,
+                    "proposed_drafts": 2,
+                    "repair_ns": 15686781,
+                    "target_completed_cursor": 12,
+                    "target_start": 9,
+                    "total_ns": 479491355,
+                    "verify_ns_including_public_vector_checks": 383855354
+                  },
+                  {
+                    "accepted_drafts": 0,
+                    "accepted_outputs": 1,
+                    "draft_completed_cell": 12,
+                    "draft_ns": 20,
+                    "proposed_drafts": 0,
+                    "repair_ns": 8947691,
+                    "target_completed_cursor": 13,
+                    "target_start": 12,
+                    "total_ns": 287061082,
+                    "verify_ns_including_public_vector_checks": 278113081
+                  }
+                ],
+                "target_fill_counters_after": {
+                  "direct_bytes": 5759232000,
+                  "direct_components": 8373,
+                  "direct_windows": 411,
+                  "evictions": 0,
+                  "first_touch_fills": 2791
+                },
+                "target_fill_counters_before": {
+                  "direct_bytes": 982272000,
+                  "direct_components": 1440,
+                  "direct_windows": 48,
+                  "evictions": 0,
+                  "first_touch_fills": 480
+                },
+                "target_host_phase_ns": {
+                  "native_all_family_commit": 5039091,
+                  "native_all_family_preflight": 3290555,
+                  "native_attention_and_gr_enqueue": 632475447,
+                  "native_completed_final_proofs": 115494062,
+                  "native_ffn_gr_and_router_enqueue": 13345771,
+                  "native_final_head_enqueue": 516037,
+                  "native_route_and_expert_enqueue": 3588333861,
+                  "native_router_fence": 1537088715,
+                  "native_shared_and_ffn_combine_enqueue": 17126272
+                },
+                "timed_physical_read_bytes": 2226143232,
+                "timing_scope": "original normal routing/demand uploads; public checks and actual repair included",
+                "uploaded_bytes": 4776960000,
+                "verify3_dense_calls": 6016,
+                "verify3_fused_calls": 6016,
+                "weight_read_ns": 2636993226,
+                "weight_upload_enqueue_ns": 2994077
+              },
+              {
+                "accepted_drafts": 6,
+                "accepted_tokens": 12,
+                "accepted_tokens_per_second": 6.639527729861412,
+                "draft_traffic": {
+                  "explicit_dispatches": 2216,
+                  "followup_copy_calls": 5,
+                  "host_read_bytes": 1048576,
+                  "host_read_calls": 22,
+                  "minimal_packet_reads": 10,
+                  "private_upload_bytes": 1179648,
+                  "private_upload_calls": 24
+                },
+                "elapsed_ns": 1807357464,
+                "expert_hits": 8640,
+                "expert_uploads": 0,
+                "initial_prefill_ns": 151188230,
+                "load_and_initial_prefill_cumulative_ns": 21047162854,
+                "load_and_initial_prefill_physical_read_bytes": 188416,
+                "model_weights_warm": true,
+                "proposed_drafts": 10,
+                "replay": 1,
+                "request_close_ns_inside_timing": 7448796,
+                "request_scope": {
+                  "binding_capacity": 4096,
+                  "binding_stats": [
+                    24266,
+                    3526,
+                    3526,
+                    14572135,
+                    7609920
+                  ],
+                  "closing_audit_ns": 7440846,
+                  "counter_provenance": "admission-local request checkpoints; checked process-global binding/INFO/request-reuse deltas",
+                  "full_io_audit": true,
+                  "info_stats": [
+                    24133,
+                    267,
+                    33
+                  ],
+                  "metadata_reserved_bytes": 4194304,
+                  "request_checkpoints": 411,
+                  "request_io_reuses": 1498,
+                  "runtime_limit_bytes": 134217728,
+                  "scope_closed": true,
+                  "scope_sequence": 2,
+                  "target_stream_configured": true
+                },
+                "request_scope_closed_and_audited": true,
+                "rounds": [
+                  {
+                    "accepted_drafts": 0,
+                    "accepted_outputs": 1,
+                    "draft_completed_cell": 1,
+                    "draft_ns": 238117050,
+                    "proposed_drafts": 2,
+                    "repair_ns": 138383068,
+                    "target_completed_cursor": 2,
+                    "target_start": 1,
+                    "total_ns": 548284399,
+                    "verify_ns_including_public_vector_checks": 171783871
+                  },
+                  {
+                    "accepted_drafts": 2,
+                    "accepted_outputs": 3,
+                    "draft_completed_cell": 4,
+                    "draft_ns": 44861040,
+                    "proposed_drafts": 2,
+                    "repair_ns": 13129714,
+                    "target_completed_cursor": 5,
+                    "target_start": 2,
+                    "total_ns": 241401244,
+                    "verify_ns_including_public_vector_checks": 183410110
+                  },
+                  {
+                    "accepted_drafts": 0,
+                    "accepted_outputs": 1,
+                    "draft_completed_cell": 5,
+                    "draft_ns": 45600348,
+                    "proposed_drafts": 2,
+                    "repair_ns": 139026485,
+                    "target_completed_cursor": 6,
+                    "target_start": 5,
+                    "total_ns": 369843371,
+                    "verify_ns_including_public_vector_checks": 185216228
+                  },
+                  {
+                    "accepted_drafts": 2,
+                    "accepted_outputs": 3,
+                    "draft_completed_cell": 8,
+                    "draft_ns": 46731039,
+                    "proposed_drafts": 2,
+                    "repair_ns": 12896052,
+                    "target_completed_cursor": 9,
+                    "target_start": 6,
+                    "total_ns": 252701580,
+                    "verify_ns_including_public_vector_checks": 193074229
+                  },
+                  {
+                    "accepted_drafts": 2,
+                    "accepted_outputs": 3,
+                    "draft_completed_cell": 11,
+                    "draft_ns": 46602737,
+                    "proposed_drafts": 2,
+                    "repair_ns": 13411207,
+                    "target_completed_cursor": 12,
+                    "target_start": 9,
+                    "total_ns": 243701197,
+                    "verify_ns_including_public_vector_checks": 183686923
+                  },
+                  {
+                    "accepted_drafts": 0,
+                    "accepted_outputs": 1,
+                    "draft_completed_cell": 12,
+                    "draft_ns": 30,
+                    "proposed_drafts": 0,
+                    "repair_ns": 6025431,
+                    "target_completed_cursor": 13,
+                    "target_start": 12,
+                    "total_ns": 143775613,
+                    "verify_ns_including_public_vector_checks": 137749862
+                  }
+                ],
+                "target_close": {
+                  "main_buffers": 1378,
+                  "main_bytes": 826638336,
+                  "source_buffers": 0,
+                  "source_bytes": 0
+                },
+                "target_fill_counters_after": {
+                  "direct_bytes": 5759232000,
+                  "direct_components": 8373,
+                  "direct_windows": 411,
+                  "evictions": 0,
+                  "first_touch_fills": 2791
+                },
+                "target_fill_counters_before": {
+                  "direct_bytes": 5759232000,
+                  "direct_components": 8373,
+                  "direct_windows": 411,
+                  "evictions": 0,
+                  "first_touch_fills": 2791
+                },
+                "target_host_phase_ns": {
+                  "native_all_family_commit": 4794429,
+                  "native_all_family_preflight": 2707668,
+                  "native_attention_and_gr_enqueue": 287369096,
+                  "native_completed_final_proofs": 78254042,
+                  "native_ffn_gr_and_router_enqueue": 12682701,
+                  "native_final_head_enqueue": 369724,
+                  "native_route_and_expert_enqueue": 33586587,
+                  "native_router_fence": 874694594,
+                  "native_shared_and_ffn_combine_enqueue": 13271127
+                },
+                "timed_physical_read_bytes": 4096,
+                "timing_scope": "original normal routing/demand uploads; public checks and actual repair included",
+                "uploaded_bytes": 0,
+                "verify3_dense_calls": 6016,
+                "verify3_fused_calls": 6016,
+                "weight_read_ns": 0,
+                "weight_upload_enqueue_ns": 0
+              }
+            ],
+            "prepared_verify3_experts": false,
+            "private_or_production_accepted": false,
+            "public_existing_fill": true,
+            "request_binding_capacity": 4096,
+            "request_io_reuse": true,
+            "request_reuse_metadata_reserved_bytes": 4194304,
+            "scope": "fixed-public-DASLab13-real-dual-GPU-greedy-speculation",
+            "seed": 424242,
+            "target_card": "B70",
+            "temperature": 0,
+            "verify3_dense": true,
+            "verify3_logical_finite_fused": true,
+            "warm_replay": true,
+            "warm_reset": {
+              "admission_and_public_banks_retained": true,
+              "ledger_epoch_or_poison_reset": false,
+              "main_buffers": 1378,
+              "main_bytes": 826638336,
+              "source_buffers": 0,
+              "source_bytes": 0,
+              "transient_binding_info_caches_retained": false
+            }
+          }
+        },
+        "host_before": {
+          "path": "/media/jmicko/faststore/kuno-development/daslab-speculative-inline-reuse-warm-v129-20261009/host-before.json",
+          "sha256": "26617d00a38526cd1ebfd561cc1dc30920413a2b07867e83278f5fa8e09815bf",
+          "record": {
+            "admission": {
+              "action": "status",
+              "state": {
+                "admission": {
+                  "active": false,
+                  "completed": 62,
+                  "paused": false,
+                  "recovery_required": false,
+                  "rejected": 0,
+                  "waiting": 0
+                }
+              },
+              "status": 200
+            },
+            "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+            "http_statuses": {
+              "kuno": 200,
+              "ollama": 200,
+              "vashti": 200
+            },
+            "intel": {
+              "xe_memory": [
+                {
+                  "total_bytes": 34242297856,
+                  "used_bytes": 50688000
+                }
+              ]
+            },
+            "kernel": "7.0.0-38-generic",
+            "kernel_fault_counts": {
+              "nvidia_xid": 0,
+              "xe_memory_faults": 0,
+              "xe_reset_failures": 0,
+              "xe_timeouts": 0,
+              "xe_wedged": 0
+            },
+            "nvidia_compute_process_count": 0,
+            "nvidia_memory_mib": 525,
+            "time": "2026-10-09T15:53:18.382015+00:00"
+          }
+        },
+        "host_after": {
+          "path": "/media/jmicko/faststore/kuno-development/daslab-speculative-inline-reuse-warm-v129-20261009/host-after.json",
+          "sha256": "feda9f620faf8b65f0038ea53ac15fd88946861fd30b786de98dce4e621a7db4",
+          "record": {
+            "admission": {
+              "action": "status",
+              "state": {
+                "admission": {
+                  "active": false,
+                  "completed": 62,
+                  "paused": false,
+                  "recovery_required": false,
+                  "rejected": 0,
+                  "waiting": 0
+                }
+              },
+              "status": 200
+            },
+            "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+            "http_statuses": {
+              "kuno": 200,
+              "ollama": 200,
+              "vashti": 200
+            },
+            "intel": {
+              "xe_memory": [
+                {
+                  "total_bytes": 34242297856,
+                  "used_bytes": 50688000
+                }
+              ]
+            },
+            "kernel": "7.0.0-38-generic",
+            "kernel_fault_counts": {
+              "nvidia_xid": 0,
+              "xe_memory_faults": 0,
+              "xe_reset_failures": 0,
+              "xe_timeouts": 0,
+              "xe_wedged": 0
+            },
+            "nvidia_compute_process_count": 0,
+            "nvidia_memory_mib": 571,
+            "time": "2026-10-09T15:53:44.216967+00:00"
+          }
+        }
+      }
+    }
   }
 }

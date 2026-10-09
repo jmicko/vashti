@@ -1,7 +1,7 @@
 # Active DASLab/Strata pass — 2026-10-09
 
-Latest model-tested target/MTP source is `834a299` (v128): pure-direct
-submission, complete finite fusion and real warm-bank replay pass on
+Latest model-tested target/MTP source is `12f9cc7` (v129): dedicated request
+I/O reuse, pure-direct submission, complete finite fusion and real warm-bank replay pass on
 `codex/kuno-native-text`. Selected conditional ideal timing remains v109. The user approved full DASLab IQ3_S, Strata
 source study and30 accepted-token/s work. Canonical Vashti source is preserved;
 installed services, public API/catalog/configuration and release selection are
@@ -2898,3 +2898,40 @@ the B70 target client only. NVIDIA draft/default/cap10 paths must retain their
 existing configuration; no global environment mutation or private persistence.
 It is not implemented or physically accepted in this checkpoint. Required
 Vashti changes:none. No production install/release or GPU reset.
+
+
+### Dedicated target request reuse,2026-10-09,15:55UTC
+
+Runtime `0cfdbe0`/native permit `9f3b8cc` with registration `12f9cc7` are now
+physically accepted, superseding the preceding source-only note. Frozen pure
+`direct-device` SHA256
+`70ce929d488a5aea1892f51b3016156de69096225db48fad09fbdcba3e617cda`
+passes all target4 request-mode partitions after real token0 prelude, actual
+row1/count3 prefix1/2/3 repairs/continuations, and fullCPU13 cold/warm controller
+checks. Actual scoped begin/end is proved against admission/runtime ownership.
+Scopes1/2 close with original full audit before warm reset/final close.
+
+Compiler-idle cold1.54364/warm6.63953 accepted tokens/s. Warm12 outputs take
+1.80736s,zero expert uploads/weight reads,4,096 process disk bytes. Request begin
+and7.449ms full closing audit are inside timing. Warm24,266 bindinghits/3,526
+misses and24,133 INFOhits/267 misses establish actual reuse; original complete
+fault checkpoints remain411. Checked binding/INFO/reuse deltas are process
+global; checkpoint counts are admission-local. Router phase falls to.87469s,
+attention/GR enqueue to.28737s. This is an ordered improvement over v128,
+not matchedABBA or30tokens/s acceptance. Cold includes2.226GB physical disk
+reads/2.637s source-read time and cannot establish steady-state math speed.
+
+Target-only constructor captures128MiB I/O,4096-byte INFO/batched inline maps
+and fully charged4MiB/4096 FIFO metadata. No global environment mutation;
+Nvidia draft remains64MiB I/O/16MiB HOST, original generic cap10 unchanged.
+Native complete HOST stays22,806,528bytes, no new MAIN/GPU owner. Full retained
+and final1378-owner826,638,336byte erasure, physical memory/HTTP/admission
+recovery andzero classified GPU faults pass. Root814 default+2auxiliary tests
+(oneignored), pure-direct3 runtime/policy tests, strict default/direct all-target
+Clippy/fmt and88 launcher controls pass; independent source review passes.
+
+Next is an opt-in original-F32 grouped expert scratch reduction: skip shared
+stores/adds for unused members while preserving each live64-lane tree and every
+unconditional barrier. Kernel, both-card multirow operator and immutable model
+plan work are isolated; none is physically accepted here yet. No API/frontend/
+production installation/release/reset change. Required Vashti changes:none.

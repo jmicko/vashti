@@ -2761,8 +2761,9 @@ quality comparison candidate, without a new download or measured comparison.
 Supersedes the paused `9218638` checkpoint for backend inference work. User has
 returned the GPUs and approved full DASLab IQ3_S plus Strata source study, with
 an active30 accepted-token/s target. Latest model-tested target/MTP source is
-`834a299` (v128) in the same isolated `codex/kuno-native-text` worktree: direct-only
-submission, complete finite fusion and actual warm replay pass full physical gates. Earlier
+`12f9cc7` (v129) in the same isolated `codex/kuno-native-text` worktree: dedicated
+request I/O reuse, direct-only submission, complete finite fusion and actual warm
+replay pass full physical gates. Earlier
 conditional ideal count1 v109 remains selected for that separate scope. Installed services, public contracts/catalog/
 configuration, Vashti and release selection remain unchanged. Preserve the
 canonical checkout's uncommitted coordination/application work.
@@ -2944,3 +2945,21 @@ helper/numeric evidence is in the foundation receipt and native checkpoint.
 A target-client-only charged request metadata reuse scope is next, source work
 only. Ordinary modes/API/frontend/install/release remain unchanged; required
 Vashti changes:none. Preserve canonical application and coordination work.
+
+
+### Kuno native text request reuse checkpoint,2026-10-09,15:55UTC
+
+Runtime `0cfdbe0`, bounded native permit `9f3b8cc`, public registration `12f9cc7`
+now pass original target4/actual prefix repair and fullCPU13 cold/warm dual-GPU
+controller gates. Compiler-idle warm6.63953 acceptedtokens/s,zero expert uploads/
+weight reads/4,096 process disk bytes. Request begin+original full closing audit
+are inside timing; metadata4096 entries/4MiB are fully charged, target-only
+programmatic configuration leaves draft/default/cap10 unchanged. Full private/
+source erasure, actual memory/services/admission andzero classified faults pass.
+Root814+2auxiliary tests (oneignored), strict default/direct Clippy/fmt,88
+launcher controls/source review pass. Exact hashes/numeric receipts and scope
+are linked in native checkpoint/foundation receipt.30tokens/s remains unmet;
+ordered improvement is not matchedABBA or production/private acceptance.
+Opt-in original-F32 unused expert-member scratch reductions are the next
+isolated source work. No API/frontend/installation/release/reset changes;
+required Vashti changes:none. Preserve canonical application/coordination work.
