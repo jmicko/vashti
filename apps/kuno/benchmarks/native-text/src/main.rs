@@ -1055,14 +1055,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => return Err("expected intel or nvidia".into()),
     };
     let mode = std::env::args().nth(2).unwrap_or("probe".into());
-    let verify3_dense_receipt = if mode == "verify3-dense-probe" {
+    let verify3_finite_probe = mode == "verify3-finite-probe";
+    let verify3_dense_receipt = if mode == "verify3-dense-probe" || verify3_finite_probe {
         Some(next_verify3_dense_probe::registration(
             &std::env::args_os().collect::<Vec<_>>(),
             std::env::vars_os(),
             mtp_gpu_probe::default_build(),
         )?)
     } else {
-        if std::env::var_os("KUNO_LAB_VERIFY3_DENSE_PUBLIC_ONLY").is_some() {
+        if std::env::var_os("KUNO_LAB_VERIFY3_DENSE_PUBLIC_ONLY").is_some()
+            || std::env::var_os("KUNO_LAB_VERIFY3_FINITE_PUBLIC_ONLY").is_some()
+        {
             return Err("Verify3 operator public gate requires its dedicated probe".into());
         }
         None
@@ -1990,6 +1993,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 info.subgroup_max_size,
             )?;
         }
+        if verify3_finite_probe
+            || target_rows_inputs.as_ref().is_some_and(|i| i.verify3_fused)
+            || target_repair_inputs
+                .as_ref()
+                .is_some_and(|i| i.verify3_fused)
+            || speculative_inputs.as_ref().is_some_and(|i| i.verify3_fused)
+        {
+            next_shared::validate_verify3_finite_limits(
+                &adapter.limits(),
+                adapter.features().contains(wgpu::Features::SUBGROUP),
+                info.subgroup_min_size,
+                info.subgroup_max_size,
+            )?;
+        }
         if verify3_dense_receipt.is_some()
             && adapter.limits().max_compute_workgroup_storage_size < 16 * 1024
         {
@@ -2105,7 +2122,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::panic::set_hook(Box::new(|_| {
                 eprintln!("public_verify3_operator_failure panic=true")
             }));
-            let mut value = next_verify3_dense_probe::run(&client, &grouped_limits)?;
+            let mut value = if verify3_finite_probe {
+                next_verify3_dense_probe::run_fused(&client, &grouped_limits)?
+            } else {
+                next_verify3_dense_probe::run(&client, &grouped_limits)?
+            };
             value["vendor"] = vendor.into();
             serde_json::to_writer_pretty(
                 std::fs::OpenOptions::new()
@@ -2114,7 +2135,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .open(receipt)?,
                 &value,
             )?;
-            println!("public_verify3_operator_complete normal=60 fault=20 owners_erased=true");
+            println!(
+                "public_verify3_operator_complete normal=60 fault={} owners_erased=true",
+                if verify3_finite_probe { 210 } else { 20 }
+            );
             return Ok(());
         }
         if let Some(inputs) = speculative_inputs {

@@ -7,7 +7,7 @@ import sys
 def selected_target_policy(environment, mtp=False):
     selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
     if "KUNO_LAB_TARGET_DENSE" in selected:
-        if selected.pop("KUNO_LAB_TARGET_DENSE") != "verify3":
+        if selected.pop("KUNO_LAB_TARGET_DENSE") not in ("verify3", "verify3-fused"):
             raise ValueError("Target dense policy requires canonical verify3")
     if "KUNO_LAB_TARGET_IO" in selected:
         if selected.pop("KUNO_LAB_TARGET_IO") != "chunk":
@@ -27,6 +27,14 @@ def selected_target_policy(environment, mtp=False):
     return selected
 
 def memory_limit(environment, arguments):
+    if "KUNO_LAB_VERIFY3_FINITE_PUBLIC_ONLY" in environment:
+        selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
+        if (set(selected) != {"KUNO_LAB_VERIFY3_FINITE_PUBLIC_ONLY", "KUNO_PUBLIC_RECEIPT"}
+                or any(not value for value in selected.values())
+                or selected["KUNO_LAB_VERIFY3_FINITE_PUBLIC_ONLY"] != "1"
+                or len(arguments) != 3 or arguments[1] not in ("intel", "nvidia") or arguments[2] != "verify3-finite-probe"):
+            raise ValueError("Verify3 finite operator requires the fixed public fixture")
+        return 8 * 1024**3
     if "KUNO_LAB_VERIFY3_DENSE_PUBLIC_ONLY" in environment:
         selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
         if (set(selected) != {"KUNO_LAB_VERIFY3_DENSE_PUBLIC_ONLY", "KUNO_PUBLIC_RECEIPT"}

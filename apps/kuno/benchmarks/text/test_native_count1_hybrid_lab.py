@@ -1294,6 +1294,18 @@ class HybridLabTests(unittest.TestCase):
                 with self.assertRaises(ValueError):guard.memory_limit(wrong,args)
             with self.assertRaises(ValueError):guard.memory_limit(env,[*args,"extra"])
 
+    def test_verify3_finite_operator_keeps_exact_small_public_envelope(self):
+        spec=importlib.util.spec_from_file_location("protected_verify3_finite",HERE/"protected-lab-exec.py")
+        guard=importlib.util.module_from_spec(spec);spec.loader.exec_module(guard)
+        env={"KUNO_LAB_VERIFY3_FINITE_PUBLIC_ONLY":"1", "KUNO_PUBLIC_RECEIPT":"/public/numeric"}
+        for card in ("intel", "nvidia"):
+            args=["/frozen/binary",card,"verify3-finite-probe"]
+            self.assertEqual(guard.memory_limit(env,args),8*1024**3)
+            for wrong in (dict(env,KUNO_TEST_Q3_DIR="/model"), dict(env,KUNO_LAB_VERIFY3_FINITE_PUBLIC_ONLY="0"), dict(env,KUNO_LAB_VERIFY3_DENSE_PUBLIC_ONLY="1"), dict(env,KUNO_PUBLIC_RECEIPT="")):
+                with self.assertRaises(ValueError):guard.memory_limit(wrong,args)
+            with self.assertRaises(ValueError):guard.memory_limit(env,[*args,"extra"])
+            with self.assertRaises(ValueError):guard.memory_limit(env,[*args[:2],"verify3-dense-probe"])
+
     def test_verify3_dense_is_canonical_optional_and_remains_inside_public_target_modes(self):
         spec=importlib.util.spec_from_file_location("protected_verify3",HERE/"protected-lab-exec.py")
         guard=importlib.util.module_from_spec(spec);spec.loader.exec_module(guard)
@@ -1305,6 +1317,7 @@ class HybridLabTests(unittest.TestCase):
                 env["KUNO_PUBLIC_TARGET_ROWS_REFERENCE"]="/public/reference"
             args=["/frozen/binary","intel",mode]
             self.assertEqual(guard.memory_limit(env,args),48*1024**3)
+            self.assertEqual(guard.memory_limit(dict(env,KUNO_LAB_TARGET_DENSE="verify3-fused"),args),48*1024**3)
             self.assertEqual(guard.memory_limit(dict(env,KUNO_LAB_TARGET_IO="chunk"),args),48*1024**3)
             self.assertEqual(guard.memory_limit(dict(env,KUNO_LAB_TARGET_EXPERTS="prepared-verify3"),args),48*1024**3)
             self.assertEqual(guard.memory_limit(dict(env,KUNO_LAB_TARGET_FILL="direct-public"),args),48*1024**3)

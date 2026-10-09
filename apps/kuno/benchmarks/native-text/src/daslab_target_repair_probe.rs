@@ -24,6 +24,7 @@ use zeroize::Zeroizing;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub(crate) struct Inputs {
     pub(crate) verify3_dense: bool,
+    pub(crate) verify3_fused: bool,
     pub(crate) prepared_experts: bool,
     public_existing_fill: bool,
     chunk_io: bool,
@@ -87,10 +88,11 @@ pub(crate) fn registration(
         Some(value) if value == "chunk" => true,
         _ => return Err("target I/O policy requires canonical chunk"),
     };
-    let verify3_dense = match values.remove(OsStr::new("KUNO_LAB_TARGET_DENSE")) {
-        None => false,
-        Some(value) if value == "verify3" => true,
-        _ => return Err("target dense policy requires canonical verify3"),
+    let (verify3_dense, verify3_fused) = match values.remove(OsStr::new("KUNO_LAB_TARGET_DENSE")) {
+        None => (false, false),
+        Some(value) if value == "verify3" => (true, false),
+        Some(value) if value == "verify3-fused" => (true, true),
+        _ => return Err("target dense policy requires canonical verify3 or verify3-fused"),
     };
     let mut path = |name: &str| {
         values
@@ -100,6 +102,7 @@ pub(crate) fn registration(
     };
     Ok(Inputs {
         verify3_dense,
+        verify3_fused,
         prepared_experts,
         public_existing_fill,
         chunk_io,
@@ -156,6 +159,7 @@ pub(crate) fn run(
         )?;
         executor.target_rows_reserved = true;
         executor.target_verify3_dense = input.verify3_dense;
+        executor.target_verify3_fused = input.verify3_fused;
         executor.token_io_checkpoint = input.chunk_io;
         executor.enable_transient_resident(retired.clone())?;
         executor.fast_dense = true;
@@ -255,6 +259,7 @@ pub(crate) fn run(
             )
         })();
         let actual_verify3_dense_calls = executor.target_verify3_dense_calls;
+        let actual_verify3_fused_calls = executor.target_verify3_fused_calls;
         let close = resident.close();
         let audit = resident.public_owned_zero_audit_receipt();
         drop(resident);
@@ -270,12 +275,16 @@ pub(crate) fn run(
         if input.verify3_dense && actual_verify3_dense_calls == 0 {
             return Err("target Verify3 actual dispatch evidence missing".into());
         }
+        if input.verify3_fused && actual_verify3_fused_calls == 0 {
+            return Err("target fused Verify3 actual dispatch evidence missing".into());
+        }
         report["verify3_dense_calls"] = actual_verify3_dense_calls.into();
+        report["verify3_fused_calls"] = actual_verify3_fused_calls.into();
         report["owner_audit"] = serde_json::json!({"main_bytes":main.bytes,"main_buffers":main.buffers,"source_bytes":sources.bytes,"source_buffers":sources.buffers});
         reports.push(report);
     }
     file.verify_file_unchanged()?;
-    let value = serde_json::json!({"scope":"fixed-public-DASLab-actual-target-prefix-repair-only","verify3_dense":input.verify3_dense,"prepared_verify3_experts":input.prepared_experts,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"public_token0":0,"seed":424242,"temperature":0,"max_chunk":3,"runtime_io_limit_bytes":128*1024*1024,"complete_cpu_reference_rows":4,"cases":reports,"speculative_controller":false,"accepted_speculative_tokens_per_second":null,"private_or_production_accepted":false});
+    let value = serde_json::json!({"scope":"fixed-public-DASLab-actual-target-prefix-repair-only","verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"public_token0":0,"seed":424242,"temperature":0,"max_chunk":3,"runtime_io_limit_bytes":128*1024*1024,"complete_cpu_reference_rows":4,"cases":reports,"speculative_controller":false,"accepted_speculative_tokens_per_second":null,"private_or_production_accepted":false});
     let out = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -307,6 +316,10 @@ mod tests {
             .to_vec()
         };
         assert!(registration(&args, env(), true).is_ok());
+        let mut fused = env();
+        fused.push(("KUNO_LAB_TARGET_DENSE".into(), "verify3-fused".into()));
+        let selected = registration(&args, fused, true).unwrap();
+        assert!(selected.verify3_dense && selected.verify3_fused);
         let mut candidate = env();
         candidate.push(("KUNO_LAB_TARGET_DENSE".into(), "verify3".into()));
         assert!(registration(&args, candidate, true).unwrap().verify3_dense);

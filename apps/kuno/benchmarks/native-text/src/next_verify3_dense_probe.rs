@@ -37,10 +37,18 @@ pub(crate) fn registration(
     if !default
         || args.len() != 3
         || !matches!(args[1].to_str(), Some("intel" | "nvidia"))
-        || args[2] != "verify3-dense-probe"
+        || !matches!(
+            args[2].to_str(),
+            Some("verify3-dense-probe" | "verify3-finite-probe")
+        )
     {
         return Err("Verify3 operator requires fixed default public card fixture");
     }
+    let gate = if args[2] == "verify3-finite-probe" {
+        "KUNO_LAB_VERIFY3_FINITE_PUBLIC_ONLY"
+    } else {
+        "KUNO_LAB_VERIFY3_DENSE_PUBLIC_ONLY"
+    };
     let mut selected = BTreeMap::new();
     for (key, value) in env {
         if ![b"KUNO_LAB_".as_slice(), b"KUNO_TEST_", b"KUNO_PUBLIC_"]
@@ -49,16 +57,14 @@ pub(crate) fn registration(
         {
             continue;
         }
-        if !matches!(
-            key.to_str(),
-            Some("KUNO_LAB_VERIFY3_DENSE_PUBLIC_ONLY" | "KUNO_PUBLIC_RECEIPT")
-        ) || value.is_empty()
+        if !(key == gate || key == "KUNO_PUBLIC_RECEIPT")
+            || value.is_empty()
             || selected.insert(key, value).is_some()
         {
             return Err("Verify3 operator rejects inherited experiments");
         }
     }
-    if selected.remove(OsStr::new("KUNO_LAB_VERIFY3_DENSE_PUBLIC_ONLY")) != Some("1".into()) {
+    if selected.remove(OsStr::new(gate)) != Some("1".into()) {
         return Err("Verify3 operator public gate missing");
     }
     selected
@@ -848,6 +854,37 @@ mod tests {
                 values.remove(index);
                 assert!(registration(&args, values, true).is_err());
             }
+        }
+    }
+
+    #[test]
+    fn finite_registration_rejects_other_operator_and_inherited_gates() {
+        for card in ["intel", "nvidia"] {
+            let args = ["binary", card, "verify3-finite-probe"].map(Into::into);
+            let values = || {
+                [
+                    ("KUNO_LAB_VERIFY3_FINITE_PUBLIC_ONLY", "1"),
+                    ("KUNO_PUBLIC_RECEIPT", "/public/numeric"),
+                ]
+                .map(|(k, v)| (k.into(), v.into()))
+            };
+            assert!(registration(&args, values(), true).is_ok());
+            assert!(registration(&args, values(), false).is_err());
+            for extra in [
+                ("KUNO_LAB_VERIFY3_DENSE_PUBLIC_ONLY", "1"),
+                ("KUNO_TEST_Q3_DIR", "/model"),
+                ("KUNO_LAB_TARGET_DENSE", "verify3-fused"),
+            ] {
+                let mut env = values().to_vec();
+                env.push((extra.0.into(), extra.1.into()));
+                assert!(registration(&args, env, true).is_err());
+            }
+            let mut bad = values();
+            bad[0].1 = "0".into();
+            assert!(registration(&args, bad, true).is_err());
+            let mut other = args;
+            other[2] = "verify3-dense-probe".into();
+            assert!(registration(&other, values(), true).is_err());
         }
     }
 
