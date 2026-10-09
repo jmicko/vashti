@@ -303,9 +303,36 @@ Aligned Q6 loads `bcb9bfc` independently pass both-card v107 tests,38,416 rows,
 v109 accepts all13 model vectors/greedy IDs but takes945,901,792ns, giving no
 gain over prepared-only. Keep the original head for the selected experiment.
 
-The next larger candidate is [immutable resident GPU routing](kuno-native-resident-router.md):
-continuous layer enqueue with actual original top10 and a single token-wide
-route audit. It is isolated work in progress, not a completed source/device or
-performance result. The observed router-fence wall time includes necessary
-upstream GPU computation; removing readback cannot save all of it.30tokens/s
-and full32 original-vector acceptance remain unachieved.
+## Resident GPU routing: accepted correctness, slower first version
+
+`cae513f` and `8b734fa` add the actual original GPU top10 mapper and sealed
+all-resident dispatch. `1742100` restores the original token-zero shared-expert
+condition caught by peer review before model testing. The ordinary64MiB IO
+limit remains unchanged; explicit ideal-only construction charges two full
+owners (128KiB table/2MiB audit),9,183,232 additional runtime bytes and4MiB
+host storage under a separate128MiB runtime ceiling. Every token audits all48
+literal packets and consumed MAP/PROB/OWNER wires before any family proposal.
+Source/graph/slot mappings/bank instances/full physical handles stay frozen.
+
+`f386083`/`536c98e` add/register a compiled-public operator probe. Frozen v112
+SHA256 `53e32001997781329b15e5c6c8f2ff1df7fe2c965664786528f17502ba73b95b`
+passes both cards:49 independent original top10/canonical cases over all48
+frame offsets,24 complete-owner no-publication faults, fresh-owner replay and
+16 erased owners/4,849,664bytes. Physical memory, admission and HTTPs recover;
+classified GPU fault counts stay zero.
+
+Same-artifact featured v111, source `1742100`, SHA256
+`9195a9f7281ffec27d70f571d7144655d4415fd3d6eafecad57199d884ec28de`,
+compares both original bank segments in both paths. Original CPU-router bridge
+control is1,184,871,333ns (10.1277tokens/s); GPU-routing replay is1,420,875,896ns
+(8.4455tokens/s), **a regression**. Both accept all13 full CPU vectors, greedy
+IDs and actual trace membership,5760 GPU ranks, zero CPU/uploads/physical reads.
+The new path accepts12 owning route audits/576layers and erases1380 complete
+owners/820,641,792bytes. Removing the CPU map alone does not prove a speed gain:
+GPU waiting moves into other enqueue phases; router-fence time was not solely
+readback overhead. Keep prepared-only v109 as the selected experiment.
+
+Next isolate a parallel complete-owner preflight to replace costly single-workgroup
+mapper scans without removing checks, then combine the independently accepted
+prepared integer projections. Neither next change has source/device/speed
+acceptance yet.30tokens/s and full32 original-vector acceptance remain unachieved.

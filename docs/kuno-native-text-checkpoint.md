@@ -1,6 +1,6 @@
 # Active DASLab/Strata pass — 2026-10-09
 
-Latest tested engine source is `774f2a9` on `codex/kuno-native-text`, in the
+Latest model-tested engine source is `1742100` (standalone mapper probe: `536c98e`) on `codex/kuno-native-text`, in the
 existing isolated Kuno worktree. The user approved full DASLab IQ3_S, Strata
 source study and30 accepted-token/s work. Canonical Vashti source is preserved;
 installed services, public API/catalog/configuration and release selection are
@@ -52,11 +52,17 @@ pass. Formatting and whitespace checks pass. All physical trials restore normal 
 memory and unchanged classified faults. No GPU reset/unbind/reboot, clocks/
 drivers, production installation or release.
 
-Next larger candidate is isolated immutable resident GPU routing: use actual
-original top10, freeze source/slot owners, enqueue continuous layers and resolve
-all48 route audits before original all-family acceptance. Source/device and
-speed acceptance remain pending. It must charge full table/audit owners and
-runtime/host mirrors; default paths must stay unchanged. MTP KV-only append
+Immutable resident GPU routing `cae513f`/`8b734fa` plus token-zero parity fix
+`1742100` now passes original DAS13 vectors/greedy/trace,12 owning audits/576
+layers and1380 complete-owner closes. Both-card standalone probe `536c98e`
+passes49 independent cases and24 full no-publication faults. However, matched
+both-segment v111 control/routing takes1,184,871,333→1,420,875,896ns:
+10.1277→8.4455tokens/s, a regression. Keep prepared-only v109 selected.
+The opt-in charges two full table/audit pages,9,183,232 extra runtime bytes and
+4MiB host under an explicit ideal-only128MiB ceiling; ordinary64MiB unchanged.
+Next isolate parallel complete-owner preflight, then prepared integer composition
+with a separately charged full CPU_PART clear. Both are untested candidates.
+MTP KV-only append
 `2dea140` has focused host acceptance, but target all-row verification, controller
 and accepted-prefix state repair remain pending. The active goal continues;
 if sudo expires and effective protected work cannot continue, save a tested

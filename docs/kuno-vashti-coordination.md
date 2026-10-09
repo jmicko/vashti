@@ -2797,3 +2797,17 @@ recovery pass after every physical trial. No resets, reboots, driver/clocks,
 installation or release. Integrated663 default/666 all-feature native tests and auxiliary suites pass;
 strict default/all-feature all-target Clippy pass. **Required Vashti changes: none.** Future production native
 catalog/routing still needs a coordinated consumer contract.
+
+
+#### Backend-only routing checkpoint (2026-10-09,11:00UTC)
+
+Model-tested source `1742100` retains all original DAS13 vector/greedy/trace and
+owning checks. New GPU routing is numerically accepted but **slower** than its
+matched both-segment control:10.1277→8.4455tokens/s. Keep prepared-only v109
+(12.728) selected. Mapper probe `536c98e` passes both GPUs,49 independent cases,
+24 fault cases and complete erasure. Full receipts and exact artifact hashes
+are in the linked DASLab notes/numeric receipt. Physical memory/admission/HTTPs
+recover, all classified fault counts zero. No production API/configuration,
+installation/release or Vashti change. Next isolated candidates are parallel
+mapper preflight and then prepared integer composition; no speed acceptance
+for either yet. **Required Vashti changes: none.**
