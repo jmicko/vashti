@@ -40,7 +40,7 @@ impl Planes {
         if input.is_empty()
             || input.len() > MAX_COLUMNS
             || !input.len().is_multiple_of(256)
-            || input.iter().any(|x| !x.is_finite())
+            || input.iter().any(|x| !x.is_finite() || x.abs() == f32::MAX)
         {
             return Err(reject());
         }

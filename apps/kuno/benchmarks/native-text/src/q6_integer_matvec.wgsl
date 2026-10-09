@@ -13,7 +13,7 @@ fn main(@builtin(global_invocation_id) id:vec3<u32>) {
     var valid=true;var maximum=0.0;
     for(var i=0u;i<32u;i++) {
         let x=input[p.a+block*32u+i];values[i]=x;
-        if !finite(x) {valid=false;}else{maximum=max(maximum,abs(x));}
+        if !(abs(x)<3.4028234663852886e38) {valid=false;}else{maximum=max(maximum,abs(x));}
     }
     var d=0.0;var rd=0.0;
     if valid {
