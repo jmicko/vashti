@@ -124,20 +124,35 @@ fn fixed_failure_class(error: &(dyn std::error::Error + 'static)) -> &'static st
         "segmented IQ prepared independent plane scale mismatch" => "prepared-plane-scale",
         "segmented IQ prepared compact rank" => "prepared-plane-rank",
         "segmented IQ prepared independent plane host bound" => "prepared-host-bound",
+        "segmented IQ live original GPU bits changed" => "live-original-bits",
+        "segmented IQ live inactive segment wrote full owner"
+        | "segmented IQ live inactive segment rewrote complete owner" => "live-inactive-segment",
+        "segmented IQ live full readiness/finite owner changed"
+        | "segmented IQ live status full padding changed" => "live-status-owner",
+        "segmented IQ live fault accepted" => "live-fault-accepted",
+        "segmented IQ live fault inactive math owner changed" => "live-fault-owning-write",
+        "segmented IQ live fault liveness changed" => "live-fault-readiness",
+        "segmented IQ live fault finite flag invalid"
+        | "segmented IQ live nonfinite input flag absent" => "live-fault-finite",
+        "segmented IQ live compact CPU/GPU oracle host bound" => "live-host-bound",
         _ => "unclassified",
     }
 }
 
 pub fn validate_configuration() -> std::result::Result<(), &'static str> {
-    validate_mode(false, false)
+    validate_mode(false, false, false)
 }
 pub fn validate_integer_configuration() -> std::result::Result<(), &'static str> {
-    validate_mode(true, false)
+    validate_mode(true, false, false)
 }
 // Main owns registration and must call this before device creation.
 #[allow(dead_code)]
 pub fn validate_shared_original_configuration() -> std::result::Result<(), &'static str> {
-    validate_mode(false, true)
+    validate_mode(false, true, false)
+}
+#[allow(dead_code)] // Parent registers this exclusive compiled-public entry.
+pub fn validate_live_members_configuration() -> std::result::Result<(), &'static str> {
+    validate_mode(false, false, true)
 }
 fn public_gate(
     integer: bool,
@@ -150,7 +165,25 @@ fn public_gate(
         (true, true) => Err("segmented IQ arithmetic modes are exclusive"),
     }
 }
-fn validate_mode(integer: bool, shared_original: bool) -> std::result::Result<(), &'static str> {
+fn mode_gate(
+    integer: bool,
+    shared_original: bool,
+    live_members: bool,
+) -> std::result::Result<&'static str, &'static str> {
+    if live_members {
+        if integer || shared_original {
+            return Err("segmented IQ arithmetic modes are exclusive");
+        }
+        Ok("KUNO_LAB_IQ_LIVE_MEMBERS_PUBLIC_ONLY")
+    } else {
+        public_gate(integer, shared_original)
+    }
+}
+fn validate_mode(
+    integer: bool,
+    shared_original: bool,
+    live_members: bool,
+) -> std::result::Result<(), &'static str> {
     if cfg!(any(
         feature = "direct-device",
         feature = "cpu-fma",
@@ -160,7 +193,7 @@ fn validate_mode(integer: bool, shared_original: bool) -> std::result::Result<()
     )) {
         return Err("segmented IQ probe requires default features");
     }
-    let gate = public_gate(integer, shared_original)?;
+    let gate = mode_gate(integer, shared_original, live_members)?;
     if std::env::var_os(gate).as_deref() != Some(std::ffi::OsStr::new("1"))
         || std::env::var_os("KUNO_PUBLIC_RECEIPT").is_none_or(|v| v.is_empty())
     {
@@ -181,6 +214,9 @@ fn validate_mode(integer: bool, shared_original: bool) -> std::result::Result<()
 }
 
 fn geometry(gate: TensorType, down: TensorType) -> Result<k::Geometry> {
+    geometry_tile(gate, down, 1)
+}
+fn geometry_tile(gate: TensorType, down: TensorType, tile: usize) -> Result<k::Geometry> {
     if !INTEGER_PROFILES.contains(&(gate, down)) {
         return Err("segmented IQ profile rejected".into());
     }
@@ -190,7 +226,7 @@ fn geometry(gate: TensorType, down: TensorType) -> Result<k::Geometry> {
             k::Projection::new(gate.gguf_id(), HIDDEN, FF, 512)?,
             k::Projection::new(down.gguf_id(), FF, HIDDEN, 512)?,
         ],
-        1,
+        tile,
         CAP,
     )?)
 }
@@ -218,7 +254,7 @@ fn spans(g: k::Geometry) -> Result<(k::Spans, [usize; 8])> {
 fn limits(g: k::Geometry, l: &wgpu::Limits) -> Result<()> {
     if l.max_compute_invocations_per_workgroup < 256
         || l.max_compute_workgroup_size_x < 256
-        || l.max_compute_workgroup_storage_size < 512
+        || l.max_compute_workgroup_storage_size < (2 * k::LANES * g.tile() * 4) as u32
         || l.max_storage_buffers_per_shader_stage < 7
         || l.max_bindings_per_bind_group < 7
         || l.max_bind_groups < 1
@@ -774,6 +810,16 @@ impl Oracle {
     }
 }
 fn compact_original(values: &[Zeroizing<Vec<u32>>], s: &k::Spans) -> Result<Oracle> {
+    compact_original_count(values, s, 1)
+}
+fn compact_original_count(
+    values: &[Zeroizing<Vec<u32>>],
+    s: &k::Spans,
+    count: usize,
+) -> Result<Oracle> {
+    if !(1..=3).contains(&count) {
+        return Err("segmented IQ compact count".into());
+    }
     fn rows(
         values: &[u32],
         first: usize,
@@ -807,20 +853,26 @@ fn compact_original(values: &[Zeroizing<Vec<u32>>], s: &k::Spans) -> Result<Orac
         return Err("segmented IQ original snapshot owner count".into());
     }
     Ok(Oracle {
-        act: rows(&values[c::ACT], s.act_first(), s.act_stride(), FF, 10)?,
+        act: rows(
+            &values[c::ACT],
+            s.act_first(),
+            s.act_stride(),
+            FF,
+            count * 10,
+        )?,
         part: rows(
             &values[c::PART],
             s.partial_first(),
             s.partial_stride(),
             HIDDEN,
-            10,
+            count * 10,
         )?,
         output: rows(
             &values[c::OUTPUT],
             s.output_first(),
             s.output_stride(),
             HIDDEN,
-            1,
+            count,
         )?,
     })
 }
@@ -1221,6 +1273,740 @@ fn inactive_preserved(
     }
     Ok(())
 }
+const LIVE_ROWS: [[usize; 10]; 3] = [
+    EXPERTS,
+    [0, 143, 71, 72, 2, 69, 74, 141, 36, 107],
+    [72, 71, 143, 0, 1, 70, 3, 68, 75, 140],
+];
+const ONE_SEGMENT_ROWS: [[usize; 10]; 3] = [
+    [0, 71, 1, 70, 2, 69, 3, 68, 35, 34],
+    [0, 71, 1, 70, 4, 67, 5, 66, 36, 33],
+    [71, 70, 0, 1, 2, 69, 6, 65, 7, 64],
+];
+fn live_plan(count: usize, one_segment: bool) -> Result<token_waves::Plan> {
+    if !(1..=3).contains(&count) {
+        return Err("segmented IQ live public count".into());
+    }
+    let rows = if one_segment {
+        ONE_SEGMENT_ROWS
+    } else {
+        LIVE_ROWS
+    };
+    let mut routes =
+        token_waves::Input::new(count, CAP, 512).map_err(|_| "segmented IQ live route geometry")?;
+    for (token, row) in rows.iter().enumerate().take(count) {
+        for (rank, &expert) in row.iter().enumerate() {
+            routes
+                .set(token, rank, expert as u32, PROB[rank])
+                .map_err(|_| "segmented IQ live route rank")?;
+        }
+    }
+    let plan = token_waves::Plan::build(&routes, &AtomicBool::new(false))
+        .map_err(|_| "segmented IQ live wave plan")?;
+    if plan.wave(1).is_some() || plan.wave(0).is_none() {
+        return Err("segmented IQ live single protected wave".into());
+    }
+    Ok(plan)
+}
+fn live_input(count: usize) -> Result<Zeroizing<Vec<f32>>> {
+    if !(1..=3).contains(&count) {
+        return Err("segmented IQ live input count".into());
+    }
+    Ok(Zeroizing::new(
+        (0..count * HIDDEN)
+            .map(|i| (((i % HIDDEN) * 7 + i / HIDDEN * 11) % 13) as f32 / 1024. - 6. / 1024.)
+            .collect(),
+    ))
+}
+fn live_oracle(decoded: [&[f32]; 3], x: &[f32], packet: &c::Packet) -> Result<Oracle> {
+    if !(1..=3).contains(&packet.count)
+        || x.len() != packet.count * HIDDEN
+        || decoded
+            .iter()
+            .zip([HIDDEN, HIDDEN, FF])
+            .any(|(v, width)| v.len() != SEED_ROWS * width || v.iter().any(|v| !v.is_finite()))
+    {
+        return Err("segmented IQ live CPU oracle geometry".into());
+    }
+    let mut out = Oracle {
+        act: Zeroizing::new(vec![0.; packet.count * 10 * FF]),
+        part: Zeroizing::new(vec![0.; packet.count * 10 * HIDDEN]),
+        output: Zeroizing::new(vec![0.; packet.count * HIDDEN]),
+    };
+    // Seed rows repeat exactly in the compiled PUBLIC physical banks. Compute
+    // each original64 dot once per token/phase, never change its F32 lane tree.
+    let mut gu = Zeroizing::new([[0f32; SEED_ROWS]; 2]);
+    for token in 0..packet.count {
+        let input = &x[token * HIDDEN..(token + 1) * HIDDEN];
+        for component in 0..2 {
+            for phase in 0..SEED_ROWS {
+                gu[component][phase] = tree(
+                    &decoded[component][phase * HIDDEN..(phase + 1) * HIDDEN],
+                    input,
+                );
+            }
+        }
+        for rank in token * 10..(token + 1) * 10 {
+            let slot = packet.experts[rank] as usize;
+            for row in 0..FF {
+                out.act[rank * FF + row] = kuno_text::ops::silu(gu[0][seed_index(slot, row, 0)])
+                    * gu[1][seed_index(slot, row, 1)];
+            }
+            let mut d = Zeroizing::new([0f32; SEED_ROWS]);
+            for phase in 0..SEED_ROWS {
+                d[phase] = tree(
+                    &decoded[2][phase * FF..(phase + 1) * FF],
+                    &out.act[rank * FF..(rank + 1) * FF],
+                );
+            }
+            for row in 0..HIDDEN {
+                out.part[rank * HIDDEN + row] = d[seed_index(slot, row, 2)];
+            }
+        }
+        for row in 0..HIDDEN {
+            for rank in token * 10..(token + 1) * 10 {
+                out.output[token * HIDDEN + row] +=
+                    packet.probabilities[rank] * out.part[rank * HIDDEN + row];
+            }
+        }
+    }
+    if [&out.act, &out.part, &out.output]
+        .iter()
+        .any(|v| v.iter().any(|x| !x.is_finite()) || !v.iter().any(|x| *x != 0.))
+    {
+        return Err("segmented IQ public oracle finite/nonzero gate".into());
+    }
+    Ok(out)
+}
+#[allow(clippy::too_many_arguments)] // Original seven owners/spans are independent guards.
+fn launch_live_segment(
+    client: &ComputeClient<WgpuRuntime>,
+    arena: &PrivateArena,
+    ids: &[BufferId; 8],
+    banks: &[Bank],
+    g: k::Geometry,
+    s: &k::Spans,
+    groups: usize,
+    segment: usize,
+    candidate: bool,
+) -> Result<()> {
+    if g.tile() != 8 || !g.live_member_reduction() || segment >= 2 {
+        return Err("segmented IQ live launch policy".into());
+    }
+    let [ga, up, down] = g.projections();
+    let bs = &banks[segment * 3..segment * 3 + 3];
+    let b = |i: usize| unsafe { ArrayArg::from_raw_parts(bs[i].view(), bs[i].logical / 4) };
+    let gate = if candidate {
+        k::grouped_gate_up_live::launch_unchecked::<WgpuRuntime>
+    } else {
+        k::grouped_gate_up::launch_unchecked::<WgpuRuntime>
+    };
+    let down_kernel = if candidate {
+        k::grouped_down_live::launch_unchecked::<WgpuRuntime>
+    } else {
+        k::grouped_down::launch_unchecked::<WgpuRuntime>
+    };
+    unsafe {
+        gate(
+            client,
+            g.grid(groups, false)?,
+            CubeDim::new_1d(64),
+            b(0),
+            b(1),
+            private_arg(arena, ids[c::INPUT])?,
+            private_arg(arena, ids[c::MAP])?,
+            private_arg(arena, ids[c::ACT])?,
+            private_arg(arena, ids[c::STATUS])?,
+            s.map_first(),
+            s.input_first(),
+            s.input_stride(),
+            s.act_first(),
+            s.act_stride(),
+            s.status_first(),
+            segment * SEGMENT,
+            SEGMENT,
+            HIDDEN,
+            FF,
+            ga.dtype(),
+            up.dtype(),
+            ga.row_bytes(),
+            up.row_bytes(),
+            8,
+            false,
+        );
+        down_kernel(
+            client,
+            g.grid(groups, true)?,
+            CubeDim::new_1d(64),
+            b(2),
+            private_arg(arena, ids[c::ACT])?,
+            private_arg(arena, ids[c::MAP])?,
+            private_arg(arena, ids[c::PART])?,
+            private_arg(arena, ids[c::STATUS])?,
+            s.map_first(),
+            s.act_first(),
+            s.act_stride(),
+            s.partial_first(),
+            s.partial_stride(),
+            s.status_first(),
+            segment * SEGMENT,
+            SEGMENT,
+            HIDDEN,
+            FF,
+            down.dtype(),
+            down.row_bytes(),
+            8,
+        );
+    }
+    Ok(())
+}
+fn live_shape(values: &[Zeroizing<Vec<u32>>], before: &[Zeroizing<Vec<u32>>]) -> Result<()> {
+    if values.len() != 8
+        || before.len() != 8
+        || values.iter().zip(before).any(|(a, b)| a.len() != b.len())
+    {
+        return Err("segmented IQ live full owning snapshot".into());
+    }
+    Ok(())
+}
+#[allow(clippy::too_many_arguments)]
+fn check_live(
+    values: &[Zeroizing<Vec<u32>>],
+    before: &[Zeroizing<Vec<u32>>],
+    g: k::Geometry,
+    s: &k::Spans,
+    packet: &c::Packet,
+    expected: &Oracle,
+    second: bool,
+    finished: bool,
+    exact: bool,
+) -> Result<[f32; 3]> {
+    live_shape(values, before)?;
+    if !(1..=3).contains(&packet.count)
+        || expected.act.len() != packet.count * 10 * FF
+        || expected.part.len() != packet.count * 10 * HIDDEN
+        || expected.output.len() != packet.count * HIDDEN
+    {
+        return Err("segmented IQ live reference extent".into());
+    }
+    let mut maximum = [0f32; 3];
+    for (i, first, stride, width, count, reference, stage) in [
+        (
+            c::ACT,
+            s.act_first(),
+            s.act_stride(),
+            FF,
+            packet.count * 10,
+            &expected.act,
+            0,
+        ),
+        (
+            c::PART,
+            s.partial_first(),
+            s.partial_stride(),
+            HIDDEN,
+            packet.count * 10,
+            &expected.part,
+            1,
+        ),
+        (
+            c::OUTPUT,
+            s.output_first(),
+            s.output_stride(),
+            HIDDEN,
+            packet.count * usize::from(finished),
+            &expected.output,
+            2,
+        ),
+    ] {
+        for index in 0..values[i].len() {
+            let relative = index.saturating_sub(first);
+            let rank = relative / stride;
+            let active = index >= first
+                && rank < count
+                && relative % stride < width
+                && (i == c::OUTPUT || second || packet.experts[rank] < SEGMENT as u32);
+            if active {
+                let want = reference[rank * width + relative % stride];
+                let bits = values[i][index];
+                if exact && bits != want.to_bits() {
+                    return Err("segmented IQ live original GPU bits changed".into());
+                }
+                maximum[stage] = maximum[stage].max(compare(f32::from_bits(bits), want)?);
+            } else if values[i][index] != before[i][index] {
+                return Err("segmented IQ inactive rank/gap/full owning tail changed".into());
+            }
+        }
+    }
+    for i in [c::MAP, c::INPUT, c::PROB, 7] {
+        if values[i] != before[i] {
+            return Err("segmented IQ live readonly full owner changed".into());
+        }
+    }
+    let d = HIDDEN.div_ceil(k::LANES);
+    let f = FF.div_ceil(k::LANES);
+    let regions = [
+        (k::MAX_ROUTES, packet.count * 10),
+        (k::MAX_ROUTES, packet.count * 10),
+        (k::MAX_BATCH * d, packet.count * d),
+        (k::MAX_ROUTES * f, packet.count * 10 * f),
+        (k::MAX_ROUTES * d, packet.count * 10 * d),
+        (k::MAX_BATCH * d, packet.count * d),
+    ];
+    let mut status_first = s.status_first();
+    if s.status_first() + g.status_words() > values[c::STATUS].len() {
+        return Err("segmented IQ live status extent".into());
+    }
+    for (region, (length, active_count)) in regions.into_iter().enumerate() {
+        for offset in 0..length {
+            let active = offset < active_count
+                && (region < 2 && (second || packet.experts[offset] < SEGMENT as u32)
+                    || region >= 2 && finished);
+            let expected = if active {
+                1
+            } else {
+                before[c::STATUS][status_first + offset]
+            };
+            if values[c::STATUS][status_first + offset] != expected {
+                return Err("segmented IQ live full readiness/finite owner changed".into());
+            }
+        }
+        status_first += length;
+    }
+    if values[c::STATUS][..s.status_first()] != before[c::STATUS][..s.status_first()]
+        || values[c::STATUS][status_first..] != before[c::STATUS][status_first..]
+    {
+        return Err("segmented IQ live status full padding changed".into());
+    }
+    if finished {
+        k::validate_status(g, packet.count, s.status_first(), &values[c::STATUS])?;
+    }
+    Ok(maximum)
+}
+fn live_before(
+    arena: &PrivateArena,
+    ids: &[BufferId; 8],
+    words: [usize; 8],
+    s: &k::Spans,
+    x: &[f32],
+    map: &k::GroupMap<'_>,
+) -> Result<Vec<Zeroizing<Vec<u32>>>> {
+    let mut owned = [0; 8];
+    for (i, &id) in ids.iter().enumerate() {
+        owned[i] = arena.layout(id)?.owned_words;
+    }
+    live_before_owned(owned, words, s, x, map)
+}
+fn live_before_owned(
+    owned: [usize; 8],
+    words: [usize; 8],
+    s: &k::Spans,
+    x: &[f32],
+    map: &k::GroupMap<'_>,
+) -> Result<Vec<Zeroizing<Vec<u32>>>> {
+    let count = map.words()[0] as usize;
+    if !(1..=3).contains(&count)
+        || x.len() != count * HIDDEN
+        || owned.iter().zip(words).any(|(&o, w)| o < w)
+    {
+        return Err("segmented IQ live input owner extent".into());
+    }
+    let mut before = Vec::with_capacity(8);
+    for (i, n) in words.into_iter().enumerate() {
+        let mut v = Zeroizing::new(vec![0u32; owned[i]]);
+        if matches!(i, c::INPUT | c::ACT | c::PART | c::OUTPUT) {
+            v[..n].fill(GUARD);
+        }
+        before.push(v);
+    }
+    for (i, &value) in x.iter().enumerate() {
+        *before[c::INPUT]
+            .get_mut(s.input_first() + i / HIDDEN * s.input_stride() + i % HIDDEN)
+            .ok_or("segmented IQ live input subview")? = value.to_bits();
+    }
+    before[c::MAP][s.map_first()..s.map_first() + k::MAP_WORDS].copy_from_slice(map.words());
+    for (rank, &probability) in map.probabilities().iter().enumerate() {
+        before[c::PROB][s.prob_first() + rank] = probability.to_bits();
+    }
+    Ok(before)
+}
+fn live_fault_operand(
+    before: &mut [Zeroizing<Vec<u32>>],
+    s: &k::Spans,
+    count: usize,
+    kind: usize,
+) -> Result<bool> {
+    if !(1..=3).contains(&count) || kind > 8 || before.len() != 8 {
+        return Err("segmented IQ live fault inventory".into());
+    }
+    match kind {
+        0 => before[c::INPUT][s.input_first()] = f32::NAN.to_bits(),
+        1 => {
+            before[c::INPUT][s.input_first() + (count - 1) * s.input_stride() + HIDDEN - 1] =
+                f32::INFINITY.to_bits()
+        }
+        2 => before[c::MAP][s.map_first()] = 0,
+        3 => before[c::MAP][s.map_first() + 1] = count as u32,
+        4 => before[c::MAP][s.map_first() + 4 + k::MAX_GROUPS] = 0,
+        5 => before[c::MAP][s.map_first() + 4 + k::MAX_GROUPS] = (count + 1) as u32,
+        6 => before[c::MAP][s.map_first() + 4 + 2 * k::MAX_GROUPS] = (count * 10) as u32,
+        7 => before[c::MAP][s.map_first() + 4] = CAP as u32,
+        8 => before[c::INPUT][s.input_first() + count * s.input_stride()] = f32::NAN.to_bits(),
+        _ => return Err("segmented IQ live fault inventory".into()),
+    }
+    Ok(kind == 8) // Inactive NaN must be preserved and must NOT reject math.
+}
+fn check_live_fault(
+    got: &[Zeroizing<Vec<u32>>],
+    before: &[Zeroizing<Vec<u32>>],
+    g: k::Geometry,
+    s: &k::Spans,
+    packet: &c::Packet,
+    original_map: &[u32],
+    kind: usize,
+) -> Result<()> {
+    live_shape(got, before)?;
+    if k::validate_status(g, packet.count, s.status_first(), &got[c::STATUS]).is_ok() {
+        return Err("segmented IQ live fault accepted".into());
+    }
+    for i in [c::MAP, c::INPUT, c::PROB, 7] {
+        if got[i] != before[i] {
+            return Err("segmented IQ live fault readonly owner changed".into());
+        }
+    }
+    // A bad group is wholly inactive; valid unrelated groups may still write.
+    // Every inactive route, gap and physical tail is independently preserved.
+    let suppressed = if kind >= 4 {
+        let length = original_map[4 + k::MAX_GROUPS] as usize;
+        &original_map[4 + 2 * k::MAX_GROUPS..4 + 2 * k::MAX_GROUPS + length]
+    } else {
+        &[][..]
+    };
+    for (i, first, stride, width, rows) in [
+        (c::ACT, s.act_first(), s.act_stride(), FF, packet.count * 10),
+        (
+            c::PART,
+            s.partial_first(),
+            s.partial_stride(),
+            HIDDEN,
+            packet.count * 10,
+        ),
+        (
+            c::OUTPUT,
+            s.output_first(),
+            s.output_stride(),
+            HIDDEN,
+            packet.count,
+        ),
+    ] {
+        for index in 0..got[i].len() {
+            let relative = index.saturating_sub(first);
+            let row = relative / stride;
+            let active = index >= first && row < rows && relative % stride < width;
+            let must_preserve = !active
+                || (kind == 2 || kind == 3)
+                || (i != c::OUTPUT && suppressed.contains(&(row as u32)))
+                || (i == c::OUTPUT
+                    && kind >= 4
+                    && suppressed.iter().any(|&r| r as usize / 10 == row));
+            if must_preserve && got[i][index] != before[i][index] {
+                return Err("segmented IQ live fault inactive math owner changed".into());
+            }
+        }
+    }
+    let d = HIDDEN.div_ceil(k::LANES);
+    let f = FF.div_ceil(k::LANES);
+    let regions = [
+        (k::MAX_ROUTES, packet.count * 10),
+        (k::MAX_ROUTES, packet.count * 10),
+        (k::MAX_BATCH * d, packet.count * d),
+        (k::MAX_ROUTES * f, packet.count * 10 * f),
+        (k::MAX_ROUTES * d, packet.count * 10 * d),
+        (k::MAX_BATCH * d, packet.count * d),
+    ];
+    let mut first = s.status_first();
+    for (region, (length, active)) in regions.into_iter().enumerate() {
+        for index in 0..length {
+            let v = got[c::STATUS][first + index];
+            if index >= active || kind == 2 {
+                if v != before[c::STATUS][first + index] {
+                    return Err("segmented IQ live fault inactive status changed".into());
+                }
+            } else if region < 2 {
+                let want = u32::from(kind != 3 && !suppressed.contains(&(index as u32)));
+                if v != want {
+                    return Err("segmented IQ live fault liveness changed".into());
+                }
+            } else if v > 1 {
+                return Err("segmented IQ live fault finite flag invalid".into());
+            }
+        }
+        first += length;
+    }
+    if got[c::STATUS][..s.status_first()] != before[c::STATUS][..s.status_first()]
+        || got[c::STATUS][first..] != before[c::STATUS][first..]
+    {
+        return Err("segmented IQ live fault status padding changed".into());
+    }
+    if kind < 2 {
+        let word = if kind == 0 {
+            0
+        } else {
+            (packet.count - 1) * d + d - 1
+        };
+        if got[c::STATUS][s.status_first() + k::MAX_ROUTES * 2 + word] != 0 {
+            return Err("segmented IQ live nonfinite input flag absent".into());
+        }
+    }
+    Ok(())
+}
+#[allow(clippy::too_many_arguments)]
+fn live_cases(
+    client: &ComputeClient<WgpuRuntime>,
+    arena: &PrivateArena,
+    ids: &[BufferId; 8],
+    banks: &[Bank],
+    seeds: &[Seed; 3],
+    bank: &BankSlots,
+    ledger: &mut MainAdmission,
+    retired: &AtomicBool,
+    g: k::Geometry,
+    s: &k::Spans,
+    words: [usize; 8],
+) -> Result<Vec<serde_json::Value>> {
+    let mut reports = Vec::with_capacity(6);
+    for count in 1..=3 {
+        for one_segment in [false, true] {
+            let plan = live_plan(count, one_segment)?;
+            let packet = c::Packet::from_plan(&plan)?;
+            let wave = plan.wave(0).ok_or("segmented IQ live wave absent")?;
+            let selected = wave
+                .protected_experts()
+                .iter()
+                .map(|&v| v as usize)
+                .collect::<Vec<_>>();
+            let mut staged = StagedSlots::begin(bank)?;
+            let pending = staged.plan(bank, &selected)?;
+            if !pending.uploads.is_empty() || pending.slots != selected {
+                return Err("segmented IQ actual global slot mapping".into());
+            }
+            let pin = c::ProtectedWave::new(wave, &pending, &staged, bank)?;
+            let map = pin.map(&packet)?;
+            map.validate(
+                &packet.experts[..count * 10],
+                &packet.probabilities[..count * 10],
+                CAP,
+            )?;
+            map.validate_geometry(g)?;
+            let x = live_input(count)?;
+            let expected =
+                live_oracle(seeds.each_ref().map(|v| v.decoded.as_slice()), &x, &packet)?;
+            let before = live_before(arena, ids, words, s, &x, &map)?;
+            let mut errors = [[0f32; 3]; 2];
+            let mut original = None;
+            for (candidate, maxima) in errors.iter_mut().enumerate() {
+                for (i, &id) in ids.iter().enumerate() {
+                    c::write(arena, id, &before[i][..words[i]], retired)?;
+                }
+                // When all original experts live in segment0, executing
+                // segment1 first must preserve EVERY complete owner bit.
+                if one_segment {
+                    pin.validate()?;
+                    physical(client, arena, ids, seeds, banks, g)?;
+                    launch_live_segment(
+                        client,
+                        arena,
+                        ids,
+                        banks,
+                        g,
+                        s,
+                        map.groups(),
+                        1,
+                        candidate == 1,
+                    )?;
+                    if snapshot(arena, ids, retired)? != before {
+                        return Err("segmented IQ live inactive segment wrote full owner".into());
+                    }
+                }
+                let mut previous: Option<Vec<Zeroizing<Vec<u32>>>> = None;
+                for segment in 0..2 {
+                    pin.validate()?;
+                    physical(client, arena, ids, seeds, banks, g)?;
+                    launch_live_segment(
+                        client,
+                        arena,
+                        ids,
+                        banks,
+                        g,
+                        s,
+                        map.groups(),
+                        segment,
+                        candidate == 1,
+                    )?;
+                    let got = snapshot(arena, ids, retired)?;
+                    if one_segment && segment == 1 && previous.as_ref() != Some(&got) {
+                        return Err(
+                            "segmented IQ live inactive segment rewrote complete owner".into()
+                        );
+                    }
+                    if segment == 1 {
+                        if let Some(prior) = &previous {
+                            for (i, first, stride, width) in [
+                                (c::ACT, s.act_first(), s.act_stride(), FF),
+                                (c::PART, s.partial_first(), s.partial_stride(), HIDDEN),
+                            ] {
+                                for rank in 0..count * 10 {
+                                    if packet.experts[rank] < (SEGMENT as u32) {
+                                        let start = first + rank * stride;
+                                        if got[i][start..start + width]
+                                            != prior[i][start..start + width]
+                                        {
+                                            return Err(
+                                                "segmented IQ inactive completed rank bits changed"
+                                                    .into(),
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    let e = check_live(
+                        &got,
+                        &before,
+                        g,
+                        s,
+                        &packet,
+                        &expected,
+                        segment == 1,
+                        false,
+                        false,
+                    )?;
+                    for (m, v) in maxima.iter_mut().zip(e) {
+                        *m = m.max(v);
+                    }
+                    ledger.completed_fence(c::sample(client)?)?;
+                    previous = Some(got);
+                }
+                drop(previous);
+                finish_math(client, arena, ids, g, s)?;
+                let got = snapshot(arena, ids, retired)?;
+                let e = check_live(&got, &before, g, s, &packet, &expected, true, true, false)?;
+                for (m, v) in maxima.iter_mut().zip(e) {
+                    *m = m.max(v);
+                }
+                if candidate == 0 {
+                    original = Some(compact_original_count(&got, s, count)?);
+                    if expected.owned_bytes()
+                        + original.as_ref().unwrap().owned_bytes()
+                        + x.capacity() * 4
+                        + 64 * 1024
+                        > 1024 * 1024
+                    {
+                        return Err("segmented IQ live compact CPU/GPU oracle host bound".into());
+                    }
+                } else {
+                    check_live(
+                        &got,
+                        &before,
+                        g,
+                        s,
+                        &packet,
+                        original
+                            .as_ref()
+                            .ok_or("segmented IQ live original absent")?,
+                        true,
+                        true,
+                        true,
+                    )?;
+                }
+                pin.validate()?;
+                ledger.completed_fence(c::sample(client)?)?;
+            }
+            drop(original);
+            // All declared faults are exercised through both actual GPU
+            // kernels, without changing the canonical protected wave/pins.
+            for kind in 0..=8 {
+                let mut fault_before = before.clone();
+                let valid = live_fault_operand(&mut fault_before, s, count, kind)?;
+                for candidate in [false, true] {
+                    for (i, &id) in ids.iter().enumerate() {
+                        c::write(arena, id, &fault_before[i][..words[i]], retired)?;
+                    }
+                    pin.validate()?;
+                    physical(client, arena, ids, seeds, banks, g)?;
+                    for segment in 0..2 {
+                        launch_live_segment(
+                            client,
+                            arena,
+                            ids,
+                            banks,
+                            g,
+                            s,
+                            map.groups(),
+                            segment,
+                            candidate,
+                        )?;
+                    }
+                    finish_math(client, arena, ids, g, s)?;
+                    let got = snapshot(arena, ids, retired)?;
+                    if valid {
+                        check_live(
+                            &got,
+                            &fault_before,
+                            g,
+                            s,
+                            &packet,
+                            &expected,
+                            true,
+                            true,
+                            false,
+                        )?;
+                    } else {
+                        check_live_fault(&got, &fault_before, g, s, &packet, map.words(), kind)?;
+                    }
+                    ledger.completed_fence(c::sample(client)?)?;
+                }
+            }
+            pin.validate()?;
+            staged.validate_origin(bank)?;
+            reports.push(serde_json::json!({"count":count,"routes":count*10,"groups":map.groups(),
+                "all_experts_in_segment0":one_segment,"old_and_live_gpu_bits_identical":true,
+                "original_C_CPU_max_abs_errors":errors,"all_original_rank_probabilities_preserved":true,
+                "fault_cases_per_kernel":8,"inactive_input_nan_preserved_and_accepted":true,
+                "inactive_other_segment_all_owners_bitwise_unchanged":one_segment,
+                "full_private_status_and_physical_tails_checked":true}));
+        }
+    }
+    Ok(reports)
+}
+#[allow(clippy::too_many_arguments)]
+fn finish_live_profile(
+    client: &ComputeClient<WgpuRuntime>,
+    arena: &mut PrivateArena,
+    ids: &[BufferId; 8],
+    seeds: &[Seed; 3],
+    banks: &[Bank],
+    g: k::Geometry,
+    retired: &AtomicBool,
+    ledger: &mut MainAdmission,
+) -> Result<()> {
+    verify_public(client, arena, ids[7], seeds, banks, retired)?;
+    ledger.completed_fence(c::sample(client)?)?;
+    arena.reset()?;
+    if ids.iter().any(|&id| arena.handle(id).is_ok()) {
+        return Err("segmented IQ stale private owner accepted".into());
+    }
+    ledger.completed_fence(c::sample(client)?)?;
+    ledger.precharge(&[BufferLayout::new(1)?.owned_bytes as u64])?;
+    let verify = arena.allocate_zeroed(1)?;
+    physical(client, arena, &[verify], seeds, banks, g)?;
+    verify_public(client, arena, verify, seeds, banks, retired)?;
+    ledger.completed_fence(c::sample(client)?)?;
+    arena.reset()?;
+    Ok(())
+}
+#[allow(clippy::too_many_arguments)]
 fn one(
     client: &ComputeClient<WgpuRuntime>,
     l: &wgpu::Limits,
@@ -1229,9 +2015,14 @@ fn one(
     profile: (TensorType, TensorType),
     integer: bool,
     shared_original: bool,
+    live_members: bool,
 ) -> Result<serde_json::Value> {
     integer_stage(integer, profile, "profile-start", 0, 0);
-    let g = geometry(profile.0, profile.1)?;
+    let g = if live_members {
+        geometry_tile(profile.0, profile.1, 8)?.with_live_member_reduction()?
+    } else {
+        geometry(profile.0, profile.1)?
+    };
     limits(g, l)?;
     if integer && l.max_compute_workgroup_storage_size < iq_moe_integer::MAX_SHARED_BYTES as u32 {
         return Err("segmented IQ integer workgroup storage limit".into());
@@ -1264,8 +2055,9 @@ fn one(
         return Err("segmented IQ prepared private page cap".into());
     }
     // Before/previous/current owners plus one raw readback lease, row seeds,
-    // complete CPU oracle and compact original output oracle (combined<512KiB),
-    // and bounded route metadata in the1MiB frame. No full bank host copy.
+    // complete CPU oracle and compact original output oracle (live count3:
+    // 829,440B combined), plus input and bounded route metadata in the 1MiB
+    // frame. No full bank host copy.
     let host_upper = 4 * private_pages.iter().sum::<u64>()
         + payloads
             .iter()
@@ -1352,6 +2144,29 @@ fn one(
         let selected: Vec<_> = (first..(first + 10).min(CAP)).collect();
         let plan = bank_slots.plan(&selected)?;
         bank_slots.commit(plan)?;
+    }
+    if live_members {
+        let cases = live_cases(
+            client,
+            arena,
+            &ids,
+            &banks,
+            &seeds,
+            &bank_slots,
+            &mut ledger,
+            retired,
+            g,
+            &s,
+            words,
+        )?;
+        finish_live_profile(client, arena, &ids, &seeds, &banks, g, retired, &mut ledger)?;
+        return Ok(
+            serde_json::json!({"gate_up_dtype":profile.0.gguf_id(),"down_dtype":profile.1.gguf_id(),
+            "hidden":HIDDEN,"ff":FF,"capacity":CAP,"segment_capacity":SEGMENT,"tile":8,
+            "bank_physical_bytes":pages.iter().sum::<u64>(),"private_owned_bytes":private_pages.iter().sum::<u64>(),
+            "original_lane_tree":[32,16,8,4,2,1],"shared_owner_bytes":2*k::LANES*8*4,
+            "cases":cases,"full_public_bank_and_source_padding_preserved_after_private_reset":true}),
+        );
     }
     let mut routes =
         token_waves::Input::new(1, CAP, 512).map_err(|_| "segmented IQ fixed route geometry")?;
@@ -1724,22 +2539,27 @@ fn one(
     Ok(report)
 }
 pub fn run(client: &ComputeClient<WgpuRuntime>, l: &wgpu::Limits) -> Result<()> {
-    run_mode(client, l, false, false)
+    run_mode(client, l, false, false, false)
 }
 pub fn run_integer(client: &ComputeClient<WgpuRuntime>, l: &wgpu::Limits) -> Result<()> {
-    run_mode(client, l, true, false)
+    run_mode(client, l, true, false, false)
 }
 #[allow(dead_code)]
 pub fn run_shared_original(client: &ComputeClient<WgpuRuntime>, l: &wgpu::Limits) -> Result<()> {
-    run_mode(client, l, false, true)
+    run_mode(client, l, false, true, false)
+}
+#[allow(dead_code)] // Protected main registration belongs to the parent.
+pub fn run_live_members(client: &ComputeClient<WgpuRuntime>, l: &wgpu::Limits) -> Result<()> {
+    run_mode(client, l, false, false, true)
 }
 fn run_mode(
     client: &ComputeClient<WgpuRuntime>,
     l: &wgpu::Limits,
     integer: bool,
     shared_original: bool,
+    live_members: bool,
 ) -> Result<()> {
-    validate_mode(integer, shared_original)?;
+    validate_mode(integer, shared_original, live_members)?;
     if integer && l.max_compute_workgroup_storage_size < iq_moe_integer::MAX_SHARED_BYTES as u32 {
         return Err("segmented IQ integer workgroup storage limit".into());
     }
@@ -1748,8 +2568,16 @@ fn run_mode(
     {
         return Err("segmented IQ shared-original workgroup storage limit".into());
     }
-    for &(gate, down) in profiles(integer, shared_original) {
-        limits(geometry(gate, down)?, l)?;
+    let registry = if live_members {
+        &INTEGER_PROFILES[..]
+    } else {
+        profiles(integer, shared_original)
+    };
+    for &(gate, down) in registry {
+        limits(
+            geometry_tile(gate, down, if live_members { 8 } else { 1 })?,
+            l,
+        )?;
     }
     let path = std::env::var_os("KUNO_PUBLIC_RECEIPT").ok_or("segmented IQ receipt required")?;
     let retired = Arc::new(AtomicBool::new(false));
@@ -1758,7 +2586,7 @@ fn run_mode(
     arena.enable_public_owned_zero_audit()?;
     let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<_> {
         let mut reports = Vec::new();
-        for &profile in profiles(integer, shared_original) {
+        for &profile in registry {
             reports.push(one(
                 client,
                 l,
@@ -1767,17 +2595,20 @@ fn run_mode(
                 profile,
                 integer,
                 shared_original,
+                live_members,
             )?);
             client.memory_cleanup();
         }
         Ok(reports)
     }));
-    let failure_marker = if shared_original {
+    let failure_marker = if live_members {
+        "public_iq_live_members_failure"
+    } else if shared_original {
         "public_iq_shared_original_failure"
     } else {
         "public_iq_integer_failure"
     };
-    if integer || shared_original {
+    if integer || shared_original || live_members {
         match &attempt {
             Ok(Err(error)) => println!(
                 "{failure_marker} class={}",
@@ -1788,7 +2619,7 @@ fn run_mode(
         }
     }
     let closed = arena.close();
-    if (integer || shared_original) && closed.is_err() {
+    if (integer || shared_original || live_members) && closed.is_err() {
         println!("{failure_marker} class=owner-close");
     }
     let reports = match (attempt, closed, retired.load(Ordering::Acquire)) {
@@ -1798,7 +2629,9 @@ fn run_mode(
     let audit = arena
         .owned_zero_audit_receipt()
         .ok_or("segmented IQ full owner erasure absent")?;
-    let scope = if shared_original {
+    let scope = if live_members {
+        "fixed-public-synthetic-original64-F32-live-member-shared-reduction-IQ-MoE-only"
+    } else if shared_original {
         "fixed-public-synthetic-original64-F32-workgroup-codebook-IQ-MoE-only"
     } else if integer {
         "fixed-public-synthetic-original-packed-IQ-two-Q8-plane-integer-MoE-only"
@@ -1815,7 +2648,11 @@ fn run_mode(
         .create_new(true)
         .open(path)?;
     file.write_all(serde_json::to_string_pretty(&report)?.as_bytes())?;
-    if shared_original {
+    if live_members {
+        println!(
+            "public_live_members_iq_moe profiles=9 counts=3 patterns=2 segments=2 original64=1 old_gpu_bitwise=1 accepted=1"
+        );
+    } else if shared_original {
         println!(
             "public_shared_original_iq_moe profiles=9 segments=2 ranks=10 original64=1 activation_quantization=0 accepted=1"
         );
@@ -1832,6 +2669,349 @@ fn run_mode(
 #[cfg(test)]
 mod tests {
     use super::*;
+    type LiveFixture = (
+        k::Geometry,
+        k::Spans,
+        c::Packet,
+        Vec<Zeroizing<Vec<u32>>>,
+        Oracle,
+        Zeroizing<Vec<u32>>,
+    );
+    fn live_host_fixture(count: usize, one_segment: bool) -> LiveFixture {
+        let g = geometry_tile(TensorType::Iq3Xxs, TensorType::Iq4Nl, 8)
+            .unwrap()
+            .with_live_member_reduction()
+            .unwrap();
+        let (s, words) = spans(g).unwrap();
+        let plan = live_plan(count, one_segment).unwrap();
+        let packet = c::Packet::from_plan(&plan).unwrap();
+        let wave = plan.wave(0).unwrap();
+        let mut bank = BankSlots::new(CAP, 512).unwrap();
+        for first in (0..CAP).step_by(10) {
+            let selected = (first..(first + 10).min(CAP)).collect::<Vec<_>>();
+            let pending = bank.plan(&selected).unwrap();
+            bank.commit(pending).unwrap();
+        }
+        let selected = wave
+            .protected_experts()
+            .iter()
+            .map(|&v| v as usize)
+            .collect::<Vec<_>>();
+        let mut staged = StagedSlots::begin(&bank).unwrap();
+        let pending = staged.plan(&bank, &selected).unwrap();
+        assert!(pending.uploads.is_empty());
+        assert_eq!(pending.slots, selected);
+        let pin = c::ProtectedWave::new(wave, &pending, &staged, &bank).unwrap();
+        let map = pin.map(&packet).unwrap();
+        map.validate(
+            &packet.experts[..count * 10],
+            &packet.probabilities[..count * 10],
+            CAP,
+        )
+        .unwrap();
+        map.validate_geometry(g).unwrap();
+        let x = live_input(count).unwrap();
+        let owned = words.map(|n| BufferLayout::new(n).unwrap().owned_words);
+        let before = live_before_owned(owned, words, &s, &x, &map).unwrap();
+        pin.validate().unwrap();
+        (
+            g,
+            s,
+            packet,
+            before,
+            Oracle {
+                act: Zeroizing::new(vec![0.25; count * 10 * FF]),
+                part: Zeroizing::new(vec![0.5; count * 10 * HIDDEN]),
+                output: Zeroizing::new(vec![0.75; count * HIDDEN]),
+            },
+            Zeroizing::new(map.words().to_vec()),
+        )
+    }
+    fn live_host_complete(
+        before: &[Zeroizing<Vec<u32>>],
+        g: k::Geometry,
+        s: &k::Spans,
+        packet: &c::Packet,
+        expected: &Oracle,
+    ) -> Vec<Zeroizing<Vec<u32>>> {
+        let mut actual = before.to_vec();
+        for (i, first, stride, width, rows, reference) in [
+            (
+                c::ACT,
+                s.act_first(),
+                s.act_stride(),
+                FF,
+                packet.count * 10,
+                &expected.act,
+            ),
+            (
+                c::PART,
+                s.partial_first(),
+                s.partial_stride(),
+                HIDDEN,
+                packet.count * 10,
+                &expected.part,
+            ),
+            (
+                c::OUTPUT,
+                s.output_first(),
+                s.output_stride(),
+                HIDDEN,
+                packet.count,
+                &expected.output,
+            ),
+        ] {
+            for row in 0..rows {
+                for col in 0..width {
+                    actual[i][first + row * stride + col] = reference[row * width + col].to_bits();
+                }
+            }
+        }
+        let d = HIDDEN.div_ceil(k::LANES);
+        let f = FF.div_ceil(k::LANES);
+        let mut first = s.status_first();
+        for (length, active) in [
+            (k::MAX_ROUTES, packet.count * 10),
+            (k::MAX_ROUTES, packet.count * 10),
+            (k::MAX_BATCH * d, packet.count * d),
+            (k::MAX_ROUTES * f, packet.count * 10 * f),
+            (k::MAX_ROUTES * d, packet.count * 10 * d),
+            (k::MAX_BATCH * d, packet.count * d),
+        ] {
+            actual[c::STATUS][first..first + active].fill(1);
+            first += length;
+        }
+        assert_eq!(first, s.status_first() + g.status_words());
+        actual
+    }
+    #[test]
+    fn live_public_gate_and_geometry_preserve_old_modes_and_complete_budgets() {
+        assert_eq!(
+            mode_gate(false, false, true).unwrap(),
+            "KUNO_LAB_IQ_LIVE_MEMBERS_PUBLIC_ONLY"
+        );
+        assert!(mode_gate(true, false, true).is_err());
+        assert!(mode_gate(false, true, true).is_err());
+        for &(gate, down) in &INTEGER_PROFILES {
+            let old = geometry(gate, down).unwrap();
+            let live = geometry_tile(gate, down, 8)
+                .unwrap()
+                .with_live_member_reduction()
+                .unwrap();
+            assert_eq!(old.tile(), 1);
+            assert!(!old.live_member_reduction());
+            assert_eq!(live.tile(), 8);
+            assert!(live.live_member_reduction());
+            assert_eq!(bank_pages(old).unwrap(), bank_pages(live).unwrap());
+            let (_, original_words) = spans(old).unwrap();
+            let (_, live_words) = spans(live).unwrap();
+            assert_eq!(original_words, live_words);
+            assert_eq!(
+                live_words
+                    .map(|n| BufferLayout::new(n).unwrap().owned_bytes)
+                    .iter()
+                    .sum::<usize>(),
+                1_703_936
+            );
+            assert_eq!(2 * k::LANES * live.tile() * 4, 4096);
+        }
+    }
+    #[test]
+    fn live_public_routes_cover_actual_lengths_original_rank_and_segment_boundaries() {
+        for count in 1..=3 {
+            for one_segment in [false, true] {
+                let (_, _, packet, _, _, map) = live_host_fixture(count, one_segment);
+                let rows = if one_segment {
+                    ONE_SEGMENT_ROWS
+                } else {
+                    LIVE_ROWS
+                };
+                for (token, row) in rows.iter().enumerate().take(count) {
+                    assert_eq!(
+                        &packet.experts[token * 10..(token + 1) * 10],
+                        &row.map(|v| v as u32)
+                    );
+                    assert_eq!(&packet.probabilities[token * 10..(token + 1) * 10], &PROB);
+                }
+                let groups = map[3] as usize;
+                let lengths = &map[4 + k::MAX_GROUPS..4 + k::MAX_GROUPS + groups];
+                assert!(lengths.iter().all(|&n| n >= 1 && n <= count as u32));
+                assert_eq!(lengths.iter().sum::<u32>(), (count * 10) as u32);
+                if count == 3 {
+                    for length in [1, 2, 3] {
+                        assert!(lengths.contains(&length));
+                    }
+                }
+                if one_segment {
+                    assert!(map[4..4 + groups].iter().all(|&slot| slot < 72));
+                } else {
+                    for slot in [0, 71, 72, 143] {
+                        assert!(map[4..4 + groups].contains(&slot));
+                    }
+                }
+                assert!(map[4 + groups..4 + k::MAX_GROUPS].iter().all(|&v| v == 0));
+            }
+        }
+        assert!(live_plan(0, false).is_err());
+        assert!(live_plan(4, false).is_err());
+        assert!(live_input(0).is_err());
+        assert!(live_input(4).is_err());
+    }
+    #[test]
+    fn live_cpu_oracle_preserves_count1_bits_and_bounds_all_nine_count3_references() {
+        for (gate, down) in INTEGER_PROFILES {
+            let g = geometry(gate, down).unwrap();
+            let payloads = g.projections().map(|p| seed_payload(p).unwrap());
+            let decoded = payloads.each_ref().map(|v| v.1.as_slice());
+            let x = live_input(1).unwrap();
+            let plan = live_plan(1, false).unwrap();
+            let packet = c::Packet::from_plan(&plan).unwrap();
+            let old = oracle(decoded, &x).unwrap();
+            let live = live_oracle(decoded, &x, &packet).unwrap();
+            for (a, b) in [
+                (&old.act, &live.act),
+                (&old.part, &live.part),
+                (&old.output, &live.output),
+            ] {
+                assert!(
+                    a.iter()
+                        .zip(b.iter())
+                        .all(|(x, y)| x.to_bits() == y.to_bits())
+                );
+            }
+            let x = live_input(3).unwrap();
+            let plan = live_plan(3, false).unwrap();
+            let packet = c::Packet::from_plan(&plan).unwrap();
+            let live = live_oracle(decoded, &x, &packet).unwrap();
+            assert_eq!(
+                (live.act.len(), live.part.len(), live.output.len()),
+                (19_200, 76_800, 7680)
+            );
+            assert_eq!(live.owned_bytes() * 2, 829_440);
+            assert!(live.owned_bytes() * 2 + x.capacity() * 4 + 64 * 1024 <= 1024 * 1024);
+            assert!(live_oracle(decoded, &x[..HIDDEN], &packet).is_err());
+        }
+    }
+    #[test]
+    fn live_full_owner_gate_checks_count3_last_rank_exact_bits_and_every_tail() {
+        let (g, s, packet, before, expected, _) = live_host_fixture(3, false);
+        let actual = live_host_complete(&before, g, &s, &packet, &expected);
+        assert_eq!(
+            check_live(
+                &actual, &before, g, &s, &packet, &expected, true, true, true
+            )
+            .unwrap(),
+            [0.; 3]
+        );
+        let mut one_bit = actual.clone();
+        one_bit[c::ACT][s.act_first() + 29 * s.act_stride() + FF - 1] ^= 1;
+        assert!(
+            check_live(
+                &one_bit, &before, g, &s, &packet, &expected, true, true, false
+            )
+            .is_ok()
+        );
+        assert!(
+            check_live(
+                &one_bit, &before, g, &s, &packet, &expected, true, true, true
+            )
+            .is_err()
+        );
+        for (owner, index) in [
+            (c::ACT, s.act_first() + FF),
+            (c::ACT, s.act_first() + 30 * s.act_stride()),
+            (c::PART, s.partial_first() + HIDDEN),
+            (c::PART, s.partial_first() + 30 * s.partial_stride()),
+            (c::OUTPUT, s.output_first() + 3 * s.output_stride()),
+            (c::STATUS, s.status_first() + 30),
+            (c::STATUS, s.status_first() + g.status_words()),
+            (c::MAP, s.map_first()),
+            (c::INPUT, s.input_first()),
+            (c::PROB, s.prob_first()),
+            (7, 0),
+        ]
+        .into_iter()
+        .chain((0..8).map(|owner| (owner, actual[owner].len() - 1)))
+        {
+            let mut bad = actual.clone();
+            bad[owner][index] ^= 1;
+            assert!(
+                check_live(&bad, &before, g, &s, &packet, &expected, true, true, false).is_err(),
+                "owner{owner}/index{index}"
+            );
+        }
+        let mut bad = actual.clone();
+        bad[c::OUTPUT][s.output_first() + 2 * s.output_stride() + HIDDEN - 1] = f32::NAN.to_bits();
+        assert!(check_live(&bad, &before, g, &s, &packet, &expected, true, true, false).is_err());
+        bad = actual.clone();
+        bad[c::STATUS][s.status_first() + 29] = 0;
+        assert!(check_live(&bad, &before, g, &s, &packet, &expected, true, true, false).is_err());
+        assert!(
+            check_live(
+                &actual[..7],
+                &before,
+                g,
+                &s,
+                &packet,
+                &expected,
+                true,
+                true,
+                false
+            )
+            .is_err()
+        );
+        bad = actual.clone();
+        bad[c::PART].pop();
+        assert!(check_live(&bad, &before, g, &s, &packet, &expected, true, true, false).is_err());
+    }
+    #[test]
+    fn live_fault_inventory_and_full_global_no_write_are_bounded() {
+        let (g, s, packet, before, expected, map) = live_host_fixture(3, false);
+        for kind in 0..=8 {
+            let mut bad = before.clone();
+            assert_eq!(
+                live_fault_operand(&mut bad, &s, 3, kind).unwrap(),
+                kind == 8
+            );
+        }
+        assert!(live_fault_operand(&mut before.clone(), &s, 0, 0).is_err());
+        assert!(live_fault_operand(&mut before.clone(), &s, 4, 0).is_err());
+        assert!(live_fault_operand(&mut before.clone(), &s, 3, 9).is_err());
+        let mut bad = before.clone();
+        live_fault_operand(&mut bad, &s, 3, 2).unwrap();
+        check_live_fault(&bad, &bad, g, &s, &packet, &map, 2).unwrap();
+        for (owner, index) in [
+            (c::ACT, s.act_first()),
+            (c::PART, s.partial_first()),
+            (c::OUTPUT, s.output_first()),
+            (c::STATUS, s.status_first()),
+            (c::MAP, s.map_first()),
+            (c::INPUT, s.input_first()),
+        ]
+        .into_iter()
+        .chain((0..8).map(|owner| (owner, bad[owner].len() - 1)))
+        {
+            let mut changed = bad.clone();
+            changed[owner][index] ^= 1;
+            assert!(check_live_fault(&changed, &bad, g, &s, &packet, &map, 2).is_err());
+        }
+        let mut inactive_nan = before.clone();
+        live_fault_operand(&mut inactive_nan, &s, 3, 8).unwrap();
+        let actual = live_host_complete(&inactive_nan, g, &s, &packet, &expected);
+        check_live(
+            &actual,
+            &inactive_nan,
+            g,
+            &s,
+            &packet,
+            &expected,
+            true,
+            true,
+            true,
+        )
+        .unwrap();
+        assert!(check_live_fault(&actual, &inactive_nan, g, &s, &packet, &map, 8).is_err());
+    }
     #[test]
     fn prepared_failure_classes_are_closed_static_owner_categories() {
         assert_eq!(
