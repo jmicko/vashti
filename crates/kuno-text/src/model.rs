@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::cpu::Matrix;
 use crate::ops::{
@@ -865,8 +865,30 @@ impl<'a> Qwen4Exp<'a> {
         sequence: &mut Sequence,
         token: u32,
         cancel: &AtomicBool,
-        mut layer_complete: impl FnMut(usize),
+        layer_complete: impl FnMut(usize),
     ) -> Result<Vec<f32>> {
+        self.step_with_carry(executor, sequence, token, cancel, layer_complete)
+            .map(TargetOutput::into_logits)
+    }
+
+    /// Public-fixture CPU reference with the target's unnormalized HC carry.
+    /// The hidden output is the four contiguous 2560-wide residual streams
+    /// after the final FFN combine and BEFORE the output HC RMS/mixer. Logits
+    /// use that same residual and the original single head projection.
+    ///
+    /// A result at position p consumed token p, predicts token p+1, and carries
+    /// the hidden input needed to condition MTP on token p+1. Preflight rejects
+    /// without advancing state; execution failure clears and poisons it as in
+    /// `step`. Output buffers are guarded, but inherited scalar intermediates
+    /// have not received whole-stack private error-path erasure acceptance.
+    pub fn step_with_carry(
+        &self,
+        executor: &mut impl MatrixExecutor,
+        sequence: &mut Sequence,
+        token: u32,
+        cancel: &AtomicBool,
+        mut layer_complete: impl FnMut(usize),
+    ) -> Result<TargetOutput> {
         if sequence.binding_id != self.binding_id
             || sequence.poisoned
             || sequence.position >= sequence.context_limit
@@ -937,20 +959,21 @@ impl<'a> Qwen4Exp<'a> {
                 residual = op(gr.combine(&residual, &ffn, &inject))?;
                 layer_complete(l);
             }
-            let (mixed, _) = self.gr_read(executor, &residual, "output_hc", false, cancel)?;
-            self.project(executor, "output.weight", 0, &mixed, cancel)
+            finish_target_output(residual, sequence.position, self.binding_id, |hidden| {
+                let (mixed, _) = self.gr_read(executor, hidden, "output_hc", false, cancel)?;
+                self.project(executor, "output.weight", 0, &mixed, cancel)
+            })
         })();
         match result {
-            Ok(mut logits) => {
+            Ok(output) => {
                 if cancel.load(Ordering::Relaxed) {
-                    logits.zeroize();
                     sequence.clear();
                     sequence.poisoned = true;
                     return Err(Error::InvalidFormat("graph cancelled"));
                 }
                 sequence.position += 1;
                 sequence.poisoned = false;
-                Ok(logits)
+                Ok(output)
             }
             Err(error) => {
                 sequence.clear();
@@ -959,6 +982,69 @@ impl<'a> Qwen4Exp<'a> {
             }
         }
     }
+}
+
+/// One accepted target position and its request-derived output allocations.
+/// There is no Debug, serialization, mutable payload or persistence API. Both
+/// buffers are wiped on drop, including retained capacity. This does not make
+/// the inherited scalar graph a private-request engine.
+pub struct TargetOutput {
+    logits: Zeroizing<Vec<f32>>,
+    hidden: Zeroizing<Vec<f32>>,
+    position: usize,
+    binding_id: u64,
+}
+impl TargetOutput {
+    pub fn logits(&self) -> &[f32] {
+        &self.logits
+    }
+    /// Unnormalized 10240-wide HC residual before the final head mixer.
+    pub fn hidden(&self) -> &[f32] {
+        &self.hidden
+    }
+    /// Zero-based consumed target position; the sequence has advanced to p+1.
+    pub fn position(&self) -> usize {
+        self.position
+    }
+    pub fn binding_id(&self) -> GraphBindingId {
+        GraphBindingId(self.binding_id)
+    }
+    // Preserve the original step return allocation without a vocabulary-sized
+    // clone. Only that legacy adapter transfers logits out of the new guard;
+    // its unused carry remains guarded and is wiped when this owner drops.
+    fn into_logits(mut self) -> Vec<f32> {
+        std::mem::take(&mut *self.logits)
+    }
+}
+impl Drop for TargetOutput {
+    fn drop(&mut self) {
+        self.position.zeroize();
+        self.binding_id.zeroize();
+    }
+}
+
+fn finish_target_output(
+    residual: Vec<f32>,
+    position: usize,
+    binding_id: u64,
+    head: impl FnOnce(&[f32]) -> Result<Vec<f32>>,
+) -> Result<TargetOutput> {
+    // Own the real pre-head residual before head work so it is wiped even if
+    // projection rejects or unwinds. No normalized/mixed substitute or copy.
+    let hidden = Zeroizing::new(residual);
+    if hidden.len() != HC * D || hidden.iter().any(|v| !v.is_finite()) {
+        return Err(Error::InvalidFormat("invalid target HC carry"));
+    }
+    let logits = Zeroizing::new(head(&hidden)?);
+    if logits.len() != VOCAB || logits.iter().any(|v| !v.is_finite()) {
+        return Err(Error::InvalidFormat("invalid target logits"));
+    }
+    Ok(TargetOutput {
+        logits,
+        hidden,
+        position,
+        binding_id,
+    })
 }
 
 struct GdnLayer {
@@ -1288,6 +1374,169 @@ mod tests {
             checked_ple_shape(&inconsistent),
             Err(Error::InvalidFormat("unsupported graph PLE head geometry"))
         ));
+    }
+
+    #[test]
+    fn target_carry_taps_final_combine_before_per_stream_normalization_and_head_mix() {
+        let original: Vec<_> = (0..HC)
+            .flat_map(|stream| {
+                (0..D).map(move |d| (stream + 1) as f32 * if d % 2 == 0 { 3. } else { 4. })
+            })
+            .collect();
+        let block: Vec<_> = (0..D)
+            .map(|d| if d % 2 == 0 { 1.25 } else { -0.75 })
+            .collect();
+        let inject = [-4., -2., 0., 4.];
+        let shape = GatedResidualShape::new(HC, D).unwrap();
+        let final_residual = shape.combine(&original, &block, &inject).unwrap();
+        let mut expected_carry = vec![0.; HC * D];
+        for stream in 0..HC {
+            let weight = 2. / (1. + (-inject[stream] / HC as f32).exp());
+            for d in 0..D {
+                expected_carry[stream * D + d] = (f64::from(original[stream * D + d])
+                    + f64::from(block[d]) * f64::from(weight))
+                    as f32;
+            }
+        }
+        for (&actual, &expected) in final_residual.iter().zip(&expected_carry) {
+            assert!((actual - expected).abs() < 2e-6);
+        }
+        let carry_pointer = final_residual.as_ptr();
+        let mut expected_mixed = [0.; 2];
+        for stream in 0..HC {
+            let even = f64::from(final_residual[stream * D]);
+            let odd = f64::from(final_residual[stream * D + 1]);
+            let inverse = 1. / (((even * even + odd * odd) / 2.) + f64::from(EPS)).sqrt();
+            // Original group normalization rounds each result to F32 before
+            // the HC head's zero up projection gives sigmoid(0)=1/2.
+            expected_mixed[0] += f64::from((even * inverse) as f32) * 0.5 / HC as f64;
+            expected_mixed[1] += f64::from((odd * inverse * 2.) as f32) * 0.5 / HC as f64;
+        }
+        let gamma: Vec<_> = (0..D).map(|d| if d % 2 == 0 { 1. } else { 2. }).collect();
+        let mut head_calls = 0;
+        let output = finish_target_output(final_residual, 7, 31, |hidden| {
+            head_calls += 1;
+            let normalized = ops::rms_norm(hidden, &gamma, D, EPS).unwrap();
+            assert!(normalized != hidden);
+            let mixed = shape.mix(&normalized, &vec![0.; HC * D]).unwrap();
+            for d in 0..2 {
+                assert_eq!(mixed[d].to_bits(), (expected_mixed[d] as f32).to_bits());
+            }
+            let mut logits = vec![0.; VOCAB];
+            logits[..2].copy_from_slice(&mixed[..2]);
+            Ok(logits)
+        })
+        .unwrap();
+        assert_eq!(head_calls, 1);
+        assert_eq!(output.hidden().as_ptr(), carry_pointer);
+        assert_eq!(output.hidden().len(), 10240);
+        assert_eq!(output.logits().len(), VOCAB);
+        assert_eq!(output.position(), 7);
+        assert!(output.binding_id() == GraphBindingId(31));
+        for (&actual, &expected) in output.hidden().iter().zip(&expected_carry) {
+            assert!((actual - expected).abs() < 2e-6);
+        }
+    }
+
+    #[test]
+    fn target_output_rejects_bad_extents_and_nonfinite_before_publication() {
+        for hidden in [vec![0.; HC * D - 1], vec![f32::NAN; HC * D]] {
+            let mut called = false;
+            assert!(
+                finish_target_output(hidden, 0, 1, |_| {
+                    called = true;
+                    Ok(vec![0.; VOCAB])
+                })
+                .is_err()
+            );
+            assert!(!called);
+        }
+        for logits in [vec![0.; VOCAB - 1], vec![f32::INFINITY; VOCAB]] {
+            assert!(finish_target_output(vec![0.; HC * D], 0, 1, |_| Ok(logits)).is_err());
+        }
+        let mut logits = Vec::with_capacity(VOCAB + 8);
+        logits.resize(VOCAB, 0.);
+        logits[5] = -17.;
+        let pointer = logits.as_ptr();
+        let capacity = logits.capacity();
+        let output = finish_target_output(vec![2.; HC * D], 0, 1, |_| Ok(logits)).unwrap();
+        let legacy = output.into_logits();
+        assert_eq!(legacy.as_ptr(), pointer);
+        assert_eq!(legacy.capacity(), capacity);
+        assert_eq!(legacy[5], -17.);
+    }
+
+    #[test]
+    fn target_carry_preflight_keeps_state_and_execution_failure_requires_reset() {
+        struct NoProjection;
+        impl MatrixExecutor for NoProjection {
+            fn run(
+                &mut self,
+                _: TensorView<'_>,
+                _: usize,
+                _: &[f32],
+                _: &AtomicBool,
+            ) -> Result<Vec<f32>> {
+                panic!("unexpected projection in bounded preflight fixture")
+            }
+        }
+        let fixture = TinyFixture::new();
+        let file = fixture.open();
+        let model = tiny_binding(&file, 73);
+        // The preflight test owns only its tiny public PLE state; it never
+        // claims miniature tensors implement the real 48-layer graph.
+        let mut sequence = Sequence {
+            layers: Vec::new(),
+            ple_history: PleTokenHistory::new(&model.ple_hash),
+            ple_conv: CausalConvState::new(10240, 4, 3).unwrap(),
+            context_limit: 2,
+            position: 1,
+            poisoned: false,
+            binding_id: 73,
+        };
+        let cancel = AtomicBool::new(false);
+        let mut executor = NoProjection;
+        assert!(
+            model
+                .step_with_carry(&mut executor, &mut sequence, VOCAB as u32, &cancel, |_| {})
+                .is_err()
+        );
+        assert_eq!(sequence.position(), 1);
+        assert!(!sequence.poisoned);
+        let foreign = tiny_binding(&file, 74);
+        assert!(
+            foreign
+                .step_with_carry(&mut executor, &mut sequence, 0, &cancel, |_| {})
+                .is_err()
+        );
+        assert_eq!(sequence.position(), 1);
+        assert!(!sequence.poisoned);
+        sequence.position = 2;
+        assert!(
+            model
+                .step_with_carry(&mut executor, &mut sequence, 0, &cancel, |_| {})
+                .is_err()
+        );
+        assert_eq!(sequence.position(), 2);
+        assert!(!sequence.poisoned);
+        sequence.position = 1;
+        // Missing embedding is an executed source failure, so no carry or
+        // position is returned and the exact existing clear/poison gate runs.
+        assert!(
+            model
+                .step_with_carry(&mut executor, &mut sequence, 0, &cancel, |_| {})
+                .is_err()
+        );
+        assert_eq!(sequence.position(), 0);
+        assert!(sequence.poisoned);
+        assert!(
+            model
+                .step(&mut executor, &mut sequence, 0, &cancel, |_| {})
+                .is_err()
+        );
+        sequence.reset();
+        assert_eq!(sequence.position(), 0);
+        assert!(!sequence.poisoned);
     }
     #[test]
     fn greedy_ties_nonfinite_and_empty() {
