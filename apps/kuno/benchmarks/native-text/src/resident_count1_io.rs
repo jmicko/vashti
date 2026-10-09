@@ -302,7 +302,14 @@ pub(crate) fn read_count1_router_input(
     gpu_router: bool,
     shared_router: bool,
 ) -> Result<Count1RouterInput> {
-    guarded(admission, || {
+    let fixed_public_diagnostic = std::env::var("KUNO_LAB_ORIGINAL_PACKED").as_deref()
+        == Ok("daslab-iq3")
+        && matches!(
+            std::env::var("KUNO_LAB_Q3_PUBLIC_POSITIONS").as_deref(),
+            Ok("4" | "32")
+        )
+        && std::env::var_os("KUNO_PUBLIC_Q3_REFERENCE").is_some();
+    let result = guarded(admission, || {
         active(arena, admission, cancel)?;
         shape(graph)?;
         if count != 1 || layer >= 48 || start >= 4096 {
@@ -369,7 +376,33 @@ pub(crate) fn read_count1_router_input(
             let mut out = completed_map(
                 || read(arena, packet_handle, &retired),
                 |bytes| {
-                    out.accept(bytes, gpu_router)?;
+                    if let Err(error) = out.accept(bytes, gpu_router) {
+                        // This opt-in laboratory executes only the compiled public
+                        // token fixture, validated by main before device creation.
+                        // Never print values, token/expert IDs, paths or raw errors.
+                        if fixed_public_diagnostic {
+                            let fault = word(bytes, FAULT_FIRST).unwrap_or(u32::MAX);
+                            let nonfinite = (0..FAULT_FIRST)
+                                .filter(|&i| {
+                                    word(bytes, i)
+                                        .is_ok_and(|v| !f32::from_bits(v).is_finite())
+                                })
+                                .count();
+                            let tail_nonzero = (FAULT_FIRST + 1..bytes.len() / 4)
+                                .filter(|&i| {
+                                    !(gpu_router
+                                        && (crate::router_gpu::FIRST..crate::router_gpu::END)
+                                            .contains(&i))
+                                        && word(bytes, i).is_ok_and(|v| v != 0)
+                                })
+                                .count();
+                            eprintln!(
+                                "public_daslab_router_reject start={start} layer={layer} bytes={} fault={fault} nonfinite={nonfinite} tail_nonzero={tail_nonzero}",
+                                bytes.len()
+                            );
+                        }
+                        return Err(error);
+                    }
                     Ok(out)
                 },
             )?;
@@ -382,7 +415,11 @@ pub(crate) fn read_count1_router_input(
             });
             Ok(out)
         })
-    })
+    });
+    if fixed_public_diagnostic && result.is_err() {
+        eprintln!("public_daslab_count1_io_reject start={start} layer={layer}");
+    }
+    result
 }
 
 #[cfg(test)]
