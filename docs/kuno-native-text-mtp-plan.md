@@ -70,8 +70,8 @@ and the stored QSA indexer. Reference context is explicitly limited to2048.
 
 Each sequence owns its KV cache and binding identity. A rejected preflight input
 leaves state unchanged. An execution error clears/poisons it until reset. Draft
-rewind clears the provisional KV suffix; target GDN/PLE rollback is a separate
-unimplemented transaction. Returned logits/hidden and MTP-owned intermediate
+rewind clears the provisional KV suffix; target GDN/QSA/PLE rollback is a separate guarded transaction, implemented
+by `87049e4`/`f3899b6` but pending physical acceptance at this checkpoint. Returned logits/hidden and MTP-owned intermediate
 buffers use wiping guards. Existing scalar normalization/HC helpers have not
 received whole-stack error-path erasure acceptance; this reference remains a
 public-fixture laboratory path, never a live HTTP/private-request engine.
@@ -90,8 +90,10 @@ numerical parity nor useful speculative performance.
 to one10240-wide RMS before the shared EH projection. Attention/FFN/head HC
 mixers retain their original per-stream norms. The analytic host test preserves
 different amplitudes across all four streams; full core117 tests pass (two
-opt-in ignored), as do strict library Clippy and formatting. GPU acceptance of
-the corrected resident MTP workspace and a new full-vector oracle is pending.
+opt-in ignored), as do strict library Clippy and formatting. The versioned aligned CPU oracle `99386e6` and corrected full resident MTP
+workspace `a32f241` now pass both GPUs through public consumer `1761b06`.
+See the current native checkpoint and numeric foundation receipt for exact
+provenance, complete vector/owner acceptance and remaining draft-quality limits.
 
 The original pinned llama prototype differs from the publisher here. Official
 [vLLM0.30 NVIDIA MTP](https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/models/qwen4_exp/nvidia/mtp.py)

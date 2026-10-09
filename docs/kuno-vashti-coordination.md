@@ -2843,3 +2843,22 @@ All supplied rows commit; accepted-prefix repair, whole GPU MTP and speculative
 speed remain pending. No new throughput claim. Physical memory/admission/HTTPs
 recover and classified faults stay zero. No install/API/Vashti/release change.
 **Required Vashti changes:none.**
+
+#### Backend-only resident MTP checkpoint (2026-10-09,12:48UTC)
+
+Corrected global input RMS `724ca2f` and publisher-aligned CPU v2 oracle
+`99386e6` pass complete fresh CPU vectors. Full resident Q8 MTP `a32f241`
+and public consumer `1761b06` pass both physical GPUs: teacher/provisional
+vectors, exact greedies, actual target-KV repair/continuation, two fresh
+workspaces,42-owner erasure and public-weight release. Frozen default source
+`f652d53`, SHA256 `7f6a8e12690b2ad2c68827bc26d00808ebe4657deea28f384a59318a9dc266d4`.
+739 default native+2auxiliary tests, strict Clippy/fmt and81 launcher controls
+pass. Actual memory/HTTP/admission recover and classified faults remainzero.
+Initial provisional CPU agreement remains0/2; neither useful steady draft
+acceptance nor speculative throughput is claimed. Historical dummy-cell/
+per-stream references are retained but superseded for publisher conditioning.
+Target-prefix repair source `f3899b6` and public consumer `211b282` pass
+747+2 source tests/strict Clippy; physical target repair is next. See the
+[native checkpoint](kuno-native-text-checkpoint.md) and
+[foundation receipt](../apps/kuno/benchmarks/text/receipts/daslab-target-mtp-foundation-20261009.json).
+No public contract/install/release change. **Required Vashti changes:none.**

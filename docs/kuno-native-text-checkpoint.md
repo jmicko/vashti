@@ -66,8 +66,8 @@ physical numerical/owner checks. Their performance is variable; keep both
 optional and prepared-only v109 selected. See the latest result below.
 MTP KV-only append
 `2dea140` has focused host acceptance. Target all-row verification now passes
-the B70 physical gate below; GPU MTP, controller and accepted-prefix state
-repair remain pending. The active goal continues;
+the B70 physical gate below. Whole resident GPU MTP now passes both cards;
+controller and accepted-prefix target state repair remain pending. The active goal continues;
 if sudo expires and effective protected work cannot continue, save a tested
 checkpoint and restore normal GPU/service access.
 
@@ -2619,3 +2619,34 @@ HTTP200. Xe wedged/timeout/reset-failure/memory-fault and NVIDIA Xid counts
 remain zero. No installed binary/configuration, model-file, public API/catalog,
 Vashti, release or installation change. No reset/unbind/reboot/driver/clock
 change. **Required Vashti changes: none.**
+
+### Publisher-aligned full resident MTP acceptance, 2026-10-09,12:48UTC
+
+Input normalization `724ca2f` follows publisher/vLLM global10240-wide RMS;
+aligned reference `99386e6` pairs T(c+1)/R(c) at MTP cell c. Historical
+`0c1cbfb` dummy-cell/per-stream artifacts are preserved and superseded for
+conditioning/quality. The v2 six-row CPU fixture is6,205,952bytes, SHA256
+`8ebabbf3e60addf6c9138c699837b2fd4d03bbc5f3495dd3462600884f34490d`.
+All12 CPU steps and2 real KV appends replay full vectors bit-for-bit; the
+complete original Q8 sidecar hash is reverified. Teacher-forced agreement is
+2/3 scored rows, and the initial two provisional drafts both miss. Longer
+steady draft quality remains unmeasured; no accepted-token speed is claimed.
+
+Full resident Q8 workspace `a32f241` and exclusive public consumer `1761b06`
+pass both RTX3060 and B70. Frozen default source `f652d53`, binary SHA256
+`7f6a8e12690b2ad2c68827bc26d00808ebe4657deea28f384a59318a9dc266d4`,
+executes4 complete teacher rows,2 actual provisional rows and real target-KV
+repair/continuation, in two fresh workspaces per card. Every248320-logit and
+10240-hidden vector and exact greedy matches unchanged tolerances. Intel
+maximum errors are0.000064612/0.000024796. All42 private owners/11,698,176bytes
+erase, and5,011,668,992public bytes release. Default739 native+2auxiliary
+tests, strict all-target Clippy/fmt and81 protected launcher controls pass.
+The guarded stream reserves64MiB runtime and no CPU projection fallback.
+
+Numerical/provenance records are in the
+[foundation receipt](../apps/kuno/benchmarks/text/receipts/daslab-target-mtp-foundation-20261009.json).
+At12:48:12UTC actual B70 memory returned to50,688,000bytes, NVIDIA568MiB
+desktop-only with no compute process, all HTTP services200, normal admission
+and zero classified GPU faults. No API/frontend/install/release change.
+Target-prefix repair source `f3899b6` and root public fixture `211b282` are
+implemented with747+2 tests/strict Clippy; their physical gate is next.

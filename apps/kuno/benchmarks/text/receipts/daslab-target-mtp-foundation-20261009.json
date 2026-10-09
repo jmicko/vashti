@@ -331,10 +331,354 @@
     "corrected_by": "ef2cf9e"
   },
   "limitations": [
-    "all supplied rows commit; accepted prefix repair pending",
+    "target accepted-prefix repair and speculative controller pending",
     "whole target B70 only; full main bank does not fitRTX3060",
-    "GPU MTP and speculative controller not accepted",
+    "resident MTP passes both cards but useful steady draft acceptance and speculative throughput remain unmeasured",
+    "corrected initial two provisional drafts both miss the target; no quality/speed claim",
     "cold correctness durations include full-vector checks and expert uploads; no performance claim",
     "known original32-position GPUlogit discontinuity still unresolved"
-  ]
+  ],
+  "historical_CPU_MTP_v1": {
+    "directory": "/media/jmicko/faststore/kuno-development/daslab-mtp-reference6-20261009",
+    "source": "0c1cbfb0bb0cf655741a5c1280e4d574b394513c",
+    "historical_only": true,
+    "conditioning": "dummy cell and separate stream input RMS; superseded by publisher alignment/global input RMS"
+  },
+  "CPU_MTP_aligned_v2": {
+    "path": "/media/jmicko/faststore/kuno-development/daslab-mtp-reference6-v2-20261009/reference-receipt.json",
+    "sha256": "409da7c140b89673d76b2d0589d4a5c64ee2f512b59460784841731e83d765d3",
+    "record": {
+      "source": "99386e66cf5ea6aa8ee2530ea010325c2b4452f8",
+      "binary_sha256": "23f9472598cab96834c25fc6a411e87c515dabfe30d101b8b0ccf795f084812a",
+      "sidecar_sha256": "58a47d6a216307e9b97172d5bfdc3436a8994b632f5e436b9bb6edf8951da8d1",
+      "target_carry_sha256": "18788aee8ccb1defdbba624df3ae914c3cf574ab719c3d2a5f375e4048c67c20",
+      "teacher_forced_rows": 4,
+      "provisional_rows": 2,
+      "bytes": 6205952,
+      "output_sha256": "8ebabbf3e60addf6c9138c699837b2fd4d03bbc5f3495dd3462600884f34490d",
+      "public_token0": 0,
+      "seed": 424242,
+      "temperature": 0,
+      "full_CPU_MTP_reference_only": true,
+      "GPU_or_speculative_throughput_accepted": false,
+      "helper_sha256": "362ea71501043dd7eabb15009a7f81b0299ac5624f23008b325d20dc5a905390"
+    },
+    "teacher_forced_agreement": {
+      "matches": 2,
+      "compared": 3,
+      "last_row_not_scored": true
+    },
+    "initial_provisional_agreement": {
+      "matches": 0,
+      "compared": 2,
+      "draft_quality_or_speed_accepted": false
+    }
+  },
+  "GPU_resident_MTP_nvidia": {
+    "path": "/media/jmicko/faststore/kuno-development/daslab-resident-mtp-v116-20261009/nvidia-resident-mtp.json",
+    "sha256": "60586140795688aae6562e18a51566030d48a4a4d65602f75b6a73ec5ed20754",
+    "record": {
+      "accepted_speculative_tokens_per_second": null,
+      "passes": [
+        {
+          "acceptance": {
+            "checks": [
+              {
+                "all_vectors_accepted": true,
+                "cursor": 1,
+                "teacher_forced": 0
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 2,
+                "teacher_forced": 1
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 3,
+                "teacher_forced": 2
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 4,
+                "teacher_forced": 3
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 2,
+                "provisional_rows": 2
+              },
+              {
+                "actual_target_KV_repair": true,
+                "all_vectors_accepted": true,
+                "continued_cursor": 4
+              }
+            ],
+            "hidden_max_abs_error": 2.765655517578125e-05,
+            "logits_max_abs_error": 7.605552673339844e-05,
+            "replay": 0
+          },
+          "close": {
+            "main_reserved": 0,
+            "private_buffers": 42,
+            "private_bytes": 11698176,
+            "public_bytes": 5011668992
+          }
+        },
+        {
+          "acceptance": {
+            "checks": [
+              {
+                "all_vectors_accepted": true,
+                "cursor": 1,
+                "teacher_forced": 0
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 2,
+                "teacher_forced": 1
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 3,
+                "teacher_forced": 2
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 4,
+                "teacher_forced": 3
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 2,
+                "provisional_rows": 2
+              },
+              {
+                "actual_target_KV_repair": true,
+                "all_vectors_accepted": true,
+                "continued_cursor": 4
+              }
+            ],
+            "hidden_max_abs_error": 2.765655517578125e-05,
+            "logits_max_abs_error": 7.605552673339844e-05,
+            "replay": 1
+          },
+          "close": {
+            "main_reserved": 0,
+            "private_buffers": 42,
+            "private_bytes": 11698176,
+            "public_bytes": 5011668992
+          }
+        }
+      ],
+      "private_or_production_accepted": false,
+      "public_token0": 0,
+      "scope": "fixed-public-original-Q8-resident-MTP-only",
+      "seed": 424242,
+      "speculative_controller": false,
+      "target_model_on_this_card": false,
+      "temperature": 0,
+      "vendor": 4318
+    }
+  },
+  "GPU_resident_MTP_nvidia_source": {
+    "path": "/media/jmicko/faststore/kuno-development/daslab-resident-mtp-v116-20261009/nvidia-source.json",
+    "sha256": "91055bde0e81e0a6fc7a0c7d189ce5c565045c93f377feb82c7e747a80a1123b",
+    "record": {
+      "commit": "f652d53a6481a8996bfba1beb895f9f78d057722",
+      "binary_sha256": "7f6a8e12690b2ad2c68827bc26d00808ebe4657deea28f384a59318a9dc266d4",
+      "features": [],
+      "reference_sha256": "8ebabbf3e60addf6c9138c699837b2fd4d03bbc5f3495dd3462600884f34490d",
+      "sidecar_sha256_previously_full_verified_this_segment": "58a47d6a216307e9b97172d5bfdc3436a8994b632f5e436b9bb6edf8951da8d1",
+      "target_carry_sha256": "18788aee8ccb1defdbba624df3ae914c3cf574ab719c3d2a5f375e4048c67c20",
+      "public_token0": 0,
+      "seed": 424242,
+      "temperature": 0,
+      "performance_accepted": false,
+      "helper_sha256": "cc2a4c96b26e2110972bff74211a503652ae3e0f4dd173b4c88cb3ec7200c170"
+    }
+  },
+  "GPU_resident_MTP_intel": {
+    "path": "/media/jmicko/faststore/kuno-development/daslab-resident-mtp-v116-20261009/intel-resident-mtp.json",
+    "sha256": "7b0e64286d7d43bc975e3daa4c079018a39961f25411d64c8236041a3526e685",
+    "record": {
+      "accepted_speculative_tokens_per_second": null,
+      "passes": [
+        {
+          "acceptance": {
+            "checks": [
+              {
+                "all_vectors_accepted": true,
+                "cursor": 1,
+                "teacher_forced": 0
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 2,
+                "teacher_forced": 1
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 3,
+                "teacher_forced": 2
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 4,
+                "teacher_forced": 3
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 2,
+                "provisional_rows": 2
+              },
+              {
+                "actual_target_KV_repair": true,
+                "all_vectors_accepted": true,
+                "continued_cursor": 4
+              }
+            ],
+            "hidden_max_abs_error": 2.47955322265625e-05,
+            "logits_max_abs_error": 6.461143493652344e-05,
+            "replay": 0
+          },
+          "close": {
+            "main_reserved": 0,
+            "private_buffers": 42,
+            "private_bytes": 11698176,
+            "public_bytes": 5011668992
+          }
+        },
+        {
+          "acceptance": {
+            "checks": [
+              {
+                "all_vectors_accepted": true,
+                "cursor": 1,
+                "teacher_forced": 0
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 2,
+                "teacher_forced": 1
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 3,
+                "teacher_forced": 2
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 4,
+                "teacher_forced": 3
+              },
+              {
+                "all_vectors_accepted": true,
+                "cursor": 2,
+                "provisional_rows": 2
+              },
+              {
+                "actual_target_KV_repair": true,
+                "all_vectors_accepted": true,
+                "continued_cursor": 4
+              }
+            ],
+            "hidden_max_abs_error": 2.47955322265625e-05,
+            "logits_max_abs_error": 6.461143493652344e-05,
+            "replay": 1
+          },
+          "close": {
+            "main_reserved": 0,
+            "private_buffers": 42,
+            "private_bytes": 11698176,
+            "public_bytes": 5011668992
+          }
+        }
+      ],
+      "private_or_production_accepted": false,
+      "public_token0": 0,
+      "scope": "fixed-public-original-Q8-resident-MTP-only",
+      "seed": 424242,
+      "speculative_controller": false,
+      "target_model_on_this_card": false,
+      "temperature": 0,
+      "vendor": 32902
+    }
+  },
+  "GPU_resident_MTP_intel_source": {
+    "path": "/media/jmicko/faststore/kuno-development/daslab-resident-mtp-v116-20261009/intel-source.json",
+    "sha256": "91055bde0e81e0a6fc7a0c7d189ce5c565045c93f377feb82c7e747a80a1123b",
+    "record": {
+      "commit": "f652d53a6481a8996bfba1beb895f9f78d057722",
+      "binary_sha256": "7f6a8e12690b2ad2c68827bc26d00808ebe4657deea28f384a59318a9dc266d4",
+      "features": [],
+      "reference_sha256": "8ebabbf3e60addf6c9138c699837b2fd4d03bbc5f3495dd3462600884f34490d",
+      "sidecar_sha256_previously_full_verified_this_segment": "58a47d6a216307e9b97172d5bfdc3436a8994b632f5e436b9bb6edf8951da8d1",
+      "target_carry_sha256": "18788aee8ccb1defdbba624df3ae914c3cf574ab719c3d2a5f375e4048c67c20",
+      "public_token0": 0,
+      "seed": 424242,
+      "temperature": 0,
+      "performance_accepted": false,
+      "helper_sha256": "cc2a4c96b26e2110972bff74211a503652ae3e0f4dd173b4c88cb3ec7200c170"
+    }
+  },
+  "resident_MTP_checks": {
+    "source": "1761b06",
+    "frozen_source": "f652d53a6481a8996bfba1beb895f9f78d057722",
+    "binary_sha256": "7f6a8e12690b2ad2c68827bc26d00808ebe4657deea28f384a59318a9dc266d4",
+    "default_native_tests": 739,
+    "auxiliary_tests": 2,
+    "ignored_opt_in": 1,
+    "strict_default_all_target_clippy": true,
+    "protected_launcher_tests": 81,
+    "complete_cpu_logits_and_carries": true,
+    "real_target_KV_repair": true,
+    "two_fresh_workspaces_each_card": true,
+    "speculative_controller_or_performance_accepted": false
+  },
+  "resident_MTP_host_after": {
+    "path": "/media/jmicko/faststore/kuno-development/daslab-resident-mtp-v116-20261009/host-after.json",
+    "sha256": "8f971ea78330c550626849f6ea4b48d7c2e8f3b16dbf307d91c7aa307574160c",
+    "record": {
+      "admission": {
+        "action": "status",
+        "state": {
+          "admission": {
+            "active": false,
+            "completed": 62,
+            "paused": false,
+            "recovery_required": false,
+            "rejected": 0,
+            "waiting": 0
+          }
+        },
+        "status": 200
+      },
+      "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+      "http_statuses": {
+        "kuno": 200,
+        "ollama": 200,
+        "vashti": 200
+      },
+      "intel": {
+        "xe_memory": [
+          {
+            "total_bytes": 34242297856,
+            "used_bytes": 50688000
+          }
+        ]
+      },
+      "kernel": "7.0.0-38-generic",
+      "kernel_fault_counts": {
+        "nvidia_xid": 0,
+        "xe_memory_faults": 0,
+        "xe_reset_failures": 0,
+        "xe_timeouts": 0,
+        "xe_wedged": 0
+      },
+      "nvidia_compute_process_count": 0,
+      "nvidia_memory_mib": 568,
+      "time": "2026-10-09T12:48:12.689838+00:00"
+    }
+  }
 }
