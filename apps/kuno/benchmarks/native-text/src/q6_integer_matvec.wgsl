@@ -50,13 +50,13 @@ fn main(@builtin(global_invocation_id) id:vec3<u32>) {
 }
 // PROJECT_STAGE
 fn finite(x:f32)->bool {return x<=3.4028234663852886e38 && x>=-3.4028234663852886e38;}
+// WEIGHT_HELPERS_BEGIN
+fn weight_word(index:u32)->u32 {return weight[index];}
 fn word_at(at:u32)->u32 {
     let shift=(at%4u)*8u;let low=weight[at/4u];
     if shift==0u {return low;}
     return (low>>shift)|(weight[at/4u+1u]<<(32u-shift));
 }
-fn byte_at(at:u32)->u32 {return (weight[at/4u]>>((at%4u)*8u))&255u;}
-fn signed_byte(x:u32)->i32 {return i32(x)-select(0,256,x>=128u);}
 fn q6_word(base:u32,sub:u32,word:u32)->u32 {
     let half=sub/8u;let quarter=(sub%8u)/2u;let side=sub%2u;
     let offset=side*16u+word*4u;
@@ -69,6 +69,13 @@ fn q6_word(base:u32,sub:u32,word:u32)->u32 {
     // XOR128 then yields the exact signed byte(code-32), with no borrow.
     return (codes+0x60606060u)^0x80808080u;
 }
+fn q6_words(base:u32,sub:u32)->vec4<u32> {
+    return vec4<u32>(q6_word(base,sub,0u),q6_word(base,sub,1u),
+        q6_word(base,sub,2u),q6_word(base,sub,3u));
+}
+// WEIGHT_HELPERS_END
+fn byte_at(at:u32)->u32 {return (weight_word(at/4u)>>((at%4u)*8u))&255u;}
+fn signed_byte(x:u32)->i32 {return i32(x)-select(0,256,x>=128u);}
 @compute @workgroup_size(128)
 fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(local_invocation_index) local:u32,
     @builtin(subgroup_id) sg:u32,@builtin(subgroup_invocation_id) lane:u32,
@@ -81,8 +88,9 @@ fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(local_invocation_index) loca
             let half_bits=byte_at(base+208u)|(byte_at(base+209u)<<8u);
             let factor=unpack2x16float(half_bits).x*f32(signed_byte(byte_at(base+192u+sub)));
             var first=0;var second=0;
+            let codes=q6_words(base,sub);
             for(var word=0u;word<4u;word++) {
-                let q=q6_word(base,sub,word);let at=group*4u+word;
+                let q=codes[word];let at=group*4u+word;
                 first+=dot4I8Packed(q,planes[p.b+at]);
                 second+=dot4I8Packed(q,planes[p.b+PACKED_WORDS+at]);
             }
@@ -104,4 +112,35 @@ fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(local_invocation_index) loca
             if i<p.e || i>=end {if !finite(output[i]) {atomicOr(&fault[p.d],1u);}}
         }
     }
+}
+// WIDE_WEIGHT_HELPERS
+// Original byte ranges, no repacked/dequantized model. Aligned-vector loading
+// follows Strata fb58e0's load16_a2 mechanism; its MIT notice is retained in
+// q6_integer_fixtures/NOTICE. No inferred speed or physical bandwidth claim.
+fn weight_word(index:u32)->u32 {return weight[index/4u][index%4u];}
+fn words_at(at:u32)->vec4<u32> {
+    let low=weight[at/16u];var high=low;
+    // Read the second aligned vector only when needed. For the final qh run
+    // its last byte is at most block+207, inside the original210-byte block.
+    if at%16u!=0u {high=weight[at/16u+1u];}
+    let offset=(at%16u)/4u;let shift=(at%4u)*8u;
+    var words=low;var tail=high.x;
+    switch offset {
+        case 1u: {words=vec4<u32>(low.y,low.z,low.w,high.x);tail=high.y;}
+        case 2u: {words=vec4<u32>(low.z,low.w,high.x,high.y);tail=high.z;}
+        case 3u: {words=vec4<u32>(low.w,high.x,high.y,high.z);tail=high.w;}
+        default: {}
+    }
+    if shift==0u {return words;}
+    let next=vec4<u32>(words.y,words.z,words.w,tail);
+    return (words>>vec4<u32>(shift))|(next<<vec4<u32>(32u-shift));
+}
+fn q6_words(base:u32,sub:u32)->vec4<u32> {
+    let half=sub/8u;let quarter=(sub%8u)/2u;let offset=(sub%2u)*16u;
+    let low=words_at(base+half*64u+(quarter%2u)*32u+offset);
+    let high=words_at(base+128u+half*32u+offset);
+    var nibble=low&vec4<u32>(0x0f0f0f0fu);
+    if quarter>=2u {nibble=(low>>vec4<u32>(4u))&vec4<u32>(0x0f0f0f0fu);}
+    let codes=nibble|(((high>>vec4<u32>(quarter*2u))&vec4<u32>(0x03030303u))<<vec4<u32>(4u));
+    return (codes+vec4<u32>(0x60606060u))^vec4<u32>(0x80808080u);
 }

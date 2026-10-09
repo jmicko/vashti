@@ -112,7 +112,12 @@ impl ProjectSpans {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Kernel {
     Prepare(usize),
-    Project(Spec, bool),
+    Project(Spec, bool, bool),
+}
+// Array<vec4<u32>> must expose the complete byte extent, including metadata at
+// the end of an original block. Do not enlarge a source view to select it.
+fn wide_weight_view(weight_words: usize) -> bool {
+    weight_words != 0 && weight_words.is_multiple_of(4)
 }
 impl Kernel {
     fn source(self) -> String {
@@ -124,17 +129,31 @@ impl Kernel {
                 columns,
                 String::new(),
                 "@group(0) @binding(0) var<storage,read> input:array<f32>;\n@group(0) @binding(1) var<storage,read_write> planes:array<u32>;\n@group(0) @binding(2) var<storage,read_write> fault:array<atomic<u32>>;\n@group(0) @binding(3) var<uniform> p:Params;",
-                prepare,
+                prepare.to_owned(),
             ),
-            Self::Project(spec, tail) => (
-                spec.columns,
-                format!(
-                    "const ROWS:u32={}u;const ROW_BYTES:u32={}u;const AUDIT_TAIL:bool={tail};\n",
-                    spec.rows, spec.row_bytes
-                ),
-                "@group(0) @binding(0) var<storage,read> weight:array<u32>;\n@group(0) @binding(1) var<storage,read> planes:array<u32>;\n@group(0) @binding(2) var<storage,read_write> output:array<f32>;\n@group(0) @binding(3) var<storage,read_write> fault:array<atomic<u32>>;\n@group(0) @binding(4) var<uniform> p:Params;",
-                project,
-            ),
+            Self::Project(spec, tail, wide) => {
+                let (body, helpers) = project.split_once("// WIDE_WEIGHT_HELPERS").unwrap();
+                let body = if wide {
+                    let (before, rest) = body.split_once("// WEIGHT_HELPERS_BEGIN").unwrap();
+                    let (_, after) = rest.split_once("// WEIGHT_HELPERS_END").unwrap();
+                    format!("{before}\n{helpers}\n{after}")
+                } else {
+                    body.to_owned()
+                };
+                (
+                    spec.columns,
+                    format!(
+                        "const ROWS:u32={}u;const ROW_BYTES:u32={}u;const AUDIT_TAIL:bool={tail};\n",
+                        spec.rows, spec.row_bytes
+                    ),
+                    if wide {
+                        "@group(0) @binding(0) var<storage,read> weight:array<vec4<u32>>;\n@group(0) @binding(1) var<storage,read> planes:array<u32>;\n@group(0) @binding(2) var<storage,read_write> output:array<f32>;\n@group(0) @binding(3) var<storage,read_write> fault:array<atomic<u32>>;\n@group(0) @binding(4) var<uniform> p:Params;"
+                    } else {
+                        "@group(0) @binding(0) var<storage,read> weight:array<u32>;\n@group(0) @binding(1) var<storage,read> planes:array<u32>;\n@group(0) @binding(2) var<storage,read_write> output:array<f32>;\n@group(0) @binding(3) var<storage,read_write> fault:array<atomic<u32>>;\n@group(0) @binding(4) var<uniform> p:Params;"
+                    },
+                    body,
+                )
+            }
         };
         format!(
             "requires packed_4x8_integer_dot_product;\nconst COLUMNS:u32={columns}u;const PACKED_WORDS:u32={}u;const BLOCKS:u32={}u;\n{constants}struct Params {{a:u32,b:u32,c:u32,d:u32,e:u32,f:u32,g:u32,h:u32}}\n{bindings}\n{body}",
@@ -147,7 +166,7 @@ impl KernelMetadata for Kernel {
     fn name(&self) -> &'static str {
         match self {
             Self::Prepare(_) => "Q6ResidualQ8Prepare",
-            Self::Project(_, _) => "Q6IntegerProject",
+            Self::Project(_, _, _) => "Q6IntegerProject",
         }
     }
     fn id(&self) -> KernelId {
@@ -279,13 +298,21 @@ pub(crate) fn project(
     // owners. Subgroups16..32 cover at least four rows; inactive rows read none.
     unsafe {
         client.launch_unchecked(
-            Box::new(Kernel::Project(spec, audit_tail)),
+            Box::new(Kernel::Project(
+                spec,
+                audit_tail,
+                wide_weight_view(weight_words),
+            )),
             CubeCount::Static(groups as u32, 1, 1),
             args,
         );
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "q6_integer_load_tests.rs"]
+mod load_tests;
 
 #[cfg(test)]
 mod tests {
@@ -391,8 +418,10 @@ mod tests {
             let spec = Spec::new(7, columns).unwrap();
             for kernel in [
                 Kernel::Prepare(columns),
-                Kernel::Project(spec, false),
-                Kernel::Project(spec, true),
+                Kernel::Project(spec, false, false),
+                Kernel::Project(spec, true, false),
+                Kernel::Project(spec, false, true),
+                Kernel::Project(spec, true, true),
             ] {
                 let source = kernel.source();
                 let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
@@ -410,13 +439,16 @@ mod tests {
                         assert!(source.contains("floor(value)"));
                         assert!(!source.contains("subgroupAdd"));
                     }
-                    Kernel::Project(_, _) => {
+                    Kernel::Project(_, _, wide) => {
                         assert!(source.contains("dot4I8Packed"));
                         assert!(source.contains("210u"));
                         assert!(source.contains("base+192u+sub"));
                         assert!(source.contains("base+208u"));
                         assert!(source.contains("p.e+p.f"));
                         assert!(source.contains("atomicLoad(&fault[p.d])==0u"));
+                        assert!(source.contains("let codes=q6_words(base,sub)"));
+                        assert_eq!(source.contains("weight:array<vec4<u32>>"), wide);
+                        assert_eq!(source.contains("let low=weight[at/16u]"), wide);
                     }
                 }
             }
