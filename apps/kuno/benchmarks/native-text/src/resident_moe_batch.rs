@@ -1217,7 +1217,7 @@ impl GpuExecutor<'_> {
             write_words(arena, ids[PROB], &*probs, &w.poison)?;
             physical(arena, bank, g, &ids, s.stamp.fault, w)?;
             launch_wave(arena, bank, g, &spans, &ids, map.groups())?;
-            launch_finite(arena, g, &spans, &ids)?;
+            launch_finite_for_count(arena, g, &spans, &ids, routes.count())?;
             fold(
                 arena,
                 g,
@@ -1256,8 +1256,8 @@ impl GpuExecutor<'_> {
         {
             return Err(err("native routed incomplete coverage"));
         }
-        launch_reduce(arena, g, &spans, &ids)?;
-        launch_finite(arena, g, &spans, &ids)?;
+        launch_reduce(arena, g, &spans, &ids, routes.count())?;
+        launch_finite_for_count(arena, g, &spans, &ids, routes.count())?;
         fold(
             arena,
             g,
@@ -1634,12 +1634,14 @@ fn launch_reduce(
     g: k::Geometry,
     s: &k::Spans,
     ids: &[BufferId; 7],
+    count: usize,
 ) -> Result<()> {
+    let grid = g.reduce_grid_for_count(count).map_err(err)?;
     let c = arena.client().map_err(u::fault)?;
     unsafe {
         k::grouped_reduce::launch_unchecked::<WgpuRuntime>(
             c,
-            g.reduce_grid(),
+            grid,
             CubeDim::new_1d(64),
             arg(arena, ids[PART])?,
             arg(arena, ids[PROB])?,
@@ -1664,11 +1666,22 @@ fn launch_finite(
     s: &k::Spans,
     ids: &[BufferId; 7],
 ) -> Result<()> {
+    // Preserve the existing count1/router callers' public-capacity grid.
+    launch_finite_for_count(arena, g, s, ids, g.member_capacity())
+}
+fn launch_finite_for_count(
+    arena: &PrivateArena,
+    g: k::Geometry,
+    s: &k::Spans,
+    ids: &[BufferId; 7],
+    count: usize,
+) -> Result<()> {
+    let grid = g.finite_grid_for_count(count).map_err(err)?;
     let c = arena.client().map_err(u::fault)?;
     unsafe {
         k::grouped_finite::launch_unchecked::<WgpuRuntime>(
             c,
-            g.finite_grid(),
+            grid,
             CubeDim::new_1d(64),
             arg(arena, ids[INPUT])?,
             arg(arena, ids[ACT])?,

@@ -300,6 +300,16 @@ impl Geometry {
             1,
         )
     }
+    /// Checked frozen chunk count changes dispatch only, never specialization
+    /// or full owning spans. Omitted reducer cubes cannot write storage output.
+    pub fn reduce_grid_for_count(self, count: usize) -> Result<CubeCount, &'static str> {
+        self.validate_count(count)?;
+        Ok(CubeCount::Static(
+            self.hidden.div_ceil(LANES) as u32,
+            count as u32,
+            1,
+        ))
+    }
     /// All ten routes for every admitted public member, with unchanged full
     /// MAX80 status owners. Inactive finite cubes only touch workgroup scratch.
     pub fn finite_grid(self) -> CubeCount {
@@ -308,6 +318,17 @@ impl Geometry {
             (self.member_capacity() * RANKS) as u32,
             4,
         )
+    }
+    /// Cover every active rank of the checked frozen chunk count. Omitted
+    /// cubes only touched workgroup scratch; the separate full inactive/status/
+    /// padding fold and unchanged MAX80 status owners remain mandatory.
+    pub fn finite_grid_for_count(self, count: usize) -> Result<CubeCount, &'static str> {
+        self.validate_count(count)?;
+        Ok(CubeCount::Static(
+            self.hidden.div_ceil(LANES).max(self.ff.div_ceil(LANES)) as u32,
+            (count * RANKS) as u32,
+            4,
+        ))
     }
     pub fn status_words(self) -> usize {
         MAX_ROUTES * 2
@@ -1621,6 +1642,116 @@ mod tests {
                     g.validate_count(1).unwrap();
                     for count in [0, 2, 3, 5, 8, usize::MAX] {
                         assert!(g.validate_count(count).is_err());
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn count_aware_grids_validate_policy_and_keep_original_shape_and_owners() {
+        for tile in [1, 4, 8] {
+            let g = geometry(F32, 257, 129, tile, 16);
+            let full = geometry(F32, 257, 129, 8, 16);
+            assert_eq!(g.status_words(), full.status_words());
+            assert_eq!(g.scratch_bytes(true), full.scratch_bytes(true));
+            for count in 1..=g.member_capacity() {
+                assert!(matches!(
+                    g.reduce_grid_for_count(count).unwrap(),
+                    CubeCount::Static(5, rows, 1) if rows == count as u32
+                ));
+                assert!(matches!(
+                    g.finite_grid_for_count(count).unwrap(),
+                    CubeCount::Static(5, rows, 4) if rows == (count * RANKS) as u32
+                ));
+            }
+            for count in [0, g.member_capacity() + 1, 9, usize::MAX] {
+                assert_eq!(
+                    g.reduce_grid_for_count(count).unwrap_err(),
+                    "grouped public member policy count"
+                );
+                assert_eq!(
+                    g.finite_grid_for_count(count).unwrap_err(),
+                    "grouped public member policy count"
+                );
+            }
+        }
+        let g = geometry(F32, 2560, 640, 8, 16);
+        assert!(matches!(
+            g.finite_grid_for_count(3).unwrap(),
+            CubeCount::Static(40, 30, 4)
+        ));
+        assert!(matches!(
+            g.reduce_grid_for_count(3).unwrap(),
+            CubeCount::Static(40, 3, 1)
+        ));
+        // Same two sweeps and reducer dispatch; no owners/INFO are removed.
+        assert_eq!((40 * 80 * 4 - 40 * 30 * 4) * 2 * 48, 768_000);
+    }
+
+    #[test]
+    fn count_aware_grids_cover_all_active_storage_and_leave_full_inactive_domains() {
+        for (hidden, ff) in [(257, 129), (129, 257), (2560, 640)] {
+            for tile in [4, 8] {
+                let g = geometry(F32, hidden, ff, tile, 16);
+                let d = hidden.div_ceil(LANES);
+                let f = ff.div_ceil(LANES);
+                let starts = [
+                    MAX_ROUTES * 2,
+                    MAX_ROUTES * 2 + MAX_BATCH * d,
+                    MAX_ROUTES * 2 + MAX_BATCH * d + MAX_ROUTES * f,
+                    MAX_ROUTES * 2 + MAX_BATCH * d + MAX_ROUTES * f + MAX_ROUTES * d,
+                ];
+                for count in 1..=MAX_BATCH {
+                    let mut expected_status = vec![0u8; g.status_words()];
+                    for (stage, length) in
+                        [count * d, count * RANKS * f, count * RANKS * d, count * d]
+                            .into_iter()
+                            .enumerate()
+                    {
+                        expected_status[starts[stage]..starts[stage] + length].fill(1);
+                    }
+                    // Independently expected full MAX8 output footprint. A
+                    // count-aware grid must preserve every active feature and
+                    // never touch ready flags, inactive rows or status gaps.
+                    let mut expected_output = vec![0u8; MAX_BATCH * hidden];
+                    expected_output[..count * hidden].fill(1);
+                    for grid in [g.finite_grid(), g.finite_grid_for_count(count).unwrap()] {
+                        let CubeCount::Static(chunks, rows, stages) = grid else {
+                            panic!("fixed finite grid");
+                        };
+                        let mut writes = vec![0u8; g.status_words()];
+                        for (stage, &start) in starts.iter().enumerate().take(stages as usize) {
+                            let (active_rows, width) = match stage {
+                                0 | 3 => (count, d),
+                                1 => (count * RANKS, f),
+                                2 => (count * RANKS, d),
+                                _ => panic!("finite stage"),
+                            };
+                            for row in 0..rows as usize {
+                                for chunk in 0..chunks as usize {
+                                    if row < active_rows && chunk < width {
+                                        writes[start + row * width + chunk] += 1;
+                                    }
+                                }
+                            }
+                        }
+                        assert_eq!(writes, expected_status);
+                    }
+                    for grid in [g.reduce_grid(), g.reduce_grid_for_count(count).unwrap()] {
+                        let CubeCount::Static(chunks, rows, depth) = grid else {
+                            panic!("fixed reducer grid");
+                        };
+                        assert_eq!(depth, 1);
+                        let mut writes = vec![0u8; MAX_BATCH * hidden];
+                        for token in 0..rows as usize {
+                            for feature in 0..chunks as usize * LANES {
+                                if token < count && feature < hidden {
+                                    writes[token * hidden + feature] += 1;
+                                }
+                            }
+                        }
+                        assert_eq!(writes, expected_output);
                     }
                 }
             }
