@@ -47,6 +47,8 @@ mod ple_batch_gpu;
 mod ple_chunk;
 mod ple_chunk_probe;
 mod private_arena;
+#[allow(dead_code)] // Numeric/source admission helpers are public-lab-only.
+mod public_host_expert_attachment;
 #[allow(dead_code)]
 mod public_host_expert_mirror;
 #[allow(dead_code)] // Source-only mirror planner; physical consumer is pending.
@@ -2309,6 +2311,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let public_host_setup = public_host_cubecl_receipt
             .as_ref()
             .map(|_| (adapter.clone(), device.clone(), queue.clone()));
+        let public_model_host_device = (speculative_inputs
+            .as_ref()
+            .is_some_and(|p| p.frozen_host_sources)
+            || language_inputs
+                .as_ref()
+                .is_some_and(|p| p.frozen_host_sources))
+        .then(|| device.clone());
         let selected = init_device(
             WgpuSetup {
                 instance,
@@ -2402,10 +2411,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
         if let Some(inputs) = language_inputs {
-            return daslab_language_probe::run(&client, &grouped_limits, inputs);
+            return daslab_language_probe::run(
+                &client,
+                &grouped_limits,
+                inputs,
+                public_model_host_device.as_ref(),
+            );
         }
         if let Some(inputs) = speculative_inputs {
-            return daslab_speculative_probe::run(&client, &grouped_limits, inputs);
+            return daslab_speculative_probe::run(
+                &client,
+                &grouped_limits,
+                inputs,
+                public_model_host_device.as_ref(),
+            );
         }
         if let Some(inputs) = target_repair_inputs {
             return daslab_target_repair_probe::run(&client, &grouped_limits, inputs);

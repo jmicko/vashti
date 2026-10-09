@@ -93,6 +93,7 @@ pub(crate) struct Inputs {
     pub(crate) fused_sweeps: bool,
     draft_profile: Profile,
     pub(crate) gpu_qsa_selector: bool,
+    pub(crate) frozen_host_sources: bool,
     pub(crate) verify3_dense: bool,
     pub(crate) verify3_fused: bool,
     pub(crate) prepared_experts: bool,
@@ -134,6 +135,7 @@ pub(crate) fn registration(
                     | "KUNO_LAB_MTP_SWEEPS"
                     | "KUNO_LAB_MTP_PROFILE"
                     | "KUNO_LAB_TARGET_QSA"
+                    | "KUNO_LAB_TARGET_SOURCES"
                     | "KUNO_LAB_TARGET_DENSE"
                     | "KUNO_LAB_TARGET_EXPERTS"
                     | "KUNO_LAB_TARGET_FILL"
@@ -168,6 +170,11 @@ pub(crate) fn registration(
         Some(v) if v == "chronological-public" => true,
         _ => return Err("target QSA requires canonical chronological-public"),
     };
+    let frozen_host_sources = match values.remove(OsStr::new("KUNO_LAB_TARGET_SOURCES")) {
+        None => false,
+        Some(v) if v == "frozen-host-public" => true,
+        _ => return Err("target sources require canonical frozen-host-public"),
+    };
     let raw_profile = values.remove(OsStr::new("KUNO_LAB_MTP_PROFILE"));
     let draft_profile = Profile::parse(raw_profile.as_deref())?;
     let raw = values.remove(OsStr::new("KUNO_LAB_TARGET_MOE"));
@@ -182,6 +189,11 @@ pub(crate) fn registration(
         Some(v) if v == "verify3-fused" => (true, true),
         _ => return Err("language dense policy requires canonical selection"),
     };
+    if frozen_host_sources
+        && (!request_reuse || !public_existing_fill || prepared_experts || live_member_reduction)
+    {
+        return Err("frozen sources require original public language request scope");
+    }
     let fixture = Fixture::parse(
         values
             .remove(OsStr::new("KUNO_LAB_LANGUAGE_FIXTURE"))
@@ -199,6 +211,7 @@ pub(crate) fn registration(
         fused_sweeps,
         draft_profile,
         gpu_qsa_selector,
+        frozen_host_sources,
         verify3_dense,
         verify3_fused,
         prepared_experts,
@@ -440,7 +453,11 @@ pub(crate) fn run(
     client: &ComputeClient<WgpuRuntime>,
     limits: &wgpu::Limits,
     input: Inputs,
+    host_device: Option<&wgpu::Device>,
 ) -> Result<()> {
+    if input.frozen_host_sources != host_device.is_some() {
+        return Err("public frozen sources require exact parent device selection".into());
+    }
     crate::target_lab_build::validate_runtime(input.inline_dispatch)?;
     validate_limits(limits)?;
     std::panic::set_hook(Box::new(|_| {
@@ -522,6 +539,9 @@ pub(crate) fn run(
         if input.gpu_qsa_selector {
             config = config.reserve_public_gpu_qsa_selector()?;
         }
+        if input.frozen_host_sources {
+            config = config.reserve_public_frozen_host_sources()?;
+        }
         if input.prepared_experts {
             config = config.reserve_prepared_verify3_experts()?;
         }
@@ -534,6 +554,9 @@ pub(crate) fn run(
         if input.request_reuse {
             config = config.reserve_public_language_request_io(prompt.len(), MAX_OUTPUTS)?;
         }
+        let prepared_host = std::cell::OnceCell::new();
+        let mut host_attachment = None;
+        let mut host_setup = None;
         let mut target = ResidentModel::new_with_native_batch(
             graph.bound_graph(),
             client.clone(),
@@ -589,6 +612,35 @@ pub(crate) fn run(
                 return Err("language frozen live reduction rejected".into());
             }
             let prefill_ns = elapsed(prefill)?;
+            if input.frozen_host_sources {
+                println!("public_frozen_host_prepare_start");
+                let preparation = Instant::now();
+                let (plan, fills) = target.prepare_public_host_sources(&mut executor, &cancel)?;
+                prepared_host
+                    .set(plan)
+                    .map_err(|_| "public source plan already initialized")?;
+                let prepared = prepared_host.get().ok_or("public host plan absent")?;
+                let reserved = prepared.budget().total_host_reserved_bytes;
+                let attach_start = Instant::now();
+                // SAFETY: protected runner verified full immutable public
+                // source hashes before opening the original model descriptors.
+                host_attachment = Some(unsafe {
+                    target.attach_public_host_sources(
+                        &mut executor,
+                        prepared,
+                        host_device.ok_or("public exact device absent")?,
+                        reserved,
+                        &cancel,
+                    )?
+                });
+                host_setup = Some(serde_json::json!({"bank_completion_experts":fills.experts,
+                    "bank_completion_uploaded_bytes":fills.bytes,"bank_completion_read_ns":fills.read_ns,
+                    "bank_completion_upload_ns":fills.upload_ns,
+                    "prepare_and_attach_ns":preparation.elapsed().as_nanos(),
+                    "attach_ns":attach_start.elapsed().as_nanos(),
+                    "separate_host_reserved_bytes":reserved}));
+                println!("public_frozen_host_attach_complete");
+            }
             let load_disk_after = process_disk_read_bytes()?;
             let before_uploads = executor.expert_uploads;
             let before_hits = executor.expert_hits;
@@ -801,6 +853,13 @@ pub(crate) fn run(
                 .collect();
             let after_traffic = draft.traffic();
             let (actual_direct, after_fills) = target.native_public_fill_counters(&executor)?;
+            let frozen_routes = if executor.target_frozen_host_source_identity.is_some() {
+                let counts = target.native_frozen_source_counters(&executor)?;
+                Some(serde_json::json!({"vram_routes":counts.vram_routes,
+                    "host_routes":counts.host_routes,"source_dispatches":counts.source_dispatches}))
+            } else {
+                None
+            };
             if actual_direct != input.public_existing_fill
                 || target.native_live_member_reduction(&executor)? != input.live_member_reduction
             {
@@ -810,7 +869,7 @@ pub(crate) fn run(
                 .checked_sub(load_disk_after)
                 .ok_or("language process read counter regressed")?;
             Ok(
-                serde_json::json!({"fixture":input.fixture.name(),"prompt_tokens":prompt.len(),"context_capacity":input.fixture.context(),"compiled_prompt_template_revision":TEMPLATE_REVISION,"compiled_prompt_template_file":TEMPLATE_FILE,"load_ns":load_ns,"prefill_ns_including_real_teacher_kv":prefill_ns,"prefill_first_output_count":1,"prefill_first_output_generation_pick_timed":false,"first_output_emission_timed":true,"emitted_tokens_including_eos":emitted.len(),"post_prefill_target_continuations":stats.continuations,"stop_reason":if confirmed==graph.eos_token(){"eos"}else{"limit"},"nonempty_text":nonempty_text,"elapsed_ns":elapsed_ns,"continuation_tokens_per_second":stats.continuations as f64*1e9/elapsed_ns as f64,"emitted_tokens_per_second":emitted.len()as f64*1e9/elapsed_ns as f64,"rounds":stats.rounds,"proposed_drafts":stats.proposed,"accepted_drafts":stats.accepted_drafts,"draft_ns":stats.draft_ns,"verify_ns_full_packets":stats.verify_ns,"repair_ns_including_vector_checks":stats.repair_ns,"actual_target_recomputations":stats.repairs,"repair_logit_max_abs":stats.repair_logit_max,"repair_hidden_max_abs":stats.repair_hidden_max,"repair_abs_tolerance":ABS,"repair_rel_tolerance":REL,"fixture_peak_host_bytes":fixture_peak,"request_scope":request_scope,"request_close_ns_inside_timing":request_close_ns,"host_io":host_io,"target_host_phase_ns":phase_ns,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"verify3_fused_calls":executor.target_verify3_fused_calls-before_fused,"load_and_prefill_physical_read_bytes":load_disk_after.checked_sub(load_disk_before).ok_or("language process read counter regressed")?,"generation_physical_read_bytes":physical_read_bytes,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"target_fill_counters_before":fill_counter_record(before_fills),"target_fill_counters_after":fill_counter_record(after_fills),"draft_traffic":{"host_read_calls":after_traffic.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after_traffic.host_read_bytes-before_traffic.host_read_bytes,"explicit_dispatches":after_traffic.explicit_dispatches-before_traffic.explicit_dispatches,"private_upload_calls":after_traffic.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after_traffic.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after_traffic.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after_traffic.followup_copy_calls-before_traffic.followup_copy_calls}}),
+                serde_json::json!({"fixture":input.fixture.name(),"prompt_tokens":prompt.len(),"context_capacity":input.fixture.context(),"compiled_prompt_template_revision":TEMPLATE_REVISION,"compiled_prompt_template_file":TEMPLATE_FILE,"load_ns":load_ns,"prefill_ns_including_real_teacher_kv":prefill_ns,"prefill_first_output_count":1,"prefill_first_output_generation_pick_timed":false,"first_output_emission_timed":true,"emitted_tokens_including_eos":emitted.len(),"post_prefill_target_continuations":stats.continuations,"stop_reason":if confirmed==graph.eos_token(){"eos"}else{"limit"},"nonempty_text":nonempty_text,"elapsed_ns":elapsed_ns,"continuation_tokens_per_second":stats.continuations as f64*1e9/elapsed_ns as f64,"emitted_tokens_per_second":emitted.len()as f64*1e9/elapsed_ns as f64,"rounds":stats.rounds,"proposed_drafts":stats.proposed,"accepted_drafts":stats.accepted_drafts,"draft_ns":stats.draft_ns,"verify_ns_full_packets":stats.verify_ns,"repair_ns_including_vector_checks":stats.repair_ns,"actual_target_recomputations":stats.repairs,"repair_logit_max_abs":stats.repair_logit_max,"repair_hidden_max_abs":stats.repair_hidden_max,"repair_abs_tolerance":ABS,"repair_rel_tolerance":REL,"fixture_peak_host_bytes":fixture_peak,"request_scope":request_scope,"request_close_ns_inside_timing":request_close_ns,"host_io":host_io,"target_host_phase_ns":phase_ns,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"verify3_fused_calls":executor.target_verify3_fused_calls-before_fused,"load_and_prefill_physical_read_bytes":load_disk_after.checked_sub(load_disk_before).ok_or("language process read counter regressed")?,"generation_physical_read_bytes":physical_read_bytes,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"target_fill_counters_before":fill_counter_record(before_fills),"target_fill_counters_after":fill_counter_record(after_fills),"frozen_source_routes":frozen_routes,"draft_traffic":{"host_read_calls":after_traffic.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after_traffic.host_read_bytes-before_traffic.host_read_bytes,"explicit_dispatches":after_traffic.explicit_dispatches-before_traffic.explicit_dispatches,"private_upload_calls":after_traffic.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after_traffic.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after_traffic.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after_traffic.followup_copy_calls-before_traffic.followup_copy_calls}}),
             )
         })();
         let close = target.close();
@@ -818,8 +877,29 @@ pub(crate) fn run(
         drop(target);
         close?;
         let (main, sources) = audit.ok_or("language target complete erasure rejected")?;
+        let host_close = if let Some(owner) = host_attachment.take() {
+            // SAFETY: actual complete private close/audit succeeded and lexical
+            // model drop removed every SourceSet consumer.
+            Some(unsafe { owner.close()? })
+        } else {
+            None
+        };
         let mut record = runs?;
         record["target_close"] = serde_json::json!({"main_buffers":main.buffers,"main_bytes":main.bytes,"source_buffers":sources.buffers,"source_bytes":sources.bytes});
+        record["frozen_host_setup"] = host_setup.into();
+        record["frozen_host_close"] = host_close
+            .map(|closed| {
+                serde_json::json!({
+                    "registered_pages":closed.registered_pages,
+                    "detached_pages":closed.detached_pages,
+                    "physical_allocated_bytes":closed.mirror.total_allocated_bytes,
+                    "physical_freed_bytes":closed.mirror.total_freed_bytes,
+                    "live_backing_bytes":closed.mirror.live_backing_bytes,
+                    "metadata_owned_bytes":closed.mirror.metadata_owned_bytes,
+                    "source_window_peak_bytes":closed.mirror.source_window_peak_bytes,
+                })
+            })
+            .into();
         Ok(record)
     })();
     let target_close = executor.close_transient_resident();
@@ -870,6 +950,56 @@ mod tests {
         ]
         .map(|(k, v)| (k.into(), v.into()))
         .to_vec()
+    }
+    #[test]
+    fn frozen_sources_require_original_public_scope_and_fixed_runtime() {
+        let build = crate::target_lab_build::Build::Inline;
+        let mut selected = env();
+        for (key, value) in [
+            ("KUNO_LAB_DEVICE_DISPATCH", "inline"),
+            ("KUNO_LAB_TARGET_FILL", "direct-public"),
+            ("KUNO_LAB_TARGET_IO", "chunk"),
+            ("KUNO_LAB_TARGET_REUSE", "request"),
+            ("KUNO_LAB_TARGET_SOURCES", "frozen-host-public"),
+        ] {
+            selected.push((key.into(), value.into()));
+        }
+        assert!(
+            registration(&args(), selected.clone(), build)
+                .unwrap()
+                .frozen_host_sources
+        );
+        for key in [
+            "KUNO_LAB_TARGET_FILL",
+            "KUNO_LAB_TARGET_REUSE",
+            "KUNO_LAB_DEVICE_DISPATCH",
+        ] {
+            let mut wrong = selected.clone();
+            wrong.retain(|(k, _)| k != key);
+            assert!(registration(&args(), wrong, build).is_err());
+        }
+        for value in ["", "1", "frozen-host", "FROZEN-HOST-PUBLIC"] {
+            let mut wrong = selected.clone();
+            wrong
+                .iter_mut()
+                .find(|(k, _)| k == "KUNO_LAB_TARGET_SOURCES")
+                .unwrap()
+                .1 = value.into();
+            assert!(registration(&args(), wrong, build).is_err());
+        }
+        for (key, value) in [
+            ("KUNO_LAB_TARGET_EXPERTS", "prepared-verify3"),
+            ("KUNO_LAB_TARGET_MOE", "live"),
+        ] {
+            let mut wrong = selected.clone();
+            wrong.push((key.into(), value.into()));
+            assert!(registration(&args(), wrong, build).is_err());
+        }
+        selected.push((
+            "KUNO_LAB_TARGET_SOURCES".into(),
+            "frozen-host-public".into(),
+        ));
+        assert!(registration(&args(), selected, build).is_err());
     }
     #[test]
     fn qsa_gpu_selection_is_explicit_and_rejects_malformed_or_duplicate_policy() {

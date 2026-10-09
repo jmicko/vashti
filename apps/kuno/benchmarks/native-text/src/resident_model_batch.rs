@@ -292,6 +292,7 @@ pub(crate) struct Config {
     live_member_reduction: bool,
     public_warm_batch_router: bool,
     public_gpu_qsa_selector: bool,
+    public_frozen_host_sources: bool,
 }
 fn prepared_verify3_configuration(
     target_rows: bool,
@@ -330,6 +331,30 @@ fn gpu_qsa_selector_configuration(
     }
     Ok(())
 }
+#[allow(clippy::too_many_arguments)] // Independent construction policy axes.
+fn frozen_host_source_configuration(
+    selected: bool,
+    target_rows: bool,
+    hybrid: bool,
+    router: bool,
+    prepared: bool,
+    batch_router: bool,
+    live_members: bool,
+    tile: usize,
+) -> Result<()> {
+    if selected
+        && (!target_rows
+            || hybrid
+            || router
+            || prepared
+            || batch_router
+            || live_members
+            || tile != 8)
+    {
+        return Err(error());
+    }
+    Ok(())
+}
 impl Config {
     fn qsa_host_reservation(&self) -> Result<(usize, usize)> {
         let (reserved, limit) = host_reservation_with_verify3(
@@ -346,6 +371,14 @@ impl Config {
         } else {
             0
         };
+        let extra = extra
+            .checked_add(if self.public_frozen_host_sources {
+                usize::try_from(batch_moe::frozen_sources::EXTRA_HOST_BYTES_PER_CHUNK)
+                    .map_err(|_| Error::ArithmeticOverflow)?
+            } else {
+                0
+            })
+            .ok_or(Error::ArithmeticOverflow)?;
         Ok((
             reserved
                 .checked_add(extra)
@@ -377,6 +410,7 @@ impl Config {
             live_member_reduction: false,
             public_warm_batch_router: false,
             public_gpu_qsa_selector: false,
+            public_frozen_host_sources: false,
         })
     }
     /// Construction-fixed, one-shot empty PRIVATE-state replay after the
@@ -421,6 +455,25 @@ impl Config {
             self.tile,
         )?;
         self.public_gpu_qsa_selector = true;
+        Ok(self)
+    }
+    /// Precharge immutable public host sources before the ordinary model
+    /// constructor. This grants no completion or physical import authority.
+    pub(crate) fn reserve_public_frozen_host_sources(mut self) -> Result<Self> {
+        if self.public_frozen_host_sources {
+            return Err(error());
+        }
+        frozen_host_source_configuration(
+            true,
+            self.target_rows_reserved,
+            self.cpu_operator.is_some(),
+            self.resident_router_reserved,
+            self.prepared_verify3_experts_reserved,
+            self.public_warm_batch_router,
+            self.live_member_reduction,
+            self.tile,
+        )?;
+        self.public_frozen_host_sources = true;
         Ok(self)
     }
     /// Construction-fixed original-F32 reduction of actual grouped members.
@@ -689,6 +742,16 @@ impl Plan {
         }
         validate_limits(&config.limits, config.tile)?;
         config.qsa_host_reservation()?;
+        frozen_host_source_configuration(
+            config.public_frozen_host_sources,
+            config.target_rows_reserved,
+            config.cpu_operator.is_some(),
+            config.resident_router_reserved,
+            config.prepared_verify3_experts_reserved,
+            config.public_warm_batch_router,
+            config.live_member_reduction,
+            config.tile,
+        )?;
         gpu_qsa_selector_configuration(
             config.public_gpu_qsa_selector,
             config.target_rows_reserved,
@@ -731,6 +794,14 @@ impl Plan {
             if host > limit {
                 return Err(error());
             }
+        }
+        if config.public_frozen_host_sources
+            && (executor.packed_profile != crate::expert_banks::OriginalPackedProfile::DaslabIq3
+                || executor.resident_bank_capacity() != 144
+                || executor.target_frozen_host_source_identity.is_some()
+                || executor.resident_banks_frozen)
+        {
+            return Err(error());
         }
         executor.check_original_bank_metadata(LAYERS, ORIGINAL_BANK_HOST)?;
         let g = graph.geometry();
@@ -1016,6 +1087,13 @@ impl Plan {
                     0
                 })
             })
+            .and_then(|n| {
+                n.checked_add(if config.public_frozen_host_sources {
+                    batch_moe::frozen_sources::EXTRA_RUNTIME_BYTES_PER_CHUNK
+                } else {
+                    0
+                })
+            })
             .ok_or(Error::ArithmeticOverflow)?;
         if runtime > executor.resident_runtime_io_limit()
             || HOST_COMPONENTS + if hybrid { HYBRID_HOST } else { 0 } > HOST_CAP
@@ -1122,6 +1200,7 @@ pub(super) struct Workspace {
     public_target_request_io: Option<public_target_request_io::Permit>,
     public_language_request_io: Option<public_language_request_io::Permit>,
     public_gpu_qsa_selector: bool,
+    public_frozen_host_sources: bool,
 }
 impl Workspace {
     fn decode_kernels(&self) -> Result<NativeDecodeKernels> {
@@ -1153,6 +1232,16 @@ impl Workspace {
         allocation: &crate::executor::ModelConstructionAllocation<'_>,
     ) -> Result<Self> {
         allocation.check(&model.admission)?;
+        frozen_host_source_configuration(
+            config.public_frozen_host_sources,
+            config.target_rows_reserved,
+            config.cpu_operator.is_some(),
+            config.resident_router_reserved,
+            config.prepared_verify3_experts_reserved,
+            config.public_warm_batch_router,
+            config.live_member_reduction,
+            config.tile,
+        )?;
         gpu_qsa_selector_configuration(
             config.public_gpu_qsa_selector,
             config.target_rows_reserved,
@@ -1343,6 +1432,7 @@ impl Workspace {
             public_target_request_io,
             public_language_request_io,
             public_gpu_qsa_selector: config.public_gpu_qsa_selector,
+            public_frozen_host_sources: config.public_frozen_host_sources,
         };
         result.prove_outer(model)?;
         Ok(result)
@@ -1878,6 +1968,126 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .ok_or(error())?
             .gdn
             .shared_vector_calls)
+    }
+
+    /// Public-only source preparation follows an actual committed whole-model
+    /// boundary. Empty slots receive original weights; existing residents stay.
+    pub(crate) fn prepare_public_host_sources(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+        cancel: &AtomicBool,
+    ) -> Result<(
+        crate::public_host_expert_attachment::PreparedPlan<'m, 'f>,
+        crate::expert_banks::FillStats,
+    )> {
+        u::cancel(cancel)?;
+        let native = self.native_batch.as_ref().ok_or(error())?;
+        if !native.public_frozen_host_sources
+            || native.moe.frozen_host_sources_enabled()
+            || self.admission.request_io_reuse_active()
+        {
+            return Err(error());
+        }
+        let boundary = self.completed_native_projection_boundary(executor)?;
+        native
+            .moe
+            .validate_public_warm_boundary(executor, self.graph, &self.arena)?;
+        let fills = if self.context == 13 && native.public_warm_replay.is_some() {
+            // Deterministic PHYSICAL placement exercises both actual tiers in
+            // the complete CPU13 numerical gate. It never changes routing.
+            executor.complete_public_host_validation_banks(
+                &boundary,
+                self.graph,
+                &self.arena,
+                self.b.fault,
+                cancel,
+            )?
+        } else {
+            executor.complete_public_host_banks(
+                &boundary,
+                self.graph,
+                &self.arena,
+                self.b.fault,
+                cancel,
+            )?
+        };
+        self.completed_native_projection_boundary(executor)?;
+        let prepared = crate::public_host_expert_attachment::PreparedPlan::new(
+            self.graph,
+            executor.public_host_model(),
+            executor,
+            65536,
+            crate::public_host_expert_plan::METADATA_HOST_CAP,
+            cancel,
+        )
+        .map_err(|_| error())?;
+        Ok((prepared, fills))
+    }
+    /// The parent retains exact public hash/source proofs and PreparedPlan.
+    /// No model/workspace borrow escapes into the imported-page lifetime.
+    pub(crate) unsafe fn attach_public_host_sources<'plan>(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+        prepared: &'plan crate::public_host_expert_attachment::PreparedPlan<'m, 'f>,
+        device: &wgpu::Device,
+        reserved: u64,
+        cancel: &AtomicBool,
+    ) -> Result<crate::public_host_expert_attachment::Attachment<'plan, 'm, 'f>> {
+        u::cancel(cancel)?;
+        if self.poisoned
+            || self.retired.load(Ordering::Acquire)
+            || self.admission.request_io_reuse_active()
+            || !self.pending_qsa.is_empty()
+            || !self.pending_moe.is_empty()
+            || self.ple_batch_pending.is_some()
+        {
+            return Err(error());
+        }
+        let native = self.native_batch.as_ref().ok_or(error())?;
+        if !native.public_frozen_host_sources || native.moe.frozen_host_sources_enabled() {
+            return Err(error());
+        }
+        if self.position == 0 {
+            if self.context != 13
+                || native
+                    .public_warm_replay
+                    .as_ref()
+                    .is_none_or(|permit| !permit.reset_consumed())
+            {
+                return Err(error());
+            }
+        } else {
+            self.completed_native_projection_boundary(executor)?;
+        }
+        native.prove_outer(self)?;
+        native
+            .moe
+            .validate_public_warm_boundary(executor, self.graph, &self.arena)?;
+        // SAFETY: fixed-public caller verified original source hashes and
+        // immutability. All actual bank/family/device checks above precede import.
+        unsafe {
+            prepared.attach(
+                device,
+                self.arena.client().map_err(u::fault)?,
+                executor,
+                &mut self.native_batch.as_mut().ok_or(error())?.moe,
+                &self.arena,
+                reserved,
+                cancel,
+            )
+        }
+        .map_err(|_| error())
+    }
+    pub(crate) fn native_frozen_source_counters(
+        &self,
+        executor: &GpuExecutor<'f>,
+    ) -> Result<batch_moe::frozen_sources::Counters> {
+        self.completed_native_projection_boundary(executor)?;
+        let native = self.native_batch.as_ref().ok_or(error())?;
+        if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
+            return Err(error());
+        }
+        Ok(native.moe.frozen_source_counters())
     }
 
     pub(crate) fn activate_public_warm_batch_router(
@@ -2705,7 +2915,26 @@ impl Workspace {
                         packet,
                         cancel,
                     )?
+                } else if self.moe.frozen_host_sources_enabled() {
+                    if !self.public_frozen_host_sources {
+                        return Err(error());
+                    }
+                    e.enqueue_routed_moe_frozen_host_batch(
+                        m.graph,
+                        &m.arena,
+                        &mut self.moe,
+                        &session,
+                        layer,
+                        prepared.mixed(),
+                        self.outer.block[0],
+                        &spans,
+                        &waves,
+                        cancel,
+                    )?
                 } else {
+                    if e.target_frozen_host_source_identity.is_some() {
+                        return Err(error());
+                    }
                     e.enqueue_routed_moe_batch(
                         m.graph,
                         &m.arena,
@@ -3548,5 +3777,38 @@ mod gpu_qsa_plan_tests {
         assert_eq!(qsa::EXTRA_INFO_BYTES_PER_CHUNK, 12 * 2 * 2048);
         assert_eq!(qsa::EXTRA_HOST_BYTES_PER_CHUNK, 4096);
         assert_eq!(TARGET_ROWS_PRIVATE_MAIN, 826_638_336);
+    }
+}
+
+#[cfg(test)]
+mod frozen_source_configuration_tests {
+    use super::*;
+    #[test]
+    fn original_target_domain_and_all_incompatible_policies_are_checked() {
+        frozen_host_source_configuration(false, false, true, true, true, true, true, 1).unwrap();
+        frozen_host_source_configuration(true, true, false, false, false, false, false, 8).unwrap();
+        for (target, hybrid, router, prepared, batch_router, live, tile) in [
+            (false, false, false, false, false, false, 8),
+            (true, true, false, false, false, false, 8),
+            (true, false, true, false, false, false, 8),
+            (true, false, false, true, false, false, 8),
+            (true, false, false, false, true, false, 8),
+            (true, false, false, false, false, true, 8),
+            (true, false, false, false, false, false, 4),
+        ] {
+            assert!(
+                frozen_host_source_configuration(
+                    true,
+                    target,
+                    hybrid,
+                    router,
+                    prepared,
+                    batch_router,
+                    live,
+                    tile
+                )
+                .is_err()
+            );
+        }
     }
 }

@@ -6,6 +6,265 @@
     "No generated text/token IDs or private content retained",
     "No compiler ran during v131 GPU trials; source edits and a few bounded read-only inspections occurred"
   ],
+  "cubecl_host_weight_v138": {
+    "cards": {
+      "intel": {
+        "columns": 64,
+        "exact_decoded_values": 512,
+        "exact_original64_dots": 8,
+        "fault_cases": 5,
+        "fault_full_owner_no_publication": true,
+        "full_private_zero_buffers": 21,
+        "full_private_zero_bytes": 688128,
+        "full_source_backing_zero_bytes": 458752,
+        "heap_indices": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "host_backing_detached_bytes": 458752,
+        "host_backing_live_bytes": 0,
+        "host_backing_registered_bytes": 458752,
+        "host_cap_bytes": 8388608,
+        "io_cap_bytes": 16777216,
+        "main_cap_bytes": 1048576,
+        "managed_cleanup_complete": true,
+        "memory_heap_flags": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "memory_property_flags": [
+          14,
+          14,
+          14,
+          14,
+          14,
+          14,
+          14
+        ],
+        "memory_type_indices": [
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2
+        ],
+        "normal_cases": 2,
+        "original_dtype": 42,
+        "performance_accepted": false,
+        "physical_backing_bytes": [
+          65536,
+          65536,
+          65536,
+          65536,
+          65536,
+          65536,
+          65536
+        ],
+        "private_request_accepted": false,
+        "registration_count": 7,
+        "registry_metadata_cap_bytes": 1048576,
+        "registry_metadata_owned_bytes": 67536,
+        "rows": 4,
+        "scope": "compiled_public_nonlocal_host_q2_cubecl_operator_only",
+        "source_full_buffer_bytes": 65536,
+        "source_import_managed_allocations": 0,
+        "source_load_only_reflection_required": true,
+        "typed_detach_and_cpu_free": true,
+        "vendor": 32902,
+        "weight_upload_bytes": 0,
+        "whole_model_accepted": false,
+        "whole_owning_erasure_accepted": false
+      },
+      "nvidia": {
+        "columns": 64,
+        "exact_decoded_values": 512,
+        "exact_original64_dots": 8,
+        "fault_cases": 5,
+        "fault_full_owner_no_publication": true,
+        "full_private_zero_buffers": 21,
+        "full_private_zero_bytes": 688128,
+        "full_source_backing_zero_bytes": 458752,
+        "heap_indices": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "host_backing_detached_bytes": 458752,
+        "host_backing_live_bytes": 0,
+        "host_backing_registered_bytes": 458752,
+        "host_cap_bytes": 8388608,
+        "io_cap_bytes": 16777216,
+        "main_cap_bytes": 1048576,
+        "managed_cleanup_complete": true,
+        "memory_heap_flags": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "memory_property_flags": [
+          14,
+          14,
+          14,
+          14,
+          14,
+          14,
+          14
+        ],
+        "memory_type_indices": [
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4
+        ],
+        "normal_cases": 2,
+        "original_dtype": 42,
+        "performance_accepted": false,
+        "physical_backing_bytes": [
+          65536,
+          65536,
+          65536,
+          65536,
+          65536,
+          65536,
+          65536
+        ],
+        "private_request_accepted": false,
+        "registration_count": 7,
+        "registry_metadata_cap_bytes": 1048576,
+        "registry_metadata_owned_bytes": 67536,
+        "rows": 4,
+        "scope": "compiled_public_nonlocal_host_q2_cubecl_operator_only",
+        "source_full_buffer_bytes": 65536,
+        "source_import_managed_allocations": 0,
+        "source_load_only_reflection_required": true,
+        "typed_detach_and_cpu_free": true,
+        "vendor": 4318,
+        "weight_upload_bytes": 0,
+        "whole_model_accepted": false,
+        "whole_owning_erasure_accepted": false
+      }
+    },
+    "host_after": {
+      "admission": {
+        "action": "status",
+        "state": {
+          "admission": {
+            "active": false,
+            "completed": 62,
+            "paused": false,
+            "recovery_required": false,
+            "rejected": 0,
+            "waiting": 0
+          }
+        },
+        "status": 200
+      },
+      "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+      "http_statuses": {
+        "kuno": 200,
+        "ollama": 200,
+        "vashti": 200
+      },
+      "intel": {
+        "xe_memory": [
+          {
+            "total_bytes": 34242297856,
+            "used_bytes": 50688000
+          }
+        ]
+      },
+      "kernel": "7.0.0-38-generic",
+      "kernel_fault_counts": {
+        "nvidia_xid": 0,
+        "xe_memory_faults": 0,
+        "xe_reset_failures": 0,
+        "xe_timeouts": 0,
+        "xe_wedged": 0
+      },
+      "nvidia_compute_process_count": 0,
+      "nvidia_memory_mib": 484,
+      "time": "2026-10-09T20:07:02.533364+00:00"
+    },
+    "host_before": {
+      "admission": {
+        "action": "status",
+        "state": {
+          "admission": {
+            "active": false,
+            "completed": 62,
+            "paused": false,
+            "recovery_required": false,
+            "rejected": 0,
+            "waiting": 0
+          }
+        },
+        "status": 200
+      },
+      "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+      "http_statuses": {
+        "kuno": 200,
+        "ollama": 200,
+        "vashti": 200
+      },
+      "intel": {
+        "xe_memory": [
+          {
+            "total_bytes": 34242297856,
+            "used_bytes": 50688000
+          }
+        ]
+      },
+      "kernel": "7.0.0-38-generic",
+      "kernel_fault_counts": {
+        "nvidia_xid": 0,
+        "xe_memory_faults": 0,
+        "xe_reset_failures": 0,
+        "xe_timeouts": 0,
+        "xe_wedged": 0
+      },
+      "nvidia_compute_process_count": 0,
+      "nvidia_memory_mib": 484,
+      "time": "2026-10-09T20:07:00.954544+00:00"
+    },
+    "limit": "Small compiled-public Q2 host operator only; no full model/performance/private claim",
+    "source": {
+      "binary_sha256": "87a45f08d4ce02411d4ef8059fd58ab0ee0b49376c235ca8f53f1bc64580b5e7",
+      "commit": "1155e40cf592b8c1dbb96139a9fcca12a89b37e2",
+      "features": [
+        "direct-device"
+      ],
+      "helper_sha256": "204a67766e33cbca81203a5d975b6974c9109b523cb29edc82b94c2c157139f5",
+      "native_30_tokens_per_second_accepted": false,
+      "ordinary_demand_performance_claimed": false,
+      "protected_launcher_sha256": "6563abedbd496811a0831143cccc02f8ee10672b790c2132abdef42a99895199",
+      "public_trial": "host-cubecl",
+      "seed": 424242,
+      "temperature": 0
+    }
+  },
   "language_code_v131": {
     "chunk_io_checkpoint": true,
     "device_dispatch": "inline",

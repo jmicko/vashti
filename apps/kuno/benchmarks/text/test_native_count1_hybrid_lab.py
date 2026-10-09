@@ -1833,6 +1833,35 @@ class StrataInspiredGuards(unittest.TestCase):
         for key,value in [("KUNO_LAB_LANGUAGE_FIXTURE","private"),("KUNO_LAB_PROMPT","secret"),("KUNO_LAB_WARM_REPLAY","once"),("KUNO_LAB_TARGET_ROUTER","device-warm-public"),("KUNO_PUBLIC_TARGET_CARRY13_REFERENCE","/public/reference")]:
             with self.assertRaises(ValueError):guard.memory_limit(dict(env,**{key:value}),args)
 
+    def test_frozen_sources_require_fixed_public_scope_and_original_policies(self):
+        guard=self.guard()
+        common={"KUNO_LAB_STATIC_CACHE_BYTES":"8589934592","KUNO_TEST_Q3_DIR":"/original",
+            "KUNO_TEST_MTP":"/original/draft","KUNO_PUBLIC_RECEIPT":"/public/numeric",
+            "KUNO_LAB_DEVICE_DISPATCH":"inline","KUNO_LAB_TARGET_IO":"chunk",
+            "KUNO_LAB_TARGET_REUSE":"request","KUNO_LAB_TARGET_FILL":"direct-public",
+            "KUNO_LAB_TARGET_SOURCES":"frozen-host-public"}
+        for language in (False, True):
+            env=dict(common)
+            if language:
+                env.update(KUNO_LAB_LANGUAGE_PUBLIC_ONLY="1",KUNO_LAB_LANGUAGE_FIXTURE="first-code")
+                mode="daslab-language-probe";limit=48*1024**3+196*1024**2
+            else:
+                env.update(KUNO_LAB_SPECULATIVE_PUBLIC_ONLY="1",KUNO_LAB_WARM_REPLAY="once",
+                    KUNO_PUBLIC_TARGET_CARRY13_REFERENCE="/public/reference")
+                mode="daslab-speculative-probe";limit=48*1024**3
+            args=["/frozen/binary","intel",mode]
+            self.assertEqual(guard.memory_limit(env,args),limit)
+            for key in ("KUNO_LAB_TARGET_REUSE","KUNO_LAB_TARGET_FILL","KUNO_LAB_DEVICE_DISPATCH"):
+                bad=dict(env);bad.pop(key)
+                with self.assertRaises(ValueError):guard.memory_limit(bad,args)
+            for key in ("KUNO_LAB_TARGET_ROUTER","KUNO_LAB_TARGET_EXPERTS","KUNO_LAB_TARGET_MOE","KUNO_LAB_PROMPT"):
+                with self.assertRaises(ValueError):guard.memory_limit(dict(env,**{key:"0"}),args)
+            for value in ("", "1", "frozen-host", "FROZEN-HOST-PUBLIC"):
+                with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_TARGET_SOURCES=value),args)
+            if not language:
+                bad=dict(env);bad.pop("KUNO_LAB_WARM_REPLAY")
+                with self.assertRaises(ValueError):guard.memory_limit(bad,args)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -36,6 +36,7 @@ pub(crate) struct Inputs {
     pub(crate) fused_sweeps: bool,
     draft_profile: Profile,
     pub(crate) gpu_qsa_selector: bool,
+    pub(crate) frozen_host_sources: bool,
     warm_replay: bool,
     pub(crate) verify3_dense: bool,
     pub(crate) verify3_fused: bool,
@@ -79,6 +80,7 @@ pub(crate) fn registration(
                     | "KUNO_LAB_MTP_SWEEPS"
                     | "KUNO_LAB_MTP_PROFILE"
                     | "KUNO_LAB_TARGET_QSA"
+                    | "KUNO_LAB_TARGET_SOURCES"
                     | "KUNO_LAB_WARM_REPLAY"
                     | "KUNO_LAB_TARGET_DENSE"
                     | "KUNO_LAB_TARGET_EXPERTS"
@@ -152,6 +154,21 @@ pub(crate) fn registration(
         Some(v) if v == "chronological-public" => true,
         _ => return Err("target QSA requires canonical chronological-public"),
     };
+    let frozen_host_sources = match values.remove(OsStr::new("KUNO_LAB_TARGET_SOURCES")) {
+        None => false,
+        Some(v) if v == "frozen-host-public" => true,
+        _ => return Err("target sources require canonical frozen-host-public"),
+    };
+    if frozen_host_sources
+        && (!warm_replay
+            || !request_reuse
+            || !public_existing_fill
+            || device_router
+            || prepared_experts
+            || live_member_reduction)
+    {
+        return Err("frozen sources require original public warm request scope");
+    }
     let raw_profile = values.remove(OsStr::new("KUNO_LAB_MTP_PROFILE"));
     let draft_profile = Profile::parse(raw_profile.as_deref())?;
     let mut path = |name: &str| {
@@ -165,6 +182,7 @@ pub(crate) fn registration(
         fused_sweeps,
         draft_profile,
         gpu_qsa_selector,
+        frozen_host_sources,
         warm_replay,
         verify3_dense,
         verify3_fused,
@@ -276,7 +294,11 @@ pub(crate) fn run(
     client: &ComputeClient<WgpuRuntime>,
     limits: &wgpu::Limits,
     input: Inputs,
+    host_device: Option<&wgpu::Device>,
 ) -> Result<()> {
+    if input.frozen_host_sources != host_device.is_some() {
+        return Err("public frozen sources require exact parent device selection".into());
+    }
     crate::target_lab_build::validate_runtime(input.inline_dispatch)?;
     std::panic::set_hook(Box::new(|_| {
         eprintln!("public_speculative_failure panic=true")
@@ -361,6 +383,9 @@ pub(crate) fn run(
         if input.gpu_qsa_selector {
             config = config.reserve_public_gpu_qsa_selector()?;
         }
+        if input.frozen_host_sources {
+            config = config.reserve_public_frozen_host_sources()?;
+        }
         if input.prepared_experts {
             config = config.reserve_prepared_verify3_experts()?;
         }
@@ -379,6 +404,9 @@ pub(crate) fn run(
         if input.device_router {
             config = config.reserve_public_warm_batch_router()?;
         }
+        let prepared_host = std::cell::OnceCell::new();
+        let mut host_attachment = None;
+        let mut host_setup = None;
         let mut target = ResidentModel::new_with_native_batch(
             graph.bound_graph(),
             client.clone(),
@@ -601,11 +629,23 @@ pub(crate) fn run(
                     let after = draft.traffic();
                     let (actual_direct, after_fills) =
                         target.native_public_fill_counters(&executor)?;
+                    let frozen_routes = if executor.target_frozen_host_source_identity.is_some() {
+                        let counts = target.native_frozen_source_counters(&executor)?;
+                        if counts.host_routes == 0 || counts.vram_routes == 0 {
+                            return Err(
+                                "public CPU13 must exercise both actual source tiers".into()
+                            );
+                        }
+                        Some(serde_json::json!({"vram_routes":counts.vram_routes,
+                            "host_routes":counts.host_routes,"source_dispatches":counts.source_dispatches}))
+                    } else {
+                        None
+                    };
                     if actual_direct != input.public_existing_fill {
                         return Err("public fill frozen selection changed".into());
                     }
                     Ok(
-                        serde_json::json!({"replay":replay,"device_router":input.device_router && replay == 1,"device_router_scope":"conditional actual all-hit warm13; strict original IDs and full vectors, experimental F32 probabilities","request_scope_closed_and_audited":input.request_reuse,"request_scope":request_scope_receipt,"request_close_ns_inside_timing":request_close_ns,"host_io":host_io,"model_weights_warm":replay==1,"initial_prefill_ns":initial_prefill_ns,"gpu_router_calls":executor.gpu_router_calls-before_gpu_routers,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"verify3_fused_calls":executor.target_verify3_fused_calls-before_fused,"target_host_phase_ns":host_phase_ns,"load_and_initial_prefill_physical_read_bytes":load_disk_after.checked_sub(replay_disk_before).ok_or("public process read counter regressed")?,"timed_physical_read_bytes":timed_physical_read_bytes,"target_fill_counters_before":fill_counter_record(before_fills),"target_fill_counters_after":fill_counter_record(after_fills),"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"timing_scope":if input.device_router && replay == 1 {"conditional actual all-hit GPU routing; deferred original-route audit, public checks and actual repair included"} else {"original normal routing/demand uploads; public checks and actual repair included"},"load_and_initial_prefill_cumulative_ns":load_ns,"accepted_tokens":accepted_tokens,"elapsed_ns":elapsed_ns,"accepted_tokens_per_second":accepted_tokens as f64*1e9/elapsed_ns as f64,"proposed_drafts":proposed_tokens,"accepted_drafts":accepted_drafts,"rounds":rounds,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"draft_traffic":{"host_read_calls":after.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after.host_read_bytes-before_traffic.host_read_bytes,"explicit_dispatches":after.explicit_dispatches-before_traffic.explicit_dispatches,"private_upload_calls":after.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after.followup_copy_calls-before_traffic.followup_copy_calls}}),
+                        serde_json::json!({"replay":replay,"device_router":input.device_router && replay == 1,"device_router_scope":"conditional actual all-hit warm13; strict original IDs and full vectors, experimental F32 probabilities","request_scope_closed_and_audited":input.request_reuse,"request_scope":request_scope_receipt,"request_close_ns_inside_timing":request_close_ns,"host_io":host_io,"model_weights_warm":replay==1,"initial_prefill_ns":initial_prefill_ns,"gpu_router_calls":executor.gpu_router_calls-before_gpu_routers,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"verify3_fused_calls":executor.target_verify3_fused_calls-before_fused,"target_host_phase_ns":host_phase_ns,"load_and_initial_prefill_physical_read_bytes":load_disk_after.checked_sub(replay_disk_before).ok_or("public process read counter regressed")?,"timed_physical_read_bytes":timed_physical_read_bytes,"target_fill_counters_before":fill_counter_record(before_fills),"target_fill_counters_after":fill_counter_record(after_fills),"frozen_source_routes":frozen_routes,"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"timing_scope":if input.frozen_host_sources && replay == 1 {"original CPU13 routes and weights; deterministic diagnostic VRAM placement plus immutable direct host sources, no demand expert uploads; full vectors and actual repair included"} else if input.device_router && replay == 1 {"conditional actual all-hit GPU routing; deferred original-route audit, public checks and actual repair included"} else {"original normal routing/demand uploads; public checks and actual repair included"},"load_and_initial_prefill_cumulative_ns":load_ns,"accepted_tokens":accepted_tokens,"elapsed_ns":elapsed_ns,"accepted_tokens_per_second":accepted_tokens as f64*1e9/elapsed_ns as f64,"proposed_drafts":proposed_tokens,"accepted_drafts":accepted_drafts,"rounds":rounds,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"draft_traffic":{"host_read_calls":after.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after.host_read_bytes-before_traffic.host_read_bytes,"explicit_dispatches":after.explicit_dispatches-before_traffic.explicit_dispatches,"private_upload_calls":after.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after.followup_copy_calls-before_traffic.followup_copy_calls}}),
                     )
                 })()?;
                 println!("public_speculative_full_pass_accepted replay={replay}");
@@ -613,6 +653,21 @@ pub(crate) fn run(
                 if input.warm_replay && replay == 0 {
                     // All guarded outputs and the old host carry are dropped.
                     // The reset performs complete actual private/source audits.
+                    if input.frozen_host_sources {
+                        println!("public_frozen_host_prepare_start");
+                        let preparation = Instant::now();
+                        let (plan, fills) =
+                            target.prepare_public_host_sources(&mut executor, &cancel)?;
+                        prepared_host
+                            .set(plan)
+                            .map_err(|_| "public source plan already initialized")?;
+                        host_setup =
+                            Some(serde_json::json!({"bank_completion_experts":fills.experts,
+                            "bank_completion_uploaded_bytes":fills.bytes,
+                            "bank_completion_read_ns":fills.read_ns,
+                            "bank_completion_upload_ns":fills.upload_ns,
+                            "prepare_ns":preparation.elapsed().as_nanos()}));
+                    }
                     let receipt = target.reset_public_warm_replay(&mut executor, &cancel)?;
                     draft.rewind(0)?;
                     // The typed reset commits target cursor0; the existing
@@ -620,6 +675,28 @@ pub(crate) fn run(
                     // Next pass proves start0/count1/cursor1 with real prefill.
                     if draft.position() != 0 {
                         return Err("public warm replay empty draft state rejected".into());
+                    }
+                    if input.frozen_host_sources {
+                        let attachment_start = Instant::now();
+                        let prepared = prepared_host.get().ok_or("public host plan absent")?;
+                        let reserved = prepared.budget().total_host_reserved_bytes;
+                        // SAFETY: protected runner verified the full immutable
+                        // original model hashes before opening these sources.
+                        host_attachment = Some(unsafe {
+                            target.attach_public_host_sources(
+                                &mut executor,
+                                prepared,
+                                host_device.ok_or("public exact device absent")?,
+                                reserved,
+                                &cancel,
+                            )?
+                        });
+                        if let Some(setup) = host_setup.as_mut() {
+                            setup["attach_ns"] =
+                                u64::try_from(attachment_start.elapsed().as_nanos())?.into();
+                            setup["separate_host_reserved_bytes"] = reserved.into();
+                        }
+                        println!("public_frozen_host_attach_complete");
                     }
                     warm_reset = Some(
                         serde_json::json!({"main_buffers":receipt.main.buffers,"main_bytes":receipt.main.bytes,"source_buffers":receipt.source.buffers,"source_bytes":receipt.source.bytes,"admission_and_public_banks_retained":true,"transient_binding_info_caches_retained":false,"ledger_epoch_or_poison_reset":false}),
@@ -633,11 +710,32 @@ pub(crate) fn run(
         drop(target);
         close?;
         let (main, sources) = audit.ok_or("speculative target full owning erasure rejected")?;
+        let host_close = if let Some(owner) = host_attachment.take() {
+            // SAFETY: actual target private close and full owning zero audit
+            // succeeded; lexical model drop removed every SourceSet consumer.
+            Some(unsafe { owner.close()? })
+        } else {
+            None
+        };
         runs?;
         let record = passes
             .last_mut()
             .ok_or("public controller completion missing")?;
         record["target_close"] = serde_json::json!({"main_buffers":main.buffers,"main_bytes":main.bytes,"source_buffers":sources.buffers,"source_bytes":sources.bytes});
+        record["frozen_host_setup"] = host_setup.into();
+        record["frozen_host_close"] = host_close
+            .map(|closed| {
+                serde_json::json!({
+                    "registered_pages":closed.registered_pages,
+                    "detached_pages":closed.detached_pages,
+                    "physical_allocated_bytes":closed.mirror.total_allocated_bytes,
+                    "physical_freed_bytes":closed.mirror.total_freed_bytes,
+                    "live_backing_bytes":closed.mirror.live_backing_bytes,
+                    "metadata_owned_bytes":closed.mirror.metadata_owned_bytes,
+                    "source_window_peak_bytes":closed.mirror.source_window_peak_bytes,
+                })
+            })
+            .into();
         Ok(())
     })();
     let target_close = executor.close_transient_resident();
@@ -683,6 +781,62 @@ mod tests {
         ]
         .map(|(k, v)| (k.into(), v.into()))
         .to_vec()
+    }
+    #[test]
+    fn frozen_sources_require_original_public_scope_and_fixed_runtime() {
+        fn args() -> Vec<OsString> {
+            ["binary", "intel", "daslab-speculative-probe"]
+                .map(Into::into)
+                .to_vec()
+        }
+        let build = crate::target_lab_build::Build::Inline;
+        let mut selected = env();
+        for (key, value) in [
+            ("KUNO_LAB_DEVICE_DISPATCH", "inline"),
+            ("KUNO_LAB_TARGET_FILL", "direct-public"),
+            ("KUNO_LAB_TARGET_IO", "chunk"),
+            ("KUNO_LAB_TARGET_REUSE", "request"),
+            ("KUNO_LAB_TARGET_SOURCES", "frozen-host-public"),
+            ("KUNO_LAB_WARM_REPLAY", "once"),
+        ] {
+            selected.push((key.into(), value.into()));
+        }
+        assert!(
+            registration(&args(), selected.clone(), build)
+                .unwrap()
+                .frozen_host_sources
+        );
+        for key in [
+            "KUNO_LAB_TARGET_FILL",
+            "KUNO_LAB_TARGET_REUSE",
+            "KUNO_LAB_DEVICE_DISPATCH",
+        ] {
+            let mut wrong = selected.clone();
+            wrong.retain(|(k, _)| k != key);
+            assert!(registration(&args(), wrong, build).is_err());
+        }
+        for value in ["", "1", "frozen-host", "FROZEN-HOST-PUBLIC"] {
+            let mut wrong = selected.clone();
+            wrong
+                .iter_mut()
+                .find(|(k, _)| k == "KUNO_LAB_TARGET_SOURCES")
+                .unwrap()
+                .1 = value.into();
+            assert!(registration(&args(), wrong, build).is_err());
+        }
+        for (key, value) in [
+            ("KUNO_LAB_TARGET_EXPERTS", "prepared-verify3"),
+            ("KUNO_LAB_TARGET_MOE", "live"),
+        ] {
+            let mut wrong = selected.clone();
+            wrong.push((key.into(), value.into()));
+            assert!(registration(&args(), wrong, build).is_err());
+        }
+        selected.push((
+            "KUNO_LAB_TARGET_SOURCES".into(),
+            "frozen-host-public".into(),
+        ));
+        assert!(registration(&args(), selected, build).is_err());
     }
     #[test]
     fn qsa_gpu_selection_is_explicit_and_rejects_malformed_or_duplicate_policy() {

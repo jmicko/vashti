@@ -6,6 +6,16 @@ import sys
 
 def selected_target_policy(environment, mtp=False):
     selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
+    if "KUNO_LAB_TARGET_SOURCES" in selected:
+        spec = selected.get("KUNO_LAB_SPECULATIVE_PUBLIC_ONLY") == "1"
+        language = selected.get("KUNO_LAB_LANGUAGE_PUBLIC_ONLY") == "1"
+        if (not mtp or selected.pop("KUNO_LAB_TARGET_SOURCES") != "frozen-host-public"
+                or spec == language
+                or spec and selected.get("KUNO_LAB_WARM_REPLAY") != "once"
+                or selected.get("KUNO_LAB_TARGET_REUSE") != "request"
+                or selected.get("KUNO_LAB_TARGET_FILL") != "direct-public"
+                or any(key in selected for key in ("KUNO_LAB_TARGET_ROUTER", "KUNO_LAB_TARGET_EXPERTS", "KUNO_LAB_TARGET_MOE"))):
+            raise ValueError("Frozen host sources require the fixed original public target scope")
     if "KUNO_LAB_TARGET_QSA" in selected:
         if not mtp or selected.pop("KUNO_LAB_TARGET_QSA") != "chronological-public":
             raise ValueError("GPU QSA requires the explicit compiled public target selector")
