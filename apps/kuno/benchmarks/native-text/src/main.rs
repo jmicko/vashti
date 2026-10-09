@@ -311,8 +311,8 @@ fn q3_speed_fixture_option(
                 && protected
                 && empty_fill
                 && matches!(positions, 4 | 23 | 32)
-                && matches!(option, "skip-segments" | "ideal-prefix")
-                && (option == "skip-segments" || positions == 23) =>
+                && matches!(option, "skip-segments" | "subgroup-moe" | "ideal-prefix")
+                && (option != "ideal-prefix" || positions == 23) =>
         {
             Ok(true)
         }
@@ -979,6 +979,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
     };
     let q3_skip_empty_segments = speed_option("KUNO_LAB_Q3_SKIP_EMPTY_SEGMENTS", "skip-segments")?;
+    let q3_subgroup_moe = speed_option("KUNO_LAB_Q3_SUBGROUP_MOE", "subgroup-moe")?;
     let q3_ideal_public = speed_option("KUNO_LAB_Q3_IDEAL_PUBLIC", "ideal-prefix")?;
     let q3_oracle_raw = std::env::var_os("KUNO_LAB_Q3_EXPERT_ORACLE");
     let q3_expert_oracle = q3_expert_oracle(
@@ -1285,6 +1286,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         return Err(
             "Q3 empty-slot fill requires original intel144 mapped pooled overlap cap10".into(),
+        );
+    }
+    if q3_subgroup_moe && (!q3_skip_empty_segments || !fast_gpu || !gpu_router || !next_shared) {
+        return Err(
+            "Q3 subgroup MoE requires protected original fast count1 and segment policy".into(),
         );
     }
     if gpu_expert_limit < 10
@@ -1596,7 +1602,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             return Err("shared Next router requires256 workgroup lanes".into());
         }
-        if (fast_gpu || mode == "iq-quant-probe")
+        if (fast_gpu || mode == "iq-quant-probe" || segmented_iq_probe)
             && (!adapter.features().contains(wgpu::Features::SUBGROUP)
                 || info.subgroup_min_size < 16
                 || info.subgroup_max_size > 32
@@ -2778,6 +2784,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             executor.gpu_expert_limit = gpu_expert_limit;
             executor.q3_empty_slot_fill = q3_empty_slot_fill;
             executor.q3_skip_empty_segments = q3_skip_empty_segments;
+            executor.q3_subgroup_moe = q3_subgroup_moe;
             executor.q3_expert_oracle = q3_expert_oracle;
             executor.q3_router_reference = q3_router_reference.clone();
             executor.fast_dense = fast_gpu;
@@ -3158,6 +3165,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let occupied = executor.q3_occupied_slots()?;
                     receipt["q3_empty_slot_fill"] = serde_json::json!(q3_empty_slot_fill);
                     receipt["q3_skip_empty_segments"] = serde_json::json!(q3_skip_empty_segments);
+                    receipt["q3_subgroup_moe"] = serde_json::json!(q3_subgroup_moe);
                     receipt["expert_slots_reserved"] = serde_json::json!(48 * 144);
                     receipt["expert_slots_occupied_after_prefill"] = serde_json::json!(pre_slots);
                     receipt["expert_slots_occupied_after_decode"] = serde_json::json!(occupied);
@@ -3663,6 +3671,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 executor.gpu_expert_limit = gpu_expert_limit;
                 executor.q3_empty_slot_fill = q3_empty_slot_fill;
                 executor.q3_skip_empty_segments = q3_skip_empty_segments;
+                executor.q3_subgroup_moe = q3_subgroup_moe;
                 executor.q3_expert_oracle = q3_expert_oracle;
                 executor.q3_router_reference = q3_router_reference.clone();
                 executor.fast_dense = fast_gpu;
@@ -3791,6 +3800,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     executor.gpu_expert_limit = gpu_expert_limit;
                     executor.q3_empty_slot_fill = q3_empty_slot_fill;
                     executor.q3_skip_empty_segments = q3_skip_empty_segments;
+                    executor.q3_subgroup_moe = q3_subgroup_moe;
                     executor.q3_expert_oracle = q3_expert_oracle;
                     executor.q3_router_reference = q3_router_reference.clone();
                     executor.fast_dense = fast_gpu;
@@ -4065,6 +4075,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             )?;
                             e.q3_empty_slot_fill = q3_empty_slot_fill;
                             e.q3_skip_empty_segments = q3_skip_empty_segments;
+                            e.q3_subgroup_moe = q3_subgroup_moe;
                             e.gpu_router = gpu_router;
                             e.fused_experts = fused_experts;
                             e.integer_experts = integer_experts;
@@ -4153,7 +4164,7 @@ mod transient_mode_tests {
     #[test]
     fn q3_speed_options_reject_other_models_unprotected_and_noncanonical_inputs() {
         use crate::expert_banks::OriginalPackedProfile as P;
-        for option in ["skip-segments", "ideal-prefix"] {
+        for option in ["skip-segments", "subgroup-moe", "ideal-prefix"] {
             assert!(
                 !super::q3_speed_fixture_option("probe", P::Q4, false, 4, false, option, None)
                     .unwrap()
