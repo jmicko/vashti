@@ -35,6 +35,41 @@ struct Kernel {
     slots: usize,
 }
 
+fn original_grid_words(dtype: u32) -> Vec<u32> {
+    match dtype {
+        super::IQ3_XXS => kuno_text::quant::IQ3_XXS_GRID.to_vec(),
+        super::IQ3_S => kuno_text::quant::IQ3_S_GRID.to_vec(),
+        super::IQ2_S => kuno_text::quant::IQ2_S_GRID
+            .into_iter()
+            .flat_map(|word| [word as u32, (word >> 32) as u32])
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Each lane writes its immutable cells directly, once. A lookup switch with
+/// one case per word repeatedly diverges for every initialization iteration;
+/// the largest original table has2,048 words/16 iterations per lane. Keep the
+/// same full workgroup table and barriers without any runtime literal lookup,
+/// Function-address array copy, persistent buffer or private allocation.
+fn grid_source(words: &[u32]) -> (String, String) {
+    if words.is_empty() {
+        return (String::new(), String::new());
+    }
+    use std::fmt::Write;
+    let declaration = format!("var<workgroup> iq3_grid:array<u32,{}>;", words.len());
+    let mut initialize = String::from("switch local {\n");
+    for lane in 0..128 {
+        writeln!(initialize, "case {lane}u: {{").unwrap();
+        for index in (lane..words.len()).step_by(128) {
+            writeln!(initialize, "iq3_grid[{index}u]=0x{:08x}u;", words[index]).unwrap();
+        }
+        initialize.push_str("}\n");
+    }
+    initialize.push_str("default: {}\n}\n");
+    (declaration, initialize)
+}
+
 fn projection(name: &str, dtype: u32) -> String {
     let factor = match dtype {
         super::IQ3_XXS => {
@@ -146,38 +181,7 @@ impl Kernel {
                 "var a=0.0;var b=0.0;if valid && row<ROWS {let base=(slot*ROWS+row)*ROW_BYTES;a=gate_project(base,lane,width);b=up_project(base,lane,width);}\nif valid && row<ROWS && lane==0u {var sig=0.0;if a>=0.0 {sig=1.0/(1.0+exp(-a));}else{let e=exp(a);sig=e/(1.0+e);}\noutput[p.d+route*p.e+row]=a*sig*b;if row==0u {status[p.f+route]=1u;}}",
             )
         };
-        let (grid, initialize) = if matches!(
-            self.dtype,
-            super::IQ3_XXS | super::IQ3_S | super::IQ2_S
-        ) {
-            use std::fmt::Write;
-            let words: Vec<u32> = match self.dtype {
-                super::IQ3_XXS => kuno_text::quant::IQ3_XXS_GRID.to_vec(),
-                super::IQ3_S => kuno_text::quant::IQ3_S_GRID.to_vec(),
-                super::IQ2_S => kuno_text::quant::IQ2_S_GRID
-                    .into_iter()
-                    .flat_map(|word| [word as u32, (word >> 32) as u32])
-                    .collect(),
-                _ => unreachable!("matched original grid"),
-            };
-            let mut grid = format!(
-                "var<workgroup> iq3_grid:array<u32,{}>;\nfn iq3_literal(i:u32)->u32 {{switch i {{\n",
-                words.len()
-            );
-            for (i, &word) in words.iter().enumerate() {
-                writeln!(grid, "case {i}u: {{return 0x{word:08x}u;}}").unwrap();
-            }
-            grid.push_str("default: {return 0u;}\n}}\n");
-            (
-                grid,
-                format!(
-                    "for(var i=local;i<{}u;i+=128u) {{iq3_grid[i]=iq3_literal(i);}}",
-                    words.len()
-                ),
-            )
-        } else {
-            (String::new(), String::new())
-        };
+        let (grid, initialize) = grid_source(&original_grid_words(self.dtype));
         let mut source = include_str!("iq_moe_integer.wgsl")
             .replace("BINDINGS_VALUE", bindings)
             .replace("PROJECTION_HELPERS_VALUE", &helpers)
@@ -377,6 +381,182 @@ pub(crate) fn launch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn compile_public_source(source: &str) -> (wgpu::naga::Module, Vec<u32>) {
+        let module = wgpu::naga::front::wgsl::parse_str(source).unwrap();
+        let info = wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::SUBGROUP
+                | wgpu::naga::valid::Capabilities::SHADER_FLOAT16_IN_FLOAT32,
+        )
+        .validate(&module)
+        .unwrap();
+        let spirv = wgpu::naga::back::spv::write_vec(
+            &module,
+            &info,
+            &wgpu::naga::back::spv::Options {
+                lang_version: (1, 3),
+                ..Default::default()
+            },
+            Some(&wgpu::naga::back::spv::PipelineOptions {
+                shader_stage: wgpu::naga::ShaderStage::Compute,
+                entry_point: "main".into(),
+            }),
+        )
+        .unwrap();
+        (module, spirv)
+    }
+
+    fn switches(spirv: &[u32]) -> Vec<usize> {
+        let mut cases = Vec::new();
+        let mut at = 5;
+        while at < spirv.len() {
+            let length = (spirv[at] >> 16) as usize;
+            let opcode = spirv[at] & 65535;
+            assert!(length > 0 && at + length <= spirv.len());
+            // OpSwitch on the original32-bit selector owns two fixed operands
+            // (selector/default), then literal/target pairs for every case.
+            if opcode == 251 {
+                assert!(length >= 3 && (length - 3).is_multiple_of(2));
+                cases.push((length - 3) / 2);
+            }
+            at += length;
+        }
+        cases
+    }
+
+    fn constant_grid_stores(
+        block: &wgpu::naga::Block,
+        expressions: &wgpu::naga::Arena<wgpu::naga::Expression>,
+        grid: wgpu::naga::Handle<wgpu::naga::GlobalVariable>,
+        stores: &mut Vec<(u32, u32)>,
+    ) {
+        use wgpu::naga::{Expression as E, Literal as L, Statement as S};
+        for statement in block {
+            match statement {
+                S::Store { pointer, value } => {
+                    if let E::AccessIndex { base, index } = expressions[*pointer]
+                        && matches!(expressions[base], E::GlobalVariable(v) if v==grid)
+                    {
+                        let E::Literal(L::U32(bits)) = expressions[*value] else {
+                            panic!("grid store must contain only its literal original word");
+                        };
+                        stores.push((index, bits));
+                    }
+                }
+                S::Block(inner) => constant_grid_stores(inner, expressions, grid, stores),
+                S::If { accept, reject, .. } => {
+                    constant_grid_stores(accept, expressions, grid, stores);
+                    constant_grid_stores(reject, expressions, grid, stores);
+                }
+                S::Switch { cases, .. } => {
+                    for case in cases {
+                        constant_grid_stores(&case.body, expressions, grid, stores);
+                    }
+                }
+                S::Loop {
+                    body, continuing, ..
+                } => {
+                    constant_grid_stores(body, expressions, grid, stores);
+                    constant_grid_stores(continuing, expressions, grid, stores);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn grid_initializer_has_exact_original_bits_once_and_bounded_lane_switch() {
+        use std::fmt::Write;
+        for dtype in [
+            super::super::IQ3_XXS,
+            super::super::IQ3_S,
+            super::super::IQ2_S,
+        ] {
+            let words = original_grid_words(dtype);
+            let kernel = Kernel {
+                down: false,
+                dtype,
+                row_bytes: kuno_text::TensorType::from_gguf_id(dtype)
+                    .unwrap()
+                    .row_bytes(2560)
+                    .unwrap() as usize,
+                first: 0,
+                slots: 72,
+            };
+            let source = kernel.source();
+            assert!(!source.contains("iq3_literal"));
+            assert_eq!(source.matches("workgroupBarrier();").count(), 2);
+            let (module, spirv) = compile_public_source(&source);
+            assert_eq!(switches(&spirv), [128]);
+            let grid = module
+                .global_variables
+                .iter()
+                .find(|(_, variable)| variable.name.as_deref() == Some("iq3_grid"))
+                .unwrap()
+                .0;
+            let entry = &module.entry_points[0].function;
+            let lane_cases = entry
+                .body
+                .iter()
+                .find_map(|statement| match statement {
+                    wgpu::naga::Statement::Switch { cases, .. } => Some(cases),
+                    _ => None,
+                })
+                .unwrap();
+            let mut lanes = Vec::new();
+            for case in lane_cases {
+                assert!(!case.fall_through);
+                let mut owned = Vec::new();
+                constant_grid_stores(&case.body, &entry.expressions, grid, &mut owned);
+                match case.value {
+                    wgpu::naga::SwitchValue::U32(lane) => {
+                        assert!(lane < 128);
+                        lanes.push(lane);
+                        assert_eq!(owned.len(), words.len() / 128);
+                        assert!(owned.iter().all(|&(index, _)| index % 128 == lane));
+                    }
+                    wgpu::naga::SwitchValue::Default => assert!(owned.is_empty()),
+                    _ => panic!("only original local-invocation lanes are permitted"),
+                }
+            }
+            lanes.sort_unstable();
+            assert_eq!(lanes, (0..128).collect::<Vec<_>>());
+            let mut stores = Vec::new();
+            constant_grid_stores(&entry.body, &entry.expressions, grid, &mut stores);
+            stores.sort_by_key(|&(index, _)| index);
+            assert_eq!(stores.len(), words.len());
+            for (index, (&expected, &(actual_index, bits))) in words.iter().zip(&stores).enumerate()
+            {
+                assert_eq!(actual_index as usize, index);
+                assert_eq!(bits, expected);
+            }
+            // Compile the exact prior literal-lookup scheme through the same
+            // backend. This proves removal of the large switch in generated
+            // SPIRV, not merely in its WGSL spelling; hardware speed is separate.
+            let (declaration, initialize) = grid_source(&words);
+            let mut legacy = format!("{declaration}\nfn iq3_literal(i:u32)->u32 {{switch i {{\n");
+            for (index, &word) in words.iter().enumerate() {
+                writeln!(legacy, "case {index}u: {{return 0x{word:08x}u;}}").unwrap();
+            }
+            legacy.push_str("default: {return 0u;}\n}}\n");
+            let prior = source.replace(&declaration, &legacy).replace(
+                &initialize,
+                &format!(
+                    "for(var i=local;i<{}u;i+=128u) {{iq3_grid[i]=iq3_literal(i);}}",
+                    words.len()
+                ),
+            );
+            let (_, previous_spirv) = compile_public_source(&prior);
+            assert_eq!(switches(&previous_spirv), [words.len()]);
+            println!(
+                "public_iq_grid_lowering dtype={dtype} words={} previous_cases={} current_cases=128 exact_constant_stores=1",
+                words.len(),
+                words.len()
+            );
+        }
+    }
+
     #[test]
     fn q2_four_code_bytes_preserve_all256_patterns_without_borrow() {
         for byte in 0..=255u32 {

@@ -1,6 +1,7 @@
 // Original packed IQ weights times two residual Q8 activation planes.
 // Explicit alternate arithmetic: NOT the default original64 F32 contract.
-// Rust substitutes public immutable dtype/geometry and scalar grid literals.
+// Rust substitutes public immutable dtype/geometry and direct constant-index
+// grid stores, once per local lane before the existing unconditional barrier.
 // No request-derived code generation, host-pinned doorbells or CUDA engine.
 requires packed_4x8_integer_dot_product;
 
