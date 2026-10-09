@@ -85,6 +85,21 @@ impl GpuExecutor<'_> {
         if self.q3_subgroup_moe && (!self.q3_empty_slot_fill || !self.q3_skip_empty_segments) {
             return Err(err("native Q3 subgroup runtime policy"));
         }
+        if self.q3_integer_moe
+            && (!self.packed_profile.is_low_bit()
+                || !self.q3_empty_slot_fill
+                || !self.q3_skip_empty_segments
+                || !self.fast_dense
+                || !self.gpu_router
+                || !self.shared_kernels
+                || self.q3_subgroup_moe
+                || self.fused_experts
+                || self.integer_experts
+                || w.cpu_q8_activations() != Some(false)
+                || w.cpu_q8_residual() != Some(false))
+        {
+            return Err(err("native Q3 integer runtime policy"));
+        }
         if self.q3_empty_slot_fill
             && (!self.packed_profile.is_low_bit()
                 || cap != 10
@@ -413,11 +428,19 @@ impl GpuExecutor<'_> {
             write_gpu_header(arena, ids[PROB], &*probs, &w.poison)?;
             physical(arena, bank, g, &ids, s.stamp.fault, w)?;
             if !split.gpu().is_empty() {
-                if self.q3_subgroup_moe {
+                if self.q3_subgroup_moe || self.q3_integer_moe {
                     let active = active_segments
                         .as_ref()
-                        .ok_or(err("native Q3 subgroup segment proof absent"))?;
-                    launch_q3_subgroup_segments(arena, bank, g, &spans, &ids, active)?;
+                        .ok_or(err("native Q3 selected segment proof absent"))?;
+                    launch_q3_selected_segments(
+                        arena,
+                        bank,
+                        g,
+                        &spans,
+                        &ids,
+                        active,
+                        self.q3_integer_moe,
+                    )?;
                 } else if self.shared_kernels
                     && bank.profile() == crate::expert_banks::OriginalPackedProfile::Q4
                 {
@@ -920,15 +943,17 @@ fn launch_q3_active_segments(
 }
 
 /// Same frozen original plan/physical owners as the generic dispatch above.
-/// Only the explicit Q3 count1 option chooses the already validated subgroup
-/// arithmetic. Finite/fault/merge and all-family publication remain unchanged.
-fn launch_q3_subgroup_segments(
+/// Only explicit fixed-public Q3 options select subgroup original64 or the
+/// alternative integer arithmetic. Finite/fault/merge and all-family
+/// publication remain unchanged; no failure selects an alternative leaf.
+fn launch_q3_selected_segments(
     arena: &PrivateArena,
     bank: &ExpertBanks,
     g: k::Geometry,
     s: &k::Spans,
     ids: &[BufferId; 7],
     active: &[bool; 2],
+    integer: bool,
 ) -> Result<()> {
     let client = arena.client().map_err(u::fault)?;
     let owner = |index: usize| arena.handle(ids[index]).cloned().map_err(u::fault);
@@ -948,7 +973,12 @@ fn launch_q3_subgroup_segments(
         let ga = &bank.gate().segments()[shard];
         let up = &bank.up().segments()[shard];
         let down = &bank.down().segments()[shard];
-        crate::quant_matvec::q3_subgroup_moe::launch(
+        let launch = if integer {
+            crate::quant_matvec::iq_moe_integer::launch
+        } else {
+            crate::quant_matvec::q3_subgroup_moe::launch
+        };
+        launch(
             client,
             g,
             s,

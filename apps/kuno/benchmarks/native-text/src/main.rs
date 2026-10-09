@@ -273,11 +273,11 @@ fn q3_public_positions(
         Some(raw @ ("4" | "13" | "23" | "32"))
             if mode == "resident-count1-hybrid-chat"
                 && profile.is_low_bit()
-                && match (profile, raw) {
-                    (expert_banks::OriginalPackedProfile::DaslabIq3, "23") => false,
-                    (expert_banks::OriginalPackedProfile::UnslothQ3, "13") => false,
-                    _ => true,
-                }
+                && !matches!(
+                    (profile, raw),
+                    (expert_banks::OriginalPackedProfile::DaslabIq3, "23")
+                        | (expert_banks::OriginalPackedProfile::UnslothQ3, "13")
+                )
                 && protected =>
         {
             raw.parse().map_err(|_| "public Q3 positions")
@@ -322,10 +322,18 @@ fn q3_speed_fixture_option(
                 && protected
                 && empty_fill
                 && matches!(positions, 4 | 13 | 23 | 32)
-                && matches!(option, "skip-segments" | "subgroup-moe" | "ideal-prefix")
+                && matches!(
+                    option,
+                    "skip-segments" | "subgroup-moe" | "integer-moe" | "ideal-prefix"
+                )
                 && match option {
                     "skip-segments" => true,
                     "subgroup-moe" => profile == expert_banks::OriginalPackedProfile::UnslothQ3,
+                    "integer-moe" => matches!(
+                        (profile, positions),
+                        (expert_banks::OriginalPackedProfile::UnslothQ3, 4 | 23 | 32)
+                            | (expert_banks::OriginalPackedProfile::DaslabIq3, 4 | 13 | 32)
+                    ),
                     "ideal-prefix" => matches!(
                         (profile, positions),
                         (expert_banks::OriginalPackedProfile::UnslothQ3, 23)
@@ -338,6 +346,43 @@ fn q3_speed_fixture_option(
         }
         _ => Err("Q3 speed diagnostic requires its explicit protected original fixture"),
     }
+}
+
+/// The GPU integer leaf changes activation arithmetic, not CPU policy. Existing
+/// supported direct-device/FMA/worker builds remain usable; CPU Q8 and the older
+/// Q4 fused/integer paths cannot be selected alongside this fixed experiment.
+#[allow(clippy::too_many_arguments)]
+fn q3_integer_moe_policy(
+    enabled: bool,
+    empty_fill: bool,
+    skip_segments: bool,
+    fast_gpu: bool,
+    gpu_router: bool,
+    next_shared: bool,
+    subgroup_moe: bool,
+    incompatible_arithmetic: bool,
+) -> Result<(), &'static str> {
+    if enabled
+        && (!empty_fill
+            || !skip_segments
+            || !fast_gpu
+            || !gpu_router
+            || !next_shared
+            || subgroup_moe
+            || incompatible_arithmetic)
+    {
+        return Err(
+            "Q3 integer MoE requires protected fast count1 empty/segment policy and exclusive original CPU arithmetic",
+        );
+    }
+    Ok(())
+}
+
+fn q3_integer_moe_shared_limit(enabled: bool, available: u32) -> Result<(), &'static str> {
+    if enabled && (available as usize) < quant_matvec::iq_moe_integer::MAX_SHARED_BYTES {
+        return Err("Q3 integer MoE requires its complete workgroup storage limit");
+    }
+    Ok(())
 }
 
 fn q3_router_reference_path(
@@ -1018,6 +1063,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let q3_skip_empty_segments = speed_option("KUNO_LAB_Q3_SKIP_EMPTY_SEGMENTS", "skip-segments")?;
     let q3_subgroup_moe = speed_option("KUNO_LAB_Q3_SUBGROUP_MOE", "subgroup-moe")?;
+    let q3_integer_moe = speed_option("KUNO_LAB_Q3_INTEGER_MOE", "integer-moe")?;
     let q3_ideal_public = speed_option("KUNO_LAB_Q3_IDEAL_PUBLIC", "ideal-prefix")?;
     let q3_oracle_raw = std::env::var_os("KUNO_LAB_Q3_EXPERT_ORACLE");
     let q3_expert_oracle = q3_expert_oracle(
@@ -1579,6 +1625,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         packed_profile,
     )?;
     if q3_main {
+        q3_integer_moe_policy(
+            q3_integer_moe,
+            q3_empty_slot_fill,
+            q3_skip_empty_segments,
+            fast_gpu,
+            gpu_router,
+            next_shared,
+            q3_subgroup_moe,
+            cpu_q8 || cpu_q8_residual || cpu_q8_two_pass || fused_experts || integer_experts,
+        )?;
         packed_profile.validate_shortcuts(
             false,
             fused_experts,
@@ -1631,6 +1687,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let adapter = candidates.remove(0);
         let info = adapter.get_info();
+        // Admission precedes request_device; required_limits below requests the
+        // complete admitted adapter limits, including this workgroup storage.
+        q3_integer_moe_shared_limit(
+            q3_integer_moe,
+            adapter.limits().max_compute_workgroup_storage_size,
+        )?;
         if mtp_gpu_inputs.is_some() {
             mtp_gpu_probe::validate_limits(&adapter.limits())?;
         }
@@ -2845,6 +2907,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             executor.q3_empty_slot_fill = q3_empty_slot_fill;
             executor.q3_skip_empty_segments = q3_skip_empty_segments;
             executor.q3_subgroup_moe = q3_subgroup_moe;
+            executor.q3_integer_moe = q3_integer_moe;
             executor.q3_expert_oracle = q3_expert_oracle;
             executor.q3_router_reference = q3_router_reference.clone();
             executor.fast_dense = fast_gpu;
@@ -3239,6 +3302,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     receipt["q3_empty_slot_fill"] = serde_json::json!(q3_empty_slot_fill);
                     receipt["q3_skip_empty_segments"] = serde_json::json!(q3_skip_empty_segments);
                     receipt["q3_subgroup_moe"] = serde_json::json!(q3_subgroup_moe);
+                    receipt["q3_integer_moe"] = serde_json::json!(q3_integer_moe);
+                    receipt["moe_arithmetic"] = serde_json::json!(if q3_integer_moe {
+                        "original-packed-IQ-two-residual-Q8-planes-integer-candidate"
+                    } else {
+                        "original64-F32"
+                    });
+                    receipt["original_f32_full_logits_and_greedy_required"] =
+                        serde_json::json!(true);
+                    receipt["moe_alternative_activation_arithmetic"] =
+                        serde_json::json!(q3_integer_moe);
                     receipt["expert_slots_reserved"] = serde_json::json!(48 * 144);
                     receipt["expert_slots_occupied_after_prefill"] = serde_json::json!(pre_slots);
                     receipt["expert_slots_occupied_after_decode"] = serde_json::json!(occupied);
@@ -3745,6 +3818,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 executor.q3_empty_slot_fill = q3_empty_slot_fill;
                 executor.q3_skip_empty_segments = q3_skip_empty_segments;
                 executor.q3_subgroup_moe = q3_subgroup_moe;
+                executor.q3_integer_moe = q3_integer_moe;
                 executor.q3_expert_oracle = q3_expert_oracle;
                 executor.q3_router_reference = q3_router_reference.clone();
                 executor.fast_dense = fast_gpu;
@@ -3874,6 +3948,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     executor.q3_empty_slot_fill = q3_empty_slot_fill;
                     executor.q3_skip_empty_segments = q3_skip_empty_segments;
                     executor.q3_subgroup_moe = q3_subgroup_moe;
+                    executor.q3_integer_moe = q3_integer_moe;
                     executor.q3_expert_oracle = q3_expert_oracle;
                     executor.q3_router_reference = q3_router_reference.clone();
                     executor.fast_dense = fast_gpu;
@@ -4149,6 +4224,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             e.q3_empty_slot_fill = q3_empty_slot_fill;
                             e.q3_skip_empty_segments = q3_skip_empty_segments;
                             e.q3_subgroup_moe = q3_subgroup_moe;
+                            e.q3_integer_moe = q3_integer_moe;
                             e.gpu_router = gpu_router;
                             e.fused_experts = fused_experts;
                             e.integer_experts = integer_experts;
@@ -5339,5 +5415,138 @@ mod daslab_connection_tests {
                 .is_err()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod q3_integer_model_policy_tests {
+    use super::*;
+    use expert_banks::OriginalPackedProfile as P;
+
+    #[test]
+    fn integer_moe_opt_in_has_exact_public_model_and_position_scope() {
+        let mode = "resident-count1-hybrid-chat";
+        assert_eq!(
+            q3_speed_fixture_option("probe", P::Q4, false, 4, false, "integer-moe", None),
+            Ok(false)
+        );
+        for (profile, positions) in [
+            (P::UnslothQ3, 4),
+            (P::UnslothQ3, 23),
+            (P::UnslothQ3, 32),
+            (P::DaslabIq3, 4),
+            (P::DaslabIq3, 13),
+            (P::DaslabIq3, 32),
+        ] {
+            assert_eq!(
+                q3_speed_fixture_option(
+                    mode,
+                    profile,
+                    true,
+                    positions,
+                    true,
+                    "integer-moe",
+                    Some("1")
+                ),
+                Ok(true)
+            );
+        }
+        for (selected, profile, public, positions, empty) in [
+            ("resident-chat", P::UnslothQ3, true, 4, true),
+            ("probe", P::UnslothQ3, true, 4, true),
+            (mode, P::Q4, true, 4, true),
+            (mode, P::UnslothQ3, false, 4, true),
+            (mode, P::UnslothQ3, true, 4, false),
+            (mode, P::UnslothQ3, true, 13, true),
+            (mode, P::DaslabIq3, true, 23, true),
+            (mode, P::DaslabIq3, true, 128, true),
+        ] {
+            assert!(
+                q3_speed_fixture_option(
+                    selected,
+                    profile,
+                    public,
+                    positions,
+                    empty,
+                    "integer-moe",
+                    Some("1")
+                )
+                .is_err()
+            );
+        }
+        for raw in ["", "0", "01", " 1", "true", "2"] {
+            assert!(
+                q3_speed_fixture_option(
+                    mode,
+                    P::DaslabIq3,
+                    true,
+                    13,
+                    true,
+                    "integer-moe",
+                    Some(raw)
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn integer_moe_requires_every_dependency_and_excludes_other_arithmetic() {
+        assert!(
+            q3_integer_moe_policy(false, false, false, false, false, false, true, true).is_ok()
+        );
+        assert!(q3_integer_moe_policy(true, true, true, true, true, true, false, false).is_ok());
+        for missing in 0..5 {
+            let mut required = [true; 5];
+            required[missing] = false;
+            assert!(
+                q3_integer_moe_policy(
+                    true,
+                    required[0],
+                    required[1],
+                    required[2],
+                    required[3],
+                    required[4],
+                    false,
+                    false
+                )
+                .is_err()
+            );
+        }
+        assert!(q3_integer_moe_policy(true, true, true, true, true, true, true, false).is_err());
+        // Each actual incompatible arithmetic selection is rejected. Supported
+        // direct-device/FMA/work-stealing builds add no blanket rejection;
+        // existing CPU/dispatch admission still checks their explicit policies.
+        for incompatible in [
+            [true, false, false, false, false],
+            [false, true, false, false, false],
+            [false, false, true, false, false],
+            [false, false, false, true, false],
+            [false, false, false, false, true],
+        ] {
+            assert!(
+                q3_integer_moe_policy(
+                    true,
+                    true,
+                    true,
+                    true,
+                    true,
+                    true,
+                    false,
+                    incompatible.into_iter().any(|v| v)
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn complete_integer_workgroup_storage_is_admitted_before_device_creation() {
+        let required = quant_matvec::iq_moe_integer::MAX_SHARED_BYTES as u32;
+        assert_eq!(required, 24_196);
+        assert!(q3_integer_moe_shared_limit(false, 0).is_ok());
+        assert!(q3_integer_moe_shared_limit(true, required - 1).is_err());
+        assert!(q3_integer_moe_shared_limit(true, required).is_ok());
+        assert!(q3_integer_moe_shared_limit(true, 32_768).is_ok());
     }
 }
