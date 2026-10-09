@@ -31,7 +31,10 @@ const RESIDUAL_WORDS: usize = MAX_BATCH * HC * D;
 const BLOCK_WORDS: usize = MAX_BATCH * D;
 const HYBRID_MAIN: u64 = 163_840;
 const HYBRID_HOST: usize = 1024 * 1024;
-const HYBRID_RUNTIME: u64 = 1024 * 1024;
+// Gate and down planes each prepare once per count1 layer. Retain their full
+// INFO source/target/inspection charge through the token's owning I/O audit.
+const HYBRID_PREPARE_INFO: u64 = 2 * LAYERS as u64 * 2048;
+const HYBRID_RUNTIME: u64 = 1024 * 1024 + HYBRID_PREPARE_INFO;
 const DEFAULT_REUSE_METADATA: usize = 256 * 1024;
 
 /// Complete separate runtime metadata reservation, added to the existing
@@ -60,8 +63,11 @@ pub(crate) fn host_reservation(hybrid: bool, reuse_metadata: usize) -> Result<(u
 // Two extra scratch clears per layer; replacement merge/fold plus the new
 // owning packet fold have zero net INFO growth. Reserve128 rather than96.
 // Count full INFO source/target/inspection ownership, both bridge upload pages
-// with duplicate inspection, packet readback and duplicated slab padding.
-const HYBRID_IO_DERIVED: u64 = 128 * 2048 + 4 * HYBRID_MAIN + 2 * 32768 + 4 * 8192;
+// with duplicate inspection, packet readback and duplicated slab padding. The
+// prepared integer pair adds96 records separately; no interior-fence/cache
+// credit or existing128-record clear allowance is spent on those prepares.
+const HYBRID_IO_DERIVED: u64 =
+    128 * 2048 + 4 * HYBRID_MAIN + 2 * 32768 + 4 * 8192 + HYBRID_PREPARE_INFO;
 const _: () = {
     assert!(HYBRID_IO_DERIVED <= HYBRID_RUNTIME);
 };
@@ -1932,8 +1938,12 @@ mod tests {
         assert_eq!(TOTAL_MAIN + HYBRID_MAIN, 818413568);
         assert_eq!(1286 + 90 + 2, 1378);
         assert_eq!(HOST_CAP - (HOST_COMPONENTS + HYBRID_HOST), 327680);
-        assert_eq!(runtime_bytes(38).unwrap() + HYBRID_RUNTIME, 65138688);
-        assert_eq!(HYBRID_IO_DERIVED, 1015808);
+        assert_eq!(HYBRID_PREPARE_INFO, 96 * 2048);
+        assert_eq!(HYBRID_PREPARE_INFO, 196608);
+        assert_eq!(HYBRID_RUNTIME, 1245184);
+        assert_eq!(runtime_bytes(16).unwrap() + HYBRID_RUNTIME, 65245184);
+        assert_eq!(runtime_bytes(38).unwrap() + HYBRID_RUNTIME, 65335296);
+        assert_eq!(HYBRID_IO_DERIVED, 1212416);
         assert_eq!(HYBRID_RUNTIME - HYBRID_IO_DERIVED, 32768);
         assert!(
             runtime_bytes(38).unwrap() + HYBRID_RUNTIME <= crate::executor::RESIDENT_RUNTIME_IO_MAX

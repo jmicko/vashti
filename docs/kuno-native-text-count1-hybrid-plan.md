@@ -28,7 +28,7 @@ layer tensors; it adds no expert bank, weight conversion or host payload cache.
 | MAIN total | 196,608 B, three pages reused across 48 layers | 818,249,728 → 818,446,336 B; 1376 → 1379 owners |
 | Private application host | Shared 1,048,576 B CPU/bridge peak, with exact live capacities checked | 11,075,584 → 12,124,160 B within existing 12 MiB; 458,752 B remaining |
 | Public CPU jobs | Existing 40 MiB cap; maximum actual ten Q8 experts: 35,840,000 B | Original packed bytes, released after each joined layer |
-| Owned runtime I/O | Additional 1 MiB conservative component peak | Existing 64,000,000 / 64,090,112 B envelopes → 65,048,576 / 65,138,688 B, below 64 MiB |
+| Owned runtime I/O | Initial additional 1 MiB estimate, superseded by the explicit prepare INFO reservation below | Current additional 1,245,184 B; existing 64,000,000 / 64,090,112 B envelopes → 65,245,184 / 65,335,296 B, below 64 MiB |
 
 The host reservation is not CPU1 MiB plus another bridge1 MiB. Reuse the existing
 64 KiB router host allowance for the combined packet: its32 KiB map lease plus
@@ -238,15 +238,23 @@ the caller subtracts actual live guarded mixed/logit storage, split/map and
 selection headers from that limit through a subtract-only operator API. After
 join, actual Partials capacity plus padded CPU and owner encoding and all live
 headers must fit that same1MiB. No CPU job/vector is retained in48 Pending
-receipts. One additional1MiB runtime component is conservatively precharged
-alongside the existing64090112-byte maximum, giving65138688 below64MiB.
-The additional component explicitly counts128 full2048-byte INFO envelopes
+receipts. The current additional runtime component is conservatively precharged
+at1245184 bytes alongside the existing64090112-byte maximum, giving65335296
+below64MiB. The base component explicitly counts128 full2048-byte INFO envelopes
 (the actual additional clears need96 records), four ownership/inspection copies
 of the160KiB CPU+owner upload, two32KiB packet readback copies and four8KiB
-slab tails:1015808 bytes. Rounded1MiB leaves32768 bytes. This supersedes the
-initial688128-byte estimate, which did not spell out full INFO ownership.
-The mandatory audited router dependency drains the preceding layer before
-scratch reuse; the final original whole-model proof covers the last layer.
+slab tails:1015808 bytes. The once-prepared integer pair independently adds one
+gate and one down prepare per layer:2×48=96 further full2048-byte INFO envelopes,
+or196608 bytes. Derived ownership is therefore1212416 bytes; the1245184-byte
+reservation retains the original32768-byte margin. This replaces the earlier
+1MiB runtime estimate and applies conservatively to every explicit count1
+hybrid owner plan, including configurations that do not select integer math.
+Host reservations, MAIN owners and the independent64MiB runtime hard cap remain
+unchanged. No INFO interning or interior-fence credit reduces this charge:
+token-only router bridges retain tracked runtime owners until the original
+owning audit. Same-stream ordering permits scratch reuse; the final original
+whole-model proof still accepts every retained runtime owner. The initial
+688128-byte estimate did not spell out full INFO ownership and is superseded.
 
 The owner packet has header `[1,cpu_count,gpu_count,0]`, then80 triples
 `[owner,index,ready]`. Active GPU records use owner0/index=original rank/ready0,
