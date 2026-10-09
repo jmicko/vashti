@@ -5,6 +5,17 @@ import resource
 import sys
 
 def memory_limit(environment, arguments):
+    if "KUNO_LAB_TARGET_ROWS_PUBLIC_ONLY" in environment:
+        permitted = {"KUNO_LAB_TARGET_ROWS_PUBLIC_ONLY", "KUNO_LAB_STATIC_CACHE_BYTES", "KUNO_TEST_Q3_DIR", "KUNO_PUBLIC_TARGET_ROWS_REFERENCE", "KUNO_PUBLIC_RECEIPT"}
+        selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
+        if (set(selected) != permitted or any(not value for value in selected.values())
+                or selected["KUNO_LAB_TARGET_ROWS_PUBLIC_ONLY"] != "1"
+                or selected["KUNO_LAB_STATIC_CACHE_BYTES"] != "8589934592"
+                or len(arguments) != 3 or arguments[1:] != ["intel", "daslab-target-rows-probe"]):
+            raise ValueError("Larger target cache requires the fixed public DASLab target fixture")
+        # Original mapped model pages and the separately bounded 8GiB cache;
+        # this does not enlarge any request-derived owning allocation.
+        return 48 * 1024**3
     value = environment.get("KUNO_LAB_LARGE_WEIGHT_CACHE", "0")
     if value == "0":
         return 8 * 1024**3
