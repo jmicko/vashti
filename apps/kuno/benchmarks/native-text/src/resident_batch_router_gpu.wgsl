@@ -1,5 +1,6 @@
 // Experimental F32 routing of actual MAX8 scores. No fixed/oracle experts.
 // Complete owning preflight and selection/map publication are ordered phases.
+const SOURCE_CAPACITY:u32=144u;
 struct Params { layer:u32, start:u32, count:u32, margin:u32,
                 version:u32, reserved0:u32, reserved1:u32, reserved2:u32 }
 @group(0) @binding(0) var<storage,read> router:array<u32>;
@@ -34,7 +35,7 @@ fn preflight(@builtin(global_invocation_id) global:vec3<u32>) {
     }
     if index<32768u {
         let slot=table[index];
-        if index<24576u {if slot!=0xffffffffu && slot>=144u {bad=true;}}
+        if index<24576u {if slot!=0xffffffffu && slot>=SOURCE_CAPACITY {bad=true;}}
         else if slot!=0u {bad=true;}
     }
     if index<9336u {if audit[p.layer*9336u+index]!=0u {bad=true;}}
@@ -132,7 +133,7 @@ fn main(@builtin(local_invocation_index) local:u32) {
         for(var route=0u;route<p.count*10u;route++) {
             let expert=picked[(route/10u)*11u+route%10u];
             let slot=table[p.layer*512u+expert];
-            if slot>=144u {reject(4u);}
+            if slot>=SOURCE_CAPACITY {reject(4u);}
             var group=wire[3];
             for(var old=0u;old<wire[3];old++) {
                 if group_expert[old]==expert {group=old;}
@@ -183,7 +184,7 @@ fn main(@builtin(local_invocation_index) local:u32) {
             else if j==2u {bits=p.layer;}
             else if j==3u {bits=p.start;}
             else if j==4u {bits=p.count;}
-            else if j==5u {bits=144u;}
+            else if j==5u {bits=SOURCE_CAPACITY;}
             else if j==6u {bits=wire[3];}
             else if j>=8u && j<8u+p.count*2u {
                 let row=(j-8u)/2u;

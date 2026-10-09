@@ -19,6 +19,10 @@ const FIRST: [usize; 5] = [0, 72, 144, 288, 432];
 const ROLES: [Role; 3] = [Role::Gate, Role::Up, Role::Down];
 const PAGES: usize = 15;
 const EXTENTS: usize = 8 + PAGES;
+const ROUTER_EXTENTS: usize = EXTENTS + 3;
+pub(crate) const ROUTER_MAIN_BYTES: u64 = super::batch_router::MAIN_BYTES;
+pub(crate) const ROUTER_RUNTIME_BYTES: u64 = super::batch_router::RUNTIME_BYTES;
+pub(crate) const ROUTER_HOST_BYTES: u64 = super::batch_router::HOST_BYTES as u64;
 fn reject() -> Error {
     err("frozen public expert source rejected")
 }
@@ -350,6 +354,16 @@ impl Sources {
         check_mapping(&l.by_expert, &bank.slots)?;
         Ok(l)
     }
+    pub(super) fn slot_table(
+        &self,
+        layer: usize,
+        bank: &ExpertBanks,
+    ) -> Result<Zeroizing<[u32; 512]>> {
+        let l = self.check_layer(layer, bank)?;
+        Ok(Zeroizing::new(std::array::from_fn(|i| {
+            u32::from(l.by_expert[i])
+        })))
+    }
     pub(super) fn geometry(&self, layer: usize, bank: &ExpertBanks) -> Result<k::Geometry> {
         Ok(self.check_layer(layer, bank)?.geometry)
     }
@@ -361,7 +375,7 @@ impl Sources {
             .map(|p| p.handle.clone())
             .collect())
     }
-    fn validate_source_layer(
+    pub(super) fn validate_source_layer(
         &self,
         client: &ComputeClient<WgpuRuntime>,
         layer: usize,
@@ -462,16 +476,48 @@ impl Sources {
         fault: BufferId,
         pending_pins: Option<&[Handle]>,
     ) -> Result<()> {
+        self.physical_inner(arena, layer, bank, ids, fault, pending_pins, &[])
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn physical_with_router(
+        &self,
+        arena: &PrivateArena,
+        layer: usize,
+        bank: &ExpertBanks,
+        ids: &[BufferId; 7],
+        fault: BufferId,
+        pending_pins: Option<&[Handle]>,
+        router: &[BufferId; 3],
+    ) -> Result<()> {
+        self.physical_inner(arena, layer, bank, ids, fault, pending_pins, router)
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn physical_inner(
+        &self,
+        arena: &PrivateArena,
+        layer: usize,
+        bank: &ExpertBanks,
+        ids: &[BufferId; 7],
+        fault: BufferId,
+        pending_pins: Option<&[Handle]>,
+        router: &[BufferId],
+    ) -> Result<()> {
+        if !matches!(router.len(), 0 | 3) {
+            return Err(reject());
+        }
         let l = self.check_layer(layer, bank)?;
         let client = arena.client().map_err(u::fault)?;
         bank.check_client(client)?;
         let stream = arena.handle(fault).map_err(u::fault)?.stream;
-        let mut handles = Vec::with_capacity(EXTENTS);
-        let mut extents = Zeroizing::new([(0u64, 0u64); EXTENTS]);
+        let private = 8 + router.len();
+        let extent_count = private + PAGES;
+        let mut handles = Vec::with_capacity(extent_count);
+        let mut extents = Zeroizing::new([(0u64, 0u64); ROUTER_EXTENTS]);
         for (i, id) in ids
             .iter()
             .copied()
             .chain(std::iter::once(fault))
+            .chain(router.iter().copied())
             .enumerate()
         {
             if ids[..i.min(ids.len())].contains(&id) {
@@ -498,7 +544,7 @@ impl Sources {
             {
                 return Err(reject());
             }
-            extents[8 + i] = (
+            extents[private + i] = (
                 bytes,
                 if i % 5 >= 2 {
                     bytes
@@ -513,7 +559,7 @@ impl Sources {
             .checked_mul(std::mem::size_of::<Handle>())
             .ok_or(Error::ArithmeticOverflow)?;
         let metadata = u::resources(client, handles)?;
-        if metadata.len() != EXTENTS {
+        if metadata.len() != extent_count {
             return Err(reject());
         }
         let primary = handle_bytes
@@ -544,7 +590,7 @@ impl Sources {
             {
                 return Err(reject());
             }
-            if i >= 8 && !same_resource(actual, &l.pages[i - 8].resource) {
+            if i >= private && !same_resource(actual, &l.pages[i - private].resource) {
                 return Err(reject());
             }
         }
@@ -631,6 +677,7 @@ pub(super) struct Proof {
     count: Zeroizing<usize>,
     vram: u64,
     host: u64,
+    pub(super) router_owners: Option<Zeroizing<[BufferId; 3]>>,
 }
 impl Drop for Proof {
     fn drop(&mut self) {
@@ -663,6 +710,7 @@ impl Proof {
             count: Zeroizing::new(routes.count()),
             vram: 0,
             host: 0,
+            router_owners: None,
         };
         for (i, &expert) in union.protected_experts().iter().enumerate() {
             let slot = *l.by_expert.get(expert as usize).ok_or(reject())?;
@@ -679,6 +727,69 @@ impl Proof {
         }
         p.validate(layer, bank)?;
         Ok(p)
+    }
+    pub(super) fn deferred(
+        source: Arc<Sources>,
+        count: usize,
+        router_owners: [BufferId; 3],
+    ) -> Result<Self> {
+        if !(1..=3).contains(&count) {
+            return Err(reject());
+        }
+        Ok(Self {
+            source,
+            pairs: Zeroizing::new([(0, 0); 30]),
+            len: Zeroizing::new(0),
+            count: Zeroizing::new(count),
+            vram: 0,
+            host: 0,
+            router_owners: Some(Zeroizing::new(router_owners)),
+        })
+    }
+    pub(super) fn resolve_audited(
+        &mut self,
+        layer: usize,
+        bank: &ExpertBanks,
+        routes: &crate::resident_batch_router_gpu::AuditedRoutes,
+    ) -> Result<()> {
+        if *self.len != 0
+            || self.vram != 0
+            || self.host != 0
+            || self.router_owners.is_none()
+            || routes.count() != *self.count
+            || routes.groups() == 0
+            || routes.groups() > 30
+        {
+            return Err(reject());
+        }
+        let l = self.source.check_layer(layer, bank)?;
+        for (i, &(id, slot)) in routes.pairs().iter().enumerate() {
+            if id >= 512
+                || slot != u32::from(l.by_expert[id as usize])
+                || routes.pairs()[..i]
+                    .iter()
+                    .any(|&(e, s)| e == id || s == slot)
+            {
+                return Err(reject());
+            }
+        }
+        let mut vram = 0;
+        let mut host = 0;
+        for &id in &routes.experts()[..*self.count * 10] {
+            if id >= 512 || !routes.pairs().iter().any(|&(e, _)| e == id) {
+                return Err(reject());
+            }
+            if l.by_expert[id as usize] < 144 {
+                vram += 1;
+            } else {
+                host += 1;
+            }
+        }
+        self.pairs[..routes.groups()].copy_from_slice(routes.pairs());
+        *self.len = routes.groups();
+        self.vram = vram;
+        self.host = host;
+        self.validate(layer, bank)
     }
     pub(super) fn count(&self) -> usize {
         *self.count
@@ -751,9 +862,15 @@ impl Workspace {
         self.validate_public_warm_boundary(executor, graph, arena)?;
         if self.frozen_sources.is_some()
             || self.batch_router.is_some()
+                && (!self.frozen_host_batch_router_reserved()
+                    || self.batch_router_active()
+                    || !executor.target_frozen_host_router_reserved
+                    || !executor.target_batch_router_reserved)
             || self.prepared_verify3.is_some()
             || self.hybrid.is_some()
             || self.resident_router.is_some()
+            || executor.target_frozen_host_router_reserved
+                != self.frozen_host_batch_router_reserved()
             || sources.binding != self.binding
             || sources.layers.len() != 48
             || self.layout.capacity != 144
@@ -826,6 +943,162 @@ impl GpuExecutor<'_> {
         }
         out
     }
+    /// Device routing over authenticated original VRAM+host sources. The
+    /// copied actual-score audit must resolve this Pending before acceptance.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn enqueue_frozen_host_batch_router_moe(
+        &mut self,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+        w: &mut Workspace,
+        s: &Session,
+        layer: usize,
+        input: BufferId,
+        output: BufferId,
+        router: BufferId,
+        views: &BatchSpans,
+        cancel: &AtomicBool,
+    ) -> Result<Pending> {
+        let out = guarded(&w.poison.clone(), || {
+            u::cancel(cancel)?;
+            w.check(self, s, arena)?;
+            if !w.frozen_host_batch_router_active()
+                || !(1..=3).contains(&views.count())
+                || views.count() != s.stamp.count
+                || views.input_first() != 0
+                || views.output_first() != 0
+                || views.input_stride() != 2560
+                || views.output_stride() != 2560
+                || views.packed_first() != 0
+            {
+                return Err(reject());
+            }
+            w.check_batch_router_bank(self, graph, arena, layer)?;
+            graph.verify_unchanged()?;
+            self.model.verify_file_unchanged()?;
+            let source = w.frozen_sources.as_ref().ok_or(reject())?.clone();
+            let original = weights(graph, layer)?;
+            let key = original.gate.info().name().to_owned();
+            let bank = self.banks.get(&key).ok_or(reject())?;
+            let g = source.geometry(layer, bank)?;
+            let ids = w.ids(input, output);
+            let spans = k::Spans::new([0, 0, 2560, 0, 640, 0, 2560, 0, 0, 2560, 0]);
+            let mut words = Zeroizing::new([0usize; 7]);
+            for (i, &id) in ids.iter().enumerate() {
+                words[i] = u::words(arena, id)?;
+            }
+            spans.validate(g, *words).map_err(err)?;
+            let reserved = w.batch_router_ids().ok_or(reject())?;
+            let router_owners = [router, reserved[0], reserved[1]];
+            source.physical_with_router(
+                arena,
+                layer,
+                bank,
+                &ids,
+                s.stamp.fault,
+                None,
+                &router_owners,
+            )?;
+            let handle = |id| arena.handle(id).cloned().map_err(u::fault);
+            let handles = [
+                handle(router)?,
+                handle(reserved[0])?,
+                handle(ids[MAP])?,
+                handle(ids[PROB])?,
+                handle(reserved[1])?,
+                handle(s.stamp.fault)?,
+            ];
+            crate::resident_batch_router_gpu::validate_owners(
+                &handles,
+                layer,
+                s.stamp.start,
+                views.count(),
+            )?;
+            let proof = Proof::deferred(source.clone(), views.count(), router_owners)?;
+            w.policy.issue(layer)?;
+            u::zero_many(arena, &*w.ids)?;
+            crate::resident_batch_router_gpu::launch_frozen_sources(
+                arena.client().map_err(u::fault)?,
+                handles,
+                layer,
+                s.stamp.start,
+                views.count(),
+            )?;
+            // Fixed maximum union only schedules work. Each original kernel
+            // consumes the actual GPU MAP group/rank header, never forced IDs.
+            source.launch(arena, layer, bank, g, &spans, &ids, 30)?;
+            launch_finite_for_count(arena, g, &spans, &ids, views.count())?;
+            fold(
+                arena,
+                g,
+                &ids,
+                s.stamp.fault,
+                views.count(),
+                0,
+                views.count(),
+                false,
+            )?;
+            launch_reduce(arena, g, &spans, &ids, views.count())?;
+            launch_finite_for_count(arena, g, &spans, &ids, views.count())?;
+            fold(
+                arena,
+                g,
+                &ids,
+                s.stamp.fault,
+                views.count(),
+                0,
+                views.count(),
+                true,
+            )?;
+            u::cancel(cancel)?;
+            w.check(self, s, arena)?;
+            w.check_batch_router_bank(self, graph, arena, layer)?;
+            let pins = source.pins(layer, bank)?;
+            let metadata = std::mem::size_of::<Pending>()
+                .checked_add(std::mem::size_of::<Proof>())
+                .and_then(|n| {
+                    n.checked_add(pins.capacity().checked_mul(std::mem::size_of::<Handle>())?)
+                })
+                .ok_or(Error::ArithmeticOverflow)?;
+            if metadata > 32 * 1024 {
+                return Err(Error::LimitExceeded("frozen router pending host envelope"));
+            }
+            let pending = Pending {
+                views: Views {
+                    ids: Zeroizing::new([input, output]),
+                    offsets: Zeroizing::new([0, 2560, 0, 2560]),
+                },
+                stamp: Zeroizing::new((*s.stamp).clone()),
+                layer: Zeroizing::new(layer),
+                key,
+                instance: bank.instance(),
+                pins,
+                staged: None,
+                last: None,
+                count1: None,
+                deferred_router: Some(Zeroizing::new(w.identity)),
+                frozen_sources: Some(proof),
+                waves: Zeroizing::new(1),
+                poison: w.poison.clone(),
+                armed: true,
+            };
+            self.gpu_router_calls = self
+                .gpu_router_calls
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow)?;
+            self.moe_calls = self
+                .moe_calls
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow)?;
+            // Truthful source tiers are counted only after actual CPU audit and
+            // all-family acceptance. No ordinary GPU hit/upload claim here.
+            Ok(pending)
+        });
+        if out.is_err() {
+            self.poison_resident();
+        }
+        out
+    }
     #[allow(clippy::too_many_arguments)]
     fn frozen_batch_checked(
         &mut self,
@@ -846,6 +1119,7 @@ impl GpuExecutor<'_> {
         self.model.verify_file_unchanged()?;
         let source = w.frozen_sources.as_ref().ok_or(reject())?.clone();
         if !self.resident_banks_frozen
+            || self.target_frozen_host_router_reserved
             || self.target_frozen_host_source_identity != Some(source.plan_identity())
             || graph.binding_id() != source.binding
             || w.binding != source.binding
@@ -1161,6 +1435,9 @@ mod tests {
     fn truthful_increment_keeps_runtime_and_host_source_metadata_separate() {
         assert_eq!(EXTRA_INFO_BYTES_PER_CHUNK, 589_824);
         assert_eq!(EXTRA_HOST_BYTES, 2_105_344);
+        assert_eq!(ROUTER_MAIN_BYTES, 2_228_224);
+        assert_eq!(ROUTER_RUNTIME_BYTES, 9_175_040);
+        assert_eq!(ROUTER_HOST_BYTES, 5 * 1024 * 1024);
         assert_eq!(PARTS.into_iter().sum::<usize>(), 512);
         let mut next = 0;
         for (first, slots) in FIRST.into_iter().zip(PARTS) {

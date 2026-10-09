@@ -1298,7 +1298,7 @@ impl GpuExecutor<'_> {
                         != w.frozen_sources.as_ref().map(|s| s.plan_identity())
                     || w.hybrid.is_some()
                     || w.resident_router.is_some()
-                    || w.batch_router.is_some()
+                    || w.batch_router.is_some() && !w.frozen_host_batch_router_active()
                     || w.prepared_verify3.is_some())
             {
                 return Err(err("frozen source chunk policy"));
@@ -2484,7 +2484,21 @@ impl Workspace {
                 words[i] = u::words(arena, id)?;
             }
             spans.validate(g, *words).map_err(err)?;
-            return source.physical(arena, *p.layer, bank, &ids, s.stamp.fault, Some(&p.pins));
+            if self.frozen_host_batch_router_active() != proof.router_owners.is_some() {
+                return Err(err("frozen source router pending mode"));
+            }
+            return match &proof.router_owners {
+                Some(router) => source.physical_with_router(
+                    arena,
+                    *p.layer,
+                    bank,
+                    &ids,
+                    s.stamp.fault,
+                    Some(&p.pins),
+                    router,
+                ),
+                None => source.physical(arena, *p.layer, bank, &ids, s.stamp.fault, Some(&p.pins)),
+            };
         }
         if self.frozen_sources.is_some() {
             return Err(err("frozen source pending receipt required"));

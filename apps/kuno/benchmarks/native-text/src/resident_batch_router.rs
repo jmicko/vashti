@@ -1,6 +1,8 @@
-//! Construction-reserved, public warm13 all-hit GPU routing experiment.
-//! Actual routed IDs are checked against original CPU routing before any family
-//! commit. Missing experts reject; this is not a general offload implementation.
+//! Construction-reserved fixed-public actual-score GPU routing experiment.
+//! Ordinary warm13 addresses only real144 VRAM slots and rejects misses. The
+//! explicit frozen-source variant addresses authenticated original512 sources
+//! without extending BankSlots or publishing recency. Both variants require the
+//! deferred original CPU ID/order/wire audit before any all-family commit.
 use super::*;
 use crate::resident_batch_router_gpu as gpu;
 
@@ -8,13 +10,32 @@ pub(crate) const MAIN_BYTES: u64 = gpu::NEW_TABLE_AUDIT_BYTES;
 pub(crate) const HOST_BYTES: usize = 5 * 1024 * 1024;
 pub(crate) const RUNTIME_BYTES: u64 = 4 * MAIN_BYTES + 48 * 4096 + 65536;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SourcePolicy {
+    Resident144,
+    FrozenHost512 {
+        identity: crate::public_host_expert_plan::PlanIdentity,
+        context: usize,
+    },
+}
 pub(super) struct Owners {
+    // Construction context is immutable; activation captures the exact sealed
+    // SourceSet identity once. Ordinary warm144 never accepts that source mode.
+    configured_context: Option<usize>,
+    source_policy: Option<SourcePolicy>,
     ids: Zeroizing<[BufferId; 2]>,
     table: Option<Zeroizing<Vec<u32>>>,
     instances: Vec<expert_banks::BankInstance>,
 }
 fn reject() -> Error {
     err("public warm batch router rejected")
+}
+fn valid_window(context: usize, start: u64, count: usize) -> bool {
+    (1..=4096).contains(&context)
+        && (1..=3).contains(&count)
+        && start
+            .checked_add(count as u64)
+            .is_some_and(|end| end <= context as u64)
 }
 fn slot_table(slots: &crate::bank_slots::BankSlots) -> Result<Zeroizing<[u32; 512]>> {
     if slots.capacity() != 144 || slots.experts() != 512 {
@@ -46,6 +67,25 @@ impl Workspace {
         arena: &mut PrivateArena,
         allocation: &ModelConstructionAllocation<'_>,
     ) -> Result<()> {
+        self.reserve_batch_router_policy(arena, allocation, None)
+    }
+    pub(crate) fn reserve_frozen_host_batch_router(
+        &mut self,
+        arena: &mut PrivateArena,
+        allocation: &ModelConstructionAllocation<'_>,
+        context: usize,
+    ) -> Result<()> {
+        if !(1..=4096).contains(&context) {
+            return Err(reject());
+        }
+        self.reserve_batch_router_policy(arena, allocation, Some(context))
+    }
+    fn reserve_batch_router_policy(
+        &mut self,
+        arena: &mut PrivateArena,
+        allocation: &ModelConstructionAllocation<'_>,
+        configured_context: Option<usize>,
+    ) -> Result<()> {
         allocation.check(&self.admission)?;
         if self.batch_router.is_some()
             || self.hybrid.is_some()
@@ -58,6 +98,8 @@ impl Workspace {
             return Err(reject());
         }
         self.batch_router = Some(Owners {
+            configured_context,
+            source_policy: None,
             ids: Zeroizing::new([
                 arena.allocate_zeroed(48 * 512).map_err(u::fault)?,
                 arena.allocate_zeroed(gpu::AUDIT_WORDS).map_err(u::fault)?,
@@ -66,6 +108,16 @@ impl Workspace {
             instances: Vec::new(),
         });
         Ok(())
+    }
+    pub(super) fn frozen_host_batch_router_reserved(&self) -> bool {
+        self.batch_router
+            .as_ref()
+            .is_some_and(|r| r.configured_context.is_some())
+    }
+    pub(crate) fn frozen_host_batch_router_active(&self) -> bool {
+        self.batch_router.as_ref().is_some_and(|r| {
+            matches!(r.source_policy, Some(SourcePolicy::FrozenHost512 { .. })) && r.table.is_some()
+        })
     }
     pub(crate) fn batch_router_active(&self) -> bool {
         self.batch_router
@@ -85,6 +137,10 @@ impl Workspace {
         self.policy.completed_boundary()?;
         let owners = self.batch_router.as_ref().ok_or(reject())?;
         if owners.table.is_some()
+            || owners.configured_context.is_some()
+            || owners.source_policy.is_some()
+            || self.frozen_sources.is_some()
+            || e.target_frozen_host_router_reserved
             || !e.target_rows_reserved
             || e.packed_profile != expert_banks::OriginalPackedProfile::DaslabIq3
             || e.adaptive.is_some()
@@ -119,6 +175,70 @@ impl Workspace {
             .map_err(u::fault)?;
         let owners = self.batch_router.as_mut().ok_or(reject())?;
         owners.instances = instances;
+        owners.source_policy = Some(SourcePolicy::Resident144);
+        owners.table = Some(table);
+        Ok(())
+    }
+    pub(crate) fn activate_frozen_host_batch_router(
+        &mut self,
+        e: &GpuExecutor<'_>,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+    ) -> Result<()> {
+        self.validate_public_warm_boundary(e, graph, arena)?;
+        let owners = self.batch_router.as_ref().ok_or(reject())?;
+        let context = owners.configured_context.ok_or(reject())?;
+        let sources = self.frozen_sources.as_ref().ok_or(reject())?;
+        if owners.table.is_some()
+            || owners.source_policy.is_some()
+            || !e.target_rows_reserved
+            || !e.target_batch_router_reserved
+            || !e.target_frozen_host_router_reserved
+            || !e.resident_banks_frozen
+            || e.target_frozen_host_source_identity != Some(sources.plan_identity())
+            || context > graph.geometry().max_context
+            || e.packed_profile != expert_banks::OriginalPackedProfile::DaslabIq3
+            || e.batch_moe.is_some()
+            || !arena.public_owned_zero_audit_enabled()
+        {
+            return Err(reject());
+        }
+        let mut table = Zeroizing::new(vec![0u32; gpu::TABLE_WORDS]);
+        let mut instances = Vec::with_capacity(48);
+        for layer in 0..48 {
+            let weights = weights(graph, layer)?;
+            let bank = e.banks.get(weights.gate.info().name()).ok_or(reject())?;
+            bank.check_names(weights)?;
+            sources.validate_source_layer(
+                arena.client().map_err(u::fault)?,
+                layer,
+                bank,
+                arena.handle(self.ids[0]).map_err(u::fault)?,
+            )?;
+            table[layer * 512..(layer + 1) * 512]
+                .copy_from_slice(&*sources.slot_table(layer, bank)?);
+            instances.push(bank.instance());
+        }
+        gpu::validate_frozen_source_table(&table)?;
+        let mut bytes = Zeroizing::new(Vec::with_capacity(128 * 1024));
+        for &word in table.iter() {
+            bytes.extend_from_slice(&word.to_le_bytes());
+        }
+        arena
+            .client()
+            .map_err(u::fault)?
+            .write_private(
+                arena.handle(owners.ids[0]).map_err(u::fault)?.clone(),
+                std::mem::take(&mut *bytes),
+            )
+            .map_err(u::fault)?;
+        let policy = SourcePolicy::FrozenHost512 {
+            identity: sources.plan_identity(),
+            context,
+        };
+        let owners = self.batch_router.as_mut().ok_or(reject())?;
+        owners.instances = instances;
+        owners.source_policy = Some(policy);
         owners.table = Some(table);
         Ok(())
     }
@@ -131,10 +251,15 @@ impl Workspace {
         if !self.batch_router_active() {
             return Ok(());
         }
-        if !(1..=3).contains(&count) || start.checked_add(count as u64).is_none_or(|x| x > 13) {
+        let owners = self.batch_router.as_ref().ok_or(reject())?;
+        let context = match owners.source_policy.ok_or(reject())? {
+            SourcePolicy::Resident144 => 13,
+            SourcePolicy::FrozenHost512 { context, .. } => context,
+        };
+        if !valid_window(context, start, count) {
             return Err(reject());
         }
-        u::zero(arena, self.batch_router.as_ref().ok_or(reject())?.ids[1])
+        u::zero(arena, owners.ids[1])
     }
     pub(crate) fn resolve_batch_router_chunk(
         &self,
@@ -168,13 +293,29 @@ impl Workspace {
                     return Err(reject());
                 }
                 for layer in 0..48 {
-                    routes.push(gpu::audit_frame(
-                        bytes,
-                        table,
-                        layer,
-                        s.stamp.start,
-                        s.stamp.count,
-                    )?);
+                    routes.push(match owners.source_policy.ok_or(reject())? {
+                        SourcePolicy::Resident144 => {
+                            gpu::audit_frame(bytes, table, layer, s.stamp.start, s.stamp.count)?
+                        }
+                        SourcePolicy::FrozenHost512 { identity, .. } => {
+                            let sources = self.frozen_sources.as_ref().ok_or(reject())?;
+                            if identity != sources.plan_identity() {
+                                return Err(reject());
+                            }
+                            let bank = e
+                                .banks
+                                .get(weights(graph, layer)?.gate.info().name())
+                                .ok_or(reject())?;
+                            gpu::audit_frame_frozen_sources(
+                                bytes,
+                                table,
+                                layer,
+                                s.stamp.start,
+                                s.stamp.count,
+                                sources.geometry(layer, bank)?,
+                            )?
+                        }
+                    });
                 }
                 Ok(routes)
             },
@@ -198,6 +339,19 @@ impl Workspace {
             }
             let bank = e.banks.get(&p.key).ok_or(reject())?;
             self.check_batch_router_bank(e, graph, arena, layer)?;
+            if let Some(SourcePolicy::FrozenHost512 { identity, .. }) = owners.source_policy {
+                let sources = self.frozen_sources.as_ref().ok_or(reject())?;
+                let proof = p.frozen_sources.as_mut().ok_or(reject())?;
+                if identity != sources.plan_identity() || !Arc::ptr_eq(sources, &proof.source) {
+                    return Err(reject());
+                }
+                proof.resolve_audited(layer, bank, routes)?;
+                p.deferred_router = None;
+                continue;
+            }
+            if p.frozen_sources.is_some() {
+                return Err(reject());
+            }
             let mut staged = StagedSlots::begin(&bank.slots).map_err(|_| reject())?;
             let mut selected = Zeroizing::new([0usize; 80]);
             for (i, &(id, _)) in routes.pairs().iter().enumerate() {
@@ -227,7 +381,7 @@ impl Workspace {
         }
         Ok(())
     }
-    fn check_batch_router_bank(
+    pub(super) fn check_batch_router_bank(
         &self,
         e: &GpuExecutor<'_>,
         graph: BoundGraph<'_, '_>,
@@ -238,10 +392,25 @@ impl Workspace {
         let table = owners.table.as_ref().ok_or(reject())?;
         let weights = weights(graph, layer)?;
         let bank = e.banks.get(weights.gate.info().name()).ok_or(reject())?;
-        if layer >= 48
-            || owners.instances.get(layer) != Some(&bank.instance())
-            || table[layer * 512..(layer + 1) * 512] != *slot_table(&bank.slots)?
-        {
+        if layer >= 48 || owners.instances.get(layer) != Some(&bank.instance()) {
+            return Err(reject());
+        }
+        let expected = match owners.source_policy.ok_or(reject())? {
+            SourcePolicy::Resident144 => slot_table(&bank.slots)?,
+            SourcePolicy::FrozenHost512 { identity, context } => {
+                let sources = self.frozen_sources.as_ref().ok_or(reject())?;
+                if identity != sources.plan_identity()
+                    || e.target_frozen_host_source_identity != Some(identity)
+                    || !e.target_frozen_host_router_reserved
+                    || !e.resident_banks_frozen
+                    || context > graph.geometry().max_context
+                {
+                    return Err(reject());
+                }
+                sources.slot_table(layer, bank)?
+            }
+        };
+        if table[layer * 512..(layer + 1) * 512] != *expected {
             return Err(reject());
         }
         bank.check_names(weights)?;
@@ -269,6 +438,9 @@ impl GpuExecutor<'_> {
             u::cancel(cancel)?;
             w.check(self, s, arena)?;
             w.check_batch_router_bank(self, graph, arena, layer)?;
+            if w.frozen_host_batch_router_active() {
+                return Err(reject());
+            }
             if !(1..=3).contains(&views.count())
                 || s.stamp.count != views.count()
                 || views.input_first() != 0
@@ -380,6 +552,26 @@ impl GpuExecutor<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn immutable_context_keeps_original_warm13_limit_and_bounds_source_count1_to3() {
+        for context in [4, 13, 512, 2048, 4096] {
+            for count in 1..=3 {
+                assert!(valid_window(context, context as u64 - count as u64, count));
+                assert!(!valid_window(
+                    context,
+                    context as u64 - count as u64 + 1,
+                    count
+                ));
+            }
+            assert!(!valid_window(context, 0, 0));
+            assert!(!valid_window(context, 0, 4));
+            assert!(!valid_window(context, u64::MAX, 1));
+        }
+        assert!(!valid_window(0, 0, 1));
+        assert!(!valid_window(4097, 0, 1));
+        assert!(!valid_window(13, 13, 1));
+        assert!(valid_window(512, 13, 1));
+    }
     #[test]
     fn immutable_table_uses_actual_original_slots_and_marks_missing_experts() {
         let mut slots = crate::bank_slots::BankSlots::new(144, 512).unwrap();
