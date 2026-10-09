@@ -31,6 +31,15 @@ pub(crate) const PROB_WORDS: usize = 80;
 pub(crate) const OWNER_WORDS: usize = 244;
 pub(crate) const FRAME_WORDS: usize = PACKET_WORDS + MAP_WORDS + PROB_WORDS + OWNER_WORDS + 2;
 pub(crate) const AUDIT_WORDS: usize = 48 * FRAME_WORDS;
+pub(crate) const PREFLIGHT_WORDS: usize = 524288 - AUDIT_WORDS;
+pub(crate) const PREFLIGHT_WORKGROUPS: u32 = PREFLIGHT_WORDS.div_ceil(256) as u32;
+pub(crate) const INFO_CALLS_PER_LAYER: usize = 2;
+pub(crate) const EXTRA_INFO_CALLS_PER_TOKEN: usize = 48 * (INFO_CALLS_PER_LAYER - 1);
+pub(crate) const EXTRA_INFO_BYTES_PER_TOKEN: u64 = EXTRA_INFO_CALLS_PER_TOKEN as u64 * 2048;
+// Frozen full-scan launch geometry and the extra conservative INFO envelope.
+// The consumer must charge this increment before enabling the paired phase.
+const _: () = assert!(PREFLIGHT_WORDS == 76832 && PREFLIGHT_WORKGROUPS == 301);
+const _: () = assert!(INFO_CALLS_PER_LAYER == 2 && EXTRA_INFO_BYTES_PER_TOKEN == 98304);
 const OWNED_BYTES: [u64; 7] = [
     (PACKET_WORDS * 4) as u64,
     (TABLE_WORDS * 4).next_power_of_two() as u64,
@@ -42,6 +51,7 @@ const OWNED_BYTES: [u64; 7] = [
 ];
 
 struct Kernel;
+struct PreflightKernel;
 impl KernelMetadata for Kernel {
     fn name(&self) -> &'static str {
         "ResidentCount1RouterMapAudit"
@@ -68,6 +78,35 @@ impl CubeTask<AutoCompiler> for Kernel {
             source: include_str!("resident_router_gpu.wgsl").into(),
             repr: None,
             cube_dim: CubeDim::new_1d(64),
+            debug_info: None,
+        })
+    }
+}
+impl KernelMetadata for PreflightKernel {
+    fn name(&self) -> &'static str {
+        "ResidentCount1RouterOwningPreflight"
+    }
+    fn id(&self) -> KernelId {
+        KernelId::new::<Self>().cube_dim(CubeDim::new_1d(256))
+    }
+    fn address_type(&self) -> StorageType {
+        StorageType::Scalar(ElemType::UInt(UIntKind::U32))
+    }
+}
+impl CubeTask<AutoCompiler> for PreflightKernel {
+    fn compile(
+        &self,
+        _: &mut AutoCompiler,
+        _: &cubecl::WgpuCompilationOptions,
+        _: ExecutionMode,
+        _: StorageType,
+    ) -> std::result::Result<CompiledKernel<AutoCompiler>, CompilationError> {
+        Ok(CompiledKernel {
+            entrypoint_name: "main".into(),
+            debug_name: None,
+            source: include_str!("resident_router_gpu_preflight.wgsl").into(),
+            repr: None,
+            cube_dim: CubeDim::new_1d(256),
             debug_info: None,
         })
     }
@@ -100,19 +139,27 @@ pub(crate) fn launch(
     start: u64,
 ) -> Result<()> {
     validate(&owners, layer, start)?;
-    let mut args = KernelArguments::new();
-    for owner in owners {
-        args = args.with_buffer(owner.binding());
-    }
-    args = args.with_info(MetadataBindingInfo::custom(vec![
-        layer as u64 | (start << 32),
-        0,
-    ]));
-    // SAFETY: fixed complete extents/stream and bounded coordinates above.
-    // Parent proves physical disjoint owners/client/bank identity; shader
-    // preflight rejects all invalid wires before any header or audit write.
+    let arguments = || {
+        let mut args = KernelArguments::new();
+        for owner in &owners {
+            args = args.with_buffer(owner.clone().binding());
+        }
+        args.with_info(MetadataBindingInfo::custom(vec![
+            layer as u64 | (start << 32),
+            0,
+        ]))
+    };
+    // SAFETY: the same fixed complete owners/coordinates are retained across
+    // both ordered dispatches. Parent proves physical alias/client/bank and
+    // epoch identity. Complete preflight writes only sticky fault; publication
+    // first rejects it and independently validates actual numeric routes.
     unsafe {
-        client.launch_unchecked(Box::new(Kernel), CubeCount::Static(1, 1, 1), args);
+        client.launch_unchecked(
+            Box::new(PreflightKernel),
+            CubeCount::Static(PREFLIGHT_WORKGROUPS, 1, 1),
+            arguments(),
+        );
+        client.launch_unchecked(Box::new(Kernel), CubeCount::Static(1, 1, 1), arguments());
     }
     Ok(())
 }
@@ -136,6 +183,8 @@ mod tests {
         );
         assert_eq!(FRAME_WORDS, 9322);
         assert_eq!(AUDIT_WORDS, 447456);
+        assert_eq!(EXTRA_INFO_CALLS_PER_TOKEN, 48);
+        assert_eq!(EXTRA_INFO_BYTES_PER_TOKEN, 98304);
         assert_eq!(BufferLayout::new(TABLE_WORDS).unwrap().owned_bytes, 131072);
         assert_eq!(BufferLayout::new(AUDIT_WORDS).unwrap().owned_bytes, 2097152);
         assert!(validate(&owners(), 0, 0).is_ok());
@@ -256,5 +305,77 @@ mod tests {
         assert!(source.contains("storageBarrier();"));
         assert!(!source.contains("exp("));
         assert!(!source.contains("select("));
+    }
+
+    #[test]
+    fn parallel_preflight_preserves_every_full_scan_and_only_writes_sticky_fault() {
+        let source = include_str!("resident_router_gpu_preflight.wgsl");
+        let module = wgpu::naga::front::wgsl::parse_str(source).unwrap();
+        let info = wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap();
+        assert_eq!(module.entry_points[0].workgroup_size, [256, 1, 1]);
+        let mut bindings = Vec::new();
+        for (handle, var) in module.global_variables.iter() {
+            if let Some(binding) = &var.binding {
+                assert!(!info.get_entry_point(0)[handle].is_empty());
+                assert_eq!(binding.group, 0);
+                bindings.push(binding.binding);
+                // The preflight has no capability to mutate any consumed wire
+                // or source. Only the atomic fault owner has write access.
+                if let wgpu::naga::AddressSpace::Storage { access } = var.space {
+                    assert_eq!(
+                        access.contains(wgpu::naga::StorageAccess::STORE),
+                        binding.binding == 6
+                    );
+                }
+            }
+        }
+        bindings.sort_unstable();
+        assert_eq!(bindings, (0..8).collect::<Vec<_>>());
+        wgpu::naga::back::spv::write_vec(
+            &module,
+            &info,
+            &wgpu::naga::back::spv::Options {
+                lang_version: (1, 3),
+                ..Default::default()
+            },
+            Some(&wgpu::naga::back::spv::PipelineOptions {
+                shader_stage: wgpu::naga::ShaderStage::Compute,
+                entry_point: "main".into(),
+            }),
+        )
+        .unwrap();
+        let invocations = PREFLIGHT_WORKGROUPS as usize * 256;
+        assert!((PREFLIGHT_WORDS..PREFLIGHT_WORDS + 256).contains(&invocations));
+        // Fixed domains are independently derived from complete owner layouts.
+        // The one global-index partition visits each required word once, with
+        // no grid-stride serial scan or dynamically allocated owner.
+        let domains = [
+            8192,
+            OWNED_BYTES[1] as usize / 4,
+            FRAME_WORDS,
+            OWNED_BYTES[5] as usize / 4 - AUDIT_WORDS,
+        ];
+        for words in domains {
+            assert!((0..invocations).filter(|&i| i < words).eq(0..words));
+        }
+        for fragment in [
+            "index<8192u",
+            "index<32768u",
+            "index<9322u",
+            "index<76832u",
+            "audit[447456u+index]",
+            "atomicOr(&fault[0],4u)",
+        ] {
+            assert!(source.contains(fragment));
+        }
+        let publication = include_str!("resident_router_gpu.wgsl");
+        assert!(publication.contains("atomicLoad(&fault[0])!=0u {reject();}"));
+        assert!(!publication.contains("for(var index=local;index<32768u"));
+        assert!(!publication.contains("for(var index=447456u+local"));
     }
 }

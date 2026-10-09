@@ -94,7 +94,7 @@ pub(crate) fn validate_limits(l: &wgpu::Limits) -> Result<()> {
         || l.max_bindings_per_bind_group < 8
         || l.max_bind_groups < 1
         || l.max_uniform_buffer_binding_size < 16
-        || l.max_compute_workgroups_per_dimension < 1
+        || l.max_compute_workgroups_per_dimension < k::PREFLIGHT_WORKGROUPS
         || l.max_storage_buffer_binding_size < 2097152
         || l.max_buffer_size < 2097152
     {

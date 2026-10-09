@@ -1,6 +1,6 @@
 // Private ideal-resident count1 mapper. Routing arithmetic remains unchanged.
-// All validation precedes every consumed-header or audit store. One workgroup
-// owns this entire phase; the following projection uses the same stream.
+// Complete parallel owning preflight precedes this exact numeric/publish phase
+// on the same stream. Its sticky fault rejects every output publication here.
 struct Params { layer:u32, start:u32, reserved0:u32, reserved1:u32 }
 @group(0) @binding(0) var<storage,read> packet:array<u32>;
 @group(0) @binding(1) var<storage,read> table:array<u32>;
@@ -38,6 +38,7 @@ fn main(@builtin(local_invocation_index) local:u32) {
            arrayLength(&map)!=8192u || arrayLength(&probability)!=8192u ||
            arrayLength(&owner)!=8192u || arrayLength(&audit)!=524288u ||
            arrayLength(&fault)!=8192u {reject();}
+        if arrayLength(&fault)>0u {if atomicLoad(&fault[0])!=0u {reject();}}
     }
     workgroupBarrier();
     if atomicLoad(&bad)!=0u {
@@ -45,30 +46,8 @@ fn main(@builtin(local_invocation_index) local:u32) {
         return;
     }
     let frame=p.layer*9322u;
-    // Packet mixed/logit words are finite; the owning fault and every word
-    // outside the exact existing top10 wire interval must remain zero.
-    for(var index=local;index<8192u;index+=64u) {
-        let bits=packet[index];
-        if index<3072u {if !finite(bits) {reject();}}
-        else if index<3073u || index>=3093u {if bits!=0u {reject();}}
-        if map[index]!=0u || probability[index]!=0u || owner[index]!=0u ||
-           atomicLoad(&fault[index])!=0u {reject();}
-    }
-    // The immutable table is independently bound/validated by the owner.
-    // Selected slots are checked again below; missing entries never fallback.
-    for(var index=local;index<32768u;index+=64u) {
-        let slot=table[index];
-        if index<24576u {if slot!=0xffffffffu && slot>=144u {reject();}}
-        else if slot!=0u {reject();}
-    }
-    // Previous accepted layer frames are not scratch. Current frame and the
-    // complete allocation tail must be clean before writing this layer once.
-    for(var index=local;index<9322u;index+=64u) {
-        if audit[frame+index]!=0u {reject();}
-    }
-    for(var index=447456u+local;index<524288u;index+=64u) {
-        if audit[index]!=0u {reject();}
-    }
+    // Complete source/header/table/current-frame/tail checks were queued in
+    // the sealed parallel preflight. Numeric routing remains unchanged below.
     if local<10u {
         let chosen=id(local);
         let bits=weight_bits(local);
