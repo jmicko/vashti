@@ -1486,6 +1486,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .or_else(|| target_repair_inputs.as_ref().map(|p| p.inline_dispatch))
         .or_else(|| target_rows_inputs.as_ref().map(|p| p.inline_dispatch))
         .or_else(|| language_inputs.as_ref().map(|p| p.inline_dispatch))
+        .or_else(|| strata_mtp_inputs.as_ref().map(|_| inline_dispatch))
         .or_else(|| batch_router_receipt.as_ref().map(|_| inline_dispatch));
     let device_dispatch = if let Some(selected) = public_target_dispatch {
         target_lab_build::validate_runtime(selected)?;
