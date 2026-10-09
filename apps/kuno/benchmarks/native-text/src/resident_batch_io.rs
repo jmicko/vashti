@@ -339,6 +339,25 @@ fn read(arena: &PrivateArena, handle: Handle, retired: &AtomicBool) -> Result<By
             error()
         })
 }
+/// The additive target-row packet keeps exactly the ordinary completed-map
+/// lease destruction, forced audit and final telemetry/MAIN fence ordering.
+pub(super) fn read_target_output<T>(
+    arena: &PrivateArena,
+    admission: &ResidentAdmission,
+    packet: Handle,
+    cancel: &AtomicBool,
+    enqueue: impl FnOnce() -> Result<()>,
+    decode: impl FnOnce(&[u8]) -> Result<T>,
+) -> Result<T> {
+    guarded(admission, || {
+        active(arena, admission, cancel)?;
+        enqueue()?;
+        let retired = admission.retired_context();
+        admission.readback_audited(cancel, || {
+            completed_map(|| read(arena, packet, &retired), decode)
+        })
+    })
+}
 fn word(bytes: &[u8], i: usize) -> Result<u32> {
     let start = i.checked_mul(4).ok_or(Error::ArithmeticOverflow)?;
     let end = start.checked_add(4).ok_or(Error::ArithmeticOverflow)?;

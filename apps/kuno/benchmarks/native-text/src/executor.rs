@@ -754,6 +754,7 @@ pub struct GpuExecutor<'a> {
     pub(crate) q3_shared_original_moe: bool,
     pub(crate) q6_integer_head: bool,
     pub(crate) resident_router_reserved: bool,
+    pub(crate) target_rows_reserved: bool,
     pub(crate) resident_banks_frozen: bool,
     pub(crate) resident_router_audits: u64,
     pub q6_integer_head_prepares: u64,
@@ -980,6 +981,7 @@ impl<'a> GpuExecutor<'a> {
             q3_shared_original_moe: false,
             q6_integer_head: false,
             resident_router_reserved: false,
+            target_rows_reserved: false,
             resident_banks_frozen: false,
             resident_router_audits: 0,
             q6_integer_head_prepares: 0,
@@ -1763,11 +1765,49 @@ impl<'a> GpuExecutor<'a> {
         self.bank_slots
     }
     pub(crate) fn resident_runtime_io_limit(&self) -> u64 {
-        if self.resident_router_reserved {
+        if self.target_rows_reserved {
+            crate::resident_model::batch::TARGET_ROWS_RUNTIME_LIMIT
+        } else if self.resident_router_reserved {
             batch_moe::RESIDENT_ROUTER_RUNTIME_LIMIT
         } else {
             RESIDENT_RUNTIME_IO_MAX
         }
+    }
+    pub(crate) fn check_target_rows_policy(&self) -> Result<()> {
+        if self.target_rows_reserved
+            && (self.resident_router_reserved
+                || !self.packed_profile.is_low_bit()
+                || self.bank_slots != 144
+                || self.transient_resident.is_none()
+                || !self.model.weights_mapped()
+                || self.adaptive.is_some()
+                || self.secondary.is_some()
+                || self.secondary_frequency.is_some()
+                || self.ordered_public_upload
+                || self.batch_experts
+                || self.word_down
+                || self.fused_experts
+                || self.integer_experts
+                || self.q3_empty_slot_fill
+                || self.q3_skip_empty_segments
+                || self.q3_subgroup_moe
+                || self.q3_integer_moe
+                || self.q3_shared_original_moe
+                || self.q6_integer_head
+                || self.resident_banks_frozen
+                || self.resident_router_audits != 0
+                || self.oracle_trace.is_some()
+                || self.q3_expert_oracle
+                || self.q3_router_reference.is_some()
+                || self.gpu_router
+                || self.native_projection_member_capacity() != 8
+                || self.native_projection_tile() != 8)
+        {
+            return Err(Error::InvalidFormat(
+                "native target rows explicit construction policy",
+            ));
+        }
+        Ok(())
     }
     /// Before ANY owner allocation, admit all static full pages and every
     /// simultaneously queued source page. Capacity plan is distinct from the
@@ -1779,6 +1819,14 @@ impl<'a> GpuExecutor<'a> {
         public_pages: u64,
     ) -> Result<ResidentAdmission> {
         self.check_segmented_resident(true)?;
+        self.check_target_rows_policy()?;
+        if self.target_rows_reserved
+            && private_owned != crate::resident_model::batch::TARGET_ROWS_PRIVATE_MAIN
+        {
+            return Err(Error::InvalidFormat(
+                "native target rows explicit construction policy",
+            ));
+        }
         if self.resident_router_reserved
             && (!self.packed_profile.is_low_bit()
                 || self.bank_slots != 144

@@ -38,25 +38,29 @@ pub enum Kind {
     Attention(usize),
     Ffn(usize),
     Final,
+    FinalAllRows,
 }
 impl Kind {
     fn base(self, layers: usize) -> Result<String> {
         match self {
             Self::Attention(l) if l < layers => Ok(format!("blk.{l}.hc_attn")),
             Self::Ffn(l) if l < layers => Ok(format!("blk.{l}.hc_ffn")),
-            Self::Final => Ok("output_hc".into()),
+            Self::Final | Self::FinalAllRows => Ok("output_hc".into()),
             _ => Err(Error::OutOfBounds),
         }
     }
     fn inject(self) -> bool {
-        self != Self::Final
+        !matches!(self, Self::Final | Self::FinalAllRows)
     }
 }
 
-/// Final mixer reads only the last original residual column into scratch row0.
-/// Attention/FFN retain every active column. Both source and scratch geometry
-/// remain runtime data with fixed MAX8 owning allocation.
+/// Ordinary Final compacts the last original residual column into scratch row0.
+/// FinalAllRows retains the bounded first one to three rows; Attention/FFN keep
+/// every active column. All roles retain the fixed MAX8 owning allocation.
 fn read_columns(kind: Kind, count: usize, width: usize, words: usize) -> Result<(usize, usize)> {
+    if kind == Kind::FinalAllRows && count > crate::resident_model::batch::TARGET_ROWS_MAX {
+        return Err(Error::InvalidBufferLength);
+    }
     validate_view(count, 0, width, width, words)?;
     let (active, first) = if kind == Kind::Final {
         (
@@ -70,6 +74,36 @@ fn read_columns(kind: Kind, count: usize, width: usize, words: usize) -> Result<
     };
     validate_view(active, first, width, width, words)?;
     Ok((active, first))
+}
+
+fn final_head_spans(
+    kind: Kind,
+    count: usize,
+    width: usize,
+    vocabulary: usize,
+) -> Result<BatchSpans> {
+    if !matches!(kind, Kind::Final | Kind::FinalAllRows) || count == 0 {
+        return Err(Error::InvalidBufferLength);
+    }
+    let all_rows = kind == Kind::FinalAllRows;
+    if all_rows && count > crate::resident_model::batch::TARGET_ROWS_MAX {
+        return Err(Error::InvalidBufferLength);
+    }
+    let first = if all_rows {
+        0
+    } else {
+        (count - 1)
+            .checked_mul(width)
+            .ok_or(Error::ArithmeticOverflow)?
+    };
+    Ok(BatchSpans::new(
+        if all_rows { count } else { 1 },
+        0,
+        first,
+        width,
+        0,
+        vocabulary,
+    ))
 }
 
 #[derive(Clone, Copy)]
@@ -630,7 +664,7 @@ impl Prepared<'_, '_> {
         logits: BufferId,
     ) -> Result<()> {
         self.workspace.phase = Phase::Poisoned;
-        if self.kind != Kind::Final {
+        if !matches!(self.kind, Kind::Final | Kind::FinalAllRows) {
             return Err(Error::InvalidFormat("GR injection consumer missing"));
         }
         u::cancel(self.cancel)?;
@@ -643,7 +677,14 @@ impl Prepared<'_, '_> {
             self.arena,
             self.residual,
             self.fault,
-            &[(logits, vocabulary)],
+            &[(
+                logits,
+                if self.kind == Kind::FinalAllRows {
+                    crate::resident_model::batch::TARGET_ROWS_MAX * vocabulary
+                } else {
+                    vocabulary
+                },
+            )],
             None,
         )?;
         let tensor = graph.tensor("output.weight")?;
@@ -652,10 +693,24 @@ impl Prepared<'_, '_> {
         if matrix.experts() != 1 || matrix.inputs() != width || matrix.outputs() != vocabulary {
             return Err(Error::InvalidBufferLength);
         }
-        let first = (self.count[0] - 1)
-            .checked_mul(width)
-            .ok_or(Error::ArithmeticOverflow)?;
-        let spans = BatchSpans::new(1, 0, first, width, 0, vocabulary);
+        let all_rows = self.kind == Kind::FinalAllRows;
+        let spans = final_head_spans(self.kind, self.count[0], width, vocabulary)?;
+        if all_rows {
+            // Explicit original arithmetic for all-row verification, even for
+            // a count1 call; do not lend NORM to the alternative integer head.
+            projector.enqueue_batch(
+                BoundProjection { tensor, matrix },
+                self.arena,
+                self.workspace.ids[MIXED],
+                logits,
+                &spans,
+                self.cancel,
+            )?;
+            u::cancel(self.cancel)?;
+            self.consumed = true;
+            self.workspace.phase = Phase::Available;
+            return Ok(());
+        }
         let scratch = FinalHeadScratch {
             arena: self.arena,
             ids: Zeroizing::new([
@@ -697,6 +752,36 @@ impl Drop for Prepared<'_, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn all_row_final_mixer_and_head_keep_complete_original_row_strides() {
+        for count in 1..=3 {
+            let (active, first) =
+                read_columns(Kind::FinalAllRows, count, 10240, MAX_BATCH * 10240).unwrap();
+            assert_eq!((active, first), (count, 0));
+            let spans = final_head_spans(Kind::FinalAllRows, active, 2560, 248320).unwrap();
+            assert_eq!(spans.count(), count);
+            assert_eq!(spans.input_first(), 0);
+            assert_eq!(spans.input_stride(), 2560);
+            assert_eq!(spans.output_first(), 0);
+            assert_eq!(spans.output_stride(), 248320);
+            assert_eq!(
+                validate_view(count, 0, 248320, 248320, 3 * 248320).unwrap(),
+                count * 248320
+            );
+            // Old Final still compacts its selected source into scratch row0.
+            let (last_active, last_first) =
+                read_columns(Kind::Final, count, 10240, MAX_BATCH * 10240).unwrap();
+            assert_eq!((last_active, last_first), (1, (count - 1) * 10240));
+            let last = final_head_spans(Kind::Final, last_active, 2560, 248320).unwrap();
+            assert_eq!((last.count(), last.input_first()), (1, 0));
+        }
+        assert_eq!(Kind::FinalAllRows.base(48).unwrap(), "output_hc");
+        assert!(!Kind::FinalAllRows.inject());
+        for count in [0, 4, 8, usize::MAX] {
+            assert!(read_columns(Kind::FinalAllRows, count, 10240, MAX_BATCH * 10240).is_err());
+            assert!(final_head_spans(Kind::FinalAllRows, count, 2560, 248320).is_err());
+        }
+    }
     #[test]
     fn final_head_scratch_rejects_foreign_stale_reversed_and_aliased_roles() {
         let ids = [0, 1, 2, 3].map(|slot| BufferId::metadata_fixture(7, 4, slot));

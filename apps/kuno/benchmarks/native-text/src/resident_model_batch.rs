@@ -14,6 +14,12 @@ use crate::{
     token_waves,
 };
 use kuno_text::cpu::Matrix;
+#[path = "resident_target_rows.rs"]
+mod target_rows;
+pub(crate) use target_rows::NativeTargetRows;
+pub(crate) const TARGET_ROWS_MAX: usize = target_rows::MAX_ROWS;
+pub(crate) const TARGET_ROWS_RUNTIME_LIMIT: u64 = target_rows::RUNTIME_LIMIT;
+pub(crate) const TARGET_ROWS_PRIVATE_MAIN: u64 = TOTAL_MAIN + target_rows::MAIN_BYTES;
 
 const OLD_MAIN: u64 = 785_186_816;
 const NEW_MAIN: u64 = 33_062_912;
@@ -49,8 +55,18 @@ pub(crate) fn host_reservation_with_router(
     reuse_metadata: usize,
     router: bool,
 ) -> Result<(usize, usize)> {
+    host_reservation_with_outputs(hybrid, reuse_metadata, router, false)
+}
+fn host_reservation_with_outputs(
+    hybrid: bool,
+    reuse_metadata: usize,
+    router: bool,
+    target_rows: bool,
+) -> Result<(usize, usize)> {
     if !matches!(reuse_metadata, DEFAULT_REUSE_METADATA | 1048576 | 4194304)
-        || (reuse_metadata > DEFAULT_REUSE_METADATA || router) && !hybrid
+        || router && !hybrid
+        || reuse_metadata > DEFAULT_REUSE_METADATA && !hybrid && !target_rows
+        || target_rows && (hybrid || router)
     {
         return Err(error());
     }
@@ -64,12 +80,26 @@ pub(crate) fn host_reservation_with_router(
                 0
             })
         })
+        .and_then(|n| {
+            n.checked_add(if target_rows {
+                target_rows::HOST_INCREMENT
+            } else {
+                0
+            })
+        })
         .ok_or(Error::ArithmeticOverflow)?;
     let limit = HOST_CAP
         .checked_add(reuse_metadata - DEFAULT_REUSE_METADATA)
         .and_then(|n| {
             n.checked_add(if router {
                 batch_moe::RESIDENT_ROUTER_HOST
+            } else {
+                0
+            })
+        })
+        .and_then(|n| {
+            n.checked_add(if target_rows {
+                target_rows::HOST_INCREMENT
             } else {
                 0
             })
@@ -180,6 +210,7 @@ pub(crate) struct Config {
     cpu_gpu_overlap: bool,
     request_reuse_metadata: usize,
     resident_router_reserved: bool,
+    target_rows_reserved: bool,
 }
 impl Config {
     pub(crate) fn new(
@@ -196,6 +227,7 @@ impl Config {
             cpu_gpu_overlap: false,
             request_reuse_metadata: DEFAULT_REUSE_METADATA,
             resident_router_reserved: false,
+            target_rows_reserved: false,
         })
     }
     pub(crate) fn reserve_resident_router(mut self) -> Result<Self> {
@@ -203,6 +235,7 @@ impl Config {
             || !self.cpu_gpu_overlap
             || self.tile != 8
             || self.resident_router_reserved
+            || self.target_rows_reserved
         {
             return Err(error());
         }
@@ -210,11 +243,28 @@ impl Config {
         self.resident_router_reserved = true;
         Ok(self)
     }
+    /// Fixed-public construction-only output capacity. No hybrid owners or
+    /// count1 policies are installed; the caller configures the matching
+    /// protected runtime ceiling before constructing the whole native owner.
+    #[allow(dead_code)] // Parent owns the dedicated fixed-public registration.
+    pub(crate) fn reserve_target_rows(mut self) -> Result<Self> {
+        if self.target_rows_reserved
+            || self.cpu_operator.is_some()
+            || self.resident_router_reserved
+            || self.tile != 8
+        {
+            return Err(error());
+        }
+        host_reservation_with_outputs(false, self.request_reuse_metadata, false, true)?;
+        self.target_rows_reserved = true;
+        Ok(self)
+    }
     pub(crate) fn reserve_request_reuse_metadata(mut self, bytes: usize) -> Result<Self> {
-        host_reservation_with_router(
+        host_reservation_with_outputs(
             self.cpu_operator.is_some(),
             bytes,
             self.resident_router_reserved,
+            self.target_rows_reserved,
         )?;
         self.request_reuse_metadata = bytes;
         Ok(self)
@@ -245,6 +295,7 @@ impl Config {
     ) -> Result<Self> {
         use kuno_text::cpu_expert::{Backend, ExpertOperator, WorkerPlan};
         if self.cpu_operator.is_some()
+            || self.target_rows_reserved
             || self.tile != 8
             || ((overlap || q8) && !pooled)
             || (residual && !q8)
@@ -387,15 +438,28 @@ impl Plan {
             requests.push(BufferLayout::new(words).map_err(u::fault)?.owned_bytes as u64);
         }
         let hybrid = config.cpu_operator.is_some();
-        host_reservation_with_router(
+        host_reservation_with_outputs(
             hybrid,
             config.request_reuse_metadata,
             config.resident_router_reserved,
+            config.target_rows_reserved,
         )?;
         if hybrid {
             requests.extend(batch_moe::Workspace::count1_hybrid_allocation_requests()?);
         }
         let router = config.resident_router_reserved;
+        let target_rows = config.target_rows_reserved;
+        executor.check_target_rows_policy()?;
+        if target_rows != executor.target_rows_reserved
+            || target_rows
+                && (hybrid
+                    || router
+                    || config.tile != 8
+                    || executor.native_projection_member_capacity() != 8
+                    || executor.native_projection_tile() != 8)
+        {
+            return Err(error());
+        }
         if router != executor.resident_router_reserved
             || router
                 && (!hybrid
@@ -407,13 +471,22 @@ impl Plan {
         if router {
             requests.extend(batch_moe::Workspace::resident_router_allocation_requests());
         }
+        if target_rows {
+            requests.extend(target_rows::Owners::allocation_requests()?);
+        }
         let extra = if hybrid { HYBRID_MAIN } else { 0 }
             + if router {
                 batch_moe::RESIDENT_ROUTER_MAIN
             } else {
                 0
+            }
+            + if target_rows {
+                target_rows::MAIN_BYTES
+            } else {
+                0
             };
-        if requests.len() != 90 + usize::from(hybrid) * 2 + usize::from(router) * 2
+        if requests.len()
+            != 90 + usize::from(hybrid) * 2 + usize::from(router) * 2 + usize::from(target_rows) * 2
             || sum(&requests)? != NEW_MAIN + extra
             || OLD_MAIN.checked_add(sum(&requests)?) != Some(TOTAL_MAIN + extra)
         {
@@ -434,6 +507,13 @@ impl Plan {
             .and_then(|n| {
                 n.checked_add(if router {
                     batch_moe::resident_router_runtime(executor.q3_integer_moe)
+                } else {
+                    0
+                })
+            })
+            .and_then(|n| {
+                n.checked_add(if target_rows {
+                    target_rows::RUNTIME_INCREMENT
                 } else {
                     0
                 })
@@ -460,6 +540,15 @@ impl Plan {
         })
     }
     pub(super) fn check_public(&self, graph: BoundGraph<'_, '_>, pages: u64) -> Result<()> {
+        self.check_public_with_audit(graph, pages, false)
+    }
+    pub(super) fn check_public_with_audit(
+        &self,
+        graph: BoundGraph<'_, '_>,
+        pages: u64,
+        public_zero_audit: bool,
+    ) -> Result<()> {
+        target_rows::check_public_audit(self.config.target_rows_reserved, public_zero_audit)?;
         // prewarm() independently proves exact planned cache names/counts and
         // seals them; here the actual graph count/full-page SUM must match too.
         if graph.static_vectors().count() != 341 || pages != PUBLIC_MAIN {
@@ -498,6 +587,12 @@ fn runtime_bytes(head_tiles: u64) -> Result<u64> {
 pub(crate) enum Purpose {
     Advance,
     LastLogits,
+    AllRowsWithCarry,
+}
+enum ChunkOutput {
+    Legacy(Zeroizing<Vec<f32>>),
+    #[allow(dead_code)] // Read by the additive parent-registered result method.
+    TargetRows(NativeTargetRows),
 }
 struct Outer {
     residual: [BufferId; 2],
@@ -523,6 +618,7 @@ pub(super) struct Workspace {
     outer: Zeroizing<Outer>,
     poison: Arc<AtomicBool>,
     dense_member_capacity: usize,
+    target_rows: Option<target_rows::Owners>,
 }
 impl Workspace {
     fn decode_kernels(&self) -> Result<NativeDecodeKernels> {
@@ -609,6 +705,11 @@ impl Workspace {
             router: alloc(MAX_BATCH * ROUTER)?,
             packet: alloc(MAX_BATCH * ROUTER + 1)?,
         });
+        let target_rows = if config.target_rows_reserved {
+            Some(target_rows::Owners::allocate(&mut model.arena)?)
+        } else {
+            None
+        };
         let ple = ple_batch::PleBatchWorkspace::allocate_with_profile(
             model,
             sequence,
@@ -626,6 +727,7 @@ impl Workspace {
             outer,
             poison,
             dense_member_capacity: 8,
+            target_rows,
         };
         result.prove_outer(model)?;
         Ok(result)
@@ -657,6 +759,9 @@ impl Workspace {
             {
                 handles.push(gr::full_private(&model.arena, id, words)?);
             }
+        }
+        if let Some(rows) = &self.target_rows {
+            handles.extend(rows.prove(&model.arena)?);
         }
         gr::physical(&model.arena, &handles)?;
         model
@@ -772,6 +877,20 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         native.shared.validate_all_consumers_queued()?;
         native.ple.validate_completed_projection_boundary(self)?;
         Ok(CompletedNativeProjectionBoundary { _private: () })
+    }
+
+    /// Actual committed cursor for the explicitly reserved target-row owner.
+    /// This performs the existing complete native boundary proof; it does not
+    /// infer completion from the returned result's start/count metadata.
+    #[allow(dead_code)] // Parent owns the dedicated fixed-public registration.
+    pub(crate) fn completed_target_rows_cursor(&self, executor: &GpuExecutor<'f>) -> Result<usize> {
+        let native = self.native_batch.as_ref().ok_or(error())?;
+        if !executor.target_rows_reserved || native.target_rows.is_none() {
+            return Err(error());
+        }
+        executor.check_target_rows_policy()?;
+        self.completed_native_projection_boundary(executor)?;
+        Ok(self.position)
     }
 
     /// Every oracle operation requires the unchanged complete native boundary,
@@ -1271,13 +1390,56 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         purpose: Purpose,
         cancel: &AtomicBool,
     ) -> Result<Zeroizing<Vec<f32>>> {
+        if purpose == Purpose::AllRowsWithCarry {
+            return Err(error());
+        }
+        self.execute_native_chunk(executor, tokens, purpose, cancel, |output| match output {
+            ChunkOutput::Legacy(logits) => Ok(logits),
+            ChunkOutput::TargetRows(_) => Err(error()),
+        })
+    }
+    /// Additive fixed-public target-output foundation. It commits every
+    /// supplied row; this is not accepted-prefix or speculative execution.
+    #[allow(dead_code)] // Parent owns the dedicated fixed-public registration.
+    pub(crate) fn prefill_chunk_with_carry(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+        tokens: &[u32],
+        cancel: &AtomicBool,
+    ) -> Result<NativeTargetRows> {
+        self.execute_native_chunk(
+            executor,
+            tokens,
+            Purpose::AllRowsWithCarry,
+            cancel,
+            |output| match output {
+                ChunkOutput::TargetRows(rows) => Ok(rows),
+                ChunkOutput::Legacy(_) => Err(error()),
+            },
+        )
+    }
+    fn execute_native_chunk<T>(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+        tokens: &[u32],
+        purpose: Purpose,
+        cancel: &AtomicBool,
+        accept: impl FnOnce(ChunkOutput) -> Result<T>,
+    ) -> Result<T> {
+        if let Some(rows) = &self.native_batch.as_ref().ok_or(error())?.target_rows {
+            // No command/state mutation occurs while an admitted output-host
+            // payload is still held. This guard also covers legacy purposes.
+            rows.check_no_live_output()?;
+        }
         let mut native = self.native_batch.take().ok_or(error())?;
         let mut flight = Flight {
             poison: native.poison.clone(),
             accepted: false,
         };
         let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            native.run(self, executor, tokens, purpose, cancel)
+            native
+                .run(self, executor, tokens, purpose, cancel)
+                .and_then(accept)
         }));
         match attempt {
             Ok(Ok(logits)) => {
@@ -1369,12 +1531,28 @@ impl Workspace {
         tokens: &[u32],
         purpose: Purpose,
         cancel: &AtomicBool,
-    ) -> Result<Zeroizing<Vec<f32>>> {
+    ) -> Result<ChunkOutput> {
         self.prove_outer(m)?;
         e.check_client(m.arena.client().map_err(u::fault)?)?;
         e.check_resident_admission(&m.admission)?;
         if self.dense_member_capacity != e.native_projection_member_capacity() {
             return Err(error());
+        }
+        if e.target_rows_reserved != self.target_rows.is_some()
+            || purpose == Purpose::AllRowsWithCarry && self.target_rows.is_none()
+        {
+            return Err(error());
+        }
+        if self.target_rows.is_some() {
+            e.check_target_rows_policy()?;
+            target_rows::coordinates(tokens.len(), m.position)?;
+            if self.decode_kernels()? != NativeDecodeKernels::Chunk
+                || self.moe.cpu_miss_cap().is_some()
+                || self.moe.cpu_gpu_overlap().is_some()
+                || self.moe.resident_router_active()
+            {
+                return Err(error());
+            }
         }
         m.graph.verify_unchanged()?;
         u::cancel(cancel)?;
@@ -1411,6 +1589,9 @@ impl Workspace {
             m.b.logit_packet,
         ]);
         u::zero_many(&m.arena, &*clear_ids)?;
+        if let Some(rows) = &self.target_rows {
+            u::zero_many(&m.arena, &rows.ids())?;
+        }
         batch_io::enqueue_embedding(
             m.graph,
             &m.arena,
@@ -1839,6 +2020,25 @@ impl Workspace {
                     cancel,
                 )?
                 .enqueue_final_head(m.graph, &mut projector, m.b.logits)?;
+        } else if purpose == Purpose::AllRowsWithCarry {
+            let rows = self.target_rows.as_ref().ok_or(error())?;
+            let mut projector = ResidentBatchProjection {
+                executor: e,
+                fault: m.b.fault,
+            };
+            self.gr
+                .read(
+                    m.graph,
+                    &m.arena,
+                    &mut m.public,
+                    &mut projector,
+                    gr::Kind::FinalAllRows,
+                    self.outer.residual[*current],
+                    *count,
+                    m.b.fault,
+                    cancel,
+                )?
+                .enqueue_final_head(m.graph, &mut projector, rows.logits())?;
         }
         *m.phase_ns.entry("native_final_head_enqueue").or_default() +=
             final_head_start.elapsed().as_nanos();
@@ -1848,7 +2048,7 @@ impl Workspace {
         let (output, ple) = completed_proof(
             || {
                 Ok(if purpose == Purpose::LastLogits {
-                    batch_io::read_last_logits(
+                    ChunkOutput::Legacy(batch_io::read_last_logits(
                         m.graph,
                         &m.arena,
                         &m.admission,
@@ -1856,10 +2056,21 @@ impl Workspace {
                         m.b.logit_packet,
                         m.b.fault,
                         cancel,
-                    )?
+                    )?)
+                } else if purpose == Purpose::AllRowsWithCarry {
+                    ChunkOutput::TargetRows(self.target_rows.as_ref().ok_or(error())?.read(
+                        m.graph,
+                        &m.arena,
+                        &m.admission,
+                        self.outer.residual[*current],
+                        m.b.fault,
+                        *count,
+                        *start,
+                        cancel,
+                    )?)
                 } else {
                     batch_io::read_fault(&m.arena, &m.admission, m.b.fault, cancel)?;
-                    Zeroizing::new(Vec::new())
+                    ChunkOutput::Legacy(Zeroizing::new(Vec::new()))
                 })
             },
             || {
@@ -2029,6 +2240,34 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn target_rows_charge_two_full_owners_and_independent_larger_io_and_host_caps() {
+        assert_eq!(TARGET_ROWS_PRIVATE_MAIN, 826_638_336);
+        assert_eq!(
+            target_rows::Owners::allocation_requests().unwrap(),
+            [4_194_304; 2]
+        );
+        assert_eq!(1286 + 90 + 2, 1378);
+        for (tiles, expected) in [(16, 70_295_552), (38, 70_385_664)] {
+            let selected = runtime_bytes(tiles).unwrap() + target_rows::RUNTIME_INCREMENT;
+            assert_eq!(selected, expected);
+            assert!(selected > crate::executor::RESIDENT_RUNTIME_IO_MAX);
+            assert!(selected < TARGET_ROWS_RUNTIME_LIMIT);
+        }
+        for reuse in [DEFAULT_REUSE_METADATA, 1048576, 4194304] {
+            let (reserved, limit) =
+                host_reservation_with_outputs(false, reuse, false, true).unwrap();
+            assert_eq!(reserved, HOST_COMPONENTS + reuse + 6 * 1024 * 1024);
+            assert_eq!(limit, 18 * 1024 * 1024 + reuse - DEFAULT_REUSE_METADATA);
+            assert_eq!(limit - reserved, 1_114_112);
+        }
+        assert_eq!(
+            host_reservation(false, DEFAULT_REUSE_METADATA).unwrap(),
+            (11_468_800, 12_582_912)
+        );
+        assert!(host_reservation_with_outputs(true, DEFAULT_REUSE_METADATA, false, true).is_err());
+        assert!(host_reservation_with_outputs(false, DEFAULT_REUSE_METADATA, true, true).is_err());
+    }
     #[test]
     fn constructor_overlap_owners_cannot_finish_an_unprepared_shared_projection() {
         for cap in [None, Some(0), Some(10)] {

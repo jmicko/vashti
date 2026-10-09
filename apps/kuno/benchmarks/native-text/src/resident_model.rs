@@ -359,7 +359,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         })?;
         let public_pages = PublicVectors::prewarm_page_bytes(graph)?;
         if let Some(plan) = &native {
-            plan.check_public(graph, public_pages)?;
+            plan.check_public_with_audit(graph, public_pages, public_zero_audit)?;
         }
         let admission = executor.begin_resident(graph, private_owned, public_pages)?;
         if (public_zero_audit || native.is_some()) && !admission.transient_io() {
