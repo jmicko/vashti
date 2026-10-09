@@ -5,13 +5,15 @@ import resource
 import sys
 
 def memory_limit(environment, arguments):
-    if "KUNO_LAB_TARGET_ROWS_PUBLIC_ONLY" in environment:
-        permitted = {"KUNO_LAB_TARGET_ROWS_PUBLIC_ONLY", "KUNO_LAB_STATIC_CACHE_BYTES", "KUNO_TEST_Q3_DIR", "KUNO_PUBLIC_TARGET_ROWS_REFERENCE", "KUNO_PUBLIC_RECEIPT"}
+    target_modes = {"KUNO_LAB_TARGET_ROWS_PUBLIC_ONLY": "daslab-target-rows-probe", "KUNO_LAB_TARGET_REPAIR_PUBLIC_ONLY": "daslab-target-repair-probe"}
+    target_gate = next((key for key in target_modes if key in environment), None)
+    if target_gate is not None:
+        permitted = {target_gate, "KUNO_LAB_STATIC_CACHE_BYTES", "KUNO_TEST_Q3_DIR", "KUNO_PUBLIC_TARGET_ROWS_REFERENCE", "KUNO_PUBLIC_RECEIPT"}
         selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
         if (set(selected) != permitted or any(not value for value in selected.values())
-                or selected["KUNO_LAB_TARGET_ROWS_PUBLIC_ONLY"] != "1"
+                or selected[target_gate] != "1"
                 or selected["KUNO_LAB_STATIC_CACHE_BYTES"] != "8589934592"
-                or len(arguments) != 3 or arguments[1:] != ["intel", "daslab-target-rows-probe"]):
+                or len(arguments) != 3 or arguments[1:] != ["intel", target_modes[target_gate]]):
             raise ValueError("Larger target cache requires the fixed public DASLab target fixture")
         # Original mapped model pages and the separately bounded 8GiB cache;
         # this does not enlarge any request-derived owning allocation.

@@ -1256,6 +1256,18 @@ class HybridLabTests(unittest.TestCase):
         for wrong in (args[:-1],[*args,"extra"],[args[0],"nvidia",args[2]],[args[0],"intel","probe"]):
             with self.assertRaises(ValueError):guard.memory_limit(env,wrong)
 
+    def test_target_repair_large_cache_rejects_other_public_modes(self):
+        spec=importlib.util.spec_from_file_location("protected_repair",HERE/"protected-lab-exec.py")
+        guard=importlib.util.module_from_spec(spec);spec.loader.exec_module(guard)
+        env={"KUNO_LAB_TARGET_REPAIR_PUBLIC_ONLY":"1", "KUNO_LAB_STATIC_CACHE_BYTES":"8589934592", "KUNO_TEST_Q3_DIR":"/original", "KUNO_PUBLIC_TARGET_ROWS_REFERENCE":"/public/reference", "KUNO_PUBLIC_RECEIPT":"/public/receipt"}
+        args=["/frozen/binary","intel","daslab-target-repair-probe"]
+        self.assertEqual(guard.memory_limit(env,args),48*1024**3)
+        for wrong in (dict(env,KUNO_LAB_TARGET_ROWS_PUBLIC_ONLY="1"),dict(env,KUNO_LAB_TARGET_REPAIR_PUBLIC_ONLY="0"),dict(env,KUNO_LAB_LARGE_WEIGHT_CACHE="1")):
+            with self.assertRaises(ValueError):guard.memory_limit(wrong,args)
+        for mode in ("daslab-target-rows-probe","resident-mtp-probe"):
+            with self.assertRaises(ValueError):guard.memory_limit(env,[*args[:2],mode])
+        with self.assertRaises(ValueError):guard.memory_limit(env,[args[0],"nvidia",args[2]])
+
     def test_fast_gpu_requires_actual_dispatches_and_separate_long_selection(self):
         value = receipt("intel",10)
         value.update(fast_gpu=True,observed_fast_dense_calls=5264,long_fixture=False)
