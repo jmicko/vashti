@@ -27,6 +27,7 @@ use kuno_text::{
     Error, GgufFile, Result, TensorType, TensorView,
     model::{BoundGraph, GraphBindingId, RoutedWeights},
 };
+use std::sync::atomic::{AtomicU64, Ordering};
 use zeroize::{Zeroize, Zeroizing};
 
 pub(crate) const LAYERS: usize = 48;
@@ -45,6 +46,19 @@ const UNSET: u16 = u16::MAX;
 
 fn reject() -> Error {
     Error::InvalidFormat("public host expert source plan rejected")
+}
+
+/// One validated plan's authority; equal geometry/source bindings are not
+/// interchangeable. No address reuse, public constructor or serialization.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PlanIdentity(u64);
+static NEXT_PLAN_IDENTITY: AtomicU64 = AtomicU64::new(1);
+fn fresh_identity(next: &AtomicU64) -> Result<PlanIdentity> {
+    next.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+        if n == 0 { None } else { n.checked_add(1) }
+    })
+    .map(PlanIdentity)
+    .map_err(|_| Error::ArithmeticOverflow)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -437,6 +451,7 @@ impl Budget {
 }
 
 pub(crate) struct Plan<'model, 'file> {
+    identity: PlanIdentity,
     graph: BoundGraph<'model, 'file>,
     model: &'file GgufFile,
     binding: GraphBindingId,
@@ -532,6 +547,7 @@ impl<'model, 'file> Plan<'model, 'file> {
             return Err(reject());
         }
         let plan = Self {
+            identity: fresh_identity(&NEXT_PLAN_IDENTITY)?,
             graph,
             model,
             binding: graph.binding_id(),
@@ -548,6 +564,9 @@ impl<'model, 'file> Plan<'model, 'file> {
         };
         plan.check_frozen(graph, model, banks)?;
         Ok(plan)
+    }
+    pub(crate) fn identity(&self) -> PlanIdentity {
+        self.identity
     }
     /// Exact generation freeze, including recency-only ledger commits. A later
     /// source-aware consumer must not reuse ordinary mutation receipts here.
@@ -674,6 +693,42 @@ fn check_bank(bank: &ExpertBanks, sources: [TensorView<'_>; 3]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn plan_identity_is_unique_and_exhaustion_never_wraps_or_reuses() {
+        let next = AtomicU64::new(1);
+        let first = fresh_identity(&next).unwrap();
+        let second = fresh_identity(&next).unwrap();
+        assert!(first != second);
+        assert_eq!(next.load(Ordering::Relaxed), 3);
+        let exhausted = AtomicU64::new(u64::MAX - 1);
+        assert_eq!(fresh_identity(&exhausted).unwrap().0, u64::MAX - 1);
+        assert!(fresh_identity(&exhausted).is_err());
+        assert!(fresh_identity(&exhausted).is_err());
+        assert_eq!(exhausted.load(Ordering::Relaxed), u64::MAX);
+        assert!(fresh_identity(&AtomicU64::new(0)).is_err());
+    }
+    #[test]
+    fn concurrent_plan_identities_are_not_reused() {
+        let next = AtomicU64::new(1);
+        std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..8)
+                .map(|_| {
+                    let next = &next;
+                    scope.spawn(move || {
+                        (0..32)
+                            .map(|_| fresh_identity(next).unwrap().0)
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            let mut ids: Vec<_> = workers
+                .into_iter()
+                .flat_map(|worker| worker.join().unwrap())
+                .collect();
+            ids.sort_unstable();
+            assert_eq!(ids, (1..=256).collect::<Vec<_>>());
+        });
+    }
     fn slots() -> [Option<usize>; VRAM_SLOTS] {
         std::array::from_fn(|i| Some((i * 3 + 11) % EXPERTS))
     }
