@@ -5,6 +5,7 @@
 #![allow(dead_code)] // Future all-family coordinator; no default/model hook.
 use super::*;
 use crate::{
+    expert_banks::OriginalPackedProfile,
     ple_batch_gpu as p,
     quant_matvec::matmul::{BatchSpans, MAX_BATCH},
     resident_batch_projection::{BatchedResidentProjector, validate_view},
@@ -188,6 +189,7 @@ struct Public {
     conv: Handle,
 }
 pub(crate) struct PleBatchWorkspace {
+    profile: OriginalPackedProfile,
     binding: GraphBindingId,
     sequence: SequenceKey,
     identity: u64,
@@ -209,7 +211,16 @@ impl Drop for PleBatchWorkspace {
 }
 impl PleBatchWorkspace {
     pub(crate) fn allocation_requests(graph: BoundGraph<'_, '_>) -> Result<[u64; N]> {
+        Self::allocation_requests_with_profile(graph, OriginalPackedProfile::Q4)
+    }
+    pub(crate) fn allocation_requests_with_profile(
+        graph: BoundGraph<'_, '_>,
+        profile: OriginalPackedProfile,
+    ) -> Result<[u64; N]> {
         graph_preflight(graph)?;
+        if profile == OriginalPackedProfile::UnslothQ3 {
+            profile.validate_graph(graph)?;
+        }
         requests()
     }
     /// Caller must include these exact19 pages in actual MainAdmission BEFORE
@@ -222,9 +233,21 @@ impl PleBatchWorkspace {
         poison: Arc<AtomicBool>,
         cancel: &AtomicBool,
     ) -> Result<Self> {
+        Self::allocate_with_profile(model, sequence, poison, cancel, OriginalPackedProfile::Q4)
+    }
+    pub(crate) fn allocate_with_profile(
+        model: &mut ResidentModel<'_, '_>,
+        sequence: SequenceKey,
+        poison: Arc<AtomicBool>,
+        cancel: &AtomicBool,
+        profile: OriginalPackedProfile,
+    ) -> Result<Self> {
         let result = guarded(&poison, || {
             u::cancel(cancel)?;
             graph_preflight(model.graph)?;
+            if profile == OriginalPackedProfile::UnslothQ3 {
+                profile.validate_graph(model.graph)?;
+            }
             if !Arc::ptr_eq(&model.admission.sequence_poison(), &poison)
                 || !model.admission.transient_io()
                 || model.poisoned
@@ -278,6 +301,7 @@ impl PleBatchWorkspace {
                 *id = model.arena.allocate_zeroed(words(i)).map_err(u::fault)?;
             }
             let workspace = Self {
+                profile,
                 binding: model.graph.binding_id(),
                 sequence,
                 identity,
@@ -444,7 +468,14 @@ impl PleBatchWorkspace {
         for (bytes, &v) in old.chunks_exact_mut(4).zip(model.ple_conv.history()) {
             bytes.copy_from_slice(&v.to_bits().to_le_bytes());
         }
-        let mut embedding = embedding(model.graph, count, tokens, &old_tokens, cancel)?;
+        let mut embedding = embedding(
+            model.graph,
+            count,
+            tokens,
+            &old_tokens,
+            cancel,
+            self.profile,
+        )?;
         let arena = &model.arena;
         queue(cancel, |operation| {
             match operation {
@@ -816,6 +847,7 @@ fn embedding(
     tokens: &[u32; MAX_BATCH],
     old: &[i32; 2],
     cancel: &AtomicBool,
+    profile: OriginalPackedProfile,
 ) -> Result<Zeroizing<Vec<u8>>> {
     let mut rows = Zeroizing::new([[0u32; 16]; MAX_BATCH]);
     let mut previous = Zeroizing::new(*old);
@@ -832,24 +864,20 @@ fn embedding(
         previous[1] = tokens[t] as i32;
     }
     let table = graph.tensor("per_layer_token_embd.weight")?;
-    if table.info().dtype() != kuno_text::TensorType::Q5_0
-        || table.info().row_len() != 160
-        || table.info().row_bytes() != 110
-        || table.info().row_count() != 320001536
-    {
-        return Err(error());
-    }
+    profile.validate_ple(
+        table.info().dtype(),
+        table.info().dimensions(),
+        table.info().row_bytes(),
+    )?;
     let mut upload = source(BufferLayout::new(words(EMB)).map_err(u::fault)?.owned_bytes)?;
     let mut packed = Zeroizing::new([0u8; 110]);
     let mut decoded = Zeroizing::new([0f32; 160]);
     for t in 0..count {
         for head in 0..16 {
             u::cancel(cancel)?;
-            table.read_row(u64::from(rows[t][head]), &mut packed[..])?;
-            kuno_text::TensorType::Q5_0.decode(&packed[..], &mut decoded[..])?;
-            if decoded.iter().any(|x| !x.is_finite()) {
-                return Err(error());
-            }
+            let row = &mut packed[..profile.ple_row_bytes()];
+            table.read_row(u64::from(rows[t][head]), row)?;
+            decode_ple_row(profile, table.info().dtype(), row, &mut decoded[..])?;
             for (d, &v) in decoded.iter().enumerate() {
                 let at = (t * WIDTH + head * 160 + d) * 4;
                 upload[at..at + 4].copy_from_slice(&v.to_bits().to_le_bytes());
@@ -858,6 +886,25 @@ fn embedding(
     }
     graph.verify_unchanged()?;
     Ok(upload)
+}
+
+fn decode_ple_row(
+    profile: OriginalPackedProfile,
+    dtype: kuno_text::TensorType,
+    packed: &[u8],
+    decoded: &mut [f32],
+) -> Result<()> {
+    // This is selected-row reconstruction for the existing transient embedding
+    // upload, not a retained float mirror of the original table or model.
+    profile.validate_ple(dtype, &[160, 320001536], packed.len() as u64)?;
+    if decoded.len() != 160 {
+        return Err(error());
+    }
+    dtype.decode(packed, decoded)?;
+    if decoded.iter().any(|x| !x.is_finite()) {
+        return Err(error());
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1277,6 +1324,67 @@ mod tests {
     }
 
     use super::*;
+    #[test]
+    fn q3_ple_decodes_only_the_original_90_byte_row_without_reusing_q5_geometry() {
+        let mut storage = [0xa5u8; 110];
+        for block in storage[..90].chunks_exact_mut(18) {
+            block.fill(0);
+            block[..2].copy_from_slice(&0x3c00u16.to_le_bytes());
+        }
+        let mut decoded = [0.; 160];
+        decode_ple_row(
+            OriginalPackedProfile::UnslothQ3,
+            kuno_text::TensorType::Iq4Nl,
+            &storage[..90],
+            &mut decoded,
+        )
+        .unwrap();
+        // Code zero is the pinned original nonlinear grid value -127; unit d.
+        assert_eq!(decoded, [-127.; 160]);
+        assert_eq!(&storage[90..], &[0xa5; 20]);
+        for (profile, dtype, length) in [
+            (OriginalPackedProfile::Q4, kuno_text::TensorType::Iq4Nl, 90),
+            (
+                OriginalPackedProfile::UnslothQ3,
+                kuno_text::TensorType::Q5_0,
+                110,
+            ),
+            (
+                OriginalPackedProfile::UnslothQ3,
+                kuno_text::TensorType::Iq4Nl,
+                110,
+            ),
+            (
+                OriginalPackedProfile::UnslothQ3,
+                kuno_text::TensorType::Iq4Nl,
+                89,
+            ),
+        ] {
+            decoded.fill(5.);
+            assert!(decode_ple_row(profile, dtype, &storage[..length], &mut decoded).is_err());
+            assert_eq!(decoded, [5.; 160]);
+        }
+        assert!(
+            decode_ple_row(
+                OriginalPackedProfile::UnslothQ3,
+                kuno_text::TensorType::Iq4Nl,
+                &storage[..90],
+                &mut [0.; 159]
+            )
+            .is_err()
+        );
+        let mut nonfinite = storage;
+        nonfinite[..2].copy_from_slice(&0x7c00u16.to_le_bytes());
+        assert!(
+            decode_ple_row(
+                OriginalPackedProfile::UnslothQ3,
+                kuno_text::TensorType::Iq4Nl,
+                &nonfinite[..90],
+                &mut decoded
+            )
+            .is_err()
+        );
+    }
     #[test]
     fn exact_full_pages_and_separate_component_bound_are_pinned() {
         assert_eq!(requests().unwrap().iter().sum::<u64>(), MAIN_BYTES);

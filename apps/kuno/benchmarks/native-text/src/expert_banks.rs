@@ -12,6 +12,203 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 use zeroize::Zeroize;
 
+/// Explicit original-weight laboratory profile. Selection belongs to the
+/// constructor; never infer a profile from a failed admission or source read.
+/// Neither variant changes route coverage, slot lifetime or completion gates.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum OriginalPackedProfile {
+    #[default]
+    Q4,
+    UnslothQ3,
+}
+pub(crate) const UNSLOTH_Q3_BANK_BYTES_144: usize = 19_998_441_472;
+
+impl OriginalPackedProfile {
+    pub(crate) fn validate_capacity(self, capacity: usize) -> Result<()> {
+        validate_capacity(capacity)?;
+        if self == Self::UnslothQ3 && capacity != 144 {
+            return Err(Error::InvalidFormat(
+                "Unsloth Q3 requires 144 original slots",
+            ));
+        }
+        Ok(())
+    }
+    /// IQ support first uses the original generic grouped kernels. The Q4
+    /// shared/fused/integer/word/block implementations are separate algorithms.
+    pub(crate) fn validate_shortcuts(
+        self,
+        shared_moe: bool,
+        fused: bool,
+        integer: bool,
+        word: bool,
+        block: bool,
+    ) -> Result<()> {
+        if self == Self::UnslothQ3 && (shared_moe || fused || integer || word || block) {
+            return Err(Error::InvalidFormat(
+                "Unsloth Q3 requires generic original packed MoE",
+            ));
+        }
+        Ok(())
+    }
+    pub(crate) fn ple_row_bytes(self) -> usize {
+        match self {
+            Self::Q4 => 110,
+            Self::UnslothQ3 => 90,
+        }
+    }
+    pub(crate) fn validate_ple(
+        self,
+        dtype: TensorType,
+        dimensions: &[u64],
+        row_bytes: u64,
+    ) -> Result<()> {
+        let expected = match self {
+            Self::Q4 => TensorType::Q5_0,
+            Self::UnslothQ3 => TensorType::Iq4Nl,
+        };
+        if dtype != expected
+            || dimensions != [160, 320001536]
+            || row_bytes != self.ple_row_bytes() as u64
+        {
+            return Err(Error::InvalidFormat("original packed profile PLE source"));
+        }
+        Ok(())
+    }
+    /// Validates every bound main-graph tensor before model/device allocation.
+    /// Q4 keeps its existing admission contract; Q3 is the inspected Unsloth
+    /// mixed profile, not a general low-bit or requantized-weight fallback.
+    pub(crate) fn validate_graph(self, graph: BoundGraph<'_, '_>) -> Result<()> {
+        if self == Self::Q4 {
+            return Ok(());
+        }
+        graph.verify_unchanged()?;
+        if graph.geometry().layers != 48 {
+            return Err(Error::InvalidFormat(
+                "Unsloth Q3 requires 48 original layers",
+            ));
+        }
+        for name in graph.tensor_names() {
+            let tensor = graph.tensor(name)?;
+            let info = tensor.info();
+            if name.ends_with("_exps.weight") {
+                // Complete triples and canonical per-layer names are checked
+                // below, before any bank allocation or source staging.
+                continue;
+            }
+            let expected = q3_main_dtype(name, info.dimensions());
+            if info.dtype() != expected {
+                return Err(Error::InvalidFormat(
+                    "Unsloth Q3 original main tensor dtype",
+                ));
+            }
+            if name == "per_layer_token_embd.weight" {
+                self.validate_ple(info.dtype(), info.dimensions(), info.row_bytes())?;
+            }
+        }
+        for layer in 0..48 {
+            let weights = routed_weights(graph, layer)?;
+            validate_profile_weights(self, weights)?;
+        }
+        graph.verify_unchanged()
+    }
+}
+
+fn q3_main_dtype(name: &str, dimensions: &[u64]) -> TensorType {
+    if name == "output.weight" {
+        TensorType::Q6K
+    } else if name == "per_layer_token_embd.weight" {
+        TensorType::Iq4Nl
+    } else if name.ends_with("indexer.q_proj.weight") || name.ends_with("indexer.k_proj.weight") {
+        TensorType::Bf16
+    } else if dimensions.len() == 1
+        || name.ends_with("ffn_gate_inp.weight")
+        || name.ends_with("hc_attn_inject.weight")
+        || name.ends_with("hc_ffn_inject.weight")
+        || name.ends_with("ssm_alpha.weight")
+        || name.ends_with("ssm_beta.weight")
+        || name.ends_with("ssm_conv1d.weight")
+        || name.ends_with("ple_conv1d.weight")
+    {
+        TensorType::F32
+    } else {
+        TensorType::Q8_0
+    }
+}
+
+fn q3_expert_types(layer: usize) -> Result<[TensorType; 3]> {
+    if layer >= 48 {
+        return Err(Error::OutOfBounds);
+    }
+    let gate = if layer == 2 {
+        TensorType::Iq4Xs
+    } else {
+        TensorType::Iq3Xxs
+    };
+    let down = if matches!(layer, 2 | 4 | 30 | 46 | 47) {
+        TensorType::Q8_0
+    } else {
+        TensorType::Iq4Nl
+    };
+    Ok([gate, gate, down])
+}
+
+fn routed_weights<'a>(graph: BoundGraph<'_, 'a>, layer: usize) -> Result<RoutedWeights<'a>> {
+    Ok(RoutedWeights {
+        gate: graph.tensor(&format!("blk.{layer}.ffn_gate_exps.weight"))?,
+        up: graph.tensor(&format!("blk.{layer}.ffn_up_exps.weight"))?,
+        down: graph.tensor(&format!("blk.{layer}.ffn_down_exps.weight"))?,
+    })
+}
+
+fn validate_profile_metadata(
+    profile: OriginalPackedProfile,
+    layer: usize,
+    parts: [(TensorType, &[u64]); 3],
+) -> Result<()> {
+    if profile == OriginalPackedProfile::Q4 {
+        return validate_segmented_metadata(parts);
+    }
+    let expected = q3_expert_types(layer)?;
+    for (index, (dtype, dimensions)) in parts.into_iter().enumerate() {
+        if dtype != expected[index]
+            || dimensions
+                != if index == 2 {
+                    &[640, 2560, 512]
+                } else {
+                    &[2560, 640, 512]
+                }
+        {
+            return Err(Error::InvalidFormat("Unsloth Q3 original expert metadata"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_profile_weights(
+    profile: OriginalPackedProfile,
+    weights: RoutedWeights<'_>,
+) -> Result<()> {
+    let name = weights.gate.info().name();
+    let layer = name
+        .strip_prefix("blk.")
+        .and_then(|s| s.strip_suffix(".ffn_gate_exps.weight"))
+        .and_then(|s| s.parse::<usize>().ok())
+        .ok_or(Error::InvalidFormat("original packed profile layer name"))?;
+    for (tensor, suffix) in [weights.gate, weights.up, weights.down]
+        .into_iter()
+        .zip(["gate", "up", "down"])
+    {
+        if tensor.info().name() != format!("blk.{layer}.ffn_{suffix}_exps.weight") {
+            return Err(Error::InvalidFormat("original packed profile layer name"));
+        }
+    }
+    validate_profile_metadata(
+        profile,
+        layer,
+        [weights.gate, weights.up, weights.down].map(|t| (t.info().dtype(), t.info().dimensions())),
+    )
+}
+
 /// Immutable allocation extent; expose only readonly handles/geometry. Filling
 /// changes PUBLIC weight bytes, never these allocations or their offsets.
 pub struct BankSegment {
@@ -102,6 +299,7 @@ pub struct ExpertBanks {
     pub slots: BankSlots,
     names: [String; 3],
     origin: ComputeClient<WgpuRuntime>,
+    profile: OriginalPackedProfile,
 }
 
 #[cfg(test)]
@@ -222,13 +420,44 @@ pub fn validate_segmented_configuration(
     word_down: bool,
     resident: bool,
 ) -> Result<()> {
-    validate_capacity(capacity)?;
+    validate_segmented_configuration_with_profile(
+        capacity,
+        explicit_cache,
+        budget,
+        block,
+        batch,
+        word_down,
+        resident,
+        OriginalPackedProfile::Q4,
+    )
+}
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn validate_segmented_configuration_with_profile(
+    capacity: usize,
+    explicit_cache: Option<usize>,
+    budget: usize,
+    block: bool,
+    batch: bool,
+    word_down: bool,
+    resident: bool,
+    profile: OriginalPackedProfile,
+) -> Result<()> {
+    profile.validate_capacity(capacity)?;
+    let gate_policy = match profile {
+        OriginalPackedProfile::Q4 => block,
+        OriginalPackedProfile::UnslothQ3 => !block,
+    };
     if segmented_capacity(capacity)
-        && (explicit_cache != Some(budget) || !block || batch || word_down || !resident)
+        && (explicit_cache != Some(budget) || !gate_policy || batch || word_down || !resident)
     {
-        return Err(Error::InvalidFormat(
-            "segmented slots require explicit static cache, resident block MoE, legacy fill and generic down",
-        ));
+        return Err(Error::InvalidFormat(match profile {
+            OriginalPackedProfile::Q4 => {
+                "segmented slots require explicit static cache, resident block MoE, legacy fill and generic down"
+            }
+            OriginalPackedProfile::UnslothQ3 => {
+                "Unsloth Q3 requires explicit static cache, resident generic grouped MoE and original fill"
+            }
+        }));
     }
     Ok(())
 }
@@ -286,23 +515,51 @@ pub fn preflight_residency(
     cache_bytes: usize,
     device_bytes: usize,
 ) -> Result<usize> {
-    validate_capacity(capacity)?;
+    preflight_residency_with_profile(
+        graph,
+        capacity,
+        cache_bytes,
+        device_bytes,
+        OriginalPackedProfile::Q4,
+    )
+}
+pub(crate) fn preflight_residency_with_profile(
+    graph: BoundGraph<'_, '_>,
+    capacity: usize,
+    cache_bytes: usize,
+    device_bytes: usize,
+    profile: OriginalPackedProfile,
+) -> Result<usize> {
+    profile.validate_capacity(capacity)?;
+    profile.validate_graph(graph)?;
     if segmented_capacity(capacity) && graph.geometry().layers != 48 {
         return Err(Error::InvalidFormat("segmented graph requires 48 layers"));
     }
     let mut total = 0usize;
     for layer in 0..graph.geometry().layers {
-        let prefix = format!("blk.{layer}.");
-        let weights = RoutedWeights {
-            gate: graph.tensor(&format!("{prefix}ffn_gate_exps.weight"))?,
-            up: graph.tensor(&format!("{prefix}ffn_up_exps.weight"))?,
-            down: graph.tensor(&format!("{prefix}ffn_down_exps.weight"))?,
-        };
+        let weights = routed_weights(graph, layer)?;
         total = total
-            .checked_add(ExpertBanks::allocation(weights, capacity)?)
+            .checked_add(ExpertBanks::allocation_with_profile(
+                weights, capacity, profile,
+            )?)
             .ok_or(Error::ArithmeticOverflow)?;
     }
-    if segmented_capacity(capacity)
+    validate_profile_residency(profile, capacity, total, cache_bytes, device_bytes)?;
+    Ok(total)
+}
+fn validate_profile_residency(
+    profile: OriginalPackedProfile,
+    capacity: usize,
+    total: usize,
+    cache_bytes: usize,
+    device_bytes: usize,
+) -> Result<()> {
+    profile.validate_capacity(capacity)?;
+    if profile == OriginalPackedProfile::UnslothQ3 && total != UNSLOTH_Q3_BANK_BYTES_144 {
+        return Err(Error::InvalidFormat("Unsloth Q3 full graph page charge"));
+    }
+    if profile == OriginalPackedProfile::Q4
+        && segmented_capacity(capacity)
         && total
             != (if capacity == 160 {
                 27
@@ -331,12 +588,22 @@ pub fn preflight_residency(
     } else {
         validate_residency_budget(total, cache_bytes, device_bytes)?;
     }
-    Ok(total)
+    Ok(())
 }
 impl ExpertBanks {
     pub fn allocation_requests(weights: RoutedWeights<'_>, capacity: usize) -> Result<Vec<u64>> {
-        validate_capacity(capacity)?;
-        if segmented_capacity(capacity) {
+        Self::allocation_requests_with_profile(weights, capacity, OriginalPackedProfile::Q4)
+    }
+    pub(crate) fn allocation_requests_with_profile(
+        weights: RoutedWeights<'_>,
+        capacity: usize,
+        profile: OriginalPackedProfile,
+    ) -> Result<Vec<u64>> {
+        profile.validate_capacity(capacity)?;
+        if profile == OriginalPackedProfile::UnslothQ3 {
+            validate_profile_weights(profile, weights)?;
+        }
+        if profile == OriginalPackedProfile::Q4 && segmented_capacity(capacity) {
             validate_segmented_metadata(
                 [weights.gate, weights.up, weights.down]
                     .map(|t| (t.info().dtype(), t.info().dimensions())),
@@ -351,7 +618,14 @@ impl ExpertBanks {
         Ok(requests)
     }
     pub fn allocation(weights: RoutedWeights<'_>, capacity: usize) -> Result<usize> {
-        Self::allocation_requests(weights, capacity)?
+        Self::allocation_with_profile(weights, capacity, OriginalPackedProfile::Q4)
+    }
+    pub(crate) fn allocation_with_profile(
+        weights: RoutedWeights<'_>,
+        capacity: usize,
+        profile: OriginalPackedProfile,
+    ) -> Result<usize> {
+        Self::allocation_requests_with_profile(weights, capacity, profile)?
             .into_iter()
             .try_fold(0usize, |total, bytes| {
                 total
@@ -368,7 +642,15 @@ impl ExpertBanks {
         weights: RoutedWeights<'_>,
         capacity: usize,
     ) -> Result<Self> {
-        Self::new_inner(client, weights, capacity, false, false)
+        Self::new_with_profile(client, weights, capacity, OriginalPackedProfile::Q4)
+    }
+    pub(crate) fn new_with_profile(
+        client: &ComputeClient<WgpuRuntime>,
+        weights: RoutedWeights<'_>,
+        capacity: usize,
+        profile: OriginalPackedProfile,
+    ) -> Result<Self> {
+        Self::new_inner(client, weights, capacity, false, false, profile)
     }
     /// Narrow operator-lab seam: original Q4 gate/up and Q5/Q8 down, exactly
     /// sixteen slots. The original constructor/model allocation is unchanged.
@@ -381,7 +663,7 @@ impl ExpertBanks {
                 .map(|tensor| (tensor.info().dtype(), tensor.info().dimensions())),
         )
         .map_err(|_| Error::InvalidFormat("fixed-public original expert bank metadata"))?;
-        Self::new_inner(client, weights, 16, true, false)
+        Self::new_inner(client, weights, 16, true, false, OriginalPackedProfile::Q4)
     }
     /// A separate stationary secondary bank. Preserve ordinary flat48 geometry.
     pub(crate) fn new_secondary(
@@ -392,7 +674,7 @@ impl ExpertBanks {
             [weights.gate, weights.up, weights.down]
                 .map(|t| (t.info().dtype(), t.info().dimensions())),
         )?;
-        Self::new_inner(client, weights, 48, false, true)
+        Self::new_inner(client, weights, 48, false, true, OriginalPackedProfile::Q4)
     }
     pub(crate) fn secondary_requests(weights: RoutedWeights<'_>) -> Result<Vec<u64>> {
         validate_segmented_metadata(
@@ -419,6 +701,7 @@ impl ExpertBanks {
         capacity: usize,
         full_lab_pages: bool,
         secondary: bool,
+        profile: OriginalPackedProfile,
     ) -> Result<Self> {
         let gate = Matrix::new(weights.gate)?;
         let up = Matrix::new(weights.up)?;
@@ -435,7 +718,7 @@ impl ExpertBanks {
         {
             return Err(Error::InvalidFormat("expert bank geometry"));
         }
-        Self::allocation(weights, capacity)?;
+        Self::allocation_with_profile(weights, capacity, profile)?;
         let create = |t: TensorView<'_>| -> Result<Bank> {
             let (expert_bytes, sizes) = if secondary {
                 let (expert, first) = packed_bank_bytes(
@@ -481,6 +764,7 @@ impl ExpertBanks {
         };
         let instance = next_instance(&NEXT_BANK_INSTANCE)?;
         Ok(Self {
+            profile,
             instance,
             gate: create(weights.gate)?,
             up: create(weights.up)?,
@@ -496,6 +780,9 @@ impl ExpertBanks {
     }
     pub fn instance(&self) -> BankInstance {
         self.instance
+    }
+    pub(crate) fn profile(&self) -> OriginalPackedProfile {
+        self.profile
     }
     pub fn gate(&self) -> &Bank {
         &self.gate
@@ -516,6 +803,9 @@ impl ExpertBanks {
         Ok(())
     }
     pub fn check_names(&self, weights: RoutedWeights<'_>) -> Result<()> {
+        if self.profile == OriginalPackedProfile::UnslothQ3 {
+            validate_profile_weights(self.profile, weights)?;
+        }
         if [weights.gate, weights.up, weights.down]
             .iter()
             .zip(&self.names)
@@ -534,6 +824,9 @@ impl ExpertBanks {
         input: &[f32],
         selected: &[(usize, f32)],
     ) -> Result<()> {
+        if self.profile == OriginalPackedProfile::UnslothQ3 {
+            self.check_names(weights)?;
+        }
         if [weights.gate, weights.up, weights.down]
             .iter()
             .zip(&self.names)
@@ -2379,5 +2672,446 @@ mod segmented_tests {
             .unwrap();
         assert_eq!(p.uploads, [(200, 1), (201, 2)]);
         bank.commit(p).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod q3_profile_tests {
+    use super::*;
+    const GIB: usize = 1024 * 1024 * 1024;
+
+    /// Explicit local original-model admission only: no device client,
+    /// generation, expert payload copy, or model-wide float expansion.
+    #[test]
+    #[ignore = "set KUNO_TEST_Q3_DIR to the pinned Unsloth UD-Q3_K_XL shard directory"]
+    fn installed_q3_sharded_profile_admits_exact_original_graph_and_owned_charges() {
+        use kuno_text::{GgufFile, GgufLimits, model::Qwen4Exp};
+        let directory = std::env::var_os("KUNO_TEST_Q3_DIR")
+            .map(std::path::PathBuf::from)
+            .expect("KUNO_TEST_Q3_DIR must explicitly select the original public shard directory");
+        let paths = [
+            "Qwen3.8-Flash-Next-UD-Q3_K_XL-00001-of-00003.gguf",
+            "Qwen3.8-Flash-Next-UD-Q3_K_XL-00002-of-00003.gguf",
+            "Qwen3.8-Flash-Next-UD-Q3_K_XL-00003-of-00003.gguf",
+        ]
+        .map(|name| directory.join(name));
+        let file = GgufFile::open_shards(&paths, GgufLimits::default()).unwrap();
+        let model = Qwen4Exp::bind(&file).unwrap();
+        let graph = model.bound_graph();
+        let profile = OriginalPackedProfile::UnslothQ3;
+        profile.validate_graph(graph).unwrap();
+        assert_eq!(
+            preflight_residency_with_profile(graph, 144, 5 * GIB, 31 * GIB, profile).unwrap(),
+            19_998_441_472
+        );
+        assert_eq!(
+            crate::resident_model::ple_batch::PleBatchWorkspace::allocation_requests_with_profile(
+                graph, profile
+            )
+            .unwrap()
+            .iter()
+            .sum::<u64>(),
+            6_258_688
+        );
+        graph.verify_unchanged().unwrap();
+    }
+
+    #[test]
+    fn q3_allocation_api_uses_inspected_original_tensor_geometry_before_device_work() {
+        use kuno_text::{GgufFile, GgufLimits};
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        struct Fixture(std::path::PathBuf);
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(&self.0);
+            }
+        }
+        fn text(bytes: &mut Vec<u8>, value: &str) {
+            bytes.extend((value.len() as u64).to_le_bytes());
+            bytes.extend(value.as_bytes());
+        }
+        for layer in [0, 2, 4] {
+            let fixture = Fixture(std::env::temp_dir().join(format!(
+                "kuno-q3-owner-{}-{}.gguf",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            )));
+            let kinds = q3_expert_types(layer).unwrap();
+            let mut bytes = b"GGUF".to_vec();
+            bytes.extend(3u32.to_le_bytes());
+            bytes.extend(3u64.to_le_bytes());
+            bytes.extend(0u64.to_le_bytes());
+            let mut offset = 0u64;
+            for (index, suffix) in ["gate", "up", "down"].into_iter().enumerate() {
+                text(&mut bytes, &format!("blk.{layer}.ffn_{suffix}_exps.weight"));
+                bytes.extend(3u32.to_le_bytes());
+                let dimensions = if index == 2 {
+                    [640u64, 2560, 512]
+                } else {
+                    [2560u64, 640, 512]
+                };
+                for dimension in dimensions {
+                    bytes.extend(dimension.to_le_bytes());
+                }
+                bytes.extend(kinds[index].gguf_id().to_le_bytes());
+                bytes.extend(offset.to_le_bytes());
+                offset +=
+                    kinds[index].row_bytes(dimensions[0]).unwrap() * dimensions[1] * dimensions[2];
+            }
+            bytes.resize(bytes.len().next_multiple_of(32), 0);
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&fixture.0)
+                .unwrap();
+            file.write_all(&bytes).unwrap();
+            // Sparse public extent only: no weight payload allocation/write/read,
+            // device client, map or GPU command is used by this metadata test.
+            file.set_len(bytes.len() as u64 + offset).unwrap();
+            drop(file);
+            let model = GgufFile::open(&fixture.0, GgufLimits::default()).unwrap();
+            let weights = RoutedWeights {
+                gate: model
+                    .tensor(&format!("blk.{layer}.ffn_gate_exps.weight"))
+                    .unwrap(),
+                up: model
+                    .tensor(&format!("blk.{layer}.ffn_up_exps.weight"))
+                    .unwrap(),
+                down: model
+                    .tensor(&format!("blk.{layer}.ffn_down_exps.weight"))
+                    .unwrap(),
+            };
+            let requests = ExpertBanks::allocation_requests_with_profile(
+                weights,
+                144,
+                OriginalPackedProfile::UnslothQ3,
+            )
+            .unwrap();
+            assert_eq!(requests.len(), 6);
+            let expected_gate = if layer == 2 { 62_668_800 } else { 45_158_400 };
+            let expected_down = if layer == 0 { 66_355_200 } else { 125_337_600 };
+            assert_eq!(
+                requests,
+                [
+                    expected_gate,
+                    expected_gate,
+                    expected_gate,
+                    expected_gate,
+                    expected_down,
+                    expected_down
+                ]
+            );
+            assert_eq!(
+                ExpertBanks::allocation_with_profile(
+                    weights,
+                    144,
+                    OriginalPackedProfile::UnslothQ3
+                )
+                .unwrap(),
+                if layer == 0 {
+                    384 * 1024 * 1024
+                } else {
+                    512 * 1024 * 1024
+                }
+            );
+            assert!(ExpertBanks::allocation_requests(weights, 144).is_err());
+            assert!(
+                ExpertBanks::allocation_requests_with_profile(
+                    weights,
+                    128,
+                    OriginalPackedProfile::UnslothQ3
+                )
+                .is_err()
+            );
+            assert!(
+                validate_profile_weights(
+                    OriginalPackedProfile::UnslothQ3,
+                    RoutedWeights {
+                        gate: weights.gate,
+                        up: weights.down,
+                        down: weights.up,
+                    }
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn q3_profile_preserves_exact_mixed_types_in_all_48_layers() {
+        let gate = [2560, 640, 512];
+        let down = [640, 2560, 512];
+        let mut iq4_gate_layers = 0;
+        let mut q8_down_layers = 0;
+        for layer in 0..48 {
+            let kinds = q3_expert_types(layer).unwrap();
+            iq4_gate_layers += usize::from(kinds[0] == TensorType::Iq4Xs);
+            q8_down_layers += usize::from(kinds[2] == TensorType::Q8_0);
+            assert_eq!(
+                kinds[0],
+                if layer == 2 {
+                    TensorType::Iq4Xs
+                } else {
+                    TensorType::Iq3Xxs
+                }
+            );
+            assert_eq!(
+                kinds[2],
+                if [2, 4, 30, 46, 47].contains(&layer) {
+                    TensorType::Q8_0
+                } else {
+                    TensorType::Iq4Nl
+                }
+            );
+            let parts = [
+                (kinds[0], &gate[..]),
+                (kinds[1], &gate[..]),
+                (kinds[2], &down[..]),
+            ];
+            validate_profile_metadata(OriginalPackedProfile::UnslothQ3, layer, parts).unwrap();
+            assert!(validate_profile_metadata(OriginalPackedProfile::Q4, layer, parts).is_err());
+            for position in 0..3 {
+                let mut bad = parts;
+                bad[position].0 = TensorType::F32;
+                assert!(
+                    validate_profile_metadata(OriginalPackedProfile::UnslothQ3, layer, bad)
+                        .is_err()
+                );
+            }
+        }
+        assert_eq!((iq4_gate_layers, q8_down_layers), (1, 5));
+        assert!(q3_expert_types(48).is_err());
+        let wrong = [2560, 640, 511];
+        assert!(
+            validate_profile_metadata(
+                OriginalPackedProfile::UnslothQ3,
+                0,
+                [
+                    (TensorType::Iq3Xxs, &wrong),
+                    (TensorType::Iq3Xxs, &gate),
+                    (TensorType::Iq4Nl, &down)
+                ]
+            )
+            .is_err()
+        );
+        // A rare layer cannot accidentally inherit the common layer profile.
+        assert!(
+            validate_profile_metadata(
+                OriginalPackedProfile::UnslothQ3,
+                2,
+                [
+                    (TensorType::Iq3Xxs, &gate),
+                    (TensorType::Iq3Xxs, &gate),
+                    (TensorType::Q8_0, &down)
+                ]
+            )
+            .is_err()
+        );
+        assert!(
+            validate_profile_metadata(
+                OriginalPackedProfile::UnslothQ3,
+                4,
+                [
+                    (TensorType::Iq3Xxs, &gate),
+                    (TensorType::Iq3Xxs, &gate),
+                    (TensorType::Iq4Nl, &down)
+                ]
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn q3_profile_derives_real_packed_rows_and_full_physical_bank_charge() {
+        let mut logical = 0usize;
+        let mut physical = 0usize;
+        for layer in 0..48 {
+            let kinds = q3_expert_types(layer).unwrap();
+            for (index, kind) in kinds.into_iter().enumerate() {
+                let (columns, rows) = if index == 2 { (640, 2560) } else { (2560, 640) };
+                let row = kind.row_bytes(columns).unwrap() as usize;
+                assert_eq!(
+                    row,
+                    match kind {
+                        TensorType::Iq3Xxs => 980,
+                        TensorType::Iq4Xs => 1360,
+                        TensorType::Iq4Nl => 360,
+                        TensorType::Q8_0 => 680,
+                        _ => unreachable!(),
+                    }
+                );
+                let (expert, segments) = packed_segments(row, rows, 144).unwrap();
+                assert_eq!(segments, [expert * 72; 2]);
+                assert_eq!(
+                    expert,
+                    match kind {
+                        TensorType::Iq3Xxs => 627200,
+                        TensorType::Iq4Xs => 870400,
+                        TensorType::Iq4Nl => 921600,
+                        TensorType::Q8_0 => 1740800,
+                        _ => unreachable!(),
+                    }
+                );
+                for bytes in segments {
+                    assert!(bytes <= 128 * 1024 * 1024);
+                    assert!(bytes.is_multiple_of(4));
+                    logical += bytes;
+                    physical += bytes.next_power_of_two();
+                }
+            }
+        }
+        assert_eq!(logical, 15_700_377_600);
+        assert_eq!(physical, UNSLOTH_Q3_BANK_BYTES_144);
+        assert_eq!(physical, 18 * GIB + 640 * 1024 * 1024);
+        validate_profile_residency(
+            OriginalPackedProfile::UnslothQ3,
+            144,
+            physical,
+            5 * GIB,
+            31 * GIB,
+        )
+        .unwrap();
+        for (cap, bytes, cache, device) in [
+            (144, logical, 5 * GIB, 31 * GIB),
+            (144, 24 * GIB, 5 * GIB, 31 * GIB),
+            (128, physical, 5 * GIB, 31 * GIB),
+            (144, physical, 6 * GIB, 31 * GIB),
+            (144, physical, 5 * GIB, 26 * GIB),
+            (144, usize::MAX, 5 * GIB, 31 * GIB),
+        ] {
+            assert!(
+                validate_profile_residency(
+                    OriginalPackedProfile::UnslothQ3,
+                    cap,
+                    bytes,
+                    cache,
+                    device
+                )
+                .is_err()
+            );
+        }
+        validate_profile_residency(OriginalPackedProfile::Q4, 144, 24 * GIB, 5 * GIB, 31 * GIB)
+            .unwrap();
+        assert!(
+            validate_profile_residency(OriginalPackedProfile::Q4, 144, physical, 5 * GIB, 31 * GIB)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn q3_profile_is_explicit_and_rejects_every_q4_shortcut() {
+        assert_eq!(OriginalPackedProfile::default(), OriginalPackedProfile::Q4);
+        let q3 = OriginalPackedProfile::UnslothQ3;
+        validate_segmented_configuration_with_profile(
+            144,
+            Some(5 * GIB),
+            5 * GIB,
+            false,
+            false,
+            false,
+            true,
+            q3,
+        )
+        .unwrap();
+        for (capacity, cache, block, batch, word, resident) in [
+            (144, None, false, false, false, true),
+            (128, Some(5 * GIB), false, false, false, true),
+            (144, Some(5 * GIB), true, false, false, true),
+            (144, Some(5 * GIB), false, true, false, true),
+            (144, Some(5 * GIB), false, false, true, true),
+            (144, Some(5 * GIB), false, false, false, false),
+        ] {
+            assert!(
+                validate_segmented_configuration_with_profile(
+                    capacity,
+                    cache,
+                    5 * GIB,
+                    block,
+                    batch,
+                    word,
+                    resident,
+                    q3
+                )
+                .is_err()
+            );
+        }
+        q3.validate_shortcuts(false, false, false, false, false)
+            .unwrap();
+        for index in 0..5 {
+            let mut options = [false; 5];
+            options[index] = true;
+            assert!(
+                q3.validate_shortcuts(options[0], options[1], options[2], options[3], options[4])
+                    .is_err()
+            );
+        }
+        OriginalPackedProfile::Q4
+            .validate_shortcuts(true, true, true, true, true)
+            .unwrap();
+    }
+
+    #[test]
+    fn q3_profile_matches_original_main_and_paired_ple_formats() {
+        for (name, dimensions, dtype) in [
+            ("token_embd.weight", &[2560, 248320][..], TensorType::Q8_0),
+            ("output.weight", &[2560, 248320][..], TensorType::Q6K),
+            (
+                "per_layer_token_embd.weight",
+                &[160, 320001536][..],
+                TensorType::Iq4Nl,
+            ),
+            (
+                "blk.3.indexer.q_proj.weight",
+                &[2560, 512][..],
+                TensorType::Bf16,
+            ),
+            (
+                "blk.3.indexer.k_proj.weight",
+                &[2560, 128][..],
+                TensorType::Bf16,
+            ),
+            (
+                "blk.0.ffn_gate_inp.weight",
+                &[2560, 512][..],
+                TensorType::F32,
+            ),
+            (
+                "blk.0.hc_attn_inject.weight",
+                &[10240, 4][..],
+                TensorType::F32,
+            ),
+            ("blk.0.ssm_alpha.weight", &[2560, 48][..], TensorType::F32),
+            ("blk.0.ssm_conv1d.weight", &[4, 10240][..], TensorType::F32),
+            ("blk.1.ple_conv1d.weight", &[4, 10240][..], TensorType::F32),
+            ("blk.0.hc_attn_norm.weight", &[10240][..], TensorType::F32),
+            (
+                "blk.0.hc_attn_down.weight",
+                &[10240, 320][..],
+                TensorType::Q8_0,
+            ),
+        ] {
+            assert_eq!(q3_main_dtype(name, dimensions), dtype);
+        }
+        let dimensions = [160, 320001536];
+        let q3 = OriginalPackedProfile::UnslothQ3;
+        q3.validate_ple(TensorType::Iq4Nl, &dimensions, 90).unwrap();
+        OriginalPackedProfile::Q4
+            .validate_ple(TensorType::Q5_0, &dimensions, 110)
+            .unwrap();
+        for (dtype, dims, bytes) in [
+            (TensorType::Q5_0, &dimensions[..], 110),
+            (TensorType::Iq4Nl, &dimensions[..], 110),
+            (TensorType::Iq4Nl, &[160, 320001535][..], 90),
+            (TensorType::Iq4Nl, &[159, 320001536][..], 90),
+        ] {
+            assert!(q3.validate_ple(dtype, dims, bytes).is_err());
+        }
+        assert!(
+            OriginalPackedProfile::Q4
+                .validate_ple(TensorType::Iq4Nl, &dimensions, 90)
+                .is_err()
+        );
     }
 }

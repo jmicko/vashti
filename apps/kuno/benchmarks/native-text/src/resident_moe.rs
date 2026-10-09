@@ -469,6 +469,15 @@ impl ResidentMoe {
         cancelled(cancel)?;
         graph.verify_unchanged()?;
         let weights = self.weights(graph)?;
+        // This legacy scalar/segmented family has Q4-specific stride shortcuts.
+        // The explicit Q3 profile is initially connected only through native
+        // grouped kernels; never silently fall back to this family on failure.
+        if banks.profile() == crate::expert_banks::OriginalPackedProfile::UnslothQ3 {
+            banks
+                .profile()
+                .validate_shortcuts(false, false, false, word_down, block_moe)?;
+            return Err(fault("Unsloth Q3 requires native grouped MoE owner"));
+        }
         let shape = quant_matvec::moe::MoeShape::new(SELECTED, banks.hidden, banks.ff, 65535)
             .map_err(fault)?;
         if word_down {
