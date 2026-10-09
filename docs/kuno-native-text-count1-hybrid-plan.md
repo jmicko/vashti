@@ -2112,3 +2112,26 @@ capacity; add actual ten-route/four-global/one-per-layer bounded convergence
 coverage. A simultaneous50-expert shift in all48 layers has a600-token lower
 bound under the current transfer budget; the127-step timing fixture cannot
 establish fully warmed long-run throughput for that case.
+
+### Longer matched settling diagnostic (2026-10-08)
+
+The user requested sustained measurements after confirming warm mapped uploads
+have no disk reads. Keep the complete original128-ID/fresh/cancel/owning fixture
+unchanged, including its203-token allocation and five original owner closes.
+Only after that fixture fully closes, an explicit `KUNO_LAB_STEADY_PUBLIC=1`
+creates a separate1227-token context on the same selected engine and runs the
+same75-token public prompt, verifies the128-token original greedy prefix, then
+feeds that fixed public128-ID sequence cyclically for1024 more decode steps.
+This teacher-forced workload keeps inputs identical between fixed and adaptive
+engines after a normal response would end. It measures persistent-topic cache
+settling and increasing context; it does not establish arbitrary long-response
+quality. No arbitrary/private input is accepted by this diagnostic.
+
+Report eight disjoint128-step windows: elapsed time, exactGPU/CPU route partition,
+completed promotions/original bytes/promotion wall time, and numeric disk/fault
+counters. Keep actual greedy output IDs transient until the new context's full
+owning zero audit and existing I/O closing audit succeed; diagnostic receipts
+may contain only these compiled-public outputs. Compare their exact sequences
+between engines. Never persist private expert IDs/histories. The nested steady
+receipt and its extra closing markers are separate from the frozen original
+acceptance fields/markers. Normal benchmark invocations pin this flag off.

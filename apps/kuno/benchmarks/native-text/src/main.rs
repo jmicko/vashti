@@ -50,6 +50,7 @@ mod scratch_clear_batch;
 mod secondary_experts;
 mod small_cpu;
 mod status_fold_batch;
+mod steady_public;
 mod token_waves;
 mod transient_probe;
 use cubecl::prelude::*;
@@ -891,6 +892,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Fused subgroup finite checks require the explicit fast GPU path".into());
     }
     let long_fixture = count1_environment_opt_in(&mode, "KUNO_LAB_LONG_FIXTURE")?;
+    let steady_public = count1_environment_opt_in(&mode, "KUNO_LAB_STEADY_PUBLIC")?;
     let cpu_buffered_weights = cfg!(feature = "cpu-buffered-weights");
     if cpu_buffered_weights && (!mapped_weights || !count1_pooled) {
         return Err("CPU buffered weights require mapped pooled hybrid mode".into());
@@ -1015,6 +1017,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         && (count1_hybrid_cap != Some(10) || !mapped_weights || !count1_pooled || !count1_overlap)
     {
         return Err("GPU expert balancing requires mapped cap10 pooled overlap".into());
+    }
+
+    if steady_public
+        && (!long_fixture
+            || secondary_experts
+            || vendor != 0x8086
+            || count1_banks != Count1Banks::Intel144
+            || count1_hybrid_cap != Some(10)
+            || gpu_expert_limit != 10
+            || !mapped_weights
+            || !count1_pooled
+            || !count1_overlap
+            || !next_shared
+            || !inline_dispatch
+            || std::env::var("KUNO_LAB_DEFER_ROUTER_IO").as_deref() != Ok("1")
+            || std::env::var("KUNO_LAB_REQUEST_IO_REUSE").as_deref() != Ok("1"))
+    {
+        return Err("steady diagnostic requires protected fixed public intel144 cap10 mode".into());
     }
 
     let integer_experts = count1_environment_opt_in(&mode, "KUNO_LAB_INTEGER_EXPERTS")?;
@@ -3424,6 +3444,61 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if ordered_public_upload {
                     receipt["ordered_public_source_pending_bytes_after_cleanup"] =
                         serde_json::json!(executor.ordered_source_pending_bytes());
+                }
+                if steady_public {
+                    // Original fields and all five original audits are frozen
+                    // before this separate extended-context diagnostic begins.
+                    println!("public_steady_probe_begin=true");
+                    resident.take();
+                    executor = executor::GpuExecutor::new(
+                        &file,
+                        client.clone(),
+                        cache_budget,
+                        expert_slots,
+                        device_budget,
+                    )?;
+                    executor.enable_transient_resident(
+                        transient_context
+                            .as_ref()
+                            .ok_or("steady transient owner missing")?
+                            .clone(),
+                    )?;
+                    executor.gpu_router = gpu_router;
+                    executor.fused_experts = fused_experts;
+                    executor.integer_experts = integer_experts;
+                    executor.gpu_expert_limit = gpu_expert_limit;
+                    executor.fast_dense = fast_gpu;
+                    executor.fast_dense_fault = fast_gpu_fault;
+                    executor.shared_kernels = next_shared;
+                    executor.shared_gdn = shared_gdn;
+                    executor.token_io_checkpoint = token_checkpoint || defer_router_io;
+                    let mut steady = resident_model::ResidentModel::new_for_lab_fixture(
+                        model.bound_graph(),
+                        client.clone(),
+                        steady_public::CONTEXT,
+                        &mut executor,
+                        true,
+                        native_config.clone(),
+                    )?;
+                    let public_prefix = zeroize::Zeroizing::new(
+                        receipt["public_generated_ids"]
+                            .as_array()
+                            .ok_or("steady public prefix absent")?
+                            .iter()
+                            .map(|x| {
+                                x.as_u64()
+                                    .and_then(|n| u32::try_from(n).ok())
+                                    .ok_or("steady public prefix invalid")
+                            })
+                            .collect::<Result<Vec<_>, _>>()?,
+                    );
+                    receipt["steady_probe"] = steady_public::run(
+                        &mut steady,
+                        &mut executor,
+                        &ids,
+                        &public_prefix,
+                        &cancel,
+                    )?;
                 }
                 let mut out = std::fs::OpenOptions::new()
                     .write(true)
