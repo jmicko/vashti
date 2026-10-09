@@ -1,13 +1,17 @@
-//! Fixed-public, fully resident original-Q8 MTP laboratory workspace.
+//! Fixed-public, fully resident original-packed MTP laboratory workspace.
 //!
 //! No model alias, HTTP request, speculative acceptance controller or arbitrary
 //! configuration is exposed here. The caller supplies a fresh exclusive-bin
-//! client and the strict34-tensor `MtpGraph`. Every expert remains original and
+//! client and an explicitly selected strict `MtpGraph`. Every expert is original and
 //! resident. A step is provisional until the target verifies it. Position is
 //! committed only after complete finite/fault/tail and guarded output proofs.
 //! A failed queued step destroys the entire cache and poisons this sequence.
 #![allow(dead_code)] // Parent fixed-public registration/physical gate is separate.
 
+#[path = "resident_strata_mtp.rs"]
+mod strata;
+#[path = "strata_mtp_kernels.rs"]
+mod strata_k;
 #[path = "mtp_private_sweeps.rs"]
 mod sweeps;
 
@@ -19,7 +23,10 @@ use crate::{
     resident_util as u,
 };
 use cubecl::{prelude::*, server::Handle, wgpu::WgpuRuntime};
-use kuno_text::{Error, Result, TensorType, mtp::MtpGraph};
+use kuno_text::{
+    Error, Result, TensorType,
+    mtp::{MtpGraph, MtpProfile},
+};
 use std::{
     cell::Cell,
     collections::BTreeMap,
@@ -31,6 +38,9 @@ use std::{
 use zeroize::{Zeroize, Zeroizing};
 
 pub const PUBLIC_BYTES: u64 = 5_011_668_992;
+// Original GGUF dense BF16 +borrowed IQ4_XS embedding/Q6_K full head. Exact
+// independent startup page geometry is checked before any device allocation.
+pub const STRATA_PUBLIC_BYTES: u64 = 2_539_257_856;
 pub const MAIN_BYTES: u64 = 6 * 1024 * 1024 * 1024;
 pub const PRIVATE_BYTES: usize = 16 * 1024 * 1024;
 pub const RUNTIME_BYTES: u64 = 64 * 1024 * 1024;
@@ -554,10 +564,10 @@ fn private_guard(
         }
     }
 }
-/// Same complete public bytes/tail semantics as host validation. Q8 half
+/// Same complete public bytes/tail semantics as host validation. Packed half
 /// scales may be finite subnormals/negative/zero; all exponent31 are rejected.
 #[cube(launch)]
-#[allow(clippy::manual_range_contains)]
+#[allow(clippy::manual_range_contains, clippy::collapsible_if)] // Keep compile-time dtype admission outside runtime bit predicates.
 fn public_guard(
     values: &Array<u32>,
     fault: &mut Array<Atomic<u32>>,
@@ -576,6 +586,10 @@ fn public_guard(
             if !(value >= -3.4028235e38_f32 && value <= 3.4028235e38_f32) {
                 fault[0].fetch_or(1);
             }
+        } else if comptime!(dtype == quant_matvec::BF16) {
+            if word & 32640 == 32640 || (word >> 16) & 32640 == 32640 {
+                fault[0].fetch_or(1);
+            }
         }
         if comptime!(dtype == quant_matvec::Q8_0) {
             let block = i * 34;
@@ -583,6 +597,30 @@ fn public_guard(
                 let index = block / 4;
                 let shift = (block % 4) * 8;
                 let half = (values[index] >> (shift as u32)) & 65535;
+                if half & 31744 == 31744 {
+                    fault[0].fetch_or(1);
+                }
+            }
+        }
+        if comptime!(
+            dtype == quant_matvec::Q2_0
+                || dtype == quant_matvec::IQ4_XS
+                || dtype == quant_matvec::Q6_K
+        ) {
+            let block_bytes = comptime!(if dtype == quant_matvec::Q2_0 {
+                18
+            } else if dtype == quant_matvec::IQ4_XS {
+                136
+            } else {
+                210
+            });
+            let scale_offset = comptime!(if dtype == quant_matvec::Q6_K { 208 } else { 0 });
+            // Bound the block index BEFORE multiplication. Full owned page
+            // sweeps also visit padding words, not only packed block count.
+            if i < logical_bytes / block_bytes {
+                let block = i * block_bytes;
+                let at = block + scale_offset;
+                let half = (values[at / 4] >> ((at % 4) * 8) as u32) & 65535;
                 if half & 31744 == 31744 {
                     fault[0].fetch_or(1);
                 }
@@ -711,13 +749,61 @@ fn tile_plan(spec: Spec) -> Result<Vec<(usize, usize, usize, usize)>> {
         .collect()
 }
 fn public_plan() -> Result<u64> {
-    let mut bytes = k::expert_owned_bytes()?;
-    for spec in MATRICES.into_iter().chain([HEAD_UP, EMBEDDING]) {
+    public_plan_for(MtpProfile::SelfContainedQ8)
+}
+fn matrices_for(profile: MtpProfile) -> &'static [Spec] {
+    match profile {
+        MtpProfile::SelfContainedQ8 => &MATRICES,
+        MtpProfile::StrataQ2 => &strata::MATRICES_Q2,
+    }
+}
+fn head_up_for(profile: MtpProfile) -> Spec {
+    match profile {
+        MtpProfile::SelfContainedQ8 => HEAD_UP,
+        MtpProfile::StrataQ2 => strata::HEAD_UP_Q2,
+    }
+}
+fn embedding_for(profile: MtpProfile) -> Spec {
+    match profile {
+        MtpProfile::SelfContainedQ8 => EMBEDDING,
+        MtpProfile::StrataQ2 => strata::EMBEDDING_Q2,
+    }
+}
+fn vectors_for(profile: MtpProfile) -> &'static [(&'static str, usize)] {
+    match profile {
+        MtpProfile::SelfContainedQ8 => &VECTORS,
+        MtpProfile::StrataQ2 => &strata::VECTORS_Q2,
+    }
+}
+fn public_bytes_for(profile: MtpProfile) -> u64 {
+    match profile {
+        MtpProfile::SelfContainedQ8 => PUBLIC_BYTES,
+        MtpProfile::StrataQ2 => STRATA_PUBLIC_BYTES,
+    }
+}
+fn validate_profile(actual: MtpProfile, expected: MtpProfile, target_bound: bool) -> Result<()> {
+    if actual != expected || expected == MtpProfile::StrataQ2 && !target_bound {
+        return Err(Error::InvalidFormat(
+            "MTP resident constructor profile mismatch",
+        ));
+    }
+    Ok(())
+}
+fn public_plan_for(profile: MtpProfile) -> Result<u64> {
+    let mut bytes = match profile {
+        MtpProfile::SelfContainedQ8 => k::expert_owned_bytes()?,
+        MtpProfile::StrataQ2 => strata::expert_owned_bytes()?,
+    };
+    for spec in matrices_for(profile)
+        .iter()
+        .copied()
+        .chain([head_up_for(profile), embedding_for(profile)])
+    {
         for (_, _, _, owned) in tile_plan(spec)? {
             bytes += owned as u64;
         }
     }
-    for (_, words) in VECTORS {
+    for &(_, words) in vectors_for(profile) {
         bytes += main_admission::page_bytes((words * 4) as u64).map_err(error)?;
     }
     bytes += 2 * main_admission::page_bytes((crate::qsa_gpu::ROPE_TABLE_WORDS * 4) as u64)
@@ -740,6 +826,30 @@ fn validate_source(bytes: &[u8], dtype: u32) -> Result<()> {
                 .any(|b| !f32::from_le_bytes([b[0], b[1], b[2], b[3]]).is_finite())
             {
                 return Err(Error::InvalidFormat("MTP nonfinite original F32 source"));
+            }
+        }
+        quant_matvec::BF16 if bytes.len().is_multiple_of(2) => {
+            if bytes
+                .chunks_exact(2)
+                .any(|b| u16::from_le_bytes([b[0], b[1]]) & 0x7f80 == 0x7f80)
+            {
+                return Err(Error::InvalidFormat("MTP nonfinite original BF16 source"));
+            }
+        }
+        quant_matvec::Q2_0 | quant_matvec::IQ4_XS | quant_matvec::Q6_K => {
+            let (block, scale) = match dtype {
+                quant_matvec::Q2_0 => (18, 0),
+                quant_matvec::IQ4_XS => (136, 0),
+                _ => (210, 208),
+            };
+            if !bytes.len().is_multiple_of(block) {
+                return Err(Error::InvalidBufferLength);
+            }
+            if bytes
+                .chunks_exact(block)
+                .any(|b| u16::from_le_bytes([b[scale], b[scale + 1]]) & 0x7c00 == 0x7c00)
+            {
+                return Err(Error::InvalidFormat("MTP nonfinite original packed source"));
             }
         }
         _ => return Err(Error::InvalidBufferLength),
@@ -776,7 +886,14 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         limits: &wgpu::Limits,
         retired: Arc<AtomicBool>,
     ) -> Result<Self> {
-        Self::construct(graph, client, limits, retired, false)
+        Self::construct(
+            graph,
+            client,
+            limits,
+            retired,
+            false,
+            MtpProfile::SelfContainedQ8,
+        )
     }
     /// Separate fixed-public performance candidate. The mode is immutable for
     /// this workspace, and ordinary `new` retains the accepted original path.
@@ -787,7 +904,32 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         limits: &wgpu::Limits,
         retired: Arc<AtomicBool>,
     ) -> Result<Self> {
-        Self::construct(graph, client, limits, retired, true)
+        Self::construct(
+            graph,
+            client,
+            limits,
+            retired,
+            true,
+            MtpProfile::SelfContainedQ8,
+        )
+    }
+    /// Explicit original Strata GGUF profile. Requires the already-bound paired
+    /// target; no dense repacking, vocabulary subset or CPU expert fallback.
+    pub fn new_strata_q2(
+        graph: &'g MtpGraph<'f>,
+        client: ComputeClient<WgpuRuntime>,
+        limits: &wgpu::Limits,
+        retired: Arc<AtomicBool>,
+    ) -> Result<Self> {
+        Self::construct(graph, client, limits, retired, false, MtpProfile::StrataQ2)
+    }
+    pub fn new_strata_q2_with_fused_sweeps(
+        graph: &'g MtpGraph<'f>,
+        client: ComputeClient<WgpuRuntime>,
+        limits: &wgpu::Limits,
+        retired: Arc<AtomicBool>,
+    ) -> Result<Self> {
+        Self::construct(graph, client, limits, retired, true, MtpProfile::StrataQ2)
     }
     fn construct(
         graph: &'g MtpGraph<'f>,
@@ -795,7 +937,14 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         limits: &wgpu::Limits,
         retired: Arc<AtomicBool>,
         fused_sweeps: bool,
+        expected_profile: MtpProfile,
     ) -> Result<Self> {
+        validate_profile(
+            graph.profile(),
+            expected_profile,
+            graph.target_binding_id().is_some(),
+        )?;
+        graph.verify_unchanged()?;
         if fused_sweeps {
             validate_fused_sweep_limits(limits)?;
         } else {
@@ -805,7 +954,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             return Err(Error::InvalidFormat("MTP physical context retired"));
         }
         let private = private_plan()?;
-        if public_plan()? != PUBLIC_BYTES
+        if public_plan_for(expected_profile)? != public_bytes_for(expected_profile)
             || private > PRIVATE_BYTES as u64
             || INFO_BYTES + 3 * 4 * 1024 * 1024 > RUNTIME_BYTES
         {
@@ -814,7 +963,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         main_admission::check_capacity(
             MAIN_BYTES,
             &[
-                PUBLIC_BYTES,
+                public_bytes_for(expected_profile),
                 PRIVATE_BYTES as u64,
                 RUNTIME_BYTES,
                 PUBLIC_SOURCE_BYTES as u64,
@@ -942,7 +1091,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
     fn verify_source(&self) -> Result<()> {
         // This zero-length range still validates the pinned descriptor and all
         // source stat identities before/after; no model payload read occurs.
-        self.graph.tensor("output.weight")?.read_range(0, &mut [])
+        self.graph.verify_unchanged()
     }
     fn physical(&self) -> Result<()> {
         let mut owners: Vec<Handle> = self
@@ -983,11 +1132,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             return Err(Error::LimitExceeded("MTP public source capacity"));
         }
         let tensor = self.graph.tensor(name)?;
-        let expected = match dtype {
-            quant_matvec::Q8_0 => TensorType::Q8_0,
-            quant_matvec::F32 => TensorType::F32,
-            _ => return Err(Error::InvalidBufferLength),
-        };
+        let expected = TensorType::from_gguf_id(dtype)?;
         if tensor.info().dtype() != expected {
             return Err(Error::InvalidBufferLength);
         }
@@ -1052,7 +1197,12 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
     fn load_public(&mut self) -> Result<Public> {
         let mut pages = BTreeMap::new();
         let mut bytes = 0_u64;
-        for spec in MATRICES.into_iter().chain([HEAD_UP, EMBEDDING]) {
+        let profile = self.graph.profile();
+        for spec in matrices_for(profile)
+            .iter()
+            .copied()
+            .chain([head_up_for(profile), embedding_for(profile)])
+        {
             let tensor = self.graph.tensor(spec.name)?;
             if tensor.info().dimensions() != [spec.columns as u64, spec.rows as u64]
                 || tensor.info().byte_len() as usize
@@ -1076,34 +1226,85 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             }
             pages.insert(spec.name, list);
         }
-        for name in EXPERT_NAMES {
-            if self.graph.tensor(name)?.info().byte_len() != (k::EXPERTS * k::EXPERT_BYTES) as u64 {
-                return Err(Error::InvalidBufferLength);
+        if profile == MtpProfile::StrataQ2 {
+            for (name, gate_up) in [(strata::GU_NAME, true), (strata::DOWN_NAME, false)] {
+                let expert_bytes = if gate_up {
+                    strata::GU_EXPERT_BYTES
+                } else {
+                    strata::DOWN_EXPERT_BYTES
+                };
+                let tensor = self.graph.tensor(name)?;
+                if tensor.info().dtype() != TensorType::Q2_0
+                    || tensor.info().byte_len() != (k::EXPERTS * expert_bytes) as u64
+                {
+                    return Err(Error::InvalidBufferLength);
+                }
+                let mut list = Vec::with_capacity(strata::SHARDS);
+                for index in 0..strata::SHARDS {
+                    let shard = strata::Shard::new(index)?;
+                    let owned = shard.owned(gate_up)?;
+                    list.push(self.load_page(
+                        name,
+                        shard.first * expert_bytes,
+                        shard.bytes(gate_up)?,
+                        owned,
+                        shard.first,
+                        strata::EXPERTS_PER_SHARD,
+                        quant_matvec::Q2_0,
+                    )?);
+                    bytes += owned as u64;
+                }
+                pages.insert(name, list);
             }
-            let mut list = Vec::with_capacity(k::SHARDS);
-            for index in 0..k::SHARDS {
-                let shard = k::Shard::new(index)?;
-                let logical = shard.packed_bytes()?;
-                let owned = shard.owned_bytes()? as usize;
-                list.push(self.load_page(
-                    name,
-                    shard.first * k::EXPERT_BYTES,
-                    logical,
-                    owned,
-                    shard.first,
-                    shard.experts,
-                    quant_matvec::Q8_0,
-                )?);
-                bytes += owned as u64;
+        } else {
+            for name in EXPERT_NAMES {
+                if self.graph.tensor(name)?.info().byte_len()
+                    != (k::EXPERTS * k::EXPERT_BYTES) as u64
+                {
+                    return Err(Error::InvalidBufferLength);
+                }
+                let mut list = Vec::with_capacity(k::SHARDS);
+                for index in 0..k::SHARDS {
+                    let shard = k::Shard::new(index)?;
+                    let logical = shard.packed_bytes()?;
+                    let owned = shard.owned_bytes()? as usize;
+                    list.push(self.load_page(
+                        name,
+                        shard.first * k::EXPERT_BYTES,
+                        logical,
+                        owned,
+                        shard.first,
+                        shard.experts,
+                        quant_matvec::Q8_0,
+                    )?);
+                    bytes += owned as u64;
+                }
+                pages.insert(name, list);
             }
-            pages.insert(name, list);
         }
-        for (name, n) in VECTORS {
+        for &(name, n) in vectors_for(profile) {
             let owned = main_admission::page_bytes((n * 4) as u64).map_err(error)? as usize;
-            pages.insert(
-                name,
-                vec![self.load_page(name, 0, n * 4, owned, 0, 1, quant_matvec::F32)?],
-            );
+            if profile == MtpProfile::StrataQ2 {
+                let values = self.graph.static_vector(name)?;
+                if values.len() != n {
+                    return Err(Error::InvalidBufferLength);
+                }
+                let mut source = Upload(vec![0; owned]);
+                for (word, value) in source.0.chunks_exact_mut(4).zip(values) {
+                    word.copy_from_slice(&value.to_le_bytes());
+                }
+                validate_source(&source.0[..n * 4], quant_matvec::F32)?;
+                self.verify_source()?;
+                pages.insert(
+                    name,
+                    vec![self.upload_page(source, n * 4, owned, 0, 1, quant_matvec::F32)?],
+                );
+            } else {
+                pages.insert(
+                    name,
+                    vec![self.load_page(name, 0, n * 4, owned, 0, 1, quant_matvec::F32)?],
+                );
+            }
             bytes += owned as u64;
         }
         let (sin, cos) = k::rope_tables();
@@ -1119,7 +1320,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         let sin = upload_rope(sin)?;
         let cos = upload_rope(cos)?;
         bytes += (sin.owned_bytes + cos.owned_bytes) as u64;
-        if bytes != PUBLIC_BYTES || pages.len() != 30 {
+        if bytes != public_bytes_for(profile) || pages.len() != 30 {
             return Err(Error::InvalidBufferLength);
         }
         Ok(Public {
@@ -1496,9 +1697,10 @@ impl ResidentMtp<'_, '_> {
         Self::public_arg(self.public()?.one(name)?)
     }
     fn project(&mut self, name: &'static str, input: B, output: B) -> Result<()> {
-        let spec = MATRICES
-            .into_iter()
-            .chain([HEAD_UP])
+        let spec = matrices_for(self.graph.profile())
+            .iter()
+            .copied()
+            .chain([head_up_for(self.graph.profile())])
             .find(|s| s.name == name)
             .ok_or(Error::InvalidFormat("MTP projection role"))?;
         if WORDS[input as usize] != spec.columns
@@ -1574,6 +1776,22 @@ impl ResidentMtp<'_, '_> {
     fn condition(&mut self) -> Result<()> {
         let pages = self.public()?.pages(EMBEDDING.name)?;
         for page in pages {
+            if self.graph.profile() == MtpProfile::StrataQ2 {
+                unsafe {
+                    strata_k::embedding_tile::launch_unchecked::<WgpuRuntime>(
+                        self.client()?,
+                        u::grid(k::D)?,
+                        CubeDim::new_1d(64),
+                        Self::public_arg(page)?,
+                        self.a(B::Token)?,
+                        self.a(B::Embedding)?,
+                        self.a(B::Fault)?,
+                        page.first,
+                        page.rows,
+                    );
+                }
+                continue;
+            }
             unsafe {
                 k::embedding_tile::launch_unchecked::<WgpuRuntime>(
                     self.client()?,
@@ -1604,6 +1822,9 @@ impl ResidentMtp<'_, '_> {
             HIDDEN_NORM_GROUPS,
             HIDDEN_NORM_WIDTH,
         )?;
+        if self.graph.profile() == MtpProfile::StrataQ2 {
+            return self.condition_strata();
+        }
         k::condition_concat::launch::<WgpuRuntime>(
             self.client()?,
             u::grid(k::CONDITION_WORDS)?,
@@ -1641,6 +1862,50 @@ impl ResidentMtp<'_, '_> {
                 4,
             );
         }
+        self.tick(1)?;
+        self.finite(B::Residual0)
+    }
+    fn condition_strata(&mut self) -> Result<()> {
+        // Original embedding is dead after its norm. Reuse its exact2560-word
+        // owner for the embedding FC, distinct from the normalized input.
+        self.project(strata::FC_EMBEDDING, B::EmbeddingNorm, B::Embedding)?;
+        let page = self.public()?.one(strata::FC_HIDDEN)?;
+        let geometry =
+            matmul::MatrixGeometry::new(quant_matvec::BF16, k::D, k::D, 4).map_err(error)?;
+        let spans = matmul::BatchSpans::new(k::HC, 0, 0, k::D, 0, k::D);
+        geometry
+            .validate_spans(&spans, page.logical_bytes / 4, k::WIDE, k::WIDE)
+            .map_err(error)?;
+        unsafe {
+            matmul::packed_matmul::launch_unchecked::<WgpuRuntime>(
+                self.client()?,
+                geometry.grid(),
+                CubeDim::new_1d(64),
+                Self::public_arg(page)?,
+                self.a(B::HiddenNorm)?,
+                self.a(B::Residual0)?,
+                k::HC,
+                0,
+                0,
+                k::D,
+                0,
+                k::D,
+                k::D,
+                k::D,
+                quant_matvec::BF16,
+                4,
+            );
+        }
+        self.tick(1)?;
+        self.finite(B::Residual0)?;
+        strata_k::broadcast_embedding::launch::<WgpuRuntime>(
+            self.client()?,
+            u::grid(k::WIDE)?,
+            CubeDim::new_1d(64),
+            self.a(B::Embedding)?,
+            self.a(B::Residual0)?,
+            self.a(B::Fault)?,
+        );
         self.tick(1)?;
         self.finite(B::Residual0)
     }
@@ -1852,58 +2117,62 @@ impl ResidentMtp<'_, '_> {
             self.a(B::Fault)?,
         );
         self.tick(1)?;
-        for index in 0..k::SHARDS {
-            let shard = k::Shard::new(index)?;
-            let gate = &self.public()?.pages(EXPERT_NAMES[0])?[index];
-            let up = &self.public()?.pages(EXPERT_NAMES[1])?[index];
-            if gate.first != shard.first
-                || up.first != shard.first
-                || gate.rows != shard.experts
-                || up.rows != shard.experts
-            {
-                return Err(Error::InvalidBufferLength);
+        if self.graph.profile() == MtpProfile::StrataQ2 {
+            self.strata_experts()?;
+        } else {
+            for index in 0..k::SHARDS {
+                let shard = k::Shard::new(index)?;
+                let gate = &self.public()?.pages(EXPERT_NAMES[0])?[index];
+                let up = &self.public()?.pages(EXPERT_NAMES[1])?[index];
+                if gate.first != shard.first
+                    || up.first != shard.first
+                    || gate.rows != shard.experts
+                    || up.rows != shard.experts
+                {
+                    return Err(Error::InvalidBufferLength);
+                }
+                unsafe {
+                    k::q8_gate_up::launch_unchecked::<WgpuRuntime>(
+                        self.client()?,
+                        CubeCount::Static((k::FF / 4) as u32, k::RANKS as u32, 1),
+                        CubeDim::new_1d(128),
+                        Self::public_arg(gate)?,
+                        Self::public_arg(up)?,
+                        self.a(B::Mixed)?,
+                        self.a(B::Packet)?,
+                        self.a(B::Activation)?,
+                        self.a(B::Readiness)?,
+                        self.a(B::Fault)?,
+                        shard.first,
+                        shard.experts,
+                    );
+                }
             }
-            unsafe {
-                k::q8_gate_up::launch_unchecked::<WgpuRuntime>(
-                    self.client()?,
-                    CubeCount::Static((k::FF / 4) as u32, k::RANKS as u32, 1),
-                    CubeDim::new_1d(128),
-                    Self::public_arg(gate)?,
-                    Self::public_arg(up)?,
-                    self.a(B::Mixed)?,
-                    self.a(B::Packet)?,
-                    self.a(B::Activation)?,
-                    self.a(B::Readiness)?,
-                    self.a(B::Fault)?,
-                    shard.first,
-                    shard.experts,
-                );
+            self.tick(k::SHARDS)?;
+            for index in 0..k::SHARDS {
+                let shard = k::Shard::new(index)?;
+                let down = &self.public()?.pages(EXPERT_NAMES[2])?[index];
+                if down.first != shard.first || down.rows != shard.experts {
+                    return Err(Error::InvalidBufferLength);
+                }
+                unsafe {
+                    k::q8_down::launch_unchecked::<WgpuRuntime>(
+                        self.client()?,
+                        CubeCount::Static((k::D / 4) as u32, k::RANKS as u32, 1),
+                        CubeDim::new_1d(128),
+                        Self::public_arg(down)?,
+                        self.a(B::Activation)?,
+                        self.a(B::Packet)?,
+                        self.a(B::Partials)?,
+                        self.a(B::Readiness)?,
+                        self.a(B::Fault)?,
+                        shard.first,
+                        shard.experts,
+                    );
+                }
             }
+            self.tick(k::SHARDS)?;
         }
-        self.tick(k::SHARDS)?;
-        for index in 0..k::SHARDS {
-            let shard = k::Shard::new(index)?;
-            let down = &self.public()?.pages(EXPERT_NAMES[2])?[index];
-            if down.first != shard.first || down.rows != shard.experts {
-                return Err(Error::InvalidBufferLength);
-            }
-            unsafe {
-                k::q8_down::launch_unchecked::<WgpuRuntime>(
-                    self.client()?,
-                    CubeCount::Static((k::D / 4) as u32, k::RANKS as u32, 1),
-                    CubeDim::new_1d(128),
-                    Self::public_arg(down)?,
-                    self.a(B::Activation)?,
-                    self.a(B::Packet)?,
-                    self.a(B::Partials)?,
-                    self.a(B::Readiness)?,
-                    self.a(B::Fault)?,
-                    shard.first,
-                    shard.experts,
-                );
-            }
-        }
-        self.tick(k::SHARDS)?;
         self.project("blk.48.ffn_gate_shexp.weight", B::Mixed, B::SharedGate)?;
         self.project("blk.48.ffn_up_shexp.weight", B::Mixed, B::SharedUp)?;
         k::shared_activate::launch::<WgpuRuntime>(
@@ -1917,16 +2186,24 @@ impl ResidentMtp<'_, '_> {
         );
         self.tick(1)?;
         self.project("blk.48.ffn_down_shexp.weight", B::SharedAct, B::SharedDown)?;
-        k::shared_gate::launch::<WgpuRuntime>(
-            self.client()?,
-            CubeCount::Static(1, 1, 1),
-            CubeDim::new_1d(64),
-            self.vector_arg("blk.48.ffn_gate_inp_shexp.weight")?,
-            self.a(B::Mixed)?,
-            self.a(B::SharedScalar)?,
-            self.a(B::Fault)?,
-        );
-        self.tick(1)?;
+        if self.graph.profile() == MtpProfile::StrataQ2 {
+            self.project(
+                "blk.48.ffn_gate_inp_shexp.weight",
+                B::Mixed,
+                B::SharedScalar,
+            )?;
+        } else {
+            k::shared_gate::launch::<WgpuRuntime>(
+                self.client()?,
+                CubeCount::Static(1, 1, 1),
+                CubeDim::new_1d(64),
+                self.vector_arg("blk.48.ffn_gate_inp_shexp.weight")?,
+                self.a(B::Mixed)?,
+                self.a(B::SharedScalar)?,
+                self.a(B::Fault)?,
+            );
+            self.tick(1)?;
+        }
         k::routed_shared_merge::launch::<WgpuRuntime>(
             self.client()?,
             u::grid(k::D)?,
@@ -1941,6 +2218,62 @@ impl ResidentMtp<'_, '_> {
         );
         self.tick(1)?;
         self.finite(B::Block)
+    }
+    fn strata_experts(&mut self) -> Result<()> {
+        // Original top10 ranks/probabilities are unchanged. Every actual expert
+        // exists in one of four complete128-expert shards; no fallback/remap.
+        for index in 0..strata::SHARDS {
+            let shard = strata::Shard::new(index)?;
+            let gate_up = &self.public()?.pages(strata::GU_NAME)?[index];
+            if gate_up.first != shard.first
+                || gate_up.rows != strata::EXPERTS_PER_SHARD
+                || gate_up.logical_bytes != shard.bytes(true)?
+                || gate_up.owned_bytes != shard.owned(true)?
+            {
+                return Err(Error::InvalidBufferLength);
+            }
+            unsafe {
+                strata_k::gate_up::launch_unchecked::<WgpuRuntime>(
+                    self.client()?,
+                    CubeCount::Static((k::FF / 4) as u32, k::RANKS as u32, 1),
+                    CubeDim::new_1d(128),
+                    Self::public_arg(gate_up)?,
+                    self.a(B::Mixed)?,
+                    self.a(B::Packet)?,
+                    self.a(B::Activation)?,
+                    self.a(B::Readiness)?,
+                    self.a(B::Fault)?,
+                    shard.first,
+                );
+            }
+        }
+        self.tick(strata::SHARDS)?;
+        for index in 0..strata::SHARDS {
+            let shard = strata::Shard::new(index)?;
+            let down = &self.public()?.pages(strata::DOWN_NAME)?[index];
+            if down.first != shard.first
+                || down.rows != strata::EXPERTS_PER_SHARD
+                || down.logical_bytes != shard.bytes(false)?
+                || down.owned_bytes != shard.owned(false)?
+            {
+                return Err(Error::InvalidBufferLength);
+            }
+            unsafe {
+                strata_k::down::launch_unchecked::<WgpuRuntime>(
+                    self.client()?,
+                    CubeCount::Static((k::D / 4) as u32, k::RANKS as u32, 1),
+                    CubeDim::new_1d(128),
+                    Self::public_arg(down)?,
+                    self.a(B::Activation)?,
+                    self.a(B::Packet)?,
+                    self.a(B::Partials)?,
+                    self.a(B::Readiness)?,
+                    self.a(B::Fault)?,
+                    shard.first,
+                );
+            }
+        }
+        self.tick(strata::SHARDS)
     }
     fn finish_gpu(&mut self) -> Result<()> {
         self.project("output.weight", B::Mixed, B::Logits)?;
@@ -2418,6 +2751,9 @@ fn decode_draft(packet: &[u32]) -> Result<(Zeroizing<Vec<f32>>, u32)> {
     Ok((hidden, packet[DRAFT_TOKEN]))
 }
 
+#[cfg(test)]
+#[path = "resident_strata_mtp_tests.rs"]
+mod strata_tests;
 #[cfg(test)]
 #[path = "resident_mtp_tests.rs"]
 mod tests;
