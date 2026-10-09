@@ -21,6 +21,9 @@ def selected_target_policy(environment, mtp=False):
     if mtp and "KUNO_LAB_MTP_SWEEPS" in selected:
         if selected.pop("KUNO_LAB_MTP_SWEEPS") != "fused":
             raise ValueError("MTP sweep policy requires canonical fused")
+    if mtp and "KUNO_LAB_WARM_REPLAY" in selected:
+        if selected.pop("KUNO_LAB_WARM_REPLAY") != "once":
+            raise ValueError("Warm replay requires the one-shot public fixture")
     return selected
 
 def memory_limit(environment, arguments):

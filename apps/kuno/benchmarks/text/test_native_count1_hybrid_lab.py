@@ -1314,10 +1314,14 @@ class HybridLabTests(unittest.TestCase):
                 with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_TARGET_EXPERTS=invalid),args)
             if gate=="KUNO_LAB_SPECULATIVE_PUBLIC_ONLY":
                 self.assertEqual(guard.memory_limit(dict(env,KUNO_LAB_MTP_SWEEPS="fused"),args),48*1024**3)
+                self.assertEqual(guard.memory_limit(dict(env,KUNO_LAB_WARM_REPLAY="once"),args),48*1024**3)
+                for invalid in ("", "auto", "0", "1", "once ", True):
+                    with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_WARM_REPLAY=invalid),args)
                 for invalid in ("", "auto", "0", "1", "fused ", True):
                     with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_MTP_SWEEPS=invalid),args)
             else:
                 with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_MTP_SWEEPS="fused"),args)
+                with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_WARM_REPLAY="once"),args)
             for invalid in ("", "auto", "0", "1", "chunk ", True):
                 with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_TARGET_IO=invalid),args)
             for invalid in ("", "auto", "0", "1", "verify3 ", True):
@@ -1338,6 +1342,7 @@ class HybridLabTests(unittest.TestCase):
                 wrong=dict(env);wrong.pop(key)
                 with self.assertRaises(ValueError):guard.memory_limit(wrong,args)
             with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_TARGET_EXPERTS="prepared-verify3"),args)
+            with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_WARM_REPLAY="once"),args)
             with self.assertRaises(ValueError):guard.memory_limit(env,[*args,"extra"])
 
     def test_fast_gpu_requires_actual_dispatches_and_separate_long_selection(self):
