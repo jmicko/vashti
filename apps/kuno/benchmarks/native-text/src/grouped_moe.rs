@@ -155,6 +155,7 @@ pub struct Geometry {
     reduction_policy: ReductionPolicy,
     secondary_partition: bool,
     frozen_host_sources: bool,
+    inactive_partition_exit: bool,
 }
 impl Geometry {
     pub fn new(
@@ -209,6 +210,7 @@ impl Geometry {
             reduction_policy: ReductionPolicy::AllMembers,
             secondary_partition: false,
             frozen_host_sources: false,
+            inactive_partition_exit: false,
         })
     }
     /// Explicit source-only public profile. These virtual slots are NOT
@@ -242,6 +244,25 @@ impl Geometry {
     }
     pub(crate) fn frozen_host_sources(self) -> bool {
         self.frozen_host_sources
+    }
+    /// Construction-fixed source-only candidate. The default frozen source
+    /// geometry retains the original kernels, including their inactive trees.
+    pub(crate) fn with_inactive_partition_exit(mut self) -> Result<Self, &'static str> {
+        if !self.frozen_host_sources
+            || self.capacity != 512
+            || self.tile != 8
+            || self.secondary_partition
+            || self.gate_policy != GatePolicy::Generic
+            || self.reduction_policy != ReductionPolicy::AllMembers
+            || self.inactive_partition_exit
+        {
+            return Err("grouped frozen inactive-partition policy");
+        }
+        self.inactive_partition_exit = true;
+        Ok(self)
+    }
+    pub(crate) fn inactive_partition_exit(self) -> bool {
+        self.inactive_partition_exit
     }
     /// Narrow immutable32+16 partition; ordinary flat48 remains unchanged.
     pub(crate) fn stationary_secondary(projections: [Projection; 3]) -> Result<Self, &'static str> {
@@ -286,6 +307,7 @@ impl Geometry {
         if !matches!(self.tile, 4 | 8)
             || self.gate_policy != GatePolicy::Generic
             || self.secondary_partition
+            || self.inactive_partition_exit
         {
             return Err("grouped live-member public policy");
         }
@@ -1066,6 +1088,62 @@ pub fn grouped_gate_up(
         tile,
         q4_block,
         false,
+        false,
+    );
+}
+
+/// Authenticated frozen-source partition only; inactive groups do no writes.
+#[cube(launch, launch_unchecked)]
+#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
+pub fn grouped_gate_up_frozen(
+    gate: &Array<u32>,
+    up: &Array<u32>,
+    input: &Array<f32>,
+    map: &Array<u32>,
+    activations: &mut Array<f32>,
+    status: &mut Array<u32>,
+    map_first: usize,
+    input_first: usize,
+    input_stride: usize,
+    act_first: usize,
+    act_stride: usize,
+    status_first: usize,
+    first_slot: usize,
+    slot_count: usize,
+    #[comptime] hidden: usize,
+    #[comptime] ff: usize,
+    #[comptime] gate_dtype: u32,
+    #[comptime] up_dtype: u32,
+    #[comptime] gate_row_bytes: usize,
+    #[comptime] up_row_bytes: usize,
+    #[comptime] tile: usize,
+    #[comptime] q4_block: bool,
+) {
+    grouped_gate_up_inner(
+        gate,
+        up,
+        input,
+        map,
+        activations,
+        status,
+        map_first,
+        input_first,
+        input_stride,
+        act_first,
+        act_stride,
+        status_first,
+        first_slot,
+        slot_count,
+        hidden,
+        ff,
+        gate_dtype,
+        up_dtype,
+        gate_row_bytes,
+        up_row_bytes,
+        tile,
+        q4_block,
+        false,
+        true,
     );
 }
 
@@ -1120,6 +1198,7 @@ pub fn grouped_gate_up_live(
         tile,
         q4_block,
         true,
+        false,
     );
 }
 
@@ -1149,6 +1228,7 @@ fn grouped_gate_up_inner(
     #[comptime] tile: usize,
     #[comptime] q4_block: bool,
     #[comptime] live_member_reduction: bool,
+    #[comptime] inactive_partition_exit: bool,
 ) {
     let feature = CUBE_POS_X as usize;
     let group = CUBE_POS_Y as usize;
@@ -1169,6 +1249,13 @@ fn grouped_gate_up_inner(
                     live = remaining;
                 }
             }
+        }
+    }
+    // The decision uses only workgroup coordinates and immutable MAP fields.
+    // Inactive shards must not erase rows already produced by another shard.
+    if comptime!(inactive_partition_exit) {
+        if !active {
+            terminate!();
         }
     }
     let mut gates = Array::<f32>::new(tile);
@@ -1348,6 +1435,54 @@ pub fn grouped_down(
         down_row_bytes,
         tile,
         false,
+        false,
+    );
+}
+
+/// Authenticated frozen-source partition only; inactive groups do no writes.
+#[cube(launch, launch_unchecked)]
+#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
+pub fn grouped_down_frozen(
+    down: &Array<u32>,
+    activations: &Array<f32>,
+    map: &Array<u32>,
+    partials: &mut Array<f32>,
+    status: &mut Array<u32>,
+    map_first: usize,
+    act_first: usize,
+    act_stride: usize,
+    partial_first: usize,
+    partial_stride: usize,
+    status_first: usize,
+    first_slot: usize,
+    slot_count: usize,
+    #[comptime] hidden: usize,
+    #[comptime] ff: usize,
+    #[comptime] down_dtype: u32,
+    #[comptime] down_row_bytes: usize,
+    #[comptime] tile: usize,
+) {
+    grouped_down_inner(
+        down,
+        activations,
+        map,
+        partials,
+        status,
+        map_first,
+        act_first,
+        act_stride,
+        partial_first,
+        partial_stride,
+        status_first,
+        first_slot,
+        slot_count,
+        hidden,
+        ff,
+        down_dtype,
+        down_row_bytes,
+        tile,
+        false,
+        true,
     );
 }
 
@@ -1394,6 +1529,7 @@ pub fn grouped_down_live(
         down_row_bytes,
         tile,
         true,
+        false,
     );
 }
 
@@ -1419,6 +1555,7 @@ fn grouped_down_inner(
     #[comptime] down_row_bytes: usize,
     #[comptime] tile: usize,
     #[comptime] live_member_reduction: bool,
+    #[comptime] inactive_partition_exit: bool,
 ) {
     let feature = CUBE_POS_X as usize;
     let group = CUBE_POS_Y as usize;
@@ -1439,6 +1576,12 @@ fn grouped_down_inner(
                     live = remaining;
                 }
             }
+        }
+    }
+    // Same workgroup-uniform source guard and original no-write semantics.
+    if comptime!(inactive_partition_exit) {
+        if !active {
+            terminate!();
         }
     }
     let mut partial = Array::<f32>::new(tile);
@@ -1939,6 +2082,7 @@ mod tests {
             reduction_policy: ReductionPolicy::AllMembers,
             secondary_partition: false,
             frozen_host_sources: false,
+            inactive_partition_exit: false,
         };
         assert_eq!(g.scratch_bytes(true).unwrap(), 4480 * 1024);
     }
@@ -2685,7 +2829,9 @@ mod tests {
                 let status_first = b.scalar(uint).into();
                 let first_slot = b.scalar(uint).into();
                 let slot_count = b.scalar(uint).into();
-                let expand = if g.live_member_reduction() {
+                let expand = if g.inactive_partition_exit() {
+                    grouped_gate_up_frozen::expand
+                } else if g.live_member_reduction() {
                     grouped_gate_up_live::expand
                 } else {
                     grouped_gate_up::expand
@@ -2730,7 +2876,9 @@ mod tests {
                 let status_first = b.scalar(uint).into();
                 let first_slot = b.scalar(uint).into();
                 let slot_count = b.scalar(uint).into();
-                let expand = if g.live_member_reduction() {
+                let expand = if g.inactive_partition_exit() {
+                    grouped_down_frozen::expand
+                } else if g.live_member_reduction() {
                     grouped_down_live::expand
                 } else {
                     grouped_down::expand
@@ -2870,6 +3018,159 @@ mod tests {
                 "missing runtime scalar{scalar}"
             );
         }
+    }
+
+    #[test]
+    fn frozen_inactive_exit_validates_checked_and_unchecked_shaders() {
+        use cubecl::server::ExecutionMode;
+        let mut profiles = Vec::new();
+        for layer in 0..48 {
+            let types = crate::daslab_profile::routed_types(layer).unwrap();
+            if !profiles.contains(&types) {
+                profiles.push(types);
+            }
+        }
+        for [gate, up, down] in profiles {
+            let p = [
+                Projection::new(gate, 2560, 640, 512).unwrap(),
+                Projection::new(up, 2560, 640, 512).unwrap(),
+                Projection::new(down, 640, 2560, 512).unwrap(),
+            ];
+            let ordinary = Geometry::new(p, 8, 144).unwrap();
+            let old = ordinary.with_frozen_host_sources().unwrap();
+            let new = old.with_inactive_partition_exit().unwrap();
+            for mode in [ExecutionMode::Checked, ExecutionMode::Unchecked] {
+                for kind in [0, 1] {
+                    let old_source = shader(kind, old, mode);
+                    // Uninitialized declaration order can vary between CubeCL
+                    // expansions; compare lowered operation/owner structure.
+                    let ordinary_module =
+                        wgpu::naga::front::wgsl::parse_str(&shader(kind, ordinary, mode)).unwrap();
+                    let new_source = shader(kind, new, mode);
+                    validate_shader(&new_source, 8, true);
+                    let original = wgpu::naga::front::wgsl::parse_str(&old_source).unwrap();
+                    let candidate = wgpu::naga::front::wgsl::parse_str(&new_source).unwrap();
+                    let old_body = &original.entry_points[0].function.body;
+                    let new_body = &candidate.entry_points[0].function.body;
+                    // One handoff plus a loop barrier executed at six strides.
+                    assert_eq!(unconditional_barriers(old_body, false), 2);
+                    assert_eq!(unconditional_barriers(new_body, false), 2);
+                    let old_events = memory_events(&original);
+                    assert_eq!(old_events, memory_events(&ordinary_module));
+                    assert_eq!(
+                        arithmetic_operations(&original),
+                        arithmetic_operations(&ordinary_module)
+                    );
+                    let new_events = memory_events(&candidate);
+                    assert_eq!(
+                        new_events.iter().filter(|&&x| x == 'r').count(),
+                        old_events.iter().filter(|&&x| x == 'r').count() + 1
+                    );
+                    // This is an actual terminating path, before the first
+                    // workgroup or output store and before any shared barrier.
+                    let exit = new_events.iter().position(|&x| x == 'r').unwrap();
+                    for event in ['s', 'w', 'b'] {
+                        let first = new_events.iter().position(|&x| x == event).unwrap();
+                        assert!(exit < first);
+                        assert_eq!(
+                            old_events.iter().filter(|&&x| x == event).count(),
+                            new_events.iter().filter(|&&x| x == event).count()
+                        );
+                    }
+                    assert_eq!(
+                        arithmetic_operations(&original),
+                        arithmetic_operations(&candidate)
+                    );
+                    let info = wgpu::naga::valid::Validator::new(
+                        wgpu::naga::valid::ValidationFlags::all(),
+                        wgpu::naga::valid::Capabilities::empty(),
+                    )
+                    .validate(&candidate)
+                    .unwrap();
+                    let words = wgpu::naga::back::spv::write_vec(
+                        &candidate,
+                        &info,
+                        &wgpu::naga::back::spv::Options {
+                            lang_version: (1, 3),
+                            ..Default::default()
+                        },
+                        Some(&wgpu::naga::back::spv::PipelineOptions {
+                            shader_stage: wgpu::naga::ShaderStage::Compute,
+                            entry_point: candidate.entry_points[0].name.clone(),
+                        }),
+                    )
+                    .unwrap();
+                    assert!(!words.is_empty());
+                }
+            }
+        }
+    }
+
+    fn arithmetic_operations(module: &wgpu::naga::Module) -> Vec<String> {
+        let mut operations = Vec::new();
+        for (_, expression) in module.entry_points[0].function.expressions.iter() {
+            match expression {
+                wgpu::naga::Expression::Binary { op, .. } => operations.push(format!("{op:?}")),
+                wgpu::naga::Expression::Math { fun, .. } => operations.push(format!("{fun:?}")),
+                _ => {}
+            }
+        }
+        operations.sort_unstable();
+        operations
+    }
+
+    fn memory_events(module: &wgpu::naga::Module) -> Vec<char> {
+        use wgpu::naga::{AddressSpace, Expression, Function, Statement};
+        fn global(
+            function: &Function,
+            pointer: wgpu::naga::Handle<Expression>,
+        ) -> Option<wgpu::naga::Handle<wgpu::naga::GlobalVariable>> {
+            match function.expressions[pointer] {
+                Expression::GlobalVariable(var) => Some(var),
+                Expression::Access { base, .. } | Expression::AccessIndex { base, .. } => {
+                    global(function, base)
+                }
+                _ => None,
+            }
+        }
+        fn visit(module: &wgpu::naga::Module, body: &wgpu::naga::Block, out: &mut Vec<char>) {
+            let function = &module.entry_points[0].function;
+            for statement in body {
+                match statement {
+                    Statement::Return { .. } => out.push('r'),
+                    Statement::ControlBarrier(_) => out.push('b'),
+                    Statement::Store { pointer, .. } => {
+                        if let Some(var) = global(function, *pointer) {
+                            match module.global_variables[var].space {
+                                AddressSpace::Storage { .. } => out.push('s'),
+                                AddressSpace::WorkGroup => out.push('w'),
+                                _ => {}
+                            }
+                        }
+                    }
+                    Statement::Block(block) => visit(module, block, out),
+                    Statement::If { accept, reject, .. } => {
+                        visit(module, accept, out);
+                        visit(module, reject, out);
+                    }
+                    Statement::Switch { cases, .. } => {
+                        for case in cases {
+                            visit(module, &case.body, out);
+                        }
+                    }
+                    Statement::Loop {
+                        body, continuing, ..
+                    } => {
+                        visit(module, body, out);
+                        visit(module, continuing, out);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let mut events = Vec::new();
+        visit(module, &module.entry_points[0].function.body, &mut events);
+        events
     }
 
     fn unconditional_barriers(block: &wgpu::naga::Block, conditional: bool) -> usize {
@@ -3369,6 +3670,126 @@ mod tests {
     }
 
     #[test]
+    fn frozen_partition_boundaries_preserve_rank_bits_after_full_stale_reset() {
+        use kuno_text::TensorType;
+        let projections = [
+            Projection::new(IQ3_XXS, 2560, 640, 512).unwrap(),
+            Projection::new(IQ3_XXS, 2560, 640, 512).unwrap(),
+            Projection::new(IQ4_NL, 640, 2560, 512).unwrap(),
+        ];
+        let geometry = Geometry::new(projections, 8, 144)
+            .unwrap()
+            .with_frozen_host_sources()
+            .unwrap()
+            .with_inactive_partition_exit()
+            .unwrap();
+        let virtual_slots = [0u32, 71, 72, 143, 144, 287, 288, 431, 432, 511];
+        let protected: Vec<_> = virtual_slots
+            .iter()
+            .enumerate()
+            .map(|(expert, &slot)| (expert as u32, slot))
+            .collect();
+        let (rows, columns, first, stride) = (7, 256, 5, 13);
+        for dtype in [IQ3_XXS, IQ4_NL, IQ4_XS] {
+            let packed = packed_fixture(dtype, 10 * rows, columns, 3);
+            let mut decoded = vec![0f32; 10 * rows * columns];
+            TensorType::from_gguf_id(dtype)
+                .unwrap()
+                .decode(&packed, &mut decoded)
+                .unwrap();
+            let mut actual = vec![f32::NAN; first + MAX_ROUTES * stride + 11];
+            let mut writes = [0u8; MAX_ROUTES];
+            // A smaller second chunk must not inherit prior route/tail rows.
+            for (epoch, count) in [3usize, 1, 2, 1].into_iter().enumerate() {
+                actual.fill(0.); // existing complete owner reset, ONCE/layer
+                writes.fill(0);
+                let experts: Vec<_> = (0..count)
+                    .flat_map(|t| (0..10).map(move |r| ((r + t + epoch) % 10) as u32))
+                    .collect();
+                let probabilities = vec![0.1; count * 10];
+                let map = GroupMap::new_frozen_sources(
+                    count,
+                    &experts,
+                    &probabilities,
+                    &protected,
+                    geometry,
+                )
+                .unwrap();
+                let input: Vec<_> = (0..MAX_BATCH * columns)
+                    .map(|i| ((i * 7 + epoch * 11) % 31) as f32 / 32. - 0.5)
+                    .collect();
+                let mut reference = vec![0.; actual.len()];
+                grouped_projection(
+                    &map,
+                    8,
+                    rows,
+                    columns,
+                    &decoded,
+                    &input,
+                    0,
+                    columns,
+                    &mut reference,
+                    first,
+                    stride,
+                    false,
+                );
+                // Independent source membership uses the sealed partition
+                // intervals, not a replica of group_active's shader predicates.
+                for (lower, upper) in [(0u32, 72u32), (72, 144), (144, 288), (288, 432), (432, 512)]
+                {
+                    let prior = actual.clone();
+                    for group in 0..30 {
+                        if group >= map.groups() {
+                            continue;
+                        }
+                        let slot = map.words[SLOTS + group];
+                        if !(lower..upper).contains(&slot) {
+                            continue;
+                        }
+                        let expert = map.protected[group].0 as usize;
+                        for member in 0..map.words[LENGTHS + group] as usize {
+                            let route = map.words[MEMBERS + group * MAX_BATCH + member] as usize;
+                            writes[route] += 1;
+                            for row in 0..rows {
+                                let weight = &decoded[(expert * rows + row) * columns..][..columns];
+                                let x = &input[route / RANKS * columns..][..columns];
+                                actual[first + route * stride + row] = tree_dot(weight, x);
+                            }
+                        }
+                    }
+                    for route in 0..count * RANKS {
+                        let slot = virtual_slots[experts[route] as usize];
+                        if !(lower..upper).contains(&slot) {
+                            assert_eq!(
+                                actual[first + route * stride..][..rows]
+                                    .iter()
+                                    .map(|x| x.to_bits())
+                                    .collect::<Vec<_>>(),
+                                prior[first + route * stride..][..rows]
+                                    .iter()
+                                    .map(|x| x.to_bits())
+                                    .collect::<Vec<_>>()
+                            );
+                        }
+                    }
+                }
+                assert_eq!(
+                    actual.iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
+                    reference.iter().map(|x| x.to_bits()).collect::<Vec<_>>()
+                );
+                for (route, &written) in writes.iter().enumerate() {
+                    assert_eq!(written, u8::from(route < count * RANKS));
+                }
+                // Leave finite stale rows throughout the complete allocation;
+                // the next chunk's once-only reset must erase even inactive
+                // MAX8 rows, prefix/gaps and the full suffix before any shard.
+                actual.fill(17.25);
+                writes.fill(9);
+            }
+        }
+    }
+
+    #[test]
     fn original_q4_gate_and_both_down_formats_have_independent_numeric_and_guard_oracles() {
         use kuno_text::TensorType;
         let (hidden, ff) = (256, 32);
@@ -3573,8 +3994,10 @@ mod tests {
         for (name, public_args) in [
             ("grouped_gate_up", 8),
             ("grouped_gate_up_live", 8),
+            ("grouped_gate_up_frozen", 8),
             ("grouped_down", 5),
             ("grouped_down_live", 5),
+            ("grouped_down_frozen", 5),
             ("grouped_reduce", 1),
             ("grouped_finite", 2),
         ] {
@@ -3738,6 +4161,61 @@ mod frozen_source_tests {
         );
     }
     #[test]
+    fn inactive_partition_policy_is_frozen_only_and_preserves_exact_owner_geometry() {
+        use std::hash::{DefaultHasher, Hash, Hasher};
+        let hash = |g: Geometry| {
+            let mut h = DefaultHasher::new();
+            g.hash(&mut h);
+            h.finish()
+        };
+        let axes = |grid: CubeCount| match grid {
+            CubeCount::Static(x, y, z) => (x, y, z),
+            _ => panic!("expected original static grid"),
+        };
+        for layer in 0..48 {
+            let ordinary = geometry(layer);
+            assert!(ordinary.with_inactive_partition_exit().is_err());
+            let old = ordinary.with_frozen_host_sources().unwrap();
+            let new = old.with_inactive_partition_exit().unwrap();
+            assert!(!ordinary.inactive_partition_exit());
+            assert!(!old.inactive_partition_exit());
+            assert!(new.inactive_partition_exit());
+            assert!(new.with_inactive_partition_exit().is_err());
+            assert!(new.with_live_member_reduction().is_err());
+            assert!(
+                old.with_live_member_reduction()
+                    .unwrap()
+                    .with_inactive_partition_exit()
+                    .is_err()
+            );
+            assert_ne!(hash(old), hash(new));
+            assert_eq!(old.projections(), new.projections());
+            assert_eq!(old.member_capacity(), new.member_capacity());
+            assert_eq!(old.status_words(), new.status_words());
+            for io in [false, true] {
+                assert_eq!(old.scratch_bytes(io), new.scratch_bytes(io));
+            }
+            for groups in [1, 10, 20, 30] {
+                for down in [false, true] {
+                    assert_eq!(
+                        axes(old.grid(groups, down).unwrap()),
+                        axes(new.grid(groups, down).unwrap())
+                    );
+                }
+            }
+            for count in 1..=3 {
+                assert_eq!(
+                    axes(old.finite_grid_for_count(count).unwrap()),
+                    axes(new.finite_grid_for_count(count).unwrap())
+                );
+                assert_eq!(
+                    axes(old.reduce_grid_for_count(count).unwrap()),
+                    axes(new.reduce_grid_for_count(count).unwrap())
+                );
+            }
+        }
+    }
+    #[test]
     fn virtual_source_map_preserves_actual_ranks_probability_bits_and_boundaries() {
         let g = geometry(0).with_frozen_host_sources().unwrap();
         let slots = [0u32, 71, 72, 143, 144, 287, 288, 431, 432, 511];
@@ -3780,5 +4258,35 @@ mod frozen_source_tests {
         bad[9].1 = bad[0].1;
         assert!(GroupMap::new_frozen_sources(1, &experts, &p, &bad, g).is_err());
         assert!(GroupMap::new_frozen_sources(1, &experts, &p, &pairs[..9], g).is_err());
+    }
+    #[test]
+    fn inactive_exit_does_not_admit_malformed_original_map_or_ready_status() {
+        let old = geometry(0).with_frozen_host_sources().unwrap();
+        let new = old.with_inactive_partition_exit().unwrap();
+        let experts: Vec<_> = (0..30).map(|r| (r % 10) as u32).collect();
+        let probabilities = vec![0.1; 30];
+        let pairs: Vec<_> = [0u32, 71, 72, 143, 144, 287, 288, 431, 432, 511]
+            .into_iter()
+            .enumerate()
+            .map(|(expert, slot)| (expert as u32, slot))
+            .collect();
+        for policy in [old, new] {
+            for (index, bad) in [
+                (0, 0),
+                (3, 81),
+                (SLOTS, 512),
+                (LENGTHS, 0),
+                (LENGTHS, 4),
+                (MEMBERS, 30),
+            ] {
+                let mut map =
+                    GroupMap::new_frozen_sources(3, &experts, &probabilities, &pairs, policy)
+                        .unwrap();
+                map.words[index] = bad;
+                assert!(map.validate(&experts, &probabilities, 512).is_err());
+            }
+            let status = vec![0u32; policy.status_words()];
+            assert!(validate_status(policy, 3, 0, &status).is_err());
+        }
     }
 }

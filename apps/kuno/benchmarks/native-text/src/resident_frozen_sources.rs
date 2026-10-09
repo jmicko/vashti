@@ -144,6 +144,27 @@ impl Sources {
         pages: Vec<RegisteredPage>,
         reserved_host_bytes: u64,
     ) -> Result<Arc<Self>> {
+        Self::new_with_policy(executor, graph, plan, pages, reserved_host_bytes, false)
+    }
+    /// Explicit matched-control candidate, frozen before any source descriptors
+    /// are allocated or attached. All actual source/owner admission is shared.
+    pub(crate) fn new_with_inactive_partition_exit(
+        executor: &GpuExecutor<'_>,
+        graph: BoundGraph<'_, '_>,
+        plan: &plan::Plan<'_, '_>,
+        pages: Vec<RegisteredPage>,
+        reserved_host_bytes: u64,
+    ) -> Result<Arc<Self>> {
+        Self::new_with_policy(executor, graph, plan, pages, reserved_host_bytes, true)
+    }
+    fn new_with_policy(
+        executor: &GpuExecutor<'_>,
+        graph: BoundGraph<'_, '_>,
+        plan: &plan::Plan<'_, '_>,
+        pages: Vec<RegisteredPage>,
+        reserved_host_bytes: u64,
+        inactive_partition_exit: bool,
+    ) -> Result<Arc<Self>> {
         if reserved_host_bytes < EXTRA_HOST_BYTES
             || graph.binding_id() != plan.binding()
             || executor.packed_profile != crate::expert_banks::OriginalPackedProfile::DaslabIq3
@@ -189,9 +210,12 @@ impl Sources {
                 .map_err(err)
             });
             let [gate, up, down] = projections;
-            let geometry = k::Geometry::new([gate?, up?, down?], 8, 144)
+            let mut geometry = k::Geometry::new([gate?, up?, down?], 8, 144)
                 .and_then(k::Geometry::with_frozen_host_sources)
                 .map_err(err)?;
+            if inactive_partition_exit {
+                geometry = geometry.with_inactive_partition_exit().map_err(err)?;
+            }
             let layer_bound = StagedSlots::bounded_native_metadata_bytes(144)
                 .map_err(|_| reject())?
                 .checked_add(512 * std::mem::size_of::<u16>())
@@ -340,6 +364,9 @@ impl Sources {
     }
     pub(crate) fn metadata_bytes(&self) -> usize {
         self.metadata_bytes
+    }
+    pub(crate) fn inactive_partition_exit(&self) -> bool {
+        self.layers[0].geometry.inactive_partition_exit()
     }
     fn check_layer(&self, layer: usize, bank: &ExpertBanks) -> Result<&Layer> {
         let l = self.layers.get(layer).ok_or(reject())?;
@@ -846,6 +873,13 @@ impl Workspace {
     pub(crate) fn frozen_host_sources_enabled(&self) -> bool {
         self.frozen_sources.is_some()
     }
+    pub(crate) fn frozen_host_source_partition_exit(&self) -> Result<bool> {
+        Ok(self
+            .frozen_sources
+            .as_ref()
+            .ok_or_else(reject)?
+            .inactive_partition_exit())
+    }
     pub(crate) fn frozen_source_counters(&self) -> Counters {
         self.frozen_source_counters
     }
@@ -903,9 +937,12 @@ impl Workspace {
                 bank,
                 arena.handle(self.ids[0]).map_err(u::fault)?,
             )?;
-            let g = self.layout.geometries[layer]
+            let mut g = self.layout.geometries[layer]
                 .with_frozen_host_sources()
                 .map_err(err)?;
+            if sources.inactive_partition_exit() {
+                g = g.with_inactive_partition_exit().map_err(err)?;
+            }
             if g != sources.geometry(layer, bank)? {
                 return Err(reject());
             }
@@ -1296,57 +1333,66 @@ impl Sources {
             let ga = &l.pages[shard];
             let up_page = &l.pages[5 + shard];
             let down_page = &l.pages[10 + shard];
-            unsafe {
-                k::grouped_gate_up::launch_unchecked::<WgpuRuntime>(
-                    client,
-                    g.grid(groups, false).map_err(err)?,
-                    CubeDim::new_1d(64),
-                    ArrayArg::from_raw_parts(ga.handle.clone(), ga.words),
-                    ArrayArg::from_raw_parts(up_page.handle.clone(), up_page.words),
-                    arg(arena, ids[INPUT])?,
-                    arg(arena, ids[MAP])?,
-                    arg(arena, ids[ACT])?,
-                    arg(arena, ids[STATUS])?,
-                    s.map_first(),
-                    s.input_first(),
-                    s.input_stride(),
-                    s.act_first(),
-                    s.act_stride(),
-                    s.status_first(),
-                    FIRST[shard],
-                    PARTS[shard],
-                    g.hidden(),
-                    g.ff(),
-                    gate.dtype(),
-                    up.dtype(),
-                    gate.row_bytes(),
-                    up.row_bytes(),
-                    g.tile(),
-                    false,
-                );
-                k::grouped_down::launch_unchecked::<WgpuRuntime>(
-                    client,
-                    g.grid(groups, true).map_err(err)?,
-                    CubeDim::new_1d(64),
-                    ArrayArg::from_raw_parts(down_page.handle.clone(), down_page.words),
-                    arg(arena, ids[ACT])?,
-                    arg(arena, ids[MAP])?,
-                    arg(arena, ids[PART])?,
-                    arg(arena, ids[STATUS])?,
-                    s.map_first(),
-                    s.act_first(),
-                    s.act_stride(),
-                    s.partial_first(),
-                    s.partial_stride(),
-                    s.status_first(),
-                    FIRST[shard],
-                    PARTS[shard],
-                    g.hidden(),
-                    g.ff(),
-                    down.dtype(),
-                    down.row_bytes(),
-                    g.tile(),
-                );
+            macro_rules! dispatch {
+                ($gate:ident, $down:ident) => {
+                    unsafe {
+                        k::$gate::launch_unchecked::<WgpuRuntime>(
+                            client,
+                            g.grid(groups, false).map_err(err)?,
+                            CubeDim::new_1d(64),
+                            ArrayArg::from_raw_parts(ga.handle.clone(), ga.words),
+                            ArrayArg::from_raw_parts(up_page.handle.clone(), up_page.words),
+                            arg(arena, ids[INPUT])?,
+                            arg(arena, ids[MAP])?,
+                            arg(arena, ids[ACT])?,
+                            arg(arena, ids[STATUS])?,
+                            s.map_first(),
+                            s.input_first(),
+                            s.input_stride(),
+                            s.act_first(),
+                            s.act_stride(),
+                            s.status_first(),
+                            FIRST[shard],
+                            PARTS[shard],
+                            g.hidden(),
+                            g.ff(),
+                            gate.dtype(),
+                            up.dtype(),
+                            gate.row_bytes(),
+                            up.row_bytes(),
+                            g.tile(),
+                            false,
+                        );
+                        k::$down::launch_unchecked::<WgpuRuntime>(
+                            client,
+                            g.grid(groups, true).map_err(err)?,
+                            CubeDim::new_1d(64),
+                            ArrayArg::from_raw_parts(down_page.handle.clone(), down_page.words),
+                            arg(arena, ids[ACT])?,
+                            arg(arena, ids[MAP])?,
+                            arg(arena, ids[PART])?,
+                            arg(arena, ids[STATUS])?,
+                            s.map_first(),
+                            s.act_first(),
+                            s.act_stride(),
+                            s.partial_first(),
+                            s.partial_stride(),
+                            s.status_first(),
+                            FIRST[shard],
+                            PARTS[shard],
+                            g.hidden(),
+                            g.ff(),
+                            down.dtype(),
+                            down.row_bytes(),
+                            g.tile(),
+                        );
+                    }
+                };
+            }
+            if g.inactive_partition_exit() {
+                dispatch!(grouped_gate_up_frozen, grouped_down_frozen);
+            } else {
+                dispatch!(grouped_gate_up, grouped_down);
             }
         }
         Ok(())
