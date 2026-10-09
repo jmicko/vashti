@@ -47,8 +47,11 @@ mod ple_batch_gpu;
 mod ple_chunk;
 mod ple_chunk_probe;
 mod private_arena;
+#[allow(dead_code)] // Source-only mirror planner; physical consumer is pending.
+mod public_host_expert_plan;
 mod public_host_weight_pool;
 mod public_host_weight_probe;
+mod public_qsa_chronological_probe;
 mod public_resources;
 mod q3_ideal_public;
 mod q3_public_reference;
@@ -1110,6 +1113,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         None
     };
+    let qsa_chronological_receipt = if mode == "qsa-chronological-probe" {
+        let receipt = public_qsa_chronological_probe::registration(
+            &std::env::args_os().collect::<Vec<_>>(),
+            std::env::vars_os(),
+            target_lab_build::Build::compiled() != target_lab_build::Build::Rejected,
+        )?;
+        resident_qsa::batch::chronological_probe::validate_configuration()?;
+        Some(receipt)
+    } else {
+        if std::env::var_os("KUNO_LAB_QSA_CHRONOLOGICAL_PUBLIC_ONLY").is_some() {
+            return Err("QSA public gate requires its dedicated probe".into());
+        }
+        None
+    };
     let batch_router_receipt = if mode == "batch-router-gpu-probe" {
         let selected: std::collections::BTreeMap<_, _> = std::env::vars_os()
             .filter(|(k, _)| {
@@ -1171,6 +1188,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         && language_inputs.is_none()
     {
         return Err("draft profile requires its fixed public target controller".into());
+    }
+    if std::env::var_os("KUNO_LAB_TARGET_QSA").is_some()
+        && speculative_inputs.is_none()
+        && language_inputs.is_none()
+    {
+        return Err("QSA selector requires its fixed public target controller".into());
     }
     let target_repair_inputs = if mode == "daslab-target-repair-probe" {
         Some(daslab_target_repair_probe::registration(
@@ -1509,7 +1532,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .or_else(|| language_inputs.as_ref().map(|p| p.inline_dispatch))
         .or_else(|| strata_mtp_inputs.as_ref().map(|_| inline_dispatch))
         .or_else(|| public_host_weight_receipt.as_ref().map(|_| inline_dispatch))
-        .or_else(|| batch_router_receipt.as_ref().map(|_| inline_dispatch));
+        .or_else(|| batch_router_receipt.as_ref().map(|_| inline_dispatch))
+        .or_else(|| qsa_chronological_receipt.as_ref().map(|_| inline_dispatch));
     let device_dispatch = if let Some(selected) = public_target_dispatch {
         target_lab_build::validate_runtime(selected)?;
         target_lab_build::name(selected)
@@ -2075,6 +2099,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if batch_router_receipt.is_some() {
             resident_batch_router_gpu::validate_limits(&adapter.limits())?;
         }
+        if qsa_chronological_receipt.is_some()
+            || speculative_inputs
+                .as_ref()
+                .is_some_and(|p| p.gpu_qsa_selector)
+            || language_inputs.as_ref().is_some_and(|p| p.gpu_qsa_selector)
+        {
+            resident_qsa::batch::chronological_probe::validate_limits(&adapter.limits())?;
+        }
         if public_host_weight_receipt.is_some() {
             public_host_weight_probe::validate_limits(&adapter.limits())?;
         }
@@ -2298,6 +2330,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "public_verify3_operator_complete normal=60 fault={} owners_erased=true",
                 if verify3_finite_probe { 210 } else { 20 }
             );
+            return Ok(());
+        }
+        if qsa_chronological_receipt.is_some() {
+            std::panic::set_hook(Box::new(|_| {
+                eprintln!("public_qsa_selector_failure panic=true")
+            }));
+            resident_qsa::batch::chronological_probe::run(&client, &grouped_limits)?;
+            println!("public_qsa_selector_operator_complete owners_erased=true");
             return Ok(());
         }
         if let Some(receipt) = batch_router_receipt {

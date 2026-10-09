@@ -6,6 +6,9 @@ import sys
 
 def selected_target_policy(environment, mtp=False):
     selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
+    if "KUNO_LAB_TARGET_QSA" in selected:
+        if not mtp or selected.pop("KUNO_LAB_TARGET_QSA") != "chronological-public":
+            raise ValueError("GPU QSA requires the explicit compiled public target selector")
     if "KUNO_LAB_MTP_PROFILE" in selected:
         if not mtp or selected.pop("KUNO_LAB_MTP_PROFILE") != "strata-q2":
             raise ValueError("Alternate draft requires the explicit original Q2 profile")
@@ -48,6 +51,14 @@ def selected_target_policy(environment, mtp=False):
     return selected
 
 def memory_limit(environment, arguments):
+    if "KUNO_LAB_QSA_CHRONOLOGICAL_PUBLIC_ONLY" in environment or (len(arguments) > 2 and arguments[2] == "qsa-chronological-probe"):
+        selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
+        if (set(selected) != {"KUNO_LAB_QSA_CHRONOLOGICAL_PUBLIC_ONLY", "KUNO_PUBLIC_RECEIPT"}
+                or any(not value for value in selected.values())
+                or selected["KUNO_LAB_QSA_CHRONOLOGICAL_PUBLIC_ONLY"] != "1"
+                or len(arguments) != 3 or arguments[1] not in ("intel", "nvidia") or arguments[2] != "qsa-chronological-probe"):
+            raise ValueError("QSA selection requires the compiled original public fixture")
+        return 8 * 1024**3
     if "KUNO_LAB_PUBLIC_HOST_WEIGHT_ONLY" in environment or (len(arguments) > 2 and arguments[2] == "public-host-weight-probe"):
         selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
         if (set(selected) != {"KUNO_LAB_PUBLIC_HOST_WEIGHT_ONLY", "KUNO_PUBLIC_RECEIPT"}

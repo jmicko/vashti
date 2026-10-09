@@ -92,6 +92,7 @@ pub(crate) struct Inputs {
     pub(crate) inline_dispatch: bool,
     pub(crate) fused_sweeps: bool,
     draft_profile: Profile,
+    pub(crate) gpu_qsa_selector: bool,
     pub(crate) verify3_dense: bool,
     pub(crate) verify3_fused: bool,
     pub(crate) prepared_experts: bool,
@@ -132,6 +133,7 @@ pub(crate) fn registration(
                     | "KUNO_LAB_DEVICE_DISPATCH"
                     | "KUNO_LAB_MTP_SWEEPS"
                     | "KUNO_LAB_MTP_PROFILE"
+                    | "KUNO_LAB_TARGET_QSA"
                     | "KUNO_LAB_TARGET_DENSE"
                     | "KUNO_LAB_TARGET_EXPERTS"
                     | "KUNO_LAB_TARGET_FILL"
@@ -161,6 +163,11 @@ pub(crate) fn registration(
     let public_existing_fill = choice("KUNO_LAB_TARGET_FILL", "direct-public")?;
     let chunk_io = choice("KUNO_LAB_TARGET_IO", "chunk")?;
     let fused_sweeps = choice("KUNO_LAB_MTP_SWEEPS", "fused")?;
+    let gpu_qsa_selector = match values.remove(OsStr::new("KUNO_LAB_TARGET_QSA")) {
+        None => false,
+        Some(v) if v == "chronological-public" => true,
+        _ => return Err("target QSA requires canonical chronological-public"),
+    };
     let raw_profile = values.remove(OsStr::new("KUNO_LAB_MTP_PROFILE"));
     let draft_profile = Profile::parse(raw_profile.as_deref())?;
     let raw = values.remove(OsStr::new("KUNO_LAB_TARGET_MOE"));
@@ -191,6 +198,7 @@ pub(crate) fn registration(
         inline_dispatch,
         fused_sweeps,
         draft_profile,
+        gpu_qsa_selector,
         verify3_dense,
         verify3_fused,
         prepared_experts,
@@ -511,6 +519,9 @@ pub(crate) fn run(
         let mut config = Config::new(client, limits, 8)?
             .reserve_target_rows()?
             .reserve_latest_target_checkpoint()?;
+        if input.gpu_qsa_selector {
+            config = config.reserve_public_gpu_qsa_selector()?;
+        }
         if input.prepared_experts {
             config = config.reserve_prepared_verify3_experts()?;
         }
@@ -828,7 +839,7 @@ pub(crate) fn run(
     if client.public_target_request_io_configured()? != input.request_reuse {
         return Err("language target stream configuration changed".into());
     }
-    let value = serde_json::json!({"scope":"compiled-public-language200-real-dual-device-greedy","target_card":"B70","draft_card":"RTX3060","draft_profile":input.draft_profile.name(),"draft_public_reserved_bytes":input.draft_profile.public_bytes(),"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"temperature":0,"seed":424242,"repetition_penalty":1.0,"presence_penalty":0.0,"frequency_penalty":0.0,"thinking":false,"max_outputs":MAX_OUTPUTS,"verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"live_member_reduction":input.live_member_reduction,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"fused_mtp_sweeps":input.fused_sweeps,"fixture_host_reserved_bytes":FIXTURE_HOST_BYTES,"tokenizer_host_cap_bytes":TOKENIZER_HOST_BYTES,"request_reuse_metadata_reserved_bytes":if input.request_reuse{4*1024*1024}else{0},"full_target_packets_retained":true,"greedy_target_verification":true,"repair_original_prefix_vector_checks":true,"independent_cpu200_reference_accepted":false,"forced_oracle_tokens":false,"forced_experts":false,"private_or_production_accepted":false,"record":record,"draft_close":{"private_buffers":draft_close.private.buffers,"private_bytes":draft_close.private.bytes,"public_bytes":draft_close.public_bytes,"main_reserved":draft_close.main_reserved}});
+    let value = serde_json::json!({"scope":"compiled-public-language200-real-dual-device-greedy","target_card":"B70","draft_card":"RTX3060","draft_profile":input.draft_profile.name(),"gpu_chronological_qsa_selector":input.gpu_qsa_selector,"qsa_extra_runtime_info_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_INFO_BYTES_PER_CHUNK}else{0},"qsa_extra_host_reserved_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_HOST_BYTES_PER_CHUNK}else{0},"draft_public_reserved_bytes":input.draft_profile.public_bytes(),"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"temperature":0,"seed":424242,"repetition_penalty":1.0,"presence_penalty":0.0,"frequency_penalty":0.0,"thinking":false,"max_outputs":MAX_OUTPUTS,"verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"live_member_reduction":input.live_member_reduction,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"fused_mtp_sweeps":input.fused_sweeps,"fixture_host_reserved_bytes":FIXTURE_HOST_BYTES,"tokenizer_host_cap_bytes":TOKENIZER_HOST_BYTES,"request_reuse_metadata_reserved_bytes":if input.request_reuse{4*1024*1024}else{0},"full_target_packets_retained":true,"greedy_target_verification":true,"repair_original_prefix_vector_checks":true,"independent_cpu200_reference_accepted":false,"forced_oracle_tokens":false,"forced_experts":false,"private_or_production_accepted":false,"record":record,"draft_close":{"private_buffers":draft_close.private.buffers,"private_bytes":draft_close.private.bytes,"public_bytes":draft_close.public_bytes,"main_reserved":draft_close.main_reserved}});
     serde_json::to_writer_pretty(
         std::fs::OpenOptions::new()
             .write(true)
@@ -860,6 +871,27 @@ mod tests {
         .map(|(k, v)| (k.into(), v.into()))
         .to_vec()
     }
+    #[test]
+    fn qsa_gpu_selection_is_explicit_and_rejects_malformed_or_duplicate_policy() {
+        let args = ["lab", "intel", "daslab-language-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Threaded;
+        assert!(!registration(&args, env(), build).unwrap().gpu_qsa_selector);
+        let mut selected = env();
+        selected.push(("KUNO_LAB_TARGET_QSA".into(), "chronological-public".into()));
+        assert!(
+            registration(&args, selected.clone(), build)
+                .unwrap()
+                .gpu_qsa_selector
+        );
+        selected.push(("KUNO_LAB_TARGET_QSA".into(), "chronological-public".into()));
+        assert!(registration(&args, selected, build).is_err());
+        for raw in ["", "1", "chronological", "CHRONOLOGICAL-PUBLIC"] {
+            let mut invalid = env();
+            invalid.push(("KUNO_LAB_TARGET_QSA".into(), raw.into()));
+            assert!(registration(&args, invalid, build).is_err());
+        }
+    }
+
     #[test]
     fn both_compiled_language_fixtures_require_explicit_bounded_draft_selection() {
         let threaded = crate::target_lab_build::Build::Threaded;

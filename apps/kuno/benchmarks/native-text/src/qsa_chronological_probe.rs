@@ -32,7 +32,7 @@ fn configuration(
     vars: impl IntoIterator<Item = (OsString, OsString)>,
 ) -> std::result::Result<(), &'static str> {
     if features {
-        return Err("QSA chronological probe requires default features");
+        return Err("QSA chronological probe requires default or pure direct-device features");
     }
     let (mut gate, mut receipt) = (false, false);
     for (key, value) in vars {
@@ -68,7 +68,6 @@ fn configuration(
 pub(crate) fn validate_configuration() -> std::result::Result<(), &'static str> {
     configuration(
         cfg!(any(
-            feature = "direct-device",
             feature = "cpu-fma",
             feature = "cpu-buffered-weights",
             feature = "cpu-work-stealing",

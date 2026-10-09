@@ -1676,6 +1676,26 @@ class StrataInspiredGuards(unittest.TestCase):
         guard=importlib.util.module_from_spec(spec);spec.loader.exec_module(guard)
         return guard
 
+    def test_qsa_selector_operator_requires_its_exact_model_free_gate(self):
+        guard=self.guard()
+        env={"KUNO_LAB_QSA_CHRONOLOGICAL_PUBLIC_ONLY":"1","KUNO_PUBLIC_RECEIPT":"/public/numeric"}
+        for card in ("intel", "nvidia"):
+            args=["/frozen/binary",card,"qsa-chronological-probe"]
+            self.assertEqual(guard.memory_limit(env,args),8*1024**3)
+            for key in ("KUNO_TEST_MODEL", "KUNO_LAB_PROMPT", "KUNO_LAB_TARGET_QSA"):
+                with self.assertRaises(ValueError):guard.memory_limit(dict(env,**{key:"1"}),args)
+            bad=dict(env);bad.pop("KUNO_LAB_QSA_CHRONOLOGICAL_PUBLIC_ONLY")
+            with self.assertRaises(ValueError):guard.memory_limit(bad,args)
+
+    def test_qsa_selector_stays_in_public_target_controllers(self):
+        guard=self.guard()
+        env={"KUNO_LAB_LANGUAGE_PUBLIC_ONLY":"1","KUNO_LAB_LANGUAGE_FIXTURE":"first-code","KUNO_LAB_STATIC_CACHE_BYTES":"8589934592","KUNO_TEST_Q3_DIR":"/original","KUNO_TEST_MTP":"/original/sidecar","KUNO_PUBLIC_RECEIPT":"/public/numeric","KUNO_LAB_TARGET_QSA":"chronological-public"}
+        args=["/frozen/binary","intel","daslab-language-probe"]
+        self.assertEqual(guard.memory_limit(env,args),48*1024**3+196*1024**2)
+        for value in ("", "1", "chronological", "CHRONOLOGICAL-PUBLIC"):
+            with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_TARGET_QSA=value),args)
+        with self.assertRaises(ValueError):guard.memory_limit(env,[args[0],"intel","daslab-target-rows-probe"])
+
     def test_host_weight_operator_rejects_model_or_private_input(self):
         guard=self.guard()
         env={"KUNO_LAB_PUBLIC_HOST_WEIGHT_ONLY":"1","KUNO_PUBLIC_RECEIPT":"/public/numeric"}

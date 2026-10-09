@@ -291,6 +291,7 @@ pub(crate) struct Config {
     public_language_request_io: Option<public_language_request_io::Geometry>,
     live_member_reduction: bool,
     public_warm_batch_router: bool,
+    public_gpu_qsa_selector: bool,
 }
 fn prepared_verify3_configuration(
     target_rows: bool,
@@ -317,7 +318,41 @@ fn live_member_reduction_configuration(
     }
     Ok(())
 }
+fn gpu_qsa_selector_configuration(
+    selected: bool,
+    target_rows: bool,
+    hybrid: bool,
+    router: bool,
+    tile: usize,
+) -> Result<()> {
+    if selected && (!target_rows || hybrid || router || tile != 8) {
+        return Err(error());
+    }
+    Ok(())
+}
 impl Config {
+    fn qsa_host_reservation(&self) -> Result<(usize, usize)> {
+        let (reserved, limit) = host_reservation_with_verify3(
+            self.cpu_operator.is_some(),
+            self.request_reuse_metadata,
+            self.resident_router_reserved,
+            self.target_rows_reserved,
+            self.latest_target_checkpoint_reserved,
+            self.prepared_verify3_experts_reserved,
+        )?;
+        let extra = if self.public_gpu_qsa_selector {
+            usize::try_from(qsa::EXTRA_HOST_BYTES_PER_CHUNK)
+                .map_err(|_| Error::ArithmeticOverflow)?
+        } else {
+            0
+        };
+        Ok((
+            reserved
+                .checked_add(extra)
+                .ok_or(Error::ArithmeticOverflow)?,
+            limit.checked_add(extra).ok_or(Error::ArithmeticOverflow)?,
+        ))
+    }
     pub(crate) fn new(
         client: &ComputeClient<WgpuRuntime>,
         limits: &wgpu::Limits,
@@ -341,6 +376,7 @@ impl Config {
             public_language_request_io: None,
             live_member_reduction: false,
             public_warm_batch_router: false,
+            public_gpu_qsa_selector: false,
         })
     }
     /// Construction-fixed, one-shot empty PRIVATE-state replay after the
@@ -368,6 +404,23 @@ impl Config {
             self.tile,
         )?;
         self.public_existing_expert_fill = true;
+        Ok(self)
+    }
+    /// Construction-fixed public target selector. Selected blocks are exactly
+    /// chronological within the original2048-token budget; longer contexts
+    /// retain the original guarded CPU selector. No new private MAIN owners.
+    pub(crate) fn reserve_public_gpu_qsa_selector(mut self) -> Result<Self> {
+        if self.public_gpu_qsa_selector {
+            return Err(error());
+        }
+        gpu_qsa_selector_configuration(
+            true,
+            self.target_rows_reserved,
+            self.cpu_operator.is_some(),
+            self.resident_router_reserved,
+            self.tile,
+        )?;
+        self.public_gpu_qsa_selector = true;
         Ok(self)
     }
     /// Construction-fixed original-F32 reduction of actual grouped members.
@@ -635,6 +688,14 @@ impl Plan {
             return Err(error());
         }
         validate_limits(&config.limits, config.tile)?;
+        config.qsa_host_reservation()?;
+        gpu_qsa_selector_configuration(
+            config.public_gpu_qsa_selector,
+            config.target_rows_reserved,
+            config.cpu_operator.is_some(),
+            config.resident_router_reserved,
+            config.tile,
+        )?;
         live_member_reduction_configuration(
             config.live_member_reduction,
             config.target_rows_reserved,
@@ -948,6 +1009,13 @@ impl Plan {
                     0
                 })
             })
+            .and_then(|n| {
+                n.checked_add(if config.public_gpu_qsa_selector {
+                    qsa::EXTRA_INFO_BYTES_PER_CHUNK
+                } else {
+                    0
+                })
+            })
             .ok_or(Error::ArithmeticOverflow)?;
         if runtime > executor.resident_runtime_io_limit()
             || HOST_COMPONENTS + if hybrid { HYBRID_HOST } else { 0 } > HOST_CAP
@@ -1053,6 +1121,7 @@ pub(super) struct Workspace {
     public_warm_replay: Option<public_warm_replay::Permit>,
     public_target_request_io: Option<public_target_request_io::Permit>,
     public_language_request_io: Option<public_language_request_io::Permit>,
+    public_gpu_qsa_selector: bool,
 }
 impl Workspace {
     fn decode_kernels(&self) -> Result<NativeDecodeKernels> {
@@ -1084,6 +1153,14 @@ impl Workspace {
         allocation: &crate::executor::ModelConstructionAllocation<'_>,
     ) -> Result<Self> {
         allocation.check(&model.admission)?;
+        gpu_qsa_selector_configuration(
+            config.public_gpu_qsa_selector,
+            config.target_rows_reserved,
+            config.cpu_operator.is_some(),
+            config.resident_router_reserved,
+            config.tile,
+        )?;
+        config.qsa_host_reservation()?;
         live_member_reduction_configuration(
             config.live_member_reduction,
             config.target_rows_reserved,
@@ -1265,6 +1342,7 @@ impl Workspace {
             public_warm_replay,
             public_target_request_io,
             public_language_request_io,
+            public_gpu_qsa_selector: config.public_gpu_qsa_selector,
         };
         result.prove_outer(model)?;
         Ok(result)
@@ -2376,9 +2454,8 @@ impl Workspace {
                     )?)
                 }
                 Layer::Qsa(stage, public) => {
-                    let mut selector = qsa::AdmittedBatchSelector {
-                        admission: &m.admission,
-                    };
+                    let mut selector =
+                        qsa::BatchSelector::new(&m.admission, self.public_gpu_qsa_selector);
                     pending.qsa[layer] = Some(stage.enqueue_batch(
                         m.graph,
                         &m.arena,
@@ -3450,5 +3527,26 @@ mod live_member_reduction_plan_tests {
                 )
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod gpu_qsa_plan_tests {
+    use super::*;
+    #[test]
+    fn selector_keeps_default_and_rejects_non_target_geometry() {
+        gpu_qsa_selector_configuration(true, true, false, false, 8).unwrap();
+        for (rows, hybrid, router, tile) in [
+            (false, false, false, 8),
+            (true, true, false, 8),
+            (true, false, true, 8),
+            (true, false, false, 1),
+        ] {
+            assert!(gpu_qsa_selector_configuration(true, rows, hybrid, router, tile).is_err());
+            gpu_qsa_selector_configuration(false, rows, hybrid, router, tile).unwrap();
+        }
+        assert_eq!(qsa::EXTRA_INFO_BYTES_PER_CHUNK, 12 * 2 * 2048);
+        assert_eq!(qsa::EXTRA_HOST_BYTES_PER_CHUNK, 4096);
+        assert_eq!(TARGET_ROWS_PRIVATE_MAIN, 826_638_336);
     }
 }
