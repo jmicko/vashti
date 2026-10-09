@@ -11,8 +11,9 @@ pub(crate) const RESIDENT_ROUTER_HOST: usize = batch_io::RESIDENT_AUDIT_HOST;
 // Count both complete owners' runtime source/target/inspection mirrors even
 // though only the table is uploaded and the audit is mapped. Keep extra INFO
 // and slab rollover separate; no reclaimed old bridge credit is assumed.
+pub(crate) const RESIDENT_ROUTER_PREFLIGHT_INFO: u64 = 48 * 2048;
 pub(crate) const RESIDENT_ROUTER_RUNTIME: u64 =
-    4 * RESIDENT_ROUTER_MAIN + (48 * 2 + 4) * 2048 + 65536;
+    4 * RESIDENT_ROUTER_MAIN + (48 * 2 + 4) * 2048 + 65536 + RESIDENT_ROUTER_PREFLIGHT_INFO;
 pub(crate) const RESIDENT_ROUTER_RUNTIME_LIMIT: u64 = 128 * 1024 * 1024;
 
 struct FrozenBank {
@@ -760,5 +761,7 @@ mod tests {
         );
         const { assert!(RESIDENT_ROUTER_RUNTIME > 4 * RESIDENT_ROUTER_MAIN) };
         const { assert!(RESIDENT_ROUTER_RUNTIME + 67108864 < RESIDENT_ROUTER_RUNTIME_LIMIT) };
+        assert_eq!(RESIDENT_ROUTER_PREFLIGHT_INFO, 98_304);
+        assert_eq!(RESIDENT_ROUTER_RUNTIME, 9_281_536);
     }
 }
