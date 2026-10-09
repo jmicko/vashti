@@ -40,6 +40,9 @@ UI or change its user-data storage.
 - [Native text checkpoint](kuno-native-text-checkpoint.md): current
   integrated source, isolated diagnostic candidate, completed checks and the
   next physical acceptance gates. Resume from this checkpoint first.
+- [Native disk-access research](kuno-native-text-disk-access.md): intended lazy
+  n-gram lookup, actual source paging and the accepted long public diagnostic;
+  aggregate disk reads alone do not establish cache thrashing.
 - [Fully resident Ornith speed lab](kuno-native-ornith.md): user-selected
   Qwen3.5 MoE diagnostic before further Flash-Next offload work; no API change.
 - [Image engine contract](kuno-images.md): supported execution and image API.
@@ -2516,6 +2519,8 @@ needed for this internal opt-in benchmark path.
 
 ### Active handoff: full adaptive cache awaits device benchmark (2026-10-08)
 
+Historical; superseded by the adaptive settling/disk handoff below.
+
 User corrected the 16-slot experiment: unused pinned experts must not prevent a
 new working set from settling into GPU memory. Latest Kuno lab source
 `3d67dbdd3c331b779779406a0fd177d3f459a4cd` makes all144 slots eligible, learns
@@ -2534,3 +2539,36 @@ historical comparisons, not a selected optimization. Native lab only; no
 installation, release or public API/config/catalog changes. Required Vashti
 changes: none. Normal admission is resumed; no GPU benchmark remains running.
 The user requested a reasoning-mode switch before further GPU trials.
+
+### Active handoff: adaptive settling and disk research (2026-10-08)
+
+Kuno laboratory integration is `8d25a9d` on `codex/kuno-native-text` in the
+dedicated Kuno worktree. Source `cbfa8d1` corrects fractional token-time decay,
+retains transient frequency/recency across all144 slots and adds optional
+original PUBLIC writes into retained GPU slots. Original acceptance passes in
+fixed/copy/direct modes; short matched decode is10.9238/10.4829/10.5202tokens/s,
+with no demonstrated direct-write speed gain. Long diagnostic source is
+`569c8e2`; runner acceptance is `8d25a9d`.
+
+Both v75 separate1024-step public continuations pass full closes and exactly
+matching greedy IDs. Last128 steps reach7.475 fixed versus9.405 adaptive
+tokens/s; adaptive expert coverage reaches89.18%. Disk reads taper substantially
+but total20.922/20.430GiB. This repeated teacher-forced workload is diagnostic;
+the ordered pair has a file-cache warming confound. It does not prove arbitrary
+prompt performance or repeated hot-page thrashing. Read the
+[current checkpoint](kuno-native-text-checkpoint.md),
+[disk research](kuno-native-text-disk-access.md), and
+[verified numeric receipt](../apps/kuno/benchmarks/text/receipts/next-adaptive-steady-20261008.json).
+
+Checks pass519 native tests plus two one-test shader suites,69 targeted Python
+controls, strict release all-target Clippy and formatting. The accepted frozen
+v75 SHA is `ecdb3a5f231d1a81b91398ebcc39378a659d96fce2d3358682da9b78f312a882`.
+Exact trace/preload and runner candidates `990c52d`/`0740b6b` remain isolated,
+unintegrated and unmeasured; root orchestration/main is still needed. Preserve
+their clean review worktrees until integration. Do not package these candidates
+as accepted runtime changes.
+
+Normal admission is resumed; all lab jobs exited. B70 physical memory returned
+to50688000bytes, NVIDIA has no compute process, classified Xe/NVIDIA faults are
+zero and all three services returnHTTP200. No reset, unbind, reboot, install,
+release or API/configuration change. **Required Vashti changes: none.**

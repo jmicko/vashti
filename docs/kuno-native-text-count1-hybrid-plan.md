@@ -2135,3 +2135,34 @@ may contain only these compiled-public outputs. Compare their exact sequences
 between engines. Never persist private expert IDs/histories. The nested steady
 receipt and its extra closing markers are separate from the frozen original
 acceptance fields/markers. Normal benchmark invocations pin this flag off.
+
+### Longer diagnostic acceptance and disk interpretation (2026-10-08)
+
+Corrected source `cbfa8d1` passes the complete original128-ID/fresh/poison/
+cancellation/owning gates in matched v74 fixed, adaptive-copy and adaptive-direct
+modes. Decode is11626/12115/12072ms for127 steps. Adaptive copies/direct both
+complete504 promotions/1649049600original bytes; zero physical reads/writes in
+all three short samples. The direct path is accepted but is not a demonstrated
+whole-model speed gain. Keep it opt-in, preserving the ordinary copy control.
+
+Longer source `569c8e2` with runner `8d25a9d` passes both v75 complete fixtures
+and separate1024-step continuation closes. All1024 actual greedy IDs match;
+only their hash is included in the repository aggregate. Fixed versus adaptive
+continuation wall time is145.999919178 versus126.437574531seconds; last128-step
+windows are7.475 versus9.405tokens/s and29.97% versus89.18% GPU expert coverage.
+Adaptive completes4086 promotions/12.387GiB of original weight uploads.
+This single ordered pair is confounded by OS cache warming and artificial
+teacher forcing. It is not a replacement for original acceptance or general
+response throughput.
+
+The continuations report20.922/20.430GiB physical reads and zero writes, with
+substantial tapering. The short zero-read observation does not establish
+permanent RAM residency. Preserve on-demand sparse n-gram lookup; do not treat
+all disk reads as a failure. Separate first-touch reads from refaults of evicted
+file pages before changing memory budgets or recommending more RAM. Read
+[the primary-source disk research](kuno-native-text-disk-access.md) and
+[exact receipts/options/window counters](../apps/kuno/benchmarks/text/receipts/next-adaptive-steady-20261008.json).
+
+Host gates pass519 native tests plus two shader suites,69 targeted Python
+controls and strict release all-target Clippy. Laboratory only; installed
+services, public API, Vashti and private-content persistence remain unchanged.

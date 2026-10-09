@@ -1,6 +1,47 @@
 # Native text checkpoint, 2026-10-08
 
-**Latest pause for reasoning-mode switch:** full-cache source is
+**Latest checkpoint: longer adaptive settling and disk research complete.**
+Integrated laboratory source is `8d25a9d`; corrected token-time decay and
+original existing-slot PUBLIC writes are `cbfa8d1`, long diagnostic source is
+`569c8e2`, and runner acceptance is `8d25a9d`. All144 slots remain eligible;
+the earlier full-cache decay implementation below is superseded.
+
+Complete unchanged original acceptance passes for v74 fixed/copy/direct modes.
+Their127-step decode rates are10.9238/10.4829/10.5202tokens/s with zero physical
+reads or writes. Direct writes have no demonstrated total speed advantage.
+Two separate v75 1024-step diagnostics also pass every original gate, their
+extra owning closes, and exact equality of all1024 greedy outputs. Last128-step
+windows reach7.475 fixed versus9.405 adaptive tokens/s; adaptive VRAM expert hits
+reach89.18%. Across the whole continuation, rates are7.0137 versus8.0989tokens/s.
+These are repeated public teacher-forced inputs with growing context. Adaptive
+follows fixed; file-cache warming remains an order confound, not a proved causal
+speed gain or general10-token/s acceptance.
+
+Longer runs read20.922/20.430GiB from storage, tapering sharply across windows;
+there are zero physical writes. Expected lazy n-gram row access and mapped
+expert first touches must be distinguished from eviction. There is no current
+proof of hot-page thrashing or a48GiB cgroup-induced shortage. See
+[disk research and next attribution measurement](kuno-native-text-disk-access.md)
+and [the verified numeric receipt](../apps/kuno/benchmarks/text/receipts/next-adaptive-steady-20261008.json).
+
+Source gates pass519 native tests, two one-test shader suites,69 targeted Python
+controls, strict release all-target Clippy and formatting. Frozen v75 artifact:
+`ecdb3a5f231d1a81b91398ebcc39378a659d96fce2d3358682da9b78f312a882`.
+The exact short trace/replay ceiling remains pending: isolated `990c52d` adds
+trace/preload seams, `0740b6b` adds runner controls (79 targeted/181 Python tests
+pass). Root must write orchestration/main, integrate, compile and validate before
+claiming any oracle measurement. Preserve those two clean review worktrees.
+
+No lab benchmark remains running. Normal admission is resumed, no recovery is
+required, B70 physical usage is50688000bytes, NVIDIA has no compute process,
+classified Xe/NVIDIA faults are zero, and Kuno/Ollama/Vashti returnHTTP200.
+Installed binaries/settings and API remain unchanged; required Vashti changes:
+none. Keep fixed placement selected until the adaptive order/working-set concern
+and broader quality/context coverage are resolved.
+
+### Historical reasoning-mode checkpoint (superseded)
+
+The preceding pause for reasoning-mode switch used full-cache source
 `3d67dbdd3c331b779779406a0fd177d3f459a4cd` (not device accepted yet).
 The user rejected permanent 128-slot pins; all 144 slots now use prefill and
 accepted decode frequency/recency, with 16-token frequency decay, current-token
