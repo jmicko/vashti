@@ -1,8 +1,11 @@
 //! Fixed public original-Q8 MTP full-vector oracle; no prompt arguments.
 //!
-//! Teacher rows0..3 consume the actual DAS target input token and preceding
-//! target HC (zero at0). Provisional rows1/2 catch up KV at0, then use target
-//! HC0 followed by their own draft HC1. The second mode is not teacher forcing.
+//! Aligned version2 teacher cells0..3 consume target T[c+1] + real target R[c]
+//! at RoPE cell c, predicting T[c+2], with GLOBAL10240 input hidden RMS. There
+//! is no dummy/zero-HC cell. Provisional cells0/1 use target T1/R0 followed by
+//! their own greedy0/HC0. Primary convention links are in mtp_public_reference.
+//! Requires core global-input-norm correction724ca2ff7ca307399b0665e795e19159a22ac2f8;
+//! the protected runner must pin the compiled source before generating v2.
 //! Full publisher/target-fixture SHA256 checks belong to the protected runner.
 //! CPU scalar helpers have no whole-stack private-erasure acceptance; this
 //! writer is exclusively a compiled public fixture, not an inference route.
@@ -21,7 +24,6 @@ use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
-use zeroize::Zeroizing;
 
 const STEP_PROJECTIONS: usize = 51;
 const APPEND_PROJECTIONS: usize = 8;
@@ -168,7 +170,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Err("public MTP fixed CPU threads rejected".into());
     }
     let cancel = AtomicBool::new(false);
-    let zero = Zeroizing::new(vec![0.; HIDDEN]);
 
     // Two bindings of identical source still have separate sequence domains.
     // Foreign sequence rejection must precede all projections and cache writes.
@@ -180,8 +181,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             .step(
                 &mut executor,
                 &mut foreign,
-                target.input_token(0)?,
-                &zero,
+                target.token(0)?,
+                target.hidden(0)?,
                 &cancel,
             )
             .is_ok()
@@ -199,14 +200,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let mut sequence = graph.sequence(CONTEXT)?;
     for position in 0..TEACHER_ROWS {
-        let input = target.input_token(position)?;
-        let preceding = if position == 0 {
-            &zero[..]
-        } else {
-            target.hidden(position - 1)?
-        };
+        let input = target.token(position)?;
         let before = executor.calls;
-        let output = graph.step(&mut executor, &mut sequence, input, preceding, &cancel)?;
+        let output = graph.step(
+            &mut executor,
+            &mut sequence,
+            input,
+            target.hidden(position)?,
+            &cancel,
+        )?;
         check_progress(&executor, before, STEP_PROJECTIONS, &sequence, position + 1)?;
         rows.push(row(Conditioning::TeacherForced, position, input, output)?);
     }
@@ -214,16 +216,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     check_progress(&executor, executor.calls, 0, &sequence, 0)?;
 
     let before = executor.calls;
-    graph.append_kv(
-        &mut executor,
-        &mut sequence,
-        target.input_token(0)?,
-        &zero,
-        &cancel,
-    )?;
-    check_progress(&executor, before, APPEND_PROJECTIONS, &sequence, 1)?;
-    let before = executor.calls;
-    let input = target.input_token(1)?;
+    let input = target.token(0)?;
     let output = graph.step(
         &mut executor,
         &mut sequence,
@@ -231,29 +224,31 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         target.hidden(0)?,
         &cancel,
     )?;
-    check_progress(&executor, before, STEP_PROJECTIONS, &sequence, 2)?;
-    rows.push(row(Conditioning::ProvisionalTarget, 1, input, output)?);
+    check_progress(&executor, before, STEP_PROJECTIONS, &sequence, 1)?;
+    rows.push(row(Conditioning::ProvisionalTarget, 0, input, output)?);
     let first = &rows[TEACHER_ROWS];
     let input = first.token();
     let before = executor.calls;
     let output = graph.step(&mut executor, &mut sequence, input, first.hidden(), &cancel)?;
-    check_progress(&executor, before, STEP_PROJECTIONS, &sequence, 3)?;
-    rows.push(row(Conditioning::ProvisionalDraft, 2, input, output)?);
+    check_progress(&executor, before, STEP_PROJECTIONS, &sequence, 2)?;
+    rows.push(row(Conditioning::ProvisionalDraft, 1, input, output)?);
     sequence.reset();
     let reference = Reference::new(rows, &target)?;
 
     // Fresh allocation, original CPU execution and exact complete-vector bits.
     // Use the replay's own draft output for its second provisional conditioning.
     let mut fresh = graph.sequence(CONTEXT)?;
+    let mut replay_first = None;
     for position in 0..TEACHER_ROWS {
-        let input = target.input_token(position)?;
-        let preceding = if position == 0 {
-            &zero[..]
-        } else {
-            target.hidden(position - 1)?
-        };
+        let input = target.token(position)?;
         let before = executor.calls;
-        let output = graph.step(&mut executor, &mut fresh, input, preceding, &cancel)?;
+        let output = graph.step(
+            &mut executor,
+            &mut fresh,
+            input,
+            target.hidden(position)?,
+            &cancel,
+        )?;
         check_progress(&executor, before, STEP_PROJECTIONS, &fresh, position + 1)?;
         reference.verify(
             Conditioning::TeacherForced,
@@ -269,25 +264,27 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             &output.logits,
             &output.hidden,
         )?;
+        if position == 0 {
+            // This guarded output is also the fresh first provisional cell.
+            // Retain its actual HC for draft1; never clone the vocabulary.
+            replay_first = Some(output);
+        }
     }
     fresh.reset();
     let before = executor.calls;
     graph.append_kv(
         &mut executor,
         &mut fresh,
-        target.input_token(0)?,
-        &zero,
+        target.token(0)?,
+        target.hidden(0)?,
         &cancel,
     )?;
     check_progress(&executor, before, APPEND_PROJECTIONS, &fresh, 1)?;
-    let before = executor.calls;
-    let input = target.input_token(1)?;
-    let first = graph.step(&mut executor, &mut fresh, input, target.hidden(0)?, &cancel)?;
-    check_progress(&executor, before, STEP_PROJECTIONS, &fresh, 2)?;
+    let first = replay_first.ok_or("public MTP fresh first cell missing")?;
     reference.verify(
         Conditioning::ProvisionalTarget,
         0,
-        input,
+        target.token(0)?,
         fresh.position(),
         &first.logits,
         &first.hidden,
@@ -301,7 +298,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let input = greedy(&first.logits)?;
     let before = executor.calls;
     let second = graph.step(&mut executor, &mut fresh, input, &first.hidden, &cancel)?;
-    check_progress(&executor, before, STEP_PROJECTIONS, &fresh, 3)?;
+    check_progress(&executor, before, STEP_PROJECTIONS, &fresh, 2)?;
     reference.verify(
         Conditioning::ProvisionalDraft,
         1,
@@ -320,6 +317,40 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     drop(first);
     fresh.reset();
     check_progress(&executor, executor.calls, 0, &fresh, 0)?;
+
+    // Independent KV-only catch-up of actual cell0 followed by teacher cell1
+    // must reproduce the complete normal step's teacher1 outputs exactly.
+    // This second append preserves the fixed12step/2append projection bound.
+    let before = executor.calls;
+    graph.append_kv(
+        &mut executor,
+        &mut fresh,
+        target.token(0)?,
+        target.hidden(0)?,
+        &cancel,
+    )?;
+    check_progress(&executor, before, APPEND_PROJECTIONS, &fresh, 1)?;
+    let before = executor.calls;
+    let input = target.token(1)?;
+    let catchup = graph.step(&mut executor, &mut fresh, input, target.hidden(1)?, &cancel)?;
+    check_progress(&executor, before, STEP_PROJECTIONS, &fresh, 2)?;
+    reference.verify(
+        Conditioning::TeacherForced,
+        1,
+        input,
+        fresh.position(),
+        &catchup.logits,
+        &catchup.hidden,
+    )?;
+    reference.verify_bits(
+        Conditioning::TeacherForced,
+        1,
+        &catchup.logits,
+        &catchup.hidden,
+    )?;
+    drop(catchup);
+    fresh.reset();
+    check_progress(&executor, executor.calls, 0, &fresh, 0)?;
     if executor.calls != EXPECTED_PROJECTIONS {
         return Err("public MTP complete execution count".into());
     }
@@ -329,11 +360,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // A later I/O failure cannot pass the strict exact-length/header parser.
     reference.write_new(&inputs.output)?;
     println!(
-        "public_daslab_mtp_reference_complete=true teacher_rows=4 provisional_rows=2 executions=12 kv_appends=2 projections={} replay_bit_mismatches=0 logits_values={} hidden_values={} teacher_greedy_agreements={} provisional_first_greedy_agreements={} provisional_second_greedy_agreements={} bytes={} abs_tolerance={} rel_tolerance={} private_request_accepted=false whole_owning_erasure_accepted=false quality_accepted=false performance_accepted=false",
+        "public_daslab_mtp_reference_complete=true convention_version=2 hidden_norm_width=10240 dummy_cells=0 teacher_rows=4 provisional_rows=2 executions=12 kv_appends=2 projections={} replay_bit_mismatches=0 logits_values={} hidden_values={} teacher_greedy_agreements={} teacher_greedy_compared={} provisional_first_greedy_agreements={} provisional_second_greedy_agreements={} provisional_greedy_compared=2 bytes={} abs_tolerance={} rel_tolerance={} private_request_accepted=false whole_owning_erasure_accepted=false quality_accepted=false performance_accepted=false",
         executor.calls,
         mtp_public_reference::VOCAB,
         HIDDEN,
         agreements.teacher_forced,
+        agreements.teacher_compared,
         agreements.provisional_first,
         agreements.provisional_second,
         mtp_public_reference::FILE_BYTES,

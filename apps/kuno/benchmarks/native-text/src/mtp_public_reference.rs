@@ -4,17 +4,34 @@
 //! No private-request persistence, speculative acceptance or performance claim.
 //!
 //! Wire:320-byte header, then six records of eight little-endian u32 words
-//! (mode,position,input,greedy,completed cursor,preceding position,V,H), followed
+//! (mode,position,input,greedy,completed cursor,conditioning cell,V,H), followed
 //! by V logits and H wide hidden values as little-endian F32. Teacher records
-//! use input_token(p), zero HC at0 and target HC(p-1). Draft records are p1 with
-//! target HC0 after p0 KV catch-up, then p2 with draft greedy1 and draft HC1.
+//! use target.token(c)=T[c+1] and target.hidden(c)=R[c] at MTP/RoPE cell c,
+//! predicting T[c+2]. Draft records are c0 with target T1/R0, then c1 with
+//! draft greedy0/draft HC0. There is no dummy/zero-HC cell. The input hidden
+//! normalization spans all10240 HC values, before the per-stream EH fusion.
+//! Field5 records the conditioning HC cell: c for target modes, c-1 for draft.
 //! Fixed header words pin version/counts/context/V/H/HC/D/main layers/MTP
 //! layers/first MTP layer/tensor count/Q8 ID/token0/seed/mode mask/threads/record
 //! words/Q heads/KV heads/head width/RoPE width/MTP context limit/experts/topk/
-//! expert FF/HC low rank/KV width/main GGUF version/sidecar version/reserved.
+//! expert FF/HC low rank/KV width/main GGUF version/sidecar version/hidden norm
+//! width. Version2 rejects the historical dummy-cell/per-stream version1.
 //! Remaining bytes pin original source extents and revisions, sidecar SHA,
 //! both DAS shard SHAs and the actual target-carry fixture SHA. Source digest
 //! verification remains the protected runner's gate before this fixed writer.
+//!
+//! Primary convention sources: official vLLM v0.30.0, full commit
+//! ced6857afa0ea7b2e3f0846a62e1394e90f15607 (verified tag ref).
+//! https://github.com/vllm-project/vllm/blob/ced6857afa0ea7b2e3f0846a62e1394e90f15607/vllm/v1/spec_decode/llm_base_proposer.py#L746-L780
+//! https://github.com/vllm-project/vllm/blob/ced6857afa0ea7b2e3f0846a62e1394e90f15607/vllm/models/qwen4_exp/nvidia/mtp.py#L211-L216
+//! https://github.com/vllm-project/vllm/blob/ced6857afa0ea7b2e3f0846a62e1394e90f15607/vllm/models/qwen4_exp/nvidia/mtp.py#L280-L289
+//! The AMD counterpart independently uses the same flattened input norm:
+//! https://github.com/vllm-project/vllm/blob/ced6857afa0ea7b2e3f0846a62e1394e90f15607/vllm/models/qwen4_exp/amd/mtp.py#L224-L226
+//! https://github.com/vllm-project/vllm/blob/ced6857afa0ea7b2e3f0846a62e1394e90f15607/vllm/models/qwen4_exp/amd/mtp.py#L289-L297
+//! Pinned Strata fb58e0dbc8399662c0e47c76578c6e878b14f6cf documents both:
+//! https://github.com/Niko1221/Strata/blob/fb58e0dbc8399662c0e47c76578c6e878b14f6cf/include/strata/core/mtp.hpp#L3-L10
+//! These establish the contract, not independent numerical acceptance of this
+//! quantized sidecar or a draft-quality/performance claim.
 
 use kuno_text::model::greedy;
 use kuno_text::{Error, Result};
@@ -23,11 +40,14 @@ use std::path::Path;
 use zeroize::{Zeroize, Zeroizing};
 
 pub const TEACHER_ROWS: usize = 4;
+pub const TEACHER_AGREEMENT_ROWS: usize = TEACHER_ROWS - 1;
 pub const DRAFT_ROWS: usize = 2;
 pub const ROWS: usize = TEACHER_ROWS + DRAFT_ROWS;
 pub const CONTEXT: usize = 4;
 pub const VOCAB: usize = 248_320;
 pub const HIDDEN: usize = 10_240;
+pub const CONVENTION_VERSION: u32 = 2;
+pub const HIDDEN_NORM_WIDTH: usize = HIDDEN;
 pub const THREADS: usize = 16;
 pub const SIDECAR_BYTES: u64 = 4_137_429_120;
 pub const SIDECAR_REVISION: &str = "766911a6b7369840a91dbcd95f9f997acaab6cd6";
@@ -42,10 +62,40 @@ pub const FILE_BYTES: usize = HEADER_BYTES + ROWS * ROW_BYTES;
 pub const OWNER_HOST_CAP: usize = 8 * 1024 * 1024;
 pub const COUPLED_HOST_CAP: usize = 32 * 1024 * 1024;
 const STREAM_BYTES: usize = 64 * 1024;
-const MAGIC: &[u8; 8] = b"KMTP0001";
+const MAGIC: &[u8; 8] = b"KMTP0002";
 const HEADER_FIELDS: [u32; 32] = [
-    1, 6, 4, 2, 4, 248320, 10240, 4, 2560, 48, 1, 48, 34, 8, 0, 424242, 7, 16, 8, 24, 2, 256, 64,
-    2048, 512, 10, 640, 320, 512, 3, 3, 0,
+    CONVENTION_VERSION,
+    6,
+    4,
+    2,
+    4,
+    248320,
+    10240,
+    4,
+    2560,
+    48,
+    1,
+    48,
+    34,
+    8,
+    0,
+    424242,
+    7,
+    16,
+    8,
+    24,
+    2,
+    256,
+    64,
+    2048,
+    512,
+    10,
+    640,
+    320,
+    512,
+    3,
+    3,
+    HIDDEN_NORM_WIDTH as u32,
 ];
 
 fn err() -> Error {
@@ -89,11 +139,11 @@ fn header() -> Result<[u8; HEADER_BYTES]> {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Conditioning {
-    /// At0 use defined zero preceding HC; atp>0 use real target HC(p-1).
+    /// Cell c consumes target T[c+1] and actual target HC[c] at RoPE c.
     TeacherForced,
-    /// Pos1 consumes target input1 + real target HC0 after pos0 KV catch-up.
+    /// Cell0 consumes target T1 + actual target HC0, with no dummy KV cell.
     ProvisionalTarget,
-    /// Pos2 consumes provisional greedy1 + preceding MTP HC1.
+    /// Cell1 consumes provisional greedy0 + preceding MTP HC0.
     ProvisionalDraft,
 }
 impl Conditioning {
@@ -144,10 +194,11 @@ impl Row {
             return Err(err());
         }
         let token = greedy(&logits)?;
-        let preceding = if position == 0 {
-            u32::MAX
-        } else {
-            (position - 1) as u32
+        let conditioning = match mode {
+            Conditioning::TeacherForced => position,
+            Conditioning::ProvisionalTarget if position == 0 => 0,
+            Conditioning::ProvisionalDraft if position == 1 => 0,
+            _ => return Err(err()),
         };
         Ok(Self {
             metadata: Zeroizing::new([
@@ -156,7 +207,7 @@ impl Row {
                 input,
                 token,
                 cursor as u32,
-                preceding,
+                conditioning as u32,
             ]),
             logits,
             hidden,
@@ -176,6 +227,10 @@ impl Row {
     }
     pub fn completed_cursor(&self) -> usize {
         self.metadata[4] as usize
+    }
+    /// Source HC cell; the conditioning enum distinguishes target from draft.
+    pub fn conditioning_position(&self) -> usize {
+        self.metadata[5] as usize
     }
     pub fn logits(&self) -> &[f32] {
         &self.logits
@@ -197,6 +252,7 @@ pub struct Report {
 }
 pub struct Agreements {
     pub teacher_forced: u32,
+    pub teacher_compared: u32,
     pub provisional_first: u32,
     pub provisional_second: u32,
 }
@@ -207,17 +263,13 @@ impl Reference {
         }
         for (index, row) in rows.iter().enumerate() {
             let (mode, position, input) = if index < TEACHER_ROWS {
-                (
-                    Conditioning::TeacherForced,
-                    index,
-                    target.input_token(index)?,
-                )
+                (Conditioning::TeacherForced, index, target.token(index)?)
             } else if index == TEACHER_ROWS {
-                (Conditioning::ProvisionalTarget, 1, target.input_token(1)?)
+                (Conditioning::ProvisionalTarget, 0, target.token(0)?)
             } else {
                 (
                     Conditioning::ProvisionalDraft,
-                    2,
+                    1,
                     rows[TEACHER_ROWS].token(),
                 )
             };
@@ -225,11 +277,11 @@ impl Reference {
                 || row.position() != position
                 || row.input_token() != input
                 || row.completed_cursor() != position + 1
-                || row.metadata[5]
-                    != if position == 0 {
-                        u32::MAX
+                || row.conditioning_position()
+                    != if mode == Conditioning::ProvisionalDraft {
+                        0
                     } else {
-                        (position - 1) as u32
+                        position
                     }
             {
                 return Err(err());
@@ -245,11 +297,11 @@ impl Reference {
         {
             return Err(err());
         }
-        // append_kv catch-up and step have identical KV: the first provisional
-        // input/cache is the same as teacher-forced row1, so every output bit is.
+        // First provisional cell has the exact teacher0 input/HC/empty cache.
+        // Its full output is bitwise identical, without a preceding dummy cell.
         result.verify_bits(
             Conditioning::TeacherForced,
-            1,
+            0,
             result.provisional(0)?.logits(),
             result.provisional(0)?.hidden(),
         )?;
@@ -330,11 +382,14 @@ impl Reference {
         target: &crate::daslab_carry_reference::Reference,
     ) -> Result<Agreements> {
         let mut teacher_forced = 0;
-        for p in 0..TEACHER_ROWS {
-            teacher_forced += u32::from(self.teacher_forced(p)?.token() == target.token(p)?);
+        // Row c predicts T[c+2]. The four-row target oracle supplies only T1..T4,
+        // so teacher3's T5 is deliberately not assigned an agreement score.
+        for c in 0..TEACHER_AGREEMENT_ROWS {
+            teacher_forced += u32::from(self.teacher_forced(c)?.token() == target.token(c + 1)?);
         }
         Ok(Agreements {
             teacher_forced,
+            teacher_compared: TEACHER_AGREEMENT_ROWS as u32,
             provisional_first: u32::from(self.provisional(0)?.token() == target.token(1)?),
             provisional_second: u32::from(self.provisional(1)?.token() == target.token(2)?),
         })
@@ -504,12 +559,12 @@ mod tests {
         let mut rows = Vec::with_capacity(ROWS);
         for p in 0..TEACHER_ROWS {
             let mut logits = floats(VOCAB, 0.5);
-            logits[if p == 1 { 6 } else { p + 1 }] = 5.0;
+            logits[if p == 0 { 6 } else { p + 2 }] = 5.0;
             rows.push(
                 Row::new(
                     Conditioning::TeacherForced,
                     p,
-                    p as u32,
+                    p as u32 + 1,
                     p + 1,
                     logits,
                     floats(HIDDEN, p as f32 + 0.75),
@@ -517,20 +572,20 @@ mod tests {
                 .unwrap(),
             );
         }
-        let first = &rows[1];
+        let first = &rows[0];
         let mut logits = floats(VOCAB, 0.0);
         logits.copy_from_slice(first.logits());
         let mut hidden = floats(HIDDEN, 0.0);
         hidden.copy_from_slice(first.hidden());
-        rows.push(Row::new(Conditioning::ProvisionalTarget, 1, 1, 2, logits, hidden).unwrap());
+        rows.push(Row::new(Conditioning::ProvisionalTarget, 0, 1, 1, logits, hidden).unwrap());
         let mut logits = floats(VOCAB, 0.75);
         logits[99] = 5.0;
         rows.push(
             Row::new(
                 Conditioning::ProvisionalDraft,
-                2,
+                1,
                 6,
-                3,
+                2,
                 logits,
                 floats(HIDDEN, 2.25),
             )
@@ -555,14 +610,17 @@ mod tests {
         let bytes = wire(&original);
         let loaded = Reference::read(&mut Cursor::new(&bytes[..]), &target).unwrap();
         assert_eq!(FILE_BYTES, 6_205_952);
-        assert_eq!(&bytes[..8], b"KMTP0001");
+        assert_eq!(&bytes[..8], b"KMTP0002");
+        assert_eq!(HEADER_FIELDS[0], CONVENTION_VERSION);
+        assert_eq!(HEADER_FIELDS[31] as usize, HIDDEN_NORM_WIDTH);
         assert_eq!(&bytes[288..320], &pin::<32>(TARGET_CARRY_SHA256).unwrap());
         assert!(original.owned_bytes() < OWNER_HOST_CAP);
         for p in 0..TEACHER_ROWS {
             let row = loaded.teacher_forced(p).unwrap();
             assert_eq!(row.position(), p);
-            assert_eq!(row.input_token(), target.input_token(p).unwrap());
-            assert_ne!(row.input_token(), target.token(p).unwrap());
+            assert_eq!(row.input_token(), target.token(p).unwrap());
+            assert_ne!(row.input_token(), target.input_token(p).unwrap());
+            assert_eq!(row.conditioning_position(), p);
             original
                 .verify_bits(Conditioning::TeacherForced, p, row.logits(), row.hidden())
                 .unwrap();
@@ -570,10 +628,11 @@ mod tests {
         assert_eq!(loaded.provisional(1).unwrap().input_token(), 6);
         assert_ne!(
             loaded.provisional(1).unwrap().input_token(),
-            target.input_token(2).unwrap()
+            target.token(1).unwrap()
         );
         let agreements = loaded.agreements(&target).unwrap();
-        assert_eq!(agreements.teacher_forced, 3);
+        assert_eq!(agreements.teacher_forced, 2);
+        assert_eq!(agreements.teacher_compared, 3);
         assert_eq!(agreements.provisional_first, 0);
         assert_eq!(agreements.provisional_second, 0);
         assert!(loaded.teacher_forced(4).is_err());
@@ -584,7 +643,7 @@ mod tests {
         let target = target();
         let reference = Reference::new(rows(), &target).unwrap();
         let mut bytes = wire(&reference);
-        for offset in [0, 8, 24, 56, 136, 144, 152, 172, 192, 224, 256, 288] {
+        for offset in [0, 8, 24, 56, 132, 136, 144, 152, 172, 192, 224, 256, 288] {
             bytes[offset] ^= 1;
             assert!(Reference::read(&mut Cursor::new(&bytes[..]), &target).is_err());
             bytes[offset] ^= 1;
@@ -593,10 +652,10 @@ mod tests {
         for (record, index, value) in [
             (0, 0, 2),
             (0, 1, 4),
-            (0, 2, 1),
+            (0, 2, 0),
             (0, 3, 99),
             (0, 4, 2),
-            (0, 5, 0),
+            (0, 5, u32::MAX),
             (0, 6, (VOCAB - 1) as u32),
             (0, 7, (HIDDEN - 1) as u32),
             (4, 0, 3),
@@ -614,6 +673,50 @@ mod tests {
         // Stream exact EOF without making a second full numeric payload copy.
         let mut extra = Cursor::new(&bytes[..]).chain(Cursor::new([0u8]));
         assert!(Reference::read(&mut extra, &target).is_err());
+    }
+    #[test]
+    fn historical_dummy_cell_and_per_stream_headers_are_not_v2() {
+        let target = target();
+        let reference = Reference::new(rows(), &target).unwrap();
+        let mut bytes = wire(&reference);
+        bytes[..8].copy_from_slice(b"KMTP0001");
+        word(&mut bytes, 8, 1);
+        word(&mut bytes, 132, 0);
+        assert!(Reference::read(&mut Cursor::new(&bytes[..]), &target).is_err());
+        bytes[..HEADER_BYTES].copy_from_slice(&header().unwrap());
+        word(&mut bytes, 132, 2560);
+        assert!(Reference::read(&mut Cursor::new(&bytes[..]), &target).is_err());
+        bytes[..HEADER_BYTES].copy_from_slice(&header().unwrap());
+        // A former dummy input0/zero-preceding marker cannot masquerade as cell0.
+        word(&mut bytes, HEADER_BYTES + 8, target.input_token(0).unwrap());
+        word(&mut bytes, HEADER_BYTES + 20, u32::MAX);
+        assert!(Reference::read(&mut Cursor::new(&bytes[..]), &target).is_err());
+    }
+    #[test]
+    fn teacher_final_unknown_prediction_does_not_enter_agreement_denominator() {
+        let target = target();
+        let baseline = Reference::new(rows(), &target)
+            .unwrap()
+            .agreements(&target)
+            .unwrap();
+        let mut changed = rows();
+        let mut logits = floats(VOCAB, 0.5);
+        logits[target.token(3).unwrap() as usize] = 5.0;
+        changed[3] = Row::new(
+            Conditioning::TeacherForced,
+            3,
+            target.token(3).unwrap(),
+            4,
+            logits,
+            floats(HIDDEN, 3.75),
+        )
+        .unwrap();
+        let agreements = Reference::new(changed, &target)
+            .unwrap()
+            .agreements(&target)
+            .unwrap();
+        assert_eq!(agreements.teacher_compared, 3);
+        assert_eq!(agreements.teacher_forced, baseline.teacher_forced);
     }
     #[test]
     fn full_tail_nonfinite_and_catchup_mismatch_are_rejected() {
@@ -664,7 +767,7 @@ mod tests {
                 .verify(
                     Conditioning::TeacherForced,
                     1,
-                    1,
+                    2,
                     2,
                     row.logits(),
                     row.hidden()
@@ -676,7 +779,7 @@ mod tests {
                 .verify(
                     Conditioning::TeacherForced,
                     1,
-                    target.token(1).unwrap(),
+                    target.input_token(1).unwrap(),
                     2,
                     row.logits(),
                     row.hidden()
@@ -688,7 +791,7 @@ mod tests {
                 .verify(
                     Conditioning::TeacherForced,
                     1,
-                    1,
+                    2,
                     3,
                     row.logits(),
                     row.hidden()
@@ -712,14 +815,14 @@ mod tests {
         logits[VOCAB - 1] += 0.02;
         assert!(
             reference
-                .verify(Conditioning::TeacherForced, 1, 1, 2, &logits, row.hidden())
+                .verify(Conditioning::TeacherForced, 1, 2, 2, &logits, row.hidden())
                 .is_err()
         );
         logits.copy_from_slice(row.logits());
         logits[99] = 5.1;
         assert!(
             reference
-                .verify(Conditioning::TeacherForced, 1, 1, 2, &logits, row.hidden())
+                .verify(Conditioning::TeacherForced, 1, 2, 2, &logits, row.hidden())
                 .is_err()
         );
         let mut hidden = floats(HIDDEN, 0.0);
@@ -727,7 +830,7 @@ mod tests {
         hidden[HIDDEN - 1] += 0.0001;
         assert!(
             reference
-                .verify(Conditioning::TeacherForced, 1, 1, 2, row.logits(), &hidden)
+                .verify(Conditioning::TeacherForced, 1, 2, 2, row.logits(), &hidden)
                 .is_ok()
         );
         assert!(
@@ -738,7 +841,7 @@ mod tests {
         hidden[HIDDEN - 1] += 0.02;
         assert!(
             reference
-                .verify(Conditioning::TeacherForced, 1, 1, 2, row.logits(), &hidden)
+                .verify(Conditioning::TeacherForced, 1, 2, 2, row.logits(), &hidden)
                 .is_err()
         );
         assert!(
@@ -746,7 +849,7 @@ mod tests {
                 .verify(
                     Conditioning::TeacherForced,
                     1,
-                    1,
+                    2,
                     2,
                     &row.logits()[..VOCAB - 1],
                     row.hidden()
