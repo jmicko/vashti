@@ -28,6 +28,7 @@ const RUNTIME: u64 = 128 * 1024 * 1024;
 
 pub(crate) struct Inputs {
     pub(crate) verify3_dense: bool,
+    chunk_io: bool,
     directory: PathBuf,
     reference: PathBuf,
     receipt: PathBuf,
@@ -58,6 +59,7 @@ pub(crate) fn registration(
                     | "KUNO_PUBLIC_RECEIPT"
                     | "KUNO_LAB_STATIC_CACHE_BYTES"
                     | "KUNO_LAB_TARGET_DENSE"
+                    | "KUNO_LAB_TARGET_IO"
             )
         ) || value.is_empty()
             || selected.insert(key, value).is_some()
@@ -74,6 +76,11 @@ pub(crate) fn registration(
     {
         return Err("target rows require explicit original 8GiB static cache");
     }
+    let chunk_io = match selected.remove(OsStr::new("KUNO_LAB_TARGET_IO")) {
+        None => false,
+        Some(value) if value == "chunk" => true,
+        _ => return Err("target I/O policy requires canonical chunk"),
+    };
     let verify3_dense = match selected.remove(OsStr::new("KUNO_LAB_TARGET_DENSE")) {
         None => false,
         Some(value) if value == "verify3" => true,
@@ -81,6 +88,7 @@ pub(crate) fn registration(
     };
     Ok(Inputs {
         verify3_dense,
+        chunk_io,
         directory: selected
             .remove(OsStr::new("KUNO_TEST_Q3_DIR"))
             .ok_or("original DAS shards required")?
@@ -162,6 +170,7 @@ pub(crate) fn run(
         )?;
         executor.target_rows_reserved = true;
         executor.target_verify3_dense = input.verify3_dense;
+        executor.token_io_checkpoint = input.chunk_io;
         executor.enable_transient_resident(retired.clone())?;
         executor.fast_dense = true;
         executor.fast_dense_fault = true;
@@ -245,7 +254,7 @@ pub(crate) fn run(
     file.verify_file_unchanged()?;
     let receipt = serde_json::json!({"scope":"fixed-public-DASLab-target-rows-and-carry-only",
         "model_repository":daslab_profile::REPOSITORY,"model_revision":daslab_profile::REVISION,
-        "verify3_dense":input.verify3_dense,"public_token0":0,"seed":424242,"temperature":0,"complete_cpu_reference_rows":4,
+        "verify3_dense":input.verify3_dense,"chunk_io_checkpoint":input.chunk_io,"public_token0":0,"seed":424242,"temperature":0,"complete_cpu_reference_rows":4,
         "logits_width":reference::VOCAB,"carry_width":reference::HIDDEN,"max_chunk":3,
         "absolute_tolerance":reference::ABS_TOLERANCE,"relative_tolerance":reference::REL_TOLERANCE,
         "carry_tap":"layer47 FFN HC residual before output_hc",
@@ -293,6 +302,14 @@ mod tests {
                 .unwrap()
                 .verify3_dense
         );
+        let mut candidate = env();
+        candidate.push(("KUNO_LAB_TARGET_IO".into(), "chunk".into()));
+        assert!(registration(&args(), candidate, true).unwrap().chunk_io);
+        for invalid in ["", "auto", "0", "1", "chunk "] {
+            let mut candidate = env();
+            candidate.push(("KUNO_LAB_TARGET_IO".into(), invalid.into()));
+            assert!(registration(&args(), candidate, true).is_err());
+        }
         for invalid in ["", "auto", "0", "1", "verify3 "] {
             let mut candidate = env();
             candidate.push(("KUNO_LAB_TARGET_DENSE".into(), invalid.into()));

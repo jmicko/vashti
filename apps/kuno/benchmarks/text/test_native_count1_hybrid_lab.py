@@ -1294,6 +1294,9 @@ class HybridLabTests(unittest.TestCase):
                 env["KUNO_PUBLIC_TARGET_ROWS_REFERENCE"]="/public/reference"
             args=["/frozen/binary","intel",mode]
             self.assertEqual(guard.memory_limit(env,args),48*1024**3)
+            self.assertEqual(guard.memory_limit(dict(env,KUNO_LAB_TARGET_IO="chunk"),args),48*1024**3)
+            for invalid in ("", "auto", "0", "1", "chunk ", True):
+                with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_TARGET_IO=invalid),args)
             for invalid in ("", "auto", "0", "1", "verify3 ", True):
                 with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_TARGET_DENSE=invalid),args)
             with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_OTHER="1"),args)

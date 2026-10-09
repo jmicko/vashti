@@ -9,6 +9,9 @@ def selected_target_policy(environment):
     if "KUNO_LAB_TARGET_DENSE" in selected:
         if selected.pop("KUNO_LAB_TARGET_DENSE") != "verify3":
             raise ValueError("Target dense policy requires canonical verify3")
+    if "KUNO_LAB_TARGET_IO" in selected:
+        if selected.pop("KUNO_LAB_TARGET_IO") != "chunk":
+            raise ValueError("Target I/O policy requires canonical chunk")
     return selected
 
 def memory_limit(environment, arguments):

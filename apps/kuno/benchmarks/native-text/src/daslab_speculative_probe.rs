@@ -33,6 +33,7 @@ use zeroize::Zeroizing;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub(crate) struct Inputs {
     pub(crate) verify3_dense: bool,
+    chunk_io: bool,
     directory: PathBuf,
     mtp: PathBuf,
     reference: PathBuf,
@@ -64,6 +65,7 @@ pub(crate) fn registration(
                     | "KUNO_PUBLIC_RECEIPT"
                     | "KUNO_LAB_STATIC_CACHE_BYTES"
                     | "KUNO_LAB_TARGET_DENSE"
+                    | "KUNO_LAB_TARGET_IO"
             )
         ) || value.is_empty()
             || values.insert(key, value).is_some()
@@ -76,6 +78,11 @@ pub(crate) fn registration(
     {
         return Err("speculative fixed public/cache gates missing");
     }
+    let chunk_io = match values.remove(OsStr::new("KUNO_LAB_TARGET_IO")) {
+        None => false,
+        Some(value) if value == "chunk" => true,
+        _ => return Err("target I/O policy requires canonical chunk"),
+    };
     let verify3_dense = match values.remove(OsStr::new("KUNO_LAB_TARGET_DENSE")) {
         None => false,
         Some(value) if value == "verify3" => true,
@@ -89,6 +96,7 @@ pub(crate) fn registration(
     };
     Ok(Inputs {
         verify3_dense,
+        chunk_io,
         directory: path("KUNO_TEST_Q3_DIR")?,
         mtp: path("KUNO_TEST_MTP")?,
         reference: path("KUNO_PUBLIC_TARGET_CARRY13_REFERENCE")?,
@@ -229,6 +237,7 @@ pub(crate) fn run(
     )?;
     executor.target_rows_reserved = true;
     executor.target_verify3_dense = input.verify3_dense;
+    executor.token_io_checkpoint = input.chunk_io;
     executor.enable_transient_resident(target_retired.clone())?;
     executor.fast_dense = true;
     executor.fast_dense_fault = true;
@@ -269,6 +278,8 @@ pub(crate) fn run(
                 let before_hits = executor.expert_hits;
                 let before_bytes = executor.uploaded_bytes;
                 let before_dense = executor.target_verify3_dense_calls;
+                let before_weight_reads = executor.weight_read_ns;
+                let before_weight_uploads = executor.weight_upload_ns;
                 let before_phases = target.phase_ns.clone();
                 let start = Instant::now();
                 while target.completed_target_rows_cursor(&executor)? < reference::POSITIONS {
@@ -384,7 +395,7 @@ pub(crate) fn run(
                     .collect();
                 let after = draft.traffic();
                 Ok(
-                    serde_json::json!({"replay":replay,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"target_host_phase_ns":host_phase_ns,"timing_scope":"original normal routing/demand uploads; public checks and actual repair included","load_and_initial_prefill_cumulative_ns":load_ns,"accepted_tokens":accepted_tokens,"elapsed_ns":elapsed_ns,"accepted_tokens_per_second":accepted_tokens as f64*1e9/elapsed_ns as f64,"proposed_drafts":proposed_tokens,"accepted_drafts":accepted_drafts,"rounds":rounds,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"draft_traffic":{"host_read_calls":after.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after.host_read_bytes-before_traffic.host_read_bytes,"private_upload_calls":after.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after.followup_copy_calls-before_traffic.followup_copy_calls}}),
+                    serde_json::json!({"replay":replay,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"target_host_phase_ns":host_phase_ns,"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"timing_scope":"original normal routing/demand uploads; public checks and actual repair included","load_and_initial_prefill_cumulative_ns":load_ns,"accepted_tokens":accepted_tokens,"elapsed_ns":elapsed_ns,"accepted_tokens_per_second":accepted_tokens as f64*1e9/elapsed_ns as f64,"proposed_drafts":proposed_tokens,"accepted_drafts":accepted_drafts,"rounds":rounds,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"draft_traffic":{"host_read_calls":after.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after.host_read_bytes-before_traffic.host_read_bytes,"private_upload_calls":after.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after.followup_copy_calls-before_traffic.followup_copy_calls}}),
                 )
             })();
             let close = target.close();
@@ -410,7 +421,7 @@ pub(crate) fn run(
     }
     file.verify_file_unchanged()?;
     sidecar.verify_file_unchanged()?;
-    let value = serde_json::json!({"scope":"fixed-public-DASLab13-real-dual-GPU-greedy-speculation","target_card":"B70","draft_card":"RTX3060","verify3_dense":input.verify3_dense,"compiled_token0":0,"seed":424242,"temperature":0,"oracle_forcing":false,"expert_route_forcing":false,"passes":passes,"draft_close":{"private_buffers":draft_close.private.buffers,"private_bytes":draft_close.private.bytes,"public_bytes":draft_close.public_bytes,"main_reserved":draft_close.main_reserved},"private_or_production_accepted":false});
+    let value = serde_json::json!({"scope":"fixed-public-DASLab13-real-dual-GPU-greedy-speculation","target_card":"B70","draft_card":"RTX3060","verify3_dense":input.verify3_dense,"chunk_io_checkpoint":input.chunk_io,"compiled_token0":0,"seed":424242,"temperature":0,"oracle_forcing":false,"expert_route_forcing":false,"passes":passes,"draft_close":{"private_buffers":draft_close.private.buffers,"private_bytes":draft_close.private.bytes,"public_bytes":draft_close.public_bytes,"main_reserved":draft_close.main_reserved},"private_or_production_accepted":false});
     serde_json::to_writer_pretty(
         std::fs::OpenOptions::new()
             .write(true)
@@ -462,6 +473,14 @@ mod tests {
         let mut candidate = env();
         candidate.push(("KUNO_LAB_TARGET_DENSE".into(), "verify3".into()));
         assert!(registration(&args, candidate, true).unwrap().verify3_dense);
+        let mut candidate = env();
+        candidate.push(("KUNO_LAB_TARGET_IO".into(), "chunk".into()));
+        assert!(registration(&args, candidate, true).unwrap().chunk_io);
+        for invalid in ["", "auto", "0", "1", "chunk "] {
+            let mut candidate = env();
+            candidate.push(("KUNO_LAB_TARGET_IO".into(), invalid.into()));
+            assert!(registration(&args, candidate, true).is_err());
+        }
         for invalid in ["", "auto", "0", "1", "verify3 "] {
             let mut candidate = env();
             candidate.push(("KUNO_LAB_TARGET_DENSE".into(), invalid.into()));

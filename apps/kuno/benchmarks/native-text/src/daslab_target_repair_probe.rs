@@ -24,6 +24,7 @@ use zeroize::Zeroizing;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub(crate) struct Inputs {
     pub(crate) verify3_dense: bool,
+    chunk_io: bool,
     directory: PathBuf,
     reference: PathBuf,
     receipt: PathBuf,
@@ -54,6 +55,7 @@ pub(crate) fn registration(
                     | "KUNO_PUBLIC_RECEIPT"
                     | "KUNO_LAB_STATIC_CACHE_BYTES"
                     | "KUNO_LAB_TARGET_DENSE"
+                    | "KUNO_LAB_TARGET_IO"
             )
         ) || value.is_empty()
             || values.insert(key, value).is_some()
@@ -66,6 +68,11 @@ pub(crate) fn registration(
     {
         return Err("target repair fixed public/cache gates missing");
     }
+    let chunk_io = match values.remove(OsStr::new("KUNO_LAB_TARGET_IO")) {
+        None => false,
+        Some(value) if value == "chunk" => true,
+        _ => return Err("target I/O policy requires canonical chunk"),
+    };
     let verify3_dense = match values.remove(OsStr::new("KUNO_LAB_TARGET_DENSE")) {
         None => false,
         Some(value) if value == "verify3" => true,
@@ -79,6 +86,7 @@ pub(crate) fn registration(
     };
     Ok(Inputs {
         verify3_dense,
+        chunk_io,
         directory: path("KUNO_TEST_Q3_DIR")?,
         reference: path("KUNO_PUBLIC_TARGET_ROWS_REFERENCE")?,
         receipt: path("KUNO_PUBLIC_RECEIPT")?,
@@ -132,6 +140,7 @@ pub(crate) fn run(
         )?;
         executor.target_rows_reserved = true;
         executor.target_verify3_dense = input.verify3_dense;
+        executor.token_io_checkpoint = input.chunk_io;
         executor.enable_transient_resident(retired.clone())?;
         executor.fast_dense = true;
         executor.fast_dense_fault = true;
@@ -244,7 +253,7 @@ pub(crate) fn run(
         reports.push(report);
     }
     file.verify_file_unchanged()?;
-    let value = serde_json::json!({"scope":"fixed-public-DASLab-actual-target-prefix-repair-only","verify3_dense":input.verify3_dense,"public_token0":0,"seed":424242,"temperature":0,"max_chunk":3,"runtime_io_limit_bytes":128*1024*1024,"complete_cpu_reference_rows":4,"cases":reports,"speculative_controller":false,"accepted_speculative_tokens_per_second":null,"private_or_production_accepted":false});
+    let value = serde_json::json!({"scope":"fixed-public-DASLab-actual-target-prefix-repair-only","verify3_dense":input.verify3_dense,"chunk_io_checkpoint":input.chunk_io,"public_token0":0,"seed":424242,"temperature":0,"max_chunk":3,"runtime_io_limit_bytes":128*1024*1024,"complete_cpu_reference_rows":4,"cases":reports,"speculative_controller":false,"accepted_speculative_tokens_per_second":null,"private_or_production_accepted":false});
     let out = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -279,6 +288,14 @@ mod tests {
         let mut candidate = env();
         candidate.push(("KUNO_LAB_TARGET_DENSE".into(), "verify3".into()));
         assert!(registration(&args, candidate, true).unwrap().verify3_dense);
+        let mut candidate = env();
+        candidate.push(("KUNO_LAB_TARGET_IO".into(), "chunk".into()));
+        assert!(registration(&args, candidate, true).unwrap().chunk_io);
+        for invalid in ["", "auto", "0", "1", "chunk "] {
+            let mut candidate = env();
+            candidate.push(("KUNO_LAB_TARGET_IO".into(), invalid.into()));
+            assert!(registration(&args, candidate, true).is_err());
+        }
         for invalid in ["", "auto", "0", "1", "verify3 "] {
             let mut candidate = env();
             candidate.push(("KUNO_LAB_TARGET_DENSE".into(), invalid.into()));
