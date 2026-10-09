@@ -530,17 +530,6 @@ mod tests {
             )
             .validate(&module)
             .unwrap();
-            let expected = if dtype == IQ3_XXS {
-                kuno_text::quant::IQ3_XXS_GRID
-                    .into_iter()
-                    .map(i64::from)
-                    .collect::<Vec<_>>()
-            } else {
-                kuno_text::quant::IQ4_NL_VALUES
-                    .into_iter()
-                    .map(i64::from)
-                    .collect::<Vec<_>>()
-            };
             let arrays = module
                 .constants
                 .iter()
@@ -560,7 +549,25 @@ mod tests {
                     },
                 )
                 .collect::<Vec<_>>();
-            assert_eq!(arrays, [expected]);
+            if dtype == IQ3_XXS {
+                let expected = kuno_text::quant::IQ3_XXS_GRID
+                    .into_iter()
+                    .map(i64::from)
+                    .collect::<Vec<_>>();
+                assert_eq!(arrays, [expected]);
+            } else {
+                // IQ4's16 signed entries use only four packed scalar literals.
+                // No value-array constant exists for a runtime nibble to index;
+                // original packed source/result/INFO bindings are unchanged.
+                assert!(arrays.is_empty());
+                assert!(module.constants.iter().all(|(_, constant)| {
+                    !matches!(
+                        module.types[constant.ty].inner,
+                        wgpu::naga::TypeInner::Array { .. }
+                    )
+                }));
+                assert!(!source.contains("arrays_"));
+            }
             // Public original packed weights, private result, and original INFO.
             assert_eq!(
                 module

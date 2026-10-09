@@ -182,7 +182,7 @@ fn signed_byte(value: u32) -> i32 {
     result
 }
 
-/// Public codebooks are compiled as shader-global constant arrays. There is no
+/// IQ3's public codebook remains a shader-global constant array. There is no
 /// new storage binding, per-request lookup upload or expanded weight payload.
 #[cube]
 fn iq3_grid_word(index: usize) -> u32 {
@@ -192,14 +192,22 @@ fn iq3_grid_word(index: usize) -> u32 {
 
 #[cube]
 fn iq4_value(index: usize) -> f32 {
-    let values = Array::<i32>::from_data(comptime!(
-        kuno_text::quant::IQ4_NL_VALUES
-            .iter()
-            .copied()
-            .map(i32::from)
-            .collect::<Vec<_>>()
-    ));
-    values[index] as f32
+    // Original signed IQ4 codebook, four little-endian bytes per literal.
+    // The packed nibble caller proves index<16. Select only scalar integers:
+    // dynamic value-array indexing otherwise requires a Naga SPIR-V Function
+    // spill even when WGSL declares the complete table as a module constant.
+    let word = if index < 8 {
+        if index < 4 {
+            0xbfad_9881_u32
+        } else {
+            0xf6ea_ddcf_u32
+        }
+    } else if index < 12 {
+        0x2619_0d01_u32
+    } else {
+        0x7159_4535_u32
+    };
+    signed_byte((word >> (((index & 3) * 8) as u32)) & 255) as f32
 }
 
 /// F32 callers must use a four-byte-aligned row_offset. Validated tightly
@@ -351,6 +359,13 @@ pub fn packed_matvec(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn iq4_packed_literals_match_every_original_signed_code_bit() {
+        for (index, expected) in kuno_text::quant::IQ4_NL_VALUES.into_iter().enumerate() {
+            assert_eq!(iq4_value(index).to_bits(), f32::from(expected).to_bits());
+        }
+    }
 
     #[test]
     fn tightly_packed_rows_and_end_padding() {
