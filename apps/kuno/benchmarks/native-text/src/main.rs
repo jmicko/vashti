@@ -259,6 +259,15 @@ fn original_count1_setting(
     raw: Option<&str>,
 ) -> Result<(), &'static str> {
     if profile == expert_banks::OriginalPackedProfile::UnslothQ3 {
+        if name == "KUNO_LAB_STATIC_CACHE_BYTES" {
+            return if banks == Count1Banks::Intel144
+                && matches!(raw, Some("5368709120" | "8589934592"))
+            {
+                Ok(())
+            } else {
+                Err("original Q3 cache requires explicit5 or8 GiB")
+            };
+        }
         let expected = match name {
             "KUNO_LAB_BLOCK_MOE" => Some("0"),
             "KUNO_LAB_NATIVE_DECODE_KERNELS" => Some("single-all"),
@@ -1321,7 +1330,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::env::var("KUNO_LAB_BLOCK_MOE").as_deref() == Ok("1"),
         )?;
         if count1_banks != Count1Banks::Intel144
-            || count1_hybrid_cap != Some(10)
+            || !matches!(count1_hybrid_cap, Some(0 | 10))
             || !transient_resident
             || !public_owned_zero_audit
             || !mapped_weights
@@ -3775,6 +3784,35 @@ mod transient_mode_tests {
         ] {
             assert!(super::original_packed_profile(mode, vendor, Some(raw)).is_err());
         }
+        for raw in [Some("5368709120"), Some("8589934592")] {
+            assert!(
+                super::original_count1_setting(
+                    P::UnslothQ3,
+                    super::Count1Banks::Intel144,
+                    "KUNO_LAB_STATIC_CACHE_BYTES",
+                    raw
+                )
+                .is_ok()
+            );
+        }
+        assert!(
+            super::original_count1_setting(
+                P::UnslothQ3,
+                super::Count1Banks::Intel144,
+                "KUNO_LAB_STATIC_CACHE_BYTES",
+                Some("10737418240")
+            )
+            .is_err()
+        );
+        assert!(
+            super::original_count1_setting(
+                P::Q4,
+                super::Count1Banks::Intel144,
+                "KUNO_LAB_STATIC_CACHE_BYTES",
+                Some("8589934592")
+            )
+            .is_err()
+        );
         for raw in [None, Some("1"), Some("")] {
             assert!(
                 super::original_count1_setting(
