@@ -22,6 +22,8 @@ struct LogitDiagnostics {
 }
 
 impl LogitDiagnostics {
+    #[cold]
+    #[inline(never)]
     fn inspect(actual: &[f32], reference: &[f32]) -> Self {
         let mut out = Self {
             first_bad: None,
@@ -154,23 +156,32 @@ impl Reference {
             );
             return Err(Error::InvalidFormat("public Q3 greedy mismatch"));
         }
-        let diagnostics = LogitDiagnostics::inspect(actual, reference);
         let selected = match greedy(actual) {
             Ok(selected) => selected,
             Err(error) => {
-                diagnostics.report_failure(position, "nonfinite", false);
+                LogitDiagnostics::inspect(actual, reference).report_failure(
+                    position,
+                    "nonfinite",
+                    false,
+                );
                 return Err(error);
             }
         };
         if selected != self.tokens[position] {
-            diagnostics.report_failure(position, "greedy", false);
+            LogitDiagnostics::inspect(actual, reference).report_failure(position, "greedy", false);
             return Err(Error::InvalidFormat("public Q3 greedy mismatch"));
         }
-        if diagnostics.first_bad.is_some() {
-            diagnostics.report_failure(position, "logits", true);
-            return Err(Error::InvalidFormat("public Q3 full logits mismatch"));
+        // Accepted benchmark vectors retain the original f32 hot loop. The
+        // full diagnostic scan/divisions occur only after an unchanged failure.
+        let mut max_error = 0f32;
+        for (&a, &r) in actual.iter().zip(reference.iter()) {
+            if !a.is_finite() || (a - r).abs() > 0.006 + 0.0003 * r.abs() {
+                LogitDiagnostics::inspect(actual, reference)
+                    .report_failure(position, "logits", true);
+                return Err(Error::InvalidFormat("public Q3 full logits mismatch"));
+            }
+            max_error = max_error.max((a - r).abs());
         }
-        let max_error = diagnostics.max_abs_error as f32;
         println!(
             "public_q3_full_logits position={position} values={VOCAB} max_abs_error={max_error} greedy_matches=true"
         );
