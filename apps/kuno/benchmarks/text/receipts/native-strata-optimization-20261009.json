@@ -5936,5 +5936,175 @@
       "ABBA delta +4.61% is the exit kernel alone on CPU-routed code200; GPU-router composition on code200 remains unmeasured",
       "No generated text retained; no production catalogue/API/installation change"
     ]
+  },
+  "v145_router_ledger_fix_physical": {
+    "scope": "v145 artifact frozen from the router-activation ledger fix: four same-artifact whole-model CPU13 gates plus the previously blocked GPU-routed language ABBA. No acceptance transferred from v144; all four gates re-run on the new binary.",
+    "build": {
+      "source_commit": "fd39cd1d21df22f92815e86c58059357cf9649aa",
+      "fix_commit": "8c7d838",
+      "binary_sha256": "f8f23497bb318c12c91b74bfa4d3fe9bb7b70af32b0bdbeeca373a7ad445a554",
+      "build_dir": "/media/jmicko/faststore/kuno-development/native-next-v145-build-20261010",
+      "features": [
+        "direct-device"
+      ]
+    },
+    "host_note": "First gate attempt was refused by the helper idle guard: the resident Kuno image worker held 16.8 GiB on the B70 (retained image model, no idle expiry). With user authorization kuno.service was restarted, clearing the worker; refused-attempt directory native-next-v145-gate1-cpu-control-20261010 retained with source.json only. The next image generation pays a model reload.",
+    "warm_cpu13_gates": {
+      "gate1_cpu_control": {
+        "artifacts": "/media/jmicko/faststore/kuno-development/native-next-v145-gate1-cpu-control-r2-20261010",
+        "trial": "warm-host",
+        "source_commit": "fd39cd1d21df22f92815e86c58059357cf9649aa",
+        "binary_sha256": "f8f23497bb318c12c91b74bfa4d3fe9bb7b70af32b0bdbeeca373a7ad445a554",
+        "accepted_tokens": 12,
+        "elapsed_ns": 2824518958,
+        "accepted_tokens_per_second": 4.24851104858472,
+        "frozen_host_gpu_router": false,
+        "frozen_host_inactive_partition_exit": false,
+        "gpu_router_calls": 0,
+        "frozen_source_routes": {
+          "host_routes": 6530,
+          "source_dispatches": 4320,
+          "vram_routes": 2590
+        }
+      },
+      "gate2_cpu_exit": {
+        "artifacts": "/media/jmicko/faststore/kuno-development/native-next-v145-gate2-cpu-exit-20261010",
+        "trial": "warm-fast-host",
+        "source_commit": "fd39cd1d21df22f92815e86c58059357cf9649aa",
+        "binary_sha256": "f8f23497bb318c12c91b74bfa4d3fe9bb7b70af32b0bdbeeca373a7ad445a554",
+        "accepted_tokens": 12,
+        "elapsed_ns": 2586052646,
+        "accepted_tokens_per_second": 4.6402767625636345,
+        "frozen_host_gpu_router": false,
+        "frozen_host_inactive_partition_exit": true,
+        "gpu_router_calls": 0,
+        "frozen_source_routes": {
+          "host_routes": 6530,
+          "source_dispatches": 4320,
+          "vram_routes": 2590
+        }
+      },
+      "gate3_gpu512_control": {
+        "artifacts": "/media/jmicko/faststore/kuno-development/native-next-v145-gate3-gpu-control-20261010",
+        "trial": "warm-gpu-host",
+        "source_commit": "fd39cd1d21df22f92815e86c58059357cf9649aa",
+        "binary_sha256": "f8f23497bb318c12c91b74bfa4d3fe9bb7b70af32b0bdbeeca373a7ad445a554",
+        "accepted_tokens": 12,
+        "elapsed_ns": 2642000327,
+        "accepted_tokens_per_second": 4.542013063876506,
+        "frozen_host_gpu_router": true,
+        "frozen_host_inactive_partition_exit": false,
+        "gpu_router_calls": 384,
+        "frozen_source_routes": {
+          "host_routes": 6530,
+          "source_dispatches": 4320,
+          "vram_routes": 2590
+        }
+      },
+      "gate4_gpu512_exit": {
+        "artifacts": "/media/jmicko/faststore/kuno-development/native-next-v145-gate4-gpu-exit-20261010",
+        "trial": "warm-fast-gpu-host",
+        "source_commit": "fd39cd1d21df22f92815e86c58059357cf9649aa",
+        "binary_sha256": "f8f23497bb318c12c91b74bfa4d3fe9bb7b70af32b0bdbeeca373a7ad445a554",
+        "accepted_tokens": 12,
+        "elapsed_ns": 2284172618,
+        "accepted_tokens_per_second": 5.253543407987741,
+        "frozen_host_gpu_router": true,
+        "frozen_host_inactive_partition_exit": true,
+        "gpu_router_calls": 384,
+        "frozen_source_routes": {
+          "host_routes": 6530,
+          "source_dispatches": 4320,
+          "vram_routes": 2590
+        }
+      },
+      "all_gates_full_cpu13_acceptance": true
+    },
+    "language_code200_gpu_abba": {
+      "order": [
+        "control",
+        "candidate",
+        "candidate",
+        "control"
+      ],
+      "a1_gpu_control": {
+        "artifacts": "/media/jmicko/faststore/kuno-development/native-next-v145-lang-gpu-abba-a1-20261010",
+        "trial": "language-code-gpu-host",
+        "emitted_tokens_including_eos": 200,
+        "post_prefill_target_continuations": 199,
+        "stop_reason": "limit",
+        "elapsed_ns": 26488775729,
+        "continuation_tokens_per_second": 7.51261598633017,
+        "frozen_host_gpu_router": true,
+        "frozen_host_inactive_partition_exit": false,
+        "gpu_router_calls": 3552,
+        "expert_uploads": 0,
+        "proposed_drafts": 138,
+        "accepted_drafts": 130,
+        "rounds": 69
+      },
+      "b1_gpu_exit_candidate": {
+        "artifacts": "/media/jmicko/faststore/kuno-development/native-next-v145-lang-gpu-abba-b1-20261010",
+        "trial": "language-code-fast-gpu-host",
+        "emitted_tokens_including_eos": 200,
+        "post_prefill_target_continuations": 199,
+        "stop_reason": "limit",
+        "elapsed_ns": 24120758336,
+        "continuation_tokens_per_second": 8.250155207723896,
+        "frozen_host_gpu_router": true,
+        "frozen_host_inactive_partition_exit": true,
+        "gpu_router_calls": 3552,
+        "expert_uploads": 0,
+        "proposed_drafts": 138,
+        "accepted_drafts": 130,
+        "rounds": 69
+      },
+      "b2_gpu_exit_candidate": {
+        "artifacts": "/media/jmicko/faststore/kuno-development/native-next-v145-lang-gpu-abba-b2-20261010",
+        "trial": "language-code-fast-gpu-host",
+        "emitted_tokens_including_eos": 200,
+        "post_prefill_target_continuations": 199,
+        "stop_reason": "limit",
+        "elapsed_ns": 23617264234,
+        "continuation_tokens_per_second": 8.426039444209405,
+        "frozen_host_gpu_router": true,
+        "frozen_host_inactive_partition_exit": true,
+        "gpu_router_calls": 3552,
+        "expert_uploads": 0,
+        "proposed_drafts": 138,
+        "accepted_drafts": 130,
+        "rounds": 69
+      },
+      "a2_gpu_control": {
+        "artifacts": "/media/jmicko/faststore/kuno-development/native-next-v145-lang-gpu-abba-a2-20261010",
+        "trial": "language-code-gpu-host",
+        "emitted_tokens_including_eos": 200,
+        "post_prefill_target_continuations": 199,
+        "stop_reason": "limit",
+        "elapsed_ns": 26262814431,
+        "continuation_tokens_per_second": 7.577253402251708,
+        "frozen_host_gpu_router": true,
+        "frozen_host_inactive_partition_exit": false,
+        "gpu_router_calls": 3552,
+        "expert_uploads": 0,
+        "proposed_drafts": 138,
+        "accepted_drafts": 130,
+        "rounds": 69
+      },
+      "control_mean_tokens_per_second": 7.544934694290939,
+      "control_stdev": 0.0457055551164951,
+      "candidate_mean_tokens_per_second": 8.33809732596665,
+      "candidate_stdev": 0.12436893632272139,
+      "matched_abba_improvement_fraction": 0.10512518183568598,
+      "identical_rounds_acceptance_and_router_calls": true,
+      "vs_v144_cpu_routed_control_fraction": 0.25377424700856466
+    },
+    "fix_physical_validation": "The GPU-routed language path (previously deterministically broken) completed all four ABBA runs with full real target-greedy verification, router calls 3552, owner erasure and baseline recovery on the frozen v145 artifact.",
+    "limits": [
+      "Warm fixture rates are twelve verified continuations, setup excluded",
+      "Language code200 is the fixed public fixture, seed 424242, temperature 0, 199 timed continuations; not a general benchmark",
+      "The kuno restart cleared the resident image model; image-generation users pay one model reload",
+      "Exit kernel and router effects remain workload-dependent; the 30 tokens/s objective needs the packed IQ3 block decoding and row-grouping kernels"
+    ]
   }
 }

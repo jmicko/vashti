@@ -3449,3 +3449,61 @@ composed fastest combination on code200. After that, continue toward the
 30 tokens/s objective with the packed IQ3 block decoding and row-grouping
 kernel investigation. No GPU trial is running; the host was left at baseline
 with admission normal.
+
+### v145 fix acceptance: gates re-run and GPU-routed language ABBA (2026-10-10)
+
+With user authorization the optimization goal resumed. The resident Kuno image
+worker held 16.8 GiB on the B70 (retained image model from earlier
+generation, no idle expiry by design); the helper's idle guard correctly
+refused the first gate attempt (directory
+`native-next-v145-gate1-cpu-control-20261010`, source.json only). The user
+authorized restarting kuno.service, which cleared the worker and returned the
+card to the 50,688,000 B baseline; the next image generation pays one model
+reload.
+
+A fresh v145 build was frozen from `fd39cd1` (ledger fix `8c7d838`): binary
+`f8f23497bb318c12c91b74bfa4d3fe9bb7b70af32b0bdbeeca373a7ad445a554`
+(`native-next-v145-build-20261010`). No acceptance was transferred from v144;
+all four whole-model CPU13 gates were re-run on the new artifact and passed
+complete vectors/carries, exact greedies, real repair, both source tiers
+(VRAM 2590 / host 6530), zero uploads and baseline recovery:
+
+| Gate | Trial | Router | Exit | tokens/s |
+| --- | --- | --- | --- | --- |
+| 1 | warm-host | false | false | 4.248511 |
+| 2 | warm-fast-host | false | true | 4.640277 |
+| 3 | warm-gpu-host | true | false | 4.542013 |
+| 4 | warm-fast-gpu-host | true | true | 5.253543 |
+
+The previously blocked GPU-routed language ABBA then ran on the same artifact
+(language-code-gpu-host control vs language-code-fast-gpu-host candidate;
+35-prompt first-code fixture, seed 424242, temperature 0, 199 timed
+continuations, identical 69 rounds, 130/138 accepted drafts and 3552 actual
+router calls in every run):
+
+| Run | Trial | tokens/s |
+| --- | --- | --- |
+| A1 | language-code-gpu-host | 7.512568 |
+| B1 | language-code-fast-gpu-host | 8.250165 |
+| B2 | language-code-fast-gpu-host | 8.425974 |
+| A2 | language-code-gpu-host | 7.577262 |
+
+GPU-routed controls mean 7.5449 (stdev 0.0457); composed candidates mean
+8.3381 (stdev 0.1244): **matched ABBA improvement +10.51%** from the exit
+kernel, and **+25.4% over the v144 CPU-routed control** (6.6504). The frozen
+GPU-routed language path itself - deterministically broken before the fix -
+completed with full real target-greedy verification, owner erasure and
+baseline recovery on the frozen artifact. Ordinary public code200 decode is
+now 6.65 (CPU control) to 8.34 (composed candidate) tokens/s, up from the
+2-4 tokens/s of the older artifacts.
+
+All runs ended with admission normal, Intel at 50,688,000 B, no NVIDIA
+compute owners and unchanged classified fault counts. Required Vashti
+changes: none. The kuno service restart is the only service action this
+pass, explicitly user-authorized.
+
+Next concrete step toward the 30 tokens/s objective: the packed IQ3 block
+decoding and row-grouping kernel investigation (MIT-noticed Strata
+inspiration in pinned sycl/src/kernels/cuda/iq_kernels.dp.cpp), one change
+per experiment with the same gate discipline; the Q2 draft remains a separate
+later experiment.
