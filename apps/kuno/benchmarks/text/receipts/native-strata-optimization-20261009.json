@@ -5693,5 +5693,234 @@
       "seed": 424242,
       "temperature": 0
     }
+  },
+  "v144_partition_exit_physical": {
+    "scope": "Physically validated v144 inactive-partition exit candidate: four same-artifact whole-model CPU13 gates plus matched ABBA normal public code200 language runs. Frozen public RAM/VRAM sources, Q8 MTP draft, CPU13 carry reference and model hashes unchanged from v143. No engine source changed this pass; helper labels extended and oracle-tested. Production services/API/installs untouched.",
+    "build": {
+      "source_commit": "cab8ec59bab732e7f28ae7d58432a8c44ec256f5",
+      "binary_sha256": "0f14244454f8c9046c80ca330da00f8bd7eb08069e97c38100d702bec02ff158",
+      "build_dir": "/media/jmicko/faststore/kuno-development/native-next-v144-build-20261009",
+      "features": [
+        "direct-device"
+      ]
+    },
+    "helper": {
+      "path": "/media/jmicko/faststore/kuno-development/run-native-strata-public-protected-20261009.py",
+      "sha256": "00abc51fdacc16535b42360c91a11e6a31d4f7e98dd4bf9af095b6f1a890ee23",
+      "prior_sha256": "dc72bdedd34606b0093d64ace7856622651c03160a15291fea425e8d6722e888",
+      "change": "four explicit fast labels selecting canonical KUNO_LAB_FROZEN_PARTITION_EXIT=1 only with frozen-host sources; existing labels oracle-verified byte-identical; env selection tested without GPUs (test-run-native-strata-fast-labels-20261009.py, 24 trials, zero failures)"
+    },
+    "warm_cpu13_gates": {
+      "gate1_cpu_control": {
+        "artifacts": "/media/jmicko/faststore/kuno-development/native-next-v144-gate1-cpu-control-20261009",
+        "trial": "warm-host",
+        "source_commit": "cab8ec59bab732e7f28ae7d58432a8c44ec256f5",
+        "binary_sha256": "0f14244454f8c9046c80ca330da00f8bd7eb08069e97c38100d702bec02ff158",
+        "helper_sha256": "00abc51fdacc16535b42360c91a11e6a31d4f7e98dd4bf9af095b6f1a890ee23",
+        "accepted_tokens": 12,
+        "elapsed_ns": 2823796990,
+        "accepted_tokens_per_second": 4.249597277175368,
+        "frozen_host_gpu_router": false,
+        "frozen_host_inactive_partition_exit": false,
+        "gpu_router_calls": 0,
+        "expert_uploads": 0,
+        "frozen_source_routes": {
+          "host_routes": 6530,
+          "source_dispatches": 4320,
+          "vram_routes": 2590
+        },
+        "both_tiers_exercised": true
+      },
+      "gate2_cpu_exit": {
+        "artifacts": "/media/jmicko/faststore/kuno-development/native-next-v144-gate2-cpu-exit-20261009",
+        "trial": "warm-fast-host",
+        "source_commit": "cab8ec59bab732e7f28ae7d58432a8c44ec256f5",
+        "binary_sha256": "0f14244454f8c9046c80ca330da00f8bd7eb08069e97c38100d702bec02ff158",
+        "helper_sha256": "00abc51fdacc16535b42360c91a11e6a31d4f7e98dd4bf9af095b6f1a890ee23",
+        "accepted_tokens": 12,
+        "elapsed_ns": 2653490424,
+        "accepted_tokens_per_second": 4.52234531975835,
+        "frozen_host_gpu_router": false,
+        "frozen_host_inactive_partition_exit": true,
+        "gpu_router_calls": 0,
+        "expert_uploads": 0,
+        "frozen_source_routes": {
+          "host_routes": 6530,
+          "source_dispatches": 4320,
+          "vram_routes": 2590
+        },
+        "both_tiers_exercised": true
+      },
+      "gate3_gpu512_control": {
+        "artifacts": "/media/jmicko/faststore/kuno-development/native-next-v144-gate3-gpu-control-20261009",
+        "trial": "warm-gpu-host",
+        "source_commit": "cab8ec59bab732e7f28ae7d58432a8c44ec256f5",
+        "binary_sha256": "0f14244454f8c9046c80ca330da00f8bd7eb08069e97c38100d702bec02ff158",
+        "helper_sha256": "00abc51fdacc16535b42360c91a11e6a31d4f7e98dd4bf9af095b6f1a890ee23",
+        "accepted_tokens": 12,
+        "elapsed_ns": 2602790735,
+        "accepted_tokens_per_second": 4.610435959616246,
+        "frozen_host_gpu_router": true,
+        "frozen_host_inactive_partition_exit": false,
+        "gpu_router_calls": 384,
+        "expert_uploads": 0,
+        "frozen_source_routes": {
+          "host_routes": 6530,
+          "source_dispatches": 4320,
+          "vram_routes": 2590
+        },
+        "both_tiers_exercised": true
+      },
+      "gate4_gpu512_exit": {
+        "artifacts": "/media/jmicko/faststore/kuno-development/native-next-v144-gate4-gpu-exit-20261009",
+        "trial": "warm-fast-gpu-host",
+        "source_commit": "cab8ec59bab732e7f28ae7d58432a8c44ec256f5",
+        "binary_sha256": "0f14244454f8c9046c80ca330da00f8bd7eb08069e97c38100d702bec02ff158",
+        "helper_sha256": "00abc51fdacc16535b42360c91a11e6a31d4f7e98dd4bf9af095b6f1a890ee23",
+        "accepted_tokens": 12,
+        "elapsed_ns": 2190333649,
+        "accepted_tokens_per_second": 5.478617381182368,
+        "frozen_host_gpu_router": true,
+        "frozen_host_inactive_partition_exit": true,
+        "gpu_router_calls": 384,
+        "expert_uploads": 0,
+        "frozen_source_routes": {
+          "host_routes": 6530,
+          "source_dispatches": 4320,
+          "vram_routes": 2590
+        },
+        "both_tiers_exercised": true
+      },
+      "all_gates_full_cpu13_vectors_carries_exact_greedies_real_repair": true,
+      "all_gates_recovery_baseline_intel_bytes": 50688000
+    },
+    "language_code200_abba": {
+      "order": [
+        "control",
+        "candidate",
+        "candidate",
+        "control"
+      ],
+      "cpu_routed_control": {
+        "artifacts": "/media/jmicko/faststore/kuno-development/native-next-v144-lang-cpuhost-bisect-20261009",
+        "trial": "language-code-host",
+        "source_commit": "cab8ec59bab732e7f28ae7d58432a8c44ec256f5",
+        "binary_sha256": "0f14244454f8c9046c80ca330da00f8bd7eb08069e97c38100d702bec02ff158",
+        "helper_sha256": "00abc51fdacc16535b42360c91a11e6a31d4f7e98dd4bf9af095b6f1a890ee23",
+        "emitted_tokens_including_eos": 200,
+        "post_prefill_target_continuations": 199,
+        "stop_reason": "limit",
+        "elapsed_ns": 29697528132,
+        "continuation_tokens_per_second": 6.700894401563724,
+        "frozen_host_gpu_router": false,
+        "frozen_host_inactive_partition_exit": false,
+        "gpu_router_calls": 0,
+        "expert_uploads": 0,
+        "proposed_drafts": 138,
+        "accepted_drafts": 130,
+        "rounds": 69
+      },
+      "cpu_routed_candidate_1": {
+        "artifacts": "/media/jmicko/faststore/kuno-development/native-next-v144-lang-abba-b1-fast-20261009",
+        "trial": "language-code-fast-host",
+        "source_commit": "cab8ec59bab732e7f28ae7d58432a8c44ec256f5",
+        "binary_sha256": "0f14244454f8c9046c80ca330da00f8bd7eb08069e97c38100d702bec02ff158",
+        "helper_sha256": "00abc51fdacc16535b42360c91a11e6a31d4f7e98dd4bf9af095b6f1a890ee23",
+        "emitted_tokens_including_eos": 200,
+        "post_prefill_target_continuations": 199,
+        "stop_reason": "limit",
+        "elapsed_ns": 28628839803,
+        "continuation_tokens_per_second": 6.951032642934657,
+        "frozen_host_gpu_router": false,
+        "frozen_host_inactive_partition_exit": true,
+        "gpu_router_calls": 0,
+        "expert_uploads": 0,
+        "proposed_drafts": 138,
+        "accepted_drafts": 130,
+        "rounds": 69
+      },
+      "cpu_routed_candidate_2": {
+        "artifacts": "/media/jmicko/faststore/kuno-development/native-next-v144-lang-abba-b2-fast-20261009",
+        "trial": "language-code-fast-host",
+        "source_commit": "cab8ec59bab732e7f28ae7d58432a8c44ec256f5",
+        "binary_sha256": "0f14244454f8c9046c80ca330da00f8bd7eb08069e97c38100d702bec02ff158",
+        "helper_sha256": "00abc51fdacc16535b42360c91a11e6a31d4f7e98dd4bf9af095b6f1a890ee23",
+        "emitted_tokens_including_eos": 200,
+        "post_prefill_target_continuations": 199,
+        "stop_reason": "limit",
+        "elapsed_ns": 28577697408,
+        "continuation_tokens_per_second": 6.963472149589358,
+        "frozen_host_gpu_router": false,
+        "frozen_host_inactive_partition_exit": true,
+        "gpu_router_calls": 0,
+        "expert_uploads": 0,
+        "proposed_drafts": 138,
+        "accepted_drafts": 130,
+        "rounds": 69
+      },
+      "cpu_routed_control_2": {
+        "artifacts": "/media/jmicko/faststore/kuno-development/native-next-v144-lang-abba-a2-control-20261009",
+        "trial": "language-code-host",
+        "source_commit": "cab8ec59bab732e7f28ae7d58432a8c44ec256f5",
+        "binary_sha256": "0f14244454f8c9046c80ca330da00f8bd7eb08069e97c38100d702bec02ff158",
+        "helper_sha256": "00abc51fdacc16535b42360c91a11e6a31d4f7e98dd4bf9af095b6f1a890ee23",
+        "emitted_tokens_including_eos": 200,
+        "post_prefill_target_continuations": 199,
+        "stop_reason": "limit",
+        "elapsed_ns": 30152159540,
+        "continuation_tokens_per_second": 6.599858949937089,
+        "frozen_host_gpu_router": false,
+        "frozen_host_inactive_partition_exit": false,
+        "gpu_router_calls": 0,
+        "expert_uploads": 0,
+        "proposed_drafts": 138,
+        "accepted_drafts": 130,
+        "rounds": 69
+      },
+      "control_mean_tokens_per_second": 6.650376675750406,
+      "control_stdev": 0.07144285298543913,
+      "candidate_mean_tokens_per_second": 6.957252396262008,
+      "candidate_stdev": 0.008796059510154226,
+      "matched_abba_improvement_fraction": 0.04614411114945982,
+      "identical_rounds_and_acceptance": true
+    },
+    "language_gpu_router_defect": {
+      "status": "open engine/lab integration defect, not caused by the exit candidate",
+      "failed_run_1": {
+        "artifacts": "/media/jmicko/faststore/kuno-development/native-next-v144-lang-abba-a1-20261009",
+        "trial": "language-code-gpu-host",
+        "source_commit": "cab8ec59bab732e7f28ae7d58432a8c44ec256f5",
+        "binary_sha256": "0f14244454f8c9046c80ca330da00f8bd7eb08069e97c38100d702bec02ff158",
+        "helper_sha256": "00abc51fdacc16535b42360c91a11e6a31d4f7e98dd4bf9af095b6f1a890ee23",
+        "frozen_partition_exit_requested": false,
+        "exit_code": 1,
+        "receipt": false,
+        "final_stage": "public_language_failed_cleanup complete=0",
+        "authored_error": "Error: InvalidFormat(\"native model chunk rejected\")",
+        "deterministic_reproduction": true
+      },
+      "failed_run_2_deterministic_reproduction": {
+        "artifacts": "/media/jmicko/faststore/kuno-development/native-next-v144-lang-abba-a1-retry-20261009",
+        "trial": "language-code-gpu-host",
+        "source_commit": "cab8ec59bab732e7f28ae7d58432a8c44ec256f5",
+        "binary_sha256": "0f14244454f8c9046c80ca330da00f8bd7eb08069e97c38100d702bec02ff158",
+        "helper_sha256": "00abc51fdacc16535b42360c91a11e6a31d4f7e98dd4bf9af095b6f1a890ee23",
+        "frozen_partition_exit_requested": false,
+        "exit_code": 1,
+        "receipt": false,
+        "final_stage": "public_language_failed_cleanup complete=0",
+        "authored_error": "Error: InvalidFormat(\"native model chunk rejected\")",
+        "deterministic_reproduction": true
+      },
+      "cpu_routed_control_completes": true,
+      "failure_point": "first completed-native-projection-boundary call (native_public_fill_counters, daslab_language_probe.rs:684) immediately after activate_public_frozen_host_batch_router; warm probe tolerates the same activation because its replay performs a fresh prefill commit before the next bare boundary call",
+      "authored_error_is_content_free": "InvalidFormat(\"native model chunk rejected\")"
+    },
+    "limits": [
+      "Warm fixture: twelve verified continuations, setup excluded; not ordinary generation",
+      "Language rates are CPU-routed frozen-host sources; the GPU512+exit composed language combination is blocked by the open language router activation defect",
+      "ABBA delta +4.61% is the exit kernel alone on CPU-routed code200; GPU-router composition on code200 remains unmeasured",
+      "No generated text retained; no production catalogue/API/installation change"
+    ]
   }
 }

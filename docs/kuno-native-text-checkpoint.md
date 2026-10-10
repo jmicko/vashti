@@ -3325,3 +3325,81 @@ control. Record prompt/seed, accepted token counts, measured actual routes,
 readbacks/disk reads, source setup and physical RAM/VRAM recovery; do not present
 rank-member route counts as unique PCIe bytes. The user's stop request leaves
 no GPU trial or automatic work running. The optimization goal remains paused.
+
+### v144 partition-exit physical acceptance and code200 ABBA (2026-10-10)
+
+The user explicitly resumed the optimization goal and confirmed idle GPUs. No
+engine source changed this pass; HEAD remains `cab8ec5` with candidate source
+`389fb6b` and documents only. The protected comparison helper was extended
+with four explicit fast labels (`warm-fast-host`, `warm-fast-gpu-host`,
+`language-code-fast-host`, `language-code-fast-gpu-host`) that select canonical
+`KUNO_LAB_FROZEN_PARTITION_EXIT=1` only together with frozen-host sources.
+Helper sha256 `00abc51fdacc16535b42360c91a11e6a31d4f7e98dd4bf9af095b6f1a890ee23`
+(prior `dc72bded...`); all twenty existing labels were oracle-compared
+byte-identical and the protected launcher accepts every new environment
+(`test-run-native-strata-fast-labels-20261009.py`, 24 trials, zero failures).
+A fresh direct-device build was frozen from `cab8ec5`:
+binary sha256 `0f14244454f8c9046c80ca330da00f8bd7eb08069e97c38100d702bec02ff158`
+(build `native-next-v144-build-20261009`). This is a new binary; no v143
+physical acceptance was transferred to it.
+
+Four same-artifact whole-model CPU13 gates all passed complete vectors/carries,
+exact greedies, real prefix repair, both source tiers (VRAM 2590 / host 6530,
+dispatches 4320), zero expert uploads, clean closes and baseline recovery
+(Intel 50,688,000 B, no classified faults, admission normal):
+
+| Gate | Trial | Router | Exit | tokens/s |
+| --- | --- | --- | --- | --- |
+| 1 | warm-host | false | false | 4.249597 |
+| 2 | warm-fast-host | false | true | 4.522345 |
+| 3 | warm-gpu-host | true | false | 4.610436 |
+| 4 | warm-fast-gpu-host | true | true | 5.478617 |
+
+Gate 3/4 receipts carry positive actual `gpu_router_calls` (384) with full CPU13
+acceptance, establishing the whole-model GPU512 routing acceptance that was
+still pending at v143. The composed candidate is the fastest accepted warm
+configuration (+29.2% over the CPU control).
+
+Normal public code200 was then measured with matched same-day ABBA runs on the
+CPU-routed frozen-host pair (35-prompt first-code fixture, seed 424242,
+temperature 0, 200 emitted, 199 timed continuations, identical 69 rounds and
+138/130 draft proposals/acceptances in every run):
+
+| Run | Trial | tokens/s |
+| --- | --- | --- |
+| A1 | language-code-host | 6.700894 |
+| B1 | language-code-fast-host | 6.951033 |
+| B2 | language-code-fast-host | 6.963472 |
+| A2 | language-code-host | 6.599900 |
+
+Controls mean 6.6504 (stdev 0.0714), candidates mean 6.9573 (stdev 0.0088):
+**matched ABBA improvement +4.61%** from the exit kernel alone, well outside
+the control noise band. Ordinary generation is now ~6.6-7.0 tokens/s, up from
+the older 2-4 tokens/s artifacts.
+
+New defect found and preserved: `language-code-gpu-host` fails deterministically
+(two failed evidence dirs `native-next-v144-lang-abba-a1-20261009` and
+`...-a1-retry-20261009`) with the content-free authored error
+`InvalidFormat("native model chunk rejected")` at the first
+completed-native-projection-boundary call (`native_public_fill_counters`,
+daslab_language_probe.rs:684) immediately after
+`activate_public_frozen_host_batch_router`. The same activation passes in the
+warm probe only because its replay performs a fresh prefill commit before the
+next bare boundary call; the CPU-routed language control completes normally
+(`native-next-v144-lang-cpuhost-bisect-20261009`). This is a language-probe /
+frozen-router integration defect, not an exit-candidate failure: it reproduces
+on the control label and the exit kernel passed every gate including the
+GPU-routed composed gate 4.
+
+All runs ended with admission normal, Intel at 50,688,000 B, no NVIDIA compute
+owners, and unchanged classified fault counts. Required Vashti changes: none.
+
+Next concrete steps, in order:
+1. Pinpoint and fix the post-router-activation completed-boundary violation
+   (one of prove_outer/checks in resident_model_batch.rs:1646-1672) so the
+   language probe can begin request I/O immediately after activation; focused
+   CPU tests first, then rebuild, then repeat the four gates plus a GPU-routed
+   language ABBA to measure the composed fastest combination on code200.
+2. Then continue toward the 30 tokens/s objective with the packed IQ3 block
+   decoding and row-grouping kernel investigation (MIT-noticed Strata
+   inspiration), keeping the Q8 draft and one-change-per-experiment discipline.
