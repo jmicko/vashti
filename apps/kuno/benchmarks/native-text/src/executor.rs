@@ -787,6 +787,12 @@ impl ResidentAdmission {
             }
         })
     }
+    /// Router table uploads charge the private I/O exclusive-owner ledger.
+    /// A completed public activation must leave that ledger empty so the next
+    /// request I/O reuse begin is legal without an intervening commit.
+    pub(crate) fn checkpoint_public_router_activation(&self) -> Result<()> {
+        self.checkpoint()
+    }
     /// Explicit abandoned-owner teardown, outside any admission lock. A
     /// cancelled attention step may not have reached its next router read.
     /// Drain/erase ordered upload staging before the optional MAIN zero audit

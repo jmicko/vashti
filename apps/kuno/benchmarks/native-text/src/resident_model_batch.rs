@@ -2213,7 +2213,8 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         }
         native
             .moe
-            .activate_frozen_host_batch_router(executor, self.graph, &self.arena)
+            .activate_frozen_host_batch_router(executor, self.graph, &self.arena)?;
+        self.admission.checkpoint_public_router_activation()
     }
 
     pub(crate) fn activate_public_warm_batch_router(
@@ -2237,7 +2238,8 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .as_mut()
             .ok_or(error())?
             .moe
-            .activate_batch_router(executor, self.graph, &self.arena)
+            .activate_batch_router(executor, self.graph, &self.arena)?;
+        self.admission.checkpoint_public_router_activation()
     }
 
     pub(crate) fn begin_lab_request_io_reuse(&self, executor: &GpuExecutor<'f>) -> Result<()> {
