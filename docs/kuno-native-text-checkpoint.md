@@ -3403,3 +3403,49 @@ Next concrete steps, in order:
 2. Then continue toward the 30 tokens/s objective with the packed IQ3 block
    decoding and row-grouping kernel investigation (MIT-noticed Strata
    inspiration), keeping the Q8 draft and one-change-per-experiment discipline.
+
+### Language router-activation defect: root cause and source fix (2026-10-10)
+
+The deterministic `language-code-gpu-host` failure diagnosed to completion. The
+authored error `InvalidFormat("native model chunk rejected")` was misleading:
+`lab_oracle_attempt` (resident_model_batch.rs:1746) poisons the model and
+replaces any operation error with that generic message, hiding the real
+rejection. A separate diagnostic worktree (`codex/kuno-router-lang-diag`,
+instrumented boundary checks plus an oracle catch-arm print) reproduced the
+failure and revealed the original errors: admission
+"request I/O scope rejected", then vendor
+"private reuse begin requires empty exclusive owner".
+
+Root cause: `activate_public_frozen_host_batch_router` uploads the 48-layer
+routing table through client `write_private`, which charges the private I/O
+exclusive-owner ledger. Beginning a request I/O reuse scope requires that
+ledger completely empty (transient_io.rs `begin_reuse_configured`). The warm
+probe never observed the dirty window because its replay performs a fresh
+prefill commit - whose readback checkpoint sanitizes the ledger - before
+`begin_public_target_request_io`; the language probe begins request I/O
+immediately after activation.
+
+Fix (commit `8c7d838` on codex/kuno-native-text): a new admission method
+`checkpoint_public_router_activation` runs the existing checkpoint/sanitize at
+the end of both `activate_public_frozen_host_batch_router` and
+`activate_public_warm_batch_router`, so a completed activation leaves the
+exclusive-owner ledger empty. Focused checks pass: 45 daslab_, 30 frozen and
+66 router tests, Clippy all-targets -D warnings, formatting and whitespace.
+
+Diagnostic validation (not acceptance evidence): the instrumented build
+`native-next-diag-routerlang-build4-20261010` (source `ded5afc`, binary
+`293bb2c0...`) completed the full `language-code-gpu-host` run in
+`native-next-diag-routerlang-run4-20261010`: 3552 actual gpu_router_calls,
+199 continuations, complete real target-greedy verification and owner erasure,
+diagnostic preview 7.1716 continuation tokens/s. Diagnostic runs 1-3 preserve
+the failure progression; build/run directories are under
+/media/jmicko/faststore/kuno-development with the diag- prefix.
+
+Next session, in order: freeze a fresh v145 build from `8c7d838`, repeat the
+four same-artifact whole-model CPU13 gates (no acceptance transfers from
+v144), then run the GPU-routed language ABBA
+(language-code-gpu-host vs language-code-fast-gpu-host) to measure the
+composed fastest combination on code200. After that, continue toward the
+30 tokens/s objective with the packed IQ3 block decoding and row-grouping
+kernel investigation. No GPU trial is running; the host was left at baseline
+with admission normal.

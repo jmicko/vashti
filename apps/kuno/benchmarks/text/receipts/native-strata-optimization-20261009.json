@@ -5885,7 +5885,7 @@
       "identical_rounds_and_acceptance": true
     },
     "language_gpu_router_defect": {
-      "status": "open engine/lab integration defect, not caused by the exit candidate",
+      "status": "fixed in source commit 8c7d838 on codex/kuno-native-text; diagnostic validation complete, v145 physical re-gate pending",
       "failed_run_1": {
         "artifacts": "/media/jmicko/faststore/kuno-development/native-next-v144-lang-abba-a1-20261009",
         "trial": "language-code-gpu-host",
@@ -5914,7 +5914,21 @@
       },
       "cpu_routed_control_completes": true,
       "failure_point": "first completed-native-projection-boundary call (native_public_fill_counters, daslab_language_probe.rs:684) immediately after activate_public_frozen_host_batch_router; warm probe tolerates the same activation because its replay performs a fresh prefill commit before the next bare boundary call",
-      "authored_error_is_content_free": "InvalidFormat(\"native model chunk rejected\")"
+      "authored_error_is_content_free": "InvalidFormat(\"native model chunk rejected\")",
+      "root_cause": "activate_public_frozen_host_batch_router uploads the routing table through client write_private, charging the private I/O exclusive-owner ledger; the vendor requires that ledger completely empty when beginning request I/O reuse (transient_io.rs: begin_reuse_configured). The warm probe masked this because its replay commit checkpoints (sanitizes) the ledger before beginning reuse; the language probe begins request I/O immediately after activation.",
+      "diagnosis_note": "lab_oracle_attempt resident_model_batch.rs:1746 poisons the model and replaces any operation error with the generic InvalidFormat(\"native model chunk rejected\"), hiding the real rejection; the diagnostic worktree codex/kuno-router-lang-diag revealed the original error \"request I/O scope rejected\" and the vendor fault \"private reuse begin requires empty exclusive owner\".",
+      "fix": "checkpoint_public_router_activation (admission checkpoint/sanitize) now runs at the end of both activate_public_frozen_host_batch_router and activate_public_warm_batch_router; focused checks 45 daslab + 30 frozen + 66 router tests, Clippy -D warnings, fmt and whitespace pass.",
+      "diagnostic_validation": {
+        "diag_branch": "codex/kuno-router-lang-diag",
+        "diag_source_commit": "ded5afc520bcb82be863d8f42c5cd7d02863cf5e",
+        "diag_binary_sha256": "293bb2c0b9725196662c61e5baa253a5a30c9b81093960138cbf71fbbb654eae",
+        "artifacts": "/media/jmicko/faststore/kuno-development/native-next-diag-routerlang-run4-20261010",
+        "language_code_gpu_host_completed": true,
+        "gpu_router_calls": 3552,
+        "post_prefill_target_continuations": 199,
+        "continuation_tokens_per_second_diagnostic_preview_only": 7.171575487540439,
+        "note": "diagnostic instrumented build; numbers are not acceptance evidence"
+      }
     },
     "limits": [
       "Warm fixture: twelve verified continuations, setup excluded; not ordinary generation",
