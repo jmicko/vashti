@@ -13,7 +13,9 @@ use kuno_text::{Error, Result};
 
 pub const ENGLISH_ROWS: usize = 40_525;
 pub const ENGLISH_BYTES: usize = ENGLISH_ROWS * 4;
-pub const ENGLISH_OWNED_BYTES: usize = 196_608;
+// The native exclusive allocator reserves power-of-two bins. Cover the full
+// physical 256 KiB owner, rather than a 64 KiB-rounded 192 KiB handle inside it.
+pub const ENGLISH_OWNED_BYTES: usize = 262_144;
 pub const ENGLISH_SHA256: &str = "369151522226a5edaa5f12cfd1e2ae7db8f4fbdbd222f3dcf327dced9597fb25";
 pub const STRATA_REVISION: &str = "fb58e0dbc8399662c0e47c76578c6e878b14f6cf";
 pub const TILE_ROWS: usize = 16_384;

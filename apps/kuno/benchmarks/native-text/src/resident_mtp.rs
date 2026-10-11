@@ -23,6 +23,7 @@ use crate::{
     resident_util as u,
 };
 use cubecl::{prelude::*, server::Handle, wgpu::WgpuRuntime};
+use fast::pruned_head as english;
 use kuno_text::{
     Error, Result, TensorType,
     mtp::{MtpGraph, MtpProfile},
@@ -38,6 +39,8 @@ use std::{
 use zeroize::{Zeroize, Zeroizing};
 
 pub const PUBLIC_BYTES: u64 = 5_011_668_992;
+pub const ENGLISH_VOCAB_OWNED_BYTES: u64 = english::ENGLISH_OWNED_BYTES as u64;
+pub const ENGLISH_PUBLIC_BYTES: u64 = PUBLIC_BYTES + ENGLISH_VOCAB_OWNED_BYTES;
 // Original GGUF dense BF16 +borrowed IQ4_XS embedding/Q6_K full head. Exact
 // independent startup page geometry is checked before any device allocation.
 pub const STRATA_PUBLIC_BYTES: u64 = 2_539_257_856;
@@ -58,6 +61,7 @@ const HIDDEN_NORM_WIDTH: usize = k::WIDE;
 // source ledger never credits a dropped owner before a completed fence.
 const MAX_TOKEN_DISPATCHES: usize = 512;
 const INFO_BYTES: u64 = MAX_TOKEN_DISPATCHES as u64 * 2048;
+const PUBLIC_ENGLISH_IDS: u32 = u32::MAX;
 static NEXT_BINDING: AtomicU64 = AtomicU64::new(1);
 const MAX_LIVE_OUTPUTS: usize = 4;
 const OUTPUT_HOST_BYTES: usize = (k::VOCAB + k::WIDE) * 4;
@@ -383,6 +387,7 @@ struct Public {
     pages: BTreeMap<&'static str, Vec<Page>>,
     sin: Page,
     cos: Page,
+    english_ids: Option<Page>,
     bytes: u64,
 }
 impl Public {
@@ -405,6 +410,7 @@ impl Public {
             .flatten()
             .map(|p| p.handle.clone())
             .chain([self.sin.handle.clone(), self.cos.handle.clone()])
+            .chain(self.english_ids.iter().map(|p| p.handle.clone()))
             .collect()
     }
 }
@@ -462,7 +468,8 @@ pub struct Traffic {
 }
 
 /// Provisional draft result without a full vocabulary host copy. The complete
-/// vocabulary is still computed/finite-checked and actual greedy chosen onGPU.
+/// vocabulary is selected by immutable construction policy and actual greedy
+/// is chosen onGPU. The original target always verifies provisional proposals.
 pub struct DraftOutput {
     hidden: Zeroizing<Vec<f32>>,
     greedy: Zeroizing<u32>,
@@ -507,6 +514,8 @@ pub struct ResidentMtp<'g, 'f> {
     q8_head_broadcast_completed: bool,
     q8_head_shared_scales: bool,
     q8_head_shared_scales_completed: bool,
+    public_english_vocab: Option<english::EnglishVocabulary>,
+    public_english_vocab_completed: bool,
 }
 
 fn validate_q8_head_broadcast_selection(
@@ -609,6 +618,15 @@ fn public_guard(
         if i * 4 >= logical_bytes {
             if word != 0 {
                 fault[0].fetch_or(4);
+            }
+        } else if comptime!(dtype == PUBLIC_ENGLISH_IDS) {
+            if logical_bytes != english::ENGLISH_BYTES || word >= k::VOCAB as u32 {
+                fault[0].fetch_or(1);
+            }
+            if i > 0 {
+                if values[i - 1] >= word {
+                    fault[0].fetch_or(1);
+                }
             }
         } else if comptime!(dtype == quant_matvec::F32) {
             let value = f32::reinterpret(word);
@@ -810,6 +828,89 @@ fn public_bytes_for(profile: MtpProfile) -> u64 {
         MtpProfile::StrataQ2 => STRATA_PUBLIC_BYTES,
     }
 }
+fn public_bytes_with_english(profile: MtpProfile, english: bool) -> Result<u64> {
+    if english && profile != MtpProfile::SelfContainedQ8 {
+        return Err(Error::InvalidFormat(
+            "MTP English vocabulary requires original Q8 head",
+        ));
+    }
+    Ok(public_bytes_for(profile)
+        + if english {
+            ENGLISH_VOCAB_OWNED_BYTES
+        } else {
+            0
+        })
+}
+fn public_plan_with_english(profile: MtpProfile, english: bool) -> Result<u64> {
+    public_bytes_with_english(profile, english)?;
+    Ok(public_plan_for(profile)?
+        + if english {
+            main_admission::page_bytes(english::ENGLISH_BYTES as u64).map_err(error)?
+        } else {
+            0
+        })
+}
+fn validate_full_output(english: bool) -> Result<()> {
+    if english {
+        return Err(Error::InvalidFormat(
+            "MTP public English vocabulary supports draft output only",
+        ));
+    }
+    Ok(())
+}
+fn validate_english_broadcast(english: bool, broadcast: bool) -> Result<()> {
+    if english && broadcast {
+        return Err(Error::InvalidFormat(
+            "MTP public English vocabulary excludes broadcast",
+        ));
+    }
+    Ok(())
+}
+fn completed_english_policy(
+    selected: bool,
+    completed: bool,
+    closed: bool,
+    poisoned: bool,
+    retired: bool,
+) -> Result<bool> {
+    if closed || poisoned || retired {
+        return Err(Error::InvalidFormat(
+            "MTP completed English vocabulary unavailable",
+        ));
+    }
+    Ok(selected && completed)
+}
+fn validate_english_readback(bytes: &[u8]) -> Result<()> {
+    if bytes.len() != english::ENGLISH_OWNED_BYTES {
+        return Err(Error::InvalidBufferLength);
+    }
+    english::EnglishVocabulary::validate_exact(&bytes[..english::ENGLISH_BYTES])?;
+    if bytes[english::ENGLISH_BYTES..]
+        .iter()
+        .any(|&value| value != 0)
+    {
+        return Err(Error::InvalidFormat("MTP English public map padding"));
+    }
+    Ok(())
+}
+fn validate_english_owner(
+    profile: MtpProfile,
+    english: bool,
+    public_bytes: u64,
+    map: Option<(usize, usize, usize, usize, u64)>,
+) -> Result<()> {
+    let expected = english.then_some((
+        english::ENGLISH_BYTES,
+        english::ENGLISH_OWNED_BYTES,
+        0,
+        english::ENGLISH_ROWS,
+        ENGLISH_VOCAB_OWNED_BYTES,
+    ));
+    if public_bytes != public_bytes_with_english(profile, english)? || map != expected {
+        return Err(Error::InvalidFormat("MTP immutable English public owner"));
+    }
+    Ok(())
+}
 fn validate_profile(actual: MtpProfile, expected: MtpProfile, target_bound: bool) -> Result<()> {
     if actual != expected || expected == MtpProfile::StrataQ2 && !target_bound {
         return Err(Error::InvalidFormat(
@@ -922,6 +1023,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             retired,
             false,
             MtpProfile::SelfContainedQ8,
+            false,
         )
     }
     /// Separate fixed-public performance candidate. The mode is immutable for
@@ -940,6 +1042,27 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             retired,
             true,
             MtpProfile::SelfContainedQ8,
+            false,
+        )
+    }
+    /// Explicit immutable English/code proposal subset of the full original
+    /// Q8 head. Full42 private owners and every original public weight page
+    /// remain resident; only one pinned public ID owner is added. The full
+    /// Output API and broadcast policy are rejected before any mutation.
+    pub fn new_public_english_with_fused_sweeps(
+        graph: &'g MtpGraph<'f>,
+        client: ComputeClient<WgpuRuntime>,
+        limits: &wgpu::Limits,
+        retired: Arc<AtomicBool>,
+    ) -> Result<Self> {
+        Self::construct(
+            graph,
+            client,
+            limits,
+            retired,
+            true,
+            MtpProfile::SelfContainedQ8,
+            true,
         )
     }
     /// Explicit original Strata GGUF profile. Requires the already-bound paired
@@ -950,7 +1073,15 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         limits: &wgpu::Limits,
         retired: Arc<AtomicBool>,
     ) -> Result<Self> {
-        Self::construct(graph, client, limits, retired, false, MtpProfile::StrataQ2)
+        Self::construct(
+            graph,
+            client,
+            limits,
+            retired,
+            false,
+            MtpProfile::StrataQ2,
+            false,
+        )
     }
     pub fn new_strata_q2_with_fused_sweeps(
         graph: &'g MtpGraph<'f>,
@@ -958,7 +1089,15 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         limits: &wgpu::Limits,
         retired: Arc<AtomicBool>,
     ) -> Result<Self> {
-        Self::construct(graph, client, limits, retired, true, MtpProfile::StrataQ2)
+        Self::construct(
+            graph,
+            client,
+            limits,
+            retired,
+            true,
+            MtpProfile::StrataQ2,
+            false,
+        )
     }
     fn construct(
         graph: &'g MtpGraph<'f>,
@@ -967,12 +1106,17 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         retired: Arc<AtomicBool>,
         fused_sweeps: bool,
         expected_profile: MtpProfile,
+        public_english: bool,
     ) -> Result<Self> {
         validate_profile(
             graph.profile(),
             expected_profile,
             graph.target_binding_id().is_some(),
         )?;
+        let public_bytes = public_bytes_with_english(expected_profile, public_english)?;
+        let public_english_vocab = public_english
+            .then(english::EnglishVocabulary::embedded)
+            .transpose()?;
         graph.verify_unchanged()?;
         if fused_sweeps {
             validate_fused_sweep_limits(limits)?;
@@ -983,7 +1127,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             return Err(Error::InvalidFormat("MTP physical context retired"));
         }
         let private = private_plan()?;
-        if public_plan_for(expected_profile)? != public_bytes_for(expected_profile)
+        if public_plan_with_english(expected_profile, public_english)? != public_bytes
             || private > PRIVATE_BYTES as u64
             || INFO_BYTES + 3 * 4 * 1024 * 1024 > RUNTIME_BYTES
         {
@@ -992,7 +1136,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         main_admission::check_capacity(
             MAIN_BYTES,
             &[
-                public_bytes_for(expected_profile),
+                public_bytes,
                 PRIVATE_BYTES as u64,
                 RUNTIME_BYTES,
                 PUBLIC_SOURCE_BYTES as u64,
@@ -1050,6 +1194,8 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             q8_head_broadcast_completed: false,
             q8_head_shared_scales: false,
             q8_head_shared_scales_completed: false,
+            public_english_vocab,
+            public_english_vocab_completed: false,
         };
         let result = workspace.load_public();
         match result {
@@ -1134,6 +1280,20 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             .map(|&id| self.arena.handle(id).cloned().map_err(error))
             .collect::<Result<_>>()?;
         if let Some(public) = &self.public {
+            validate_english_owner(
+                self.graph.profile(),
+                self.public_english_vocab.is_some(),
+                public.bytes,
+                public.english_ids.as_ref().map(|page| {
+                    (
+                        page.logical_bytes,
+                        page.owned_bytes,
+                        page.first,
+                        page.rows,
+                        page.handle.size(),
+                    )
+                }),
+            )?;
             owners.extend(public.handles());
         }
         crate::resident_gr::batch::physical(&self.arena, &owners)?;
@@ -1226,6 +1386,52 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             dtype,
         );
         self.complete_fault()?;
+        Ok(page)
+    }
+    fn load_public_english_ids(&mut self, proof: english::EnglishVocabulary) -> Result<Page> {
+        let owned = english::ENGLISH_OWNED_BYTES;
+        if main_admission::page_bytes(english::ENGLISH_BYTES as u64).map_err(error)? as usize
+            != owned
+            || owned > PUBLIC_SOURCE_BYTES
+            || owned > HOST_BYTES
+        {
+            return Err(Error::LimitExceeded("MTP English public map source plan"));
+        }
+        let mut source = Upload(vec![0; owned]);
+        source.0[..english::ENGLISH_BYTES].copy_from_slice(proof.bytes());
+        english::EnglishVocabulary::validate_exact(&source.0[..english::ENGLISH_BYTES])?;
+        let page = self.upload_page(
+            source,
+            english::ENGLISH_BYTES,
+            owned,
+            0,
+            english::ENGLISH_ROWS,
+            PUBLIC_ENGLISH_IDS,
+        )?;
+        // Public construction readback proves the exact immutable uploaded ID
+        // bytes as well as every padding byte. No private request row is read.
+        let read = self
+            .client()?
+            .read_one(page.handle.clone())
+            .map_err(error)?;
+        let bytes = Bytes(read);
+        self.count_traffic(|traffic| {
+            traffic.host_read_calls = traffic
+                .host_read_calls
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow)?;
+            traffic.host_read_bytes = traffic
+                .host_read_bytes
+                .checked_add(owned as u64)
+                .ok_or(Error::ArithmeticOverflow)?;
+            Ok(())
+        })?;
+        validate_english_readback(&bytes.0)?;
+        drop(bytes);
+        io_audit(self.client()?, &self.retired)?;
+        self.ledger
+            .completed_fence(sample(self.client()?)?)
+            .map_err(error)?;
         Ok(page)
     }
     fn load_public(&mut self) -> Result<Public> {
@@ -1354,13 +1560,23 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         let sin = upload_rope(sin)?;
         let cos = upload_rope(cos)?;
         bytes += (sin.owned_bytes + cos.owned_bytes) as u64;
-        if bytes != public_bytes_for(profile) || pages.len() != 30 {
+        let english_ids = self
+            .public_english_vocab
+            .map(|proof| self.load_public_english_ids(proof))
+            .transpose()?;
+        if let Some(map) = &english_ids {
+            bytes += map.owned_bytes as u64;
+        }
+        if bytes != public_bytes_with_english(profile, self.public_english_vocab.is_some())?
+            || pages.len() != 30
+        {
             return Err(Error::InvalidBufferLength);
         }
         Ok(Public {
             pages,
             sin,
             cos,
+            english_ids,
             bytes,
         })
     }
@@ -1727,6 +1943,7 @@ impl ResidentMtp<'_, '_> {
     /// Rewinding a used workspace does not reopen this immutable selection.
     #[allow(dead_code)] // Protected runner selection is integrated separately.
     pub fn set_q8_head_broadcast(&mut self, enabled: bool) -> Result<()> {
+        validate_english_broadcast(self.public_english_vocab.is_some(), enabled)?;
         validate_q8_head_broadcast_selection(
             self.graph.profile(),
             self.closed,
@@ -1779,6 +1996,29 @@ impl ResidentMtp<'_, '_> {
         self.physical()?;
         Ok(self.q8_head_shared_scales_completed)
     }
+    /// Actual successful draft-head execution, available only with live healthy
+    /// owners. Construction/append/rewind alone never reports completed use.
+    pub fn completed_public_english_vocab(&self) -> Result<bool> {
+        let completed = completed_english_policy(
+            self.public_english_vocab.is_some(),
+            self.public_english_vocab_completed,
+            self.closed,
+            self.poisoned,
+            self.retired.load(Ordering::Acquire),
+        )?;
+        self.verify_source()?;
+        self.physical()?;
+        Ok(completed)
+    }
+    /// Content-free immutable map identity after an accepted draft operation.
+    pub fn public_english_vocab_receipt(&self) -> Result<(u32, &'static str)> {
+        if !self.completed_public_english_vocab()? {
+            return Err(Error::InvalidFormat(
+                "MTP English vocabulary has no completed draft",
+            ));
+        }
+        Ok((english::ENGLISH_ROWS as u32, english::ENGLISH_SHA256))
+    }
     fn public(&self) -> Result<&Public> {
         self.public
             .as_ref()
@@ -1799,6 +2039,9 @@ impl ResidentMtp<'_, '_> {
             || input == output
         {
             return Err(Error::InvalidBufferLength);
+        }
+        if self.public_english_vocab.is_some() && name == "output.weight" {
+            return self.project_public_english(input, output);
         }
         let pages = self.public()?.pages(name)?;
         let row_bytes = quant_matvec::packed_row_bytes(spec.columns, spec.dtype);
@@ -1891,6 +2134,101 @@ impl ResidentMtp<'_, '_> {
             }
         }
         self.tick(pages.len())?;
+        self.finite(output)
+    }
+    fn project_public_english(&mut self, input: B, output: B) -> Result<()> {
+        let proof = self
+            .public_english_vocab
+            .ok_or(Error::InvalidFormat("MTP English vocabulary absent"))?;
+        if self.graph.profile() != MtpProfile::SelfContainedQ8
+            || input != B::Mixed
+            || output != B::Logits
+            || WORDS[input as usize] != k::D
+            || WORDS[output as usize] != k::VOCAB
+            || self.q8_head_broadcast
+        {
+            return Err(Error::InvalidFormat(
+                "MTP indexed original Q8 head geometry",
+            ));
+        }
+        let map = self
+            .public()?
+            .english_ids
+            .as_ref()
+            .ok_or(Error::InvalidFormat("MTP public English map owner absent"))?;
+        let pages = self.public()?.pages("output.weight")?;
+        if pages.len() != english::SEGMENTS {
+            return Err(Error::InvalidBufferLength);
+        }
+        let owned_words = self
+            .arena
+            .layout(self.id(output))
+            .map_err(error)?
+            .owned_words;
+        let mut dispatches = 0;
+        for (index, page) in pages.iter().enumerate() {
+            let segment = proof.segment(index)?;
+            segment.validate()?;
+            if page.first != segment.source_first
+                || page.rows != segment.source_rows
+                || page.logical_bytes != segment.source_rows * k::ROW_BYTES
+            {
+                return Err(Error::InvalidBufferLength);
+            }
+            if segment.subset_rows == 0 {
+                continue;
+            }
+            let check_tail = index + 1 == pages.len();
+            let grid = segment.cube_count(check_tail, owned_words)?;
+            // SAFETY: exact immutable map readback and full original source/page,
+            // input/output extents, no-alias/stream and full padding proof are
+            // admitted before consumption. Row mapping precedes packed reads.
+            unsafe {
+                if self.q8_head_shared_scales {
+                    english::packed_q8_english_head_shared_scales_fault::launch_unchecked::<
+                        WgpuRuntime,
+                    >(
+                        self.client()?,
+                        grid,
+                        CubeDim::new_1d(128),
+                        Self::public_arg(page)?,
+                        Self::public_arg(map)?,
+                        self.a(input)?,
+                        self.full(output)?,
+                        self.a(B::Fault)?,
+                        1,
+                        0,
+                        0,
+                        segment.source_first,
+                        segment.subset_first,
+                        segment.source_rows,
+                        segment.subset_rows,
+                        check_tail,
+                    );
+                } else {
+                    english::packed_q8_english_head_fault::launch_unchecked::<WgpuRuntime>(
+                        self.client()?,
+                        grid,
+                        CubeDim::new_1d(128),
+                        Self::public_arg(page)?,
+                        Self::public_arg(map)?,
+                        self.a(input)?,
+                        self.full(output)?,
+                        self.a(B::Fault)?,
+                        1,
+                        0,
+                        0,
+                        segment.source_first,
+                        segment.subset_first,
+                        segment.source_rows,
+                        segment.subset_rows,
+                        check_tail,
+                    );
+                }
+            }
+            dispatches += 1;
+        }
+        self.tick(dispatches)?;
         self.finite(output)
     }
     fn normalize(
@@ -2427,29 +2765,58 @@ impl ResidentMtp<'_, '_> {
     }
     fn finish_gpu(&mut self) -> Result<()> {
         self.project("output.weight", B::Mixed, B::Logits)?;
-        k::greedy_chunks::launch::<WgpuRuntime>(
-            self.client()?,
-            CubeCount::Static(k::GREEDY_GROUPS as u32, 1, 1),
-            CubeDim::new_1d(64),
-            self.a(B::Logits)?,
-            self.a(B::Candidates)?,
-            self.a(B::Fault)?,
-        );
+        if self.public_english_vocab.is_some() {
+            let map = self
+                .public()?
+                .english_ids
+                .as_ref()
+                .ok_or(Error::InvalidFormat("MTP public English map owner absent"))?;
+            english::english_greedy_chunks::launch::<WgpuRuntime>(
+                self.client()?,
+                CubeCount::Static(english::ENGLISH_GREEDY_GROUPS as u32, 1, 1),
+                CubeDim::new_1d(64),
+                self.a(B::Logits)?,
+                Self::public_arg(map)?,
+                self.a(B::Candidates)?,
+                self.a(B::Fault)?,
+            );
+        } else {
+            k::greedy_chunks::launch::<WgpuRuntime>(
+                self.client()?,
+                CubeCount::Static(k::GREEDY_GROUPS as u32, 1, 1),
+                CubeDim::new_1d(64),
+                self.a(B::Logits)?,
+                self.a(B::Candidates)?,
+                self.a(B::Fault)?,
+            );
+        }
         self.tick(1)?;
-        k::greedy_finish::launch::<WgpuRuntime>(
-            self.client()?,
-            CubeCount::Static(1, 1, 1),
-            CubeDim::new_1d(64),
-            self.a(B::Candidates)?,
-            self.a(B::Greedy)?,
-            self.a(B::Fault)?,
-        );
+        if self.public_english_vocab.is_some() {
+            english::english_greedy_finish::launch::<WgpuRuntime>(
+                self.client()?,
+                CubeCount::Static(1, 1, 1),
+                CubeDim::new_1d(64),
+                self.a(B::Candidates)?,
+                self.a(B::Greedy)?,
+                self.a(B::Fault)?,
+            );
+        } else {
+            k::greedy_finish::launch::<WgpuRuntime>(
+                self.client()?,
+                CubeCount::Static(1, 1, 1),
+                CubeDim::new_1d(64),
+                self.a(B::Candidates)?,
+                self.a(B::Greedy)?,
+                self.a(B::Fault)?,
+            );
+        }
         self.tick(1)?;
         self.physical()?;
         self.guard_private(self.position + 1)?;
         Ok(())
     }
     fn output(&mut self, lease: OutputLease) -> Result<Output> {
+        validate_full_output(self.public_english_vocab.is_some())?;
         self.finish_gpu()?;
         self.complete_fault()?;
         let logits = self.read_f32(B::Logits)?;
@@ -2545,6 +2912,7 @@ impl ResidentMtp<'_, '_> {
         self.poisoned = false;
         self.q8_head_broadcast_completed = self.q8_head_broadcast;
         self.q8_head_shared_scales_completed = self.q8_head_shared_scales;
+        self.public_english_vocab_completed = self.public_english_vocab.is_some();
         self.last_forward = Some(LastForward {
             binding: self.binding,
             start,
@@ -2610,6 +2978,7 @@ impl ResidentMtp<'_, '_> {
         Ok(values)
     }
     pub fn step(&mut self, token: u32, carry: &[f32], cancel: &AtomicBool) -> Result<Output> {
+        validate_full_output(self.public_english_vocab.is_some())?;
         // Publisher alignment: cell c consumes T[c+1] with R[c], using RoPE
         // position c, to predict T[c+2]. The caller starts with this real pair,
         // never a dummy zero-conditioned cell. A provisional next cell can
@@ -2903,6 +3272,9 @@ fn decode_draft(packet: &[u32]) -> Result<(Zeroizing<Vec<f32>>, u32)> {
     Ok((hidden, packet[DRAFT_TOKEN]))
 }
 
+#[cfg(test)]
+#[path = "resident_mtp_english_tests.rs"]
+mod english_tests;
 #[cfg(test)]
 #[path = "resident_strata_mtp_tests.rs"]
 mod strata_tests;

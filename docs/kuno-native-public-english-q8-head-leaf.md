@@ -15,13 +15,19 @@ ID and ordering; a structurally valid different vocabulary is rejected. No
 request-selected vocabulary or private ID map is admitted.
 
 The parent retains every original packed head page and all 42 private owners.
-The map adds one 196,608-byte public owner, with 162,100 logical bytes and exact
+The map adds one 262,144-byte public owner, with 162,100 logical bytes and exact
 zero padding. It joins the same pinned client's complete public physical
 ownership, no-alias, stream, source admission and close accounting. No extra
 private owner is needed. Parent integration must prove its upload/source and
 full padding before launch, clear the original full logits/candidate owners,
 reject broadcast, and reject full `Output` APIs before any state mutation.
 Shared Q8 scales may compose with the indexed entry.
+
+The source-only leaf originally proposed a 196,608-byte owner by rounding to
+64KiB. Resident integration's exact startup-plan test found that the existing
+exclusive allocator uses power-of-two bins. The integrated source therefore
+covers, reads and accounts for the complete 256 KiB bin, adding exactly 262,144
+public MAIN bytes; it does not leave a 64 KiB uninspected reservation tail.
 
 The 16 original 16,384-row head segments select respectively
 16,384/16,384/2,777/1,958/1,503/996/0/0/0/31/44/33/26/32/34/323 rows.

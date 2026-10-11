@@ -17,7 +17,7 @@ fn english_ids() -> Vec<u32> {
 fn english_vocabulary_exact_identity_and_all_source_segment_bounds() {
     assert_eq!(ENGLISH_ROWS, 40_525);
     assert_eq!(ENGLISH_BYTES, 162_100);
-    assert_eq!(ENGLISH_OWNED_BYTES, 196_608);
+    assert_eq!(ENGLISH_OWNED_BYTES, 262_144);
     assert_eq!((VOCAB, TILE_ROWS, SEGMENTS), (248_320, 16_384, 16));
     let proof = EnglishVocabulary::embedded().unwrap();
     let bytes = proof.bytes();
