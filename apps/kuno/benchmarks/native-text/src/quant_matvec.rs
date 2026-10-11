@@ -27,6 +27,9 @@ pub(crate) mod iq_moe_integer;
 #[path = "frozen_gu_integer.rs"]
 pub(crate) mod frozen_gu_integer;
 
+#[path = "frozen_down_integer.rs"]
+pub(crate) mod frozen_down_integer;
+
 #[path = "iq_moe_shared_original.rs"]
 pub(crate) mod iq_moe_shared_original;
 
