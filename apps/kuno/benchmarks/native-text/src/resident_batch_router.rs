@@ -22,6 +22,7 @@ pub(super) struct Owners {
     // Construction context is immutable; activation captures the exact sealed
     // SourceSet identity once. Ordinary warm144 never accepts that source mode.
     configured_context: Option<usize>,
+    four_reserved: bool,
     source_policy: Option<SourcePolicy>,
     ids: Zeroizing<[BufferId; 2]>,
     table: Option<Zeroizing<Vec<u32>>>,
@@ -67,7 +68,7 @@ impl Workspace {
         arena: &mut PrivateArena,
         allocation: &ModelConstructionAllocation<'_>,
     ) -> Result<()> {
-        self.reserve_batch_router_policy(arena, allocation, None)
+        self.reserve_batch_router_policy(arena, allocation, None, false)
     }
     pub(crate) fn reserve_frozen_host_batch_router(
         &mut self,
@@ -75,16 +76,24 @@ impl Workspace {
         allocation: &ModelConstructionAllocation<'_>,
         context: usize,
     ) -> Result<()> {
-        if !(1..=4096).contains(&context) {
-            return Err(reject());
-        }
-        self.reserve_batch_router_policy(arena, allocation, Some(context))
+        self.reserve_frozen_host_batch_router_with_four_rows(arena, allocation, context, false)
+    }
+    pub(crate) fn reserve_frozen_host_batch_router_with_four_rows(
+        &mut self, arena: &mut PrivateArena, allocation: &ModelConstructionAllocation<'_>,
+        context: usize, four_reserved: bool,
+    ) -> Result<()> {
+        if !(1..=4096).contains(&context) { return Err(reject()); }
+        self.reserve_batch_router_policy(arena, allocation, Some(context), four_reserved)
+    }
+    pub(super) fn four_member_router_reserved(&self) -> bool {
+        self.batch_router.as_ref().is_some_and(|r| r.four_reserved && r.configured_context.is_some())
     }
     fn reserve_batch_router_policy(
         &mut self,
         arena: &mut PrivateArena,
         allocation: &ModelConstructionAllocation<'_>,
         configured_context: Option<usize>,
+        four_reserved: bool,
     ) -> Result<()> {
         allocation.check(&self.admission)?;
         if self.batch_router.is_some()
@@ -99,10 +108,11 @@ impl Workspace {
         }
         self.batch_router = Some(Owners {
             configured_context,
+            four_reserved,
             source_policy: None,
             ids: Zeroizing::new([
                 arena.allocate_zeroed(48 * 512).map_err(u::fault)?,
-                arena.allocate_zeroed(gpu::AUDIT_WORDS).map_err(u::fault)?,
+                arena.allocate_zeroed(if four_reserved { gpu::four::AUDIT_WORDS } else { gpu::AUDIT_WORDS }).map_err(u::fault)?,
             ]),
             table: None,
             instances: Vec::new(),
@@ -256,7 +266,8 @@ impl Workspace {
             SourcePolicy::Resident144 => 13,
             SourcePolicy::FrozenHost512 { context, .. } => context,
         };
-        if !valid_window(context, start, count) {
+        let four = owners.four_reserved && matches!(owners.source_policy, Some(SourcePolicy::FrozenHost512 { .. }));
+        if !(valid_window(context, start, count) || four && count == 4 && (1..=4096).contains(&context) && start.checked_add(4).is_some_and(|end| end <= context as u64)) {
             return Err(reject());
         }
         u::zero(arena, owners.ids[1])

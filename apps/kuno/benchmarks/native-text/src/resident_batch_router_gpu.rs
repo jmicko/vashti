@@ -22,6 +22,8 @@ use cubecl_runtime::server::{ExecutionMode, Handle, KernelArguments, MetadataBin
 use kuno_text::{Error, Result};
 use zeroize::{Zeroize, Zeroizing};
 
+#[path = "resident_batch_router_gpu_four.rs"]
+pub(crate) mod four;
 pub(crate) const EXPERTS: usize = 512;
 pub(crate) const LAYERS: usize = 48;
 pub(crate) const SLOTS: usize = 144;
@@ -136,6 +138,7 @@ pub(crate) fn validate_owners(
     start: u64,
     count: usize,
 ) -> Result<()> {
+    if count == 4 {return four::validate_owners(owners,layer,start,count);}
     coordinates(layer, start, count)?;
     for (h, bytes) in owners.iter().zip(OWNED_BYTES) {
         if h.stream != owners[0].stream
@@ -216,6 +219,7 @@ pub(crate) fn launch_frozen_sources(
     start: u64,
     count: usize,
 ) -> Result<()> {
+    if count == 4 {return four::launch_frozen_sources(client,owners,layer,start,count);}
     launch_with_addressing(
         client,
         owners,
@@ -275,7 +279,7 @@ struct Routes {
     groups: usize,
     experts: [u32; MAX_ROUTES],
     probabilities: [f32; MAX_ROUTES],
-    pairs: [(u32, u32); MAX_COUNT * RANKS],
+    pairs: [(u32, u32); 40],
     probability_bit_mismatches: usize,
     max_probability_abs_error: f64,
     minimum_gap: f32,
@@ -357,6 +361,7 @@ pub(crate) fn audit_frame_frozen_sources(
     count: usize,
     geometry: crate::quant_matvec::grouped_moe::Geometry,
 ) -> Result<AuditedRoutes> {
+    if count == 4 {return four::audit_frame_frozen_sources(bytes,table,layer,start,count,geometry);}
     if !geometry.frozen_host_sources() {
         return Err(Error::InvalidFormat(
             "batch device router frozen source geometry",
@@ -398,7 +403,7 @@ fn audit_frame_with_addressing(
         groups: 0,
         experts: [0; MAX_ROUTES],
         probabilities: [0.; MAX_ROUTES],
-        pairs: [(0, 0); MAX_COUNT * RANKS],
+        pairs: [(0, 0); 40],
         probability_bit_mismatches: 0,
         max_probability_abs_error: 0.,
         minimum_gap: f32::MAX,
