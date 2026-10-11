@@ -10,6 +10,7 @@ def selected_target_policy(environment, mtp=False):
     frozen_down_integer_scope(environment)
     iq4_register_scope(environment)
     target_submission_backlog_scope(environment)
+    profile_bank_fill_scope(environment)
     grouped_status_scope(environment)
     grouped_ple_scope(environment)
     frozen_down_stride_scope(environment)
@@ -25,6 +26,9 @@ def selected_target_policy(environment, mtp=False):
     if "KUNO_LAB_TARGET_STATUS_FOLDS" in selected:
         if not mtp or selected.pop("KUNO_LAB_TARGET_STATUS_FOLDS") != "grouped-public":
             raise ValueError("Grouped status folds require the canonical fixed public target")
+    if "KUNO_LAB_FROZEN_BANK_FILL" in selected:
+        if not mtp or selected.pop("KUNO_LAB_FROZEN_BANK_FILL") != "profile-ranked-public":
+            raise ValueError("Profile filler requires the fixed Intel full-Q8 target scope")
     if "KUNO_LAB_TARGET_SUBMISSION_BACKLOG" in selected:
         if not mtp or selected.pop("KUNO_LAB_TARGET_SUBMISSION_BACKLOG") != "queued-2048-public":
             raise ValueError("Target backlog requires the fixed Intel full-Q8 target scope")
@@ -260,6 +264,21 @@ def target_submission_backlog_scope(environment):
         raise ValueError("Target backlog requires original speculative Intel full-Q8 scope")
 
 
+
+def profile_bank_fill_scope(environment):
+    selector = "KUNO_LAB_FROZEN_BANK_FILL"
+    if selector not in environment:
+        return
+    original_frozen_target_scope(environment, selector, "profile-ranked-public", full_vocab=True)
+    if (environment.get("KUNO_LAB_MTP_DEVICE") != "intel-public"
+            or environment.get("KUNO_LAB_MTP_SWEEPS") != "fused"
+            or environment.get("KUNO_LAB_MTP_Q8_HEAD") not in (None, "shared-public")
+            or any(key in environment for key in (
+                "KUNO_LAB_MTP_PROFILE", "KUNO_LAB_LANGUAGE_DECODE",
+            ))):
+        raise ValueError("Profile filler requires original speculative Intel full-Q8 scope")
+
+
 def frozen_gu_integer_scope(environment):
     if not any(key in environment for key in ("KUNO_LAB_FROZEN_GU_MATH", "KUNO_LAB_FROZEN_GU_SCHEDULE")):
         return
@@ -319,7 +338,7 @@ def target_only_scope(environment):
         "KUNO_LAB_FROZEN_GU_FACTORS", "KUNO_LAB_FROZEN_GU_ROWS",
         "KUNO_LAB_FROZEN_HOST_STAGE", "KUNO_LAB_FROZEN_MEMBERS",
         "KUNO_LAB_FROZEN_BANK_PLACEMENT", "KUNO_LAB_TARGET_EXPERTS",
-        "KUNO_LAB_TARGET_MOE", "KUNO_LAB_FROZEN_DOWN_MATH", "KUNO_LAB_TARGET_IQ4_DECODER", "KUNO_LAB_TARGET_SUBMISSION_BACKLOG", "KUNO_PUBLIC_MTP_INTEL_TOTAL_BYTES",
+        "KUNO_LAB_TARGET_MOE", "KUNO_LAB_FROZEN_DOWN_MATH", "KUNO_LAB_TARGET_IQ4_DECODER", "KUNO_LAB_TARGET_SUBMISSION_BACKLOG", "KUNO_LAB_FROZEN_BANK_FILL", "KUNO_PUBLIC_MTP_INTEL_TOTAL_BYTES",
         "KUNO_PUBLIC_MTP_INTEL_USED_BYTES", "KUNO_PUBLIC_MTP_INTEL_DEVICE_ID",
     )
     if (any(environment.get(key) != value for key, value in required.items())
@@ -456,6 +475,7 @@ def memory_limit(environment, arguments):
     frozen_down_integer_scope(environment)
     iq4_register_scope(environment)
     target_submission_backlog_scope(environment)
+    profile_bank_fill_scope(environment)
     grouped_status_scope(environment)
     grouped_ple_scope(environment)
     frozen_down_stride_scope(environment)

@@ -3713,3 +3713,46 @@ Clippy and259integratedPython checks plus6fixed helper labels/caps pass. The
 harness limitation is recorded in the normative contract. Physical CPU13 and
 same-artifact normal speed comparison remain pending. No GPU reset, installed
 service/default/API/frontend change or30tokens/s/release claim. Vashti changes:none.
+
+
+### Intel target queue comparison complete; placement next, 2026-10-11
+
+Frozen v166 source0d35d5c7d1f7daf040622be61009f4770ce2616b,
+pure-direct binary450e32a18ff3b9f3d985a27cb9550564c6b7c29c83bdfb09ba0c8aa3199da045,
+passes unchanged original cold/warm CPU13 full vectors/carries/greedy/real repair,
+actual target2048/minimum1 with independent draft512/minimum0, full1382MAIN/
+828997632B,42draft and432HOST close and physical recovery19:41:31UTC.
+Actual selected runtime was constructed before model allocation for both passes,
+and remained immutable through completed close. No kernel or route changed.
+
+Same-artifact compiler-idle ordered code200 pair10.451238original512 vs
+10.482525queued2048(+0.30percent), both199 real continuations/130of138 drafts/
+69rounds/five repairs, shows no material gain in one pair. Keep original512
+for the next placement candidate. Global submission waits618→281 and
+8.294789→1.668612seconds, while mapped-read wait2.472111→8.967485seconds;
+work largely moved to a different wait boundary. These overlapping timers
+are not isolated GPU kernel cost and cannot be added as a removable speed gain.
+Full numerical hashes, actual policy/counters/admission and closing evidence
+are in v166_intel_target_backlog_physical. Integrated strict release/direct
+all-targetClippy passed. No ABBA/prose/CPU200/private/production or30tokens/s claim.
+
+Latest physical snapshot remains sameboot Intel50688000B/Nvidia compute0,
+allHTTP200, idle/unpaused/no recovery latch and no new classifiedGPU faults.
+Nvidia remains deferred. Installedservices/defaults/API/frontend unchanged.
+Required Vashti changes:none.
+
+Next isolated source preparation is setup-only public profile-ranked empty-bank
+fill: preserve all existing prompt/cold-pass residents, use the pinned public
+Strata ranking only for empty slots, then freeze the original144/layer bank,
+all512 actual IDs and sorted368 HOST complement. No private prompt or future
+route profile is recorded and no capacity/arithmetic/route change is selected.
+Read docs/kuno-native-public-profile-ranked-bank-filler.md after leaf integration;
+its exact artifact/derivation, full owner/cap and CPU13coverage limitations are
+authoritative. Protected scope263Python checks +three fixed helper labels/caps
+pass; leaf/controller numerical/physical/speed acceptance remains pending.
+Source CPU13 selected preservation may be all-hit: original diagnostic HOST
+coverage remains a separate required control, never fabricated. A separate
+borrowed CPU-batch leaf is being prepared to compute existing RAM-resident
+expert weights with original Rust AVX2 math; it is not whole-model inference
+or a speed claim. Root owns cache scheduling, shared GPU tests and physical
+recovery; separate source branches retain ownership boundaries.

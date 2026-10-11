@@ -215,3 +215,6 @@ lockfile and pure direct-device feature selection; this compiled the real
 vendored runtime source. Owned-source formatting and diff checks passed. CPU
 jobs were idle at2026-10-11T19:17:36Z. No GPU/service/system changes were made;
 physical admission, numerical replay and throughput remain pending integration.
+
+
+Physical v166 proof completed2026-10-11: original CPU13 and actual selected target2048/draft512, complete closure and recovery pass. One ordered code200 pair10.451238original512 vs10.482525queued2048 shows no material gain. Original512 stays selected for next candidate; explicit2048 experiment remains available. Full numeric/source/policy evidence: v166_intel_target_backlog_physical and latest coordination handoff. Prior pending statements describe source checkpoint.
