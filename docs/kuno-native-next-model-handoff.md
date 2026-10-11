@@ -714,3 +714,29 @@ gate before any combination. New policies remain default-off; source success
 does not establish physical numerical, throughput or30tokens/s acceptance.
 Root owns GPUs/services; canonical Vashti and installed/public behavior remain
 unchanged. Required Vashti changes:none.
+
+
+### Intel-only grouped PLE physical receipt,2026-10-11 17:41UTC
+
+Frozen66bdd0f/v162 (SHA498736a0bacd6a6d31c9610931658fff0c04cdee790fa996f20a9331ae19a9d2)
+passes unchanged originalCPU13 cold/warm target vectors/carries/greedy, real
+repair, full1381MAIN/42draft/432HOST-page close and physical recovery. Warm
+selection reports8actual completed groupedPLE chunks; cold false/zero. Source
+gate117Rust/239Python/9fixed-label checks and strict directClippy pass.
+
+Compiler-idle same-artifact ordered normalcode200 is9.886106control versus
+10.022470groupedPLE continuations/s (199timed,130/138drafts,69rounds,5repairs).
+Candidate reports74actualgroupedchunks and302readbackbatches versus450control:
+148 fewer batches. Both still report618GPUwaits; scoped map intervals remain
+about2.63s. This small1.38% preliminary timing does not establish a repeated
+gain or removed actualGPUwaits. No math/owner/cap/reference change.
+
+Latest recovery17:41:33UTC: B70baseline50688000B,Nvidia compute0, allHTTP200,
+idle/unpaused/no recovery and unchanged classifiedfaults on sameboot. Exact
+numeric/source/helper/model/admission/close evidence is under
+`v162_intel_grouped_reads_and_down_schedule` in the root native receipt.
+DOWNstride and combined original numerical/throughput gates remain pending;
+keep them off in the PLEpair. Next separate source work prepares immutable
+grouped GR/GDN/QSA status folds (defaultoff), preserving all original checks.
+CanonicalVashti/API/installedservices unchanged; requiredVashti changes:none.
+No30tokens/s, normalprose, independentCPU200, production or release claim.
