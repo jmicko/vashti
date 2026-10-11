@@ -3281,9 +3281,17 @@ remain pending. No API/configuration/installed service change or release claim.
 Required Vashti changes:none. Work remains in the native isolated checkout.
 
 Initial v152/c3e9403 rejected before target allocation: the executor's independent
-exact MAIN check omitted the new staging extent. Recovered snapshot13:48:38UTC
+exact MAIN check omitted the new staging extent. Recovered snapshot13:48:24UTC
 retains baseline GPU memory, idle admission/healthy HTTP and zero classified
 faults. Followup adds explicit default-off executor staging reservation, Config
 parity and exact precharged byte acceptance;4focused root checks and strict
 direct Clippy pass. New frozen artifact/full GPU gate remains required. No
 numerical/throughput acceptance or installed-service/API/Vashti change.
+
+v153/e56e466 exposed a second construction issue: staging reserve reacquired MAIN
+through healthy()/active inside the already-locked allocation callback. Stopped
+only the owned benchmark unit and ran helper recovery; baseline GPUs/HTTP/idle
+admission/no faults returned at13:58:14UTC. Full owner erasure is not claimed for
+that aborted public-only process. The fix retains borrowed construction origin,
+poison and full arena/owner checks without locking MAIN again; held-lock token
+test and strict direct Clippy pass. Fresh original GPU acceptance remains pending.

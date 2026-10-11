@@ -637,6 +637,15 @@ and admits exactly the old routed MAIN plus100,663,296B. The new pure extent
 test rejects omitted/extra bytes and wrong scopes;4focused parent checks and
 strict direct Clippy pass. A new frozen artifact must rerun the original GPU gate.
 
+The v153/e56e466 attempt then blocked before the first public inference pass:
+the staging constructor called `healthy()/admission.active()` while the MAIN
+construction lock was already held. Only its owned systemd benchmark unit was
+stopped; helper recovery returned both GPUs/services/admission to baseline with
+no new faults at13:58:14UTC. Full owner erasure is not claimed for this aborted
+process. Constructor now uses the existing borrowed origin token and independent
+poison/full arena checks without reacquiring MAIN. The existing held-lock token
+test and strict Clippy pass. A fresh original GPU gate remains required.
+
 
 ### Paired frozen public gate/up parent selection, 2026-10-11
 

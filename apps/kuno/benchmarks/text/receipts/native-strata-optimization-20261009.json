@@ -10701,5 +10701,79 @@
       "time": "2026-10-11T13:48:24.889365+00:00"
     },
     "followup": "Explicit default-off executor reservation, exact Config parity and strict charged extent test; new frozen artifact required"
+  },
+  "v153_packed_staging_constructor_blockage": {
+    "source": {
+      "commit": "e56e4669d6c3c76dd43dff65143f7d0df740d053",
+      "binary_sha256": "411c63f211c59d4cb4ba594b9385adb50c121376d91be6c8611ced2fbd5fc5c3",
+      "features": [
+        "direct-device"
+      ],
+      "protected_launcher_sha256": "c1e200702c866703f6f484032c7cb04b08b13eb011938517cabbe47eab4f9ae6",
+      "helper_sha256": "8cd79d8e3b35937a97338d94c41fba32bf37d21beb4952ac2b8ce44cace88d63",
+      "public_trial": "warm-four-down-shared-head-packed-stage-gpu-host",
+      "seed": 424242,
+      "temperature": 0,
+      "frozen_partition_exit_requested": true,
+      "frozen_bank_preserve_requested": false,
+      "frozen_private_tables_requested": false,
+      "frozen_workgroup_tables_requested": false,
+      "frozen_shared_down_scales_requested": false,
+      "frozen_shared_gate_up_factors_requested": false,
+      "mtp_q8_head_broadcast_requested": false,
+      "frozen_four_row_down_requested": true,
+      "mtp_q8_head_shared_scales_requested": true,
+      "frozen_two_row_gate_up_requested": false,
+      "frozen_packed_host_staging_requested": true,
+      "ordinary_demand_performance_claimed": false,
+      "native_30_tokens_per_second_accepted": false
+    },
+    "accepted": false,
+    "stage": "before first public inference pass",
+    "cause": "staging reserve reacquired admission MAIN mutex via healthy()/active while allocate_model held construction lock",
+    "termination": "Stopped only owned native-next-v153-warm-packed-stage-20261011-intel.service; resumed benchmark helper finally",
+    "close_owner_erasure_proven": false,
+    "host_after": {
+      "admission": {
+        "action": "status",
+        "state": {
+          "admission": {
+            "active": false,
+            "completed": 59,
+            "paused": false,
+            "recovery_required": false,
+            "rejected": 0,
+            "waiting": 0
+          }
+        },
+        "status": 200
+      },
+      "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+      "http_statuses": {
+        "kuno": 200,
+        "ollama": 200,
+        "vashti": 200
+      },
+      "intel": {
+        "xe_memory": [
+          {
+            "total_bytes": 34242297856,
+            "used_bytes": 50688000
+          }
+        ]
+      },
+      "kernel": "7.0.0-38-generic",
+      "kernel_fault_counts": {
+        "nvidia_xid": 0,
+        "xe_memory_faults": 0,
+        "xe_reset_failures": 0,
+        "xe_timeouts": 0,
+        "xe_wedged": 0
+      },
+      "nvidia_compute_process_count": 0,
+      "nvidia_memory_mib": 640,
+      "time": "2026-10-11T13:58:14.429638+00:00"
+    },
+    "followup": "Use existing borrowed construction origin token, independent poison and arena full owner checks; no MAIN reacquisition; fresh frozen GPU gate required"
   }
 }

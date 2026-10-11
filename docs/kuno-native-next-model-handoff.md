@@ -29,6 +29,13 @@ no faults. The followup threads explicit executor staging authority, Config
 parity and exact charged bytes, with4focused root checks and strict Clippy passing.
 Freeze a new artifact and rerun the full gate; v152 has no physical acceptance.
 
+v153/e56e466 blocked before inference because staging construction reacquired
+MAIN via healthy()/active. Only the owned benchmark unit was stopped; helper
+recovery at13:58:14UTC returned baseline GPUs/healthy services/idle admission and
+zero faults. No full-erasure/acceptance claim for the aborted process. Constructor
+now uses the borrowed origin token and independent poison/arena checks; held-lock
+token regression and strict Clippy pass. Another fresh GPU gate is required.
+
 Last recovered host2026-10-11 13:39:03UTC: same boot, B70baseline50,688,000B,
 NVIDIA compute0, admission unpaused/idle/no recovery, allthree HTTP200, GPU faults0.
 This is historical evidence; verify current state before a new trial. Sudo was

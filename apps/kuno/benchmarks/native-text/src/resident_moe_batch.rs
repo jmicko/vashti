@@ -975,8 +975,12 @@ impl Workspace {
         allocation: &ModelConstructionAllocation<'_>,
     ) -> Result<()> {
         allocation.check(&self.admission)?;
-        self.healthy(arena)?;
-        if self.frozen_staging.is_some()
+        // MAIN is already locked by allocate_model. The construction token
+        // proves its origin and active sequence; healthy()/active() would
+        // reacquire that lock. Keep the independent arena/owner checks here.
+        self.validate_ids(arena)?;
+        if self.poison.load(Ordering::Acquire)
+            || self.frozen_staging.is_some()
             || *self.policy.chunk != 0
             || self.frozen_sources.is_some()
             || !self.frozen_host_batch_router_reserved()
