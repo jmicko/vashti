@@ -2,7 +2,7 @@
 //! and tree, with two logical lanes per physical lane and subgroup shuffles.
 //! Requires enabled subgroup support,16..32 subgroup bounds and128 cube lanes.
 //! Original MAX8 owners, spans, finite faults and erasure remain with the caller.
-use super::{Q4_K, binary16, packed_value};
+use super::{Q4_K, binary16, byte_at, packed_value, signed_byte, u16_at};
 use cubecl::prelude::*;
 
 pub const ROWS_PER_CUBE: usize = 4;
@@ -131,6 +131,54 @@ pub fn dot(
     reduce_original64(low, high)
 }
 
+/// Head-only experiment: one public Q8 half conversion per subgroup and
+/// block. Each physical lane still owns the same two logical accumulators.
+/// Broadcasts occur in converged control flow even for inactive tail rows.
+/// The byte helpers preserve tightly packed, only two-byte-aligned34B blocks.
+#[cube]
+#[allow(clippy::collapsible_if)]
+pub fn dot_q8_head_broadcast(
+    packed: &Array<u32>,
+    input: &Array<f32>,
+    row_offset: usize,
+    input_first: usize,
+    active: bool,
+    #[comptime] columns: usize,
+) -> f32 {
+    let logical_lane = lane();
+    let mut low = 0.0_f32;
+    let mut high = 0.0_f32;
+    for tile in 0..comptime!(columns.div_ceil(64)) {
+        let base = row_offset + tile * 68;
+        let mut lower_scale = 0.0_f32;
+        let mut upper_scale = 0.0_f32;
+        if UNIT_POS_PLANE == 0 {
+            if active {
+                if tile * 64 < columns {
+                    lower_scale = binary16(u16_at(packed, base));
+                }
+                if tile * 64 + 32 < columns {
+                    upper_scale = binary16(u16_at(packed, base + 34));
+                }
+            }
+        }
+        let lower_scale = plane_broadcast(lower_scale, 0_u32);
+        let upper_scale = plane_broadcast(upper_scale, 0_u32);
+        if active {
+            let col = tile * 64 + logical_lane;
+            if col < columns {
+                let quant = signed_byte(byte_at(packed, base + 2 + logical_lane));
+                low += (lower_scale * quant as f32) * input[input_first + col];
+            }
+            if col + 32 < columns {
+                let quant = signed_byte(byte_at(packed, base + 36 + logical_lane));
+                high += (upper_scale * quant as f32) * input[input_first + col + 32];
+            }
+        }
+    }
+    reduce_original64(low, high)
+}
+
 #[cube(launch, launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 pub fn packed_single(
@@ -240,6 +288,61 @@ pub fn packed_single_fault(
     }
 }
 
+/// Explicit original-Q8 head entrypoint. Runtime spans, complete output/tail
+/// finite checks and the original four-row reduction remain unchanged.
+#[cube(launch, launch_unchecked)]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::collapsible_if,
+    clippy::neg_cmp_op_on_partial_ord
+)]
+pub fn packed_q8_head_broadcast_fault(
+    packed: &Array<u32>,
+    input: &Array<f32>,
+    output: &mut Array<f32>,
+    fault: &mut Array<Atomic<u32>>,
+    count: usize,
+    packed_first: usize,
+    input_first: usize,
+    output_first: usize,
+    matrix_first: usize,
+    #[comptime] rows: usize,
+    #[comptime] columns: usize,
+    #[comptime] row_bytes: usize,
+    #[comptime] matrix_rows: usize,
+    #[comptime] check_tail: bool,
+) {
+    let row = CUBE_POS_X as usize * ROWS_PER_CUBE + local_row();
+    let active = row < rows && count == 1;
+    let value = dot_q8_head_broadcast(
+        packed,
+        input,
+        packed_first + row * row_bytes,
+        input_first,
+        active,
+        columns,
+    );
+    if lane() == 0 && active {
+        output[output_first + row] = value;
+        if !(value.abs() <= f32::MAX) {
+            fault[0].fetch_or(1);
+        }
+    }
+    if comptime!(check_tail) {
+        let index = ABSOLUTE_POS;
+        if index < output.len() {
+            if !active_output(index, matrix_first, matrix_rows) {
+                if !(output[index].abs() <= f32::MAX) {
+                    fault[0].fetch_or(1);
+                }
+            }
+        }
+    }
+    if lane() == 0 && count != 1 {
+        fault[0].fetch_or(1);
+    }
+}
+
 pub fn fault_grid(rows: usize, output_words: usize, check_tail: bool) -> CubeCount {
     let cubes = rows.div_ceil(ROWS_PER_CUBE);
     let cubes = if check_tail {
@@ -251,13 +354,17 @@ pub fn fault_grid(rows: usize, output_words: usize, check_tail: bool) -> CubeCou
 }
 
 #[cfg(test)]
+#[path = "q8_head_broadcast_tests.rs"]
+mod q8_head_broadcast_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::quant_matvec::{
         BF16, F16, IQ2_S, IQ3_S, IQ3_XXS, IQ4_NL, IQ4_XS, Q2_0, Q5_0, Q5_K, Q6_K, Q8_0,
     };
 
-    fn assert_shared_reduction_is_only_for16(module: &wgpu::naga::Module) {
+    pub(super) fn assert_shared_reduction_is_only_for16(module: &wgpu::naga::Module) {
         use wgpu::naga::{AddressSpace, BinaryOperator, Expression, Literal, Statement};
         fn subgroup_size(
             module: &wgpu::naga::Module,
@@ -342,7 +449,10 @@ mod tests {
                         );
                         counts[1] += 1;
                     }
-                    Statement::SubgroupGather { .. } => {
+                    Statement::SubgroupGather {
+                        mode: wgpu::naga::GatherMode::ShuffleDown(_),
+                        ..
+                    } => {
                         assert!(
                             !inside16,
                             "original shuffle tree remains shared by both widths"

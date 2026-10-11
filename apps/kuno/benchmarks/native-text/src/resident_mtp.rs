@@ -502,6 +502,24 @@ pub struct ResidentMtp<'g, 'f> {
     last_forward: Option<LastForward>,
     traffic: Cell<Traffic>,
     fused_sweeps: bool,
+    q8_head_broadcast: bool,
+    q8_head_policy_locked: bool,
+    q8_head_broadcast_completed: bool,
+}
+
+fn validate_q8_head_broadcast_selection(
+    profile: MtpProfile,
+    closed: bool,
+    poisoned: bool,
+    position: usize,
+    locked: bool,
+) -> Result<()> {
+    if profile != MtpProfile::SelfContainedQ8 || closed || poisoned || position != 0 || locked {
+        return Err(Error::InvalidFormat(
+            "MTP Q8 head selection requires unused Q8 workspace",
+        ));
+    }
+    Ok(())
 }
 
 fn error(_: impl std::fmt::Display) -> Error {
@@ -1016,6 +1034,9 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             last_forward: None,
             traffic: Cell::new(Traffic::default()),
             fused_sweeps,
+            q8_head_broadcast: false,
+            q8_head_policy_locked: false,
+            q8_head_broadcast_completed: false,
         };
         let result = workspace.load_public();
         match result {
@@ -1624,6 +1645,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             return Err(Error::InvalidFormat("MTP resident poisoned"));
         }
         validate_input(token, carry, self.position)?;
+        self.q8_head_policy_locked = true;
         self.verify_source()?;
         self.physical()?;
         self.ledger
@@ -1688,6 +1710,34 @@ impl ResidentMtp<'_, '_> {
     pub fn traffic(&self) -> Traffic {
         self.traffic.get()
     }
+    /// Select the head-only experiment before any draft or KV conditioning.
+    /// Rewinding a used workspace does not reopen this immutable selection.
+    #[allow(dead_code)] // Protected runner selection is integrated separately.
+    pub fn set_q8_head_broadcast(&mut self, enabled: bool) -> Result<()> {
+        validate_q8_head_broadcast_selection(
+            self.graph.profile(),
+            self.closed,
+            self.poisoned || self.retired.load(Ordering::Acquire),
+            self.position,
+            self.q8_head_policy_locked,
+        )?;
+        self.verify_source()?;
+        self.physical()?;
+        self.q8_head_broadcast = enabled;
+        Ok(())
+    }
+    /// Actual completed full-forward policy, captured before workspace close.
+    /// Merely selecting the experiment or appending KV cannot claim its use.
+    #[allow(dead_code)] // Protected runner receipts are integrated separately.
+    pub fn completed_q8_head_broadcast(&self) -> Result<bool> {
+        if self.closed || self.poisoned || self.retired.load(Ordering::Acquire) {
+            return Err(Error::InvalidFormat(
+                "MTP completed Q8 head policy unavailable",
+            ));
+        }
+        self.physical()?;
+        Ok(self.q8_head_broadcast_completed)
+    }
     fn public(&self) -> Result<&Public> {
         self.public
             .as_ref()
@@ -1718,6 +1768,35 @@ impl ResidentMtp<'_, '_> {
             // SAFETY: exact original role geometry, complete disjoint owners and
             // source/finite/tail preflight precede all unchecked leaf launches.
             unsafe {
+                if self.q8_head_broadcast && name == "output.weight" {
+                    if self.graph.profile() != MtpProfile::SelfContainedQ8
+                        || spec.dtype != quant_matvec::Q8_0
+                        || spec.columns != k::D
+                        || spec.rows != k::VOCAB
+                    {
+                        return Err(Error::InvalidFormat("MTP Q8 head broadcast geometry"));
+                    }
+                    fast::packed_q8_head_broadcast_fault::launch_unchecked::<WgpuRuntime>(
+                        self.client()?,
+                        fast::fault_grid(page.rows, spec.rows, index + 1 == pages.len()),
+                        CubeDim::new_1d(128),
+                        Self::public_arg(page)?,
+                        self.a(input)?,
+                        self.a(output)?,
+                        self.a(B::Fault)?,
+                        1,
+                        0,
+                        0,
+                        page.first,
+                        0,
+                        page.rows,
+                        spec.columns,
+                        row_bytes,
+                        spec.rows,
+                        index + 1 == pages.len(),
+                    );
+                    continue;
+                }
                 fast::packed_single_fault::launch_unchecked::<WgpuRuntime>(
                     self.client()?,
                     fast::fault_grid(page.rows, spec.rows, index + 1 == pages.len()),
@@ -2393,6 +2472,7 @@ impl ResidentMtp<'_, '_> {
         let start = self.position;
         self.position += 1;
         self.poisoned = false;
+        self.q8_head_broadcast_completed = self.q8_head_broadcast;
         self.last_forward = Some(LastForward {
             binding: self.binding,
             start,
@@ -2757,6 +2837,28 @@ mod strata_tests;
 #[cfg(test)]
 #[path = "resident_mtp_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[test]
+fn q8_head_broadcast_selection_rejects_used_or_non_q8_workspaces() {
+    assert!(
+        validate_q8_head_broadcast_selection(MtpProfile::SelfContainedQ8, false, false, 0, false,)
+            .is_ok()
+    );
+    for (profile, closed, poisoned, position, locked) in [
+        (MtpProfile::StrataQ2, false, false, 0, false),
+        (MtpProfile::SelfContainedQ8, true, false, 0, false),
+        (MtpProfile::SelfContainedQ8, false, true, 0, false),
+        (MtpProfile::SelfContainedQ8, false, false, 1, false),
+        // A rewind to zero must not reopen policy selection.
+        (MtpProfile::SelfContainedQ8, false, false, 0, true),
+    ] {
+        assert!(
+            validate_q8_head_broadcast_selection(profile, closed, poisoned, position, locked,)
+                .is_err()
+        );
+    }
+}
 
 fn validate_input(token: u32, carry: &[f32], position: usize) -> Result<()> {
     k::validate_position(position)?;
