@@ -79,3 +79,8 @@ also pass:42 unique focused/regression tests in total.
 Strict combined all-target Clippy remains the integrating parent's check;
 the standalone reservation/router dependency has temporarily unconsumed
 entrypoints. No GPU operator or whole-model count4 result is claimed.
+
+The completed pending-source acceptance repeats the selected3/4 count bound
+and validates that count against the actual reconstructed Source geometry
+before full physical joins/publication. A focused source proof covers this
+separate acceptance guard; its final test run belongs to parent integration.

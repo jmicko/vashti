@@ -57,3 +57,27 @@ fn four_member_workspace_full_router_layout_uses_real_constructor_reservation() 
     assert_eq!(old.owned_words, four.owned_words);
     assert_ne!(old, four);
 }
+
+#[test]
+fn four_member_pending_acceptance_uses_selected_bound_and_actual_source_geometry() {
+    let source = include_str!("resident_moe_batch.rs");
+    let body = source
+        .split_once("if let Some(proof) = &p.frozen_sources {")
+        .unwrap()
+        .1
+        .split_once("if self.frozen_sources.is_some()")
+        .unwrap()
+        .0;
+    let normalized = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(normalized.contains("if self.public_four_members_policy() { 4 } else { 3 }"));
+    assert!(!normalized.contains("(1..=3).contains(&s.stamp.count)"));
+    assert!(body.contains("g.validate_count(s.stamp.count).map_err(err)?"));
+    assert!(
+        body.find("proof.validate(*p.layer, bank)?").unwrap()
+            < body.find("g.validate_count(s.stamp.count)").unwrap()
+    );
+    assert!(
+        body.find("g.validate_count(s.stamp.count)").unwrap()
+            < body.find("source.physical_with_router(").unwrap()
+    );
+}

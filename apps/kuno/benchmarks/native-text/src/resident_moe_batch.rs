@@ -2747,7 +2747,12 @@ impl Workspace {
                 || p.last.is_some()
                 || p.count1.is_some()
                 || *p.waves != 1
-                || !(1..=3).contains(&s.stamp.count)
+                || !(1..=if self.public_four_members_policy() {
+                    4
+                } else {
+                    3
+                })
+                    .contains(&s.stamp.count)
                 || proof.count() != s.stamp.count
                 || !e.resident_banks_frozen
                 || e.target_frozen_host_source_identity != Some(source.plan_identity())
@@ -2756,6 +2761,7 @@ impl Workspace {
             }
             proof.validate(*p.layer, bank)?;
             let g = source.geometry(*p.layer, bank)?;
+            g.validate_count(s.stamp.count).map_err(err)?;
             let ids = self.ids(p.views.ids[0], p.views.ids[1]);
             let v = &p.views.offsets;
             let spans = k::Spans::new([0, v[0], v[1], 0, g.ff(), 0, g.hidden(), 0, v[2], v[3], 0]);
