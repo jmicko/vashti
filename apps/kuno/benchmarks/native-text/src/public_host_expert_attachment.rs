@@ -31,6 +31,10 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 
+#[path = "public_cpu_host_borrow.rs"]
+mod cpu_host_borrow;
+pub(crate) use cpu_host_borrow::CpuLayerBorrow;
+
 pub(crate) const ATTACHMENT_HOST_BYTES: u64 = 256 * 1024;
 pub(crate) const REGISTRY_HOST_BYTES: u64 = MAX_METADATA_BYTES as u64;
 const HOST_CAP: u64 = 64 * 1024 * 1024 * 1024;
@@ -694,6 +698,9 @@ fn attachment_metadata(owners: usize, receipts: usize) -> Result<u64> {
         })
         .and_then(|n| n.checked_add(size_of::<Attachment<'_, '_, '_>>() * 2))
         .and_then(|n| n.checked_add(size_of::<PreparedPlan<'_, '_>>() * 2))
+        // One exclusive scoped CPU layer borrow; fixed map headers remain in
+        // the unchanged Mirror metadata constituent, not copied weight bytes.
+        .and_then(|n| n.checked_add(size_of::<CpuLayerBorrow<'_, '_, '_, '_>>() * 2))
         .and_then(|n| n.checked_add(8192)) // temporary identity/resource validation
         .ok_or(Error::ArithmeticOverflow)?;
     if bytes as u64 > ATTACHMENT_HOST_BYTES {

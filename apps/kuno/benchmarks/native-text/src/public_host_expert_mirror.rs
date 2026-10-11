@@ -180,6 +180,11 @@ fn metadata_bytes(mapping: u64, generations: u64, pages: usize, proofs: usize) -
         .and_then(|n| n.checked_add(proofs as u64))
         .and_then(|n| n.checked_add(witnesses as u64))
         .and_then(|n| n.checked_add(size_of::<Mirror<'_, '_, '_>>() as u64))
+        // One scoped layer may map the SAME registered allocations readonly.
+        // Fixed headers only; no copied source payload or additional RAM page.
+        .and_then(|n| {
+            n.checked_add((size_of::<ReadOnlyLayer<'_>>() + size_of::<ReadOnlyMapped<'_>>()) as u64)
+        })
         .and_then(|n| n.checked_add((size_of::<ash::Device>() + 2 * size_of::<usize>()) as u64))
         // Source fill/registration/close temporarily retain one full descriptor,
         // backing, receipt and a complete validation bitmap, all public metadata.
@@ -326,6 +331,140 @@ impl Drop for Mapped<'_> {
     fn drop(&mut self) {
         // SAFETY: this guard exists only after successful map and unmaps once.
         unsafe { self.backing.raw.unmap_memory(self.backing.memory.unwrap()) }
+    }
+}
+
+fn readonly_extent(logical: u64, backing: u64, first: u64, bytes: u64) -> Result<(usize, usize)> {
+    if logical == 0
+        || logical > backing
+        || backing > plan::MAX_BINDING_BYTES
+        || bytes == 0
+        || first.checked_add(bytes).is_none_or(|end| end > logical)
+    {
+        return Err(rejected());
+    }
+    let first = usize::try_from(first).map_err(|_| rejected())?;
+    let bytes = usize::try_from(bytes).map_err(|_| rejected())?;
+    Ok((first, bytes))
+}
+fn require_readonly_phase(phase: Phase) -> Result<()> {
+    if phase != Phase::Registered {
+        return Err(rejected());
+    }
+    Ok(())
+}
+fn same_readonly_binding_shape(a: &Binding, b: &Binding) -> bool {
+    // Opaque descriptor identity stays inside the runtime. Both bindings come
+    // from sealed producer-owned registration; exact resolved buffer identity
+    // is independently checked below, not inferred from this shape comparison.
+    is_public_external_binding(a)
+        && is_public_external_binding(b)
+        && a.stream == b.stream
+        && a.size == b.size
+        && a.offset_start == b.offset_start
+        && a.offset_end == b.offset_end
+}
+fn readonly_resource_shape(
+    logical: u64,
+    offset: u64,
+    size: u64,
+    buffer: u64,
+    same_original_buffer: bool,
+) -> Result<()> {
+    if logical == 0 || offset != 0 || size != logical || buffer != logical || !same_original_buffer
+    {
+        return Err(rejected());
+    }
+    Ok(())
+}
+fn distinct_readonly_memories(memories: [Option<vk::DeviceMemory>; 9]) -> Result<()> {
+    for (i, memory) in memories.iter().enumerate() {
+        if memory.is_none() || memories[..i].contains(memory) {
+            return Err(rejected());
+        }
+    }
+    Ok(())
+}
+
+/// Private map of an already flushed immutable registered allocation. Unlike
+/// the construction/close map, this has NO mutable slice or cache operation.
+struct ReadOnlyMapped<'a> {
+    owner: &'a PageOwner,
+    pointer: *const u8,
+}
+impl ReadOnlyMapped<'_> {
+    fn span(&self, first: u64, bytes: u64) -> Result<&[u8]> {
+        let backing = self.owner.backing.as_ref().ok_or(rejected())?;
+        let (first, bytes) = readonly_extent(self.owner.logical, backing.bytes, first, bytes)?;
+        // SAFETY: sole scoped readonly map of this complete retained allocation;
+        // the checked logical range excludes physical padding. Existing source
+        // attachment forbids all CPU/GPU writes until joined detach and close.
+        Ok(unsafe { std::slice::from_raw_parts(self.pointer.add(first), bytes) })
+    }
+}
+impl Drop for ReadOnlyMapped<'_> {
+    fn drop(&mut self) {
+        if let Some(backing) = self.owner.backing.as_ref()
+            && let Some(memory) = backing.memory
+        {
+            // SAFETY: this guard alone owns this CPU map. Unmap neither frees
+            // the allocation nor mutates the registered GPU source binding.
+            unsafe { backing.raw.unmap_memory(memory) };
+        }
+    }
+}
+
+/// Opaque, at most nine same-backing maps. Attachment owns the only public
+/// lifetime path; no source pointer, handle, mutable bytes or padding escapes.
+pub(crate) struct ReadOnlyLayer<'a> {
+    maps: [Option<ReadOnlyMapped<'a>>; 9],
+}
+impl ReadOnlyLayer<'_> {
+    pub(crate) fn check_resource(
+        &self,
+        role: Role,
+        page: usize,
+        binding: &Binding,
+        resource: &WgpuResource,
+    ) -> Result<()> {
+        let owner = self.maps[index(0, role, page)?]
+            .as_ref()
+            .ok_or(rejected())?
+            .owner;
+        require_readonly_phase(owner.phase)?;
+        readonly_resource_shape(
+            owner.logical,
+            resource.offset,
+            resource.size,
+            resource.buffer.size(),
+            owner.buffer.as_ref() == Some(&resource.buffer),
+        )?;
+        if !same_readonly_binding_shape(owner.binding.as_ref().ok_or(rejected())?, binding)
+            || !is_public_external_binding(binding)
+            || binding.size != owner.logical
+            || binding.offset_start.is_some()
+            || binding.offset_end.is_some()
+        {
+            return Err(rejected());
+        }
+        Ok(())
+    }
+    pub(crate) fn span(&self, role: Role, page: usize, first: u64, bytes: u64) -> Result<&[u8]> {
+        let i = index(0, role, page)?;
+        self.maps[i].as_ref().ok_or(rejected())?.span(first, bytes)
+    }
+    pub(crate) fn placements(&self) -> Result<[Placement; 9]> {
+        let mut result = [Placement {
+            memory_type: 0,
+            heap: 0,
+            property_flags: 0,
+            heap_flags: 0,
+            heap_bytes: 0,
+        }; 9];
+        for (out, map) in result.iter_mut().zip(&self.maps) {
+            *out = map.as_ref().ok_or(rejected())?.owner.placement;
+        }
+        Ok(result)
     }
 }
 
@@ -686,6 +825,100 @@ impl<'plan, 'model, 'file> Mirror<'plan, 'model, 'file> {
     pub(crate) fn ledger(&self) -> Ledger {
         self.ledger
     }
+    /// Authenticate a full registered page against its actual retained owner.
+    /// This returns no resource clone or native memory identity.
+    pub(crate) fn check_readonly_page(
+        &self,
+        expected_plan: &Plan<'_, '_>,
+        layer: usize,
+        role: Role,
+        page: usize,
+        binding: &Binding,
+        resource: &WgpuResource,
+    ) -> Result<()> {
+        if !std::ptr::eq(self.plan, expected_plan)
+            || self.plan.identity() != expected_plan.identity()
+            || self.plan.binding() != expected_plan.binding()
+        {
+            return Err(rejected());
+        }
+        let owner = self
+            .pages
+            .get(index(layer, role, page)?)
+            .ok_or(rejected())?;
+        require_readonly_phase(owner.phase)?;
+        let expected = self.plan.page(layer, role, page).map_err(|_| rejected())?;
+        let backing = owner.backing.as_ref().ok_or(rejected())?;
+        expected
+            .check_actual_allocation(backing.bytes, owner.allocation_alignment)
+            .map_err(|_| rejected())?;
+        readonly_resource_shape(
+            owner.logical,
+            resource.offset,
+            resource.size,
+            resource.buffer.size(),
+            owner.buffer.as_ref() == Some(&resource.buffer),
+        )?;
+        if !same_readonly_binding_shape(owner.binding.as_ref().ok_or(rejected())?, binding)
+            || !is_public_external_binding(binding)
+            || binding.size != expected.logical_bytes()
+            || binding.offset_start.is_some()
+            || binding.offset_end.is_some()
+            || owner.logical != expected.logical_bytes()
+            || backing.device != self.device
+            || backing.memory.is_none()
+            || backing.raw_buffer.is_some()
+            || owner.placement.property_flags & vk::MemoryPropertyFlags::HOST_VISIBLE.as_raw() == 0
+            || owner.placement.property_flags
+                & (vk::MemoryPropertyFlags::DEVICE_LOCAL
+                    | vk::MemoryPropertyFlags::LAZILY_ALLOCATED
+                    | vk::MemoryPropertyFlags::PROTECTED)
+                    .as_raw()
+                != 0
+            || owner.placement.heap_flags & vk::MemoryHeapFlags::DEVICE_LOCAL.as_raw() != 0
+        {
+            return Err(rejected());
+        }
+        Ok(())
+    }
+    /// Called only after all nine actual registrations have been authenticated
+    /// by the exclusive Attachment borrow. No mutable registered map exists.
+    pub(crate) fn borrow_readonly_layer(&self, layer: usize) -> Result<ReadOnlyLayer<'_>> {
+        if layer >= plan::LAYERS {
+            return Err(rejected());
+        }
+        // Preflight every owner and pair BEFORE the first vkMapMemory call.
+        let mut memories = [None; 9];
+        for (i, memory) in memories.iter_mut().enumerate() {
+            let owner = self.pages.get(layer * 9 + i).ok_or(rejected())?;
+            require_readonly_phase(owner.phase)?;
+            let backing = owner.backing.as_ref().ok_or(rejected())?;
+            *memory = backing.memory;
+        }
+        distinct_readonly_memories(memories)?;
+        let mut mapped = ReadOnlyLayer {
+            maps: std::array::from_fn(|_| None),
+        };
+        for (i, map) in mapped.maps.iter_mut().enumerate() {
+            let owner = &self.pages[layer * 9 + i];
+            let backing = owner.backing.as_ref().ok_or(rejected())?;
+            // SAFETY: unique complete HOST_VISIBLE allocation, immutable and
+            // flushed before publication; Attachment retains its backing and
+            // excludes another CPU map/close until this scoped borrow ends.
+            let pointer = unsafe {
+                backing.raw.map_memory(
+                    backing.memory.ok_or(rejected())?,
+                    0,
+                    backing.bytes,
+                    vk::MemoryMapFlags::empty(),
+                )
+            }
+            .map_err(|_| "public host expert readonly map failed")?
+            .cast::<u8>() as *const u8;
+            *map = Some(ReadOnlyMapped { owner, pointer });
+        }
+        Ok(mapped)
+    }
     pub(crate) fn check_frozen(
         &self,
         graph: BoundGraph<'_, '_>,
@@ -879,6 +1112,70 @@ impl<'plan, 'model, 'file> Mirror<'plan, 'model, 'file> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn exact_original_page_identity_and_full_resource_extent_are_required() {
+        readonly_resource_shape(100, 0, 100, 100, true).unwrap();
+        for args in [
+            (100, 0, 100, 100, false),
+            (100, 1, 100, 100, true),
+            (100, 0, 99, 100, true),
+            (100, 0, 101, 100, true),
+            (100, 0, 100, 128, true),
+            (100, 0, 100, 99, true),
+            (0, 0, 0, 0, true),
+        ] {
+            assert!(readonly_resource_shape(args.0, args.1, args.2, args.3, args.4).is_err());
+        }
+    }
+    #[test]
+    fn readonly_payload_extent_excludes_complete_allocation_padding() {
+        assert_eq!(readonly_extent(100, 128, 0, 100).unwrap(), (0, 100));
+        assert_eq!(readonly_extent(100, 128, 80, 20).unwrap(), (80, 20));
+        for args in [
+            (100, 128, 100, 1),
+            (100, 128, 0, 101),
+            (100, 128, 0, 128),
+            (100, 99, 0, 1),
+            (0, 128, 0, 1),
+            (100, 128, 0, 0),
+            (100, 128, u64::MAX, 1),
+            (100, u64::MAX, 0, 1),
+        ] {
+            assert!(readonly_extent(args.0, args.1, args.2, args.3).is_err());
+        }
+    }
+    #[test]
+    fn only_registered_pages_allow_a_readonly_cpu_map() {
+        for phase in [
+            Phase::Sealed,
+            Phase::Exposed,
+            Phase::Registered,
+            Phase::Detached,
+            Phase::Joined,
+            Phase::Released,
+        ] {
+            assert_eq!(
+                require_readonly_phase(phase).is_ok(),
+                phase == Phase::Registered
+            );
+        }
+    }
+    #[test]
+    fn all_nine_actual_memories_preflight_before_first_map() {
+        use ash::vk::Handle as _;
+        let good = std::array::from_fn(|i| Some(vk::DeviceMemory::from_raw(i as u64 + 1)));
+        distinct_readonly_memories(good).unwrap();
+        for i in 0..9 {
+            let mut absent = good;
+            absent[i] = None;
+            assert!(distinct_readonly_memories(absent).is_err());
+            if i != 0 {
+                let mut alias = good;
+                alias[i] = good[0];
+                assert!(distinct_readonly_memories(alias).is_err());
+            }
+        }
+    }
     fn inventory() -> vk::PhysicalDeviceMemoryProperties {
         let mut p = vk::PhysicalDeviceMemoryProperties {
             memory_type_count: 4,
