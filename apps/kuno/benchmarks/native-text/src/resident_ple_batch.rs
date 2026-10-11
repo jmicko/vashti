@@ -199,6 +199,7 @@ pub(crate) struct PleBatchWorkspace {
     public: Public,
     poison: Arc<AtomicBool>,
     pending: bool,
+    public_grouped_reads: bool,
 }
 impl Drop for PleBatchWorkspace {
     fn drop(&mut self) {
@@ -622,6 +623,7 @@ impl PleBatchWorkspace {
                 public,
                 poison: poison.clone(),
                 pending: false,
+                public_grouped_reads: false,
             };
             workspace.validate_ids(&model.arena)?;
             model.ple_batch_poison = Some(poison.clone());
@@ -667,6 +669,23 @@ impl PleBatchWorkspace {
     ) -> Result<()> {
         self.healthy(model, &AtomicBool::new(false))?;
         completed_projection_cursor(self.next, model.position, self.pending)
+    }
+    /// The native target owner alone selects this immutable public policy at a
+    /// completed boundary. No GR arithmetic flag is modified.
+    pub(super) fn select_public_grouped_reads(
+        &mut self,
+        position: usize,
+        _boundary: &crate::resident_model::batch::CompletedNativeProjectionBoundary,
+    ) -> Result<()> {
+        completed_projection_cursor(self.next, position, self.pending)?;
+        if self.poison.load(Ordering::Acquire) {
+            return Err(error());
+        }
+        self.public_grouped_reads = true;
+        Ok(())
+    }
+    pub(super) fn public_grouped_reads(&self) -> bool {
+        self.public_grouped_reads
     }
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn enqueue(
@@ -973,7 +992,13 @@ impl PleBatchWorkspace {
         let diagnostics = guarded(&poison, || {
             self.receipt_parts(&c, &receipt, cancel)?;
             let m = &*receipt.metadata;
-            let (old, normalized, next) = if crate::next_shared::gr_selected() {
+            let public_grouped_read = self.public_grouped_reads;
+            if public_grouped_read && !(1..=3).contains(&m.count) {
+                return Err(error());
+            }
+            let (old, normalized, next) = if public_grouped_read
+                || crate::next_shared::gr_selected()
+            {
                 let existing = core::owner_capacity_bytes(c.conv, c.history).map_err(u::fault)?;
                 let [old, normalized, next] = read_full_three(
                     c.arena,
@@ -1017,9 +1042,9 @@ impl PleBatchWorkspace {
             {
                 return Err(error());
             }
-            Ok((old, normalized, next))
+            Ok((old, normalized, next, public_grouped_read))
         });
-        let (old, normalized, next) = match diagnostics {
+        let (old, normalized, next, public_grouped_read) = match diagnostics {
             Ok(v) => v,
             Err(e) => {
                 *c.owner_poisoned = true;
@@ -1050,6 +1075,7 @@ impl PleBatchWorkspace {
                 transition: Some(transition),
                 receipt,
                 armed: true,
+                public_grouped_read,
             }),
             Err(e) => {
                 *c.owner_poisoned = true;
@@ -1087,8 +1113,14 @@ pub(crate) struct PleBatchAcceptance<'a> {
     transition: Option<core::PleChunkCommit<'a>>,
     receipt: PendingPleBatch,
     armed: bool,
+    public_grouped_read: bool,
 }
 impl PleBatchAcceptance<'_> {
+    /// Actual selected read_full_three execution, after full diagnostics and
+    /// transition preparation. The coordinator credits it only after commit.
+    pub(super) fn public_grouped_read_completed(&self) -> bool {
+        self.public_grouped_read
+    }
     /// All-family preflight BEFORE any state swap. No CPU histories can change
     /// concurrently: the core ticket retains their exclusive mutable borrows.
     pub(crate) fn preflight(&self, cancel: &AtomicBool) -> Result<()> {
@@ -1096,6 +1128,7 @@ impl PleBatchAcceptance<'_> {
             if self.workspace.poison.load(Ordering::Acquire)
                 || self.retired.load(Ordering::Acquire)
                 || !self.armed
+                || self.public_grouped_read != self.workspace.public_grouped_reads
             {
                 return Err(error());
             }
@@ -1551,6 +1584,25 @@ impl Drop for ReadBatch {
         }
     }
 }
+fn grouped_read_host_bound(existing: usize, raw_bytes: usize) -> Result<()> {
+    if existing
+        .checked_add(raw_bytes.checked_mul(2).ok_or(Error::ArithmeticOverflow)?)
+        .and_then(|n| n.checked_add(65536))
+        .is_none_or(|n| n > HOST_CAP)
+    {
+        return Err(error());
+    }
+    Ok(())
+}
+fn decode_three(raw: &ReadBatch, count: usize) -> Result<[Zeroizing<Vec<f32>>; 3]> {
+    if raw.0.len() != 3 {
+        return Err(error());
+    }
+    let old = decode_download(&raw.0[0], words(OLD), count, false)?;
+    let normalized = decode_download(&raw.0[1], words(NORMALIZED), count, true)?;
+    let next = decode_download(&raw.0[2], words(NEXT), count, false)?;
+    Ok([old, normalized, next])
+}
 fn read_full_three(
     arena: &PrivateArena,
     ids: [BufferId; 3],
@@ -1569,26 +1621,14 @@ fn read_full_three(
         handles.push(h);
     }
     // All three existing full maps and their converted Vecs can coexist during
-    // conversion. Same4MiB cap, including64KiB original scoped metadata reserve.
-    if existing
-        .checked_add(raw_bytes.checked_mul(2).ok_or(Error::ArithmeticOverflow)?)
-        .and_then(|n| n.checked_add(65536))
-        .is_none_or(|n| n > HOST_CAP)
-    {
-        return Err(error());
-    }
+    // conversion. Same 4MiB cap, including 64KiB original scoped metadata reserve.
+    grouped_read_host_bound(existing, raw_bytes)?;
     let raw = ReadBatch(
         cubecl::future::block_on(arena.client().map_err(u::fault)?.read_async(handles))
             .map_err(u::fault)?,
     );
-    if raw.0.len() != 3 {
-        return Err(error());
-    }
-    let old = decode_download(&raw.0[0], logical[0], count, false)?;
-    let normalized = decode_download(&raw.0[1], logical[1], count, true)?;
-    let next = decode_download(&raw.0[2], logical[2], count, false)?;
     // Guard wipes every raw map before the caller's original audited cleanup.
-    Ok([old, normalized, next])
+    decode_three(&raw, count)
 }
 fn audit(arena: &PrivateArena, retired: &AtomicBool) -> Result<()> {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1621,6 +1661,94 @@ fn audit(arena: &PrivateArena, retired: &AtomicBool) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn grouped_ple_raw_plus_decoded_caps_keep_original_four_mib_and_overflow_rejection() {
+        let raw: usize = [OLD, NORMALIZED, NEXT]
+            .into_iter()
+            .map(|i| BufferLayout::new(words(i)).unwrap().owned_bytes)
+            .sum();
+        assert_eq!(raw, 3 * 524288);
+        let maximum_existing = HOST_CAP - 2 * raw - 65536;
+        grouped_read_host_bound(core::HISTORY_WORDS * 4 + 8, raw).unwrap();
+        grouped_read_host_bound(maximum_existing, raw).unwrap();
+        assert!(grouped_read_host_bound(maximum_existing + 1, raw).is_err());
+        assert!(grouped_read_host_bound(0, usize::MAX).is_err());
+        assert!(grouped_read_host_bound(usize::MAX, raw).is_err());
+    }
+    #[test]
+    fn grouped_ple_actual_three_map_decoder_preserves_all_bits_and_rejects_every_owner_tail() {
+        for count in 1..=3 {
+            let logical = [words(OLD), words(NORMALIZED), words(NEXT)];
+            let make = |part: usize| {
+                let mut bytes = vec![0; BufferLayout::new(logical[part]).unwrap().owned_bytes];
+                let active = if part == 1 {
+                    count * CHANNELS
+                } else {
+                    logical[part]
+                };
+                for i in 0..active {
+                    let value = if i % 19 == 0 {
+                        -0.0f32
+                    } else {
+                        (part * 101 + i % 107) as f32 / 113.0
+                    };
+                    bytes[i * 4..i * 4 + 4].copy_from_slice(&value.to_bits().to_le_bytes());
+                }
+                bytes
+            };
+            let originals: [Vec<u8>; 3] = std::array::from_fn(make);
+            let batch = ReadBatch(
+                originals
+                    .iter()
+                    .cloned()
+                    .map(cubecl::bytes::Bytes::from_bytes_vec)
+                    .collect(),
+            );
+            let grouped = decode_three(&batch, count).unwrap();
+            for part in 0..3 {
+                let separate =
+                    decode_download(&originals[part], logical[part], count, part == 1).unwrap();
+                assert_eq!(grouped[part].len(), 131072);
+                assert!(
+                    grouped[part]
+                        .iter()
+                        .zip(separate.iter())
+                        .all(|(a, b)| a.to_bits() == b.to_bits())
+                );
+            }
+            // Every full owner has exact finite active words and zero unused
+            // words, even though count 1/2/3 reads the same 524KiB capacity.
+            for part in 0..3 {
+                for (index, bits) in [(0, f32::NAN.to_bits()), (131071, 1u32)] {
+                    let mut invalid = originals.clone();
+                    invalid[part][index * 4..index * 4 + 4].copy_from_slice(&bits.to_le_bytes());
+                    let invalid = ReadBatch(
+                        invalid
+                            .into_iter()
+                            .map(cubecl::bytes::Bytes::from_bytes_vec)
+                            .collect(),
+                    );
+                    assert!(decode_three(&invalid, count).is_err());
+                }
+            }
+            let mut inactive = originals.clone();
+            inactive[1][count * CHANNELS * 4..count * CHANNELS * 4 + 4]
+                .copy_from_slice(&(-0.0f32).to_bits().to_le_bytes());
+            assert!(
+                decode_three(
+                    &ReadBatch(
+                        inactive
+                            .into_iter()
+                            .map(cubecl::bytes::Bytes::from_bytes_vec)
+                            .collect()
+                    ),
+                    count
+                )
+                .is_err()
+            );
+        }
+        assert!(decode_three(&ReadBatch(Vec::new()), 1).is_err());
+    }
     #[test]
     fn projection_switch_requires_an_accepted_matching_idle_native_cursor() {
         use super::completed_projection_cursor;
