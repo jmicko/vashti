@@ -39,18 +39,19 @@ pub enum Kind {
     Ffn(usize),
     Final,
     FinalAllRows,
+    FinalFourRows,
 }
 impl Kind {
     fn base(self, layers: usize) -> Result<String> {
         match self {
             Self::Attention(l) if l < layers => Ok(format!("blk.{l}.hc_attn")),
             Self::Ffn(l) if l < layers => Ok(format!("blk.{l}.hc_ffn")),
-            Self::Final | Self::FinalAllRows => Ok("output_hc".into()),
+            Self::Final | Self::FinalAllRows | Self::FinalFourRows => Ok("output_hc".into()),
             _ => Err(Error::OutOfBounds),
         }
     }
     fn inject(self) -> bool {
-        !matches!(self, Self::Final | Self::FinalAllRows)
+        !matches!(self, Self::Final | Self::FinalAllRows | Self::FinalFourRows)
     }
 }
 
@@ -58,7 +59,9 @@ impl Kind {
 /// FinalAllRows retains the bounded first one to three rows; Attention/FFN keep
 /// every active column. All roles retain the fixed MAX8 owning allocation.
 fn read_columns(kind: Kind, count: usize, width: usize, words: usize) -> Result<(usize, usize)> {
-    if kind == Kind::FinalAllRows && count > crate::resident_model::batch::TARGET_ROWS_MAX {
+    if (kind == Kind::FinalAllRows && count > crate::resident_model::batch::TARGET_ROWS_MAX)
+        || (kind == Kind::FinalFourRows && count != 4)
+    {
         return Err(Error::InvalidBufferLength);
     }
     validate_view(count, 0, width, width, words)?;
@@ -82,11 +85,18 @@ fn final_head_spans(
     width: usize,
     vocabulary: usize,
 ) -> Result<BatchSpans> {
-    if !matches!(kind, Kind::Final | Kind::FinalAllRows) || count == 0 {
+    if !matches!(kind, Kind::Final | Kind::FinalAllRows | Kind::FinalFourRows) || count == 0 {
         return Err(Error::InvalidBufferLength);
     }
-    let all_rows = kind == Kind::FinalAllRows;
-    if all_rows && count > crate::resident_model::batch::TARGET_ROWS_MAX {
+    let all_rows = matches!(kind, Kind::FinalAllRows | Kind::FinalFourRows);
+    if all_rows
+        && count
+            > if kind == Kind::FinalFourRows {
+                4
+            } else {
+                crate::resident_model::batch::TARGET_ROWS_MAX
+            }
+    {
         return Err(Error::InvalidBufferLength);
     }
     let first = if all_rows {
@@ -684,7 +694,10 @@ impl Prepared<'_, '_> {
         logits: BufferId,
     ) -> Result<()> {
         self.workspace.phase = Phase::Poisoned;
-        if !matches!(self.kind, Kind::Final | Kind::FinalAllRows) {
+        if !matches!(
+            self.kind,
+            Kind::Final | Kind::FinalAllRows | Kind::FinalFourRows
+        ) {
             return Err(Error::InvalidFormat("GR injection consumer missing"));
         }
         u::cancel(self.cancel)?;
@@ -699,7 +712,7 @@ impl Prepared<'_, '_> {
             self.fault,
             &[(
                 logits,
-                if self.kind == Kind::FinalAllRows {
+                if matches!(self.kind, Kind::FinalAllRows | Kind::FinalFourRows) {
                     crate::resident_model::batch::TARGET_ROWS_MAX * vocabulary
                 } else {
                     vocabulary
@@ -713,7 +726,7 @@ impl Prepared<'_, '_> {
         if matrix.experts() != 1 || matrix.inputs() != width || matrix.outputs() != vocabulary {
             return Err(Error::InvalidBufferLength);
         }
-        let all_rows = self.kind == Kind::FinalAllRows;
+        let all_rows = matches!(self.kind, Kind::FinalAllRows | Kind::FinalFourRows);
         let spans = final_head_spans(self.kind, self.count[0], width, vocabulary)?;
         if all_rows {
             // Explicit original arithmetic for all-row verification, even for

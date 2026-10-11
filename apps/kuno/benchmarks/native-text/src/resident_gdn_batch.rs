@@ -1248,9 +1248,21 @@ impl GdnBatchWorkspace {
         count: usize,
         cancel: &AtomicBool,
     ) -> Result<LatestGdnCheckpoint> {
+        self.checkpoint_latest_with_four_rows(stage, arena, start, count, false, cancel)
+    }
+    pub(crate) fn checkpoint_latest_with_four_rows(
+        &self,
+        stage: &ResidentGdn<'_>,
+        arena: &PrivateArena,
+        start: u64,
+        count: usize,
+        four: bool,
+        cancel: &AtomicBool,
+    ) -> Result<LatestGdnCheckpoint> {
         self.healthy(arena, cancel)?;
         checked_count(start, count, stage.layout.max_context)?;
-        if !(1..=3).contains(&count)
+        if count == 4 && self.recurrence_policy != RecurrencePolicy::FourStreaming
+            || !(1..=if four { 4 } else { 3 }).contains(&count)
             || self.policy.phase != ChunkPhase::Idle
             || *self.policy.issued != 0
             || *self.policy.committed != 0

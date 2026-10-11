@@ -69,6 +69,7 @@ struct Authority {
     geometry: Geometry,
     phase: Phase,
     scopes: u64,
+    four_rows: bool,
 }
 impl Authority {
     fn new(geometry: Geometry, context: usize, actual: bool) -> Result<Self> {
@@ -77,6 +78,7 @@ impl Authority {
             return Err(rejected());
         }
         Ok(Self {
+            four_rows: false,
             geometry,
             phase: Phase::Prefill,
             scopes: 0,
@@ -92,7 +94,13 @@ impl Authority {
     }
     fn run(&self, start: usize, count: usize, actual: bool) -> Result<()> {
         self.active(actual)?;
-        if !(1..=3).contains(&count) {
+        if !(1..=if self.four_rows && self.phase == Phase::Active {
+            4
+        } else {
+            3
+        })
+            .contains(&count)
+        {
             return Err(rejected());
         }
         let end = start.checked_add(count).ok_or(rejected())?;
@@ -152,6 +160,13 @@ pub(super) struct Permit {
     authority: Authority,
 }
 impl Permit {
+    pub(super) fn enable_four_rows(&mut self) -> Result<()> {
+        if self.authority.phase == Phase::Active || self.authority.four_rows {
+            return Err(rejected());
+        }
+        self.authority.four_rows = true;
+        Ok(())
+    }
     #[allow(clippy::too_many_arguments)] // Separate actual construction attestations.
     pub(super) fn new(
         binding: GraphBindingId,
@@ -323,6 +338,21 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn four_language_permission_keeps_prefill_original_and_requires_active_real_cursor() {
+        let geometry = Geometry::new(30, MAX_OUTPUTS).unwrap();
+        let mut authority = Authority::new(geometry, geometry.context(), false).unwrap();
+        authority.four_rows = true;
+        assert!(authority.run(0, 4, false).is_err());
+        authority.run(0, 3, false).unwrap();
+        authority.begin(30, true).unwrap();
+        authority.run(30, 4, true).unwrap();
+        assert!(authority.run(30, 5, true).is_err());
+        assert!(authority.run(29, 4, true).is_err());
+        let mut original = Authority::new(geometry, geometry.context(), false).unwrap();
+        original.begin(30, true).unwrap();
+        assert!(original.run(30, 4, true).is_err());
+    }
     #[test]
     fn exact_compiled_language_geometry_rejects_old_or_arbitrary_contexts() {
         for prompt in [30, 35] {

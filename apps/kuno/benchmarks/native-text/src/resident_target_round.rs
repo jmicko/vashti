@@ -34,17 +34,28 @@ enum Phase {
     Consumed,
 }
 /// The SAME immutable packet supplies capture, original execution and repair.
-/// Keeping only three tokens is deliberate; arbitrary prompt inputs are not an
-/// API for this public lab. Binding identity is process-local, never persisted.
+/// The original entry admits three tokens; the explicit reserved policy admits
+/// four real rows. Unused token cells stay zero and wipe with the full owner.
+/// Arbitrary prompt inputs are not an API for this public lab. Binding identity
+/// is process-local, never persisted.
 struct Packet<B = GraphBindingId> {
-    tokens: Zeroizing<[u32; TARGET_ROWS_MAX]>,
+    tokens: Zeroizing<[u32; 4]>,
     geometry: Zeroizing<[usize; 2]>,
     binding: Option<B>,
     phase: Phase,
 }
 impl<B: Copy + PartialEq> Packet<B> {
     fn new(start: usize, context: usize, tokens: &[u32], binding: B) -> Result<Self> {
-        target_rows::coordinates(tokens.len(), start)?;
+        Self::new_selected(start, context, tokens, binding, false)
+    }
+    fn new_selected(
+        start: usize,
+        context: usize,
+        tokens: &[u32],
+        binding: B,
+        four: bool,
+    ) -> Result<Self> {
+        target_rows::coordinates_selected(tokens.len(), start, four)?;
         if context == 0
             || context > 4096
             || start
@@ -54,7 +65,7 @@ impl<B: Copy + PartialEq> Packet<B> {
         {
             return Err(rejected());
         }
-        let mut packet = Zeroizing::new([0; TARGET_ROWS_MAX]);
+        let mut packet = Zeroizing::new([0; 4]);
         packet[..tokens.len()].copy_from_slice(tokens);
         Ok(Self {
             tokens: packet,
@@ -138,11 +149,12 @@ impl<'a, 'm, 'f> LatestTargetRound<'a, 'm, 'f> {
             return Err(rejected());
         }
         entry_boundary(model, executor)?;
-        let packet = Packet::new(
+        let packet = Packet::new_selected(
             model.position,
             model.context,
             tokens,
             model.graph.binding_id(),
+            executor.target_four_rows_active,
         )?;
         let mut result = Self {
             model,
@@ -166,23 +178,25 @@ impl<'a, 'm, 'f> LatestTargetRound<'a, 'm, 'f> {
         for owner in &model.layers {
             match owner {
                 Layer::Gdn(stage, _) => {
-                    let ticket = native.gdn.checkpoint_latest(
+                    let ticket = native.gdn.checkpoint_latest_with_four_rows(
                         stage,
                         &model.arena,
                         model.position as u64,
                         self.packet.inputs().len(),
+                        self.executor.target_four_rows_active,
                         cancel,
                     )?;
                     self.captured = true;
                     gdn.push(ticket);
                 }
                 Layer::Qsa(stage, _) => {
-                    let ticket = native.qsa.checkpoint_latest(
+                    let ticket = native.qsa.checkpoint_latest_with_four_rows(
                         stage,
                         &model.arena,
                         model.position as u64,
                         self.packet.inputs().len(),
                         model.b.fault,
+                        self.executor.target_four_rows_active,
                         cancel,
                     )?;
                     self.captured = true;
@@ -190,17 +204,21 @@ impl<'a, 'm, 'f> LatestTargetRound<'a, 'm, 'f> {
                 }
             }
         }
-        let ple = native
-            .ple
-            .checkpoint_latest(model, self.packet.inputs(), cancel)?;
+        let ple = native.ple.checkpoint_latest_with_four_rows(
+            model,
+            self.packet.inputs(),
+            self.executor.target_four_rows_active,
+            cancel,
+        )?;
         self.captured = true;
-        let checkpoint = LatestTargetChunk::new(
+        let checkpoint = LatestTargetChunk::new_selected(
             model.graph.binding_id(),
             model.position,
             self.packet.inputs(),
             gdn,
             qsa,
             ple,
+            self.executor.target_four_rows_active,
         )?;
         check_peak(checkpoint.owned_bytes()?)?;
         Ok(checkpoint)
@@ -587,7 +605,7 @@ mod tests {
         assert!(packet.accepted(2).unwrap());
         assert!(!packet.accepted(3).unwrap());
         packet.wipe();
-        assert_eq!(*packet.tokens, [0; 3]);
+        assert_eq!(*packet.tokens, [0; 4]);
         assert_eq!(*packet.geometry, [0; 2]);
         assert!(packet.binding.is_none());
         assert!(packet.accepted(1).is_err());

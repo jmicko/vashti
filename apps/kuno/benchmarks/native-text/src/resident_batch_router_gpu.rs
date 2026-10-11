@@ -22,6 +22,7 @@ use cubecl_runtime::server::{ExecutionMode, Handle, KernelArguments, MetadataBin
 use kuno_text::{Error, Result};
 use zeroize::{Zeroize, Zeroizing};
 
+#[allow(dead_code)] // Copied isolated fixed-four variant retains original fixture/table helpers.
 #[path = "resident_batch_router_gpu_four.rs"]
 pub(crate) mod four;
 pub(crate) const EXPERTS: usize = 512;
@@ -138,7 +139,9 @@ pub(crate) fn validate_owners(
     start: u64,
     count: usize,
 ) -> Result<()> {
-    if count == 4 {return four::validate_owners(owners,layer,start,count);}
+    if count == 4 {
+        return four::validate_owners(owners, layer, start, count);
+    }
     coordinates(layer, start, count)?;
     for (h, bytes) in owners.iter().zip(OWNED_BYTES) {
         if h.stream != owners[0].stream
@@ -219,7 +222,9 @@ pub(crate) fn launch_frozen_sources(
     start: u64,
     count: usize,
 ) -> Result<()> {
-    if count == 4 {return four::launch_frozen_sources(client,owners,layer,start,count);}
+    if count == 4 {
+        return four::launch_frozen_sources(client, owners, layer, start, count);
+    }
     launch_with_addressing(
         client,
         owners,
@@ -361,7 +366,9 @@ pub(crate) fn audit_frame_frozen_sources(
     count: usize,
     geometry: crate::quant_matvec::grouped_moe::Geometry,
 ) -> Result<AuditedRoutes> {
-    if count == 4 {return four::audit_frame_frozen_sources(bytes,table,layer,start,count,geometry);}
+    if count == 4 {
+        return four::audit_frame_frozen_sources(bytes, table, layer, start, count, geometry);
+    }
     if !geometry.frozen_host_sources() {
         return Err(Error::InvalidFormat(
             "batch device router frozen source geometry",
@@ -675,7 +682,7 @@ mod frozen_source_tests {
     // Independent actual-score fixture: original core router returns its IDs
     // and probabilities; the original canonical map builds consumed wires.
     // No fixture carries a forced expert choice into a model or GPU request.
-    fn fixture(
+    pub(super) fn fixture(
         layer: usize,
         start: u64,
         count: usize,
@@ -766,6 +773,24 @@ mod frozen_source_tests {
             bytes.extend_from_slice(&word.to_le_bytes());
         }
         (bytes, table)
+    }
+    #[test]
+    fn selected_four_capacity_tail_still_consumes_original_meta16_full_clear_layout() {
+        let selected = geometry(47)
+            .with_inactive_partition_exit()
+            .unwrap()
+            .with_four_members()
+            .unwrap();
+        for count in [1, 2, 3, 2, 1] {
+            let (bytes, table) = fixture(47, 200, count, false);
+            let routes =
+                audit_frame_frozen_sources(&bytes, &table, 47, 200, count, selected).unwrap();
+            assert_eq!(routes.count(), count);
+            assert_eq!(FRAME_WORDS, 9336);
+            assert!(
+                four::audit_frame_frozen_sources(&bytes, &table, 47, 200, 4, selected).is_err()
+            );
+        }
     }
     #[test]
     fn full_virtual_table_requires_complete_per_layer_bijection_and_is_not_residency() {

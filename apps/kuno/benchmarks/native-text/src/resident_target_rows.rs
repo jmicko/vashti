@@ -7,6 +7,9 @@ use cubecl::server::Handle;
 use kuno_text::model::GraphBindingId;
 
 pub(crate) const MAX_ROWS: usize = 3;
+pub(crate) const FOUR_ROWS: usize = 4;
+const FOUR_LOGITS_WORDS: usize = FOUR_ROWS * VOCABULARY;
+const FOUR_PACKET_WORDS: usize = HEADER_WORDS + FOUR_LOGITS_WORDS + FOUR_ROWS * HC_WIDTH;
 pub(crate) const VOCABULARY: usize = 248320;
 pub(crate) const HC_WIDTH: usize = 10240;
 pub(crate) const HEADER_WORDS: usize = 8;
@@ -25,6 +28,13 @@ fn rejected() -> Error {
 }
 pub(super) fn check_public_audit(reserved: bool, public_zero_audit: bool) -> Result<()> {
     if reserved && !public_zero_audit {
+        return Err(rejected());
+    }
+    Ok(())
+}
+pub(super) fn coordinates_selected(count: usize, start: usize, four: bool) -> Result<()> {
+    let maximum = if four { FOUR_ROWS } else { MAX_ROWS };
+    if !(1..=maximum).contains(&count) || start.checked_add(count).is_none_or(|end| end > 4096) {
         return Err(rejected());
     }
     Ok(())
@@ -123,7 +133,13 @@ fn word(bytes: &[u8], index: usize) -> Result<u32> {
     ))
 }
 fn decode(bytes: &[u8], count: usize, start: usize) -> Result<Payload> {
-    coordinates(count, start)?;
+    decode_selected(bytes, count, start, false)
+}
+fn decode_selected(bytes: &[u8], count: usize, start: usize, four: bool) -> Result<Payload> {
+    let rows = if four { FOUR_ROWS } else { MAX_ROWS };
+    let logits_words = rows * VOCABULARY;
+    let packet_words = HEADER_WORDS + logits_words + rows * HC_WIDTH;
+    coordinates_selected(count, start, four)?;
     if bytes.len() != OWNER_BYTES {
         return Err(rejected());
     }
@@ -133,7 +149,7 @@ fn decode(bytes: &[u8], count: usize, start: usize) -> Result<Payload> {
         start as u32,
         VOCABULARY as u32,
         HC_WIDTH as u32,
-        MAX_ROWS as u32,
+        rows as u32,
         0,
         0,
     ];
@@ -145,10 +161,10 @@ fn decode(bytes: &[u8], count: usize, start: usize) -> Result<Payload> {
     // Check the complete owning span before allocating either returned payload.
     for index in HEADER_WORDS..OWNER_BYTES / 4 {
         let bits = word(bytes, index)?;
-        let active = if index < HEADER_WORDS + LOGITS_WORDS {
+        let active = if index < HEADER_WORDS + logits_words {
             index - HEADER_WORDS < count * VOCABULARY
-        } else if index < PACKET_WORDS {
-            index - HEADER_WORDS - LOGITS_WORDS < count * HC_WIDTH
+        } else if index < packet_words {
+            index - HEADER_WORDS - logits_words < count * HC_WIDTH
         } else {
             false
         };
@@ -183,7 +199,7 @@ fn decode(bytes: &[u8], count: usize, start: usize) -> Result<Payload> {
     for index in 0..count * HC_WIDTH {
         hidden.push(f32::from_bits(word(
             bytes,
-            HEADER_WORDS + LOGITS_WORDS + index,
+            HEADER_WORDS + logits_words + index,
         )?));
     }
     Ok(Payload {
@@ -235,9 +251,52 @@ fn target_packet(
     }
 }
 
+#[cube(launch)]
+#[allow(clippy::manual_range_contains)] // CubeCL expands explicit runtime comparisons.
+fn target_four_packet(
+    logits: &Array<f32>,
+    carry: &Array<f32>,
+    fault: &Array<u32>,
+    output: &mut Array<u32>,
+    count: usize,
+    start: usize,
+) {
+    let index = ABSOLUTE_POS;
+    if index < output.len() {
+        let mut value = 0u32;
+        if index == 0 {
+            value = 1;
+        } else if index == 1 {
+            value = count as u32;
+        } else if index == 2 {
+            value = start as u32;
+        } else if index == 3 {
+            value = VOCABULARY as u32;
+        } else if index == 4 {
+            value = HC_WIDTH as u32;
+        } else if index == 5 {
+            value = FOUR_ROWS as u32;
+        } else if index == 6 {
+            value = fault[0];
+        } else if index >= HEADER_WORDS && index < HEADER_WORDS + FOUR_LOGITS_WORDS {
+            let source = index - HEADER_WORDS;
+            if source < count * VOCABULARY {
+                value = u32::reinterpret(logits[source]);
+            }
+        } else if index >= HEADER_WORDS + FOUR_LOGITS_WORDS && index < FOUR_PACKET_WORDS {
+            let source = index - HEADER_WORDS - FOUR_LOGITS_WORDS;
+            if source < count * HC_WIDTH {
+                value = u32::reinterpret(carry[source]);
+            }
+        }
+        output[index] = value;
+    }
+}
+
 pub(super) struct Owners {
     ids: Zeroizing<[BufferId; 2]>,
     output_live: Arc<AtomicBool>,
+    four_reserved: bool,
 }
 impl Owners {
     pub(super) fn allocation_requests() -> Result<[u64; 2]> {
@@ -251,12 +310,31 @@ impl Owners {
         ])
     }
     pub(super) fn allocate(arena: &mut PrivateArena) -> Result<Self> {
+        Self::allocate_with_four_rows(arena, false)
+    }
+    pub(super) fn allocate_with_four_rows(
+        arena: &mut PrivateArena,
+        four_reserved: bool,
+    ) -> Result<Self> {
         Ok(Self {
             ids: Zeroizing::new([
-                arena.allocate_zeroed(LOGITS_WORDS).map_err(u::fault)?,
-                arena.allocate_zeroed(PACKET_WORDS).map_err(u::fault)?,
+                arena
+                    .allocate_zeroed(if four_reserved {
+                        FOUR_LOGITS_WORDS
+                    } else {
+                        LOGITS_WORDS
+                    })
+                    .map_err(u::fault)?,
+                arena
+                    .allocate_zeroed(if four_reserved {
+                        FOUR_PACKET_WORDS
+                    } else {
+                        PACKET_WORDS
+                    })
+                    .map_err(u::fault)?,
             ]),
             output_live: Arc::new(AtomicBool::new(false)),
+            four_reserved,
         })
     }
     pub(super) fn check_no_live_output(&self) -> Result<()> {
@@ -273,8 +351,24 @@ impl Owners {
     }
     pub(super) fn prove(&self, arena: &PrivateArena) -> Result<[Handle; 2]> {
         let handles = [
-            gr::full_private(arena, self.ids[0], LOGITS_WORDS)?,
-            gr::full_private(arena, self.ids[1], PACKET_WORDS)?,
+            gr::full_private(
+                arena,
+                self.ids[0],
+                if self.four_reserved {
+                    FOUR_LOGITS_WORDS
+                } else {
+                    LOGITS_WORDS
+                },
+            )?,
+            gr::full_private(
+                arena,
+                self.ids[1],
+                if self.four_reserved {
+                    FOUR_PACKET_WORDS
+                } else {
+                    PACKET_WORDS
+                },
+            )?,
         ];
         gr::physical(arena, &handles)?;
         Ok(handles)
@@ -291,7 +385,11 @@ impl Owners {
         start: usize,
         cancel: &AtomicBool,
     ) -> Result<NativeTargetRows> {
-        coordinates(count, start)?;
+        let four = count == FOUR_ROWS;
+        if four && !self.four_reserved {
+            return Err(rejected());
+        }
+        coordinates_selected(count, start, four)?;
         graph.verify_unchanged()?;
         let geometry = graph.geometry();
         if geometry.vocabulary != VOCABULARY
@@ -313,22 +411,36 @@ impl Owners {
             packet.clone(),
             cancel,
             || {
-                target_packet::launch::<WgpuRuntime>(
-                    arena.client().map_err(u::fault)?,
-                    u::grid(OWNER_BYTES / 4)?,
-                    CubeDim::new_1d(64),
-                    u::raw_arg(logits, LOGITS_WORDS)?,
-                    u::raw_arg(carry, MAX_BATCH * HC_WIDTH)?,
-                    u::raw_arg(fault, 1)?,
-                    u::raw_arg(packet, OWNER_BYTES / 4)?,
-                    count,
-                    start,
-                );
+                if four {
+                    target_four_packet::launch::<WgpuRuntime>(
+                        arena.client().map_err(u::fault)?,
+                        u::grid(OWNER_BYTES / 4)?,
+                        CubeDim::new_1d(64),
+                        u::raw_arg(logits, FOUR_LOGITS_WORDS)?,
+                        u::raw_arg(carry, MAX_BATCH * HC_WIDTH)?,
+                        u::raw_arg(fault, 1)?,
+                        u::raw_arg(packet, OWNER_BYTES / 4)?,
+                        count,
+                        start,
+                    );
+                } else {
+                    target_packet::launch::<WgpuRuntime>(
+                        arena.client().map_err(u::fault)?,
+                        u::grid(OWNER_BYTES / 4)?,
+                        CubeDim::new_1d(64),
+                        u::raw_arg(logits, LOGITS_WORDS)?,
+                        u::raw_arg(carry, MAX_BATCH * HC_WIDTH)?,
+                        u::raw_arg(fault, 1)?,
+                        u::raw_arg(packet, OWNER_BYTES / 4)?,
+                        count,
+                        start,
+                    );
+                }
                 Ok(())
             },
             |bytes| {
                 Ok(NativeTargetRows {
-                    payload: decode(bytes, count, start)?,
+                    payload: decode_selected(bytes, count, start, four)?,
                     binding: Some(graph.binding_id()),
                     _lease: lease,
                 })
@@ -341,6 +453,11 @@ impl Owners {
 mod tests {
     use super::*;
     fn packet(count: usize, start: usize) -> Zeroizing<Vec<u8>> {
+        packet_selected(count, start, false)
+    }
+    fn packet_selected(count: usize, start: usize, four: bool) -> Zeroizing<Vec<u8>> {
+        let capacity = if four { FOUR_ROWS } else { MAX_ROWS };
+        let logits_words = capacity * VOCABULARY;
         let mut bytes = Zeroizing::new(vec![0; OWNER_BYTES]);
         let header = [
             1,
@@ -348,7 +465,7 @@ mod tests {
             start as u32,
             VOCABULARY as u32,
             HC_WIDTH as u32,
-            MAX_ROWS as u32,
+            capacity as u32,
             0,
             0,
         ];
@@ -367,7 +484,7 @@ mod tests {
                 for column in 0..2560 {
                     set(
                         &mut bytes,
-                        HEADER_WORDS + LOGITS_WORDS + row * HC_WIDTH + stream * 2560 + column,
+                        HEADER_WORDS + logits_words + row * HC_WIDTH + stream * 2560 + column,
                         ((row * 4 + stream + 1) as f32).to_bits(),
                     );
                 }
@@ -377,6 +494,55 @@ mod tests {
     }
     fn set(bytes: &mut [u8], index: usize, value: u32) {
         bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    #[test]
+    fn four_rows_fit_original_owners_and_host_cap_with_tails_still_original() {
+        assert_eq!(FOUR_LOGITS_WORDS * 4, 3973120);
+        assert_eq!(FOUR_PACKET_WORDS * 4, 4136992);
+        assert_eq!(
+            OWNER_BYTES + (FOUR_ROWS * (VOCABULARY + HC_WIDTH)) * 4,
+            8331264
+        );
+        assert!(
+            OWNER_BYTES
+                + (FOUR_ROWS * (VOCABULARY + HC_WIDTH)) * 4
+                + std::mem::size_of::<NativeTargetRows>()
+                < HOST_CAP
+        );
+        for count in [4, 2, 4] {
+            let four = count == 4;
+            let mut bytes = packet_selected(count, 11, four);
+            let value = decode_selected(&bytes, count, 11, four).unwrap();
+            assert_eq!(value.coordinates[1], count);
+            assert!(
+                value
+                    .row(count - 1, true)
+                    .unwrap()
+                    .iter()
+                    .all(|v| v.is_finite())
+            );
+            assert!(decode_selected(&bytes, count, 11, !four).is_err());
+            if four {
+                for (index, bits) in [
+                    (6, 1),
+                    (HEADER_WORDS + 3 * VOCABULARY, f32::NAN.to_bits()),
+                    (
+                        HEADER_WORDS + FOUR_LOGITS_WORDS + 3 * HC_WIDTH,
+                        f32::INFINITY.to_bits(),
+                    ),
+                ] {
+                    let original = word(&bytes, index).unwrap();
+                    set(&mut bytes, index, bits);
+                    assert!(decode_selected(&bytes, count, 11, true).is_err());
+                    set(&mut bytes, index, original);
+                }
+            }
+            set(&mut bytes, OWNER_BYTES / 4 - 1, 1);
+            assert!(decode_selected(&bytes, count, 11, four).is_err());
+        }
+        assert!(coordinates(4, 0).is_err());
+        assert!(coordinates_selected(4, 4093, true).is_err());
+        assert!(coordinates_selected(4, 4092, true).is_ok());
     }
     #[test]
     fn exact_three_row_memory_and_info_charges() {
@@ -511,6 +677,51 @@ mod tests {
                         KernelSettings::default()
                             .cube_dim(CubeDim::new_1d(64))
                             .kernel_name("native_target_rows_packet"),
+                    ),
+                    &WgpuCompilationOptions::default(),
+                    mode,
+                    u,
+                )
+                .unwrap()
+                .to_string();
+            let module = wgpu::naga::front::wgsl::parse_str(&shader).unwrap();
+            wgpu::naga::valid::Validator::new(
+                wgpu::naga::valid::ValidationFlags::all(),
+                wgpu::naga::valid::Capabilities::empty(),
+            )
+            .validate(&module)
+            .unwrap();
+            assert!(shader.contains("bitcast<u32>"));
+            assert!(shader.contains("scalars"));
+        }
+    }
+    #[test]
+    fn four_owning_target_packet_validates_offline_without_old_carry_offset() {
+        use cubecl::compute::KernelBuilder;
+        use cubecl::ir::{ElemType, FloatKind, StorageType, Type, UIntKind};
+        use cubecl::server::ExecutionMode;
+        use cubecl::wgpu::WgslCompiler;
+        use cubecl::{Compiler, KernelSettings, WgpuCompilationOptions};
+        for mode in [ExecutionMode::Checked, ExecutionMode::Unchecked] {
+            let mut b = KernelBuilder::default();
+            let f = StorageType::Scalar(ElemType::Float(FloatKind::F32));
+            let u = StorageType::Scalar(ElemType::UInt(UIntKind::U32));
+            b.scope.register_type::<f32>(f);
+            b.scope.register_type::<u32>(u);
+            b.scope.register_type::<usize>(u);
+            let logits = b.input_array(Type::new(f)).into();
+            let carry = b.input_array(Type::new(f)).into();
+            let fault = b.input_array(Type::new(u)).into();
+            let output = b.output_array(Type::new(u)).into();
+            let count = b.scalar(u).into();
+            let start = b.scalar(u).into();
+            target_four_packet::expand(&mut b.scope, logits, carry, fault, output, count, start);
+            let shader = WgslCompiler::default()
+                .compile(
+                    b.build(
+                        KernelSettings::default()
+                            .cube_dim(CubeDim::new_1d(64))
+                            .kernel_name("native_four_target_rows_packet"),
                     ),
                     &WgpuCompilationOptions::default(),
                     mode,

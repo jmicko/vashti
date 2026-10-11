@@ -79,14 +79,21 @@ impl Workspace {
         self.reserve_frozen_host_batch_router_with_four_rows(arena, allocation, context, false)
     }
     pub(crate) fn reserve_frozen_host_batch_router_with_four_rows(
-        &mut self, arena: &mut PrivateArena, allocation: &ModelConstructionAllocation<'_>,
-        context: usize, four_reserved: bool,
+        &mut self,
+        arena: &mut PrivateArena,
+        allocation: &ModelConstructionAllocation<'_>,
+        context: usize,
+        four_reserved: bool,
     ) -> Result<()> {
-        if !(1..=4096).contains(&context) { return Err(reject()); }
+        if !(1..=4096).contains(&context) {
+            return Err(reject());
+        }
         self.reserve_batch_router_policy(arena, allocation, Some(context), four_reserved)
     }
     pub(super) fn four_member_router_reserved(&self) -> bool {
-        self.batch_router.as_ref().is_some_and(|r| r.four_reserved && r.configured_context.is_some())
+        self.batch_router
+            .as_ref()
+            .is_some_and(|r| r.four_reserved && r.configured_context.is_some())
     }
     fn reserve_batch_router_policy(
         &mut self,
@@ -112,7 +119,13 @@ impl Workspace {
             source_policy: None,
             ids: Zeroizing::new([
                 arena.allocate_zeroed(48 * 512).map_err(u::fault)?,
-                arena.allocate_zeroed(if four_reserved { gpu::four::AUDIT_WORDS } else { gpu::AUDIT_WORDS }).map_err(u::fault)?,
+                arena
+                    .allocate_zeroed(if four_reserved {
+                        gpu::four::AUDIT_WORDS
+                    } else {
+                        gpu::AUDIT_WORDS
+                    })
+                    .map_err(u::fault)?,
             ]),
             table: None,
             instances: Vec::new(),
@@ -201,6 +214,8 @@ impl Workspace {
         let sources = self.frozen_sources.as_ref().ok_or(reject())?;
         if owners.table.is_some()
             || owners.source_policy.is_some()
+            || owners.four_reserved != sources.four_members()
+            || owners.four_reserved != self.public_four_members_policy()
             || !e.target_rows_reserved
             || !e.target_batch_router_reserved
             || !e.target_frozen_host_router_reserved
@@ -266,8 +281,19 @@ impl Workspace {
             SourcePolicy::Resident144 => 13,
             SourcePolicy::FrozenHost512 { context, .. } => context,
         };
-        let four = owners.four_reserved && matches!(owners.source_policy, Some(SourcePolicy::FrozenHost512 { .. }));
-        if !(valid_window(context, start, count) || four && count == 4 && (1..=4096).contains(&context) && start.checked_add(4).is_some_and(|end| end <= context as u64)) {
+        let four = owners.four_reserved
+            && matches!(
+                owners.source_policy,
+                Some(SourcePolicy::FrozenHost512 { .. })
+            );
+        if !(valid_window(context, start, count)
+            || four
+                && count == 4
+                && (1..=4096).contains(&context)
+                && start
+                    .checked_add(4)
+                    .is_some_and(|end| end <= context as u64))
+        {
             return Err(reject());
         }
         u::zero(arena, owners.ids[1])

@@ -16,7 +16,7 @@ use zeroize::{Zeroize, Zeroizing};
 pub(crate) const HOST_INCREMENT: usize = 1024 * 1024;
 pub(crate) const RUNTIME_INCREMENT: u64 = crate::resident_qsa::batch::LATEST_QSA_RUNTIME_INFO;
 const LAYERS: usize = 48;
-const MAX_ROWS: usize = 3;
+const MAX_ROWS: usize = 4;
 fn error() -> Error {
     Error::InvalidFormat("native latest target chunk checkpoint")
 }
@@ -31,8 +31,13 @@ struct RoundState {
     phase: Phase,
 }
 impl RoundState {
+    #[cfg(test)]
     fn new(start: usize, count: usize) -> Result<Self> {
-        if !(1..=MAX_ROWS).contains(&count) || start.checked_add(count).is_none_or(|end| end > 4096)
+        Self::new_selected(start, count, false)
+    }
+    fn new_selected(start: usize, count: usize, four: bool) -> Result<Self> {
+        if !(1..=if four { MAX_ROWS } else { 3 }).contains(&count)
+            || start.checked_add(count).is_none_or(|end| end > 4096)
         {
             return Err(error());
         }
@@ -78,6 +83,7 @@ pub(crate) struct LatestTargetChunk {
     ple: Option<LatestPleCheckpoint>,
 }
 impl LatestTargetChunk {
+    #[allow(dead_code)] // Original count3 compatibility entry remains available.
     pub(crate) fn new(
         binding: GraphBindingId,
         start: usize,
@@ -86,7 +92,18 @@ impl LatestTargetChunk {
         qsa: Vec<LatestQsaCheckpoint>,
         ple: LatestPleCheckpoint,
     ) -> Result<Self> {
-        let state = RoundState::new(start, tokens.len())?;
+        Self::new_selected(binding, start, tokens, gdn, qsa, ple, false)
+    }
+    pub(crate) fn new_selected(
+        binding: GraphBindingId,
+        start: usize,
+        tokens: &[u32],
+        gdn: Vec<LatestGdnCheckpoint>,
+        qsa: Vec<LatestQsaCheckpoint>,
+        ple: LatestPleCheckpoint,
+        four: bool,
+    ) -> Result<Self> {
+        let state = RoundState::new_selected(start, tokens.len(), four)?;
         if tokens.iter().any(|&t| t >= 248320)
             || gdn.len() != 36
             || qsa.len() != 12
@@ -244,6 +261,22 @@ mod tests {
                 s.consume(accepted, accepted < count).unwrap();
             }
         }
+    }
+    #[test]
+    fn four_row_checkpoint_requires_real_completed_cursor_and_exact_rejected_prefix() {
+        assert!(RoundState::new(17, 4).is_err());
+        for accepted in 1..=4 {
+            let mut state = RoundState::new_selected(17, 4, true).unwrap();
+            assert!(state.consume(accepted, accepted < 4).is_err());
+            assert!(state.completed(20).is_err());
+            state.completed(21).unwrap();
+            assert!(state.consume(accepted, accepted == 4).is_err());
+            state.consume(accepted, accepted < 4).unwrap();
+            assert!(state.consume(accepted, accepted < 4).is_err());
+        }
+        assert!(RoundState::new_selected(4093, 4, true).is_err());
+        assert!(RoundState::new_selected(0, 5, true).is_err());
+        assert!(ops_snapshot_peak() < HOST_INCREMENT);
     }
     #[test]
     fn malformed_extents_and_overflow_cannot_make_a_checkpoint() {

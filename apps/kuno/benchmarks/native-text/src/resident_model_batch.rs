@@ -259,6 +259,7 @@ pub(crate) enum NativeDecodeKernels {
     SingleQ4All,
     // Actual public target state; deliberately absent from the count1 parser.
     ThreeGdn,
+    FourGdn,
 }
 impl NativeDecodeKernels {
     pub(crate) fn parse(value: &str) -> Result<Self> {
@@ -279,13 +280,16 @@ impl NativeDecodeKernels {
             Self::SingleAll => "single-all",
             Self::SingleQ4All => "single-q4-all",
             Self::ThreeGdn => "three-gdn-streaming-public",
+            Self::FourGdn => "four-gdn-streaming-public",
         }
     }
     fn single_moe(self) -> bool {
         matches!(self, Self::SingleMoe | Self::SingleAll | Self::SingleQ4All)
     }
     fn recurrence(self) -> crate::gdn_chunk::RecurrencePolicy {
-        if self == Self::ThreeGdn {
+        if self == Self::FourGdn {
+            crate::gdn_chunk::RecurrencePolicy::FourStreaming
+        } else if self == Self::ThreeGdn {
             crate::gdn_chunk::RecurrencePolicy::ThreeStreaming
         } else if matches!(self, Self::SingleGdn | Self::SingleAll | Self::SingleQ4All) {
             crate::gdn_chunk::RecurrencePolicy::SingleStreaming
@@ -297,6 +301,7 @@ impl NativeDecodeKernels {
         let accepted = match self {
             Self::Chunk => (1..=MAX_BATCH).contains(&count),
             Self::ThreeGdn => (1..=3).contains(&count),
+            Self::FourGdn => (1..=4).contains(&count),
             _ => count == 1,
         };
         if !accepted {
@@ -323,6 +328,7 @@ pub(crate) struct Config {
     request_reuse_metadata: usize,
     resident_router_reserved: bool,
     target_rows_reserved: bool,
+    public_four_rows_reserved: bool,
     latest_target_checkpoint_reserved: bool,
     prepared_verify3_experts_reserved: bool,
     public_existing_expert_fill: bool,
@@ -565,6 +571,7 @@ impl Config {
             request_reuse_metadata: DEFAULT_REUSE_METADATA,
             resident_router_reserved: false,
             target_rows_reserved: false,
+            public_four_rows_reserved: false,
             latest_target_checkpoint_reserved: false,
             prepared_verify3_experts_reserved: false,
             public_existing_expert_fill: false,
@@ -773,6 +780,19 @@ impl Config {
         }
         host_reservation_with_outputs(false, self.request_reuse_metadata, false, true)?;
         self.target_rows_reserved = true;
+        Ok(self)
+    }
+    #[allow(dead_code)] // Controller is integrated separately after source acceptance.
+    pub(crate) fn reserve_public_four_rows(mut self) -> Result<Self> {
+        if self.public_four_rows_reserved
+            || !self.target_rows_reserved
+            || self.tile != 8
+            || self.cpu_operator.is_some()
+            || self.resident_router_reserved
+        {
+            return Err(error());
+        }
+        self.public_four_rows_reserved = true;
         Ok(self)
     }
     pub(crate) fn reserve_request_reuse_metadata(mut self, bytes: usize) -> Result<Self> {
@@ -1065,6 +1085,20 @@ impl Plan {
             if host > limit {
                 return Err(error());
             }
+        }
+        if config.public_four_rows_reserved != executor.target_four_rows_reserved
+            || config.public_four_rows_reserved
+                && (!config.target_rows_reserved
+                    || !config.latest_target_checkpoint_reserved
+                    || !config.public_frozen_host_sources
+                    || !config.public_frozen_host_router
+                    || !config.public_frozen_gu_integer
+                    || !config.public_frozen_down_integer
+                    || config.public_frozen_host_staging
+                    || config.prepared_verify3_experts_reserved
+                    || config.live_member_reduction)
+        {
+            return Err(error());
         }
         if config.public_frozen_host_sources
             && (executor.packed_profile != crate::expert_banks::OriginalPackedProfile::DaslabIq3
@@ -1523,7 +1557,9 @@ fn decode_family_policy(
     q4_block: bool,
     dense_members: usize,
 ) -> Result<NativeDecodeKernels> {
-    use crate::gdn_chunk::RecurrencePolicy::{Chunk, SingleStreaming, ThreeStreaming};
+    use crate::gdn_chunk::RecurrencePolicy::{
+        Chunk, FourStreaming, SingleStreaming, ThreeStreaming,
+    };
     Ok(match (tile, recurrence, q4_block, dense_members) {
         (4 | 8, Chunk, false, 8) => NativeDecodeKernels::Chunk,
         (1, Chunk, false, 8) => NativeDecodeKernels::SingleMoe,
@@ -1531,6 +1567,7 @@ fn decode_family_policy(
         (1, SingleStreaming, false, 1) => NativeDecodeKernels::SingleAll,
         (1, SingleStreaming, true, 1) => NativeDecodeKernels::SingleQ4All,
         (8, ThreeStreaming, false, 8) => NativeDecodeKernels::ThreeGdn,
+        (8, FourStreaming, false, 8) => NativeDecodeKernels::FourGdn,
         _ => return Err(error()),
     })
 }
@@ -1568,7 +1605,7 @@ impl PublicThreeGdnScope {
 fn projection_policy_allows_tile(policy: NativeDecodeKernels, tile: usize) -> bool {
     match policy {
         NativeDecodeKernels::Chunk => true,
-        NativeDecodeKernels::ThreeGdn => tile == 8,
+        NativeDecodeKernels::ThreeGdn | NativeDecodeKernels::FourGdn => tile == 8,
         _ => tile == 1,
     }
 }
@@ -1584,8 +1621,31 @@ fn three_gdn_selection_allowed(
             NativeDecodeKernels::Chunk | NativeDecodeKernels::ThreeGdn
         )
 }
+#[allow(dead_code)] // Warm-only activation is consumed by the separate public controller.
+fn four_rows_selection_allowed(
+    policy: NativeDecodeKernels,
+    accepted_prefill: bool,
+    request_active: bool,
+) -> bool {
+    accepted_prefill && !request_active && policy == NativeDecodeKernels::Chunk
+}
 fn next_three_gdn_chunks(policy: NativeDecodeKernels, current: u64) -> Result<u64> {
     if policy == NativeDecodeKernels::ThreeGdn {
+        current.checked_add(1).ok_or(Error::ArithmeticOverflow)
+    } else {
+        Ok(current)
+    }
+}
+fn next_four_rows_chunks(
+    policy: NativeDecodeKernels,
+    count: usize,
+    actual: (bool, u64, u64),
+    current: u64,
+) -> Result<u64> {
+    if policy == NativeDecodeKernels::FourGdn && count == 4 {
+        if !actual.0 || actual.1 == 0 || actual.1 != actual.2 {
+            return Err(error());
+        }
         current.checked_add(1).ok_or(Error::ArithmeticOverflow)
     } else {
         Ok(current)
@@ -1611,7 +1671,9 @@ fn grouped_ple_selection_allowed(
         && (!selected || requested)
         && matches!(
             policy,
-            NativeDecodeKernels::Chunk | NativeDecodeKernels::ThreeGdn
+            NativeDecodeKernels::Chunk
+                | NativeDecodeKernels::ThreeGdn
+                | NativeDecodeKernels::FourGdn
         )
 }
 fn next_grouped_ple_chunks(selected: bool, actual: bool, current: u64) -> Result<u64> {
@@ -1626,6 +1688,15 @@ fn next_grouped_ple_chunks(selected: bool, actual: bool, current: u64) -> Result
 }
 fn grouped_ple_run_allowed(selected: bool, count: usize, purpose: Purpose) -> bool {
     !selected || (1..=3).contains(&count) && purpose == Purpose::AllRowsWithCarry
+}
+fn grouped_ple_run_allowed_selected(
+    selected: bool,
+    count: usize,
+    purpose: Purpose,
+    four: bool,
+) -> bool {
+    grouped_ple_run_allowed(selected, count, purpose)
+        || four && count == 4 && purpose == Purpose::AllRowsWithCarry
 }
 fn grouped_ple_completed_receipt(selected: bool, chunks: u64) -> Result<(bool, u64)> {
     if selected == (chunks == 0) {
@@ -1652,6 +1723,8 @@ pub(super) struct Workspace {
     public_frozen_host_sources: bool,
     public_frozen_host_router: bool,
     three_gdn_completed_chunks: u64,
+    public_four_rows_reserved: bool,
+    four_rows_completed_chunks: u64,
     public_grouped_ple_reads_reserved: bool,
     public_grouped_status_folds_reserved: bool,
     grouped_ple_completed_chunks: u64,
@@ -1681,6 +1754,12 @@ impl Workspace {
         executor: &GpuExecutor<'_>,
         admission: &crate::executor::ResidentAdmission,
     ) -> Result<()> {
+        if self.public_four_rows_reserved != executor.target_four_rows_reserved
+            || executor.target_four_rows_active
+                != (self.decode_kernels()? == NativeDecodeKernels::FourGdn)
+        {
+            return Err(error());
+        }
         if self.moe.frozen_host_source_down_integer_selected() {
             if !executor.target_frozen_down_integer_reserved
                 || self.moe.frozen_down_integer_owner_id().is_none()
@@ -1704,6 +1783,16 @@ impl Workspace {
         match self.decode_kernels()? {
             NativeDecodeKernels::Chunk => Ok(()),
             NativeDecodeKernels::ThreeGdn => self.three_gdn_scope(executor, admission)?.validate(),
+            NativeDecodeKernels::FourGdn => {
+                if !self.public_four_rows_reserved
+                    || !executor.target_four_rows_active
+                    || !executor.target_four_rows_reserved
+                    || !self.moe.public_four_members_policy()
+                {
+                    return Err(error());
+                }
+                self.three_gdn_scope(executor, admission)?.validate()
+            }
             _ => Err(error()),
         }
     }
@@ -1916,7 +2005,12 @@ impl Workspace {
             moe.reserve_batch_router(&mut model.arena, allocation)?;
         }
         if config.public_frozen_host_router {
-            moe.reserve_frozen_host_batch_router(&mut model.arena, allocation, model.context)?;
+            moe.reserve_frozen_host_batch_router_with_four_rows(
+                &mut model.arena,
+                allocation,
+                model.context,
+                config.public_four_rows_reserved,
+            )?;
         }
         if config.public_frozen_host_staging {
             moe.reserve_frozen_host_staging(&mut model.arena, allocation)?;
@@ -1939,7 +2033,10 @@ impl Workspace {
             packet: alloc(MAX_BATCH * ROUTER + 1)?,
         });
         let target_rows = if config.target_rows_reserved {
-            Some(target_rows::Owners::allocate(&mut model.arena)?)
+            Some(target_rows::Owners::allocate_with_four_rows(
+                &mut model.arena,
+                config.public_four_rows_reserved,
+            )?)
         } else {
             None
         };
@@ -1969,6 +2066,8 @@ impl Workspace {
             public_frozen_host_sources: config.public_frozen_host_sources,
             public_frozen_host_router: config.public_frozen_host_router,
             three_gdn_completed_chunks: 0,
+            public_four_rows_reserved: config.public_four_rows_reserved,
+            four_rows_completed_chunks: 0,
             public_grouped_ple_reads_reserved: config.public_grouped_ple_reads_reserved,
             grouped_ple_completed_chunks: 0,
             public_grouped_status_folds_reserved: config.public_grouped_status_folds_reserved,
@@ -2006,10 +2105,14 @@ impl Workspace {
             }
         }
         if let Some(ids) = self.moe.batch_router_ids() {
-            for (id, words) in ids
-                .into_iter()
-                .zip([48 * 512, crate::resident_batch_router_gpu::AUDIT_WORDS])
-            {
+            for (id, words) in ids.into_iter().zip([
+                48 * 512,
+                if self.public_four_rows_reserved {
+                    crate::resident_batch_router_gpu::four::AUDIT_WORDS
+                } else {
+                    crate::resident_batch_router_gpu::AUDIT_WORDS
+                },
+            ]) {
                 handles.push(gr::full_private(&model.arena, id, words)?);
             }
         }
@@ -3015,10 +3118,21 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         native
             .moe
             .validate_public_warm_boundary(executor, self.graph, &self.arena)?;
-        // SAFETY: fixed-public caller verified original source hashes and
-        // immutability. All actual bank/family/device checks above precede import.
+        let four_rows = self
+            .native_batch
+            .as_ref()
+            .ok_or(error())?
+            .public_four_rows_reserved;
+        if four_rows {
+            self.native_batch
+                .as_mut()
+                .ok_or(error())?
+                .moe
+                .set_public_four_members_policy(executor, self.graph, &self.arena, true)?;
+        }
+        // SAFETY: immutable actual original source/all-family proofs precede import.
         unsafe {
-            prepared.attach_with_down_math(
+            prepared.attach_with_four_rows(
                 device,
                 self.arena.client().map_err(u::fault)?,
                 executor,
@@ -3038,6 +3152,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 gu_stride_four,
                 down_stride_four,
                 down_integer,
+                four_rows,
                 cancel,
             )
         }
@@ -3435,6 +3550,123 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
     }
     /// Selection plus positive accepted whole-chunk execution at the original
     /// completed boundary; requested environment flags are not evidence.
+    #[allow(dead_code)] // Controller is integrated separately after source acceptance.
+    pub(crate) fn set_public_four_rows(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        u::cancel(cancel)?;
+        let boundary = self.completed_native_projection_boundary(executor)?;
+        executor.check_target_rows_policy()?;
+        if !executor.target_four_rows_reserved || executor.target_four_rows_active {
+            return Err(error());
+        }
+        let native = self.native_batch.as_ref().ok_or(error())?;
+        if !native.public_four_rows_reserved
+            || !native.moe.public_four_members_policy()
+            || !native.moe.frozen_host_sources_enabled()
+        {
+            return Err(error());
+        }
+        native
+            .three_gdn_scope(executor, &self.admission)?
+            .validate()?;
+        let accepted_prefill = match (
+            &native.public_target_request_io,
+            &native.public_language_request_io,
+        ) {
+            (Some(_), None) => {
+                self.context == 13
+                    && self.position == 1
+                    && native
+                        .public_warm_replay
+                        .as_ref()
+                        .is_some_and(|p| p.reset_consumed())
+            }
+            (None, Some(permit)) => {
+                permit
+                    .identity(self.graph.binding_id(), self.context)
+                    .is_ok()
+                    && permit.validate_begin(self.position, false).is_ok()
+            }
+            _ => false,
+        };
+        if !four_rows_selection_allowed(
+            native.decode_kernels()?,
+            accepted_prefill,
+            self.admission.request_io_reuse_active(),
+        ) {
+            return Err(error());
+        }
+        let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let native = self.native_batch.as_mut().ok_or(error())?;
+            native.gdn.set_lab_recurrence_policy(
+                executor,
+                &self.arena,
+                crate::gdn_chunk::RecurrencePolicy::FourStreaming,
+                &boundary,
+                cancel,
+            )?;
+            if let Some(p) = native.public_target_request_io.as_mut() {
+                p.enable_four_rows()?;
+            }
+            if let Some(p) = native.public_language_request_io.as_mut() {
+                p.enable_four_rows()?;
+            }
+            native.ple.select_public_four_rows(&boundary)?;
+            executor.target_four_rows_active = true;
+            if native.decode_kernels()? != NativeDecodeKernels::FourGdn {
+                return Err(error());
+            }
+            native.validate_target_decode_policy(executor, &self.admission)?;
+            u::cancel(cancel)
+        }));
+        match attempt {
+            Ok(Ok(())) => Ok(()),
+            _ => {
+                self.admission
+                    .sequence_poison()
+                    .store(true, Ordering::Release);
+                self.poisoned = true;
+                executor.poison_resident();
+                let _ = self.close();
+                let _ = executor.close_transient_resident();
+                Err(error())
+            }
+        }
+    }
+    /// Selection plus positive accepted whole-chunk execution at the original
+    /// completed boundary; requested environment flags are not evidence.
+    #[allow(dead_code)] // Controller is integrated separately after source acceptance.
+    pub(crate) fn completed_public_four_rows(
+        &self,
+        executor: &GpuExecutor<'f>,
+    ) -> Result<(bool, u64)> {
+        self.completed_native_projection_boundary(executor)?;
+        let native = self.native_batch.as_ref().ok_or(error())?;
+        let selected = native.decode_kernels()? == NativeDecodeKernels::FourGdn;
+        if !selected {
+            if executor.target_four_rows_active
+                || native.four_rows_completed_chunks != 0
+                || executor.target_verify4_dense_calls != 0
+                || executor.target_verify4_fused_calls != 0
+            {
+                return Err(error());
+            }
+            return Ok((false, 0));
+        }
+        native.validate_target_decode_policy(executor, &self.admission)?;
+        if native.four_rows_completed_chunks == 0 {
+            return Ok((false, 0));
+        }
+        if executor.target_verify4_dense_calls == 0
+            || executor.target_verify4_dense_calls != executor.target_verify4_fused_calls
+        {
+            return Err(error());
+        }
+        Ok((true, native.four_rows_completed_chunks))
+    }
     pub(crate) fn completed_public_three_gdn_streaming(
         &self,
         executor: &GpuExecutor<'f>,
@@ -3912,14 +4144,22 @@ impl Workspace {
         let decode_policy = self.decode_kernels()?;
         let grouped_ple_reads = self.ple.public_grouped_reads();
         let (grouped_status_folds, grouped_status_before) = self.grouped_status_state()?;
-        if !grouped_ple_run_allowed(grouped_ple_reads, tokens.len(), purpose)
-            || !grouped_ple_run_allowed(grouped_status_folds, tokens.len(), purpose)
-            || !grouped_ple_run_allowed(
-                self.moe.frozen_host_source_down_integer_selected(),
-                tokens.len(),
-                purpose,
-            )
-        {
+        if !grouped_ple_run_allowed_selected(
+            grouped_ple_reads,
+            tokens.len(),
+            purpose,
+            decode_policy == NativeDecodeKernels::FourGdn && e.target_four_rows_active,
+        ) || !grouped_ple_run_allowed_selected(
+            grouped_status_folds,
+            tokens.len(),
+            purpose,
+            decode_policy == NativeDecodeKernels::FourGdn && e.target_four_rows_active,
+        ) || !grouped_ple_run_allowed_selected(
+            self.moe.frozen_host_source_down_integer_selected(),
+            tokens.len(),
+            purpose,
+            decode_policy == NativeDecodeKernels::FourGdn && e.target_four_rows_active,
+        ) {
             return Err(error());
         }
         e.check_client(m.arena.client().map_err(u::fault)?)?;
@@ -3934,7 +4174,7 @@ impl Workspace {
         }
         if self.target_rows.is_some() {
             e.check_target_rows_policy()?;
-            target_rows::coordinates(tokens.len(), m.position)?;
+            target_rows::coordinates_selected(tokens.len(), m.position, e.target_four_rows_active)?;
             self.validate_target_decode_policy(e, &m.admission)?;
             if self.moe.cpu_miss_cap().is_some()
                 || self.moe.cpu_gpu_overlap().is_some()
@@ -4533,7 +4773,11 @@ impl Workspace {
                     &m.arena,
                     &mut m.public,
                     &mut projector,
-                    gr::Kind::FinalAllRows,
+                    if *count == 4 {
+                        gr::Kind::FinalFourRows
+                    } else {
+                        gr::Kind::FinalAllRows
+                    },
                     self.outer.residual[*current],
                     *count,
                     m.b.fault,
@@ -4685,6 +4929,11 @@ impl Workspace {
             self.qsa
                 .accept_after_whole_model_chunk_acceptance(&m.arena, &refs, cancel)?
         };
+        let four_dispatch_receipt = (
+            e.target_four_rows_active,
+            e.target_verify4_dense_calls,
+            e.target_verify4_fused_calls,
+        );
         let mut ma = {
             let first = pending.moe[0].as_ref().ok_or(error())?;
             let mut refs = [first; LAYERS];
@@ -4716,6 +4965,12 @@ impl Workspace {
             checked_cpu_miss_total(*m.completed_cpu_misses, ma.completed_cpu_misses())?;
         let three_gdn_completed_chunks =
             next_three_gdn_chunks(decode_policy, self.three_gdn_completed_chunks)?;
+        let four_rows_completed_chunks = next_four_rows_chunks(
+            decode_policy,
+            *count,
+            four_dispatch_receipt,
+            self.four_rows_completed_chunks,
+        )?;
         let grouped_ple_completed_chunks = next_grouped_ple_chunks(
             grouped_ple_reads,
             ple.public_grouped_read_completed(),
@@ -4774,6 +5029,7 @@ impl Workspace {
         }
         *m.completed_cpu_misses = *completed_cpu_misses;
         self.three_gdn_completed_chunks = three_gdn_completed_chunks;
+        self.four_rows_completed_chunks = four_rows_completed_chunks;
         self.grouped_ple_completed_chunks = grouped_ple_completed_chunks;
         self.grouped_status_completed = grouped_status_completed;
         m.position = *end;
@@ -4783,6 +5039,57 @@ impl Workspace {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn four_rows_policy_and_actual_completion_preserve_original_prefill_and_repair_tails() {
+        use NativeDecodeKernels::{Chunk, FourGdn, ThreeGdn};
+        assert!(!four_rows_selection_allowed(Chunk, false, false));
+        assert!(!four_rows_selection_allowed(Chunk, true, true));
+        assert!(!four_rows_selection_allowed(ThreeGdn, true, false));
+        assert!(four_rows_selection_allowed(Chunk, true, false));
+        assert!(!three_gdn_selection_allowed(FourGdn, true, false));
+        assert_eq!(
+            next_four_rows_chunks(FourGdn, 4, (true, 5, 5), 2).unwrap(),
+            3
+        );
+        for count in 1..=3 {
+            assert_eq!(
+                next_four_rows_chunks(FourGdn, count, (true, 5, 5), 3).unwrap(),
+                3
+            );
+            assert!(grouped_ple_run_allowed_selected(
+                true,
+                count,
+                Purpose::AllRowsWithCarry,
+                true
+            ));
+        }
+        assert_eq!(
+            next_four_rows_chunks(Chunk, 3, (false, 0, 0), 0).unwrap(),
+            0
+        );
+        for actual in [(false, 5, 5), (true, 0, 0), (true, 5, 4)] {
+            assert!(next_four_rows_chunks(FourGdn, 4, actual, 0).is_err());
+        }
+        assert!(next_four_rows_chunks(FourGdn, 4, (true, 5, 5), u64::MAX).is_err());
+        assert!(!grouped_ple_run_allowed_selected(
+            true,
+            4,
+            Purpose::AllRowsWithCarry,
+            false
+        ));
+        assert!(grouped_ple_run_allowed_selected(
+            true,
+            4,
+            Purpose::AllRowsWithCarry,
+            true
+        ));
+        assert!(!grouped_ple_run_allowed_selected(
+            true,
+            5,
+            Purpose::AllRowsWithCarry,
+            true
+        ));
+    }
     #[test]
     fn grouped_status_actual_workspace_states_reject_partial_selection() {
         for bits in 0..8 {

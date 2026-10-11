@@ -434,6 +434,7 @@ pub(crate) struct Sources {
     gu_stride_four: bool,
     down_stride_four: bool,
     down_integer: bool,
+    four_members: bool,
 }
 fn initial_metadata(layers: usize, pages: usize, banks: usize) -> Result<usize> {
     let bytes = std::mem::size_of::<Sources>()
@@ -971,6 +972,60 @@ impl Sources {
         down_stride_four: bool,
         down_integer: bool,
     ) -> Result<Arc<Self>> {
+        Self::new_with_policy_and_four_rows(
+            executor,
+            graph,
+            plan,
+            pages,
+            reserved_host_bytes,
+            inactive_partition_exit,
+            private_tables,
+            workgroup_tables,
+            shared_down_scales,
+            shared_gate_up_factors,
+            four_row_down,
+            two_row_gate_up,
+            packed_host_staging,
+            three_members,
+            gu_integer,
+            gu_stride_four,
+            down_stride_four,
+            down_integer,
+            false,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_with_policy_and_four_rows(
+        executor: &GpuExecutor<'_>,
+        graph: BoundGraph<'_, '_>,
+        plan: &plan::Plan<'_, '_>,
+        pages: Vec<RegisteredPage>,
+        reserved_host_bytes: u64,
+        inactive_partition_exit: bool,
+        private_tables: bool,
+        workgroup_tables: bool,
+        shared_down_scales: bool,
+        shared_gate_up_factors: bool,
+        four_row_down: bool,
+        two_row_gate_up: bool,
+        packed_host_staging: bool,
+        three_members: bool,
+        gu_integer: bool,
+        gu_stride_four: bool,
+        down_stride_four: bool,
+        down_integer: bool,
+        four_members: bool,
+    ) -> Result<Arc<Self>> {
+        if four_members != executor.target_four_rows_reserved
+            || four_members
+                && (!gu_integer
+                    || !down_integer
+                    || three_members
+                    || down_stride_four
+                    || packed_host_staging)
+        {
+            return Err(reject());
+        }
         Self::validate_down_integer_policy(
             down_integer,
             inactive_partition_exit,
@@ -1136,6 +1191,9 @@ impl Sources {
                 geometry = geometry.with_two_row_gate_up().map_err(err)?;
             }
             geometry = three_member_geometry(geometry, three_members)?;
+            if four_members {
+                geometry = geometry.with_four_members().map_err(err)?;
+            }
             if gu_integer {
                 crate::quant_matvec::frozen_gu_integer::validate_geometry(geometry)?;
             }
@@ -1292,7 +1350,14 @@ impl Sources {
             gu_stride_four,
             down_stride_four,
             down_integer,
+            four_members,
         }))
+    }
+    pub(crate) fn four_members(&self) -> bool {
+        self.four_members
+    }
+    fn count_limit(&self) -> usize {
+        if self.four_members { 4 } else { 3 }
     }
     pub(crate) fn gu_integer(&self) -> bool {
         self.gu_integer
@@ -1770,13 +1835,23 @@ struct GuIntegerDispatch {
     stride_four_dispatches: u64,
 }
 impl GuIntegerDispatch {
+    #[allow(dead_code)] // Original count1..3 private receipt fixture.
     fn validate(self, layer: usize, count: usize, stride_four: bool) -> Result<()> {
+        self.validate_selected(layer, count, stride_four, false)
+    }
+    fn validate_selected(
+        self,
+        layer: usize,
+        count: usize,
+        stride_four: bool,
+        four: bool,
+    ) -> Result<()> {
         if self.layer != layer
             || layer >= 48
             || self.count != count
             || self.dispatches != 5
             || self.stride_four_dispatches != if stride_four { 5 } else { 0 }
-            || !(1..=3).contains(&count)
+            || !(1..=if four { 4 } else { 3 }).contains(&count)
         {
             return Err(reject());
         }
@@ -1811,11 +1886,15 @@ struct DownIntegerDispatch {
     audits: u64,
 }
 impl DownIntegerDispatch {
+    #[allow(dead_code)] // Original count1..3 private receipt fixture.
     fn validate(self, layer: usize, count: usize) -> Result<()> {
+        self.validate_selected(layer, count, false)
+    }
+    fn validate_selected(self, layer: usize, count: usize, four: bool) -> Result<()> {
         if self.layer != layer
             || layer >= 48
             || self.count != count
-            || !(1..=3).contains(&count)
+            || !(1..=if four { 4 } else { 3 }).contains(&count)
             || self.preparations != 1
             || self.dispatches != 5
             || self.audits != 1
@@ -1832,7 +1911,7 @@ struct SourceLaunch {
 }
 pub(super) struct Proof {
     pub(super) source: Arc<Sources>,
-    pairs: Zeroizing<[(u32, u32); 30]>,
+    pairs: Zeroizing<[(u32, u32); 40]>,
     len: Zeroizing<usize>,
     count: Zeroizing<usize>,
     vram: u64,
@@ -1859,19 +1938,19 @@ impl Proof {
         routes: &token_waves::Plan,
     ) -> Result<Self> {
         let l = source.check_layer(layer, bank)?;
-        if !(1..=3).contains(&routes.count()) || routes.wave_count() != 1 {
+        if !(1..=source.count_limit()).contains(&routes.count()) || routes.wave_count() != 1 {
             return Err(reject());
         }
         let union = routes.wave(0).ok_or(reject())?;
         if union.tokens() != (0..routes.count())
             || union.protected_experts().is_empty()
-            || union.protected_experts().len() > 30
+            || union.protected_experts().len() > source.count_limit() * 10
         {
             return Err(reject());
         }
         let mut p = Self {
             source: source.clone(),
-            pairs: Zeroizing::new([(0, 0); 30]),
+            pairs: Zeroizing::new([(0, 0); 40]),
             len: Zeroizing::new(union.protected_experts().len()),
             count: Zeroizing::new(routes.count()),
             vram: 0,
@@ -1902,12 +1981,12 @@ impl Proof {
         count: usize,
         router_owners: [BufferId; 3],
     ) -> Result<Self> {
-        if !(1..=3).contains(&count) {
+        if !(1..=source.count_limit()).contains(&count) {
             return Err(reject());
         }
         Ok(Self {
             source,
-            pairs: Zeroizing::new([(0, 0); 30]),
+            pairs: Zeroizing::new([(0, 0); 40]),
             len: Zeroizing::new(0),
             count: Zeroizing::new(count),
             vram: 0,
@@ -1927,7 +2006,12 @@ impl Proof {
             return Err(reject());
         }
         if let Some(receipt) = receipt {
-            receipt.validate(layer, *self.count, self.source.gu_stride_four)?;
+            receipt.validate_selected(
+                layer,
+                *self.count,
+                self.source.gu_stride_four,
+                self.source.four_members,
+            )?;
             self.gu_integer_launch = Some(receipt);
         }
         Ok(())
@@ -1960,7 +2044,7 @@ impl Proof {
             return Err(reject());
         }
         if let Some(receipt) = receipt {
-            receipt.validate(layer, *self.count)?;
+            receipt.validate_selected(layer, *self.count, self.source.four_members)?;
             if self.router_owners.is_none() {
                 return Err(reject());
             }
@@ -1980,7 +2064,7 @@ impl Proof {
             || self.router_owners.is_none()
             || routes.count() != *self.count
             || routes.groups() == 0
-            || routes.groups() > 30
+            || routes.groups() > self.source.count_limit() * 10
         {
             return Err(reject());
         }
@@ -2022,7 +2106,12 @@ impl Proof {
             return Err(reject());
         }
         if let Some(receipt) = self.gu_integer_launch {
-            receipt.validate(layer, *self.count, self.source.gu_stride_four)?;
+            receipt.validate_selected(
+                layer,
+                *self.count,
+                self.source.gu_stride_four,
+                self.source.four_members,
+            )?;
         }
         if self.source.down_stride_four != self.down_stride_four_launch.is_some() {
             return Err(reject());
@@ -2034,8 +2123,8 @@ impl Proof {
             }
         }
         if *self.len == 0
-            || *self.len > 30
-            || !(1..=3).contains(&*self.count)
+            || *self.len > self.source.count_limit() * 10
+            || !(1..=self.source.count_limit()).contains(&*self.count)
             || self.vram + self.host != (*self.count * 10) as u64
             || *self.len > *self.count * 10
         {
@@ -2139,7 +2228,12 @@ impl Counters {
     pub(super) fn add(self, p: &Proof, layer: usize) -> Result<Self> {
         let gu = match p.gu_integer_launch {
             Some(receipt) if p.source.gu_integer => {
-                receipt.validate(layer, *p.count, p.source.gu_stride_four)?;
+                receipt.validate_selected(
+                    layer,
+                    *p.count,
+                    p.source.gu_stride_four,
+                    p.source.four_members,
+                )?;
                 receipt.dispatches
             }
             None if !p.source.gu_integer => 0,
@@ -2156,7 +2250,7 @@ impl Counters {
         };
         let down_integer = match p.down_integer_launch {
             Some(receipt) if p.source.down_integer && p.router_owners.is_some() => {
-                receipt.validate(layer, *p.count)?;
+                receipt.validate_selected(layer, *p.count, p.source.four_members)?;
                 receipt.dispatches
             }
             None if !p.source.down_integer => 0,
@@ -2452,6 +2546,9 @@ impl Workspace {
             || sources.down_stride_four() && !self.frozen_host_batch_router_reserved()
             || sources.packed_host_staging() && !self.frozen_host_batch_router_reserved()
             || sources.three_members() && !self.frozen_host_batch_router_reserved()
+            || sources.four_members() != self.public_four_members_policy()
+            || sources.four_members() != executor.target_four_rows_reserved
+            || sources.four_members() && !self.four_member_router_reserved()
             || sources.binding != self.binding
             || sources.layers.len() != 48
             || self.layout.capacity != 144
@@ -2509,6 +2606,9 @@ impl Workspace {
                 g = g.with_two_row_gate_up().map_err(err)?;
             }
             g = three_member_geometry(g, sources.three_members())?;
+            if sources.four_members() {
+                g = g.with_four_members().map_err(err)?;
+            }
             if sources.gu_integer() {
                 crate::quant_matvec::frozen_gu_integer::validate_geometry(g)?;
             }
@@ -2572,7 +2672,10 @@ impl GpuExecutor<'_> {
             u::cancel(cancel)?;
             w.check(self, s, arena)?;
             if !w.frozen_host_batch_router_active()
-                || !(1..=3).contains(&views.count())
+                || !(1..=if w.public_four_members_policy() { 4 } else { 3 })
+                    .contains(&views.count())
+                || views.count() == 4
+                    && (!self.target_four_rows_active || !w.four_member_router_reserved())
                 || views.count() != s.stamp.count
                 || views.input_first() != 0
                 || views.output_first() != 0
@@ -2645,7 +2748,7 @@ impl GpuExecutor<'_> {
                 g,
                 &spans,
                 &ids,
-                30,
+                if views.count() == 4 { 40 } else { 30 },
                 w.frozen_staging_owner_ids().as_ref(),
                 w.frozen_gu_integer_owner_id(),
                 w.frozen_down_integer_owner_id(),
@@ -2751,7 +2854,7 @@ impl GpuExecutor<'_> {
             || self.target_frozen_host_source_identity != Some(source.plan_identity())
             || graph.binding_id() != source.binding
             || w.binding != source.binding
-            || !(1..=3).contains(&routes.count())
+            || !(1..=source.count_limit()).contains(&routes.count())
             || routes.count() != s.stamp.count
             || views.count() != routes.count()
             || routes.wave_count() != 1
@@ -2936,9 +3039,12 @@ impl Sources {
         if self.packed_host_staging != staging.is_some()
             || g != l.geometry
             || self.down_integer != down_integer.is_some()
-            || self.down_integer && (groups != 30 || staging.is_some() || !(1..=3).contains(&count))
+            || self.down_integer
+                && (groups != if count == 4 { 40 } else { 30 }
+                    || staging.is_some()
+                    || !(1..=self.count_limit()).contains(&count))
             || self.gu_integer != gu_integer.is_some()
-            || self.gu_integer && (staging.is_some() || !(1..=3).contains(&count))
+            || self.gu_integer && (staging.is_some() || !(1..=self.count_limit()).contains(&count))
         {
             return Err(reject());
         }
@@ -2953,14 +3059,11 @@ impl Sources {
             let [a, b, c, d, e, f, h] = handles;
             let handles = [a?, b?, c?, d?, e?, f?, h?];
             let scratch = arena.handle(scratch).cloned().map_err(u::fault)?;
-            crate::quant_matvec::frozen_gu_integer::prepare(
-                client,
-                g,
-                s,
-                handles.clone(),
-                scratch.clone(),
-                count,
-            )?;
+            (if count == 4 {
+                crate::quant_matvec::frozen_gu_integer::four::prepare
+            } else {
+                crate::quant_matvec::frozen_gu_integer::prepare
+            })(client, g, s, handles.clone(), scratch.clone(), count)?;
             Some((handles, scratch))
         } else {
             None
@@ -2986,14 +3089,11 @@ impl Sources {
         for &phase in source_phases(self.down_integer) {
             if phase == SourcePhase::PrepareAndDown {
                 let (handles, scratch) = down_integer_handles.as_ref().ok_or_else(reject)?;
-                crate::quant_matvec::frozen_down_integer::prepare(
-                    client,
-                    g,
-                    s,
-                    handles.clone(),
-                    scratch.clone(),
-                    count,
-                )?;
+                (if count == 4 {
+                    crate::quant_matvec::frozen_down_integer::four::prepare
+                } else {
+                    crate::quant_matvec::frozen_down_integer::prepare
+                })(client, g, s, handles.clone(), scratch.clone(), count)?;
                 down_integer_preparations = down_integer_preparations
                     .checked_add(1)
                     .ok_or(Error::ArithmeticOverflow)?;
@@ -3128,10 +3228,15 @@ impl Sources {
                         if gate != GateKernel::Frozen || staged_shard {
                             return Err(reject());
                         }
-                        let launch = if self.gu_stride_four {
-                            crate::quant_matvec::frozen_gu_integer::launch_group_stride4
-                        } else {
-                            crate::quant_matvec::frozen_gu_integer::launch
+                        let launch = match (count == 4, self.gu_stride_four) {
+                            (true, true) => {
+                                crate::quant_matvec::frozen_gu_integer::four::launch_group_stride4
+                            }
+                            (true, false) => crate::quant_matvec::frozen_gu_integer::four::launch,
+                            (false, true) => {
+                                crate::quant_matvec::frozen_gu_integer::launch_group_stride4
+                            }
+                            (false, false) => crate::quant_matvec::frozen_gu_integer::launch,
                         };
                         launch(
                             client,
@@ -3197,7 +3302,11 @@ impl Sources {
                         }
                         let (handles, scratch) =
                             down_integer_handles.as_ref().ok_or_else(reject)?;
-                        crate::quant_matvec::frozen_down_integer::launch(
+                        (if count == 4 {
+                            crate::quant_matvec::frozen_down_integer::four::launch
+                        } else {
+                            crate::quant_matvec::frozen_down_integer::launch
+                        })(
                             client,
                             g,
                             s,
@@ -3279,7 +3388,11 @@ impl Sources {
             }
         }
         let gu_integer = if let Some((_, scratch)) = integer_handles {
-            crate::quant_matvec::frozen_gu_integer::audit(
+            (if count == 4 {
+                crate::quant_matvec::frozen_gu_integer::four::audit
+            } else {
+                crate::quant_matvec::frozen_gu_integer::audit
+            })(
                 client,
                 scratch,
                 arena.handle(fault).cloned().map_err(u::fault)?,
@@ -3291,7 +3404,7 @@ impl Sources {
                 dispatches: integer_dispatches,
                 stride_four_dispatches,
             };
-            receipt.validate(layer, count, self.gu_stride_four)?;
+            receipt.validate_selected(layer, count, self.gu_stride_four, self.four_members)?;
             Some(receipt)
         } else {
             None
@@ -3308,7 +3421,11 @@ impl Sources {
             None
         };
         let down_integer = if let Some((_, scratch)) = down_integer_handles {
-            crate::quant_matvec::frozen_down_integer::audit(
+            (if count == 4 {
+                crate::quant_matvec::frozen_down_integer::four::audit
+            } else {
+                crate::quant_matvec::frozen_down_integer::audit
+            })(
                 client,
                 scratch,
                 arena.handle(fault).cloned().map_err(u::fault)?,
@@ -3321,7 +3438,7 @@ impl Sources {
                 dispatches: down_integer_dispatches,
                 audits: 1,
             };
-            receipt.validate(layer, count)?;
+            receipt.validate_selected(layer, count, self.four_members)?;
             Some(receipt)
         } else {
             None

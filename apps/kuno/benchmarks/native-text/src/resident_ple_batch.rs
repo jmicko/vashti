@@ -200,6 +200,7 @@ pub(crate) struct PleBatchWorkspace {
     poison: Arc<AtomicBool>,
     pending: bool,
     public_grouped_reads: bool,
+    public_four_rows: bool,
 }
 impl Drop for PleBatchWorkspace {
     fn drop(&mut self) {
@@ -226,7 +227,7 @@ struct LatestPleMetadata {
     start: usize,
     count: usize,
     ids: [BufferId; N],
-    tokens: [u32; 3],
+    tokens: [u32; 4],
     old_tokens: [i32; 2],
 }
 impl Zeroize for LatestPleMetadata {
@@ -248,9 +249,18 @@ impl PleBatchWorkspace {
         tokens: &[u32],
         cancel: &AtomicBool,
     ) -> Result<LatestPleCheckpoint> {
+        self.checkpoint_latest_with_four_rows(model, tokens, false, cancel)
+    }
+    pub(crate) fn checkpoint_latest_with_four_rows(
+        &self,
+        model: &ResidentModel<'_, '_>,
+        tokens: &[u32],
+        four: bool,
+        cancel: &AtomicBool,
+    ) -> Result<LatestPleCheckpoint> {
         self.healthy(model, cancel)?;
         graph_preflight(model.graph)?;
-        if !(1..=3).contains(&tokens.len())
+        if !(1..=if four { 4 } else { 3 }).contains(&tokens.len())
             || tokens.iter().any(|&t| t >= 248320)
             || self.pending
             || model.ple_batch_pending.is_some()
@@ -271,7 +281,7 @@ impl PleBatchWorkspace {
             ops::ple_checkpoint::MAX_OWNED_BYTES,
         )
         .map_err(u::fault)?;
-        let mut packet = Zeroizing::new([0; 3]);
+        let mut packet = Zeroizing::new([0; 4]);
         packet[..tokens.len()].copy_from_slice(tokens);
         Ok(LatestPleCheckpoint {
             snapshot: Some(snapshot),
@@ -624,6 +634,7 @@ impl PleBatchWorkspace {
                 poison: poison.clone(),
                 pending: false,
                 public_grouped_reads: false,
+                public_four_rows: false,
             };
             workspace.validate_ids(&model.arena)?;
             model.ple_batch_poison = Some(poison.clone());
@@ -672,6 +683,16 @@ impl PleBatchWorkspace {
     }
     /// The native target owner alone selects this immutable public policy at a
     /// completed boundary. No GR arithmetic flag is modified.
+    pub(super) fn select_public_four_rows(
+        &mut self,
+        _boundary: &crate::resident_model::batch::CompletedNativeProjectionBoundary,
+    ) -> Result<()> {
+        if self.public_four_rows || self.pending || self.poison.load(Ordering::Acquire) {
+            return Err(error());
+        }
+        self.public_four_rows = true;
+        Ok(())
+    }
     pub(super) fn select_public_grouped_reads(
         &mut self,
         position: usize,
@@ -993,7 +1014,9 @@ impl PleBatchWorkspace {
             self.receipt_parts(&c, &receipt, cancel)?;
             let m = &*receipt.metadata;
             let public_grouped_read = self.public_grouped_reads;
-            if public_grouped_read && !(1..=3).contains(&m.count) {
+            if public_grouped_read
+                && !(1..=if self.public_four_rows { 4 } else { 3 }).contains(&m.count)
+            {
                 return Err(error());
             }
             let (old, normalized, next) = if public_grouped_read

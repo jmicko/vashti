@@ -6,6 +6,8 @@ API or installed inference change. The controller selector is
 plus three actual completed MTP proposals, not four invented acceptances.
 Original cold CPU13 and real prompt prefill remain count1..3 with the original
 arithmetic. Selected tails1..3 retain the original dense and integer kernels.
+FourStreaming dispatches the new exact4 kernel only for count4; every
+count1..3 tail or repair dispatches the unchanged original `gdn_chunk` entry.
 The original CPU13 reference, every full vector and existing tolerances remain
 authoritative. Source acceptance does not establish physical speed or parity.
 
@@ -76,3 +78,45 @@ cold/warm CPU13 full vectors/greedy positions, real draft/target repair,
 all-owner closure and fresh recovery before compiler-idle normal timing.
 Record actual count4/tail/accepted-prefix coverage; do not claim cases absent
 from the fixed original reference. A throughput gain remains unmeasured.
+
+## Parent source handoff (2026-10-11)
+
+The parent keeps the existing controller attachment call unchanged. Internally
+it consumes the construction reservation at the accepted cold-to-warm reset
+or completed real language prefill, before attachment; it invokes
+`PreparedPlan::attach_with_four_rows(...,down_integer,four_rows,cancel)`. The
+original `attach_with_down_math` wrapper passes false. The Sources factory
+`new_with_policy_and_four_rows` joins that flag to the actual Executor,
+Workspace and typed router reservation; no Arc of Sources authorizes new RAM.
+All48 geometries reconstruct the same immutable flag. Initial count4 requires
+both original accepted integer GU and integer DOWN policies; competing source
+packing/arithmetic and count3-specialized source modes remain rejected.
+
+The router constructor reserves448224 logical words within its original
+524288-word owner. Genuine4 uses META18/version2/9338-word frames.
+Count1..3 uses the original META16/version1/9336-word frames and auditor even
+on a four-capable model. Each chunk clears the complete owner before launch;
+full-owner fixture audits cover selected-capability tails and4→2→4 output
+layouts. Real rejected-prefix restoration remains the existing all-family
+checkpoint mechanism; all prefix lengths1..4 have strict cursor/consume source
+coverage, and physical real repair is still required.
+
+`set_public_four_rows` additionally activates the private PLE grouped-read
+count4 permission and both fixed request permits at the original completed
+boundary. Cold/prefill/closed scopes retain their original restrictions.
+`completed_public_four_rows(executor)` returns `(false,0)` before a genuine
+accepted whole-model count4 chunk, then returns its monotone actual count;
+count1..3 repair work does not increment it or erase prior count4 execution.
+Counter preflight requires positive successful equal Verify4 dense/fused
+launches and publishes only after every original family commits.
+
+Source checks use the locked native-text `kuno-text-lab` target with
+`direct-device`, two compile jobs, and the NVMe runtime-review cache. Focused
+filters passed: `four`64; `resident_model::batch::`64; PLE11; GDN17; QSA22;
+GR7; frozen Sources26; GDN kernel probe15; router10. These filter counts
+overlap and are not a unique-test total. Original controls were preserved.
+Strict direct all-target Clippy with warnings denied, formatter and diff
+checks passed on the final source. No GPU test, service change, model
+acceptance or speed claim was made by this parent task. Root owns independent
+Verify4 physical operators, original CPU13/real repair/full closure/recovery
+and compiler-idle timing.

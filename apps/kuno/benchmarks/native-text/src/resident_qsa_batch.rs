@@ -1764,9 +1764,22 @@ impl QsaBatchWorkspace {
         fault_id: BufferId,
         cancel: &AtomicBool,
     ) -> Result<LatestQsaCheckpoint> {
+        self.checkpoint_latest_with_four_rows(stage, arena, start, count, fault_id, false, cancel)
+    }
+    #[allow(clippy::too_many_arguments)] // Actual family/owner/window plus immutable four-row scope.
+    pub(crate) fn checkpoint_latest_with_four_rows(
+        &self,
+        stage: &ResidentQsa<'_>,
+        arena: &PrivateArena,
+        start: u64,
+        count: usize,
+        fault_id: BufferId,
+        four: bool,
+        cancel: &AtomicBool,
+    ) -> Result<LatestQsaCheckpoint> {
         self.healthy(arena, cancel)?;
         checked_count(start, count, stage.layout.max_context)?;
-        if !(1..=3).contains(&count)
+        if !(1..=if four { 4 } else { 3 }).contains(&count)
             || self.policy.phase != ChunkPhase::Idle
             || *self.policy.issued != 0
             || *self.policy.committed != 0

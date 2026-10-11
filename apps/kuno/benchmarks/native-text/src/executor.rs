@@ -2002,6 +2002,7 @@ impl<'a> GpuExecutor<'a> {
         Ok((self.target_iq4_decoder, self.target_iq4_decoder_calls))
     }
     /// Construction-only capability; this never activates a four-row chunk.
+    #[allow(dead_code)] // Construction-only until the isolated four-row parent is integrated.
     pub(crate) fn reserve_public_four_rows(&mut self) -> Result<()> {
         if self.target_four_rows_reserved
             || self.target_four_rows_active
@@ -2024,12 +2025,15 @@ impl<'a> GpuExecutor<'a> {
         Ok(())
     }
     pub(crate) fn check_target_rows_policy(&self) -> Result<()> {
-        if self.resident_admission.as_ref().is_some_and(|a|
-            a.target_four_rows_reserved != self.target_four_rows_reserved)
-            || self.target_four_rows_active && (!self.target_four_rows_reserved
-                || self.resident_admission.is_none()
-                || !self.resident_banks_frozen
-                || self.target_frozen_host_source_identity.is_none())
+        if self
+            .resident_admission
+            .as_ref()
+            .is_some_and(|a| a.target_four_rows_reserved != self.target_four_rows_reserved)
+            || self.target_four_rows_active
+                && (!self.target_four_rows_reserved
+                    || self.resident_admission.is_none()
+                    || !self.resident_banks_frozen
+                    || self.target_frozen_host_source_identity.is_none())
             || !self.target_four_rows_active
                 && (self.target_verify4_dense_calls != 0 || self.target_verify4_fused_calls != 0)
         {
@@ -2859,7 +2863,8 @@ impl<'a> GpuExecutor<'a> {
         // policy is fixed between completed chunks, never chosen from count.
         self.check_target_rows_policy()?;
         if self.target_verify3_dense
-            && (!(1..=3).contains(&spans.count()) || self.resident_admission.is_none())
+            && (!(1..=if self.target_four_rows_active { 4 } else { 3 }).contains(&spans.count())
+                || self.resident_admission.is_none())
         {
             return Err(Error::InvalidFormat("native Verify3 projection count"));
         }
@@ -2949,7 +2954,20 @@ impl<'a> GpuExecutor<'a> {
                 output_words,
             )
             .map_err(|_| Error::InvalidBufferLength)?;
-            let verify3 = if self.target_verify3_dense {
+            let verify4 = if self.target_four_rows_active && spans.count() == 4 {
+                let spec = crate::next_shared::MatrixSpec::new(g.rows(), g.columns(), g.dtype())?;
+                crate::next_shared::validate_verify4_spans(
+                    spec,
+                    &packet,
+                    g.total_bytes().div_ceil(4) as u64 * 4,
+                    input_words,
+                    output_words,
+                )?;
+                Some(spec)
+            } else {
+                None
+            };
+            let verify3 = if self.target_verify3_dense && verify4.is_none() {
                 let spec = target_verify3_iq4_spec(
                     g.rows(),
                     g.columns(),
@@ -2978,7 +2996,32 @@ impl<'a> GpuExecutor<'a> {
             // SAFETY: same original packed row proof as scalar enqueue; caller
             // owns disjoint x/y, and the exact runtime spans passed validation.
             unsafe {
-                if let Some(spec) = verify3 {
+                if let Some(spec) = verify4 {
+                    let dense = self
+                        .target_verify4_dense_calls
+                        .checked_add(1)
+                        .ok_or(Error::ArithmeticOverflow)?;
+                    let fused = self
+                        .target_verify4_fused_calls
+                        .checked_add(1)
+                        .ok_or(Error::ArithmeticOverflow)?;
+                    crate::next_shared::matrix_verify4_finite(
+                        &self.client,
+                        spec,
+                        weights,
+                        x.clone(),
+                        y.clone(),
+                        fault.clone(),
+                        input_words,
+                        output_words,
+                        &packet,
+                        m.outputs(),
+                        spans.output_first(),
+                        first + rows == m.outputs(),
+                    )?;
+                    self.target_verify4_dense_calls = dense;
+                    self.target_verify4_fused_calls = fused;
+                } else if let Some(spec) = verify3 {
                     let iq4_calls = next_target_iq4_dispatch_count(
                         self.target_iq4_decoder_calls,
                         spec.iq4_decoder(),

@@ -1067,6 +1067,7 @@ mod tests {
             RecurrencePolicy::Chunk => expand!(gdn_chunk),
             RecurrencePolicy::SingleStreaming => expand!(gdn_single_streaming),
             RecurrencePolicy::ThreeStreaming => expand!(gdn_three_streaming),
+            RecurrencePolicy::FourStreaming => expand!(gdn_four_streaming),
         }
         WgslCompiler::default()
             .compile(
@@ -1077,6 +1078,7 @@ mod tests {
                             RecurrencePolicy::Chunk => "gdn_chunk",
                             RecurrencePolicy::SingleStreaming => "gdn_single_streaming",
                             RecurrencePolicy::ThreeStreaming => "gdn_three_streaming",
+                            RecurrencePolicy::FourStreaming => "gdn_four_streaming",
                         }),
                 ),
                 &WgpuCompilationOptions::default(),
@@ -1128,6 +1130,50 @@ mod tests {
                 for scalar in 0..21 {
                     assert!(wgsl.contains(&format!("scalars_u32[{scalar}]")));
                 }
+                let module = wgpu::naga::front::wgsl::parse_str(&wgsl).unwrap();
+                wgpu::naga::valid::Validator::new(
+                    wgpu::naga::valid::ValidationFlags::all(),
+                    wgpu::naga::valid::Capabilities::empty(),
+                )
+                .validate(&module)
+                .unwrap();
+            }
+        }
+    }
+    #[test]
+    fn four_streaming_exact_count4_uses_original_tail_kernel_and_ordered_reference() {
+        for count in 1..=3 {
+            assert_eq!(
+                RecurrencePolicy::FourStreaming
+                    .execution_policy(count)
+                    .unwrap(),
+                RecurrencePolicy::Chunk
+            );
+        }
+        assert_eq!(
+            RecurrencePolicy::FourStreaming.execution_policy(4).unwrap(),
+            RecurrencePolicy::FourStreaming
+        );
+        assert!(RecurrencePolicy::FourStreaming.execution_policy(5).is_err());
+        for shape in [GdnShape::new(7, 2, 6).unwrap(), GdnShape::qwen38()] {
+            let f = fixture(shape, 4).unwrap();
+            let inputs = [
+                &f.query[..],
+                &f.key[..],
+                &f.value[..],
+                &f.controls[..],
+                &f.old[..],
+            ];
+            let original = chunk::lane_reference(shape, f.spans, inputs).unwrap();
+            let four = chunk::four_streaming_lane_reference(shape, f.spans, inputs).unwrap();
+            three_streaming_assert_exact(&original, &four);
+            for mode in [
+                cubecl::server::ExecutionMode::Checked,
+                cubecl::server::ExecutionMode::Unchecked,
+            ] {
+                let wgsl = shader(shape, mode, RecurrencePolicy::FourStreaming);
+                assert!(!wgsl.contains("array<f32,"));
+                assert!(!wgsl.contains("fma("));
                 let module = wgpu::naga::front::wgsl::parse_str(&wgsl).unwrap();
                 wgpu::naga::valid::Validator::new(
                     wgpu::naga::valid::ValidationFlags::all(),

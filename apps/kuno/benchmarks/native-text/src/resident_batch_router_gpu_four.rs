@@ -20,7 +20,7 @@ use cubecl_runtime::id::KernelId;
 use cubecl_runtime::kernel::{CompiledKernel, KernelMetadata};
 use cubecl_runtime::server::{ExecutionMode, Handle, KernelArguments, MetadataBindingInfo};
 use kuno_text::{Error, Result};
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroizing;
 
 pub(crate) const EXPERTS: usize = 512;
 pub(crate) const LAYERS: usize = 48;
@@ -270,7 +270,7 @@ fn launch_with_addressing(
     Ok(())
 }
 
-use super::{Routes,AuditedRoutes};
+use super::{AuditedRoutes, Routes};
 fn word(bytes: &[u8], index: usize) -> u32 {
     u32::from_le_bytes(
         bytes[index * 4..index * 4 + 4]
@@ -503,4 +503,227 @@ fn audit_frame_with_addressing(
     }
     drop(canonical);
     Ok(routes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::quant_matvec::grouped_moe::{Geometry, GroupMap, Projection};
+    fn geometry(layer: usize) -> Geometry {
+        let [gate, up, down] = crate::daslab_profile::routed_types(layer).unwrap();
+        Geometry::new(
+            [
+                Projection::new(gate, 2560, 640, 512).unwrap(),
+                Projection::new(up, 2560, 640, 512).unwrap(),
+                Projection::new(down, 640, 2560, 512).unwrap(),
+            ],
+            8,
+            144,
+        )
+        .unwrap()
+        .with_frozen_host_sources()
+        .unwrap()
+        .with_inactive_partition_exit()
+        .unwrap()
+        .with_four_members()
+        .unwrap()
+    }
+    fn table() -> Zeroizing<Vec<u32>> {
+        let mut out = Zeroizing::new(vec![0; TABLE_WORDS]);
+        for layer in 0..LAYERS {
+            for expert in 0..EXPERTS {
+                out[layer * EXPERTS + expert] = ((expert * 31 + layer * 7) % 512) as u32;
+            }
+        }
+        out
+    }
+    // Independent actual-score fixture: original core router returns its IDs
+    // and probabilities; the original canonical map builds consumed wires.
+    // No fixture carries a forced expert choice into a model or GPU request.
+    fn fixture(
+        layer: usize,
+        start: u64,
+        count: usize,
+        ties: bool,
+    ) -> (Zeroizing<Vec<u8>>, Zeroizing<Vec<u32>>) {
+        let table = table();
+        let mut words = Zeroizing::new(vec![0u32; AUDIT_OWNED_WORDS]);
+        let base = layer * FRAME_WORDS;
+        let boundary = [0usize, 143, 144, 287, 288, 431, 432, 511, 71, 72, 17];
+        let mut experts = Zeroizing::new([0u32; MAX_ROUTES]);
+        let mut probabilities = Zeroizing::new([0f32; MAX_ROUTES]);
+        let mut pairs = Zeroizing::new(Vec::with_capacity(40));
+        let mut meta = Zeroizing::new([0u32; META_WORDS]);
+        meta[..8].copy_from_slice(&[
+            MAGIC,
+            VERSION,
+            layer as u32,
+            start as u32,
+            count as u32,
+            512,
+            0,
+            0,
+        ]);
+        meta[17] = NEAR_TIE_MARGIN.to_bits();
+        let mut minimum_gap = f32::MAX;
+        for row in 0..count {
+            let mut scores = Zeroizing::new(std::array::from_fn::<_, 512, _>(|id| {
+                -8. - id as f32 / 1024.
+            }));
+            if ties {
+                for id in 0..12 {
+                    scores[id] = if id & 1 == 0 { 0. } else { -0. };
+                }
+            } else {
+                for (rank, &id) in boundary.iter().enumerate() {
+                    let id = (id + row * 37) % 512;
+                    scores[id] = 8. - rank as f32 / 8.;
+                }
+            }
+            for (i, &score) in scores.iter().enumerate() {
+                words[base + row * EXPERTS + i] = score.to_bits();
+            }
+            let selected = kuno_text::ops::router_topk_guarded(&*scores, RANKS, true).unwrap();
+            let mut raw = Zeroizing::new(std::array::from_fn::<_, 512, _>(|id| id));
+            raw.sort_unstable_by(|&a, &b| {
+                scores[b].partial_cmp(&scores[a]).unwrap().then(a.cmp(&b))
+            });
+            meta[8 + row * 2] = raw[10] as u32;
+            meta[9 + row * 2] = scores[raw[10]].to_bits();
+            for rank in 0..RANKS {
+                minimum_gap = minimum_gap.min(scores[raw[rank]] - scores[raw[rank + 1]]);
+                let (id, probability) = selected.as_slice()[rank];
+                assert_eq!(id as usize, raw[rank]);
+                let route = row * RANKS + rank;
+                experts[route] = id;
+                probabilities[route] = probability;
+                if !pairs.iter().any(|&(old, _)| old == id) {
+                    pairs.push((id, table[layer * EXPERTS + id as usize]));
+                }
+                words[base + SELECTION + 4 + route * 3] = id;
+                words[base + SELECTION + 5 + route * 3] = probability.to_bits();
+                words[base + SELECTION + 6 + route * 3] = scores[id as usize].to_bits();
+            }
+        }
+        let map = GroupMap::new_frozen_sources(
+            count,
+            &experts[..count * RANKS],
+            &probabilities[..count * RANKS],
+            &pairs,
+            geometry(layer),
+        )
+        .unwrap();
+        words[base + MAP..base + MAP + MAP_WORDS].copy_from_slice(map.words());
+        for (i, p) in map.probabilities().iter().enumerate() {
+            words[base + PROB + i] = p.to_bits();
+        }
+        words[base + SELECTION..base + SELECTION + 4].copy_from_slice(&[
+            count as u32,
+            0,
+            (count * RANKS) as u32,
+            pairs.len() as u32,
+        ]);
+        meta[6] = pairs.len() as u32;
+        meta[16] = minimum_gap.to_bits();
+        words[base + META..base + META + META_WORDS].copy_from_slice(&*meta);
+        let mut bytes = Zeroizing::new(Vec::with_capacity(words.len() * 4));
+        for &word in words.iter() {
+            bytes.extend_from_slice(&word.to_le_bytes());
+        }
+        (bytes, table)
+    }
+    #[test]
+    fn four_router_full_source_owner_meta18_original_rank_wires() {
+        assert_eq!((META_WORDS, FRAME_WORDS, AUDIT_WORDS), (18, 9338, 448224));
+        for layer in [0, 23, 47] {
+            for ties in [false, true] {
+                let (mut bytes, table) = fixture(layer, 200, 4, ties);
+                let routes =
+                    audit_frame_frozen_sources(&bytes, &table, layer, 200, 4, geometry(layer))
+                        .unwrap();
+                assert_eq!(
+                    (routes.count(), routes.probability_bit_mismatches()),
+                    (4, 0)
+                );
+                assert!(routes.groups() <= 40);
+                let base = layer * FRAME_WORDS;
+                for offset in [
+                    META + 14,
+                    META + 15,
+                    META + 16,
+                    META + 17,
+                    SELECTION + 4 + 39 * 3,
+                    MAP + 803,
+                    PROB + 79,
+                    ROUTER_WORDS - 1,
+                ] {
+                    let first = (base + offset) * 4;
+                    let original = bytes[first..first + 4].to_vec();
+                    let corrupted = word(&bytes, base + offset) ^ 1;
+                    bytes[first..first + 4].copy_from_slice(&corrupted.to_le_bytes());
+                    assert!(
+                        audit_frame_frozen_sources(&bytes, &table, layer, 200, 4, geometry(layer))
+                            .is_err()
+                    );
+                    bytes[first..first + 4].copy_from_slice(&original);
+                }
+                assert!(
+                    super::super::audit_frame_frozen_sources(
+                        &bytes,
+                        &table,
+                        layer,
+                        200,
+                        3,
+                        geometry(layer)
+                    )
+                    .is_err()
+                );
+                bytes[AUDIT_WORDS * 4] = 1;
+                assert!(
+                    audit_frame_frozen_sources(&bytes, &table, layer, 200, 4, geometry(layer))
+                        .is_err()
+                );
+            }
+        }
+    }
+    #[test]
+    fn four_router_shader_keeps_typed_metadata_and_uniform_full_owner_gate() {
+        let source = Addressing::FrozenHost512.shader();
+        let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
+        let info = wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::empty(),
+        )
+        .validate(&module)
+        .unwrap();
+        for entry in &module.entry_points {
+            wgpu::naga::back::spv::write_vec(
+                &module,
+                &info,
+                &wgpu::naga::back::spv::Options {
+                    lang_version: (1, 3),
+                    ..Default::default()
+                },
+                Some(&wgpu::naga::back::spv::PipelineOptions {
+                    shader_stage: wgpu::naga::ShaderStage::Compute,
+                    entry_point: entry.name.clone(),
+                }),
+            )
+            .unwrap();
+        }
+        assert!(source.contains("9338u"));
+        assert!(source.contains("448224u"));
+        assert_ne!(
+            Kernel {
+                addressing: Addressing::FrozenHost512,
+                preflight: false
+            }
+            .id(),
+            super::super::Kernel {
+                addressing: super::super::Addressing::FrozenHost512,
+                preflight: false
+            }
+            .id()
+        );
+    }
 }

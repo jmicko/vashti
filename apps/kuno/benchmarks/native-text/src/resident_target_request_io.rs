@@ -83,6 +83,7 @@ struct Authority {
     context: usize,
     max_scopes: u64,
     scopes: u64,
+    four_rows: bool,
 }
 impl Authority {
     fn new(context: usize, warm: bool, actual_active: bool) -> Result<Self> {
@@ -90,6 +91,7 @@ impl Authority {
             return Err(rejected());
         }
         Ok(Self {
+            four_rows: false,
             phase: Phase::Fresh,
             context,
             max_scopes: if warm { 2 } else { 1 },
@@ -108,7 +110,12 @@ impl Authority {
     }
     fn validate_run(&self, start: usize, count: usize, actual: bool) -> Result<()> {
         self.active(actual)?;
-        if !(1..=3).contains(&count)
+        if !(1..=if self.four_rows && self.phase == Phase::Active {
+            4
+        } else {
+            3
+        })
+            .contains(&count)
             || start
                 .checked_add(count)
                 .is_none_or(|end| end > self.context)
@@ -252,6 +259,13 @@ pub(super) struct Permit {
     before: Option<Counters>,
 }
 impl Permit {
+    pub(super) fn enable_four_rows(&mut self) -> Result<()> {
+        if self.authority.phase == Phase::Active || self.authority.four_rows {
+            return Err(rejected());
+        }
+        self.authority.four_rows = true;
+        Ok(())
+    }
     #[allow(clippy::too_many_arguments)] // Construction captures separate ownership attestations.
     pub(super) fn new(
         binding: GraphBindingId,
@@ -484,6 +498,21 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn four_request_permission_never_changes_cold_or_closed_scope() {
+        let mut authority = Authority::new(13, true, false).unwrap();
+        authority.four_rows = true;
+        assert!(authority.validate_run(0, 4, false).is_err());
+        authority.validate_run(0, 1, false).unwrap();
+        authority.begin(1, true).unwrap();
+        authority.validate_run(1, 4, true).unwrap();
+        assert!(authority.validate_run(1, 5, true).is_err());
+        authority.end(13, false).unwrap();
+        assert!(authority.validate_run(1, 4, false).is_err());
+        let mut original = Authority::new(13, true, false).unwrap();
+        original.begin(1, true).unwrap();
+        assert!(original.validate_run(1, 4, true).is_err());
+    }
     #[test]
     fn construction_requires_exact_public_target_and_fixed_direct_stream() {
         for rows in [false, true] {
