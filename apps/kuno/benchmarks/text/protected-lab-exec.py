@@ -10,6 +10,14 @@ def selected_target_policy(environment, mtp=False):
         if (not mtp or selected.pop("KUNO_LAB_FROZEN_PARTITION_EXIT") != "1"
                 or selected.get("KUNO_LAB_TARGET_SOURCES") != "frozen-host-public"):
             raise ValueError("Partition exit requires explicit frozen public target sources")
+    if "KUNO_LAB_FROZEN_BANK_PLACEMENT" in selected:
+        # The preserve-placement diagnostic keeps the warm replay's actual
+        # routed VRAM residents; it never changes routing or arithmetic.
+        if (not mtp or selected.pop("KUNO_LAB_FROZEN_BANK_PLACEMENT") != "preserve-public"
+                or selected.get("KUNO_LAB_TARGET_SOURCES") != "frozen-host-public"
+                or selected.get("KUNO_LAB_SPECULATIVE_PUBLIC_ONLY") != "1"
+                or selected.get("KUNO_LAB_WARM_REPLAY") != "once"):
+            raise ValueError("Bank placement requires the canonical warm frozen public scope")
     if "KUNO_LAB_TARGET_SOURCES" in selected:
         spec = selected.get("KUNO_LAB_SPECULATIVE_PUBLIC_ONLY") == "1"
         language = selected.get("KUNO_LAB_LANGUAGE_PUBLIC_ONLY") == "1"
@@ -72,7 +80,17 @@ def selected_target_policy(environment, mtp=False):
             raise ValueError("Warm replay requires the one-shot public fixture")
     return selected
 
+def bank_placement_scope(environment):
+    if "KUNO_LAB_FROZEN_BANK_PLACEMENT" in environment:
+        if (environment.get("KUNO_LAB_FROZEN_BANK_PLACEMENT") != "preserve-public"
+                or environment.get("KUNO_LAB_TARGET_SOURCES") != "frozen-host-public"
+                or environment.get("KUNO_LAB_SPECULATIVE_PUBLIC_ONLY") != "1"
+                or environment.get("KUNO_LAB_WARM_REPLAY") != "once"):
+            raise ValueError("Bank placement requires the canonical warm frozen public scope")
+
+
 def memory_limit(environment, arguments):
+    bank_placement_scope(environment)
     if "KUNO_LAB_PUBLIC_HOST_CUBECL_ONLY" in environment or (len(arguments) > 2 and arguments[2] == "public-host-weight-cubecl-probe"):
         selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
         if (set(selected) != {"KUNO_LAB_PUBLIC_HOST_CUBECL_ONLY", "KUNO_PUBLIC_RECEIPT"}

@@ -39,6 +39,7 @@ pub(crate) struct Inputs {
     pub(crate) frozen_host_sources: bool,
     pub(crate) frozen_host_router: bool,
     pub(crate) frozen_partition_exit: bool,
+    pub(crate) preserve_routed_bank: bool,
     warm_replay: bool,
     pub(crate) verify3_dense: bool,
     pub(crate) verify3_fused: bool,
@@ -84,6 +85,7 @@ pub(crate) fn registration(
                     | "KUNO_LAB_TARGET_QSA"
                     | "KUNO_LAB_TARGET_SOURCES"
                     | "KUNO_LAB_FROZEN_PARTITION_EXIT"
+                    | "KUNO_LAB_FROZEN_BANK_PLACEMENT"
                     | "KUNO_LAB_WARM_REPLAY"
                     | "KUNO_LAB_TARGET_DENSE"
                     | "KUNO_LAB_TARGET_EXPERTS"
@@ -173,6 +175,13 @@ pub(crate) fn registration(
         Some(v) if v == "1" && frozen_host_sources => true,
         _ => return Err("partition exit requires explicit frozen public sources"),
     };
+    let preserve_routed_bank = match values.remove(OsStr::new("KUNO_LAB_FROZEN_BANK_PLACEMENT")) {
+        None => false,
+        Some(v) if v == "preserve-public" && frozen_host_sources && warm_replay => true,
+        _ => {
+            return Err("bank placement requires canonical warm frozen public sources");
+        }
+    };
     if frozen_host_sources
         && (!warm_replay
             || !request_reuse
@@ -202,6 +211,7 @@ pub(crate) fn registration(
         frozen_host_sources,
         frozen_host_router,
         frozen_partition_exit,
+        preserve_routed_bank,
         warm_replay,
         verify3_dense,
         verify3_fused,
@@ -654,10 +664,17 @@ pub(crate) fn run(
                         target.native_public_fill_counters(&executor)?;
                     let frozen_routes = if executor.target_frozen_host_source_identity.is_some() {
                         let counts = target.native_frozen_source_counters(&executor)?;
-                        if counts.host_routes == 0 || counts.vram_routes == 0 {
-                            return Err(
-                                "public CPU13 must exercise both actual source tiers".into()
-                            );
+                        // The canonical diagnostic placement must exercise both
+                        // actual source tiers. The explicit preserve variant
+                        // keeps the replay's actual routed residents; reading
+                        // every routed expert from VRAM is its measurement.
+                        let tiers_valid = if input.preserve_routed_bank {
+                            counts.vram_routes != 0
+                        } else {
+                            counts.host_routes != 0 && counts.vram_routes != 0
+                        };
+                        if !tiers_valid {
+                            return Err("public CPU13 actual source tier policy rejected".into());
                         }
                         Some(serde_json::json!({"vram_routes":counts.vram_routes,
                             "host_routes":counts.host_routes,"source_dispatches":counts.source_dispatches}))
@@ -676,8 +693,13 @@ pub(crate) fn run(
                     if actual_direct != input.public_existing_fill {
                         return Err("public fill frozen selection changed".into());
                     }
+                    let placement_scope = if input.preserve_routed_bank {
+                        "preserved actual routed VRAM resident set"
+                    } else {
+                        "deterministic diagnostic VRAM placement"
+                    };
                     Ok(
-                        serde_json::json!({"replay":replay,"device_router":(input.device_router || input.frozen_host_router) && replay == 1,"frozen_host_gpu_router":input.frozen_host_router && replay == 1,"frozen_host_inactive_partition_exit":frozen_partition_exit,"device_router_scope":if input.frozen_host_router {"authenticated actual512 VRAM/host sources; deferred strict original IDs and full vectors, experimental F32 probabilities"} else {"conditional actual all-hit warm13; strict original IDs and full vectors, experimental F32 probabilities"},"request_scope_closed_and_audited":input.request_reuse,"request_scope":request_scope_receipt,"request_close_ns_inside_timing":request_close_ns,"host_io":host_io,"model_weights_warm":replay==1,"initial_prefill_ns":initial_prefill_ns,"gpu_router_calls":executor.gpu_router_calls-before_gpu_routers,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"verify3_fused_calls":executor.target_verify3_fused_calls-before_fused,"target_host_phase_ns":host_phase_ns,"load_and_initial_prefill_physical_read_bytes":load_disk_after.checked_sub(replay_disk_before).ok_or("public process read counter regressed")?,"timed_physical_read_bytes":timed_physical_read_bytes,"target_fill_counters_before":fill_counter_record(before_fills),"target_fill_counters_after":fill_counter_record(after_fills),"frozen_source_routes":frozen_routes,"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"timing_scope":if input.frozen_host_router && replay == 1 {"original CPU13 routes and weights; deterministic diagnostic VRAM placement plus immutable direct host sources and deferred original GPU route audits, no demand expert uploads; full vectors and actual repair included"} else if input.frozen_host_sources && replay == 1 {"original CPU13 routes and weights; deterministic diagnostic VRAM placement plus immutable direct host sources, no demand expert uploads; full vectors and actual repair included"} else if input.device_router && replay == 1 {"conditional actual all-hit GPU routing; deferred original-route audit, public checks and actual repair included"} else {"original normal routing/demand uploads; public checks and actual repair included"},"load_and_initial_prefill_cumulative_ns":load_ns,"accepted_tokens":accepted_tokens,"elapsed_ns":elapsed_ns,"accepted_tokens_per_second":accepted_tokens as f64*1e9/elapsed_ns as f64,"proposed_drafts":proposed_tokens,"accepted_drafts":accepted_drafts,"rounds":rounds,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"draft_traffic":{"host_read_calls":after.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after.host_read_bytes-before_traffic.host_read_bytes,"explicit_dispatches":after.explicit_dispatches-before_traffic.explicit_dispatches,"private_upload_calls":after.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after.followup_copy_calls-before_traffic.followup_copy_calls}}),
+                        serde_json::json!({"replay":replay,"device_router":(input.device_router || input.frozen_host_router) && replay == 1,"frozen_host_gpu_router":input.frozen_host_router && replay == 1,"frozen_host_inactive_partition_exit":frozen_partition_exit,"frozen_bank_placement":if input.preserve_routed_bank && replay == 1 {"preserve-routed"} else {"cpu13-diagnostic"},"device_router_scope":if input.frozen_host_router {"authenticated actual512 VRAM/host sources; deferred strict original IDs and full vectors, experimental F32 probabilities"} else {"conditional actual all-hit warm13; strict original IDs and full vectors, experimental F32 probabilities"},"request_scope_closed_and_audited":input.request_reuse,"request_scope":request_scope_receipt,"request_close_ns_inside_timing":request_close_ns,"host_io":host_io,"model_weights_warm":replay==1,"initial_prefill_ns":initial_prefill_ns,"gpu_router_calls":executor.gpu_router_calls-before_gpu_routers,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"verify3_fused_calls":executor.target_verify3_fused_calls-before_fused,"target_host_phase_ns":host_phase_ns,"load_and_initial_prefill_physical_read_bytes":load_disk_after.checked_sub(replay_disk_before).ok_or("public process read counter regressed")?,"timed_physical_read_bytes":timed_physical_read_bytes,"target_fill_counters_before":fill_counter_record(before_fills),"target_fill_counters_after":fill_counter_record(after_fills),"frozen_source_routes":frozen_routes,"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"timing_scope":if input.frozen_host_router && replay == 1 {format!("original CPU13 routes and weights; {placement_scope} plus immutable direct host sources and deferred original GPU route audits, no demand expert uploads; full vectors and actual repair included")} else if input.frozen_host_sources && replay == 1 {format!("original CPU13 routes and weights; {placement_scope} plus immutable direct host sources, no demand expert uploads; full vectors and actual repair included")} else if input.device_router && replay == 1 {"conditional actual all-hit GPU routing; deferred original-route audit, public checks and actual repair included".to_string()} else {"original normal routing/demand uploads; public checks and actual repair included".to_string()},"load_and_initial_prefill_cumulative_ns":load_ns,"accepted_tokens":accepted_tokens,"elapsed_ns":elapsed_ns,"accepted_tokens_per_second":accepted_tokens as f64*1e9/elapsed_ns as f64,"proposed_drafts":proposed_tokens,"accepted_drafts":accepted_drafts,"rounds":rounds,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"draft_traffic":{"host_read_calls":after.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after.host_read_bytes-before_traffic.host_read_bytes,"explicit_dispatches":after.explicit_dispatches-before_traffic.explicit_dispatches,"private_upload_calls":after.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after.followup_copy_calls-before_traffic.followup_copy_calls}}),
                     )
                 })()?;
                 println!("public_speculative_full_pass_accepted replay={replay}");
@@ -688,8 +710,11 @@ pub(crate) fn run(
                     if input.frozen_host_sources {
                         println!("public_frozen_host_prepare_start");
                         let preparation = Instant::now();
-                        let (plan, fills) =
-                            target.prepare_public_host_sources(&mut executor, &cancel)?;
+                        let (plan, fills) = target.prepare_public_host_sources(
+                            &mut executor,
+                            &cancel,
+                            input.preserve_routed_bank,
+                        )?;
                         println!("public_frozen_host_prepare_complete");
                         prepared_host
                             .set(plan)
@@ -978,6 +1003,65 @@ mod tests {
         assert!(registration(&args, inherited, build).is_err());
         selected.push(flag);
         assert!(registration(&args, selected, build).is_err());
+    }
+    #[test]
+    fn bank_placement_is_explicit_warm_frozen_only_and_rejects_malformed_flags() {
+        let args = ["lab", "intel", "daslab-speculative-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        let mut selected = env();
+        for (key, value) in [
+            ("KUNO_LAB_DEVICE_DISPATCH", "inline"),
+            ("KUNO_LAB_TARGET_FILL", "direct-public"),
+            ("KUNO_LAB_TARGET_IO", "chunk"),
+            ("KUNO_LAB_TARGET_REUSE", "request"),
+            ("KUNO_LAB_TARGET_SOURCES", "frozen-host-public"),
+            ("KUNO_LAB_WARM_REPLAY", "once"),
+        ] {
+            selected.push((key.into(), value.into()));
+        }
+        assert!(
+            !registration(&args, selected.clone(), build)
+                .unwrap()
+                .preserve_routed_bank
+        );
+        let flag = (
+            "KUNO_LAB_FROZEN_BANK_PLACEMENT".into(),
+            "preserve-public".into(),
+        );
+        let mut valid = selected.clone();
+        valid.push(flag.clone());
+        let registered = registration(&args, valid.clone(), build).unwrap();
+        assert!(registered.preserve_routed_bank);
+        // The measurement composes with the accepted exit candidate.
+        valid.push(("KUNO_LAB_FROZEN_PARTITION_EXIT".into(), "1".into()));
+        let composed = registration(&args, valid.clone(), build).unwrap();
+        assert!(composed.preserve_routed_bank && composed.frozen_partition_exit);
+        for raw in [
+            "",
+            "0",
+            "true",
+            "preserve",
+            "preserve-public ",
+            "diagnostic",
+        ] {
+            let mut invalid = selected.clone();
+            invalid.push(("KUNO_LAB_FROZEN_BANK_PLACEMENT".into(), raw.into()));
+            assert!(registration(&args, invalid, build).is_err());
+        }
+        // Without warm replay or without frozen sources the flag is rejected.
+        for key in ["KUNO_LAB_TARGET_SOURCES", "KUNO_LAB_WARM_REPLAY"] {
+            let mut invalid = valid.clone();
+            invalid.retain(|(k, _)| k != key);
+            invalid.push((
+                "KUNO_LAB_FROZEN_BANK_PLACEMENT".into(),
+                "preserve-public".into(),
+            ));
+            assert!(registration(&args, invalid, build).is_err());
+        }
+        // Duplicates remain rejected.
+        let mut duplicate = valid.clone();
+        duplicate.push(flag);
+        assert!(registration(&args, duplicate, build).is_err());
     }
     #[test]
     fn qsa_gpu_selection_is_explicit_and_rejects_malformed_or_duplicate_policy() {

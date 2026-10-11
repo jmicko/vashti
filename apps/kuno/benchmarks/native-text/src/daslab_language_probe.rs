@@ -636,7 +636,8 @@ pub(crate) fn run(
             if input.frozen_host_sources {
                 println!("public_frozen_host_prepare_start");
                 let preparation = Instant::now();
-                let (plan, fills) = target.prepare_public_host_sources(&mut executor, &cancel)?;
+                let (plan, fills) =
+                    target.prepare_public_host_sources(&mut executor, &cancel, false)?;
                 println!("public_frozen_host_prepare_complete");
                 prepared_host
                     .set(plan)

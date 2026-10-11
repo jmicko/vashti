@@ -2038,6 +2038,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         &mut self,
         executor: &mut GpuExecutor<'f>,
         cancel: &AtomicBool,
+        preserve_routed_bank: bool,
     ) -> Result<(
         crate::public_host_expert_attachment::PreparedPlan<'m, 'f>,
         crate::expert_banks::FillStats,
@@ -2064,25 +2065,26 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .moe
             .validate_public_warm_boundary(executor, self.graph, &self.arena)
             .map_err(|_| Error::InvalidFormat("public host prepare routed completed boundary"))?;
-        let fills = if self.context == 13 && native.public_warm_replay.is_some() {
-            // Deterministic PHYSICAL placement exercises both actual tiers in
-            // the complete CPU13 numerical gate. It never changes routing.
-            executor.complete_public_host_validation_banks(
-                &boundary,
-                self.graph,
-                &self.arena,
-                self.b.fault,
-                cancel,
-            )?
-        } else {
-            executor.complete_public_host_banks(
-                &boundary,
-                self.graph,
-                &self.arena,
-                self.b.fault,
-                cancel,
-            )?
-        };
+        let fills =
+            if self.context == 13 && native.public_warm_replay.is_some() && !preserve_routed_bank {
+                // Deterministic PHYSICAL placement exercises both actual tiers in
+                // the complete CPU13 numerical gate. It never changes routing.
+                executor.complete_public_host_validation_banks(
+                    &boundary,
+                    self.graph,
+                    &self.arena,
+                    self.b.fault,
+                    cancel,
+                )?
+            } else {
+                executor.complete_public_host_banks(
+                    &boundary,
+                    self.graph,
+                    &self.arena,
+                    self.b.fault,
+                    cancel,
+                )?
+            };
         self.completed_native_projection_boundary(executor)
             .map_err(|_| Error::InvalidFormat("public host prepare filled completed boundary"))?;
         let prepared = crate::public_host_expert_attachment::PreparedPlan::new(
