@@ -163,6 +163,7 @@ pub struct Geometry {
     workgroup_tables: bool,
     shared_down_scales: bool,
     shared_gate_up_factors: bool,
+    four_row_down: bool,
 }
 impl Geometry {
     pub fn new(
@@ -222,6 +223,7 @@ impl Geometry {
             workgroup_tables: false,
             shared_down_scales: false,
             shared_gate_up_factors: false,
+            four_row_down: false,
         })
     }
     /// Explicit source-only public profile. These virtual slots are NOT
@@ -358,6 +360,43 @@ impl Geometry {
     pub(crate) fn shared_gate_up_factors(self) -> bool {
         self.shared_gate_up_factors
     }
+    /// Four output rows per64-thread cube, retaining the original64 virtual
+    /// lane accumulators and exact tree. Storage owners and route maps do not
+    /// change; the matching explicit down entrypoint must consume this grid.
+    #[allow(dead_code)]
+    pub(crate) fn with_four_row_down(mut self) -> Result<Self, &'static str> {
+        if !self.frozen_host_sources
+            || !self.inactive_partition_exit
+            || self.capacity != 512
+            || self.tile != 8
+            || self.hidden != 2560
+            || self.ff != 640
+            || self.secondary_partition
+            || self.gate_policy != GatePolicy::Generic
+            || self.reduction_policy != ReductionPolicy::AllMembers
+            || !matches!(self.projections[2].dtype, super::IQ4_NL | super::Q2_0)
+            || self.four_row_down
+        {
+            return Err("grouped frozen four-row-down policy");
+        }
+        self.four_row_down = true;
+        Ok(self)
+    }
+    #[allow(dead_code)]
+    pub(crate) fn four_row_down(self) -> bool {
+        self.four_row_down
+    }
+    /// Per-dispatch shared scratch, not a MAIN allocation or owning charge.
+    #[allow(dead_code)]
+    pub(crate) fn down_shared_memory_bytes(self) -> usize {
+        let rows = if self.four_row_down { 4 } else { 1 };
+        LANES * self.tile * std::mem::size_of::<f32>()
+            + if self.shared_down_scales && self.projections[2].dtype == super::IQ4_NL {
+                rows * (self.ff / 32) * std::mem::size_of::<f32>()
+            } else {
+                0
+            }
+    }
     /// Narrow immutable32+16 partition; ordinary flat48 remains unchanged.
     pub(crate) fn stationary_secondary(projections: [Projection; 3]) -> Result<Self, &'static str> {
         let [gate, up, down] = projections;
@@ -469,7 +508,11 @@ impl Geometry {
             return Err("grouped dispatch group count");
         }
         Ok(CubeCount::Static(
-            if down { self.hidden } else { self.ff } as u32,
+            if down {
+                self.hidden / if self.four_row_down { 4 } else { 1 }
+            } else {
+                self.ff
+            } as u32,
             groups as u32,
             (self.member_capacity() / self.tile) as u32,
         ))
@@ -2174,6 +2217,251 @@ fn grouped_down_inner(
     }
 }
 
+/// Four original down rows in one64-thread frozen cube. Each physical thread
+/// retains four virtual original64-lane accumulators; no dot is regrouped.
+#[cube(launch, launch_unchecked)]
+#[allow(clippy::too_many_arguments)]
+pub fn grouped_down_frozen_four_rows(
+    down: &Array<u32>,
+    activations: &Array<f32>,
+    map: &Array<u32>,
+    partials: &mut Array<f32>,
+    status: &mut Array<u32>,
+    map_first: usize,
+    act_first: usize,
+    act_stride: usize,
+    partial_first: usize,
+    partial_stride: usize,
+    status_first: usize,
+    first_slot: usize,
+    slot_count: usize,
+    #[comptime] hidden: usize,
+    #[comptime] ff: usize,
+    #[comptime] down_dtype: u32,
+    #[comptime] down_row_bytes: usize,
+    #[comptime] tile: usize,
+) {
+    grouped_down_four_rows_inner(
+        down,
+        activations,
+        map,
+        partials,
+        status,
+        map_first,
+        act_first,
+        act_stride,
+        partial_first,
+        partial_stride,
+        status_first,
+        first_slot,
+        slot_count,
+        hidden,
+        ff,
+        down_dtype,
+        down_row_bytes,
+        tile,
+        false,
+    );
+}
+
+/// The same four-row tree with exact original IQ4_NL scale staging. Q2_0
+/// compiles to the identical four-row packed-value path without scale scratch.
+#[cube(launch, launch_unchecked)]
+#[allow(clippy::too_many_arguments)]
+pub fn grouped_down_frozen_four_rows_shared_scales(
+    down: &Array<u32>,
+    activations: &Array<f32>,
+    map: &Array<u32>,
+    partials: &mut Array<f32>,
+    status: &mut Array<u32>,
+    map_first: usize,
+    act_first: usize,
+    act_stride: usize,
+    partial_first: usize,
+    partial_stride: usize,
+    status_first: usize,
+    first_slot: usize,
+    slot_count: usize,
+    #[comptime] hidden: usize,
+    #[comptime] ff: usize,
+    #[comptime] down_dtype: u32,
+    #[comptime] down_row_bytes: usize,
+    #[comptime] tile: usize,
+) {
+    grouped_down_four_rows_inner(
+        down,
+        activations,
+        map,
+        partials,
+        status,
+        map_first,
+        act_first,
+        act_stride,
+        partial_first,
+        partial_stride,
+        status_first,
+        first_slot,
+        slot_count,
+        hidden,
+        ff,
+        down_dtype,
+        down_row_bytes,
+        tile,
+        true,
+    );
+}
+
+#[cube]
+#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
+fn grouped_down_four_rows_inner(
+    down: &Array<u32>,
+    activations: &Array<f32>,
+    map: &Array<u32>,
+    partials: &mut Array<f32>,
+    status: &mut Array<u32>,
+    map_first: usize,
+    act_first: usize,
+    act_stride: usize,
+    partial_first: usize,
+    partial_stride: usize,
+    status_first: usize,
+    first_slot: usize,
+    slot_count: usize,
+    #[comptime] hidden: usize,
+    #[comptime] ff: usize,
+    #[comptime] down_dtype: u32,
+    #[comptime] down_row_bytes: usize,
+    #[comptime] tile: usize,
+    #[comptime] shared_down_scales: bool,
+) {
+    let first_feature = CUBE_POS_X as usize * 4;
+    let group = CUBE_POS_Y as usize;
+    let first_member = CUBE_POS_Z as usize * tile;
+    let lane = UNIT_POS_X as usize;
+    let row = lane / 16;
+    let row_lane = lane % 16;
+    let feature = first_feature + row;
+    // Only public cube coordinates and the shared group map enter the exit.
+    // Frozen geometry fixes hidden=2560 and exactly four complete rows/cube.
+    let mut active = group_active(map, map_first, group, first_slot, slot_count, tile)
+        && first_feature + 3 < hidden;
+    if active {
+        if first_member >= map[map_first + LENGTHS + group] as usize {
+            active = false;
+        }
+    }
+    if !active {
+        terminate!();
+    }
+    let slot = map[map_first + SLOTS + group] as usize - first_slot;
+    let length = map[map_first + LENGTHS + group] as usize;
+    let row_offset = (slot * hidden + feature) * down_row_bytes;
+    let mut partial = Array::<f32>::new(comptime!(4 * tile));
+    #[unroll]
+    for virtual_lane in 0_usize..4 {
+        #[unroll]
+        for member in 0..tile {
+            partial[virtual_lane * tile + member] = 0.;
+        }
+    }
+    if comptime!(shared_down_scales && down_dtype == IQ4_NL) {
+        let mut scales = SharedMemory::<f32>::new(comptime!(4 * (ff / 32)));
+        //64 physical lanes initialize all80 scales in two bounded rounds.
+        // The source row for each scale is independent of the lane's dot row.
+        #[unroll]
+        for scale_tile in 0..comptime!((4 * (ff / 32)).div_ceil(LANES)) {
+            let index = scale_tile * LANES + lane;
+            if index < comptime!(4 * (ff / 32)) {
+                let scale_row = index / comptime!(ff / 32);
+                let block = index % comptime!(ff / 32);
+                let offset = (slot * hidden + first_feature + scale_row) * down_row_bytes;
+                scales[index] = iq4_nl_scale(down, offset, block);
+            }
+        }
+        sync_cube();
+        for column_tile in 0..comptime!(ff.div_ceil(LANES)) {
+            #[unroll]
+            for virtual_lane in 0_usize..4 {
+                let column = column_tile * LANES + row_lane + virtual_lane * 16;
+                if column < ff {
+                    let weight = iq4_nl_value_with_scale(
+                        down,
+                        row_offset,
+                        column,
+                        scales[row * comptime!(ff / 32) + column / 32],
+                    );
+                    #[unroll]
+                    for member in 0..tile {
+                        if first_member + member < length {
+                            let route = map
+                                [map_first + MEMBERS + group * MAX_BATCH + first_member + member]
+                                as usize;
+                            partial[virtual_lane * tile + member] +=
+                                weight * activations[act_first + route * act_stride + column];
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        for column_tile in 0..comptime!(ff.div_ceil(LANES)) {
+            #[unroll]
+            for virtual_lane in 0_usize..4 {
+                let column = column_tile * LANES + row_lane + virtual_lane * 16;
+                if column < ff {
+                    let weight = packed_value(down, row_offset, column, down_dtype);
+                    #[unroll]
+                    for member in 0..tile {
+                        if first_member + member < length {
+                            let route = map
+                                [map_first + MEMBERS + group * MAX_BATCH + first_member + member]
+                                as usize;
+                            partial[virtual_lane * tile + member] +=
+                                weight * activations[act_first + route * act_stride + column];
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut sums = SharedMemory::<f32>::new(comptime!(4 * 16 * tile));
+    #[unroll]
+    for member in 0..tile {
+        // Original stride32 then stride16 additions, with identical operands
+        // and parentheses, precede the remaining original strides8..1.
+        let lower = partial[member] + partial[2 * tile + member];
+        let upper = partial[tile + member] + partial[3 * tile + member];
+        sums[(row * tile + member) * 16 + row_lane] = lower + upper;
+    }
+    sync_cube();
+    let mut stride = 8_usize;
+    while stride > 0 {
+        if row_lane < stride {
+            #[unroll]
+            for member in 0..tile {
+                let index = (row * tile + member) * 16 + row_lane;
+                sums[index] += sums[index + stride];
+            }
+        }
+        sync_cube();
+        stride /= 2;
+    }
+    if row_lane == 0 {
+        #[unroll]
+        for member in 0..tile {
+            if first_member + member < length {
+                let route =
+                    map[map_first + MEMBERS + group * MAX_BATCH + first_member + member] as usize;
+                partials[partial_first + route * partial_stride + feature] =
+                    sums[(row * tile + member) * 16];
+                if feature == 0 {
+                    status[status_first + MAX_ROUTES + route] = 1;
+                }
+            }
+        }
+    }
+}
+
 /// Run once after every wave's completed consumers. Original rank0..9 order;
 /// all readiness flags remain mandatory separate acceptance input.
 #[cube(launch, launch_unchecked)]
@@ -2606,6 +2894,7 @@ mod tests {
             workgroup_tables: false,
             shared_down_scales: false,
             shared_gate_up_factors: false,
+            four_row_down: false,
         };
         assert_eq!(g.scratch_bytes(true).unwrap(), 4480 * 1024);
     }
@@ -5329,6 +5618,7 @@ mod tests {
     }
     include!("iq4_down_scale_tests.rs");
     include!("iq_gate_up_factor_tests.rs");
+    include!("down_four_row_tests.rs");
 }
 #[cfg(test)]
 mod frozen_source_tests {
