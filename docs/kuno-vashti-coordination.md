@@ -3479,3 +3479,33 @@ User steering after this receipt: continue native optimization with target and
 full Q8 MTP on Intel B70 only. Defer Nvidia experiments; next physical candidates
 must use the accepted Intel placement. This is internal benchmark selection,
 not authorization for an untested installed/runtime/API default change.
+
+
+Following Intel-only steering, grouped PLE sourceleaf9f8462e/controller513fe02
+are integrated onto accepted HALfix86882f9. The exact contract is now in
+[kuno-native-target-grouped-ple.md](kuno-native-target-grouped-ple.md). Root
+integrated source review/CPU checks and protected guard/helper preparation are
+underway. Both new policies remain default-off. Fresh full original physical
+gates and separate Intel-only timing comparisons are still required; no new
+performance, installed-service or consumer change is accepted by this source
+integration alone.
+
+
+### Intel-only grouped-read/source gate,2026-10-11
+
+Grouped PLE source9f8462e/controller513fe02 and protected registrationde59c75
+are now integrated above accepted HALfix86882f9. The integrated read-only review
+finds no blocker;117 relevant Rust tests and strict locked pure-direct all-target
+Clippy with two CPU jobs pass. Both original owning/fault proofs and unchanged
+CPU13 reference/tolerances remain mandatory.27 protected-launcher tests and nine
+new external fixed Intel-only PLE/DOWN/combined labels pass exact-selector and
+original host-cap checks. Fake Xe metadata was used only in those source checks;
+physical trials require a fresh privileged memory snapshot after draining.
+
+Next artifact will independently gate grouped PLE on original cold/warm CPU13,
+then compare normal compiler-idle Intel Q8 MTP code200 control/candidate. DOWN
+stride stays off during that pair and needs its own original numerical/speed
+gate before any combination. New policies remain default-off; source success
+does not establish physical numerical, throughput or30tokens/s acceptance.
+Root owns GPUs/services; canonical Vashti and installed/public behavior remain
+unchanged. Required Vashti changes:none.

@@ -9,7 +9,7 @@ User steering after the completed three-way comparison: continue optimization
 with target and full Q8 MTP on Intel B70 only; defer Nvidia experiments.
 Ordinary installed defaults remain unchanged until their own integration gate.
 
-Latest full physical source isac78f00/v159, frozen binarySHA256
+Accepted GU scheduling physical source isac78f00/v159, frozen binarySHA256
 `c04d49a6ca11115c0bba0b1acc38019ae2f6f4b1f323cc0f9b6608eaa639bc7d`.
 Encoded-register preparation and explicit GU stride-four pass the unchanged
 original CPU13 cold/warm vectors/carries/targetgreedy, real repair, full1381
@@ -88,18 +88,17 @@ Combined source checks and the v159 physical gates above pass. Separate
 original four-row DOWN stride scheduling is integrated(ec367fb) but remains
 unselected/physically untested; the protected guard still needs its explicit
 selector handler before a GPU gate. Keep this effect separate from placement.
-Grouped PLE reads remain an isolated, unselected source candidate at
-`/home/jmicko/.codex/worktrees/kuno-grouped-ple-controller/vashti`: leaf33b4de7
-(equivalent0d09330), controllercce4f66, based748b235. All13 grouped tests and78
-controller/helper checks plus strict Clippy pass. Read
-[kuno-native-target-grouped-ple.md](kuno-native-target-grouped-ple.md) from that
-owner tree before integration. Its exact specification is copied here for
-resumption; the leaf/controller implementation is not yet integrated. Before any GPU
-comparison, root must integrate it with the86882f9 HAL fix, add the exact
-protected/helper selector, freeze a clean artifact, pass unchanged full CPU13/
-repair/owner/recovery gates, then measure same-artifact normal runs with source
-unselected/selected. Reserve before model, select only after accepted prefill/
-source attachment before requestIO; no global GR math or changed owner budgets.
+Grouped PLE leaf/controller are integrated9f8462e/513fe02 onto the accepted
+86882f9 HAL device-identity fix. Original source commits33b4de7/cce4f66 remain
+clean at `/home/jmicko/.codex/worktrees/kuno-grouped-ple-controller/vashti`.
+Read [the exact grouped PLE contract](kuno-native-target-grouped-ple.md).
+All13 grouped tests and78 owner controller/helper checks plus strict Clippy pass;
+root integrated CPU/source review is underway. Policies remain default-off.
+Protected guard/helper integration is being prepared; no new physical or speed
+acceptance yet. Fresh freeze must pass unchanged full CPU13/repair/owner/recovery
+before Intel-only normal comparisons. Reserve before model; select only after
+accepted prefill/source attachment before requestIO. No global GR math or changed
+owner budgets. Test PLE separately from DOWN stride before combining.
 Root owns the guard/helper and all shared GPU work.
 
 Earlier e16c549/v156 ThreeGdn full gates pass at8.489327 normalcode200; control
@@ -695,3 +694,23 @@ installation, and release. Record exact source/binary/helper/reference hashes,
 trial policy and seed, acceptance failures as well as successes, measured token
 counts, actual RAM/VRAM recovery, and which claims remain untested. A source commit
 or clean device operator alone never establishes production readiness or speed.
+
+
+### Intel-only grouped-read/source gate,2026-10-11
+
+Grouped PLE source9f8462e/controller513fe02 and protected registrationde59c75
+are now integrated above accepted HALfix86882f9. The integrated read-only review
+finds no blocker;117 relevant Rust tests and strict locked pure-direct all-target
+Clippy with two CPU jobs pass. Both original owning/fault proofs and unchanged
+CPU13 reference/tolerances remain mandatory.27 protected-launcher tests and nine
+new external fixed Intel-only PLE/DOWN/combined labels pass exact-selector and
+original host-cap checks. Fake Xe metadata was used only in those source checks;
+physical trials require a fresh privileged memory snapshot after draining.
+
+Next artifact will independently gate grouped PLE on original cold/warm CPU13,
+then compare normal compiler-idle Intel Q8 MTP code200 control/candidate. DOWN
+stride stays off during that pair and needs its own original numerical/speed
+gate before any combination. New policies remain default-off; source success
+does not establish physical numerical, throughput or30tokens/s acceptance.
+Root owns GPUs/services; canonical Vashti and installed/public behavior remain
+unchanged. Required Vashti changes:none.
