@@ -5,31 +5,31 @@ Updated2026-10-11: the user restored GPU access/sudo and resumed the existing
 This supersedes the historical stop instructions below; it does not authorize
 API/UI changes, installation or release. Canonical Vashti is unchanged.
 
-Current source `76ffd66` includes cooperative leaves `4f23abd`/`ce78d39`, root
-selection/receipt composition `042e905`, and runtime-matching shader proofs.
-v148 SHA256 `dc795837174239c6a91bd458e082f5402787494f3d0702d4f226b5395268e55a`
-passes complete original cold/warm CPU13 vectors/carries/greedies/real repair,
-full owning closure and physical recovery. Warm12 continuations take2.49330s
-(4.81289tokens/s), a diagnostic placement result, not normal throughput.
-Same-artifact ordered code200 comparison is7.73410 control /6.90538 combined
-continuation tokens/s (-10.7149%); candidate remains default-off. This single
-ordered pair is not a repeated performance claim. Original repair and complete
-closure pass, with physical recovery and unchanged fault counts.
+Current integrated source includes original GU factor and Q8-head broadcast
+leaves1ba718e/0675594 and completed parent selection030a20c. Frozen v149 SHA256
+`cd1c32acca4004a3ca3ba485cc658a0cee8331270bd18f1c2c417bfd1e57e57f`
+passes original full cold/warm CPU13 vectors/carries/greedies/actual repair and
+full owner closure. Warm12/2.389274810s=5.02244tokens/s is a placement diagnostic.
+Normal ordered code200 is8.11398 control /7.68506 GU factors; no gain. Broadcast
+head-only normal timing was not run; do not claim its speed from combined CPU13.
+Both policies remain default-off. v148 cooperative table/down-scale candidate
+also regressed normal code200 (7.73410→6.90538). Numeric evidence is in the root
+optimization receipt v148/v149 sections. Neither30t/s nor production accepted.
 
-Lab flags: `KUNO_LAB_FROZEN_TABLES=workgroup-public` and independently
-`KUNO_LAB_FROZEN_DOWN_SCALES=shared-public`; both require original frozen
-public sources and partition exit. Actual completed attachment flags must match
-requests. Private/workgroup table modes exclude each other. No default changes.
-Exact policy is in the final section of the all-row plan; numeric evidence is
-under `v148_cooperative_physical` in the root receipt. Never infer speed from
-source-only tests or this short CPU13 fixture. Two further isolated source
-experiments are being prepared: GU block-factor staging and Q8-draft-head scale
-broadcast, preserving original arithmetic. Neither yet has GPU acceptance.
+Next integrated source-only leaves are four-row DOWNf7bb253 and cooperative
+Q8-head scales9dde5da. Parent actual-selection/receipt composition and guarded
+launchers are being frozen for v150. Exact default-off selectors are in the final
+all-row plan sections. Full original GPU CPU13 and normal timing remain pending
+for these new policies. Two-row GU is separate source work in progress; bounded
+RAM→VRAM staging is a further proposed internal candidate. No installed/API/UI
+change. Canonical Vashti remains unchanged; required Vashti changes:none.
 
-Fresh recovery2026-10-11 12:33:49UTC: Intel50,688,000B, NVIDIA compute0,
-admission normal/idle, allthree services HTTP200, sameboot and GPU faults0.
-Protected benchmark owns admission temporarily for each following GPU trial;
-root controls shared devices and agents must hold CPU builds during timed decode.
+Root owns shared hardware; CPU builds must hold during timed decode. All finished
+trials restore B70baseline50,688,000B, NVIDIA compute0, normal admission/allthree
+HTTPservices200 and unchanged classified faults. These recovery snapshots are
+historical; check live state before later runs. Root preserves fixed public
+seed424242, original files/vectors/tolerances, target greedy verification, real
+repair and private owning erasure. No prompt/output/routing IDs saved in receipts.
 
 ## Historical stop checkpoint from 2026-10-10
 

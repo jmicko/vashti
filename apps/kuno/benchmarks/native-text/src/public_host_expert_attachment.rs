@@ -161,10 +161,15 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
         workgroup_tables: bool,
         shared_down_scales: bool,
         shared_gate_up_factors: bool,
+        four_row_down: bool,
         cancel: &AtomicBool,
     ) -> Result<Attachment<'plan, 'model, 'file>> {
         u::cancel(cancel)?;
-        if ((private_tables || workgroup_tables || shared_down_scales || shared_gate_up_factors)
+        if ((private_tables
+            || workgroup_tables
+            || shared_down_scales
+            || shared_gate_up_factors
+            || four_row_down)
             && !inactive_partition_exit)
             || (private_tables && workgroup_tables)
         {
@@ -279,7 +284,8 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
         if owners.len() != mirror::PAGES || registered.len() != mirror::PAGES {
             return Err(rejected());
         }
-        let sources = if shared_gate_up_factors
+        let sources = if four_row_down
+            || shared_gate_up_factors
             || shared_down_scales && (private_tables || workgroup_tables)
         {
             Sources::new_with_policy(
@@ -293,6 +299,7 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
                 workgroup_tables,
                 shared_down_scales,
                 shared_gate_up_factors,
+                four_row_down,
             )
         } else if workgroup_tables {
             Sources::new_with_workgroup_tables(

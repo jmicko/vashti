@@ -93,6 +93,7 @@ pub(crate) struct Inputs {
     pub(crate) fused_sweeps: bool,
     draft_profile: Profile,
     mtp_q8_head_broadcast: bool,
+    mtp_q8_head_shared_scales: bool,
     pub(crate) gpu_qsa_selector: bool,
     pub(crate) frozen_host_sources: bool,
     pub(crate) frozen_host_router: bool,
@@ -101,6 +102,7 @@ pub(crate) struct Inputs {
     pub(crate) frozen_workgroup_tables: bool,
     pub(crate) frozen_shared_down_scales: bool,
     pub(crate) frozen_shared_gate_up_factors: bool,
+    pub(crate) frozen_four_row_down: bool,
     pub(crate) verify3_dense: bool,
     pub(crate) verify3_fused: bool,
     pub(crate) prepared_experts: bool,
@@ -148,6 +150,7 @@ pub(crate) fn registration(
                     | "KUNO_LAB_FROZEN_TABLES"
                     | "KUNO_LAB_FROZEN_DOWN_SCALES"
                     | "KUNO_LAB_FROZEN_GU_FACTORS"
+                    | "KUNO_LAB_FROZEN_DOWN_ROWS"
                     | "KUNO_LAB_TARGET_ROUTER"
                     | "KUNO_LAB_TARGET_DENSE"
                     | "KUNO_LAB_TARGET_EXPERTS"
@@ -220,13 +223,24 @@ pub(crate) fn registration(
         Some(v) if v == "device-frozen-public" && frozen_host_sources => true,
         _ => return Err("source router requires canonical device-frozen-public"),
     };
+    let frozen_four_row_down = match values.remove(OsStr::new("KUNO_LAB_FROZEN_DOWN_ROWS")) {
+        None => false,
+        Some(v) if v == "four-public" && frozen_host_sources && frozen_partition_exit => true,
+        _ => return Err("four-row down requires canonical public frozen partition exit"),
+    };
     let raw_profile = values.remove(OsStr::new("KUNO_LAB_MTP_PROFILE"));
     let draft_profile = Profile::parse(raw_profile.as_deref())?;
-    let mtp_q8_head_broadcast = match values.remove(OsStr::new("KUNO_LAB_MTP_Q8_HEAD")) {
-        None => false,
-        Some(v) if v == "broadcast-public" && draft_profile == Profile::SelfContainedQ8 => true,
-        _ => return Err("head broadcast requires canonical public self-contained Q8 draft"),
-    };
+    let (mtp_q8_head_broadcast, mtp_q8_head_shared_scales) =
+        match values.remove(OsStr::new("KUNO_LAB_MTP_Q8_HEAD")) {
+            None => (false, false),
+            Some(v) if v == "broadcast-public" && draft_profile == Profile::SelfContainedQ8 => {
+                (true, false)
+            }
+            Some(v) if v == "shared-public" && draft_profile == Profile::SelfContainedQ8 => {
+                (false, true)
+            }
+            _ => return Err("head scales require canonical public self-contained Q8 draft"),
+        };
     let raw = values.remove(OsStr::new("KUNO_LAB_TARGET_MOE"));
     let live_member_reduction =
         crate::target_lab_build::live_member_reduction(raw.as_deref(), prepared_experts)?;
@@ -261,6 +275,7 @@ pub(crate) fn registration(
         fused_sweeps,
         draft_profile,
         mtp_q8_head_broadcast,
+        mtp_q8_head_shared_scales,
         gpu_qsa_selector,
         frozen_host_sources,
         frozen_host_router,
@@ -269,6 +284,7 @@ pub(crate) fn registration(
         frozen_workgroup_tables,
         frozen_shared_down_scales,
         frozen_shared_gate_up_factors,
+        frozen_four_row_down,
         verify3_dense,
         verify3_fused,
         prepared_experts,
@@ -575,6 +591,9 @@ pub(crate) fn run(
     if input.mtp_q8_head_broadcast {
         draft.set_q8_head_broadcast(true)?;
     }
+    if input.mtp_q8_head_shared_scales {
+        draft.set_q8_head_shared_scales(true)?;
+    }
     let mut executor = GpuExecutor::new_with_profile(
         &file,
         client.clone(),
@@ -703,6 +722,7 @@ pub(crate) fn run(
                         input.frozen_workgroup_tables,
                         input.frozen_shared_down_scales,
                         input.frozen_shared_gate_up_factors,
+                        input.frozen_four_row_down,
                         &cancel,
                     )?
                 });
@@ -965,6 +985,18 @@ pub(crate) fn run(
             if frozen_shared_down_scales != input.frozen_shared_down_scales {
                 return Err("actual frozen shared down scales policy mismatch".into());
             }
+            let frozen_four_row_down = if executor.target_frozen_host_source_identity.is_some() {
+                target.native_frozen_source_four_row_down(&executor)?
+            } else {
+                false
+            };
+            if frozen_four_row_down != input.frozen_four_row_down {
+                return Err("actual four-row down policy mismatch".into());
+            }
+            let mtp_q8_head_shared_scales = draft.completed_q8_head_shared_scales()?;
+            if mtp_q8_head_shared_scales != input.mtp_q8_head_shared_scales {
+                return Err("actual MTP shared head scales mismatch".into());
+            }
             let mtp_q8_head_broadcast = draft.completed_q8_head_broadcast()?;
             if mtp_q8_head_broadcast != input.mtp_q8_head_broadcast {
                 return Err("actual completed MTP Q8 head policy mismatch".into());
@@ -993,7 +1025,7 @@ pub(crate) fn run(
                 .checked_sub(load_disk_after)
                 .ok_or("language process read counter regressed")?;
             Ok(
-                serde_json::json!({"fixture":input.fixture.name(),"prompt_tokens":prompt.len(),"context_capacity":input.fixture.context(),"compiled_prompt_template_revision":TEMPLATE_REVISION,"compiled_prompt_template_file":TEMPLATE_FILE,"load_ns":load_ns,"prefill_ns_including_real_teacher_kv":prefill_ns,"prefill_first_output_count":1,"prefill_first_output_generation_pick_timed":false,"first_output_emission_timed":true,"emitted_tokens_including_eos":emitted.len(),"post_prefill_target_continuations":stats.continuations,"stop_reason":if confirmed==graph.eos_token(){"eos"}else{"limit"},"nonempty_text":nonempty_text,"elapsed_ns":elapsed_ns,"continuation_tokens_per_second":stats.continuations as f64*1e9/elapsed_ns as f64,"emitted_tokens_per_second":emitted.len()as f64*1e9/elapsed_ns as f64,"rounds":stats.rounds,"frozen_host_gpu_router":input.frozen_host_router,"frozen_host_inactive_partition_exit":frozen_partition_exit,"frozen_host_private_tables":frozen_private_tables,"frozen_host_workgroup_tables":frozen_workgroup_tables,"frozen_host_shared_down_scales":frozen_shared_down_scales,"frozen_host_shared_gate_up_factors":frozen_shared_gate_up_factors,"mtp_q8_head_broadcast":mtp_q8_head_broadcast,"gpu_router_calls":executor.gpu_router_calls-before_gpu_routers,"proposed_drafts":stats.proposed,"accepted_drafts":stats.accepted_drafts,"draft_ns":stats.draft_ns,"verify_ns_full_packets":stats.verify_ns,"repair_ns_including_vector_checks":stats.repair_ns,"actual_target_recomputations":stats.repairs,"repair_logit_max_abs":stats.repair_logit_max,"repair_hidden_max_abs":stats.repair_hidden_max,"repair_abs_tolerance":ABS,"repair_rel_tolerance":REL,"fixture_peak_host_bytes":fixture_peak,"request_scope":request_scope,"request_close_ns_inside_timing":request_close_ns,"host_io":host_io,"target_host_phase_ns":phase_ns,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"verify3_fused_calls":executor.target_verify3_fused_calls-before_fused,"load_and_prefill_physical_read_bytes":load_disk_after.checked_sub(load_disk_before).ok_or("language process read counter regressed")?,"generation_physical_read_bytes":physical_read_bytes,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"target_fill_counters_before":fill_counter_record(before_fills),"target_fill_counters_after":fill_counter_record(after_fills),"frozen_source_routes":frozen_routes,"draft_traffic":{"host_read_calls":after_traffic.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after_traffic.host_read_bytes-before_traffic.host_read_bytes,"explicit_dispatches":after_traffic.explicit_dispatches-before_traffic.explicit_dispatches,"private_upload_calls":after_traffic.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after_traffic.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after_traffic.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after_traffic.followup_copy_calls-before_traffic.followup_copy_calls}}),
+                serde_json::json!({"fixture":input.fixture.name(),"prompt_tokens":prompt.len(),"context_capacity":input.fixture.context(),"compiled_prompt_template_revision":TEMPLATE_REVISION,"compiled_prompt_template_file":TEMPLATE_FILE,"load_ns":load_ns,"prefill_ns_including_real_teacher_kv":prefill_ns,"prefill_first_output_count":1,"prefill_first_output_generation_pick_timed":false,"first_output_emission_timed":true,"emitted_tokens_including_eos":emitted.len(),"post_prefill_target_continuations":stats.continuations,"stop_reason":if confirmed==graph.eos_token(){"eos"}else{"limit"},"nonempty_text":nonempty_text,"elapsed_ns":elapsed_ns,"continuation_tokens_per_second":stats.continuations as f64*1e9/elapsed_ns as f64,"emitted_tokens_per_second":emitted.len()as f64*1e9/elapsed_ns as f64,"rounds":stats.rounds,"frozen_host_gpu_router":input.frozen_host_router,"frozen_host_inactive_partition_exit":frozen_partition_exit,"frozen_host_private_tables":frozen_private_tables,"frozen_host_workgroup_tables":frozen_workgroup_tables,"frozen_host_shared_down_scales":frozen_shared_down_scales,"frozen_host_shared_gate_up_factors":frozen_shared_gate_up_factors,"mtp_q8_head_broadcast":mtp_q8_head_broadcast,"mtp_q8_head_shared_scales":mtp_q8_head_shared_scales,"frozen_host_four_row_down":frozen_four_row_down,"gpu_router_calls":executor.gpu_router_calls-before_gpu_routers,"proposed_drafts":stats.proposed,"accepted_drafts":stats.accepted_drafts,"draft_ns":stats.draft_ns,"verify_ns_full_packets":stats.verify_ns,"repair_ns_including_vector_checks":stats.repair_ns,"actual_target_recomputations":stats.repairs,"repair_logit_max_abs":stats.repair_logit_max,"repair_hidden_max_abs":stats.repair_hidden_max,"repair_abs_tolerance":ABS,"repair_rel_tolerance":REL,"fixture_peak_host_bytes":fixture_peak,"request_scope":request_scope,"request_close_ns_inside_timing":request_close_ns,"host_io":host_io,"target_host_phase_ns":phase_ns,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"verify3_fused_calls":executor.target_verify3_fused_calls-before_fused,"load_and_prefill_physical_read_bytes":load_disk_after.checked_sub(load_disk_before).ok_or("language process read counter regressed")?,"generation_physical_read_bytes":physical_read_bytes,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"target_fill_counters_before":fill_counter_record(before_fills),"target_fill_counters_after":fill_counter_record(after_fills),"frozen_source_routes":frozen_routes,"draft_traffic":{"host_read_calls":after_traffic.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after_traffic.host_read_bytes-before_traffic.host_read_bytes,"explicit_dispatches":after_traffic.explicit_dispatches-before_traffic.explicit_dispatches,"private_upload_calls":after_traffic.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after_traffic.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after_traffic.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after_traffic.followup_copy_calls-before_traffic.followup_copy_calls}}),
             )
         })();
         let close = target.close();
@@ -1233,6 +1265,12 @@ mod tests {
                 .unwrap()
                 .mtp_q8_head_broadcast
         );
+        let mut shared = selected.clone();
+        shared.last_mut().unwrap().1 = "shared-public".into();
+        let got = registration(&args, shared.clone(), build).unwrap();
+        assert!(got.mtp_q8_head_shared_scales && !got.mtp_q8_head_broadcast);
+        shared.push(("KUNO_LAB_MTP_PROFILE".into(), "strata-q2".into()));
+        assert!(registration(&args, shared, build).is_err());
         let mut q2 = selected.clone();
         q2.push(("KUNO_LAB_MTP_PROFILE".into(), "strata-q2".into()));
         assert!(registration(&args, q2, build).is_err());
@@ -1305,6 +1343,61 @@ mod tests {
             assert!(registration(&args, bad, build).is_err());
         }
         base.push(("KUNO_LAB_FROZEN_GU_FACTORS".into(), "shared-public".into()));
+        assert!(registration(&args, base, build).is_err());
+    }
+
+    #[test]
+    fn four_row_down_requires_exact_public_scope() {
+        let args = ["lab", "intel", "daslab-language-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        let mut base = env();
+        for (key, value) in [
+            ("KUNO_LAB_DEVICE_DISPATCH", "inline"),
+            ("KUNO_LAB_TARGET_FILL", "direct-public"),
+            ("KUNO_LAB_TARGET_IO", "chunk"),
+            ("KUNO_LAB_TARGET_REUSE", "request"),
+            ("KUNO_LAB_TARGET_SOURCES", "frozen-host-public"),
+            ("KUNO_LAB_FROZEN_PARTITION_EXIT", "1"),
+        ] {
+            base.push((key.into(), value.into()));
+        }
+        assert!(
+            !registration(&args, base.clone(), build)
+                .unwrap()
+                .frozen_four_row_down
+        );
+        base.push(("KUNO_LAB_FROZEN_DOWN_ROWS".into(), "four-public".into()));
+        for tables in [None, Some("private-public"), Some("workgroup-public")] {
+            for scales in [false, true] {
+                let mut valid = base.clone();
+                if let Some(t) = tables {
+                    valid.push(("KUNO_LAB_FROZEN_TABLES".into(), t.into()));
+                }
+                if scales {
+                    valid.push(("KUNO_LAB_FROZEN_DOWN_SCALES".into(), "shared-public".into()));
+                }
+                assert!(
+                    registration(&args, valid.clone(), build)
+                        .unwrap()
+                        .frozen_four_row_down
+                );
+                for key in [
+                    "KUNO_LAB_TARGET_SOURCES",
+                    "KUNO_LAB_FROZEN_PARTITION_EXIT",
+                    "KUNO_LAB_TARGET_REUSE",
+                ] {
+                    let mut bad = valid.clone();
+                    bad.retain(|(k, _)| k != key);
+                    assert!(registration(&args, bad, build).is_err());
+                }
+            }
+        }
+        for raw in ["", "shared", "true", "four-public "] {
+            let mut bad = base.clone();
+            bad.last_mut().unwrap().1 = raw.into();
+            assert!(registration(&args, bad, build).is_err());
+        }
+        base.push(("KUNO_LAB_FROZEN_DOWN_ROWS".into(), "four-public".into()));
         assert!(registration(&args, base, build).is_err());
     }
 

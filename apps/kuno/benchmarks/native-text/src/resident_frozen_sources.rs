@@ -29,6 +29,8 @@ enum DownKernel {
     Original,
     Frozen,
     SharedScales,
+    FourRows,
+    FourRowsSharedScales,
 }
 // This selector is used by actual dispatch, so compound policy tests cover the
 // runtime entrypoints rather than just the stored attachment flags.
@@ -50,7 +52,13 @@ fn kernel_policy(g: k::Geometry) -> (GateKernel, DownKernel) {
     } else {
         GateKernel::Original
     };
-    let down = if g.shared_down_scales() {
+    let down = if g.four_row_down() {
+        if g.shared_down_scales() {
+            DownKernel::FourRowsSharedScales
+        } else {
+            DownKernel::FourRows
+        }
+    } else if g.shared_down_scales() {
         DownKernel::SharedScales
     } else if g.inactive_partition_exit() {
         DownKernel::Frozen
@@ -200,6 +208,7 @@ impl Sources {
             false,
             false,
             false,
+            false,
         )
     }
     /// Explicit matched-control candidate, frozen before any source descriptors
@@ -218,6 +227,7 @@ impl Sources {
             pages,
             reserved_host_bytes,
             true,
+            false,
             false,
             false,
             false,
@@ -245,6 +255,7 @@ impl Sources {
             false,
             false,
             false,
+            false,
         )
     }
     /// Literal-lane initialization of one shared immutable public IQ grid.
@@ -265,6 +276,7 @@ impl Sources {
             true,
             false,
             true,
+            false,
             false,
             false,
         )
@@ -290,6 +302,7 @@ impl Sources {
             false,
             true,
             false,
+            false,
         )
     }
     /// Explicit frozen IQ2/IQ3 subgroup-factor staging candidate.
@@ -312,6 +325,7 @@ impl Sources {
             false,
             false,
             true,
+            false,
         )
     }
     #[allow(clippy::too_many_arguments)]
@@ -326,8 +340,13 @@ impl Sources {
         workgroup_tables: bool,
         shared_down_scales: bool,
         shared_gate_up_factors: bool,
+        four_row_down: bool,
     ) -> Result<Arc<Self>> {
-        if (private_tables || workgroup_tables || shared_down_scales || shared_gate_up_factors)
+        if (private_tables
+            || workgroup_tables
+            || shared_down_scales
+            || shared_gate_up_factors
+            || four_row_down)
             && !inactive_partition_exit
             || private_tables && workgroup_tables
             || reserved_host_bytes < EXTRA_HOST_BYTES
@@ -392,6 +411,9 @@ impl Sources {
             }
             if shared_gate_up_factors {
                 geometry = geometry.with_shared_gate_up_factors().map_err(err)?;
+            }
+            if four_row_down {
+                geometry = geometry.with_four_row_down().map_err(err)?;
             }
             let layer_bound = StagedSlots::bounded_native_metadata_bytes(144)
                 .map_err(|_| reject())?
@@ -556,6 +578,9 @@ impl Sources {
     }
     pub(crate) fn shared_gate_up_factors(&self) -> bool {
         self.layers[0].geometry.shared_gate_up_factors()
+    }
+    pub(crate) fn four_row_down(&self) -> bool {
+        self.layers[0].geometry.four_row_down()
     }
     fn check_layer(&self, layer: usize, bank: &ExpertBanks) -> Result<&Layer> {
         let l = self.layers.get(layer).ok_or(reject())?;
@@ -1100,6 +1125,13 @@ impl Workspace {
             .ok_or_else(reject)?
             .shared_gate_up_factors())
     }
+    pub(crate) fn frozen_host_source_four_row_down(&self) -> Result<bool> {
+        Ok(self
+            .frozen_sources
+            .as_ref()
+            .ok_or_else(reject)?
+            .four_row_down())
+    }
     pub(crate) fn frozen_source_counters(&self) -> Counters {
         self.frozen_source_counters
     }
@@ -1174,6 +1206,9 @@ impl Workspace {
             }
             if sources.shared_gate_up_factors() {
                 g = g.with_shared_gate_up_factors().map_err(err)?;
+            }
+            if sources.four_row_down() {
+                g = g.with_four_row_down().map_err(err)?;
             }
             if g != sources.geometry(layer, bank)? {
                 return Err(reject());
@@ -1565,8 +1600,8 @@ impl Sources {
             let ga = &l.pages[shard];
             let up_page = &l.pages[5 + shard];
             let down_page = &l.pages[10 + shard];
-            macro_rules! dispatch {
-                ($gate:ident, $down:ident) => {
+            macro_rules! dispatch_gate {
+                ($gate:ident) => {
                     unsafe {
                         k::$gate::launch_unchecked::<WgpuRuntime>(
                             client,
@@ -1595,6 +1630,12 @@ impl Sources {
                             g.tile(),
                             false,
                         );
+                    }
+                };
+            }
+            macro_rules! dispatch_down {
+                ($down:ident) => {
+                    unsafe {
                         k::$down::launch_unchecked::<WgpuRuntime>(
                             client,
                             g.grid(groups, true).map_err(err)?,
@@ -1621,54 +1662,33 @@ impl Sources {
                     }
                 };
             }
-            match kernel_policy(g) {
-                (GateKernel::WorkgroupFactors, DownKernel::SharedScales) => dispatch!(
-                    grouped_gate_up_frozen_workgroup_grid_shared_factors,
-                    grouped_down_frozen_shared_scales
-                ),
-                (GateKernel::WorkgroupFactors, DownKernel::Frozen) => dispatch!(
-                    grouped_gate_up_frozen_workgroup_grid_shared_factors,
-                    grouped_down_frozen
-                ),
-                (GateKernel::PrivateFactors, DownKernel::SharedScales) => dispatch!(
-                    grouped_gate_up_frozen_private_grid_shared_factors,
-                    grouped_down_frozen_shared_scales
-                ),
-                (GateKernel::PrivateFactors, DownKernel::Frozen) => dispatch!(
-                    grouped_gate_up_frozen_private_grid_shared_factors,
-                    grouped_down_frozen
-                ),
-                (GateKernel::SharedFactors, DownKernel::SharedScales) => dispatch!(
-                    grouped_gate_up_frozen_shared_factors,
-                    grouped_down_frozen_shared_scales
-                ),
-                (GateKernel::SharedFactors, DownKernel::Frozen) => {
-                    dispatch!(grouped_gate_up_frozen_shared_factors, grouped_down_frozen)
+            let (gate, down) = kernel_policy(g);
+            if (gate == GateKernel::Original) != (down == DownKernel::Original) {
+                return Err(reject());
+            }
+            match gate {
+                GateKernel::Original => dispatch_gate!(grouped_gate_up),
+                GateKernel::Frozen => dispatch_gate!(grouped_gate_up_frozen),
+                GateKernel::PrivateTables => dispatch_gate!(grouped_gate_up_frozen_private_grid),
+                GateKernel::WorkgroupTables => {
+                    dispatch_gate!(grouped_gate_up_frozen_workgroup_grid)
                 }
-                (GateKernel::WorkgroupTables, DownKernel::SharedScales) => dispatch!(
-                    grouped_gate_up_frozen_workgroup_grid,
-                    grouped_down_frozen_shared_scales
-                ),
-                (GateKernel::WorkgroupTables, DownKernel::Frozen) => {
-                    dispatch!(grouped_gate_up_frozen_workgroup_grid, grouped_down_frozen)
+                GateKernel::SharedFactors => dispatch_gate!(grouped_gate_up_frozen_shared_factors),
+                GateKernel::PrivateFactors => {
+                    dispatch_gate!(grouped_gate_up_frozen_private_grid_shared_factors)
                 }
-                (GateKernel::PrivateTables, DownKernel::SharedScales) => dispatch!(
-                    grouped_gate_up_frozen_private_grid,
-                    grouped_down_frozen_shared_scales
-                ),
-                (GateKernel::PrivateTables, DownKernel::Frozen) => {
-                    dispatch!(grouped_gate_up_frozen_private_grid, grouped_down_frozen)
+                GateKernel::WorkgroupFactors => {
+                    dispatch_gate!(grouped_gate_up_frozen_workgroup_grid_shared_factors)
                 }
-                (GateKernel::Frozen, DownKernel::SharedScales) => {
-                    dispatch!(grouped_gate_up_frozen, grouped_down_frozen_shared_scales)
+            }
+            match down {
+                DownKernel::Original => dispatch_down!(grouped_down),
+                DownKernel::Frozen => dispatch_down!(grouped_down_frozen),
+                DownKernel::SharedScales => dispatch_down!(grouped_down_frozen_shared_scales),
+                DownKernel::FourRows => dispatch_down!(grouped_down_frozen_four_rows),
+                DownKernel::FourRowsSharedScales => {
+                    dispatch_down!(grouped_down_frozen_four_rows_shared_scales)
                 }
-                (GateKernel::Frozen, DownKernel::Frozen) => {
-                    dispatch!(grouped_gate_up_frozen, grouped_down_frozen)
-                }
-                (GateKernel::Original, DownKernel::Original) => {
-                    dispatch!(grouped_gate_up, grouped_down)
-                }
-                _ => return Err(reject()),
             }
         }
         Ok(())
@@ -1721,6 +1741,22 @@ mod tests {
                     kernel_policy(factors.with_shared_down_scales().unwrap()),
                     (factor, DownKernel::SharedScales)
                 );
+                for (geometry, expected_gate) in [(selected, table), (factors, factor)] {
+                    let rows = geometry.with_four_row_down().unwrap();
+                    assert_eq!(kernel_policy(rows), (expected_gate, DownKernel::FourRows));
+                    assert_eq!(
+                        kernel_policy(rows.with_shared_down_scales().unwrap()),
+                        (expected_gate, DownKernel::FourRowsSharedScales)
+                    );
+                    assert!(matches!(
+                        rows.grid(30, true).unwrap(),
+                        CubeCount::Static(640, 30, 1)
+                    ));
+                    assert!(matches!(
+                        geometry.grid(30, true).unwrap(),
+                        CubeCount::Static(2560, 30, 1)
+                    ));
+                }
                 assert_eq!(kernel_policy(selected), (table, DownKernel::Frozen));
                 assert_eq!(
                     kernel_policy(selected.with_shared_down_scales().unwrap()),

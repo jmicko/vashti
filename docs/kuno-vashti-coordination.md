@@ -3222,3 +3222,25 @@ cooperative draft-head scale candidates are isolated source work in progress.
 This is backend-only lab optimization. Installed services/public API/production
 configuration and the canonical Vashti checkout remain unchanged. No release or
 installation is authorized by this source handoff. Required Vashti changes:none.
+
+### Active row/draft-scale source checkpoint, 2026-10-11
+
+v149/030a20c original full CPU13, real repair, full closure and physical recovery
+pass with GU factor plus broadcast-head candidates. Normal ordered code200 is
+8.11398 control /7.68506 GU factors; no accepted gain. Both remain default-off;
+broadcast-head-only normal speed was not measured. Reference fixture throughput
+is diagnostic, not normal generation. Numeric source/model hashes, all results
+and recovery are recorded under `v149_factors_head_physical` in the root receipt.
+
+Next integrated source-only leavesf7bb253 (four-row DOWN, original64virtual
+sums/tree) and9dde5da (cooperative Q8-head scales) now have complete guarded
+parent selectors and actual-completed-policy receipts. Source tests pass11exact
+public policy checks, all48actual composed entrypoint/grid checks,3operative
+four-row tests,10Q8head checks,108Python launcher checks,9newfixed-trial memory/
+scope checks, strict pure-direct all-target Clippy, fmt/diff checks. Exact internal
+contract is in final all-row plan sections. Full original GPU CPU13 and normal
+language timing remain pending for v150. Source-only counts are not speed proof.
+
+Backend lab only; installed services/public API and canonical Vashti unchanged.
+Required Vashti changes:none. Additional two-row GU and transient host-weight
+staging experiments remain separate source work, with no physical acceptance.

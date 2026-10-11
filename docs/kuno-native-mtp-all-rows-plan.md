@@ -545,3 +545,34 @@ workgroup-table plus shared-down-scale candidate passed CPU13 but regressed the
 single normal ordered code200 pair (7.73410 to6.90538tokens/s); do not turn it on
 implicitly when evaluating these candidates. Neither30tokens/s nor production
 acceptance is established here. Required Vashti changes:none.
+
+### Frozen public row packing and cooperative draft-head scales, 2026-10-11
+
+`KUNO_LAB_FROZEN_DOWN_ROWS=four-public` is an independent default-off frozen
+public/partition-exit policy. Four rows share a64-thread workgroup,16physical
+lanes per row, each retaining four original virtual64-lane accumulators.
+Register folding of stride32 then16 and the remaining16-lane tree preserve
+original operation order for IQ4_NL and Q2_0, all640columns and8RHS cells. Original
+input, partial/fault owners and finite/coverage checks are unchanged. Geometry's
+down grid changes2560 to640 atomically with the selected actual down entrypoint;
+completed receipt `frozen_host_four_row_down` must match the requested policy.
+This composes with existing table/factor/down-scale choices. Gate grid and
+member capacity are unchanged. Scratch is2048B plain and2368B shared-scale,
+and accumulator register count rises8 to32 per thread. Scheduled workgroups
+fall byfour; packed weight/PCIe volume does not. Neither is a speed claim.
+
+`KUNO_LAB_MTP_Q8_HEAD=shared-public` extends the existing head selector as a
+mutually exclusive alternative to `broadcast-public`. It cooperatively stages
+320original halfword-safe decoded head scales into1280B shared memory with one
+uniform barrier, preserving the original512B reduction scratch, input/code
+multiplication order,64virtual-lane dot/reduction, fault/tail logic and owners.
+Initialization covers every slot; inactive rows writezero without reading weights.
+It remains restricted to the public self-contained Q8 profile and selection
+before any draft/KV operation. Actual completed full-forward receipt
+`mtp_q8_head_shared_scales` is captured before close; broadcast receipt is false
+in this mode. No other draft projection or target quantization changes.
+
+The original cold/warm CPU13 and normal-language gates, no-swap/core constraints,
+fixed seed/fixtures and recovered physical-state requirements remain unchanged.
+Alternate Q2 and private/production inference do not silently receive these
+policies. Required Vashti changes:none. Public APIs/installed defaults unchanged.
