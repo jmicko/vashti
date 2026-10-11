@@ -18,16 +18,20 @@ pub const MAX_BATCH: usize = 8;
 pub const MAX_HEAD_DIM: usize = 128;
 const LANES: usize = 64;
 /// Explicit public laboratory policy. Never infer a specialization from a
-/// private token count; the streaming policy rejects every count except one.
+/// private token count. Each streaming policy admits its fixed public ceiling.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum RecurrencePolicy {
     #[default]
     Chunk,
     SingleStreaming,
+    ThreeStreaming,
 }
 impl RecurrencePolicy {
     pub(crate) fn validate_count(self, count: usize) -> Result<()> {
-        if !(1..=MAX_BATCH).contains(&count) || self == Self::SingleStreaming && count != 1 {
+        if !(1..=MAX_BATCH).contains(&count)
+            || self == Self::SingleStreaming && count != 1
+            || self == Self::ThreeStreaming && count > 3
+        {
             return Err(fault());
         }
         Ok(())
@@ -36,6 +40,7 @@ impl RecurrencePolicy {
         match self {
             Self::Chunk => "chunk",
             Self::SingleStreaming => "single-streaming",
+            Self::ThreeStreaming => "three-streaming",
         }
     }
 }
@@ -398,6 +403,7 @@ pub(crate) fn enqueue_with_policy(
     match policy {
         RecurrencePolicy::Chunk => launch!(gdn_chunk),
         RecurrencePolicy::SingleStreaming => launch!(gdn_single_streaming),
+        RecurrencePolicy::ThreeStreaming => launch!(gdn_three_streaming),
     }
     Ok(())
 }
@@ -683,6 +689,120 @@ pub fn gdn_single_streaming(
     }
 }
 
+/// Explicit fixed-public count1..3 candidate. Each lane owns one state column.
+/// Complete prediction precedes in-place update; later tokens consume that
+/// lane's candidate column without a head_dim-sized private array. All address
+/// spans/count remain runtime values, and old state is never written.
+#[allow(clippy::manual_range_contains)]
+#[cube(launch, launch_unchecked)]
+pub fn gdn_three_streaming(
+    query: &Array<f32>,
+    key: &Array<f32>,
+    value: &Array<f32>,
+    controls: &Array<f32>,
+    old: &Array<f32>,
+    next: &mut Array<f32>,
+    output: &mut Array<f32>,
+    status: &mut Array<u32>,
+    count: usize,
+    q_base: usize,
+    q_stride: usize,
+    k_base: usize,
+    k_stride: usize,
+    v_base: usize,
+    v_stride: usize,
+    c_base: usize,
+    c_stride: usize,
+    old_base: usize,
+    old_head: usize,
+    old_key: usize,
+    old_column: usize,
+    next_base: usize,
+    next_head: usize,
+    next_key: usize,
+    next_column: usize,
+    out_base: usize,
+    out_stride: usize,
+    status_base: usize,
+    status_stride: usize,
+    #[comptime] head_dim: usize,
+    #[comptime] key_heads: usize,
+    #[comptime] value_heads: usize,
+) {
+    let lane = ABSOLUTE_POS;
+    // Public policy admission repeats the bound before any unchecked access.
+    if count >= 1 && count <= 3 && lane < value_heads * head_dim {
+        let h = lane / head_dim;
+        let j = lane % head_dim;
+        let kh = h % key_heads;
+        let mut valid = true;
+        let mut next_written = false;
+        for token in 0..count {
+            let qi = q_base + token * q_stride + kh * head_dim;
+            let ki = k_base + token * k_stride + kh * head_dim;
+            let ci = c_base + token * c_stride;
+            let log_decay = controls[ci + h];
+            let beta = controls[ci + value_heads + h];
+            let decay = log_decay.exp();
+            valid = valid
+                && finite(log_decay)
+                && log_decay <= 0.0_f32
+                && finite(beta)
+                && beta >= 0.0_f32
+                && beta <= 1.0_f32;
+            status[status_base + token * status_stride + lane] = 0;
+            output[out_base + token * out_stride + lane] = 0.0_f32;
+            let mut predicted = 0.0_f32;
+            for i in 0..head_dim {
+                let previous = if token == 0 || !next_written {
+                    old[old_base + h * old_head + i * old_key + j * old_column]
+                } else {
+                    next[next_base + h * next_head + i * next_key + j * next_column]
+                };
+                valid = valid && finite(previous);
+                let decayed = previous * decay;
+                predicted += decayed * key[ki + i];
+            }
+            let delta = (value[v_base + token * v_stride + lane] - predicted) * beta;
+            valid = valid && finite(predicted) && finite(delta);
+            if valid {
+                let mut readout = 0.0_f32;
+                for i in 0..head_dim {
+                    let previous = if token == 0 || !next_written {
+                        old[old_base + h * old_head + i * old_key + j * old_column]
+                    } else {
+                        next[next_base + h * next_head + i * next_key + j * next_column]
+                    };
+                    let decayed = previous * decay;
+                    let updated = decayed + key[ki + i] * delta;
+                    valid = valid && finite(updated);
+                    next[next_base + h * next_head + i * next_key + j * next_column] = updated;
+                    readout += updated * query[qi + i];
+                }
+                // The complete column is now initialized, even if a late
+                // update/readout failed. Keep original invalid-column arithmetic
+                // until the final whole-column erasure below.
+                next_written = true;
+                valid = valid && finite(readout);
+                if valid {
+                    output[out_base + token * out_stride + lane] = readout;
+                    status[status_base + token * status_stride + lane] = 1;
+                }
+            }
+        }
+        if !valid {
+            for i in 0..head_dim {
+                next[next_base + h * next_head + i * next_key + j * next_column] = 0.0_f32;
+            }
+            // A later failed token invalidates every earlier candidate row.
+            for token in 0..count {
+                status[status_base + token * status_stride + lane] = 0;
+                output[out_base + token * out_stride + lane] = 0.0_f32;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn streaming_lane_reference(
     shape: GdnShape,
@@ -757,6 +877,108 @@ pub(crate) fn streaming_lane_reference(
                 for i in 0..shape.head_dim {
                     next[spans.next.at(h, i, j)] = 0.;
                 }
+            }
+        }
+    }
+    Ok((next, out, status))
+}
+
+#[cfg(test)]
+pub(crate) fn three_streaming_lane_reference(
+    shape: GdnShape,
+    spans: ChunkSpans,
+    inputs: [&[f32]; 5],
+) -> Result<(Vec<f32>, Vec<f32>, Vec<u32>)> {
+    let l = GdnLayout::new(shape).map_err(|_| fault())?;
+    spans.validate(l)?;
+    RecurrencePolicy::ThreeStreaming.validate_count(spans.count)?;
+    if inputs.iter().zip(spans.words()).any(|(s, n)| s.len() != n) {
+        return Err(fault());
+    }
+    let [q, k, v, c, old] = inputs;
+    let mut next = vec![
+        0.;
+        BufferLayout::new(spans.next.words)
+            .map_err(|_| fault())?
+            .owned_words
+    ];
+    next[..spans.next.words].fill(-173.25);
+    let mut out = vec![
+        0.;
+        BufferLayout::new(spans.output.words)
+            .map_err(|_| fault())?
+            .owned_words
+    ];
+    out[..spans.output.words].fill(-173.25);
+    let mut status = vec![
+        0;
+        BufferLayout::new(spans.status.words)
+            .map_err(|_| fault())?
+            .owned_words
+    ];
+    status[..spans.status.words].fill(0x53aa_9267);
+    for lane in 0..l.value_elements {
+        let h = lane / shape.head_dim;
+        let j = lane % shape.head_dim;
+        let kh = h % shape.key_heads;
+        let mut valid = true;
+        let mut next_written = false;
+        for token in 0..spans.count {
+            let qi = spans.query.at(token) + kh * shape.head_dim;
+            let ki = spans.key.at(token) + kh * shape.head_dim;
+            let ci = spans.controls.at(token);
+            let log = c[ci + h];
+            let beta = c[ci + shape.value_heads + h];
+            let decay = log.exp();
+            valid = valid
+                && log.is_finite()
+                && log <= 0.
+                && beta.is_finite()
+                && (0.0..=1.0).contains(&beta);
+            status[spans.status.at(token) + lane] = 0;
+            out[spans.output.at(token) + lane] = 0.;
+            let mut predicted = 0_f32;
+            for i in 0..shape.head_dim {
+                let previous = if token == 0 || !next_written {
+                    old[spans.old.at(h, i, j)]
+                } else {
+                    next[spans.next.at(h, i, j)]
+                };
+                valid = valid && previous.is_finite();
+                let decayed = previous * decay;
+                predicted += decayed * k[ki + i];
+            }
+            let delta = (v[spans.value.at(token) + lane] - predicted) * beta;
+            valid = valid && predicted.is_finite() && delta.is_finite();
+            if valid {
+                let mut readout = 0_f32;
+                for i in 0..shape.head_dim {
+                    let previous = if token == 0 || !next_written {
+                        old[spans.old.at(h, i, j)]
+                    } else {
+                        next[spans.next.at(h, i, j)]
+                    };
+                    let decayed = previous * decay;
+                    let updated = decayed + k[ki + i] * delta;
+                    valid = valid && updated.is_finite();
+                    next[spans.next.at(h, i, j)] = updated;
+                    readout += updated * q[qi + i];
+                }
+                next_written = true;
+                valid = valid && readout.is_finite();
+                if valid {
+                    out[spans.output.at(token) + lane] = readout;
+                    status[spans.status.at(token) + lane] = 1;
+                }
+            }
+        }
+        if !valid {
+            for i in 0..shape.head_dim {
+                next[spans.next.at(h, i, j)] = 0.;
+            }
+            for token in 0..spans.count {
+                status[spans.status.at(token) + lane] = 0;
+                out[spans.output.at(token) + lane] = 0.;
             }
         }
     }

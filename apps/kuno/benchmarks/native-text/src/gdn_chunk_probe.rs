@@ -1066,6 +1066,7 @@ mod tests {
         match policy {
             RecurrencePolicy::Chunk => expand!(gdn_chunk),
             RecurrencePolicy::SingleStreaming => expand!(gdn_single_streaming),
+            RecurrencePolicy::ThreeStreaming => expand!(gdn_three_streaming),
         }
         WgslCompiler::default()
             .compile(
@@ -1075,6 +1076,7 @@ mod tests {
                         .kernel_name(match policy {
                             RecurrencePolicy::Chunk => "gdn_chunk",
                             RecurrencePolicy::SingleStreaming => "gdn_single_streaming",
+                            RecurrencePolicy::ThreeStreaming => "gdn_three_streaming",
                         }),
                 ),
                 &WgpuCompilationOptions::default(),
@@ -1136,4 +1138,5 @@ mod tests {
             }
         }
     }
+    include!("gdn_three_streaming_tests.rs");
 }
