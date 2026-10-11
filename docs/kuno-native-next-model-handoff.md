@@ -1082,3 +1082,36 @@ operator measurements may be unusually L3-hot; actual whole-model CPU13 and
 normal timing remain later gates. Root controls physical trials and compiler
 scheduling; agents use separate worktrees/caches and cannot independently use
 GPUs, change services or release.
+### Intel four-row physical checkpoint, 2026-10-11
+
+The user selected Intel-only target and full-Q8 MTP; Nvidia remains deferred.
+Frozen v174 source42df9070ef5af165667ba472c93053f66d92a759, pure-direct
+binary SHA256f976442266b2d16b463a3211c35968bcae7cc3cee88ca89b5a7862b825abfada,
+passes independent original-controlled Verify4 dense and fused operators:
+20 numerical cases each,20 plain faults and70 fused faults, all10 formats,
+both subgroup widths, unchanged independent CPU-F64 and scalar-GPU controls,
+source/inactive/padding/sticky-fault checks and full operator zero audits.
+These are operator receipts, not whole-model or performance acceptance.
+The unchanged original constructor passes cold/warm CPU13 full vectors,
+greedy/carries and actual rejection/repair, full target/draft/HOST closure.
+Source compilation may overlap these correctness runs; their diagnostic
+intervals carry no compiler-idle normal-performance credit.
+
+The selected four-row constructor fails before its first original count1
+prefill is accepted, with InvalidBufferLength. It has not accepted a third
+MTP proposal or whole count4 chunk. Root and two independent source owners
+trace the cause to GR's exact final-head proof: its reserved logits owner is
+993280 logical words, but FinalAllRows and FinalFourRows still prove744960.
+The fix must carry the actual constructor-fixed Owners capacity into that
+proof while preserving original count1..3 arithmetic/spans and original
+CPU13 reference/tolerances. Do not narrow the allocation, choose owner size
+from active count, or weaken the proof. Retest a new frozen artifact before
+normal same-artifact original/four performance comparison.
+
+All four trials recover the same boot/kernel to B70 used50688000B, Nvidia
+compute0, all three HTTP probes200, idle/unpaused admission without recovery
+latch and no new classified GPU fault. Latest recovery22:32:25UTC. Exact
+source/guard/helper hashes and content-free receipts are in
+v174_four_rows_operators_and_initial_owner_failure of the native Strata
+receipt. Native30tokens/s remains unachieved. Installed services/defaults,
+public protocols and canonical Vashti are unchanged; Vashti changes:none.

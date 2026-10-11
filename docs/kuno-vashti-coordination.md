@@ -3900,3 +3900,26 @@ original tails/caps/reference. Read the normative parent/dense/MoE/controller
 contracts when integrated. Physical acceptance remains separate. Canonical
 Vashti, installed services/defaults, API and release are unchanged. Required
 Vashti changes:none. Nvidia remains deferred at the user's direction.
+
+### Intel four-row operator acceptance and constructor rejection, 2026-10-11
+
+Current owner source42df907 reserves genuine four-row lookahead only in the
+fixed-public Intel target/full-Q8 MTP lab. v174 independent Verify4 plain/fused
+operators pass original scalar-GPU/CPU-F64, all10 formats,20 numeric each,
+20/70 fault cases and complete source/owner zero checks. Original CPU13
+cold/warm full vectors/greedy/carries/real repair and complete closure pass.
+Selected four-row CPU13 fails before initial count1 prefill acceptance:
+GR incorrectly proves the constructor-reserved four-row logits owner using
+its older three-row logical extent. No third-proposal/count4 or normal speed
+acceptance follows. Carry fixed owner capacity into the exact proof, preserve
+original arithmetic/reference/caps, freeze and retest before timing.
+
+See the latest owner handoff and
+v174_four_rows_operators_and_initial_owner_failure in the numeric receipt
+for exact source/binary/guards, original controls, failure and recovery.
+Latest physical recovery22:32:25UTC: same boot/kernel, B70 used50688000B,
+Nvidia compute0, allHTTP200, admission idle/unpaused/no recovery and no new
+classified GPU fault. These correctness runs may overlap CPU source checks;
+diagnostic rates do not establish compiler-idle normal throughput.
+Native30tokens/s remains unachieved. Installed services, public contract,
+canonical Vashti and frontend unchanged; required Vashti changes:none.
