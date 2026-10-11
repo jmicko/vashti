@@ -40,6 +40,7 @@ mod mtp_resident_kernels;
 mod next_shared;
 mod next_shared_moe;
 mod next_verify3_dense_probe;
+mod next_verify4_dense_probe;
 mod oracle_public;
 mod oracle_trace;
 mod ordered_public;
@@ -1104,6 +1105,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         None
     };
+    let verify4_finite_probe = mode == "verify4-finite-probe";
+    let verify4_dense_receipt = if mode == "verify4-dense-probe" || verify4_finite_probe {
+        Some(next_verify4_dense_probe::registration(
+            &std::env::args_os().collect::<Vec<_>>(),
+            std::env::vars_os(),
+            target_lab_build::Build::compiled() == target_lab_build::Build::Inline,
+        )?)
+    } else {
+        if std::env::var_os("KUNO_LAB_VERIFY4_DENSE_PUBLIC_ONLY").is_some()
+            || std::env::var_os("KUNO_LAB_VERIFY4_FINITE_PUBLIC_ONLY").is_some()
+        {
+            return Err("Verify4 operator public gate requires its dedicated probe".into());
+        }
+        None
+    };
     let verify3_finite_probe = mode == "verify3-finite-probe";
     let verify3_dense_receipt = if mode == "verify3-dense-probe" || verify3_finite_probe {
         Some(next_verify3_dense_probe::registration(
@@ -1565,6 +1581,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .as_ref()
                 .map(|p| p.inline_dispatch)
         })
+        .or_else(|| verify4_dense_receipt.as_ref().map(|_| inline_dispatch))
         .or_else(|| strata_mtp_inputs.as_ref().map(|_| inline_dispatch))
         .or_else(|| public_host_weight_receipt.as_ref().map(|_| inline_dispatch))
         .or_else(|| public_host_cubecl_receipt.as_ref().map(|_| inline_dispatch))
@@ -2189,6 +2206,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )?;
             executor::batch_moe::prepared_verify3::validate_limits(&adapter.limits())?;
         }
+        if verify4_dense_receipt.is_some() {
+            next_shared::validate_verify4_limits(
+                &adapter.limits(),
+                adapter.features().contains(wgpu::Features::SUBGROUP),
+                info.subgroup_min_size,
+                info.subgroup_max_size,
+            )?;
+            if verify4_finite_probe {
+                next_shared::validate_verify4_finite_limits(
+                    &adapter.limits(),
+                    adapter.features().contains(wgpu::Features::SUBGROUP),
+                    info.subgroup_min_size,
+                    info.subgroup_max_size,
+                )?;
+            }
+            if adapter.limits().max_compute_workgroup_storage_size < 16 * 1024 {
+                return Err("Verify4 original scalar Q4 operator control storage limit".into());
+            }
+        }
         if verify3_dense_receipt.is_some()
             || public_host_cpu_batch_inputs.is_some()
             || target_rows_inputs.as_ref().is_some_and(|i| i.verify3_dense)
@@ -2387,6 +2423,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &value,
             )?;
             println!("public_host_cubecl_operator_complete owners_erased=true");
+            return Ok(());
+        }
+        if let Some(receipt) = verify4_dense_receipt {
+            std::panic::set_hook(Box::new(|_| {
+                eprintln!("public_verify4_operator_failure panic=true")
+            }));
+            let mut value = if verify4_finite_probe {
+                next_verify4_dense_probe::run_fused(&client, &grouped_limits)?
+            } else {
+                next_verify4_dense_probe::run(&client, &grouped_limits)?
+            };
+            value["vendor"] = vendor.into();
+            serde_json::to_writer_pretty(
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(receipt)?,
+                &value,
+            )?;
+            println!(
+                "public_verify4_operator_complete normal=20 fault={} owners_erased=true",
+                if verify4_finite_probe { 70 } else { 20 }
+            );
             return Ok(());
         }
         if let Some(receipt) = verify3_dense_receipt {

@@ -516,6 +516,22 @@ def bank_placement_scope(environment):
 
 
 def memory_limit(environment, arguments):
+    four_operator = (
+        "KUNO_LAB_VERIFY4_DENSE_PUBLIC_ONLY", "KUNO_LAB_VERIFY4_FINITE_PUBLIC_ONLY",
+    )
+    if (any(key in environment for key in four_operator)
+            or len(arguments) > 2 and arguments[2] in ("verify4-dense-probe", "verify4-finite-probe")):
+        selected = {key: value for key, value in environment.items()
+                    if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
+        if len(arguments) != 3 or arguments[1] != "intel":
+            raise ValueError("Verify4 operator requires fixed Intel public fixtures")
+        gate = dict(zip(("verify4-dense-probe", "verify4-finite-probe"), four_operator)).get(arguments[2])
+        if (gate is None
+                or set(selected) != {gate, "KUNO_PUBLIC_RECEIPT", "KUNO_LAB_DEVICE_DISPATCH"}
+                or selected[gate] != "1" or not selected["KUNO_PUBLIC_RECEIPT"]
+                or selected["KUNO_LAB_DEVICE_DISPATCH"] != "inline"):
+            raise ValueError("Verify4 operator rejects model inputs and inherited experiments")
+        return 8 * 1024**3
     if ("KUNO_LAB_HOST_CPU_BATCH_PUBLIC_ONLY" in environment
             or len(arguments) > 2 and arguments[2] == "public-host-cpu-batch-probe"):
         selected = {key: value for key, value in environment.items()

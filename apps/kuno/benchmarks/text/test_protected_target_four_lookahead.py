@@ -83,6 +83,24 @@ class FourLookaheadAdmission(unittest.TestCase):
                 GUARD.selected_target_policy(environment, mtp=False)
         self.rejected({SELECTOR: "four-public"}, ["/frozen/binary", "intel", "daslab-language-probe"])
 
+    def test_dedicated_math_operators_have_no_model_or_request_input_scope(self):
+        for mode, gate in (("verify4-dense-probe", "KUNO_LAB_VERIFY4_DENSE_PUBLIC_ONLY"),
+                           ("verify4-finite-probe", "KUNO_LAB_VERIFY4_FINITE_PUBLIC_ONLY")):
+            environment = {gate: "1", "KUNO_PUBLIC_RECEIPT": "/public/numeric.json",
+                           "KUNO_LAB_DEVICE_DISPATCH": "inline"}
+            args = ["/frozen/binary", "intel", mode]
+            self.assertEqual(GUARD.memory_limit(environment, args), 8 * 1024**3)
+            for key in environment:
+                bad = dict(environment)
+                del bad[key]
+                self.rejected(bad, args)
+                self.rejected(dict(environment, **{key: ""}), args)
+            self.rejected(environment, args + ["extra"])
+            self.rejected(environment, [args[0], "nvidia", mode])
+            for key, value in dict(CONFLICTS, KUNO_TEST_Q3_DIR="/model", KUNO_TEST_MTP="/draft",
+                                   KUNO_LAB_TARGET_LOOKAHEAD="four-public").items():
+                self.rejected(dict(environment, **{key: value}), args)
+
 
 if __name__ == "__main__":
     unittest.main()
