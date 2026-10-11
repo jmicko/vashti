@@ -3507,3 +3507,74 @@ decoding and row-grouping kernel investigation (MIT-noticed Strata
 inspiration in pinned sycl/src/kernels/cuda/iq_kernels.dp.cpp), one change
 per experiment with the same gate discipline; the Q2 draft remains a separate
 later experiment.
+
+### IQ3 kernel investigation: Strata study and experiment design (2026-10-10)
+
+The pinned Strata reference (fb58e0d, v0.1.41,
+sycl/src/kernels/cuda/iq_kernels.dp.cpp) was studied against the lab's
+current IQ MoE kernels. Findings:
+
+1. **Decode-once split is already present in the lab.** Strata's central
+   trick - Split<TY>::load/apply, decoding each weight block once and
+   applying it to every activation column, bitwise-equal by construction -
+   corresponds to the lab's verify3 prepare/project pair: Q8 activation
+   planes are prepared once per packet/layer, and the project kernel applies
+   each decoded weight word to all three frames (THREE_PACKED_VALUE
+   workgroup planes). The packet dimension needs no new work.
+2. **Grid staging is the measured anti-pattern.** Strata stages the format
+   grid in workgroup memory behind STRATA_GRID_SLM and measured it a LOSS,
+   leaving it off: "copying the grid into each of ~1,200 work-groups per
+   call costs more than the lookups save (IQ2_S 52.5 -> 62.7 us, IQ3_S
+   60.8 -> 70.0, IQ3_XXS 60.3 -> 62.1; unitrace 2026-10-01)". The lab does
+   exactly this: grid_source (iq_moe_integer.rs:52-73) emits a 128-case
+   switch that stores every grid word into workgroup memory per workgroup
+   invocation, used by both the single-token and verify3 kernels
+   (iq_moe_integer_verify3.rs:108-144).
+3. **Byte-addressed decode vs packed loads.** Strata loads containing
+   words once (load8_a2/load4_a2, page-safe unaligned handling) and
+   extracts bytes in registers. The lab's decode (projection() packed
+   expressions) performs three scattered NAME_byte word loads per quartet.
+   The SWAR sign trick (iq3_signed_word) already matches Strata's
+   swar_sub4; the loads are the difference.
+4. **Row grouping.** Strata: STRATA_EXPERT_LANES=8 lanes per row, 32 rows
+   per workgroup, 10 block-calls per lane for a 2560 row. The lab:
+   subgroup-per-row with block stride = subgroup width (80/width blocks
+   per lane; B70 subgroup width must be measured, expected 16 -> 5 blocks
+   per lane, 8 rows per 128-lane workgroup). Geometry change is a
+   measurement question, not a proven win.
+5. **Mixed formats confirmed.** The GSQ-RCO IQ3_S file keeps one layer's
+   routed gate/up experts in IQ4_XS (Strata comment line 419), matching
+   the lab's all-profile mixed lowering tests.
+
+Phase accounting from the v145 composed run (B2): verify is 72% of code200
+elapsed (16.9 s of 23.6 s; draft 4.9 s on the 3060 is a separate floor);
+within verify, attention_and_gr_enqueue ~11.1 s carries the MoE work,
+completed proofs ~4.5 s and router audits ~0.8 s are lab correctness
+overheads. The IQ kernels live in the dominant phase but attention shares
+it; the exit candidate's 2.4 s savings confirmed the MoE slice is real.
+
+Experiment queue, one isolated change per pass with oracle proof, then
+whole-model gates and matched ABBA (no acceptance claims before all four):
+
+- **E1 (first): grid to read-only storage buffer.** Replace per-workgroup
+  SLM staging with a read-only storage buffer of original_grid_words(dtype)
+  bound at launch; remove GRID_DECLARATION/GRID_INITIALIZE substitution.
+  Bitwise-equal by construction: same words, same lookups, storage class
+  only. Files: iq_moe_integer.rs grid_source + dense BINDINGS strings,
+  iq_moe_integer_verify3.rs binding assembly and launch path, WGSL/SPIR-V
+  lowering tests asserting on the switch text. Expected gain: removes a
+  128-case switch and 256 word stores per workgroup per launch; Strata's
+  measurement implies a double-digit percent kernel gain for IQ3_S.
+- **E2: packed per-block decode.** Load the containing words once per
+  (row, block) and extract index/high/sign bytes in registers, replacing
+  the per-quartet scattered NAME_byte loads. Same values in the same
+  order; oracle must pass unchanged.
+- **E3: row-grouping geometry.** Evaluate subgroup-per-row against
+  8-lane/row grouping under the existing scratch/reduction guards;
+  measure, do not assume the scheduling ratio.
+
+No engine source was changed in this investigation; the working tree is at
+9020b5e and clean. The next session should implement E1 through the lab's
+full discipline: oracle and lowering tests first, clean commit, fresh
+build freeze, four whole-model gates, then the code200 ABBA with the
+composed GPU-routed+exit configuration.
