@@ -122,6 +122,45 @@ fn validate_target_verify3_fused_policy(
     Ok(())
 }
 
+fn activate_target_iq4_decoder(
+    previous: crate::next_shared::Iq4Decoder,
+    original_public_scope: bool,
+) -> Result<crate::next_shared::Iq4Decoder> {
+    if previous != crate::next_shared::Iq4Decoder::Original || !original_public_scope {
+        return Err(Error::InvalidFormat(
+            "IQ4 decoder immutable public activation",
+        ));
+    }
+    Ok(crate::next_shared::Iq4Decoder::PackedRegisters)
+}
+
+fn target_verify3_iq4_spec(
+    rows: usize,
+    columns: usize,
+    dtype: u32,
+    decoder: crate::next_shared::Iq4Decoder,
+) -> Result<crate::next_shared::MatrixSpec> {
+    let original = crate::next_shared::MatrixSpec::new(rows, columns, dtype)?;
+    if matches!(dtype, 20 | 23) {
+        original.with_iq4_decoder(decoder)
+    } else {
+        // This changes only the two original IQ4 decoders. Other packed formats
+        // retain their ordinary original source and receive no candidate credit.
+        Ok(original)
+    }
+}
+
+fn next_target_iq4_dispatch_count(
+    previous: u64,
+    actual: crate::next_shared::Iq4Decoder,
+) -> Result<u64> {
+    if actual == crate::next_shared::Iq4Decoder::PackedRegisters {
+        previous.checked_add(1).ok_or(Error::ArithmeticOverflow)
+    } else {
+        Ok(previous)
+    }
+}
+
 fn cleanup_failure_category(code: &str) -> Option<&'static str> {
     // Forward fixed infrastructure categories only, never backend descriptions,
     // shader source, metadata values or request content.
@@ -855,6 +894,8 @@ pub struct GpuExecutor<'a> {
     pub(crate) target_verify3_dense_calls: u64,
     pub(crate) target_verify3_fused: bool,
     pub(crate) target_verify3_fused_calls: u64,
+    target_iq4_decoder: crate::next_shared::Iq4Decoder,
+    target_iq4_decoder_calls: u64,
     pub(crate) resident_banks_frozen: bool,
     pub(crate) resident_router_audits: u64,
     pub q6_integer_head_prepares: u64,
@@ -1097,6 +1138,8 @@ impl<'a> GpuExecutor<'a> {
             target_verify3_dense_calls: 0,
             target_verify3_fused: false,
             target_verify3_fused_calls: 0,
+            target_iq4_decoder: crate::next_shared::Iq4Decoder::Original,
+            target_iq4_decoder_calls: 0,
             resident_banks_frozen: false,
             resident_router_audits: 0,
             q6_integer_head_prepares: 0,
@@ -1251,6 +1294,8 @@ impl<'a> GpuExecutor<'a> {
         self.target_frozen_host_staging_reserved = false;
         self.target_frozen_gu_integer_reserved = false;
         self.target_frozen_down_integer_reserved = false;
+        self.target_iq4_decoder = crate::next_shared::Iq4Decoder::Original;
+        self.target_iq4_decoder_calls = 0;
         self.batch_moe = None;
         self.bank_reserved = 0;
         // All previous commands completed before public cache handles release.
@@ -1893,7 +1938,67 @@ impl<'a> GpuExecutor<'a> {
             RESIDENT_RUNTIME_IO_MAX
         }
     }
+    /// One immutable activation after the original public prefill or consumed
+    /// CPU13 reset has authenticated its actual frozen source attachment.
+    /// No scalar source, private owner, capacity or runtime cadence is changed.
+    pub(crate) fn activate_public_target_iq4_decoder(&mut self) -> Result<()> {
+        self.check_target_rows_policy()?;
+        self.resident_admission
+            .as_ref()
+            .ok_or(Error::InvalidFormat(
+                "IQ4 decoder actual model admission absent",
+            ))?
+            .active()?;
+        self.target_iq4_decoder = activate_target_iq4_decoder(
+            self.target_iq4_decoder,
+            self.target_rows_reserved
+                && self.target_verify3_dense
+                && self.target_verify3_fused
+                && self.token_io_checkpoint
+                && self.resident_banks_frozen
+                && self.target_frozen_host_source_identity.is_some()
+                && self.packed_profile == expert_banks::OriginalPackedProfile::DaslabIq3
+                && self.bank_slots == 144
+                && self
+                    .client
+                    .public_target_request_io_configured()
+                    .map_err(|_| {
+                        Error::InvalidFormat("IQ4 decoder original target runtime selection")
+                    })?,
+        )?;
+        Ok(())
+    }
+    /// Count actual successful candidate launches only. Callers publish this
+    /// scalar receipt only after the original whole-model acceptance boundary.
+    pub(crate) fn public_target_iq4_decoder(
+        &self,
+    ) -> Result<(crate::next_shared::Iq4Decoder, u64)> {
+        self.check_target_rows_policy()?;
+        self.resident_admission
+            .as_ref()
+            .ok_or(Error::InvalidFormat(
+                "IQ4 decoder actual model admission absent",
+            ))?
+            .active()?;
+        Ok((self.target_iq4_decoder, self.target_iq4_decoder_calls))
+    }
     pub(crate) fn check_target_rows_policy(&self) -> Result<()> {
+        if self.target_iq4_decoder == crate::next_shared::Iq4Decoder::PackedRegisters
+            && (!self.target_rows_reserved
+                || !self.target_verify3_dense
+                || !self.target_verify3_fused
+                || !self.token_io_checkpoint
+                || !self.resident_banks_frozen
+                || self.target_frozen_host_source_identity.is_none()
+                || self.packed_profile != expert_banks::OriginalPackedProfile::DaslabIq3
+                || self.bank_slots != 144)
+            || self.target_iq4_decoder == crate::next_shared::Iq4Decoder::Original
+                && self.target_iq4_decoder_calls != 0
+        {
+            return Err(Error::InvalidFormat(
+                "IQ4 decoder actual original target scope",
+            ));
+        }
         if self.target_frozen_host_staging_reserved
             && (!self.target_rows_reserved
                 || !self.target_batch_router_reserved
@@ -2041,7 +2146,12 @@ impl<'a> GpuExecutor<'a> {
                 "resident router explicit construction policy",
             ));
         }
-        if self.resident_admission.is_some() || !self.cache.is_empty() || !self.banks.is_empty() {
+        if self.resident_admission.is_some()
+            || !self.cache.is_empty()
+            || !self.banks.is_empty()
+            || self.target_iq4_decoder != crate::next_shared::Iq4Decoder::Original
+            || self.target_iq4_decoder_calls != 0
+        {
             return Err(Error::InvalidFormat("resident executor already used"));
         }
         if self.token_io_checkpoint && self.transient_resident.is_none() {
@@ -2787,7 +2897,12 @@ impl<'a> GpuExecutor<'a> {
             )
             .map_err(|_| Error::InvalidBufferLength)?;
             let verify3 = if self.target_verify3_dense {
-                let spec = crate::next_shared::MatrixSpec::new(g.rows(), g.columns(), g.dtype())?;
+                let spec = target_verify3_iq4_spec(
+                    g.rows(),
+                    g.columns(),
+                    g.dtype(),
+                    self.target_iq4_decoder,
+                )?;
                 crate::next_shared::validate_verify3_spans(
                     spec,
                     &packet,
@@ -2811,6 +2926,10 @@ impl<'a> GpuExecutor<'a> {
             // owns disjoint x/y, and the exact runtime spans passed validation.
             unsafe {
                 if let Some(spec) = verify3 {
+                    let iq4_calls = next_target_iq4_dispatch_count(
+                        self.target_iq4_decoder_calls,
+                        spec.iq4_decoder(),
+                    )?;
                     let calls = self
                         .target_verify3_dense_calls
                         .checked_add(1)
@@ -2849,6 +2968,7 @@ impl<'a> GpuExecutor<'a> {
                         )?;
                     }
                     self.target_verify3_dense_calls = calls;
+                    self.target_iq4_decoder_calls = iq4_calls;
                     self.shared_dense_calls += 1;
                     self.fast_dense_calls += 1;
                 } else if self.fast_dense
@@ -3441,6 +3561,8 @@ impl Drop for GpuExecutor<'_> {
         self.target_frozen_host_staging_reserved = false;
         self.target_frozen_gu_integer_reserved = false;
         self.target_frozen_down_integer_reserved = false;
+        self.target_iq4_decoder = crate::next_shared::Iq4Decoder::Original;
+        self.target_iq4_decoder_calls = 0;
         self.bank_reserved = 0;
         self.client.memory_cleanup();
         let _ = cubecl::future::block_on(self.client.sync());
@@ -4256,6 +4378,68 @@ mod admission_tests {
 #[cfg(test)]
 mod target_verify3_tests {
     use super::*;
+
+    #[test]
+    fn iq4_decoder_activation_is_one_way_and_requires_actual_original_public_scope() {
+        use crate::next_shared::Iq4Decoder as D;
+        assert_eq!(
+            activate_target_iq4_decoder(D::Original, true).unwrap(),
+            D::PackedRegisters
+        );
+        assert!(activate_target_iq4_decoder(D::Original, false).is_err());
+        for scope in [false, true] {
+            assert!(activate_target_iq4_decoder(D::PackedRegisters, scope).is_err());
+        }
+    }
+
+    #[test]
+    fn actual_verify3_spec_selects_only_original_iq4_types_with_distinct_immutable_keys() {
+        use crate::next_shared::{Iq4Decoder as D, MatrixSpec};
+        for dtype in [0, 1, 6, 8, 12, 13, 14, 20, 23, 30] {
+            let original = MatrixSpec::new(7, 256, dtype).unwrap();
+            assert_eq!(
+                target_verify3_iq4_spec(7, 256, dtype, D::Original).unwrap(),
+                original
+            );
+            let candidate = target_verify3_iq4_spec(7, 256, dtype, D::PackedRegisters).unwrap();
+            if matches!(dtype, 20 | 23) {
+                assert_ne!(candidate, original);
+                assert_eq!(candidate.iq4_decoder(), D::PackedRegisters);
+                let hash = |spec: MatrixSpec| {
+                    use std::hash::{Hash, Hasher};
+                    let mut hash = std::collections::hash_map::DefaultHasher::new();
+                    spec.hash(&mut hash);
+                    hash.finish()
+                };
+                assert_ne!(hash(original), hash(candidate));
+            } else {
+                assert_eq!(candidate, original);
+                assert_eq!(candidate.iq4_decoder(), D::Original);
+            }
+        }
+        assert!(target_verify3_iq4_spec(7, 257, 20, D::PackedRegisters).is_err());
+        assert!(target_verify3_iq4_spec(7, 256, 999, D::PackedRegisters).is_err());
+    }
+
+    #[test]
+    fn iq4_counter_credits_only_actual_candidate_dispatch_and_rejects_overflow() {
+        use crate::next_shared::Iq4Decoder as D;
+        assert_eq!(next_target_iq4_dispatch_count(0, D::Original).unwrap(), 0);
+        assert_eq!(next_target_iq4_dispatch_count(7, D::Original).unwrap(), 7);
+        assert_eq!(
+            next_target_iq4_dispatch_count(0, D::PackedRegisters).unwrap(),
+            1
+        );
+        assert_eq!(
+            next_target_iq4_dispatch_count(7, D::PackedRegisters).unwrap(),
+            8
+        );
+        assert_eq!(
+            next_target_iq4_dispatch_count(u64::MAX, D::Original).unwrap(),
+            u64::MAX
+        );
+        assert!(next_target_iq4_dispatch_count(u64::MAX, D::PackedRegisters).is_err());
+    }
 
     #[test]
     fn verify3_is_fixed_at_construction_and_requires_original_target_batch_policy() {

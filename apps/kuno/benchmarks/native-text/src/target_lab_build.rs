@@ -507,6 +507,46 @@ pub(crate) fn three_gdn_streaming(
     }
 }
 
+/// This initial decoder trial admits only the accepted physical Intel/MTP
+/// placement. Absence preserves every unrelated existing controller choice.
+pub(crate) fn public_iq4_decoder(raw: Option<&OsStr>, scope: bool) -> Result<bool, &'static str> {
+    match raw {
+        None => Ok(false),
+        Some(value) if value == "packed-registers-public" && scope => Ok(true),
+        _ => Err("IQ4 decoder requires canonical fixed Intel speculative full-Q8 scope"),
+    }
+}
+
+pub(crate) fn public_iq4_decoder_name(actual: crate::next_shared::Iq4Decoder) -> &'static str {
+    match actual {
+        crate::next_shared::Iq4Decoder::Original => "original",
+        crate::next_shared::Iq4Decoder::PackedRegisters => "packed-registers",
+    }
+}
+
+/// Calls are credited by the actual selected MatrixSpec after successful
+/// existing Verify3 enqueues, then published only after full model acceptance.
+pub(crate) fn public_iq4_decoder_record(
+    selected: bool,
+    actual: crate::next_shared::Iq4Decoder,
+    successful_dispatches: u64,
+    verify3_dense_dispatches: u64,
+) -> Result<serde_json::Value, &'static str> {
+    if selected != (actual == crate::next_shared::Iq4Decoder::PackedRegisters)
+        || if selected {
+            successful_dispatches == 0 || successful_dispatches > verify3_dense_dispatches
+        } else {
+            successful_dispatches != 0
+        }
+    {
+        return Err("IQ4 decoder actual successful projection receipt rejected");
+    }
+    Ok(
+        serde_json::json!({"selected":selected,"successful_dispatches":successful_dispatches,
+        "verify3_dense_dispatches":verify3_dense_dispatches}),
+    )
+}
+
 /// Initial DOWN candidate has an explicit original speculative full-Q8 proof;
 /// no target-only or draft-profile claim is synthesized in the target parent.
 pub(crate) fn frozen_down_integer(raw: Option<&OsStr>, scope: bool) -> Result<bool, &'static str> {
@@ -834,6 +874,51 @@ pub(crate) fn name(inline: bool) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn iq4_decoder_selector_is_canonical_default_off_and_intel_full_q8_only() {
+        for scope in [false, true] {
+            assert_eq!(public_iq4_decoder(None, scope), Ok(false));
+            for raw in [
+                "packed-registers-public",
+                "packed-registers",
+                "true",
+                "",
+                "packed-registers-public ",
+            ] {
+                assert_eq!(
+                    public_iq4_decoder(Some(OsStr::new(raw)), scope).is_ok(),
+                    scope && raw == "packed-registers-public"
+                );
+            }
+        }
+    }
+    #[test]
+    fn iq4_decoder_receipts_require_actual_mode_successful_positive_calls_and_dense_coverage() {
+        use crate::next_shared::Iq4Decoder as D;
+        assert_eq!(public_iq4_decoder_name(D::Original), "original");
+        assert_eq!(
+            public_iq4_decoder_name(D::PackedRegisters),
+            "packed-registers"
+        );
+        assert!(public_iq4_decoder_record(false, D::Original, 0, 0).is_ok());
+        assert!(public_iq4_decoder_record(false, D::Original, 0, 900).is_ok());
+        for (calls, dense) in [(1, 1), (89, 200), (890, 2000)] {
+            let receipt =
+                public_iq4_decoder_record(true, D::PackedRegisters, calls, dense).unwrap();
+            assert_eq!(receipt["successful_dispatches"], calls);
+            assert_eq!(receipt["verify3_dense_dispatches"], dense);
+        }
+        for (selected, actual, calls, dense) in [
+            (true, D::Original, 1, 1),
+            (false, D::PackedRegisters, 1, 1),
+            (false, D::Original, 1, 1),
+            (true, D::PackedRegisters, 0, 200),
+            (true, D::PackedRegisters, 90, 89),
+            (true, D::PackedRegisters, u64::MAX, 200),
+        ] {
+            assert!(public_iq4_decoder_record(selected, actual, calls, dense).is_err());
+        }
+    }
     #[test]
     fn frozen_down_integer_flag_is_canonical_default_off_and_speculative_scope_bound() {
         for scope in [false, true] {
