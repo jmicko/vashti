@@ -9,7 +9,7 @@
 //! No bank fill, commit, graph hook, CPU fallback or device action lives here.
 //! Parent owns physical owner/alias/epoch/device-limit validation and acceptance.
 
-use super::{Q4_K, binary16, packed_value};
+use super::{IQ4_NL, Q4_K, binary16, iq4_nl_scale, iq4_nl_value_with_scale, packed_value};
 use cubecl::prelude::*;
 use zeroize::Zeroize;
 
@@ -158,6 +158,7 @@ pub struct Geometry {
     inactive_partition_exit: bool,
     private_tables: bool,
     workgroup_tables: bool,
+    shared_down_scales: bool,
 }
 impl Geometry {
     pub fn new(
@@ -215,6 +216,7 @@ impl Geometry {
             inactive_partition_exit: false,
             private_tables: false,
             workgroup_tables: false,
+            shared_down_scales: false,
         })
     }
     /// Explicit source-only public profile. These virtual slots are NOT
@@ -308,6 +310,27 @@ impl Geometry {
     }
     pub(crate) fn workgroup_tables(self) -> bool {
         self.workgroup_tables
+    }
+    /// Explicit frozen IQ4_NL scale-sharing candidate. Q2_0 keeps its exact
+    /// original decoder; no source binding, MAIN owner or INFO span is added.
+    #[allow(dead_code)]
+    pub(crate) fn with_shared_down_scales(mut self) -> Result<Self, &'static str> {
+        if !self.frozen_host_sources
+            || !self.inactive_partition_exit
+            || self.capacity != 512
+            || self.tile != 8
+            || self.secondary_partition
+            || self.gate_policy != GatePolicy::Generic
+            || self.reduction_policy != ReductionPolicy::AllMembers
+            || self.shared_down_scales
+        {
+            return Err("grouped frozen shared-down-scale policy");
+        }
+        self.shared_down_scales = true;
+        Ok(self)
+    }
+    pub(crate) fn shared_down_scales(self) -> bool {
+        self.shared_down_scales
     }
     /// Narrow immutable32+16 partition; ordinary flat48 remains unchanged.
     pub(crate) fn stationary_secondary(projections: [Projection; 3]) -> Result<Self, &'static str> {
@@ -1593,6 +1616,7 @@ pub fn grouped_down(
         tile,
         false,
         false,
+        false,
     );
 }
 
@@ -1639,6 +1663,56 @@ pub fn grouped_down_frozen(
         down_row_bytes,
         tile,
         false,
+        true,
+        false,
+    );
+}
+
+/// Original frozen-down arithmetic with twenty cooperatively decoded IQ4_NL
+/// scales per active row. Q2_0 is compile-time identical to the exit control.
+#[cube(launch, launch_unchecked)]
+#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
+pub fn grouped_down_frozen_shared_scales(
+    down: &Array<u32>,
+    activations: &Array<f32>,
+    map: &Array<u32>,
+    partials: &mut Array<f32>,
+    status: &mut Array<u32>,
+    map_first: usize,
+    act_first: usize,
+    act_stride: usize,
+    partial_first: usize,
+    partial_stride: usize,
+    status_first: usize,
+    first_slot: usize,
+    slot_count: usize,
+    #[comptime] hidden: usize,
+    #[comptime] ff: usize,
+    #[comptime] down_dtype: u32,
+    #[comptime] down_row_bytes: usize,
+    #[comptime] tile: usize,
+) {
+    grouped_down_inner(
+        down,
+        activations,
+        map,
+        partials,
+        status,
+        map_first,
+        act_first,
+        act_stride,
+        partial_first,
+        partial_stride,
+        status_first,
+        first_slot,
+        slot_count,
+        hidden,
+        ff,
+        down_dtype,
+        down_row_bytes,
+        tile,
+        false,
+        true,
         true,
     );
 }
@@ -1687,6 +1761,7 @@ pub fn grouped_down_live(
         tile,
         true,
         false,
+        false,
     );
 }
 
@@ -1713,6 +1788,7 @@ fn grouped_down_inner(
     #[comptime] tile: usize,
     #[comptime] live_member_reduction: bool,
     #[comptime] inactive_partition_exit: bool,
+    #[comptime] shared_down_scales: bool,
 ) {
     let feature = CUBE_POS_X as usize;
     let group = CUBE_POS_Y as usize;
@@ -1750,18 +1826,46 @@ fn grouped_down_inner(
         let slot = map[map_first + SLOTS + group] as usize - first_slot;
         let length = map[map_first + LENGTHS + group] as usize;
         let row_offset = (slot * hidden + feature) * down_row_bytes;
-        for column_tile in 0..comptime!(ff.div_ceil(LANES)) {
-            let column = column_tile * LANES + lane;
-            if column < ff {
-                let weight = packed_value(down, row_offset, column, down_dtype);
-                #[unroll]
-                for member in 0..tile {
-                    if first_member + member < length {
-                        let route = map
-                            [map_first + MEMBERS + group * MAX_BATCH + first_member + member]
-                            as usize;
-                        partial[member] +=
-                            weight * activations[act_first + route * act_stride + column];
+        if comptime!(shared_down_scales && down_dtype == IQ4_NL) {
+            // active is workgroup-uniform. Frozen geometry proves FF=640,
+            // so lanes0..19 initialize every scale before the uniform barrier.
+            // Each header retains the original integer IEEE half conversion.
+            let mut scales = SharedMemory::<f32>::new(comptime!(ff / 32));
+            if lane < comptime!(ff / 32) {
+                scales[lane] = iq4_nl_scale(down, row_offset, lane);
+            }
+            sync_cube();
+            for column_tile in 0..comptime!(ff.div_ceil(LANES)) {
+                let column = column_tile * LANES + lane;
+                if column < ff {
+                    let weight =
+                        iq4_nl_value_with_scale(down, row_offset, column, scales[column / 32]);
+                    #[unroll]
+                    for member in 0..tile {
+                        if first_member + member < length {
+                            let route = map
+                                [map_first + MEMBERS + group * MAX_BATCH + first_member + member]
+                                as usize;
+                            partial[member] +=
+                                weight * activations[act_first + route * act_stride + column];
+                        }
+                    }
+                }
+            }
+        } else {
+            for column_tile in 0..comptime!(ff.div_ceil(LANES)) {
+                let column = column_tile * LANES + lane;
+                if column < ff {
+                    let weight = packed_value(down, row_offset, column, down_dtype);
+                    #[unroll]
+                    for member in 0..tile {
+                        if first_member + member < length {
+                            let route = map
+                                [map_first + MEMBERS + group * MAX_BATCH + first_member + member]
+                                as usize;
+                            partial[member] +=
+                                weight * activations[act_first + route * act_stride + column];
+                        }
                     }
                 }
             }
@@ -2242,6 +2346,7 @@ mod tests {
             inactive_partition_exit: false,
             private_tables: false,
             workgroup_tables: false,
+            shared_down_scales: false,
         };
         assert_eq!(g.scratch_bytes(true).unwrap(), 4480 * 1024);
     }
@@ -3039,7 +3144,9 @@ mod tests {
                 let status_first = b.scalar(uint).into();
                 let first_slot = b.scalar(uint).into();
                 let slot_count = b.scalar(uint).into();
-                let expand = if g.inactive_partition_exit() {
+                let expand = if g.shared_down_scales() {
+                    grouped_down_frozen_shared_scales::expand
+                } else if g.inactive_partition_exit() {
                     grouped_down_frozen::expand
                 } else if g.live_member_reduction() {
                     grouped_down_live::expand
@@ -4825,6 +4932,7 @@ mod tests {
         assert!(failed.is_err());
         assert_eq!(SCRATCH_WIPES.with(|n| n.get()), before + 5);
     }
+    include!("iq4_down_scale_tests.rs");
 }
 #[cfg(test)]
 mod frozen_source_tests {

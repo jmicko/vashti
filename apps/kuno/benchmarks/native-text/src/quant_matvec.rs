@@ -236,6 +236,32 @@ fn iq4_value(index: usize) -> f32 {
     signed_byte((word >> (((index & 3) * 8) as u32)) & 255) as f32
 }
 
+/// Original IQ4_NL half scale at one tightly packed32-value block.
+/// Frozen-down staging calls this once per block, without weight expansion.
+#[cube]
+pub(super) fn iq4_nl_scale(words: &Array<u32>, row_offset: usize, block: usize) -> f32 {
+    binary16(u16_at(words, row_offset + block * 18))
+}
+
+/// Same nibble selection and weight multiplication as packed_value(IQ4_NL).
+/// Only the already decoded block scale is supplied by shared workgroup memory.
+#[cube]
+pub(super) fn iq4_nl_value_with_scale(
+    words: &Array<u32>,
+    row_offset: usize,
+    column: usize,
+    scale: f32,
+) -> f32 {
+    let base = row_offset + (column / 32) * 18;
+    let lane = column % 32;
+    let codes = byte_at(words, base + 2 + lane % 16);
+    let mut code = codes & 15;
+    if lane >= 16 {
+        code = codes >> 4;
+    }
+    scale * iq4_value(code as usize)
+}
+
 /// F32 callers must use a four-byte-aligned row_offset. Validated tightly
 /// packed F32 rows are columns*4 bytes; whole-row tile/expert views preserve
 /// alignment. Quantized rows keep their original byte addressing below.
