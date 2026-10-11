@@ -23,6 +23,8 @@ const MAX_FEED_FORWARD: usize = 1024;
 const MAX_EXPERTS: usize = 512;
 const WORKER_FIXED_PRIVATE_BYTES: usize = (256 + LANES) * size_of::<f32>() + 4096;
 const MAX_WORKER_PRIVATE_BYTES: usize = 32 * 1024;
+#[path = "cpu_expert_batch.rs"]
+pub mod batch;
 #[path = "cpu_quantized.rs"]
 mod quantized;
 
@@ -2334,6 +2336,10 @@ mod affinity {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    mod batch_tests {
+        use super::*;
+        include!("cpu_expert_batch_tests.rs");
+    }
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     mod iq_tests {
         use super::*;
