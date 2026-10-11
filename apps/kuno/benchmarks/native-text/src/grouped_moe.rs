@@ -3368,6 +3368,8 @@ mod tests {
                         &info,
                         &wgpu::naga::back::spv::Options {
                             lang_version: (1, 3),
+                            zero_initialize_workgroup_memory:
+                                wgpu::naga::back::spv::ZeroInitializeWorkgroupMemoryMode::None,
                             ..Default::default()
                         },
                         Some(&wgpu::naga::back::spv::PipelineOptions {
@@ -3602,19 +3604,21 @@ mod tests {
         assert_public_tables_immutable(&module);
     }
 
-    fn spirv_tables(module: &wgpu::naga::Module) -> (usize, usize, usize) {
-        use std::collections::HashMap;
+    fn runtime_spirv(module: &wgpu::naga::Module) -> Vec<u32> {
         let info = wgpu::naga::valid::Validator::new(
             wgpu::naga::valid::ValidationFlags::all(),
             wgpu::naga::valid::Capabilities::empty(),
         )
         .validate(module)
         .unwrap();
-        let words = wgpu::naga::back::spv::write_vec(
+        wgpu::naga::back::spv::write_vec(
             module,
             &info,
             &wgpu::naga::back::spv::Options {
                 lang_version: (1, 3),
+                // CubeCL backend/base.rs disables implicit workgroup zeroing.
+                zero_initialize_workgroup_memory:
+                    wgpu::naga::back::spv::ZeroInitializeWorkgroupMemoryMode::None,
                 ..Default::default()
             },
             Some(&wgpu::naga::back::spv::PipelineOptions {
@@ -3622,7 +3626,111 @@ mod tests {
                 entry_point: module.entry_points[0].name.clone(),
             }),
         )
-        .unwrap();
+        .unwrap()
+    }
+
+    fn runtime_spirv_barriers(module: &wgpu::naga::Module) -> usize {
+        let words = runtime_spirv(module);
+        let mut cursor = 5;
+        let mut barriers = 0;
+        while cursor < words.len() {
+            let len = (words[cursor] >> 16) as usize;
+            assert!(len > 0);
+            barriers += usize::from(words[cursor] & 0xffff == 224); // OpControlBarrier
+            cursor += len;
+        }
+        assert_eq!(cursor, words.len());
+        barriers
+    }
+
+    fn shared_pointer_global(
+        function: &wgpu::naga::Function,
+        pointer: wgpu::naga::Handle<wgpu::naga::Expression>,
+    ) -> Option<wgpu::naga::Handle<wgpu::naga::GlobalVariable>> {
+        use wgpu::naga::Expression;
+        match function.expressions[pointer] {
+            Expression::GlobalVariable(var) => Some(var),
+            Expression::Access { base, .. } | Expression::AccessIndex { base, .. } => {
+                shared_pointer_global(function, base)
+            }
+            _ => None,
+        }
+    }
+
+    fn is_physical_lane_x(
+        function: &wgpu::naga::Function,
+        expression: wgpu::naga::Handle<wgpu::naga::Expression>,
+    ) -> bool {
+        use wgpu::naga::{Binding, BuiltIn, Expression};
+        match function.expressions[expression] {
+            Expression::As { expr, .. } => is_physical_lane_x(function, expr),
+            Expression::AccessIndex { base, index: 0 } => match function.expressions[base] {
+                Expression::FunctionArgument(arg) => matches!(
+                    function.arguments[arg as usize].binding,
+                    Some(Binding::BuiltIn(BuiltIn::LocalInvocationId))
+                ),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    fn assert_shared_loads_follow_barrier(
+        module: &wgpu::naga::Module,
+        array: wgpu::naga::Handle<wgpu::naga::GlobalVariable>,
+    ) {
+        use wgpu::naga::{Expression, Function, Statement};
+        fn visit(
+            function: &Function,
+            block: &wgpu::naga::Block,
+            array: wgpu::naga::Handle<wgpu::naga::GlobalVariable>,
+            mut ready: bool,
+        ) -> bool {
+            for statement in block {
+                match statement {
+                    Statement::Emit(range) => {
+                        for handle in range.clone() {
+                            if let Expression::Load { pointer } = function.expressions[handle] {
+                                assert!(
+                                    ready
+                                        || shared_pointer_global(function, pointer) != Some(array),
+                                    "shared array read before initialization barrier"
+                                );
+                            }
+                        }
+                    }
+                    Statement::ControlBarrier(_) => ready = true,
+                    Statement::Block(body) => ready = visit(function, body, array, ready),
+                    Statement::If { accept, reject, .. } => {
+                        visit(function, accept, array, ready);
+                        visit(function, reject, array, ready);
+                    }
+                    Statement::Switch { cases, .. } => {
+                        for case in cases {
+                            visit(function, &case.body, array, ready);
+                        }
+                    }
+                    Statement::Loop {
+                        body, continuing, ..
+                    } => {
+                        visit(function, body, array, ready);
+                        visit(function, continuing, array, ready);
+                    }
+                    _ => {}
+                }
+            }
+            ready
+        }
+        let function = &module.entry_points[0].function;
+        visit(function, &function.body, array, false);
+        for (_, function) in module.functions.iter() {
+            visit(function, &function.body, array, false);
+        }
+    }
+
+    fn spirv_tables(module: &wgpu::naga::Module) -> (usize, usize, usize) {
+        use std::collections::HashMap;
+        let words = runtime_spirv(module);
         let mut instructions = Vec::new();
         let mut cursor = 5;
         while cursor < words.len() {
@@ -3729,6 +3837,15 @@ mod tests {
                 }
             }
         }
+        for (array, variable) in module.global_variables.iter() {
+            if variable
+                .name
+                .as_deref()
+                .is_some_and(|n| n.starts_with("arrays_"))
+            {
+                assert_shared_loads_follow_barrier(module, array);
+            }
+        }
         let function = &module.entry_points[0].function;
         let barrier = function
             .body
@@ -3752,6 +3869,15 @@ mod tests {
     fn workgroup_table_element_store_cannot_bypass_immutability_proof() {
         let module = wgpu::naga::front::wgsl::parse_str(
             "var<workgroup> arrays_0: array<u32,256>; @compute @workgroup_size(64) fn main(@builtin(local_invocation_id) id:vec3<u32>) { workgroupBarrier(); if id.x==0u {arrays_0[id.x]=1u;} }"
+        ).unwrap();
+        assert_workgroup_tables_immutable_after_init(&module);
+    }
+
+    #[test]
+    #[should_panic(expected = "shared array read before initialization barrier")]
+    fn workgroup_table_read_before_barrier_cannot_bypass_initialization_proof() {
+        let module = wgpu::naga::front::wgsl::parse_str(
+            "var<workgroup> arrays_0:array<u32,256>; @group(0) @binding(0) var<storage,read_write> output:array<u32>; @compute @workgroup_size(64) fn main(@builtin(local_invocation_id) id:vec3<u32>) { output[id.x]=arrays_0[id.x]; workgroupBarrier(); }"
         ).unwrap();
         assert_workgroup_tables_immutable_after_init(&module);
     }
@@ -3835,7 +3961,13 @@ mod tests {
                         .iter()
                         .enumerate()
                         .find_map(|(i, statement)| match statement {
-                            Statement::Switch { cases, .. } => Some((i, cases)),
+                            Statement::Switch { selector, cases } => {
+                                assert!(
+                                    is_physical_lane_x(function, *selector),
+                                    "physical lane selector required for table initializer"
+                                );
+                                Some((i, cases))
+                            }
                             _ => None,
                         })
                         .expect("top-level literal-lane initializer");
@@ -3922,6 +4054,10 @@ mod tests {
                     2 + usize::from(!expected.is_empty())
                 );
                 assert_eq!(spirv_tables(&candidate), (0, 0, 0));
+                assert_eq!(
+                    runtime_spirv_barriers(&candidate),
+                    2 + usize::from(!expected.is_empty())
+                );
                 for kind in [1, 2, 3] {
                     let a = wgpu::naga::front::wgsl::parse_str(&shader(kind, old, mode)).unwrap();
                     let b = wgpu::naga::front::wgsl::parse_str(&shader(kind, new, mode)).unwrap();
