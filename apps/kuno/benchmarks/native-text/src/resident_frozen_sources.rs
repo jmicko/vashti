@@ -144,7 +144,15 @@ impl Sources {
         pages: Vec<RegisteredPage>,
         reserved_host_bytes: u64,
     ) -> Result<Arc<Self>> {
-        Self::new_with_policy(executor, graph, plan, pages, reserved_host_bytes, false)
+        Self::new_with_policy(
+            executor,
+            graph,
+            plan,
+            pages,
+            reserved_host_bytes,
+            false,
+            false,
+        )
     }
     /// Explicit matched-control candidate, frozen before any source descriptors
     /// are allocated or attached. All actual source/owner admission is shared.
@@ -155,7 +163,35 @@ impl Sources {
         pages: Vec<RegisteredPage>,
         reserved_host_bytes: u64,
     ) -> Result<Arc<Self>> {
-        Self::new_with_policy(executor, graph, plan, pages, reserved_host_bytes, true)
+        Self::new_with_policy(
+            executor,
+            graph,
+            plan,
+            pages,
+            reserved_host_bytes,
+            true,
+            false,
+        )
+    }
+    /// Public original codebooks use module-private pointer indexing rather
+    /// than repeated by-value SPIR-V array spills. Explicit exit policy only.
+    #[allow(dead_code)]
+    pub(crate) fn new_with_private_tables(
+        executor: &GpuExecutor<'_>,
+        graph: BoundGraph<'_, '_>,
+        plan: &plan::Plan<'_, '_>,
+        pages: Vec<RegisteredPage>,
+        reserved_host_bytes: u64,
+    ) -> Result<Arc<Self>> {
+        Self::new_with_policy(
+            executor,
+            graph,
+            plan,
+            pages,
+            reserved_host_bytes,
+            true,
+            true,
+        )
     }
     fn new_with_policy(
         executor: &GpuExecutor<'_>,
@@ -164,8 +200,10 @@ impl Sources {
         pages: Vec<RegisteredPage>,
         reserved_host_bytes: u64,
         inactive_partition_exit: bool,
+        private_tables: bool,
     ) -> Result<Arc<Self>> {
-        if reserved_host_bytes < EXTRA_HOST_BYTES
+        if private_tables && !inactive_partition_exit
+            || reserved_host_bytes < EXTRA_HOST_BYTES
             || graph.binding_id() != plan.binding()
             || executor.packed_profile != crate::expert_banks::OriginalPackedProfile::DaslabIq3
             || executor.bank_slots != 144
@@ -215,6 +253,9 @@ impl Sources {
                 .map_err(err)?;
             if inactive_partition_exit {
                 geometry = geometry.with_inactive_partition_exit().map_err(err)?;
+            }
+            if private_tables {
+                geometry = geometry.with_private_tables().map_err(err)?;
             }
             let layer_bound = StagedSlots::bounded_native_metadata_bytes(144)
                 .map_err(|_| reject())?
@@ -367,6 +408,9 @@ impl Sources {
     }
     pub(crate) fn inactive_partition_exit(&self) -> bool {
         self.layers[0].geometry.inactive_partition_exit()
+    }
+    pub(crate) fn private_tables(&self) -> bool {
+        self.layers[0].geometry.private_tables()
     }
     fn check_layer(&self, layer: usize, bank: &ExpertBanks) -> Result<&Layer> {
         let l = self.layers.get(layer).ok_or(reject())?;
@@ -880,6 +924,14 @@ impl Workspace {
             .ok_or_else(reject)?
             .inactive_partition_exit())
     }
+    #[allow(dead_code)]
+    pub(crate) fn frozen_host_source_private_tables(&self) -> Result<bool> {
+        Ok(self
+            .frozen_sources
+            .as_ref()
+            .ok_or_else(reject)?
+            .private_tables())
+    }
     pub(crate) fn frozen_source_counters(&self) -> Counters {
         self.frozen_source_counters
     }
@@ -942,6 +994,9 @@ impl Workspace {
                 .map_err(err)?;
             if sources.inactive_partition_exit() {
                 g = g.with_inactive_partition_exit().map_err(err)?;
+            }
+            if sources.private_tables() {
+                g = g.with_private_tables().map_err(err)?;
             }
             if g != sources.geometry(layer, bank)? {
                 return Err(reject());
@@ -1389,7 +1444,9 @@ impl Sources {
                     }
                 };
             }
-            if g.inactive_partition_exit() {
+            if g.private_tables() {
+                dispatch!(grouped_gate_up_frozen_private_grid, grouped_down_frozen);
+            } else if g.inactive_partition_exit() {
                 dispatch!(grouped_gate_up_frozen, grouped_down_frozen);
             } else {
                 dispatch!(grouped_gate_up, grouped_down);

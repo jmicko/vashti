@@ -199,10 +199,26 @@ var<{location}, {visibility}> info: info_st;
             )?;
         }
 
+        // This named laboratory entrypoint contains only compiled PUBLIC IQ
+        // codebook constants. The default declaration is byte-for-byte unchanged.
+        // Pointer indexing avoids Naga's per-access whole-composite Function
+        // spill; module Private storage is still per invocation, not shared SLM.
+        let private_iq_tables = self.kernel_name == "grouped_gate_up_frozen_private_grid";
         for array in self.constant_arrays.iter() {
+            let declaration = if private_iq_tables {
+                if array.item != Item::Scalar(Elem::U32)
+                    || !matches!(array.size, 256 | 512 | 2048)
+                    || array.values.len() != array.size as usize
+                {
+                    return Err(core::fmt::Error);
+                }
+                "var<private>"
+            } else {
+                "const"
+            };
             write!(
                 f,
-                "const arrays_{}: array<{}, {}> = array(",
+                "{declaration} arrays_{}: array<{}, {}> = array(",
                 array.index, array.item, array.size
             )?;
             for value in array.values.iter() {

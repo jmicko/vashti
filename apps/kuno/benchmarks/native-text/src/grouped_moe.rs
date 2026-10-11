@@ -156,6 +156,7 @@ pub struct Geometry {
     secondary_partition: bool,
     frozen_host_sources: bool,
     inactive_partition_exit: bool,
+    private_tables: bool,
 }
 impl Geometry {
     pub fn new(
@@ -211,6 +212,7 @@ impl Geometry {
             secondary_partition: false,
             frozen_host_sources: false,
             inactive_partition_exit: false,
+            private_tables: false,
         })
     }
     /// Explicit source-only public profile. These virtual slots are NOT
@@ -263,6 +265,26 @@ impl Geometry {
     }
     pub(crate) fn inactive_partition_exit(self) -> bool {
         self.inactive_partition_exit
+    }
+    /// Explicit public table-storage experiment. The original64 arithmetic,
+    /// owners and bindings remain identical to the frozen exit control.
+    pub(crate) fn with_private_tables(mut self) -> Result<Self, &'static str> {
+        if !self.frozen_host_sources
+            || !self.inactive_partition_exit
+            || self.capacity != 512
+            || self.tile != 8
+            || self.secondary_partition
+            || self.gate_policy != GatePolicy::Generic
+            || self.reduction_policy != ReductionPolicy::AllMembers
+            || self.private_tables
+        {
+            return Err("grouped frozen private-table policy");
+        }
+        self.private_tables = true;
+        Ok(self)
+    }
+    pub(crate) fn private_tables(self) -> bool {
+        self.private_tables
     }
     /// Narrow immutable32+16 partition; ordinary flat48 remains unchanged.
     pub(crate) fn stationary_secondary(projections: [Projection; 3]) -> Result<Self, &'static str> {
@@ -1096,6 +1118,62 @@ pub fn grouped_gate_up(
 #[cube(launch, launch_unchecked)]
 #[allow(clippy::too_many_arguments, clippy::collapsible_if)]
 pub fn grouped_gate_up_frozen(
+    gate: &Array<u32>,
+    up: &Array<u32>,
+    input: &Array<f32>,
+    map: &Array<u32>,
+    activations: &mut Array<f32>,
+    status: &mut Array<u32>,
+    map_first: usize,
+    input_first: usize,
+    input_stride: usize,
+    act_first: usize,
+    act_stride: usize,
+    status_first: usize,
+    first_slot: usize,
+    slot_count: usize,
+    #[comptime] hidden: usize,
+    #[comptime] ff: usize,
+    #[comptime] gate_dtype: u32,
+    #[comptime] up_dtype: u32,
+    #[comptime] gate_row_bytes: usize,
+    #[comptime] up_row_bytes: usize,
+    #[comptime] tile: usize,
+    #[comptime] q4_block: bool,
+) {
+    grouped_gate_up_inner(
+        gate,
+        up,
+        input,
+        map,
+        activations,
+        status,
+        map_first,
+        input_first,
+        input_stride,
+        act_first,
+        act_stride,
+        status_first,
+        first_slot,
+        slot_count,
+        hidden,
+        ff,
+        gate_dtype,
+        up_dtype,
+        gate_row_bytes,
+        up_row_bytes,
+        tile,
+        q4_block,
+        false,
+        true,
+    );
+}
+
+/// Explicit immutable public IQ table-storage candidate. The exact entrypoint
+/// name selects bounded module-private codebook lowering; all math is shared.
+#[cube(launch, launch_unchecked)]
+#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
+pub fn grouped_gate_up_frozen_private_grid(
     gate: &Array<u32>,
     up: &Array<u32>,
     input: &Array<f32>,
@@ -2083,6 +2161,7 @@ mod tests {
             secondary_partition: false,
             frozen_host_sources: false,
             inactive_partition_exit: false,
+            private_tables: false,
         };
         assert_eq!(g.scratch_bytes(true).unwrap(), 4480 * 1024);
     }
@@ -2829,7 +2908,9 @@ mod tests {
                 let status_first = b.scalar(uint).into();
                 let first_slot = b.scalar(uint).into();
                 let slot_count = b.scalar(uint).into();
-                let expand = if g.inactive_partition_exit() {
+                let expand = if g.private_tables() {
+                    grouped_gate_up_frozen_private_grid::expand
+                } else if g.inactive_partition_exit() {
                     grouped_gate_up_frozen::expand
                 } else if g.live_member_reduction() {
                     grouped_gate_up_live::expand
@@ -2981,7 +3062,11 @@ mod tests {
                 b.build(
                     KernelSettings::default()
                         .cube_dim(CubeDim::new_1d(64))
-                        .kernel_name("grouped_moe_operator"),
+                        .kernel_name(if kind == 0 && g.private_tables() {
+                            "grouped_gate_up_frozen_private_grid"
+                        } else {
+                            "grouped_moe_operator"
+                        }),
                 ),
                 &WgpuCompilationOptions::default(),
                 mode,
@@ -3102,6 +3187,234 @@ mod tests {
                     .unwrap();
                     assert!(!words.is_empty());
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn private_table_actual_mixed_shaders_remove_function_array_spills() {
+        use cubecl::server::ExecutionMode;
+        use wgpu::naga::{AddressSpace, Expression, Literal};
+
+        fn table_values(module: &wgpu::naga::Module, private: bool) -> Vec<Vec<u32>> {
+            fn value(module: &wgpu::naga::Module, h: wgpu::naga::Handle<Expression>) -> u32 {
+                match module.global_expressions[h] {
+                    Expression::Literal(Literal::U32(v)) => v,
+                    Expression::Literal(Literal::I32(v)) => v as u32,
+                    Expression::Literal(Literal::AbstractInt(v)) => v as u32,
+                    Expression::As { expr, .. } => value(module, expr),
+                    ref e => panic!("unexpected public table literal: {e:?}"),
+                }
+            }
+            let initializers: Vec<_> = if private {
+                module
+                    .global_variables
+                    .iter()
+                    .filter_map(|(_, var)| {
+                        if var
+                            .name
+                            .as_deref()
+                            .is_some_and(|n| n.starts_with("arrays_"))
+                        {
+                            assert_eq!(var.space, AddressSpace::Private);
+                            Some(var.init.unwrap())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            } else {
+                module
+                    .constants
+                    .iter()
+                    .filter_map(|(_, c)| {
+                        c.name
+                            .as_deref()
+                            .is_some_and(|n| n.starts_with("arrays_"))
+                            .then_some(c.init)
+                    })
+                    .collect()
+            };
+            let mut tables: Vec<_> = initializers
+                .into_iter()
+                .map(|h| match &module.global_expressions[h] {
+                    Expression::Compose { components, .. } => {
+                        components.iter().map(|&v| value(module, v)).collect()
+                    }
+                    e => panic!("unexpected public table initializer: {e:?}"),
+                })
+                .collect();
+            tables.sort();
+            tables
+        }
+
+        // Inspect actual Naga SPIR-V. A dynamic value-array access spills its
+        // entire initializer into a Function variable; pointer indexing must
+        // eliminate both that variable and every whole-composite store to it.
+        fn spirv_tables(module: &wgpu::naga::Module) -> (usize, usize, usize) {
+            use std::collections::HashMap;
+            let info = wgpu::naga::valid::Validator::new(
+                wgpu::naga::valid::ValidationFlags::all(),
+                wgpu::naga::valid::Capabilities::empty(),
+            )
+            .validate(module)
+            .unwrap();
+            let words = wgpu::naga::back::spv::write_vec(
+                module,
+                &info,
+                &wgpu::naga::back::spv::Options {
+                    lang_version: (1, 3),
+                    ..Default::default()
+                },
+                Some(&wgpu::naga::back::spv::PipelineOptions {
+                    shader_stage: wgpu::naga::ShaderStage::Compute,
+                    entry_point: module.entry_points[0].name.clone(),
+                }),
+            )
+            .unwrap();
+            let mut instructions = Vec::new();
+            let mut cursor = 5;
+            while cursor < words.len() {
+                let len = (words[cursor] >> 16) as usize;
+                assert!(len > 0);
+                instructions.push((words[cursor] & 0xffff, &words[cursor + 1..cursor + len]));
+                cursor += len;
+            }
+            assert_eq!(cursor, words.len());
+            let mut constants = HashMap::new();
+            let mut arrays = HashMap::new();
+            let mut pointers = HashMap::new();
+            for &(opcode, operands) in &instructions {
+                match opcode {
+                    43 if operands.len() == 3 => {
+                        constants.insert(operands[1], operands[2]);
+                    }
+                    28 => {
+                        arrays.insert(operands[0], operands[2]);
+                    }
+                    32 => {
+                        pointers.insert(operands[0], (operands[1], operands[2]));
+                    }
+                    _ => {}
+                }
+            }
+            let mut functions = Vec::new();
+            let mut private = Vec::new();
+            for &(opcode, operands) in &instructions {
+                if opcode != 59 {
+                    continue;
+                }
+                if let Some(&(space, pointee)) = pointers.get(&operands[0]) {
+                    if arrays
+                        .get(&pointee)
+                        .and_then(|id| constants.get(id))
+                        .is_some_and(|&n| matches!(n, 256 | 512 | 2048))
+                    {
+                        match space {
+                            7 => functions.push(operands[1]),
+                            6 => private.push(operands[1]),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            let stores = instructions
+                .iter()
+                .filter(|(opcode, operands)| *opcode == 62 && functions.contains(&operands[0]))
+                .count();
+            assert!(
+                !instructions
+                    .iter()
+                    .any(|(opcode, operands)| { *opcode == 62 && private.contains(&operands[0]) }),
+                "public private table was mutated after its initializer"
+            );
+            (functions.len(), private.len(), stores)
+        }
+
+        let mut profiles = Vec::new();
+        for layer in 0..48 {
+            let p = crate::daslab_profile::routed_types(layer).unwrap();
+            if !profiles.contains(&p) {
+                profiles.push(p);
+            }
+        }
+        for [gate, up, down] in profiles {
+            let old = Geometry::new(
+                [
+                    Projection::new(gate, 2560, 640, 512).unwrap(),
+                    Projection::new(up, 2560, 640, 512).unwrap(),
+                    Projection::new(down, 640, 2560, 512).unwrap(),
+                ],
+                8,
+                144,
+            )
+            .unwrap()
+            .with_frozen_host_sources()
+            .unwrap()
+            .with_inactive_partition_exit()
+            .unwrap();
+            let new = old.with_private_tables().unwrap();
+            for mode in [ExecutionMode::Checked, ExecutionMode::Unchecked] {
+                let old_source = shader(0, old, mode);
+                let new_source = shader(0, new, mode);
+                validate_shader(&new_source, 8, true);
+                assert!(new_source.contains("fn grouped_gate_up_frozen_private_grid"));
+                let original = wgpu::naga::front::wgsl::parse_str(&old_source).unwrap();
+                let candidate = wgpu::naga::front::wgsl::parse_str(&new_source).unwrap();
+                let old_tables = table_values(&original, false);
+                let new_tables = table_values(&candidate, true);
+                assert_eq!(old_tables, new_tables);
+                for table in &new_tables {
+                    let expected: Vec<u32> = match table.len() {
+                        256 => kuno_text::quant::IQ3_XXS_GRID.to_vec(),
+                        512 => kuno_text::quant::IQ3_S_GRID.to_vec(),
+                        2048 => kuno_text::quant::IQ2_S_GRID
+                            .iter()
+                            .flat_map(|v| [*v as u32, (*v >> 32) as u32])
+                            .collect(),
+                        n => panic!("unexpected public table size {n}"),
+                    };
+                    assert_eq!(*table, expected);
+                }
+                assert_eq!(
+                    arithmetic_operations(&original),
+                    arithmetic_operations(&candidate)
+                );
+                assert_eq!(memory_events(&original), memory_events(&candidate));
+                assert_eq!(
+                    unconditional_barriers(&original.entry_points[0].function.body, false),
+                    2
+                );
+                assert_eq!(
+                    unconditional_barriers(&candidate.entry_points[0].function.body, false),
+                    2
+                );
+                let before = spirv_tables(&original);
+                let after = spirv_tables(&candidate);
+                assert_eq!(after.0, 0);
+                assert_eq!(after.2, 0);
+                assert_eq!(after.1, new_tables.len());
+                if !new_tables.is_empty() {
+                    assert!(before.0 > 0 && before.2 >= before.0);
+                } else {
+                    assert_eq!(before, (0, 0, 0));
+                }
+                eprintln!(
+                    "private_table gate={gate} up={up} mode={mode:?} public_words={:?} original_function_private_stores={before:?} candidate={after:?}",
+                    new_tables.iter().map(Vec::len).collect::<Vec<_>>()
+                );
+                // Downward expansion and its compiler selection stay unchanged.
+                let old_down = wgpu::naga::front::wgsl::parse_str(&shader(1, old, mode)).unwrap();
+                let new_down = wgpu::naga::front::wgsl::parse_str(&shader(1, new, mode)).unwrap();
+                assert_eq!(
+                    table_values(&old_down, false),
+                    table_values(&new_down, false)
+                );
+                assert_eq!(
+                    arithmetic_operations(&old_down),
+                    arithmetic_operations(&new_down)
+                );
+                assert_eq!(memory_events(&old_down), memory_events(&new_down));
             }
         }
     }
@@ -4114,6 +4427,42 @@ mod frozen_source_tests {
             Projection::new(down, 640, 2560, 512).unwrap(),
         ];
         Geometry::new(p, 8, 144).unwrap()
+    }
+    #[test]
+    fn private_table_policy_requires_frozen_exit_and_preserves_owners() {
+        use std::hash::{DefaultHasher, Hash, Hasher};
+        let hash = |g: Geometry| {
+            let mut h = DefaultHasher::new();
+            g.hash(&mut h);
+            h.finish()
+        };
+        for layer in 0..48 {
+            let ordinary = geometry(layer);
+            assert!(ordinary.with_private_tables().is_err());
+            let frozen = ordinary.with_frozen_host_sources().unwrap();
+            assert!(frozen.with_private_tables().is_err());
+            let old = frozen.with_inactive_partition_exit().unwrap();
+            let new = old.with_private_tables().unwrap();
+            assert!(!old.private_tables());
+            assert!(new.private_tables());
+            assert!(new.with_private_tables().is_err());
+            assert!(new.with_live_member_reduction().is_err());
+            assert_ne!(hash(old), hash(new));
+            assert_eq!(old.projections(), new.projections());
+            assert_eq!(old.member_capacity(), new.member_capacity());
+            assert_eq!(old.status_words(), new.status_words());
+            for io in [false, true] {
+                assert_eq!(old.scratch_bytes(io), new.scratch_bytes(io));
+            }
+            for groups in [1, 10, 20, 30] {
+                for down in [false, true] {
+                    assert_eq!(
+                        format!("{:?}", old.grid(groups, down).unwrap()),
+                        format!("{:?}", new.grid(groups, down).unwrap())
+                    );
+                }
+            }
+        }
     }
     #[test]
     fn virtual_five_page_geometry_is_separate_from_ordinary_bank_capacity() {
