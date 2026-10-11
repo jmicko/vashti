@@ -59,6 +59,10 @@ fn fault() -> Error {
     Error::InvalidFormat("GDN chunk invalid layout or result")
 }
 
+#[cfg(test)]
+#[path = "gdn_retained_metadata_tests.rs"]
+mod retained_metadata_tests;
+
 #[derive(Clone, Copy)]
 pub struct TokenSpan {
     pub base: usize,
@@ -299,15 +303,31 @@ pub fn validate_bindings(
             return Err(fault());
         }
     }
-    let resources = buffers
-        .0
-        .iter()
-        .map(|&id| {
-            client
-                .get_resource(arena.handle(id).map_err(|_| fault())?.clone())
-                .map_err(|_| fault())
-        })
-        .collect::<Result<Vec<_>>>()?;
+    // Eight full owner headers only; no tensor bytes or new retained owner.
+    // Include the client/server conversion's headers conservatively within
+    // the existing 64 KiB/stage runtime reservation, alongside its INFO bound.
+    const HEADER_BYTES: usize = 8
+        * (std::mem::size_of::<cubecl::server::Handle>()
+            + std::mem::size_of::<cubecl::server::Binding>()
+            + 2 * std::mem::size_of::<
+                cubecl_runtime::storage::ManagedResource<cubecl::wgpu::WgpuResource>,
+            >())
+        + 6 * std::mem::size_of::<Vec<usize>>();
+    const { assert!(HEADER_BYTES <= 4096) };
+    const { assert!(37 * 2 * 512 + HEADER_BYTES <= 64 * 2 * 512) };
+    let mut handles = Vec::with_capacity(buffers.0.len());
+    if handles.capacity() != 8 {
+        return Err(fault());
+    }
+    for &id in &buffers.0 {
+        handles.push(arena.handle(id).map_err(|_| fault())?.clone());
+    }
+    // Default retains ordered get_resource calls. The selected existing
+    // metadata policy inspects the same full roots without submitting work.
+    let resources = crate::resident_util::resources(client, handles).map_err(|_| fault())?;
+    if resources.len() != 8 || resources.capacity() != 8 {
+        return Err(fault());
+    }
     for (index, r) in resources.iter().enumerate() {
         let h = arena.handle(buffers.0[index]).map_err(|_| fault())?;
         let region = r.resource();
