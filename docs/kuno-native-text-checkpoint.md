@@ -3578,3 +3578,46 @@ No engine source was changed in this investigation; the working tree is at
 full discipline: oracle and lowering tests first, clean commit, fresh
 build freeze, four whole-model gates, then the code200 ABBA with the
 composed GPU-routed+exit configuration.
+
+### Correction to the IQ3 investigation: the operative path (2026-10-10)
+
+Deeper tracing corrects the section above before implementation. The E1
+experiment as scoped there is wrong, and no engine source has been changed.
+
+1. **The operative frozen MoE kernels are NOT the iq_moe_integer WGSL
+   family.** The accepted warm/language runs use
+   `grouped_gate_up_frozen`/`grouped_down_frozen` (grouped_moe.rs, CubeCL,
+   the original64 F32 contract) decoding each weight through
+   `quant_matvec::packed_value` -> `quant_daslab` per value. The
+   iq_moe_integer/verify3/prepared family - including the WGSL SLM grid
+   staging - is the separate integer family, inactive in every accepted run
+   (`prepared_verify3_experts: false` in all language receipts). Implementing
+   E1 would optimize a family that does not run and would show ~0% in the
+   operative ABBA; the staging remains a latent anti-pattern only if that
+   family is ever enabled.
+2. **Decode-once is already present in the operative kernel** across the
+   member dimension (grouped_moe.rs: "Decode each original weight only ONCE,
+   reused across RHS"). The actual decode inefficiency is per-VALUE block
+   metadata: each of the 32 lanes covering an IQ block independently
+   re-reads the same scale/sign/high-bit words from the weight array, so
+   block metadata is loaded ~32x redundantly per block per row. An
+   arithmetic-identical amortization (stage a row's block metadata in
+   workgroup memory once) is the real "packed IQ3 block decoding" candidate,
+   and it lives in quant_matvec/quant_daslab plus the grouped_moe inner
+   loop, not in the WGSL templates.
+3. **The VRAM placement is a frozen fixture contract**: public_host_bank_completion
+   validates the resident set is exactly experts 0..CAPACITY (0..143),
+   documented as the diagnostic placement exercising both tiers. A
+   route-aware (hot-expert) placement is a fixture-contract change with its
+   own opt-in, validation, acceptance-description update and re-gating - a
+   separate experiment from kernel work, though potentially the largest
+   lever if host-source PCIe streaming dominates (71.5% of routes hit host
+   sources; existing receipts do not instrument PCIe bytes, so this remains
+   unproven).
+4. **Decision for the next implementation pass**: operative-path per-block
+   metadata staging (arithmetic-identical, oracle-testable) vs the
+   hot-placement fixture variant (measurement first, larger protocol
+   change). The weight_read_ns receipt counters track only demand uploads,
+   which are zero in the frozen design, so neither experiment's payoff can
+   be predicted from existing receipts; the placement variant would decide
+   the memory-versus-compute question directly.
