@@ -1,7 +1,8 @@
 //! Fixed-public count1 port of the accepted resident arithmetic. Uses the
 //! original CubeCL stream/owners; no second device, inference API or fallback.
-//! Public geometry alone identifies pipelines. Offsets enter the existing
-//! transient uniform ledger and never become compilation/cache keys.
+//! Public geometry and an explicit immutable decoder policy identify pipelines.
+//! Offsets enter the existing transient uniform ledger and never become
+//! compilation/cache keys.
 use cubecl::ir::{ElemType, StorageType, UIntKind};
 use cubecl::prelude::{ComputeClient, CubeCount, CubeDim, CubeElement};
 use cubecl::wgpu::{AutoCompiler, WgpuRuntime};
@@ -14,12 +15,22 @@ use zeroize::{Zeroize, Zeroizing};
 
 const VERIFY3_FINITE_WORD_LIMIT: usize = 64 * 1024 * 1024 / 4;
 
+/// Original packed weights/F32 math in both modes; only the IQ4 lookup differs.
+/// The alternate decoder is restricted to Verify3 and public decoder fixtures.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum Iq4Decoder {
+    Original,
+    #[allow(dead_code)] // Default-off leaf; the separately gated controller selects it.
+    PackedRegisters,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct MatrixSpec {
     rows: usize,
     columns: usize,
     dtype: u32,
     row_bytes: usize,
+    iq4_decoder: Iq4Decoder,
 }
 impl MatrixSpec {
     /// Exact decoder set in ornith/matrix_vector.wgsl. The generic packed
@@ -51,7 +62,51 @@ impl MatrixSpec {
             columns,
             dtype,
             row_bytes,
+            iq4_decoder: Iq4Decoder::Original,
         })
+    }
+    /// No automatic format selection or fallback: the caller must explicitly
+    /// select this policy only for an original IQ4_NL/IQ4_XS public tile.
+    #[allow(dead_code)] // Default-off leaf; parent activation is independently gated.
+    pub(crate) fn with_iq4_decoder(mut self, decoder: Iq4Decoder) -> Result<Self> {
+        if decoder == Iq4Decoder::PackedRegisters && !matches!(self.dtype, 20 | 23) {
+            return Err(Error::InvalidFormat("Verify3 IQ4 register decoder dtype"));
+        }
+        self.iq4_decoder = decoder;
+        Ok(self)
+    }
+    #[allow(dead_code)] // Parent actual-dispatch accounting reads this immutable policy.
+    pub(crate) fn iq4_decoder(self) -> Iq4Decoder {
+        self.iq4_decoder
+    }
+    fn require_original_scalar(self) -> Result<()> {
+        if self.iq4_decoder != Iq4Decoder::Original {
+            return Err(Error::InvalidFormat(
+                "IQ4 register decoder requires Verify3",
+            ));
+        }
+        Ok(())
+    }
+    fn verify3_helpers(self) -> String {
+        let original = include_str!("ornith/matrix_vector.wgsl")
+            .split_once("@compute")
+            .expect("shared packed main boundary")
+            .0;
+        if self.iq4_decoder == Iq4Decoder::Original {
+            return original.to_owned();
+        }
+        // Replace ONLY the original IQ4 lookup, leaving all packed addresses,
+        // scale operations and original Q5_K helper expressions untouched.
+        let (prefix, table) = original
+            .split_once("// Original GGML b11232 nonlinear IQ4 table")
+            .expect("shared original IQ4 lookup boundary");
+        let (_, suffix) = table
+            .split_once("// Four natural-order original values.")
+            .expect("shared original IQ4 packed decoder boundary");
+        format!(
+            "{prefix}{}\n// Four natural-order original values.{suffix}",
+            include_str!("next_iq4_register.wgsl")
+        )
     }
     fn source(self) -> String {
         // Reuse the exact arithmetic that passed original Next slabs. Only its
@@ -111,10 +166,7 @@ impl MatrixSpec {
             .split_once("fn sigmoid")
             .unwrap()
             .1;
-        let helpers = include_str!("ornith/matrix_vector.wgsl")
-            .split_once("@compute")
-            .unwrap()
-            .0;
+        let helpers = self.verify3_helpers();
         format!(
             "const DTYPE:u32={}u;const ROWS:u32={}u;const COLUMNS:u32={}u;const ROW_BYTES:u32={}u;\nstruct Params {{a:u32,b:u32,c:u32,d:u32}}\n@group(0) @binding(0) var<storage,read> weight:array<u32>;\n@group(0) @binding(1) var<storage,read_write> output:array<f32>;\n@group(0) @binding(2) var<uniform> p:Params;\nfn sigmoid{common}\n{helpers}\n@compute @workgroup_size(128)\nfn main(@builtin(global_invocation_id) id:vec3<u32>) {{let index=id.x;if index<ROWS*COLUMNS/4u {{let row=index/(COLUMNS/4u);let col=(index%(COLUMNS/4u))*4u;let values=dense_added_packed(p.a+row*ROW_BYTES,col);for(var lane=0u;lane<4u;lane++) {{output[p.b+row*p.c+col+lane]=values[lane];}}}}}}",
             self.dtype, self.rows, self.columns, self.row_bytes
@@ -125,10 +177,7 @@ impl MatrixSpec {
             .split_once("fn sigmoid")
             .expect("shared packed helper boundary")
             .1;
-        let helpers = include_str!("ornith/matrix_vector.wgsl")
-            .split_once("@compute")
-            .expect("shared packed main boundary")
-            .0;
+        let helpers = self.verify3_helpers();
         format!(
             "const DTYPE:u32={}u;const ROWS:u32={}u;const COLUMNS:u32={}u;const ROW_BYTES:u32={}u;\n\
              struct Params {{input_first:u32,output_first:u32,count:u32,input_stride:u32,output_stride:u32,input_words:u32,output_words:u32,reserved:u32}}\n\
@@ -701,6 +750,9 @@ fn matrix_inner(
     output_first: usize,
     fault: Option<(Handle, usize, usize, bool)>,
 ) -> Result<()> {
+    // A selected alternate spec must never silently compile/dispatch the old
+    // scalar source. Only Verify3 and the independent public decoder accept it.
+    spec.require_original_scalar()?;
     if !input_words.is_multiple_of(4)
         || !input_first.is_multiple_of(4)
         || input_first
@@ -1123,6 +1175,10 @@ pub(crate) fn probe_gdn(
 #[cfg(test)]
 #[path = "next_verify3_finite_tests.rs"]
 mod verify3_finite_tests;
+
+#[cfg(test)]
+#[path = "next_iq4_register_tests.rs"]
+mod iq4_register_tests;
 
 #[cfg(test)]
 mod tests {
