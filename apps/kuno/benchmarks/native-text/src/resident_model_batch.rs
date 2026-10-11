@@ -227,6 +227,8 @@ pub(crate) enum NativeDecodeKernels {
     SingleGdn,
     SingleAll,
     SingleQ4All,
+    // Actual public target state; deliberately absent from the count1 parser.
+    ThreeGdn,
 }
 impl NativeDecodeKernels {
     pub(crate) fn parse(value: &str) -> Result<Self> {
@@ -246,20 +248,28 @@ impl NativeDecodeKernels {
             Self::SingleGdn => "single-gdn",
             Self::SingleAll => "single-all",
             Self::SingleQ4All => "single-q4-all",
+            Self::ThreeGdn => "three-gdn-streaming-public",
         }
     }
     fn single_moe(self) -> bool {
         matches!(self, Self::SingleMoe | Self::SingleAll | Self::SingleQ4All)
     }
     fn recurrence(self) -> crate::gdn_chunk::RecurrencePolicy {
-        if matches!(self, Self::SingleGdn | Self::SingleAll | Self::SingleQ4All) {
+        if self == Self::ThreeGdn {
+            crate::gdn_chunk::RecurrencePolicy::ThreeStreaming
+        } else if matches!(self, Self::SingleGdn | Self::SingleAll | Self::SingleQ4All) {
             crate::gdn_chunk::RecurrencePolicy::SingleStreaming
         } else {
             crate::gdn_chunk::RecurrencePolicy::Chunk
         }
     }
     fn validate_count(self, count: usize) -> Result<()> {
-        if !(1..=MAX_BATCH).contains(&count) || self != Self::Chunk && count != 1 {
+        let accepted = match self {
+            Self::Chunk => (1..=MAX_BATCH).contains(&count),
+            Self::ThreeGdn => (1..=3).contains(&count),
+            _ => count == 1,
+        };
+        if !accepted {
             return Err(error());
         }
         Ok(())
@@ -1292,6 +1302,80 @@ impl Zeroize for Outer {
         self.packet.zeroize();
     }
 }
+fn decode_family_policy(
+    tile: usize,
+    recurrence: crate::gdn_chunk::RecurrencePolicy,
+    q4_block: bool,
+    dense_members: usize,
+) -> Result<NativeDecodeKernels> {
+    use crate::gdn_chunk::RecurrencePolicy::{Chunk, SingleStreaming, ThreeStreaming};
+    Ok(match (tile, recurrence, q4_block, dense_members) {
+        (4 | 8, Chunk, false, 8) => NativeDecodeKernels::Chunk,
+        (1, Chunk, false, 8) => NativeDecodeKernels::SingleMoe,
+        (4 | 8, SingleStreaming, false, 8) => NativeDecodeKernels::SingleGdn,
+        (1, SingleStreaming, false, 1) => NativeDecodeKernels::SingleAll,
+        (1, SingleStreaming, true, 1) => NativeDecodeKernels::SingleQ4All,
+        (8, ThreeStreaming, false, 8) => NativeDecodeKernels::ThreeGdn,
+        _ => return Err(error()),
+    })
+}
+#[derive(Clone, Copy)]
+struct PublicThreeGdnScope {
+    original_profile: bool,
+    target_rows: bool,
+    checkpoint: bool,
+    public_request: bool,
+    frozen_sources: bool,
+    frozen_router: bool,
+    partition_exit: bool,
+    original_io: bool,
+    original_dispatch: bool,
+    original_families: bool,
+}
+impl PublicThreeGdnScope {
+    fn validate(self) -> Result<()> {
+        if !self.original_profile
+            || !self.target_rows
+            || !self.checkpoint
+            || !self.public_request
+            || !self.frozen_sources
+            || !self.frozen_router
+            || !self.partition_exit
+            || !self.original_io
+            || !self.original_dispatch
+            || !self.original_families
+        {
+            return Err(error());
+        }
+        Ok(())
+    }
+}
+fn projection_policy_allows_tile(policy: NativeDecodeKernels, tile: usize) -> bool {
+    match policy {
+        NativeDecodeKernels::Chunk => true,
+        NativeDecodeKernels::ThreeGdn => tile == 8,
+        _ => tile == 1,
+    }
+}
+fn three_gdn_selection_allowed(
+    policy: NativeDecodeKernels,
+    accepted_prefill: bool,
+    request_active: bool,
+) -> bool {
+    accepted_prefill
+        && !request_active
+        && matches!(
+            policy,
+            NativeDecodeKernels::Chunk | NativeDecodeKernels::ThreeGdn
+        )
+}
+fn next_three_gdn_chunks(policy: NativeDecodeKernels, current: u64) -> Result<u64> {
+    if policy == NativeDecodeKernels::ThreeGdn {
+        current.checked_add(1).ok_or(Error::ArithmeticOverflow)
+    } else {
+        Ok(current)
+    }
+}
 pub(super) struct Workspace {
     gr: gr::Workspace,
     gdn: gdn::GdnBatchWorkspace,
@@ -1310,28 +1394,68 @@ pub(super) struct Workspace {
     public_gpu_qsa_selector: bool,
     public_frozen_host_sources: bool,
     public_frozen_host_router: bool,
+    three_gdn_completed_chunks: u64,
 }
 impl Workspace {
     fn decode_kernels(&self) -> Result<NativeDecodeKernels> {
-        let single_moe = match self.moe.projection_tile() {
-            1 => true,
-            4 | 8 => false,
-            _ => return Err(error()),
-        };
-        let single_gdn =
-            self.gdn.recurrence_policy() == crate::gdn_chunk::RecurrencePolicy::SingleStreaming;
-        let q4_block =
-            self.moe.gate_policy() == crate::quant_matvec::grouped_moe::GatePolicy::Q4Block;
-        Ok(
-            match (single_moe, single_gdn, q4_block, self.dense_member_capacity) {
-                (false, false, false, 8) => NativeDecodeKernels::Chunk,
-                (true, false, false, 8) => NativeDecodeKernels::SingleMoe,
-                (false, true, false, 8) => NativeDecodeKernels::SingleGdn,
-                (true, true, false, 1) => NativeDecodeKernels::SingleAll,
-                (true, true, true, 1) => NativeDecodeKernels::SingleQ4All,
-                _ => return Err(error()),
-            },
+        decode_family_policy(
+            self.moe.projection_tile(),
+            self.gdn.recurrence_policy(),
+            self.moe.gate_policy() == crate::quant_matvec::grouped_moe::GatePolicy::Q4Block,
+            self.dense_member_capacity,
         )
+    }
+    /// Called by every target/round/request path, including prefill. The new
+    /// state remains restricted to its actual public frozen construction.
+    fn validate_target_decode_policy(
+        &self,
+        executor: &GpuExecutor<'_>,
+        admission: &crate::executor::ResidentAdmission,
+    ) -> Result<()> {
+        match self.decode_kernels()? {
+            NativeDecodeKernels::Chunk => Ok(()),
+            NativeDecodeKernels::ThreeGdn => self.three_gdn_scope(executor, admission)?.validate(),
+            _ => Err(error()),
+        }
+    }
+    fn three_gdn_scope(
+        &self,
+        executor: &GpuExecutor<'_>,
+        admission: &crate::executor::ResidentAdmission,
+    ) -> Result<PublicThreeGdnScope> {
+        Ok(PublicThreeGdnScope {
+            original_profile: executor.packed_profile
+                == crate::expert_banks::OriginalPackedProfile::DaslabIq3,
+            target_rows: self.target_rows.is_some() && executor.target_rows_reserved,
+            checkpoint: self.latest_target_checkpoint_reserved,
+            public_request: self.public_target_request_io.is_some()
+                != self.public_language_request_io.is_some(),
+            frozen_sources: self.public_frozen_host_sources
+                && self.moe.frozen_host_sources_enabled(),
+            frozen_router: self.public_frozen_host_router
+                && self.moe.frozen_host_batch_router_active()
+                && executor.target_frozen_host_router_reserved
+                && executor.target_batch_router_reserved
+                && executor.target_frozen_host_source_identity.is_some()
+                && executor.resident_banks_frozen,
+            partition_exit: self.moe.frozen_host_sources_enabled()
+                && self.moe.frozen_host_source_partition_exit()?,
+            original_io: executor.token_io_checkpoint
+                && admission.deferred_token_io()
+                && admission.transient_io(),
+            original_dispatch: executor.target_verify3_dense
+                && executor.target_verify3_fused
+                && self.moe.projection_tile() == 8
+                && self.dense_member_capacity == 8
+                && executor.native_projection_tile() == 8
+                && executor.native_projection_member_capacity() == 8,
+            original_families: self.moe.cpu_miss_cap().is_none()
+                && self.moe.cpu_gpu_overlap().is_none()
+                && !self.moe.resident_router_active()
+                && self.moe.count1_hybrid_owner_ids().is_none()
+                && self.moe.prepared_verify3_owner_id().is_none()
+                && !self.moe.live_member_reduction_enabled(),
+        })
     }
     pub(super) fn allocate(
         model: &mut ResidentModel<'_, '_>,
@@ -1549,6 +1673,7 @@ impl Workspace {
             public_gpu_qsa_selector: config.public_gpu_qsa_selector,
             public_frozen_host_sources: config.public_frozen_host_sources,
             public_frozen_host_router: config.public_frozen_host_router,
+            three_gdn_completed_chunks: 0,
         };
         result.prove_outer(model)?;
         Ok(result)
@@ -1698,7 +1823,8 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &mut GpuExecutor<'f>,
         tile: usize,
     ) -> Result<usize> {
-        if tile != 1 && self.native_decode_kernels()? != NativeDecodeKernels::Chunk {
+        let actual = self.native_decode_kernels()?;
+        if !projection_policy_allows_tile(actual, tile) {
             return Err(error());
         }
         let tile = NativeProjectionTile::new(tile)?;
@@ -2478,6 +2604,95 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         }
     }
 
+    /// Explicit fixed-public Verify3 selection after accepted prefill and
+    /// actual frozen source/router activation. No allocations or owner changes.
+    pub(crate) fn set_public_three_gdn_streaming(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        u::cancel(cancel)?;
+        let boundary = self.completed_native_projection_boundary(executor)?;
+        executor.check_target_rows_policy()?;
+        let native = self.native_batch.as_ref().ok_or(error())?;
+        native
+            .three_gdn_scope(executor, &self.admission)?
+            .validate()?;
+        let accepted_prefill = match (
+            &native.public_target_request_io,
+            &native.public_language_request_io,
+        ) {
+            (Some(_), None) => {
+                self.context == 13
+                    && self.position == 1
+                    && native
+                        .public_warm_replay
+                        .as_ref()
+                        .is_some_and(|p| p.reset_consumed())
+            }
+            (None, Some(permit)) => {
+                permit
+                    .identity(self.graph.binding_id(), self.context)
+                    .is_ok()
+                    && permit.validate_begin(self.position, false).is_ok()
+            }
+            _ => false,
+        };
+        if !three_gdn_selection_allowed(
+            native.decode_kernels()?,
+            accepted_prefill,
+            self.admission.request_io_reuse_active(),
+        ) {
+            return Err(error());
+        }
+        let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let native = self.native_batch.as_mut().ok_or(error())?;
+            native.gdn.set_lab_recurrence_policy(
+                executor,
+                &self.arena,
+                crate::gdn_chunk::RecurrencePolicy::ThreeStreaming,
+                &boundary,
+                cancel,
+            )?;
+            if native.decode_kernels()? != NativeDecodeKernels::ThreeGdn {
+                return Err(error());
+            }
+            native.validate_target_decode_policy(executor, &self.admission)?;
+            u::cancel(cancel)
+        }));
+        match attempt {
+            Ok(Ok(())) => Ok(()),
+            _ => {
+                self.admission
+                    .sequence_poison()
+                    .store(true, Ordering::Release);
+                self.poisoned = true;
+                executor.poison_resident();
+                let _ = self.close();
+                let _ = executor.close_transient_resident();
+                Err(error())
+            }
+        }
+    }
+    /// Selection plus positive accepted whole-chunk execution at the original
+    /// completed boundary; requested environment flags are not evidence.
+    pub(crate) fn completed_public_three_gdn_streaming(
+        &self,
+        executor: &GpuExecutor<'f>,
+    ) -> Result<(bool, u64)> {
+        self.completed_native_projection_boundary(executor)?;
+        let native = self.native_batch.as_ref().ok_or(error())?;
+        let selected = native.decode_kernels()? == NativeDecodeKernels::ThreeGdn;
+        if selected {
+            native.validate_target_decode_policy(executor, &self.admission)?;
+            if native.three_gdn_completed_chunks == 0 {
+                return Err(error());
+            }
+        } else if native.three_gdn_completed_chunks != 0 {
+            return Err(error());
+        }
+        Ok((selected, native.three_gdn_completed_chunks))
+    }
     pub(crate) fn set_lab_native_decode_kernels(
         &mut self,
         executor: &mut GpuExecutor<'f>,
@@ -2485,6 +2700,9 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         cancel: &AtomicBool,
     ) -> Result<NativeDecodeKernels> {
         u::cancel(cancel)?;
+        if policy == NativeDecodeKernels::ThreeGdn {
+            return Err(error());
+        }
         let boundary = self.completed_native_projection_boundary(executor)?;
         let observed = self.native_decode_kernels()?;
         if self
@@ -2751,6 +2969,9 @@ impl Workspace {
         cancel: &AtomicBool,
     ) -> Result<ChunkOutput> {
         self.prove_outer(m)?;
+        // Immutable for this exclusive transaction; capture before real PLE
+        // acceptance retains its disjoint mutable workspace borrow.
+        let decode_policy = self.decode_kernels()?;
         e.check_client(m.arena.client().map_err(u::fault)?)?;
         e.check_resident_admission(&m.admission)?;
         if self.dense_member_capacity != e.native_projection_member_capacity() {
@@ -2764,8 +2985,8 @@ impl Workspace {
         if self.target_rows.is_some() {
             e.check_target_rows_policy()?;
             target_rows::coordinates(tokens.len(), m.position)?;
-            if self.decode_kernels()? != NativeDecodeKernels::Chunk
-                || self.moe.cpu_miss_cap().is_some()
+            self.validate_target_decode_policy(e, &m.admission)?;
+            if self.moe.cpu_miss_cap().is_some()
                 || self.moe.cpu_gpu_overlap().is_some()
                 || self.moe.resident_router_active()
             {
@@ -2810,9 +3031,7 @@ impl Workspace {
                 self.moe.resident_router_ids().is_some() || e.resident_router_reserved,
                 self.moe.prepared_verify3_owner_id().is_some(),
             )?;
-            if self.decode_kernels()? != NativeDecodeKernels::Chunk {
-                return Err(error());
-            }
+            self.validate_target_decode_policy(e, &m.admission)?;
         }
         if self.moe.prepared_verify3_owner_id().is_some() {
             if self.target_rows.is_none()
@@ -2834,7 +3053,7 @@ impl Workspace {
         u::cancel(cancel)?;
         // Preflight both single-token families before clears, embeddings or
         // any other layer can enqueue work for this transaction.
-        self.decode_kernels()?.validate_count(tokens.len())?;
+        decode_policy.validate_count(tokens.len())?;
         if self.moe.cpu_miss_cap().is_some() && tokens.len() != 1 {
             return Err(error());
         }
@@ -3531,6 +3750,8 @@ impl Workspace {
         // guarded proposal is discarded on all late failure/cancellation paths.
         let completed_cpu_misses =
             checked_cpu_miss_total(*m.completed_cpu_misses, ma.completed_cpu_misses())?;
+        let three_gdn_completed_chunks =
+            next_three_gdn_chunks(decode_policy, self.three_gdn_completed_chunks)?;
         *m.phase_ns.entry("native_all_family_preflight").or_default() +=
             family_start.elapsed().as_nanos();
         let commit_start = Instant::now();
@@ -3577,6 +3798,7 @@ impl Workspace {
             return Err(error());
         }
         *m.completed_cpu_misses = *completed_cpu_misses;
+        self.three_gdn_completed_chunks = three_gdn_completed_chunks;
         m.position = *end;
         Ok(output)
     }
@@ -3584,6 +3806,125 @@ impl Workspace {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn three_gdn_actual_policy_is_exact_and_cannot_enter_count1_geometry() {
+        use crate::gdn_chunk::RecurrencePolicy::{Chunk, SingleStreaming, ThreeStreaming};
+        assert_eq!(
+            decode_family_policy(8, ThreeStreaming, false, 8).unwrap(),
+            NativeDecodeKernels::ThreeGdn
+        );
+        assert_eq!(
+            decode_family_policy(8, Chunk, false, 8).unwrap(),
+            NativeDecodeKernels::Chunk
+        );
+        assert_eq!(
+            decode_family_policy(8, SingleStreaming, false, 8).unwrap(),
+            NativeDecodeKernels::SingleGdn
+        );
+        for tile in [1, 4, 8] {
+            for dense in [1, 8] {
+                for q4 in [false, true] {
+                    assert_eq!(
+                        decode_family_policy(tile, ThreeStreaming, q4, dense).is_ok(),
+                        tile == 8 && dense == 8 && !q4
+                    );
+                }
+            }
+        }
+        let policy = NativeDecodeKernels::ThreeGdn;
+        assert_eq!(policy.recurrence(), ThreeStreaming);
+        assert!(!policy.single_moe());
+        for count in [0, 1, 2, 3, 4, 5, 8, 9, usize::MAX] {
+            assert_eq!(
+                policy.validate_count(count).is_ok(),
+                (1..=3).contains(&count)
+            );
+        }
+        for tile in [0, 1, 4, 8, usize::MAX] {
+            assert_eq!(projection_policy_allows_tile(policy, tile), tile == 8);
+        }
+        // The normal count1 CLI cannot select this state.
+        assert!(NativeDecodeKernels::parse(policy.label()).is_err());
+        assert_eq!(NativeDecodeKernels::default(), NativeDecodeKernels::Chunk);
+    }
+    #[test]
+    fn three_gdn_public_scope_rejects_each_missing_actual_owner_or_dispatch_gate() {
+        let scope = PublicThreeGdnScope {
+            original_profile: true,
+            target_rows: true,
+            checkpoint: true,
+            public_request: true,
+            frozen_sources: true,
+            frozen_router: true,
+            partition_exit: true,
+            original_io: true,
+            original_dispatch: true,
+            original_families: true,
+        };
+        scope.validate().unwrap();
+        for missing in 0..10 {
+            let mut invalid = scope;
+            match missing {
+                0 => invalid.original_profile = false,
+                1 => invalid.target_rows = false,
+                2 => invalid.checkpoint = false,
+                3 => invalid.public_request = false,
+                4 => invalid.frozen_sources = false,
+                5 => invalid.frozen_router = false,
+                6 => invalid.partition_exit = false,
+                7 => invalid.original_io = false,
+                8 => invalid.original_dispatch = false,
+                _ => invalid.original_families = false,
+            }
+            assert!(invalid.validate().is_err());
+        }
+    }
+    #[test]
+    fn three_gdn_selection_needs_accepted_prefill_before_request_and_no_count1_state() {
+        for policy in [
+            NativeDecodeKernels::Chunk,
+            NativeDecodeKernels::ThreeGdn,
+            NativeDecodeKernels::SingleMoe,
+            NativeDecodeKernels::SingleGdn,
+            NativeDecodeKernels::SingleAll,
+            NativeDecodeKernels::SingleQ4All,
+        ] {
+            for prefill in [false, true] {
+                for active in [false, true] {
+                    assert_eq!(
+                        three_gdn_selection_allowed(policy, prefill, active),
+                        prefill
+                            && !active
+                            && matches!(
+                                policy,
+                                NativeDecodeKernels::Chunk | NativeDecodeKernels::ThreeGdn
+                            )
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn three_gdn_completion_counter_is_checked_before_family_publication() {
+        assert_eq!(
+            next_three_gdn_chunks(NativeDecodeKernels::ThreeGdn, 0).unwrap(),
+            1
+        );
+        assert_eq!(
+            next_three_gdn_chunks(NativeDecodeKernels::ThreeGdn, 9).unwrap(),
+            10
+        );
+        assert!(next_three_gdn_chunks(NativeDecodeKernels::ThreeGdn, u64::MAX).is_err());
+        assert_eq!(
+            next_three_gdn_chunks(NativeDecodeKernels::Chunk, u64::MAX).unwrap(),
+            u64::MAX
+        );
+        let current = 9;
+        let candidate = next_three_gdn_chunks(NativeDecodeKernels::ThreeGdn, current).unwrap();
+        assert_eq!(candidate, 10);
+        // No mutable current is lent to preflight; late failure can abandon it.
+        assert_eq!(current, 9);
+    }
     #[test]
     fn frozen_staging_budget_requires_both_original_sources_and_gpu_router() {
         for sources in [false, true] {

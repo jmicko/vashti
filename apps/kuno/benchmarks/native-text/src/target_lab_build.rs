@@ -65,6 +65,19 @@ pub(crate) fn live_member_reduction(
     }
 }
 
+/// No count-based or production selection: the controllers pass their exact
+/// validated public frozen Verify3 scope, and reject arbitrary values.
+pub(crate) fn three_gdn_streaming(
+    raw: Option<&OsStr>,
+    public_frozen_scope: bool,
+) -> Result<bool, &'static str> {
+    match raw {
+        None => Ok(false),
+        Some(value) if value == "three-streaming-public" && public_frozen_scope => Ok(true),
+        _ => Err("three-token GDN requires canonical original public frozen Verify3 request scope"),
+    }
+}
+
 pub(crate) fn host_io_snapshot() -> [u64; 6] {
     let (setup, flush, map) = cubecl::wgpu::transient_scoped_read_ns();
     let (wait_ns, waits) = cubecl::wgpu::transient_gpu_submission_wait_stats();

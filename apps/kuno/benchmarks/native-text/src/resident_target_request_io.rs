@@ -323,8 +323,8 @@ pub(super) fn check_execution(
 ) -> Result<()> {
     check_runtime(model.arena.client().map_err(u::fault)?)?;
     executor.check_target_rows_policy()?;
+    native.validate_target_decode_policy(executor, &model.admission)?;
     if native.target_rows.is_none()
-        || native.decode_kernels()? != NativeDecodeKernels::Chunk
         || native.moe.cpu_miss_cap().is_some()
         || native.moe.cpu_gpu_overlap().is_some()
         || native.moe.resident_router_active()

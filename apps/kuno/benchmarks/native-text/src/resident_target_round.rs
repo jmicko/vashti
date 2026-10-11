@@ -119,9 +119,9 @@ impl<'a, 'm, 'f> LatestTargetRound<'a, 'm, 'f> {
         // configuration/cancel/input error here does NOT close a normal model.
         u::cancel(cancel)?;
         let native = model.native_batch.as_ref().ok_or(rejected())?;
+        native.validate_target_decode_policy(executor, &model.admission)?;
         if !native.latest_target_checkpoint_reserved
             || native.target_rows.is_none()
-            || native.decode_kernels()? != NativeDecodeKernels::Chunk
             || native.moe.cpu_miss_cap().is_some()
             || native.moe.cpu_gpu_overlap().is_some()
             || native.moe.resident_router_active()
