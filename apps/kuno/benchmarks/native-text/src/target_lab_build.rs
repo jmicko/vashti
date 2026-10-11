@@ -390,6 +390,58 @@ pub(crate) fn request_reuse(
     }
 }
 
+/// Initial runtime construction policy, distinct from warm-only model math.
+pub(crate) fn public_target_submission_backlog(
+    raw: Option<&OsStr>,
+    original_intel_full_q8_scope: bool,
+) -> Result<cubecl_runtime::server::PublicTargetSubmissionBacklog, &'static str> {
+    use cubecl_runtime::server::PublicTargetSubmissionBacklog;
+    match raw {
+        None => Ok(PublicTargetSubmissionBacklog::Default512),
+        Some(value) if value == "queued-2048-public" && original_intel_full_q8_scope => {
+            Ok(PublicTargetSubmissionBacklog::Queued2048)
+        }
+        _ => Err("target backlog requires canonical original Intel full-Q8 frozen public scope"),
+    }
+}
+
+pub(crate) fn public_target_submission_backlog_record(
+    selected: cubecl_runtime::server::PublicTargetSubmissionBacklog,
+    actual: Option<cubecl_runtime::server::PublicTargetSubmissionBacklog>,
+    request_reuse: bool,
+    draft_target_query_rejected: Option<bool>,
+) -> Result<serde_json::Value, &'static str> {
+    use cubecl_runtime::server::PublicTargetSubmissionBacklog;
+    if request_reuse && actual != Some(selected)
+        || !request_reuse
+            && (actual.is_some() || selected != PublicTargetSubmissionBacklog::Default512)
+        || draft_target_query_rejected == Some(false)
+        || selected == PublicTargetSubmissionBacklog::Queued2048
+            && draft_target_query_rejected != Some(true)
+    {
+        return Err("target backlog actual runtime construction or draft isolation rejected");
+    }
+    Ok(serde_json::json!({
+        "requested": if selected == PublicTargetSubmissionBacklog::Queued2048 {
+            "queued-2048-public"
+        } else { "original-512" },
+        "actual_target_policy": actual.map(|policy| match policy {
+            PublicTargetSubmissionBacklog::Default512 => "original-512",
+            PublicTargetSubmissionBacklog::Queued2048 => "queued-2048-public",
+        }),
+        "target_regulation_window": actual.map(|policy| policy.task_window()),
+        "target_minimum_actual_submission_cost": actual.map(|policy| policy.minimum_submission_cost()),
+        "selected_before_model_construction": selected == PublicTargetSubmissionBacklog::Queued2048,
+        "warm_only_model_arithmetic_activation": false,
+        "completed_device_execution_credit": false,
+        "draft_public_target_policy_query_rejected": draft_target_query_rejected,
+        "draft_original_constructor_regulation_window": draft_target_query_rejected.map(|_| 512usize),
+        "draft_original_constructor_minimum_submission_cost": draft_target_query_rejected.map(|_| 0usize),
+        "new_owner_or_metadata_charge_bytes": 0,
+        "opaque_driver_bytes_proven": false,
+    }))
+}
+
 /// Independent immutable status-fold selection for the compiled public target.
 pub(crate) fn public_grouped_status_folds(
     raw: Option<&OsStr>,
@@ -874,6 +926,77 @@ pub(crate) fn name(inline: bool) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn target_backlog_selector_requires_exact_value_and_original_intel_full_q8_scope() {
+        use cubecl_runtime::server::PublicTargetSubmissionBacklog as P;
+        for scope in [false, true] {
+            assert_eq!(
+                public_target_submission_backlog(None, scope),
+                Ok(P::Default512)
+            );
+            for raw in [
+                "queued-2048-public",
+                "queued-2048",
+                "2048",
+                "1",
+                "",
+                "queued-2048-public ",
+                "original-512",
+            ] {
+                assert_eq!(
+                    public_target_submission_backlog(Some(OsStr::new(raw)), scope).is_ok(),
+                    scope && raw == "queued-2048-public"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn target_backlog_receipt_requires_actual_immutable_policy_and_draft_isolation() {
+        use cubecl_runtime::server::PublicTargetSubmissionBacklog as P;
+        let selected = public_target_submission_backlog_record(
+            P::Queued2048,
+            Some(P::Queued2048),
+            true,
+            Some(true),
+        )
+        .unwrap();
+        assert_eq!(selected["target_regulation_window"], 2048);
+        assert_eq!(selected["target_minimum_actual_submission_cost"], 1);
+        assert_eq!(
+            selected["draft_original_constructor_regulation_window"],
+            512
+        );
+        assert_eq!(selected["warm_only_model_arithmetic_activation"], false);
+        assert_eq!(selected["completed_device_execution_credit"], false);
+        let original = public_target_submission_backlog_record(
+            P::Default512,
+            Some(P::Default512),
+            true,
+            Some(true),
+        )
+        .unwrap();
+        assert_eq!(original["target_regulation_window"], 512);
+        assert_eq!(original["target_minimum_actual_submission_cost"], 0);
+        let generic =
+            public_target_submission_backlog_record(P::Default512, None, false, None).unwrap();
+        assert!(generic["actual_target_policy"].is_null());
+        for (selected, actual, request, draft) in [
+            (P::Queued2048, Some(P::Default512), true, Some(true)),
+            (P::Default512, Some(P::Queued2048), true, Some(true)),
+            (P::Queued2048, None, true, Some(true)),
+            (P::Queued2048, None, false, Some(true)),
+            (P::Default512, Some(P::Default512), false, Some(true)),
+            (P::Queued2048, Some(P::Queued2048), true, None),
+            (P::Queued2048, Some(P::Queued2048), true, Some(false)),
+            (P::Default512, Some(P::Default512), true, Some(false)),
+        ] {
+            assert!(
+                public_target_submission_backlog_record(selected, actual, request, draft).is_err()
+            );
+        }
+    }
+
     #[test]
     fn iq4_decoder_selector_is_canonical_default_off_and_intel_full_q8_only() {
         for scope in [false, true] {

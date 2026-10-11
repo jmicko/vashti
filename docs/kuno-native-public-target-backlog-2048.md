@@ -6,7 +6,8 @@ Source preparation does not establish numerical, admission, speed or physical
 closing acceptance. The initial controller scope is the original public DASLab
 speculative target with full Q8 MTP on the independently identified Intel GPU.
 Nvidia and the draft stream retain their existing construction and512 policy.
-The controller and protected selector registration are separate from this leaf.
+The native controllers below implement selection; protected labels and hardware
+acceptance remain separately owned.
 
 ## Exact runtime API and construction boundary
 
@@ -79,17 +80,31 @@ the retained original warning path on poll failure is not a completion proof.
 The unchanged error futures and complete closing gates still reject failed
 device execution. The policy cannot establish driver completion by arithmetic.
 
-The canonical scalar/kernel batch threshold remains256. An original native
-owner-clear batch can overshoot it: `resident_util::zero_batch()` permits at
-most16 owners, so255 previous tasks plus16 clears permits a271-task submission.
-Private read batches add two tasks per nonempty descriptor then explicitly
-flush; the approved native target uses bounded original owner arrays and full
-owner/cap checks. For the canonical `S=271` envelope, selected2048 has at most
-4636 unfinished charged tasks/submissions; the comparable positive-task512
-envelope is1564. The window change adds at most3072 charged task slots to that
-conservative envelope. These are source bounds, not observed driver occupancy.
-If a future caller changes batch geometry, it must recompute `S`; the API alone
-does not prove the271 application bound for arbitrary descriptor vectors.
+The canonical scalar/kernel batch threshold remains256. For the approved
+ordinary inference path, an original native owner-clear batch can overshoot it:
+`resident_util::zero_many()` chunks at most16 owners and
+`transient::clear_owner_bindings()` preserves that bound, so255 prior tasks plus
+16 clears permits a271-task submission. Actual private read batches add two
+tasks per nonempty descriptor and explicitly flush. The only grouped target
+`read_async` call is the original or grouped PLE three-owner read, permitting at
+most255+6=261 tasks; other target ordinary reads use a single descriptor. These
+original bounded arrays, full owner/cap checks and scheduling are unchanged.
+
+For this ordinary regulated inference envelope, `S=271` gives selected2048 at
+most4636 unfinished charged tasks/submissions; the comparable positive-task512
+envelope is1564. The window adds at most3072 charged task slots to that
+conservative source bound. These are not observed driver occupancy. The typed
+API checks the256 scheduler threshold; it does not impose an arbitrary private
+read-vector271 bound. Any future larger descriptor batch must recompute `S`.
+
+This4636 envelope does **not** cover every raw runtime or closing command.
+`CleanupBoundary::ordinary_regulation()` deliberately skips the regulator during
+original cleanup. `TransientIo::sanitize_after_drain()` retains its own raw
+queue/audit commands and checked drains; full private-owner closing erasure and
+single-owner cleanup read maps keep their original real drain/deadline gates.
+Original public write-buffer64-write drains also remain outside this ordinary
+regulated task envelope. None of these commands, proofs or drains is changed or
+credited by the policy.
 
 ## Owner, metadata and error-future inventory
 
@@ -148,3 +163,55 @@ full original closure, then compare normal-language control/candidate with CPU
 compilation idle and complete fresh admission/recovery. Nested attention/proof
 and GPU-wait/map timers overlap and must not be added or treated as isolated
 kernel cost. No speed or30-token/s claim follows from fewer regulator waits.
+
+## Native controller contract and CPU receipt
+
+Both public controllers accept only the explicit selector
+`KUNO_LAB_TARGET_SUBMISSION_BACKLOG=queued-2048-public`; absence preserves512.
+Selection requires original speculative full-Q8 MTP on the independently
+identified Intel device, fused MTP sweeps, frozen original HOST/VRAM expert
+sources, GPU routing, partition exit, direct fill, inline execution, Verify3
+logical/finite fusion, chunk checkpoints and full request reuse. CPU13 also
+requires its original warm replay and diagnostic bank placement. Target-only,
+Nvidia placement, Q2 draft, English pruning, head broadcast, prepared/live MoE,
+old codebooks/scales/factors, two-row GU, staging and three-member arithmetic
+are rejected. Existing valid GU integer/stride, DOWN integer or original
+four-row/stride, grouped PLE/status, chronological QSA, three-streaming GDN and
+packed IQ4 policies compose under their independent scope guards.
+
+The selected typed constructor runs before target model allocation. Cold and
+warm CPU13 passes therefore both use the selected runtime backlog; model
+arithmetic policies retain their original warm-only activation. Draft uses its
+unchanged generic64MiB I/O constructor and must reject the target policy query.
+The receipt checks the target's actual immutable policy after construction and
+again after original full model/draft closure. It reports window and minimum
+actual-submission cost separately, explicitly gives no completed device
+execution credit, and does not reinterpret global wait attribution as a
+per-target metric. It adds no owner or metadata charge and preserves admission,
+all full closing/source proofs, numerical references and tolerances.
+
+Seven real regulator unit tests passed using an exact-source state harness,
+with the actual pinned wgpu29.0.4 and vendored CubeCL runtime/common types. The
+harness copied the complete non-wasm/wasm regulator source tail and all seven
+tests verbatim, plus the original transient I/O fault helper. The stream-tail
+SHA256 was
+`b2d6793eebfd7b14dbba0e98ffbe2dbfecef6a1083ccf162283c1079da1f3bde`;
+the fault-helper SHA256 was
+`aeb88ffe32cd2d62b326e4cc85dfdde365aa751faf19ab03d64a1f53bfb50965`.
+The standalone temporary harness used the existing
+`runtime-review-target-20261008` cache and performed no device creation or GPU
+work. Its attribution callback was a no-op, so this receipt proves state,
+finite-count and guard behavior, not driver poll completion or hardware timing.
+The original vendor crate's full strict compile is required by the native
+controller check; no repository manifest was changed for the harness.
+
+The native controller source check passed eight focused backlog tests, then all
+44 language-controller,36 CPU13-controller and31 target-helper tests
+(111 distinct tests including the eight new ones). Commands used the pinned
+standalone native-text manifest, `--locked --no-default-features --features direct-device --bin kuno-text-lab`, each named test filter and `-j2`, with only
+the existing `oracle-native-target-20261009` cache. Strict native
+`cargo clippy --all-targets -j2 -- -D warnings` passed with the same manifest,
+lockfile and pure direct-device feature selection; this compiled the real
+vendored runtime source. Owned-source formatting and diff checks passed. CPU
+jobs were idle at2026-10-11T19:17:36Z. No GPU/service/system changes were made;
+physical admission, numerical replay and throughput remain pending integration.

@@ -42,11 +42,14 @@ use thiserror::Error;
 /// This does not change the scheduler/submission size or authorize completion.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PublicTargetSubmissionBacklog {
+    /// Original regulator, with its historical zero-task submission cost.
     #[default]
     Default512,
+    /// Explicit native target experiment; each actual submission costs at least one.
     Queued2048,
 }
 impl PublicTargetSubmissionBacklog {
+    /// Accumulated task-cost threshold for the original previous-stamp wait.
     pub const fn task_window(self) -> usize {
         match self {
             Self::Default512 => 512,

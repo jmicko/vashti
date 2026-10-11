@@ -133,6 +133,7 @@ pub(crate) struct Inputs {
     pub(crate) frozen_gu_integer: bool,
     pub(crate) frozen_down_integer: bool,
     pub(crate) public_iq4_decoder: bool,
+    pub(crate) target_submission_backlog: cubecl_runtime::server::PublicTargetSubmissionBacklog,
     pub(crate) frozen_gu_stride_four: bool,
     pub(crate) frozen_down_stride_four: bool,
     pub(crate) three_gdn_streaming: bool,
@@ -198,6 +199,7 @@ pub(crate) fn registration(
                     | "KUNO_LAB_FROZEN_GU_MATH"
                     | "KUNO_LAB_FROZEN_DOWN_MATH"
                     | "KUNO_LAB_TARGET_IQ4_DECODER"
+                    | "KUNO_LAB_TARGET_SUBMISSION_BACKLOG"
                     | "KUNO_LAB_FROZEN_GU_SCHEDULE"
                     | "KUNO_LAB_FROZEN_DOWN_SCHEDULE"
                     | "KUNO_LAB_TARGET_GDN"
@@ -512,6 +514,17 @@ pub(crate) fn registration(
             && !mtp_english_vocab
             && !frozen_down_stride_four,
     )?;
+    let raw_backlog = values.remove(OsStr::new("KUNO_LAB_TARGET_SUBMISSION_BACKLOG"));
+    let target_submission_backlog = crate::target_lab_build::public_target_submission_backlog(
+        raw_backlog.as_deref(),
+        decode_mode == DecodeMode::Speculative
+            && original_public_target_scope
+            && mtp_device == crate::target_lab_build::MtpDevice::Intel
+            && fused_sweeps
+            && draft_profile == Profile::SelfContainedQ8
+            && !mtp_q8_head_broadcast
+            && !mtp_english_vocab,
+    )?;
     let raw_ple_reads = values.remove(OsStr::new("KUNO_LAB_TARGET_PLE_READS"));
     let public_grouped_ple_reads = crate::target_lab_build::public_grouped_ple_reads(
         raw_ple_reads.as_deref(),
@@ -553,6 +566,7 @@ pub(crate) fn registration(
         frozen_gu_integer,
         frozen_down_integer,
         public_iq4_decoder,
+        target_submission_backlog,
         frozen_gu_stride_four,
         frozen_down_stride_four,
         three_gdn_streaming,
@@ -922,10 +936,26 @@ pub(crate) fn run(
     crate::resident_util::select_retained_metadata(true);
     crate::resident_util::select_compute_scratch_clear(true);
     if input.request_reuse {
-        client.configure_public_target_request_io()?;
+        if input.target_submission_backlog
+            == cubecl_runtime::server::PublicTargetSubmissionBacklog::Default512
+        {
+            client.configure_public_target_request_io()?;
+        } else {
+            client
+                .configure_public_target_request_io_with_backlog(input.target_submission_backlog)?;
+        }
     } else {
         client.configure_transient_io(128 * 1024 * 1024)?;
     }
+    let actual_target_backlog = if input.request_reuse {
+        Some(client.public_target_submission_backlog()?)
+    } else {
+        if client.public_target_submission_backlog().is_ok() {
+            return Err("ordinary target stream acquired fixed backlog policy".into());
+        }
+        None
+    };
+    let mut draft_target_backlog_query_rejected = None;
     let draft_gpu = if draft_graph.is_some() {
         let (draft_client, draft_limits, mtp_device_receipt) = cubecl::future::block_on(
             draft_client(input.fused_sweeps, input.mtp_device, client, host_device),
@@ -934,10 +964,22 @@ pub(crate) fn run(
         if draft_client.public_target_request_io_configured()? {
             return Err("language target runtime leaked to draft stream".into());
         }
+        let rejected = draft_client.public_target_submission_backlog().is_err();
+        if !rejected {
+            return Err("language draft stream acquired target backlog policy".into());
+        }
+        draft_target_backlog_query_rejected = Some(rejected);
         Some((draft_client, draft_limits, mtp_device_receipt))
     } else {
         None
     };
+    let target_submission_backlog_receipt =
+        crate::target_lab_build::public_target_submission_backlog_record(
+            input.target_submission_backlog,
+            actual_target_backlog,
+            input.request_reuse,
+            draft_target_backlog_query_rejected,
+        )?;
     let target_retired = Arc::new(AtomicBool::new(false));
     let draft_retired = Arc::new(AtomicBool::new(false));
     let cancel = AtomicBool::new(false);
@@ -1844,6 +1886,7 @@ pub(crate) fn run(
             );
         }
         let mut record = runs?;
+        record["target_submission_backlog"] = target_submission_backlog_receipt.clone();
         let (main, sources, host_close) = cleanup?;
         record["target_close"] = serde_json::json!({"main_buffers":main.buffers,"main_bytes":main.bytes,"source_buffers":sources.buffers,"source_bytes":sources.bytes});
         record["frozen_host_setup"] = host_setup.into();
@@ -1898,6 +1941,23 @@ pub(crate) fn run(
     if client.public_target_request_io_configured()? != input.request_reuse {
         return Err("language target stream configuration changed".into());
     }
+    let final_target_backlog = if input.request_reuse {
+        Some(client.public_target_submission_backlog()?)
+    } else {
+        if client.public_target_submission_backlog().is_ok() {
+            return Err("ordinary target stream acquired fixed backlog policy after close".into());
+        }
+        None
+    };
+    let final_backlog_receipt = crate::target_lab_build::public_target_submission_backlog_record(
+        input.target_submission_backlog,
+        final_target_backlog,
+        input.request_reuse,
+        draft_target_backlog_query_rejected,
+    )?;
+    if final_backlog_receipt != target_submission_backlog_receipt {
+        return Err("immutable target backlog policy changed before full close".into());
+    }
     let draft_close = draft_close.map(|closed| {
         serde_json::json!({
         "private_buffers":closed.private.buffers,"private_bytes":closed.private.bytes,
@@ -1916,6 +1976,7 @@ pub(crate) fn run(
     }
     .into();
     value["target_iq4_decoder_requested"] = input.public_iq4_decoder.into();
+    value["target_submission_backlog"] = final_backlog_receipt;
     serde_json::to_writer_pretty(
         std::fs::OpenOptions::new()
             .write(true)
@@ -1929,6 +1990,161 @@ pub(crate) fn run(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn target_backlog_default_off_and_original_public_compositions() {
+        use cubecl_runtime::server::PublicTargetSubmissionBacklog as P;
+        let args = ["lab", "intel", "daslab-language-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        let base = intel_mtp_env();
+        assert_eq!(
+            registration(&args, base.clone(), build)
+                .unwrap()
+                .target_submission_backlog,
+            P::Default512
+        );
+        for (gu_integer, down_integer, down_stride, iq4) in [
+            (false, false, false, false),
+            (true, false, false, true),
+            (true, true, false, true),
+            (false, false, true, false),
+        ] {
+            let mut selected = base.clone();
+            for (key, value) in [
+                ("KUNO_LAB_TARGET_SUBMISSION_BACKLOG", "queued-2048-public"),
+                ("KUNO_LAB_MTP_Q8_HEAD", "shared-public"),
+                ("KUNO_LAB_TARGET_PLE_READS", "grouped-public"),
+                ("KUNO_LAB_TARGET_STATUS_FOLDS", "grouped-public"),
+                ("KUNO_LAB_TARGET_QSA", "chronological-public"),
+                ("KUNO_LAB_TARGET_GDN", "three-streaming-public"),
+            ] {
+                selected.push((key.into(), value.into()));
+            }
+            if gu_integer {
+                selected.push(("KUNO_LAB_FROZEN_GU_MATH".into(), "integer-public".into()));
+                selected.push(("KUNO_LAB_FROZEN_GU_SCHEDULE".into(), "four-public".into()));
+            }
+            if down_integer {
+                selected.push(("KUNO_LAB_FROZEN_DOWN_MATH".into(), "integer-public".into()));
+            } else {
+                selected.push(("KUNO_LAB_FROZEN_DOWN_ROWS".into(), "four-public".into()));
+                if down_stride {
+                    selected.push(("KUNO_LAB_FROZEN_DOWN_SCHEDULE".into(), "four-public".into()));
+                }
+            }
+            if iq4 {
+                selected.push((
+                    "KUNO_LAB_TARGET_IQ4_DECODER".into(),
+                    "packed-registers-public".into(),
+                ));
+            }
+            let got = registration(&args, selected, build).unwrap();
+            assert_eq!(got.target_submission_backlog, P::Queued2048);
+            assert_eq!(got.frozen_gu_integer, gu_integer);
+            assert_eq!(got.frozen_down_integer, down_integer);
+            assert_eq!(got.frozen_down_stride_four, down_stride);
+            assert_eq!(got.public_iq4_decoder, iq4);
+            assert!(
+                got.public_grouped_ple_reads
+                    && got.public_grouped_status_folds
+                    && got.three_gdn_streaming
+                    && got.gpu_qsa_selector
+            );
+        }
+    }
+
+    #[test]
+    fn target_backlog_rejects_missing_scope_and_other_draft_profiles() {
+        let args = ["lab", "intel", "daslab-language-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        let mut base = intel_mtp_env();
+        base.push((
+            "KUNO_LAB_TARGET_SUBMISSION_BACKLOG".into(),
+            "queued-2048-public".into(),
+        ));
+        for key in [
+            "KUNO_LAB_DEVICE_DISPATCH",
+            "KUNO_LAB_TARGET_FILL",
+            "KUNO_LAB_TARGET_DENSE",
+            "KUNO_LAB_TARGET_IO",
+            "KUNO_LAB_TARGET_REUSE",
+            "KUNO_LAB_TARGET_SOURCES",
+            "KUNO_LAB_FROZEN_PARTITION_EXIT",
+            "KUNO_LAB_TARGET_ROUTER",
+            "KUNO_LAB_MTP_SWEEPS",
+        ] {
+            let mut invalid = base.clone();
+            invalid.retain(|(k, _)| k != key);
+            assert!(registration(&args, invalid, build).is_err(), "{key}");
+        }
+        for (key, value) in [
+            ("KUNO_LAB_MTP_PROFILE", "strata-q2"),
+            ("KUNO_LAB_MTP_Q8_HEAD", "broadcast-public"),
+            ("KUNO_LAB_MTP_VOCAB", "english-public"),
+            ("KUNO_LAB_FROZEN_TABLES", "private-public"),
+            ("KUNO_LAB_FROZEN_DOWN_SCALES", "shared-public"),
+            ("KUNO_LAB_FROZEN_GU_FACTORS", "shared-public"),
+            ("KUNO_LAB_FROZEN_GU_ROWS", "two-public"),
+            ("KUNO_LAB_FROZEN_HOST_STAGE", "packed-public"),
+            ("KUNO_LAB_FROZEN_MEMBERS", "three-public"),
+            ("KUNO_LAB_TARGET_EXPERTS", "prepared-verify3"),
+            ("KUNO_LAB_TARGET_MOE", "live"),
+        ] {
+            let mut invalid = base.clone();
+            invalid.push((key.into(), value.into()));
+            assert!(registration(&args, invalid, build).is_err(), "{key}");
+        }
+        let mut nvidia = base.clone();
+        nvidia.retain(|(k, _)| {
+            !matches!(
+                k.to_str(),
+                Some(
+                    "KUNO_LAB_MTP_DEVICE"
+                        | "KUNO_PUBLIC_MTP_INTEL_TOTAL_BYTES"
+                        | "KUNO_PUBLIC_MTP_INTEL_USED_BYTES"
+                        | "KUNO_PUBLIC_MTP_INTEL_DEVICE_ID"
+                )
+            )
+        });
+        assert!(registration(&args, nvidia, build).is_err());
+        assert!(registration(&args, base, crate::target_lab_build::Build::Threaded).is_err());
+    }
+
+    #[test]
+    fn target_backlog_requires_canonical_value_and_unique_key() {
+        let args = ["lab", "intel", "daslab-language-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        for raw in [
+            "",
+            "2048",
+            "queued-2048",
+            "queued-2048-public ",
+            "1",
+            "original-512",
+        ] {
+            let mut invalid = intel_mtp_env();
+            invalid.push(("KUNO_LAB_TARGET_SUBMISSION_BACKLOG".into(), raw.into()));
+            assert!(registration(&args, invalid, build).is_err());
+        }
+        let mut duplicate = intel_mtp_env();
+        for _ in 0..2 {
+            duplicate.push((
+                "KUNO_LAB_TARGET_SUBMISSION_BACKLOG".into(),
+                "queued-2048-public".into(),
+            ));
+        }
+        assert!(registration(&args, duplicate, build).is_err());
+        let mut target_only = intel_mtp_env();
+        target_only.push((
+            "KUNO_LAB_TARGET_SUBMISSION_BACKLOG".into(),
+            "queued-2048-public".into(),
+        ));
+        target_only.push((
+            "KUNO_LAB_LANGUAGE_DECODE".into(),
+            "target-only-public".into(),
+        ));
+        assert!(registration(&args, target_only, build).is_err());
+    }
+
     #[test]
     fn grouped_status_registration_keeps_default_off_and_original_public_compositions() {
         let args = args();
