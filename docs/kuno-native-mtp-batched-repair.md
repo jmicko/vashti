@@ -63,6 +63,20 @@ original CPU13 full vectors, actual rejection repair, target greedy and complete
 owning closure/recovery gates plus a same-artifact normal timing comparison are
 required before physical acceptance.
 
+The integrated controller explicitly rejects profile-ranked bank filling for
+this first comparison. The protected guard consumes only the canonical
+`batch-public` selector and retains the original Intel memory metadata,
+48GiB host cgroup (plus the existing196MiB language owners), no-swap/core rules
+and all original target/draft capacities. Q2, English pruning, broadcast head,
+target-only decoding and alternate source geometries reject. The fixed local
+runner has three additive warm/code/prose labels ending in
+`intel-mtp-batch-repair-down-integer-grouped-ple-gu-stride-shared-head-gpu-host`;
+they retain Original bank fill, original512 backlog/IQ4 decoding and the
+selected integer GU/DOWN, grouped PLE and shared full-Q8 head. Actual requested
+selection and completed leaf counters are recorded separately. All271 existing
+and additive protected-launcher tests and three actual helper scope/cap checks
+pass. This source acceptance does not establish device or throughput acceptance.
+
 Source validation uses only the existing
 `cpu-batch-native-target-20261011` cache, the standalone native-text manifest,
 `--no-default-features --features direct-device --bin kuno-text-lab -j2`, and

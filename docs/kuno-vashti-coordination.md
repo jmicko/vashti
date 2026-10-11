@@ -3815,3 +3815,56 @@ operator measurements may be unusually L3-hot; actual whole-model CPU13 and
 normal timing remain later gates. Root controls physical trials and compiler
 scheduling; agents use separate worktrees/caches and cannot independently use
 GPUs, change services or release.
+
+### Attached CPU operator accepted; Intel MTP repair candidate next, 2026-10-11
+
+Continue Intel-only target/full-Q8 MTP optimization. Native30tokens/s remains
+unachieved; latest normal selected control is v167 at10.482354 continuations/s.
+The current owner checkpoint is [the native-model handoff](kuno-native-next-model-handoff.md).
+Canonical Vashti, installed selections and public protocols are unchanged.
+Required Vashti changes:none.
+
+Actual original HOST CPU operator v172 is frozen from
+`47b972bf73f79c04acee3c87e922526203c54099`, binary SHA256
+`107958180ec3334cc6e1c84b65976600b790c94539f12ca04cbd6c4f6e06175a`.
+Read [the operator contract](kuno-native-public-host-cpu-batch-probe.md).
+All45 synthetic one-layer case points/180 pairs pass original full
+partial/inactive/padding/source/fault checks, maximum absolute error1.071021e-8
+under unchanged1e-4/3e-4 bounds. Original coldCPU13 and warm token0 full-vector
+checks pass. Actual original432 HOST allocations have HOST_VISIBLE,
+HOST_COHERENT and HOST_CACHED mapping flags; no copied CPU model was introduced.
+All11 operator owners/2392064B,1380 target MAIN owners/828866560B and432 HOST
+pages/36147609600B close. No MTP ran in this operator diagnostic.
+
+Complete15-worker CPU handoff/compute/upload means at count3/fiveHOSTranks are
+2.324ms versus1.763ms original-F32 GPU,32percent slower; at tenHOSTranks3.394ms
+versus2.852ms,19percent slower. Keep GPU execution for the current batched target
+path. Some count1 points favor CPU; a single L3-hot synthetic layer and three
+repetitions do not establish48-layer hybrid benefit or performance against the
+selected integer GPU kernels. No connected CPU hybrid/whole-model speed claim.
+
+The prior v171 failed private readback setup after original coldCPU13/warm0.
+Its repeated full-owner audit stages necessarily exceeded the unchanged128MiB
+I/O ceiling. Existing audited cleanup after every completed pair fixes the
+lifetime without new runtime policy/cap/vendor code;180 actual checkpoints
+inspect919937280B and take432.422ms outside both operator arms. Exact failure
+and successful numeric/source/owner/recovery receipts are separate keys
+`v171_attached_cpu_operator_readback_setup_failure` and
+`v172_attached_cpu_operator_physical` in the native-Strata JSON. Latest physical
+recovery at21:23:44UTC is same boot, B70used50688000B, Nvidia compute0,
+allHTTP200, admission idle/unpaused/no recovery latch, classified faults0.
+
+Source-only candidates integrated: original-math joined MTP repair leaf
+`ed7b345` (original`0fa9cc3`) and guarded controller`e37ae50`
+(original`012320c`); resident-bank ownership telemetry`f386606`
+(original`859c2a5`). Read
+[the repair contract](kuno-native-mtp-batched-repair.md) and
+[the telemetry contract](kuno-native-resident-bank-telemetry.md).
+49 MTP checks,131 controller/helper checks,9 telemetry/attachment checks and
+strict direct all-target Clippy pass on their separate source trees. Root's
+271 protected-launcher checks and three fixed helper scope/cap checks pass.
+Physical originalCPU13/full closure/recovery and a same-artifact normal speed
+comparison remain required for MTP repair. Telemetry distinguishes actual
+backing padding from unused conservative admission headroom; neither is yet
+measured on-device or credited as additional capacity. A separate four-row
+dense leaf is being prepared without changing original count3 behavior.

@@ -7,6 +7,7 @@ import sys
 def selected_target_policy(environment, mtp=False):
     target_only_scope(environment)
     intel_mtp_scope(environment)
+    mtp_cache_repair_scope(environment)
     frozen_down_integer_scope(environment)
     iq4_register_scope(environment)
     target_submission_backlog_scope(environment)
@@ -23,6 +24,9 @@ def selected_target_policy(environment, mtp=False):
             raise ValueError("Intel draft placement requires the fixed public speculative scope")
         for key in ("KUNO_PUBLIC_MTP_INTEL_TOTAL_BYTES", "KUNO_PUBLIC_MTP_INTEL_USED_BYTES", "KUNO_PUBLIC_MTP_INTEL_DEVICE_ID"):
             selected.pop(key)
+    if "KUNO_LAB_MTP_REPAIR" in selected:
+        if not mtp or selected.pop("KUNO_LAB_MTP_REPAIR") != "batch-public":
+            raise ValueError("Batched MTP repair requires fixed Intel full-Q8 scope")
     if "KUNO_LAB_TARGET_STATUS_FOLDS" in selected:
         if not mtp or selected.pop("KUNO_LAB_TARGET_STATUS_FOLDS") != "grouped-public":
             raise ValueError("Grouped status folds require the canonical fixed public target")
@@ -279,6 +283,21 @@ def profile_bank_fill_scope(environment):
         raise ValueError("Profile filler requires original speculative Intel full-Q8 scope")
 
 
+def mtp_cache_repair_scope(environment):
+    selector = "KUNO_LAB_MTP_REPAIR"
+    if selector not in environment:
+        return
+    original_frozen_target_scope(environment, selector, "batch-public", full_vocab=True)
+    if (environment.get("KUNO_LAB_MTP_DEVICE") != "intel-public"
+            or environment.get("KUNO_LAB_MTP_SWEEPS") != "fused"
+            or environment.get("KUNO_LAB_MTP_Q8_HEAD") not in (None, "shared-public")
+            or any(key in environment for key in (
+                "KUNO_LAB_MTP_PROFILE", "KUNO_LAB_LANGUAGE_DECODE",
+                "KUNO_LAB_FROZEN_BANK_FILL",
+            ))):
+        raise ValueError("Batched MTP repair requires original Intel speculative full-Q8 scope")
+
+
 def frozen_gu_integer_scope(environment):
     if not any(key in environment for key in ("KUNO_LAB_FROZEN_GU_MATH", "KUNO_LAB_FROZEN_GU_SCHEDULE")):
         return
@@ -333,7 +352,7 @@ def target_only_scope(environment):
     conflicts = (
         "KUNO_LAB_SPECULATIVE_PUBLIC_ONLY", "KUNO_LAB_WARM_REPLAY",
         "KUNO_LAB_MTP_SWEEPS", "KUNO_LAB_MTP_VOCAB", "KUNO_LAB_MTP_PROFILE",
-        "KUNO_LAB_MTP_Q8_HEAD", "KUNO_LAB_MTP_DEVICE", "KUNO_LAB_TARGET_GDN",
+        "KUNO_LAB_MTP_Q8_HEAD", "KUNO_LAB_MTP_DEVICE", "KUNO_LAB_MTP_REPAIR", "KUNO_LAB_TARGET_GDN",
         "KUNO_LAB_FROZEN_TABLES", "KUNO_LAB_FROZEN_DOWN_SCALES",
         "KUNO_LAB_FROZEN_GU_FACTORS", "KUNO_LAB_FROZEN_GU_ROWS",
         "KUNO_LAB_FROZEN_HOST_STAGE", "KUNO_LAB_FROZEN_MEMBERS",
@@ -490,6 +509,7 @@ def memory_limit(environment, arguments):
         return 48 * 1024**3
     target_only_scope(environment)
     intel_mtp_scope(environment)
+    mtp_cache_repair_scope(environment)
     frozen_down_integer_scope(environment)
     iq4_register_scope(environment)
     target_submission_backlog_scope(environment)

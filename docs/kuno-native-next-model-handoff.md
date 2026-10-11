@@ -16,16 +16,30 @@ The public profile filler measured10.478727 and remains unselected. See the
 completed v167 receipt below; these are one ordered code200 pair, not30tokens/s.
 
 The borrowed CPU leaf/actual same-RAM bridge and fixed one-layer operator
-controller are integrated through9453a4b. Three setup attempts v168–v170 failed
-before operator timing: explicit static-cache admission, original request-I/O
-setup/scope, then rejection of an actual full private owner represented by
-zero-valued optional offsets. The failed setups are recorded separately in
-`v168_v170_attached_cpu_operator_setup_failures`; every attempt returned normal
-services, B70 used50688000B and unchanged classified fault counts. v170 passed
-original coldCPU13 and warm token0 full-vector checks before its bridge failure.
-No CPU hybrid speed or complete numeric closure receipt follows from a failure.
-The next gate applies the tested full-span representation fix and repeats the
-same operator. Source-only batched MTP cache repair is being prepared separately.
+passed the v172 physical gate on source47b972bf73f79c04acee3c87e922526203c54099,
+binary SHA256107958180ec3334cc6e1c84b65976600b790c94539f12ca04cbd6c4f6e06175a.
+All45 cases/180 pairs pass actual full partial/inactive/padding/source/fault
+checks; maximum absolute error1.071021e-8 under unchanged1e-4/3e-4 bounds.
+Cold originalCPU13 and warm token0 full vectors pass. All11 operator owners,
+1380 target MAIN owners and432 original HOST pages close, and same-boot normal
+services/B70baseline/fault counts recover. Read the original operator contract.
+
+The complete15-worker CPU handoff/compute/upload path is2.324ms versus1.763ms
+original-F32 GPU at count3/fiveHOSTranks; at tenHOSTranks3.394ms versus2.852ms.
+Keep the GPU path for current batched verification. Some count1 CPU points win,
+but this L3-hot synthetic layer does not establish whole-model hybrid benefit,
+and the selected integer GPU path was not compared. Exact cases/owners/recovery
+are in `v172_attached_cpu_operator_physical`. The four preceding setup failures
+(v168..171) are separately recorded; no timing/complete close credit belongs
+to a failure. v171 exposed cumulative full-owner I/O audits exceeding128MiB;
+v172 uses the existing complete audited sanitizer after every pair, retaining
+the cap and recording432.422ms total cleanup outside both operator arms.
+
+Original-math batched MTP cache repair and content-free actual resident-bank
+backing telemetry are source-integrated, default-unused and awaiting v173
+originalCPU13/full owner/recovery and same-artifact normal speed gates. Native
+30tokens/s remains unachieved. A separate four-row dense projection leaf is
+being prepared; it does not establish connected four-row target execution.
 
 Accepted GU scheduling physical source isac78f00/v159, frozen binarySHA256
 `c04d49a6ca11115c0bba0b1acc38019ae2f6f4b1f323cc0f9b6608eaa639bc7d`.
