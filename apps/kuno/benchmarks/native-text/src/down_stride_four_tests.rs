@@ -105,6 +105,10 @@ fn down_stride_four_actual_checked_unchecked_shader_uses_original_owner_and_grou
             let write = events.iter().position(|&event| event == 'w').unwrap();
             let barrier = events.iter().position(|&event| event == 'b').unwrap();
             assert!(exit < write && write < barrier);
+            let output = events.iter().rposition(|&event| event == 's').unwrap();
+            let reuse_fence = events.iter().rposition(|&event| event == 'b').unwrap();
+            assert!(output < reuse_fence);
+            assert_eq!(events.last(), Some(&'b'));
         }
     }
 }
