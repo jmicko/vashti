@@ -53,12 +53,17 @@ fn same_tensor(a: TensorView<'_>, b: TensorView<'_>, model: &GgufFile) -> bool {
 }
 fn check_full_handle(handle: &Handle, bytes: u64) -> Result<()> {
     if bytes == 0
+        // ComputeClient::empty's contiguous owner represents zero offsets as
+        // Some(0). Prove values, not their optional representation. Reject
+        // forged offsets before size_in_used's unchecked subtraction.
+        || handle.offset_start.unwrap_or(0) != 0
+        || handle.offset_end.unwrap_or(0) != 0
         || handle.size() != bytes
         || handle.size_in_used() != bytes
-        || handle.offset_start.is_some()
-        || handle.offset_end.is_some()
     {
-        return Err(rejected());
+        return Err(Error::InvalidFormat(
+            "public host CPU borrow full owner rejected",
+        ));
     }
     Ok(())
 }
@@ -472,6 +477,70 @@ impl Drop for CpuLayerBorrow<'_, '_, '_, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cubecl_common::stream_id::StreamId;
+    use cubecl_runtime::{
+        allocator::ContiguousMemoryLayoutPolicy,
+        server::{MemoryLayoutDescriptor, MemoryLayoutPolicy},
+    };
+    #[test]
+    fn full_owner_accepts_all_zero_offset_representations() {
+        let owner = Handle::new(StreamId { value: 23 }, 32768);
+        for start in [None, Some(0)] {
+            for end in [None, Some(0)] {
+                let mut full = owner.clone();
+                full.offset_start = start;
+                full.offset_end = end;
+                check_full_handle(&full, 32768).unwrap();
+                assert_eq!(full.size_in_used(), owner.size());
+            }
+        }
+    }
+    #[test]
+    fn full_owner_checks_actual_empty_layout_and_rejects_subspans() {
+        let stream = StreamId { value: 23 };
+        let policy = ContiguousMemoryLayoutPolicy::new(256);
+        // This is ComputeClient::empty's actual descriptor/apply path, without
+        // creating a device. The private arena owns this complete layout.
+        let descriptor = MemoryLayoutDescriptor::contiguous([32768].into(), 1);
+        let (owner, mut layouts) = policy.apply(stream, &[descriptor]);
+        let full = layouts.remove(0).memory;
+        assert_eq!(full.offset_start, Some(0));
+        assert_eq!(full.offset_end, Some(0));
+        check_full_handle(&full, 32768).unwrap();
+        assert_eq!(full.size(), owner.size());
+
+        let padded = MemoryLayoutDescriptor::contiguous([257].into(), 1);
+        let (owner, mut layouts) = policy.apply(stream, &[padded]);
+        let subspan = layouts.remove(0).memory;
+        assert_eq!(subspan.offset_end, Some(255));
+        assert!(check_full_handle(&subspan, 257).is_err());
+        assert!(check_full_handle(&subspan, owner.size()).is_err());
+
+        let descriptors = [
+            MemoryLayoutDescriptor::contiguous([256].into(), 1),
+            MemoryLayoutDescriptor::contiguous([256].into(), 1),
+        ];
+        let (owner, layouts) = policy.apply(stream, &descriptors);
+        for subspan in layouts {
+            assert!(check_full_handle(&subspan.memory, 256).is_err());
+            assert!(check_full_handle(&subspan.memory, owner.size()).is_err());
+        }
+    }
+    #[test]
+    fn full_owner_rejects_nonzero_overflowing_and_wrong_sized_handles() {
+        let owner = Handle::new(StreamId { value: 23 }, 32768);
+        assert!(check_full_handle(&owner, 0).is_err());
+        assert!(check_full_handle(&owner, 32767).is_err());
+        assert!(check_full_handle(&owner, 32769).is_err());
+        for value in [1, 32768, 32769, u64::MAX] {
+            let mut subspan = owner.clone();
+            subspan.offset_start = Some(value);
+            assert!(check_full_handle(&subspan, 32768).is_err());
+            subspan.offset_start = None;
+            subspan.offset_end = Some(value);
+            assert!(check_full_handle(&subspan, 32768).is_err());
+        }
+    }
     #[test]
     fn coordinates_are_exact_and_checked_before_owner_access() {
         for layer in 0..48 {
