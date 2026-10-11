@@ -101,7 +101,13 @@ fn compile(kernel: Kernel) -> (n::Module, Vec<u32>) {
             .filter(|(_, storage)| *storage == 7)
             .all(|(ty, _)| !arrays.contains(pointers.get(ty).unwrap()))
     );
-    assert_eq!(dot_count > 0, matches!(kernel, Kernel::Project { .. }));
+    assert_eq!(
+        dot_count > 0,
+        matches!(
+            kernel,
+            Kernel::Project { .. } | Kernel::ProjectStride4 { .. }
+        )
+    );
     (module, words)
 }
 
@@ -505,6 +511,115 @@ fn frozen_gu_integer_actual_shaders_spirv_none_have_packed_dots_and_initialized_
     assert_eq!(barriers(&audit.entry_points[0].function.body), 0);
     assert!(Kernel::Audit.source().contains("atomicOr(&fault[0],8u)"));
     assert!(!Kernel::Audit.source().contains("atomicStore"));
+}
+
+#[test]
+fn frozen_gu_integer_group_stride_four_keeps_one_exact_arithmetic_body_and_uniform_group_fences() {
+    for dtype in [
+        super::super::IQ2_S,
+        super::super::IQ3_XXS,
+        super::super::IQ3_S,
+        super::super::IQ4_XS,
+    ] {
+        let row_bytes = TensorType::from_gguf_id(dtype)
+            .unwrap()
+            .row_bytes(2560)
+            .unwrap() as usize;
+        let original = Kernel::Project { dtype, row_bytes };
+        let alternative = Kernel::ProjectStride4 { dtype, row_bytes };
+        assert_ne!(original.id(), alternative.id());
+        let original_source = original.source();
+        let source = alternative.source();
+        let (module, _) = compile(alternative);
+        assert_eq!(module.entry_points[0].workgroup_size, [64, 1, 1]);
+        assert_eq!(barriers(&module.entry_points[0].function.body), 4);
+        assert_eq!(
+            shared_bytes(&module),
+            1536 + integer::original_grid_words(dtype).len() as u32 * 4
+        );
+        let original_body = original_source
+            .split_once("// FROZEN_GU_PROJECT_BODY_BEGIN\n")
+            .unwrap()
+            .1
+            .split_once("// FROZEN_GU_PROJECT_BODY_END")
+            .unwrap()
+            .0;
+        // The arithmetic is extracted once; only the runtime group address is
+        // renamed, with the same blocks, factors, members and reduction order.
+        assert!(source.contains(&original_body.replace("group.y", "routed_group")));
+        assert!(
+            source.find("if !any_valid {return;}").unwrap()
+                < source.find("workgroupBarrier();").unwrap()
+        );
+        if !integer::original_grid_words(dtype).is_empty() {
+            assert!(
+                source.find("if !any_valid {return;}").unwrap()
+                    < source.find("iq3_grid[0u]=").unwrap()
+            );
+        }
+        assert_eq!(
+            source
+                .matches("routed_group=group.y;routed_group<p.g;routed_group+=4u")
+                .count(),
+            2
+        );
+        assert!(source.contains("group>=groups || group>=p.g"));
+        assert!(source.contains("p.g<1u || p.g>80u"));
+        assert!(source.contains("group.y>=4u"));
+        assert!(source.contains("if valid_group(routed_group) {"));
+        assert!(source.contains("gate_sums[local*3u+j]=gates[j]"));
+        assert!(source.contains("up_sums[local*3u+j]=ups[j]"));
+        let last_output = source.rfind("status[p.f+route]=1u").unwrap();
+        assert!(last_output < source.rfind("workgroupBarrier();").unwrap());
+        for (index, word) in integer::original_grid_words(dtype).into_iter().enumerate() {
+            assert_eq!(
+                source
+                    .matches(&format!("iq3_grid[{index}u]=0x{word:08x}u;"))
+                    .count(),
+                1
+            );
+        }
+    }
+    assert_eq!(GROUP_STRIDE_FOUR, 4);
+    assert_eq!(5 * 80 * GROUP_STRIDE_FOUR, 1600);
+}
+
+#[test]
+fn frozen_gu_integer_group_stride_four_covers_exact_original_groups_and_routes_once() {
+    let partitions = [(0, 72), (72, 72), (144, 144), (288, 144), (432, 80)];
+    // Every legal envelope and every public count, including envelopes below
+    // and above actual MAP group count. Synthetic slots span all original
+    // sources and valid groups retain distinct original route identities.
+    for count in 1..=3 {
+        for actual_groups in 1..=count * 10 {
+            for envelope in 1..=80 {
+                let slots: Vec<usize> = (0..actual_groups)
+                    .map(|g| (g * 173 + count * 71) % 512)
+                    .collect();
+                let mut original = Vec::new();
+                let mut scheduled = Vec::new();
+                for (shard, &(first, length)) in partitions.iter().enumerate() {
+                    original.extend(
+                        (0..envelope.min(actual_groups))
+                            .filter(|&g| slots[g] >= first && slots[g] < first + length)
+                            .map(|g| (shard, g)),
+                    );
+                    for y in 0..GROUP_STRIDE_FOUR as usize {
+                        for g in (y..envelope).step_by(GROUP_STRIDE_FOUR as usize) {
+                            if g < actual_groups && slots[g] >= first && slots[g] < first + length {
+                                scheduled.push((shard, g));
+                            }
+                        }
+                    }
+                }
+                original.sort_unstable();
+                scheduled.sort_unstable();
+                assert_eq!(scheduled, original);
+                assert_eq!(scheduled.len(), envelope.min(actual_groups));
+                assert!(scheduled.windows(2).all(|pair| pair[0] != pair[1]));
+            }
+        }
+    }
 }
 
 fn contract(source: &str) -> bool {

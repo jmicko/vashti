@@ -98,6 +98,7 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
     FRAME_MEMBERS_VALUE
     GRID_INITIALIZE_VALUE
     workgroupBarrier();
+// FROZEN_GU_PROJECT_BODY_BEGIN
     var gates=vec3<f32>(0.0);var ups=vec3<f32>(0.0);
     for(var block=lane;block<80u;block+=8u) {
         let gprepared=gate_prepare(offset,block);let uprepared=up_prepare(offset,block);
@@ -124,8 +125,39 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
     if lane==0u {
         OUTPUT_MEMBERS_VALUE
     }
+// FROZEN_GU_PROJECT_BODY_END
 }
 // FROZEN_GU_PROJECT_END
+// FROZEN_GU_PROJECT_STRIDE4_MAIN_BEGIN
+@compute @workgroup_size(64)
+fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) local:u32) {
+    // The bounded envelope and every candidate predicate are uniform. A shard
+    // with no valid assigned group exits before codebook writes or fences.
+    if group.x>=80u || group.y>=4u || group.z!=0u || p.h<1u || p.h>3u || p.g<1u || p.g>80u {return;}
+    var any_valid=false;
+    for(var routed_group=group.y;routed_group<p.g;routed_group+=4u) {
+        if valid_group(routed_group) {any_valid=true;}
+    }
+    if !any_valid {return;}
+    let row=group.x*8u+local/8u;let lane=local%8u;
+    GRID_INITIALIZE_VALUE
+    workgroupBarrier();
+    for(var routed_group=group.y;routed_group<p.g;routed_group+=4u) {
+        if valid_group(routed_group) {
+            let length=map[p.a+84u+routed_group];let slot=map[p.a+4u+routed_group]-p.b;
+            let offset=(slot*640u+row)*ROW_BYTES;
+            var frames=vec3<u32>(0u);
+            FRAME_MEMBERS_VALUE
+            // Each group's scalar/vector accumulators and every reduction
+            // cell reset in the shared body; arithmetic order is unchanged.
+            PROJECT_BODY_VALUE
+            // All lanes finish reading their reduction before the next group
+            // can overwrite any shared cell, including unused member cells.
+            workgroupBarrier();
+        }
+    }
+}
+// FROZEN_GU_PROJECT_STRIDE4_MAIN_END
 // FROZEN_GU_AUDIT_BEGIN
 struct Params {count:u32,r0:u32,r1:u32,r2:u32,r3:u32,r4:u32,r5:u32,r6:u32}
 @group(0) @binding(0) var<storage,read> planes:array<u32>;

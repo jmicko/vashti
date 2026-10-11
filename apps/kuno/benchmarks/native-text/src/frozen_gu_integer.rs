@@ -15,6 +15,7 @@ use cubecl_runtime::server::{ExecutionMode, Handle, KernelArguments, MetadataBin
 use kuno_text::{Error, Result};
 
 pub(crate) const MAX_COUNT: usize = 3;
+pub(crate) const GROUP_STRIDE_FOUR: u32 = 4;
 pub(crate) const HEADER_WORDS: usize = 64;
 pub(crate) const FRAME_WORDS: usize = 1440;
 pub(crate) const LOGICAL_WORDS: usize = HEADER_WORDS + MAX_COUNT * FRAME_WORDS;
@@ -46,6 +47,7 @@ fn template(section: &str) -> &'static str {
 enum Kernel {
     Prepare,
     Project { dtype: u32, row_bytes: usize },
+    ProjectStride4 { dtype: u32, row_bytes: usize },
     Audit,
 }
 
@@ -154,7 +156,31 @@ impl Kernel {
                     .replace("BLOCKS_VALUE", "80")
             }
             Self::Audit => template("AUDIT").to_owned(),
-            Self::Project { dtype, row_bytes } => {
+            Self::Project { dtype, row_bytes } | Self::ProjectStride4 { dtype, row_bytes } => {
+                let stride_four = matches!(self, Self::ProjectStride4 { .. });
+                // Both schedules use one arithmetic body. This keeps decoder,
+                // member order and the fixed lane tree identical by construction.
+                let project = template("PROJECT");
+                let source = if stride_four {
+                    let prefix = project
+                        .split_once("@compute @workgroup_size(64)")
+                        .unwrap()
+                        .0;
+                    format!(
+                        "{prefix}{}",
+                        template("PROJECT_STRIDE4_MAIN")
+                            .replace("PROJECT_BODY_VALUE", template("PROJECT_BODY"))
+                    )
+                    .replace("p.g!=0u", "p.g<1u || p.g>80u")
+                    .replace("group>=groups", "group>=groups || group>=p.g")
+                } else {
+                    project.to_owned()
+                };
+                let group_index = if stride_four {
+                    "routed_group"
+                } else {
+                    "group.y"
+                };
                 let (grid, initialize) = grid_source(dtype);
                 let helpers = include_str!("iq_moe_integer.wgsl")
                     .split_once("fn iq4_byte")
@@ -165,7 +191,7 @@ impl Kernel {
                     .0;
                 let halves = if dtype == super::IQ2_S { 2 } else { 1 };
                 let quartets = if halves == 2 { 4 } else { 8 };
-                template("PROJECT")
+                source
                     .replace("GRID_DECLARATION_VALUE", &grid)
                     .replace("GRID_INITIALIZE_VALUE", &initialize)
                     .replace("DECODE_HELPERS_VALUE", &format!("fn iq4_byte{helpers}"))
@@ -173,19 +199,21 @@ impl Kernel {
                     .replace("ROW_BYTES_VALUE", &row_bytes.to_string())
                     .replace("HALVES_VALUE", &halves.to_string())
                     .replace("QUARTETS_VALUE", &quartets.to_string())
-                    .replace("FRAME_MEMBERS_VALUE", &members("frames.AXIS=64u+(map[p.a+164u+group.y*8u+MEMBER_INDEXu]/10u)*1440u;\n"))
+                    .replace("FRAME_MEMBERS_VALUE", &members(&format!("frames.AXIS=64u+(map[p.a+164u+{group_index}*8u+MEMBER_INDEXu]/10u)*1440u;\n")))
                     .replace("DOT_MEMBERS_VALUE", &members("{let first=planes[frames.AXIS+at];let second=planes[frames.AXIS+640u+at];gf.AXIS+=dot4I8Packed(gq,first);gs.AXIS+=dot4I8Packed(gq,second);uf.AXIS+=dot4I8Packed(uq,first);us.AXIS+=dot4I8Packed(uq,second);}\n"))
                     .replace("SCALE_MEMBERS_VALUE", &members("{let a=bitcast<f32>(planes[frames.AXIS+1280u+block]);let b=bitcast<f32>(planes[frames.AXIS+1360u+block]);let gp=a*f32(gf.AXIS)+b*f32(gs.AXIS);let up=a*f32(uf.AXIS)+b*f32(us.AXIS);gates.AXIS+=gd*gp;ups.AXIS+=ud*up;}\n"))
-                    .replace("OUTPUT_MEMBERS_VALUE", &members("{let route=map[p.a+164u+group.y*8u+MEMBER_INDEXu];output[p.d+route*p.e+row]=silu(gate_sums[local*3u+MEMBER_INDEXu])*up_sums[local*3u+MEMBER_INDEXu];if row==0u {status[p.f+route]=1u;}}\n"))
+                    .replace("OUTPUT_MEMBERS_VALUE", &members(&format!("{{let route=map[p.a+164u+{group_index}*8u+MEMBER_INDEXu];output[p.d+route*p.e+row]=silu(gate_sums[local*3u+MEMBER_INDEXu])*up_sums[local*3u+MEMBER_INDEXu];if row==0u {{status[p.f+route]=1u;}}}}\n")))
             }
         }
     }
     fn dim(self) -> CubeDim {
-        CubeDim::new_1d(if matches!(self, Self::Project { .. }) {
-            64
-        } else {
-            128
-        })
+        CubeDim::new_1d(
+            if matches!(self, Self::Project { .. } | Self::ProjectStride4 { .. }) {
+                64
+            } else {
+                128
+            },
+        )
     }
 }
 impl KernelMetadata for Kernel {
@@ -193,6 +221,7 @@ impl KernelMetadata for Kernel {
         match self {
             Self::Prepare => "FrozenGuIntegerPrepare",
             Self::Project { .. } => "FrozenGuIntegerEightLanes",
+            Self::ProjectStride4 { .. } => "FrozenGuIntegerEightLanesStride4",
             Self::Audit => "FrozenGuIntegerAudit",
         }
     }
@@ -367,6 +396,47 @@ pub(crate) fn launch(
     groups: usize,
     count: usize,
 ) -> Result<()> {
+    launch_with_schedule(
+        client, geometry, spans, banks, owners, scratch, first_slot, slot_count, groups, count,
+        false,
+    )
+}
+
+/// Explicit alternative scheduling: four workgroups per row tile uniformly
+/// stride over the same bounded original groups. No arithmetic or owner change.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn launch_group_stride4(
+    client: &ComputeClient<WgpuRuntime>,
+    geometry: g::Geometry,
+    spans: &g::Spans,
+    banks: [Handle; 2],
+    owners: [Handle; 7],
+    scratch: Handle,
+    first_slot: usize,
+    slot_count: usize,
+    groups: usize,
+    count: usize,
+) -> Result<()> {
+    launch_with_schedule(
+        client, geometry, spans, banks, owners, scratch, first_slot, slot_count, groups, count,
+        true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn launch_with_schedule(
+    client: &ComputeClient<WgpuRuntime>,
+    geometry: g::Geometry,
+    spans: &g::Spans,
+    banks: [Handle; 2],
+    owners: [Handle; 7],
+    scratch: Handle,
+    first_slot: usize,
+    slot_count: usize,
+    groups: usize,
+    count: usize,
+    stride_four: bool,
+) -> Result<()> {
     validate_layout(
         geometry,
         spans,
@@ -416,20 +486,29 @@ pub(crate) fn launch(
         spans.act_first(),
         spans.act_stride(),
         spans.status_first(),
-        0,
+        if stride_four { groups } else { 0 },
         count,
     ]));
     // SAFETY: parent retains frozen source identity/pending rank protection;
     // shader exits uniformly for inactive partitions before all payload reads.
     unsafe {
-        client.launch_unchecked(
-            Box::new(Kernel::Project {
+        let kernel = if stride_four {
+            Kernel::ProjectStride4 {
                 dtype: gate.dtype(),
                 row_bytes: gate.row_bytes(),
-            }),
-            CubeCount::Static(80, groups as u32, 1),
-            args,
-        );
+            }
+        } else {
+            Kernel::Project {
+                dtype: gate.dtype(),
+                row_bytes: gate.row_bytes(),
+            }
+        };
+        let grid_y = if stride_four {
+            GROUP_STRIDE_FOUR
+        } else {
+            groups as u32
+        };
+        client.launch_unchecked(Box::new(kernel), CubeCount::Static(80, grid_y, 1), args);
     }
     Ok(())
 }
