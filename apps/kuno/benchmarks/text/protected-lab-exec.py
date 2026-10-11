@@ -7,6 +7,8 @@ import sys
 def selected_target_policy(environment, mtp=False):
     target_only_scope(environment)
     intel_mtp_scope(environment)
+    grouped_ple_scope(environment)
+    frozen_down_stride_scope(environment)
     selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
     if "KUNO_LAB_LANGUAGE_DECODE" in selected:
         if not mtp or selected.pop("KUNO_LAB_LANGUAGE_DECODE") != "target-only-public":
@@ -16,6 +18,12 @@ def selected_target_policy(environment, mtp=False):
             raise ValueError("Intel draft placement requires the fixed public speculative scope")
         for key in ("KUNO_PUBLIC_MTP_INTEL_TOTAL_BYTES", "KUNO_PUBLIC_MTP_INTEL_USED_BYTES", "KUNO_PUBLIC_MTP_INTEL_DEVICE_ID"):
             selected.pop(key)
+    if "KUNO_LAB_TARGET_PLE_READS" in selected:
+        if not mtp or selected.pop("KUNO_LAB_TARGET_PLE_READS") != "grouped-public":
+            raise ValueError("Grouped PLE reads require the canonical fixed public target")
+    if "KUNO_LAB_FROZEN_DOWN_SCHEDULE" in selected:
+        if not mtp or selected.pop("KUNO_LAB_FROZEN_DOWN_SCHEDULE") != "four-public":
+            raise ValueError("DOWN scheduling requires the canonical original four-row target")
     if "KUNO_LAB_FROZEN_GU_SCHEDULE" in selected:
         frozen_gu_integer_scope(environment)
         if not mtp or selected.pop("KUNO_LAB_FROZEN_GU_SCHEDULE") != "four-public":
@@ -138,6 +146,53 @@ def selected_target_policy(environment, mtp=False):
         if selected.pop("KUNO_LAB_WARM_REPLAY") != "once":
             raise ValueError("Warm replay requires the one-shot public fixture")
     return selected
+
+def original_frozen_target_scope(environment, selector, value, *, four_down=False, full_vocab=False):
+    """Shared original target prerequisites; draft policies keep their own scope."""
+    if selector not in environment:
+        return
+    spec = environment.get("KUNO_LAB_SPECULATIVE_PUBLIC_ONLY") == "1"
+    language = environment.get("KUNO_LAB_LANGUAGE_PUBLIC_ONLY") == "1"
+    required = {
+        selector: value,
+        "KUNO_LAB_TARGET_SOURCES": "frozen-host-public",
+        "KUNO_LAB_FROZEN_PARTITION_EXIT": "1",
+        "KUNO_LAB_TARGET_ROUTER": "device-frozen-public",
+        "KUNO_LAB_TARGET_REUSE": "request",
+        "KUNO_LAB_TARGET_FILL": "direct-public",
+        "KUNO_LAB_DEVICE_DISPATCH": "inline",
+        "KUNO_LAB_TARGET_IO": "chunk",
+        "KUNO_LAB_TARGET_DENSE": "verify3-fused",
+    }
+    if four_down:
+        required["KUNO_LAB_FROZEN_DOWN_ROWS"] = "four-public"
+    conflicts = (
+        "KUNO_LAB_FROZEN_TABLES", "KUNO_LAB_FROZEN_DOWN_SCALES",
+        "KUNO_LAB_FROZEN_GU_FACTORS", "KUNO_LAB_FROZEN_GU_ROWS",
+        "KUNO_LAB_FROZEN_HOST_STAGE", "KUNO_LAB_FROZEN_MEMBERS",
+        "KUNO_LAB_FROZEN_BANK_PLACEMENT", "KUNO_LAB_TARGET_EXPERTS",
+        "KUNO_LAB_TARGET_MOE",
+    )
+    if (any(environment.get(key) != expected for key, expected in required.items())
+            or spec == language
+            or spec and environment.get("KUNO_LAB_WARM_REPLAY") != "once"
+            or language and "KUNO_LAB_WARM_REPLAY" in environment
+            or any(key in environment for key in conflicts)
+            or full_vocab and "KUNO_LAB_MTP_VOCAB" in environment):
+        raise ValueError("Target read/schedule policy requires original bounded public frozen scope")
+
+
+def grouped_ple_scope(environment):
+    original_frozen_target_scope(
+        environment, "KUNO_LAB_TARGET_PLE_READS", "grouped-public", full_vocab=True,
+    )
+
+
+def frozen_down_stride_scope(environment):
+    original_frozen_target_scope(
+        environment, "KUNO_LAB_FROZEN_DOWN_SCHEDULE", "four-public", four_down=True,
+    )
+
 
 def frozen_gu_integer_scope(environment):
     if not any(key in environment for key in ("KUNO_LAB_FROZEN_GU_MATH", "KUNO_LAB_FROZEN_GU_SCHEDULE")):
@@ -332,6 +387,8 @@ def bank_placement_scope(environment):
 def memory_limit(environment, arguments):
     target_only_scope(environment)
     intel_mtp_scope(environment)
+    grouped_ple_scope(environment)
+    frozen_down_stride_scope(environment)
     frozen_gu_integer_scope(environment)
     english_vocab_scope(environment)
     three_gdn_scope(environment)

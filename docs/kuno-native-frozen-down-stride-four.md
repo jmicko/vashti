@@ -127,8 +127,30 @@ shared/storage/barrier event to be the reuse fence after all output writes.
 Independent read-only reviews found no source blocker in the leaf/parent or
 compiled controller. These remain source-only receipts.
 
-Root must still register the protected launcher selector, freeze a new artifact,
+Protected launcher registration is now covered below. Root must still freeze
+a new artifact,
 pass the unchanged original CPU13 target/carry/greedy/real-repair gate,
 complete full owner erasure and physical GPU memory recovery, then measure
 matched normal language throughput with all CPU builders idle. No numerical
 tolerance is widened and no speed gain is claimed by this source handoff.
+
+## Protected launcher registration
+
+The guard now consumes canonical
+`KUNO_LAB_FROZEN_DOWN_SCHEDULE=four-public` only with the original frozen public
+target prerequisites above and explicit `KUNO_LAB_FROZEN_DOWN_ROWS=four-public`.
+It accepts CPU13's single warm replay and code/prose fixtures with Nvidia,
+explicit Intel or actual target-only execution. Plain/integer/stride GU and
+grouped PLE reads compose subject to their separate original scopes. No MTP
+format or sweep dependency is added to DOWN scheduling. An English draft with
+DOWN alone must satisfy the existing English-Q8 guard; adding grouped PLE
+rejects English, matching the compiled read-policy controller.
+
+Both read/schedule selectors reject private/workgroup tables, shared DOWN
+scales, GU factors, two-row GU, staging, three-member arithmetic, prepared
+experts, live reduction and preserved-bank placement. Host caps, default
+selection, swap/core checks and content-free transport remain unchanged. Seven
+new read/schedule tests and all 27 protected-launcher tests pass, as do Python
+source compilation and whitespace checks. No GPU or service work is included;
+root still owns the frozen helper, original numeric/closure gates and normal
+performance trials.

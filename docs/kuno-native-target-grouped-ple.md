@@ -101,5 +101,33 @@ grouped PLE tests pass, including eight selector/receipt tests and the five
 actual leaf tests. Complete language-controller 32, CPU13-controller 26 and
 target-build helper 20 tests pass. Strict direct-device all-target Clippy with
 `-j2` and warnings denied passes. Formatting and diff checks pass. The source
-remains a separate unselected candidate; protected launcher registration and
-completed physical CPU13/code/prose/lifecycle/timing acceptance remain pending.
+remains a separate unselected candidate. Protected launcher registration is
+covered below; completed physical CPU13/code/prose/lifecycle/timing acceptance
+remains pending.
+
+## Protected launcher registration
+
+`protected-lab-exec.py` now recognizes only the canonical
+`KUNO_LAB_TARGET_PLE_READS=grouped-public` selector in the same fixed CPU13 and
+code/prose scopes as the compiled controllers. It requires all original target
+source/router, partition-exit, direct-fill, inline-dispatch, Verify3-fused and
+chunk/request prerequisites, CPU13's single warm replay, and exclusive public
+fixture selection. It rejects the incompatible target policies listed above,
+preserved bank placement and any English vocabulary selector. The selector
+cannot escape through another probe, device argument or generic host cap.
+
+The guard permits existing Nvidia, explicit Intel and language target-only
+placement, plain/integer/stride GU, four-row/stride DOWN, chronological QSA and
+independently valid draft head/GDN choices. It introduces no fabricated MTP
+profile or fused-sweep prerequisite. Existing Intel metadata, GU integer,
+target-only and draft-profile checks still apply. The environment is unmodified;
+only the guard's copied policy map consumes the explicit selector. Neither
+48GiB CPU13 nor 48GiB+196MiB language host limits are enlarged.
+
+Seven new focused launcher tests pass across placements, both policies singly
+and together, all original prerequisites, canonical values, incompatible math,
+private/unknown fields and command escapes. All 27 protected-launcher tests pass,
+and Python source compilation plus whitespace checks pass. Tests import the
+guard functions only; no protected process, GPU, service, model or private input
+was used. The fixed external helper, artifact freeze and physical acceptance
+remain root-owned and separate from this source registration.
