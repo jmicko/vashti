@@ -3343,3 +3343,27 @@ source work is not GPU/throughput acceptance. Last recovery14:51:03UTC restores
 baseline GPUs, idle/unpaused/no-recovery admission, allHTTP200, classifiedfaults0.
 No30tokens/s/private/production claim; installedservices/API/canonicalVashti
 unchanged. Backend-only internal work; required Vashti changes:none.
+
+
+### Active native kernel checkpoint,2026-10-11 15:44UTC
+
+Latest tested source21d97e2/v157 passes original CPU13/targetgreedy/carries,
+real repair, full draft/target/source closure and physical recovery with the
+fixed40525-row English/code draft head. Normal compiler-idle ordered code200
+is8.293190 shortlist versus8.525761 same-artifact full-head control; no gain,
+shortlist stays default-off. Warm4.152881 is diagnostic only. Read receipt
+v157_public_english_vocab_physical and the updated next-model handoff. Last
+recovery15:42:52UTC returns B70baseline50688000B, NVIDIA compute0, idle/unpaused/
+no-recovery admission, allHTTP200 and no classified GPU faults.
+
+Next integrated source-only candidate is the explicit two-residual-Q8 frozen
+GU integer leaf and immutable parent, throughe655f32/13c276c/fb7c528/9f80c33.
+Read the frozen GU leaf/parent contracts. Ten focused agent checks, strict
+all-target directClippy and independent read-only source review pass. Original
+F32 equivalence, full original CPU13 and throughput are NOT established by
+packed-oracle tests. Root owns public controller/launcher integration and all
+GPU/services; agents own isolated encoded-weight/group-scheduling followups.
+Do not enable these candidates for ordinary inference, widen tolerances or
+represent requested flags as actual execution. No30tokens/s/API/install/release
+acceptance; canonical Vashti and installed services unchanged. Required Vashti
+changes:none.

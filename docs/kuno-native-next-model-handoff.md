@@ -5,44 +5,44 @@ Canonical Vashti/public APIs/installed services remain unchanged. Work checkout
 is `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
 `codex/kuno-native-text`. Required Vashti changes:none.
 
-Latest tested source is e16c549 (three-GDN parent/kernel plus earlier target
-variants); Python admission2c397d8 is separately hashed by each protected trial.
-Frozen v156 binarySHA256
-`0a4ddf0f1725922ffff94572a1751aa92e2450faf2a7f8fdae3c0eb062a3f907`
-passes complete original coldChunk/warmThreeGdn CPU13 vectors/carries/greedy
-and real-prefix repair with all owning erasure/source detachment. Its normal
-code200 result is8.489327 continuationtokens/s (199/23.441199195s),
-130/138drafts/69rounds,74actual completedThreeGdn chunks. The original target
-uses four-rowDOWN and draft shared Q8-head scales; MoE three-member arithmetic
-and packed staging are disabled. Same-artifact normal control is8.542111t/s; agentClippy may have
-overlapped that trial, so this is not a compiler-idle causal pair and no
-recurrent-kernel speed gain is established. Warm12-token5.479043
-is diagnostic only. Default production and all lab candidates stay unchanged.
+Latest full physical source is21d97e2/v157, frozen binarySHA256
+`a483e3f6aefb4ea74cda20457d17bf7bb240c18ff50cd67a3e7ae646ab91df44`.
+The pinned40525-row English/code Q8 draft head passes unchanged full CPU13
+vectors/carries/targetgreedy, real repair, all42 draft private owners,1380 target
+MAIN owners/828866560B,432 HOST pages/36147609600B freed and full physical recovery.
+Normal compiler-idle ordered same-artifact code200 is8.293190 shortlist versus
+8.525761 full-head control. Both time199 real continuations; shortlist129/140
+accepted/proposed drafts over70 rounds, control130/138 over69. Draft time falls
+5.239454→4.930069s but extra verification/repair removes that saving. No gain;
+shortlist remains default-off. Warm12-token4.152881 is diagnostic only. Exact
+source/model/helper hashes, all results and recovery are in receipt section
+`v157_public_english_vocab_physical`. No ABBA/prose/independentCPU200/private or
+production acceptance. Original map262144B owning charge,40525 rows and public
+SHA256369151522226a5edaa5f12cfd1e2ae7db8f4fbdbd222f3dcf327dced9597fb25 are required.
 
-Original Q2 draft with three-member/four-DOWN target v155 passes the full
-original gate and normal code200 at7.949402continuationt/s,129/140drafts/70rounds.
-It reserves2,539,257,856B of public GPU weights versus original Q8
-5,011,668,992B, but establishes no speed gain. Separate new helper labels retain
-original-shard hashing and omit Q8-head policies; old Q2 labels are unchanged.
+Next integrated source-only candidate is frozen GU integer preparation/eight-lane
+projection: ownerprechargee655f32, leaf13c276c, limitfixfb7c528, parent9f80c33
+(original agent commitsd68f80d/40bddbb/1657abe/e10e9fb). One full64KiB private owner
+and independent HOST/INFO/runtime precharges retain original MAP/weight pages,
+DOWN and all-family completion. Actual1 preparation:5 GUlaunches:1 owneraudit
+must join deferred actual original routing acceptance. This is explicitly
+alternate two-residual-Q8 activation/eight-lane arithmetic; packed oracle tests
+are NOT originalF32 equivalence. Unchanged original CPU13/greedy/repair must
+accept before normal speed. Read the frozen GU leaf and parent contracts.
+Root fixed-public controller/launcher integration and frozen artifact are in
+progress; no GU GPU/throughput acceptance yet. Future source-only followups
+prepare packed weight headers once and bound idle group dispatches separately.
 
-Earlier v155 three-member/four-DOWN/shared-Q8-head is8.094793, v154 packed
-staging/four-DOWN/shared-Q8-head7.870304; both pass original CPU13, repair,
-full closure and physical recovery, but no speed gain is established and both
-remain default off. The earlier v150 ordered normal pair8.119520control /
-8.484726four-DOWN/shared-Q8-head is preliminary (+4.50%), not repeatedABBA.
-All actual source/binary/helper hashes, numeric phases and closure/recovery
-are in `apps/kuno/benchmarks/text/receipts/native-strata-optimization-20261009.json`.
+Earlier e16c549/v156 ThreeGdn full gates pass at8.489327 normalcode200; control
+8.542111 may overlap agentClippy and is not a compiler-idle causal pair.
+Q2 v155 reserves2539257856B public draft weights versus Q85011668992B but
+normal7.949402 establishes no speed gain. Three-member8.094793, staging7.870304
+also pass full physical gates and remain default-off. v150 ordered4DOWN/shared
+head8.119520 control /8.484726 candidate is preliminary, not repeatedABBA.
 
-Next source candidate: static English/code draft vocabulary from pinned MIT
-Strata fb58e0d,40,525/248,320rows, immutable public map SHA256
-`369151522226a5edaa5f12cfd1e2ae7db8f4fbdbd222f3dcf327dced9597fb25`.
-Leaf is in an isolated worktree. It will preserve original Q8 weights/math,
-full target greedy verification and repair. Smaller draft coverage must never
-be represented as full-head numerical equivalence. No GPU acceptance yet.
-
-Last recovered host2026-10-11T14:57:50.406199UTC: same boot, B70baseline50688000B,
+Last recovered host2026-10-11T15:42:52.097951UTC: same boot, B70baseline50688000B,
 NVIDIA compute0, unpaused idle/no recovery, HTTP200 for allthree services, GPU
-faults0. Historical snapshot; both completed trials recovered normally.
+faults0. This is a historical snapshot, not future availability.
 No30tokens/s, independentCPU200 or private/production acceptance. No runtime
 installation, API/UI work, release or other task messaging.
 

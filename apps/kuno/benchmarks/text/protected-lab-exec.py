@@ -6,6 +6,10 @@ import sys
 
 def selected_target_policy(environment, mtp=False):
     selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
+    if "KUNO_LAB_FROZEN_GU_MATH" in selected:
+        frozen_gu_integer_scope(environment)
+        if not mtp or selected.pop("KUNO_LAB_FROZEN_GU_MATH") != "integer-public":
+            raise ValueError("Integer GU requires the canonical fixed public target")
     if "KUNO_LAB_TARGET_GDN" in selected:
         three_gdn_scope(environment)
         if not mtp or selected.pop("KUNO_LAB_TARGET_GDN") != "three-streaming-public":
@@ -121,6 +125,37 @@ def selected_target_policy(environment, mtp=False):
             raise ValueError("Warm replay requires the one-shot public fixture")
     return selected
 
+def frozen_gu_integer_scope(environment):
+    if "KUNO_LAB_FROZEN_GU_MATH" not in environment:
+        return
+    spec = environment.get("KUNO_LAB_SPECULATIVE_PUBLIC_ONLY") == "1"
+    language = environment.get("KUNO_LAB_LANGUAGE_PUBLIC_ONLY") == "1"
+    required = {
+        "KUNO_LAB_FROZEN_GU_MATH": "integer-public",
+        "KUNO_LAB_TARGET_SOURCES": "frozen-host-public",
+        "KUNO_LAB_FROZEN_PARTITION_EXIT": "1",
+        "KUNO_LAB_TARGET_ROUTER": "device-frozen-public",
+        "KUNO_LAB_TARGET_REUSE": "request",
+        "KUNO_LAB_TARGET_FILL": "direct-public",
+        "KUNO_LAB_DEVICE_DISPATCH": "inline",
+        "KUNO_LAB_TARGET_IO": "chunk",
+        "KUNO_LAB_TARGET_DENSE": "verify3-fused",
+        "KUNO_LAB_MTP_SWEEPS": "fused",
+    }
+    conflicts = (
+        "KUNO_LAB_FROZEN_TABLES", "KUNO_LAB_FROZEN_DOWN_SCALES",
+        "KUNO_LAB_FROZEN_GU_FACTORS", "KUNO_LAB_FROZEN_GU_ROWS",
+        "KUNO_LAB_FROZEN_HOST_STAGE", "KUNO_LAB_FROZEN_MEMBERS",
+        "KUNO_LAB_FROZEN_BANK_PLACEMENT", "KUNO_LAB_TARGET_EXPERTS",
+        "KUNO_LAB_TARGET_MOE", "KUNO_LAB_MTP_PROFILE", "KUNO_LAB_MTP_VOCAB",
+    )
+    if (any(environment.get(key) != value for key, value in required.items())
+            or spec == language
+            or spec and environment.get("KUNO_LAB_WARM_REPLAY") != "once"
+            or environment.get("KUNO_LAB_MTP_Q8_HEAD") not in (None, "shared-public")
+            or any(key in environment for key in conflicts)):
+        raise ValueError("Integer GU requires the original bounded public GPU-router scope")
+
 def english_vocab_scope(environment):
     if "KUNO_LAB_MTP_VOCAB" not in environment:
         return
@@ -203,6 +238,7 @@ def bank_placement_scope(environment):
 
 
 def memory_limit(environment, arguments):
+    frozen_gu_integer_scope(environment)
     english_vocab_scope(environment)
     three_gdn_scope(environment)
     private_table_scope(environment)
