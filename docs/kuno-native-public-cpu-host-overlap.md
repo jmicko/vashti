@@ -287,6 +287,12 @@ completion passes ten. Strict direct-device all-target Clippy with denied
 warnings, formatter check and diff check pass. These are CPU/source checks,
 not evidence of GPU numerical agreement, actual overlap or faster inference.
 
+The real layer-zero metadata construction regression also passes: pinned
+`[18,18,20]` projections construct the original 144-slot banks first, convert
+to the explicit 512-slot frozen source geometry with inactive partition exit,
+and validate count three and all five original source ranges. Ordinary
+512-slot construction and count four remain rejected.
+
 The probe contains eleven fixed physical negative controls for malformed
 count/owner/readiness/logical padding, missing original GPU status, a zero
 probability with a nonfinite partial, prior sticky fault, physical padding,

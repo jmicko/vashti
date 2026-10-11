@@ -15,6 +15,7 @@ use cubecl_runtime::public_external::PublicExternalHandle;
 const SOURCES: usize = 15;
 const PRIVATE: usize = 7;
 const METADATA_CAP: usize = 8192;
+const ORIGINAL_BANK_CAPACITY: usize = crate::daslab_profile::BANK_SLOTS;
 const FIRST: [usize; 5] = [0, 72, 144, 288, 432];
 const COUNTS: [usize; 5] = [72, 72, 144, 144, 80];
 fn reject_overlap() -> Error {
@@ -99,7 +100,7 @@ impl GpuExecutor<'_> {
                 .map_err(Error::InvalidFormat)?,
             ],
             8,
-            512,
+            ORIGINAL_BANK_CAPACITY,
         )
         .and_then(k::Geometry::with_frozen_host_sources)
         .and_then(k::Geometry::with_inactive_partition_exit)
@@ -272,5 +273,41 @@ impl GpuExecutor<'_> {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn actual_das_layer_zero_banks_convert_to_original_count_three_sources() {
+        let types = crate::daslab_profile::routed_types(0).unwrap();
+        assert_eq!(types, [18, 18, 20]);
+        let projections = [
+            k::Projection::new(types[0], 2560, 640, 512).unwrap(),
+            k::Projection::new(types[1], 2560, 640, 512).unwrap(),
+            k::Projection::new(types[2], 640, 2560, 512).unwrap(),
+        ];
+        assert_eq!(ORIGINAL_BANK_CAPACITY, 144);
+        assert!(k::Geometry::new(projections, 8, 512).is_err());
+        let banks = k::Geometry::new(projections, 8, ORIGINAL_BANK_CAPACITY).unwrap();
+        assert_eq!(banks.capacity(), 144);
+        assert!(!banks.frozen_host_sources());
+        let source = banks
+            .with_frozen_host_sources()
+            .and_then(k::Geometry::with_inactive_partition_exit)
+            .unwrap();
+        assert_eq!(source.capacity(), 512);
+        assert_eq!(source.projections(), projections);
+        assert!(source.frozen_host_sources());
+        assert!(source.inactive_partition_exit());
+        assert_eq!(source.member_limit(), 3);
+        assert!(source.validate_count(3).is_ok());
+        assert!(source.validate_count(4).is_err());
+        for (&first, &count) in FIRST.iter().zip(&COUNTS) {
+            let words = projections.map(|p| p.segment_words(count).unwrap());
+            assert!(source.validate_shard(first, count, words).is_ok());
+        }
     }
 }
