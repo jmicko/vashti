@@ -37,6 +37,33 @@ use cubecl_zspace::{Shape, Strides, metadata::Metadata};
 use hashbrown::HashSet;
 use thiserror::Error;
 
+/// Immutable construction policy for the separately admitted public target
+/// stream. Ordinary streams retain the original 512-task regulation window.
+/// This does not change the scheduler/submission size or authorize completion.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PublicTargetSubmissionBacklog {
+    #[default]
+    Default512,
+    Queued2048,
+}
+impl PublicTargetSubmissionBacklog {
+    pub const fn task_window(self) -> usize {
+        match self {
+            Self::Default512 => 512,
+            Self::Queued2048 => 2048,
+        }
+    }
+
+    /// A submitted INFO-only command buffer spends one selected-policy slot.
+    /// The original policy retains its historical zero-task accounting.
+    pub const fn minimum_submission_cost(self) -> usize {
+        match self {
+            Self::Default512 => 0,
+            Self::Queued2048 => 1,
+        }
+    }
+}
+
 #[derive(Error, Clone)]
 #[cfg_attr(std_io, derive(serde::Serialize, serde::Deserialize))]
 /// An error during profiling.
@@ -435,6 +462,30 @@ where
         &mut self,
         _stream_id: StreamId,
     ) -> Result<(), ServerError> {
+        Err(IoError::UnsupportedIoOperation {
+            backtrace: BackTrace::capture(),
+        }
+        .into())
+    }
+
+    /// Explicit target-only construction variant. Unsupported backends reject
+    /// it; they cannot silently substitute the ordinary regulation policy.
+    fn configure_public_target_request_io_with_backlog(
+        &mut self,
+        _backlog: PublicTargetSubmissionBacklog,
+        _stream_id: StreamId,
+    ) -> Result<(), ServerError> {
+        Err(IoError::UnsupportedIoOperation {
+            backtrace: BackTrace::capture(),
+        }
+        .into())
+    }
+
+    /// The actual immutable policy of an already configured target stream.
+    fn public_target_submission_backlog(
+        &mut self,
+        _stream_id: StreamId,
+    ) -> Result<PublicTargetSubmissionBacklog, ServerError> {
         Err(IoError::UnsupportedIoOperation {
             backtrace: BackTrace::capture(),
         }

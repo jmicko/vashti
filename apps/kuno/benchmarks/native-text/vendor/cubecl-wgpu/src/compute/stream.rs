@@ -26,7 +26,10 @@ static SUBMISSION_WAITS: std::sync::atomic::AtomicU64 = std::sync::atomic::Atomi
 /// Content-free process-global attribution, not an isolated GPU kernel timer.
 pub fn transient_gpu_submission_wait_stats() -> (u64, u64) {
     use std::sync::atomic::Ordering::Relaxed;
-    (SUBMISSION_WAIT_NS.load(Relaxed), SUBMISSION_WAITS.load(Relaxed))
+    (
+        SUBMISSION_WAIT_NS.load(Relaxed),
+        SUBMISSION_WAITS.load(Relaxed),
+    )
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -494,20 +497,19 @@ impl WgpuStream {
         Ok(())
     }
 
-    pub(crate) fn configure_public_target_request_io(&mut self) -> Result<(), ServerError> {
+    pub(crate) fn configure_public_target_request_io_with_backlog(
+        &mut self,
+        backlog: cubecl_runtime::server::PublicTargetSubmissionBacklog,
+    ) -> Result<(), ServerError> {
         let inline_device =
             cubecl_common::device_handle::DeviceHandle::<super::server::WgpuServer>::is_blocking();
-        if !inline_device {
-            return Err(super::transient_io::fault(
-                "public target I/O requires inline device",
-            ));
-        }
-        if self.cleanup_boundary.retired() {
-            return Err(super::transient_io::fault("private I/O stream retired"));
-        }
-        if self.transient_io.is_some() {
-            return Err(super::transient_io::fault("private I/O already configured"));
-        }
+        validate_public_target_request_io_configuration(
+            backlog,
+            self.tasks_max,
+            inline_device,
+            self.cleanup_boundary.retired(),
+            self.transient_io.is_some(),
+        )?;
         self.flush(StreamErrorMode {
             ignore: false,
             flush: true,
@@ -519,7 +521,21 @@ impl WgpuStream {
         )?;
         io.drain_submitted()?;
         self.transient_io = Some(io);
+        // Prior setup work is drained above. No live request, owner reuse,
+        // ledger or completion state is reset by this construction selection.
+        self.submission_load.configure_public_target(backlog);
         Ok(())
+    }
+
+    pub(crate) fn public_target_submission_backlog(
+        &self,
+    ) -> Result<cubecl_runtime::server::PublicTargetSubmissionBacklog, ServerError> {
+        if !self.public_target_request_io_configured()? {
+            return Err(super::transient_io::fault(
+                "public target I/O not configured",
+            ));
+        }
+        Ok(self.submission_load.policy())
     }
 
     pub(crate) fn public_target_request_io_configured(&self) -> Result<bool, ServerError> {
@@ -1227,14 +1243,105 @@ impl WgpuStream {
 
 #[cfg(not(target_family = "wasm"))]
 mod __submission_load {
-    #[derive(Default, Debug)]
-    pub enum SubmissionLoad {
+    use cubecl_runtime::server::PublicTargetSubmissionBacklog;
+
+    /// Both policies retain exactly one submission stamp and one task counter.
+    /// Separate variants keep the policy immutable without another owner/list.
+    #[derive(Debug)]
+    pub enum SubmissionLoad<I = wgpu::SubmissionIndex> {
         Init {
-            last_index: wgpu::SubmissionIndex,
+            last_index: I,
             tasks_count_submitted: usize,
         },
-        #[default]
         Empty,
+        PublicTargetInit {
+            last_index: I,
+            tasks_count_submitted: usize,
+        },
+        PublicTargetEmpty,
+    }
+
+    impl<I> Default for SubmissionLoad<I> {
+        fn default() -> Self {
+            Self::Empty
+        }
+    }
+
+    impl<I> SubmissionLoad<I> {
+        pub fn policy(&self) -> PublicTargetSubmissionBacklog {
+            match self {
+                Self::PublicTargetInit { .. } | Self::PublicTargetEmpty => {
+                    PublicTargetSubmissionBacklog::Queued2048
+                }
+                Self::Init { .. } | Self::Empty => PublicTargetSubmissionBacklog::Default512,
+            }
+        }
+
+        /// Called only by the dedicated I/O constructor after its real drain.
+        /// The default leaves the original regulator state/stamp unchanged.
+        pub fn configure_public_target(&mut self, policy: PublicTargetSubmissionBacklog) {
+            if policy == PublicTargetSubmissionBacklog::Queued2048 {
+                *self = Self::PublicTargetEmpty;
+            }
+        }
+
+        /// Return the ORIGINAL previous stamp to wait for, never the current
+        /// submission. Counter reset remains after the real poll below.
+        fn record_submission(&mut self, tasks_count: usize, mut index: I) -> Option<I> {
+            let policy = self.policy();
+            let window = policy.task_window();
+            match self {
+                Self::Init {
+                    last_index,
+                    tasks_count_submitted,
+                }
+                | Self::PublicTargetInit {
+                    last_index,
+                    tasks_count_submitted,
+                } => {
+                    if policy == PublicTargetSubmissionBacklog::Default512 {
+                        *tasks_count_submitted += tasks_count;
+                    } else {
+                        // Every ACTUAL submission spends at least one slot,
+                        // including a zero-task pending-INFO submission. Huge
+                        // invalid counts cannot wrap away the selected wait.
+                        *tasks_count_submitted = tasks_count_submitted
+                            .saturating_add(tasks_count.max(policy.minimum_submission_cost()));
+                    }
+                    if *tasks_count_submitted >= window {
+                        core::mem::swap(last_index, &mut index);
+                        return Some(index);
+                    }
+                }
+                Self::Empty => {
+                    *self = Self::Init {
+                        last_index: index,
+                        tasks_count_submitted: 0,
+                    }
+                }
+                Self::PublicTargetEmpty => {
+                    *self = Self::PublicTargetInit {
+                        last_index: index,
+                        tasks_count_submitted: 0,
+                    }
+                }
+            }
+            None
+        }
+
+        fn finish_wait(&mut self) {
+            match self {
+                Self::Init {
+                    tasks_count_submitted,
+                    ..
+                }
+                | Self::PublicTargetInit {
+                    tasks_count_submitted,
+                    ..
+                } => *tasks_count_submitted = 0,
+                Self::Empty | Self::PublicTargetEmpty => unreachable!(),
+            }
+        }
     }
 
     impl SubmissionLoad {
@@ -1242,45 +1349,187 @@ mod __submission_load {
             &mut self,
             device: &wgpu::Device,
             tasks_count: usize,
-            mut index: wgpu::SubmissionIndex,
+            index: wgpu::SubmissionIndex,
         ) {
-            match self {
-                SubmissionLoad::Init {
-                    last_index,
-                    tasks_count_submitted,
-                } => {
-                    *tasks_count_submitted += tasks_count;
-
-                    // Enough to keep the GPU busy.
-                    //
-                    // - Too much can hang the GPU and create slowdown.
-                    // - Too little and GPU utilization is really bad.
-                    //
-                    // TODO: Could be smarter and dynamic based on stats.
-                    const MAX_TOTAL_TASKS: usize = 512;
-
-                    if *tasks_count_submitted >= MAX_TOTAL_TASKS {
-                        core::mem::swap(last_index, &mut index);
-                        let started = std::time::Instant::now();
-                        if let Err(e) = device.poll(wgpu::PollType::Wait {
-                            submission_index: Some(index),
-                            timeout: None,
-                        }) {
-                            log::warn!(
-                                "wgpu: requested wait timed out before the submission was completed during sync. ({e})"
-                            )
-                        }
-                        super::record_submission_wait(started.elapsed());
-                        *tasks_count_submitted = 0;
-                    }
+            if let Some(previous_index) = self.record_submission(tasks_count, index) {
+                let started = std::time::Instant::now();
+                if let Err(e) = device.poll(wgpu::PollType::Wait {
+                    submission_index: Some(previous_index),
+                    timeout: None,
+                }) {
+                    log::warn!(
+                        "wgpu: requested wait timed out before the submission was completed during sync. ({e})"
+                    )
                 }
-                SubmissionLoad::Empty => {
-                    *self = Self::Init {
-                        last_index: index,
-                        tasks_count_submitted: 0,
-                    }
-                }
+                super::record_submission_wait(started.elapsed());
+                self.finish_wait();
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn counter(load: &SubmissionLoad<usize>) -> usize {
+            match load {
+                SubmissionLoad::Init {
+                    tasks_count_submitted,
+                    ..
+                }
+                | SubmissionLoad::PublicTargetInit {
+                    tasks_count_submitted,
+                    ..
+                } => *tasks_count_submitted,
+                _ => 0,
+            }
+        }
+
+        // A separate copy of the original 512-state transition is the oracle;
+        // the candidate shares neither policy selection nor helper code here.
+        #[derive(Default)]
+        enum Original<I> {
+            Init {
+                last: I,
+                count: usize,
+            },
+            #[default]
+            Empty,
+        }
+        impl<I> Original<I> {
+            fn submit(&mut self, tasks: usize, mut index: I) -> Option<I> {
+                match self {
+                    Self::Init { last, count } => {
+                        *count += tasks;
+                        if *count >= 512 {
+                            core::mem::swap(last, &mut index);
+                            *count = 0;
+                            return Some(index);
+                        }
+                    }
+                    Self::Empty => {
+                        *self = Self::Init {
+                            last: index,
+                            count: 0,
+                        }
+                    }
+                }
+                None
+            }
+        }
+
+        #[test]
+        fn public_target_backlog_default_matches_original_stamp_sequence() {
+            let mut load = SubmissionLoad::<usize>::default();
+            let mut original = Original::<usize>::default();
+            // Includes full scheduler batches, clear overshoot, explicit read
+            // flushes and empty INFO-only submissions from the actual runtime.
+            let batches = [256, 256, 271, 2, 0, 34, 255, 1, 256, 7];
+            for index in 0..400 {
+                let tasks = batches[index % batches.len()];
+                let expected = original.submit(tasks, index);
+                let actual = load.record_submission(tasks, index);
+                assert_eq!(actual, expected);
+                if actual.is_some() {
+                    assert!(counter(&load) >= 512);
+                    load.finish_wait();
+                }
+                assert_eq!(load.policy(), PublicTargetSubmissionBacklog::Default512);
+            }
+        }
+
+        #[test]
+        fn public_target_backlog_waits_previous_stamp_at_exact_2048_boundary() {
+            let mut load = SubmissionLoad::<usize>::default();
+            load.configure_public_target(PublicTargetSubmissionBacklog::Queued2048);
+            assert_eq!(load.record_submission(256, 100), None);
+            assert_eq!(counter(&load), 0); // Original first-submission rule.
+            for index in 101..108 {
+                assert_eq!(load.record_submission(256, index), None);
+            }
+            assert_eq!(counter(&load), 1792);
+            assert_eq!(load.record_submission(256, 108), Some(100));
+            assert_eq!(counter(&load), 2048); // Not reset before device.poll.
+            load.finish_wait();
+            assert_eq!(counter(&load), 0);
+            for index in 109..116 {
+                assert_eq!(load.record_submission(256, index), None);
+            }
+            assert_eq!(load.record_submission(256, 116), Some(108));
+            load.finish_wait();
+            assert_eq!(load.policy(), PublicTargetSubmissionBacklog::Queued2048);
+        }
+
+        #[test]
+        fn public_target_backlog_finite_irregular_batch_envelope() {
+            // The public target's largest enqueue overshoot is a batch of
+            // sixteen owner clears: 255 existing tasks plus sixteen clears.
+            const MAX_BATCH: usize = 271;
+            for policy in [
+                PublicTargetSubmissionBacklog::Default512,
+                PublicTargetSubmissionBacklog::Queued2048,
+            ] {
+                let mut load = SubmissionLoad::<usize>::default();
+                load.configure_public_target(policy);
+                let mut submitted = 0usize;
+                let mut completed = 0usize;
+                let mut totals = vec![0usize];
+                let mut peak = 0usize;
+                let mut waits = 0;
+                for index in 1..=2048 {
+                    let tasks = [MAX_BATCH, 1, 0, 256, 34, 2][index % 6];
+                    submitted += tasks.max(policy.minimum_submission_cost());
+                    totals.push(submitted);
+                    peak = peak.max(submitted - completed);
+                    if let Some(previous) = load.record_submission(tasks, index) {
+                        assert!(previous < index);
+                        assert!(counter(&load) < policy.task_window() + MAX_BATCH);
+                        completed = totals[previous];
+                        load.finish_wait();
+                        waits += 1;
+                    }
+                }
+                assert!(waits > 0);
+                assert!(peak <= 2 * (policy.task_window() + MAX_BATCH - 1));
+            }
+        }
+
+        #[test]
+        fn public_target_backlog_counts_only_actual_info_only_submissions_and_never_wraps() {
+            let mut load = SubmissionLoad::<usize>::default();
+            load.configure_public_target(PublicTargetSubmissionBacklog::Queued2048);
+            // record_submission is reached ONLY after queue.submit. A flush
+            // with neither tasks nor pending INFO returns before this point.
+            assert_eq!(load.record_submission(0, 1), None);
+            for index in 2..2049 {
+                assert_eq!(load.record_submission(0, index), None);
+            }
+            assert_eq!(counter(&load), 2047);
+            assert_eq!(load.record_submission(0, 2049), Some(1));
+            assert_eq!(counter(&load), 2048);
+            load.finish_wait();
+            assert_eq!(load.record_submission(2047, 2050), None);
+            assert_eq!(load.record_submission(usize::MAX, 2051), Some(2049));
+            assert_eq!(counter(&load), usize::MAX);
+            load.finish_wait();
+            assert_eq!(counter(&load), 0);
+        }
+
+        #[test]
+        fn public_target_backlog_retains_one_stamp_without_extra_state_allocation() {
+            assert_eq!(
+                core::mem::size_of::<SubmissionLoad<usize>>(),
+                core::mem::size_of::<Original<usize>>()
+            );
+            assert_eq!(
+                core::mem::size_of::<SubmissionLoad>(),
+                core::mem::size_of::<Original<wgpu::SubmissionIndex>>()
+            );
+            let mut load = SubmissionLoad::<usize>::default();
+            assert_eq!(load.record_submission(256, 10), None);
+            assert_eq!(load.record_submission(256, 11), None);
+            load.configure_public_target(PublicTargetSubmissionBacklog::Default512);
+            assert_eq!(load.record_submission(256, 12), Some(10));
         }
     }
 }
@@ -1291,6 +1540,20 @@ mod __submission_load_wasm {
     pub struct SubmissionLoad;
 
     impl SubmissionLoad {
+        pub fn configure_public_target(
+            &mut self,
+            policy: cubecl_runtime::server::PublicTargetSubmissionBacklog,
+        ) {
+            debug_assert_eq!(
+                policy,
+                cubecl_runtime::server::PublicTargetSubmissionBacklog::Default512
+            );
+        }
+
+        pub fn policy(&self) -> cubecl_runtime::server::PublicTargetSubmissionBacklog {
+            cubecl_runtime::server::PublicTargetSubmissionBacklog::Default512
+        }
+
         pub fn regulate(
             &mut self,
             _device: &wgpu::Device,
@@ -1306,3 +1569,99 @@ mod __submission_load_wasm {
 use __submission_load::*;
 #[cfg(target_family = "wasm")]
 use __submission_load_wasm::*;
+
+fn validate_public_target_backlog(
+    policy: cubecl_runtime::server::PublicTargetSubmissionBacklog,
+    tasks_max: usize,
+) -> Result<(), ServerError> {
+    if policy == cubecl_runtime::server::PublicTargetSubmissionBacklog::Queued2048
+        && (tasks_max != 256 || cfg!(target_family = "wasm"))
+    {
+        return Err(super::transient_io::fault(
+            "public target backlog requires native 256-task submissions",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_public_target_request_io_configuration(
+    policy: cubecl_runtime::server::PublicTargetSubmissionBacklog,
+    tasks_max: usize,
+    inline_device: bool,
+    retired: bool,
+    configured: bool,
+) -> Result<(), ServerError> {
+    validate_public_target_backlog(policy, tasks_max)?;
+    if !inline_device {
+        return Err(super::transient_io::fault(
+            "public target I/O requires inline device",
+        ));
+    }
+    if retired {
+        return Err(super::transient_io::fault("private I/O stream retired"));
+    }
+    if configured {
+        return Err(super::transient_io::fault("private I/O already configured"));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod public_target_backlog_tests {
+    use super::*;
+    use cubecl_runtime::server::PublicTargetSubmissionBacklog;
+
+    #[test]
+    fn public_target_backlog_selection_preserves_default_and_exact_scheduler_bound() {
+        for size in [0, 1, 255, 256, 257, 512, usize::MAX] {
+            assert!(
+                validate_public_target_backlog(PublicTargetSubmissionBacklog::Default512, size)
+                    .is_ok()
+            );
+            assert_eq!(
+                validate_public_target_backlog(PublicTargetSubmissionBacklog::Queued2048, size)
+                    .is_ok(),
+                size == 256 && !cfg!(target_family = "wasm")
+            );
+        }
+        assert_eq!(PublicTargetSubmissionBacklog::default().task_window(), 512);
+        assert_eq!(
+            PublicTargetSubmissionBacklog::Queued2048.task_window(),
+            2048
+        );
+        assert_eq!(
+            PublicTargetSubmissionBacklog::default().minimum_submission_cost(),
+            0
+        );
+        assert_eq!(
+            PublicTargetSubmissionBacklog::Queued2048.minimum_submission_cost(),
+            1
+        );
+    }
+
+    #[test]
+    fn public_target_backlog_constructor_rejects_late_reconfigure_and_retired_streams() {
+        for policy in [
+            PublicTargetSubmissionBacklog::Default512,
+            PublicTargetSubmissionBacklog::Queued2048,
+        ] {
+            for inline in [false, true] {
+                for retired in [false, true] {
+                    for configured in [false, true] {
+                        assert_eq!(
+                            validate_public_target_request_io_configuration(
+                                policy, 256, inline, retired, configured
+                            )
+                            .is_ok(),
+                            inline
+                                && !retired
+                                && !configured
+                                && (policy == PublicTargetSubmissionBacklog::Default512
+                                    || !cfg!(target_family = "wasm"))
+                        );
+                    }
+                }
+            }
+        }
+    }
+}

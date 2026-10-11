@@ -498,6 +498,44 @@ impl<R: Runtime> ComputeClient<R> {
             })?
     }
 
+    /// Construct the same bounded public target I/O with an explicit immutable
+    /// regulation window. Invoke before target model construction; generic and
+    /// draft streams cannot acquire it through configure_transient_io.
+    pub fn configure_public_target_request_io_with_backlog(
+        &self,
+        backlog: crate::server::PublicTargetSubmissionBacklog,
+    ) -> Result<(), ServerError> {
+        if !DeviceHandle::<R::Server>::is_blocking() {
+            return Err(ServerError::Generic {
+                reason: "public target I/O requires inline device".into(),
+                backtrace: BackTrace::capture(),
+            });
+        }
+        let stream_id = self.stream_id();
+        self.device
+            .submit_blocking(move |server| {
+                server.configure_public_target_request_io_with_backlog(backlog, stream_id)
+            })
+            .map_err(|_| ServerError::Generic {
+                reason: "public target I/O channel unavailable".into(),
+                backtrace: BackTrace::capture(),
+            })?
+    }
+
+    /// Actual configured policy only; this query does not grant device success
+    /// or credit a selected window that never reaches a regulation boundary.
+    pub fn public_target_submission_backlog(
+        &self,
+    ) -> Result<crate::server::PublicTargetSubmissionBacklog, ServerError> {
+        let stream_id = self.stream_id();
+        self.device
+            .submit_blocking(move |server| server.public_target_submission_backlog(stream_id))
+            .map_err(|_| ServerError::Generic {
+                reason: "public target I/O channel unavailable".into(),
+                backtrace: BackTrace::capture(),
+            })?
+    }
+
     /// Content-free validation of this stream's immutable target I/O policy.
     /// A retired stream fails; an ordinary or unconfigured stream returns false.
     pub fn public_target_request_io_configured(&self) -> Result<bool, ServerError> {

@@ -557,6 +557,17 @@ impl ComputeServer for WgpuServer {
         &mut self,
         stream_id: StreamId,
     ) -> Result<(), ServerError> {
+        self.configure_public_target_request_io_with_backlog(
+            cubecl_runtime::server::PublicTargetSubmissionBacklog::Default512,
+            stream_id,
+        )
+    }
+
+    fn configure_public_target_request_io_with_backlog(
+        &mut self,
+        backlog: cubecl_runtime::server::PublicTargetSubmissionBacklog,
+        stream_id: StreamId,
+    ) -> Result<(), ServerError> {
         if !cubecl_common::device_handle::DeviceHandle::<Self>::is_blocking() {
             return Err(super::transient_io::fault(
                 "public target I/O requires inline device",
@@ -570,8 +581,17 @@ impl ComputeServer for WgpuServer {
             self.scheduler.execute_streams(vec![stream_id]);
             self.scheduler
                 .stream(&stream_id)
-                .configure_public_target_request_io()
+                .configure_public_target_request_io_with_backlog(backlog)
         })
+    }
+
+    fn public_target_submission_backlog(
+        &mut self,
+        stream_id: StreamId,
+    ) -> Result<cubecl_runtime::server::PublicTargetSubmissionBacklog, ServerError> {
+        self.scheduler
+            .stream(&stream_id)
+            .public_target_submission_backlog()
     }
 
     fn public_target_request_io_configured(
