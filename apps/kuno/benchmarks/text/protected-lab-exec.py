@@ -7,6 +7,7 @@ import sys
 def selected_target_policy(environment, mtp=False):
     target_only_scope(environment)
     intel_mtp_scope(environment)
+    frozen_down_integer_scope(environment)
     grouped_status_scope(environment)
     grouped_ple_scope(environment)
     frozen_down_stride_scope(environment)
@@ -32,6 +33,9 @@ def selected_target_policy(environment, mtp=False):
         frozen_gu_integer_scope(environment)
         if not mtp or selected.pop("KUNO_LAB_FROZEN_GU_SCHEDULE") != "four-public":
             raise ValueError("GU scheduling requires canonical fixed public integer scope")
+    if "KUNO_LAB_FROZEN_DOWN_MATH" in selected:
+        if not mtp or selected.pop("KUNO_LAB_FROZEN_DOWN_MATH") != "integer-public":
+            raise ValueError("Integer DOWN requires fixed original speculative full-Q8 scope")
     if "KUNO_LAB_FROZEN_GU_MATH" in selected:
         frozen_gu_integer_scope(environment)
         if not mtp or selected.pop("KUNO_LAB_FROZEN_GU_MATH") != "integer-public":
@@ -204,6 +208,20 @@ def frozen_down_stride_scope(environment):
     )
 
 
+def frozen_down_integer_scope(environment):
+    selector = "KUNO_LAB_FROZEN_DOWN_MATH"
+    if selector not in environment:
+        return
+    original_frozen_target_scope(environment, selector, "integer-public", full_vocab=True)
+    if (environment.get("KUNO_LAB_MTP_SWEEPS") != "fused"
+            or environment.get("KUNO_LAB_MTP_Q8_HEAD") not in (None, "shared-public")
+            or any(key in environment for key in (
+                "KUNO_LAB_MTP_PROFILE", "KUNO_LAB_LANGUAGE_DECODE",
+                "KUNO_LAB_FROZEN_DOWN_ROWS", "KUNO_LAB_FROZEN_DOWN_SCHEDULE",
+            ))):
+        raise ValueError("Integer DOWN requires original speculative Q8 and original DOWN math")
+
+
 def frozen_gu_integer_scope(environment):
     if not any(key in environment for key in ("KUNO_LAB_FROZEN_GU_MATH", "KUNO_LAB_FROZEN_GU_SCHEDULE")):
         return
@@ -263,7 +281,7 @@ def target_only_scope(environment):
         "KUNO_LAB_FROZEN_GU_FACTORS", "KUNO_LAB_FROZEN_GU_ROWS",
         "KUNO_LAB_FROZEN_HOST_STAGE", "KUNO_LAB_FROZEN_MEMBERS",
         "KUNO_LAB_FROZEN_BANK_PLACEMENT", "KUNO_LAB_TARGET_EXPERTS",
-        "KUNO_LAB_TARGET_MOE", "KUNO_PUBLIC_MTP_INTEL_TOTAL_BYTES",
+        "KUNO_LAB_TARGET_MOE", "KUNO_LAB_FROZEN_DOWN_MATH", "KUNO_PUBLIC_MTP_INTEL_TOTAL_BYTES",
         "KUNO_PUBLIC_MTP_INTEL_USED_BYTES", "KUNO_PUBLIC_MTP_INTEL_DEVICE_ID",
     )
     if (any(environment.get(key) != value for key, value in required.items())
@@ -397,6 +415,7 @@ def bank_placement_scope(environment):
 def memory_limit(environment, arguments):
     target_only_scope(environment)
     intel_mtp_scope(environment)
+    frozen_down_integer_scope(environment)
     grouped_status_scope(environment)
     grouped_ple_scope(environment)
     frozen_down_stride_scope(environment)

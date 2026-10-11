@@ -74,6 +74,16 @@ pub(crate) struct IntelMtpMemory {
     pub(crate) used: u64,
     pub(crate) device: u32,
 }
+/// Exact original ownership plus explicit independently selected math owners.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct IntelTargetOwners {
+    pub(crate) main: u64,
+    pub(crate) banks: u64,
+    pub(crate) source_pages: u64,
+    pub(crate) baseline: u64,
+    pub(crate) gu_integer: bool,
+    pub(crate) down_integer: bool,
+}
 impl IntelMtpMemory {
     /// The protected runner supplies a fresh Xe MEM_REGIONS query while other
     /// inference is paused. Privilege-masked zero never means a free card.
@@ -123,12 +133,46 @@ impl IntelMtpMemory {
         target_source_pages: u64,
         target_baseline: u64,
     ) -> Result<serde_json::Value, &'static str> {
+        if !matches!(target_main, 828_866_560 | 828_932_096) {
+            return Err("Intel MTP default MAIN scope rejected");
+        }
+        self.admit_with_math(
+            target_device,
+            draft_public,
+            IntelTargetOwners {
+                main: target_main,
+                banks,
+                source_pages: target_source_pages,
+                baseline: target_baseline,
+                gu_integer: target_main == 828_932_096,
+                down_integer: false,
+            },
+        )
+    }
+    pub(crate) fn admit_with_math(
+        self,
+        target_device: u32,
+        draft_public: u64,
+        owners: IntelTargetOwners,
+    ) -> Result<serde_json::Value, &'static str> {
+        let IntelTargetOwners {
+            main: target_main,
+            banks,
+            source_pages: target_source_pages,
+            baseline: target_baseline,
+            gu_integer,
+            down_integer,
+        } = owners;
+        let expected_main = 828_866_560
+            + if gu_integer { 65_536 } else { 0 }
+            + if down_integer { 65_536 } else { 0 };
         if self.used == 0
             || self.used >= self.total
             || self.device == 0
             || target_device != self.device
             || banks != crate::daslab_profile::bank_bytes_144().physical
-            || !matches!(target_main, 828_866_560 | 828_932_096)
+            || target_main != expected_main
+            || down_integer && draft_public != crate::resident_mtp::PUBLIC_BYTES
             || !matches!(
                 draft_public,
                 crate::resident_mtp::PUBLIC_BYTES | crate::resident_mtp::STRATA_PUBLIC_BYTES
@@ -152,6 +196,7 @@ impl IntelMtpMemory {
             crate::resident_mtp::PUBLIC_SOURCE_BYTES as u64,
             512 * 1024 * 1024,
             target_baseline,
+            if down_integer { 462_848 } else { 0 },
         ];
         let total = components.into_iter().try_fold(0u64, |sum, bytes| {
             sum.checked_add(bytes)
@@ -165,6 +210,11 @@ impl IntelMtpMemory {
             "physical_available_bytes":self.total-self.used,"physical_device_id":self.device,
             "target_slots":144,"target_bank_bytes":banks,"target_static_cache_bytes":8u64*1024*1024*1024,
             "target_main_bytes":target_main,"target_vector_bytes":25_165_824,
+            "target_gu_integer":gu_integer,"target_down_integer":down_integer,
+            "target_down_integer_extra_main_bytes":if down_integer {65_536}else{0},
+            "target_down_integer_extra_host_bytes":if down_integer {65_536}else{0},
+            "target_down_integer_extra_info_bytes":if down_integer {196_608}else{0},
+            "target_down_integer_extra_runtime_bytes":if down_integer {462_848}else{0},
             "target_io_bytes":crate::executor::RESIDENT_IO_MAX,
             "target_runtime_io_bytes":crate::resident_model::batch::TARGET_ROWS_RUNTIME_LIMIT,
             "target_source_page_bytes":target_source_pages,"target_baseline_bytes":target_baseline,
@@ -176,12 +226,13 @@ impl IntelMtpMemory {
     }
 }
 
-pub(crate) fn intel_mtp_preflight(
+pub(crate) fn intel_mtp_preflight_with_down_math(
     proof: IntelMtpMemory,
     target: &wgpu::Device,
     client: &cubecl::prelude::ComputeClient<cubecl::wgpu::WgpuRuntime>,
     graph: kuno_text::model::BoundGraph<'_, '_>,
     integer: bool,
+    down_integer: bool,
     profile: crate::mtp_lab_profile::Profile,
 ) -> std::result::Result<serde_json::Value, Box<dyn std::error::Error>> {
     let info = target.adapter_info();
@@ -226,16 +277,33 @@ pub(crate) fn intel_mtp_preflight(
         }
         source_pages = source_pages.max(layer_pages);
     }
-    proof
-        .admit(
-            info.device,
-            if integer { 828_932_096 } else { 828_866_560 },
-            profile.public_bytes(),
-            banks,
-            source_pages,
-            usage.bytes_reserved,
-        )
-        .map_err(Into::into)
+    if down_integer {
+        proof
+            .admit_with_math(
+                info.device,
+                profile.public_bytes(),
+                IntelTargetOwners {
+                    main: 828_866_560 + if integer { 65_536 } else { 0 } + 65_536,
+                    banks,
+                    source_pages,
+                    baseline: usage.bytes_reserved,
+                    gu_integer: integer,
+                    down_integer,
+                },
+            )
+            .map_err(Into::into)
+    } else {
+        proof
+            .admit(
+                info.device,
+                if integer { 828_932_096 } else { 828_866_560 },
+                profile.public_bytes(),
+                banks,
+                source_pages,
+                usage.bytes_reserved,
+            )
+            .map_err(Into::into)
+    }
 }
 
 /// Read only live, borrowed Vulkan device identities. Wgpu's local core IDs
@@ -437,6 +505,88 @@ pub(crate) fn three_gdn_streaming(
         Some(value) if value == "three-streaming-public" && public_frozen_scope => Ok(true),
         _ => Err("three-token GDN requires canonical original public frozen Verify3 request scope"),
     }
+}
+
+/// Initial DOWN candidate has an explicit original speculative full-Q8 proof;
+/// no target-only or draft-profile claim is synthesized in the target parent.
+pub(crate) fn frozen_down_integer(raw: Option<&OsStr>, scope: bool) -> Result<bool, &'static str> {
+    match raw {
+        None => Ok(false),
+        Some(value) if value == "integer-public" && scope => Ok(true),
+        _ => Err("integer DOWN requires canonical original speculative full-Q8 scope"),
+    }
+}
+
+pub(crate) fn frozen_down_integer_record(
+    selected: bool,
+    actual: bool,
+    preparations: u64,
+    dispatches: u64,
+    audits: u64,
+    source_dispatches: u64,
+) -> Result<serde_json::Value, &'static str> {
+    if selected != actual
+        || if selected {
+            preparations == 0
+                || !preparations.is_multiple_of(48)
+                || preparations.checked_mul(5) != Some(dispatches)
+                || preparations != audits
+                || preparations.checked_mul(10) != Some(source_dispatches)
+        } else {
+            preparations != 0 || dispatches != 0 || audits != 0
+        }
+    {
+        return Err("integer DOWN actual joined source dispatch receipt rejected");
+    }
+    Ok(
+        serde_json::json!({"preparations":preparations,"down_dispatches":dispatches,
+        "full_owner_audits":audits,"source_dispatches":source_dispatches}),
+    )
+}
+
+pub(crate) fn frozen_down_integer_initial_record(
+    selected: bool,
+    actual: bool,
+    preparations: u64,
+    dispatches: u64,
+    audits: u64,
+    source_dispatches: u64,
+) -> Result<serde_json::Value, &'static str> {
+    let receipt = frozen_down_integer_record(
+        selected,
+        actual,
+        preparations,
+        dispatches,
+        audits,
+        source_dispatches,
+    )?;
+    if selected
+        && (preparations != 48 || dispatches != 240 || audits != 48 || source_dispatches != 480)
+    {
+        return Err("integer DOWN original warm first-token execution rejected");
+    }
+    Ok(receipt)
+}
+
+/// New candidate closes both actual math owners; old default/GU checks stay exact.
+pub(crate) fn validate_frozen_integer_math_close(
+    gu_integer: bool,
+    down_integer: bool,
+    buffers: u64,
+    bytes: u64,
+) -> Result<(), &'static str> {
+    if !down_integer {
+        return validate_frozen_gu_integer_close(gu_integer, buffers, bytes);
+    }
+    let expected = if gu_integer {
+        (1382, 828_997_632)
+    } else {
+        (1381, 828_932_096)
+    };
+    if (buffers, bytes) != expected {
+        return Err("integer DOWN complete extra MAIN owner closure rejected");
+    }
+    Ok(())
 }
 
 /// The immutable GU arithmetic candidate is admitted only by the two compiled
@@ -684,6 +834,178 @@ pub(crate) fn name(inline: bool) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn frozen_down_integer_flag_is_canonical_default_off_and_speculative_scope_bound() {
+        for scope in [false, true] {
+            assert_eq!(frozen_down_integer(None, scope), Ok(false));
+            for raw in ["integer-public", "integer", "true", "", "integer-public "] {
+                assert_eq!(
+                    frozen_down_integer(Some(OsStr::new(raw)), scope).is_ok(),
+                    scope && raw == "integer-public"
+                );
+            }
+        }
+    }
+    #[test]
+    fn frozen_down_integer_receipts_require_exact_complete_actual_source_layers() {
+        assert!(frozen_down_integer_record(false, false, 0, 0, 0, 480).is_ok());
+        for preps in [48, 96, 48 * 75] {
+            assert!(
+                frozen_down_integer_record(true, true, preps, preps * 5, preps, preps * 10).is_ok()
+            );
+            for (p, d, a, sources) in [
+                (0, 0, 0, 0),
+                (preps - 1, preps * 5, preps, preps * 10),
+                (preps, preps * 5 - 1, preps, preps * 10),
+                (preps, preps * 5, preps - 1, preps * 10),
+                (preps, preps * 5, preps, preps * 10 - 1),
+                (preps, preps * 5, preps, preps * 10 + 1),
+                (u64::MAX - 15, 0, u64::MAX - 15, 0),
+            ] {
+                assert!(frozen_down_integer_record(true, true, p, d, a, sources).is_err());
+            }
+        }
+        for (selected, actual, p, d, a) in [
+            (true, false, 48, 240, 48),
+            (false, true, 48, 240, 48),
+            (false, false, 1, 0, 0),
+            (false, false, 0, 1, 0),
+            (false, false, 0, 0, 1),
+        ] {
+            assert!(frozen_down_integer_record(selected, actual, p, d, a, 480).is_err());
+        }
+        let source_overflow_preps = (u64::MAX / 10 / 48 + 1) * 48;
+        assert!(
+            frozen_down_integer_record(
+                true,
+                true,
+                source_overflow_preps,
+                source_overflow_preps * 5,
+                source_overflow_preps,
+                0
+            )
+            .is_err()
+        );
+        assert!(frozen_down_integer_initial_record(true, true, 48, 240, 48, 480).is_ok());
+        assert!(frozen_down_integer_initial_record(false, false, 0, 0, 0, 0).is_ok());
+        assert!(frozen_down_integer_initial_record(true, true, 96, 480, 96, 960).is_err());
+    }
+    #[test]
+    fn frozen_down_integer_close_requires_both_exact_math_owners_without_relaxing_defaults() {
+        for (gu, down, buffers, bytes) in [
+            (false, false, 1380, 828_866_560),
+            (true, false, 1381, 828_932_096),
+            (false, true, 1381, 828_932_096),
+            (true, true, 1382, 828_997_632),
+        ] {
+            assert!(validate_frozen_integer_math_close(gu, down, buffers, bytes).is_ok());
+            if gu || down {
+                assert!(validate_frozen_integer_math_close(gu, down, buffers - 1, bytes).is_err());
+                assert!(validate_frozen_integer_math_close(gu, down, buffers, bytes - 1).is_err());
+                assert!(validate_frozen_integer_math_close(gu, down, buffers + 1, bytes).is_err());
+                assert!(validate_frozen_integer_math_close(gu, down, buffers, bytes + 1).is_err());
+            }
+        }
+        assert!(validate_frozen_gu_integer_close(true, 1382, 828_997_632).is_err());
+        assert!(validate_public_target_only_close(true, 1382, 828_997_632).is_err());
+    }
+    #[test]
+    fn intel_down_integer_admission_charges_new_owners_and_keeps_default_caps_exact() {
+        let proof = IntelMtpMemory {
+            total: 34_242_297_856,
+            used: 50_688_000,
+            device: 4660,
+        };
+        for (gu, down, expected) in [
+            (false, false, 34_166_767_616),
+            (true, false, 34_166_833_152),
+            (false, true, 34_167_296_000),
+            (true, true, 34_167_361_536),
+        ] {
+            let owners = IntelTargetOwners {
+                main: 828_866_560 + if gu { 65_536 } else { 0 } + if down { 65_536 } else { 0 },
+                banks: crate::daslab_profile::bank_bytes_144().physical,
+                source_pages: 30 * 1024 * 1024,
+                baseline: 0,
+                gu_integer: gu,
+                down_integer: down,
+            };
+            let got = proof
+                .admit_with_math(4660, crate::resident_mtp::PUBLIC_BYTES, owners)
+                .unwrap();
+            assert_eq!(got["combined_reserved_bytes"], expected);
+            assert_eq!(got["target_runtime_io_bytes"], 134_217_728u64);
+            assert_eq!(got["shared_driver_margin_bytes"], 512u64 * 1024 * 1024);
+            for (field, n) in [
+                ("target_down_integer_extra_main_bytes", 65_536),
+                ("target_down_integer_extra_host_bytes", 65_536),
+                ("target_down_integer_extra_info_bytes", 196_608),
+                ("target_down_integer_extra_runtime_bytes", 462_848),
+            ] {
+                assert_eq!(got[field], if down { n } else { 0 });
+            }
+            let exact = IntelMtpMemory {
+                total: proof.used + expected,
+                ..proof
+            };
+            assert!(
+                exact
+                    .admit_with_math(4660, crate::resident_mtp::PUBLIC_BYTES, owners)
+                    .is_ok()
+            );
+            assert!(
+                IntelMtpMemory {
+                    total: exact.total - 1,
+                    ..proof
+                }
+                .admit_with_math(4660, crate::resident_mtp::PUBLIC_BYTES, owners)
+                .is_err()
+            );
+            for bad in [
+                IntelTargetOwners {
+                    main: owners.main - 1,
+                    ..owners
+                },
+                IntelTargetOwners {
+                    main: owners.main + 1,
+                    ..owners
+                },
+                IntelTargetOwners {
+                    gu_integer: !gu,
+                    ..owners
+                },
+                IntelTargetOwners {
+                    down_integer: !down,
+                    ..owners
+                },
+            ] {
+                assert!(
+                    proof
+                        .admit_with_math(4660, crate::resident_mtp::PUBLIC_BYTES, bad)
+                        .is_err()
+                );
+            }
+            if down {
+                assert!(
+                    proof
+                        .admit_with_math(4660, crate::resident_mtp::STRATA_PUBLIC_BYTES, owners)
+                        .is_err()
+                );
+            }
+        }
+        assert!(
+            proof
+                .admit(
+                    4660,
+                    828_997_632,
+                    crate::resident_mtp::PUBLIC_BYTES,
+                    crate::daslab_profile::bank_bytes_144().physical,
+                    30 * 1024 * 1024,
+                    0
+                )
+                .is_err()
+        );
+    }
     #[test]
     fn grouped_status_public_flag_is_canonical_default_off_and_scope_bound() {
         for scope in [false, true] {

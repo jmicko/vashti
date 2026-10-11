@@ -53,6 +53,7 @@ pub(crate) struct Inputs {
     pub(crate) frozen_packed_host_staging: bool,
     pub(crate) frozen_three_members: bool,
     pub(crate) frozen_gu_integer: bool,
+    pub(crate) frozen_down_integer: bool,
     pub(crate) frozen_gu_stride_four: bool,
     pub(crate) frozen_down_stride_four: bool,
     pub(crate) three_gdn_streaming: bool,
@@ -118,6 +119,7 @@ pub(crate) fn registration(
                     | "KUNO_LAB_FROZEN_HOST_STAGE"
                     | "KUNO_LAB_FROZEN_MEMBERS"
                     | "KUNO_LAB_FROZEN_GU_MATH"
+                    | "KUNO_LAB_FROZEN_DOWN_MATH"
                     | "KUNO_LAB_FROZEN_GU_SCHEDULE"
                     | "KUNO_LAB_FROZEN_DOWN_SCHEDULE"
                     | "KUNO_LAB_TARGET_GDN"
@@ -450,6 +452,36 @@ pub(crate) fn registration(
         used.as_deref(),
         device.as_deref(),
     )?;
+    let raw_down_math = values.remove(OsStr::new("KUNO_LAB_FROZEN_DOWN_MATH"));
+    let frozen_down_integer = crate::target_lab_build::frozen_down_integer(
+        raw_down_math.as_deref(),
+        frozen_host_sources
+            && frozen_host_router
+            && frozen_partition_exit
+            && verify3_dense
+            && verify3_fused
+            && request_reuse
+            && chunk_io
+            && inline_dispatch
+            && public_existing_fill
+            && warm_replay
+            && !mtp_english_vocab
+            && !frozen_private_tables
+            && !frozen_workgroup_tables
+            && !frozen_shared_down_scales
+            && !frozen_shared_gate_up_factors
+            && !frozen_two_row_gate_up
+            && !frozen_packed_host_staging
+            && !frozen_three_members
+            && !preserve_routed_bank
+            && !prepared_experts
+            && !live_member_reduction
+            && fused_sweeps
+            && draft_profile == Profile::SelfContainedQ8
+            && !mtp_q8_head_broadcast
+            && !frozen_four_row_down
+            && !frozen_down_stride_four,
+    )?;
     let raw_ple_reads = values.remove(OsStr::new("KUNO_LAB_TARGET_PLE_READS"));
     let public_grouped_ple_reads = crate::target_lab_build::public_grouped_ple_reads(
         raw_ple_reads.as_deref(),
@@ -528,6 +560,7 @@ pub(crate) fn registration(
         frozen_packed_host_staging,
         frozen_three_members,
         frozen_gu_integer,
+        frozen_down_integer,
         frozen_gu_stride_four,
         frozen_down_stride_four,
         three_gdn_streaming,
@@ -711,12 +744,13 @@ pub(crate) fn run(
     let intel_mtp_admission = input
         .intel_mtp_memory
         .map(|proof| {
-            crate::target_lab_build::intel_mtp_preflight(
+            crate::target_lab_build::intel_mtp_preflight_with_down_math(
                 proof,
                 host_device.ok_or("Intel MTP actual target device missing")?,
                 client,
                 graph.bound_graph(),
                 input.frozen_gu_integer,
+                input.frozen_down_integer,
                 input.draft_profile,
             )
         })
@@ -778,6 +812,7 @@ pub(crate) fn run(
     executor.target_frozen_host_router_reserved = input.frozen_host_router;
     executor.target_frozen_host_staging_reserved = input.frozen_packed_host_staging;
     executor.target_frozen_gu_integer_reserved = input.frozen_gu_integer;
+    executor.target_frozen_down_integer_reserved = input.frozen_down_integer;
     executor.target_verify3_dense = input.verify3_dense;
     executor.target_verify3_fused = input.verify3_fused;
     executor.token_io_checkpoint = input.chunk_io;
@@ -826,6 +861,9 @@ pub(crate) fn run(
         }
         if input.frozen_gu_integer {
             config = config.reserve_public_frozen_gu_integer()?;
+        }
+        if input.frozen_down_integer {
+            config = config.reserve_public_frozen_down_integer()?;
         }
         if input.public_grouped_ple_reads {
             config = config.reserve_public_grouped_ple_reads()?;
@@ -953,6 +991,33 @@ pub(crate) fn run(
                     {
                         return Err("target initial live reduction geometry mismatch".into());
                     }
+                    let (
+                        initial_prefill_frozen_down_integer,
+                        initial_down_integer_preparations,
+                        initial_down_integer_dispatches,
+                        initial_down_integer_audits,
+                        initial_down_integer_sources,
+                    ) = if executor.target_frozen_host_source_identity.is_some() {
+                        let counts = target.native_frozen_source_counters(&executor)?;
+                        (
+                            target.native_frozen_source_down_integer(&executor)?,
+                            counts.down_integer_preparations,
+                            counts.down_integer_dispatches,
+                            counts.down_integer_audits,
+                            counts.source_dispatches,
+                        )
+                    } else {
+                        (false, 0, 0, 0, 0)
+                    };
+                    let initial_prefill_frozen_down_integer_counters =
+                        crate::target_lab_build::frozen_down_integer_initial_record(
+                            input.frozen_down_integer && replay == 1,
+                            initial_prefill_frozen_down_integer,
+                            initial_down_integer_preparations,
+                            initial_down_integer_dispatches,
+                            initial_down_integer_audits,
+                            initial_down_integer_sources,
+                        )?;
                     let (initial_prefill_target_grouped_status_folds, initial_status_folds) =
                         target.completed_public_grouped_status_folds(&executor)?;
                     let initial_prefill_target_grouped_status_folds_receipt =
@@ -1257,6 +1322,33 @@ pub(crate) fn run(
                             u64::try_from(rounds.len())?,
                             target_recomputations,
                         )?;
+                    let (
+                        frozen_down_integer,
+                        down_integer_preparations,
+                        down_integer_dispatches,
+                        down_integer_audits,
+                        down_integer_sources,
+                    ) = if executor.target_frozen_host_source_identity.is_some() {
+                        let counts = target.native_frozen_source_counters(&executor)?;
+                        (
+                            target.native_frozen_source_down_integer(&executor)?,
+                            counts.down_integer_preparations,
+                            counts.down_integer_dispatches,
+                            counts.down_integer_audits,
+                            counts.source_dispatches,
+                        )
+                    } else {
+                        (false, 0, 0, 0, 0)
+                    };
+                    let frozen_down_integer_counters =
+                        crate::target_lab_build::frozen_down_integer_record(
+                            input.frozen_down_integer && replay == 1,
+                            frozen_down_integer,
+                            down_integer_preparations,
+                            down_integer_dispatches,
+                            down_integer_audits,
+                            down_integer_sources,
+                        )?;
                     let (public_grouped_status_folds, completed_status_folds) =
                         target.completed_public_grouped_status_folds(&executor)?;
                     let grouped_status_folds_receipt =
@@ -1384,7 +1476,7 @@ pub(crate) fn run(
                         "deterministic diagnostic VRAM placement"
                     };
                     Ok(
-                        serde_json::json!({"replay":replay,"device_router":(input.device_router || input.frozen_host_router) && replay == 1,"frozen_host_gpu_router":input.frozen_host_router && replay == 1,"frozen_host_inactive_partition_exit":frozen_partition_exit,"frozen_host_private_tables":frozen_private_tables,"frozen_host_workgroup_tables":frozen_workgroup_tables,"frozen_host_shared_down_scales":frozen_shared_down_scales,"frozen_host_shared_gate_up_factors":frozen_shared_gate_up_factors,"mtp_q8_head_broadcast":mtp_q8_head_broadcast,"mtp_q8_head_shared_scales":mtp_q8_head_shared_scales,"mtp_english_vocab":mtp_english_vocab,"mtp_english_vocab_receipt":mtp_english_vocab_receipt,"frozen_host_four_row_down":frozen_four_row_down,"frozen_host_two_row_gate_up":frozen_two_row_gate_up,"frozen_packed_host_staging":frozen_packed_host_staging,"frozen_three_member_arithmetic":frozen_three_members,"frozen_gu_integer":frozen_gu_integer,"frozen_gu_integer_counters":frozen_gu_integer_counters,"frozen_gu_stride_four":frozen_gu_stride_four,"frozen_gu_stride_four_counters":frozen_gu_stride_four_counters,"frozen_down_stride_four":frozen_down_stride_four,"frozen_down_stride_four_counters":frozen_down_stride_four_counters,"target_grouped_ple_reads":public_grouped_ple_reads,"target_grouped_ple_reads_receipt":grouped_ple_reads_receipt,"target_grouped_status_folds":public_grouped_status_folds,"target_grouped_status_folds_receipt":grouped_status_folds_receipt,"initial_prefill_target_grouped_status_folds":initial_prefill_target_grouped_status_folds,"initial_prefill_target_grouped_status_folds_receipt":initial_prefill_target_grouped_status_folds_receipt,"target_three_gdn_streaming":three_gdn_streaming,"target_three_gdn_completed_chunks":three_gdn_completed_chunks,"frozen_bank_placement":if input.preserve_routed_bank && replay == 1 {"preserve-routed"} else {"cpu13-diagnostic"},"device_router_scope":if input.frozen_host_router {"authenticated actual512 VRAM/host sources; deferred strict original IDs and full vectors, experimental F32 probabilities"} else {"conditional actual all-hit warm13; strict original IDs and full vectors, experimental F32 probabilities"},"request_scope_closed_and_audited":input.request_reuse,"request_scope":request_scope_receipt,"request_close_ns_inside_timing":request_close_ns,"host_io":host_io,"model_weights_warm":replay==1,"initial_prefill_ns":initial_prefill_ns,"initial_prefill_frozen_gu_integer":initial_prefill_frozen_gu_integer,"initial_prefill_frozen_gu_integer_counters":initial_prefill_frozen_gu_integer_counters,"initial_prefill_frozen_gu_stride_four":initial_prefill_frozen_gu_stride_four,"initial_prefill_frozen_gu_stride_four_counters":initial_prefill_frozen_gu_stride_four_counters,"initial_prefill_frozen_down_stride_four":initial_prefill_frozen_down_stride_four,"initial_prefill_frozen_down_stride_four_counters":initial_prefill_frozen_down_stride_four_counters,"gpu_router_calls":executor.gpu_router_calls-before_gpu_routers,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"verify3_fused_calls":executor.target_verify3_fused_calls-before_fused,"target_host_phase_ns":host_phase_ns,"load_and_initial_prefill_physical_read_bytes":load_disk_after.checked_sub(replay_disk_before).ok_or("public process read counter regressed")?,"timed_physical_read_bytes":timed_physical_read_bytes,"target_fill_counters_before":fill_counter_record(before_fills),"target_fill_counters_after":fill_counter_record(after_fills),"frozen_source_routes":frozen_routes,"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"timing_scope":if input.frozen_host_router && replay == 1 {format!("original CPU13 routes and weights; {placement_scope} plus immutable direct host sources and deferred original GPU route audits, no demand expert uploads; full vectors and actual repair included")} else if input.frozen_host_sources && replay == 1 {format!("original CPU13 routes and weights; {placement_scope} plus immutable direct host sources, no demand expert uploads; full vectors and actual repair included")} else if input.device_router && replay == 1 {"conditional actual all-hit GPU routing; deferred original-route audit, public checks and actual repair included".to_string()} else {"original normal routing/demand uploads; public checks and actual repair included".to_string()},"load_and_initial_prefill_cumulative_ns":load_ns,"accepted_tokens":accepted_tokens,"elapsed_ns":elapsed_ns,"accepted_tokens_per_second":accepted_tokens as f64*1e9/elapsed_ns as f64,"proposed_drafts":proposed_tokens,"accepted_drafts":accepted_drafts,"rounds":rounds,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"draft_traffic":{"host_read_calls":after.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after.host_read_bytes-before_traffic.host_read_bytes,"explicit_dispatches":after.explicit_dispatches-before_traffic.explicit_dispatches,"private_upload_calls":after.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after.followup_copy_calls-before_traffic.followup_copy_calls}}),
+                        serde_json::json!({"replay":replay,"device_router":(input.device_router || input.frozen_host_router) && replay == 1,"frozen_host_gpu_router":input.frozen_host_router && replay == 1,"frozen_host_inactive_partition_exit":frozen_partition_exit,"frozen_host_private_tables":frozen_private_tables,"frozen_host_workgroup_tables":frozen_workgroup_tables,"frozen_host_shared_down_scales":frozen_shared_down_scales,"frozen_host_shared_gate_up_factors":frozen_shared_gate_up_factors,"mtp_q8_head_broadcast":mtp_q8_head_broadcast,"mtp_q8_head_shared_scales":mtp_q8_head_shared_scales,"mtp_english_vocab":mtp_english_vocab,"mtp_english_vocab_receipt":mtp_english_vocab_receipt,"frozen_host_four_row_down":frozen_four_row_down,"frozen_host_two_row_gate_up":frozen_two_row_gate_up,"frozen_packed_host_staging":frozen_packed_host_staging,"frozen_three_member_arithmetic":frozen_three_members,"frozen_gu_integer":frozen_gu_integer,"frozen_gu_integer_counters":frozen_gu_integer_counters,"frozen_down_integer":frozen_down_integer,"frozen_down_integer_counters":frozen_down_integer_counters,"frozen_gu_stride_four":frozen_gu_stride_four,"frozen_gu_stride_four_counters":frozen_gu_stride_four_counters,"frozen_down_stride_four":frozen_down_stride_four,"frozen_down_stride_four_counters":frozen_down_stride_four_counters,"target_grouped_ple_reads":public_grouped_ple_reads,"target_grouped_ple_reads_receipt":grouped_ple_reads_receipt,"target_grouped_status_folds":public_grouped_status_folds,"target_grouped_status_folds_receipt":grouped_status_folds_receipt,"initial_prefill_target_grouped_status_folds":initial_prefill_target_grouped_status_folds,"initial_prefill_target_grouped_status_folds_receipt":initial_prefill_target_grouped_status_folds_receipt,"target_three_gdn_streaming":three_gdn_streaming,"target_three_gdn_completed_chunks":three_gdn_completed_chunks,"frozen_bank_placement":if input.preserve_routed_bank && replay == 1 {"preserve-routed"} else {"cpu13-diagnostic"},"device_router_scope":if input.frozen_host_router {"authenticated actual512 VRAM/host sources; deferred strict original IDs and full vectors, experimental F32 probabilities"} else {"conditional actual all-hit warm13; strict original IDs and full vectors, experimental F32 probabilities"},"request_scope_closed_and_audited":input.request_reuse,"request_scope":request_scope_receipt,"request_close_ns_inside_timing":request_close_ns,"host_io":host_io,"model_weights_warm":replay==1,"initial_prefill_ns":initial_prefill_ns,"initial_prefill_frozen_gu_integer":initial_prefill_frozen_gu_integer,"initial_prefill_frozen_gu_integer_counters":initial_prefill_frozen_gu_integer_counters,"initial_prefill_frozen_down_integer":initial_prefill_frozen_down_integer,"initial_prefill_frozen_down_integer_counters":initial_prefill_frozen_down_integer_counters,"initial_prefill_frozen_gu_stride_four":initial_prefill_frozen_gu_stride_four,"initial_prefill_frozen_gu_stride_four_counters":initial_prefill_frozen_gu_stride_four_counters,"initial_prefill_frozen_down_stride_four":initial_prefill_frozen_down_stride_four,"initial_prefill_frozen_down_stride_four_counters":initial_prefill_frozen_down_stride_four_counters,"gpu_router_calls":executor.gpu_router_calls-before_gpu_routers,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"verify3_fused_calls":executor.target_verify3_fused_calls-before_fused,"target_host_phase_ns":host_phase_ns,"load_and_initial_prefill_physical_read_bytes":load_disk_after.checked_sub(replay_disk_before).ok_or("public process read counter regressed")?,"timed_physical_read_bytes":timed_physical_read_bytes,"target_fill_counters_before":fill_counter_record(before_fills),"target_fill_counters_after":fill_counter_record(after_fills),"frozen_source_routes":frozen_routes,"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"timing_scope":if input.frozen_host_router && replay == 1 {format!("original CPU13 routes and weights; {placement_scope} plus immutable direct host sources and deferred original GPU route audits, no demand expert uploads; full vectors and actual repair included")} else if input.frozen_host_sources && replay == 1 {format!("original CPU13 routes and weights; {placement_scope} plus immutable direct host sources, no demand expert uploads; full vectors and actual repair included")} else if input.device_router && replay == 1 {"conditional actual all-hit GPU routing; deferred original-route audit, public checks and actual repair included".to_string()} else {"original normal routing/demand uploads; public checks and actual repair included".to_string()},"load_and_initial_prefill_cumulative_ns":load_ns,"accepted_tokens":accepted_tokens,"elapsed_ns":elapsed_ns,"accepted_tokens_per_second":accepted_tokens as f64*1e9/elapsed_ns as f64,"proposed_drafts":proposed_tokens,"accepted_drafts":accepted_drafts,"rounds":rounds,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"draft_traffic":{"host_read_calls":after.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after.host_read_bytes-before_traffic.host_read_bytes,"explicit_dispatches":after.explicit_dispatches-before_traffic.explicit_dispatches,"private_upload_calls":after.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after.followup_copy_calls-before_traffic.followup_copy_calls}}),
                     )
                 })()?;
                 println!("public_speculative_full_pass_accepted replay={replay}");
@@ -1414,8 +1506,9 @@ pub(crate) fn run(
                     println!("public_warm_reset_start");
                     let receipt = target.reset_public_warm_replay(&mut executor, &cancel)?;
                     println!("public_warm_reset_complete");
-                    crate::target_lab_build::validate_frozen_gu_integer_close(
+                    crate::target_lab_build::validate_frozen_integer_math_close(
                         input.frozen_gu_integer,
+                        input.frozen_down_integer,
                         receipt.main.buffers,
                         receipt.main.bytes,
                     )?;
@@ -1434,7 +1527,28 @@ pub(crate) fn run(
                         // SAFETY: protected runner verified the full immutable
                         // original model hashes before opening these sources.
                         host_attachment = Some(unsafe {
-                            if input.frozen_gu_stride_four || input.frozen_down_stride_four {
+                            if input.frozen_down_integer {
+                                target.attach_public_host_sources_with_down_math(
+                                    &mut executor,
+                                    prepared,
+                                    host_device.ok_or("public exact device absent")?,
+                                    reserved,
+                                    input.frozen_partition_exit,
+                                    input.frozen_private_tables,
+                                    input.frozen_workgroup_tables,
+                                    input.frozen_shared_down_scales,
+                                    input.frozen_shared_gate_up_factors,
+                                    input.frozen_four_row_down,
+                                    input.frozen_two_row_gate_up,
+                                    input.frozen_packed_host_staging,
+                                    input.frozen_three_members,
+                                    input.frozen_gu_integer,
+                                    input.frozen_gu_stride_four,
+                                    input.frozen_down_stride_four,
+                                    input.frozen_down_integer,
+                                    &cancel,
+                                )?
+                            } else if input.frozen_gu_stride_four || input.frozen_down_stride_four {
                                 target.attach_public_host_sources_with_schedules(
                                     &mut executor,
                                     prepared,
@@ -1522,8 +1636,9 @@ pub(crate) fn run(
             } else {
                 None
             };
-            crate::target_lab_build::validate_frozen_gu_integer_close(
+            crate::target_lab_build::validate_frozen_integer_math_close(
                 input.frozen_gu_integer,
+                input.frozen_down_integer,
                 main.buffers,
                 main.bytes,
             )?;
@@ -1586,7 +1701,7 @@ pub(crate) fn run(
     if client.public_target_request_io_configured()? != input.request_reuse {
         return Err("target request stream frozen configuration mismatch".into());
     }
-    let value = serde_json::json!({"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"scope":if input.mtp_device == crate::target_lab_build::MtpDevice::Intel {"fixed-public-DASLab13-real-independent-stream-greedy-speculation"}else{"fixed-public-DASLab13-real-dual-GPU-greedy-speculation"},"target_card":"B70","draft_card":if input.mtp_device == crate::target_lab_build::MtpDevice::Intel {"B70"}else{"RTX3060"},"mtp_device_requested":input.mtp_device.name(),"mtp_device":mtp_device_receipt,"intel_mtp_admission":intel_mtp_admission,"draft_profile":input.draft_profile.name(),"gpu_chronological_qsa_selector":input.gpu_qsa_selector,"qsa_extra_runtime_info_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_INFO_BYTES_PER_CHUNK}else{0},"qsa_extra_host_reserved_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_HOST_BYTES_PER_CHUNK}else{0},"draft_public_reserved_bytes":input.draft_profile.public_bytes_with_english(input.mtp_english_vocab)?,"frozen_gu_integer_requested":input.frozen_gu_integer,"frozen_gu_stride_four_requested":input.frozen_gu_stride_four,"frozen_down_schedule":if input.frozen_down_stride_four {"four-public"} else {"original"},"frozen_down_stride_four_requested":input.frozen_down_stride_four,"target_ple_reads":if input.public_grouped_ple_reads {"grouped-public"} else {"original"},"target_grouped_ple_reads_requested":input.public_grouped_ple_reads,"target_status_folds":if input.public_grouped_status_folds {"grouped-public"} else {"original"},"target_grouped_status_folds_requested":input.public_grouped_status_folds,"frozen_gu_integer_extra_main_bytes":if input.frozen_gu_integer {65536} else {0},"frozen_gu_integer_extra_host_bytes":if input.frozen_gu_integer {65536} else {0},"frozen_gu_integer_extra_info_bytes":if input.frozen_gu_integer {196608} else {0},"frozen_gu_integer_extra_runtime_bytes":if input.frozen_gu_integer {462848} else {0},"verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"live_member_reduction":input.live_member_reduction,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"request_reuse_metadata_reserved_bytes":if input.request_reuse {4*1024*1024}else{0},"request_binding_capacity":if input.request_reuse {4096}else{0},"fused_mtp_sweeps":input.fused_sweeps,"warm_replay":input.warm_replay,"warm_reset":warm_reset,"compiled_token0":0,"seed":424242,"temperature":0,"oracle_forcing":false,"expert_route_forcing":false,"passes":passes,"draft_close":{"private_buffers":draft_close.private.buffers,"private_bytes":draft_close.private.bytes,"public_bytes":draft_close.public_bytes,"main_reserved":draft_close.main_reserved},"private_or_production_accepted":false});
+    let value = serde_json::json!({"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"scope":if input.mtp_device == crate::target_lab_build::MtpDevice::Intel {"fixed-public-DASLab13-real-independent-stream-greedy-speculation"}else{"fixed-public-DASLab13-real-dual-GPU-greedy-speculation"},"target_card":"B70","draft_card":if input.mtp_device == crate::target_lab_build::MtpDevice::Intel {"B70"}else{"RTX3060"},"mtp_device_requested":input.mtp_device.name(),"mtp_device":mtp_device_receipt,"intel_mtp_admission":intel_mtp_admission,"draft_profile":input.draft_profile.name(),"gpu_chronological_qsa_selector":input.gpu_qsa_selector,"qsa_extra_runtime_info_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_INFO_BYTES_PER_CHUNK}else{0},"qsa_extra_host_reserved_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_HOST_BYTES_PER_CHUNK}else{0},"draft_public_reserved_bytes":input.draft_profile.public_bytes_with_english(input.mtp_english_vocab)?,"frozen_gu_integer_requested":input.frozen_gu_integer,"frozen_down_math":if input.frozen_down_integer {"integer-public"}else{"original"},"frozen_down_integer_requested":input.frozen_down_integer,"frozen_down_integer_extra_main_bytes":if input.frozen_down_integer{65536}else{0},"frozen_down_integer_extra_host_bytes":if input.frozen_down_integer{65536}else{0},"frozen_down_integer_extra_info_bytes":if input.frozen_down_integer{196608}else{0},"frozen_down_integer_extra_runtime_bytes":if input.frozen_down_integer{462848}else{0},"frozen_gu_stride_four_requested":input.frozen_gu_stride_four,"frozen_down_schedule":if input.frozen_down_stride_four {"four-public"} else {"original"},"frozen_down_stride_four_requested":input.frozen_down_stride_four,"target_ple_reads":if input.public_grouped_ple_reads {"grouped-public"} else {"original"},"target_grouped_ple_reads_requested":input.public_grouped_ple_reads,"target_status_folds":if input.public_grouped_status_folds {"grouped-public"} else {"original"},"target_grouped_status_folds_requested":input.public_grouped_status_folds,"frozen_gu_integer_extra_main_bytes":if input.frozen_gu_integer {65536} else {0},"frozen_gu_integer_extra_host_bytes":if input.frozen_gu_integer {65536} else {0},"frozen_gu_integer_extra_info_bytes":if input.frozen_gu_integer {196608} else {0},"frozen_gu_integer_extra_runtime_bytes":if input.frozen_gu_integer {462848} else {0},"verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"live_member_reduction":input.live_member_reduction,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"request_reuse_metadata_reserved_bytes":if input.request_reuse {4*1024*1024}else{0},"request_binding_capacity":if input.request_reuse {4096}else{0},"fused_mtp_sweeps":input.fused_sweeps,"warm_replay":input.warm_replay,"warm_reset":warm_reset,"compiled_token0":0,"seed":424242,"temperature":0,"oracle_forcing":false,"expert_route_forcing":false,"passes":passes,"draft_close":{"private_buffers":draft_close.private.buffers,"private_bytes":draft_close.private.bytes,"public_bytes":draft_close.public_bytes,"main_reserved":draft_close.main_reserved},"private_or_production_accepted":false});
     serde_json::to_writer_pretty(
         std::fs::OpenOptions::new()
             .write(true)
@@ -1890,6 +2005,57 @@ mod tests {
                     assert_eq!(got.public_grouped_ple_reads, ple);
                     assert_eq!(got.frozen_down_stride_four, down);
                 }
+            }
+        }
+    }
+    #[test]
+    fn frozen_down_integer_composes_gu_math_and_reads_on_each_explicit_placement() {
+        let build = crate::target_lab_build::Build::Inline;
+        for intel in [false, true] {
+            for (gu, stride) in [(false, false), (true, false), (true, true)] {
+                let mut valid = frozen_down_stride_four_env();
+                valid.retain(|(key, _)| key != "KUNO_LAB_FROZEN_DOWN_ROWS");
+                for (key, value) in [
+                    ("KUNO_LAB_FROZEN_DOWN_MATH", "integer-public"),
+                    ("KUNO_LAB_MTP_SWEEPS", "fused"),
+                    ("KUNO_LAB_MTP_Q8_HEAD", "shared-public"),
+                    ("KUNO_LAB_TARGET_PLE_READS", "grouped-public"),
+                    ("KUNO_LAB_TARGET_STATUS_FOLDS", "grouped-public"),
+                    ("KUNO_LAB_TARGET_QSA", "chronological-public"),
+                    ("KUNO_LAB_TARGET_GDN", "three-streaming-public"),
+                ] {
+                    valid.push((key.into(), value.into()));
+                }
+                if gu {
+                    valid.push(("KUNO_LAB_FROZEN_GU_MATH".into(), "integer-public".into()));
+                }
+                if stride {
+                    valid.push(("KUNO_LAB_FROZEN_GU_SCHEDULE".into(), "four-public".into()));
+                }
+                if intel {
+                    for (key, value) in [
+                        ("KUNO_LAB_MTP_DEVICE", "intel-public"),
+                        ("KUNO_PUBLIC_MTP_INTEL_TOTAL_BYTES", "34242297856"),
+                        ("KUNO_PUBLIC_MTP_INTEL_USED_BYTES", "50688000"),
+                        ("KUNO_PUBLIC_MTP_INTEL_DEVICE_ID", "57891"),
+                    ] {
+                        valid.push((key.into(), value.into()));
+                    }
+                }
+                let got = registration(
+                    &["lab", "intel", "daslab-speculative-probe"].map(OsString::from),
+                    valid,
+                    build,
+                )
+                .unwrap();
+                assert!(
+                    got.frozen_down_integer
+                        && got.public_grouped_ple_reads
+                        && got.public_grouped_status_folds
+                );
+                assert_eq!(got.frozen_gu_integer, gu);
+                assert_eq!(got.frozen_gu_stride_four, stride);
+                assert!(!got.frozen_four_row_down && !got.frozen_down_stride_four);
             }
         }
     }
@@ -2211,6 +2377,119 @@ mod tests {
         base.push(("KUNO_LAB_FROZEN_GU_SCHEDULE".into(), "four-public".into()));
         assert!(registration(&args, base, build).is_err());
     }
+    #[test]
+    fn frozen_down_integer_controller_registration_requires_complete_original_public_scope() {
+        let args = ["lab", "intel", "daslab-speculative-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        let mut base = env();
+        for (key, value) in [
+            ("KUNO_LAB_DEVICE_DISPATCH", "inline"),
+            ("KUNO_LAB_TARGET_FILL", "direct-public"),
+            ("KUNO_LAB_TARGET_DENSE", "verify3-fused"),
+            ("KUNO_LAB_TARGET_IO", "chunk"),
+            ("KUNO_LAB_TARGET_REUSE", "request"),
+            ("KUNO_LAB_TARGET_SOURCES", "frozen-host-public"),
+            ("KUNO_LAB_FROZEN_PARTITION_EXIT", "1"),
+            ("KUNO_LAB_TARGET_ROUTER", "device-frozen-public"),
+            ("KUNO_LAB_MTP_SWEEPS", "fused"),
+        ] {
+            base.push((key.into(), value.into()));
+        }
+        base.push(("KUNO_LAB_WARM_REPLAY".into(), "once".into()));
+        assert!(
+            !registration(&args, base.clone(), build)
+                .unwrap()
+                .frozen_down_integer
+        );
+        base.push(("KUNO_LAB_FROZEN_DOWN_MATH".into(), "integer-public".into()));
+        for qsa in [false, true] {
+            for grouped_status in [false, true] {
+                for shared_head in [false, true] {
+                    for three_gdn in [false, true] {
+                        let mut valid = base.clone();
+                        if qsa {
+                            valid.push((
+                                "KUNO_LAB_TARGET_QSA".into(),
+                                "chronological-public".into(),
+                            ));
+                        }
+                        if grouped_status {
+                            valid.push((
+                                "KUNO_LAB_TARGET_STATUS_FOLDS".into(),
+                                "grouped-public".into(),
+                            ));
+                        }
+                        if shared_head {
+                            valid.push(("KUNO_LAB_MTP_Q8_HEAD".into(), "shared-public".into()));
+                        }
+                        if three_gdn {
+                            valid.push((
+                                "KUNO_LAB_TARGET_GDN".into(),
+                                "three-streaming-public".into(),
+                            ));
+                        }
+                        let got = registration(&args, valid, build).unwrap();
+                        assert!(got.frozen_down_integer);
+                        assert_eq!(got.gpu_qsa_selector, qsa);
+                        assert_eq!(got.public_grouped_status_folds, grouped_status);
+                        assert_eq!(got.mtp_q8_head_shared_scales, shared_head);
+                        assert_eq!(got.three_gdn_streaming, three_gdn);
+                    }
+                }
+            }
+        }
+        for key in [
+            "KUNO_LAB_DEVICE_DISPATCH",
+            "KUNO_LAB_TARGET_FILL",
+            "KUNO_LAB_TARGET_DENSE",
+            "KUNO_LAB_TARGET_IO",
+            "KUNO_LAB_TARGET_REUSE",
+            "KUNO_LAB_TARGET_SOURCES",
+            "KUNO_LAB_FROZEN_PARTITION_EXIT",
+            "KUNO_LAB_TARGET_ROUTER",
+            "KUNO_LAB_MTP_SWEEPS",
+            "KUNO_LAB_WARM_REPLAY",
+        ] {
+            let mut bad = base.clone();
+            bad.retain(|(k, _)| k != key);
+            assert!(registration(&args, bad, build).is_err(), "{key}");
+        }
+        for (key, value) in [
+            ("KUNO_LAB_FROZEN_DOWN_MATH", "integer-public"),
+            ("KUNO_LAB_FROZEN_TABLES", "private-public"),
+            ("KUNO_LAB_FROZEN_TABLES", "workgroup-public"),
+            ("KUNO_LAB_FROZEN_DOWN_ROWS", "four-public"),
+            ("KUNO_LAB_FROZEN_DOWN_SCHEDULE", "four-public"),
+            ("KUNO_LAB_FROZEN_DOWN_SCALES", "shared-public"),
+            ("KUNO_LAB_FROZEN_GU_FACTORS", "shared-public"),
+            ("KUNO_LAB_FROZEN_GU_ROWS", "two-public"),
+            ("KUNO_LAB_FROZEN_HOST_STAGE", "packed-public"),
+            ("KUNO_LAB_FROZEN_BANK_PLACEMENT", "preserve-public"),
+            ("KUNO_LAB_FROZEN_MEMBERS", "three-public"),
+            ("KUNO_LAB_TARGET_EXPERTS", "prepared-verify3"),
+            ("KUNO_LAB_TARGET_MOE", "live"),
+            ("KUNO_LAB_MTP_Q8_HEAD", "broadcast-public"),
+            ("KUNO_LAB_MTP_PROFILE", "strata-q2"),
+            ("KUNO_LAB_MTP_VOCAB", "english-public"),
+        ] {
+            let mut bad = base.clone();
+            bad.push((key.into(), value.into()));
+            assert!(registration(&args, bad, build).is_err(), "{key}");
+        }
+        for value in ["", "integer", "true", "integer-public "] {
+            let mut bad = base.clone();
+            bad.last_mut().unwrap().1 = value.into();
+            assert!(registration(&args, bad, build).is_err());
+        }
+        let mut wrong_dense = base.clone();
+        for (key, value) in &mut wrong_dense {
+            if key == "KUNO_LAB_TARGET_DENSE" {
+                *value = "verify3".into();
+            }
+        }
+        assert!(registration(&args, wrong_dense, build).is_err());
+    }
+
     #[test]
     fn frozen_gu_integer_controller_registration_requires_complete_original_public_scope() {
         let args = ["lab", "intel", "daslab-speculative-probe"].map(OsString::from);
