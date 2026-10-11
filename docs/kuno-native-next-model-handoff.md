@@ -64,12 +64,17 @@ allHTTP200, unpaused/idle/no recovery latch and all classified GPU faults0.
 Exact source, admission, counters and complete receipts are recorded in
 v173_intel_mtp_batched_repair_and_bank_backing_physical.
 
-Next source candidate is genuine four-row verification with three real MTP
-proposals, original tails/scalar repair and new count4 arithmetic/metadata paths.
-Three isolated source owners are preparing dense/MoE kernels, the all-family
-parent and the fixed-public controller. It remains source-only until integrated
-full-vector/carry/greedy/actual repair and closure/recovery gates pass; no cap,
-reference or tolerance change is authorized.
+Current integrated candidate is genuine four-row verification with three real
+MTP proposals, original tails/scalar repair and new count4 arithmetic/metadata
+paths. Independent plain/fused Verify4 operators and original CPU13 controls
+pass. Selected v176 on source2dbc897 passes original cold CPU13, real frozen
+Source attachment and warm initial prefill, but its first actual count4 chunk
+hits the unchanged demand-fill count1..3 guard before expert work begins.
+Repair only that admission boundary using actual attached frozen-four
+Source/router/bank/constructor authority; retain the original demand guard.
+Selected full-vector/carry/greedy/real repair and complete closure/recovery
+acceptance remain pending. No four-row speed or30tokens/s claim follows.
+See v176_actual_first_four_direct_fill_guard_rejection in the numeric receipt.
 
 Accepted GU scheduling physical source isac78f00/v159, frozen binarySHA256
 `c04d49a6ca11115c0bba0b1acc38019ae2f6f4b1f323cc0f9b6608eaa639bc7d`.

@@ -42087,5 +42087,152 @@
     "v174_verify4_operator_revalidation_needed": false,
     "operator_reuse_reason": "Only constructor owner proof and selected pre-Source setup predicate changed; all Verify4 numerical shader/control/cap/finite owners remain unchanged.",
     "compiler_idle_correctness_credit": false
+  },
+  "v176_actual_first_four_direct_fill_guard_rejection": {
+    "status": "selected correctness failure; no throughput credit",
+    "source_commit": "2dbc897c4a4b88148183144665ecaf22447d972a",
+    "output_directory": "/media/jmicko/faststore/kuno-development/native-next-v176-four-warm-intel-20261011",
+    "source": {
+      "commit": "2dbc897c4a4b88148183144665ecaf22447d972a",
+      "binary_sha256": "e5d18432254c1628cc05d08d83f3cb740275925617f66d0e031bcac3ac2d00a5",
+      "features": [
+        "direct-device"
+      ],
+      "protected_launcher_sha256": "fc4d66121e429709b97cb60bd6399aa9ba6540f992a5cc7e3a798bc900e957be",
+      "helper_sha256": "6dc461d462d41036a52329abd703d63042714f0dc3ecf8026d2559b2eae2cd98",
+      "public_trial": "warm-intel-mtp-four-lookahead-down-integer-grouped-ple-gu-stride-shared-head-gpu-host",
+      "seed": 424242,
+      "temperature": 0,
+      "frozen_partition_exit_requested": true,
+      "frozen_bank_preserve_requested": false,
+      "frozen_private_tables_requested": false,
+      "frozen_workgroup_tables_requested": false,
+      "frozen_shared_down_scales_requested": false,
+      "frozen_shared_gate_up_factors_requested": false,
+      "mtp_q8_head_broadcast_requested": false,
+      "frozen_four_row_down_requested": false,
+      "mtp_q8_head_shared_scales_requested": true,
+      "frozen_two_row_gate_up_requested": false,
+      "frozen_packed_host_staging_requested": false,
+      "frozen_three_member_arithmetic_requested": false,
+      "draft_profile_requested": "self-contained-q8",
+      "three_gdn_streaming_requested": false,
+      "mtp_english_vocab_requested": false,
+      "frozen_gu_integer_requested": true,
+      "frozen_gu_stride_four_requested": true,
+      "target_only_requested": false,
+      "intel_mtp_requested": true,
+      "target_grouped_ple_requested": true,
+      "frozen_down_stride_four_requested": false,
+      "target_grouped_status_folds_requested": false,
+      "frozen_down_integer_requested": true,
+      "target_iq4_registers_requested": false,
+      "target_submission_backlog_requested": false,
+      "profile_ranked_bank_fill_requested": false,
+      "mtp_batched_cache_repair_requested": false,
+      "four_row_target_lookahead_requested": true,
+      "host_cpu_batch_operator_requested": false,
+      "synthetic_one_layer_operator_only": false,
+      "ordinary_demand_performance_claimed": false,
+      "native_30_tokens_per_second_accepted": false
+    },
+    "original_cold_cpu13_accepted": true,
+    "actual_frozen_source_attached": true,
+    "original_warm_initial_prefill_accepted": true,
+    "actual_four_chunk_accepted": false,
+    "complete_selected_receipt": false,
+    "failure_stage": "first genuine count4 target chunk before routed MoE transaction begins",
+    "error_class": "InvalidFormat native routed chunk failed",
+    "source_cause": "Required public_existing_fill=true reaches unchanged direct demand-fill public_existing_count, whose count1..3 guard rejects4 before authenticated frozen Source branch. Both source reviewers independently confirm.",
+    "preserved_demand_scope": "Do not globally widen public_existing_count or demand batch_checked. Count4 requires actual selected frozen Source, original banks/router, exact target source identity and immutable four constructor/active capability.",
+    "explicit_cleanup_completed": {
+      "target": true,
+      "draft": true
+    },
+    "host_before": {
+      "admission": {
+        "action": "status",
+        "state": {
+          "admission": {
+            "active": false,
+            "completed": 59,
+            "paused": false,
+            "recovery_required": false,
+            "rejected": 0,
+            "waiting": 0
+          }
+        },
+        "status": 200
+      },
+      "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+      "http_statuses": {
+        "kuno": 200,
+        "ollama": 200,
+        "vashti": 200
+      },
+      "intel": {
+        "xe_memory": [
+          {
+            "total_bytes": 34242297856,
+            "used_bytes": 50688000
+          }
+        ]
+      },
+      "kernel": "7.0.0-38-generic",
+      "kernel_fault_counts": {
+        "nvidia_xid": 0,
+        "xe_memory_faults": 0,
+        "xe_reset_failures": 0,
+        "xe_timeouts": 0,
+        "xe_wedged": 0
+      },
+      "nvidia_compute_process_count": 0,
+      "nvidia_memory_mib": 657,
+      "time": "2026-10-11T22:57:02.165975+00:00"
+    },
+    "host_after": {
+      "admission": {
+        "action": "status",
+        "state": {
+          "admission": {
+            "active": false,
+            "completed": 59,
+            "paused": false,
+            "recovery_required": false,
+            "rejected": 0,
+            "waiting": 0
+          }
+        },
+        "status": 200
+      },
+      "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+      "http_statuses": {
+        "kuno": 200,
+        "ollama": 200,
+        "vashti": 200
+      },
+      "intel": {
+        "xe_memory": [
+          {
+            "total_bytes": 34242297856,
+            "used_bytes": 50688000
+          }
+        ]
+      },
+      "kernel": "7.0.0-38-generic",
+      "kernel_fault_counts": {
+        "nvidia_xid": 0,
+        "xe_memory_faults": 0,
+        "xe_reset_failures": 0,
+        "xe_timeouts": 0,
+        "xe_wedged": 0
+      },
+      "nvidia_compute_process_count": 0,
+      "nvidia_memory_mib": 662,
+      "time": "2026-10-11T23:00:27.056768+00:00"
+    },
+    "normal_performance_accepted": false,
+    "native_30_tokens_per_second_accepted": false,
+    "operator_reuse_reason": "Pending predicate fix must preserve all numerical shaders, owner capacities, arithmetic/reference/tolerances and source mapping; accepted v174 independent operators then remain unchanged."
   }
 }

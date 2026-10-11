@@ -3923,3 +3923,31 @@ classified GPU fault. These correctness runs may overlap CPU source checks;
 diagnostic rates do not establish compiler-idle normal throughput.
 Native30tokens/s remains unachieved. Installed services, public contract,
 canonical Vashti and frontend unchanged; required Vashti changes:none.
+
+### Intel-only native optimization continuation, 2026-10-11
+
+Latest user direction is Intel B70 target and full-Q8 MTP only; defer Nvidia.
+Latest normal accepted comparison remains v17310.533053 original versus
+10.603973 batched repair real continuations/s, one ordered code200 pair.
+The integrated four-row candidate passes the unchanged independent v174
+Verify4 operators and original v175 CPU13 controls. Two setup predicates were
+repaired without changing arithmetic: immutable reserved head capacity
+(`e6baa7e`) and mandatory original direct-fill attachment (`2dbc897`).
+
+Selected v176 on2dbc897 now passes cold CPU13, actual frozen Source attachment
+and warm initial prefill. First genuine count4 then hits the older direct
+demand-fill count1..3 guard. The next repair must authenticate the real
+attached frozen-four capability before that guard; original demand loading
+stays capped at3. Selected whole-model four-row acceptance and throughput are
+still pending. v176 explicitly cleans target/draft and restores same-boot
+B70baseline50688000B, Nvidia compute0, allHTTP200, admission idle/unpaused
+without recovery latch and no new classified GPU fault. Exact source and
+recovery are in v176_actual_first_four_direct_fill_guard_rejection.
+
+Read the current [owner handoff](kuno-native-next-model-handoff.md) and
+[four-row contract](kuno-native-target-four-rows.md) before resuming. The
+unused exact persistent144 bank leaf (`e16ac7a`) grants no additional physical
+capacity or slots. A separate bounded CPU-HOST/GPU-resident overlap operator
+is being prepared and has no model consumer or measured gain yet. No API,
+installed service, canonical Vashti, frontend or release change; required
+Vashti changes:none. The30tokens/s goal is unachieved.
