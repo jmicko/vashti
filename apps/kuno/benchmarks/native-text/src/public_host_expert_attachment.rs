@@ -162,19 +162,19 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
         shared_down_scales: bool,
         shared_gate_up_factors: bool,
         four_row_down: bool,
+        two_row_gate_up: bool,
         cancel: &AtomicBool,
     ) -> Result<Attachment<'plan, 'model, 'file>> {
         u::cancel(cancel)?;
-        if ((private_tables
-            || workgroup_tables
-            || shared_down_scales
-            || shared_gate_up_factors
-            || four_row_down)
-            && !inactive_partition_exit)
-            || (private_tables && workgroup_tables)
-        {
-            return Err(rejected());
-        }
+        Sources::validate_kernel_policies(
+            inactive_partition_exit,
+            private_tables,
+            workgroup_tables,
+            shared_down_scales,
+            shared_gate_up_factors,
+            four_row_down,
+            two_row_gate_up,
+        )?;
         self.budget.check_exact(exact_reserved_host)?;
         executor.check_client(client)?;
         workspace.validate_public_warm_boundary(executor, self.graph, arena)?;
@@ -284,7 +284,8 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
         if owners.len() != mirror::PAGES || registered.len() != mirror::PAGES {
             return Err(rejected());
         }
-        let sources = if four_row_down
+        let sources = if two_row_gate_up
+            || four_row_down
             || shared_gate_up_factors
             || shared_down_scales && (private_tables || workgroup_tables)
         {
@@ -300,6 +301,7 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
                 shared_down_scales,
                 shared_gate_up_factors,
                 four_row_down,
+                two_row_gate_up,
             )
         } else if workgroup_tables {
             Sources::new_with_workgroup_tables(

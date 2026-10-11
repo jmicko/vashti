@@ -23,6 +23,7 @@ enum GateKernel {
     SharedFactors,
     PrivateFactors,
     WorkgroupFactors,
+    TwoRows,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DownKernel {
@@ -35,7 +36,9 @@ enum DownKernel {
 // This selector is used by actual dispatch, so compound policy tests cover the
 // runtime entrypoints rather than just the stored attachment flags.
 fn kernel_policy(g: k::Geometry) -> (GateKernel, DownKernel) {
-    let gate = if g.shared_gate_up_factors() {
+    let gate = if g.two_row_gate_up() {
+        GateKernel::TwoRows
+    } else if g.shared_gate_up_factors() {
         if g.workgroup_tables() {
             GateKernel::WorkgroupFactors
         } else if g.private_tables() {
@@ -209,6 +212,7 @@ impl Sources {
             false,
             false,
             false,
+            false,
         )
     }
     /// Explicit matched-control candidate, frozen before any source descriptors
@@ -227,6 +231,7 @@ impl Sources {
             pages,
             reserved_host_bytes,
             true,
+            false,
             false,
             false,
             false,
@@ -256,6 +261,7 @@ impl Sources {
             false,
             false,
             false,
+            false,
         )
     }
     /// Literal-lane initialization of one shared immutable public IQ grid.
@@ -276,6 +282,7 @@ impl Sources {
             true,
             false,
             true,
+            false,
             false,
             false,
             false,
@@ -303,6 +310,7 @@ impl Sources {
             true,
             false,
             false,
+            false,
         )
     }
     /// Explicit frozen IQ2/IQ3 subgroup-factor staging candidate.
@@ -326,7 +334,31 @@ impl Sources {
             false,
             true,
             false,
+            false,
         )
+    }
+    pub(crate) fn validate_kernel_policies(
+        inactive_partition_exit: bool,
+        private_tables: bool,
+        workgroup_tables: bool,
+        shared_down_scales: bool,
+        shared_gate_up_factors: bool,
+        four_row_down: bool,
+        two_row_gate_up: bool,
+    ) -> Result<()> {
+        if ((private_tables
+            || workgroup_tables
+            || shared_down_scales
+            || shared_gate_up_factors
+            || four_row_down
+            || two_row_gate_up)
+            && !inactive_partition_exit)
+            || private_tables && workgroup_tables
+            || two_row_gate_up && (private_tables || workgroup_tables || shared_gate_up_factors)
+        {
+            return Err(reject());
+        }
+        Ok(())
     }
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new_with_policy(
@@ -341,15 +373,18 @@ impl Sources {
         shared_down_scales: bool,
         shared_gate_up_factors: bool,
         four_row_down: bool,
+        two_row_gate_up: bool,
     ) -> Result<Arc<Self>> {
-        if (private_tables
-            || workgroup_tables
-            || shared_down_scales
-            || shared_gate_up_factors
-            || four_row_down)
-            && !inactive_partition_exit
-            || private_tables && workgroup_tables
-            || reserved_host_bytes < EXTRA_HOST_BYTES
+        Self::validate_kernel_policies(
+            inactive_partition_exit,
+            private_tables,
+            workgroup_tables,
+            shared_down_scales,
+            shared_gate_up_factors,
+            four_row_down,
+            two_row_gate_up,
+        )?;
+        if reserved_host_bytes < EXTRA_HOST_BYTES
             || graph.binding_id() != plan.binding()
             || executor.packed_profile != crate::expert_banks::OriginalPackedProfile::DaslabIq3
             || executor.bank_slots != 144
@@ -414,6 +449,9 @@ impl Sources {
             }
             if four_row_down {
                 geometry = geometry.with_four_row_down().map_err(err)?;
+            }
+            if two_row_gate_up {
+                geometry = geometry.with_two_row_gate_up().map_err(err)?;
             }
             let layer_bound = StagedSlots::bounded_native_metadata_bytes(144)
                 .map_err(|_| reject())?
@@ -581,6 +619,9 @@ impl Sources {
     }
     pub(crate) fn four_row_down(&self) -> bool {
         self.layers[0].geometry.four_row_down()
+    }
+    pub(crate) fn two_row_gate_up(&self) -> bool {
+        self.layers[0].geometry.two_row_gate_up()
     }
     fn check_layer(&self, layer: usize, bank: &ExpertBanks) -> Result<&Layer> {
         let l = self.layers.get(layer).ok_or(reject())?;
@@ -1132,6 +1173,14 @@ impl Workspace {
             .ok_or_else(reject)?
             .four_row_down())
     }
+    pub(crate) fn frozen_host_source_two_row_gate_up(&self) -> Result<bool> {
+        let sources = self.frozen_sources.as_ref().ok_or_else(reject)?;
+        let enabled = sources.two_row_gate_up();
+        if enabled && self.frozen_source_counters.source_dispatches == 0 {
+            return Err(reject());
+        }
+        Ok(enabled)
+    }
     pub(crate) fn frozen_source_counters(&self) -> Counters {
         self.frozen_source_counters
     }
@@ -1209,6 +1258,9 @@ impl Workspace {
             }
             if sources.four_row_down() {
                 g = g.with_four_row_down().map_err(err)?;
+            }
+            if sources.two_row_gate_up() {
+                g = g.with_two_row_gate_up().map_err(err)?;
             }
             if g != sources.geometry(layer, bank)? {
                 return Err(reject());
@@ -1667,6 +1719,7 @@ impl Sources {
                 return Err(reject());
             }
             match gate {
+                GateKernel::TwoRows => dispatch_gate!(grouped_gate_up_frozen_two_rows),
                 GateKernel::Original => dispatch_gate!(grouped_gate_up),
                 GateKernel::Frozen => dispatch_gate!(grouped_gate_up_frozen),
                 GateKernel::PrivateTables => dispatch_gate!(grouped_gate_up_frozen_private_grid),
@@ -1763,6 +1816,115 @@ mod tests {
                     (table, DownKernel::SharedScales)
                 );
             }
+        }
+    }
+    #[test]
+    fn two_row_gate_up_attachment_flags_reject_incompatible_policies_before_import() {
+        assert!(
+            Sources::validate_kernel_policies(false, false, false, false, false, false, false)
+                .is_ok()
+        );
+        assert!(
+            Sources::validate_kernel_policies(false, false, false, false, false, false, true)
+                .is_err()
+        );
+        for down_scales in [false, true] {
+            for down_rows in [false, true] {
+                assert!(
+                    Sources::validate_kernel_policies(
+                        true,
+                        false,
+                        false,
+                        down_scales,
+                        false,
+                        down_rows,
+                        true
+                    )
+                    .is_ok()
+                );
+                for (private, workgroup, factors) in [
+                    (true, false, false),
+                    (false, true, false),
+                    (false, false, true),
+                ] {
+                    assert!(
+                        Sources::validate_kernel_policies(
+                            true,
+                            private,
+                            workgroup,
+                            down_scales,
+                            factors,
+                            down_rows,
+                            true
+                        )
+                        .is_err()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn two_row_gate_up_actual_dispatch_uses_paired_grid_and_independent_down_choices() {
+        for layer in 0..48 {
+            let [gate, up, down] = crate::daslab_profile::routed_types(layer).unwrap();
+            let original = k::Geometry::new(
+                [
+                    k::Projection::new(gate, 2560, 640, 512).unwrap(),
+                    k::Projection::new(up, 2560, 640, 512).unwrap(),
+                    k::Projection::new(down, 640, 2560, 512).unwrap(),
+                ],
+                8,
+                144,
+            )
+            .unwrap()
+            .with_frozen_host_sources()
+            .unwrap()
+            .with_inactive_partition_exit()
+            .unwrap();
+            assert_eq!(
+                kernel_policy(original),
+                (GateKernel::Frozen, DownKernel::Frozen)
+            );
+            let paired = original.with_two_row_gate_up().unwrap();
+            assert_eq!(
+                kernel_policy(paired),
+                (GateKernel::TwoRows, DownKernel::Frozen)
+            );
+            assert!(matches!(
+                paired.grid(30, false).unwrap(),
+                CubeCount::Static(320, 30, 1)
+            ));
+            assert!(paired.with_private_tables().is_err());
+            assert!(paired.with_workgroup_tables().is_err());
+            assert!(paired.with_shared_gate_up_factors().is_err());
+            assert_eq!(
+                kernel_policy(paired.with_shared_down_scales().unwrap()),
+                (GateKernel::TwoRows, DownKernel::SharedScales)
+            );
+            let down_rows = paired.with_four_row_down().unwrap();
+            assert_eq!(
+                kernel_policy(down_rows),
+                (GateKernel::TwoRows, DownKernel::FourRows)
+            );
+            assert_eq!(
+                kernel_policy(down_rows.with_shared_down_scales().unwrap()),
+                (GateKernel::TwoRows, DownKernel::FourRowsSharedScales)
+            );
+            assert_eq!(
+                down_rows.with_shared_down_scales().unwrap(),
+                original
+                    .with_shared_down_scales()
+                    .unwrap()
+                    .with_four_row_down()
+                    .unwrap()
+                    .with_two_row_gate_up()
+                    .unwrap()
+            );
+            assert!(matches!(
+                down_rows.grid(30, true).unwrap(),
+                CubeCount::Static(640, 30, 1)
+            ));
         }
     }
     fn full_bank() -> crate::bank_slots::BankSlots {

@@ -23,8 +23,32 @@ weight decode work per thread doubles; throughput must be measured.
 
 The parent must select `grouped_gate_up_frozen_two_rows` atomically with the
 paired Geometry grid. Ordinary entrypoints must never consume that grid. This
-leaf changes no resident/probe/launcher policy and has no GPU acceptance claim.
+source kernel leaf has no GPU acceptance claim.
 Focused CPU checks cover all 48 layer geometries, all four original IQ GU
 families, exact virtual 64-lane dots and SiLU products, Checked/Unchecked shader
 lowering, actual initialization coverage, uniform barriers and runtime SPIR-V
 with workgroup zero-initialization disabled. Existing original fixtures remain.
+
+## Internal public probe selection
+
+Both fixed public probes accept `KUNO_LAB_FROZEN_GU_ROWS=two-public`; absence
+selects the original one-row gate/up kernel. The canonical value requires
+`KUNO_LAB_TARGET_SOURCES=frozen-host-public`,
+`KUNO_LAB_FROZEN_PARTITION_EXIT=1` and the existing protected original request
+scope. The speculative probe also requires its original warm replay. Table
+placement and GU-factor choices are rejected before source imports; four-row
+down and shared down scales may compose independently. No production API or
+default inference behavior changes.
+
+The choice is fixed in each source layer's Geometry and selects
+`GateKernel::TwoRows`, the named two-row entrypoint and its paired grid together.
+The attachment validates the same flag contract before importing any pages.
+Actual receipts use `frozen_host_two_row_gate_up`, read from attached source
+geometry through `native_frozen_source_two_row_gate_up` after the existing
+healthy completed native projection/owner proof. Enabled selection additionally
+requires a nonzero accepted source-dispatch counter. Receipts are captured before
+close. The speculative cold replay reports false; the attached warm replay must
+match the explicit request. A selected flag alone is insufficient for true.
+
+The protected launcher remains a separate parent integration. This source
+wiring does not release, deploy or execute an inference trial.

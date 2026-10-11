@@ -46,6 +46,7 @@ pub(crate) struct Inputs {
     pub(crate) frozen_shared_down_scales: bool,
     pub(crate) frozen_shared_gate_up_factors: bool,
     pub(crate) frozen_four_row_down: bool,
+    pub(crate) frozen_two_row_gate_up: bool,
     pub(crate) preserve_routed_bank: bool,
     warm_replay: bool,
     pub(crate) verify3_dense: bool,
@@ -97,6 +98,7 @@ pub(crate) fn registration(
                     | "KUNO_LAB_FROZEN_DOWN_SCALES"
                     | "KUNO_LAB_FROZEN_GU_FACTORS"
                     | "KUNO_LAB_FROZEN_DOWN_ROWS"
+                    | "KUNO_LAB_FROZEN_GU_ROWS"
                     | "KUNO_LAB_FROZEN_BANK_PLACEMENT"
                     | "KUNO_LAB_WARM_REPLAY"
                     | "KUNO_LAB_TARGET_DENSE"
@@ -221,6 +223,20 @@ pub(crate) fn registration(
         Some(v) if v == "four-public" && frozen_host_sources && frozen_partition_exit => true,
         _ => return Err("four-row down requires canonical public frozen partition exit"),
     };
+    let frozen_two_row_gate_up = match values.remove(OsStr::new("KUNO_LAB_FROZEN_GU_ROWS")) {
+        None => false,
+        Some(v)
+            if v == "two-public"
+                && frozen_host_sources
+                && frozen_partition_exit
+                && !frozen_private_tables
+                && !frozen_workgroup_tables
+                && !frozen_shared_gate_up_factors =>
+        {
+            true
+        }
+        _ => return Err("two-row gate/up requires canonical frozen exit without tables/factors"),
+    };
     if frozen_host_sources
         && (!warm_replay
             || !request_reuse
@@ -268,6 +284,7 @@ pub(crate) fn registration(
         frozen_shared_down_scales,
         frozen_shared_gate_up_factors,
         frozen_four_row_down,
+        frozen_two_row_gate_up,
         preserve_routed_bank,
         warm_replay,
         verify3_dense,
@@ -784,6 +801,15 @@ pub(crate) fn run(
                     if frozen_four_row_down != (input.frozen_four_row_down && replay == 1) {
                         return Err("actual four-row down policy mismatch".into());
                     }
+                    let frozen_two_row_gate_up =
+                        if executor.target_frozen_host_source_identity.is_some() {
+                            target.native_frozen_source_two_row_gate_up(&executor)?
+                        } else {
+                            false
+                        };
+                    if frozen_two_row_gate_up != (input.frozen_two_row_gate_up && replay == 1) {
+                        return Err("actual two-row gate/up policy mismatch".into());
+                    }
                     let mtp_q8_head_shared_scales = draft.completed_q8_head_shared_scales()?;
                     if mtp_q8_head_shared_scales != input.mtp_q8_head_shared_scales {
                         return Err("actual MTP shared head scales mismatch".into());
@@ -818,7 +844,7 @@ pub(crate) fn run(
                         "deterministic diagnostic VRAM placement"
                     };
                     Ok(
-                        serde_json::json!({"replay":replay,"device_router":(input.device_router || input.frozen_host_router) && replay == 1,"frozen_host_gpu_router":input.frozen_host_router && replay == 1,"frozen_host_inactive_partition_exit":frozen_partition_exit,"frozen_host_private_tables":frozen_private_tables,"frozen_host_workgroup_tables":frozen_workgroup_tables,"frozen_host_shared_down_scales":frozen_shared_down_scales,"frozen_host_shared_gate_up_factors":frozen_shared_gate_up_factors,"mtp_q8_head_broadcast":mtp_q8_head_broadcast,"mtp_q8_head_shared_scales":mtp_q8_head_shared_scales,"frozen_host_four_row_down":frozen_four_row_down,"frozen_bank_placement":if input.preserve_routed_bank && replay == 1 {"preserve-routed"} else {"cpu13-diagnostic"},"device_router_scope":if input.frozen_host_router {"authenticated actual512 VRAM/host sources; deferred strict original IDs and full vectors, experimental F32 probabilities"} else {"conditional actual all-hit warm13; strict original IDs and full vectors, experimental F32 probabilities"},"request_scope_closed_and_audited":input.request_reuse,"request_scope":request_scope_receipt,"request_close_ns_inside_timing":request_close_ns,"host_io":host_io,"model_weights_warm":replay==1,"initial_prefill_ns":initial_prefill_ns,"gpu_router_calls":executor.gpu_router_calls-before_gpu_routers,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"verify3_fused_calls":executor.target_verify3_fused_calls-before_fused,"target_host_phase_ns":host_phase_ns,"load_and_initial_prefill_physical_read_bytes":load_disk_after.checked_sub(replay_disk_before).ok_or("public process read counter regressed")?,"timed_physical_read_bytes":timed_physical_read_bytes,"target_fill_counters_before":fill_counter_record(before_fills),"target_fill_counters_after":fill_counter_record(after_fills),"frozen_source_routes":frozen_routes,"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"timing_scope":if input.frozen_host_router && replay == 1 {format!("original CPU13 routes and weights; {placement_scope} plus immutable direct host sources and deferred original GPU route audits, no demand expert uploads; full vectors and actual repair included")} else if input.frozen_host_sources && replay == 1 {format!("original CPU13 routes and weights; {placement_scope} plus immutable direct host sources, no demand expert uploads; full vectors and actual repair included")} else if input.device_router && replay == 1 {"conditional actual all-hit GPU routing; deferred original-route audit, public checks and actual repair included".to_string()} else {"original normal routing/demand uploads; public checks and actual repair included".to_string()},"load_and_initial_prefill_cumulative_ns":load_ns,"accepted_tokens":accepted_tokens,"elapsed_ns":elapsed_ns,"accepted_tokens_per_second":accepted_tokens as f64*1e9/elapsed_ns as f64,"proposed_drafts":proposed_tokens,"accepted_drafts":accepted_drafts,"rounds":rounds,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"draft_traffic":{"host_read_calls":after.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after.host_read_bytes-before_traffic.host_read_bytes,"explicit_dispatches":after.explicit_dispatches-before_traffic.explicit_dispatches,"private_upload_calls":after.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after.followup_copy_calls-before_traffic.followup_copy_calls}}),
+                        serde_json::json!({"replay":replay,"device_router":(input.device_router || input.frozen_host_router) && replay == 1,"frozen_host_gpu_router":input.frozen_host_router && replay == 1,"frozen_host_inactive_partition_exit":frozen_partition_exit,"frozen_host_private_tables":frozen_private_tables,"frozen_host_workgroup_tables":frozen_workgroup_tables,"frozen_host_shared_down_scales":frozen_shared_down_scales,"frozen_host_shared_gate_up_factors":frozen_shared_gate_up_factors,"mtp_q8_head_broadcast":mtp_q8_head_broadcast,"mtp_q8_head_shared_scales":mtp_q8_head_shared_scales,"frozen_host_four_row_down":frozen_four_row_down,"frozen_host_two_row_gate_up":frozen_two_row_gate_up,"frozen_bank_placement":if input.preserve_routed_bank && replay == 1 {"preserve-routed"} else {"cpu13-diagnostic"},"device_router_scope":if input.frozen_host_router {"authenticated actual512 VRAM/host sources; deferred strict original IDs and full vectors, experimental F32 probabilities"} else {"conditional actual all-hit warm13; strict original IDs and full vectors, experimental F32 probabilities"},"request_scope_closed_and_audited":input.request_reuse,"request_scope":request_scope_receipt,"request_close_ns_inside_timing":request_close_ns,"host_io":host_io,"model_weights_warm":replay==1,"initial_prefill_ns":initial_prefill_ns,"gpu_router_calls":executor.gpu_router_calls-before_gpu_routers,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"verify3_fused_calls":executor.target_verify3_fused_calls-before_fused,"target_host_phase_ns":host_phase_ns,"load_and_initial_prefill_physical_read_bytes":load_disk_after.checked_sub(replay_disk_before).ok_or("public process read counter regressed")?,"timed_physical_read_bytes":timed_physical_read_bytes,"target_fill_counters_before":fill_counter_record(before_fills),"target_fill_counters_after":fill_counter_record(after_fills),"frozen_source_routes":frozen_routes,"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"timing_scope":if input.frozen_host_router && replay == 1 {format!("original CPU13 routes and weights; {placement_scope} plus immutable direct host sources and deferred original GPU route audits, no demand expert uploads; full vectors and actual repair included")} else if input.frozen_host_sources && replay == 1 {format!("original CPU13 routes and weights; {placement_scope} plus immutable direct host sources, no demand expert uploads; full vectors and actual repair included")} else if input.device_router && replay == 1 {"conditional actual all-hit GPU routing; deferred original-route audit, public checks and actual repair included".to_string()} else {"original normal routing/demand uploads; public checks and actual repair included".to_string()},"load_and_initial_prefill_cumulative_ns":load_ns,"accepted_tokens":accepted_tokens,"elapsed_ns":elapsed_ns,"accepted_tokens_per_second":accepted_tokens as f64*1e9/elapsed_ns as f64,"proposed_drafts":proposed_tokens,"accepted_drafts":accepted_drafts,"rounds":rounds,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"draft_traffic":{"host_read_calls":after.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after.host_read_bytes-before_traffic.host_read_bytes,"explicit_dispatches":after.explicit_dispatches-before_traffic.explicit_dispatches,"private_upload_calls":after.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after.followup_copy_calls-before_traffic.followup_copy_calls}}),
                     )
                 })()?;
                 println!("public_speculative_full_pass_accepted replay={replay}");
@@ -874,6 +900,7 @@ pub(crate) fn run(
                                 input.frozen_shared_down_scales,
                                 input.frozen_shared_gate_up_factors,
                                 input.frozen_four_row_down,
+                                input.frozen_two_row_gate_up,
                                 &cancel,
                             )?
                         });
@@ -1216,6 +1243,79 @@ mod tests {
             assert!(registration(&args, bad, build).is_err());
         }
         base.push(("KUNO_LAB_FROZEN_GU_FACTORS".into(), "shared-public".into()));
+        assert!(registration(&args, base, build).is_err());
+    }
+
+    #[test]
+    fn two_row_gate_up_requires_exact_public_scope_and_rejects_tables_factors() {
+        let args = ["lab", "intel", "daslab-speculative-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        let mut base = env();
+        for (key, value) in [
+            ("KUNO_LAB_DEVICE_DISPATCH", "inline"),
+            ("KUNO_LAB_TARGET_FILL", "direct-public"),
+            ("KUNO_LAB_TARGET_IO", "chunk"),
+            ("KUNO_LAB_TARGET_REUSE", "request"),
+            ("KUNO_LAB_TARGET_SOURCES", "frozen-host-public"),
+            ("KUNO_LAB_FROZEN_PARTITION_EXIT", "1"),
+            ("KUNO_LAB_WARM_REPLAY", "once"),
+        ] {
+            base.push((key.into(), value.into()));
+        }
+        assert!(
+            !registration(&args, base.clone(), build)
+                .unwrap()
+                .frozen_two_row_gate_up
+        );
+        base.push(("KUNO_LAB_FROZEN_GU_ROWS".into(), "two-public".into()));
+        for down_rows in [false, true] {
+            for down_scales in [false, true] {
+                let mut valid = base.clone();
+                if down_rows {
+                    valid.push(("KUNO_LAB_FROZEN_DOWN_ROWS".into(), "four-public".into()));
+                }
+                if down_scales {
+                    valid.push(("KUNO_LAB_FROZEN_DOWN_SCALES".into(), "shared-public".into()));
+                }
+                let parsed = registration(&args, valid, build).unwrap();
+                assert!(parsed.frozen_two_row_gate_up);
+                assert_eq!(parsed.frozen_four_row_down, down_rows);
+                assert_eq!(parsed.frozen_shared_down_scales, down_scales);
+            }
+        }
+        for (key, value) in [
+            ("KUNO_LAB_FROZEN_TABLES", "private-public"),
+            ("KUNO_LAB_FROZEN_TABLES", "workgroup-public"),
+            ("KUNO_LAB_FROZEN_GU_FACTORS", "shared-public"),
+        ] {
+            for prepend in [false, true] {
+                let mut bad = base.clone();
+                if prepend {
+                    bad.insert(0, (key.into(), value.into()));
+                } else {
+                    bad.push((key.into(), value.into()));
+                }
+                assert!(registration(&args, bad, build).is_err());
+            }
+        }
+        for key in [
+            "KUNO_LAB_TARGET_SOURCES",
+            "KUNO_LAB_FROZEN_PARTITION_EXIT",
+            "KUNO_LAB_TARGET_REUSE",
+            "KUNO_LAB_TARGET_FILL",
+            "KUNO_LAB_TARGET_IO",
+            "KUNO_LAB_WARM_REPLAY",
+        ] {
+            let mut bad = base.clone();
+            bad.retain(|(k, _)| k != key);
+            assert!(registration(&args, bad, build).is_err());
+        }
+        for raw in ["", "two", "true", "1", "two-public ", "four-public"] {
+            let mut bad = base.clone();
+            bad.last_mut().unwrap().1 = raw.into();
+            assert!(registration(&args, bad, build).is_err());
+        }
+        base.push(("KUNO_LAB_FROZEN_GU_ROWS".into(), "two-public".into()));
         assert!(registration(&args, base, build).is_err());
     }
 
