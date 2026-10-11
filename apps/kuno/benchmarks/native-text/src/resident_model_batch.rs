@@ -307,6 +307,7 @@ pub(crate) struct Config {
     public_frozen_host_staging: bool,
     public_frozen_gu_integer: bool,
     public_grouped_ple_reads_reserved: bool,
+    public_grouped_status_folds_reserved: bool,
 }
 fn prepared_verify3_configuration(
     target_rows: bool,
@@ -404,8 +405,27 @@ impl Config {
         }
         Ok(())
     }
+    fn validate_public_grouped_status_folds(&self) -> Result<()> {
+        if self.public_grouped_status_folds_reserved
+            && (!self.target_rows_reserved
+                || !self.latest_target_checkpoint_reserved
+                || self.public_target_request_io == self.public_language_request_io.is_some()
+                || !self.public_frozen_host_sources
+                || !self.public_frozen_host_router
+                || self.cpu_operator.is_some()
+                || self.resident_router_reserved
+                || self.prepared_verify3_experts_reserved
+                || self.live_member_reduction
+                || self.tile != 8
+                || crate::status_fold_batch::selected())
+        {
+            return Err(error());
+        }
+        Ok(())
+    }
     fn qsa_host_reservation(&self) -> Result<(usize, usize)> {
         self.validate_public_grouped_ple_reads()?;
+        self.validate_public_grouped_status_folds()?;
         if self.public_frozen_host_router
             && (!self.public_frozen_host_sources
                 || !self.target_rows_reserved
@@ -502,6 +522,7 @@ impl Config {
             public_frozen_host_staging: false,
             public_frozen_gu_integer: false,
             public_grouped_ple_reads_reserved: false,
+            public_grouped_status_folds_reserved: false,
         })
     }
     /// Construction-fixed, one-shot empty PRIVATE-state replay after the
@@ -742,6 +763,17 @@ impl Config {
             return Err(error());
         }
         self.public_grouped_ple_reads_reserved = true;
+        self.qsa_host_reservation()?;
+        Ok(self)
+    }
+    /// Permission only: grouped status dispatch remains off through prefill.
+    /// Original workspace owners, INFO envelope and full audits are unchanged.
+    #[allow(dead_code)] // Root owns fixed-public controller registration.
+    pub(crate) fn reserve_public_grouped_status_folds(mut self) -> Result<Self> {
+        if self.public_grouped_status_folds_reserved {
+            return Err(error());
+        }
+        self.public_grouped_status_folds_reserved = true;
         self.qsa_host_reservation()?;
         Ok(self)
     }
@@ -1472,6 +1504,12 @@ fn next_three_gdn_chunks(policy: NativeDecodeKernels, current: u64) -> Result<u6
         Ok(current)
     }
 }
+fn grouped_status_states(states: [(bool, u64); 3]) -> Result<(bool, [u64; 3])> {
+    if states.iter().any(|state| state.0 != states[0].0) {
+        return Err(error());
+    }
+    Ok((states[0].0, states.map(|state| state.1)))
+}
 fn grouped_ple_selection_allowed(
     reserved: bool,
     selected: bool,
@@ -1528,9 +1566,19 @@ pub(super) struct Workspace {
     public_frozen_host_router: bool,
     three_gdn_completed_chunks: u64,
     public_grouped_ple_reads_reserved: bool,
+    public_grouped_status_folds_reserved: bool,
     grouped_ple_completed_chunks: u64,
+    grouped_status_completed: crate::status_fold_batch::Completed,
 }
 impl Workspace {
+    fn grouped_status_state(&self) -> Result<(bool, [u64; 3])> {
+        let states = [
+            self.gr.public_grouped_status_folds(),
+            self.gdn.public_grouped_status_folds(),
+            self.qsa.public_grouped_status_folds(),
+        ];
+        grouped_status_states(states)
+    }
     fn decode_kernels(&self) -> Result<NativeDecodeKernels> {
         decode_family_policy(
             self.moe.projection_tile(),
@@ -1548,6 +1596,12 @@ impl Workspace {
     ) -> Result<()> {
         if self.ple.public_grouped_reads() {
             if !self.public_grouped_ple_reads_reserved {
+                return Err(error());
+            }
+            self.three_gdn_scope(executor, admission)?.validate()?;
+        }
+        if self.grouped_status_state()?.0 {
+            if !self.public_grouped_status_folds_reserved || crate::status_fold_batch::selected() {
                 return Err(error());
             }
             self.three_gdn_scope(executor, admission)?.validate()?;
@@ -1819,6 +1873,8 @@ impl Workspace {
             three_gdn_completed_chunks: 0,
             public_grouped_ple_reads_reserved: config.public_grouped_ple_reads_reserved,
             grouped_ple_completed_chunks: 0,
+            public_grouped_status_folds_reserved: config.public_grouped_status_folds_reserved,
+            grouped_status_completed: crate::status_fold_batch::Completed::default(),
         };
         result.prove_outer(model)?;
         Ok(result)
@@ -1977,6 +2033,13 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
     ) -> Result<usize> {
         let actual = self.native_decode_kernels()?;
         if !projection_policy_allows_tile(actual, tile)
+            || self
+                .native_batch
+                .as_ref()
+                .ok_or(error())?
+                .grouped_status_state()?
+                .0
+                && tile != 8
             || self
                 .native_batch
                 .as_ref()
@@ -3129,6 +3192,86 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         }
         grouped_ple_completed_receipt(selected, native.grouped_ple_completed_chunks)
     }
+    /// Fixed-public target status policy selected only after real accepted
+    /// prefill/warmreset and source/router attachment, before request I/O.
+    #[allow(dead_code)] // Root owns protected controller registration.
+    pub(crate) fn set_public_grouped_status_folds(
+        &mut self,
+        executor: &GpuExecutor<'f>,
+        selected: bool,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        u::cancel(cancel)?;
+        let boundary = self.completed_native_projection_boundary(executor)?;
+        executor.check_target_rows_policy()?;
+        let native = self.native_batch.as_ref().ok_or(error())?;
+        native
+            .three_gdn_scope(executor, &self.admission)?
+            .validate()?;
+        let accepted_prefill = match (
+            &native.public_target_request_io,
+            &native.public_language_request_io,
+        ) {
+            (Some(_), None) => {
+                self.context == 13
+                    && self.position == 1
+                    && native
+                        .public_warm_replay
+                        .as_ref()
+                        .is_some_and(|p| p.reset_consumed())
+            }
+            (None, Some(permit)) => {
+                permit
+                    .identity(self.graph.binding_id(), self.context)
+                    .is_ok()
+                    && permit.validate_begin(self.position, false).is_ok()
+            }
+            _ => false,
+        };
+        let (already_selected, calls) = native.grouped_status_state()?;
+        if !grouped_ple_selection_allowed(
+            native.public_grouped_status_folds_reserved,
+            already_selected,
+            selected,
+            accepted_prefill,
+            self.admission.request_io_reuse_active(),
+            native.decode_kernels()?,
+        ) || calls != [0; 3]
+            || native.grouped_status_completed != crate::status_fold_batch::Completed::default()
+            || crate::status_fold_batch::selected()
+        {
+            return Err(error());
+        }
+        // Preflight all three actual workspaces BEFORE any immutable selection.
+        native.gr.validate_public_grouped_status_selection()?;
+        native
+            .gdn
+            .validate_public_grouped_status_selection(&self.arena, cancel)?;
+        native
+            .qsa
+            .validate_public_grouped_status_selection(&self.arena, cancel)?;
+        if selected {
+            let native = self.native_batch.as_mut().ok_or(error())?;
+            native.gr.enable_public_grouped_status_folds(&boundary);
+            native.gdn.enable_public_grouped_status_folds(&boundary);
+            native.qsa.enable_public_grouped_status_folds(&boundary);
+        }
+        Ok(())
+    }
+    /// Requested flags/enqueue alone earn no actual completed receipt.
+    #[allow(dead_code)] // Root owns protected controller receipt registration.
+    pub(crate) fn completed_public_grouped_status_folds(
+        &self,
+        executor: &GpuExecutor<'f>,
+    ) -> Result<(bool, crate::status_fold_batch::Completed)> {
+        self.completed_native_projection_boundary(executor)?;
+        let native = self.native_batch.as_ref().ok_or(error())?;
+        let (selected, actual) = native.grouped_status_state()?;
+        if selected {
+            native.validate_target_decode_policy(executor, &self.admission)?;
+        }
+        native.grouped_status_completed.receipt(selected, actual)
+    }
     pub(crate) fn set_lab_native_decode_kernels(
         &mut self,
         executor: &mut GpuExecutor<'f>,
@@ -3137,6 +3280,16 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
     ) -> Result<NativeDecodeKernels> {
         u::cancel(cancel)?;
         if policy == NativeDecodeKernels::ThreeGdn {
+            return Err(error());
+        }
+        if self
+            .native_batch
+            .as_ref()
+            .ok_or(error())?
+            .grouped_status_state()?
+            .0
+            && policy != NativeDecodeKernels::Chunk
+        {
             return Err(error());
         }
         if self
@@ -3419,7 +3572,10 @@ impl Workspace {
         // acceptance retains its disjoint mutable workspace borrow.
         let decode_policy = self.decode_kernels()?;
         let grouped_ple_reads = self.ple.public_grouped_reads();
-        if !grouped_ple_run_allowed(grouped_ple_reads, tokens.len(), purpose) {
+        let (grouped_status_folds, grouped_status_before) = self.grouped_status_state()?;
+        if !grouped_ple_run_allowed(grouped_ple_reads, tokens.len(), purpose)
+            || !grouped_ple_run_allowed(grouped_status_folds, tokens.len(), purpose)
+        {
             return Err(error());
         }
         e.check_client(m.arena.client().map_err(u::fault)?)?;
@@ -4045,6 +4201,20 @@ impl Workspace {
             final_head_start.elapsed().as_nanos();
         self.gr.validate_all_consumers_queued()?;
         self.shared.validate_all_consumers_queued()?;
+        // Capture real queued counters before PLE/family permits borrow their
+        // disjoint workspaces. Completion and publication remain below.
+        let mut grouped_status_expected = [1u64, 0, 0]; // FinalAllRows GR.
+        for layer in m.layers.iter() {
+            grouped_status_expected[0] += 2; // Attention and FFN GR.
+            match layer {
+                Layer::Gdn(_, _) => grouped_status_expected[1] += 1,
+                Layer::Qsa(_, _) => grouped_status_expected[2] += 1,
+            }
+        }
+        let (still_selected, grouped_status_after) = self.grouped_status_state()?;
+        if grouped_status_folds != still_selected {
+            return Err(error());
+        }
         let final_proof_start = Instant::now();
         let (output, ple) = completed_proof(
             || {
@@ -4207,6 +4377,12 @@ impl Workspace {
             ple.public_grouped_read_completed(),
             self.grouped_ple_completed_chunks,
         )?;
+        let grouped_status_completed = self.grouped_status_completed.propose(
+            grouped_status_folds,
+            grouped_status_before,
+            grouped_status_after,
+            grouped_status_expected,
+        )?;
         *m.phase_ns.entry("native_all_family_preflight").or_default() +=
             family_start.elapsed().as_nanos();
         let commit_start = Instant::now();
@@ -4255,6 +4431,7 @@ impl Workspace {
         *m.completed_cpu_misses = *completed_cpu_misses;
         self.three_gdn_completed_chunks = three_gdn_completed_chunks;
         self.grouped_ple_completed_chunks = grouped_ple_completed_chunks;
+        self.grouped_status_completed = grouped_status_completed;
         m.position = *end;
         Ok(output)
     }
@@ -4262,6 +4439,107 @@ impl Workspace {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn grouped_status_actual_workspace_states_reject_partial_selection() {
+        for bits in 0..8 {
+            let states = std::array::from_fn(|i| (bits & (1 << i) != 0, i as u64));
+            let actual = grouped_status_states(states);
+            if bits == 0 || bits == 7 {
+                assert_eq!(actual.unwrap(), (bits == 7, [0, 1, 2]));
+            } else {
+                assert!(actual.is_err());
+            }
+        }
+    }
+    #[test]
+    fn grouped_status_completion_joins_actual_folds_before_any_commit() {
+        use crate::status_fold_batch::Completed;
+        let zero = Completed::default();
+        assert_eq!(zero.receipt(false, [0; 3]).unwrap(), (false, zero));
+        let proposal = zero
+            .propose(true, [0; 3], [97, 36, 12], [97, 36, 12])
+            .unwrap();
+        assert_eq!(zero, Completed::default()); // Proposal has not published.
+        assert_eq!(
+            proposal.receipt(true, [97, 36, 12]).unwrap(),
+            (true, proposal)
+        );
+        for role in 0..3 {
+            for delta in [-1i64, 1] {
+                let mut actual = [97, 36, 12];
+                actual[role] = (actual[role] as i64 + delta) as u64;
+                assert!(zero.propose(true, [0; 3], actual, [97, 36, 12]).is_err());
+            }
+        }
+        assert!(
+            zero.propose(false, [0; 3], [97, 36, 12], [97, 36, 12])
+                .is_err()
+        );
+        assert!(
+            zero.propose(true, [1, 0, 0], [98, 36, 12], [97, 36, 12])
+                .is_err()
+        );
+        assert!(
+            zero.propose(true, [0; 3], [97, 36, 12], [97, 35, 13])
+                .is_err()
+        );
+        assert!(zero.receipt(true, [0; 3]).is_err());
+        assert!(proposal.receipt(false, [97, 36, 12]).is_err());
+        assert!(proposal.receipt(true, [97, 36, 11]).is_err());
+    }
+    #[test]
+    fn grouped_status_scope_stays_full_families_all_rows_and_immutable_before_io() {
+        for count in 0..=9 {
+            for purpose in [
+                Purpose::Advance,
+                Purpose::LastLogits,
+                Purpose::AllRowsWithCarry,
+            ] {
+                assert_eq!(
+                    grouped_ple_run_allowed(true, count, purpose),
+                    (1..=3).contains(&count) && purpose == Purpose::AllRowsWithCarry
+                );
+            }
+        }
+        assert!(grouped_ple_selection_allowed(
+            true,
+            false,
+            true,
+            true,
+            false,
+            NativeDecodeKernels::Chunk
+        ));
+        assert!(grouped_ple_selection_allowed(
+            true,
+            true,
+            true,
+            true,
+            false,
+            NativeDecodeKernels::ThreeGdn
+        ));
+        for (reserved, accepted, active) in [
+            (false, true, false),
+            (true, false, false),
+            (true, true, true),
+        ] {
+            assert!(!grouped_ple_selection_allowed(
+                reserved,
+                false,
+                true,
+                accepted,
+                active,
+                NativeDecodeKernels::Chunk
+            ));
+        }
+        assert!(!grouped_ple_selection_allowed(
+            true,
+            true,
+            false,
+            true,
+            false,
+            NativeDecodeKernels::Chunk
+        ));
+    }
     #[test]
     fn grouped_ple_selection_requires_reserved_accepted_public_prefill_and_is_immutable() {
         use NativeDecodeKernels::{Chunk, SingleAll, SingleGdn, SingleMoe, SingleQ4All, ThreeGdn};

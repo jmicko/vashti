@@ -426,8 +426,28 @@ pub(crate) struct GdnBatchWorkspace {
     recurrence_policy: RecurrencePolicy,
     shared_vector: bool,
     pub(crate) shared_vector_calls: u64,
+    public_grouped_status: crate::status_fold_batch::PublicPolicy,
 }
 impl GdnBatchWorkspace {
+    pub(crate) fn public_grouped_status_folds(&self) -> (bool, u64) {
+        self.public_grouped_status.state()
+    }
+    pub(crate) fn validate_public_grouped_status_selection(
+        &self,
+        arena: &PrivateArena,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        self.healthy(arena, cancel)?;
+        self.policy.completed_boundary()?;
+        self.public_grouped_status.validate_selection()
+    }
+    pub(crate) fn enable_public_grouped_status_folds(
+        &mut self,
+        _boundary: &crate::resident_model::batch::CompletedNativeProjectionBoundary,
+    ) {
+        self.public_grouped_status.enable();
+    }
+
     pub(crate) fn allocation_requests(graph: BoundGraph<'_, '_>) -> Result<[u64; N]> {
         graph_plan(graph)?.0.requests()
     }
@@ -478,6 +498,7 @@ impl GdnBatchWorkspace {
                 recurrence_policy: RecurrencePolicy::Chunk,
                 shared_vector: false,
                 shared_vector_calls: 0,
+                public_grouped_status: crate::status_fold_batch::PublicPolicy::default(),
             };
             workspace.validate_ids(arena)?;
             cancelled(cancel)?;
@@ -1052,7 +1073,9 @@ impl ResidentGdn<'_> {
                     cancel,
                 )?,
                 Operation::Status(i) => {
-                    if crate::status_fold_batch::selected() {
+                    if workspace.public_grouped_status.state().0
+                        || crate::status_fold_batch::selected()
+                    {
                         if i == 0 {
                             let views: [crate::status_fold_batch::View; 5] =
                                 std::array::from_fn(|j| {
@@ -1064,7 +1087,13 @@ impl ResidentGdn<'_> {
                                         layout.widths[STATUS + j],
                                     )
                                 });
-                            crate::status_fold_batch::launch(arena, &views, fault_id)?;
+                            if workspace.public_grouped_status.state().0 {
+                                workspace
+                                    .public_grouped_status
+                                    .launch(arena, &views, fault_id)?;
+                            } else {
+                                crate::status_fold_batch::launch(arena, &views, fault_id)?;
+                            }
                         }
                     } else {
                         u::status_batch(

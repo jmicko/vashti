@@ -396,8 +396,33 @@ pub(crate) struct QsaBatchWorkspace {
     fault: Option<BufferId>,
     poison: Arc<AtomicBool>,
     policy: Policy,
+    public_grouped_status: crate::status_fold_batch::PublicPolicy,
 }
 impl QsaBatchWorkspace {
+    pub(crate) fn public_grouped_status_folds(&self) -> (bool, u64) {
+        self.public_grouped_status.state()
+    }
+    pub(crate) fn validate_public_grouped_status_selection(
+        &self,
+        arena: &PrivateArena,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        self.healthy(arena, cancel)?;
+        if self.policy.phase != ChunkPhase::Idle
+            || *self.policy.issued != 0
+            || *self.policy.committed != 0
+        {
+            return Err(Error::InvalidFormat("target grouped QSA status boundary"));
+        }
+        self.public_grouped_status.validate_selection()
+    }
+    pub(crate) fn enable_public_grouped_status_folds(
+        &mut self,
+        _boundary: &crate::resident_model::batch::CompletedNativeProjectionBoundary,
+    ) {
+        self.public_grouped_status.enable();
+    }
+
     pub(crate) fn allocation_requests(graph: BoundGraph<'_, '_>) -> Result<[u64; S]> {
         graph_plan(graph)?.0.requests()
     }
@@ -444,6 +469,7 @@ impl QsaBatchWorkspace {
                 fault: None,
                 poison: poison.clone(),
                 policy: Policy::new(expected),
+                public_grouped_status: crate::status_fold_batch::PublicPolicy::default(),
             };
             out.validate_ids(arena)?;
             Ok(out)
@@ -1550,7 +1576,10 @@ impl ResidentQsa<'_> {
                     l.widths[APPEND],
                 ),
                 Operation::Fold(i, t) => {
-                    if t == MAX_BATCH && crate::status_fold_batch::selected() {
+                    if t == MAX_BATCH
+                        && (workspace.public_grouped_status.state().0
+                            || crate::status_fold_batch::selected())
+                    {
                         if i == 0 {
                             let views = [0, 1, 2, 3, 4, 9, 10, 11].map(|j| {
                                 crate::status_fold_batch::View::new(
@@ -1561,7 +1590,13 @@ impl ResidentQsa<'_> {
                                     l.widths[FLAGS + j],
                                 )
                             });
-                            crate::status_fold_batch::launch(arena, &views, fault_id)?;
+                            if workspace.public_grouped_status.state().0 {
+                                workspace
+                                    .public_grouped_status
+                                    .launch(arena, &views, fault_id)?;
+                            } else {
+                                crate::status_fold_batch::launch(arena, &views, fault_id)?;
+                            }
                         }
                     } else {
                         let (width, first, n) = if t == MAX_BATCH {

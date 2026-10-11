@@ -229,8 +229,23 @@ pub struct Workspace {
     layout: Layout,
     ids: [BufferId; N],
     phase: Phase,
+    public_grouped_status: crate::status_fold_batch::PublicPolicy,
 }
 impl Workspace {
+    pub(crate) fn public_grouped_status_folds(&self) -> (bool, u64) {
+        self.public_grouped_status.state()
+    }
+    pub(crate) fn validate_public_grouped_status_selection(&self) -> Result<()> {
+        self.validate_all_consumers_queued()?;
+        self.public_grouped_status.validate_selection()
+    }
+    pub(crate) fn enable_public_grouped_status_folds(
+        &mut self,
+        _boundary: &crate::resident_model::batch::CompletedNativeProjectionBoundary,
+    ) {
+        self.public_grouped_status.enable();
+    }
+
     pub fn allocation_requests(graph: BoundGraph<'_, '_>) -> Result<[u64; N]> {
         let g = graph.geometry();
         Layout::new(g.residual.streams, g.residual.width, g.low_rank)?.requests()
@@ -269,6 +284,7 @@ impl Workspace {
             layout,
             ids,
             phase: Phase::Available,
+            public_grouped_status: crate::status_fold_batch::PublicPolicy::default(),
         })
     }
     /// Full-model coordinator must also reject abandoned read capabilities.
@@ -401,7 +417,7 @@ impl Workspace {
                 l.width,
             );
         }
-        if !crate::status_fold_batch::selected() {
+        if !(self.public_grouped_status.state().0 || crate::status_fold_batch::selected()) {
             self.fold(arena, SN, count, fault)?;
         }
         self.project(
@@ -431,7 +447,7 @@ impl Workspace {
             l.streams,
             l.low,
         );
-        if !crate::status_fold_batch::selected() {
+        if !(self.public_grouped_status.state().0 || crate::status_fold_batch::selected()) {
             self.fold(arena, SL, count, fault)?;
         }
         self.project(
@@ -464,11 +480,15 @@ impl Workspace {
             l.streams,
             l.width,
         );
-        if crate::status_fold_batch::selected() {
+        if self.public_grouped_status.state().0 || crate::status_fold_batch::selected() {
             let views = [SN, SL, SM].map(|i| {
                 crate::status_fold_batch::View::new(self.ids[i], count, 0, l.widths[i], l.widths[i])
             });
-            crate::status_fold_batch::launch(arena, &views, fault)?;
+            if self.public_grouped_status.state().0 {
+                self.public_grouped_status.launch(arena, &views, fault)?;
+            } else {
+                crate::status_fold_batch::launch(arena, &views, fault)?;
+            }
         } else {
             self.fold(arena, SM, count, fault)?;
         }

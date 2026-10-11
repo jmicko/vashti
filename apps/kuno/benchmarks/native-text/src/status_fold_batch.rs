@@ -31,6 +31,169 @@ pub(crate) fn selected() -> bool {
 pub(crate) fn calls() -> u64 {
     CALLS.load(Ordering::Relaxed)
 }
+/// Model-local permission selects only the original target status spans. The
+/// legacy process-global experiment remains independent and cannot earn these
+/// actual dispatch receipts.
+#[derive(Default)]
+pub(crate) struct PublicPolicy {
+    selected: bool,
+    dispatched: u64,
+}
+impl PublicPolicy {
+    pub(crate) fn state(&self) -> (bool, u64) {
+        (self.selected, self.dispatched)
+    }
+    pub(crate) fn validate_selection(&self) -> Result<()> {
+        if self.dispatched != 0 {
+            return Err(Error::InvalidFormat(
+                "target grouped status selection after dispatch",
+            ));
+        }
+        Ok(())
+    }
+    /// Enclosing model preflights every workspace before changing any policy.
+    pub(crate) fn enable(&mut self) {
+        self.selected = true;
+    }
+    pub(crate) fn launch(
+        &mut self,
+        arena: &PrivateArena,
+        views: &[View],
+        fault: BufferId,
+    ) -> Result<()> {
+        let next = next_public_dispatch(self.selected, self.dispatched)?;
+        launch(arena, views, fault)?;
+        self.dispatched = next;
+        Ok(())
+    }
+}
+fn next_public_dispatch(selected: bool, current: u64) -> Result<u64> {
+    if !selected {
+        return Err(Error::InvalidFormat(
+            "unselected target grouped status dispatch",
+        ));
+    }
+    current.checked_add(1).ok_or(Error::ArithmeticOverflow)
+}
+
+/// Public counts only. A proposal joins every actual original target role and
+/// is published by the model only after all original family commits and health.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub(crate) struct Completed {
+    pub(crate) chunks: u64,
+    pub(crate) gr_dispatches: u64,
+    pub(crate) gdn_dispatches: u64,
+    pub(crate) qsa_dispatches: u64,
+}
+impl Completed {
+    pub(crate) fn dispatches(self) -> [u64; 3] {
+        [self.gr_dispatches, self.gdn_dispatches, self.qsa_dispatches]
+    }
+    pub(crate) fn propose(
+        self,
+        selected: bool,
+        before: [u64; 3],
+        after: [u64; 3],
+        expected: [u64; 3],
+    ) -> Result<Self> {
+        let accepted = [97u64, 36, 12].map(|n| self.chunks.checked_mul(n));
+        if accepted != self.dispatches().map(Some) {
+            return Err(Error::InvalidFormat(
+                "target grouped status prior accepted join",
+            ));
+        }
+        if before != self.dispatches() {
+            return Err(Error::InvalidFormat(
+                "target grouped status unaccepted dispatches",
+            ));
+        }
+        if !selected {
+            if self != Self::default() || after != before {
+                return Err(Error::InvalidFormat(
+                    "unselected target grouped status credit",
+                ));
+            }
+            return Ok(self);
+        }
+        // These are the real DASLab48 roles, including FinalAllRows GR.
+        if expected != [97, 36, 12] {
+            return Err(Error::InvalidFormat(
+                "target grouped status actual family inventory",
+            ));
+        }
+        for i in 0..3 {
+            if after[i].checked_sub(before[i]) != Some(expected[i]) {
+                return Err(Error::InvalidFormat(
+                    "target grouped status missing or surplus fold",
+                ));
+            }
+        }
+        Ok(Self {
+            chunks: self
+                .chunks
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow)?,
+            gr_dispatches: after[0],
+            gdn_dispatches: after[1],
+            qsa_dispatches: after[2],
+        })
+    }
+    pub(crate) fn receipt(self, selected: bool, actual: [u64; 3]) -> Result<(bool, Self)> {
+        if actual != self.dispatches() || selected == (self.chunks == 0) {
+            return Err(Error::InvalidFormat(
+                "target grouped status incomplete receipt",
+            ));
+        }
+        let expected = [97u64, 36, 12].map(|n| self.chunks.checked_mul(n));
+        if expected != self.dispatches().map(Some) {
+            return Err(Error::InvalidFormat(
+                "target grouped status accepted family join",
+            ));
+        }
+        Ok((selected, self))
+    }
+}
+
+#[cfg(test)]
+mod public_policy_tests {
+    use super::*;
+    #[test]
+    fn immutable_target_policy_does_not_change_the_old_global_flag() {
+        let global = selected();
+        let mut policy = PublicPolicy::default();
+        assert_eq!(policy.state(), (false, 0));
+        policy.validate_selection().unwrap();
+        assert!(next_public_dispatch(false, 0).is_err());
+        policy.enable();
+        assert_eq!(policy.state(), (true, 0));
+        assert_eq!(next_public_dispatch(true, 0).unwrap(), 1);
+        assert!(next_public_dispatch(true, u64::MAX).is_err());
+        policy.dispatched = 1;
+        assert!(policy.validate_selection().is_err());
+        assert_eq!(selected(), global);
+    }
+    #[test]
+    fn actual_completion_rejects_wrong_previous_credit_and_overflow() {
+        let bad = Completed {
+            chunks: 1,
+            ..Completed::default()
+        };
+        assert!(
+            bad.propose(true, [0; 3], [97, 36, 12], [97, 36, 12])
+                .is_err()
+        );
+        let bad = Completed {
+            chunks: u64::MAX,
+            ..Completed::default()
+        };
+        assert!(
+            bad.propose(true, [0; 3], [97, 36, 12], [97, 36, 12])
+                .is_err()
+        );
+        assert!(bad.receipt(true, [0; 3]).is_err());
+    }
+}
+
 pub(crate) struct View {
     region: BufferId,
     span: Zeroizing<[usize; 4]>,
@@ -311,6 +474,474 @@ pub(crate) fn probe(client: &ComputeClient<WgpuRuntime>, retired: Arc<AtomicBool
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
+    use wgpu::naga as n;
+
+    type Offline<T> = std::result::Result<T, &'static str>;
+
+    fn compiled_status_source(source: &str, members: usize) -> n::Module {
+        let module = n::front::wgsl::parse_str(source).unwrap();
+        let info = n::valid::Validator::new(
+            n::valid::ValidationFlags::all(),
+            n::valid::Capabilities::empty(),
+        )
+        .validate(&module)
+        .unwrap();
+        assert_eq!(module.entry_points.len(), 1);
+        assert_eq!(module.entry_points[0].workgroup_size, [64, 1, 1]);
+        assert!(module.functions.is_empty());
+        let mut bindings = Vec::new();
+        for (_, global) in module.global_variables.iter() {
+            let binding = global.binding.as_ref().unwrap();
+            assert_eq!(binding.group, 0);
+            bindings.push(binding.binding);
+            if binding.binding as usize == members + 1 {
+                assert_eq!(global.space, n::AddressSpace::Uniform);
+                let n::TypeInner::Array { base, stride, .. } = module.types[global.ty].inner else {
+                    panic!("status parameters are not an array");
+                };
+                assert_eq!(stride, 16);
+                let n::TypeInner::Struct { ref members, span } = module.types[base].inner else {
+                    panic!("status parameters are not a struct");
+                };
+                assert_eq!(span, 16);
+                assert_eq!(
+                    members.iter().map(|m| m.offset).collect::<Vec<_>>(),
+                    [0, 4, 8, 12]
+                );
+            } else {
+                let n::AddressSpace::Storage { access } = global.space else {
+                    panic!("unexpected status memory space");
+                };
+                assert_eq!(
+                    access.contains(n::StorageAccess::STORE),
+                    binding.binding as usize == members
+                );
+                let n::TypeInner::Array { base, stride, .. } = module.types[global.ty].inner else {
+                    panic!("status storage is not an array");
+                };
+                assert_eq!(stride, 4);
+                let scalar = match module.types[base].inner {
+                    n::TypeInner::Atomic(scalar) if binding.binding as usize == members => scalar,
+                    n::TypeInner::Scalar(scalar) if (binding.binding as usize) < members => scalar,
+                    _ => panic!("unexpected status/fault element type"),
+                };
+                assert_eq!(scalar.kind, n::ScalarKind::Uint);
+                assert_eq!(scalar.width, 4);
+            }
+        }
+        bindings.sort_unstable();
+        assert_eq!(bindings, (0..members as u32 + 2).collect::<Vec<_>>());
+        let words = n::back::spv::write_vec(
+            &module,
+            &info,
+            &n::back::spv::Options {
+                lang_version: (1, 3),
+                zero_initialize_workgroup_memory:
+                    n::back::spv::ZeroInitializeWorkgroupMemoryMode::None,
+                ..Default::default()
+            },
+            Some(&n::back::spv::PipelineOptions {
+                shader_stage: n::ShaderStage::Compute,
+                entry_point: "main".into(),
+            }),
+        )
+        .unwrap();
+        let mut atomic_ors = 0;
+        let mut at = 5;
+        while at < words.len() {
+            let length = (words[at] >> 16) as usize;
+            assert!(length > 0 && at + length <= words.len());
+            atomic_ors += usize::from(words[at] & 65535 == 241); // OpAtomicOr.
+            at += length;
+        }
+        assert_eq!(atomic_ors, members);
+        module
+    }
+
+    #[derive(Clone, Debug)]
+    enum Value {
+        Word(u32),
+        Bool(bool),
+        Id([u32; 3]),
+        Params([u32; 4]),
+        Global(u32, Vec<u32>),
+        Local(usize),
+    }
+    impl Value {
+        fn word(self) -> Offline<u32> {
+            match self {
+                Self::Word(value) => Ok(value),
+                _ => Err("expected word"),
+            }
+        }
+        fn boolean(self) -> Offline<bool> {
+            match self {
+                Self::Bool(value) => Ok(value),
+                _ => Err("expected boolean"),
+            }
+        }
+        fn index(self, index: u32) -> Offline<Self> {
+            match self {
+                Self::Id(id) => id
+                    .get(index as usize)
+                    .copied()
+                    .map(Self::Word)
+                    .ok_or("id index"),
+                Self::Params(params) => params
+                    .get(index as usize)
+                    .copied()
+                    .map(Self::Word)
+                    .ok_or("parameter index"),
+                Self::Global(binding, mut path) => {
+                    path.push(index);
+                    Ok(Self::Global(binding, path))
+                }
+                _ => Err("unexpected indexed value"),
+            }
+        }
+    }
+
+    // Interpret the generated Naga control flow, including Emit timing. An
+    // eagerly emitted storage load is observed even when its later branch is
+    // inactive; a handwritten copy of the shader's if expression would miss it.
+    struct Invocation<'a> {
+        module: &'a n::Module,
+        function: &'a n::Function,
+        params: &'a [[u32; 4]],
+        status: &'a [Vec<u32>],
+        id: [u32; 3],
+        fault: &'a mut u32,
+        touched: &'a mut BTreeSet<(usize, usize)>,
+        values: Vec<Option<Value>>,
+        locals: Vec<Option<Value>>,
+    }
+    impl Invocation<'_> {
+        fn expression(&mut self, handle: n::Handle<n::Expression>) -> Offline<Value> {
+            if let Some(value) = &self.values[handle.index()] {
+                return Ok(value.clone());
+            }
+            let value = match self.function.expressions[handle].clone() {
+                n::Expression::Literal(n::Literal::U32(value)) => Value::Word(value),
+                n::Expression::Literal(n::Literal::I32(value)) => {
+                    Value::Word(u32::try_from(value).map_err(|_| "negative word")?)
+                }
+                n::Expression::Literal(n::Literal::Bool(value)) => Value::Bool(value),
+                n::Expression::FunctionArgument(0) => Value::Id(self.id),
+                n::Expression::GlobalVariable(global) => Value::Global(
+                    self.module.global_variables[global]
+                        .binding
+                        .as_ref()
+                        .ok_or("unbound global")?
+                        .binding,
+                    Vec::new(),
+                ),
+                n::Expression::LocalVariable(local) => Value::Local(local.index()),
+                n::Expression::AccessIndex { base, index } => {
+                    self.expression(base)?.index(index)?
+                }
+                n::Expression::Access { base, index } => {
+                    let index = self.expression(index)?.word()?;
+                    self.expression(base)?.index(index)?
+                }
+                n::Expression::As { expr, .. } => self.expression(expr)?,
+                n::Expression::Load { pointer } => match self.expression(pointer)? {
+                    Value::Local(local) => {
+                        self.locals[local].clone().ok_or("uninitialized local")?
+                    }
+                    Value::Global(binding, path) if binding as usize == self.params.len() + 1 => {
+                        match path.as_slice() {
+                            [member] => Value::Params(
+                                *self.params.get(*member as usize).ok_or("uniform member")?,
+                            ),
+                            [member, field] => Value::Word(
+                                *self
+                                    .params
+                                    .get(*member as usize)
+                                    .and_then(|p| p.get(*field as usize))
+                                    .ok_or("uniform field")?,
+                            ),
+                            _ => return Err("uniform load shape"),
+                        }
+                    }
+                    Value::Global(binding, path) if (binding as usize) < self.params.len() => {
+                        let member = binding as usize;
+                        let [count, first, stride, width] = self.params[member];
+                        if self.id[1] >= count || self.id[0] >= width {
+                            return Err("inactive status read");
+                        }
+                        let [index] = path.as_slice() else {
+                            return Err("status load shape");
+                        };
+                        if *index != first + self.id[1] * stride + self.id[0] {
+                            return Err("wrong active status span");
+                        }
+                        let word = *self.status[member]
+                            .get(*index as usize)
+                            .ok_or("out of bounds status read")?;
+                        if !self.touched.insert((member, *index as usize)) {
+                            return Err("duplicate status read");
+                        }
+                        Value::Word(word)
+                    }
+                    _ => return Err("unexpected storage load"),
+                },
+                n::Expression::Binary { op, left, right } => {
+                    let left = self.expression(left)?;
+                    let right = self.expression(right)?;
+                    match op {
+                        n::BinaryOperator::Add => {
+                            Value::Word(left.word()?.wrapping_add(right.word()?))
+                        }
+                        n::BinaryOperator::Multiply => {
+                            Value::Word(left.word()?.wrapping_mul(right.word()?))
+                        }
+                        n::BinaryOperator::Less => Value::Bool(left.word()? < right.word()?),
+                        n::BinaryOperator::NotEqual => Value::Bool(left.word()? != right.word()?),
+                        n::BinaryOperator::LogicalAnd => {
+                            Value::Bool(left.boolean()? && right.boolean()?)
+                        }
+                        _ => return Err("unexpected binary operator"),
+                    }
+                }
+                _ => return Err("unexpected generated expression"),
+            };
+            self.values[handle.index()] = Some(value.clone());
+            Ok(value)
+        }
+        fn block(&mut self, block: &n::Block) -> Offline<()> {
+            for statement in block {
+                match statement {
+                    n::Statement::Emit(range) => {
+                        for handle in range.clone() {
+                            self.expression(handle)?;
+                        }
+                    }
+                    n::Statement::If {
+                        condition,
+                        accept,
+                        reject,
+                    } => {
+                        if self.expression(*condition)?.boolean()? {
+                            self.block(accept)?;
+                        } else {
+                            self.block(reject)?;
+                        }
+                    }
+                    n::Statement::Store { pointer, value } => {
+                        let Value::Local(local) = self.expression(*pointer)? else {
+                            return Err("nonlocal store");
+                        };
+                        let value = self.expression(*value)?;
+                        self.locals[local] = Some(value);
+                    }
+                    n::Statement::Atomic {
+                        pointer,
+                        fun,
+                        value,
+                        result,
+                    } => {
+                        if *fun != n::AtomicFunction::InclusiveOr {
+                            return Err("non-OR atomic");
+                        }
+                        let Value::Global(binding, path) = self.expression(*pointer)? else {
+                            return Err("non-global atomic");
+                        };
+                        if binding as usize != self.params.len()
+                            || path != [0]
+                            || self.expression(*value)?.word()? != 2
+                        {
+                            return Err("wrong fault mutation");
+                        }
+                        let old = *self.fault;
+                        *self.fault |= 2;
+                        if let Some(result) = result {
+                            self.values[result.index()] = Some(Value::Word(old));
+                        }
+                    }
+                    n::Statement::Block(block) => self.block(block)?,
+                    n::Statement::Return { value: None } => return Ok(()),
+                    _ => return Err("unexpected generated statement"),
+                }
+            }
+            Ok(())
+        }
+    }
+    fn invoke(
+        module: &n::Module,
+        params: &[[u32; 4]],
+        status: &[Vec<u32>],
+        id: [u32; 3],
+        fault: &mut u32,
+        touched: &mut BTreeSet<(usize, usize)>,
+    ) -> Offline<()> {
+        let function = &module.entry_points[0].function;
+        let mut invocation = Invocation {
+            module,
+            function,
+            params,
+            status,
+            id,
+            fault,
+            touched,
+            values: vec![None; function.expressions.len()],
+            locals: vec![None; function.local_variables.len()],
+        };
+        for (local, variable) in function.local_variables.iter() {
+            if let Some(init) = variable.init {
+                let value = invocation.expression(init)?;
+                invocation.locals[local.index()] = Some(value);
+            }
+        }
+        invocation.block(&function.body)
+    }
+    fn grouped_dispatch(
+        module: &n::Module,
+        params: &[[u32; 4]],
+        status: &[Vec<u32>],
+        prior: u32,
+    ) -> (u32, BTreeSet<(usize, usize)>) {
+        let width = params.iter().map(|p| p[3]).max().unwrap().div_ceil(64) * 64;
+        let count = params.iter().map(|p| p[0]).max().unwrap();
+        let mut fault = prior;
+        let mut touched = BTreeSet::new();
+        for y in 0..count {
+            for x in 0..width {
+                invoke(module, params, status, [x, y, 0], &mut fault, &mut touched).unwrap();
+            }
+        }
+        (fault, touched)
+    }
+    // Independent original schedule: each scalar fold visits only the active
+    // width of its own strided rows, with no shared maximum or rounded grid.
+    fn original_scalar_folds(
+        params: &[[u32; 4]],
+        status: &[Vec<u32>],
+        prior: u32,
+    ) -> (u32, BTreeSet<(usize, usize)>) {
+        let mut fault = prior;
+        let mut touched = BTreeSet::new();
+        for (member, &[count, first, stride, width]) in params.iter().enumerate() {
+            for (token, row) in status[member][first as usize..]
+                .chunks(stride as usize)
+                .take(count as usize)
+                .enumerate()
+            {
+                for (element, &word) in row.iter().take(width as usize).enumerate() {
+                    touched.insert((member, first as usize + token * stride as usize + element));
+                    if word != 1 {
+                        fault |= 2;
+                    }
+                }
+            }
+        }
+        (fault, touched)
+    }
+
+    #[test]
+    fn generated_status3_5_8_memory_and_exact_active_spans_match_original_folds() {
+        let widths = [1, 2, 3, 5, 63, 64, 65, 129, 257];
+        for members in [3, 5, 8] {
+            let module = compiled_status_source(&Kernel(members as u8).source(), members);
+            for count in [1, 2, 3, 5, 8] {
+                for offset in 0..3 {
+                    let params: Vec<[u32; 4]> = (0..members)
+                        .map(|i| {
+                            let width = widths[(i + offset) % widths.len()];
+                            [
+                                count - i as u32 % count,
+                                (i + offset) as u32 % 4,
+                                width + i as u32 % 3 + 1,
+                                width,
+                            ]
+                        })
+                        .collect();
+                    let mut status: Vec<Vec<u32>> = params
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &[active, first, stride, width])| {
+                            let mut owner =
+                                vec![[0, 9, u32::MAX][i % 3]; (first + 8 * stride + 7) as usize];
+                            for row in owner[first as usize..]
+                                .chunks_mut(stride as usize)
+                                .take(active as usize)
+                            {
+                                row[..width as usize].fill(1);
+                            }
+                            crate::resident_batch_projection::validate_view(
+                                active as usize,
+                                first as usize,
+                                stride as usize,
+                                width as usize,
+                                owner.len(),
+                            )
+                            .unwrap();
+                            owner
+                        })
+                        .collect();
+                    assert_eq!(
+                        grouped_dispatch(&module, &params, &status, 0),
+                        original_scalar_folds(&params, &status, 0)
+                    );
+                    for member in 0..members {
+                        let [active, first, stride, width] = params[member];
+                        for (x, y) in [(0, 0), (width - 1, active - 1)] {
+                            let index = (first + y * stride + x) as usize;
+                            for bad in [0, 2, u32::MAX] {
+                                status[member][index] = bad;
+                                for prior in [0, 8, u32::MAX] {
+                                    let mut fault = prior;
+                                    invoke(
+                                        &module,
+                                        &params,
+                                        &status,
+                                        [x, y, 0],
+                                        &mut fault,
+                                        &mut BTreeSet::new(),
+                                    )
+                                    .unwrap();
+                                    assert_eq!(
+                                        fault,
+                                        original_scalar_folds(&params, &status, prior).0
+                                    );
+                                }
+                            }
+                            status[member][index] = 1;
+                        }
+                    }
+                    for (owner, &[active, first, stride, width]) in status.iter_mut().zip(&params) {
+                        owner[(first + (active - 1) * stride + width - 1) as usize] = 0;
+                    }
+                    assert_eq!(
+                        grouped_dispatch(&module, &params, &status, 8),
+                        original_scalar_folds(&params, &status, 8)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn generated_guard_proof_rejects_a_hoisted_inactive_storage_read() {
+        let source = Kernel(3).source();
+        let read = "status0[params[0].first+id.y*params[0].stride+id.x]";
+        let hoisted = source.replacen(read, "eager_status0", 1).replacen(
+            "id:vec3<u32>) {\n",
+            &format!("id:vec3<u32>) {{\nlet eager_status0={read};\n"),
+            1,
+        );
+        assert_ne!(source, hoisted);
+        let module = compiled_status_source(&hoisted, 3);
+        let params = [[1, 0, 1, 1], [3, 0, 65, 65], [2, 0, 3, 3]];
+        let status = [vec![1; 8], vec![1; 8 * 65], vec![1; 8 * 3]];
+        for id in [[1, 0, 0], [0, 1, 0]] {
+            assert_eq!(
+                invoke(&module, &params, &status, id, &mut 0, &mut BTreeSet::new()),
+                Err("inactive status read")
+            );
+        }
+    }
+
     #[test]
     fn original_active_status_predicates_and_uniform_layout_validate_offline() {
         for n in [3, 5, 8] {
