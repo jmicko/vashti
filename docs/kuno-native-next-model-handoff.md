@@ -5,41 +5,42 @@ Canonical Vashti/public APIs/installed services remain unchanged. Work checkout
 is `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
 `codex/kuno-native-text`. Required Vashti changes:none.
 
-Latest physical paired-GU v151/e3983c3 artifactSHA256
-`8e89cf791965ff95e9e1afbd3a183c77f4c274079ee08ac8dfeb404fe90101ae`
-passes original complete CPU13/real repair/all owners and recovered host. Normal
-public code200 is199/28.098057325s=7.08234 continuation tokens/s; this is slower
-than historical v150 four-DOWN/shared-Q8-head8.48473. No same-artifact v151 normal
-control was measured. Paired GU remains default-off. v150's8.11952/8.48473 ordered
-pair (+4.50%) remains preliminary, without ABBA/prose/independent CPU200.
-No30tokens/s or production acceptance. Exact numeric results are in root receipt
-sections v150_rows_shared_head_physical and v151_paired_gu_physical.
+Latest fully tested source: three-member parent226e3fe with Python admission
+1db3d8c. Frozen v155 binarySHA256
+`f55bcf49f4f936f9cd049514103761191d2afb58e069151d8fb38117d53861c7`
+passes complete original cold/warm CPU13 vectors/carries/greedy decisions,
+real-prefix repair, actual three-member/four-DOWN/shared-Q8-head flags and full
+owner/source/draft closure. Warm12-token diagnostic is5.471858tokens/s; it is
+not a normal-generation throughput result. Normal code200 completed at
+8.094793 continuationt/s (199/24.583703122s), with130/138 drafts accepted,
+69rounds, full repair and all closure proofs. No matched control was run; no
+gain established versus historicalv1508.484726, so the alternative stays off.
+Five new Python checks,110 existing,9 exact fixed-label scopes/caps and strict
+all-target direct Clippy pass. Actual attachment now reconstructs the arithmetic
+flag through the same tested helper as source construction. No new owners.
 
-Packed HOST staging leafd640ab2/c3b5f8d is now integrated through bounded
-construction reservations, full owner/source proofs, exact dispatch, public
-selectors and actual completed-policy/copy counters. Source gate passes5leaf
-checks,3parent parser/actual-dispatch checks,110Python tests,9fixed-label flag/
-scope/memory checks, strict direct all-target Clippy, fmt/diff. Full GPU original
-CPU13 and normal same-artifact timing remain pending. See the final all-row plan
-contract and staging leaf note. Do not claim source-only checks prove speed.
+Packed HOST staging v154/3de1529d passed the same full gate but its normal
+code200 result was7.870304 continuationtokens/s (199/25.284918616s), below
+historical v150 four-DOWN/shared-Q8-head8.484726. No same-artifact control, so no
+causal regression claim. It remains default off. All three32MiB staging owners
+were included in1383MAIN/929529856B full closure;432HOST pages freed36147609600B.
+See v154_packed_staging_physical and v155_three_member_arithmetic_physical in
+`apps/kuno/benchmarks/text/receipts/native-strata-optimization-20261009.json`.
 
-v152/c3e9403 stopped before target allocation because a separate executor MAIN
-extent guard lacked the staged inventory. It recovered both GPUs/services with
-no faults. The followup threads explicit executor staging authority, Config
-parity and exact charged bytes, with4focused root checks and strict Clippy passing.
-Freeze a new artifact and rerun the full gate; v152 has no physical acceptance.
+Existing Q2 draft profile is already implemented; new explicit combined helper
+labels retain the -gpu-host suffix, full original-shard verification and omit
+Q8 head policies. Nine Q2 combined profile/flags/caps checks pass. Full original
+GPU gate/normal comparison with current target variants remains pending. Old
+Q2 labels retain their old meaning. Root helper SHA is captured per trial.
+A three-token original-arithmetic streaming GDN leaf/parent is in isolated
+agent worktrees; it is not yet integrated or physically accepted. It targets
+the dynamically indexed128F32 state-column array, with no weaker proof contract.
 
-v153/e56e466 blocked before inference because staging construction reacquired
-MAIN via healthy()/active. Only the owned benchmark unit was stopped; helper
-recovery at13:58:14UTC returned baseline GPUs/healthy services/idle admission and
-zero faults. No full-erasure/acceptance claim for the aborted process. Constructor
-now uses the borrowed origin token and independent poison/arena checks; held-lock
-token regression and strict Clippy pass. Another fresh GPU gate is required.
-
-Last recovered host2026-10-11 13:39:03UTC: same boot, B70baseline50,688,000B,
-NVIDIA compute0, admission unpaused/idle/no recovery, allthree HTTP200, GPU faults0.
-This is historical evidence; verify current state before a new trial. Sudo was
-refreshed after the completed trial. No runtime installation or API/UI work.
+Last recovered host2026-10-11T14:28:19.601071UTC: same boot, B70baseline50688000B,
+NVIDIA compute0, unpaused idle/no recovery, HTTP200 for allthree services, GPU
+faults0. This is historical evidence; root currently owns the subsequent Q2 warm gate.
+No30tokens/s, independentCPU200 or private/production acceptance. No runtime
+installation, API/UI work, release or other task messaging.
 
 ## Historical stop checkpoint from 2026-10-10
 

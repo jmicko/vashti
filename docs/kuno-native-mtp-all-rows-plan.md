@@ -694,8 +694,12 @@ and positive accepted original frozen-source dispatches. Cold CPU13 remains fals
 warm/language must match actual requested selection. Six focused checks pass
 (3leaf C/SIMT/Checked+Unchecked SPIR-V None proofs and3root canonical parser/
 all48 actual entrypoint composition checks), strict pure-direct all-target Clippy
-including tests passes. Protected launcher/fixed-trial selection and full GPU
-acceptance/normal language speed are still pending at this source checkpoint.
+including tests passes. Python admission1db3d8c adds5focusedchecks;110existing
+checks and9external strict labels/caps pass. Frozenv155/226e3fe passed complete
+originalCPU13 cold/warm/real-repair/fullclose and actual three-member dispatch;
+warm12-token diagnostic5.471858t/s is not normal throughput. Normalcode200
+8.094793continuationt/s passed full repair/closure; no same-artifact control or
+improvement established versus historicalv1508.484726. The flag remains off.
 Required Vashti changes:none; installed services remain unchanged.
 
 v154/3de1529d passed the complete original CPU13 cold/warm vectors/carries,

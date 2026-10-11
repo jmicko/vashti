@@ -3295,3 +3295,32 @@ admission/no faults returned at13:58:14UTC. Full owner erasure is not claimed fo
 that aborted public-only process. The fix retains borrowed construction origin,
 poison and full arena/owner checks without locking MAIN again; held-lock token
 test and strict direct Clippy pass. Fresh original GPU acceptance remains pending.
+
+
+### Active native optimization checkpoint: three-member arithmetic,2026-10-11
+
+Supersedes the pending packed-staging acceptance above. Constructor fixes
+3de1529d passed full original CPU13/repair/all-owner gate in v154. Normal code200
+packed staging/four-DOWN/shared-Q8-head is7.870304 continuationt/s; no same-artifact
+control or speed gain claimed, and the alternative stays default off. Numerical
+and physical closure evidence is in v154_packed_staging_physical.
+
+Three-member kernel leaf6473be6 and parent226e3fe plus protected policy1db3d8c
+pass6focusedRustchecks, strict all-target directClippy,5new/110existingPython
+checks and9strict helperlabels/caps. It keeps tile8/MAX8 owners and every retained
+F32 operation, only removing unreachable arithmetic cells3..7. Original-source
+construction and attachment share the exact geometry reconstruction. Frozenv155
+passed full originalCPU13 and actual completed three-member/four-DOWN/shared-head
+flags, full1380MAIN/828866560B and432HOST-page36147609600B closure, and zero draft
+reservations. Warm12-token5.471858 diagnostic does not establish normal speed;
+normalcode200 completed at8.094793continuationt/s (199/24.583703122s),
+130/138drafts/69rounds, full repair/closure. No matched control or speed gain
+established; defaultoff retained. Exact source/binary/helper hashes and recovered
+snapshot14:28:19UTC are under v155_three_member_arithmetic_physical.
+
+Next comparisons: already-supported original Q2 MTP with current frozen target
+(explicit new labels, original shard hashing, no Q8-head policy); separately,
+isolated original-arithmetic three-token GDN streaming source to remove a large
+private column array. Neither is physically accepted yet. Root owns all shared
+GPU/services. Backend-only lab; required Vashti changes:none, installed services
+and public API unchanged. No30tokens/s or release/production acceptance.
