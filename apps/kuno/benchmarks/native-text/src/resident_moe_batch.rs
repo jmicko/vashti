@@ -541,6 +541,7 @@ impl Workspace {
         self.validate_ids(arena)?;
         if self.poison.load(Ordering::Acquire)
             || self.prepared_verify3.is_some()
+            || self.frozen_gu_integer.is_some()
             || self.live_member_reduction_enabled()
             || self.hybrid.is_some()
             || self.resident_router.is_some()
@@ -583,6 +584,7 @@ impl Workspace {
             || self.public_existing_fill
             || self.live_member_reduction_enabled()
             || self.prepared_verify3.is_some()
+            || self.frozen_gu_integer.is_some()
             || self.policy.phase != Phase::Idle
             || *self.policy.chunk != 0
             || (overlap && !operator.workers_pooled())
@@ -1149,8 +1151,8 @@ impl Workspace {
                 }
             }
         }
-        if let Some(id) = self.frozen_gu_integer {
-            if self.ids.contains(&id)
+        if let Some(id) = self.frozen_gu_integer
+            && (self.ids.contains(&id)
                 || self.batch_router_ids().is_none_or(|ids| ids.contains(&id))
                 || self.frozen_staging.is_some()
                 || self.hybrid.is_some()
@@ -1159,10 +1161,9 @@ impl Workspace {
                 || self.live_member_reduction_enabled()
                 || !arena.public_owned_zero_audit_enabled()
                 || arena.layout(id).map_err(u::fault)?
-                    != BufferLayout::new(FROZEN_GU_INTEGER_SCRATCH_WORDS).map_err(u::fault)?
-            {
-                return Err(err("frozen GU integer complete owner layout"));
-            }
+                    != BufferLayout::new(FROZEN_GU_INTEGER_SCRATCH_WORDS).map_err(u::fault)?)
+        {
+            return Err(err("frozen GU integer complete owner layout"));
         }
         if let Some(id) = self.prepared_verify3
             && (self.hybrid.is_some()
@@ -2633,6 +2634,7 @@ impl Workspace {
                     Some(&p.pins),
                     router,
                     self.frozen_staging_owner_ids().as_ref(),
+                    self.frozen_gu_integer_owner_id(),
                 ),
                 None => source.physical(arena, *p.layer, bank, &ids, s.stamp.fault, Some(&p.pins)),
             };

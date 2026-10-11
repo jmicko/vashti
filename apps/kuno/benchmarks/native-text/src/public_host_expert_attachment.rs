@@ -167,6 +167,50 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
         three_members: bool,
         cancel: &AtomicBool,
     ) -> Result<Attachment<'plan, 'model, 'file>> {
+        // SAFETY: forwards the same caller contract with original math.
+        unsafe {
+            self.attach_with_gu_math(
+                device,
+                client,
+                executor,
+                workspace,
+                arena,
+                exact_reserved_host,
+                inactive_partition_exit,
+                private_tables,
+                workgroup_tables,
+                shared_down_scales,
+                shared_gate_up_factors,
+                four_row_down,
+                two_row_gate_up,
+                packed_host_staging,
+                three_members,
+                false,
+                cancel,
+            )
+        }
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) unsafe fn attach_with_gu_math<'plan>(
+        &'plan self,
+        device: &wgpu::Device,
+        client: &ComputeClient<WgpuRuntime>,
+        executor: &mut GpuExecutor<'file>,
+        workspace: &mut batch_moe::Workspace,
+        arena: &PrivateArena,
+        exact_reserved_host: u64,
+        inactive_partition_exit: bool,
+        private_tables: bool,
+        workgroup_tables: bool,
+        shared_down_scales: bool,
+        shared_gate_up_factors: bool,
+        four_row_down: bool,
+        two_row_gate_up: bool,
+        packed_host_staging: bool,
+        three_members: bool,
+        gu_integer: bool,
+        cancel: &AtomicBool,
+    ) -> Result<Attachment<'plan, 'model, 'file>> {
         u::cancel(cancel)?;
         Sources::validate_kernel_policies(
             inactive_partition_exit,
@@ -194,6 +238,23 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
             shared_gate_up_factors,
             two_row_gate_up,
         )?;
+        Sources::validate_gu_integer_policy(
+            gu_integer,
+            inactive_partition_exit,
+            private_tables,
+            workgroup_tables,
+            shared_down_scales,
+            shared_gate_up_factors,
+            two_row_gate_up,
+            packed_host_staging,
+            three_members,
+        )?;
+        if gu_integer != executor.target_frozen_gu_integer_reserved
+            || gu_integer != workspace.frozen_gu_integer_owner_id().is_some()
+            || gu_integer && !executor.target_frozen_host_router_reserved
+        {
+            return Err(rejected());
+        }
         if three_members && !executor.target_frozen_host_router_reserved {
             return Err(rejected());
         }
@@ -309,14 +370,15 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
         if owners.len() != mirror::PAGES || registered.len() != mirror::PAGES {
             return Err(rejected());
         }
-        let sources = if three_members
+        let sources = if gu_integer
+            || three_members
             || packed_host_staging
             || two_row_gate_up
             || four_row_down
             || shared_gate_up_factors
             || shared_down_scales && (private_tables || workgroup_tables)
         {
-            Sources::new_with_policy(
+            Sources::new_with_policy_and_gu_math(
                 executor,
                 self.graph,
                 &self.plan,
@@ -331,6 +393,7 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
                 two_row_gate_up,
                 packed_host_staging,
                 three_members,
+                gu_integer,
             )
         } else if workgroup_tables {
             Sources::new_with_workgroup_tables(

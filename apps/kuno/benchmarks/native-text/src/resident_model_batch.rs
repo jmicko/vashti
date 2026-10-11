@@ -875,6 +875,9 @@ impl Plan {
                 "frozen host staging copy device limits",
             ));
         }
+        if config.public_frozen_gu_integer {
+            crate::quant_matvec::frozen_gu_integer::validate_limits(&config.limits)?;
+        }
         config.qsa_host_reservation()?;
         frozen_host_source_configuration(
             config.public_frozen_host_sources,
@@ -2378,6 +2381,46 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         three_members: bool,
         cancel: &AtomicBool,
     ) -> Result<crate::public_host_expert_attachment::Attachment<'plan, 'm, 'f>> {
+        // SAFETY: forwards the same caller contract with original math.
+        unsafe {
+            self.attach_public_host_sources_with_gu_math(
+                executor,
+                prepared,
+                device,
+                reserved,
+                inactive_partition_exit,
+                private_tables,
+                workgroup_tables,
+                shared_down_scales,
+                shared_gate_up_factors,
+                four_row_down,
+                two_row_gate_up,
+                packed_host_staging,
+                three_members,
+                false,
+                cancel,
+            )
+        }
+    }
+    #[allow(clippy::too_many_arguments)] // Explicit immutable source policies belong to this attachment.
+    pub(crate) unsafe fn attach_public_host_sources_with_gu_math<'plan>(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+        prepared: &'plan crate::public_host_expert_attachment::PreparedPlan<'m, 'f>,
+        device: &wgpu::Device,
+        reserved: u64,
+        inactive_partition_exit: bool,
+        private_tables: bool,
+        workgroup_tables: bool,
+        shared_down_scales: bool,
+        shared_gate_up_factors: bool,
+        four_row_down: bool,
+        two_row_gate_up: bool,
+        packed_host_staging: bool,
+        three_members: bool,
+        gu_integer: bool,
+        cancel: &AtomicBool,
+    ) -> Result<crate::public_host_expert_attachment::Attachment<'plan, 'm, 'f>> {
         u::cancel(cancel)?;
         if self.poisoned
             || self.retired.load(Ordering::Acquire)
@@ -2389,7 +2432,23 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             return Err(error());
         }
         let native = self.native_batch.as_ref().ok_or(error())?;
-        if !native.public_frozen_host_sources || native.moe.frozen_host_sources_enabled() {
+        if !native.public_frozen_host_sources
+            || native.moe.frozen_host_sources_enabled()
+            || gu_integer
+                && (native.target_rows.is_none()
+                    || !native.latest_target_checkpoint_reserved
+                    || native.public_target_request_io.is_some()
+                        == native.public_language_request_io.is_some()
+                    || !executor.target_frozen_gu_integer_reserved
+                    || !executor.target_verify3_dense
+                    || !executor.target_verify3_fused
+                    || !executor.token_io_checkpoint
+                    || !self.admission.deferred_token_io()
+                    || !self.admission.transient_io()
+                    || native.dense_member_capacity != 8
+                    || executor.native_projection_tile() != 8
+                    || executor.native_projection_member_capacity() != 8)
+        {
             return Err(error());
         }
         if self.position == 0 {
@@ -2411,7 +2470,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         // SAFETY: fixed-public caller verified original source hashes and
         // immutability. All actual bank/family/device checks above precede import.
         unsafe {
-            prepared.attach(
+            prepared.attach_with_gu_math(
                 device,
                 self.arena.client().map_err(u::fault)?,
                 executor,
@@ -2427,6 +2486,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 two_row_gate_up,
                 packed_host_staging,
                 three_members,
+                gu_integer,
                 cancel,
             )
         }
@@ -2536,6 +2596,18 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             return Err(error());
         }
         native.moe.frozen_host_source_three_members()
+    }
+    #[allow(dead_code)] // Root owns public receipt registration.
+    pub(crate) fn native_frozen_source_gu_integer(
+        &self,
+        executor: &GpuExecutor<'_>,
+    ) -> Result<bool> {
+        self.completed_native_projection_boundary(executor)?;
+        let native = self.native_batch.as_ref().ok_or(error())?;
+        if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
+            return Err(error());
+        }
+        native.moe.frozen_host_source_gu_integer()
     }
     pub(crate) fn native_frozen_source_packed_staging(
         &self,

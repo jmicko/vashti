@@ -124,7 +124,7 @@ const FIRST: [usize; 5] = [0, 72, 144, 288, 432];
 const ROLES: [Role; 3] = [Role::Gate, Role::Up, Role::Down];
 const PAGES: usize = 15;
 const EXTENTS: usize = 8 + PAGES;
-const ROUTER_EXTENTS: usize = EXTENTS + 3 + 3;
+const ROUTER_EXTENTS: usize = EXTENTS + 3 + 3 + 1;
 pub(crate) const ROUTER_MAIN_BYTES: u64 = super::batch_router::MAIN_BYTES;
 pub(crate) const ROUTER_RUNTIME_BYTES: u64 = super::batch_router::RUNTIME_BYTES;
 pub(crate) const ROUTER_HOST_BYTES: u64 = super::batch_router::HOST_BYTES as u64;
@@ -226,6 +226,7 @@ pub(crate) struct Sources {
     layers: Vec<Layer>,
     metadata_bytes: usize,
     packed_host_staging: bool,
+    gu_integer: bool,
 }
 fn initial_metadata(layers: usize, pages: usize, banks: usize) -> Result<usize> {
     let bytes = std::mem::size_of::<Sources>()
@@ -414,6 +415,32 @@ impl Sources {
         }
         Ok(())
     }
+    #[allow(clippy::too_many_arguments)] // Independent immutable source-policy axes.
+    pub(crate) fn validate_gu_integer_policy(
+        selected: bool,
+        exit: bool,
+        private: bool,
+        workgroup: bool,
+        scales: bool,
+        factors: bool,
+        paired_gu: bool,
+        staging: bool,
+        three_members: bool,
+    ) -> Result<()> {
+        if selected
+            && (!exit
+                || private
+                || workgroup
+                || scales
+                || factors
+                || paired_gu
+                || staging
+                || three_members)
+        {
+            return Err(reject());
+        }
+        Ok(())
+    }
     pub(crate) fn validate_staging_policy(
         selected: bool,
         inactive_partition_exit: bool,
@@ -473,6 +500,42 @@ impl Sources {
         packed_host_staging: bool,
         three_members: bool,
     ) -> Result<Arc<Self>> {
+        Self::new_with_policy_and_gu_math(
+            executor,
+            graph,
+            plan,
+            pages,
+            reserved_host_bytes,
+            inactive_partition_exit,
+            private_tables,
+            workgroup_tables,
+            shared_down_scales,
+            shared_gate_up_factors,
+            four_row_down,
+            two_row_gate_up,
+            packed_host_staging,
+            three_members,
+            false,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_with_policy_and_gu_math(
+        executor: &GpuExecutor<'_>,
+        graph: BoundGraph<'_, '_>,
+        plan: &plan::Plan<'_, '_>,
+        pages: Vec<RegisteredPage>,
+        reserved_host_bytes: u64,
+        inactive_partition_exit: bool,
+        private_tables: bool,
+        workgroup_tables: bool,
+        shared_down_scales: bool,
+        shared_gate_up_factors: bool,
+        four_row_down: bool,
+        two_row_gate_up: bool,
+        packed_host_staging: bool,
+        three_members: bool,
+        gu_integer: bool,
+    ) -> Result<Arc<Self>> {
         Self::validate_kernel_policies(
             inactive_partition_exit,
             private_tables,
@@ -499,6 +562,30 @@ impl Sources {
             shared_gate_up_factors,
             two_row_gate_up,
         )?;
+        Self::validate_gu_integer_policy(
+            gu_integer,
+            inactive_partition_exit,
+            private_tables,
+            workgroup_tables,
+            shared_down_scales,
+            shared_gate_up_factors,
+            two_row_gate_up,
+            packed_host_staging,
+            three_members,
+        )?;
+        if gu_integer != executor.target_frozen_gu_integer_reserved
+            || gu_integer
+                && (!executor.target_frozen_host_router_reserved
+                    || !executor.target_batch_router_reserved
+                    || !executor.target_rows_reserved
+                    || !executor.target_verify3_dense
+                    || !executor.target_verify3_fused
+                    || !executor.token_io_checkpoint
+                    || executor.native_projection_tile() != 8
+                    || executor.native_projection_member_capacity() != 8)
+        {
+            return Err(reject());
+        }
         if three_members && !executor.target_frozen_host_router_reserved {
             return Err(reject());
         }
@@ -572,6 +659,9 @@ impl Sources {
                 geometry = geometry.with_two_row_gate_up().map_err(err)?;
             }
             geometry = three_member_geometry(geometry, three_members)?;
+            if gu_integer {
+                crate::quant_matvec::frozen_gu_integer::validate_geometry(geometry)?;
+            }
             let layer_bound = StagedSlots::bounded_native_metadata_bytes(144)
                 .map_err(|_| reject())?
                 .checked_add(512 * std::mem::size_of::<u16>())
@@ -717,7 +807,11 @@ impl Sources {
             layers,
             metadata_bytes,
             packed_host_staging,
+            gu_integer,
         }))
+    }
+    pub(crate) fn gu_integer(&self) -> bool {
+        self.gu_integer
     }
     pub(crate) fn three_members(&self) -> bool {
         self.layers[0].geometry.three_member_arithmetic()
@@ -887,7 +981,17 @@ impl Sources {
         fault: BufferId,
         pending_pins: Option<&[Handle]>,
     ) -> Result<()> {
-        self.physical_inner(arena, layer, bank, ids, fault, pending_pins, &[], None)
+        self.physical_inner(
+            arena,
+            layer,
+            bank,
+            ids,
+            fault,
+            pending_pins,
+            &[],
+            None,
+            None,
+        )
     }
     #[allow(clippy::too_many_arguments)]
     pub(super) fn physical_with_router(
@@ -900,6 +1004,7 @@ impl Sources {
         pending_pins: Option<&[Handle]>,
         router: &[BufferId; 3],
         staging: Option<&[BufferId; 3]>,
+        gu_integer: Option<BufferId>,
     ) -> Result<()> {
         self.physical_inner(
             arena,
@@ -910,6 +1015,7 @@ impl Sources {
             pending_pins,
             router,
             staging,
+            gu_integer,
         )
     }
     #[allow(clippy::too_many_arguments)]
@@ -923,10 +1029,13 @@ impl Sources {
         pending_pins: Option<&[Handle]>,
         router: &[BufferId],
         staging: Option<&[BufferId; 3]>,
+        gu_integer: Option<BufferId>,
     ) -> Result<()> {
         if !matches!(router.len(), 0 | 3)
             || self.packed_host_staging != staging.is_some()
             || staging.is_some() && router.len() != 3
+            || self.gu_integer != gu_integer.is_some()
+            || gu_integer.is_some() && (router.len() != 3 || staging.is_some())
         {
             return Err(reject());
         }
@@ -935,7 +1044,7 @@ impl Sources {
         bank.check_client(client)?;
         let stream = arena.handle(fault).map_err(u::fault)?.stream;
         let stage_ids = staging.map_or(&[][..], |ids| &ids[..]);
-        let private = 8 + router.len() + stage_ids.len();
+        let private = 8 + router.len() + stage_ids.len() + usize::from(gu_integer.is_some());
         let extent_count = private + PAGES;
         let mut handles = Vec::with_capacity(extent_count);
         let mut extents = Zeroizing::new([(0u64, 0u64); ROUTER_EXTENTS]);
@@ -945,6 +1054,7 @@ impl Sources {
             .chain(std::iter::once(fault))
             .chain(router.iter().copied())
             .chain(stage_ids.iter().copied())
+            .chain(gu_integer)
             .enumerate()
         {
             if ids[..i.min(ids.len())].contains(&id) {
@@ -953,7 +1063,17 @@ impl Sources {
             let h = arena.handle(id).map_err(u::fault)?;
             let bytes = arena.layout(id).map_err(u::fault)?.owned_bytes as u64;
             full_handle(h, bytes)?;
-            if i >= 8 + router.len() && bytes != FROZEN_STAGING_OWNER_BYTES {
+            if i >= 8 + router.len()
+                && i < 8 + router.len() + stage_ids.len()
+                && bytes != FROZEN_STAGING_OWNER_BYTES
+            {
+                return Err(reject());
+            }
+            if gu_integer == Some(id)
+                && (bytes != FROZEN_GU_INTEGER_MAIN_BYTES
+                    || arena.layout(id).map_err(u::fault)?.logical_words
+                        != FROZEN_GU_INTEGER_SCRATCH_WORDS)
+            {
                 return Err(reject());
             }
             if h.stream != stream || is_public_external_binding(&h.clone().binding()) {
@@ -1100,6 +1220,25 @@ fn check_mapping(map: &[u16], bank: &crate::bank_slots::BankSlots) -> Result<()>
     }
     Ok(())
 }
+#[derive(Clone, Copy)]
+struct GuIntegerDispatch {
+    layer: usize,
+    count: usize,
+    dispatches: u64,
+}
+impl GuIntegerDispatch {
+    fn validate(self, layer: usize, count: usize) -> Result<()> {
+        if self.layer != layer
+            || layer >= 48
+            || self.count != count
+            || self.dispatches != 5
+            || !(1..=3).contains(&count)
+        {
+            return Err(reject());
+        }
+        Ok(())
+    }
+}
 pub(super) struct Proof {
     pub(super) source: Arc<Sources>,
     pairs: Zeroizing<[(u32, u32); 30]>,
@@ -1107,12 +1246,14 @@ pub(super) struct Proof {
     count: Zeroizing<usize>,
     vram: u64,
     host: u64,
+    gu_integer_launch: Option<GuIntegerDispatch>,
     pub(super) router_owners: Option<Zeroizing<[BufferId; 3]>>,
 }
 impl Drop for Proof {
     fn drop(&mut self) {
         self.vram.zeroize();
         self.host.zeroize();
+        self.gu_integer_launch = None;
     }
 }
 impl Proof {
@@ -1140,6 +1281,7 @@ impl Proof {
             count: Zeroizing::new(routes.count()),
             vram: 0,
             host: 0,
+            gu_integer_launch: None,
             router_owners: None,
         };
         for (i, &expert) in union.protected_experts().iter().enumerate() {
@@ -1173,8 +1315,23 @@ impl Proof {
             count: Zeroizing::new(count),
             vram: 0,
             host: 0,
+            gu_integer_launch: None,
             router_owners: Some(Zeroizing::new(router_owners)),
         })
+    }
+    fn record_gu_integer_launch(
+        &mut self,
+        layer: usize,
+        receipt: Option<GuIntegerDispatch>,
+    ) -> Result<()> {
+        if self.gu_integer_launch.is_some() || self.source.gu_integer != receipt.is_some() {
+            return Err(reject());
+        }
+        if let Some(receipt) = receipt {
+            receipt.validate(layer, *self.count)?;
+            self.gu_integer_launch = Some(receipt);
+        }
+        Ok(())
     }
     pub(super) fn resolve_audited(
         &mut self,
@@ -1226,6 +1383,12 @@ impl Proof {
     }
     pub(super) fn validate(&self, layer: usize, bank: &ExpertBanks) -> Result<()> {
         let l = self.source.check_layer(layer, bank)?;
+        if self.source.gu_integer != self.gu_integer_launch.is_some() {
+            return Err(reject());
+        }
+        if let Some(receipt) = self.gu_integer_launch {
+            receipt.validate(layer, *self.count)?;
+        }
         if *self.len == 0
             || *self.len > 30
             || !(1..=3).contains(&*self.count)
@@ -1248,17 +1411,45 @@ impl Proof {
     }
 }
 
+fn gu_integer_completed_flag(
+    selected: bool,
+    preparations: u64,
+    dispatches: u64,
+    audits: u64,
+) -> Result<bool> {
+    if if selected {
+        preparations == 0
+            || preparations != audits
+            || preparations.checked_mul(5) != Some(dispatches)
+    } else {
+        preparations != 0 || dispatches != 0 || audits != 0
+    } {
+        return Err(reject());
+    }
+    Ok(selected)
+}
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct Counters {
     pub vram_routes: u64,
     pub host_routes: u64,
     pub source_dispatches: u64,
+    pub gu_integer_preparations: u64,
+    pub gu_integer_dispatches: u64,
+    pub gu_integer_audits: u64,
     pub staging_dispatches: u64,
     pub staged_unique_host_groups: u64,
     pub staged_packed_bytes: u64,
 }
 impl Counters {
     pub(super) fn add(self, p: &Proof, layer: usize) -> Result<Self> {
+        let gu = match p.gu_integer_launch {
+            Some(receipt) if p.source.gu_integer => {
+                receipt.validate(layer, *p.count)?;
+                receipt.dispatches
+            }
+            None if !p.source.gu_integer => 0,
+            _ => return Err(reject()),
+        };
         let (groups, bytes) = if p.source.packed_host_staging {
             let geometry = p.source.layers.get(layer).ok_or_else(reject)?.geometry;
             let groups = p.pairs[..*p.len]
@@ -1289,6 +1480,18 @@ impl Counters {
             host_routes: self
                 .host_routes
                 .checked_add(p.host)
+                .ok_or(Error::ArithmeticOverflow)?,
+            gu_integer_preparations: self
+                .gu_integer_preparations
+                .checked_add(u64::from(gu != 0))
+                .ok_or(Error::ArithmeticOverflow)?,
+            gu_integer_dispatches: self
+                .gu_integer_dispatches
+                .checked_add(gu)
+                .ok_or(Error::ArithmeticOverflow)?,
+            gu_integer_audits: self
+                .gu_integer_audits
+                .checked_add(u64::from(gu != 0))
                 .ok_or(Error::ArithmeticOverflow)?,
             source_dispatches: self
                 .source_dispatches
@@ -1373,6 +1576,16 @@ impl Workspace {
         }
         Ok(source.three_members())
     }
+    pub(crate) fn frozen_host_source_gu_integer(&self) -> Result<bool> {
+        let sources = self.frozen_sources.as_ref().ok_or_else(reject)?;
+        let counters = self.frozen_source_counters;
+        gu_integer_completed_flag(
+            sources.gu_integer(),
+            counters.gu_integer_preparations,
+            counters.gu_integer_dispatches,
+            counters.gu_integer_audits,
+        )
+    }
     pub(crate) fn frozen_host_source_packed_staging(&self) -> Result<bool> {
         Ok(self
             .frozen_sources
@@ -1406,6 +1619,9 @@ impl Workspace {
             || executor.target_frozen_host_router_reserved
                 != self.frozen_host_batch_router_reserved()
             || sources.packed_host_staging() != self.frozen_staging.is_some()
+            || sources.gu_integer() != self.frozen_gu_integer.is_some()
+            || sources.gu_integer() != executor.target_frozen_gu_integer_reserved
+            || sources.gu_integer() && !self.frozen_host_batch_router_reserved()
             || sources.packed_host_staging() && !self.frozen_host_batch_router_reserved()
             || sources.three_members() && !self.frozen_host_batch_router_reserved()
             || sources.binding != self.binding
@@ -1465,6 +1681,9 @@ impl Workspace {
                 g = g.with_two_row_gate_up().map_err(err)?;
             }
             g = three_member_geometry(g, sources.three_members())?;
+            if sources.gu_integer() {
+                crate::quant_matvec::frozen_gu_integer::validate_geometry(g)?;
+            }
             if g != sources.geometry(layer, bank)? {
                 return Err(reject());
             }
@@ -1558,6 +1777,7 @@ impl GpuExecutor<'_> {
                 None,
                 &router_owners,
                 w.frozen_staging_owner_ids().as_ref(),
+                w.frozen_gu_integer_owner_id(),
             )?;
             let handle = |id| arena.handle(id).cloned().map_err(u::fault);
             let handles = [
@@ -1574,7 +1794,7 @@ impl GpuExecutor<'_> {
                 s.stamp.start,
                 views.count(),
             )?;
-            let proof = Proof::deferred(source.clone(), views.count(), router_owners)?;
+            let mut proof = Proof::deferred(source.clone(), views.count(), router_owners)?;
             w.policy.issue(layer)?;
             u::zero_many(arena, &*w.ids)?;
             crate::resident_batch_router_gpu::launch_frozen_sources(
@@ -1586,7 +1806,7 @@ impl GpuExecutor<'_> {
             )?;
             // Fixed maximum union only schedules work. Each original kernel
             // consumes the actual GPU MAP group/rank header, never forced IDs.
-            source.launch(
+            let integer_launch = source.launch(
                 arena,
                 layer,
                 bank,
@@ -1595,8 +1815,11 @@ impl GpuExecutor<'_> {
                 &ids,
                 30,
                 w.frozen_staging_owner_ids().as_ref(),
+                w.frozen_gu_integer_owner_id(),
+                views.count(),
                 s.stamp.fault,
             )?;
+            proof.record_gu_integer_launch(layer, integer_launch)?;
             launch_finite_for_count(arena, g, &spans, &ids, views.count())?;
             fold(
                 arena,
@@ -1786,6 +2009,8 @@ impl GpuExecutor<'_> {
             &ids,
             map.groups(),
             None,
+            None,
+            routes.count(),
             s.stamp.fault,
         )?;
         launch_finite_for_count(arena, g, &spans, &ids, routes.count())?;
@@ -1866,14 +2091,38 @@ impl Sources {
         ids: &[BufferId; 7],
         groups: usize,
         staging: Option<&[BufferId; 3]>,
+        gu_integer: Option<BufferId>,
+        count: usize,
         fault: BufferId,
-    ) -> Result<()> {
+    ) -> Result<Option<GuIntegerDispatch>> {
         let l = self.check_layer(layer, bank)?;
-        if self.packed_host_staging != staging.is_some() || g != l.geometry {
+        if self.packed_host_staging != staging.is_some()
+            || g != l.geometry
+            || self.gu_integer != gu_integer.is_some()
+            || self.gu_integer && (staging.is_some() || !(1..=3).contains(&count))
+        {
             return Err(reject());
         }
         let [gate, up, down] = g.projections();
         let client = arena.client().map_err(u::fault)?;
+        let integer_handles = if let Some(scratch) = gu_integer {
+            let handles = ids.map(|id| arena.handle(id).cloned().map_err(u::fault));
+            let [a, b, c, d, e, f, h] = handles;
+            let handles = [a?, b?, c?, d?, e?, f?, h?];
+            let scratch = arena.handle(scratch).cloned().map_err(u::fault)?;
+            crate::quant_matvec::frozen_gu_integer::prepare(
+                client,
+                g,
+                s,
+                handles.clone(),
+                scratch.clone(),
+                count,
+            )?;
+            Some((handles, scratch))
+        } else {
+            None
+        };
+        let mut integer_dispatches = 0u64;
         for shard in 0..5 {
             let ga = &l.pages[shard];
             let up_page = &l.pages[5 + shard];
@@ -1999,26 +2248,55 @@ impl Sources {
             if (gate == GateKernel::Original) != (down == DownKernel::Original) {
                 return Err(reject());
             }
-            match gate {
-                GateKernel::ThreeMembers => dispatch_gate!(grouped_gate_up_frozen_three_members),
-                GateKernel::StagedThreeMembers => {
-                    dispatch_gate!(grouped_gate_up_frozen_staged_three_members)
+            if let Some((handles, scratch)) = &integer_handles {
+                if gate != GateKernel::Frozen || staged_shard {
+                    return Err(reject());
                 }
-                GateKernel::StagedTwoRows => dispatch_gate!(grouped_gate_up_frozen_staged_two_rows),
-                GateKernel::StagedFrozen => dispatch_gate!(grouped_gate_up_frozen_staged),
-                GateKernel::TwoRows => dispatch_gate!(grouped_gate_up_frozen_two_rows),
-                GateKernel::Original => dispatch_gate!(grouped_gate_up),
-                GateKernel::Frozen => dispatch_gate!(grouped_gate_up_frozen),
-                GateKernel::PrivateTables => dispatch_gate!(grouped_gate_up_frozen_private_grid),
-                GateKernel::WorkgroupTables => {
-                    dispatch_gate!(grouped_gate_up_frozen_workgroup_grid)
-                }
-                GateKernel::SharedFactors => dispatch_gate!(grouped_gate_up_frozen_shared_factors),
-                GateKernel::PrivateFactors => {
-                    dispatch_gate!(grouped_gate_up_frozen_private_grid_shared_factors)
-                }
-                GateKernel::WorkgroupFactors => {
-                    dispatch_gate!(grouped_gate_up_frozen_workgroup_grid_shared_factors)
+                crate::quant_matvec::frozen_gu_integer::launch(
+                    client,
+                    g,
+                    s,
+                    [gate_handle.clone(), up_handle.clone()],
+                    handles.clone(),
+                    scratch.clone(),
+                    FIRST[shard],
+                    PARTS[shard],
+                    groups,
+                    count,
+                )?;
+                integer_dispatches = integer_dispatches
+                    .checked_add(1)
+                    .ok_or(Error::ArithmeticOverflow)?;
+            } else {
+                match gate {
+                    GateKernel::ThreeMembers => {
+                        dispatch_gate!(grouped_gate_up_frozen_three_members)
+                    }
+                    GateKernel::StagedThreeMembers => {
+                        dispatch_gate!(grouped_gate_up_frozen_staged_three_members)
+                    }
+                    GateKernel::StagedTwoRows => {
+                        dispatch_gate!(grouped_gate_up_frozen_staged_two_rows)
+                    }
+                    GateKernel::StagedFrozen => dispatch_gate!(grouped_gate_up_frozen_staged),
+                    GateKernel::TwoRows => dispatch_gate!(grouped_gate_up_frozen_two_rows),
+                    GateKernel::Original => dispatch_gate!(grouped_gate_up),
+                    GateKernel::Frozen => dispatch_gate!(grouped_gate_up_frozen),
+                    GateKernel::PrivateTables => {
+                        dispatch_gate!(grouped_gate_up_frozen_private_grid)
+                    }
+                    GateKernel::WorkgroupTables => {
+                        dispatch_gate!(grouped_gate_up_frozen_workgroup_grid)
+                    }
+                    GateKernel::SharedFactors => {
+                        dispatch_gate!(grouped_gate_up_frozen_shared_factors)
+                    }
+                    GateKernel::PrivateFactors => {
+                        dispatch_gate!(grouped_gate_up_frozen_private_grid_shared_factors)
+                    }
+                    GateKernel::WorkgroupFactors => {
+                        dispatch_gate!(grouped_gate_up_frozen_workgroup_grid_shared_factors)
+                    }
                 }
             }
             match down {
@@ -2043,12 +2321,165 @@ impl Sources {
                 }
             }
         }
-        Ok(())
+        if let Some((_, scratch)) = integer_handles {
+            crate::quant_matvec::frozen_gu_integer::audit(
+                client,
+                scratch,
+                arena.handle(fault).cloned().map_err(u::fault)?,
+                count,
+            )?;
+            let receipt = GuIntegerDispatch {
+                layer,
+                count,
+                dispatches: integer_dispatches,
+            };
+            receipt.validate(layer, count)?;
+            Ok(Some(receipt))
+        } else {
+            Ok(None)
+        }
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn frozen_gu_integer_policy_rejects_every_conflict_and_keeps_original_down_geometry() {
+        for selected in [false, true] {
+            for bits in 0u16..256 {
+                let exit = bits & 1 != 0;
+                let private = bits & 2 != 0;
+                let workgroup = bits & 4 != 0;
+                let scales = bits & 8 != 0;
+                let factors = bits & 16 != 0;
+                let paired = bits & 32 != 0;
+                let staging = bits & 64 != 0;
+                let members = bits & 128 != 0;
+                assert_eq!(
+                    Sources::validate_gu_integer_policy(
+                        selected, exit, private, workgroup, scales, factors, paired, staging,
+                        members
+                    )
+                    .is_ok(),
+                    !selected || (exit && bits == 1)
+                );
+            }
+        }
+        // The actual 48-layer profile, not a synthetic cross-product of dtypes.
+        for layer in 0..48 {
+            let [gate, up, down] = crate::daslab_profile::routed_types(layer).unwrap();
+            let projections = [
+                k::Projection::new(gate, 2560, 640, 512).unwrap(),
+                k::Projection::new(up, 2560, 640, 512).unwrap(),
+                k::Projection::new(down, 640, 2560, 512).unwrap(),
+            ];
+            let original = k::Geometry::new(projections, 8, 144)
+                .unwrap()
+                .with_frozen_host_sources()
+                .unwrap()
+                .with_inactive_partition_exit()
+                .unwrap();
+            for four_down in [false, true] {
+                let g = if four_down {
+                    original.with_four_row_down().unwrap()
+                } else {
+                    original
+                };
+                crate::quant_matvec::frozen_gu_integer::validate_geometry(g).unwrap();
+                let (gate, down) = source_kernel_policy(g, false).unwrap();
+                assert_eq!(gate, GateKernel::Frozen);
+                assert_eq!(
+                    down,
+                    if four_down {
+                        DownKernel::FourRows
+                    } else {
+                        DownKernel::Frozen
+                    }
+                );
+                assert_eq!(g.tile(), 8);
+                assert_eq!(g.projections(), projections);
+                assert_eq!(g.member_capacity(), original.member_capacity());
+                assert_eq!(g.capacity(), 512);
+                assert_eq!(k::MAP_WORDS, 804);
+            }
+        }
+    }
+
+    #[test]
+    fn frozen_gu_integer_completed_flag_requires_positive_specific_joined_counts() {
+        assert!(!gu_integer_completed_flag(false, 0, 0, 0).unwrap());
+        assert!(gu_integer_completed_flag(true, 1, 5, 1).unwrap());
+        assert!(gu_integer_completed_flag(true, 48, 240, 48).unwrap());
+        for (p, d, a) in [
+            (0, 0, 0),
+            (0, 5, 0),
+            (1, 0, 1),
+            (1, 4, 1),
+            (1, 6, 1),
+            (1, 5, 0),
+            (1, 5, 2),
+            (u64::MAX, u64::MAX, u64::MAX),
+        ] {
+            assert!(gu_integer_completed_flag(true, p, d, a).is_err());
+        }
+        for (p, d, a) in [(1, 0, 0), (0, 5, 0), (0, 0, 1), (1, 5, 1)] {
+            assert!(gu_integer_completed_flag(false, p, d, a).is_err());
+        }
+    }
+    #[test]
+    fn frozen_gu_integer_actual_launch_receipt_requires_all_shards_exact_layer_and_count() {
+        for layer in 0..48 {
+            for count in 1..=3 {
+                let receipt = GuIntegerDispatch {
+                    layer,
+                    count,
+                    dispatches: 5,
+                };
+                receipt.validate(layer, count).unwrap();
+                assert!(receipt.validate((layer + 1) % 48, count).is_err());
+                assert!(receipt.validate(layer, count + 1).is_err());
+                for dispatches in [0, 1, 4, 6, 10] {
+                    assert!(
+                        GuIntegerDispatch {
+                            dispatches,
+                            ..receipt
+                        }
+                        .validate(layer, count)
+                        .is_err()
+                    );
+                }
+            }
+        }
+        for count in [0, 4, 8] {
+            assert!(
+                GuIntegerDispatch {
+                    layer: 0,
+                    count,
+                    dispatches: 5
+                }
+                .validate(0, count)
+                .is_err()
+            );
+        }
+        assert!(
+            GuIntegerDispatch {
+                layer: 48,
+                count: 1,
+                dispatches: 5
+            }
+            .validate(48, 1)
+            .is_err()
+        );
+        // Exact parent inventory matches the leaf rather than an untracked tail.
+        use crate::quant_matvec::frozen_gu_integer as integer;
+        assert_eq!(integer::SCRATCH_WORDS, FROZEN_GU_INTEGER_SCRATCH_WORDS);
+        assert_eq!(integer::MAIN_BYTES, FROZEN_GU_INTEGER_MAIN_BYTES);
+        assert_eq!(integer::HOST_INCREMENT, FROZEN_GU_INTEGER_HOST_BYTES);
+        assert_eq!(integer::INFO_INCREMENT, FROZEN_GU_INTEGER_INFO_BYTES);
+        assert_eq!(integer::RUNTIME_INCREMENT, FROZEN_GU_INTEGER_RUNTIME_BYTES);
+        assert_eq!(integer::LOGICAL_WORDS, 4384);
+        assert_eq!(ROUTER_EXTENTS, 30);
+    }
     #[test]
     fn three_member_actual_entries_keep_original_tile_owners_and_stage_composition() {
         assert!(
