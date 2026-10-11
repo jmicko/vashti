@@ -3435,3 +3435,47 @@ compares registry-local IDs across independent Instance contexts incorrectly
 for this purpose; actual live Vulkan logical-device comparison is being fixed.
 No Intel inference/timing/memory-fit claim follows from this failure. See
 `v160_intel_mtp_registration_failure`; freeze a new artifact for the retry.
+
+
+### Completed Intel/Nvidia/target-only placement block,2026-10-11
+
+Source86882f9/v161, binarySHA256
+`95ab177a40131f60342b5dff72cb75486c1d89958709def127b0e079ba777632`,
+passes original full CPU13 cold/warm with Intel MTP: complete target vectors/
+carries/greedy, real repair, all1381target MAIN/42draft private owners and432HOST
+pages closed/freed, physical memory recovered. Fix compares live Vulkan device
+handles rather than Instance-local Wgpu IDs. Six focused identity tests, strict
+all-target direct Clippy and formatting pass; previous integrated98Rust and
+130Python checks remain applicable to unchanged parser/guard code.
+
+Compiler-idle ordered same-artifact code200 (199 timed continuations each):
+Intel MTP9.908034, Nvidia MTP8.876789, real target-only8.336136tokens/s.
+Same public prompt/seed424242/original target math/capacity/cache; both MTP use
+full Q8/shared head, accept130/138 proposals over69 rounds and perform5 repairs.
+Target-only opens no sidecar/creates no draft device and executes199 actual
+count1 target passes, zero drafts/repairs. Full original source/owner closure and
+physical recovery pass for each. Preliminary Intel gains11.62% over Nvidia and
+18.86% over target-only; no repeatedABBA/prose/independentCPU200/30t/s acceptance.
+This does not isolate PCIe bandwidth from compute/queue/driver differences.
+
+Full144banks/8GiB static/fullQ8 draft fit together on B70 under the unchanged
+combined admission; actual same physical PCI but distinct Vulkan devices and
+runtimes are reported. No profile/slot/cap fallback or installed/default change.
+Last recovery17:14:23UTC: B70baseline50688000B,NVIDIAcompute0,allHTTP200,
+idle/unpaused/no recovery, no classifiedGPUfaults on the same boot. Exact hashes,
+checks, failures and content-free records: v161_mtp_placement_comparison and
+[the active next-model guide](kuno-native-next-model-handoff.md).
+
+Next source candidates remain separate: DOWNstride(ec367fb) needs protected
+registration and physical gates; grouped PLE leaf33b4de7/controllercce4f66 is
+clean in its isolated tree with13grouped/78controller checks and strict Clippy,
+but unintegrated/unselected. Preserve86882f9 during its controller merge; keep
+defaults off and validate unchanged full CPU13 before timing any new candidate.
+Canonical Vashti/API/installedservices unchanged; required Vashti changes:none.
+No release/install or other-task messaging is authorized by this handoff.
+
+
+User steering after this receipt: continue native optimization with target and
+full Q8 MTP on Intel B70 only. Defer Nvidia experiments; next physical candidates
+must use the accepted Intel placement. This is internal benchmark selection,
+not authorization for an untested installed/runtime/API default change.

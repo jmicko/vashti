@@ -5,6 +5,10 @@ Canonical Vashti/public APIs/installed services remain unchanged. Work checkout
 is `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
 `codex/kuno-native-text`. Required Vashti changes:none.
 
+User steering after the completed three-way comparison: continue optimization
+with target and full Q8 MTP on Intel B70 only; defer Nvidia experiments.
+Ordinary installed defaults remain unchanged until their own integration gate.
+
 Latest full physical source isac78f00/v159, frozen binarySHA256
 `c04d49a6ca11115c0bba0b1acc38019ae2f6f4b1f323cc0f9b6608eaa639bc7d`.
 Encoded-register preparation and explicit GU stride-four pass the unchanged
@@ -19,25 +23,40 @@ independentCPU200 acceptance. Defaults remain unchanged; see checked-in
 `v159_encoded_register_gu_stride_physical` receipt. Earlier v158 integer
 normal8.642210 is retained as historical evidence.
 
-Source for the requested MTP placement comparison is integrated: real target-only
-controllerd12b52f and explicit Intel MTP controller7b790f4. Read the public
-Intel placement contract. Target-only never opens/binds the draft or selects
-NVIDIA. Intel uses a separate device/runtime on the same physical target GPU;
-fresh privileged Xe memory data and full combined owning charges must pass
-before either model allocation. No smaller slots, widened caps or implicit Q2
-fallback. Full144-bank/Q8 admission is tight; reject rather than force it.
-The first v160 physical Intel attempt rejected before model allocation with
-`MTP cannot share the target Wgpu device`. Fresh Xe query/admission passed;
-physical recovery returned baseline with all HTTP200 and no new faults.
-Pinned wgpu29 CoreDevice equality compares registry-local IDs; independently
-created Instance contexts can reuse those IDs. This is an identity-check bug,
-not evidence that Intel inference or memory fit failed. Fix actual live Vulkan
-logical-device identity while preserving runtime/adapter/owner checks, then
-freeze a new artifact and rerun original physical gates. See checked-in
-`v160_intel_mtp_registration_failure`; no Intel timing accepted yet.
-The three-way comparison must use identical target math, prompt, seed, expert
-capacity and draft profile where applicable. Intel and target-only physical
-acceptance and timings are still pending. Backend-only; no API/UI changes.
+The requested MTP placement comparison uses source86882f9/v161, frozen binary
+SHA256 `95ab177a40131f60342b5dff72cb75486c1d89958709def127b0e079ba777632`.
+Intel MTP passes the unchanged original CPU13 cold/warm target vectors/carries,
+targetgreedy, real repair, all1381 target MAIN owners, all42 draft private owners,
+full432 HOST-page detach/free and physical recovery. Actual receipt verifies
+same B70 PCI0000:2d:00.0 with distinct live Vulkan logical devices and runtimes.
+Full144 target banks,8GiB static cache and full Q8 draft coexist without widened
+caps or fallback. Combined34,166,833,152B owning admission includes512MiB driver
+margin, leaving24,776,704B beyond that margin on the fresh baseline query.
+
+Same-artifact compiler-idle ordered code200 so far: Intel MTP9.908034 versus
+Nvidia MTP8.876789 continuation tokens/s (199 continuations each), preliminary
+11.62% Intel gain. Both accept130/138 drafts over69 rounds and make5 real repairs.
+Intel draft3.053354s/verify15.174402s/repair1.836269s, total20.084711873s;
+Nvidia draft5.281152s/verify15.321660s/repair1.796661s, total22.418017018s.
+This does not isolate PCIe transfer from draft GPU compute/queue costs and is
+not repeatedABBA/prose/independentCPU200 acceptance. Warm12-token6.464541 remains
+diagnostic only. True target-only comparison completes199 real count1 continuations at8.336136t/s
+(23.871972055s), with no draft model/device/public weights/proposals/repairs, full
+1381MAIN/432HOST closure and physical recovery. Intel is preliminarily18.86%
+faster than target-only; Nvidia6.48%. Retain MTP and investigate Intel placement
+as the next internal candidate; ordinary defaults stay unchanged. Required
+Vashti changes:none.
+
+The first v160 attempt rejected before model allocation because pinned wgpu29
+CoreDevice equality compares registry-local IDs across independent Instances.
+Fix86882f9 uses borrowed nonnull/distinct live Vulkan device handles, preserving
+adapter/runtime/admission checks; six focused tests and strict all-target
+Clippy pass. Legacy no-parent Nvidia scopes explicitly report unverified/null
+logical identity; full frozen placement scopes require actual verified identity.
+The failure and successful retry are both recorded separately in checked-in
+`v160_intel_mtp_registration_failure` and `v161_mtp_placement_comparison`.
+No installed/API/default changes. DOWN stride and grouped PLE stay unselected
+for the placement comparison; do not combine their effects with placement.
 
 Previous full physical source is21d97e2/v157, frozen binarySHA256
 `a483e3f6aefb4ea74cda20457d17bf7bb240c18ff50cd67a3e7ae646ab91df44`.
@@ -66,9 +85,21 @@ physically passes v158 as above. Read the frozen GU leaf/parent/controller
 contracts. Integrated followups cache encoded weight chunks once in registers(b4b20f9)
 and add immutable four-group GU scheduling(50d423d/febf8df/e5182f0/853e0e0).
 Combined source checks and the v159 physical gates above pass. Separate
-original four-row DOWN stride scheduling is integrated but remains unselected
-and physically untested; do not combine it into the initial MTP placement
-comparison. Grouped PLE reads remain an isolated, unselected source candidate.
+original four-row DOWN stride scheduling is integrated(ec367fb) but remains
+unselected/physically untested; the protected guard still needs its explicit
+selector handler before a GPU gate. Keep this effect separate from placement.
+Grouped PLE reads remain an isolated, unselected source candidate at
+`/home/jmicko/.codex/worktrees/kuno-grouped-ple-controller/vashti`: leaf33b4de7
+(equivalent0d09330), controllercce4f66, based748b235. All13 grouped tests and78
+controller/helper checks plus strict Clippy pass. Read
+[kuno-native-target-grouped-ple.md](kuno-native-target-grouped-ple.md) from that
+owner tree before integration. Its exact specification is copied here for
+resumption; the leaf/controller implementation is not yet integrated. Before any GPU
+comparison, root must integrate it with the86882f9 HAL fix, add the exact
+protected/helper selector, freeze a clean artifact, pass unchanged full CPU13/
+repair/owner/recovery gates, then measure same-artifact normal runs with source
+unselected/selected. Reserve before model, select only after accepted prefill/
+source attachment before requestIO; no global GR math or changed owner budgets.
 Root owns the guard/helper and all shared GPU work.
 
 Earlier e16c549/v156 ThreeGdn full gates pass at8.489327 normalcode200; control
@@ -78,7 +109,7 @@ normal7.949402 establishes no speed gain. Three-member8.094793, staging7.870304
 also pass full physical gates and remain default-off. v150 ordered4DOWN/shared
 head8.119520 control /8.484726 candidate is preliminary, not repeatedABBA.
 
-Last recovered host2026-10-11T16:30:44.457717UTC: same boot, B70baseline50688000B,
+Last recovered host2026-10-11T17:14:23.384257UTC: same boot, B70baseline50688000B,
 NVIDIA compute0, unpaused idle/no recovery, HTTP200 for allthree services, GPU
 faults0. This is a historical snapshot, not future availability.
 No30tokens/s, independentCPU200 or private/production acceptance. No runtime
