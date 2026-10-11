@@ -322,6 +322,42 @@ pub(crate) fn request_reuse(
     }
 }
 
+/// Separate read policy: no global GR arithmetic selection or owning charge.
+pub(crate) fn public_grouped_ple_reads(
+    raw: Option<&OsStr>,
+    original_public_scope: bool,
+) -> Result<bool, &'static str> {
+    match raw {
+        None => Ok(false),
+        Some(value) if value == "grouped-public" && original_public_scope => Ok(true),
+        _ => Err("grouped PLE reads require canonical original public frozen target scope"),
+    }
+}
+
+/// Actual PLE executions join accepted verification and real repair chunks.
+pub(crate) fn public_grouped_ple_reads_record(
+    selected: bool,
+    actual: bool,
+    completed_chunks: u64,
+    verification_chunks: u64,
+    repair_chunks: u64,
+) -> Result<serde_json::Value, &'static str> {
+    let expected = verification_chunks
+        .checked_add(repair_chunks)
+        .ok_or("grouped PLE expected chunk count overflow")?;
+    if selected != actual
+        || repair_chunks > verification_chunks
+        || if selected {
+            expected == 0 || completed_chunks != expected
+        } else {
+            completed_chunks != 0
+        }
+    {
+        return Err("grouped PLE actual accepted chunk receipt rejected");
+    }
+    Ok(serde_json::json!({"selected":actual,"completed_chunks":completed_chunks}))
+}
+
 pub(crate) fn live_member_reduction(
     raw: Option<&OsStr>,
     prepared: bool,
@@ -591,6 +627,45 @@ pub(crate) fn name(inline: bool) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn grouped_ple_public_flag_is_canonical_default_off_and_scope_bound() {
+        for scope in [false, true] {
+            assert_eq!(public_grouped_ple_reads(None, scope), Ok(false));
+            for raw in ["grouped-public", "grouped", "true", "", "grouped-public "] {
+                assert_eq!(
+                    public_grouped_ple_reads(Some(OsStr::new(raw)), scope).is_ok(),
+                    scope && raw == "grouped-public",
+                );
+            }
+        }
+    }
+    #[test]
+    fn grouped_ple_receipt_joins_only_actual_accepted_verify_and_repair_chunks() {
+        assert!(public_grouped_ple_reads_record(false, false, 0, 4, 1).is_ok());
+        for (verifies, repairs) in [(4, 0), (4, 2), (69, 5), (199, 0)] {
+            let chunks = verifies + repairs;
+            assert!(public_grouped_ple_reads_record(true, true, chunks, verifies, repairs).is_ok());
+            for completed in [0, chunks - 1, chunks + 1] {
+                assert!(
+                    public_grouped_ple_reads_record(true, true, completed, verifies, repairs)
+                        .is_err()
+                );
+            }
+        }
+        for (selected, actual, chunks, verifies, repairs) in [
+            (true, false, 1, 1, 0),
+            (false, true, 1, 1, 0),
+            (false, false, 1, 1, 0),
+            (true, true, 0, 0, 0),
+            (true, true, 3, 1, 2),
+            (true, true, 1, u64::MAX, 1),
+        ] {
+            assert!(
+                public_grouped_ple_reads_record(selected, actual, chunks, verifies, repairs)
+                    .is_err()
+            );
+        }
+    }
     use super::*;
     #[test]
     fn intel_mtp_selection_and_memory_transport_are_explicit_and_strict() {

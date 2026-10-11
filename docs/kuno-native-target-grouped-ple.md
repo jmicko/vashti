@@ -26,8 +26,24 @@ calls per accepted chunk. A separate immutable target policy reuses the existing
 removes two readback batches per chunk: 148 for the 74 v158 target chunks. It
 does not remove any copied bytes or establish a runtime speed gain.
 
-The root-owned public parser/controller may request the policy through these
-internal interfaces:
+Both compiled public controllers accept the exact internal selector
+`KUNO_LAB_TARGET_PLE_READS=grouped-public`. Absence leaves the original read
+policy selected. Empty, malformed, duplicate or incomplete selections reject
+before construction. The protected runner registration remains separate.
+
+Selection requires original frozen source identity and GPU router, partition
+exit, direct fill, inline direct-device build, Verify3-fused, chunk I/O and
+request reuse. CPU13 requires its original single warm replay and diagnostic
+placement; cold replay remains off. Code/prose language fixtures allow either
+the existing Nvidia draft, explicit Intel draft placement or actual target-only
+execution. Original full Q8/Q2 draft restrictions remain; no draft selection is
+fabricated for target-only. Existing integer/stride GU, four-row/stride DOWN,
+shared Q8 head, ThreeGdn and chronological QSA selections retain their original
+independent scopes. Tables, DOWN scales, GU factors, two-row GU, staging,
+three-member arithmetic, prepared experts, live reduction, preserved bank
+placement and English shortlist reject initially.
+
+The controller uses these internal interfaces:
 
 - `Config::reserve_public_grouped_ple_reads()` grants construction permission
   after target rows/latest checkpoint, exactly one public request scope and
@@ -42,6 +58,16 @@ internal interfaces:
   only at the original completed boundary. Selection requires positive actual
   grouped PLE execution joined to whole-model acceptance. An enqueue, requested
   flag, failed proof or abandoned family commit cannot produce credit.
+
+Completed controller receipts require selected/actual parity and the exact
+number of accepted verification chunks plus real target repair chunks. The
+language controller uses its original completed round/repair counters;
+target-only has one count1 chunk per timed continuation and no repair. CPU13
+counts actual returned repair packets and excludes its initial accepted token,
+because selection follows that token's completed warm prefill. Cold/default
+receipts require `(false, 0)`. Overflow, zero selected execution, extra/missing
+chunks or repair counts exceeding verification counts reject. No token values,
+vectors or route history enter these receipts.
 
 Selected execution is restricted to original all-row target calls with runtime
 count 1..3 and the unchanged tile 8/member 8 projection contract. `Chunk` and
@@ -69,3 +95,11 @@ All 34 PLE/model batch tests pass, including the existing two-fault-proof,
 poison and all-family commit-order checks. Strict direct-device all-target
 Clippy with warnings denied and scoped format/diff checks pass. These do not
 establish GPU performance or whole-model physical acceptance.
+
+Controller validation on the `748b235` integration base plus this leaf: all 13
+grouped PLE tests pass, including eight selector/receipt tests and the five
+actual leaf tests. Complete language-controller 32, CPU13-controller 26 and
+target-build helper 20 tests pass. Strict direct-device all-target Clippy with
+`-j2` and warnings denied passes. Formatting and diff checks pass. The source
+remains a separate unselected candidate; protected launcher registration and
+completed physical CPU13/code/prose/lifecycle/timing acceptance remain pending.
