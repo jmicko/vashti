@@ -94,6 +94,7 @@ pub(crate) struct Inputs {
     draft_profile: Profile,
     mtp_q8_head_broadcast: bool,
     mtp_q8_head_shared_scales: bool,
+    mtp_english_vocab: bool,
     pub(crate) gpu_qsa_selector: bool,
     pub(crate) frozen_host_sources: bool,
     pub(crate) frozen_host_router: bool,
@@ -146,6 +147,7 @@ pub(crate) fn registration(
                     | "KUNO_LAB_STATIC_CACHE_BYTES"
                     | "KUNO_LAB_DEVICE_DISPATCH"
                     | "KUNO_LAB_MTP_SWEEPS"
+                    | "KUNO_LAB_MTP_VOCAB"
                     | "KUNO_LAB_MTP_PROFILE"
                     | "KUNO_LAB_MTP_Q8_HEAD"
                     | "KUNO_LAB_TARGET_QSA"
@@ -342,6 +344,22 @@ pub(crate) fn registration(
             && !prepared_experts
             && !live_member_reduction,
     )?;
+    let raw_vocab = values.remove(OsStr::new("KUNO_LAB_MTP_VOCAB"));
+    let mtp_english_vocab = draft_profile.parse_public_english(
+        raw_vocab.as_deref(),
+        frozen_host_sources
+            && frozen_host_router
+            && frozen_partition_exit
+            && verify3_fused
+            && request_reuse
+            && chunk_io
+            && inline_dispatch
+            && public_existing_fill
+            && fused_sweeps
+            && !prepared_experts
+            && !live_member_reduction,
+        mtp_q8_head_broadcast,
+    )?;
     let mut path = |key: &str| {
         values
             .remove(OsStr::new(key))
@@ -354,6 +372,7 @@ pub(crate) fn registration(
         draft_profile,
         mtp_q8_head_broadcast,
         mtp_q8_head_shared_scales,
+        mtp_english_vocab,
         gpu_qsa_selector,
         frozen_host_sources,
         frozen_host_router,
@@ -663,13 +682,22 @@ pub(crate) fn run(
     let cancel = AtomicBool::new(false);
     let whole = Instant::now();
     let load_disk_before = process_disk_read_bytes()?;
-    let mut draft = input.draft_profile.resident(
-        &draft_graph,
-        draft_client,
-        &draft_limits,
-        draft_retired.clone(),
-        input.fused_sweeps,
-    )?;
+    let mut draft = if input.mtp_english_vocab {
+        crate::resident_mtp::ResidentMtp::new_public_english_with_fused_sweeps(
+            &draft_graph,
+            draft_client,
+            &draft_limits,
+            draft_retired.clone(),
+        )?
+    } else {
+        input.draft_profile.resident(
+            &draft_graph,
+            draft_client,
+            &draft_limits,
+            draft_retired.clone(),
+            input.fused_sweeps,
+        )?
+    };
     if input.mtp_q8_head_broadcast {
         draft.set_q8_head_broadcast(true)?;
     }
@@ -1115,6 +1143,15 @@ pub(crate) fn run(
             if frozen_two_row_gate_up != input.frozen_two_row_gate_up {
                 return Err("actual two-row gate/up policy mismatch".into());
             }
+            let mtp_english_vocab = draft.completed_public_english_vocab()?;
+            if mtp_english_vocab != input.mtp_english_vocab {
+                return Err("actual completed English vocabulary mismatch".into());
+            }
+            let mtp_english_vocab_receipt = if mtp_english_vocab {
+                Some(draft.public_english_vocab_receipt()?)
+            } else {
+                None
+            };
             let mtp_q8_head_shared_scales = draft.completed_q8_head_shared_scales()?;
             if mtp_q8_head_shared_scales != input.mtp_q8_head_shared_scales {
                 return Err("actual MTP shared head scales mismatch".into());
@@ -1147,7 +1184,7 @@ pub(crate) fn run(
                 .checked_sub(load_disk_after)
                 .ok_or("language process read counter regressed")?;
             Ok(
-                serde_json::json!({"fixture":input.fixture.name(),"prompt_tokens":prompt.len(),"context_capacity":input.fixture.context(),"compiled_prompt_template_revision":TEMPLATE_REVISION,"compiled_prompt_template_file":TEMPLATE_FILE,"load_ns":load_ns,"prefill_ns_including_real_teacher_kv":prefill_ns,"prefill_first_output_count":1,"prefill_first_output_generation_pick_timed":false,"first_output_emission_timed":true,"emitted_tokens_including_eos":emitted.len(),"post_prefill_target_continuations":stats.continuations,"stop_reason":if confirmed==graph.eos_token(){"eos"}else{"limit"},"nonempty_text":nonempty_text,"elapsed_ns":elapsed_ns,"continuation_tokens_per_second":stats.continuations as f64*1e9/elapsed_ns as f64,"emitted_tokens_per_second":emitted.len()as f64*1e9/elapsed_ns as f64,"rounds":stats.rounds,"frozen_host_gpu_router":input.frozen_host_router,"frozen_host_inactive_partition_exit":frozen_partition_exit,"frozen_host_private_tables":frozen_private_tables,"frozen_host_workgroup_tables":frozen_workgroup_tables,"frozen_host_shared_down_scales":frozen_shared_down_scales,"frozen_host_shared_gate_up_factors":frozen_shared_gate_up_factors,"mtp_q8_head_broadcast":mtp_q8_head_broadcast,"mtp_q8_head_shared_scales":mtp_q8_head_shared_scales,"frozen_host_four_row_down":frozen_four_row_down,"frozen_host_two_row_gate_up":frozen_two_row_gate_up,"frozen_packed_host_staging":frozen_packed_host_staging,"frozen_three_member_arithmetic":frozen_three_members,"target_three_gdn_streaming":three_gdn_streaming,"target_three_gdn_completed_chunks":three_gdn_completed_chunks,"gpu_router_calls":executor.gpu_router_calls-before_gpu_routers,"proposed_drafts":stats.proposed,"accepted_drafts":stats.accepted_drafts,"draft_ns":stats.draft_ns,"verify_ns_full_packets":stats.verify_ns,"repair_ns_including_vector_checks":stats.repair_ns,"actual_target_recomputations":stats.repairs,"repair_logit_max_abs":stats.repair_logit_max,"repair_hidden_max_abs":stats.repair_hidden_max,"repair_abs_tolerance":ABS,"repair_rel_tolerance":REL,"fixture_peak_host_bytes":fixture_peak,"request_scope":request_scope,"request_close_ns_inside_timing":request_close_ns,"host_io":host_io,"target_host_phase_ns":phase_ns,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"verify3_fused_calls":executor.target_verify3_fused_calls-before_fused,"load_and_prefill_physical_read_bytes":load_disk_after.checked_sub(load_disk_before).ok_or("language process read counter regressed")?,"generation_physical_read_bytes":physical_read_bytes,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"target_fill_counters_before":fill_counter_record(before_fills),"target_fill_counters_after":fill_counter_record(after_fills),"frozen_source_routes":frozen_routes,"draft_traffic":{"host_read_calls":after_traffic.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after_traffic.host_read_bytes-before_traffic.host_read_bytes,"explicit_dispatches":after_traffic.explicit_dispatches-before_traffic.explicit_dispatches,"private_upload_calls":after_traffic.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after_traffic.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after_traffic.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after_traffic.followup_copy_calls-before_traffic.followup_copy_calls}}),
+                serde_json::json!({"fixture":input.fixture.name(),"prompt_tokens":prompt.len(),"context_capacity":input.fixture.context(),"compiled_prompt_template_revision":TEMPLATE_REVISION,"compiled_prompt_template_file":TEMPLATE_FILE,"load_ns":load_ns,"prefill_ns_including_real_teacher_kv":prefill_ns,"prefill_first_output_count":1,"prefill_first_output_generation_pick_timed":false,"first_output_emission_timed":true,"emitted_tokens_including_eos":emitted.len(),"post_prefill_target_continuations":stats.continuations,"stop_reason":if confirmed==graph.eos_token(){"eos"}else{"limit"},"nonempty_text":nonempty_text,"elapsed_ns":elapsed_ns,"continuation_tokens_per_second":stats.continuations as f64*1e9/elapsed_ns as f64,"emitted_tokens_per_second":emitted.len()as f64*1e9/elapsed_ns as f64,"rounds":stats.rounds,"frozen_host_gpu_router":input.frozen_host_router,"frozen_host_inactive_partition_exit":frozen_partition_exit,"frozen_host_private_tables":frozen_private_tables,"frozen_host_workgroup_tables":frozen_workgroup_tables,"frozen_host_shared_down_scales":frozen_shared_down_scales,"frozen_host_shared_gate_up_factors":frozen_shared_gate_up_factors,"mtp_q8_head_broadcast":mtp_q8_head_broadcast,"mtp_q8_head_shared_scales":mtp_q8_head_shared_scales,"mtp_english_vocab":mtp_english_vocab,"mtp_english_vocab_receipt":mtp_english_vocab_receipt,"frozen_host_four_row_down":frozen_four_row_down,"frozen_host_two_row_gate_up":frozen_two_row_gate_up,"frozen_packed_host_staging":frozen_packed_host_staging,"frozen_three_member_arithmetic":frozen_three_members,"target_three_gdn_streaming":three_gdn_streaming,"target_three_gdn_completed_chunks":three_gdn_completed_chunks,"gpu_router_calls":executor.gpu_router_calls-before_gpu_routers,"proposed_drafts":stats.proposed,"accepted_drafts":stats.accepted_drafts,"draft_ns":stats.draft_ns,"verify_ns_full_packets":stats.verify_ns,"repair_ns_including_vector_checks":stats.repair_ns,"actual_target_recomputations":stats.repairs,"repair_logit_max_abs":stats.repair_logit_max,"repair_hidden_max_abs":stats.repair_hidden_max,"repair_abs_tolerance":ABS,"repair_rel_tolerance":REL,"fixture_peak_host_bytes":fixture_peak,"request_scope":request_scope,"request_close_ns_inside_timing":request_close_ns,"host_io":host_io,"target_host_phase_ns":phase_ns,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"verify3_fused_calls":executor.target_verify3_fused_calls-before_fused,"load_and_prefill_physical_read_bytes":load_disk_after.checked_sub(load_disk_before).ok_or("language process read counter regressed")?,"generation_physical_read_bytes":physical_read_bytes,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"target_fill_counters_before":fill_counter_record(before_fills),"target_fill_counters_after":fill_counter_record(after_fills),"frozen_source_routes":frozen_routes,"draft_traffic":{"host_read_calls":after_traffic.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after_traffic.host_read_bytes-before_traffic.host_read_bytes,"explicit_dispatches":after_traffic.explicit_dispatches-before_traffic.explicit_dispatches,"private_upload_calls":after_traffic.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after_traffic.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after_traffic.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after_traffic.followup_copy_calls-before_traffic.followup_copy_calls}}),
             )
         })();
         let close = target.close();
@@ -1195,7 +1232,9 @@ pub(crate) fn run(
     let draft_close = draft.close();
     drop(draft);
     let draft_close = draft_close.and_then(|closed| {
-        input.draft_profile.validate_close(&closed)?;
+        input
+            .draft_profile
+            .validate_close_with_english(&closed, input.mtp_english_vocab)?;
         Ok(closed)
     });
     if attempt.is_err() {
@@ -1217,7 +1256,7 @@ pub(crate) fn run(
     if client.public_target_request_io_configured()? != input.request_reuse {
         return Err("language target stream configuration changed".into());
     }
-    let value = serde_json::json!({"scope":"compiled-public-language200-real-dual-device-greedy","target_card":"B70","draft_card":"RTX3060","draft_profile":input.draft_profile.name(),"gpu_chronological_qsa_selector":input.gpu_qsa_selector,"qsa_extra_runtime_info_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_INFO_BYTES_PER_CHUNK}else{0},"qsa_extra_host_reserved_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_HOST_BYTES_PER_CHUNK}else{0},"draft_public_reserved_bytes":input.draft_profile.public_bytes(),"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"temperature":0,"seed":424242,"repetition_penalty":1.0,"presence_penalty":0.0,"frequency_penalty":0.0,"thinking":false,"max_outputs":MAX_OUTPUTS,"verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"live_member_reduction":input.live_member_reduction,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"fused_mtp_sweeps":input.fused_sweeps,"fixture_host_reserved_bytes":FIXTURE_HOST_BYTES,"tokenizer_host_cap_bytes":TOKENIZER_HOST_BYTES,"request_reuse_metadata_reserved_bytes":if input.request_reuse{4*1024*1024}else{0},"full_target_packets_retained":true,"greedy_target_verification":true,"repair_original_prefix_vector_checks":true,"independent_cpu200_reference_accepted":false,"forced_oracle_tokens":false,"forced_experts":false,"private_or_production_accepted":false,"record":record,"draft_close":{"private_buffers":draft_close.private.buffers,"private_bytes":draft_close.private.bytes,"public_bytes":draft_close.public_bytes,"main_reserved":draft_close.main_reserved}});
+    let value = serde_json::json!({"scope":"compiled-public-language200-real-dual-device-greedy","target_card":"B70","draft_card":"RTX3060","draft_profile":input.draft_profile.name(),"gpu_chronological_qsa_selector":input.gpu_qsa_selector,"qsa_extra_runtime_info_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_INFO_BYTES_PER_CHUNK}else{0},"qsa_extra_host_reserved_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_HOST_BYTES_PER_CHUNK}else{0},"draft_public_reserved_bytes":input.draft_profile.public_bytes_with_english(input.mtp_english_vocab)?,"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"temperature":0,"seed":424242,"repetition_penalty":1.0,"presence_penalty":0.0,"frequency_penalty":0.0,"thinking":false,"max_outputs":MAX_OUTPUTS,"verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"live_member_reduction":input.live_member_reduction,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"fused_mtp_sweeps":input.fused_sweeps,"fixture_host_reserved_bytes":FIXTURE_HOST_BYTES,"tokenizer_host_cap_bytes":TOKENIZER_HOST_BYTES,"request_reuse_metadata_reserved_bytes":if input.request_reuse{4*1024*1024}else{0},"full_target_packets_retained":true,"greedy_target_verification":true,"repair_original_prefix_vector_checks":true,"independent_cpu200_reference_accepted":false,"forced_oracle_tokens":false,"forced_experts":false,"private_or_production_accepted":false,"record":record,"draft_close":{"private_buffers":draft_close.private.buffers,"private_bytes":draft_close.private.bytes,"public_bytes":draft_close.public_bytes,"main_reserved":draft_close.main_reserved}});
     serde_json::to_writer_pretty(
         std::fs::OpenOptions::new()
             .write(true)
@@ -1249,6 +1288,70 @@ mod tests {
         .map(|(k, v)| (k.into(), v.into()))
         .to_vec()
     }
+    #[test]
+    fn english_draft_vocabulary_requires_complete_fixed_public_scope() {
+        let args = ["lab", "intel", "daslab-language-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        let mut base = env();
+        for (key, value) in [
+            ("KUNO_LAB_DEVICE_DISPATCH", "inline"),
+            ("KUNO_LAB_TARGET_FILL", "direct-public"),
+            ("KUNO_LAB_TARGET_DENSE", "verify3-fused"),
+            ("KUNO_LAB_TARGET_IO", "chunk"),
+            ("KUNO_LAB_TARGET_REUSE", "request"),
+            ("KUNO_LAB_TARGET_SOURCES", "frozen-host-public"),
+            ("KUNO_LAB_FROZEN_PARTITION_EXIT", "1"),
+            ("KUNO_LAB_TARGET_ROUTER", "device-frozen-public"),
+            ("KUNO_LAB_MTP_SWEEPS", "fused"),
+        ] {
+            base.push((key.into(), value.into()));
+        }
+        assert!(
+            !registration(&args, base.clone(), build)
+                .unwrap()
+                .mtp_english_vocab
+        );
+        base.push(("KUNO_LAB_MTP_VOCAB".into(), "english-public".into()));
+        for shared in [false, true] {
+            let mut valid = base.clone();
+            if shared {
+                valid.push(("KUNO_LAB_MTP_Q8_HEAD".into(), "shared-public".into()));
+            }
+            let got = registration(&args, valid, build).unwrap();
+            assert!(got.mtp_english_vocab);
+            assert_eq!(got.mtp_q8_head_shared_scales, shared);
+        }
+        for key in [
+            "KUNO_LAB_DEVICE_DISPATCH",
+            "KUNO_LAB_TARGET_FILL",
+            "KUNO_LAB_TARGET_DENSE",
+            "KUNO_LAB_TARGET_IO",
+            "KUNO_LAB_TARGET_REUSE",
+            "KUNO_LAB_TARGET_SOURCES",
+            "KUNO_LAB_FROZEN_PARTITION_EXIT",
+            "KUNO_LAB_TARGET_ROUTER",
+            "KUNO_LAB_MTP_SWEEPS",
+        ] {
+            let mut bad = base.clone();
+            bad.retain(|(k, _)| k != key);
+            assert!(registration(&args, bad, build).is_err(), "{key}");
+        }
+        for (key, value) in [
+            ("KUNO_LAB_MTP_Q8_HEAD", "broadcast-public"),
+            ("KUNO_LAB_MTP_PROFILE", "strata-q2"),
+            ("KUNO_LAB_MTP_VOCAB", "english-public"),
+        ] {
+            let mut bad = base.clone();
+            bad.push((key.into(), value.into()));
+            assert!(registration(&args, bad, build).is_err(), "{key}");
+        }
+        for value in ["", "english", "true", "english-public "] {
+            let mut bad = base.clone();
+            bad.last_mut().unwrap().1 = value.into();
+            assert!(registration(&args, bad, build).is_err());
+        }
+    }
+
     #[test]
     fn three_gdn_requires_canonical_complete_public_scope_and_stays_default_off() {
         let args = ["lab", "intel", "daslab-language-probe"].map(OsString::from);

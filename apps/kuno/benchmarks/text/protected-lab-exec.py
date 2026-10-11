@@ -64,6 +64,10 @@ def selected_target_policy(environment, mtp=False):
     if "KUNO_LAB_TARGET_QSA" in selected:
         if not mtp or selected.pop("KUNO_LAB_TARGET_QSA") != "chronological-public":
             raise ValueError("GPU QSA requires the explicit compiled public target selector")
+    if "KUNO_LAB_MTP_VOCAB" in selected:
+        english_vocab_scope(environment)
+        if not mtp or selected.pop("KUNO_LAB_MTP_VOCAB") != "english-public":
+            raise ValueError("English vocabulary requires fixed public Q8 draft scope")
     if "KUNO_LAB_MTP_Q8_HEAD" in selected:
         if (not mtp or selected.pop("KUNO_LAB_MTP_Q8_HEAD") not in ("broadcast-public", "shared-public")
                 or "KUNO_LAB_MTP_PROFILE" in selected
@@ -116,6 +120,30 @@ def selected_target_policy(environment, mtp=False):
         if selected.pop("KUNO_LAB_WARM_REPLAY") != "once":
             raise ValueError("Warm replay requires the one-shot public fixture")
     return selected
+
+def english_vocab_scope(environment):
+    if "KUNO_LAB_MTP_VOCAB" not in environment:
+        return
+    spec = environment.get("KUNO_LAB_SPECULATIVE_PUBLIC_ONLY") == "1"
+    language = environment.get("KUNO_LAB_LANGUAGE_PUBLIC_ONLY") == "1"
+    required = {
+        "KUNO_LAB_MTP_VOCAB": "english-public",
+        "KUNO_LAB_TARGET_SOURCES": "frozen-host-public",
+        "KUNO_LAB_FROZEN_PARTITION_EXIT": "1",
+        "KUNO_LAB_TARGET_ROUTER": "device-frozen-public",
+        "KUNO_LAB_TARGET_REUSE": "request",
+        "KUNO_LAB_TARGET_FILL": "direct-public",
+        "KUNO_LAB_DEVICE_DISPATCH": "inline",
+        "KUNO_LAB_TARGET_IO": "chunk",
+        "KUNO_LAB_TARGET_DENSE": "verify3-fused",
+        "KUNO_LAB_MTP_SWEEPS": "fused",
+    }
+    if (any(environment.get(key) != value for key, value in required.items())
+            or spec == language
+            or spec and environment.get("KUNO_LAB_WARM_REPLAY") != "once"
+            or environment.get("KUNO_LAB_MTP_Q8_HEAD") not in (None, "shared-public")
+            or any(key in environment for key in ("KUNO_LAB_MTP_PROFILE", "KUNO_LAB_TARGET_MOE", "KUNO_LAB_TARGET_EXPERTS"))):
+        raise ValueError("English draft vocabulary requires original fixed public fused Q8 scope")
 
 def three_gdn_scope(environment):
     if "KUNO_LAB_TARGET_GDN" not in environment:
@@ -175,6 +203,7 @@ def bank_placement_scope(environment):
 
 
 def memory_limit(environment, arguments):
+    english_vocab_scope(environment)
     three_gdn_scope(environment)
     private_table_scope(environment)
     bank_placement_scope(environment)

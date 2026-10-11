@@ -38,6 +38,57 @@ impl Profile {
         }
     }
 
+    pub(crate) fn parse_public_english(
+        self,
+        value: Option<&OsStr>,
+        canonical_public_scope: bool,
+        broadcast: bool,
+    ) -> std::result::Result<bool, &'static str> {
+        match value {
+            None => Ok(false),
+            Some(value)
+                if value == "english-public"
+                    && self == Self::SelfContainedQ8
+                    && canonical_public_scope
+                    && !broadcast =>
+            {
+                Ok(true)
+            }
+            _ => Err("English draft vocabulary requires canonical public Q8 fused scope"),
+        }
+    }
+
+    pub(crate) fn public_bytes_with_english(self, english: bool) -> Result<u64> {
+        if english {
+            if self != Self::SelfContainedQ8 {
+                return Err(Error::InvalidFormat("English vocabulary is Q8 only"));
+            }
+            Ok(resident_mtp::ENGLISH_PUBLIC_BYTES)
+        } else {
+            Ok(self.public_bytes())
+        }
+    }
+
+    pub(crate) fn validate_close_with_english(
+        self,
+        receipt: &CloseReceipt,
+        english: bool,
+    ) -> Result<()> {
+        if !english {
+            return self.validate_close(receipt);
+        }
+        if receipt.public_bytes != self.public_bytes_with_english(true)?
+            || receipt.private.buffers != 42
+            || receipt.private.bytes != 11_698_176
+            || receipt.main_reserved != 0
+        {
+            return Err(Error::InvalidFormat(
+                "English MTP complete owner receipt rejected",
+            ));
+        }
+        Ok(())
+    }
+
     fn validate_artifact(self, bytes: u64, tensors: usize) -> Result<()> {
         let expected = match self {
             Self::SelfContainedQ8 => (4_137_429_120, 34),
@@ -133,6 +184,118 @@ mod tests {
         {
             use std::os::unix::ffi::OsStrExt;
             assert!(Profile::parse(Some(OsStr::from_bytes(b"strata-q2\xff"))).is_err());
+        }
+    }
+
+    #[test]
+    fn english_vocabulary_is_an_independent_bounded_public_q8_opt_in() {
+        for profile in [Profile::SelfContainedQ8, Profile::StrataQ2] {
+            for scope in [false, true] {
+                for broadcast in [false, true] {
+                    assert_eq!(
+                        profile.parse_public_english(None, scope, broadcast),
+                        Ok(false)
+                    );
+                    assert_eq!(
+                        profile
+                            .parse_public_english(
+                                Some(OsStr::new("english-public")),
+                                scope,
+                                broadcast
+                            )
+                            .is_ok(),
+                        profile == Profile::SelfContainedQ8 && scope && !broadcast,
+                    );
+                }
+            }
+        }
+        for raw in [
+            "",
+            "english",
+            "auto",
+            "full",
+            "ENGLISH-PUBLIC",
+            "english-public ",
+            "english-public\n",
+        ] {
+            assert!(
+                Profile::SelfContainedQ8
+                    .parse_public_english(Some(OsStr::new(raw)), true, false)
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn english_public_map_charge_and_full_private_close_are_independent() {
+        assert_eq!(resident_mtp::ENGLISH_VOCAB_OWNED_BYTES, 262_144);
+        assert_eq!(
+            resident_mtp::ENGLISH_PUBLIC_BYTES,
+            resident_mtp::PUBLIC_BYTES + 262_144
+        );
+        let full = CloseReceipt {
+            private: OwnedZeroAudit {
+                buffers: 42,
+                bytes: 11_698_176,
+            },
+            public_bytes: resident_mtp::PUBLIC_BYTES,
+            main_reserved: 0,
+        };
+        let english = CloseReceipt {
+            public_bytes: resident_mtp::ENGLISH_PUBLIC_BYTES,
+            ..full
+        };
+        Profile::SelfContainedQ8
+            .validate_close_with_english(&full, false)
+            .unwrap();
+        Profile::SelfContainedQ8
+            .validate_close_with_english(&english, true)
+            .unwrap();
+        assert!(
+            Profile::SelfContainedQ8
+                .validate_close_with_english(&full, true)
+                .is_err()
+        );
+        assert!(
+            Profile::SelfContainedQ8
+                .validate_close_with_english(&english, false)
+                .is_err()
+        );
+        assert!(Profile::StrataQ2.public_bytes_with_english(true).is_err());
+        assert!(
+            Profile::StrataQ2
+                .validate_close_with_english(&english, true)
+                .is_err()
+        );
+        for bad in [
+            CloseReceipt {
+                private: OwnedZeroAudit {
+                    buffers: 41,
+                    ..english.private
+                },
+                ..english
+            },
+            CloseReceipt {
+                private: OwnedZeroAudit {
+                    bytes: 11_698_175,
+                    ..english.private
+                },
+                ..english
+            },
+            CloseReceipt {
+                main_reserved: 65_536,
+                ..english
+            },
+            CloseReceipt {
+                public_bytes: english.public_bytes - 1,
+                ..english
+            },
+        ] {
+            assert!(
+                Profile::SelfContainedQ8
+                    .validate_close_with_english(&bad, true)
+                    .is_err()
+            );
         }
     }
 
