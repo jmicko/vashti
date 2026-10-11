@@ -17,6 +17,8 @@ pub(crate) const EXTRA_HOST_BYTES_PER_CHUNK: u64 = EXTRA_HOST_BYTES;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum GateKernel {
     StagedFrozen,
+    ThreeMembers,
+    StagedThreeMembers,
     StagedTwoRows,
     Original,
     Frozen,
@@ -30,7 +32,11 @@ enum GateKernel {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DownKernel {
     StagedFrozen,
+    ThreeMembers,
+    StagedThreeMembers,
     StagedFourRows,
+    FourRowsThreeMembers,
+    StagedFourRowsThreeMembers,
     Original,
     Frozen,
     SharedScales,
@@ -40,7 +46,9 @@ enum DownKernel {
 // This selector is used by actual dispatch, so compound policy tests cover the
 // runtime entrypoints rather than just the stored attachment flags.
 fn kernel_policy(g: k::Geometry) -> (GateKernel, DownKernel) {
-    let gate = if g.two_row_gate_up() {
+    let gate = if g.three_member_arithmetic() {
+        GateKernel::ThreeMembers
+    } else if g.two_row_gate_up() {
         GateKernel::TwoRows
     } else if g.shared_gate_up_factors() {
         if g.workgroup_tables() {
@@ -59,7 +67,13 @@ fn kernel_policy(g: k::Geometry) -> (GateKernel, DownKernel) {
     } else {
         GateKernel::Original
     };
-    let down = if g.four_row_down() {
+    let down = if g.three_member_arithmetic() {
+        if g.four_row_down() {
+            DownKernel::FourRowsThreeMembers
+        } else {
+            DownKernel::ThreeMembers
+        }
+    } else if g.four_row_down() {
         if g.shared_down_scales() {
             DownKernel::FourRowsSharedScales
         } else {
@@ -81,16 +95,29 @@ fn source_kernel_policy(g: k::Geometry, staged_shard: bool) -> Result<(GateKerne
     }
     k::frozen_host_staging::Shape::new(g).map_err(err)?;
     let gate = match gate {
+        GateKernel::ThreeMembers => GateKernel::StagedThreeMembers,
         GateKernel::Frozen => GateKernel::StagedFrozen,
         GateKernel::TwoRows => GateKernel::StagedTwoRows,
         _ => return Err(reject()),
     };
     let down = match down {
+        DownKernel::ThreeMembers => DownKernel::StagedThreeMembers,
+        DownKernel::FourRowsThreeMembers => DownKernel::StagedFourRowsThreeMembers,
         DownKernel::Frozen => DownKernel::StagedFrozen,
         DownKernel::FourRows => DownKernel::StagedFourRows,
         _ => return Err(reject()),
     };
     Ok((gate, down))
+}
+// Construction and attachment must apply the same arithmetic specialization.
+// The public owner geometry remains tile8; only unreachable arithmetic cells
+// are omitted for an authenticated one-to-three-member wave.
+fn three_member_geometry(g: k::Geometry, enabled: bool) -> Result<k::Geometry> {
+    if enabled {
+        g.with_three_member_arithmetic().map_err(err)
+    } else {
+        Ok(g)
+    }
 }
 const PARTS: [usize; 5] = [72, 72, 144, 144, 80];
 const FIRST: [usize; 5] = [0, 72, 144, 288, 432];
@@ -237,6 +264,7 @@ impl Sources {
             false,
             false,
             false,
+            false,
         )
     }
     /// Explicit matched-control candidate, frozen before any source descriptors
@@ -255,6 +283,7 @@ impl Sources {
             pages,
             reserved_host_bytes,
             true,
+            false,
             false,
             false,
             false,
@@ -288,6 +317,7 @@ impl Sources {
             false,
             false,
             false,
+            false,
         )
     }
     /// Literal-lane initialization of one shared immutable public IQ grid.
@@ -308,6 +338,7 @@ impl Sources {
             true,
             false,
             true,
+            false,
             false,
             false,
             false,
@@ -339,6 +370,7 @@ impl Sources {
             false,
             false,
             false,
+            false,
         )
     }
     /// Explicit frozen IQ2/IQ3 subgroup-factor staging candidate.
@@ -364,7 +396,23 @@ impl Sources {
             false,
             false,
             false,
+            false,
         )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn validate_three_member_policy(
+        selected: bool,
+        exit: bool,
+        private: bool,
+        workgroup: bool,
+        scales: bool,
+        factors: bool,
+        paired_gu: bool,
+    ) -> Result<()> {
+        if selected && (!exit || private || workgroup || scales || factors || paired_gu) {
+            return Err(reject());
+        }
+        Ok(())
     }
     pub(crate) fn validate_staging_policy(
         selected: bool,
@@ -423,6 +471,7 @@ impl Sources {
         four_row_down: bool,
         two_row_gate_up: bool,
         packed_host_staging: bool,
+        three_members: bool,
     ) -> Result<Arc<Self>> {
         Self::validate_kernel_policies(
             inactive_partition_exit,
@@ -441,6 +490,18 @@ impl Sources {
             shared_down_scales,
             shared_gate_up_factors,
         )?;
+        Self::validate_three_member_policy(
+            three_members,
+            inactive_partition_exit,
+            private_tables,
+            workgroup_tables,
+            shared_down_scales,
+            shared_gate_up_factors,
+            two_row_gate_up,
+        )?;
+        if three_members && !executor.target_frozen_host_router_reserved {
+            return Err(reject());
+        }
         if reserved_host_bytes < EXTRA_HOST_BYTES
             || graph.binding_id() != plan.binding()
             || executor.packed_profile != crate::expert_banks::OriginalPackedProfile::DaslabIq3
@@ -510,6 +571,7 @@ impl Sources {
             if two_row_gate_up {
                 geometry = geometry.with_two_row_gate_up().map_err(err)?;
             }
+            geometry = three_member_geometry(geometry, three_members)?;
             let layer_bound = StagedSlots::bounded_native_metadata_bytes(144)
                 .map_err(|_| reject())?
                 .checked_add(512 * std::mem::size_of::<u16>())
@@ -656,6 +718,9 @@ impl Sources {
             metadata_bytes,
             packed_host_staging,
         }))
+    }
+    pub(crate) fn three_members(&self) -> bool {
+        self.layers[0].geometry.three_member_arithmetic()
     }
     pub(crate) fn packed_host_staging(&self) -> bool {
         self.packed_host_staging
@@ -1301,6 +1366,13 @@ impl Workspace {
         }
         Ok(enabled)
     }
+    pub(crate) fn frozen_host_source_three_members(&self) -> Result<bool> {
+        let source = self.frozen_sources.as_ref().ok_or_else(reject)?;
+        if source.three_members() && self.frozen_source_counters.source_dispatches == 0 {
+            return Err(reject());
+        }
+        Ok(source.three_members())
+    }
     pub(crate) fn frozen_host_source_packed_staging(&self) -> Result<bool> {
         Ok(self
             .frozen_sources
@@ -1335,6 +1407,7 @@ impl Workspace {
                 != self.frozen_host_batch_router_reserved()
             || sources.packed_host_staging() != self.frozen_staging.is_some()
             || sources.packed_host_staging() && !self.frozen_host_batch_router_reserved()
+            || sources.three_members() && !self.frozen_host_batch_router_reserved()
             || sources.binding != self.binding
             || sources.layers.len() != 48
             || self.layout.capacity != 144
@@ -1391,6 +1464,7 @@ impl Workspace {
             if sources.two_row_gate_up() {
                 g = g.with_two_row_gate_up().map_err(err)?;
             }
+            g = three_member_geometry(g, sources.three_members())?;
             if g != sources.geometry(layer, bank)? {
                 return Err(reject());
             }
@@ -1926,6 +2000,10 @@ impl Sources {
                 return Err(reject());
             }
             match gate {
+                GateKernel::ThreeMembers => dispatch_gate!(grouped_gate_up_frozen_three_members),
+                GateKernel::StagedThreeMembers => {
+                    dispatch_gate!(grouped_gate_up_frozen_staged_three_members)
+                }
                 GateKernel::StagedTwoRows => dispatch_gate!(grouped_gate_up_frozen_staged_two_rows),
                 GateKernel::StagedFrozen => dispatch_gate!(grouped_gate_up_frozen_staged),
                 GateKernel::TwoRows => dispatch_gate!(grouped_gate_up_frozen_two_rows),
@@ -1944,6 +2022,16 @@ impl Sources {
                 }
             }
             match down {
+                DownKernel::ThreeMembers => dispatch_down!(grouped_down_frozen_three_members),
+                DownKernel::FourRowsThreeMembers => {
+                    dispatch_down!(grouped_down_frozen_four_rows_three_members)
+                }
+                DownKernel::StagedThreeMembers => {
+                    dispatch_down!(grouped_down_frozen_staged_three_members)
+                }
+                DownKernel::StagedFourRowsThreeMembers => {
+                    dispatch_down!(grouped_down_frozen_staged_four_rows_three_members)
+                }
                 DownKernel::Original => dispatch_down!(grouped_down),
                 DownKernel::StagedFrozen => dispatch_down!(grouped_down_frozen_staged),
                 DownKernel::StagedFourRows => dispatch_down!(grouped_down_frozen_staged_four_rows),
@@ -1961,6 +2049,85 @@ impl Sources {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn three_member_actual_entries_keep_original_tile_owners_and_stage_composition() {
+        assert!(
+            Sources::validate_three_member_policy(false, false, true, true, true, true, true)
+                .is_ok()
+        );
+        assert!(
+            Sources::validate_three_member_policy(true, false, false, false, false, false, false)
+                .is_err()
+        );
+        for flags in [
+            [true, false, false, false, false],
+            [false, true, false, false, false],
+            [false, false, true, false, false],
+            [false, false, false, true, false],
+            [false, false, false, false, true],
+        ] {
+            assert!(
+                Sources::validate_three_member_policy(
+                    true, true, flags[0], flags[1], flags[2], flags[3], flags[4]
+                )
+                .is_err()
+            );
+        }
+        for layer in 0..48 {
+            let [gate, up, down] = crate::daslab_profile::routed_types(layer).unwrap();
+            let base = k::Geometry::new(
+                [
+                    k::Projection::new(gate, 2560, 640, 512).unwrap(),
+                    k::Projection::new(up, 2560, 640, 512).unwrap(),
+                    k::Projection::new(down, 640, 2560, 512).unwrap(),
+                ],
+                8,
+                144,
+            )
+            .unwrap()
+            .with_frozen_host_sources()
+            .unwrap()
+            .with_inactive_partition_exit()
+            .unwrap();
+            for four in [false, true] {
+                let g = if four {
+                    base.with_four_row_down().unwrap()
+                } else {
+                    base
+                };
+                assert_eq!(three_member_geometry(g, false).unwrap(), g);
+                let g = three_member_geometry(g, true).unwrap();
+                assert_eq!(g.tile(), 8);
+                assert_eq!(g.arithmetic_members(), 3);
+                assert_eq!(
+                    source_kernel_policy(g, false).unwrap(),
+                    (
+                        GateKernel::ThreeMembers,
+                        if four {
+                            DownKernel::FourRowsThreeMembers
+                        } else {
+                            DownKernel::ThreeMembers
+                        }
+                    )
+                );
+                assert_eq!(
+                    source_kernel_policy(g, true).unwrap(),
+                    (
+                        GateKernel::StagedThreeMembers,
+                        if four {
+                            DownKernel::StagedFourRowsThreeMembers
+                        } else {
+                            DownKernel::StagedThreeMembers
+                        }
+                    )
+                );
+                assert_eq!(
+                    k::frozen_host_staging::Shape::new(g).unwrap().stage_words(),
+                    [8388608; 3]
+                );
+            }
+        }
+    }
     #[test]
     fn packed_staging_source_scope_and_actual_host_dispatch_are_sealed() {
         assert!(Sources::validate_staging_policy(false, false, true, true, true, true).is_ok());

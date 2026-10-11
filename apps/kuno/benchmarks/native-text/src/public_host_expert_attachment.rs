@@ -164,6 +164,7 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
         four_row_down: bool,
         two_row_gate_up: bool,
         packed_host_staging: bool,
+        three_members: bool,
         cancel: &AtomicBool,
     ) -> Result<Attachment<'plan, 'model, 'file>> {
         u::cancel(cancel)?;
@@ -184,6 +185,18 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
             shared_down_scales,
             shared_gate_up_factors,
         )?;
+        Sources::validate_three_member_policy(
+            three_members,
+            inactive_partition_exit,
+            private_tables,
+            workgroup_tables,
+            shared_down_scales,
+            shared_gate_up_factors,
+            two_row_gate_up,
+        )?;
+        if three_members && !executor.target_frozen_host_router_reserved {
+            return Err(rejected());
+        }
         if workspace.frozen_staging_owner_ids().is_some() != packed_host_staging {
             return Err(rejected());
         }
@@ -296,7 +309,8 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
         if owners.len() != mirror::PAGES || registered.len() != mirror::PAGES {
             return Err(rejected());
         }
-        let sources = if packed_host_staging
+        let sources = if three_members
+            || packed_host_staging
             || two_row_gate_up
             || four_row_down
             || shared_gate_up_factors
@@ -316,6 +330,7 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
                 four_row_down,
                 two_row_gate_up,
                 packed_host_staging,
+                three_members,
             )
         } else if workgroup_tables {
             Sources::new_with_workgroup_tables(

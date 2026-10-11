@@ -668,3 +668,45 @@ acceptance. Both trials restored B70 to50,688,000B and NVIDIA compute0 with all
 HTTP services200 and no new GPU faults. Exact frozen source/hash and numeric
 receipts are under v150_rows_shared_head_physical. New paired GU physical gates
 remain pending. No installed/public API/Vashti change.
+
+### Exact frozen three-member arithmetic parent, 2026-10-11
+
+Integrated leaf6473be6/69038b2 removes only unreachable member scratch cells3..7.
+The default-off internal selector is `KUNO_LAB_FROZEN_MEMBERS=three-public`;
+it requires canonical fixed public frozen sources, partition exit, GPU source
+router, inline request reuse/chunk I/O/direct fill, and the complete original
+CPU13 warm or language200 controller. It rejects table/factor/down-scale and
+paired GU policies, including bad values/duplicates/incomplete scope. Plain or
+four-row DOWN, packed HOST staging and self-contained shared Q8 head can compose.
+There is no public API/configuration/private/production selector.
+
+Original tile8, MAP, MAX8/MAX80 owners, virtual slot/rank/source identities,
+quantization, column/accumulation/reduction/SiLU order remain. The six actual
+entrypoints keep original signatures and enforce a uniform full-wave count1..3,
+groups<=30, first_member0 guard before scratch initialization/packed reads.
+Shared scratch falls4096->1536B GU and2048->768B DOWN; no additional MAIN/INFO/
+host owner reservation. This source count is not measured GPU occupancy or speed.
+VRAM shards use original-source three-member entries; packed HOST shards use
+their matching staged entries and existing same-stream copies.
+
+Receipt `frozen_three_member_arithmetic` requires the completed native boundary
+and positive accepted original frozen-source dispatches. Cold CPU13 remains false;
+warm/language must match actual requested selection. Six focused checks pass
+(3leaf C/SIMT/Checked+Unchecked SPIR-V None proofs and3root canonical parser/
+all48 actual entrypoint composition checks), strict pure-direct all-target Clippy
+including tests passes. Protected launcher/fixed-trial selection and full GPU
+acceptance/normal language speed are still pending at this source checkpoint.
+Required Vashti changes:none; installed services remain unchanged.
+
+v154/3de1529d passed the complete original CPU13 cold/warm vectors/carries,
+greedy target decisions, real-prefix repair and all target/draft/source closure.
+Packed staging plus four-DOWN/shared-Q8-head achieved7.870304 normal code200
+continuations/s (199/25.284918616s). This is below historical v1508.484726, but
+there was no same-artifact control, so no causal regression claim is made.
+Staging copied77,168,793,600 logical packed bytes over38,054 accepted unique
+HOST groups and21,312 copy dispatches; these are not measured PCIe bytes/rate.
+Full target closure covered1,383MAIN owners/929,529,856B; all432HOST pages freed
+36,147,609,600B and draft closure returned reservations to0. The helper restored
+normal admission/services and both physical GPU baselines with unchanged faults.
+The alternative remains default off; no private/production or independentCPU200
+acceptance. Exact artifact/receipts are under v154_packed_staging_physical.

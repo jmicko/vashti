@@ -2177,6 +2177,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         four_row_down: bool,
         two_row_gate_up: bool,
         packed_host_staging: bool,
+        three_members: bool,
         cancel: &AtomicBool,
     ) -> Result<crate::public_host_expert_attachment::Attachment<'plan, 'm, 'f>> {
         u::cancel(cancel)?;
@@ -2227,6 +2228,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 four_row_down,
                 two_row_gate_up,
                 packed_host_staging,
+                three_members,
                 cancel,
             )
         }
@@ -2326,6 +2328,17 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         native.moe.frozen_host_source_two_row_gate_up()
     }
 
+    pub(crate) fn native_frozen_source_three_members(
+        &self,
+        executor: &GpuExecutor<'_>,
+    ) -> Result<bool> {
+        self.completed_native_projection_boundary(executor)?;
+        let native = self.native_batch.as_ref().ok_or(error())?;
+        if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
+            return Err(error());
+        }
+        native.moe.frozen_host_source_three_members()
+    }
     pub(crate) fn native_frozen_source_packed_staging(
         &self,
         executor: &GpuExecutor<'_>,

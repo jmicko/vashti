@@ -72,9 +72,8 @@ shared and local array extents, unchanged bindings/barriers and original floatin
 instructions. Its reducer comparison sorts only hoisted uninitialized variable
 declarations because the compiler emits those declarations in HashMap order.
 
-Strict production Clippy passed. The final main-and-test Clippy run found one
-test-only collapsible-match lint; its syntax repair is saved here, with the rerun
-held for the parent's timed GPU trial. A declaration-only assertion was also
-added after the passing shader run. Both final test-only changes still need the
-focused rerun and strict test Clippy before parent acceptance; production source
-is exactly the source exercised by the three passing tests.
+Root subsequently reran all three focused leaf tests after both final test-only
+repairs and all three parent parser/actual-dispatch checks:6pass. Strict pure-direct
+all-target Clippy, including tests, also passes. Parent still needs original full
+GPU CPU13, actual completed flags/owners/repair and normal language timing before
+claiming physical or throughput acceptance.
