@@ -576,3 +576,46 @@ The original cold/warm CPU13 and normal-language gates, no-swap/core constraints
 fixed seed/fixtures and recovered physical-state requirements remain unchanged.
 Alternate Q2 and private/production inference do not silently receive these
 policies. Required Vashti changes:none. Public APIs/installed defaults unchanged.
+
+### Bounded exact host-expert staging experiment, 2026-10-11
+
+The proposed default-off laboratory selector is
+`KUNO_LAB_FROZEN_HOST_STAGE=packed-public`. It requires original authenticated
+frozen host sources, partition exit, GPU source routing, public request reuse,
+direct fill, chunk I/O, inline dispatch and the existing fixed public CPU13 or
+language200 controllers. It is not a production model/API/configuration choice.
+Invalid values, duplicates or incomplete prerequisites reject before device
+construction. Original model/reference/seed and greedy repair are unchanged.
+
+Construction reserves three transient PrivateArena owners of32MiB each for
+packed gate, up and down weights (96MiB MAIN total). They must enter the complete
+allocation inventory, stream/epoch/alias checks and full close erasure, separately
+from retained original public source pages/pins. Six additional copy dispatches
+per48-layer chunk receive589,824B extra runtime INFO reservation. Selection fixes
+these reservations before model construction; attachment grants no new uncharged
+allocation authority. The control retains its existing owner/budget inventory.
+
+After original GPU routing publishes MAP, each of the three host shards enqueues
+exact coalesced packed-word copies followed by its matching consumers, on the
+same validated stream. For an originally selected host group, source addressing
+is `(MAP.slot-first_slot)*expert_words+word`, scratch addressing is
+`group*expert_words+word`; original MAP, expert IDs, slot guards, members, ranks,
+probabilities, quantization and arithmetic stay unchanged. A256-thread copy uses
+four adjacent words per thread and grid`ceil(expert_words/1024) x30`. The largest
+GU/down logical extents26,112,000/27,648,000B fit32MiB. Consumer staging addressing
+is selected only after the original shard/member guard; inactive groups and stale
+tails remain unread. The two resident VRAM shards keep their original bindings.
+
+Queue order is router -> host shard copies -> consumers -> later overwrite.
+There is no CPU route fence, independent ready flag or source-identity rewrite.
+Original deferred route audits and full-family acceptance remain mandatory.
+Receipts report completed actual staging policy, host/VRAM routes, copy dispatch
+count and logical copied bytes derived from accepted unique host groups; staging
+routes remain host-source routes. Transfer bytes are not device bandwidth or a
+speed claim. Full original CPU13 vectors/carries/greedy/repair, source owners,
+zero audit and recovered host precede normal same-artifact generation timing.
+Original immutable RAM sources remain available; staging does not change model
+storage, free original backing early or eliminate compulsory PCIe transfer.
+
+Source implementation and physical acceptance are pending at this contract
+checkpoint. Required Vashti changes:none. Installed services remain unchanged.

@@ -294,6 +294,7 @@ pub(crate) struct Config {
     public_gpu_qsa_selector: bool,
     public_frozen_host_sources: bool,
     public_frozen_host_router: bool,
+    public_frozen_host_staging: bool,
 }
 fn prepared_verify3_configuration(
     target_rows: bool,
@@ -356,6 +357,12 @@ fn frozen_host_source_configuration(
     }
     Ok(())
 }
+fn frozen_staging_configuration(selected: bool, sources: bool, router: bool) -> Result<()> {
+    if selected && (!sources || !router) {
+        return Err(error());
+    }
+    Ok(())
+}
 impl Config {
     fn qsa_host_reservation(&self) -> Result<(usize, usize)> {
         if self.public_frozen_host_router
@@ -371,6 +378,11 @@ impl Config {
         {
             return Err(error());
         }
+        frozen_staging_configuration(
+            self.public_frozen_host_staging,
+            self.public_frozen_host_sources,
+            self.public_frozen_host_router,
+        )?;
         let (reserved, limit) = host_reservation_with_verify3(
             self.cpu_operator.is_some(),
             self.request_reuse_metadata,
@@ -433,6 +445,7 @@ impl Config {
             public_gpu_qsa_selector: false,
             public_frozen_host_sources: false,
             public_frozen_host_router: false,
+            public_frozen_host_staging: false,
         })
     }
     /// Construction-fixed, one-shot empty PRIVATE-state replay after the
@@ -515,6 +528,21 @@ impl Config {
             return Err(error());
         }
         self.public_frozen_host_router = true;
+        Ok(self)
+    }
+    /// Bounded original packed host-weight copies; charge before device owners.
+    #[allow(dead_code)] // Default-off parent selection is wired in the staging leaf integration.
+    pub(crate) fn reserve_public_frozen_host_staging(mut self) -> Result<Self> {
+        if self.public_frozen_host_staging {
+            return Err(error());
+        }
+        frozen_staging_configuration(
+            true,
+            self.public_frozen_host_sources,
+            self.public_frozen_host_router,
+        )?;
+        self.qsa_host_reservation()?;
+        self.public_frozen_host_staging = true;
         Ok(self)
     }
     /// Construction-fixed original-F32 reduction of actual grouped members.
@@ -1053,10 +1081,17 @@ impl Plan {
         {
             return Err(error());
         }
+        if config.public_frozen_host_staging {
+            requests.extend([batch_moe::FROZEN_STAGING_OWNER_BYTES; 3]);
+        }
         let extra = if config.public_frozen_host_router {
             batch_moe::frozen_sources::ROUTER_MAIN_BYTES
         } else if config.public_warm_batch_router {
             batch_moe::batch_router::MAIN_BYTES
+        } else {
+            0
+        } + if config.public_frozen_host_staging {
+            batch_moe::FROZEN_STAGING_MAIN_BYTES
         } else {
             0
         } + if hybrid { HYBRID_MAIN } else { 0 }
@@ -1077,6 +1112,7 @@ impl Plan {
             };
         if requests.len()
             != 90
+                + usize::from(config.public_frozen_host_staging) * 3
                 + usize::from(hybrid) * 2
                 + usize::from(router) * 2
                 + usize::from(target_rows) * 2
@@ -1150,6 +1186,13 @@ impl Plan {
                 } else {
                     0
                 })
+            })
+            .ok_or(Error::ArithmeticOverflow)?;
+        let runtime = runtime
+            .checked_add(if config.public_frozen_host_staging {
+                batch_moe::FROZEN_STAGING_RUNTIME_BYTES
+            } else {
+                0
             })
             .ok_or(Error::ArithmeticOverflow)?;
         if runtime > executor.resident_runtime_io_limit()
@@ -1453,6 +1496,9 @@ impl Workspace {
         }
         if config.public_frozen_host_router {
             moe.reserve_frozen_host_batch_router(&mut model.arena, allocation, model.context)?;
+        }
+        if config.public_frozen_host_staging {
+            moe.reserve_frozen_host_staging(&mut model.arena)?;
         }
         if config.prepared_verify3_experts_reserved {
             moe.reserve_prepared_verify3(&mut model.arena, allocation)?;
@@ -3476,6 +3522,30 @@ impl Workspace {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn frozen_staging_budget_requires_both_original_sources_and_gpu_router() {
+        for sources in [false, true] {
+            for router in [false, true] {
+                assert!(frozen_staging_configuration(false, sources, router).is_ok());
+                assert_eq!(
+                    frozen_staging_configuration(true, sources, router).is_ok(),
+                    sources && router
+                );
+            }
+        }
+        assert_eq!(batch_moe::FROZEN_STAGING_OWNER_BYTES, 33_554_432);
+        assert_eq!(batch_moe::FROZEN_STAGING_MAIN_BYTES, 100_663_296);
+        assert_eq!(batch_moe::FROZEN_STAGING_RUNTIME_BYTES, 589_824);
+        for bytes in [batch_moe::FROZEN_STAGING_OWNER_BYTES; 3] {
+            assert_eq!(
+                crate::private_arena::BufferLayout::new((bytes / 4) as usize)
+                    .unwrap()
+                    .owned_bytes as u64,
+                bytes
+            );
+        }
+    }
+
     use super::*;
     #[test]
     fn target_rows_charge_two_full_owners_and_independent_larger_io_and_host_caps() {

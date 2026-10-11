@@ -30,6 +30,9 @@ pub(crate) mod frozen_sources;
 mod hybrid_k;
 #[path = "iq_moe_integer_verify3.rs"]
 pub(crate) mod prepared_verify3;
+pub(crate) const FROZEN_STAGING_OWNER_BYTES: u64 = 32 * 1024 * 1024;
+pub(crate) const FROZEN_STAGING_MAIN_BYTES: u64 = 3 * FROZEN_STAGING_OWNER_BYTES;
+pub(crate) const FROZEN_STAGING_RUNTIME_BYTES: u64 = 6 * 48 * 2048;
 const MAX_LAYERS: usize = 64;
 const N: usize = 5;
 const MAP: usize = 0;
@@ -390,6 +393,7 @@ pub(crate) struct Workspace {
     public_fill_counters: PublicFillCounters,
     frozen_sources: Option<Arc<frozen_sources::Sources>>,
     frozen_source_counters: frozen_sources::Counters,
+    frozen_staging: Option<Zeroizing<[BufferId; 3]>>,
 }
 
 /// Aggregate successfully queued demand-fill diagnostics, not publication or
@@ -954,11 +958,39 @@ impl Workspace {
                 public_fill_counters: PublicFillCounters::default(),
                 frozen_sources: None,
                 frozen_source_counters: frozen_sources::Counters::default(),
+                frozen_staging: None,
             };
             out.validate_ids(arena)?;
             u::cancel(cancel)?;
             Ok(out)
         })
+    }
+    /// Construction-only owners; no source attachment, routes or use authority.
+    pub(crate) fn reserve_frozen_host_staging(&mut self, arena: &mut PrivateArena) -> Result<()> {
+        self.healthy(arena)?;
+        if self.frozen_staging.is_some()
+            || self.frozen_sources.is_some()
+            || !self.frozen_host_batch_router_reserved()
+            || self.batch_router_active()
+            || self.hybrid.is_some()
+            || self.resident_router.is_some()
+            || self.prepared_verify3.is_some()
+            || !arena.public_owned_zero_audit_enabled()
+            || arena
+                .charged_bytes()
+                .checked_add(FROZEN_STAGING_MAIN_BYTES as usize)
+                .is_none_or(|n| n > arena.budget_bytes())
+        {
+            return Err(err("frozen host staging construction rejected"));
+        }
+        let words = (FROZEN_STAGING_OWNER_BYTES / 4) as usize;
+        let first = arena.allocate_zeroed(words).map_err(u::fault)?;
+        let mut ids = Zeroizing::new([first; 3]);
+        for id in &mut ids[1..] {
+            *id = arena.allocate_zeroed(words).map_err(u::fault)?;
+        }
+        self.frozen_staging = Some(ids);
+        self.validate_ids(arena)
     }
     fn healthy(&self, arena: &PrivateArena) -> Result<()> {
         if self.poison.load(Ordering::Acquire) {
@@ -1033,6 +1065,24 @@ impl Workspace {
                         .map_err(u::fault)?
                 {
                     return Err(err("public batch router complete owner layout"));
+                }
+            }
+        }
+        if let Some(ids) = &self.frozen_staging {
+            for (i, &id) in ids.iter().enumerate() {
+                if self.ids.contains(&id)
+                    || ids[..i].contains(&id)
+                    || self
+                        .batch_router_ids()
+                        .is_none_or(|router| router.contains(&id))
+                    || self.hybrid.is_some()
+                    || self.resident_router.is_some()
+                    || self.prepared_verify3.is_some()
+                    || arena.layout(id).map_err(u::fault)?
+                        != BufferLayout::new((FROZEN_STAGING_OWNER_BYTES / 4) as usize)
+                            .map_err(u::fault)?
+                {
+                    return Err(err("frozen host staging complete owner layout"));
                 }
             }
         }
