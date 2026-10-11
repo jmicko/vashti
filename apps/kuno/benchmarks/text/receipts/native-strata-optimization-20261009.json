@@ -6207,7 +6207,8 @@
       "Normal language already preserves post-prefill residents; this is not a new language placement optimization",
       "No GPU-side immutable RAM reads selected during warm replay; counters do not measure all PCIe traffic",
       "One ordered same-artifact short replay pair; normal-language performance is not established",
-      "No API/frontend/production installation/release changes"
+      "No API/frontend/production installation/release changes",
+      "CPU source checks may have overlapped canonical control; treat short rates as diagnostic, not an isolated causal estimate"
     ],
     "matched_canonical_control": {
       "artifacts": "/media/jmicko/faststore/kuno-development/native-next-v146-canonical-control-20261010",
@@ -6224,5 +6225,587 @@
       "full_original_cpu13_gate_and_recovery_accepted": true
     },
     "matched_short_replay_speedup_percent": 32.783987818726644
+  },
+  "v147_private_table_physical": {
+    "artifacts": "/media/jmicko/faststore/kuno-development/native-next-v147-private-gpu-gate-20261010",
+    "source": {
+      "commit": "7364dc8df4dc645bb3df588f7a52b6e1b9751646",
+      "binary_sha256": "4a6f3c657941a50200f751028d3b32871c552219de02a530ceb9dfdb135e21e1",
+      "features": [
+        "direct-device"
+      ],
+      "protected_launcher_sha256": "97fefd517ba665be051606ef9e03a453c791618981fb004e99e5764067d43e0a",
+      "helper_sha256": "72ebc97520b0b0199a34ae6a37d223576e4ed70d9ff1f62469d18f5e3fac70b6",
+      "public_trial": "warm-private-gpu-host",
+      "seed": 424242,
+      "temperature": 0,
+      "frozen_partition_exit_requested": true,
+      "frozen_bank_preserve_requested": false,
+      "frozen_private_tables_requested": true,
+      "ordinary_demand_performance_claimed": false,
+      "native_30_tokens_per_second_accepted": false
+    },
+    "warm_replay": {
+      "accepted_drafts": 6,
+      "accepted_tokens": 12,
+      "accepted_tokens_per_second": 5.129888413397585,
+      "device_router": true,
+      "device_router_scope": "authenticated actual512 VRAM/host sources; deferred strict original IDs and full vectors, experimental F32 probabilities",
+      "draft_traffic": {
+        "explicit_dispatches": 2216,
+        "followup_copy_calls": 5,
+        "host_read_bytes": 1048576,
+        "host_read_calls": 22,
+        "minimal_packet_reads": 10,
+        "private_upload_bytes": 1179648,
+        "private_upload_calls": 24
+      },
+      "elapsed_ns": 2339232169,
+      "expert_hits": 0,
+      "expert_uploads": 0,
+      "frozen_bank_placement": "cpu13-diagnostic",
+      "frozen_host_close": {
+        "detached_pages": 432,
+        "live_backing_bytes": 0,
+        "metadata_owned_bytes": 1458688,
+        "physical_allocated_bytes": 36147609600,
+        "physical_freed_bytes": 36147609600,
+        "registered_pages": 432,
+        "source_window_peak_bytes": 1048576
+      },
+      "frozen_host_gpu_router": true,
+      "frozen_host_inactive_partition_exit": true,
+      "frozen_host_private_tables": true,
+      "frozen_host_setup": {
+        "attach_ns": 43336782695,
+        "bank_completion_experts": 6132,
+        "bank_completion_read_ns": 14980511861,
+        "bank_completion_upload_ns": 10242831,
+        "bank_completion_uploaded_bytes": 12535603200,
+        "prepare_ns": 18731765325,
+        "separate_host_reserved_bytes": 36166705152
+      },
+      "frozen_source_routes": {
+        "host_routes": 6530,
+        "source_dispatches": 4320,
+        "vram_routes": 2590
+      },
+      "gpu_router_calls": 384,
+      "host_io": {
+        "gpu_submission_wait_ns": 972798583,
+        "gpu_submission_waits": 62,
+        "inline_readback_batches": 51,
+        "provenance": "process-global whole public dual-device timed interval",
+        "scoped_read_flush_ns": 2328834,
+        "scoped_read_map_ns": 333985812,
+        "scoped_read_setup_ns": 84490
+      },
+      "initial_prefill_ns": 3036441458,
+      "load_and_initial_prefill_cumulative_ns": 97587807324,
+      "load_and_initial_prefill_physical_read_bytes": 6643712,
+      "model_weights_warm": true,
+      "proposed_drafts": 10,
+      "replay": 1,
+      "request_close_ns_inside_timing": 12390383,
+      "request_scope": {
+        "binding_capacity": 4096,
+        "binding_stats": [
+          25985,
+          4695,
+          4695,
+          19842657,
+          8565197
+        ],
+        "closing_audit_ns": 12380273,
+        "counter_provenance": "admission-local request checkpoints; checked process-global binding/INFO/request-reuse deltas",
+        "full_io_audit": true,
+        "info_stats": [
+          26045,
+          1243,
+          195
+        ],
+        "metadata_reserved_bytes": 4194304,
+        "request_checkpoints": 35,
+        "request_io_reuses": 380,
+        "runtime_limit_bytes": 134217728,
+        "scope_closed": true,
+        "scope_sequence": 2,
+        "target_stream_configured": true
+      },
+      "request_scope_closed_and_audited": true,
+      "rounds": [
+        {
+          "accepted_drafts": 0,
+          "accepted_outputs": 1,
+          "draft_completed_cell": 1,
+          "draft_ns": 366281350,
+          "proposed_drafts": 2,
+          "repair_ns": 149142209,
+          "target_completed_cursor": 2,
+          "target_start": 1,
+          "total_ns": 784360138,
+          "verify_ns_including_public_vector_checks": 268936189
+        },
+        {
+          "accepted_drafts": 2,
+          "accepted_outputs": 3,
+          "draft_completed_cell": 4,
+          "draft_ns": 45275610,
+          "proposed_drafts": 2,
+          "repair_ns": 12870506,
+          "target_completed_cursor": 5,
+          "target_start": 2,
+          "total_ns": 303762560,
+          "verify_ns_including_public_vector_checks": 245616144
+        },
+        {
+          "accepted_drafts": 0,
+          "accepted_outputs": 1,
+          "draft_completed_cell": 5,
+          "draft_ns": 44731465,
+          "proposed_drafts": 2,
+          "repair_ns": 149614823,
+          "target_completed_cursor": 6,
+          "target_start": 5,
+          "total_ns": 449455183,
+          "verify_ns_including_public_vector_checks": 255108255
+        },
+        {
+          "accepted_drafts": 2,
+          "accepted_outputs": 3,
+          "draft_completed_cell": 8,
+          "draft_ns": 43973170,
+          "proposed_drafts": 2,
+          "repair_ns": 13978145,
+          "target_completed_cursor": 9,
+          "target_start": 6,
+          "total_ns": 323575998,
+          "verify_ns_including_public_vector_checks": 265624363
+        },
+        {
+          "accepted_drafts": 2,
+          "accepted_outputs": 3,
+          "draft_completed_cell": 11,
+          "draft_ns": 44435723,
+          "proposed_drafts": 2,
+          "repair_ns": 16544285,
+          "target_completed_cursor": 12,
+          "target_start": 9,
+          "total_ns": 304548046,
+          "verify_ns_including_public_vector_checks": 243567688
+        },
+        {
+          "accepted_drafts": 0,
+          "accepted_outputs": 1,
+          "draft_completed_cell": 12,
+          "draft_ns": 20,
+          "proposed_drafts": 0,
+          "repair_ns": 8376113,
+          "target_completed_cursor": 13,
+          "target_start": 12,
+          "total_ns": 160934878,
+          "verify_ns_including_public_vector_checks": 152558385
+        }
+      ],
+      "target_close": {
+        "main_buffers": 1380,
+        "main_bytes": 828866560,
+        "source_buffers": 0,
+        "source_bytes": 0
+      },
+      "target_fill_counters_after": {
+        "direct_bytes": 5759232000,
+        "direct_components": 8373,
+        "direct_windows": 411,
+        "evictions": 0,
+        "first_touch_fills": 2791
+      },
+      "target_fill_counters_before": {
+        "direct_bytes": 5759232000,
+        "direct_components": 8373,
+        "direct_windows": 411,
+        "evictions": 0,
+        "first_touch_fills": 2791
+      },
+      "target_host_phase_ns": {
+        "native_all_family_commit": 3182035,
+        "native_all_family_preflight": 4701975,
+        "native_attention_and_gr_enqueue": 1052286388,
+        "native_completed_final_proofs": 500201744,
+        "native_device_router_and_expert_enqueue": 23165074,
+        "native_device_router_audit": 74607121,
+        "native_ffn_gr_and_router_enqueue": 13379569,
+        "native_final_head_enqueue": 372094,
+        "native_route_and_expert_enqueue": 0,
+        "native_router_fence": 0,
+        "native_shared_and_ffn_combine_enqueue": 12150003
+      },
+      "timed_physical_read_bytes": 1146880,
+      "timing_scope": "original CPU13 routes and weights; deterministic diagnostic VRAM placement plus immutable direct host sources and deferred original GPU route audits, no demand expert uploads; full vectors and actual repair included",
+      "uploaded_bytes": 0,
+      "verify3_dense_calls": 6016,
+      "verify3_fused_calls": 6016,
+      "weight_read_ns": 0,
+      "weight_upload_enqueue_ns": 0
+    },
+    "complete_original_cpu13_vectors_carries_greedies_real_repair_accepted": true,
+    "physical_recovery_accepted": true,
+    "normal_language_pending": false,
+    "speed_claim_accepted": false,
+    "limits": [
+      "Internal public-only opt-in; unchanged default and production/API/frontend",
+      "One correctness gate, normal language comparison pending",
+      "Module-private public codebooks remove Naga whole-array Function stores; driver-level traffic and performance remain unproven",
+      "One ordered same-artifact language pair; no ABBA/prose/soak or independent CPU200 reference acceptance",
+      "Normal route counts match:46376 host/56344 VRAM; zero explicit expert uploads does not mean zero PCIe traffic",
+      "User requested stop; both cards recovered and no owned benchmarks or CPU jobs remain"
+    ],
+    "language_code_control_a1": {
+      "artifacts": "/media/jmicko/faststore/kuno-development/native-next-v147-code-control-a1-20261010",
+      "source": {
+        "commit": "7364dc8df4dc645bb3df588f7a52b6e1b9751646",
+        "binary_sha256": "4a6f3c657941a50200f751028d3b32871c552219de02a530ceb9dfdb135e21e1",
+        "features": [
+          "direct-device"
+        ],
+        "protected_launcher_sha256": "97fefd517ba665be051606ef9e03a453c791618981fb004e99e5764067d43e0a",
+        "helper_sha256": "72ebc97520b0b0199a34ae6a37d223576e4ed70d9ff1f62469d18f5e3fac70b6",
+        "public_trial": "language-code-fast-gpu-host",
+        "seed": 424242,
+        "temperature": 0,
+        "frozen_partition_exit_requested": true,
+        "frozen_bank_preserve_requested": false,
+        "frozen_private_tables_requested": false,
+        "ordinary_demand_performance_claimed": true,
+        "native_30_tokens_per_second_accepted": false
+      },
+      "record": {
+        "accepted_drafts": 130,
+        "actual_target_recomputations": 5,
+        "compiled_prompt_template_file": "serve/chat_template.jinja",
+        "compiled_prompt_template_revision": "fb58e0dbc8399662c0e47c76578c6e878b14f6cf",
+        "context_capacity": 235,
+        "continuation_tokens_per_second": 7.7803570012243455,
+        "draft_ns": 6083257824,
+        "draft_traffic": {
+          "explicit_dispatches": 32852,
+          "followup_copy_calls": 69,
+          "host_read_bytes": 15564800,
+          "host_read_calls": 337,
+          "minimal_packet_reads": 138,
+          "private_upload_bytes": 19562496,
+          "private_upload_calls": 398
+        },
+        "elapsed_ns": 25577232506,
+        "emitted_tokens_including_eos": 200,
+        "emitted_tokens_per_second": 7.819454272587281,
+        "expert_hits": 0,
+        "expert_uploads": 0,
+        "first_output_emission_timed": true,
+        "fixture": "first-code",
+        "fixture_peak_host_bytes": 2111616,
+        "frozen_host_close": {
+          "detached_pages": 432,
+          "live_backing_bytes": 0,
+          "metadata_owned_bytes": 1458688,
+          "physical_allocated_bytes": 36147609600,
+          "physical_freed_bytes": 36147609600,
+          "registered_pages": 432,
+          "source_window_peak_bytes": 1048576
+        },
+        "frozen_host_gpu_router": true,
+        "frozen_host_inactive_partition_exit": true,
+        "frozen_host_private_tables": false,
+        "frozen_host_setup": {
+          "attach_ns": 50294768442,
+          "bank_completion_experts": 1769,
+          "bank_completion_read_ns": 4413895966,
+          "bank_completion_upload_ns": 3444516,
+          "bank_completion_uploaded_bytes": 3586201600,
+          "prepare_and_attach_ns": 55816140903,
+          "separate_host_reserved_bytes": 36166705152
+        },
+        "frozen_source_routes": {
+          "host_routes": 46376,
+          "source_dispatches": 35520,
+          "vram_routes": 56344
+        },
+        "generation_physical_read_bytes": 18571264,
+        "gpu_router_calls": 3552,
+        "host_io": {
+          "gpu_submission_wait_ns": 10205649834,
+          "gpu_submission_waits": 618,
+          "inline_readback_batches": 450,
+          "provenance": "process-global whole public dual-device timed interval",
+          "scoped_read_flush_ns": 20261222,
+          "scoped_read_map_ns": 2984517063,
+          "scoped_read_setup_ns": 670674
+        },
+        "load_and_prefill_physical_read_bytes": 60559478784,
+        "load_ns": 10201474921,
+        "nonempty_text": true,
+        "post_prefill_target_continuations": 199,
+        "prefill_first_output_count": 1,
+        "prefill_first_output_generation_pick_timed": false,
+        "prefill_ns_including_real_teacher_kv": 32435573527,
+        "prompt_tokens": 35,
+        "proposed_drafts": 138,
+        "repair_abs_tolerance": 0.006000000052154064,
+        "repair_hidden_max_abs": 0.0,
+        "repair_logit_max_abs": 0.0,
+        "repair_ns_including_vector_checks": 1920615001,
+        "repair_rel_tolerance": 0.0003000000142492354,
+        "request_close_ns_inside_timing": 15820437,
+        "request_scope": {
+          "closing_audit_ns": 15813647,
+          "full_io_audit": true,
+          "scope_closed": true,
+          "scope_sequence": 1
+        },
+        "rounds": 69,
+        "stop_reason": "limit",
+        "target_close": {
+          "main_buffers": 1380,
+          "main_bytes": 828866560,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        "target_fill_counters_after": {
+          "direct_bytes": 10756531200,
+          "direct_components": 15702,
+          "direct_windows": 797,
+          "evictions": 91,
+          "first_touch_fills": 5143
+        },
+        "target_fill_counters_before": {
+          "direct_bytes": 10756531200,
+          "direct_components": 15702,
+          "direct_windows": 797,
+          "evictions": 91,
+          "first_touch_fills": 5143
+        },
+        "target_host_phase_ns": {
+          "native_all_family_commit": 33145423,
+          "native_all_family_preflight": 45288580,
+          "native_attention_and_gr_enqueue": 11117098422,
+          "native_completed_final_proofs": 4526775396,
+          "native_device_router_and_expert_enqueue": 1245041206,
+          "native_device_router_audit": 778683089,
+          "native_ffn_gr_and_router_enqueue": 124074104,
+          "native_final_head_enqueue": 3706687,
+          "native_route_and_expert_enqueue": 0,
+          "native_router_fence": 0,
+          "native_shared_and_ffn_combine_enqueue": 114275744
+        },
+        "uploaded_bytes": 0,
+        "verify3_dense_calls": 55648,
+        "verify3_fused_calls": 55648,
+        "verify_ns_full_packets": 17554169937,
+        "weight_read_ns": 0,
+        "weight_upload_enqueue_ns": 0
+      },
+      "physical_recovery_accepted": true
+    },
+    "source_checks": {
+      "native_daslab_filtered_tests_passed": 48,
+      "private_table_filtered_tests_passed": 5,
+      "protected_launcher_python_tests_passed": 104,
+      "direct_device_all_targets_clippy_warnings_denied": true,
+      "format_and_diff_check_passed": true
+    },
+    "pending_workgroup_leaf": {
+      "commit": "3594b76de116fc72f536cc296572a281d54231f2",
+      "integration_base": "7364dc8df4dc645bb3df588f7a52b6e1b9751646",
+      "worktree": "/home/jmicko/.codex/worktrees/kuno-constant-array-probe/vashti",
+      "focused_tests_passed": 3,
+      "strict_direct_device_clippy_passed": true,
+      "root_parser_launcher_receipt_integration_pending": true,
+      "gpu_acceptance_pending": true
+    },
+    "language_code_private_b1": {
+      "artifacts": "/media/jmicko/faststore/kuno-development/native-next-v147-code-private-b1-20261010",
+      "source": {
+        "commit": "7364dc8df4dc645bb3df588f7a52b6e1b9751646",
+        "binary_sha256": "4a6f3c657941a50200f751028d3b32871c552219de02a530ceb9dfdb135e21e1",
+        "features": [
+          "direct-device"
+        ],
+        "protected_launcher_sha256": "97fefd517ba665be051606ef9e03a453c791618981fb004e99e5764067d43e0a",
+        "helper_sha256": "72ebc97520b0b0199a34ae6a37d223576e4ed70d9ff1f62469d18f5e3fac70b6",
+        "public_trial": "language-code-private-gpu-host",
+        "seed": 424242,
+        "temperature": 0,
+        "frozen_partition_exit_requested": true,
+        "frozen_bank_preserve_requested": false,
+        "frozen_private_tables_requested": true,
+        "ordinary_demand_performance_claimed": true,
+        "native_30_tokens_per_second_accepted": false
+      },
+      "record": {
+        "accepted_drafts": 130,
+        "actual_target_recomputations": 5,
+        "compiled_prompt_template_file": "serve/chat_template.jinja",
+        "compiled_prompt_template_revision": "fb58e0dbc8399662c0e47c76578c6e878b14f6cf",
+        "context_capacity": 235,
+        "continuation_tokens_per_second": 7.621614887672815,
+        "draft_ns": 5868477665,
+        "draft_traffic": {
+          "explicit_dispatches": 32852,
+          "followup_copy_calls": 69,
+          "host_read_bytes": 15564800,
+          "host_read_calls": 337,
+          "minimal_packet_reads": 138,
+          "private_upload_bytes": 19562496,
+          "private_upload_calls": 398
+        },
+        "elapsed_ns": 26109952147,
+        "emitted_tokens_including_eos": 200,
+        "emitted_tokens_per_second": 7.659914459972679,
+        "expert_hits": 0,
+        "expert_uploads": 0,
+        "first_output_emission_timed": true,
+        "fixture": "first-code",
+        "fixture_peak_host_bytes": 2111616,
+        "frozen_host_close": {
+          "detached_pages": 432,
+          "live_backing_bytes": 0,
+          "metadata_owned_bytes": 1458688,
+          "physical_allocated_bytes": 36147609600,
+          "physical_freed_bytes": 36147609600,
+          "registered_pages": 432,
+          "source_window_peak_bytes": 1048576
+        },
+        "frozen_host_gpu_router": true,
+        "frozen_host_inactive_partition_exit": true,
+        "frozen_host_private_tables": true,
+        "frozen_host_setup": {
+          "attach_ns": 47542577852,
+          "bank_completion_experts": 1769,
+          "bank_completion_read_ns": 4266622292,
+          "bank_completion_upload_ns": 3140784,
+          "bank_completion_uploaded_bytes": 3586201600,
+          "prepare_and_attach_ns": 52870415385,
+          "separate_host_reserved_bytes": 36166705152
+        },
+        "frozen_source_routes": {
+          "host_routes": 46376,
+          "source_dispatches": 35520,
+          "vram_routes": 56344
+        },
+        "generation_physical_read_bytes": 13410304,
+        "gpu_router_calls": 3552,
+        "host_io": {
+          "gpu_submission_wait_ns": 10129172127,
+          "gpu_submission_waits": 618,
+          "inline_readback_batches": 450,
+          "provenance": "process-global whole public dual-device timed interval",
+          "scoped_read_flush_ns": 22277887,
+          "scoped_read_map_ns": 2986544152,
+          "scoped_read_setup_ns": 740597
+        },
+        "load_and_prefill_physical_read_bytes": 58909011968,
+        "load_ns": 8698735645,
+        "nonempty_text": true,
+        "post_prefill_target_continuations": 199,
+        "prefill_first_output_count": 1,
+        "prefill_first_output_generation_pick_timed": false,
+        "prefill_ns_including_real_teacher_kv": 29727360541,
+        "prompt_tokens": 35,
+        "proposed_drafts": 138,
+        "repair_abs_tolerance": 0.006000000052154064,
+        "repair_hidden_max_abs": 0.0,
+        "repair_logit_max_abs": 0.0,
+        "repair_ns_including_vector_checks": 1972512689,
+        "repair_rel_tolerance": 0.0003000000142492354,
+        "request_close_ns_inside_timing": 16023817,
+        "request_scope": {
+          "closing_audit_ns": 16016547,
+          "full_io_audit": true,
+          "scope_closed": true,
+          "scope_sequence": 1
+        },
+        "rounds": 69,
+        "stop_reason": "limit",
+        "target_close": {
+          "main_buffers": 1380,
+          "main_bytes": 828866560,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        "target_fill_counters_after": {
+          "direct_bytes": 10756531200,
+          "direct_components": 15702,
+          "direct_windows": 797,
+          "evictions": 91,
+          "first_touch_fills": 5143
+        },
+        "target_fill_counters_before": {
+          "direct_bytes": 10756531200,
+          "direct_components": 15702,
+          "direct_windows": 797,
+          "evictions": 91,
+          "first_touch_fills": 5143
+        },
+        "target_host_phase_ns": {
+          "native_all_family_commit": 34129455,
+          "native_all_family_preflight": 47198116,
+          "native_attention_and_gr_enqueue": 11122873959,
+          "native_completed_final_proofs": 4543037682,
+          "native_device_router_and_expert_enqueue": 1882070080,
+          "native_device_router_audit": 797985679,
+          "native_ffn_gr_and_router_enqueue": 127740611,
+          "native_final_head_enqueue": 3935295,
+          "native_route_and_expert_enqueue": 0,
+          "native_router_fence": 0,
+          "native_shared_and_ffn_combine_enqueue": 117724201
+        },
+        "uploaded_bytes": 0,
+        "verify3_dense_calls": 55648,
+        "verify3_fused_calls": 55648,
+        "verify_ns_full_packets": 18249186611,
+        "weight_read_ns": 0,
+        "weight_upload_enqueue_ns": 0
+      },
+      "physical_recovery_accepted": true
+    },
+    "same_artifact_ordered_speedup_percent": -2.040293440603691,
+    "native_20_tokens_per_second_accepted": false,
+    "decision": "Keep module-private path experimental/default-off: one ordered pair showed no speed gain. User requested stop before testing cooperative leaves.",
+    "pending_down_scale_leaf": {
+      "commit": "b56af6af0ef70f30401ae0b881fc4178c9807951",
+      "integration_base": "7364dc8df4dc645bb3df588f7a52b6e1b9751646",
+      "worktree": "/home/jmicko/.codex/worktrees/kuno-iq4-down-scales/vashti",
+      "focused_tests_passed": 3,
+      "strict_direct_device_clippy_passed": true,
+      "shared_iq4_scale_bytes": 80,
+      "root_parser_launcher_receipt_integration_pending": true,
+      "composition_with_workgroup_leaf_pending": true,
+      "gpu_acceptance_pending": true
+    },
+    "final_stop_state": {
+      "time": "2026-10-11T01:27:07.988687+00:00",
+      "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+      "intel_used_bytes": 50688000,
+      "nvidia_compute_process_count": 0,
+      "nvidia_graphics_memory_mib": 570,
+      "admission_active": false,
+      "admission_waiting": 0,
+      "admission_paused": false,
+      "admission_recovery_required": false,
+      "http_statuses": {
+        "kuno": 200,
+        "ollama": 200,
+        "vashti": 200
+      },
+      "classified_gpu_fault_counts": {
+        "nvidia_xid": 0,
+        "xe_memory_faults": 0,
+        "xe_reset_failures": 0,
+        "xe_timeouts": 0,
+        "xe_wedged": 0
+      },
+      "owned_benchmarks_running": false,
+      "owned_cpu_jobs_running": false
+    }
   }
 }

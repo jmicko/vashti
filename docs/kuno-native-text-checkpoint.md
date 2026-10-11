@@ -3698,3 +3698,116 @@ Files changed:
 
 Host state at handoff: baseline 50,688,000 B, admission normal, no GPU trial
 launched for the placement variant yet. Working tree clean at 4fad434.
+
+### Resumed shader experiments and usable stop checkpoint, 2026-10-10
+
+The user resumed after GLM/free-model work, then explicitly asked for a few
+remaining tests and a stop with the system usable. GPU and CPU work are now
+stopped. No source acceptance authorizes further GPU occupancy or installation.
+The existing optimization goal remains paused.
+
+Review found no blocking defect in the router-activation ledger fix8c7d838 or
+preserve-bank diagnostic4fad434. Prior v145 GPU-routed code200 ABBA remains the
+accepted repeated normal-language result:7.54493 control /8.33810 exit candidate
+continuation tokens/s (+10.51%). The new results do not reach20 tokens/s.
+
+**Preserved placement diagnostic:** fresh v146 source1d0d7c8, binary SHA256
+`d5a449cd87ce6a12b24de5611adddf47b179006af9607f5f010206ac7ef16549`, build
+`/media/jmicko/faststore/kuno-development/native-next-v146-resume-build-20261010`.
+Both original CPU13 full-vector/carry/greedy/real-repair gates and full closes
+pass. Preserve replay12/2.095918815s=5.72541 tokens/s, all9120 rank-member routes
+in VRAM; canonical12/2.783044584s=4.31182,6530 host/2590 VRAM. Both upload0 experts.
+These are short diagnostic rates, not normal-generation throughput. Source
+checks may have overlapped the canonical control, so the ordered difference is
+not an isolated causal estimate. Normal language already preserves residents
+left by its actual prefill; this is not a new language placement optimization.
+
+**Operative module-private table experiment:** leaf120e94d integrated ase054d70,
+then guarded public controller/launcher and element-mutation proof7364dc8. Frozen
+v147 source`7364dc8df4dc645bb3df588f7a52b6e1b9751646`, binary SHA256
+`4a6f3c657941a50200f751028d3b32871c552219de02a530ceb9dfdb135e21e1`, build
+`/media/jmicko/faststore/kuno-development/native-next-v147-private-build-20261010`.
+Exact flag`KUNO_LAB_FROZEN_TABLES=private-public` requires original frozen public
+sources and explicit partition exit. Actual completed source policy is recorded
+and compared; default unchanged. Original grids, weights, F32 arithmetic order,
+64-lane reductions, ranks, source owners/bindings and down kernels are unchanged.
+Naga tests establish removal of per-access whole-array Function stores for all
+actual mixed IQ profiles; they do not establish physical driver traffic savings.
+
+Software checks passed:48 daslab parser/reference tests,5 private-table focused
+tests (two overlap the48),104 protected-launcher Python tests, strict
+pure-direct-device all-target Clippy, formatting and whitespace checks. The
+negative element-store fixture checks recursively resolved Private pointer bases
+in the Naga AST. Actual macro-generated runtime kernel name was independently
+verified to match the guarded compiler selector.
+
+Full original CPU13 hardware gate`warm-private-gpu-host` passed:12 verified
+continuations/2.339232169s=5.12989 tokens/s, actual private-table flagtrue,
+6530 host/2590 VRAM routes, zero demand uploads. Original complete logits,
+carries, greedies, real repair and all target/draft/host-source closes pass.
+
+One same-artifact ordered normal public code200 pair:
+
+| Trial | Timed continuations | Seconds | Continuation tokens/s |
+| --- | ---: | ---: | ---: |
+| GPU router + partition exit control |199|25.577232506|7.780357|
+| Same + module-private public grids |199|26.109952147|7.621615|
+
+Both emit200 tokens,69 rounds,130/138 draft acceptance,46376 host/56344 VRAM
+rank-member routes and0 expert uploads. Seed424242, temperature0, thinkingoff,
+original DASLab target + unchanged Q8 MTP, compiled35-token merge-sorted-lists
+prompt. Setup/hash/attachment excluded from generation timing. Real target
+verification/repair and inside-timing request close remain included. No ABBA,
+prose/soak or independent CPU200 reference gate; do not claim a precise causal
+regression. This experiment shows no speed gain and remains default-off.
+
+Exact content-free source, ownership, counters, closes and recovery evidence
+are in the native-Strata receipt and these local output directories:
+
+- `native-next-v146-preserve-gate-20261010`
+- `native-next-v146-canonical-control-20261010`
+- `native-next-v147-private-gpu-gate-20261010`
+- `native-next-v147-code-control-a1-20261010`
+- `native-next-v147-code-private-b1-20261010`
+
+All are under`/media/jmicko/faststore/kuno-development`. Both original target
+shards are fully hashed before each frozen-host trial; public reference files
+and all numerical tolerances remain unchanged. No request/generated text,
+raw output tokens, routing IDs, prompts, images or credentials were recorded.
+
+**Two clean source-only follow-ups, not integrated or GPU accepted:**
+
+1. Workgroup-table commit`3594b76de116fc72f536cc296572a281d54231f2`, based7364dc8,
+   at`/home/jmicko/.codex/worktrees/kuno-constant-array-probe/vashti`.
+   Deduplicated original public IQ grids are initialized by literal lane/value
+   stores after uniform inactive exit and one barrier.5/6/12KiB total SLM;
+   original arithmetic/owners retained. Three focused checked/unchecked
+   shader/SPIR-V/immutability/geometry tests and strict direct Clippy pass.
+   See that commit's`docs/kuno-native-public-workgroup-tables-leaf.md`.
+2. IQ4 down-scale commit`b56af6af0ef70f30401ae0b881fc4178c9807951`, based7364dc8,
+   branch`codex/kuno-iq4-down-scales`, at
+   `/home/jmicko/.codex/worktrees/kuno-iq4-down-scales/vashti`.
+   Twenty original IQ4_NL scales decoded once into80B SLM; column/member
+   order and64-lane dots unchanged. Q2/default text unchanged. Three focused
+   shader/SPIR-V/original C-fixture bit/dot/owner tests, strict direct Clippy,
+   formatting and independent peer review pass. See`iq4_down_scale_tests.rs`.
+
+After fresh authorization/availability, integrate these leaves with guarded
+parser/launcher/receipt selection; neither has a registered runtime flag yet.
+Resolve their shared Geometry/Sources policy changes carefully, retaining
+private/workgroup mutual exclusion and orthogonal scale-sharing composition.
+Re-run CPU proofs, freeze a NEW clean artifact, run full original CPU13 gates
+and actual owner/physical recovery, then compare normal generation on the same
+artifact. Do not reuse v147 acceptance for new kernels. Do not weaken guards,
+replace selected experts, or move public tables into uncharged INFO/MAP storage.
+Do not increase144 slots blindly:160 slots plus bank rounding,8GiB cache and
+margin exceed the current31GiB ceiling. Zero demand uploads does not measure
+all PCIe traffic; observed normal language has45.15% host routes.
+
+**Final live state at2026-10-11 01:27:07UTC:** same boot, B70baseline50,688,000B,
+no NVIDIA compute owners (570MiB graphics), admission idle/unpaused with no
+recovery latch, Kuno/Ollama/Vashti HTTP200, all classified GPU fault counts0.
+All owned benchmark and CPU jobs ended. Services/binaries/public APIs were not
+changed; no reset/reboot/install/release occurred. Required Vashti changes:none.
+Canonical frontend checkout remains untouched. Preserve the pre-existing native
+untracked Python bytecode cache rather than treating it as source changes.

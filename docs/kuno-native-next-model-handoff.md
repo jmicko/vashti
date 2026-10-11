@@ -1,55 +1,73 @@
 # Native Kuno text engine: next-model handoff
 
-Prepared 2026-10-09 after the user stopped optimization to conserve usage.
-This is a standalone resume guide, not authorization to restart GPU work.
+Updated2026-10-10 after the user requested a few final tests, a stop and a usable
+system. GPU/CPU work is STOPPED and the goal remains paused. This file does not
+authorize further GPU occupancy, service changes or installation.
 
-**2026-10-10 resume notice:** the user explicitly resumed this backend pass.
-The original acceptance/status below is historical. Subsequent GLM work passed
-the v144/v145 gates and GPU-routed public code200 ABBA: v145 control mean
-7.54493 and exit candidate mean **8.33810 continuation tokens/s** (+10.51%).
-The preserve-placement opt-in `4fad434` changes only the short CPU13 replay;
-normal language already preserves its post-prefill resident set. The first
-v146 preserve replay now passes, with all 9,120 rank-member routes in VRAM and
-5.72541 tokens/s; this is a diagnostic, not normal-generation throughput.
-See the latest entries in [the checkpoint](kuno-native-text-checkpoint.md) and
-[coordination guide](kuno-vashti-coordination.md) for current source, tests,
-acceptance and pending private-table compiler experiment. Do not repeat the
-already accepted v144/v145 investigations from the historical next steps below.
+## Current checkpoint
 
-## Read this first
+We have real Rust inference with original DASLab IQ3_S Qwen3.8-Flash-Next and Q8
+MTP on the3060, but have NOT reached20 or30 tokens/s. Prior repeated v145 GPU
+router + inactive-partition-exit code200 result is8.33810 continuation tokens/s.
+GLM's ledger fix8c7d838 and preserve-placement source4fad434 were reviewed with no
+blocking findings. Preserve-placement now passes hardware gates, but only gives
+5.72541 tokens/s in a short all-selected-in-VRAM replay. Normal generation
+already preserves post-prefill residents; do not mistake that for a new speedup.
 
-We have a working Rust inference laboratory for Qwen3.8-Flash-Next, including
-original DASLab IQ3_S target weights and a real MTP draft on the other GPU.
-**We have not reached the requested 30 tokens/s.** The latest accepted RAM-source
-fixture is **4.21677 tokens/s for twelve verified continuations**, not ordinary
-long generation. Strata ran much faster on this machine. The immediate task is
-to physically validate a source-only optimization that skips inactive expert
-partitions, then measure normal generation without changing the model or math.
+Current integrated kernel source is7364dc8, following private-table leafe054d70.
+Frozen v147 passes full original CPU13 vectors/carries/greedies/actual repair,
+source/owner closes and physical recovery. Its same-artifact ordered code200 pair
+is7.78036 control /7.62161 module-private public tables, both199 timed
+continuations. This candidate shows no gain and remains default-off. No ABBA,
+prose/soak or independent CPU200 proof was run; no installed/public API change.
 
-The user wants speed work in the native Rust engine. Do not spend this pass on
-API/UI integration, authentication, cancellation, new releases, or Ollama
-baseline repetition. The user accepts approximately 10 tokens/s as the Ollama
-comparison target; native 30 tokens/s is the current larger objective. A result
-must use real selected experts and verified target tokens. Substituting resident
-experts, weakening reference tolerances, or counting speculative rejected tokens
-does not satisfy that objective.
+Two clean source-only leaves based7364dc8 remain UNINTEGRATED:
 
-At handoff, the optimization goal is paused and no owned benchmark is running.
-The installed Kuno/Ollama/Vashti binaries and their APIs were not changed by this
-native pass. Required Vashti changes: **none**. Do not resume a goal, install a
-binary, change services, or occupy the GPUs merely because this file exists.
-After the user explicitly resumes work, confirm current GPU availability and
-sudo access. Old chat statements that both GPUs were free are historical.
+- `3594b76de116fc72f536cc296572a281d54231f2` at
+  `/home/jmicko/.codex/worktrees/kuno-constant-array-probe/vashti`:
+  deduplicated public workgroup grids with literal initialization after uniform
+  inactive exit, one barrier,5/6/12KiB total SLM. Three focused shader/SPIR-V/
+  immutable-store/geometry tests and strict direct Clippy pass.
+- `b56af6af0ef70f30401ae0b881fc4178c9807951` at
+  `/home/jmicko/.codex/worktrees/kuno-iq4-down-scales/vashti`, branch
+  `codex/kuno-iq4-down-scales`:20 exact IQ4_NL scales in80B SLM, original
+  decoding/order/dots, unchanged Q2/default. Three focused shader/SPIR-V/
+  C-fixture bit/dot/owner tests, strict direct Clippy and peer review pass.
+
+Their runtime selection, root parser/launcher/receipts and GPU proof are pending;
+DO NOT send a guessed workgroup/shared selector to v147. After user-authorized
+resumption, integrate leaves (resolve shared Geometry/Sources policy hunks), add
+explicit default-off selection and actual-completed-policy receipts, retain
+private/workgroup mutual exclusion and scale-policy composition, rerun CPU
+proofs, freeze a NEW clean artifact and run full original CPU13 gates before
+normal same-artifact language timing. Do not substitute resident experts or
+loosen reference checks. Keep focus on speed; no API/UI/auth/cancellation/release
+work is needed for this internal pass. Don't repeat old Ollama baselines.
+
+Read the [latest detailed checkpoint](kuno-native-text-checkpoint.md#resumed-shader-experiments-and-usable-stop-checkpoint-2026-10-10)
+for exact artifact SHA256s, paths, measurements, tests, flags and ordered gates,
+then the active coordination handoff and all-row kernel contract. It supersedes
+all historical instructions below. Root receipt is
+`apps/kuno/benchmarks/text/receipts/native-strata-optimization-20261009.json`.
+No prompts/generated text/raw output tokens/routing IDs/images/credentials were
+saved. Existing original model/reference hashes and tolerances are unchanged.
+
+Final live check2026-10-11 01:27:07UTC: both cards recovered (B70 50,688,000B,
+no NVIDIA compute owners), Kuno admission idle/unpaused/no recovery latch,
+Kuno/Ollama/Vashti HTTP200, same boot and classified GPU faults0. No owned jobs
+remain. Installed binaries and canonical frontend were untouched. Required
+Vashti changes:none. Confirm fresh availability/sudo before any new GPU run.
 
 ### Correct checkout and ownership
 
 | Purpose | Checkout | Branch / checkpoint before this handoff |
 | --- | --- | --- |
-| Native engine source; work here | `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti` | `codex/kuno-native-text`, HEAD `cfd4f14` |
+| Native engine source; work here | `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti` | `codex/kuno-native-text`, kernel integration `7364dc8`; later documentation commit |
 | Separate Vashti application task; leave alone | `/media/jmicko/faststore/dev/vashti` (also `/home/jmicko/dev/vashti`) | `codex/image-flow-refinements`, HEAD `ae3e70d` |
 | Local frozen binaries, models' numeric reference fixtures, helper scripts, receipts | `/media/jmicko/faststore/kuno-development` | Not the source checkout |
 
-Both source checkouts were clean when inspected for this handoff. Recheck branch,
+Native tracked source and isolated leaves are committed; pre-existing Python
+bytecode remains untracked. Canonical frontend was clean and untouched. Recheck branch,
 status, and recent commits before editing; other tasks may subsequently change
 them. Preserve unrelated files, including coordination documents. Concurrent
 source work requires separate worktrees from an agreed commit; worktrees do not
@@ -61,6 +79,11 @@ Read `AGENTS.md`, the latest active section of
 The [current checkpoint](kuno-native-text-checkpoint.md#ram-source-full-model-acceptance-and-stop-checkpoint-2026-10-09)
 contains the exact preceding results. Earlier “active” sections in these long
 documents are historical, not instructions to repeat every prior experiment.
+
+## Historical detailed handoff, 2026-10-09
+
+The remaining sections are historical reference. The current checkpoint above
+supersedes their old acceptance tables and immediate-next-step instructions.
 
 ## What is accepted, and what is not
 

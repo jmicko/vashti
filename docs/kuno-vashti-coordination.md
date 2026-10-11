@@ -3148,3 +3148,32 @@ and negative element-write proof are in the follow-up source commit. Root owns
 the shared GPUs. Physical candidate acceptance is pending.
 No API, frontend, catalogue, installation or release change is included.
 Required Vashti changes:none. Preserve canonical application work.
+
+### Active handoff: native text experiments stopped with system usable, 2026-10-10
+
+This supersedes the resumed/pending status above. The user requested finishing
+remaining tests and returning the GPUs. All owned GPU/CPU work has stopped;
+no benchmark, installation or release is authorized by this handoff.
+
+Native root7364dc8 (private-table leafe054d70) passes source checks and the full
+original CPU13 physical gate. One ordered same-artifact public code200 comparison
+is7.78036 control /7.62161 private-table continuation tokens/s; no speed gain.
+Default/installed behavior is unchanged. Prior repeated v145 result remains
+8.33810 tokens/s; neither20 nor30 is accepted. Two isolated clean source leaves
+are ready for future integration/testing: workgroup tables3594b76 and IQ4 shared
+down scalesb56af6a, both based7364dc8, with focused CPU tests and strict Clippy.
+Their root parser/launcher/receipts, composition and GPU acceptance are pending.
+
+Exact commits, immutable artifact hashes, tests, rates, limitations, worktrees,
+next gates and final recovery evidence are in the
+[latest checkpoint](kuno-native-text-checkpoint.md#resumed-shader-experiments-and-usable-stop-checkpoint-2026-10-10)
+and [current resume guide](kuno-native-next-model-handoff.md).
+Internal contract is in the all-row plan; no public API/configuration change.
+Required Vashti changes:none. Do not infer full feature, deployment or speed
+acceptance from source-only checks.
+
+Final live check2026-10-11 01:27:07UTC: B70baseline50,688,000B, no NVIDIA compute
+owners, admission idle/unpaused/no recovery latch, allthree services HTTP200 and
+classified GPU faults0. Installed services and canonical frontend are unchanged.
+Confirm current GPU availability/sudo again before resuming; this is a historical
+host snapshot. The optimization goal remains paused.

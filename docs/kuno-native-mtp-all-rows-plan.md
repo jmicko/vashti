@@ -452,3 +452,34 @@ with the requested mode. Source shader/SPIR-V checks are prerequisites, not GPU
 acceptance or a performance claim. Require original CPU13/repair/full-owner gates
 before ordinary same-artifact language timing. If GPU compilation or execution
 fails, retain the old path and failure evidence; do not weaken numerical guards.
+
+### Pending cooperative kernel leaves, 2026-10-10
+
+Two source-only candidates are committed in isolated worktrees based on
+`7364dc8`. Neither is integrated into the parent parser, protected launcher or
+receipts, and neither has GPU acceptance. Do not assume an environment selector
+exists or silently substitute either for `private-public`.
+
+- Workgroup-table leaf `3594b76`: immutable `with_workgroup_tables` policy
+  requires frozen sources and partition exit and excludes private tables. The
+  exact named GU entrypoint deduplicates identical public grids and performs
+  literal lane-index/value initialization after the uniform inactive exit,
+  then one barrier. It uses5/6/12KiB total SLM for IQ3_XXS/IQ3_S/IQ2_S, with
+  unchanged original arithmetic and no new MAIN/INFO/binding owners. Three
+  focused mixed-profile checked/unchecked shader/SPIR-V/negative-store tests
+  and strict direct-device Clippy pass. Root selection remains pending.
+- Down-scale leaf `b56af6a`: immutable `with_shared_down_scales` policy requires
+  frozen sources and partition exit. The named frozen-down entrypoint stages
+  the20 original IQ4_NL scales in80B SLM after the uniform inactive exit, then
+  uses the original scale/code multiplication, column/member order and64-lane
+  reduction. Q2 and default kernels remain unchanged. Three focused
+  checked/unchecked shader/SPIR-V/C-fixture bit/dot tests and strict Clippy pass.
+  Root selection and composition with the workgroup-table leaf remain pending.
+
+After explicit GPU-work resumption, integrate leaves and guarded selection
+separately, resolve their shared Geometry/Sources policy changes, rerun CPU
+proofs, freeze a new artifact, then require complete original CPU13 vectors,
+carries, greedies, actual repair and full owner/physical recovery gates before
+normal-generation comparisons. Neither source acceptance nor an isolated
+operator establishes whole-model speed. See the current checkpoint for exact
+worktrees, commits and final host state. No production/API/Vashti change.
