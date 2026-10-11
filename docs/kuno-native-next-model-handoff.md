@@ -849,3 +849,37 @@ retains PLE/GUstride/sharedQ8Intel; original DOWNrows/stride and groupedstatus
 stay off to isolate new DOWN arithmetic. Source success does not establish
 physical accuracy or speed. Required Vashti changes:none; installedAPI/services/
 canonicalcheckout unchanged. No30tokens/s or release acceptance.
+
+
+### Completed Intel integer DOWN comparison, 2026-10-11 18:50 UTC
+
+Frozen source `6d1bb47cd54937a2dd08cb05d11062313168c862`, v164, binary SHA256
+`e5baf349d6d697e388ceff2d27a24bc4a09c99f3ef196505ee44c0a596b5b52b`, passes
+unchanged original CPU13 cold/warm full vectors, carries, greedy IDs, real
+repairs and complete owning closure. Warm first token reports actual integer
+DOWN 48/240/48 and 480 source dispatches; warm full pass reports
+432/2160/432 with 4320 sources. Original reference and tolerances are unchanged.
+
+One compiler-idle same-artifact ordered code200 pair measured **10.023723 →
+10.486196 continuations/s (+4.61%)**, each timing 199 real continuations,
+130/138 accepted drafts, 69 rounds and five repairs. Integer DOWN reports
+3552 preparations, 17760 calls, 3552 audits and 35520 original source calls.
+Keep integer DOWN as a preliminary faster candidate with integer GU/stride,
+grouped PLE and original full-Q8 shared head, all on Intel. Grouped status and
+original DOWNstride remain off. Nvidia is deferred at the user's direction.
+Single ordered timing is not repeated ABBA or prose acceptance.
+
+All 1382 target owners/828997632 bytes, 42 draft owners and 432 host pages close.
+Last physical recovery18:50:02UTC: Intel50688000B, Nvidia compute0, allHTTP200,
+idle/unpaused/no recovery latch and no classified GPU faults on the same boot.
+Full source tests, hashes, actual admission/selection and closures are recorded
+in `v164_intel_integer_down_physical`. No independent CPU200/private/production,
+installed defaults/API, 30tokens/s or release claim. Required Vashti changes:none.
+
+Next isolated source candidates: transfer the existing exact packed IQ4 lookup
+into actual Verify3 dense IQ4_NL/IQ4_XS (distinct immutable pipeline policy,
+unchanged original addresses/scales/dots/reductions), and a finite target GPU
+submission-backlog experiment retaining original submissions and proofs.
+Neither has physical acceptance yet. Root coordinates GPU and CPU timing;
+separate worktrees preserve source isolation. See the new normative contracts
+once integrated. No frontend or API work is part of these candidates.

@@ -76,7 +76,25 @@ strict direct-device all-target Clippy with two build jobs and warnings denied;
 format and diff checks. One unnecessary test-only allocation found by Clippy
 was removed and the affected composition test rerun successfully.
 
-Physical numerical/lifecycle/timing gates remain pending. A passing source gate
-does not establish GPU speed or output correctness; root owns the original
-CPU13 full-vector/greedy/real-repair gate, complete recovery and normal
-same-artifact paired timing. No installed inference/API changes.
+The original CPU13 numerical/lifecycle gate and one same-artifact Intel code200
+pair passed on 2026-10-11. Frozen source `6d1bb47` (v164) retains the original
+reference SHA256 and ABS0.006/REL0.0003 tolerances. Cold arithmetic is original;
+warm selection reports 432 preparations, 2,160 DOWN calls and 432 full-owner
+audits, with 4,320 original source calls. The selected first warm token reports
+48/240/48 and 480 source calls. Both passes retain 6/10 accepted drafts and all
+13 complete vectors, carries, greedy IDs and real repairs.
+
+Compiler-idle ordered code200 measured 10.023723 continuations/s for original
+four-row DOWN and 10.486196 for integer DOWN (+4.61%). Both time 199 real
+continuations, with 130/138 accepted drafts, 69 rounds and five repairs.
+Integer DOWN reports 3,552/17,760/3,552 and 35,520 source calls. Both use Intel
+target/MTP, original full-Q8 shared head, integer GU/stride and grouped PLE;
+grouped status and original DOWNstride stay off. This single pair supports
+carrying integer DOWN into the next candidate, not a repeatability claim.
+
+Full target 1,382/828,997,632 closure, all 42 draft owners and all 432 host pages
+close. Last recovery at 18:50:02 UTC has Intel 50,688,000B, no Nvidia compute,
+all three services HTTP200 and no new classified GPU faults on the same boot.
+Numeric records and hashes are in `v164_intel_integer_down_physical` in the
+native optimization receipt. No repeated ABBA/prose, independent CPU200,
+private/production, installed inference/API or release acceptance is claimed.
