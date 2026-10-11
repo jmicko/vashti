@@ -26,6 +26,7 @@ use cubecl_runtime::public_external::{
     PublicExternalHostSource, PublicExternalUsage,
 };
 use kuno_text::{Error, GgufFile, Result, model::BoundGraph};
+pub(crate) use sources::ResidentBankAllocation;
 use std::{
     mem::size_of,
     sync::{Arc, atomic::AtomicBool},
@@ -701,6 +702,8 @@ fn attachment_metadata(owners: usize, receipts: usize) -> Result<u64> {
         // One exclusive scoped CPU layer borrow; fixed map headers remain in
         // the unchanged Mirror metadata constituent, not copied weight bytes.
         .and_then(|n| n.checked_add(size_of::<CpuLayerBorrow<'_, '_, '_, '_>>() * 2))
+        // Fixed attachment/close scalar snapshots, never another GPU owner.
+        .and_then(|n| n.checked_add(size_of::<ResidentBankAllocation>() * 2))
         .and_then(|n| n.checked_add(8192)) // temporary identity/resource validation
         .ok_or(Error::ArithmeticOverflow)?;
     if bytes as u64 > ATTACHMENT_HOST_BYTES {
@@ -806,6 +809,7 @@ pub(crate) struct CloseReceipt {
     pub registry: PublicExternalUsage,
     pub attachment_metadata_peak_bytes: u64,
     pub detached_pages: usize,
+    pub resident_bank_allocation: ResidentBankAllocation,
 }
 impl Attachment<'_, '_, '_> {
     pub(crate) fn budget(&self) -> AttachmentBudget {
@@ -820,6 +824,16 @@ impl Attachment<'_, '_, '_> {
     pub(crate) fn registry_at_attachment(&self) -> PublicExternalUsage {
         self.registry
     }
+    /// Scalar ownership measurement only; gives no GPU join/free authority.
+    pub(crate) fn resident_bank_allocation(&self) -> Result<ResidentBankAllocation> {
+        if self.phase != Phase::Attached {
+            return Err(rejected());
+        }
+        self.sources
+            .as_ref()
+            .ok_or_else(rejected)?
+            .resident_bank_allocation()
+    }
     /// # Safety
     /// Parent must first accept the ACTUAL complete original all-family/fault
     /// proof and explicit model private-zero close, then lexically drop its
@@ -830,6 +844,7 @@ impl Attachment<'_, '_, '_> {
         let source = self.sources.as_ref().ok_or_else(rejected)?;
         require_detach(self.phase, Arc::strong_count(source))?;
         cubecl_common::future::block_on(self.client.sync()).map_err(|_| backend_error())?;
+        let resident_bank_allocation = self.resident_bank_allocation()?;
         self.sources.take(); // all actual consumers joined; release our final pins
         self.phase = Phase::Detaching;
         let backing = self.ledger()?.live_backing_bytes;
@@ -864,6 +879,7 @@ impl Attachment<'_, '_, '_> {
             registry,
             attachment_metadata_peak_bytes: self.metadata_peak,
             detached_pages: mirror::PAGES,
+            resident_bank_allocation,
         })
     }
 }

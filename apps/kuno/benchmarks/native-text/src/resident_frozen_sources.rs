@@ -233,6 +233,196 @@ struct Layer {
     // role-major five exact full sources; never ordinary BankSlots(512).
     pages: Vec<SourcePage>,
 }
+/// Content-free PUBLIC resident-buffer measurement. This is not main-pool,
+/// device-local heap, detach, erasure or capacity-admission authority. Source
+/// handle clones/bindings do not allocate another physical buffer.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ResidentBankAllocation {
+    pub layers: u64,
+    pub source_bindings: u64,
+    pub physical_buffers: u64,
+    pub logical_bytes: u64,
+    pub physical_buffer_bytes: u64,
+    pub conservative_bin_bytes: u64,
+    pub padding_bytes: u64,
+    pub admission_headroom_bytes: u64,
+}
+const RESIDENT_SOURCE_PAGES: [usize; 6] = [0, 1, 5, 6, 10, 11];
+impl ResidentBankAllocation {
+    // Caller has proved that this is one distinct, original VRAM buffer. The
+    // source constructor rejects duplicate buffers across ALL roles/layers.
+    fn add_authenticated_buffer(&mut self, logical: u64, physical: u64) -> Result<()> {
+        let bound = main_admission::page_bytes(logical).map_err(admission_error)?;
+        if physical < logical || physical > bound {
+            return Err(reject());
+        }
+        let add = |old: u64, next: u64| old.checked_add(next).ok_or(Error::ArithmeticOverflow);
+        self.source_bindings = add(self.source_bindings, 1)?;
+        self.physical_buffers = add(self.physical_buffers, 1)?;
+        self.logical_bytes = add(self.logical_bytes, logical)?;
+        self.physical_buffer_bytes = add(self.physical_buffer_bytes, physical)?;
+        self.conservative_bin_bytes = add(self.conservative_bin_bytes, bound)?;
+        Ok(())
+    }
+    fn complete(mut self, layers: usize) -> Result<Self> {
+        let expected = crate::daslab_profile::bank_bytes_144();
+        if layers != 48
+            || self.source_bindings != 48 * RESIDENT_SOURCE_PAGES.len() as u64
+            || self.physical_buffers != self.source_bindings
+            || self.logical_bytes != expected.logical
+            || self.conservative_bin_bytes != expected.physical
+        {
+            return Err(reject());
+        }
+        self.layers = layers as u64;
+        self.padding_bytes = self
+            .physical_buffer_bytes
+            .checked_sub(self.logical_bytes)
+            .ok_or(Error::ArithmeticOverflow)?;
+        self.admission_headroom_bytes = self
+            .conservative_bin_bytes
+            .checked_sub(self.physical_buffer_bytes)
+            .ok_or(Error::ArithmeticOverflow)?;
+        Ok(self)
+    }
+}
+#[cfg(test)]
+mod resident_bank_allocation_tests {
+    use super::*;
+    fn original_buffers() -> Vec<u64> {
+        // Independent inspected GGUF metadata; no model payload/device.
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../text/receipts/daslab-iq3-artifact-20261009.json"
+        ))
+        .unwrap();
+        fixture["tensor_inventory"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|tensor| {
+                let name = tensor["name"].as_str().unwrap();
+                name.ends_with("ffn_gate_exps.weight")
+                    || name.ends_with("ffn_up_exps.weight")
+                    || name.ends_with("ffn_down_exps.weight")
+            })
+            .flat_map(|tensor| {
+                let bytes = tensor["tensor_bytes"].as_u64().unwrap();
+                assert_eq!(bytes % 512, 0);
+                [bytes / 512 * 72; 2]
+            })
+            .collect()
+    }
+    #[test]
+    fn original_full_48_layers_count_unique_roots_not_handle_clones() {
+        let mut actual = ResidentBankAllocation::default();
+        let buffers = original_buffers();
+        assert_eq!(buffers.len(), 288);
+        for logical in buffers {
+            actual.add_authenticated_buffer(logical, logical).unwrap();
+        }
+        let actual = actual.complete(48).unwrap();
+        assert_eq!(actual.layers, 48);
+        assert_eq!(actual.source_bindings, 288);
+        assert_eq!(actual.physical_buffers, 288);
+        assert_eq!(actual.logical_bytes, 14_144_716_800);
+        assert_eq!(actual.physical_buffer_bytes, actual.logical_bytes);
+        assert_eq!(actual.conservative_bin_bytes, 18_723_373_056);
+        assert_eq!(actual.padding_bytes, 0);
+        assert_eq!(actual.admission_headroom_bytes, 4_578_656_256);
+    }
+    #[test]
+    fn actual_backing_padding_is_separate_from_unused_admission_bound() {
+        let mut actual = ResidentBankAllocation::default();
+        for logical in original_buffers() {
+            let physical = logical.next_multiple_of(32 * 1024);
+            actual.add_authenticated_buffer(logical, physical).unwrap();
+        }
+        let actual = actual.complete(48).unwrap();
+        assert_eq!(actual.physical_buffer_bytes, 14_149_484_544);
+        assert_eq!(actual.padding_bytes, 4_767_744);
+        assert_eq!(actual.admission_headroom_bytes, 4_573_888_512);
+        assert_eq!(
+            actual.padding_bytes + actual.admission_headroom_bytes,
+            actual.conservative_bin_bytes - actual.logical_bytes
+        );
+    }
+    #[test]
+    fn imported_host_partitions_never_enter_resident_telemetry() {
+        let mut host = 0;
+        let mut resident = 0;
+        for role in 0..3 {
+            for shard in 0..5 {
+                let index = role * 5 + shard;
+                if RESIDENT_SOURCE_PAGES.contains(&index) {
+                    assert!(shard < 2);
+                    resident += 1;
+                } else {
+                    assert!(shard >= 2);
+                    host += 1;
+                }
+            }
+        }
+        assert_eq!(resident, 6);
+        assert_eq!(host, 9);
+    }
+    #[test]
+    fn incomplete_overcounted_or_wrong_profile_cannot_emit_snapshot() {
+        for layers in [0, 47, 49, usize::MAX] {
+            assert!(ResidentBankAllocation::default().complete(layers).is_err());
+        }
+        let mut actual = ResidentBankAllocation::default();
+        let buffers = original_buffers();
+        for &logical in &buffers {
+            actual.add_authenticated_buffer(logical, logical).unwrap();
+        }
+        actual.complete(48).unwrap();
+        for field in 0..4 {
+            let mut wrong = actual;
+            match field {
+                0 => wrong.source_bindings -= 1,
+                1 => wrong.physical_buffers += 1,
+                2 => wrong.logical_bytes -= 4,
+                _ => wrong.conservative_bin_bytes += 4,
+            }
+            assert!(wrong.complete(48).is_err());
+        }
+        actual
+            .add_authenticated_buffer(buffers[0], buffers[0])
+            .unwrap();
+        assert!(actual.complete(48).is_err());
+    }
+    #[test]
+    fn full_physical_extent_and_checked_sum_are_required() {
+        let logical = 45_158_400;
+        let bound = main_admission::page_bytes(logical).unwrap();
+        for (logical, physical) in [
+            (0, 0),
+            (logical, logical - 4),
+            (logical, bound + 4),
+            (u64::MAX, u64::MAX),
+        ] {
+            assert!(
+                ResidentBankAllocation::default()
+                    .add_authenticated_buffer(logical, physical)
+                    .is_err()
+            );
+        }
+        let mut overflow = ResidentBankAllocation {
+            physical_buffer_bytes: u64::MAX,
+            ..ResidentBankAllocation::default()
+        };
+        assert!(overflow.add_authenticated_buffer(logical, logical).is_err());
+        let mut upper = ResidentBankAllocation::default();
+        for logical in original_buffers() {
+            upper
+                .add_authenticated_buffer(logical, main_admission::page_bytes(logical).unwrap())
+                .unwrap();
+        }
+        let upper = upper.complete(48).unwrap();
+        assert_eq!(upper.physical_buffer_bytes, upper.conservative_bin_bytes);
+        assert_eq!(upper.admission_headroom_bytes, 0);
+    }
+}
 pub(crate) struct Sources {
     binding: GraphBindingId,
     plan_identity: plan::PlanIdentity,
@@ -1124,6 +1314,39 @@ impl Sources {
     }
     pub(crate) fn metadata_bytes(&self) -> usize {
         self.metadata_bytes
+    }
+    /// Reconstruct from the accepted immutable physical resources only. The
+    /// six resident pages per layer are distinct roots, although BankSegment,
+    /// SourcePage and kernel bindings can retain clones of those same roots.
+    /// The remaining nine imported HOST pages are deliberately excluded. No
+    /// get_resource/memory_usage/readback call or device submission is made.
+    pub(crate) fn resident_bank_allocation(&self) -> Result<ResidentBankAllocation> {
+        if self.layers.len() != 48 {
+            return Err(reject());
+        }
+        let mut result = ResidentBankAllocation::default();
+        for layer in &self.layers {
+            if layer.pages.len() != PAGES {
+                return Err(reject());
+            }
+            for index in RESIDENT_SOURCE_PAGES {
+                let page = &layer.pages[index];
+                let logical = (page.words as u64)
+                    .checked_mul(4)
+                    .ok_or(Error::ArithmeticOverflow)?;
+                full_handle(&page.handle, logical)?;
+                let r = &page.resource;
+                check_page(
+                    r.offset,
+                    r.size,
+                    r.buffer.size(),
+                    logical,
+                    main_admission::page_bytes(logical).map_err(admission_error)?,
+                )?;
+                result.add_authenticated_buffer(logical, r.buffer.size())?;
+            }
+        }
+        result.complete(self.layers.len())
     }
     pub(crate) fn inactive_partition_exit(&self) -> bool {
         self.layers[0].geometry.inactive_partition_exit()
