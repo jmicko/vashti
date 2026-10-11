@@ -73,6 +73,9 @@ pub(crate) fn registration(
     if args.len() != 3 || args[1] != "intel" || args[2] != "public-host-cpu-batch-probe" {
         return Err("attached HOST CPU batch requires fixed Intel operator mode");
     }
+    if build != crate::target_lab_build::Build::Inline {
+        return Err("attached HOST CPU batch requires original direct request I/O build");
+    }
     let mut selected = BTreeMap::new();
     for (key, value) in env {
         if [b"KUNO_LAB_".as_slice(), b"KUNO_TEST_", b"KUNO_PUBLIC_"]
@@ -719,7 +722,7 @@ pub(crate) fn run(
     }
     let graph = Qwen4Exp::bind(&file)?;
     let reader = file.positional_reader()?;
-    client.configure_transient_io(128 * 1024 * 1024)?;
+    client.configure_public_target_request_io()?;
     u::select_retained_metadata(true);
     u::select_compute_scratch_clear(true);
     let retired = Arc::new(AtomicBool::new(false));
@@ -743,14 +746,17 @@ pub(crate) fn run(
     executor.shared_gdn = true;
     let prepared = std::cell::OnceCell::<PreparedPlan<'_, '_>>::new();
     let mut attachment: Option<Attachment> = None;
+    println!("public_host_cpu_batch_phase before_config");
     let mut config = Config::new(client, limits, 8)?
         .reserve_target_rows()?
         .reserve_latest_target_checkpoint()?
         .reserve_public_frozen_host_sources()?
+        .reserve_public_target_request_io()?
         .reserve_public_warm_replay()?;
     config = config.reserve_public_frozen_host_batch_router()?;
     executor.target_batch_router_reserved = true;
     executor.target_frozen_host_router_reserved = true;
+    println!("public_host_cpu_batch_phase before_constructor");
     let mut target = ResidentModel::new_with_native_batch(
         graph.bound_graph(),
         client.clone(),
@@ -774,7 +780,20 @@ pub(crate) fn run(
                 1,
                 target.completed_target_rows_cursor(&executor)?,
             )?;
+            if position == 0 {
+                target.begin_public_target_request_io(&mut executor, &cancel)?;
+                if !target.public_target_request_io_active()? {
+                    return Err("attached CPU batch cold request scope did not activate".into());
+                }
+            }
         }
+        let cold_request_scope = crate::target_lab_build::reuse_record(
+            target.end_public_target_request_io(&mut executor, &cancel)?,
+        );
+        if target.public_target_request_io_active()? {
+            return Err("attached CPU batch cold request scope did not close".into());
+        }
+        println!("public_host_cpu_batch_phase cold13_complete");
         let cold_ns = started.elapsed().as_nanos();
         let setup = Instant::now();
         let (plan, fills) = target.prepare_public_host_sources(&mut executor, &cancel, false)?;
@@ -803,14 +822,18 @@ pub(crate) fn run(
                 &cancel,
             )?
         });
+        println!("public_host_cpu_batch_phase attached");
         target.activate_public_frozen_host_batch_router(&executor, &cancel)?;
         let first =
             target.prefill_chunk_with_carry(&mut executor, &[expected.input_token(0)?], &cancel)?;
         expected.verify(0, first.logits(0)?, first.hidden(0)?)?;
         drop(first);
-        if target.completed_target_rows_cursor(&executor)? != 1 {
+        if target.completed_target_rows_cursor(&executor)? != 1
+            || target.public_target_request_io_active()?
+        {
             return Err("attached CPU batch actual warm boundary rejected".into());
         }
+        println!("public_host_cpu_batch_phase warm_passed");
         let setup_ns = setup.elapsed().as_nanos();
         let borrow_started = Instant::now();
         let source = target.borrow_public_host_cpu_layer(
@@ -827,9 +850,13 @@ pub(crate) fn run(
         let placements = source.placements()?.map(|p| serde_json::json!({"memory_type":p.memory_type,
             "heap":p.heap,"property_flags":p.property_flags,"heap_flags":p.heap_flags,"heap_bytes":p.heap_bytes}));
         let mut value = cases(&source, client, retired.clone(), &cancel)?;
+        println!("public_host_cpu_batch_phase operators_complete");
         value["actual_readonly_host_page_placements"] = placements.into();
         drop(source);
         value["cold_original13_full_vectors_ns"] = u64::try_from(cold_ns)?.into();
+        value["cold_target_request_scope"] = cold_request_scope;
+        value["warm_target_request_scope_activated"] = false.into();
+        value["request_reuse_metadata_reserved_bytes"] = (4 * 1024 * 1024u64).into();
         value["source_bank_completion_experts"] = fills.experts.into();
         value["source_setup_and_original_warm_token0_ns"] = u64::try_from(setup_ns)?.into();
         value["readonly_layer_mapping_ns"] = u64::try_from(mapping_ns)?.into();
@@ -938,6 +965,9 @@ mod tests {
         }
         let other = ["lab", "nvidia", "public-host-cpu-batch-probe"].map(OsString::from);
         assert!(registration(&other, env.clone(), crate::target_lab_build::Build::Inline).is_err());
+        assert!(
+            registration(&args, env.clone(), crate::target_lab_build::Build::Threaded).is_err()
+        );
         assert!(registration(&args, env, crate::target_lab_build::Build::Rejected).is_err());
     }
     #[test]

@@ -22,14 +22,24 @@ The existing original target construction uses the8GiB static cache,
 144slots/layer and31GiB complete target capacity plan, including its shared
 128MiB runtime I/O ceiling. Separate operator owners fit under4MiB. Root's
 protected runner admits that complete plan against fresh physical Intel memory
-with the unchanged512MiB driver margin before entering this mode.
+with the unchanged512MiB driver margin before entering this mode. The original
+public-target request runtime is configured before construction, with its
+unchanged128MiB ceiling and separate4MiB HOST binding metadata reservation.
+Threaded builds reject this fixed direct request-I/O gate.
 
 Actual source preparation follows all13 original cold count1 rows, with full
 logits/hidden vectors, greedy reference and completed cursor checked each time.
+After cold token0, the existing actual public request scope begins; at completed
+cold cursor13 it ends with its full original I/O audit before source preparation.
 It retains the existing CPU13 diagnostic bank placement, prepares at cursor13,
 performs the original accepted warm reset, attaches the real full mirror and
 activates the original frozen GPU router. Real warm token0 is checked against
-the same full reference before any CPU borrow. The model wrapper delegates
+the same full reference before any CPU borrow. The existing Closed permission
+allows that original token0 after the audited warm reset. The operator does not
+open a second model request scope; its receipt records that scope as inactive,
+and original model/runtime ownership audits still close every owner. Fixed
+content-free phase markers identify configuration, constructor, cold13,
+attachment, warm-token and operator-completion boundaries. The model wrapper delegates
 only after its existing complete native projection boundary, retaining the
 shared actual model workspace/executor and exclusive attachment borrow.
 
