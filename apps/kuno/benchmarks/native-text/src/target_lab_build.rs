@@ -390,6 +390,78 @@ pub(crate) fn request_reuse(
     }
 }
 
+/// Fixed public accepted-cache repair; ordinary scalar calls stay unchanged.
+pub(crate) fn public_mtp_batch_repair(
+    raw: Option<&OsStr>,
+    original_intel_full_q8_scope: bool,
+) -> Result<bool, &'static str> {
+    match raw {
+        None => Ok(false),
+        Some(value) if value == "batch-public" && original_intel_full_q8_scope => Ok(true),
+        _ => Err("MTP batch repair requires canonical original Intel full-Q8 public scope"),
+    }
+}
+
+/// Credit only completed leaf calls and the exact actual accepted KV appends.
+/// A retained first draft cell contributes no append; a no-draft tail adds one.
+pub(crate) fn public_mtp_batch_repair_record(
+    selected: bool,
+    calls: u64,
+    cells: u64,
+    fault_gates: u64,
+    expected_calls: u64,
+    expected_cells: u64,
+) -> Result<serde_json::Value, &'static str> {
+    if selected {
+        if calls == 0
+            || calls != expected_calls
+            || cells != expected_cells
+            || fault_gates != calls
+            || cells
+                > calls
+                    .checked_mul(2)
+                    .ok_or("MTP batch repair count overflow")?
+        {
+            return Err("actual completed MTP batch repair counters rejected");
+        }
+    } else if [calls, cells, fault_gates, expected_calls, expected_cells]
+        .iter()
+        .any(|&count| count != 0)
+    {
+        return Err("original MTP repair acquired candidate completion credit");
+    }
+    Ok(
+        serde_json::json!({"selected":selected,"completed_calls":calls,
+        "appended_cells":cells,"completed_fault_gates":fault_gates,
+        "new_private_owners":0}),
+    )
+}
+
+pub(crate) fn public_mtp_batch_repair_traffic_record(
+    selected: bool,
+    before: crate::resident_mtp::Traffic,
+    after: crate::resident_mtp::Traffic,
+    expected_calls: u64,
+    expected_cells: u64,
+) -> Result<serde_json::Value, &'static str> {
+    let delta = |before: u64, after: u64| {
+        after
+            .checked_sub(before)
+            .ok_or("MTP batch repair traffic regressed")
+    };
+    public_mtp_batch_repair_record(
+        selected,
+        delta(before.batched_repair_calls, after.batched_repair_calls)?,
+        delta(before.batched_repair_cells, after.batched_repair_cells)?,
+        delta(
+            before.batched_repair_fault_gates,
+            after.batched_repair_fault_gates,
+        )?,
+        expected_calls,
+        expected_cells,
+    )
+}
+
 /// A fixed compiled public ranking changes only empty-slot setup selection.
 pub(crate) fn public_host_bank_fill(
     raw: Option<&OsStr>,
@@ -1011,6 +1083,110 @@ pub(crate) fn name(inline: bool) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn mtp_batch_repair_is_canonical_and_scoped_without_changing_default() {
+        for scope in [false, true] {
+            assert!(!public_mtp_batch_repair(None, scope).unwrap());
+            assert_eq!(
+                public_mtp_batch_repair(Some(OsStr::new("batch-public")), scope).is_ok(),
+                scope
+            );
+            for raw in ["", "batch", "true", "1", "batch-public ", "original"] {
+                assert!(public_mtp_batch_repair(Some(OsStr::new(raw)), scope).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn mtp_batch_repair_receipt_joins_real_rounds_cells_and_one_fault_gate() {
+        assert!(public_mtp_batch_repair_record(false, 0, 0, 0, 0, 0).is_ok());
+        for (calls, cells) in [(1, 0), (1, 1), (1, 2), (5, 8), (69, 130)] {
+            let record =
+                public_mtp_batch_repair_record(true, calls, cells, calls, calls, cells).unwrap();
+            assert_eq!(record["completed_calls"], calls);
+            assert_eq!(record["appended_cells"], cells);
+            for (bad_calls, bad_cells, bad_gates) in [
+                (calls + 1, cells, calls),
+                (calls, cells + 1, calls),
+                (calls, cells, calls + 1),
+            ] {
+                assert!(
+                    public_mtp_batch_repair_record(
+                        true, bad_calls, bad_cells, bad_gates, calls, cells
+                    )
+                    .is_err()
+                );
+            }
+            assert!(
+                public_mtp_batch_repair_record(false, calls, cells, calls, calls, cells).is_err()
+            );
+        }
+        for (calls, cells, gates, expected_calls, expected_cells) in [
+            (0, 0, 0, 0, 0),
+            (1, 3, 1, 1, 3),
+            (u64::MAX, 0, u64::MAX, u64::MAX, 0),
+        ] {
+            assert!(
+                public_mtp_batch_repair_record(
+                    true,
+                    calls,
+                    cells,
+                    gates,
+                    expected_calls,
+                    expected_cells
+                )
+                .is_err()
+            );
+        }
+        for counts in [
+            [0, 1, 0, 0, 0],
+            [0, 0, 1, 0, 0],
+            [0, 0, 0, 1, 0],
+            [0, 0, 0, 0, 1],
+        ] {
+            assert!(
+                public_mtp_batch_repair_record(
+                    false, counts[0], counts[1], counts[2], counts[3], counts[4]
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn mtp_batch_repair_traffic_checks_delta_and_never_credits_prior_activity() {
+        use crate::resident_mtp::Traffic;
+        let before = Traffic {
+            batched_repair_calls: 4,
+            batched_repair_cells: 5,
+            batched_repair_fault_gates: 4,
+            ..Traffic::default()
+        };
+        let after = Traffic {
+            batched_repair_calls: 6,
+            batched_repair_cells: 8,
+            batched_repair_fault_gates: 6,
+            ..Traffic::default()
+        };
+        assert!(public_mtp_batch_repair_traffic_record(true, before, after, 2, 3).is_ok());
+        assert!(public_mtp_batch_repair_traffic_record(false, before, before, 0, 0).is_ok());
+        for after in [
+            Traffic {
+                batched_repair_calls: 3,
+                ..after
+            },
+            Traffic {
+                batched_repair_cells: 4,
+                ..after
+            },
+            Traffic {
+                batched_repair_fault_gates: 3,
+                ..after
+            },
+        ] {
+            assert!(public_mtp_batch_repair_traffic_record(true, before, after, 2, 3).is_err());
+        }
+    }
     #[test]
     fn profile_ranked_bank_filler_parser_is_canonical_and_default_off() {
         use crate::executor::PublicHostBankFillPolicy as P;

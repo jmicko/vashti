@@ -40,6 +40,7 @@ pub(crate) struct Inputs {
     mtp_q8_head_broadcast: bool,
     mtp_q8_head_shared_scales: bool,
     mtp_english_vocab: bool,
+    pub(crate) mtp_batch_repair: bool,
     pub(crate) gpu_qsa_selector: bool,
     pub(crate) frozen_host_sources: bool,
     pub(crate) frozen_host_router: bool,
@@ -107,6 +108,7 @@ pub(crate) fn registration(
                     | "KUNO_LAB_MTP_VOCAB"
                     | "KUNO_LAB_MTP_PROFILE"
                     | "KUNO_LAB_MTP_DEVICE"
+                    | "KUNO_LAB_MTP_REPAIR"
                     | "KUNO_PUBLIC_MTP_INTEL_TOTAL_BYTES"
                     | "KUNO_PUBLIC_MTP_INTEL_USED_BYTES"
                     | "KUNO_PUBLIC_MTP_INTEL_DEVICE_ID"
@@ -458,6 +460,35 @@ pub(crate) fn registration(
         used.as_deref(),
         device.as_deref(),
     )?;
+    let raw_mtp_repair = values.remove(OsStr::new("KUNO_LAB_MTP_REPAIR"));
+    let mtp_batch_repair = crate::target_lab_build::public_mtp_batch_repair(
+        raw_mtp_repair.as_deref(),
+        mtp_device == crate::target_lab_build::MtpDevice::Intel
+            && fused_sweeps
+            && draft_profile == Profile::SelfContainedQ8
+            && !mtp_q8_head_broadcast
+            && !mtp_english_vocab
+            && frozen_host_sources
+            && frozen_host_router
+            && frozen_partition_exit
+            && verify3_dense
+            && verify3_fused
+            && request_reuse
+            && chunk_io
+            && inline_dispatch
+            && public_existing_fill
+            && warm_replay
+            && !frozen_private_tables
+            && !frozen_workgroup_tables
+            && !frozen_shared_down_scales
+            && !frozen_shared_gate_up_factors
+            && !frozen_two_row_gate_up
+            && !frozen_packed_host_staging
+            && !frozen_three_members
+            && !preserve_routed_bank
+            && !prepared_experts
+            && !live_member_reduction,
+    )?;
     let raw_down_math = values.remove(OsStr::new("KUNO_LAB_FROZEN_DOWN_MATH"));
     let frozen_down_integer = crate::target_lab_build::frozen_down_integer(
         raw_down_math.as_deref(),
@@ -547,6 +578,9 @@ pub(crate) fn registration(
             && !prepared_experts
             && !live_member_reduction,
     )?;
+    if mtp_batch_repair && bank_fill != crate::executor::PublicHostBankFillPolicy::Original {
+        return Err("MTP batch repair requires original public bank fill");
+    }
     let raw_backlog = values.remove(OsStr::new("KUNO_LAB_TARGET_SUBMISSION_BACKLOG"));
     let target_submission_backlog = crate::target_lab_build::public_target_submission_backlog(
         raw_backlog.as_deref(),
@@ -641,6 +675,7 @@ pub(crate) fn registration(
         mtp_q8_head_broadcast,
         mtp_q8_head_shared_scales,
         mtp_english_vocab,
+        mtp_batch_repair,
         gpu_qsa_selector,
         frozen_host_sources,
         frozen_host_router,
@@ -1191,6 +1226,8 @@ pub(crate) fn run(
                     let mut rounds = Vec::new();
                     let mut target_recomputations = 0u64;
                     let before_traffic = draft.traffic();
+                    let selected_mtp_batch_repair = input.mtp_batch_repair && replay == 1;
+                    let mut mtp_batch_repair_cells = 0u64;
                     let before_uploads = executor.expert_uploads;
                     let before_hits = executor.expert_hits;
                     let before_gpu_routers = executor.gpu_router_calls;
@@ -1290,7 +1327,18 @@ pub(crate) fn run(
                         if target.completed_target_rows_cursor(&executor)? != position + accepted {
                             return Err("speculative repaired actual cursor rejected".into());
                         }
-                        if count > 1 {
+                        if selected_mtp_batch_repair {
+                            draft.repair_accepted_cache(
+                                position,
+                                &inputs[..accepted],
+                                &carry,
+                                &real_carries,
+                                &cancel,
+                            )?;
+                            mtp_batch_repair_cells = mtp_batch_repair_cells
+                                .checked_add(if count > 1 { accepted - 1 } else { 1 } as u64)
+                                .ok_or("MTP batch repair appended cell count overflow")?;
+                        } else if count > 1 {
                             // First cell used real target carry. Keep that exact KV;
                             // replace only subsequent provisional cells with reality.
                             draft.rewind(position)?;
@@ -1365,6 +1413,18 @@ pub(crate) fn run(
                         .checked_sub(load_disk_after)
                         .ok_or("public process read counter regressed")?;
                     let after = draft.traffic();
+                    let mtp_batch_repair_receipt =
+                        crate::target_lab_build::public_mtp_batch_repair_traffic_record(
+                            selected_mtp_batch_repair,
+                            before_traffic,
+                            after,
+                            if selected_mtp_batch_repair {
+                                rounds.len() as u64
+                            } else {
+                                0
+                            },
+                            mtp_batch_repair_cells,
+                        )?;
                     let (actual_direct, after_fills) =
                         target.native_public_fill_counters(&executor)?;
                     let frozen_routes = if executor.target_frozen_host_source_identity.is_some() {
@@ -1642,6 +1702,14 @@ pub(crate) fn run(
                     };
                     let mut record = serde_json::json!({"replay":replay,"device_router":(input.device_router || input.frozen_host_router) && replay == 1,"frozen_host_gpu_router":input.frozen_host_router && replay == 1,"frozen_host_inactive_partition_exit":frozen_partition_exit,"frozen_host_private_tables":frozen_private_tables,"frozen_host_workgroup_tables":frozen_workgroup_tables,"frozen_host_shared_down_scales":frozen_shared_down_scales,"frozen_host_shared_gate_up_factors":frozen_shared_gate_up_factors,"mtp_q8_head_broadcast":mtp_q8_head_broadcast,"mtp_q8_head_shared_scales":mtp_q8_head_shared_scales,"mtp_english_vocab":mtp_english_vocab,"mtp_english_vocab_receipt":mtp_english_vocab_receipt,"frozen_host_four_row_down":frozen_four_row_down,"frozen_host_two_row_gate_up":frozen_two_row_gate_up,"frozen_packed_host_staging":frozen_packed_host_staging,"frozen_three_member_arithmetic":frozen_three_members,"frozen_gu_integer":frozen_gu_integer,"frozen_gu_integer_counters":frozen_gu_integer_counters,"frozen_down_integer":frozen_down_integer,"frozen_down_integer_counters":frozen_down_integer_counters,"frozen_gu_stride_four":frozen_gu_stride_four,"frozen_gu_stride_four_counters":frozen_gu_stride_four_counters,"frozen_down_stride_four":frozen_down_stride_four,"frozen_down_stride_four_counters":frozen_down_stride_four_counters,"target_grouped_ple_reads":public_grouped_ple_reads,"target_grouped_ple_reads_receipt":grouped_ple_reads_receipt,"target_grouped_status_folds":public_grouped_status_folds,"target_grouped_status_folds_receipt":grouped_status_folds_receipt,"initial_prefill_target_grouped_status_folds":initial_prefill_target_grouped_status_folds,"initial_prefill_target_grouped_status_folds_receipt":initial_prefill_target_grouped_status_folds_receipt,"target_three_gdn_streaming":three_gdn_streaming,"target_three_gdn_completed_chunks":three_gdn_completed_chunks,"frozen_bank_placement":if input.preserve_routed_bank && replay == 1 {"preserve-routed"} else {"cpu13-diagnostic"},"device_router_scope":if input.frozen_host_router {"authenticated actual512 VRAM/host sources; deferred strict original IDs and full vectors, experimental F32 probabilities"} else {"conditional actual all-hit warm13; strict original IDs and full vectors, experimental F32 probabilities"},"request_scope_closed_and_audited":input.request_reuse,"request_scope":request_scope_receipt,"request_close_ns_inside_timing":request_close_ns,"host_io":host_io,"model_weights_warm":replay==1,"initial_prefill_ns":initial_prefill_ns,"initial_prefill_frozen_gu_integer":initial_prefill_frozen_gu_integer,"initial_prefill_frozen_gu_integer_counters":initial_prefill_frozen_gu_integer_counters,"initial_prefill_frozen_down_integer":initial_prefill_frozen_down_integer,"initial_prefill_frozen_down_integer_counters":initial_prefill_frozen_down_integer_counters,"initial_prefill_frozen_gu_stride_four":initial_prefill_frozen_gu_stride_four,"initial_prefill_frozen_gu_stride_four_counters":initial_prefill_frozen_gu_stride_four_counters,"initial_prefill_frozen_down_stride_four":initial_prefill_frozen_down_stride_four,"initial_prefill_frozen_down_stride_four_counters":initial_prefill_frozen_down_stride_four_counters,"gpu_router_calls":executor.gpu_router_calls-before_gpu_routers,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"verify3_fused_calls":executor.target_verify3_fused_calls-before_fused,"target_host_phase_ns":host_phase_ns,"load_and_initial_prefill_physical_read_bytes":load_disk_after.checked_sub(replay_disk_before).ok_or("public process read counter regressed")?,"timed_physical_read_bytes":timed_physical_read_bytes,"target_fill_counters_before":fill_counter_record(before_fills),"target_fill_counters_after":fill_counter_record(after_fills),"frozen_source_routes":frozen_routes,"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"timing_scope":if input.frozen_host_router && replay == 1 {format!("original CPU13 routes and weights; {placement_scope} plus immutable direct host sources and deferred original GPU route audits, no demand expert uploads; full vectors and actual repair included")} else if input.frozen_host_sources && replay == 1 {format!("original CPU13 routes and weights; {placement_scope} plus immutable direct host sources, no demand expert uploads; full vectors and actual repair included")} else if input.device_router && replay == 1 {"conditional actual all-hit GPU routing; deferred original-route audit, public checks and actual repair included".to_string()} else {"original normal routing/demand uploads; public checks and actual repair included".to_string()},"load_and_initial_prefill_cumulative_ns":load_ns,"accepted_tokens":accepted_tokens,"elapsed_ns":elapsed_ns,"accepted_tokens_per_second":accepted_tokens as f64*1e9/elapsed_ns as f64,"proposed_drafts":proposed_tokens,"accepted_drafts":accepted_drafts,"rounds":rounds,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"draft_traffic":{"host_read_calls":after.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after.host_read_bytes-before_traffic.host_read_bytes,"explicit_dispatches":after.explicit_dispatches-before_traffic.explicit_dispatches,"private_upload_calls":after.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after.followup_copy_calls-before_traffic.followup_copy_calls}});
                     record["target_submission_backlog"] = target_submission_backlog_receipt.clone();
+                    record["mtp_batch_repair_requested"] = input.mtp_batch_repair.into();
+                    record["mtp_batch_repair"] = mtp_batch_repair_receipt;
+                    record["draft_traffic"]["batched_repair_calls"] =
+                        record["mtp_batch_repair"]["completed_calls"].clone();
+                    record["draft_traffic"]["batched_repair_cells"] =
+                        record["mtp_batch_repair"]["appended_cells"].clone();
+                    record["draft_traffic"]["batched_repair_fault_gates"] =
+                        record["mtp_batch_repair"]["completed_fault_gates"].clone();
                     record["frozen_bank_fill"] =
                         crate::target_lab_build::public_host_bank_fill_name(
                             completed_bank_fill.policy,
@@ -1941,6 +2009,13 @@ pub(crate) fn run(
     .into();
     value["target_iq4_decoder_requested"] = input.public_iq4_decoder.into();
     value["target_submission_backlog"] = final_backlog_receipt;
+    value["mtp_repair_mode"] = if input.mtp_batch_repair {
+        "batch-public"
+    } else {
+        "original"
+    }
+    .into();
+    value["mtp_batch_repair_requested"] = input.mtp_batch_repair.into();
     serde_json::to_writer_pretty(
         std::fs::OpenOptions::new()
             .write(true)
@@ -2660,6 +2735,113 @@ mod tests {
         base.push(("KUNO_LAB_WARM_REPLAY".into(), "once".into()));
         base
     }
+    #[test]
+    fn mtp_batch_repair_registration_keeps_original_default_and_composes_exact_scope() {
+        let args = ["lab", "intel", "daslab-speculative-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        let base = intel_mtp_env();
+        assert!(
+            !registration(&args, base.clone(), build)
+                .unwrap()
+                .mtp_batch_repair
+        );
+        for composed in [false, true] {
+            let mut selected = base.clone();
+            selected.push(("KUNO_LAB_MTP_REPAIR".into(), "batch-public".into()));
+            if composed {
+                for (key, value) in [
+                    ("KUNO_LAB_FROZEN_GU_MATH", "integer-public"),
+                    ("KUNO_LAB_FROZEN_GU_SCHEDULE", "four-public"),
+                    ("KUNO_LAB_FROZEN_DOWN_MATH", "integer-public"),
+                    ("KUNO_LAB_TARGET_PLE_READS", "grouped-public"),
+                    ("KUNO_LAB_TARGET_STATUS_FOLDS", "grouped-public"),
+                    ("KUNO_LAB_TARGET_QSA", "chronological-public"),
+                    ("KUNO_LAB_MTP_Q8_HEAD", "shared-public"),
+                ] {
+                    selected.push((key.into(), value.into()));
+                }
+            }
+            let got = registration(&args, selected, build).unwrap();
+            assert!(got.mtp_batch_repair);
+            assert_eq!(got.frozen_down_integer, composed);
+        }
+    }
+
+    #[test]
+    fn mtp_batch_repair_registration_rejects_missing_scope_and_unaccepted_draft_math() {
+        let args = ["lab", "intel", "daslab-speculative-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        let mut base = intel_mtp_env();
+        base.push(("KUNO_LAB_MTP_REPAIR".into(), "batch-public".into()));
+        for key in [
+            "KUNO_LAB_DEVICE_DISPATCH",
+            "KUNO_LAB_TARGET_FILL",
+            "KUNO_LAB_TARGET_DENSE",
+            "KUNO_LAB_TARGET_IO",
+            "KUNO_LAB_TARGET_REUSE",
+            "KUNO_LAB_TARGET_SOURCES",
+            "KUNO_LAB_FROZEN_PARTITION_EXIT",
+            "KUNO_LAB_TARGET_ROUTER",
+            "KUNO_LAB_MTP_SWEEPS",
+        ] {
+            let mut missing = base.clone();
+            missing.retain(|(k, _)| k != key);
+            assert!(registration(&args, missing, build).is_err(), "{key}");
+        }
+        for (key, value) in [
+            ("KUNO_LAB_MTP_PROFILE", "strata-q2"),
+            ("KUNO_LAB_MTP_Q8_HEAD", "broadcast-public"),
+            ("KUNO_LAB_MTP_VOCAB", "english-public"),
+            ("KUNO_LAB_FROZEN_BANK_FILL", "profile-ranked-public"),
+            ("KUNO_LAB_FROZEN_TABLES", "private-public"),
+            ("KUNO_LAB_TARGET_EXPERTS", "prepared-verify3"),
+            ("KUNO_LAB_TARGET_MOE", "live"),
+        ] {
+            let mut invalid = base.clone();
+            invalid.push((key.into(), value.into()));
+            assert!(registration(&args, invalid, build).is_err(), "{key}");
+        }
+        let mut nvidia = base.clone();
+        nvidia.retain(|(k, _)| {
+            !matches!(
+                k.to_str(),
+                Some(
+                    "KUNO_LAB_MTP_DEVICE"
+                        | "KUNO_PUBLIC_MTP_INTEL_TOTAL_BYTES"
+                        | "KUNO_PUBLIC_MTP_INTEL_USED_BYTES"
+                        | "KUNO_PUBLIC_MTP_INTEL_DEVICE_ID"
+                )
+            )
+        });
+        assert!(registration(&args, nvidia, build).is_err());
+        assert!(registration(&args, base, crate::target_lab_build::Build::Threaded).is_err());
+    }
+
+    #[test]
+    fn mtp_batch_repair_registration_rejects_noncanonical_and_duplicate_selection() {
+        let args = ["lab", "intel", "daslab-speculative-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        for raw in ["", "batch", "true", "1", "batch-public ", "original"] {
+            let mut invalid = intel_mtp_env();
+            invalid.push(("KUNO_LAB_MTP_REPAIR".into(), raw.into()));
+            assert!(registration(&args, invalid, build).is_err());
+        }
+        let mut duplicate = intel_mtp_env();
+        for _ in 0..2 {
+            duplicate.push(("KUNO_LAB_MTP_REPAIR".into(), "batch-public".into()));
+        }
+        assert!(registration(&args, duplicate, build).is_err());
+    }
+
+    #[test]
+    fn mtp_batch_repair_cpu13_requires_real_warm_pass() {
+        let args = ["lab", "intel", "daslab-speculative-probe"].map(OsString::from);
+        let mut invalid = intel_mtp_env();
+        invalid.retain(|(key, _)| key != "KUNO_LAB_WARM_REPLAY");
+        invalid.push(("KUNO_LAB_MTP_REPAIR".into(), "batch-public".into()));
+        assert!(registration(&args, invalid, crate::target_lab_build::Build::Inline).is_err());
+    }
+
     #[test]
     fn intel_mtp_controller_registration_retains_full144_original_target_and_explicit_profile() {
         let args = ["lab", "intel", "daslab-speculative-probe"].map(OsString::from);

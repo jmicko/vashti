@@ -118,6 +118,7 @@ pub(crate) struct Inputs {
     mtp_q8_head_broadcast: bool,
     mtp_q8_head_shared_scales: bool,
     mtp_english_vocab: bool,
+    pub(crate) mtp_batch_repair: bool,
     pub(crate) gpu_qsa_selector: bool,
     pub(crate) frozen_host_sources: bool,
     pub(crate) frozen_host_router: bool,
@@ -183,6 +184,7 @@ pub(crate) fn registration(
                     | "KUNO_LAB_MTP_VOCAB"
                     | "KUNO_LAB_MTP_PROFILE"
                     | "KUNO_LAB_MTP_DEVICE"
+                    | "KUNO_LAB_MTP_REPAIR"
                     | "KUNO_PUBLIC_MTP_INTEL_TOTAL_BYTES"
                     | "KUNO_PUBLIC_MTP_INTEL_USED_BYTES"
                     | "KUNO_PUBLIC_MTP_INTEL_DEVICE_ID"
@@ -235,6 +237,7 @@ pub(crate) fn registration(
         && [
             "KUNO_LAB_MTP_SWEEPS",
             "KUNO_LAB_MTP_DEVICE",
+            "KUNO_LAB_MTP_REPAIR",
             "KUNO_PUBLIC_MTP_INTEL_TOTAL_BYTES",
             "KUNO_PUBLIC_MTP_INTEL_USED_BYTES",
             "KUNO_PUBLIC_MTP_INTEL_DEVICE_ID",
@@ -492,6 +495,17 @@ pub(crate) fn registration(
         used.as_deref(),
         device.as_deref(),
     )?;
+    let raw_mtp_repair = values.remove(OsStr::new("KUNO_LAB_MTP_REPAIR"));
+    let mtp_batch_repair = crate::target_lab_build::public_mtp_batch_repair(
+        raw_mtp_repair.as_deref(),
+        decode_mode == DecodeMode::Speculative
+            && original_public_target_scope
+            && mtp_device == crate::target_lab_build::MtpDevice::Intel
+            && fused_sweeps
+            && draft_profile == Profile::SelfContainedQ8
+            && !mtp_q8_head_broadcast
+            && !mtp_english_vocab,
+    )?;
     let raw_down_math = values.remove(OsStr::new("KUNO_LAB_FROZEN_DOWN_MATH"));
     let frozen_down_integer = crate::target_lab_build::frozen_down_integer(
         raw_down_math.as_deref(),
@@ -527,6 +541,9 @@ pub(crate) fn registration(
             && !mtp_q8_head_broadcast
             && !mtp_english_vocab,
     )?;
+    if mtp_batch_repair && bank_fill != crate::executor::PublicHostBankFillPolicy::Original {
+        return Err("MTP batch repair requires original public bank fill");
+    }
     let raw_backlog = values.remove(OsStr::new("KUNO_LAB_TARGET_SUBMISSION_BACKLOG"));
     let target_submission_backlog = crate::target_lab_build::public_target_submission_backlog(
         raw_backlog.as_deref(),
@@ -564,6 +581,7 @@ pub(crate) fn registration(
         mtp_q8_head_broadcast,
         mtp_q8_head_shared_scales,
         mtp_english_vocab,
+        mtp_batch_repair,
         gpu_qsa_selector,
         frozen_host_sources,
         frozen_host_router,
@@ -1369,6 +1387,7 @@ pub(crate) fn run(
             let before_fused = executor.target_verify3_fused_calls;
             let before_phases = target.phase_ns.clone();
             let before_traffic = draft.as_ref().map(|draft| draft.traffic());
+            let mut mtp_batch_repair_cells = 0u64;
             let before_host = crate::target_lab_build::host_io_snapshot();
             let (actual_direct, before_fills) = target.native_public_fill_counters(&executor)?;
             if actual_direct != input.public_existing_fill {
@@ -1517,7 +1536,18 @@ pub(crate) fn run(
                 if target.completed_target_rows_cursor(&executor)? != position + accepted {
                     return Err("language repaired actual cursor rejected".into());
                 }
-                if count > 1 {
+                if input.mtp_batch_repair {
+                    draft.repair_accepted_cache(
+                        position,
+                        &inputs[..accepted],
+                        &carry,
+                        &actual_carries,
+                        &cancel,
+                    )?;
+                    mtp_batch_repair_cells = mtp_batch_repair_cells
+                        .checked_add(if count > 1 { accepted - 1 } else { 1 } as u64)
+                        .ok_or("language MTP batch repair appended cell count overflow")?;
+                } else if count > 1 {
                     // Retain first real cell; replace only provisional cells
                     // with actual accepted target carry/token conditioning.
                     draft.rewind(position)?;
@@ -1599,6 +1629,18 @@ pub(crate) fn run(
                 .map(|(n, v)| (*n, v - before_phases.get(n).copied().unwrap_or(0)))
                 .collect();
             let after_traffic = draft.as_ref().map(|draft| draft.traffic());
+            let mtp_batch_repair_receipt =
+                crate::target_lab_build::public_mtp_batch_repair_traffic_record(
+                    input.mtp_batch_repair,
+                    before_traffic.unwrap_or_default(),
+                    after_traffic.unwrap_or_default(),
+                    if input.mtp_batch_repair {
+                        stats.rounds
+                    } else {
+                        0
+                    },
+                    mtp_batch_repair_cells,
+                )?;
             let draft_traffic = match (before_traffic, after_traffic) {
                 (Some(before), Some(after)) => Some(serde_json::json!({
                     "host_read_calls":after.host_read_calls-before.host_read_calls,
@@ -1607,7 +1649,10 @@ pub(crate) fn run(
                     "private_upload_calls":after.private_upload_calls-before.private_upload_calls,
                     "private_upload_bytes":after.private_upload_bytes-before.private_upload_bytes,
                     "minimal_packet_reads":after.minimal_packet_reads-before.minimal_packet_reads,
-                    "followup_copy_calls":after.followup_copy_calls-before.followup_copy_calls})),
+                    "followup_copy_calls":after.followup_copy_calls-before.followup_copy_calls,
+                    "batched_repair_calls":mtp_batch_repair_receipt["completed_calls"],
+                    "batched_repair_cells":mtp_batch_repair_receipt["appended_cells"],
+                    "batched_repair_fault_gates":mtp_batch_repair_receipt["completed_fault_gates"]})),
                 (None, None) if input.decode_mode == DecodeMode::TargetOnly => None,
                 _ => return Err("language actual draft traffic scope changed".into()),
             };
@@ -1896,6 +1941,8 @@ pub(crate) fn run(
             record["frozen_bank_fill"] =
                 crate::target_lab_build::public_host_bank_fill_name(completed_bank_fill.policy)
                     .into();
+            record["mtp_batch_repair_requested"] = input.mtp_batch_repair.into();
+            record["mtp_batch_repair"] = mtp_batch_repair_receipt;
             record["frozen_bank_fill_receipt"] = bank_fill_receipt;
             record["initial_prefill_frozen_bank_fill"] =
                 crate::target_lab_build::public_host_bank_fill_name(initial_bank_fill.policy)
@@ -2040,6 +2087,13 @@ pub(crate) fn run(
     .into();
     value["target_iq4_decoder_requested"] = input.public_iq4_decoder.into();
     value["target_submission_backlog"] = final_backlog_receipt;
+    value["mtp_repair_mode"] = if input.mtp_batch_repair {
+        "batch-public"
+    } else {
+        "original"
+    }
+    .into();
+    value["mtp_batch_repair_requested"] = input.mtp_batch_repair.into();
     serde_json::to_writer_pretty(
         std::fs::OpenOptions::new()
             .write(true)
@@ -3039,6 +3093,116 @@ mod tests {
 
         base
     }
+    #[test]
+    fn mtp_batch_repair_registration_keeps_original_default_and_composes_exact_scope() {
+        let args = ["lab", "intel", "daslab-language-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        let base = intel_mtp_env();
+        assert!(
+            !registration(&args, base.clone(), build)
+                .unwrap()
+                .mtp_batch_repair
+        );
+        for composed in [false, true] {
+            let mut selected = base.clone();
+            selected.push(("KUNO_LAB_MTP_REPAIR".into(), "batch-public".into()));
+            if composed {
+                for (key, value) in [
+                    ("KUNO_LAB_FROZEN_GU_MATH", "integer-public"),
+                    ("KUNO_LAB_FROZEN_GU_SCHEDULE", "four-public"),
+                    ("KUNO_LAB_FROZEN_DOWN_MATH", "integer-public"),
+                    ("KUNO_LAB_TARGET_PLE_READS", "grouped-public"),
+                    ("KUNO_LAB_TARGET_STATUS_FOLDS", "grouped-public"),
+                    ("KUNO_LAB_TARGET_QSA", "chronological-public"),
+                    ("KUNO_LAB_MTP_Q8_HEAD", "shared-public"),
+                ] {
+                    selected.push((key.into(), value.into()));
+                }
+            }
+            let got = registration(&args, selected, build).unwrap();
+            assert!(got.mtp_batch_repair);
+            assert_eq!(got.frozen_down_integer, composed);
+        }
+    }
+
+    #[test]
+    fn mtp_batch_repair_registration_rejects_missing_scope_and_unaccepted_draft_math() {
+        let args = ["lab", "intel", "daslab-language-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        let mut base = intel_mtp_env();
+        base.push(("KUNO_LAB_MTP_REPAIR".into(), "batch-public".into()));
+        for key in [
+            "KUNO_LAB_DEVICE_DISPATCH",
+            "KUNO_LAB_TARGET_FILL",
+            "KUNO_LAB_TARGET_DENSE",
+            "KUNO_LAB_TARGET_IO",
+            "KUNO_LAB_TARGET_REUSE",
+            "KUNO_LAB_TARGET_SOURCES",
+            "KUNO_LAB_FROZEN_PARTITION_EXIT",
+            "KUNO_LAB_TARGET_ROUTER",
+            "KUNO_LAB_MTP_SWEEPS",
+        ] {
+            let mut missing = base.clone();
+            missing.retain(|(k, _)| k != key);
+            assert!(registration(&args, missing, build).is_err(), "{key}");
+        }
+        for (key, value) in [
+            ("KUNO_LAB_MTP_PROFILE", "strata-q2"),
+            ("KUNO_LAB_MTP_Q8_HEAD", "broadcast-public"),
+            ("KUNO_LAB_MTP_VOCAB", "english-public"),
+            ("KUNO_LAB_FROZEN_BANK_FILL", "profile-ranked-public"),
+            ("KUNO_LAB_FROZEN_TABLES", "private-public"),
+            ("KUNO_LAB_TARGET_EXPERTS", "prepared-verify3"),
+            ("KUNO_LAB_TARGET_MOE", "live"),
+        ] {
+            let mut invalid = base.clone();
+            invalid.push((key.into(), value.into()));
+            assert!(registration(&args, invalid, build).is_err(), "{key}");
+        }
+        let mut nvidia = base.clone();
+        nvidia.retain(|(k, _)| {
+            !matches!(
+                k.to_str(),
+                Some(
+                    "KUNO_LAB_MTP_DEVICE"
+                        | "KUNO_PUBLIC_MTP_INTEL_TOTAL_BYTES"
+                        | "KUNO_PUBLIC_MTP_INTEL_USED_BYTES"
+                        | "KUNO_PUBLIC_MTP_INTEL_DEVICE_ID"
+                )
+            )
+        });
+        assert!(registration(&args, nvidia, build).is_err());
+        assert!(registration(&args, base, crate::target_lab_build::Build::Threaded).is_err());
+    }
+
+    #[test]
+    fn mtp_batch_repair_registration_rejects_noncanonical_and_duplicate_selection() {
+        let args = ["lab", "intel", "daslab-language-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        for raw in ["", "batch", "true", "1", "batch-public ", "original"] {
+            let mut invalid = intel_mtp_env();
+            invalid.push(("KUNO_LAB_MTP_REPAIR".into(), raw.into()));
+            assert!(registration(&args, invalid, build).is_err());
+        }
+        let mut duplicate = intel_mtp_env();
+        for _ in 0..2 {
+            duplicate.push(("KUNO_LAB_MTP_REPAIR".into(), "batch-public".into()));
+        }
+        assert!(registration(&args, duplicate, build).is_err());
+    }
+
+    #[test]
+    fn mtp_batch_repair_never_acquires_target_only_draft_scope() {
+        let args = ["lab", "intel", "daslab-language-probe"].map(OsString::from);
+        let mut invalid = env();
+        invalid.push((
+            "KUNO_LAB_LANGUAGE_DECODE".into(),
+            "target-only-public".into(),
+        ));
+        invalid.push(("KUNO_LAB_MTP_REPAIR".into(), "batch-public".into()));
+        assert!(registration(&args, invalid, crate::target_lab_build::Build::Threaded).is_err());
+    }
+
     #[test]
     fn intel_mtp_controller_registration_retains_full144_original_target_and_explicit_profile() {
         let args = ["lab", "intel", "daslab-language-probe"].map(OsString::from);
