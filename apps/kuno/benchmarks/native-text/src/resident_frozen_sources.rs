@@ -227,6 +227,7 @@ pub(crate) struct Sources {
     metadata_bytes: usize,
     packed_host_staging: bool,
     gu_integer: bool,
+    gu_stride_four: bool,
 }
 fn initial_metadata(layers: usize, pages: usize, banks: usize) -> Result<usize> {
     let bytes = std::mem::size_of::<Sources>()
@@ -441,6 +442,15 @@ impl Sources {
         }
         Ok(())
     }
+    pub(crate) fn validate_gu_schedule_policy(
+        gu_integer: bool,
+        gu_stride_four: bool,
+    ) -> Result<()> {
+        if gu_stride_four && !gu_integer {
+            return Err(reject());
+        }
+        Ok(())
+    }
     pub(crate) fn validate_staging_policy(
         selected: bool,
         inactive_partition_exit: bool,
@@ -536,6 +546,45 @@ impl Sources {
         three_members: bool,
         gu_integer: bool,
     ) -> Result<Arc<Self>> {
+        Self::new_with_policy_and_gu_schedule(
+            executor,
+            graph,
+            plan,
+            pages,
+            reserved_host_bytes,
+            inactive_partition_exit,
+            private_tables,
+            workgroup_tables,
+            shared_down_scales,
+            shared_gate_up_factors,
+            four_row_down,
+            two_row_gate_up,
+            packed_host_staging,
+            three_members,
+            gu_integer,
+            false,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_with_policy_and_gu_schedule(
+        executor: &GpuExecutor<'_>,
+        graph: BoundGraph<'_, '_>,
+        plan: &plan::Plan<'_, '_>,
+        pages: Vec<RegisteredPage>,
+        reserved_host_bytes: u64,
+        inactive_partition_exit: bool,
+        private_tables: bool,
+        workgroup_tables: bool,
+        shared_down_scales: bool,
+        shared_gate_up_factors: bool,
+        four_row_down: bool,
+        two_row_gate_up: bool,
+        packed_host_staging: bool,
+        three_members: bool,
+        gu_integer: bool,
+        gu_stride_four: bool,
+    ) -> Result<Arc<Self>> {
+        Self::validate_gu_schedule_policy(gu_integer, gu_stride_four)?;
         Self::validate_kernel_policies(
             inactive_partition_exit,
             private_tables,
@@ -808,10 +857,14 @@ impl Sources {
             metadata_bytes,
             packed_host_staging,
             gu_integer,
+            gu_stride_four,
         }))
     }
     pub(crate) fn gu_integer(&self) -> bool {
         self.gu_integer
+    }
+    pub(crate) fn gu_stride_four(&self) -> bool {
+        self.gu_stride_four
     }
     pub(crate) fn three_members(&self) -> bool {
         self.layers[0].geometry.three_member_arithmetic()
@@ -1225,13 +1278,15 @@ struct GuIntegerDispatch {
     layer: usize,
     count: usize,
     dispatches: u64,
+    stride_four_dispatches: u64,
 }
 impl GuIntegerDispatch {
-    fn validate(self, layer: usize, count: usize) -> Result<()> {
+    fn validate(self, layer: usize, count: usize, stride_four: bool) -> Result<()> {
         if self.layer != layer
             || layer >= 48
             || self.count != count
             || self.dispatches != 5
+            || self.stride_four_dispatches != if stride_four { 5 } else { 0 }
             || !(1..=3).contains(&count)
         {
             return Err(reject());
@@ -1328,7 +1383,7 @@ impl Proof {
             return Err(reject());
         }
         if let Some(receipt) = receipt {
-            receipt.validate(layer, *self.count)?;
+            receipt.validate(layer, *self.count, self.source.gu_stride_four)?;
             self.gu_integer_launch = Some(receipt);
         }
         Ok(())
@@ -1387,7 +1442,7 @@ impl Proof {
             return Err(reject());
         }
         if let Some(receipt) = self.gu_integer_launch {
-            receipt.validate(layer, *self.count)?;
+            receipt.validate(layer, *self.count, self.source.gu_stride_four)?;
         }
         if *self.len == 0
             || *self.len > 30
@@ -1428,6 +1483,21 @@ fn gu_integer_completed_flag(
     }
     Ok(selected)
 }
+fn gu_stride_four_completed_flag(
+    integer: bool,
+    selected: bool,
+    preparations: u64,
+    dispatches: u64,
+    audits: u64,
+    stride_four_dispatches: u64,
+) -> Result<bool> {
+    Sources::validate_gu_schedule_policy(integer, selected)?;
+    gu_integer_completed_flag(integer, preparations, dispatches, audits)?;
+    if stride_four_dispatches != if selected { dispatches } else { 0 } {
+        return Err(reject());
+    }
+    Ok(selected)
+}
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct Counters {
     pub vram_routes: u64,
@@ -1435,6 +1505,7 @@ pub(crate) struct Counters {
     pub source_dispatches: u64,
     pub gu_integer_preparations: u64,
     pub gu_integer_dispatches: u64,
+    pub gu_stride_four_dispatches: u64,
     pub gu_integer_audits: u64,
     pub staging_dispatches: u64,
     pub staged_unique_host_groups: u64,
@@ -1444,12 +1515,13 @@ impl Counters {
     pub(super) fn add(self, p: &Proof, layer: usize) -> Result<Self> {
         let gu = match p.gu_integer_launch {
             Some(receipt) if p.source.gu_integer => {
-                receipt.validate(layer, *p.count)?;
+                receipt.validate(layer, *p.count, p.source.gu_stride_four)?;
                 receipt.dispatches
             }
             None if !p.source.gu_integer => 0,
             _ => return Err(reject()),
         };
+        let stride_four = p.gu_integer_launch.map_or(0, |r| r.stride_four_dispatches);
         let (groups, bytes) = if p.source.packed_host_staging {
             let geometry = p.source.layers.get(layer).ok_or_else(reject)?.geometry;
             let groups = p.pairs[..*p.len]
@@ -1488,6 +1560,10 @@ impl Counters {
             gu_integer_dispatches: self
                 .gu_integer_dispatches
                 .checked_add(gu)
+                .ok_or(Error::ArithmeticOverflow)?,
+            gu_stride_four_dispatches: self
+                .gu_stride_four_dispatches
+                .checked_add(stride_four)
                 .ok_or(Error::ArithmeticOverflow)?,
             gu_integer_audits: self
                 .gu_integer_audits
@@ -1586,6 +1662,18 @@ impl Workspace {
             counters.gu_integer_audits,
         )
     }
+    pub(crate) fn frozen_host_source_gu_stride_four(&self) -> Result<bool> {
+        let sources = self.frozen_sources.as_ref().ok_or_else(reject)?;
+        let counters = self.frozen_source_counters;
+        gu_stride_four_completed_flag(
+            sources.gu_integer(),
+            sources.gu_stride_four(),
+            counters.gu_integer_preparations,
+            counters.gu_integer_dispatches,
+            counters.gu_integer_audits,
+            counters.gu_stride_four_dispatches,
+        )
+    }
     pub(crate) fn frozen_host_source_packed_staging(&self) -> Result<bool> {
         Ok(self
             .frozen_sources
@@ -1607,6 +1695,7 @@ impl Workspace {
         reserved_host_bytes: u64,
     ) -> Result<()> {
         self.validate_public_warm_boundary(executor, graph, arena)?;
+        Sources::validate_gu_schedule_policy(sources.gu_integer(), sources.gu_stride_four())?;
         if self.frozen_sources.is_some()
             || self.batch_router.is_some()
                 && (!self.frozen_host_batch_router_reserved()
@@ -2103,6 +2192,7 @@ impl Sources {
         {
             return Err(reject());
         }
+        Self::validate_gu_schedule_policy(self.gu_integer, self.gu_stride_four)?;
         let [gate, up, down] = g.projections();
         let client = arena.client().map_err(u::fault)?;
         let integer_handles = if let Some(scratch) = gu_integer {
@@ -2123,6 +2213,7 @@ impl Sources {
             None
         };
         let mut integer_dispatches = 0u64;
+        let mut stride_four_dispatches = 0u64;
         for shard in 0..5 {
             let ga = &l.pages[shard];
             let up_page = &l.pages[5 + shard];
@@ -2252,7 +2343,12 @@ impl Sources {
                 if gate != GateKernel::Frozen || staged_shard {
                     return Err(reject());
                 }
-                crate::quant_matvec::frozen_gu_integer::launch(
+                let launch = if self.gu_stride_four {
+                    crate::quant_matvec::frozen_gu_integer::launch_group_stride4
+                } else {
+                    crate::quant_matvec::frozen_gu_integer::launch
+                };
+                launch(
                     client,
                     g,
                     s,
@@ -2264,6 +2360,13 @@ impl Sources {
                     groups,
                     count,
                 )?;
+                // Only an actual successful alternative leaf call creates
+                // stride-four credit; neither selection nor DOWN can credit it.
+                if self.gu_stride_four {
+                    stride_four_dispatches = stride_four_dispatches
+                        .checked_add(1)
+                        .ok_or(Error::ArithmeticOverflow)?;
+                }
                 integer_dispatches = integer_dispatches
                     .checked_add(1)
                     .ok_or(Error::ArithmeticOverflow)?;
@@ -2332,8 +2435,9 @@ impl Sources {
                 layer,
                 count,
                 dispatches: integer_dispatches,
+                stride_four_dispatches,
             };
-            receipt.validate(layer, count)?;
+            receipt.validate(layer, count, self.gu_stride_four)?;
             Ok(Some(receipt))
         } else {
             Ok(None)
@@ -2434,17 +2538,19 @@ mod tests {
                     layer,
                     count,
                     dispatches: 5,
+                    stride_four_dispatches: 0,
                 };
-                receipt.validate(layer, count).unwrap();
-                assert!(receipt.validate((layer + 1) % 48, count).is_err());
-                assert!(receipt.validate(layer, count + 1).is_err());
+                receipt.validate(layer, count, false).unwrap();
+                assert!(receipt.validate(layer, count, true).is_err());
+                assert!(receipt.validate((layer + 1) % 48, count, false).is_err());
+                assert!(receipt.validate(layer, count + 1, false).is_err());
                 for dispatches in [0, 1, 4, 6, 10] {
                     assert!(
                         GuIntegerDispatch {
                             dispatches,
                             ..receipt
                         }
-                        .validate(layer, count)
+                        .validate(layer, count, false)
                         .is_err()
                     );
                 }
@@ -2455,9 +2561,10 @@ mod tests {
                 GuIntegerDispatch {
                     layer: 0,
                     count,
-                    dispatches: 5
+                    dispatches: 5,
+                    stride_four_dispatches: 0,
                 }
-                .validate(0, count)
+                .validate(0, count, false)
                 .is_err()
             );
         }
@@ -2465,9 +2572,10 @@ mod tests {
             GuIntegerDispatch {
                 layer: 48,
                 count: 1,
-                dispatches: 5
+                dispatches: 5,
+                stride_four_dispatches: 0,
             }
-            .validate(48, 1)
+            .validate(48, 1, false)
             .is_err()
         );
         // Exact parent inventory matches the leaf rather than an untracked tail.
@@ -2479,6 +2587,53 @@ mod tests {
         assert_eq!(integer::RUNTIME_INCREMENT, FROZEN_GU_INTEGER_RUNTIME_BYTES);
         assert_eq!(integer::LOGICAL_WORDS, 4384);
         assert_eq!(ROUTER_EXTENTS, 30);
+    }
+    #[test]
+    fn frozen_gu_integer_stride_four_requires_integer_and_actual_joined_leaf_receipts() {
+        for integer in [false, true] {
+            for selected in [false, true] {
+                assert_eq!(
+                    Sources::validate_gu_schedule_policy(integer, selected).is_ok(),
+                    !selected || integer
+                );
+            }
+        }
+        assert!(!gu_stride_four_completed_flag(false, false, 0, 0, 0, 0).unwrap());
+        assert!(!gu_stride_four_completed_flag(true, false, 48, 240, 48, 0).unwrap());
+        assert!(gu_stride_four_completed_flag(true, true, 48, 240, 48, 240).unwrap());
+        for (integer, selected, p, d, a, s) in [
+            (false, true, 0, 0, 0, 0),
+            (true, true, 0, 0, 0, 0),
+            (true, true, 48, 240, 48, 0),
+            (true, true, 48, 240, 48, 239),
+            (true, true, 48, 240, 48, 241),
+            (true, true, 48, 240, 47, 240),
+            (true, false, 48, 240, 48, 240),
+        ] {
+            assert!(gu_stride_four_completed_flag(integer, selected, p, d, a, s).is_err());
+        }
+        for layer in 0..48 {
+            for count in 1..=3 {
+                let receipt = GuIntegerDispatch {
+                    layer,
+                    count,
+                    dispatches: 5,
+                    stride_four_dispatches: 5,
+                };
+                receipt.validate(layer, count, true).unwrap();
+                assert!(receipt.validate(layer, count, false).is_err());
+                for stride_four_dispatches in [0, 1, 4, 6, 10] {
+                    assert!(
+                        GuIntegerDispatch {
+                            stride_four_dispatches,
+                            ..receipt
+                        }
+                        .validate(layer, count, true)
+                        .is_err()
+                    );
+                }
+            }
+        }
     }
     #[test]
     fn three_member_actual_entries_keep_original_tile_owners_and_stage_composition() {

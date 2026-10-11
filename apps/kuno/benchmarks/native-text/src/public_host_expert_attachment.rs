@@ -211,7 +211,55 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
         gu_integer: bool,
         cancel: &AtomicBool,
     ) -> Result<Attachment<'plan, 'model, 'file>> {
+        // SAFETY: unchanged caller contract; the existing entry keeps the
+        // original one-group-per-workgroup integer scheduling by default.
+        unsafe {
+            self.attach_with_gu_schedule(
+                device,
+                client,
+                executor,
+                workspace,
+                arena,
+                exact_reserved_host,
+                inactive_partition_exit,
+                private_tables,
+                workgroup_tables,
+                shared_down_scales,
+                shared_gate_up_factors,
+                four_row_down,
+                two_row_gate_up,
+                packed_host_staging,
+                three_members,
+                gu_integer,
+                false,
+                cancel,
+            )
+        }
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) unsafe fn attach_with_gu_schedule<'plan>(
+        &'plan self,
+        device: &wgpu::Device,
+        client: &ComputeClient<WgpuRuntime>,
+        executor: &mut GpuExecutor<'file>,
+        workspace: &mut batch_moe::Workspace,
+        arena: &PrivateArena,
+        exact_reserved_host: u64,
+        inactive_partition_exit: bool,
+        private_tables: bool,
+        workgroup_tables: bool,
+        shared_down_scales: bool,
+        shared_gate_up_factors: bool,
+        four_row_down: bool,
+        two_row_gate_up: bool,
+        packed_host_staging: bool,
+        three_members: bool,
+        gu_integer: bool,
+        gu_stride_four: bool,
+        cancel: &AtomicBool,
+    ) -> Result<Attachment<'plan, 'model, 'file>> {
         u::cancel(cancel)?;
+        Sources::validate_gu_schedule_policy(gu_integer, gu_stride_four)?;
         Sources::validate_kernel_policies(
             inactive_partition_exit,
             private_tables,
@@ -378,7 +426,7 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
             || shared_gate_up_factors
             || shared_down_scales && (private_tables || workgroup_tables)
         {
-            Sources::new_with_policy_and_gu_math(
+            Sources::new_with_policy_and_gu_schedule(
                 executor,
                 self.graph,
                 &self.plan,
@@ -394,6 +442,7 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
                 packed_host_staging,
                 three_members,
                 gu_integer,
+                gu_stride_four,
             )
         } else if workgroup_tables {
             Sources::new_with_workgroup_tables(

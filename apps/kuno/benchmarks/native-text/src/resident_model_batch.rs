@@ -2421,7 +2421,54 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         gu_integer: bool,
         cancel: &AtomicBool,
     ) -> Result<crate::public_host_expert_attachment::Attachment<'plan, 'm, 'f>> {
+        // SAFETY: forwards the same verified original source contract; the
+        // existing entry explicitly retains default integer scheduling.
+        unsafe {
+            self.attach_public_host_sources_with_gu_schedule(
+                executor,
+                prepared,
+                device,
+                reserved,
+                inactive_partition_exit,
+                private_tables,
+                workgroup_tables,
+                shared_down_scales,
+                shared_gate_up_factors,
+                four_row_down,
+                two_row_gate_up,
+                packed_host_staging,
+                three_members,
+                gu_integer,
+                false,
+                cancel,
+            )
+        }
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) unsafe fn attach_public_host_sources_with_gu_schedule<'plan>(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+        prepared: &'plan crate::public_host_expert_attachment::PreparedPlan<'m, 'f>,
+        device: &wgpu::Device,
+        reserved: u64,
+        inactive_partition_exit: bool,
+        private_tables: bool,
+        workgroup_tables: bool,
+        shared_down_scales: bool,
+        shared_gate_up_factors: bool,
+        four_row_down: bool,
+        two_row_gate_up: bool,
+        packed_host_staging: bool,
+        three_members: bool,
+        gu_integer: bool,
+        gu_stride_four: bool,
+        cancel: &AtomicBool,
+    ) -> Result<crate::public_host_expert_attachment::Attachment<'plan, 'm, 'f>> {
         u::cancel(cancel)?;
+        batch_moe::frozen_sources::Sources::validate_gu_schedule_policy(
+            gu_integer,
+            gu_stride_four,
+        )?;
         if self.poisoned
             || self.retired.load(Ordering::Acquire)
             || self.admission.request_io_reuse_active()
@@ -2470,7 +2517,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         // SAFETY: fixed-public caller verified original source hashes and
         // immutability. All actual bank/family/device checks above precede import.
         unsafe {
-            prepared.attach_with_gu_math(
+            prepared.attach_with_gu_schedule(
                 device,
                 self.arena.client().map_err(u::fault)?,
                 executor,
@@ -2487,6 +2534,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 packed_host_staging,
                 three_members,
                 gu_integer,
+                gu_stride_four,
                 cancel,
             )
         }
@@ -2608,6 +2656,18 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             return Err(error());
         }
         native.moe.frozen_host_source_gu_integer()
+    }
+    #[allow(dead_code)] // Root owns the public scheduling receipt/selector.
+    pub(crate) fn native_frozen_source_gu_stride_four(
+        &self,
+        executor: &GpuExecutor<'_>,
+    ) -> Result<bool> {
+        self.completed_native_projection_boundary(executor)?;
+        let native = self.native_batch.as_ref().ok_or(error())?;
+        if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
+            return Err(error());
+        }
+        native.moe.frozen_host_source_gu_stride_four()
     }
     pub(crate) fn native_frozen_source_packed_staging(
         &self,
