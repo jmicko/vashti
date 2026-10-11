@@ -220,7 +220,7 @@ pub(crate) fn validate_limits(limits: &wgpu::Limits) -> Result<()> {
         || limits.max_bindings_per_bind_group < 7
         || limits.max_uniform_buffer_binding_size < 32
         || limits.max_compute_workgroups_per_dimension < 128
-        || limits.max_storage_buffer_binding_size < MAIN_BYTES as u32
+        || limits.max_storage_buffer_binding_size < MAIN_BYTES
         || limits.max_buffer_size < MAIN_BYTES
     {
         return Err(rejected());
