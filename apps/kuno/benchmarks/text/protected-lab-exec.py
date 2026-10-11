@@ -5,7 +5,17 @@ import resource
 import sys
 
 def selected_target_policy(environment, mtp=False):
+    target_only_scope(environment)
+    intel_mtp_scope(environment)
     selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
+    if "KUNO_LAB_LANGUAGE_DECODE" in selected:
+        if not mtp or selected.pop("KUNO_LAB_LANGUAGE_DECODE") != "target-only-public":
+            raise ValueError("Target-only decoding requires the compiled public language scope")
+    if "KUNO_LAB_MTP_DEVICE" in selected:
+        if not mtp or selected.pop("KUNO_LAB_MTP_DEVICE") != "intel-public":
+            raise ValueError("Intel draft placement requires the fixed public speculative scope")
+        for key in ("KUNO_PUBLIC_MTP_INTEL_TOTAL_BYTES", "KUNO_PUBLIC_MTP_INTEL_USED_BYTES", "KUNO_PUBLIC_MTP_INTEL_DEVICE_ID"):
+            selected.pop(key)
     if "KUNO_LAB_FROZEN_GU_SCHEDULE" in selected:
         frozen_gu_integer_scope(environment)
         if not mtp or selected.pop("KUNO_LAB_FROZEN_GU_SCHEDULE") != "four-public":
@@ -144,8 +154,12 @@ def frozen_gu_integer_scope(environment):
         "KUNO_LAB_DEVICE_DISPATCH": "inline",
         "KUNO_LAB_TARGET_IO": "chunk",
         "KUNO_LAB_TARGET_DENSE": "verify3-fused",
-        "KUNO_LAB_MTP_SWEEPS": "fused",
     }
+    target_only = environment.get("KUNO_LAB_LANGUAGE_DECODE") == "target-only-public"
+    if target_only:
+        target_only_scope(environment)
+    else:
+        required["KUNO_LAB_MTP_SWEEPS"] = "fused"
     conflicts = (
         "KUNO_LAB_FROZEN_TABLES", "KUNO_LAB_FROZEN_DOWN_SCALES",
         "KUNO_LAB_FROZEN_GU_FACTORS", "KUNO_LAB_FROZEN_GU_ROWS",
@@ -160,6 +174,79 @@ def frozen_gu_integer_scope(environment):
             or environment.get("KUNO_LAB_MTP_Q8_HEAD") not in (None, "shared-public")
             or any(key in environment for key in conflicts)):
         raise ValueError("Integer GU requires the original bounded public GPU-router scope")
+
+def target_only_scope(environment):
+    if "KUNO_LAB_LANGUAGE_DECODE" not in environment:
+        return
+    required = {
+        "KUNO_LAB_LANGUAGE_DECODE": "target-only-public",
+        "KUNO_LAB_LANGUAGE_PUBLIC_ONLY": "1",
+        "KUNO_LAB_TARGET_SOURCES": "frozen-host-public",
+        "KUNO_LAB_FROZEN_PARTITION_EXIT": "1",
+        "KUNO_LAB_TARGET_ROUTER": "device-frozen-public",
+        "KUNO_LAB_TARGET_REUSE": "request",
+        "KUNO_LAB_TARGET_FILL": "direct-public",
+        "KUNO_LAB_DEVICE_DISPATCH": "inline",
+        "KUNO_LAB_TARGET_IO": "chunk",
+        "KUNO_LAB_TARGET_DENSE": "verify3-fused",
+    }
+    conflicts = (
+        "KUNO_LAB_SPECULATIVE_PUBLIC_ONLY", "KUNO_LAB_WARM_REPLAY",
+        "KUNO_LAB_MTP_SWEEPS", "KUNO_LAB_MTP_VOCAB", "KUNO_LAB_MTP_PROFILE",
+        "KUNO_LAB_MTP_Q8_HEAD", "KUNO_LAB_MTP_DEVICE", "KUNO_LAB_TARGET_GDN",
+        "KUNO_LAB_FROZEN_TABLES", "KUNO_LAB_FROZEN_DOWN_SCALES",
+        "KUNO_LAB_FROZEN_GU_FACTORS", "KUNO_LAB_FROZEN_GU_ROWS",
+        "KUNO_LAB_FROZEN_HOST_STAGE", "KUNO_LAB_FROZEN_MEMBERS",
+        "KUNO_LAB_FROZEN_BANK_PLACEMENT", "KUNO_LAB_TARGET_EXPERTS",
+        "KUNO_LAB_TARGET_MOE", "KUNO_PUBLIC_MTP_INTEL_TOTAL_BYTES",
+        "KUNO_PUBLIC_MTP_INTEL_USED_BYTES", "KUNO_PUBLIC_MTP_INTEL_DEVICE_ID",
+    )
+    if (any(environment.get(key) != value for key, value in required.items())
+            or environment.get("KUNO_LAB_LANGUAGE_FIXTURE") not in ("first-code", "warm-prose")
+            or any(key in environment for key in conflicts)):
+        raise ValueError("Target-only requires fixed original public target and no draft selectors")
+
+def intel_mtp_scope(environment):
+    metadata = ("KUNO_PUBLIC_MTP_INTEL_TOTAL_BYTES", "KUNO_PUBLIC_MTP_INTEL_USED_BYTES", "KUNO_PUBLIC_MTP_INTEL_DEVICE_ID")
+    if not any(key in environment for key in ("KUNO_LAB_MTP_DEVICE", *metadata)):
+        return
+    required = {
+        "KUNO_LAB_MTP_DEVICE": "intel-public",
+        "KUNO_LAB_TARGET_SOURCES": "frozen-host-public",
+        "KUNO_LAB_FROZEN_PARTITION_EXIT": "1",
+        "KUNO_LAB_TARGET_ROUTER": "device-frozen-public",
+        "KUNO_LAB_TARGET_REUSE": "request",
+        "KUNO_LAB_TARGET_FILL": "direct-public",
+        "KUNO_LAB_DEVICE_DISPATCH": "inline",
+        "KUNO_LAB_TARGET_IO": "chunk",
+        "KUNO_LAB_TARGET_DENSE": "verify3-fused",
+        "KUNO_LAB_MTP_SWEEPS": "fused",
+    }
+    spec = environment.get("KUNO_LAB_SPECULATIVE_PUBLIC_ONLY") == "1"
+    language = environment.get("KUNO_LAB_LANGUAGE_PUBLIC_ONLY") == "1"
+    conflicts = (
+        "KUNO_LAB_LANGUAGE_DECODE", "KUNO_LAB_MTP_VOCAB", "KUNO_LAB_FROZEN_TABLES",
+        "KUNO_LAB_FROZEN_DOWN_SCALES", "KUNO_LAB_FROZEN_GU_FACTORS", "KUNO_LAB_FROZEN_GU_ROWS",
+        "KUNO_LAB_FROZEN_HOST_STAGE", "KUNO_LAB_FROZEN_MEMBERS", "KUNO_LAB_TARGET_EXPERTS",
+        "KUNO_LAB_TARGET_MOE", "KUNO_LAB_FROZEN_BANK_PLACEMENT",
+    )
+    if (any(environment.get(key) != value for key, value in required.items())
+            or spec == language
+            or spec and environment.get("KUNO_LAB_WARM_REPLAY") != "once"
+            or any(key in environment for key in conflicts)):
+        raise ValueError("Intel draft placement requires bounded original public frozen scope")
+    values = []
+    for key in metadata:
+        value = environment.get(key, "")
+        if not value or not value.isascii() or not value.isdecimal() or value.startswith("0"):
+            raise ValueError("Intel draft metadata must be canonical positive decimal")
+        parsed = int(value)
+        if parsed > (2**32 - 1 if key.endswith("DEVICE_ID") else 2**64 - 1):
+            raise ValueError("Intel draft metadata overflow")
+        values.append(parsed)
+    total, used, _ = values
+    if used >= total:
+        raise ValueError("Intel draft metadata must report actual nonzero free memory")
 
 def english_vocab_scope(environment):
     if "KUNO_LAB_MTP_VOCAB" not in environment:
@@ -243,6 +330,8 @@ def bank_placement_scope(environment):
 
 
 def memory_limit(environment, arguments):
+    target_only_scope(environment)
+    intel_mtp_scope(environment)
     frozen_gu_integer_scope(environment)
     english_vocab_scope(environment)
     three_gdn_scope(environment)

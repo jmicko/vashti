@@ -3396,3 +3396,33 @@ not open or instantiate the draft nor select NVIDIA, and must execute actual
 single-token original target passes and full closure. No target-only speed or
 30tokens/s acceptance yet. Backend-only lab: canonicalVashti, installedservices
 and publicAPI unchanged, required Vashti changes:none. No release/install.
+
+
+### Active native MTP placement comparison,2026-10-11
+
+Latest physical sourceac78f00/v159 passes original CPU13 cold/warm, targetgreedy,
+real repair, full1381MAIN/828932096B and432HOST-page/36147609600B closure,
+draft/source closure and physical recovery. Compiler-idle ordered same-artifact
+code200:8.636025 control versus8.973138 encoded-register/GUstride candidate,
+199 real continuations and130/138 accepted/proposed drafts each. This3.90%
+result is preliminary; repeatedABBA/prose are pending. Full receipt and exact
+hashes: `v159_encoded_register_gu_stride_physical`. Last recovery16:30:44UTC:
+B70baseline50688000B,NVIDIAcompute0,allHTTP200,idle/unpaused/no recovery,
+no new classifiedGPUfaults, same boot. This supersedes earlier pending-v159 notes.
+
+The user requested testing Intel MTP before choosing whether to retain MTP.
+Real target-only controllerd12b52f and Intel placement7b790f4 are integrated;
+[the exact Intel contract](kuno-native-public-intel-mtp-controller.md) requires
+fresh privileged Xe memory data, combined full owning charges, original144
+expert-bank capacity, distinct device/runtime and original physical closure.
+Target-only does not open or bind a sidecar or select NVIDIA. No implicit profile,
+slot or admission fallback. Guard130Python tests pass; Rust source tests and
+strict direct-device Clippy pass in the isolated owner trees. Integrated
+root validation/fresh frozen binary and three-way physical acceptance are next.
+Full Q8 on Intel may reject its tight combined memory budget; record any
+rejection rather than widening limits. DOWN stride and grouped PLE are separate,
+unselected candidates for later numerical/speed gates.
+
+Existing30tokens/s goal remains unachieved. Root owns GPUs/services. Canonical
+Vashti, installed services and public contracts unchanged. Required Vashti
+changes:none; no install/release or other-task message is authorized by this note.
