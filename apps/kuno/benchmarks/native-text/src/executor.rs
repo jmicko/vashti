@@ -457,6 +457,7 @@ pub(crate) struct ResidentAdmission {
     request_io_checkpoints: Arc<AtomicU64>,
     target_verify3_dense: bool,
     target_verify3_fused: bool,
+    target_four_rows_reserved: bool,
 }
 /// Borrowed only inside the existing guarded model allocation callback. This
 /// proves that its MAIN lock is already held; constructor checks must not
@@ -893,6 +894,10 @@ pub struct GpuExecutor<'a> {
     pub(crate) q6_integer_head: bool,
     pub(crate) resident_router_reserved: bool,
     pub(crate) target_rows_reserved: bool,
+    pub(crate) target_four_rows_reserved: bool,
+    pub(crate) target_four_rows_active: bool,
+    pub(crate) target_verify4_dense_calls: u64,
+    pub(crate) target_verify4_fused_calls: u64,
     pub(crate) target_batch_router_reserved: bool,
     pub(crate) target_frozen_host_router_reserved: bool,
     pub(crate) target_frozen_host_staging_reserved: bool,
@@ -1138,6 +1143,10 @@ impl<'a> GpuExecutor<'a> {
             q6_integer_head: false,
             resident_router_reserved: false,
             target_rows_reserved: false,
+            target_four_rows_reserved: false,
+            target_four_rows_active: false,
+            target_verify4_dense_calls: 0,
+            target_verify4_fused_calls: 0,
             target_batch_router_reserved: false,
             target_frozen_host_router_reserved: false,
             target_frozen_host_staging_reserved: false,
@@ -1992,7 +2001,40 @@ impl<'a> GpuExecutor<'a> {
             .active()?;
         Ok((self.target_iq4_decoder, self.target_iq4_decoder_calls))
     }
+    /// Construction-only capability; this never activates a four-row chunk.
+    pub(crate) fn reserve_public_four_rows(&mut self) -> Result<()> {
+        if self.target_four_rows_reserved
+            || self.target_four_rows_active
+            || self.resident_admission.is_some()
+            || !self.target_rows_reserved
+            || !self.target_verify3_dense
+            || !self.target_verify3_fused
+            || !self.token_io_checkpoint
+            || !self.target_frozen_host_router_reserved
+            || self.packed_profile != expert_banks::OriginalPackedProfile::DaslabIq3
+            || self.bank_slots != 144
+            || self.native_projection_member_capacity() != 8
+            || self.native_projection_tile() != 8
+            || self.target_frozen_host_staging_reserved
+            || self.target_iq4_decoder != crate::next_shared::Iq4Decoder::Original
+        {
+            return Err(Error::InvalidFormat("public four-row construction policy"));
+        }
+        self.target_four_rows_reserved = true;
+        Ok(())
+    }
     pub(crate) fn check_target_rows_policy(&self) -> Result<()> {
+        if self.resident_admission.as_ref().is_some_and(|a|
+            a.target_four_rows_reserved != self.target_four_rows_reserved)
+            || self.target_four_rows_active && (!self.target_four_rows_reserved
+                || self.resident_admission.is_none()
+                || !self.resident_banks_frozen
+                || self.target_frozen_host_source_identity.is_none())
+            || !self.target_four_rows_active
+                && (self.target_verify4_dense_calls != 0 || self.target_verify4_fused_calls != 0)
+        {
+            return Err(Error::InvalidFormat("public four-row immutable admission"));
+        }
         if self.target_iq4_decoder == crate::next_shared::Iq4Decoder::PackedRegisters
             && (!self.target_rows_reserved
                 || !self.target_verify3_dense
@@ -2245,6 +2287,7 @@ impl<'a> GpuExecutor<'a> {
         let admission = ResidentAdmission {
             target_verify3_dense: self.target_verify3_dense,
             target_verify3_fused: self.target_verify3_fused,
+            target_four_rows_reserved: self.target_four_rows_reserved,
             deferred_router_reads: Arc::new(AtomicU64::new(0)),
             request_io_nonce: Arc::new(AtomicU64::new(0)),
             request_io_checkpoints: Arc::new(AtomicU64::new(0)),
