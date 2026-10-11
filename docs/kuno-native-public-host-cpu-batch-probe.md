@@ -171,6 +171,31 @@ all eight partial rows, remaining full-owner partial/activation padding,
 untouched output owner, readiness/status tails and uploaded CPU owner are
 checked during separate untimed numeric acceptance in both arms.
 
+The operator leaves the model's public request scope closed. That does not
+disable private I/O: the existing configured runtime remains active, and every
+readback/upload/INFO owner stays charged until its original sanitizer runs.
+One pair performs3,997,696bytes of full-owner readback, including numeric and
+owning-tail checks. The180pairs would retain719,585,280bytes of readbacks alone
+without a checkpoint, exceeding the unchanged128MiB runtime cap. Dropping the
+returned Bytes releases its lease but does not erase/release its GPU owner.
+
+After each complete pair's numeric audit returns and every readback Bytes lease
+has dropped, the gate uses the existing `sanitize_transient_io_audited` on the
+same configured stream. This reclaims only original bounded transient I/O;
+actual main/private result owners and attached public weight pages stay retained.
+It adds no request permission, pool policy, capacity or owner. The receipt
+records actual completed checkpoint counts, inspected bytes/buffers and time.
+These full I/O cleanup checkpoints are outside both operator-arm timings and
+reported separately. Such timings describe the completed operators, not a
+whole-model throughput or total180-pair runtime. Fixed numeric case/pair phase
+markers identify GPU, CPU, numeric-audit and checkpoint failure boundaries.
+
+The source correction for the v171 setup failure passes five focused operator
+tests, strict direct-device all-target Clippy with warnings denied, formatting
+and diff checks. Its layout regression computes the complete per-pair readback
+extent from the actual original padded BufferLayout values. Physical numeric,
+timing and complete recovery acceptance of this correction remain pending.
+
 The GPU arm starts with the same resident input and packet and measures the
 original HOST GU/DOWN projections, finite/owner checks and queue completion.
 Validation readback must either be inside both completed intervals or be

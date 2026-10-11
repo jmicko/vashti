@@ -48,6 +48,16 @@ const ABS: f32 = 1e-4;
 const REL: f32 = 3e-4;
 const _: () = assert!(PARTIAL_WORDS * 4 + 524288 + HEADER_CAP < HOST_CAP);
 const _: () = assert!(CALLER_CAP < 128 * 1024);
+fn pair_readback_bytes() -> usize {
+    // Every whole private read in one pair, including MAX8/owning-tail audits.
+    // The row-copy audit reads a full131072-byte owner for each copied chunk.
+    let rows_for = |owned_words: usize| owned_words.div_ceil(RANKS * H);
+    6 * 32768
+        + 524288
+        + MEMBERS * 131072
+        + (rows_for(1048576 / 4) + rows_for(262144 / 4) + rows_for(131072 / 4)) * 131072
+        + INPUT_BYTES
+}
 fn fixed_host_mask(host: usize, sparse: bool) -> Result<u16> {
     if ![1, 3, 5, 10].contains(&host) || sparse && host != 3 {
         return Err("attached CPU batch fixed HOST mask rejected".into());
@@ -583,13 +593,18 @@ fn cases(
     retired: Arc<AtomicBool>,
     cancel: &AtomicBool,
 ) -> Result<serde_json::Value> {
+    println!("public_host_cpu_batch_phase before_operator_arena");
     let mut arena = PrivateArena::new_transient_on_configured(client.clone(), MAIN_CAP, retired)?;
     arena.enable_public_owned_zero_audit()?;
     let attempt = (|| -> Result<serde_json::Value> {
         let b = Buffers::new(&mut arena, source.geometry())?;
+        println!("public_host_cpu_batch_phase operator_buffers_ready");
         let main = arena.charged_bytes();
         let mut reports = Vec::new();
         let mut completed_pairs = 0u64;
+        let mut checkpoint_ns = 0u128;
+        let mut checkpoint_inspected_bytes = 0u64;
+        let mut checkpoint_inspected_buffers = 0u64;
         for workers in [8, 12, 15] {
             let workers_started = Instant::now();
             let op = ExpertOperator::new_pooled(WorkerPlan::physical(workers)?, Backend::Avx2)?;
@@ -604,6 +619,7 @@ fn cases(
             for count in 1..=3 {
                 for host in [1, 3, 5, 10] {
                     for sparse in [false, true].into_iter().filter(|s| !s || host == 3) {
+                        let case_index = reports.len();
                         let packet = Packet::new(source, count, host, sparse)?;
                         let map = packet.map(source.geometry())?;
                         upload(&arena, b.ids[0], map.words())?;
@@ -623,6 +639,9 @@ fn cases(
                         let (mut prime_gpu_ns, mut prime_cpu_ns) = (0u128, 0u128);
                         for iteration in 0..=REPEATS {
                             b.clear(&arena)?;
+                            println!(
+                                "public_host_cpu_batch_phase before_gpu_pair case={case_index} pair={iteration}"
+                            );
                             let gpu_started = Instant::now();
                             source.launch_original_gpu_partials(
                                 &arena,
@@ -634,12 +653,39 @@ fn cases(
                             )?;
                             b.finite_join(&arena, &[b.ids[1], b.ids[2], b.ids[3]])?;
                             let gpu_elapsed = gpu_started.elapsed().as_nanos();
+                            println!(
+                                "public_host_cpu_batch_phase before_cpu_pair case={case_index} pair={iteration}"
+                            );
                             let cpu_started = Instant::now();
                             let cpu = cpu_run(source, &op, &arena, &b, &packet, cancel)?;
                             let encoded = encode_partials(&arena, b.cpu, &cpu)?;
                             b.finite_join(&arena, &[b.cpu])?;
                             let cpu_elapsed = cpu_started.elapsed().as_nanos();
+                            println!(
+                                "public_host_cpu_batch_phase before_pair_audit case={case_index} pair={iteration}"
+                            );
                             max_error = max_error.max(audit_partials(&arena, &b, &packet, &cpu)?);
+                            // audit_partials has returned: every actual readback
+                            // Bytes/lease is dropped. Main/source owners remain
+                            // retained. Reclaim original bounded transient I/O
+                            // before the next pair, with the original full audit.
+                            println!(
+                                "public_host_cpu_batch_phase before_pair_checkpoint case={case_index} pair={iteration}"
+                            );
+                            let checkpoint_started = Instant::now();
+                            let checkpoint =
+                                cubecl::future::block_on(client.sanitize_transient_io_audited())?;
+                            checkpoint_ns += checkpoint_started.elapsed().as_nanos();
+                            checkpoint_inspected_bytes = checkpoint_inspected_bytes
+                                .checked_add(checkpoint.inspected_bytes)
+                                .ok_or("operator I/O checkpoint byte count overflow")?;
+                            checkpoint_inspected_buffers = checkpoint_inspected_buffers
+                                .checked_add(checkpoint.inspected_buffers)
+                                .ok_or("operator I/O checkpoint buffer count overflow")?;
+                            if checkpoint.inspected_bytes == 0 || checkpoint.inspected_buffers == 0
+                            {
+                                return Err("operator complete I/O checkpoint audit missing".into());
+                            }
                             completed_pairs = completed_pairs
                                 .checked_add(1)
                                 .ok_or("attached CPU batch completed counter overflow")?;
@@ -672,6 +718,12 @@ fn cases(
             "logical_cpu_partial_bytes":PARTIAL_WORDS * 4,"encoded_full_cpu_owner_bytes":524288,
             "input_handoff_owner_bytes":INPUT_HANDOFF_BYTES,"main_cap_bytes":MAIN_CAP,
             "runtime_io_shared_with_original_target":true,"runtime_io_cap_bytes":128u64 * 1024 * 1024,
+            "completed_pair_io_checkpoints":completed_pairs,
+            "pair_io_checkpoint_inspected_bytes":checkpoint_inspected_bytes,
+            "pair_io_checkpoint_inspected_buffers":checkpoint_inspected_buffers,
+            "pair_io_checkpoint_ns_outside_operator_arms":checkpoint_ns,
+            "pair_full_readback_bytes":pair_readback_bytes(),
+            "io_cleanup_inside_operator_arm_timings":false,
             "numeric_abs_bound":ABS,
             "numeric_rel_bound":REL,"validation_readbacks_inside_timing":false,
             "pipeline_priming_iterations":1,"warm_cpu_L3_optimistic":true}),
@@ -846,9 +898,11 @@ pub(crate) fn run(
             LAYER,
             &cancel,
         )?;
+        println!("public_host_cpu_batch_phase layer_borrowed");
         let mapping_ns = borrow_started.elapsed().as_nanos();
         let placements = source.placements()?.map(|p| serde_json::json!({"memory_type":p.memory_type,
             "heap":p.heap,"property_flags":p.property_flags,"heap_flags":p.heap_flags,"heap_bytes":p.heap_bytes}));
+        println!("public_host_cpu_batch_phase readonly_placements_checked");
         let mut value = cases(&source, client, retired.clone(), &cancel)?;
         println!("public_host_cpu_batch_phase operators_complete");
         value["actual_readonly_host_page_placements"] = placements.into();
@@ -912,6 +966,34 @@ pub(crate) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn repeated_full_owner_readbacks_require_original_per_pair_checkpoint() {
+        use crate::private_arena::BufferLayout;
+        let owned = |words| BufferLayout::new(words).unwrap().owned_bytes;
+        let row = owned(RANKS * H);
+        let tail_rows = |words| (owned(words) / 4).div_ceil(RANKS * H);
+        let exact = 2 * owned(1)
+            + owned(k::MAP_WORDS)
+            + owned(k::MAX_ROUTES)
+            + owned(3 * H)
+            + owned(4800)
+            + owned(PARTIAL_WORDS)
+            + MEMBERS * row
+            + (tail_rows(MEMBERS * RANKS * H)
+                + tail_rows(k::MAX_ROUTES * FF)
+                + tail_rows(MEMBERS * H))
+                * row
+            + owned(MEMBERS * H);
+        assert_eq!(exact, pair_readback_bytes());
+        assert_eq!(exact, 3_997_696);
+        let pairs = 3 * 3 * 5 * (REPEATS + 1);
+        assert_eq!(pairs, 180);
+        // This is readback-only: queued uploads/INFO/audit duplicates add more.
+        // A completed per-pair sanitizer bounds existing I/O; raising128MiB
+        // or leaving all owners until terminal arena.close is not a solution.
+        assert!(exact * pairs > 128 * 1024 * 1024);
+        assert!(exact < 8 * 1024 * 1024);
+    }
     #[test]
     fn fixed_registration_rejects_other_models_cards_or_inherited_policies() {
         let args = ["lab", "intel", "public-host-cpu-batch-probe"].map(OsString::from);
