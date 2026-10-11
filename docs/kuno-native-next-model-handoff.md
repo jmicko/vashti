@@ -1,5 +1,38 @@
 # Native Kuno text engine: next-model handoff
 
+Updated2026-10-11: the user restored GPU access/sudo and resumed the existing
+30tokens/s optimization goal. Work is ACTIVE in the native engine checkout.
+This supersedes the historical stop instructions below; it does not authorize
+API/UI changes, installation or release. Canonical Vashti is unchanged.
+
+Current source `76ffd66` includes cooperative leaves `4f23abd`/`ce78d39`, root
+selection/receipt composition `042e905`, and runtime-matching shader proofs.
+v148 SHA256 `dc795837174239c6a91bd458e082f5402787494f3d0702d4f226b5395268e55a`
+passes complete original cold/warm CPU13 vectors/carries/greedies/real repair,
+full owning closure and physical recovery. Warm12 continuations take2.49330s
+(4.81289tokens/s), a diagnostic placement result, not normal throughput.
+Same-artifact ordered code200 comparison is7.73410 control /6.90538 combined
+continuation tokens/s (-10.7149%); candidate remains default-off. This single
+ordered pair is not a repeated performance claim. Original repair and complete
+closure pass, with physical recovery and unchanged fault counts.
+
+Lab flags: `KUNO_LAB_FROZEN_TABLES=workgroup-public` and independently
+`KUNO_LAB_FROZEN_DOWN_SCALES=shared-public`; both require original frozen
+public sources and partition exit. Actual completed attachment flags must match
+requests. Private/workgroup table modes exclude each other. No default changes.
+Exact policy is in the final section of the all-row plan; numeric evidence is
+under `v148_cooperative_physical` in the root receipt. Never infer speed from
+source-only tests or this short CPU13 fixture. Two further isolated source
+experiments are being prepared: GU block-factor staging and Q8-draft-head scale
+broadcast, preserving original arithmetic. Neither yet has GPU acceptance.
+
+Fresh recovery2026-10-11 12:35:44UTC: Intel50,688,000B, NVIDIA compute0,
+admission normal/idle, allthree services HTTP200, sameboot and GPU faults0.
+Protected benchmark owns admission temporarily for each following GPU trial;
+root controls shared devices and agents must hold CPU builds during timed decode.
+
+## Historical stop checkpoint from 2026-10-10
+
 Updated2026-10-10 after the user requested a few final tests, a stop and a usable
 system. GPU/CPU work is STOPPED and the goal remains paused. This file does not
 authorize further GPU occupancy, service changes or installation.

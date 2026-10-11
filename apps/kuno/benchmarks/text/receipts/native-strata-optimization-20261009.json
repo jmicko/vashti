@@ -6807,5 +6807,1042 @@
       "owned_benchmarks_running": false,
       "owned_cpu_jobs_running": false
     }
+  },
+  "v148_cooperative_physical": {
+    "source": {
+      "commit": "76ffd6687ee9ab4623d023060b2d237861af7313",
+      "binary_sha256": "dc795837174239c6a91bd458e082f5402787494f3d0702d4f226b5395268e55a",
+      "features": [
+        "direct-device"
+      ],
+      "protected_launcher_sha256": "7a67edd4bb55e7ed4f6510d424e510d2da971128f0755b46386bdccedc790b4f",
+      "helper_sha256": "3f8c8fa93bf358af79201eadac7e7c2270b66033947e359d7c9bd2b840edd381",
+      "public_trial": "warm-workgroup-scales-gpu-host",
+      "seed": 424242,
+      "temperature": 0,
+      "frozen_partition_exit_requested": true,
+      "frozen_bank_preserve_requested": false,
+      "frozen_private_tables_requested": false,
+      "frozen_workgroup_tables_requested": true,
+      "frozen_shared_down_scales_requested": true,
+      "ordinary_demand_performance_claimed": false,
+      "native_30_tokens_per_second_accepted": false
+    },
+    "warm_replay": {
+      "chunk_io_checkpoint": true,
+      "compiled_token0": 0,
+      "device_dispatch": "inline",
+      "draft_card": "RTX3060",
+      "draft_close": {
+        "main_reserved": 0,
+        "private_buffers": 42,
+        "private_bytes": 11698176,
+        "public_bytes": 5011668992
+      },
+      "draft_profile": "self-contained-q8",
+      "draft_public_reserved_bytes": 5011668992,
+      "expert_route_forcing": false,
+      "fused_mtp_sweeps": true,
+      "gpu_chronological_qsa_selector": true,
+      "live_member_reduction": false,
+      "observed_inline_device_dispatch": true,
+      "oracle_forcing": false,
+      "passes": [
+        {
+          "accepted_drafts": 6,
+          "accepted_tokens": 12,
+          "accepted_tokens_per_second": 0.7820284098483136,
+          "device_router": false,
+          "device_router_scope": "authenticated actual512 VRAM/host sources; deferred strict original IDs and full vectors, experimental F32 probabilities",
+          "draft_traffic": {
+            "explicit_dispatches": 2216,
+            "followup_copy_calls": 5,
+            "host_read_bytes": 1048576,
+            "host_read_calls": 22,
+            "minimal_packet_reads": 10,
+            "private_upload_bytes": 1179648,
+            "private_upload_calls": 24
+          },
+          "elapsed_ns": 15344711073,
+          "expert_hits": 6329,
+          "expert_uploads": 2311,
+          "frozen_bank_placement": "cpu13-diagnostic",
+          "frozen_host_gpu_router": false,
+          "frozen_host_inactive_partition_exit": false,
+          "frozen_host_private_tables": false,
+          "frozen_host_shared_down_scales": false,
+          "frozen_host_workgroup_tables": false,
+          "frozen_source_routes": null,
+          "gpu_router_calls": 0,
+          "host_io": {
+            "gpu_submission_wait_ns": 295802,
+            "gpu_submission_waits": 65,
+            "inline_readback_batches": 515,
+            "provenance": "process-global whole public dual-device timed interval",
+            "scoped_read_flush_ns": 29120748,
+            "scoped_read_map_ns": 3306587136,
+            "scoped_read_setup_ns": 1786456
+          },
+          "initial_prefill_ns": 8408774537,
+          "load_and_initial_prefill_cumulative_ns": 17476988114,
+          "load_and_initial_prefill_physical_read_bytes": 9593913344,
+          "model_weights_warm": false,
+          "proposed_drafts": 10,
+          "replay": 0,
+          "request_close_ns_inside_timing": 5524773,
+          "request_scope": {
+            "binding_capacity": 4096,
+            "binding_stats": [
+              6,
+              45,
+              45,
+              750526,
+              11430
+            ],
+            "closing_audit_ns": 5517363,
+            "counter_provenance": "admission-local request checkpoints; checked process-global binding/INFO/request-reuse deltas",
+            "full_io_audit": true,
+            "info_stats": [
+              20554,
+              4038,
+              286
+            ],
+            "metadata_reserved_bytes": 4194304,
+            "request_checkpoints": 411,
+            "request_io_reuses": 1090,
+            "runtime_limit_bytes": 134217728,
+            "scope_closed": true,
+            "scope_sequence": 1,
+            "target_stream_configured": true
+          },
+          "request_scope_closed_and_audited": true,
+          "rounds": [
+            {
+              "accepted_drafts": 0,
+              "accepted_outputs": 1,
+              "draft_completed_cell": 1,
+              "draft_ns": 1193332397,
+              "proposed_drafts": 2,
+              "repair_ns": 410489960,
+              "target_completed_cursor": 2,
+              "target_start": 1,
+              "total_ns": 5985701568,
+              "verify_ns_including_public_vector_checks": 4381878801
+            },
+            {
+              "accepted_drafts": 2,
+              "accepted_outputs": 3,
+              "draft_completed_cell": 4,
+              "draft_ns": 246629662,
+              "proposed_drafts": 2,
+              "repair_ns": 33216529,
+              "target_completed_cursor": 5,
+              "target_start": 2,
+              "total_ns": 2458282199,
+              "verify_ns_including_public_vector_checks": 2178435638
+            },
+            {
+              "accepted_drafts": 0,
+              "accepted_outputs": 1,
+              "draft_completed_cell": 5,
+              "draft_ns": 185266232,
+              "proposed_drafts": 2,
+              "repair_ns": 165341940,
+              "target_completed_cursor": 6,
+              "target_start": 5,
+              "total_ns": 2401497428,
+              "verify_ns_including_public_vector_checks": 2050889026
+            },
+            {
+              "accepted_drafts": 2,
+              "accepted_outputs": 3,
+              "draft_completed_cell": 8,
+              "draft_ns": 166558022,
+              "proposed_drafts": 2,
+              "repair_ns": 19514857,
+              "target_completed_cursor": 9,
+              "target_start": 6,
+              "total_ns": 2083260052,
+              "verify_ns_including_public_vector_checks": 1897186713
+            },
+            {
+              "accepted_drafts": 2,
+              "accepted_outputs": 3,
+              "draft_completed_cell": 11,
+              "draft_ns": 171135465,
+              "proposed_drafts": 2,
+              "repair_ns": 13668591,
+              "target_completed_cursor": 12,
+              "target_start": 9,
+              "total_ns": 1523572247,
+              "verify_ns_including_public_vector_checks": 1338767361
+            },
+            {
+              "accepted_drafts": 0,
+              "accepted_outputs": 1,
+              "draft_completed_cell": 12,
+              "draft_ns": 20,
+              "proposed_drafts": 0,
+              "repair_ns": 9257059,
+              "target_completed_cursor": 13,
+              "target_start": 12,
+              "total_ns": 886644373,
+              "verify_ns_including_public_vector_checks": 877387114
+            }
+          ],
+          "target_fill_counters_after": {
+            "direct_bytes": 5759232000,
+            "direct_components": 8373,
+            "direct_windows": 411,
+            "evictions": 0,
+            "first_touch_fills": 2791
+          },
+          "target_fill_counters_before": {
+            "direct_bytes": 982272000,
+            "direct_components": 1440,
+            "direct_windows": 48,
+            "evictions": 0,
+            "first_touch_fills": 480
+          },
+          "target_host_phase_ns": {
+            "native_all_family_commit": 5035637,
+            "native_all_family_preflight": 3451545,
+            "native_attention_and_gr_enqueue": 278167495,
+            "native_completed_final_proofs": 192775033,
+            "native_ffn_gr_and_router_enqueue": 13359713,
+            "native_final_head_enqueue": 520476,
+            "native_route_and_expert_enqueue": 9192121171,
+            "native_router_fence": 3528396661,
+            "native_shared_and_ffn_combine_enqueue": 20594332
+          },
+          "timed_physical_read_bytes": 5977845760,
+          "timing_scope": "original normal routing/demand uploads; public checks and actual repair included",
+          "uploaded_bytes": 4776960000,
+          "verify3_dense_calls": 6016,
+          "verify3_fused_calls": 6016,
+          "weight_read_ns": 8047418978,
+          "weight_upload_enqueue_ns": 4089696
+        },
+        {
+          "accepted_drafts": 6,
+          "accepted_tokens": 12,
+          "accepted_tokens_per_second": 4.81289297213463,
+          "device_router": true,
+          "device_router_scope": "authenticated actual512 VRAM/host sources; deferred strict original IDs and full vectors, experimental F32 probabilities",
+          "draft_traffic": {
+            "explicit_dispatches": 2216,
+            "followup_copy_calls": 5,
+            "host_read_bytes": 1048576,
+            "host_read_calls": 22,
+            "minimal_packet_reads": 10,
+            "private_upload_bytes": 1179648,
+            "private_upload_calls": 24
+          },
+          "elapsed_ns": 2493302899,
+          "expert_hits": 0,
+          "expert_uploads": 0,
+          "frozen_bank_placement": "cpu13-diagnostic",
+          "frozen_host_close": {
+            "detached_pages": 432,
+            "live_backing_bytes": 0,
+            "metadata_owned_bytes": 1458688,
+            "physical_allocated_bytes": 36147609600,
+            "physical_freed_bytes": 36147609600,
+            "registered_pages": 432,
+            "source_window_peak_bytes": 1048576
+          },
+          "frozen_host_gpu_router": true,
+          "frozen_host_inactive_partition_exit": true,
+          "frozen_host_private_tables": false,
+          "frozen_host_setup": {
+            "attach_ns": 43903220658,
+            "bank_completion_experts": 6132,
+            "bank_completion_read_ns": 15956022746,
+            "bank_completion_upload_ns": 9769637,
+            "bank_completion_uploaded_bytes": 12535603200,
+            "prepare_ns": 19682437079,
+            "separate_host_reserved_bytes": 36166705152
+          },
+          "frozen_host_shared_down_scales": true,
+          "frozen_host_workgroup_tables": true,
+          "frozen_source_routes": {
+            "host_routes": 6530,
+            "source_dispatches": 4320,
+            "vram_routes": 2590
+          },
+          "gpu_router_calls": 384,
+          "host_io": {
+            "gpu_submission_wait_ns": 1209475374,
+            "gpu_submission_waits": 62,
+            "inline_readback_batches": 51,
+            "provenance": "process-global whole public dual-device timed interval",
+            "scoped_read_flush_ns": 2240378,
+            "scoped_read_map_ns": 357128008,
+            "scoped_read_setup_ns": 85912
+          },
+          "initial_prefill_ns": 1391201422,
+          "load_and_initial_prefill_cumulative_ns": 99284626253,
+          "load_and_initial_prefill_physical_read_bytes": 7909376,
+          "model_weights_warm": true,
+          "proposed_drafts": 10,
+          "replay": 1,
+          "request_close_ns_inside_timing": 11828333,
+          "request_scope": {
+            "binding_capacity": 4096,
+            "binding_stats": [
+              25985,
+              4695,
+              4695,
+              20061337,
+              8719481
+            ],
+            "closing_audit_ns": 11819453,
+            "counter_provenance": "admission-local request checkpoints; checked process-global binding/INFO/request-reuse deltas",
+            "full_io_audit": true,
+            "info_stats": [
+              26045,
+              1243,
+              195
+            ],
+            "metadata_reserved_bytes": 4194304,
+            "request_checkpoints": 35,
+            "request_io_reuses": 380,
+            "runtime_limit_bytes": 134217728,
+            "scope_closed": true,
+            "scope_sequence": 2,
+            "target_stream_configured": true
+          },
+          "request_scope_closed_and_audited": true,
+          "rounds": [
+            {
+              "accepted_drafts": 0,
+              "accepted_outputs": 1,
+              "draft_completed_cell": 1,
+              "draft_ns": 265953081,
+              "proposed_drafts": 2,
+              "repair_ns": 170862542,
+              "target_completed_cursor": 2,
+              "target_start": 1,
+              "total_ns": 747981226,
+              "verify_ns_including_public_vector_checks": 311165223
+            },
+            {
+              "accepted_drafts": 2,
+              "accepted_outputs": 3,
+              "draft_completed_cell": 4,
+              "draft_ns": 45045470,
+              "proposed_drafts": 2,
+              "repair_ns": 13934303,
+              "target_completed_cursor": 5,
+              "target_start": 2,
+              "total_ns": 342913305,
+              "verify_ns_including_public_vector_checks": 283933252
+            },
+            {
+              "accepted_drafts": 0,
+              "accepted_outputs": 1,
+              "draft_completed_cell": 5,
+              "draft_ns": 44243573,
+              "proposed_drafts": 2,
+              "repair_ns": 170039904,
+              "target_completed_cursor": 6,
+              "target_start": 5,
+              "total_ns": 509165924,
+              "verify_ns_including_public_vector_checks": 294882107
+            },
+            {
+              "accepted_drafts": 2,
+              "accepted_outputs": 3,
+              "draft_completed_cell": 8,
+              "draft_ns": 45351913,
+              "proposed_drafts": 2,
+              "repair_ns": 12807362,
+              "target_completed_cursor": 9,
+              "target_start": 6,
+              "total_ns": 361654255,
+              "verify_ns_including_public_vector_checks": 303494630
+            },
+            {
+              "accepted_drafts": 2,
+              "accepted_outputs": 3,
+              "draft_completed_cell": 11,
+              "draft_ns": 43669648,
+              "proposed_drafts": 2,
+              "repair_ns": 16111084,
+              "target_completed_cursor": 12,
+              "target_start": 9,
+              "total_ns": 337099411,
+              "verify_ns_including_public_vector_checks": 277318329
+            },
+            {
+              "accepted_drafts": 0,
+              "accepted_outputs": 1,
+              "draft_completed_cell": 12,
+              "draft_ns": 30,
+              "proposed_drafts": 0,
+              "repair_ns": 7554042,
+              "target_completed_cursor": 13,
+              "target_start": 12,
+              "total_ns": 182455863,
+              "verify_ns_including_public_vector_checks": 174901521
+            }
+          ],
+          "target_close": {
+            "main_buffers": 1380,
+            "main_bytes": 828866560,
+            "source_buffers": 0,
+            "source_bytes": 0
+          },
+          "target_fill_counters_after": {
+            "direct_bytes": 5759232000,
+            "direct_components": 8373,
+            "direct_windows": 411,
+            "evictions": 0,
+            "first_touch_fills": 2791
+          },
+          "target_fill_counters_before": {
+            "direct_bytes": 5759232000,
+            "direct_components": 8373,
+            "direct_windows": 411,
+            "evictions": 0,
+            "first_touch_fills": 2791
+          },
+          "target_host_phase_ns": {
+            "native_all_family_commit": 3397484,
+            "native_all_family_preflight": 4496803,
+            "native_attention_and_gr_enqueue": 1263655376,
+            "native_completed_final_proofs": 548899964,
+            "native_device_router_and_expert_enqueue": 22735150,
+            "native_device_router_audit": 72885267,
+            "native_ffn_gr_and_router_enqueue": 13022434,
+            "native_final_head_enqueue": 368722,
+            "native_route_and_expert_enqueue": 0,
+            "native_router_fence": 0,
+            "native_shared_and_ffn_combine_enqueue": 12084268
+          },
+          "timed_physical_read_bytes": 2146304,
+          "timing_scope": "original CPU13 routes and weights; deterministic diagnostic VRAM placement plus immutable direct host sources and deferred original GPU route audits, no demand expert uploads; full vectors and actual repair included",
+          "uploaded_bytes": 0,
+          "verify3_dense_calls": 6016,
+          "verify3_fused_calls": 6016,
+          "weight_read_ns": 0,
+          "weight_upload_enqueue_ns": 0
+        }
+      ],
+      "prepared_verify3_experts": false,
+      "private_or_production_accepted": false,
+      "public_existing_fill": true,
+      "qsa_extra_host_reserved_bytes": 4096,
+      "qsa_extra_runtime_info_bytes": 49152,
+      "request_binding_capacity": 4096,
+      "request_io_reuse": true,
+      "request_reuse_metadata_reserved_bytes": 4194304,
+      "scope": "fixed-public-DASLab13-real-dual-GPU-greedy-speculation",
+      "seed": 424242,
+      "target_card": "B70",
+      "temperature": 0,
+      "verify3_dense": true,
+      "verify3_logical_finite_fused": true,
+      "warm_replay": true,
+      "warm_reset": {
+        "admission_and_public_banks_retained": true,
+        "ledger_epoch_or_poison_reset": false,
+        "main_buffers": 1380,
+        "main_bytes": 828866560,
+        "source_buffers": 0,
+        "source_bytes": 0,
+        "transient_binding_info_caches_retained": false
+      }
+    },
+    "host_before": {
+      "admission": {
+        "action": "status",
+        "state": {
+          "admission": {
+            "active": false,
+            "completed": 59,
+            "paused": false,
+            "recovery_required": false,
+            "rejected": 0,
+            "waiting": 0
+          }
+        },
+        "status": 200
+      },
+      "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+      "http_statuses": {
+        "kuno": 200,
+        "ollama": 200,
+        "vashti": 200
+      },
+      "intel": {
+        "xe_memory": [
+          {
+            "total_bytes": 34242297856,
+            "used_bytes": 50688000
+          }
+        ]
+      },
+      "kernel": "7.0.0-38-generic",
+      "kernel_fault_counts": {
+        "nvidia_xid": 0,
+        "xe_memory_faults": 0,
+        "xe_reset_failures": 0,
+        "xe_timeouts": 0,
+        "xe_wedged": 0
+      },
+      "nvidia_compute_process_count": 0,
+      "nvidia_memory_mib": 579,
+      "time": "2026-10-11T12:19:29.418942+00:00"
+    },
+    "host_after": {
+      "admission": {
+        "action": "status",
+        "state": {
+          "admission": {
+            "active": false,
+            "completed": 59,
+            "paused": false,
+            "recovery_required": false,
+            "rejected": 0,
+            "waiting": 0
+          }
+        },
+        "status": 200
+      },
+      "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+      "http_statuses": {
+        "kuno": 200,
+        "ollama": 200,
+        "vashti": 200
+      },
+      "intel": {
+        "xe_memory": [
+          {
+            "total_bytes": 34242297856,
+            "used_bytes": 50688000
+          }
+        ]
+      },
+      "kernel": "7.0.0-38-generic",
+      "kernel_fault_counts": {
+        "nvidia_xid": 0,
+        "xe_memory_faults": 0,
+        "xe_reset_failures": 0,
+        "xe_timeouts": 0,
+        "xe_wedged": 0
+      },
+      "nvidia_compute_process_count": 0,
+      "nvidia_memory_mib": 576,
+      "time": "2026-10-11T12:23:19.721006+00:00"
+    },
+    "original_shards": {
+      "full_original_shards_verified": [
+        {
+          "shard": 1,
+          "bytes": 54817524224,
+          "sha256": "4c1eb2ceb4915e1192f4f386021897bde56a97f40a0bb78bb86465e0f7d2aca3"
+        },
+        {
+          "shard": 2,
+          "bytes": 28800138432,
+          "sha256": "316b46f3a2dbd68c900f43136ab9449f9dcc3725dfd8c794847c204bc161e113"
+        }
+      ],
+      "elapsed_ns": 101600907043,
+      "source_file_cache_warmed_before_model_setup": true
+    },
+    "complete_original_cpu13_vectors_carries_greedies_real_repair_accepted": true,
+    "physical_recovery_accepted": true,
+    "normal_language_pending": false,
+    "speed_claim_accepted": false,
+    "limits": [
+      "ShortCPU13 fixture is diagnostic placement, not ordinary throughput",
+      "No independent CPU200 quality acceptance or production/API implementation",
+      "Original model/reference hashes, routes, tolerances, closures and no-swap/core guards unchanged"
+    ],
+    "source_checks": {
+      "root_cooperative_parser_tests": 2,
+      "root_actual_runtime_composition_tests": 1,
+      "root_frozen_filter_tests": 36,
+      "workgroup_runtime_spirv_proof_tests": 4,
+      "scale_runtime_spirv_and_composition_proof_tests": 7,
+      "python_protected_scope_tests": 105,
+      "strict_direct_device_all_targets_clippy_root_plumbing": true,
+      "strict_direct_device_bin_tests_clippy_proof_leaf": true
+    },
+    "native_30_tokens_per_second_accepted": false,
+    "language_code_control_a1": {
+      "source": {
+        "commit": "76ffd6687ee9ab4623d023060b2d237861af7313",
+        "binary_sha256": "dc795837174239c6a91bd458e082f5402787494f3d0702d4f226b5395268e55a",
+        "features": [
+          "direct-device"
+        ],
+        "protected_launcher_sha256": "7a67edd4bb55e7ed4f6510d424e510d2da971128f0755b46386bdccedc790b4f",
+        "helper_sha256": "3f8c8fa93bf358af79201eadac7e7c2270b66033947e359d7c9bd2b840edd381",
+        "public_trial": "language-code-fast-gpu-host",
+        "seed": 424242,
+        "temperature": 0,
+        "frozen_partition_exit_requested": true,
+        "frozen_bank_preserve_requested": false,
+        "frozen_private_tables_requested": false,
+        "frozen_workgroup_tables_requested": false,
+        "frozen_shared_down_scales_requested": false,
+        "ordinary_demand_performance_claimed": true,
+        "native_30_tokens_per_second_accepted": false
+      },
+      "result": {
+        "chunk_io_checkpoint": true,
+        "device_dispatch": "inline",
+        "draft_card": "RTX3060",
+        "draft_close": {
+          "main_reserved": 0,
+          "private_buffers": 42,
+          "private_bytes": 11698176,
+          "public_bytes": 5011668992
+        },
+        "draft_profile": "self-contained-q8",
+        "draft_public_reserved_bytes": 5011668992,
+        "fixture_host_reserved_bytes": 4194304,
+        "forced_experts": false,
+        "forced_oracle_tokens": false,
+        "frequency_penalty": 0.0,
+        "full_target_packets_retained": true,
+        "fused_mtp_sweeps": true,
+        "gpu_chronological_qsa_selector": true,
+        "greedy_target_verification": true,
+        "independent_cpu200_reference_accepted": false,
+        "live_member_reduction": false,
+        "max_outputs": 200,
+        "observed_inline_device_dispatch": true,
+        "prepared_verify3_experts": false,
+        "presence_penalty": 0.0,
+        "private_or_production_accepted": false,
+        "public_existing_fill": true,
+        "qsa_extra_host_reserved_bytes": 4096,
+        "qsa_extra_runtime_info_bytes": 49152,
+        "record": {
+          "accepted_drafts": 130,
+          "actual_target_recomputations": 5,
+          "compiled_prompt_template_file": "serve/chat_template.jinja",
+          "compiled_prompt_template_revision": "fb58e0dbc8399662c0e47c76578c6e878b14f6cf",
+          "context_capacity": 235,
+          "continuation_tokens_per_second": 7.734099564490793,
+          "draft_ns": 5646843522,
+          "draft_traffic": {
+            "explicit_dispatches": 32852,
+            "followup_copy_calls": 69,
+            "host_read_bytes": 15564800,
+            "host_read_calls": 337,
+            "minimal_packet_reads": 138,
+            "private_upload_bytes": 19562496,
+            "private_upload_calls": 398
+          },
+          "elapsed_ns": 25730209230,
+          "emitted_tokens_including_eos": 200,
+          "emitted_tokens_per_second": 7.772964386422908,
+          "expert_hits": 0,
+          "expert_uploads": 0,
+          "first_output_emission_timed": true,
+          "fixture": "first-code",
+          "fixture_peak_host_bytes": 2111616,
+          "frozen_host_close": {
+            "detached_pages": 432,
+            "live_backing_bytes": 0,
+            "metadata_owned_bytes": 1458688,
+            "physical_allocated_bytes": 36147609600,
+            "physical_freed_bytes": 36147609600,
+            "registered_pages": 432,
+            "source_window_peak_bytes": 1048576
+          },
+          "frozen_host_gpu_router": true,
+          "frozen_host_inactive_partition_exit": true,
+          "frozen_host_private_tables": false,
+          "frozen_host_setup": {
+            "attach_ns": 47173072530,
+            "bank_completion_experts": 1769,
+            "bank_completion_read_ns": 4372235364,
+            "bank_completion_upload_ns": 2775218,
+            "bank_completion_uploaded_bytes": 3586201600,
+            "prepare_and_attach_ns": 52596125176,
+            "separate_host_reserved_bytes": 36166705152
+          },
+          "frozen_host_shared_down_scales": false,
+          "frozen_host_workgroup_tables": false,
+          "frozen_source_routes": {
+            "host_routes": 46376,
+            "source_dispatches": 35520,
+            "vram_routes": 56344
+          },
+          "generation_physical_read_bytes": 18620416,
+          "gpu_router_calls": 3552,
+          "host_io": {
+            "gpu_submission_wait_ns": 10614718333,
+            "gpu_submission_waits": 618,
+            "inline_readback_batches": 450,
+            "provenance": "process-global whole public dual-device timed interval",
+            "scoped_read_flush_ns": 20688932,
+            "scoped_read_map_ns": 3094525889,
+            "scoped_read_setup_ns": 726703
+          },
+          "load_and_prefill_physical_read_bytes": 59305672704,
+          "load_ns": 8624329643,
+          "nonempty_text": true,
+          "post_prefill_target_continuations": 199,
+          "prefill_first_output_count": 1,
+          "prefill_first_output_generation_pick_timed": false,
+          "prefill_ns_including_real_teacher_kv": 29647275299,
+          "prompt_tokens": 35,
+          "proposed_drafts": 138,
+          "repair_abs_tolerance": 0.006000000052154064,
+          "repair_hidden_max_abs": 0.0,
+          "repair_logit_max_abs": 0.0,
+          "repair_ns_including_vector_checks": 1927181913,
+          "repair_rel_tolerance": 0.0003000000142492354,
+          "request_close_ns_inside_timing": 13979591,
+          "request_scope": {
+            "closing_audit_ns": 13973081,
+            "full_io_audit": true,
+            "scope_closed": true,
+            "scope_sequence": 1
+          },
+          "rounds": 69,
+          "stop_reason": "limit",
+          "target_close": {
+            "main_buffers": 1380,
+            "main_bytes": 828866560,
+            "source_buffers": 0,
+            "source_bytes": 0
+          },
+          "target_fill_counters_after": {
+            "direct_bytes": 10756531200,
+            "direct_components": 15702,
+            "direct_windows": 797,
+            "evictions": 91,
+            "first_touch_fills": 5143
+          },
+          "target_fill_counters_before": {
+            "direct_bytes": 10756531200,
+            "direct_components": 15702,
+            "direct_windows": 797,
+            "evictions": 91,
+            "first_touch_fills": 5143
+          },
+          "target_host_phase_ns": {
+            "native_all_family_commit": 31795082,
+            "native_all_family_preflight": 44063631,
+            "native_attention_and_gr_enqueue": 11505931406,
+            "native_completed_final_proofs": 4685215159,
+            "native_device_router_and_expert_enqueue": 1322887056,
+            "native_device_router_audit": 765013016,
+            "native_ffn_gr_and_router_enqueue": 123416357,
+            "native_final_head_enqueue": 3722788,
+            "native_route_and_expert_enqueue": 0,
+            "native_router_fence": 0,
+            "native_shared_and_ffn_combine_enqueue": 112906150
+          },
+          "uploaded_bytes": 0,
+          "verify3_dense_calls": 55648,
+          "verify3_fused_calls": 55648,
+          "verify_ns_full_packets": 18138564596,
+          "weight_read_ns": 0,
+          "weight_upload_enqueue_ns": 0
+        },
+        "repair_original_prefix_vector_checks": true,
+        "repetition_penalty": 1.0,
+        "request_io_reuse": true,
+        "request_reuse_metadata_reserved_bytes": 4194304,
+        "scope": "compiled-public-language200-real-dual-device-greedy",
+        "seed": 424242,
+        "target_card": "B70",
+        "temperature": 0,
+        "thinking": false,
+        "tokenizer_host_cap_bytes": 201326592,
+        "verify3_dense": true,
+        "verify3_logical_finite_fused": true
+      },
+      "host_after": {
+        "admission": {
+          "action": "status",
+          "state": {
+            "admission": {
+              "active": false,
+              "completed": 59,
+              "paused": false,
+              "recovery_required": false,
+              "rejected": 0,
+              "waiting": 0
+            }
+          },
+          "status": 200
+        },
+        "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+        "http_statuses": {
+          "kuno": 200,
+          "ollama": 200,
+          "vashti": 200
+        },
+        "intel": {
+          "xe_memory": [
+            {
+              "total_bytes": 34242297856,
+              "used_bytes": 50688000
+            }
+          ]
+        },
+        "kernel": "7.0.0-38-generic",
+        "kernel_fault_counts": {
+          "nvidia_xid": 0,
+          "xe_memory_faults": 0,
+          "xe_reset_failures": 0,
+          "xe_timeouts": 0,
+          "xe_wedged": 0
+        },
+        "nvidia_compute_process_count": 0,
+        "nvidia_memory_mib": 579,
+        "time": "2026-10-11T12:28:54.743848+00:00"
+      }
+    },
+    "language_code_combined_b1": {
+      "source": {
+        "commit": "76ffd6687ee9ab4623d023060b2d237861af7313",
+        "binary_sha256": "dc795837174239c6a91bd458e082f5402787494f3d0702d4f226b5395268e55a",
+        "features": [
+          "direct-device"
+        ],
+        "protected_launcher_sha256": "7a67edd4bb55e7ed4f6510d424e510d2da971128f0755b46386bdccedc790b4f",
+        "helper_sha256": "3f8c8fa93bf358af79201eadac7e7c2270b66033947e359d7c9bd2b840edd381",
+        "public_trial": "language-code-workgroup-scales-gpu-host",
+        "seed": 424242,
+        "temperature": 0,
+        "frozen_partition_exit_requested": true,
+        "frozen_bank_preserve_requested": false,
+        "frozen_private_tables_requested": false,
+        "frozen_workgroup_tables_requested": true,
+        "frozen_shared_down_scales_requested": true,
+        "ordinary_demand_performance_claimed": true,
+        "native_30_tokens_per_second_accepted": false
+      },
+      "result": {
+        "chunk_io_checkpoint": true,
+        "device_dispatch": "inline",
+        "draft_card": "RTX3060",
+        "draft_close": {
+          "main_reserved": 0,
+          "private_buffers": 42,
+          "private_bytes": 11698176,
+          "public_bytes": 5011668992
+        },
+        "draft_profile": "self-contained-q8",
+        "draft_public_reserved_bytes": 5011668992,
+        "fixture_host_reserved_bytes": 4194304,
+        "forced_experts": false,
+        "forced_oracle_tokens": false,
+        "frequency_penalty": 0.0,
+        "full_target_packets_retained": true,
+        "fused_mtp_sweeps": true,
+        "gpu_chronological_qsa_selector": true,
+        "greedy_target_verification": true,
+        "independent_cpu200_reference_accepted": false,
+        "live_member_reduction": false,
+        "max_outputs": 200,
+        "observed_inline_device_dispatch": true,
+        "prepared_verify3_experts": false,
+        "presence_penalty": 0.0,
+        "private_or_production_accepted": false,
+        "public_existing_fill": true,
+        "qsa_extra_host_reserved_bytes": 4096,
+        "qsa_extra_runtime_info_bytes": 49152,
+        "record": {
+          "accepted_drafts": 130,
+          "actual_target_recomputations": 5,
+          "compiled_prompt_template_file": "serve/chat_template.jinja",
+          "compiled_prompt_template_revision": "fb58e0dbc8399662c0e47c76578c6e878b14f6cf",
+          "context_capacity": 235,
+          "continuation_tokens_per_second": 6.905381952053082,
+          "draft_ns": 5678642698,
+          "draft_traffic": {
+            "explicit_dispatches": 32852,
+            "followup_copy_calls": 69,
+            "host_read_bytes": 15564800,
+            "host_read_calls": 337,
+            "minimal_packet_reads": 138,
+            "private_upload_bytes": 19562496,
+            "private_upload_calls": 398
+          },
+          "elapsed_ns": 28818101791,
+          "emitted_tokens_including_eos": 200,
+          "emitted_tokens_per_second": 6.9400823638724445,
+          "expert_hits": 0,
+          "expert_uploads": 0,
+          "first_output_emission_timed": true,
+          "fixture": "first-code",
+          "fixture_peak_host_bytes": 2111616,
+          "frozen_host_close": {
+            "detached_pages": 432,
+            "live_backing_bytes": 0,
+            "metadata_owned_bytes": 1458688,
+            "physical_allocated_bytes": 36147609600,
+            "physical_freed_bytes": 36147609600,
+            "registered_pages": 432,
+            "source_window_peak_bytes": 1048576
+          },
+          "frozen_host_gpu_router": true,
+          "frozen_host_inactive_partition_exit": true,
+          "frozen_host_private_tables": false,
+          "frozen_host_setup": {
+            "attach_ns": 49283794005,
+            "bank_completion_experts": 1769,
+            "bank_completion_read_ns": 4257623616,
+            "bank_completion_upload_ns": 2845299,
+            "bank_completion_uploaded_bytes": 3586201600,
+            "prepare_and_attach_ns": 54588456117,
+            "separate_host_reserved_bytes": 36166705152
+          },
+          "frozen_host_shared_down_scales": true,
+          "frozen_host_workgroup_tables": true,
+          "frozen_source_routes": {
+            "host_routes": 46376,
+            "source_dispatches": 35520,
+            "vram_routes": 56344
+          },
+          "generation_physical_read_bytes": 18563072,
+          "gpu_router_calls": 3552,
+          "host_io": {
+            "gpu_submission_wait_ns": 13382195371,
+            "gpu_submission_waits": 618,
+            "inline_readback_batches": 450,
+            "provenance": "process-global whole public dual-device timed interval",
+            "scoped_read_flush_ns": 20717095,
+            "scoped_read_map_ns": 3344550084,
+            "scoped_read_setup_ns": 705600
+          },
+          "load_and_prefill_physical_read_bytes": 58269765632,
+          "load_ns": 10907473209,
+          "nonempty_text": true,
+          "post_prefill_target_continuations": 199,
+          "prefill_first_output_count": 1,
+          "prefill_first_output_generation_pick_timed": false,
+          "prefill_ns_including_real_teacher_kv": 30752424740,
+          "prompt_tokens": 35,
+          "proposed_drafts": 138,
+          "repair_abs_tolerance": 0.006000000052154064,
+          "repair_hidden_max_abs": 0.0,
+          "repair_logit_max_abs": 0.0,
+          "repair_ns_including_vector_checks": 2081271206,
+          "repair_rel_tolerance": 0.0003000000142492354,
+          "request_close_ns_inside_timing": 14464108,
+          "request_scope": {
+            "closing_audit_ns": 14457688,
+            "full_io_audit": true,
+            "scope_closed": true,
+            "scope_sequence": 1
+          },
+          "rounds": 69,
+          "stop_reason": "limit",
+          "target_close": {
+            "main_buffers": 1380,
+            "main_bytes": 828866560,
+            "source_buffers": 0,
+            "source_bytes": 0
+          },
+          "target_fill_counters_after": {
+            "direct_bytes": 10756531200,
+            "direct_components": 15702,
+            "direct_windows": 797,
+            "evictions": 91,
+            "first_touch_fills": 5143
+          },
+          "target_fill_counters_before": {
+            "direct_bytes": 10756531200,
+            "direct_components": 15702,
+            "direct_windows": 797,
+            "evictions": 91,
+            "first_touch_fills": 5143
+          },
+          "target_host_phase_ns": {
+            "native_all_family_commit": 32809651,
+            "native_all_family_preflight": 44400592,
+            "native_attention_and_gr_enqueue": 14013946738,
+            "native_completed_final_proofs": 5216815602,
+            "native_device_router_and_expert_enqueue": 1317460359,
+            "native_device_router_audit": 760800404,
+            "native_ffn_gr_and_router_enqueue": 124076322,
+            "native_final_head_enqueue": 3748481,
+            "native_route_and_expert_enqueue": 0,
+            "native_router_fence": 0,
+            "native_shared_and_ffn_combine_enqueue": 112853868
+          },
+          "uploaded_bytes": 0,
+          "verify3_dense_calls": 55648,
+          "verify3_fused_calls": 55648,
+          "verify_ns_full_packets": 21040219469,
+          "weight_read_ns": 0,
+          "weight_upload_enqueue_ns": 0
+        },
+        "repair_original_prefix_vector_checks": true,
+        "repetition_penalty": 1.0,
+        "request_io_reuse": true,
+        "request_reuse_metadata_reserved_bytes": 4194304,
+        "scope": "compiled-public-language200-real-dual-device-greedy",
+        "seed": 424242,
+        "target_card": "B70",
+        "temperature": 0,
+        "thinking": false,
+        "tokenizer_host_cap_bytes": 201326592,
+        "verify3_dense": true,
+        "verify3_logical_finite_fused": true
+      },
+      "host_after": {
+        "admission": {
+          "action": "status",
+          "state": {
+            "admission": {
+              "active": false,
+              "completed": 59,
+              "paused": false,
+              "recovery_required": false,
+              "rejected": 0,
+              "waiting": 0
+            }
+          },
+          "status": 200
+        },
+        "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+        "http_statuses": {
+          "kuno": 200,
+          "ollama": 200,
+          "vashti": 200
+        },
+        "intel": {
+          "xe_memory": [
+            {
+              "total_bytes": 34242297856,
+              "used_bytes": 50688000
+            }
+          ]
+        },
+        "kernel": "7.0.0-38-generic",
+        "kernel_fault_counts": {
+          "nvidia_xid": 0,
+          "xe_memory_faults": 0,
+          "xe_reset_failures": 0,
+          "xe_timeouts": 0,
+          "xe_wedged": 0
+        },
+        "nvidia_compute_process_count": 0,
+        "nvidia_memory_mib": 571,
+        "time": "2026-10-11T12:33:49.406627+00:00"
+      }
+    },
+    "normal_language_ordered_pair": {
+      "control": 7.734099564490793,
+      "combined": 6.905381952053082,
+      "change_percent": -10.715114352064504,
+      "repeated": false,
+      "speed_gain_accepted": false,
+      "note": "Combined workgroup tables plus down scales regresses this ordered normal code200 pair; remain default-off. CPU13 remains accepted."
+    }
   }
 }
