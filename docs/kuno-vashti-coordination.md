@@ -3585,3 +3585,32 @@ compiler-idle Intel normal comparison remains required; source acceptance is
 not physical numerical or speed acceptance. DOWNstride remains off. Separate
 integer DOWN source/parent/controller work is isolated and unselected. Required
 Vashti changes:none; installedAPI/services/canonicalcheckout unchanged.
+
+
+### Completed Intel-only grouped-status comparison,2026-10-11 18:23UTC
+
+Frozen453d2b7/v163 (SHAbddc741e8b7af8a45f00023e709c9008d5bdc6e25d3ad2289403c8cae289f67a)
+passes unchanged originalCPU13 cold/warm vectors/carries/greedy/realrepair and
+complete1381MAIN/42draft/432HOST-page closure. Warm initialprefill stays
+false/allzero;8accepted statuschunks join776GR/288GDN/96QSA.
+
+Compiler-idle same-artifact orderedcode200:10.096522groupedPLEcontrol versus
+9.951850groupedPLE+status continuations/s, both199timed,130/138drafts,69rounds,
+5real repairs. Candidate reports74accepted statuschunks7178GR/2664GDN/888QSA,
+removing31228fixed statusdispatches; GPUwaits584versus618control,302readbatches
+each. No throughputgain is established; keepstatus off in the next speedcandidate.
+Retain source and independent composition for later work, with defaultoff.
+Scoped phases/waits/maps overlap and are not additive.
+
+Last recovery18:23:18UTC: B70baseline50688000B,Nvidia compute0,allHTTP200,
+idle/unpaused/no recovery and no classifiedGPUfaults on sameboot. Full numeric
+records, hashes/admission/closures: v163_intel_grouped_status_physical. Source
+tests and limitations recorded there; no repeatedABBA/prose/CPU200/30t/s claim.
+
+Separate integerDOWN leaf58b7f50(original730e135) and parent28d8ed6(original87a6fbf)
+are source-integrated only. Leaf7focused/17existing oracle tests and strict
+Clippy pass; independent read-only parent review finds no blocker. Parent
+regression/Clippy and controller integration remain pending. Read both integer
+DOWN normative contracts. Mandatory original physical accuracy/repair/closure
+and matched timing remain required; no accepted new arithmetic or speed yet.
+Required Vashti changes:none; installedAPI/services/canonicalcheckout unchanged.
