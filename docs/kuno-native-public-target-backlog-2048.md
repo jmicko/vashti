@@ -74,6 +74,10 @@ most `W+2S-1` charged tasks outstanding; steady-state outstanding work is bounde
 by `2(W+S-1)`, where `W` is the chosen window. Each selected submission costs at
 least one, so its unfinished submission count is bounded by the same envelope.
 There is no new callback/future list or unbounded application queue.
+This envelope assumes the original previous-stamp poll completes successfully;
+the retained original warning path on poll failure is not a completion proof.
+The unchanged error futures and complete closing gates still reject failed
+device execution. The policy cannot establish driver completion by arithmetic.
 
 The canonical scalar/kernel batch threshold remains256. An original native
 owner-clear batch can overshoot it: `resident_util::zero_batch()` permits at
