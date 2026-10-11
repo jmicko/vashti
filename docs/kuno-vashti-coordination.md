@@ -3678,3 +3678,38 @@ submission-backlog experiment retaining original submissions and proofs.
 Neither has physical acceptance yet. Root coordinates GPU and CPU timing;
 separate worktrees preserve source isolation. See the new normative contracts
 once integrated. No frontend or API work is part of these candidates.
+
+
+### Intel Verify3 IQ4 decoder completed; queueing candidate next, 2026-10-11
+
+Frozen v165 source6266201b44faacac187db8e1f2353d35f7438b5a passes all original
+operator controls plus9408 exact packed-register IQ4 values,12normal+4fault
+Verify3 cases and12normal+42fault fused-finite cases on Intel. Default binary
+SHA996786943fb7dfc6f41e1ae975cb0659833d8cd372b673d474cd7f0f83195ad0;
+pure direct binary SHA5f86159edbad0652e77b60a19046d6ef5933e936e8677c65ec8dc3626e988719.
+Original CPU13 cold/warm full vectors, carries, greedy IDs and real repairs
+pass without changing reference80650af8 or ABS0.006/REL0.0003. Cold decoder
+staysOriginal/zero; warm actual89first/801full selected dense calls. Full1382
+MAIN/828997632B,42draft owners and432HOST pages close with physical recovery.
+
+Compiler-idle same-artifact code200 ordered pair measures10.440895control vs
+10.408871register decoder (-0.31percent), both199real continuations,
+130/138accepted drafts/69rounds/five repairs. This shows no speed gain in this
+single pair. Leave IQ4 registers off for the next speed candidate; keep its
+explicit implementation and numerical acceptance. No ABBA/prose/CPU200 or
+production/default selection follows. Latest recovery19:26UTC: sameboot,
+Intel50688000B/Nvidia compute0/allHTTP200/no recovery latch/no new GPU faults.
+See full source/actual counts/closures in v165_intel_iq4_registers_physical.
+
+Next runtime candidate is [explicit bounded target backlog2048](kuno-native-public-target-backlog-2048.md),
+leafc8bccc4(original525ce3b), clarificationad4af97(original45d944d),
+controller77e421c(original3d94692), protected guard633ac25. It retains original
+kernels, queue submissions and closing proofs; target is selected before model
+construction for bothcold/warm while independent Intel full-Q8 draft remains512.
+Its opaque driver retention is not an exact byte guarantee; fresh actual Intel
+admission and unchanged512MiB margin/caps remain required.111controller/helper
+checks (including8new),7exact-source state-harness checks, strict direct all-target
+Clippy and259integratedPython checks plus6fixed helper labels/caps pass. The
+harness limitation is recorded in the normative contract. Physical CPU13 and
+same-artifact normal speed comparison remain pending. No GPU reset, installed
+service/default/API/frontend change or30tokens/s/release claim. Vashti changes:none.

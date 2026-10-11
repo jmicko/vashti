@@ -126,3 +126,6 @@ Strict direct-device all-target Clippy with warnings denied, formatting and
 whitespace checks also pass. All physical GPU acceptance remains pending at
 this checkpoint. No service, public API, frontend, installation or release
 changes are included.
+
+
+Physical v165 acceptance completed on2026-10-11: both original operator controls and all additional decoder cases, unchanged original cold/warm CPU13, full close and recovery pass. One same-artifact code200 pair10.440895control versus10.408871candidate showed no speed gain; decoder remains unselected for the next candidate. See v165_intel_iq4_registers_physical and the latest coordination handoff for hashes, actual counts and limits. Earlier pending statements describe the source checkpoint.

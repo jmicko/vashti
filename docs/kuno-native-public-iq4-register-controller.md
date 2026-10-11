@@ -94,3 +94,6 @@ Physical decoder values, dense counts 1..3, unchanged CPU13 vectors/greedy/
 real repair, full source/owner close and memory recovery are mandatory before
 normal same-artifact compiler-idle timing. None is established by a requested
 selector or successful compilation. Root owns those GPU and lifecycle gates.
+
+
+Physical v165 acceptance completed on2026-10-11: both original operator controls and all additional decoder cases, unchanged original cold/warm CPU13, full close and recovery pass. One same-artifact code200 pair10.440895control versus10.408871candidate showed no speed gain; decoder remains unselected for the next candidate. See v165_intel_iq4_registers_physical and the latest coordination handoff for hashes, actual counts and limits. Earlier pending statements describe the source checkpoint.
