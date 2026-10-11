@@ -239,6 +239,73 @@ impl MatrixSpec {
                  }"
             } else { "// VERIFY3_LOGICAL_COMPLEMENT_SCAN" })
     }
+    fn source_verify4(self) -> String {
+        let common = include_str!("ornith/common.wgsl")
+            .split_once("fn sigmoid")
+            .expect("shared packed helper boundary")
+            .1;
+        let helpers = self.verify3_helpers();
+        format!(
+            "const DTYPE:u32={}u;const ROWS:u32={}u;const COLUMNS:u32={}u;const ROW_BYTES:u32={}u;\n\
+             struct Params {{input_first:u32,output_first:u32,count:u32,input_stride:u32,output_stride:u32,input_words:u32,output_words:u32,reserved:u32}}\n\
+             @group(0) @binding(0) var<storage,read> weight:array<u32>;\n\
+             @group(0) @binding(1) var<storage,read> input4:array<vec4<f32>>;\n\
+             @group(0) @binding(2) var<storage,read_write> output:array<f32>;\n\
+             @group(0) @binding(3) var<storage,read_write> fault:array<atomic<u32>>;\n\
+             @group(0) @binding(4) var<uniform> p:Params;\nfn sigmoid{common}\n{helpers}\n{}",
+            self.dtype,
+            self.rows,
+            self.columns,
+            self.row_bytes,
+            include_str!("next_verify4_dense.wgsl"),
+        )
+    }
+    fn source_verify4_finite(self, tail: bool) -> String {
+        // Preserve every original dot, decoder, subgroup reduction and active
+        // finite store. Only the last original weight tile scans the logical
+        // complement of ALL active full-matrix intervals. Those intervals may
+        // still be written by other workgroups: never read them here.
+        self.source_verify4()
+            .replace(
+                "reserved:u32}",
+                "reserved:u32,matrix_first:u32,matrix_rows:u32,reserved2:u32,reserved3:u32}",
+            )
+            .replace(
+                "@builtin(local_invocation_index) local:u32)",
+                "@builtin(local_invocation_index) local:u32,@builtin(num_workgroups) dispatched:vec3<u32>)",
+            )
+            .replace("// VERIFY4_COMPLETE_INTERVAL_GUARD", &format!(
+                "var complete=p.reserved2==0u && p.reserved3==0u && p.matrix_rows>0u\n\
+                 && p.output_words==arrayLength(&output) && p.output_words<=16777216u\n\
+                 && p.matrix_first<=p.output_first\n\
+                 && p.matrix_first<=p.output_words && p.output_stride>=p.matrix_rows;\n\
+                 if complete {{\n\
+                 let left=p.output_words-p.matrix_first;\n\
+                 if p.matrix_rows>left {{complete=false;}}\n\
+                 if complete {{if p.count-1u>(left-p.matrix_rows)/p.output_stride {{complete=false;}}}}\n\
+                 let relative=p.output_first-p.matrix_first;\n\
+                 if relative>p.matrix_rows {{complete=false;}}\n\
+                 if complete {{\n\
+                 let remaining=p.matrix_rows-relative;\n\
+                 if {tail} {{if ROWS!=remaining {{complete=false;}}}}\n\
+                 else {{if ROWS>=remaining {{complete=false;}}}}\n\
+                 }}\n\
+                 }}\n\
+                 if !complete {{if local==0u {{atomicOr(&fault[0],8u);}} return;}}"
+            ))
+            .replace("// VERIFY4_LOGICAL_COMPLEMENT_SCAN", if tail {
+                "// VERIFY4_LOGICAL_COMPLEMENT_SCAN\n\
+                 let index=group.x*128u+local;\n\
+                 for(var i=index;i<p.output_words;i+=128u*dispatched.x) {\n\
+                 var matrix_live=false;\n\
+                 if i>=p.matrix_first {\n\
+                 let relative=i-p.matrix_first;\n\
+                 matrix_live=relative/p.output_stride<p.count && relative%p.output_stride<p.matrix_rows;\n\
+                 }\n\
+                 if !matrix_live {if !(abs(output[i])<=3.4028234663852886e38) {atomicOr(&fault[0],1u);}}\n\
+                 }"
+            } else { "// VERIFY4_LOGICAL_COMPLEMENT_SCAN" })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -251,6 +318,9 @@ enum Kernel {
     Router,
     Gdn([usize; 3]),
     GrNorm(usize),
+    // Append only: preserve every original derived-hash discriminant.
+    MatrixVerify4(MatrixSpec),
+    MatrixVerify4Finite(MatrixSpec, bool),
 }
 impl Kernel {
     fn dimension(self) -> CubeDim {
@@ -262,6 +332,8 @@ impl Kernel {
             | Self::MatrixFault(_, _)
             | Self::MatrixVerify3(_)
             | Self::MatrixVerify3Finite(_, _)
+            | Self::MatrixVerify4(_)
+            | Self::MatrixVerify4Finite(_, _)
             | Self::PublicValues(_) => 128,
         })
     }
@@ -276,6 +348,8 @@ impl Kernel {
             Self::MatrixFault(spec, tail) => spec.source_fault(tail),
             Self::MatrixVerify3(spec) => spec.source_verify3(),
             Self::MatrixVerify3Finite(spec, tail) => spec.source_verify3_finite(tail),
+            Self::MatrixVerify4(spec) => spec.source_verify4(),
+            Self::MatrixVerify4Finite(spec, tail) => spec.source_verify4_finite(tail),
             Self::Gdn([head, key, value]) => format!(
                 "const HEAD_DIM:u32={head}u; const KEY_HEADS:u32={key}u; const VALUE_HEADS:u32={value}u;\n{}",
                 include_str!("next_gdn.wgsl")
@@ -310,6 +384,8 @@ impl KernelMetadata for Kernel {
             Self::Router => "NextRouter",
             Self::MatrixVerify3(_) => "NextVerify3Dense",
             Self::MatrixVerify3Finite(_, _) => "NextVerify3DenseFinite",
+            Self::MatrixVerify4(_) => "NextVerify4Dense",
+            Self::MatrixVerify4Finite(_, _) => "NextVerify4DenseFinite",
             Self::PublicValues(_) => "NextPublicPackedValues",
             Self::Gdn(_) => "NextGdn",
             Self::GrNorm(_) => "NextGrRms",
@@ -589,6 +665,251 @@ fn matrix_verify3_inner(
         )
     } else {
         (Kernel::MatrixVerify3(spec), spec.rows.div_ceil(4))
+    };
+    let info = MetadataBindingInfo::custom(info_words);
+    let args = KernelArguments::new()
+        .with_buffer(weights.binding())
+        .with_buffer(input.binding())
+        .with_buffer(output.binding())
+        .with_buffer(fault.binding())
+        .with_info(info);
+    // SAFETY: original checked packed tile/runtime spans; parent owns disjoint
+    // MAX8 backing roots and original full model completion/erasure acceptance.
+    unsafe {
+        client.launch_unchecked(Box::new(kernel), CubeCount::Static(grid as u32, 1, 1), args);
+    }
+    Ok(())
+}
+
+/// Separate fixed count4 policy, with the unchanged Verify3 device ceilings.
+#[allow(dead_code)] // Default-unused leaf; future parent selects explicitly.
+pub(crate) fn validate_verify4_limits(
+    limits: &wgpu::Limits,
+    subgroups: bool,
+    subgroup_min: u32,
+    subgroup_max: u32,
+) -> Result<()> {
+    validate_verify3_limits(limits, subgroups, subgroup_min, subgroup_max)
+}
+
+#[allow(dead_code)] // Default-unused leaf; future parent selects explicitly.
+pub(crate) fn validate_verify4_finite_limits(
+    limits: &wgpu::Limits,
+    subgroups: bool,
+    subgroup_min: u32,
+    subgroup_max: u32,
+) -> Result<()> {
+    validate_verify3_finite_limits(limits, subgroups, subgroup_min, subgroup_max)
+}
+
+pub(crate) fn validate_verify4_spans(
+    spec: MatrixSpec,
+    spans: &crate::quant_matvec::matmul::BatchSpans,
+    weight_bytes: u64,
+    input_words: usize,
+    output_words: usize,
+) -> Result<()> {
+    if spec.iq4_decoder != Iq4Decoder::Original {
+        return Err(Error::InvalidFormat(
+            "Verify4 requires original IQ4 decoder",
+        ));
+    }
+    if spans.count() != 4
+        || spans.packed_first() != 0
+        || !input_words.is_multiple_of(4)
+        || !spans.input_first().is_multiple_of(4)
+        || !spans.input_stride().is_multiple_of(4)
+        || weight_bytes < (spec.rows * spec.row_bytes).div_ceil(4) as u64 * 4
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    crate::resident_batch_projection::validate_view(
+        spans.count(),
+        spans.input_first(),
+        spans.input_stride(),
+        spec.columns,
+        input_words,
+    )?;
+    crate::resident_batch_projection::validate_view(
+        spans.count(),
+        spans.output_first(),
+        spans.output_stride(),
+        spec.rows,
+        output_words,
+    )?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)] // Original spans plus full-matrix completion interval.
+pub(crate) fn validate_verify4_finite_spans(
+    spec: MatrixSpec,
+    spans: &crate::quant_matvec::matmul::BatchSpans,
+    weight_bytes: u64,
+    input_words: usize,
+    output_words: usize,
+    matrix_rows: usize,
+    matrix_first: usize,
+    tail: bool,
+) -> Result<()> {
+    if output_words > VERIFY3_FINITE_WORD_LIMIT {
+        // Fixed64MiB logical binding also keeps every bounded-stride increment
+        // below u32 overflow. Existing target owners are substantially smaller.
+        return Err(Error::LimitExceeded("Verify4 finite output binding"));
+    }
+    validate_verify4_spans(spec, spans, weight_bytes, input_words, output_words)?;
+    crate::resident_batch_projection::validate_view(
+        spans.count(),
+        matrix_first,
+        spans.output_stride(),
+        matrix_rows,
+        output_words,
+    )?;
+    let tile_offset = spans
+        .output_first()
+        .checked_sub(matrix_first)
+        .ok_or(Error::InvalidBufferLength)?;
+    let tile_end = tile_offset
+        .checked_add(spec.rows)
+        .ok_or(Error::ArithmeticOverflow)?;
+    if tile_end > matrix_rows || tail != (tile_end == matrix_rows) {
+        return Err(Error::InvalidBufferLength);
+    }
+    Ok(())
+}
+
+fn verify4_finite_grid(spec: MatrixSpec, output_words: usize, tail: bool) -> usize {
+    let rows = spec.rows.div_ceil(4);
+    if tail {
+        // Fixed4096 public admission bound. The strided scan still visits every
+        // logical word exactly once when an original MAX8 output is larger.
+        rows.max(output_words.div_ceil(128).min(4096))
+    } else {
+        rows
+    }
+}
+
+/// Fixed count4 original-packed arithmetic leaf. Caller retains original source
+/// identity, disjoint MAX8 owners and the complete output finite/padding/fault
+/// gates. Same one INFO/dispatch as original projection; never claim its inline
+/// active finite bits replace the following full owning validation dispatch.
+#[allow(dead_code, clippy::too_many_arguments)] // Future parent activation only.
+pub(crate) fn matrix_verify4(
+    client: &ComputeClient<WgpuRuntime>,
+    spec: MatrixSpec,
+    weights: Handle,
+    input: Handle,
+    output: Handle,
+    fault: Handle,
+    input_words: usize,
+    output_words: usize,
+    spans: &crate::quant_matvec::matmul::BatchSpans,
+) -> Result<()> {
+    matrix_verify4_inner(
+        client,
+        spec,
+        weights,
+        input,
+        output,
+        fault,
+        input_words,
+        output_words,
+        spans,
+        None,
+    )
+}
+
+/// Exact original Verify4 arithmetic with complete LOGICAL output finite
+/// fusion. Full physical backing padding/owner/status and final fault proofs
+/// remain the caller's unchanged responsibility. The last original tile scans
+/// no active matrix word, even if other workgroups have not yet written it.
+#[allow(dead_code, clippy::too_many_arguments)] // Future parent activation only.
+pub(crate) fn matrix_verify4_finite(
+    client: &ComputeClient<WgpuRuntime>,
+    spec: MatrixSpec,
+    weights: Handle,
+    input: Handle,
+    output: Handle,
+    fault: Handle,
+    input_words: usize,
+    output_words: usize,
+    spans: &crate::quant_matvec::matmul::BatchSpans,
+    matrix_rows: usize,
+    matrix_first: usize,
+    tail: bool,
+) -> Result<()> {
+    validate_verify4_finite_spans(
+        spec,
+        spans,
+        weights.size_in_used(),
+        input_words,
+        output_words,
+        matrix_rows,
+        matrix_first,
+        tail,
+    )?;
+    if output.size_in_used() != output_words as u64 * 4 {
+        return Err(Error::InvalidBufferLength);
+    }
+    matrix_verify4_inner(
+        client,
+        spec,
+        weights,
+        input,
+        output,
+        fault,
+        input_words,
+        output_words,
+        spans,
+        Some((matrix_rows, matrix_first, tail)),
+    )
+}
+
+#[allow(clippy::too_many_arguments)] // Same original guarded bindings; optional finite interval only.
+fn matrix_verify4_inner(
+    client: &ComputeClient<WgpuRuntime>,
+    spec: MatrixSpec,
+    weights: Handle,
+    input: Handle,
+    output: Handle,
+    fault: Handle,
+    input_words: usize,
+    output_words: usize,
+    spans: &crate::quant_matvec::matmul::BatchSpans,
+    finite: Option<(usize, usize, bool)>,
+) -> Result<()> {
+    validate_verify4_spans(
+        spec,
+        spans,
+        weights.size_in_used(),
+        input_words,
+        output_words,
+    )?;
+    if input.size_in_used() < input_words as u64 * 4
+        || output.size_in_used() < output_words as u64 * 4
+        || fault.size_in_used() != 4
+        || weights.stream != input.stream
+        || output.stream != input.stream
+        || fault.stream != input.stream
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    // One exact-capacity allocation in either mode; do not make the fused hot
+    // path allocate/reallocate a temporary header for every projection tile.
+    let mut info_words = Vec::with_capacity(if finite.is_some() { 6 } else { 4 });
+    info_words.extend([
+        spans.input_first() as u64 | ((spans.output_first() as u64) << 32),
+        spans.count() as u64 | ((spans.input_stride() as u64) << 32),
+        spans.output_stride() as u64 | ((input_words as u64) << 32),
+        output_words as u64,
+    ]);
+    let (kernel, grid) = if let Some((matrix_rows, matrix_first, tail)) = finite {
+        info_words.extend([matrix_first as u64 | ((matrix_rows as u64) << 32), 0]);
+        (
+            Kernel::MatrixVerify4Finite(spec, tail),
+            verify4_finite_grid(spec, output_words, tail),
+        )
+    } else {
+        (Kernel::MatrixVerify4(spec), spec.rows.div_ceil(4))
     };
     let info = MetadataBindingInfo::custom(info_words);
     let args = KernelArguments::new()
@@ -1171,6 +1492,10 @@ pub(crate) fn probe_gdn(
     println!("next_shared_gdn cases=3 numeric_and_owning_checks=true");
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "next_verify4_dense_tests.rs"]
+mod verify4_dense_tests;
 
 #[cfg(test)]
 #[path = "next_verify3_finite_tests.rs"]
