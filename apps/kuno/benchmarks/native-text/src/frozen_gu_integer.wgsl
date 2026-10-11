@@ -100,14 +100,15 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
     workgroupBarrier();
     var gates=vec3<f32>(0.0);var ups=vec3<f32>(0.0);
     for(var block=lane;block<80u;block+=8u) {
+        let gprepared=gate_prepare(offset,block);let uprepared=up_prepare(offset,block);
         for(var half=0u;half<HALVES_VALUEu;half++) {
             var gf=vec3<i32>(0);var gs=vec3<i32>(0);var uf=vec3<i32>(0);var us=vec3<i32>(0);
             for(var quartet=half*QUARTETS_VALUEu;quartet<(half+1u)*QUARTETS_VALUEu;quartet++) {
-                let gq=gate_packed(offset,block,quartet);let uq=up_packed(offset,block,quartet);
+                let gq=gate_packed(gprepared,quartet);let uq=up_packed(uprepared,quartet);
                 let at=block*8u+quartet;
                 DOT_MEMBERS_VALUE
             }
-            let gd=gate_factor(offset,block,half);let ud=up_factor(offset,block,half);
+            let gd=gate_factor(gprepared,half);let ud=up_factor(uprepared,half);
             SCALE_MEMBERS_VALUE
         }
     }

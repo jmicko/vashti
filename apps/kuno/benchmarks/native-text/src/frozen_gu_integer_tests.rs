@@ -121,6 +121,201 @@ fn shared_bytes(module: &n::Module) -> u32 {
         })
         .sum()
 }
+
+#[derive(Clone, Copy)]
+struct Encoded {
+    codes: [u32; 4],
+    signs: u32,
+    high: u32,
+    scale: u32,
+    d: f32,
+}
+// Independent host model of the new encoded-register fields, with every
+// physical u32 source load counted and bounds checked. Expected codes/factors
+// below come from the separate scalar original decoder/C fixture records.
+struct Wire<'a> {
+    bytes: &'a [u8],
+    loads: usize,
+}
+impl Wire<'_> {
+    fn u32(&mut self, index: usize) -> u32 {
+        self.loads += 1;
+        u32::from_le_bytes(self.bytes[index * 4..index * 4 + 4].try_into().unwrap())
+    }
+    fn byte(&mut self, at: usize) -> u32 {
+        (self.u32(at / 4) >> ((at % 4) * 8)) & 255
+    }
+    fn word(&mut self, at: usize) -> u32 {
+        let shift = at % 4 * 8;
+        let low = self.u32(at / 4);
+        if shift == 0 {
+            low
+        } else {
+            low >> shift | self.u32(at / 4 + 1) << (32 - shift)
+        }
+    }
+    fn load8(&mut self, at: usize) -> [u32; 2] {
+        assert!(at.is_multiple_of(2));
+        let low = self.u32(at / 4);
+        let middle = self.u32(at / 4 + 1);
+        if at.is_multiple_of(4) {
+            [low, middle]
+        } else {
+            let high = self.u32(at / 4 + 2);
+            [low >> 16 | middle << 16, middle >> 16 | high << 16]
+        }
+    }
+    fn half(&mut self, at: usize) -> f32 {
+        assert!(at.is_multiple_of(2));
+        kuno_text::quant::f16_to_f32((self.u32(at / 4) >> ((at % 4) * 8)) as u16)
+    }
+    fn prepare(&mut self, dtype: TensorType, row: usize, block: usize) -> Encoded {
+        let group = block % 8;
+        let base = row + block / 8 * dtype.block_bytes() as usize;
+        let mut e = Encoded {
+            codes: [0; 4],
+            signs: 0,
+            high: 0,
+            scale: 0,
+            d: 0.,
+        };
+        match dtype {
+            TensorType::Iq3Xxs => {
+                e.codes[..2].copy_from_slice(&self.load8(base + 2 + group * 8));
+                e.signs = self.word(base + 66 + group * 4);
+                e.d = self.half(base);
+            }
+            TensorType::Iq3S => {
+                e.codes[..2].copy_from_slice(&self.load8(base + 2 + group * 8));
+                e.signs = self.word(base + 74 + group * 4);
+                e.high = self.byte(base + 66 + group);
+                e.scale = self.byte(base + 106 + group / 2) >> (group % 2 * 4) & 15;
+                e.d = self.half(base);
+            }
+            TensorType::Iq2S => {
+                e.codes[0] = self.word(base + 2 + group * 4);
+                e.signs = self.word(base + 34 + group * 4);
+                e.high = self.byte(base + 66 + group);
+                e.scale = self.byte(base + 74 + group);
+                e.d = self.half(base);
+            }
+            TensorType::Iq4Xs => {
+                let at = base + 8 + group * 16;
+                assert!(base.is_multiple_of(4) && at.is_multiple_of(4));
+                let header = self.u32(base / 4);
+                e.scale = self.byte(base + 4 + group / 2) >> (group % 2 * 4) & 15;
+                e.scale |= (header >> (16 + group * 2) & 3) << 4;
+                for (j, code) in e.codes.iter_mut().enumerate() {
+                    *code = self.u32(at / 4 + j);
+                }
+                e.d = kuno_text::quant::f16_to_f32(header as u16);
+            }
+            _ => panic!("frozen GU dtype"),
+        }
+        e
+    }
+}
+impl Encoded {
+    fn factor(self, dtype: TensorType, half: usize) -> f32 {
+        match dtype {
+            TensorType::Iq3Xxs => self.d * (0.5 + (self.signs >> 28) as f32) * 0.5,
+            TensorType::Iq3S => self.d * (1 + 2 * self.scale) as f32,
+            TensorType::Iq2S => self.d * (0.5 + ((self.scale >> (half * 4)) & 15) as f32) * 0.25,
+            TensorType::Iq4Xs => self.d * (self.scale as i32 - 32) as f32,
+            _ => panic!("frozen GU dtype"),
+        }
+    }
+    fn packed(self, dtype: TensorType, quartet: usize) -> u32 {
+        let octet = quartet / 2;
+        let (magnitude, signs) = match dtype {
+            TensorType::Iq3Xxs => {
+                let sign_code = self.signs >> (octet * 7) & 127;
+                let signs = sign_code | ((sign_code.count_ones() & 1) << 7);
+                let index = self.codes[quartet / 4] >> (quartet % 4 * 8) & 255;
+                (kuno_text::quant::IQ3_XXS_GRID[index as usize], signs)
+            }
+            TensorType::Iq3S => {
+                let index = (self.codes[quartet / 4] >> (quartet % 4 * 8) & 255)
+                    | ((self.high >> quartet & 1) << 8);
+                (
+                    kuno_text::quant::IQ3_S_GRID[index as usize],
+                    self.signs >> (octet * 8) & 255,
+                )
+            }
+            TensorType::Iq2S => {
+                let index =
+                    (self.codes[0] >> (octet * 8) & 255) | ((self.high >> (octet * 2) & 3) << 8);
+                let grid = kuno_text::quant::IQ2_S_GRID[index as usize];
+                (
+                    (grid >> (quartet % 2 * 32)) as u32,
+                    self.signs >> (octet * 8) & 255,
+                )
+            }
+            TensorType::Iq4Xs => {
+                let raw = self.codes[quartet % 4];
+                let lut = [0xbfad9881u32, 0xf6eaddcf, 0x26190d01, 0x71594535];
+                let mut packed = 0;
+                for byte in 0..4 {
+                    let code = raw >> (byte * 8 + usize::from(quartet >= 4) * 4) & 15;
+                    packed |= ((lut[(code / 4) as usize] >> ((code % 4) * 8)) & 255) << (byte * 8);
+                }
+                return packed;
+            }
+            _ => panic!("frozen GU dtype"),
+        };
+        let signs = signs >> (quartet % 2 * 4);
+        let mask = (0..4).fold(0, |mask, byte| {
+            mask | ((signs >> byte & 1) * 255) << (byte * 8)
+        });
+        (magnitude ^ mask).wrapping_add(mask & 0x01010101)
+    }
+}
+
+#[test]
+fn frozen_gu_integer_register_preparation_matches_every_original_code_and_factor_bit() {
+    for (dtype, expected_loads) in [
+        (TensorType::Iq2S, [5, 7]),
+        (TensorType::Iq3Xxs, [4, 6]),
+        (TensorType::Iq3S, [6, 8]),
+        (TensorType::Iq4Xs, [6, 6]),
+    ] {
+        let row_bytes = dtype.row_bytes(2560).unwrap() as usize;
+        let mut observed_loads = HashSet::new();
+        for phase in 0..32 {
+            let bytes = iq_fixtures::packed(dtype.gguf_id(), 8, 2560, phase);
+            let mut wire = Wire {
+                bytes: &bytes,
+                loads: 0,
+            };
+            for row in 0..8 {
+                let original = &bytes[row * row_bytes..(row + 1) * row_bytes];
+                for block in 0..80 {
+                    let before = wire.loads;
+                    let e = wire.prepare(dtype, row * row_bytes, block);
+                    observed_loads.insert(wire.loads - before);
+                    for half in 0..if dtype == TensorType::Iq2S { 2 } else { 1 } {
+                        let (codes, factor) = if dtype == TensorType::Iq2S {
+                            let (codes, factor) =
+                                oracle::unpack_iq2_s16(original, 2560, block * 2 + half).unwrap();
+                            (codes.to_vec(), factor)
+                        } else {
+                            let (codes, factor) =
+                                oracle::unpack32(dtype, original, 2560, block).unwrap();
+                            (codes.to_vec(), factor)
+                        };
+                        assert_eq!(e.factor(dtype, half).to_bits(), factor.to_bits());
+                        for (quartet, codes) in codes.chunks_exact(4).enumerate() {
+                            let codes: [i8; 4] = codes.try_into().unwrap();
+                            let expected = u32::from_le_bytes(codes.map(|v| v as u8));
+                            assert_eq!(e.packed(dtype, half * 4 + quartet), expected);
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(observed_loads, HashSet::from(expected_loads));
+    }
+}
 fn barriers(block: &n::Block) -> usize {
     block
         .iter()
@@ -258,6 +453,36 @@ fn frozen_gu_integer_actual_shaders_spirv_none_have_packed_dots_and_initialized_
         assert!(shared_bytes(&module) <= MAX_PROJECT_SHARED_BYTES);
         assert_eq!(barriers(&module.entry_points[0].function.body), 3);
         assert!(source.contains("block=lane;block<80u;block+=8u"));
+        // Encoded fields are loaded before either half/quartet loop. Neither
+        // helper can reload its source bank while expanding cached quartets.
+        assert!(
+            source.find("gate_prepare(offset,block)").unwrap()
+                < source.find("for(var half=0u;").unwrap()
+        );
+        assert!(
+            source.contains("gate_packed(gprepared,quartet)")
+                && source.contains("gate_factor(gprepared,half)")
+        );
+        let bank = module
+            .global_variables
+            .iter()
+            .find(|(_, v)| v.name.as_deref() == Some("gate"))
+            .unwrap()
+            .0;
+        for name in ["gate_packed", "gate_factor"] {
+            let function = module
+                .functions
+                .iter()
+                .find(|(_, f)| f.name.as_deref() == Some(name))
+                .unwrap()
+                .1;
+            assert!(
+                !function
+                    .expressions
+                    .iter()
+                    .any(|(_, e)| matches!(e, n::Expression::GlobalVariable(v) if *v==bank))
+            );
+        }
         assert!(source.contains("for(var stride=4u;stride>0u;stride/=2u)"));
         assert!(
             !source.contains("subgroupAdd")
@@ -381,6 +606,43 @@ fn packed_dot(dtype: TensorType, wire: &[u8], packed: &[u32]) -> f32 {
     }
     lanes[0]
 }
+
+fn prepared_dot(dtype: TensorType, bytes: &[u8], packed: &[u32]) -> f32 {
+    let mut wire = Wire { bytes, loads: 0 };
+    let mut lanes = [0f32; 8];
+    for (lane, sum) in lanes.iter_mut().enumerate() {
+        for block in (lane..80).step_by(8) {
+            let e = wire.prepare(dtype, 0, block);
+            for half in 0..if dtype == TensorType::Iq2S { 2 } else { 1 } {
+                let quartets = if dtype == TensorType::Iq2S { 4 } else { 8 };
+                let mut a = 0i32;
+                let mut b = 0i32;
+                for quartet in half * quartets..(half + 1) * quartets {
+                    let codes = e.packed(dtype, quartet).to_le_bytes();
+                    let first = packed[block * 8 + quartet].to_le_bytes();
+                    let second = packed[640 + block * 8 + quartet].to_le_bytes();
+                    let mut dot_first = 0;
+                    let mut dot_second = 0;
+                    for i in 0..4 {
+                        dot_first += i32::from(codes[i] as i8) * i32::from(first[i] as i8);
+                        dot_second += i32::from(codes[i] as i8) * i32::from(second[i] as i8);
+                    }
+                    a += dot_first;
+                    b += dot_second;
+                }
+                let pair = f32::from_bits(packed[1280 + block]) * a as f32
+                    + f32::from_bits(packed[1360 + block]) * b as f32;
+                *sum += e.factor(dtype, half) * pair;
+            }
+        }
+    }
+    for stride in [4, 2, 1] {
+        for lane in 0..stride {
+            lanes[lane] += lanes[lane + stride];
+        }
+    }
+    lanes[0]
+}
 #[test]
 fn frozen_gu_integer_eight_rows_three_real_routes_match_independent_full_projection_vectors() {
     for dtype in [
@@ -420,6 +682,11 @@ fn frozen_gu_integer_eight_rows_three_real_routes_match_independent_full_project
                     let ubytes = &up[row * row_bytes..(row + 1) * row_bytes];
                     for bytes in [gbytes, ubytes] {
                         let actual = packed_dot(dtype, bytes, &packed[token]);
+                        assert_eq!(
+                            prepared_dot(dtype, bytes, &packed[token]).to_bits(),
+                            actual.to_bits(),
+                            "register prep changed candidate math dtype={dtype:?} count={count} route={route} row={row}"
+                        );
                         let expected = oracle::project(dtype, bytes, &planes[token]).unwrap();
                         assert!(
                             (actual - expected).abs() <= 1e-4 + 3e-4 * expected.abs(),

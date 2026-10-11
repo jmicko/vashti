@@ -68,14 +68,56 @@ fn grid_source(dtype: u32) -> (String, String) {
     (declaration, initialize)
 }
 
-// Reuse only the independently C-fixtured original packed decoder/factors.
-// The old subgroup-per-row projection and workgroup plane copies are omitted.
+// The original byte layout and factor round points stay unchanged. Cache just
+// the encoded32-value payload/metadata, then expand each quartet immediately;
+// holding all eight decoded words for both projections raises register demand.
+// Every header/payload address below is2-byte aligned in the frozen profiles.
 fn decode(name: &str, dtype: u32) -> String {
-    integer::projection(name, dtype)
-        .split_once(&format!("fn {name}_project"))
-        .unwrap()
-        .0
-        .to_owned()
+    let (prepare, factor, packed) = match dtype {
+        super::IQ3_XXS => (
+            "let base=row+(block/8u)*98u;let group=block%8u;let codes=NAME_load8(base+2u+group*8u);return NAME_Encoded(vec4<u32>(codes,0u,0u),NAME_word(base+66u+group*4u),0u,0u,NAME_half(base));",
+            "return e.d*(0.5+f32(e.signs>>28u))*0.5;",
+            "let octet=quartet/2u;let sign_code=(e.signs>>(octet*7u))&127u;let signs=sign_code|((countOneBits(sign_code)&1u)<<7u);let codes=select(e.codes.x,e.codes.y,quartet>=4u);let index=(codes>>((quartet%4u)*8u))&255u;return iq3_signed_word(iq3_grid[index],signs>>((quartet%2u)*4u));",
+        ),
+        super::IQ3_S => (
+            "let base=row+(block/8u)*110u;let group=block%8u;let codes=NAME_load8(base+2u+group*8u);let scale=(NAME_byte(base+106u+group/2u)>>((group%2u)*4u))&15u;return NAME_Encoded(vec4<u32>(codes,0u,0u),NAME_word(base+74u+group*4u),NAME_byte(base+66u+group),scale,NAME_half(base));",
+            "return e.d*f32(1u+2u*e.scale);",
+            "let codes=select(e.codes.x,e.codes.y,quartet>=4u);let index=((codes>>((quartet%4u)*8u))&255u)|(((e.high>>quartet)&1u)<<8u);let signs=(e.signs>>((quartet/2u)*8u))&255u;return iq3_signed_word(iq3_grid[index],signs>>((quartet%2u)*4u));",
+        ),
+        super::IQ2_S => (
+            "let base=row+(block/8u)*82u;let group=block%8u;return NAME_Encoded(vec4<u32>(NAME_word(base+2u+group*4u),0u,0u,0u),NAME_word(base+34u+group*4u),NAME_byte(base+66u+group),NAME_byte(base+74u+group),NAME_half(base));",
+            "let scale=(e.scale>>(half*4u))&15u;return e.d*(0.5+f32(scale))*0.25;",
+            "let octet=quartet/2u;let index=((e.codes.x>>(octet*8u))&255u)|(((e.high>>(octet*2u))&3u)<<8u);let signs=(e.signs>>(octet*8u))&255u;return iq3_signed_word(iq3_grid[index*2u+quartet%2u],signs>>((quartet%2u)*4u));",
+        ),
+        super::IQ4_XS => (
+            "let base=row+(block/8u)*136u;let group=block%8u;let at=base+8u+group*16u;let header=NAME[base/4u];let lo=(NAME_byte(base+4u+group/2u)>>((group%2u)*4u))&15u;let hi=(header>>(16u+group*2u))&3u;return NAME_Encoded(vec4<u32>(NAME[at/4u],NAME[at/4u+1u],NAME[at/4u+2u],NAME[at/4u+3u]),0u,0u,lo|(hi<<4u),unpack2x16float(header&65535u).x);",
+            "return e.d*f32(i32(e.scale)-32);",
+            "var codes=e.codes.x;switch quartet%4u {case 1u:{codes=e.codes.y;}case 2u:{codes=e.codes.z;}case 3u:{codes=e.codes.w;}default:{}}return iq4_word(codes,quartet>=4u);",
+        ),
+        _ => unreachable!("validated frozen integer GU format"),
+    };
+    format!(
+        r#"
+struct NAME_Encoded {{codes:vec4<u32>,signs:u32,high:u32,scale:u32,d:f32}}
+fn NAME_byte(at:u32)->u32 {{return (NAME[at/4u]>>((at%4u)*8u))&255u;}}
+fn NAME_word(at:u32)->u32 {{
+    let shift=(at%4u)*8u;let low=NAME[at/4u];
+    if shift==0u {{return low;}}
+    return (low>>shift)|(NAME[at/4u+1u]<<(32u-shift));
+}}
+fn NAME_load8(at:u32)->vec2<u32> {{
+    let low=NAME[at/4u];let middle=NAME[at/4u+1u];
+    if at%4u==0u {{return vec2<u32>(low,middle);}}
+    let high=NAME[at/4u+2u];
+    return vec2<u32>((low>>16u)|(middle<<16u),(middle>>16u)|(high<<16u));
+}}
+fn NAME_half(at:u32)->f32 {{return unpack2x16float((NAME[at/4u]>>((at%4u)*8u))&65535u).x;}}
+fn NAME_prepare(row:u32,block:u32)->NAME_Encoded {{{prepare}}}
+fn NAME_factor(e:NAME_Encoded,half:u32)->f32 {{{factor}}}
+fn NAME_packed(e:NAME_Encoded,quartet:u32)->u32 {{{packed}}}
+"#
+    )
+    .replace("NAME", name)
 }
 
 fn members(body: &str) -> String {

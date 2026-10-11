@@ -79,3 +79,46 @@ packed-dot instructions, full grid word equality, no Function arrays,
 declared initialization/barriers, guard-negative mutations and eight-row/
 three-real-route independent quantized projection vectors. Physical operator,
 CPU13 and matched full-language trials remain parent-owned and pending.
+
+The separate register-preparation follow-up changes only weight decoding on
+the same explicit integer candidate. Each lane loads the encoded32-value
+payload and its sign/qh/scale/base-half fields once before expanding quartets.
+The packed codes, IQ2_S half boundaries, dot order, factor operation order,
+F32 scale/add points and eight-lane tree remain exactly the same candidate.
+There is no weight conversion, additional owner, grid/ABI/policy change or
+change to preparation, audit, original DOWN or full-source routing. Encoded
+fields stay in scalar/vector structs; decoded quartets are consumed
+immediately across both planes and all real members.
+
+Source-level u32 bank accesses per32-value chunk and projection are:
+
+| GU format | Previous per-quartet source | Encoded-register source |
+| --- | ---: | ---: |
+| IQ2_S | 30 | 5 or7 |
+| IQ3_XXS | 19 or28 | 4 or6 |
+| IQ3_S | 27 | 6 or8 |
+| IQ4_XS | 13 | 6 |
+
+The alternatives reflect2-byte record alignment. These counts precede driver
+inlining, common-expression elimination and caches; they are not measured
+memory traffic or speed claims. The eight lanes already address adjacent
+32-value parts of one256-value record. Two aligned u32 reads, plus a third
+only for a2-byte offset, assemble each eight-byte IQ3 payload; both IQ2/S
+halves share their original four-byte payload/sign words. This follows the
+packed-load approach documented in pinned Strata `load8_a2`, `load4_a2` and
+`Multi<18/21/22>::prep`, while retaining Kuno's declared factor arithmetic.
+
+Focused follow-up proofs compare every original quartet and factor bit for
+all four formats over complete eight-row C-fixture banks, check both record
+alignments and source access counts, and compare complete projection result
+bits against the pre-existing candidate for real counts1/2/3. Actual
+WGSL/Naga/SPIR-V tests retain zero-initialization `None`, full codebook and
+reduction initialization, unchanged SLM, packed dots, original guards and
+absence of Function arrays. Physical acceptance still uses unchanged CPU13
+tolerances and full target greedy verification.
+
+Register-preparation source validation: all11 focused frozen-GU leaf/parent
+tests and all17 existing integer decoder/oracle/prepared-source tests pass;
+strict direct-device all-target Clippy with warnings denied, focused Rust
+formatting and whitespace checks pass. No GPU work was performed for this
+follow-up; acceptance and measured performance remain separate physical gates.
