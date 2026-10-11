@@ -119,6 +119,7 @@ pub(crate) struct Inputs {
     mtp_q8_head_shared_scales: bool,
     mtp_english_vocab: bool,
     pub(crate) mtp_batch_repair: bool,
+    pub(crate) four_lookahead: bool,
     pub(crate) gpu_qsa_selector: bool,
     pub(crate) frozen_host_sources: bool,
     pub(crate) frozen_host_router: bool,
@@ -185,6 +186,7 @@ pub(crate) fn registration(
                     | "KUNO_LAB_MTP_PROFILE"
                     | "KUNO_LAB_MTP_DEVICE"
                     | "KUNO_LAB_MTP_REPAIR"
+                    | "KUNO_LAB_TARGET_LOOKAHEAD"
                     | "KUNO_PUBLIC_MTP_INTEL_TOTAL_BYTES"
                     | "KUNO_PUBLIC_MTP_INTEL_USED_BYTES"
                     | "KUNO_PUBLIC_MTP_INTEL_DEVICE_ID"
@@ -565,6 +567,23 @@ pub(crate) fn registration(
         raw_status_folds.as_deref(),
         original_public_target_scope && !mtp_english_vocab,
     )?;
+    let raw_lookahead = values.remove(OsStr::new("KUNO_LAB_TARGET_LOOKAHEAD"));
+    let four_lookahead = crate::target_lab_build::public_four_lookahead(
+        raw_lookahead.as_deref(),
+        decode_mode == DecodeMode::Speculative
+            && original_public_target_scope
+            && mtp_device == crate::target_lab_build::MtpDevice::Intel
+            && frozen_gu_integer
+            && frozen_down_integer
+            && fused_sweeps
+            && draft_profile == Profile::SelfContainedQ8
+            && !mtp_q8_head_broadcast
+            && !mtp_english_vocab
+            && !mtp_batch_repair
+            && !public_iq4_decoder
+            && !three_gdn_streaming
+            && bank_fill == crate::executor::PublicHostBankFillPolicy::Original,
+    )?;
     let mut path = |key: &str| {
         values
             .remove(OsStr::new(key))
@@ -582,6 +601,7 @@ pub(crate) fn registration(
         mtp_q8_head_shared_scales,
         mtp_english_vocab,
         mtp_batch_repair,
+        four_lookahead,
         gpu_qsa_selector,
         frozen_host_sources,
         frozen_host_router,
@@ -780,9 +800,36 @@ impl Statistics {
         repair: u64,
         recomputed: bool,
     ) -> Result<()> {
-        if !(1..=3).contains(&count) || accepted == 0 || accepted > count {
+        self.add_completed(
+            false,
+            count,
+            accepted,
+            crate::target_lab_build::LookaheadPhase {
+                draft_ns: draft,
+                third_follow_ns: 0,
+                verify_ns: verify,
+                repair_ns: repair,
+            },
+            recomputed,
+        )
+    }
+    fn add_completed(
+        &mut self,
+        four: bool,
+        count: usize,
+        accepted: usize,
+        phase: crate::target_lab_build::LookaheadPhase,
+        recomputed: bool,
+    ) -> Result<()> {
+        if !(1..=if four { 4 } else { 3 }).contains(&count) || accepted == 0 || accepted > count {
             return Err("language count geometry rejected".into());
         }
+        let crate::target_lab_build::LookaheadPhase {
+            draft_ns: draft,
+            verify_ns: verify,
+            repair_ns: repair,
+            ..
+        } = phase;
         fn add(n: &mut u64, v: u64) -> Result<()> {
             *n = n.checked_add(v).ok_or("language counter overflow")?;
             Ok(())
@@ -1068,6 +1115,9 @@ pub(crate) fn run(
     executor.target_verify3_dense = input.verify3_dense;
     executor.target_verify3_fused = input.verify3_fused;
     executor.token_io_checkpoint = input.chunk_io;
+    if input.four_lookahead {
+        executor.reserve_public_four_rows()?;
+    }
     executor.enable_transient_resident(target_retired.clone())?;
     executor.fast_dense = true;
     executor.fast_dense_fault = true;
@@ -1112,6 +1162,9 @@ pub(crate) fn run(
         }
         if input.public_grouped_status_folds {
             config = config.reserve_public_grouped_status_folds()?;
+        }
+        if input.four_lookahead {
+            config = config.reserve_public_four_rows()?;
         }
         let prepared_host = std::cell::OnceCell::new();
         let mut host_attachment = None;
@@ -1367,6 +1420,20 @@ pub(crate) fn run(
                     0,
                     0,
                 )?;
+            let (initial_four_rows, initial_count4_chunks) =
+                target.completed_public_four_rows(&executor)?;
+            let initial_four_lookahead_receipt =
+                crate::target_lab_build::LookaheadStatistics::default().record(
+                    false,
+                    initial_four_rows,
+                    initial_count4_chunks,
+                    executor.target_verify4_dense_calls,
+                    executor.target_verify4_fused_calls,
+                )?;
+            let selected_four_lookahead = input.four_lookahead;
+            if selected_four_lookahead {
+                target.set_public_four_rows(&mut executor, &cancel)?;
+            }
             if input.three_gdn_streaming {
                 target.set_public_three_gdn_streaming(&mut executor, &cancel)?;
             }
@@ -1383,6 +1450,9 @@ pub(crate) fn run(
             let before_weight_reads = executor.weight_read_ns;
             let before_weight_uploads = executor.weight_upload_ns;
             let before_gpu_routers = executor.gpu_router_calls;
+            let mut lookahead_stats = crate::target_lab_build::LookaheadStatistics::default();
+            let before_four_dense = executor.target_verify4_dense_calls;
+            let before_four_fused = executor.target_verify4_fused_calls;
             let before_dense = executor.target_verify3_dense_calls;
             let before_fused = executor.target_verify3_fused_calls;
             let before_phases = target.phase_ns.clone();
@@ -1446,7 +1516,8 @@ pub(crate) fn run(
                     continue;
                 }
                 let draft = draft.as_mut().ok_or("speculative actual draft absent")?;
-                let count = (MAX_OUTPUTS - emitted.len()).min(3);
+                let count =
+                    (MAX_OUTPUTS - emitted.len()).min(if selected_four_lookahead { 4 } else { 3 });
                 let mut inputs = Zeroizing::new(Vec::with_capacity(count));
                 inputs.push(confirmed);
                 let drafting = Instant::now();
@@ -1466,6 +1537,21 @@ pub(crate) fn run(
                         drop(output);
                     }
                 }
+                let mut third_follow_ns = 0;
+                if count == 4 {
+                    let third_follow = Instant::now();
+                    let output = draft.follow_draft(&cancel)?;
+                    crate::target_lab_build::public_third_draft_stamp(
+                        position,
+                        output.start(),
+                        draft.position(),
+                        draft.binding(),
+                        output.binding(),
+                    )?;
+                    inputs.push(output.greedy());
+                    drop(output);
+                    third_follow_ns = u64::try_from(third_follow.elapsed().as_nanos())?;
+                }
                 let draft_ns = elapsed(drafting)?;
                 let verifying = Instant::now();
                 let mut round =
@@ -1484,7 +1570,16 @@ pub(crate) fn run(
                     }
                     predicted.push(greedy(rows.logits(row)?)?);
                 }
-                let accepted = accepted_prefix(&inputs, &predicted, graph.eos_token())?;
+                let accepted = if count == 4 {
+                    crate::target_lab_build::public_four_accepted_prefix(
+                        &inputs,
+                        &predicted,
+                        VOCAB as u32,
+                        Some(graph.eos_token()),
+                    )?
+                } else {
+                    accepted_prefix(&inputs, &predicted, graph.eos_token())?
+                };
                 let mut actual_carries = Zeroizing::new(Vec::with_capacity(accepted * HIDDEN));
                 let mut saved_logits = Zeroizing::new(Vec::with_capacity(if accepted < count {
                     accepted * VOCAB
@@ -1574,14 +1669,15 @@ pub(crate) fn run(
                         nonempty_text |= !text.is_empty();
                     }
                 }
-                stats.add(
-                    count,
-                    accepted,
+                let repair_ns = elapsed(repairing)?;
+                let phase = crate::target_lab_build::LookaheadPhase {
                     draft_ns,
+                    third_follow_ns,
                     verify_ns,
-                    elapsed(repairing)?,
-                    recomputed,
-                )?;
+                    repair_ns,
+                };
+                lookahead_stats.add(selected_four_lookahead, count, accepted, phase)?;
+                stats.add_completed(selected_four_lookahead, count, accepted, phase, recomputed)?;
             }
             let tail = Zeroizing::new(decoder.finish());
             nonempty_text |= !tail.is_empty();
@@ -1613,11 +1709,27 @@ pub(crate) fn run(
                 0
             };
             let elapsed_ns = elapsed(start)?;
+            let (actual_four_rows, completed_count4_chunks) =
+                target.completed_public_four_rows(&executor)?;
+            let four_lookahead_receipt = lookahead_stats.record(
+                selected_four_lookahead,
+                actual_four_rows,
+                completed_count4_chunks,
+                executor
+                    .target_verify4_dense_calls
+                    .checked_sub(before_four_dense)
+                    .ok_or("Verify4 dense counter regressed")?,
+                executor
+                    .target_verify4_fused_calls
+                    .checked_sub(before_four_fused)
+                    .ok_or("Verify4 fused counter regressed")?,
+            )?;
             let host_io = crate::target_lab_build::host_io_delta(
                 before_host,
                 crate::target_lab_build::host_io_snapshot(),
             )?;
-            if stats.continuations > 0
+            if !selected_four_lookahead
+                && stats.continuations > 0
                 && (input.verify3_dense && executor.target_verify3_dense_calls == before_dense
                     || input.verify3_fused && executor.target_verify3_fused_calls == before_fused)
             {
@@ -1944,6 +2056,9 @@ pub(crate) fn run(
             record["mtp_batch_repair_requested"] = input.mtp_batch_repair.into();
             record["mtp_batch_repair"] = mtp_batch_repair_receipt;
             record["frozen_bank_fill_receipt"] = bank_fill_receipt;
+            record["target_four_lookahead_receipt"] = four_lookahead_receipt;
+            record["initial_prefill_target_four_lookahead_receipt"] =
+                initial_four_lookahead_receipt;
             record["initial_prefill_frozen_bank_fill"] =
                 crate::target_lab_build::public_host_bank_fill_name(initial_bank_fill.policy)
                     .into();
@@ -2100,6 +2215,12 @@ pub(crate) fn run(
     .into();
     value["target_iq4_decoder_requested"] = input.public_iq4_decoder.into();
     value["target_submission_backlog"] = final_backlog_receipt;
+    value["target_lookahead_requested"] = if input.four_lookahead {
+        "four-public"
+    } else {
+        "original-three"
+    }
+    .into();
     value["mtp_repair_mode"] = if input.mtp_batch_repair {
         "batch-public"
     } else {
@@ -2120,6 +2241,146 @@ pub(crate) fn run(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn four_completed_statistics_preserve_default_three_and_count_true_four_rows() {
+        let phase = crate::target_lab_build::LookaheadPhase {
+            draft_ns: 10,
+            third_follow_ns: 3,
+            verify_ns: 20,
+            repair_ns: 30,
+        };
+        let mut stats = Statistics::default();
+        assert!(stats.add(4, 4, 10, 20, 30, false).is_err());
+        assert!(stats.add_completed(false, 4, 4, phase, false).is_err());
+        for accepted in 1..=4 {
+            stats
+                .add_completed(true, 4, accepted, phase, accepted < 4)
+                .unwrap();
+        }
+        assert_eq!(
+            (
+                stats.rounds,
+                stats.proposed,
+                stats.accepted_drafts,
+                stats.continuations,
+                stats.repairs
+            ),
+            (4, 12, 6, 10, 3)
+        );
+        assert_eq!(
+            (stats.draft_ns, stats.verify_ns, stats.repair_ns),
+            (40, 80, 120)
+        );
+        assert!(stats.add_completed(true, 5, 5, phase, false).is_err());
+        assert!(stats.add_completed(true, 4, 0, phase, false).is_err());
+    }
+    #[test]
+    fn four_lookahead_registration_preserves_default_and_admits_original_composition() {
+        let args = ["lab", "intel", "daslab-language-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        let base = intel_mtp_env();
+        assert!(
+            !registration(&args, base.clone(), build)
+                .unwrap()
+                .four_lookahead
+        );
+        for stride in [false, true] {
+            let mut selected = base.clone();
+            selected.push(("KUNO_LAB_TARGET_LOOKAHEAD".into(), "four-public".into()));
+            for (key, value) in [
+                ("KUNO_LAB_TARGET_QSA", "chronological-public"),
+                ("KUNO_LAB_MTP_Q8_HEAD", "shared-public"),
+                ("KUNO_LAB_TARGET_PLE_READS", "grouped-public"),
+                ("KUNO_LAB_TARGET_STATUS_FOLDS", "grouped-public"),
+            ] {
+                selected.push((key.into(), value.into()));
+            }
+            for (key, value) in [
+                ("KUNO_LAB_FROZEN_GU_MATH", "integer-public"),
+                ("KUNO_LAB_FROZEN_DOWN_MATH", "integer-public"),
+            ] {
+                selected.push((key.into(), value.into()));
+            }
+            if stride {
+                selected.push(("KUNO_LAB_FROZEN_GU_SCHEDULE".into(), "four-public".into()));
+            }
+            let got = registration(&args, selected, build).unwrap();
+            assert!(
+                got.four_lookahead
+                    && !got.mtp_batch_repair
+                    && !got.public_iq4_decoder
+                    && !got.three_gdn_streaming
+            );
+            assert!(got.frozen_gu_integer && got.frozen_down_integer);
+            assert_eq!(got.frozen_gu_stride_four, stride);
+        }
+    }
+    #[test]
+    fn four_lookahead_rejects_missing_scope_unknown_values_and_incompatible_policies() {
+        let args = ["lab", "intel", "daslab-language-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        let mut base = intel_mtp_env();
+        base.push(("KUNO_LAB_TARGET_LOOKAHEAD".into(), "four-public".into()));
+        base.push(("KUNO_LAB_FROZEN_GU_MATH".into(), "integer-public".into()));
+        base.push(("KUNO_LAB_FROZEN_DOWN_MATH".into(), "integer-public".into()));
+        for key in [
+            "KUNO_LAB_FROZEN_GU_MATH",
+            "KUNO_LAB_FROZEN_DOWN_MATH",
+            "KUNO_LAB_DEVICE_DISPATCH",
+            "KUNO_LAB_TARGET_FILL",
+            "KUNO_LAB_TARGET_DENSE",
+            "KUNO_LAB_TARGET_IO",
+            "KUNO_LAB_TARGET_REUSE",
+            "KUNO_LAB_TARGET_SOURCES",
+            "KUNO_LAB_FROZEN_PARTITION_EXIT",
+            "KUNO_LAB_TARGET_ROUTER",
+            "KUNO_LAB_MTP_SWEEPS",
+            "KUNO_LAB_MTP_DEVICE",
+        ] {
+            let mut invalid = base.clone();
+            invalid.retain(|(k, _)| k != key);
+            assert!(registration(&args, invalid, build).is_err(), "{key}");
+        }
+        for (key, value) in [
+            ("KUNO_LAB_TARGET_LOOKAHEAD", "four"),
+            ("KUNO_LAB_TARGET_LOOKAHEAD", "4"),
+            ("KUNO_LAB_MTP_REPAIR", "batch-public"),
+            ("KUNO_LAB_TARGET_GDN", "three-streaming-public"),
+            ("KUNO_LAB_TARGET_IQ4_DECODER", "packed-registers-public"),
+            ("KUNO_LAB_FROZEN_BANK_FILL", "profile-ranked-public"),
+            ("KUNO_LAB_MTP_PROFILE", "strata-q2"),
+            ("KUNO_LAB_MTP_Q8_HEAD", "broadcast-public"),
+            ("KUNO_LAB_MTP_VOCAB", "english-public"),
+            ("KUNO_LAB_FROZEN_TABLES", "private-public"),
+            ("KUNO_LAB_FROZEN_TABLES", "workgroup-public"),
+            ("KUNO_LAB_FROZEN_DOWN_SCALES", "shared-public"),
+            ("KUNO_LAB_FROZEN_GU_FACTORS", "shared-public"),
+            ("KUNO_LAB_FROZEN_GU_ROWS", "two-public"),
+            ("KUNO_LAB_FROZEN_HOST_STAGE", "packed-public"),
+            ("KUNO_LAB_FROZEN_MEMBERS", "three-public"),
+            ("KUNO_LAB_TARGET_EXPERTS", "prepared-verify3"),
+            ("KUNO_LAB_TARGET_MOE", "live"),
+        ] {
+            let mut invalid = base.clone();
+            invalid.retain(|(k, _)| k != key);
+            invalid.push((key.into(), value.into()));
+            assert!(registration(&args, invalid, build).is_err(), "{key}");
+        }
+        assert!(
+            registration(
+                &args,
+                base.clone(),
+                crate::target_lab_build::Build::Threaded
+            )
+            .is_err()
+        );
+        let mut duplicate = base;
+        duplicate.push(("KUNO_LAB_TARGET_LOOKAHEAD".into(), "four-public".into()));
+        assert!(registration(&args, duplicate, build).is_err());
+        let mut target_only = target_only_env();
+        target_only.push(("KUNO_LAB_TARGET_LOOKAHEAD".into(), "four-public".into()));
+        assert!(registration(&args, target_only, build).is_err());
+    }
     #[test]
     fn profile_ranked_bank_filler_default_off_and_composes_original_public_policies() {
         use crate::executor::PublicHostBankFillPolicy as P;

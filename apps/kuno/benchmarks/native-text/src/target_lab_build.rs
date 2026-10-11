@@ -761,6 +761,170 @@ pub(crate) fn three_gdn_streaming(
     }
 }
 
+/// Fixed-public four-row target lookahead; no production/default expansion.
+pub(crate) fn public_four_lookahead(
+    raw: Option<&OsStr>,
+    scope: bool,
+) -> Result<bool, &'static str> {
+    match raw {
+        None => Ok(false),
+        Some(value) if value == "four-public" && scope => Ok(true),
+        _ => {
+            Err("four-row lookahead requires canonical original Intel full-Q8 scalar-repair scope")
+        }
+    }
+}
+
+pub(crate) fn public_third_draft_stamp(
+    target_start: usize,
+    output_start: usize,
+    completed: usize,
+    expected_binding: u64,
+    actual_binding: u64,
+) -> Result<(), &'static str> {
+    if target_start == 0
+        || actual_binding != expected_binding
+        || target_start.checked_add(1) != Some(output_start)
+        || target_start.checked_add(2) != Some(completed)
+    {
+        return Err("actual third draft binding/stamp/cursor rejected");
+    }
+    Ok(())
+}
+
+/// Only the new exact-four branch uses this helper; old tail acceptance stays unchanged.
+pub(crate) fn public_four_accepted_prefix(
+    inputs: &[u32],
+    predicted: &[u32],
+    vocab: u32,
+    eos: Option<u32>,
+) -> Result<usize, &'static str> {
+    if inputs.len() != 4
+        || predicted.len() != 4
+        || vocab == 0
+        || eos.is_some_and(|eos| eos >= vocab)
+        || inputs.iter().chain(predicted).any(|&token| token >= vocab)
+    {
+        return Err("four-row actual acceptance geometry rejected");
+    }
+    let mut accepted = 4;
+    for row in 1..4 {
+        if inputs[row] != predicted[row - 1] {
+            accepted = row;
+            break;
+        }
+    }
+    if let Some(index) =
+        eos.and_then(|eos| predicted[..accepted].iter().position(|&token| token == eos))
+    {
+        accepted = index + 1;
+    }
+    Ok(accepted)
+}
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct LookaheadPhase {
+    pub(crate) draft_ns: u64,
+    pub(crate) third_follow_ns: u64,
+    pub(crate) verify_ns: u64,
+    pub(crate) repair_ns: u64,
+}
+/// Actual completed round statistics only. No token/carry/route payload.
+#[derive(Default)]
+pub(crate) struct LookaheadStatistics {
+    rounds_by_count: [u64; 4],
+    count4_prefixes: [u64; 4],
+    third_conditional: u64,
+    third_accepted: u64,
+    phases: LookaheadPhase,
+}
+impl LookaheadStatistics {
+    pub(crate) fn add(
+        &mut self,
+        selected: bool,
+        count: usize,
+        accepted: usize,
+        phase: LookaheadPhase,
+    ) -> Result<(), &'static str> {
+        if !(1..=if selected { 4 } else { 3 }).contains(&count)
+            || accepted == 0
+            || accepted > count
+            || phase.third_follow_ns > phase.draft_ns
+            || (count == 4) != (phase.third_follow_ns > 0)
+        {
+            return Err("four-row actual round geometry or phase rejected");
+        }
+        fn add(n: &mut u64, v: u64) -> Result<(), &'static str> {
+            *n = n
+                .checked_add(v)
+                .ok_or("four-row actual statistics overflow")?;
+            Ok(())
+        }
+        add(&mut self.rounds_by_count[count - 1], 1)?;
+        if count == 4 {
+            add(&mut self.count4_prefixes[accepted - 1], 1)?;
+            add(&mut self.third_conditional, u64::from(accepted >= 3))?;
+            add(&mut self.third_accepted, u64::from(accepted == 4))?;
+        }
+        add(&mut self.phases.draft_ns, phase.draft_ns)?;
+        add(&mut self.phases.third_follow_ns, phase.third_follow_ns)?;
+        add(&mut self.phases.verify_ns, phase.verify_ns)?;
+        add(&mut self.phases.repair_ns, phase.repair_ns)?;
+        Ok(())
+    }
+    pub(crate) fn record(
+        &self,
+        selected: bool,
+        actual: bool,
+        completed: u64,
+        dense_calls: u64,
+        fused_calls: u64,
+    ) -> Result<serde_json::Value, &'static str> {
+        let count4 = self.rounds_by_count[3];
+        let prefixes = self
+            .count4_prefixes
+            .iter()
+            .try_fold(0u64, |a, &b| a.checked_add(b))
+            .ok_or("four-row prefix sum overflow")?;
+        if selected != actual
+            || completed != count4
+            || prefixes != count4
+            || self.third_conditional
+                != self.count4_prefixes[2]
+                    .checked_add(self.count4_prefixes[3])
+                    .ok_or("four-row conditional count overflow")?
+            || self.third_accepted != self.count4_prefixes[3]
+            || if selected {
+                count4 == 0
+                    || dense_calls < count4
+                    || fused_calls != dense_calls
+                    || self.phases.third_follow_ns == 0
+            } else {
+                count4 != 0
+                    || dense_calls != 0
+                    || fused_calls != 0
+                    || self.phases.third_follow_ns != 0
+            }
+        {
+            return Err("four-row actual selected/chunk/dispatch/acceptance receipt rejected");
+        }
+        Ok(
+            serde_json::json!({"selected":selected,"actual_four_rows":actual,
+            "completed_count4_chunks":completed,"verify4_dense_calls":dense_calls,
+            "verify4_fused_calls":fused_calls,"rounds_by_target_count_1_to_4":self.rounds_by_count,
+            "count4_accepted_prefixes_1_to_4":self.count4_prefixes,
+            "actual_third_proposals":count4,"earlier_two_proposals_accepted":self.third_conditional,
+            "accepted_third_proposals":self.third_accepted,
+            "third_conditional_acceptance":if self.third_conditional > 0 {
+                Some(self.third_accepted as f64 / self.third_conditional as f64)
+            } else {None},"draft_ns":self.phases.draft_ns,
+            "third_follow_ns":self.phases.third_follow_ns,"verify_ns":self.phases.verify_ns,
+            "repair_ns":self.phases.repair_ns,"mtp_repair":if selected {"original-scalar"}else{"existing-controller-choice"},
+            "third_draft_independent_cpu_oracle":false}),
+        )
+    }
+}
+
 /// This initial decoder trial admits only the accepted physical Intel/MTP
 /// placement. Absence preserves every unrelated existing controller choice.
 pub(crate) fn public_iq4_decoder(raw: Option<&OsStr>, scope: bool) -> Result<bool, &'static str> {
@@ -1128,6 +1292,131 @@ pub(crate) fn name(inline: bool) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn four_lookahead_selector_is_canonical_default_off_and_fixed_scope_only() {
+        for scope in [false, true] {
+            assert_eq!(public_four_lookahead(None, scope), Ok(false));
+            for value in ["four-public", "four", "4", "four-public ", ""] {
+                assert_eq!(
+                    public_four_lookahead(Some(OsStr::new(value)), scope).is_ok(),
+                    scope && value == "four-public"
+                );
+            }
+        }
+    }
+    #[test]
+    fn third_draft_stamp_requires_real_next_cell_completed_cursor_and_binding() {
+        for start in [1, 35, 2045] {
+            assert!(public_third_draft_stamp(start, start + 1, start + 2, 7, 7).is_ok());
+            assert!(public_third_draft_stamp(start, start, start + 2, 7, 7).is_err());
+            assert!(public_third_draft_stamp(start, start + 1, start + 1, 7, 7).is_err());
+            assert!(public_third_draft_stamp(start, start + 1, start + 2, 7, 8).is_err());
+        }
+        assert!(public_third_draft_stamp(0, 1, 2, 7, 7).is_err());
+        assert!(public_third_draft_stamp(1, 2, 3, 0, 1).is_err());
+        assert!(public_third_draft_stamp(usize::MAX, 0, 1, 7, 7).is_err());
+    }
+    #[test]
+    fn four_prefix_preserves_first_mismatch_and_clips_actual_eos() {
+        let inputs = [7, 8, 9, 10];
+        for (predicted, accepted) in [
+            ([8, 9, 10, 11], 4),
+            ([11, 9, 10, 11], 1),
+            ([8, 11, 10, 11], 2),
+            ([8, 9, 11, 12], 3),
+        ] {
+            assert_eq!(
+                public_four_accepted_prefix(&inputs, &predicted, 32, None),
+                Ok(accepted)
+            );
+        }
+        for (predicted, accepted) in [
+            ([8, 9, 10, 11], 4),
+            ([8, 9, 10, 31], 4),
+            ([8, 9, 31, 11], 3),
+            ([8, 31, 10, 11], 2),
+            ([31, 9, 10, 11], 1),
+        ] {
+            assert_eq!(
+                public_four_accepted_prefix(&inputs, &predicted, 32, Some(31)),
+                Ok(accepted)
+            );
+        }
+        for count in [0, 1, 2, 3, 5] {
+            assert!(
+                public_four_accepted_prefix(&vec![0; count], &vec![0; count], 32, None).is_err()
+            );
+        }
+        assert!(public_four_accepted_prefix(&inputs, &[8, 9, 10, 32], 32, None).is_err());
+        assert!(public_four_accepted_prefix(&inputs, &[8, 9, 10, 11], 32, Some(32)).is_err());
+    }
+    fn four_phase(count: usize) -> LookaheadPhase {
+        LookaheadPhase {
+            draft_ns: 10,
+            third_follow_ns: if count == 4 { 3 } else { 0 },
+            verify_ns: 20,
+            repair_ns: 30,
+        }
+    }
+    #[test]
+    fn four_receipt_joins_actual_count4_dispatches_prefixes_and_phase_costs() {
+        let mut stats = LookaheadStatistics::default();
+        for count in 1..=3 {
+            stats.add(true, count, count, four_phase(count)).unwrap();
+        }
+        for accepted in 1..=4 {
+            stats.add(true, 4, accepted, four_phase(4)).unwrap();
+        }
+        let record = stats.record(true, true, 4, 280, 280).unwrap();
+        assert_eq!(
+            record["rounds_by_target_count_1_to_4"],
+            serde_json::json!([1, 1, 1, 4])
+        );
+        assert_eq!(
+            record["count4_accepted_prefixes_1_to_4"],
+            serde_json::json!([1, 1, 1, 1])
+        );
+        assert_eq!(record["earlier_two_proposals_accepted"], 2);
+        assert_eq!(record["accepted_third_proposals"], 1);
+        assert_eq!(record["third_conditional_acceptance"], 0.5);
+        assert_eq!(record["third_follow_ns"], 12);
+        assert_eq!(record["draft_ns"], 70);
+        for (selected, actual, chunks, dense, fused) in [
+            (false, true, 4, 280, 280),
+            (true, false, 4, 280, 280),
+            (true, true, 3, 280, 280),
+            (true, true, 4, 0, 0),
+            (true, true, 4, 280, 279),
+        ] {
+            assert!(
+                stats
+                    .record(selected, actual, chunks, dense, fused)
+                    .is_err()
+            );
+        }
+    }
+    #[test]
+    fn four_default_cold_and_prefill_have_no_candidate_credit() {
+        let mut stats = LookaheadStatistics::default();
+        assert!(stats.record(false, false, 0, 0, 0).is_ok());
+        assert!(stats.record(true, true, 0, 0, 0).is_err());
+        assert!(stats.record(false, false, 0, 1, 1).is_err());
+        for count in 1..=3 {
+            stats.add(false, count, 1, four_phase(count)).unwrap();
+        }
+        let record = stats.record(false, false, 0, 0, 0).unwrap();
+        assert!(record["third_conditional_acceptance"].is_null());
+        assert_eq!(record["actual_third_proposals"], 0);
+        assert!(stats.add(false, 4, 4, four_phase(4)).is_err());
+        assert!(stats.add(true, 4, 0, four_phase(4)).is_err());
+        assert!(stats.add(true, 4, 5, four_phase(4)).is_err());
+        let mut invalid = four_phase(4);
+        invalid.third_follow_ns = 11;
+        assert!(stats.add(true, 4, 4, invalid).is_err());
+        invalid = four_phase(3);
+        invalid.third_follow_ns = 1;
+        assert!(stats.add(true, 3, 3, invalid).is_err());
+    }
     fn resident_bank_backing_fixture(
         extra: u64,
     ) -> crate::public_host_expert_attachment::ResidentBankAllocation {
