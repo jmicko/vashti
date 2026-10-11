@@ -61,6 +61,10 @@ const HIDDEN_NORM_WIDTH: usize = k::WIDE;
 // source ledger never credits a dropped owner before a completed fence.
 const MAX_TOKEN_DISPATCHES: usize = 512;
 const INFO_BYTES: u64 = MAX_TOKEN_DISPATCHES as u64 * 2048;
+// Non-fused worst case: original40 clears/42 guards/rewind, then two
+//39-clear/84-guard scalar cells. Original condition/HC/KV math uses46 calls.
+const MAX_BATCHED_REPAIR_DISPATCHES: usize = 40 + 1 + N + 2 * (39 + 2 * N + 46);
+const _: () = assert!(MAX_BATCHED_REPAIR_DISPATCHES <= MAX_TOKEN_DISPATCHES);
 const PUBLIC_ENGLISH_IDS: u32 = u32::MAX;
 static NEXT_BINDING: AtomicU64 = AtomicU64::new(1);
 const MAX_LIVE_OUTPUTS: usize = 4;
@@ -85,6 +89,78 @@ impl Drop for LastForward {
         self.binding.zeroize();
         self.start.zeroize();
     }
+}
+
+struct AcceptedCacheRepair {
+    rewind: bool,
+    first_row: usize,
+    end: usize,
+}
+impl AcceptedCacheRepair {
+    fn new(
+        old: usize,
+        start: usize,
+        completed_forward: bool,
+        tokens: &[u32],
+        preceding: &[f32],
+        carries: &[f32],
+    ) -> Result<Self> {
+        let count = tokens.len();
+        if !(1..=3).contains(&count)
+            || start == 0
+            || old > k::CONTEXT
+            || carries.len() != count * k::WIDE
+            || carries.iter().any(|x| !x.is_finite())
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        let end = start
+            .checked_add(count - 1)
+            .filter(|&end| end <= k::CONTEXT)
+            .ok_or(Error::OutOfBounds)?;
+        let rewind = old >= start;
+        if rewind {
+            if !completed_forward || old - start > 1 || count > old - start + 2 {
+                return Err(Error::InvalidFormat("MTP accepted repair draft boundary"));
+            }
+        } else if completed_forward || old != start - 1 || count != 1 {
+            return Err(Error::InvalidFormat(
+                "MTP accepted repair count-one boundary",
+            ));
+        }
+        // Validate every supplied token/preceding pair before consuming the
+        // old follow capability or clearing any owner. Last carry is validated
+        // above even though it conditions the next round, not this cache.
+        for (row, &token) in tokens.iter().enumerate() {
+            let carry = if row == 0 {
+                preceding
+            } else {
+                &carries[(row - 1) * k::WIDE..row * k::WIDE]
+            };
+            validate_input(token, carry, start + row - 1)?;
+        }
+        Ok(Self {
+            rewind,
+            first_row: usize::from(rewind),
+            end,
+        })
+    }
+}
+
+fn completed_batched_repair(mut traffic: Traffic, cells: usize) -> Result<Traffic> {
+    traffic.batched_repair_calls = traffic
+        .batched_repair_calls
+        .checked_add(1)
+        .ok_or(Error::ArithmeticOverflow)?;
+    traffic.batched_repair_cells = traffic
+        .batched_repair_cells
+        .checked_add(cells as u64)
+        .ok_or(Error::ArithmeticOverflow)?;
+    traffic.batched_repair_fault_gates = traffic
+        .batched_repair_fault_gates
+        .checked_add(1)
+        .ok_or(Error::ArithmeticOverflow)?;
+    Ok(traffic)
 }
 
 struct OutputLease {
@@ -452,6 +528,7 @@ pub struct CloseReceipt {
 /// Content-free scheduling counters. Full-owner host read/upload bytes are
 /// counted after the backend operation succeeds, including a later rejected
 /// result. Construction is included; compare snapshots around each operation.
+/// Batched-repair fields count only fully accepted joined cache repairs.
 /// These counters do not synchronize the device or include close's separately
 /// audited erasure readback. `explicit_dispatches` counts workspace dispatches,
 /// not any backend-internal copy/sanitizer work.
@@ -465,6 +542,9 @@ pub struct Traffic {
     pub followup_copy_calls: u64,
     pub full_output_reads: u64,
     pub explicit_dispatches: u64,
+    pub batched_repair_calls: u64,
+    pub batched_repair_cells: u64,
+    pub batched_repair_fault_gates: u64,
 }
 
 /// Provisional draft result without a full vocabulary host copy. The complete
@@ -1721,12 +1801,16 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         );
         self.tick(1)
     }
-    fn complete_fault(&mut self) -> Result<()> {
+    fn check_fault(&self) -> Result<()> {
         let bits = self.read_words(B::Fault)?;
         if bits.iter().any(|&x| x != 0) {
             return Err(Error::InvalidFormat("MTP resident sticky fault"));
         }
         drop(bits);
+        Ok(())
+    }
+    fn complete_fault(&mut self) -> Result<()> {
+        self.check_fault()?;
         self.ledger
             .completed_fence(sample(self.client()?)?)
             .map_err(error)
@@ -1868,6 +1952,28 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             self.tick(1)?;
         }
         Ok(())
+    }
+    /// Original complete scratch clears with only Fault retained. Reuse the
+    /// existing37-role clear and exact two-input clear; no new owner/shader.
+    fn clear_repair_scratch(&mut self) -> Result<()> {
+        self.clear_scratch_preserving_inputs(true)?;
+        let roles = [B::Token as usize, B::Carry as usize];
+        if self.fused_sweeps {
+            self.validate_sweep_roles(&roles)?;
+            sweeps::clear2::launch::<WgpuRuntime>(
+                self.client()?,
+                self.sweep_grid(&roles)?,
+                CubeDim::new_1d(64),
+                self.sweep_arg(roles[0])?,
+                self.sweep_arg(roles[1])?,
+            );
+            self.tick(1)
+        } else {
+            for index in roles {
+                u::zero(&self.arena, self.ids[index])?;
+            }
+            self.tick(roles.len())
+        }
     }
     fn start(&mut self, token: u32, carry: &[f32]) -> Result<()> {
         if self.closed || self.poisoned || self.retired.load(Ordering::Acquire) {
@@ -2474,9 +2580,18 @@ impl ResidentMtp<'_, '_> {
         self.finite(output)
     }
     fn key_value(&mut self) -> Result<()> {
+        self.key_value_at(self.position)
+    }
+    fn key_value_at(&mut self, position: usize) -> Result<()> {
         self.project("blk.48.attn_k.weight", B::Mixed, B::Key)?;
         self.project("blk.48.attn_v.weight", B::Mixed, B::Value)?;
-        self.rope(B::Key, B::KeyRotated, "blk.48.attn_k_norm.weight", k::KVH)?;
+        self.rope_at(
+            B::Key,
+            B::KeyRotated,
+            "blk.48.attn_k_norm.weight",
+            k::KVH,
+            position,
+        )?;
         k::append_kv::launch::<WgpuRuntime>(
             self.client()?,
             u::grid(k::KV)?,
@@ -2486,11 +2601,21 @@ impl ResidentMtp<'_, '_> {
             self.a(B::Keys)?,
             self.a(B::Values)?,
             self.a(B::Fault)?,
-            self.position,
+            position,
         );
         self.tick(1)
     }
     fn rope(&mut self, input: B, output: B, gamma: &'static str, groups: usize) -> Result<()> {
+        self.rope_at(input, output, gamma, groups, self.position)
+    }
+    fn rope_at(
+        &mut self,
+        input: B,
+        output: B,
+        gamma: &'static str,
+        groups: usize,
+        position: usize,
+    ) -> Result<()> {
         if groups * k::HD != WORDS[input as usize] || groups * k::HD != WORDS[output as usize] {
             return Err(Error::InvalidBufferLength);
         }
@@ -2507,7 +2632,7 @@ impl ResidentMtp<'_, '_> {
             self.a(output)?,
             self.prefix(B::Status, 0, groups)?,
             groups,
-            self.position as u32,
+            position as u32,
             EPS,
             k::HD,
             true,
@@ -3129,6 +3254,123 @@ impl ResidentMtp<'_, '_> {
             }
         }
     }
+    /// Join original cache rewind/catch-up for one actually accepted target
+    /// prefix. Caller retains target numerical authority; there is no proposal
+    /// or prefix acceptance here. Cursor/ledger credit follows one full gate.
+    pub fn repair_accepted_cache(
+        &mut self,
+        target_start: usize,
+        accepted_tokens: &[u32],
+        preceding_carry: &[f32],
+        accepted_carries: &[f32],
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        u::cancel(cancel)?;
+        if self.poisoned
+            || self.closed
+            || self.retired.load(Ordering::Acquire)
+            || self.live_outputs.load(Ordering::Acquire) != 0
+            || self.graph.profile() != MtpProfile::SelfContainedQ8
+            || self.public_english_vocab.is_some()
+        {
+            return Err(Error::InvalidFormat("MTP accepted repair workspace"));
+        }
+        let plan = AcceptedCacheRepair::new(
+            self.position,
+            target_start,
+            self.last_forward
+                .as_ref()
+                .is_some_and(|stamp| stamp.valid(self.binding, self.position)),
+            accepted_tokens,
+            preceding_carry,
+            accepted_carries,
+        )?;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<()> {
+            self.verify_source()?;
+            self.physical()?;
+            self.ledger
+                .observe_before(sample(self.client()?)?)
+                .map_err(error)?;
+            self.last_forward.take();
+            self.q8_head_policy_locked = true;
+            self.poisoned = true;
+            self.dispatches = 0;
+            if plan.rewind {
+                self.clear_scratch()?;
+                k::rewind_kv::launch::<WgpuRuntime>(
+                    self.client()?,
+                    u::grid(k::CACHE_WORDS)?,
+                    CubeDim::new_1d(64),
+                    self.a(B::Keys)?,
+                    self.a(B::Values)?,
+                    self.a(B::Fault)?,
+                    self.position,
+                    target_start,
+                );
+                self.tick(1)?;
+                self.guard_private(target_start)?;
+            }
+            for row in plan.first_row..accepted_tokens.len() {
+                u::cancel(cancel)?;
+                self.verify_source()?;
+                self.physical()?;
+                self.ledger
+                    .observe_before(sample(self.client()?)?)
+                    .map_err(error)?;
+                if plan.rewind || row != 0 {
+                    self.clear_repair_scratch()?;
+                } else {
+                    self.clear_scratch()?;
+                }
+                let position = target_start + row - 1;
+                let carry = if row == 0 {
+                    preceding_carry
+                } else {
+                    &accepted_carries[(row - 1) * k::WIDE..row * k::WIDE]
+                };
+                self.write(B::Token, &[accepted_tokens[row]])?;
+                let input = Zeroizing::new(carry.iter().map(|v| v.to_bits()).collect::<Vec<_>>());
+                if input.capacity() * 4 > HOST_BYTES {
+                    return Err(Error::LimitExceeded("MTP host carry"));
+                }
+                self.write(B::Carry, &input)?;
+                drop(input);
+                self.guard_private(position)?;
+                self.condition()?;
+                self.hc(B::Residual0, 0, false)?;
+                self.key_value_at(position)?;
+                self.guard_private(position + 1)?;
+                self.verify_source()?;
+            }
+            self.check_fault()?;
+            self.verify_source()?;
+            u::cancel(cancel)?;
+            let completed = completed_batched_repair(
+                self.traffic.get(),
+                accepted_tokens.len() - plan.first_row,
+            )?;
+            // All fallible input/source/fault/cancellation work precedes this
+            // sole completed ledger fence. No per-cell credit/reset occurs.
+            self.ledger
+                .completed_fence(sample(self.client()?)?)
+                .map_err(error)?;
+            self.traffic.set(completed);
+            self.position = plan.end;
+            self.poisoned = false;
+            Ok(())
+        }));
+        match result {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => {
+                self.fail();
+                Err(e)
+            }
+            Err(_) => {
+                self.fail();
+                Err(Error::InvalidFormat("MTP accepted repair failure"))
+            }
+        }
+    }
     pub fn rewind(&mut self, new_position: usize) -> Result<()> {
         self.last_forward.take();
         if self.closed || self.poisoned || self.retired.load(Ordering::Acquire) {
@@ -3281,6 +3523,10 @@ mod strata_tests;
 #[cfg(test)]
 #[path = "resident_mtp_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "resident_mtp_batched_repair_tests.rs"]
+mod batched_repair_tests;
 
 #[cfg(test)]
 #[test]
