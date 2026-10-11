@@ -113,3 +113,26 @@ parent and leaf dependencies. No GPU, installed service or whole-model timing
 was run by this controller owner. Original cold/warm controls, selected CPU13
 full-vector/real-repair acceptance and compiler-idle paired code/prose timings
 remain the integrating owner's physical gates.
+
+### Reserved output capacity correction
+
+The first selected physical CPU13 attempt stopped during the original cold
+count1 prefill, before any draft or count4 transaction. Reserving four rows
+creates an immutable logical `4*vocabulary` target logits owner; the final GR
+head still requested the old `3*vocabulary` full-owner proof. Both logical
+layouts occupy the same existing 4 MiB physical allocation, so proving only
+physical size would miss this mismatch.
+
+The parent now supplies the actual target-output constructor reservation flag
+to the GR full-owner proof. The original head wrapper retains its old capacity;
+selected count1..3 prefill/tails keep their original mixer/projection spans while
+proving the whole four-row logical owner. Genuine count4 requires the reserved
+four-row owner. No allocation, arithmetic, reference or tolerance changes.
+
+The correction passes 18 distinct source checks: ten GR checks (three new
+capacity regressions and seven original controls), seven original/selected
+target-output checks and the whole-model four-mode/prefill/tail completion
+check. Strict pure direct-device all-target Clippy with warnings denied and
+`-j2`, scoped formatting and diff checks also pass. A physical rerun is still
+required; source acceptance does not establish cold-prefill or selected warm
+execution on the card.

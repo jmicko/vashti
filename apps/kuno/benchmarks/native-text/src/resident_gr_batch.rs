@@ -116,6 +116,35 @@ fn final_head_spans(
     ))
 }
 
+/// Logical owning capacity follows the target's immutable constructor flag,
+/// independently of the active tail/prefill count and its original arithmetic.
+fn final_head_owner_words(
+    kind: Kind,
+    count: usize,
+    vocabulary: usize,
+    four_reserved: bool,
+) -> Result<usize> {
+    if vocabulary == 0 {
+        return Err(Error::InvalidBufferLength);
+    }
+    let rows = match kind {
+        Kind::Final if count == 1 && !four_reserved => 1,
+        Kind::FinalAllRows
+            if (1..=crate::resident_model::batch::TARGET_ROWS_MAX).contains(&count) =>
+        {
+            if four_reserved {
+                4
+            } else {
+                crate::resident_model::batch::TARGET_ROWS_MAX
+            }
+        }
+        Kind::FinalFourRows if count == 4 && four_reserved => 4,
+        _ => return Err(Error::InvalidBufferLength),
+    };
+    rows.checked_mul(vocabulary)
+        .ok_or(Error::ArithmeticOverflow)
+}
+
 #[derive(Clone, Copy)]
 struct Layout {
     streams: usize,
@@ -688,10 +717,21 @@ impl Prepared<'_, '_> {
     /// Only the last active prompt column requests logits; earlier chunks
     /// omit the entire final mixer/head and accept their residual fault fence.
     pub fn enqueue_final_head(
+        self,
+        graph: BoundGraph<'_, '_>,
+        projector: &mut impl BatchedResidentProjector,
+        logits: BufferId,
+    ) -> Result<()> {
+        self.enqueue_final_head_with_target_capacity(graph, projector, logits, false)
+    }
+    /// The parent supplies the actual target-output Owners constructor flag.
+    /// Counts1..3 retain their original spans but prove the whole reserved owner.
+    pub fn enqueue_final_head_with_target_capacity(
         mut self,
         graph: BoundGraph<'_, '_>,
         projector: &mut impl BatchedResidentProjector,
         logits: BufferId,
+        four_reserved: bool,
     ) -> Result<()> {
         self.workspace.phase = Phase::Poisoned;
         if !matches!(
@@ -706,18 +746,13 @@ impl Prepared<'_, '_> {
             return Err(Error::InvalidBufferLength);
         }
         let vocabulary = graph.geometry().vocabulary;
+        let owner_words =
+            final_head_owner_words(self.kind, self.count[0], vocabulary, four_reserved)?;
         self.workspace.prove(
             self.arena,
             self.residual,
             self.fault,
-            &[(
-                logits,
-                if matches!(self.kind, Kind::FinalAllRows | Kind::FinalFourRows) {
-                    crate::resident_model::batch::TARGET_ROWS_MAX * vocabulary
-                } else {
-                    vocabulary
-                },
-            )],
+            &[(logits, owner_words)],
             None,
         )?;
         let tensor = graph.tensor("output.weight")?;
@@ -785,6 +820,90 @@ impl Drop for Prepared<'_, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reserved_four_head_prefill_and_tails_prove_full_fixed_owner_with_original_spans() {
+        let vocabulary = 248320;
+        let original = BufferLayout::new(3 * vocabulary).unwrap();
+        let reserved = BufferLayout::new(4 * vocabulary).unwrap();
+        // Equal physical allocation is insufficient: full_private requires the
+        // exact logical constructor extent even for the first count1 prefill.
+        assert_eq!(original.owned_bytes, reserved.owned_bytes);
+        assert_eq!(reserved.owned_bytes, 4 * 1024 * 1024);
+        assert_ne!(original.logical_words, reserved.logical_words);
+        for count in 1..=3 {
+            assert_eq!(
+                final_head_owner_words(Kind::FinalAllRows, count, vocabulary, false).unwrap(),
+                original.logical_words
+            );
+            assert_eq!(
+                final_head_owner_words(Kind::FinalAllRows, count, vocabulary, true).unwrap(),
+                reserved.logical_words
+            );
+            let (active, first) =
+                read_columns(Kind::FinalAllRows, count, 10240, MAX_BATCH * 10240).unwrap();
+            assert_eq!((active, first), (count, 0));
+            let spans = final_head_spans(Kind::FinalAllRows, active, 2560, vocabulary).unwrap();
+            assert_eq!((spans.count(), spans.input_first()), (count, 0));
+            assert_eq!(
+                (spans.input_stride(), spans.output_stride()),
+                (2560, vocabulary)
+            );
+            assert_eq!(spans.output_first(), 0);
+            for owner in [original.logical_words, reserved.logical_words] {
+                assert_eq!(
+                    validate_view(count, 0, vocabulary, vocabulary, owner).unwrap(),
+                    count * vocabulary
+                );
+            }
+        }
+        assert_eq!(
+            final_head_owner_words(Kind::Final, 1, vocabulary, false).unwrap(),
+            vocabulary
+        );
+    }
+    #[test]
+    fn actual_four_head_requires_reserved_owner_and_complete_original_four_spans() {
+        let vocabulary = 248320;
+        let words = final_head_owner_words(Kind::FinalFourRows, 4, vocabulary, true).unwrap();
+        assert_eq!(words, 4 * vocabulary);
+        let (active, first) =
+            read_columns(Kind::FinalFourRows, 4, 10240, MAX_BATCH * 10240).unwrap();
+        assert_eq!((active, first), (4, 0));
+        let spans = final_head_spans(Kind::FinalFourRows, active, 2560, vocabulary).unwrap();
+        assert_eq!(
+            (spans.count(), spans.input_first(), spans.output_first()),
+            (4, 0, 0)
+        );
+        assert_eq!(
+            (spans.input_stride(), spans.output_stride()),
+            (2560, vocabulary)
+        );
+        assert_eq!(
+            validate_view(4, 0, vocabulary, vocabulary, words).unwrap(),
+            words
+        );
+        assert!(validate_view(4, 0, vocabulary, vocabulary, 3 * vocabulary).is_err());
+        assert!(final_head_owner_words(Kind::FinalFourRows, 4, vocabulary, false).is_err());
+        assert!(final_head_owner_words(Kind::FinalAllRows, 4, vocabulary, true).is_err());
+    }
+    #[test]
+    fn final_head_owner_capacity_rejects_invalid_roles_counts_and_extents() {
+        for four in [false, true] {
+            for count in [0, 4, 8, usize::MAX] {
+                assert!(final_head_owner_words(Kind::FinalAllRows, count, 248320, four).is_err());
+            }
+            for count in [0, 1, 2, 3, 5, usize::MAX] {
+                assert!(final_head_owner_words(Kind::FinalFourRows, count, 248320, four).is_err());
+            }
+            for kind in [Kind::Attention(0), Kind::Ffn(0)] {
+                assert!(final_head_owner_words(kind, 1, 248320, four).is_err());
+            }
+            assert!(final_head_owner_words(Kind::FinalAllRows, 1, 0, four).is_err());
+            assert!(final_head_owner_words(Kind::FinalAllRows, 1, usize::MAX, four).is_err());
+        }
+        assert!(final_head_owner_words(Kind::Final, 1, 248320, true).is_err());
+        assert!(final_head_owner_words(Kind::Final, 2, 248320, false).is_err());
+    }
     #[test]
     fn all_row_final_mixer_and_head_keep_complete_original_row_strides() {
         for count in 1..=3 {

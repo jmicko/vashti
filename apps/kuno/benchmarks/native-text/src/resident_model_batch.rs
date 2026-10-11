@@ -4783,7 +4783,12 @@ impl Workspace {
                     m.b.fault,
                     cancel,
                 )?
-                .enqueue_final_head(m.graph, &mut projector, rows.logits())?;
+                .enqueue_final_head_with_target_capacity(
+                    m.graph,
+                    &mut projector,
+                    rows.logits(),
+                    rows.four_rows_reserved(),
+                )?;
         }
         *m.phase_ns.entry("native_final_head_enqueue").or_default() +=
             final_head_start.elapsed().as_nanos();

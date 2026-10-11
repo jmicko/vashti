@@ -349,6 +349,9 @@ impl Owners {
     pub(super) fn logits(&self) -> BufferId {
         self.ids[0]
     }
+    pub(super) fn four_rows_reserved(&self) -> bool {
+        self.four_reserved
+    }
     pub(super) fn prove(&self, arena: &PrivateArena) -> Result<[Handle; 2]> {
         let handles = [
             gr::full_private(
