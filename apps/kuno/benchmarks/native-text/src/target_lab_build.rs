@@ -322,6 +322,63 @@ pub(crate) fn request_reuse(
     }
 }
 
+/// Independent immutable status-fold selection for the compiled public target.
+pub(crate) fn public_grouped_status_folds(
+    raw: Option<&OsStr>,
+    original_public_scope: bool,
+) -> Result<bool, &'static str> {
+    match raw {
+        None => Ok(false),
+        Some(value) if value == "grouped-public" && original_public_scope => Ok(true),
+        _ => Err("grouped status folds require canonical original public frozen target scope"),
+    }
+}
+
+/// Only model-local launches published after whole-chunk commit count. Initial
+/// real prompt/CPU13 prefill is checked separately as original false/zero.
+pub(crate) fn public_grouped_status_folds_record(
+    selected: bool,
+    actual: bool,
+    completed: crate::status_fold_batch::Completed,
+    verification_chunks: u64,
+    repair_chunks: u64,
+) -> Result<serde_json::Value, &'static str> {
+    let expected = verification_chunks
+        .checked_add(repair_chunks)
+        .ok_or("grouped status expected chunk count overflow")?;
+    let gr = expected
+        .checked_mul(97)
+        .ok_or("grouped status GR count overflow")?;
+    let gdn = expected
+        .checked_mul(36)
+        .ok_or("grouped status GDN count overflow")?;
+    let qsa = expected
+        .checked_mul(12)
+        .ok_or("grouped status QSA count overflow")?;
+    if selected != actual
+        || repair_chunks > verification_chunks
+        || if selected {
+            expected == 0
+                || completed.chunks != expected
+                || completed.gr_dispatches != gr
+                || completed.gdn_dispatches != gdn
+                || completed.qsa_dispatches != qsa
+        } else {
+            completed.chunks != 0
+                || completed.gr_dispatches != 0
+                || completed.gdn_dispatches != 0
+                || completed.qsa_dispatches != 0
+        }
+    {
+        return Err("grouped status actual accepted chunk receipt rejected");
+    }
+    Ok(
+        serde_json::json!({"selected":actual,"completed_chunks":completed.chunks,
+        "gr_dispatches":completed.gr_dispatches,"gdn_dispatches":completed.gdn_dispatches,
+        "qsa_dispatches":completed.qsa_dispatches}),
+    )
+}
+
 /// Separate read policy: no global GR arithmetic selection or owning charge.
 pub(crate) fn public_grouped_ple_reads(
     raw: Option<&OsStr>,
@@ -627,6 +684,140 @@ pub(crate) fn name(inline: bool) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn grouped_status_public_flag_is_canonical_default_off_and_scope_bound() {
+        for scope in [false, true] {
+            assert_eq!(public_grouped_status_folds(None, scope), Ok(false));
+            for raw in ["grouped-public", "grouped", "true", "", "grouped-public "] {
+                assert_eq!(
+                    public_grouped_status_folds(Some(OsStr::new(raw)), scope).is_ok(),
+                    scope && raw == "grouped-public",
+                );
+            }
+        }
+    }
+    #[test]
+    fn grouped_status_receipt_joins_exact_actual_accepted_verify_and_repair_launches() {
+        use crate::status_fold_batch::Completed;
+        let zero = Completed {
+            chunks: 0,
+            gr_dispatches: 0,
+            gdn_dispatches: 0,
+            qsa_dispatches: 0,
+        };
+        for (verifies, repairs) in [(0, 0), (4, 1), (199, 0)] {
+            let got =
+                public_grouped_status_folds_record(false, false, zero, verifies, repairs).unwrap();
+            assert_eq!(
+                got,
+                serde_json::json!({"selected":false,"completed_chunks":0,
+                "gr_dispatches":0,"gdn_dispatches":0,"qsa_dispatches":0})
+            );
+        }
+        for (verifies, repairs) in [(4, 0), (4, 2), (69, 5), (199, 0)] {
+            let chunks = verifies + repairs;
+            let exact = Completed {
+                chunks,
+                gr_dispatches: chunks * 97,
+                gdn_dispatches: chunks * 36,
+                qsa_dispatches: chunks * 12,
+            };
+            let got =
+                public_grouped_status_folds_record(true, true, exact, verifies, repairs).unwrap();
+            assert_eq!(
+                got,
+                serde_json::json!({"selected":true,"completed_chunks":chunks,
+                "gr_dispatches":chunks * 97,"gdn_dispatches":chunks * 36,"qsa_dispatches":chunks * 12})
+            );
+            // Each family must independently equal the actual per-chunk count;
+            // crediting first prefill, lost repair or one skipped fold rejects.
+            for invalid in [
+                zero,
+                Completed {
+                    chunks: chunks - 1,
+                    ..exact
+                },
+                Completed {
+                    chunks: chunks + 1,
+                    ..exact
+                },
+                Completed {
+                    gr_dispatches: exact.gr_dispatches - 1,
+                    ..exact
+                },
+                Completed {
+                    gr_dispatches: exact.gr_dispatches + 1,
+                    ..exact
+                },
+                Completed {
+                    gdn_dispatches: exact.gdn_dispatches - 1,
+                    ..exact
+                },
+                Completed {
+                    gdn_dispatches: exact.gdn_dispatches + 1,
+                    ..exact
+                },
+                Completed {
+                    qsa_dispatches: exact.qsa_dispatches - 1,
+                    ..exact
+                },
+                Completed {
+                    qsa_dispatches: exact.qsa_dispatches + 1,
+                    ..exact
+                },
+            ] {
+                assert!(
+                    public_grouped_status_folds_record(true, true, invalid, verifies, repairs)
+                        .is_err()
+                );
+            }
+        }
+        for (selected, actual, completed, verifies, repairs) in [
+            (true, false, zero, 1, 0),
+            (false, true, zero, 1, 0),
+            (false, false, Completed { chunks: 1, ..zero }, 1, 0),
+            (
+                false,
+                false,
+                Completed {
+                    gr_dispatches: 1,
+                    ..zero
+                },
+                1,
+                0,
+            ),
+            (
+                false,
+                false,
+                Completed {
+                    gdn_dispatches: 1,
+                    ..zero
+                },
+                1,
+                0,
+            ),
+            (
+                false,
+                false,
+                Completed {
+                    qsa_dispatches: 1,
+                    ..zero
+                },
+                1,
+                0,
+            ),
+            (true, true, zero, 0, 0),
+            (true, true, zero, 1, 2),
+            (true, true, zero, u64::MAX, 1),
+            (true, true, zero, u64::MAX / 97 + 1, 0),
+            (false, false, zero, u64::MAX, 1),
+        ] {
+            assert!(
+                public_grouped_status_folds_record(selected, actual, completed, verifies, repairs)
+                    .is_err()
+            );
+        }
+    }
     #[test]
     fn grouped_ple_public_flag_is_canonical_default_off_and_scope_bound() {
         for scope in [false, true] {

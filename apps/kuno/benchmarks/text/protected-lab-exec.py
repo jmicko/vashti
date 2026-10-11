@@ -7,6 +7,7 @@ import sys
 def selected_target_policy(environment, mtp=False):
     target_only_scope(environment)
     intel_mtp_scope(environment)
+    grouped_status_scope(environment)
     grouped_ple_scope(environment)
     frozen_down_stride_scope(environment)
     selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
@@ -18,6 +19,9 @@ def selected_target_policy(environment, mtp=False):
             raise ValueError("Intel draft placement requires the fixed public speculative scope")
         for key in ("KUNO_PUBLIC_MTP_INTEL_TOTAL_BYTES", "KUNO_PUBLIC_MTP_INTEL_USED_BYTES", "KUNO_PUBLIC_MTP_INTEL_DEVICE_ID"):
             selected.pop(key)
+    if "KUNO_LAB_TARGET_STATUS_FOLDS" in selected:
+        if not mtp or selected.pop("KUNO_LAB_TARGET_STATUS_FOLDS") != "grouped-public":
+            raise ValueError("Grouped status folds require the canonical fixed public target")
     if "KUNO_LAB_TARGET_PLE_READS" in selected:
         if not mtp or selected.pop("KUNO_LAB_TARGET_PLE_READS") != "grouped-public":
             raise ValueError("Grouped PLE reads require the canonical fixed public target")
@@ -180,6 +184,12 @@ def original_frozen_target_scope(environment, selector, value, *, four_down=Fals
             or any(key in environment for key in conflicts)
             or full_vocab and "KUNO_LAB_MTP_VOCAB" in environment):
         raise ValueError("Target read/schedule policy requires original bounded public frozen scope")
+
+
+def grouped_status_scope(environment):
+    original_frozen_target_scope(
+        environment, "KUNO_LAB_TARGET_STATUS_FOLDS", "grouped-public", full_vocab=True,
+    )
 
 
 def grouped_ple_scope(environment):
@@ -387,6 +397,7 @@ def bank_placement_scope(environment):
 def memory_limit(environment, arguments):
     target_only_scope(environment)
     intel_mtp_scope(environment)
+    grouped_status_scope(environment)
     grouped_ple_scope(environment)
     frozen_down_stride_scope(environment)
     frozen_gu_integer_scope(environment)
