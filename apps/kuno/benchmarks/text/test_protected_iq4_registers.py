@@ -66,6 +66,15 @@ class Iq4RegisterAdmission(unittest.TestCase):
                 GUARD.selected_target_policy(environment, mtp=False)
         self.rejected({SELECTOR: "packed-registers-public"}, ["/frozen/binary", "intel", "resident-count1-hybrid-chat"])
 
+    def test_exact_intel_compiled_c_values_only(self):
+        args = ["/frozen/binary", "intel", "iq-quant-probe"]
+        environment = {"KUNO_PUBLIC_RECEIPT": "/fixed/public/receipt.json"}
+        self.assertEqual(GUARD.memory_limit(environment, args), 8 * 1024**3)
+        for bad in ({}, {"KUNO_PUBLIC_RECEIPT": ""}, dict(environment, KUNO_TEST_GGUF="/arbitrary/model"), dict(environment, **{SELECTOR: "packed-registers-public"})):
+            self.rejected(bad, args)
+        self.rejected(environment, args + ["extra"])
+        self.rejected(environment, [args[0], "nvidia", args[2]])
+
 
 if __name__ == "__main__":
     unittest.main()

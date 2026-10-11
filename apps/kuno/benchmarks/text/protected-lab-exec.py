@@ -444,6 +444,13 @@ def memory_limit(environment, arguments):
     three_gdn_scope(environment)
     private_table_scope(environment)
     bank_placement_scope(environment)
+    if len(arguments) > 2 and arguments[2] == "iq-quant-probe":
+        selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
+        if (set(selected) != {"KUNO_PUBLIC_RECEIPT"}
+                or not selected["KUNO_PUBLIC_RECEIPT"]
+                or len(arguments) != 3 or arguments[1] != "intel"):
+            raise ValueError("IQ4 value acceptance requires the fixed Intel compiled public fixtures")
+        return 8 * 1024**3
     if "KUNO_LAB_PUBLIC_HOST_CUBECL_ONLY" in environment or (len(arguments) > 2 and arguments[2] == "public-host-weight-cubecl-probe"):
         selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
         if (set(selected) != {"KUNO_LAB_PUBLIC_HOST_CUBECL_ONLY", "KUNO_PUBLIC_RECEIPT"}
