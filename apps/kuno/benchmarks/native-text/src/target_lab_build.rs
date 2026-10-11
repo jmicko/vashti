@@ -41,6 +41,240 @@ impl Build {
     }
 }
 
+/// Explicit fixed-public draft placement. Default retains the RTX3060.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MtpDevice {
+    Nvidia,
+    Intel,
+}
+impl MtpDevice {
+    pub(crate) fn parse(raw: Option<&OsStr>, scope: bool) -> Result<Self, &'static str> {
+        match raw {
+            None => Ok(Self::Nvidia),
+            Some(raw) if raw == "intel-public" && scope => Ok(Self::Intel),
+            _ => Err("Intel MTP requires canonical fixed public original target scope"),
+        }
+    }
+    pub(crate) fn vendor(self) -> u32 {
+        match self {
+            Self::Nvidia => 0x10de,
+            Self::Intel => 0x8086,
+        }
+    }
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Nvidia => "nvidia-default",
+            Self::Intel => "intel-public",
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct IntelMtpMemory {
+    pub(crate) total: u64,
+    pub(crate) used: u64,
+    pub(crate) device: u32,
+}
+impl IntelMtpMemory {
+    /// The protected runner supplies a fresh Xe MEM_REGIONS query while other
+    /// inference is paused. Privilege-masked zero never means a free card.
+    pub(crate) fn parse(
+        selected: MtpDevice,
+        total: Option<&OsStr>,
+        used: Option<&OsStr>,
+        device: Option<&OsStr>,
+    ) -> Result<Option<Self>, &'static str> {
+        if selected == MtpDevice::Nvidia {
+            if total.is_some() || used.is_some() || device.is_some() {
+                return Err("default Nvidia MTP rejects Intel memory metadata");
+            }
+            return Ok(None);
+        }
+        fn decimal(raw: Option<&OsStr>) -> Result<u64, &'static str> {
+            let raw = raw
+                .and_then(OsStr::to_str)
+                .ok_or("Intel MTP memory metadata missing")?;
+            if raw.is_empty()
+                || !raw.bytes().all(|byte| byte.is_ascii_digit())
+                || raw.len() > 1 && raw.starts_with('0')
+            {
+                return Err("Intel MTP memory metadata requires canonical decimal");
+            }
+            raw.parse()
+                .map_err(|_| "Intel MTP memory metadata overflow")
+        }
+        let total = decimal(total)?;
+        let used = decimal(used)?;
+        let device = u32::try_from(decimal(device)?).map_err(|_| "Intel MTP device ID overflow")?;
+        if total == 0 || used == 0 || used >= total || device == 0 {
+            return Err("Intel MTP memory query is empty, masked or inconsistent");
+        }
+        Ok(Some(Self {
+            total,
+            used,
+            device,
+        }))
+    }
+    pub(crate) fn admit(
+        self,
+        target_device: u32,
+        target_main: u64,
+        draft_public: u64,
+        banks: u64,
+        target_source_pages: u64,
+        target_baseline: u64,
+    ) -> Result<serde_json::Value, &'static str> {
+        if self.used == 0
+            || self.used >= self.total
+            || self.device == 0
+            || target_device != self.device
+            || banks != crate::daslab_profile::bank_bytes_144().physical
+            || !matches!(target_main, 828_866_560 | 828_932_096)
+            || !matches!(
+                draft_public,
+                crate::resident_mtp::PUBLIC_BYTES | crate::resident_mtp::STRATA_PUBLIC_BYTES
+            )
+            || target_source_pages != 30 * 1024 * 1024
+            || target_baseline != 0
+        {
+            return Err("Intel MTP combined plan requires exact original fresh full144 owners");
+        }
+        let components = [
+            banks,
+            8 * 1024 * 1024 * 1024,
+            target_main,
+            25_165_824,
+            crate::executor::RESIDENT_IO_MAX,
+            crate::resident_model::batch::TARGET_ROWS_RUNTIME_LIMIT,
+            target_source_pages,
+            draft_public,
+            crate::resident_mtp::PRIVATE_BYTES as u64,
+            crate::resident_mtp::RUNTIME_BYTES,
+            crate::resident_mtp::PUBLIC_SOURCE_BYTES as u64,
+            512 * 1024 * 1024,
+            target_baseline,
+        ];
+        let total = components.into_iter().try_fold(0u64, |sum, bytes| {
+            sum.checked_add(bytes)
+                .ok_or("Intel MTP combined plan overflow")
+        })?;
+        if total > self.total - self.used {
+            return Err("Intel MTP combined full144 target and draft exceed available VRAM");
+        }
+        Ok(serde_json::json!({"source":"protected-xe-memory-regions",
+            "physical_total_bytes":self.total,"physical_used_bytes":self.used,
+            "physical_available_bytes":self.total-self.used,"physical_device_id":self.device,
+            "target_slots":144,"target_bank_bytes":banks,"target_static_cache_bytes":8u64*1024*1024*1024,
+            "target_main_bytes":target_main,"target_vector_bytes":25_165_824,
+            "target_io_bytes":crate::executor::RESIDENT_IO_MAX,
+            "target_runtime_io_bytes":crate::resident_model::batch::TARGET_ROWS_RUNTIME_LIMIT,
+            "target_source_page_bytes":target_source_pages,"target_baseline_bytes":target_baseline,
+            "draft_public_bytes":draft_public,"draft_private_cap_bytes":crate::resident_mtp::PRIVATE_BYTES,
+            "draft_runtime_io_bytes":crate::resident_mtp::RUNTIME_BYTES,
+            "draft_source_cap_bytes":crate::resident_mtp::PUBLIC_SOURCE_BYTES,
+            "shared_driver_margin_bytes":512u64*1024*1024,
+            "combined_reserved_bytes":total,"remaining_beyond_margin_bytes":self.total-self.used-total}))
+    }
+}
+
+pub(crate) fn intel_mtp_preflight(
+    proof: IntelMtpMemory,
+    target: &wgpu::Device,
+    client: &cubecl::prelude::ComputeClient<cubecl::wgpu::WgpuRuntime>,
+    graph: kuno_text::model::BoundGraph<'_, '_>,
+    integer: bool,
+    profile: crate::mtp_lab_profile::Profile,
+) -> std::result::Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let info = target.adapter_info();
+    if info.vendor != 0x8086
+        || info.device_type != wgpu::DeviceType::DiscreteGpu
+        || info.backend != wgpu::Backend::Vulkan
+    {
+        return Err("Intel MTP requires the actual discrete Vulkan target".into());
+    }
+    let usage = client.memory_usage()?;
+    if usage.bytes_in_use != 0 || usage.bytes_reserved != 0 || usage.number_allocs != 0 {
+        return Err("Intel MTP combined admission requires a fresh target runtime".into());
+    }
+    let banks = crate::expert_banks::preflight_residency_with_profile(
+        graph,
+        144,
+        8 * 1024 * 1024 * 1024,
+        31 * 1024 * 1024 * 1024,
+        crate::expert_banks::OriginalPackedProfile::DaslabIq3,
+    )? as u64;
+    let mut source_pages = 0;
+    for layer in 0..48 {
+        let mut layer_pages = 0u64;
+        for suffix in [
+            "ffn_gate_exps.weight",
+            "ffn_up_exps.weight",
+            "ffn_down_exps.weight",
+        ] {
+            let tensor = graph.tensor(&format!("blk.{layer}.{suffix}"))?;
+            let bytes = tensor
+                .info()
+                .row_bytes()
+                .checked_mul(tensor.info().dimensions()[1])
+                .ok_or("Intel MTP source geometry overflow")?;
+            layer_pages = layer_pages
+                .checked_add(
+                    crate::main_admission::page_bytes(bytes)?
+                        .checked_mul(10)
+                        .ok_or("Intel MTP source page count overflow")?,
+                )
+                .ok_or("Intel MTP source sum overflow")?;
+        }
+        source_pages = source_pages.max(layer_pages);
+    }
+    proof
+        .admit(
+            info.device,
+            if integer { 828_932_096 } else { 828_866_560 },
+            profile.public_bytes(),
+            banks,
+            source_pages,
+            usage.bytes_reserved,
+        )
+        .map_err(Into::into)
+}
+
+pub(crate) fn mtp_device_receipt(
+    selected: MtpDevice,
+    target: Option<&wgpu::AdapterInfo>,
+    draft: &wgpu::AdapterInfo,
+    distinct_device: bool,
+    distinct_runtime: bool,
+    draft_runtime_id: u32,
+) -> Result<serde_json::Value, &'static str> {
+    let same = target.map(|target| {
+        target.vendor == draft.vendor
+            && target.device == draft.device
+            && target.backend == draft.backend
+            && target.device_pci_bus_id == draft.device_pci_bus_id
+    });
+    if draft.vendor != selected.vendor()
+        || draft.device_type != wgpu::DeviceType::DiscreteGpu
+        || draft.backend != wgpu::Backend::Vulkan
+        || !distinct_device
+        || !distinct_runtime
+        || draft_runtime_id > u16::MAX as u32
+        || selected == MtpDevice::Intel && (same != Some(true) || target != Some(draft))
+        || selected == MtpDevice::Nvidia && same == Some(true)
+    {
+        return Err("MTP actual physical device and independent runtime identity rejected");
+    }
+    Ok(
+        serde_json::json!({"requested":selected.name(),"actual_vendor_id":draft.vendor,
+        "actual_device_id":draft.device,"actual_pci_bus_id":draft.device_pci_bus_id,"same_physical_as_target":same,
+        "actual_target_vendor_id":target.map(|info|info.vendor),
+        "actual_target_device_id":target.map(|info|info.device),
+        "actual_target_pci_bus_id":target.map(|info|&info.device_pci_bus_id),
+        "distinct_wgpu_device":distinct_device,"distinct_runtime":distinct_runtime,
+        "actual_draft_runtime_id":draft_runtime_id,"draft_request_io_shared":false,
+        "draft_private_arena_shared":false}),
+    )
+}
+
 /// A dedicated fixed-public stream, never a process-wide cache policy.
 pub(crate) fn request_reuse(
     raw: Option<&OsStr>,
@@ -266,6 +500,260 @@ pub(crate) fn name(inline: bool) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn intel_mtp_selection_and_memory_transport_are_explicit_and_strict() {
+        for scope in [false, true] {
+            assert_eq!(MtpDevice::parse(None, scope), Ok(MtpDevice::Nvidia));
+            for raw in [
+                "intel-public",
+                "intel",
+                "nvidia",
+                "auto",
+                "",
+                "intel-public ",
+            ] {
+                assert_eq!(
+                    MtpDevice::parse(Some(OsStr::new(raw)), scope).is_ok(),
+                    scope && raw == "intel-public"
+                );
+            }
+        }
+        let total = Some(OsStr::new("34242297856"));
+        let used = Some(OsStr::new("50688000"));
+        let device = Some(OsStr::new("4660"));
+        assert_eq!(
+            IntelMtpMemory::parse(MtpDevice::Intel, total, used, device).unwrap(),
+            Some(IntelMtpMemory {
+                total: 34242297856,
+                used: 50688000,
+                device: 4660
+            })
+        );
+        assert_eq!(
+            IntelMtpMemory::parse(MtpDevice::Nvidia, None, None, None),
+            Ok(None)
+        );
+        for (total, used, device) in [
+            (total, used, device),
+            (total, None, None),
+            (None, used, None),
+            (None, None, device),
+        ] {
+            assert!(IntelMtpMemory::parse(MtpDevice::Nvidia, total, used, device).is_err());
+        }
+        for (total, used, device) in [
+            (None, used, device),
+            (total, None, device),
+            (total, used, None),
+            (Some(OsStr::new("0")), used, device),
+            (total, Some(OsStr::new("0")), device),
+            (total, total, device),
+            (used, total, device),
+            (total, used, Some(OsStr::new("0"))),
+            (Some(OsStr::new("034242297856")), used, device),
+            (total, Some(OsStr::new("+50688000")), device),
+            (total, Some(OsStr::new("50688000 ")), device),
+            (total, used, Some(OsStr::new("4294967296"))),
+            (Some(OsStr::new("18446744073709551616")), used, device),
+        ] {
+            assert!(IntelMtpMemory::parse(MtpDevice::Intel, total, used, device).is_err());
+        }
+    }
+    #[test]
+    fn intel_mtp_combined_admission_charges_complete_full144_target_and_each_draft_owner() {
+        let banks = crate::daslab_profile::bank_bytes_144().physical;
+        let proof = IntelMtpMemory {
+            total: 34_242_297_856,
+            used: 50_688_000,
+            device: 4660,
+        };
+        for (draft, expected) in [
+            (crate::resident_mtp::PUBLIC_BYTES, 34_166_833_152),
+            (crate::resident_mtp::STRATA_PUBLIC_BYTES, 31_694_422_016),
+        ] {
+            let got = proof
+                .admit(4660, 828_932_096, draft, banks, 30 * 1024 * 1024, 0)
+                .unwrap();
+            assert_eq!(got["combined_reserved_bytes"], expected);
+            assert_eq!(
+                got["remaining_beyond_margin_bytes"],
+                proof.total - proof.used - expected
+            );
+            assert_eq!(got["shared_driver_margin_bytes"], 512u64 * 1024 * 1024);
+            let exact = IntelMtpMemory {
+                total: expected + proof.used,
+                ..proof
+            };
+            assert!(
+                exact
+                    .admit(4660, 828_932_096, draft, banks, 30 * 1024 * 1024, 0)
+                    .is_ok()
+            );
+            let short = IntelMtpMemory {
+                total: exact.total - 1,
+                ..proof
+            };
+            assert!(
+                short
+                    .admit(4660, 828_932_096, draft, banks, 30 * 1024 * 1024, 0)
+                    .is_err()
+            );
+        }
+        assert_eq!(
+            proof
+                .admit(
+                    4660,
+                    828_866_560,
+                    crate::resident_mtp::PUBLIC_BYTES,
+                    banks,
+                    30 * 1024 * 1024,
+                    0
+                )
+                .unwrap()["combined_reserved_bytes"],
+            34_166_767_616u64
+        );
+        for (device, main, draft, bank, source, baseline) in [
+            (
+                4661,
+                828_932_096,
+                crate::resident_mtp::PUBLIC_BYTES,
+                banks,
+                30 * 1024 * 1024,
+                0,
+            ),
+            (
+                4660,
+                828_932_095,
+                crate::resident_mtp::PUBLIC_BYTES,
+                banks,
+                30 * 1024 * 1024,
+                0,
+            ),
+            (
+                4660,
+                828_932_096,
+                crate::resident_mtp::PUBLIC_BYTES - 1,
+                banks,
+                30 * 1024 * 1024,
+                0,
+            ),
+            (
+                4660,
+                828_932_096,
+                crate::resident_mtp::PUBLIC_BYTES,
+                banks - 1,
+                30 * 1024 * 1024,
+                0,
+            ),
+            (
+                4660,
+                828_932_096,
+                crate::resident_mtp::PUBLIC_BYTES,
+                banks,
+                30 * 1024 * 1024 - 1,
+                0,
+            ),
+            (
+                4660,
+                828_932_096,
+                crate::resident_mtp::PUBLIC_BYTES,
+                banks,
+                30 * 1024 * 1024,
+                32768,
+            ),
+        ] {
+            assert!(
+                proof
+                    .admit(device, main, draft, bank, source, baseline)
+                    .is_err()
+            );
+        }
+        for used in [0, proof.total, u64::MAX] {
+            assert!(
+                IntelMtpMemory { used, ..proof }
+                    .admit(
+                        4660,
+                        828_932_096,
+                        crate::resident_mtp::PUBLIC_BYTES,
+                        banks,
+                        30 * 1024 * 1024,
+                        0
+                    )
+                    .is_err()
+            );
+        }
+    }
+    fn mtp_adapter(vendor: u32, device: u32) -> wgpu::AdapterInfo {
+        wgpu::AdapterInfo {
+            name: "compiled public adapter fixture".into(),
+            vendor,
+            device,
+            device_type: wgpu::DeviceType::DiscreteGpu,
+            device_pci_bus_id: "0000:01:00.0".into(),
+            driver: "public fixture".into(),
+            driver_info: "public fixture".into(),
+            backend: wgpu::Backend::Vulkan,
+            subgroup_min_size: 16,
+            subgroup_max_size: 32,
+            transient_saves_memory: false,
+        }
+    }
+    #[test]
+    fn intel_mtp_actual_device_receipt_requires_distinct_runtime_on_same_verified_physical_gpu() {
+        let target = mtp_adapter(0x8086, 4660);
+        let nvidia = mtp_adapter(0x10de, 123);
+        let intel = target.clone();
+        let actual =
+            mtp_device_receipt(MtpDevice::Intel, Some(&target), &intel, true, true, 1).unwrap();
+        assert_eq!(actual["same_physical_as_target"], true);
+        assert_eq!(actual["actual_target_device_id"], 4660);
+        let unknown = mtp_device_receipt(MtpDevice::Nvidia, None, &nvidia, true, true, 1).unwrap();
+        assert!(unknown["same_physical_as_target"].is_null());
+        assert!(unknown["actual_target_device_id"].is_null());
+        assert!(mtp_device_receipt(MtpDevice::Intel, Some(&target), &intel, true, true, 1).is_ok());
+        assert!(
+            mtp_device_receipt(MtpDevice::Nvidia, Some(&target), &nvidia, true, true, 1).is_ok()
+        );
+        for (device, actual) in [(MtpDevice::Intel, &intel), (MtpDevice::Nvidia, &nvidia)] {
+            for (distinct_device, distinct_runtime, id) in
+                [(false, true, 1), (true, false, 1), (true, true, 65536)]
+            {
+                assert!(
+                    mtp_device_receipt(
+                        device,
+                        Some(&target),
+                        actual,
+                        distinct_device,
+                        distinct_runtime,
+                        id
+                    )
+                    .is_err()
+                );
+            }
+        }
+        assert!(mtp_device_receipt(MtpDevice::Intel, None, &intel, true, true, 1).is_err());
+        assert!(
+            mtp_device_receipt(MtpDevice::Intel, Some(&target), &nvidia, true, true, 1).is_err()
+        );
+        assert!(
+            mtp_device_receipt(MtpDevice::Nvidia, Some(&target), &intel, true, true, 1).is_err()
+        );
+        let mut changed = intel.clone();
+        changed.device_pci_bus_id = "0000:02:00.0".into();
+        assert!(
+            mtp_device_receipt(MtpDevice::Intel, Some(&target), &changed, true, true, 1).is_err()
+        );
+        changed = intel.clone();
+        changed.device += 1;
+        assert!(
+            mtp_device_receipt(MtpDevice::Intel, Some(&target), &changed, true, true, 1).is_err()
+        );
+        changed = intel;
+        changed.device_type = wgpu::DeviceType::IntegratedGpu;
+        assert!(
+            mtp_device_receipt(MtpDevice::Intel, Some(&target), &changed, true, true, 1).is_err()
+        );
+    }
     #[test]
     fn target_only_close_requires_exact_original_complete_owner_extent() {
         for (integer, buffers, bytes) in [(false, 1380, 828_866_560), (true, 1381, 828_932_096)] {

@@ -113,6 +113,8 @@ pub(crate) struct Inputs {
     pub(crate) inline_dispatch: bool,
     pub(crate) fused_sweeps: bool,
     draft_profile: Profile,
+    mtp_device: crate::target_lab_build::MtpDevice,
+    intel_mtp_memory: Option<crate::target_lab_build::IntelMtpMemory>,
     mtp_q8_head_broadcast: bool,
     mtp_q8_head_shared_scales: bool,
     mtp_english_vocab: bool,
@@ -173,6 +175,10 @@ pub(crate) fn registration(
                     | "KUNO_LAB_MTP_SWEEPS"
                     | "KUNO_LAB_MTP_VOCAB"
                     | "KUNO_LAB_MTP_PROFILE"
+                    | "KUNO_LAB_MTP_DEVICE"
+                    | "KUNO_PUBLIC_MTP_INTEL_TOTAL_BYTES"
+                    | "KUNO_PUBLIC_MTP_INTEL_USED_BYTES"
+                    | "KUNO_PUBLIC_MTP_INTEL_DEVICE_ID"
                     | "KUNO_LAB_MTP_Q8_HEAD"
                     | "KUNO_LAB_TARGET_QSA"
                     | "KUNO_LAB_TARGET_SOURCES"
@@ -214,6 +220,10 @@ pub(crate) fn registration(
     if decode_mode == DecodeMode::TargetOnly
         && [
             "KUNO_LAB_MTP_SWEEPS",
+            "KUNO_LAB_MTP_DEVICE",
+            "KUNO_PUBLIC_MTP_INTEL_TOTAL_BYTES",
+            "KUNO_PUBLIC_MTP_INTEL_USED_BYTES",
+            "KUNO_PUBLIC_MTP_INTEL_DEVICE_ID",
             "KUNO_LAB_MTP_VOCAB",
             "KUNO_LAB_MTP_PROFILE",
             "KUNO_LAB_MTP_Q8_HEAD",
@@ -446,6 +456,23 @@ pub(crate) fn registration(
         raw_gu_schedule.as_deref(),
         frozen_gu_integer,
     )?;
+    let raw_mtp_device = values.remove(OsStr::new("KUNO_LAB_MTP_DEVICE"));
+    let mtp_device = crate::target_lab_build::MtpDevice::parse(
+        raw_mtp_device.as_deref(),
+        decode_mode == DecodeMode::Speculative
+            && original_public_target_scope
+            && fused_sweeps
+            && !mtp_english_vocab,
+    )?;
+    let total = values.remove(OsStr::new("KUNO_PUBLIC_MTP_INTEL_TOTAL_BYTES"));
+    let used = values.remove(OsStr::new("KUNO_PUBLIC_MTP_INTEL_USED_BYTES"));
+    let device = values.remove(OsStr::new("KUNO_PUBLIC_MTP_INTEL_DEVICE_ID"));
+    let intel_mtp_memory = crate::target_lab_build::IntelMtpMemory::parse(
+        mtp_device,
+        total.as_deref(),
+        used.as_deref(),
+        device.as_deref(),
+    )?;
     let mut path = |key: &str| {
         values
             .remove(OsStr::new(key))
@@ -457,6 +484,8 @@ pub(crate) fn registration(
         inline_dispatch,
         fused_sweeps,
         draft_profile,
+        mtp_device,
+        intel_mtp_memory,
         mtp_q8_head_broadcast,
         mtp_q8_head_shared_scales,
         mtp_english_vocab,
@@ -669,7 +698,12 @@ impl Statistics {
         Ok(())
     }
 }
-async fn draft_client(fused_sweeps: bool) -> Result<(ComputeClient<WgpuRuntime>, wgpu::Limits)> {
+async fn draft_client(
+    fused_sweeps: bool,
+    selection: crate::target_lab_build::MtpDevice,
+    target_client: &ComputeClient<WgpuRuntime>,
+    target_device: Option<&wgpu::Device>,
+) -> Result<(ComputeClient<WgpuRuntime>, wgpu::Limits, serde_json::Value)> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::VULKAN,
         ..wgpu::InstanceDescriptor::new_without_display_handle()
@@ -679,7 +713,7 @@ async fn draft_client(fused_sweeps: bool) -> Result<(ComputeClient<WgpuRuntime>,
         .await
         .into_iter()
         .filter(|a| {
-            a.get_info().vendor == 0x10de
+            a.get_info().vendor == selection.vendor()
                 && a.get_info().device_type == wgpu::DeviceType::DiscreteGpu
         })
         .collect();
@@ -688,6 +722,11 @@ async fn draft_client(fused_sweeps: bool) -> Result<(ComputeClient<WgpuRuntime>,
     }
     let adapter = adapters.remove(0);
     let info = adapter.get_info();
+    let target_info = target_device.map(wgpu::Device::adapter_info);
+    if selection == crate::target_lab_build::MtpDevice::Intel && target_info.as_ref() != Some(&info)
+    {
+        return Err("Intel MTP adapter differs from the actual target physical GPU".into());
+    }
     let limits = adapter.limits();
     resident_mtp::validate_limits(&limits)?;
     if fused_sweeps {
@@ -710,6 +749,10 @@ async fn draft_client(fused_sweeps: bool) -> Result<(ComputeClient<WgpuRuntime>,
         })
         .await
         .map_err(|_| "speculative draft device setup failed")?;
+    let distinct_device = target_device.is_none_or(|target| target != &device);
+    if !distinct_device {
+        return Err("MTP cannot share the target Wgpu device".into());
+    }
     let selected = init_device(
         WgpuSetup {
             instance,
@@ -723,7 +766,21 @@ async fn draft_client(fused_sweeps: bool) -> Result<(ComputeClient<WgpuRuntime>,
             memory_config: crate::private_arena::required_memory_configuration(),
         },
     );
-    Ok((WgpuRuntime::client(&selected), limits))
+    let client = WgpuRuntime::client(&selected);
+    let distinct_runtime = !std::ptr::eq(client.info(), target_client.info());
+    let runtime_id = match selected {
+        cubecl::wgpu::WgpuDevice::Existing(id) => id,
+        _ => return Err("MTP explicit independent runtime identity missing".into()),
+    };
+    let receipt = crate::target_lab_build::mtp_device_receipt(
+        selection,
+        target_info.as_ref(),
+        &info,
+        distinct_device,
+        distinct_runtime,
+        runtime_id,
+    )?;
+    Ok((client, limits, receipt))
 }
 
 fn process_disk_read_bytes() -> Result<u64> {
@@ -795,6 +852,19 @@ pub(crate) fn run(
         .map(|sidecar| input.draft_profile.bind(sidecar, graph.bound_graph()))
         .transpose()?;
     let (tokenizer, prompt) = tokenize(&file, input.fixture, graph.eos_token())?;
+    let intel_mtp_admission = input
+        .intel_mtp_memory
+        .map(|proof| {
+            crate::target_lab_build::intel_mtp_preflight(
+                proof,
+                host_device.ok_or("Intel MTP actual target device missing")?,
+                client,
+                graph.bound_graph(),
+                input.frozen_gu_integer,
+                input.draft_profile,
+            )
+        })
+        .transpose()?;
     crate::resident_util::select_retained_metadata(true);
     crate::resident_util::select_compute_scratch_clear(true);
     if input.request_reuse {
@@ -803,13 +873,14 @@ pub(crate) fn run(
         client.configure_transient_io(128 * 1024 * 1024)?;
     }
     let draft_gpu = if draft_graph.is_some() {
-        let (draft_client, draft_limits) =
-            cubecl::future::block_on(draft_client(input.fused_sweeps))?;
+        let (draft_client, draft_limits, mtp_device_receipt) = cubecl::future::block_on(
+            draft_client(input.fused_sweeps, input.mtp_device, client, host_device),
+        )?;
         draft_client.configure_transient_io(64 * 1024 * 1024)?;
         if draft_client.public_target_request_io_configured()? {
             return Err("language target runtime leaked to draft stream".into());
         }
-        Some((draft_client, draft_limits))
+        Some((draft_client, draft_limits, mtp_device_receipt))
     } else {
         None
     };
@@ -818,7 +889,8 @@ pub(crate) fn run(
     let cancel = AtomicBool::new(false);
     let whole = Instant::now();
     let load_disk_before = process_disk_read_bytes()?;
-    let mut draft = if let Some((draft_client, draft_limits)) = draft_gpu {
+    let mtp_device_receipt = draft_gpu.as_ref().map(|(_, _, receipt)| receipt.clone());
+    let mut draft = if let Some((draft_client, draft_limits, _)) = draft_gpu {
         let draft_graph = draft_graph
             .as_ref()
             .ok_or("speculative bound draft graph absent")?;
@@ -1599,7 +1671,9 @@ pub(crate) fn run(
     let draft_executed = draft_close.is_some();
     let value = serde_json::json!({"scope":if input.decode_mode == DecodeMode::TargetOnly {
         "compiled-public-language200-real-target-only-greedy"
-    } else { "compiled-public-language200-real-dual-device-greedy" },"decode_mode":input.decode_mode.name(),"draft_executed":draft_executed,"target_card":"B70","draft_card":if draft_executed {Some("RTX3060")}else{None},"draft_profile":if draft_executed{Some(input.draft_profile.name())}else{None},"gpu_chronological_qsa_selector":input.gpu_qsa_selector,"qsa_extra_runtime_info_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_INFO_BYTES_PER_CHUNK}else{0},"qsa_extra_host_reserved_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_HOST_BYTES_PER_CHUNK}else{0},"draft_public_reserved_bytes":if draft_executed{input.draft_profile.public_bytes_with_english(input.mtp_english_vocab)?}else{0},"frozen_gu_integer_requested":input.frozen_gu_integer,"frozen_gu_stride_four_requested":input.frozen_gu_stride_four,"frozen_gu_integer_extra_main_bytes":if input.frozen_gu_integer {65536} else {0},"frozen_gu_integer_extra_host_bytes":if input.frozen_gu_integer {65536} else {0},"frozen_gu_integer_extra_info_bytes":if input.frozen_gu_integer {196608} else {0},"frozen_gu_integer_extra_runtime_bytes":if input.frozen_gu_integer {462848} else {0},"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"temperature":0,"seed":424242,"repetition_penalty":1.0,"presence_penalty":0.0,"frequency_penalty":0.0,"thinking":false,"max_outputs":MAX_OUTPUTS,"verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"live_member_reduction":input.live_member_reduction,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"fused_mtp_sweeps":input.fused_sweeps,"fixture_host_reserved_bytes":FIXTURE_HOST_BYTES,"tokenizer_host_cap_bytes":TOKENIZER_HOST_BYTES,"request_reuse_metadata_reserved_bytes":if input.request_reuse{4*1024*1024}else{0},"full_target_packets_retained":true,"greedy_target_verification":true,"repair_original_prefix_vector_checks":input.decode_mode == DecodeMode::Speculative,"independent_cpu200_reference_accepted":false,"forced_oracle_tokens":false,"forced_experts":false,"private_or_production_accepted":false,"record":record,"draft_close":draft_close});
+    } else if input.mtp_device == crate::target_lab_build::MtpDevice::Intel {
+        "compiled-public-language200-real-single-physical-device-independent-stream-greedy"
+    } else { "compiled-public-language200-real-dual-device-greedy" },"decode_mode":input.decode_mode.name(),"draft_executed":draft_executed,"target_card":"B70","draft_card":if draft_executed {Some(if input.mtp_device == crate::target_lab_build::MtpDevice::Intel {"B70"}else{"RTX3060"})}else{None},"mtp_device_requested":if draft_executed {Some(input.mtp_device.name())}else{None},"mtp_device":mtp_device_receipt,"intel_mtp_admission":intel_mtp_admission,"draft_profile":if draft_executed{Some(input.draft_profile.name())}else{None},"gpu_chronological_qsa_selector":input.gpu_qsa_selector,"qsa_extra_runtime_info_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_INFO_BYTES_PER_CHUNK}else{0},"qsa_extra_host_reserved_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_HOST_BYTES_PER_CHUNK}else{0},"draft_public_reserved_bytes":if draft_executed{input.draft_profile.public_bytes_with_english(input.mtp_english_vocab)?}else{0},"frozen_gu_integer_requested":input.frozen_gu_integer,"frozen_gu_stride_four_requested":input.frozen_gu_stride_four,"frozen_gu_integer_extra_main_bytes":if input.frozen_gu_integer {65536} else {0},"frozen_gu_integer_extra_host_bytes":if input.frozen_gu_integer {65536} else {0},"frozen_gu_integer_extra_info_bytes":if input.frozen_gu_integer {196608} else {0},"frozen_gu_integer_extra_runtime_bytes":if input.frozen_gu_integer {462848} else {0},"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"temperature":0,"seed":424242,"repetition_penalty":1.0,"presence_penalty":0.0,"frequency_penalty":0.0,"thinking":false,"max_outputs":MAX_OUTPUTS,"verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"live_member_reduction":input.live_member_reduction,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"fused_mtp_sweeps":input.fused_sweeps,"fixture_host_reserved_bytes":FIXTURE_HOST_BYTES,"tokenizer_host_cap_bytes":TOKENIZER_HOST_BYTES,"request_reuse_metadata_reserved_bytes":if input.request_reuse{4*1024*1024}else{0},"full_target_packets_retained":true,"greedy_target_verification":true,"repair_original_prefix_vector_checks":input.decode_mode == DecodeMode::Speculative,"independent_cpu200_reference_accepted":false,"forced_oracle_tokens":false,"forced_experts":false,"private_or_production_accepted":false,"record":record,"draft_close":draft_close});
     serde_json::to_writer_pretty(
         std::fs::OpenOptions::new()
             .write(true)
@@ -1833,6 +1907,159 @@ mod tests {
                 .target_only_record(DecodeMode::TargetOnly, false, 2)
                 .is_err()
         );
+    }
+    fn intel_mtp_env() -> Vec<(OsString, OsString)> {
+        let mut base = env();
+        for (key, value) in [
+            ("KUNO_LAB_DEVICE_DISPATCH", "inline"),
+            ("KUNO_LAB_TARGET_FILL", "direct-public"),
+            ("KUNO_LAB_TARGET_DENSE", "verify3-fused"),
+            ("KUNO_LAB_TARGET_IO", "chunk"),
+            ("KUNO_LAB_TARGET_REUSE", "request"),
+            ("KUNO_LAB_TARGET_SOURCES", "frozen-host-public"),
+            ("KUNO_LAB_FROZEN_PARTITION_EXIT", "1"),
+            ("KUNO_LAB_TARGET_ROUTER", "device-frozen-public"),
+            ("KUNO_LAB_MTP_SWEEPS", "fused"),
+            ("KUNO_LAB_MTP_DEVICE", "intel-public"),
+            ("KUNO_PUBLIC_MTP_INTEL_TOTAL_BYTES", "34242297856"),
+            ("KUNO_PUBLIC_MTP_INTEL_USED_BYTES", "50688000"),
+            ("KUNO_PUBLIC_MTP_INTEL_DEVICE_ID", "4660"),
+        ] {
+            base.push((key.into(), value.into()));
+        }
+
+        base
+    }
+    #[test]
+    fn intel_mtp_controller_registration_retains_full144_original_target_and_explicit_profile() {
+        let args = ["lab", "intel", "daslab-language-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        let base = intel_mtp_env();
+        for q2 in [false, true] {
+            let mut selected = base.clone();
+            if q2 {
+                selected.push(("KUNO_LAB_MTP_PROFILE".into(), "strata-q2".into()));
+            }
+            let got = registration(&args, selected, build).unwrap();
+            assert_eq!(got.mtp_device, crate::target_lab_build::MtpDevice::Intel);
+            assert_eq!(
+                got.draft_profile,
+                if q2 {
+                    Profile::StrataQ2
+                } else {
+                    Profile::SelfContainedQ8
+                }
+            );
+            assert!(
+                got.frozen_host_sources
+                    && got.frozen_host_router
+                    && got.frozen_partition_exit
+                    && got.verify3_fused
+                    && got.request_reuse
+                    && got.fused_sweeps
+            );
+            assert!(got.intel_mtp_memory.is_some());
+        }
+        // Exact first comparison policy: full Q8, shared head, original DOWN,
+        // chronological QSA and the already admitted integer/stride GU option.
+        let mut q8 = base.clone();
+        for (key, value) in [
+            ("KUNO_LAB_MTP_Q8_HEAD", "shared-public"),
+            ("KUNO_LAB_FROZEN_DOWN_ROWS", "four-public"),
+            ("KUNO_LAB_TARGET_QSA", "chronological-public"),
+            ("KUNO_LAB_FROZEN_GU_MATH", "integer-public"),
+            ("KUNO_LAB_FROZEN_GU_SCHEDULE", "four-public"),
+        ] {
+            q8.push((key.into(), value.into()));
+        }
+        let got = registration(&args, q8.clone(), build).unwrap();
+        assert!(
+            got.frozen_gu_integer
+                && got.frozen_gu_stride_four
+                && got.mtp_q8_head_shared_scales
+                && got.frozen_four_row_down
+                && got.gpu_qsa_selector
+        );
+        q8.push((
+            "KUNO_LAB_TARGET_GDN".into(),
+            "three-streaming-public".into(),
+        ));
+        assert!(registration(&args, q8, build).unwrap().three_gdn_streaming);
+        let mut q2 = base.clone();
+        for (key, value) in [
+            ("KUNO_LAB_MTP_PROFILE", "strata-q2"),
+            ("KUNO_LAB_FROZEN_DOWN_ROWS", "four-public"),
+            ("KUNO_LAB_TARGET_QSA", "chronological-public"),
+        ] {
+            q2.push((key.into(), value.into()));
+        }
+        let got = registration(&args, q2, build).unwrap();
+        assert!(
+            !got.frozen_gu_integer
+                && !got.mtp_q8_head_shared_scales
+                && got.frozen_four_row_down
+                && got.gpu_qsa_selector
+        );
+        let mut default = base.clone();
+        default.retain(|(key, _)| {
+            !key.to_string_lossy().starts_with("KUNO_PUBLIC_MTP_INTEL_")
+                && key != "KUNO_LAB_MTP_DEVICE"
+        });
+        let got = registration(&args, default.clone(), build).unwrap();
+        assert_eq!(got.mtp_device, crate::target_lab_build::MtpDevice::Nvidia);
+        assert!(got.intel_mtp_memory.is_none());
+        default.push(("KUNO_PUBLIC_MTP_INTEL_USED_BYTES".into(), "50688000".into()));
+        assert!(registration(&args, default, build).is_err());
+        for key in [
+            "KUNO_LAB_DEVICE_DISPATCH",
+            "KUNO_LAB_TARGET_FILL",
+            "KUNO_LAB_TARGET_DENSE",
+            "KUNO_LAB_TARGET_IO",
+            "KUNO_LAB_TARGET_REUSE",
+            "KUNO_LAB_TARGET_SOURCES",
+            "KUNO_LAB_FROZEN_PARTITION_EXIT",
+            "KUNO_LAB_TARGET_ROUTER",
+            "KUNO_LAB_MTP_SWEEPS",
+            "KUNO_PUBLIC_MTP_INTEL_TOTAL_BYTES",
+            "KUNO_PUBLIC_MTP_INTEL_USED_BYTES",
+            "KUNO_PUBLIC_MTP_INTEL_DEVICE_ID",
+        ] {
+            let mut bad = base.clone();
+            bad.retain(|(k, _)| k != key);
+            assert!(registration(&args, bad, build).is_err(), "{key}");
+        }
+        for (key, value) in [
+            ("KUNO_LAB_MTP_DEVICE", "intel-public"),
+            ("KUNO_LAB_FROZEN_TABLES", "private-public"),
+            ("KUNO_LAB_FROZEN_TABLES", "workgroup-public"),
+            ("KUNO_LAB_FROZEN_DOWN_SCALES", "shared-public"),
+            ("KUNO_LAB_FROZEN_GU_FACTORS", "shared-public"),
+            ("KUNO_LAB_FROZEN_GU_ROWS", "two-public"),
+            ("KUNO_LAB_FROZEN_HOST_STAGE", "packed-public"),
+            ("KUNO_LAB_FROZEN_MEMBERS", "three-public"),
+            ("KUNO_LAB_TARGET_EXPERTS", "prepared-verify3"),
+            ("KUNO_LAB_TARGET_MOE", "live"),
+            ("KUNO_LAB_MTP_VOCAB", "english-public"),
+        ] {
+            let mut bad = base.clone();
+            bad.push((key.into(), value.into()));
+            assert!(registration(&args, bad, build).is_err(), "{key}");
+        }
+        for value in ["auto", "intel", "nvidia", "intel-public ", ""] {
+            let mut bad = base.clone();
+            bad.iter_mut()
+                .find(|(key, _)| key == "KUNO_LAB_MTP_DEVICE")
+                .unwrap()
+                .1 = value.into();
+            assert!(registration(&args, bad, build).is_err());
+        }
+        let mut target_only = base;
+        target_only.retain(|(key, _)| key != "KUNO_LAB_MTP_SWEEPS");
+        target_only.push((
+            "KUNO_LAB_LANGUAGE_DECODE".into(),
+            "target-only-public".into(),
+        ));
+        assert!(registration(&args, target_only, build).is_err());
     }
     #[test]
     fn frozen_gu_stride_four_controller_registration_is_explicit_and_integer_only() {
