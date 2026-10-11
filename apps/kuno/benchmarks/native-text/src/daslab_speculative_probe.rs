@@ -1901,6 +1901,10 @@ pub(crate) fn run(
             }
             Ok(())
         })();
+        let attached_resident_bank_allocation = host_attachment
+            .as_ref()
+            .map(|owner| owner.resident_bank_allocation())
+            .transpose();
         let close = target.close();
         let audit = target.public_owned_zero_audit_receipt();
         drop(target);
@@ -1930,11 +1934,19 @@ pub(crate) fn run(
         }
         runs?;
         let (main, sources, host_close) = cleanup?;
+        let resident_bank_allocation =
+            crate::target_lab_build::public_resident_bank_allocation_record(
+                attached_resident_bank_allocation?,
+                host_close
+                    .as_ref()
+                    .map(|closed| closed.resident_bank_allocation),
+            )?;
         let record = passes
             .last_mut()
             .ok_or("public controller completion missing")?;
         record["target_close"] = serde_json::json!({"main_buffers":main.buffers,"main_bytes":main.bytes,"source_buffers":sources.buffers,"source_bytes":sources.bytes});
         record["frozen_host_setup"] = host_setup.into();
+        record["resident_bank_allocation"] = resident_bank_allocation.clone();
         record["frozen_host_close"] = host_close
             .map(|closed| {
                 serde_json::json!({
@@ -1945,6 +1957,7 @@ pub(crate) fn run(
                     "live_backing_bytes":closed.mirror.live_backing_bytes,
                     "metadata_owned_bytes":closed.mirror.metadata_owned_bytes,
                     "source_window_peak_bytes":closed.mirror.source_window_peak_bytes,
+                    "resident_bank_allocation":resident_bank_allocation,
                 })
             })
             .into();

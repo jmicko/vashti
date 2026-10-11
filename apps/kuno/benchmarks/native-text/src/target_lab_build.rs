@@ -462,6 +462,51 @@ pub(crate) fn public_mtp_batch_repair_traffic_record(
     )
 }
 
+/// Report actual attached VRAM roots only after the terminal source snapshot
+/// matches. Neither these bytes nor a source-handle clone grant admission or
+/// erasure credit; HOST mirror pages are outside this fixed measurement.
+pub(crate) fn public_resident_bank_allocation_record(
+    attached: Option<crate::public_host_expert_attachment::ResidentBankAllocation>,
+    closed: Option<crate::public_host_expert_attachment::ResidentBankAllocation>,
+) -> Result<serde_json::Value, &'static str> {
+    match (attached, closed) {
+        (None, None) => Ok(serde_json::Value::Null),
+        (Some(attached), Some(closed)) if attached == closed => {
+            let expected = crate::daslab_profile::bank_bytes_144();
+            if attached.layers != 48
+                || attached.source_bindings != 288
+                || attached.physical_buffers != attached.source_bindings
+                || attached.logical_bytes != expected.logical
+                || attached.conservative_bin_bytes != expected.physical
+                || attached
+                    .physical_buffer_bytes
+                    .checked_sub(attached.logical_bytes)
+                    != Some(attached.padding_bytes)
+                || attached
+                    .conservative_bin_bytes
+                    .checked_sub(attached.physical_buffer_bytes)
+                    != Some(attached.admission_headroom_bytes)
+            {
+                return Err("actual resident bank backing geometry rejected");
+            }
+            Ok(serde_json::json!({
+                "layers":attached.layers,
+                "source_bindings":attached.source_bindings,
+                "physical_buffers":attached.physical_buffers,
+                "logical_bytes":attached.logical_bytes,
+                "physical_buffer_bytes":attached.physical_buffer_bytes,
+                "conservative_bin_bytes":attached.conservative_bin_bytes,
+                "padding_bytes":attached.padding_bytes,
+                "admission_headroom_bytes":attached.admission_headroom_bytes,
+                "attached_close_snapshot_match":true,
+                "host_mirror_excluded":true,
+                "release_erasure_or_admission_credit":false,
+            }))
+        }
+        _ => Err("resident bank attachment and close snapshots differ"),
+    }
+}
+
 /// A fixed compiled public ranking changes only empty-slot setup selection.
 pub(crate) fn public_host_bank_fill(
     raw: Option<&OsStr>,
@@ -1083,6 +1128,90 @@ pub(crate) fn name(inline: bool) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    fn resident_bank_backing_fixture(
+        extra: u64,
+    ) -> crate::public_host_expert_attachment::ResidentBankAllocation {
+        let bound = crate::daslab_profile::bank_bytes_144();
+        crate::public_host_expert_attachment::ResidentBankAllocation {
+            layers: 48,
+            source_bindings: 288,
+            physical_buffers: 288,
+            logical_bytes: bound.logical,
+            physical_buffer_bytes: bound.logical + extra,
+            conservative_bin_bytes: bound.physical,
+            padding_bytes: extra,
+            admission_headroom_bytes: bound.physical - bound.logical - extra,
+        }
+    }
+
+    #[test]
+    fn resident_bank_backing_receipt_requires_same_attached_and_closed_original_roots() {
+        assert!(
+            public_resident_bank_allocation_record(None, None)
+                .unwrap()
+                .is_null()
+        );
+        for extra in [
+            0,
+            4096,
+            crate::daslab_profile::bank_bytes_144().physical
+                - crate::daslab_profile::bank_bytes_144().logical,
+        ] {
+            let actual = resident_bank_backing_fixture(extra);
+            let value = public_resident_bank_allocation_record(Some(actual), Some(actual)).unwrap();
+            assert_eq!(value["physical_buffer_bytes"], actual.physical_buffer_bytes);
+            assert_eq!(value["padding_bytes"], extra);
+            assert_eq!(value["attached_close_snapshot_match"], true);
+            assert_eq!(value["host_mirror_excluded"], true);
+            assert_eq!(value["release_erasure_or_admission_credit"], false);
+            assert!(public_resident_bank_allocation_record(Some(actual), None).is_err());
+            assert!(public_resident_bank_allocation_record(None, Some(actual)).is_err());
+            assert!(
+                public_resident_bank_allocation_record(
+                    Some(actual),
+                    Some(resident_bank_backing_fixture(if extra == 0 {
+                        4096
+                    } else {
+                        0
+                    }))
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn resident_bank_backing_receipt_rejects_geometry_drift_and_malformed_size_relations() {
+        let original = resident_bank_backing_fixture(4096);
+        for field in 0..8 {
+            let mut changed = original;
+            match field {
+                0 => changed.layers -= 1,
+                1 => changed.source_bindings -= 1,
+                2 => changed.physical_buffers -= 1,
+                3 => changed.logical_bytes -= 1,
+                4 => changed.physical_buffer_bytes -= 1,
+                5 => changed.conservative_bin_bytes -= 1,
+                6 => changed.padding_bytes -= 1,
+                7 => changed.admission_headroom_bytes -= 1,
+                _ => unreachable!(),
+            }
+            assert!(
+                public_resident_bank_allocation_record(Some(changed), Some(changed)).is_err(),
+                "{field}"
+            );
+        }
+        for physical in [
+            original.logical_bytes - 1,
+            original.conservative_bin_bytes + 1,
+            u64::MAX,
+        ] {
+            let mut changed = original;
+            changed.physical_buffer_bytes = physical;
+            assert!(public_resident_bank_allocation_record(Some(changed), Some(changed)).is_err());
+        }
+    }
+
     #[test]
     fn mtp_batch_repair_is_canonical_and_scoped_without_changing_default() {
         for scope in [false, true] {
