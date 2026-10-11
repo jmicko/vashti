@@ -12,6 +12,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 use zeroize::Zeroize;
 
+#[path = "exact_persistent_banks.rs"]
+#[allow(dead_code)] // Source-only fixed144 allocation leaf; no selected consumer.
+pub(crate) mod exact_persistent;
+
 /// Explicit original-weight laboratory profile. Selection belongs to the
 /// constructor; never infer a profile from a failed admission or source read.
 /// Neither variant changes route coverage, slot lifetime or completion gates.
