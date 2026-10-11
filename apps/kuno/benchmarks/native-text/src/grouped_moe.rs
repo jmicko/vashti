@@ -27,6 +27,9 @@ const LENGTHS: usize = SLOTS + MAX_GROUPS;
 const MEMBERS: usize = LENGTHS + MAX_GROUPS;
 const MAX_BANK_BYTES: usize = 128 * 1024 * 1024;
 
+#[path = "frozen_host_staging.rs"]
+pub(crate) mod frozen_host_staging;
+
 /// Request-derived reduction/coverage scratch has an owning guard BEFORE any
 /// private fill, including early error and unwinding paths. Fixed public shape;
 /// no Copy/Clone/Debug/Hash/serialization and no unguarded temporary Vec.
@@ -1264,6 +1267,7 @@ pub fn grouped_gate_up(
         false,
         false,
         false,
+        false,
     );
 }
 
@@ -1320,6 +1324,64 @@ pub fn grouped_gate_up_frozen(
         false,
         true,
         false,
+        false,
+    );
+}
+
+/// Exact original frozen arithmetic over previously copied HOST group words.
+#[cube(launch, launch_unchecked)]
+#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
+pub fn grouped_gate_up_frozen_staged(
+    gate: &Array<u32>,
+    up: &Array<u32>,
+    input: &Array<f32>,
+    map: &Array<u32>,
+    activations: &mut Array<f32>,
+    status: &mut Array<u32>,
+    map_first: usize,
+    input_first: usize,
+    input_stride: usize,
+    act_first: usize,
+    act_stride: usize,
+    status_first: usize,
+    first_slot: usize,
+    slot_count: usize,
+    #[comptime] hidden: usize,
+    #[comptime] ff: usize,
+    #[comptime] gate_dtype: u32,
+    #[comptime] up_dtype: u32,
+    #[comptime] gate_row_bytes: usize,
+    #[comptime] up_row_bytes: usize,
+    #[comptime] tile: usize,
+    #[comptime] q4_block: bool,
+) {
+    grouped_gate_up_inner(
+        gate,
+        up,
+        input,
+        map,
+        activations,
+        status,
+        map_first,
+        input_first,
+        input_stride,
+        act_first,
+        act_stride,
+        status_first,
+        first_slot,
+        slot_count,
+        hidden,
+        ff,
+        gate_dtype,
+        up_dtype,
+        gate_row_bytes,
+        up_row_bytes,
+        tile,
+        q4_block,
+        false,
+        true,
+        false,
+        true,
     );
 }
 
@@ -1376,6 +1438,7 @@ pub fn grouped_gate_up_frozen_private_grid(
         q4_block,
         false,
         true,
+        false,
         false,
     );
 }
@@ -1434,6 +1497,7 @@ pub fn grouped_gate_up_frozen_workgroup_grid(
         false,
         true,
         false,
+        false,
     );
 }
 
@@ -1490,6 +1554,7 @@ pub fn grouped_gate_up_frozen_shared_factors(
         false,
         true,
         true,
+        false,
     );
 }
 
@@ -1546,6 +1611,7 @@ pub fn grouped_gate_up_frozen_private_grid_shared_factors(
         false,
         true,
         true,
+        false,
     );
 }
 
@@ -1602,6 +1668,7 @@ pub fn grouped_gate_up_frozen_workgroup_grid_shared_factors(
         false,
         true,
         true,
+        false,
     );
 }
 
@@ -1658,6 +1725,7 @@ pub fn grouped_gate_up_live(
         true,
         false,
         false,
+        false,
     );
 }
 
@@ -1689,6 +1757,7 @@ fn grouped_gate_up_inner(
     #[comptime] live_member_reduction: bool,
     #[comptime] inactive_partition_exit: bool,
     #[comptime] shared_gate_up_factors: bool,
+    #[comptime] staged_host_weights: bool,
 ) {
     let feature = CUBE_POS_X as usize;
     let group = CUBE_POS_Y as usize;
@@ -1697,6 +1766,20 @@ fn grouped_gate_up_inner(
     let mut live = 0_usize;
     let mut active =
         group_active(map, map_first, group, first_slot, slot_count, tile) && feature < ff;
+    if comptime!(staged_host_weights) {
+        if comptime!(hidden != 2560 || ff != 640 || tile != 8 || q4_block) {
+            terminate!();
+        }
+        active = active
+            && frozen_host_staging::host_group_active(
+                map, map_first, group, first_slot, slot_count,
+            )
+            && frozen_host_staging::stage_extent_valid(
+                gate.len(),
+                comptime!(ff * gate_row_bytes / 4),
+            )
+            && frozen_host_staging::stage_extent_valid(up.len(), comptime!(ff * up_row_bytes / 4));
+    }
     if active {
         if first_member >= map[map_first + LENGTHS + group] as usize {
             active = false;
@@ -1726,7 +1809,13 @@ fn grouped_gate_up_inner(
         ups[member] = 0.;
     }
     if active {
-        let slot = map[map_first + SLOTS + group] as usize - first_slot;
+        let slot = frozen_host_staging::weight_slot(
+            map,
+            map_first,
+            group,
+            first_slot,
+            staged_host_weights,
+        );
         let length = map[map_first + LENGTHS + group] as usize;
         let row = slot * ff + feature;
         let gate_offset = row * gate_row_bytes;
@@ -1939,6 +2028,114 @@ pub fn grouped_gate_up_frozen_two_rows(
     #[comptime] tile: usize,
     #[comptime] q4_block: bool,
 ) {
+    grouped_gate_up_two_rows_inner(
+        gate,
+        up,
+        input,
+        map,
+        activations,
+        status,
+        map_first,
+        input_first,
+        input_stride,
+        act_first,
+        act_stride,
+        status_first,
+        first_slot,
+        slot_count,
+        hidden,
+        ff,
+        gate_dtype,
+        up_dtype,
+        gate_row_bytes,
+        up_row_bytes,
+        tile,
+        q4_block,
+        false,
+    );
+}
+
+/// Exact original paired GU arithmetic over copied HOST group words.
+#[cube(launch, launch_unchecked)]
+#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
+pub fn grouped_gate_up_frozen_staged_two_rows(
+    gate: &Array<u32>,
+    up: &Array<u32>,
+    input: &Array<f32>,
+    map: &Array<u32>,
+    activations: &mut Array<f32>,
+    status: &mut Array<u32>,
+    map_first: usize,
+    input_first: usize,
+    input_stride: usize,
+    act_first: usize,
+    act_stride: usize,
+    status_first: usize,
+    first_slot: usize,
+    slot_count: usize,
+    #[comptime] hidden: usize,
+    #[comptime] ff: usize,
+    #[comptime] gate_dtype: u32,
+    #[comptime] up_dtype: u32,
+    #[comptime] gate_row_bytes: usize,
+    #[comptime] up_row_bytes: usize,
+    #[comptime] tile: usize,
+    #[comptime] q4_block: bool,
+) {
+    grouped_gate_up_two_rows_inner(
+        gate,
+        up,
+        input,
+        map,
+        activations,
+        status,
+        map_first,
+        input_first,
+        input_stride,
+        act_first,
+        act_stride,
+        status_first,
+        first_slot,
+        slot_count,
+        hidden,
+        ff,
+        gate_dtype,
+        up_dtype,
+        gate_row_bytes,
+        up_row_bytes,
+        tile,
+        q4_block,
+        true,
+    );
+}
+
+#[cube]
+#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
+fn grouped_gate_up_two_rows_inner(
+    gate: &Array<u32>,
+    up: &Array<u32>,
+    input: &Array<f32>,
+    map: &Array<u32>,
+    activations: &mut Array<f32>,
+    status: &mut Array<u32>,
+    map_first: usize,
+    input_first: usize,
+    input_stride: usize,
+    act_first: usize,
+    act_stride: usize,
+    status_first: usize,
+    first_slot: usize,
+    slot_count: usize,
+    #[comptime] hidden: usize,
+    #[comptime] ff: usize,
+    #[comptime] gate_dtype: u32,
+    #[comptime] up_dtype: u32,
+    #[comptime] gate_row_bytes: usize,
+    #[comptime] up_row_bytes: usize,
+    #[comptime] tile: usize,
+    #[comptime] q4_block: bool,
+    #[comptime] staged_host_weights: bool,
+) {
     // Public generic-only admission has no Q4 block specialization.
     if comptime!(q4_block) {
         terminate!();
@@ -1954,6 +2151,20 @@ pub fn grouped_gate_up_frozen_two_rows(
     // both physical rows must reach every shared reduction fence together.
     let mut active =
         group_active(map, map_first, group, first_slot, slot_count, tile) && first_feature + 1 < ff;
+    if comptime!(staged_host_weights) {
+        if comptime!(hidden != 2560 || ff != 640 || tile != 8 || q4_block) {
+            terminate!();
+        }
+        active = active
+            && frozen_host_staging::host_group_active(
+                map, map_first, group, first_slot, slot_count,
+            )
+            && frozen_host_staging::stage_extent_valid(
+                gate.len(),
+                comptime!(ff * gate_row_bytes / 4),
+            )
+            && frozen_host_staging::stage_extent_valid(up.len(), comptime!(ff * up_row_bytes / 4));
+    }
     if active {
         if first_member >= map[map_first + LENGTHS + group] as usize {
             active = false;
@@ -1962,7 +2173,8 @@ pub fn grouped_gate_up_frozen_two_rows(
     if !active {
         terminate!();
     }
-    let slot = map[map_first + SLOTS + group] as usize - first_slot;
+    let slot =
+        frozen_host_staging::weight_slot(map, map_first, group, first_slot, staged_host_weights);
     let length = map[map_first + LENGTHS + group] as usize;
     let source_row = slot * ff + feature;
     let gate_offset = source_row * gate_row_bytes;
@@ -2084,6 +2296,7 @@ pub fn grouped_down(
         false,
         false,
         false,
+        false,
     );
 }
 
@@ -2132,6 +2345,56 @@ pub fn grouped_down_frozen(
         false,
         true,
         false,
+        false,
+    );
+}
+
+/// Exact original frozen arithmetic over previously copied HOST group words.
+#[cube(launch, launch_unchecked)]
+#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
+pub fn grouped_down_frozen_staged(
+    down: &Array<u32>,
+    activations: &Array<f32>,
+    map: &Array<u32>,
+    partials: &mut Array<f32>,
+    status: &mut Array<u32>,
+    map_first: usize,
+    act_first: usize,
+    act_stride: usize,
+    partial_first: usize,
+    partial_stride: usize,
+    status_first: usize,
+    first_slot: usize,
+    slot_count: usize,
+    #[comptime] hidden: usize,
+    #[comptime] ff: usize,
+    #[comptime] down_dtype: u32,
+    #[comptime] down_row_bytes: usize,
+    #[comptime] tile: usize,
+) {
+    grouped_down_inner(
+        down,
+        activations,
+        map,
+        partials,
+        status,
+        map_first,
+        act_first,
+        act_stride,
+        partial_first,
+        partial_stride,
+        status_first,
+        first_slot,
+        slot_count,
+        hidden,
+        ff,
+        down_dtype,
+        down_row_bytes,
+        tile,
+        false,
+        true,
+        false,
+        true,
     );
 }
 
@@ -2181,6 +2444,7 @@ pub fn grouped_down_frozen_shared_scales(
         false,
         true,
         true,
+        false,
     );
 }
 
@@ -2229,6 +2493,7 @@ pub fn grouped_down_live(
         true,
         false,
         false,
+        false,
     );
 }
 
@@ -2256,6 +2521,7 @@ fn grouped_down_inner(
     #[comptime] live_member_reduction: bool,
     #[comptime] inactive_partition_exit: bool,
     #[comptime] shared_down_scales: bool,
+    #[comptime] staged_host_weights: bool,
 ) {
     let feature = CUBE_POS_X as usize;
     let group = CUBE_POS_Y as usize;
@@ -2264,6 +2530,19 @@ fn grouped_down_inner(
     let mut live = 0_usize;
     let mut active =
         group_active(map, map_first, group, first_slot, slot_count, tile) && feature < hidden;
+    if comptime!(staged_host_weights) {
+        if comptime!(hidden != 2560 || ff != 640 || tile != 8) {
+            terminate!();
+        }
+        active = active
+            && frozen_host_staging::host_group_active(
+                map, map_first, group, first_slot, slot_count,
+            )
+            && frozen_host_staging::stage_extent_valid(
+                down.len(),
+                comptime!(hidden * down_row_bytes / 4),
+            );
+    }
     if active {
         if first_member >= map[map_first + LENGTHS + group] as usize {
             active = false;
@@ -2290,7 +2569,13 @@ fn grouped_down_inner(
         partial[member] = 0.;
     }
     if active {
-        let slot = map[map_first + SLOTS + group] as usize - first_slot;
+        let slot = frozen_host_staging::weight_slot(
+            map,
+            map_first,
+            group,
+            first_slot,
+            staged_host_weights,
+        );
         let length = map[map_first + LENGTHS + group] as usize;
         let row_offset = (slot * hidden + feature) * down_row_bytes;
         if comptime!(shared_down_scales && down_dtype == IQ4_NL) {
@@ -2427,6 +2712,54 @@ pub fn grouped_down_frozen_four_rows(
         down_row_bytes,
         tile,
         false,
+        false,
+    );
+}
+
+/// Exact original frozen arithmetic over previously copied HOST group words.
+#[cube(launch, launch_unchecked)]
+#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
+pub fn grouped_down_frozen_staged_four_rows(
+    down: &Array<u32>,
+    activations: &Array<f32>,
+    map: &Array<u32>,
+    partials: &mut Array<f32>,
+    status: &mut Array<u32>,
+    map_first: usize,
+    act_first: usize,
+    act_stride: usize,
+    partial_first: usize,
+    partial_stride: usize,
+    status_first: usize,
+    first_slot: usize,
+    slot_count: usize,
+    #[comptime] hidden: usize,
+    #[comptime] ff: usize,
+    #[comptime] down_dtype: u32,
+    #[comptime] down_row_bytes: usize,
+    #[comptime] tile: usize,
+) {
+    grouped_down_four_rows_inner(
+        down,
+        activations,
+        map,
+        partials,
+        status,
+        map_first,
+        act_first,
+        act_stride,
+        partial_first,
+        partial_stride,
+        status_first,
+        first_slot,
+        slot_count,
+        hidden,
+        ff,
+        down_dtype,
+        down_row_bytes,
+        tile,
+        false,
+        true,
     );
 }
 
@@ -2474,6 +2807,7 @@ pub fn grouped_down_frozen_four_rows_shared_scales(
         down_row_bytes,
         tile,
         true,
+        false,
     );
 }
 
@@ -2499,6 +2833,7 @@ fn grouped_down_four_rows_inner(
     #[comptime] down_row_bytes: usize,
     #[comptime] tile: usize,
     #[comptime] shared_down_scales: bool,
+    #[comptime] staged_host_weights: bool,
 ) {
     let first_feature = CUBE_POS_X as usize * 4;
     let group = CUBE_POS_Y as usize;
@@ -2511,6 +2846,19 @@ fn grouped_down_four_rows_inner(
     // Frozen geometry fixes hidden=2560 and exactly four complete rows/cube.
     let mut active = group_active(map, map_first, group, first_slot, slot_count, tile)
         && first_feature + 3 < hidden;
+    if comptime!(staged_host_weights) {
+        if comptime!(hidden != 2560 || ff != 640 || tile != 8) {
+            terminate!();
+        }
+        active = active
+            && frozen_host_staging::host_group_active(
+                map, map_first, group, first_slot, slot_count,
+            )
+            && frozen_host_staging::stage_extent_valid(
+                down.len(),
+                comptime!(hidden * down_row_bytes / 4),
+            );
+    }
     if active {
         if first_member >= map[map_first + LENGTHS + group] as usize {
             active = false;
@@ -2519,7 +2867,8 @@ fn grouped_down_four_rows_inner(
     if !active {
         terminate!();
     }
-    let slot = map[map_first + SLOTS + group] as usize - first_slot;
+    let slot =
+        frozen_host_staging::weight_slot(map, map_first, group, first_slot, staged_host_weights);
     let length = map[map_first + LENGTHS + group] as usize;
     let row_offset = (slot * hidden + feature) * down_row_bytes;
     let mut partial = Array::<f32>::new(comptime!(4 * tile));
