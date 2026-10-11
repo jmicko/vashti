@@ -168,6 +168,7 @@ pub struct Geometry {
     shared_gate_up_factors: bool,
     four_row_down: bool,
     two_row_gate_up: bool,
+    three_member_arithmetic: bool,
 }
 impl Geometry {
     pub fn new(
@@ -229,6 +230,7 @@ impl Geometry {
             shared_gate_up_factors: false,
             four_row_down: false,
             two_row_gate_up: false,
+            three_member_arithmetic: false,
         })
     }
     /// Explicit source-only public profile. These virtual slots are NOT
@@ -295,6 +297,7 @@ impl Geometry {
             || self.private_tables
             || self.workgroup_tables
             || self.two_row_gate_up
+            || self.three_member_arithmetic
         {
             return Err("grouped frozen private-table policy");
         }
@@ -316,6 +319,7 @@ impl Geometry {
             || self.private_tables
             || self.workgroup_tables
             || self.two_row_gate_up
+            || self.three_member_arithmetic
         {
             return Err("grouped frozen workgroup-table policy");
         }
@@ -337,6 +341,7 @@ impl Geometry {
             || self.gate_policy != GatePolicy::Generic
             || self.reduction_policy != ReductionPolicy::AllMembers
             || self.shared_down_scales
+            || self.three_member_arithmetic
         {
             return Err("grouped frozen shared-down-scale policy");
         }
@@ -359,6 +364,7 @@ impl Geometry {
             || self.reduction_policy != ReductionPolicy::AllMembers
             || self.shared_gate_up_factors
             || self.two_row_gate_up
+            || self.three_member_arithmetic
         {
             return Err("grouped frozen shared-gate-up-factor policy");
         }
@@ -390,6 +396,7 @@ impl Geometry {
                 IQ2_S | IQ3_XXS | IQ3_S | super::IQ4_XS
             )
             || self.projections[0] != self.projections[1]
+            || self.three_member_arithmetic
         {
             return Err("grouped frozen two-row-gate-up policy");
         }
@@ -426,11 +433,49 @@ impl Geometry {
     pub(crate) fn four_row_down(self) -> bool {
         self.four_row_down
     }
+    /// Fixed public arithmetic capacity for the frozen maximum-three-row path.
+    /// MAP, tile8 coordinates, full MAX8 owners and MAX80 status stay unchanged.
+    #[allow(dead_code)]
+    pub(crate) fn with_three_member_arithmetic(mut self) -> Result<Self, &'static str> {
+        if !self.frozen_host_sources
+            || !self.inactive_partition_exit
+            || self.capacity != 512
+            || self.tile != 8
+            || self.hidden != 2560
+            || self.ff != 640
+            || self.secondary_partition
+            || self.gate_policy != GatePolicy::Generic
+            || self.reduction_policy != ReductionPolicy::AllMembers
+            || self.private_tables
+            || self.workgroup_tables
+            || self.shared_gate_up_factors
+            || self.shared_down_scales
+            || self.two_row_gate_up
+            || self.three_member_arithmetic
+        {
+            return Err("grouped frozen three-member arithmetic policy");
+        }
+        self.three_member_arithmetic = true;
+        Ok(self)
+    }
+    #[allow(dead_code)]
+    pub(crate) fn three_member_arithmetic(self) -> bool {
+        self.three_member_arithmetic
+    }
+    /// Arithmetic scratch size only; never a route/member/storage capacity.
+    #[allow(dead_code)]
+    pub(crate) fn arithmetic_members(self) -> usize {
+        if self.three_member_arithmetic {
+            3
+        } else {
+            self.tile
+        }
+    }
     /// Per-dispatch shared scratch, not a MAIN allocation or owning charge.
     #[allow(dead_code)]
     pub(crate) fn down_shared_memory_bytes(self) -> usize {
         let rows = if self.four_row_down { 4 } else { 1 };
-        LANES * self.tile * std::mem::size_of::<f32>()
+        LANES * self.arithmetic_members() * std::mem::size_of::<f32>()
             + if self.shared_down_scales && self.projections[2].dtype == super::IQ4_NL {
                 rows * (self.ff / 32) * std::mem::size_of::<f32>()
             } else {
@@ -1179,6 +1224,27 @@ pub(super) fn group_active(
     active
 }
 
+/// Original frozen verification emits full waves of at most three tokens.
+/// Public workgroup coordinates/header only: all active lanes reach every fence.
+#[cube]
+#[allow(clippy::collapsible_if, clippy::manual_range_contains)]
+pub(super) fn frozen_three_wave(map: &Array<u32>, first: usize, first_member: usize) -> bool {
+    let mut valid = false;
+    if first_member == 0 && first <= map.len() {
+        if MAP_WORDS <= map.len() - first {
+            let count = map[first] as usize;
+            let groups = map[first + 3] as usize;
+            valid = count >= 1
+                && count <= 3
+                && map[first + 1] == 0
+                && map[first + 2] as usize == count
+                && groups >= 1
+                && groups <= 30;
+        }
+    }
+    valid
+}
+
 #[cube]
 pub(super) fn grouped_silu(value: f32) -> f32 {
     let sigmoid = if value >= 0.0 {
@@ -1268,6 +1334,7 @@ pub fn grouped_gate_up(
         false,
         false,
         false,
+        tile,
     );
 }
 
@@ -1325,6 +1392,65 @@ pub fn grouped_gate_up_frozen(
         true,
         false,
         false,
+        tile,
+    );
+}
+
+/// Frozen full-wave arithmetic scratch for exactly three public member cells.
+#[cube(launch, launch_unchecked)]
+#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
+pub fn grouped_gate_up_frozen_three_members(
+    gate: &Array<u32>,
+    up: &Array<u32>,
+    input: &Array<f32>,
+    map: &Array<u32>,
+    activations: &mut Array<f32>,
+    status: &mut Array<u32>,
+    map_first: usize,
+    input_first: usize,
+    input_stride: usize,
+    act_first: usize,
+    act_stride: usize,
+    status_first: usize,
+    first_slot: usize,
+    slot_count: usize,
+    #[comptime] hidden: usize,
+    #[comptime] ff: usize,
+    #[comptime] gate_dtype: u32,
+    #[comptime] up_dtype: u32,
+    #[comptime] gate_row_bytes: usize,
+    #[comptime] up_row_bytes: usize,
+    #[comptime] tile: usize,
+    #[comptime] q4_block: bool,
+) {
+    grouped_gate_up_inner(
+        gate,
+        up,
+        input,
+        map,
+        activations,
+        status,
+        map_first,
+        input_first,
+        input_stride,
+        act_first,
+        act_stride,
+        status_first,
+        first_slot,
+        slot_count,
+        hidden,
+        ff,
+        gate_dtype,
+        up_dtype,
+        gate_row_bytes,
+        up_row_bytes,
+        tile,
+        q4_block,
+        false,
+        true,
+        false,
+        false,
+        3_usize,
     );
 }
 
@@ -1382,6 +1508,65 @@ pub fn grouped_gate_up_frozen_staged(
         true,
         false,
         true,
+        tile,
+    );
+}
+
+/// Frozen full-wave arithmetic scratch for exactly three public member cells.
+#[cube(launch, launch_unchecked)]
+#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
+pub fn grouped_gate_up_frozen_staged_three_members(
+    gate: &Array<u32>,
+    up: &Array<u32>,
+    input: &Array<f32>,
+    map: &Array<u32>,
+    activations: &mut Array<f32>,
+    status: &mut Array<u32>,
+    map_first: usize,
+    input_first: usize,
+    input_stride: usize,
+    act_first: usize,
+    act_stride: usize,
+    status_first: usize,
+    first_slot: usize,
+    slot_count: usize,
+    #[comptime] hidden: usize,
+    #[comptime] ff: usize,
+    #[comptime] gate_dtype: u32,
+    #[comptime] up_dtype: u32,
+    #[comptime] gate_row_bytes: usize,
+    #[comptime] up_row_bytes: usize,
+    #[comptime] tile: usize,
+    #[comptime] q4_block: bool,
+) {
+    grouped_gate_up_inner(
+        gate,
+        up,
+        input,
+        map,
+        activations,
+        status,
+        map_first,
+        input_first,
+        input_stride,
+        act_first,
+        act_stride,
+        status_first,
+        first_slot,
+        slot_count,
+        hidden,
+        ff,
+        gate_dtype,
+        up_dtype,
+        gate_row_bytes,
+        up_row_bytes,
+        tile,
+        q4_block,
+        false,
+        true,
+        false,
+        true,
+        3_usize,
     );
 }
 
@@ -1440,6 +1625,7 @@ pub fn grouped_gate_up_frozen_private_grid(
         true,
         false,
         false,
+        tile,
     );
 }
 
@@ -1498,6 +1684,7 @@ pub fn grouped_gate_up_frozen_workgroup_grid(
         true,
         false,
         false,
+        tile,
     );
 }
 
@@ -1555,6 +1742,7 @@ pub fn grouped_gate_up_frozen_shared_factors(
         true,
         true,
         false,
+        tile,
     );
 }
 
@@ -1612,6 +1800,7 @@ pub fn grouped_gate_up_frozen_private_grid_shared_factors(
         true,
         true,
         false,
+        tile,
     );
 }
 
@@ -1669,6 +1858,7 @@ pub fn grouped_gate_up_frozen_workgroup_grid_shared_factors(
         true,
         true,
         false,
+        tile,
     );
 }
 
@@ -1726,6 +1916,7 @@ pub fn grouped_gate_up_live(
         false,
         false,
         false,
+        tile,
     );
 }
 
@@ -1758,6 +1949,7 @@ fn grouped_gate_up_inner(
     #[comptime] inactive_partition_exit: bool,
     #[comptime] shared_gate_up_factors: bool,
     #[comptime] staged_host_weights: bool,
+    #[comptime] arithmetic_members: usize,
 ) {
     let feature = CUBE_POS_X as usize;
     let group = CUBE_POS_Y as usize;
@@ -1766,6 +1958,12 @@ fn grouped_gate_up_inner(
     let mut live = 0_usize;
     let mut active =
         group_active(map, map_first, group, first_slot, slot_count, tile) && feature < ff;
+    if comptime!(arithmetic_members == 3) {
+        if comptime!(hidden != 2560 || ff != 640 || tile != 8 || q4_block) {
+            terminate!();
+        }
+        active = active && frozen_three_wave(map, map_first, first_member);
+    }
     if comptime!(staged_host_weights) {
         if comptime!(hidden != 2560 || ff != 640 || tile != 8 || q4_block) {
             terminate!();
@@ -1801,10 +1999,10 @@ fn grouped_gate_up_inner(
             terminate!();
         }
     }
-    let mut gates = Array::<f32>::new(tile);
-    let mut ups = Array::<f32>::new(tile);
+    let mut gates = Array::<f32>::new(arithmetic_members);
+    let mut ups = Array::<f32>::new(arithmetic_members);
     #[unroll]
-    for member in 0..tile {
+    for member in 0..arithmetic_members {
         gates[member] = 0.;
         ups[member] = 0.;
     }
@@ -1913,7 +2111,7 @@ fn grouped_gate_up_inner(
                         up_dtype,
                     );
                     #[unroll]
-                    for member in 0..tile {
+                    for member in 0..arithmetic_members {
                         if first_member + member < length {
                             let route = map
                                 [map_first + MEMBERS + group * MAX_BATCH + first_member + member]
@@ -1933,7 +2131,7 @@ fn grouped_gate_up_inner(
                     let g = packed_value(gate, gate_offset, column, gate_dtype);
                     let u = packed_value(up, up_offset, column, up_dtype);
                     #[unroll]
-                    for member in 0..tile {
+                    for member in 0..arithmetic_members {
                         if first_member + member < length {
                             let route = map
                                 [map_first + MEMBERS + group * MAX_BATCH + first_member + member]
@@ -1947,10 +2145,10 @@ fn grouped_gate_up_inner(
             }
         }
     }
-    let mut gate_sums = SharedMemory::<f32>::new(LANES * tile);
-    let mut up_sums = SharedMemory::<f32>::new(LANES * tile);
+    let mut gate_sums = SharedMemory::<f32>::new(LANES * arithmetic_members);
+    let mut up_sums = SharedMemory::<f32>::new(LANES * arithmetic_members);
     #[unroll]
-    for member in 0..tile {
+    for member in 0..arithmetic_members {
         if comptime!(live_member_reduction) {
             if member < live {
                 gate_sums[member * LANES + lane] = gates[member];
@@ -1966,7 +2164,7 @@ fn grouped_gate_up_inner(
     while stride > 0 {
         if lane < stride {
             #[unroll]
-            for member in 0..tile {
+            for member in 0..arithmetic_members {
                 if comptime!(live_member_reduction) {
                     if member < live {
                         gate_sums[member * LANES + lane] +=
@@ -1985,7 +2183,7 @@ fn grouped_gate_up_inner(
     if lane == 0 && active {
         let length = map[map_first + LENGTHS + group] as usize;
         #[unroll]
-        for member in 0..tile {
+        for member in 0..arithmetic_members {
             if first_member + member < length {
                 let route =
                     map[map_first + MEMBERS + group * MAX_BATCH + first_member + member] as usize;
@@ -2297,6 +2495,7 @@ pub fn grouped_down(
         false,
         false,
         false,
+        tile,
     );
 }
 
@@ -2346,6 +2545,57 @@ pub fn grouped_down_frozen(
         true,
         false,
         false,
+        tile,
+    );
+}
+
+/// Frozen full-wave arithmetic scratch for exactly three public member cells.
+#[cube(launch, launch_unchecked)]
+#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
+pub fn grouped_down_frozen_three_members(
+    down: &Array<u32>,
+    activations: &Array<f32>,
+    map: &Array<u32>,
+    partials: &mut Array<f32>,
+    status: &mut Array<u32>,
+    map_first: usize,
+    act_first: usize,
+    act_stride: usize,
+    partial_first: usize,
+    partial_stride: usize,
+    status_first: usize,
+    first_slot: usize,
+    slot_count: usize,
+    #[comptime] hidden: usize,
+    #[comptime] ff: usize,
+    #[comptime] down_dtype: u32,
+    #[comptime] down_row_bytes: usize,
+    #[comptime] tile: usize,
+) {
+    grouped_down_inner(
+        down,
+        activations,
+        map,
+        partials,
+        status,
+        map_first,
+        act_first,
+        act_stride,
+        partial_first,
+        partial_stride,
+        status_first,
+        first_slot,
+        slot_count,
+        hidden,
+        ff,
+        down_dtype,
+        down_row_bytes,
+        tile,
+        false,
+        true,
+        false,
+        false,
+        3_usize,
     );
 }
 
@@ -2395,6 +2645,57 @@ pub fn grouped_down_frozen_staged(
         true,
         false,
         true,
+        tile,
+    );
+}
+
+/// Frozen full-wave arithmetic scratch for exactly three public member cells.
+#[cube(launch, launch_unchecked)]
+#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
+pub fn grouped_down_frozen_staged_three_members(
+    down: &Array<u32>,
+    activations: &Array<f32>,
+    map: &Array<u32>,
+    partials: &mut Array<f32>,
+    status: &mut Array<u32>,
+    map_first: usize,
+    act_first: usize,
+    act_stride: usize,
+    partial_first: usize,
+    partial_stride: usize,
+    status_first: usize,
+    first_slot: usize,
+    slot_count: usize,
+    #[comptime] hidden: usize,
+    #[comptime] ff: usize,
+    #[comptime] down_dtype: u32,
+    #[comptime] down_row_bytes: usize,
+    #[comptime] tile: usize,
+) {
+    grouped_down_inner(
+        down,
+        activations,
+        map,
+        partials,
+        status,
+        map_first,
+        act_first,
+        act_stride,
+        partial_first,
+        partial_stride,
+        status_first,
+        first_slot,
+        slot_count,
+        hidden,
+        ff,
+        down_dtype,
+        down_row_bytes,
+        tile,
+        false,
+        true,
+        false,
+        true,
+        3_usize,
     );
 }
 
@@ -2445,6 +2746,7 @@ pub fn grouped_down_frozen_shared_scales(
         true,
         true,
         false,
+        tile,
     );
 }
 
@@ -2494,6 +2796,7 @@ pub fn grouped_down_live(
         false,
         false,
         false,
+        tile,
     );
 }
 
@@ -2522,6 +2825,7 @@ fn grouped_down_inner(
     #[comptime] inactive_partition_exit: bool,
     #[comptime] shared_down_scales: bool,
     #[comptime] staged_host_weights: bool,
+    #[comptime] arithmetic_members: usize,
 ) {
     let feature = CUBE_POS_X as usize;
     let group = CUBE_POS_Y as usize;
@@ -2530,6 +2834,12 @@ fn grouped_down_inner(
     let mut live = 0_usize;
     let mut active =
         group_active(map, map_first, group, first_slot, slot_count, tile) && feature < hidden;
+    if comptime!(arithmetic_members == 3) {
+        if comptime!(hidden != 2560 || ff != 640 || tile != 8) {
+            terminate!();
+        }
+        active = active && frozen_three_wave(map, map_first, first_member);
+    }
     if comptime!(staged_host_weights) {
         if comptime!(hidden != 2560 || ff != 640 || tile != 8) {
             terminate!();
@@ -2563,9 +2873,9 @@ fn grouped_down_inner(
             terminate!();
         }
     }
-    let mut partial = Array::<f32>::new(tile);
+    let mut partial = Array::<f32>::new(arithmetic_members);
     #[unroll]
-    for member in 0..tile {
+    for member in 0..arithmetic_members {
         partial[member] = 0.;
     }
     if active {
@@ -2593,7 +2903,7 @@ fn grouped_down_inner(
                     let weight =
                         iq4_nl_value_with_scale(down, row_offset, column, scales[column / 32]);
                     #[unroll]
-                    for member in 0..tile {
+                    for member in 0..arithmetic_members {
                         if first_member + member < length {
                             let route = map
                                 [map_first + MEMBERS + group * MAX_BATCH + first_member + member]
@@ -2610,7 +2920,7 @@ fn grouped_down_inner(
                 if column < ff {
                     let weight = packed_value(down, row_offset, column, down_dtype);
                     #[unroll]
-                    for member in 0..tile {
+                    for member in 0..arithmetic_members {
                         if first_member + member < length {
                             let route = map
                                 [map_first + MEMBERS + group * MAX_BATCH + first_member + member]
@@ -2623,9 +2933,9 @@ fn grouped_down_inner(
             }
         }
     }
-    let mut sums = SharedMemory::<f32>::new(LANES * tile);
+    let mut sums = SharedMemory::<f32>::new(LANES * arithmetic_members);
     #[unroll]
-    for member in 0..tile {
+    for member in 0..arithmetic_members {
         if comptime!(live_member_reduction) {
             if member < live {
                 sums[member * LANES + lane] = partial[member];
@@ -2639,7 +2949,7 @@ fn grouped_down_inner(
     while stride > 0 {
         if lane < stride {
             #[unroll]
-            for member in 0..tile {
+            for member in 0..arithmetic_members {
                 if comptime!(live_member_reduction) {
                     if member < live {
                         sums[member * LANES + lane] += sums[member * LANES + lane + stride];
@@ -2655,7 +2965,7 @@ fn grouped_down_inner(
     if lane == 0 && active {
         let length = map[map_first + LENGTHS + group] as usize;
         #[unroll]
-        for member in 0..tile {
+        for member in 0..arithmetic_members {
             if first_member + member < length {
                 let route =
                     map[map_first + MEMBERS + group * MAX_BATCH + first_member + member] as usize;
@@ -2713,6 +3023,55 @@ pub fn grouped_down_frozen_four_rows(
         tile,
         false,
         false,
+        tile,
+    );
+}
+
+/// Frozen full-wave arithmetic scratch for exactly three public member cells.
+#[cube(launch, launch_unchecked)]
+#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
+pub fn grouped_down_frozen_four_rows_three_members(
+    down: &Array<u32>,
+    activations: &Array<f32>,
+    map: &Array<u32>,
+    partials: &mut Array<f32>,
+    status: &mut Array<u32>,
+    map_first: usize,
+    act_first: usize,
+    act_stride: usize,
+    partial_first: usize,
+    partial_stride: usize,
+    status_first: usize,
+    first_slot: usize,
+    slot_count: usize,
+    #[comptime] hidden: usize,
+    #[comptime] ff: usize,
+    #[comptime] down_dtype: u32,
+    #[comptime] down_row_bytes: usize,
+    #[comptime] tile: usize,
+) {
+    grouped_down_four_rows_inner(
+        down,
+        activations,
+        map,
+        partials,
+        status,
+        map_first,
+        act_first,
+        act_stride,
+        partial_first,
+        partial_stride,
+        status_first,
+        first_slot,
+        slot_count,
+        hidden,
+        ff,
+        down_dtype,
+        down_row_bytes,
+        tile,
+        false,
+        false,
+        3_usize,
     );
 }
 
@@ -2760,6 +3119,55 @@ pub fn grouped_down_frozen_staged_four_rows(
         tile,
         false,
         true,
+        tile,
+    );
+}
+
+/// Frozen full-wave arithmetic scratch for exactly three public member cells.
+#[cube(launch, launch_unchecked)]
+#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
+pub fn grouped_down_frozen_staged_four_rows_three_members(
+    down: &Array<u32>,
+    activations: &Array<f32>,
+    map: &Array<u32>,
+    partials: &mut Array<f32>,
+    status: &mut Array<u32>,
+    map_first: usize,
+    act_first: usize,
+    act_stride: usize,
+    partial_first: usize,
+    partial_stride: usize,
+    status_first: usize,
+    first_slot: usize,
+    slot_count: usize,
+    #[comptime] hidden: usize,
+    #[comptime] ff: usize,
+    #[comptime] down_dtype: u32,
+    #[comptime] down_row_bytes: usize,
+    #[comptime] tile: usize,
+) {
+    grouped_down_four_rows_inner(
+        down,
+        activations,
+        map,
+        partials,
+        status,
+        map_first,
+        act_first,
+        act_stride,
+        partial_first,
+        partial_stride,
+        status_first,
+        first_slot,
+        slot_count,
+        hidden,
+        ff,
+        down_dtype,
+        down_row_bytes,
+        tile,
+        false,
+        true,
+        3_usize,
     );
 }
 
@@ -2808,6 +3216,7 @@ pub fn grouped_down_frozen_four_rows_shared_scales(
         tile,
         true,
         false,
+        tile,
     );
 }
 
@@ -2834,6 +3243,7 @@ fn grouped_down_four_rows_inner(
     #[comptime] tile: usize,
     #[comptime] shared_down_scales: bool,
     #[comptime] staged_host_weights: bool,
+    #[comptime] arithmetic_members: usize,
 ) {
     let first_feature = CUBE_POS_X as usize * 4;
     let group = CUBE_POS_Y as usize;
@@ -2846,6 +3256,12 @@ fn grouped_down_four_rows_inner(
     // Frozen geometry fixes hidden=2560 and exactly four complete rows/cube.
     let mut active = group_active(map, map_first, group, first_slot, slot_count, tile)
         && first_feature + 3 < hidden;
+    if comptime!(arithmetic_members == 3) {
+        if comptime!(hidden != 2560 || ff != 640 || tile != 8) {
+            terminate!();
+        }
+        active = active && frozen_three_wave(map, map_first, first_member);
+    }
     if comptime!(staged_host_weights) {
         if comptime!(hidden != 2560 || ff != 640 || tile != 8) {
             terminate!();
@@ -2871,12 +3287,12 @@ fn grouped_down_four_rows_inner(
         frozen_host_staging::weight_slot(map, map_first, group, first_slot, staged_host_weights);
     let length = map[map_first + LENGTHS + group] as usize;
     let row_offset = (slot * hidden + feature) * down_row_bytes;
-    let mut partial = Array::<f32>::new(comptime!(4 * tile));
+    let mut partial = Array::<f32>::new(comptime!(4 * arithmetic_members));
     #[unroll]
     for virtual_lane in 0_usize..4 {
         #[unroll]
-        for member in 0..tile {
-            partial[virtual_lane * tile + member] = 0.;
+        for member in 0..arithmetic_members {
+            partial[virtual_lane * arithmetic_members + member] = 0.;
         }
     }
     if comptime!(shared_down_scales && down_dtype == IQ4_NL) {
@@ -2906,12 +3322,12 @@ fn grouped_down_four_rows_inner(
                         scales[row * comptime!(ff / 32) + column / 32],
                     );
                     #[unroll]
-                    for member in 0..tile {
+                    for member in 0..arithmetic_members {
                         if first_member + member < length {
                             let route = map
                                 [map_first + MEMBERS + group * MAX_BATCH + first_member + member]
                                 as usize;
-                            partial[virtual_lane * tile + member] +=
+                            partial[virtual_lane * arithmetic_members + member] +=
                                 weight * activations[act_first + route * act_stride + column];
                         }
                     }
@@ -2926,12 +3342,12 @@ fn grouped_down_four_rows_inner(
                 if column < ff {
                     let weight = packed_value(down, row_offset, column, down_dtype);
                     #[unroll]
-                    for member in 0..tile {
+                    for member in 0..arithmetic_members {
                         if first_member + member < length {
                             let route = map
                                 [map_first + MEMBERS + group * MAX_BATCH + first_member + member]
                                 as usize;
-                            partial[virtual_lane * tile + member] +=
+                            partial[virtual_lane * arithmetic_members + member] +=
                                 weight * activations[act_first + route * act_stride + column];
                         }
                     }
@@ -2939,22 +3355,22 @@ fn grouped_down_four_rows_inner(
             }
         }
     }
-    let mut sums = SharedMemory::<f32>::new(comptime!(4 * 16 * tile));
+    let mut sums = SharedMemory::<f32>::new(comptime!(4 * 16 * arithmetic_members));
     #[unroll]
-    for member in 0..tile {
+    for member in 0..arithmetic_members {
         // Original stride32 then stride16 additions, with identical operands
         // and parentheses, precede the remaining original strides8..1.
-        let lower = partial[member] + partial[2 * tile + member];
-        let upper = partial[tile + member] + partial[3 * tile + member];
-        sums[(row * tile + member) * 16 + row_lane] = lower + upper;
+        let lower = partial[member] + partial[2 * arithmetic_members + member];
+        let upper = partial[arithmetic_members + member] + partial[3 * arithmetic_members + member];
+        sums[(row * arithmetic_members + member) * 16 + row_lane] = lower + upper;
     }
     sync_cube();
     let mut stride = 8_usize;
     while stride > 0 {
         if row_lane < stride {
             #[unroll]
-            for member in 0..tile {
-                let index = (row * tile + member) * 16 + row_lane;
+            for member in 0..arithmetic_members {
+                let index = (row * arithmetic_members + member) * 16 + row_lane;
                 sums[index] += sums[index + stride];
             }
         }
@@ -2963,12 +3379,12 @@ fn grouped_down_four_rows_inner(
     }
     if row_lane == 0 {
         #[unroll]
-        for member in 0..tile {
+        for member in 0..arithmetic_members {
             if first_member + member < length {
                 let route =
                     map[map_first + MEMBERS + group * MAX_BATCH + first_member + member] as usize;
                 partials[partial_first + route * partial_stride + feature] =
-                    sums[(row * tile + member) * 16];
+                    sums[(row * arithmetic_members + member) * 16];
                 if feature == 0 {
                     status[status_first + MAX_ROUTES + route] = 1;
                 }
@@ -3411,6 +3827,7 @@ mod tests {
             shared_gate_up_factors: false,
             four_row_down: false,
             two_row_gate_up: false,
+            three_member_arithmetic: false,
         };
         assert_eq!(g.scratch_bytes(true).unwrap(), 4480 * 1024);
     }
@@ -6136,6 +6553,7 @@ mod tests {
     include!("iq_gate_up_factor_tests.rs");
     include!("down_four_row_tests.rs");
     include!("gate_up_two_row_tests.rs");
+    include!("three_member_arithmetic_tests.rs");
 }
 #[cfg(test)]
 mod frozen_source_tests {
