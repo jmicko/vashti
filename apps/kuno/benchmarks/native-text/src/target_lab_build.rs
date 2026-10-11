@@ -91,6 +91,39 @@ pub(crate) fn frozen_gu_integer(
     }
 }
 
+pub(crate) fn frozen_gu_stride_four(
+    raw: Option<&OsStr>,
+    integer: bool,
+) -> Result<bool, &'static str> {
+    match raw {
+        None => Ok(false),
+        Some(value) if value == "four-public" && integer => Ok(true),
+        _ => Err("four-stride GU requires canonical selected public integer math"),
+    }
+}
+
+pub(crate) fn frozen_gu_stride_four_record(
+    selected: bool,
+    actual: bool,
+    integer_actual: bool,
+    integer_dispatches: u64,
+    stride_dispatches: u64,
+) -> Result<serde_json::Value, &'static str> {
+    if selected != actual
+        || if selected {
+            !integer_actual
+                || integer_dispatches == 0
+                || !integer_dispatches.is_multiple_of(240)
+                || stride_dispatches != integer_dispatches
+        } else {
+            stride_dispatches != 0
+        }
+    {
+        return Err("four-stride GU actual joined dispatch receipt rejected");
+    }
+    Ok(serde_json::json!({"gu_dispatches":stride_dispatches}))
+}
+
 /// These are completed source-specific counts, never requested settings or
 /// generic projection dispatches. Every accepted target batch visits 48 layers.
 pub(crate) fn frozen_gu_integer_record(
@@ -217,6 +250,47 @@ pub(crate) fn name(inline: bool) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn frozen_gu_stride_four_controller_flag_requires_canonical_integer_dependency() {
+        for integer in [false, true] {
+            assert_eq!(frozen_gu_stride_four(None, integer), Ok(false));
+            for raw in ["four-public", "four", "true", "", "four-public "] {
+                assert_eq!(
+                    frozen_gu_stride_four(Some(OsStr::new(raw)), integer).is_ok(),
+                    integer && raw == "four-public"
+                );
+            }
+        }
+    }
+    #[test]
+    fn frozen_gu_stride_four_controller_receipt_requires_actual_complete_integer_dispatches() {
+        assert_eq!(
+            frozen_gu_stride_four_record(false, false, false, 0, 0).unwrap(),
+            serde_json::json!({"gu_dispatches":0})
+        );
+        assert!(frozen_gu_stride_four_record(false, false, true, 240, 0).is_ok());
+        for dispatches in [240, 480, 17760] {
+            assert_eq!(
+                frozen_gu_stride_four_record(true, true, true, dispatches, dispatches).unwrap(),
+                serde_json::json!({"gu_dispatches":dispatches})
+            );
+        }
+        for (selected, actual, integer, dispatches, stride) in [
+            (true, false, true, 240, 240),
+            (false, true, true, 240, 240),
+            (true, true, false, 240, 240),
+            (true, true, true, 0, 0),
+            (true, true, true, 239, 239),
+            (true, true, true, 240, 239),
+            (true, true, true, 240, 241),
+            (false, false, true, 240, 1),
+        ] {
+            assert!(
+                frozen_gu_stride_four_record(selected, actual, integer, dispatches, stride)
+                    .is_err()
+            );
+        }
+    }
     #[test]
     fn frozen_gu_integer_controller_flag_is_canonical_and_default_off() {
         for scope in [false, true] {
