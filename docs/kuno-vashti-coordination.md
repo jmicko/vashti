@@ -3367,3 +3367,32 @@ Do not enable these candidates for ordinary inference, widen tolerances or
 represent requested flags as actual execution. No30tokens/s/API/install/release
 acceptance; canonical Vashti and installed services unchanged. Required Vashti
 changes:none.
+
+### Active native GU scheduling and MTP comparison,2026-10-11 16:12UTC
+
+Latest physical sourceaa4df8c/v158 passes unchanged originalCPU13, targetgreedy,
+real repair, full1381MAIN/828932096B and432HOST-page/36147609600B closure,
+all draft/source closure and physical recovery. Explicit two-residual-Q8/eight
+lane GU normal compiler-idle code200 is8.642210continuationt/s:
+199/23.026516602s,130/138drafts/69rounds. Actual3552 preparations/17760GUcalls/
+3552audits join full native completion. No same-artifact original-math control
+or dramatic gain claimed; defaultoff. See v158_frozen_gu_integer_physical.
+Last recovery16:00:31UTC: B70baseline50688000B,NVIDIAcompute0,allHTTP200,
+idle/unpaused/no recovery and no classifiedGPUfaults, same boot.
+
+Later integrated source-only encoded-register preparationb4b20f9 and
+GUstride leaf/parent50d423d/febf8df/e5182f0 plus controller853e0e0 pass24
+combined focused checks and independent read-only review. Guard124Python
+checks and three external fixed stride labels pass. The alternative GU grid
+reduces12000→1600workgroups/layer while preserving original runtime routes,
+all scratch/owner limits and actual joined five-source receipts. Read the
+frozen GU integer/stride leaf, parent and controller specifications. Fresh
+artifact original GPU gate and same-artifact language timings remain required;
+source success is not physical acceptance. Root owns sharedGPU/services.
+
+The user requested measuring whether slow-slot NVIDIA MTP is a net cost.
+An isolated real target-only language controller is being prepared: it must
+not open or instantiate the draft nor select NVIDIA, and must execute actual
+single-token original target passes and full closure. No target-only speed or
+30tokens/s acceptance yet. Backend-only lab: canonicalVashti, installedservices
+and publicAPI unchanged, required Vashti changes:none. No release/install.

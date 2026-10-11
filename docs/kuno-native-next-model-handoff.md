@@ -5,7 +5,19 @@ Canonical Vashti/public APIs/installed services remain unchanged. Work checkout
 is `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
 `codex/kuno-native-text`. Required Vashti changes:none.
 
-Latest full physical source is21d97e2/v157, frozen binarySHA256
+Latest full physical source isaa4df8c/v158, frozen binarySHA256
+`a5c43b2a78bf4c7fbc8355bb9b912185a4e9ca53b4786e4e240eb7f8913ab408`.
+The explicit two-residual-Q8/eight-lane frozen GU candidate passes unchanged
+original CPU13 vectors/carries/targetgreedy, real repair, full1381 target MAIN
+owners/828932096B,432 HOST pages/36147609600B freed, all draft/source closure and
+physical recovery. Its compiler-idle normalcode200 is8.642210 continuationt/s,
+199/23.026516602s,130/138drafts/69rounds. Draft4.968547350s,
+verification16.263308694s,repair1.774728855s; actual GU3552 preparations,
+17760 dispatches and3552 full-owner audits. Warm12-token5.450663 is diagnostic
+only. No same-artifact original-math control or dramatic gain is established.
+See receipt `v158_frozen_gu_integer_physical`. Defaults remain unchanged.
+
+Previous full physical source is21d97e2/v157, frozen binarySHA256
 `a483e3f6aefb4ea74cda20457d17bf7bb240c18ff50cd67a3e7ae646ab91df44`.
 The pinned40525-row English/code Q8 draft head passes unchanged full CPU13
 vectors/carries/targetgreedy, real repair, all42 draft private owners,1380 target
@@ -20,18 +32,23 @@ source/model/helper hashes, all results and recovery are in receipt section
 production acceptance. Original map262144B owning charge,40525 rows and public
 SHA256369151522226a5edaa5f12cfd1e2ae7db8f4fbdbd222f3dcf327dced9597fb25 are required.
 
-Next integrated source-only candidate is frozen GU integer preparation/eight-lane
+Accepted source scope for frozen GU integer preparation/eight-lane
 projection: ownerprechargee655f32, leaf13c276c, limitfixfb7c528, parent9f80c33
 (original agent commitsd68f80d/40bddbb/1657abe/e10e9fb). One full64KiB private owner
 and independent HOST/INFO/runtime precharges retain original MAP/weight pages,
 DOWN and all-family completion. Actual1 preparation:5 GUlaunches:1 owneraudit
 must join deferred actual original routing acceptance. This is explicitly
 alternate two-residual-Q8 activation/eight-lane arithmetic; packed oracle tests
-are NOT originalF32 equivalence. Unchanged original CPU13/greedy/repair must
-accept before normal speed. Read the frozen GU leaf and parent contracts.
-Root fixed-public controller/launcher integration and frozen artifact are in
-progress; no GU GPU/throughput acceptance yet. Future source-only followups
-prepare packed weight headers once and bound idle group dispatches separately.
+are NOT originalF32 equivalence; the unchanged original CPU13/greedy/repair
+physically passes v158 as above. Read the frozen GU leaf/parent/controller
+contracts. Integrated source-only followups cache encoded weight chunks once
+in registers(b4b20f9) and add immutable four-group GU scheduling
+(50d423d/febf8df/e5182f0/853e0e0). Combined source tests and read-only review
+pass, but these later changes need a fresh original GPU gate and matched
+language timings. Root owns the guard/helper and all shared GPU work.
+Target-only language decoding is being prepared to measure MTP's actual net
+benefit without opening the sidecar or selecting NVIDIA; no target-only speed
+claim yet. Backend-only changes, no public API or Vashti work.
 
 Earlier e16c549/v156 ThreeGdn full gates pass at8.489327 normalcode200; control
 8.542111 may overlap agentClippy and is not a compiler-idle causal pair.
@@ -40,7 +57,7 @@ normal7.949402 establishes no speed gain. Three-member8.094793, staging7.870304
 also pass full physical gates and remain default-off. v150 ordered4DOWN/shared
 head8.119520 control /8.484726 candidate is preliminary, not repeatedABBA.
 
-Last recovered host2026-10-11T15:42:52.097951UTC: same boot, B70baseline50688000B,
+Last recovered host2026-10-11T16:00:31.332324UTC: same boot, B70baseline50688000B,
 NVIDIA compute0, unpaused idle/no recovery, HTTP200 for allthree services, GPU
 faults0. This is a historical snapshot, not future availability.
 No30tokens/s, independentCPU200 or private/production acceptance. No runtime

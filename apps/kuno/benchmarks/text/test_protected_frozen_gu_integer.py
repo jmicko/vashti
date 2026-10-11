@@ -84,6 +84,22 @@ class FrozenGuIntegerAdmission(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     GUARD.memory_limit(base, wrong)
 
+    def test_stride_is_explicit_and_requires_complete_integer_scope(self):
+        for fixture in ("warm-cpu13", "first-code", "warm-prose"):
+            base, arguments, cap = self.scope(fixture)
+            candidate = dict(base, KUNO_LAB_FROZEN_GU_SCHEDULE="four-public")
+            self.assertEqual(GUARD.memory_limit(candidate, arguments), cap)
+            self.assertNotIn("KUNO_LAB_FROZEN_GU_SCHEDULE", GUARD.selected_target_policy(candidate, mtp=True))
+            for wrong in ("", "4", "four", "four-public ", "FOUR-PUBLIC"):
+                with self.assertRaises(ValueError):
+                    GUARD.memory_limit(dict(candidate, KUNO_LAB_FROZEN_GU_SCHEDULE=wrong), arguments)
+            missing = dict(candidate)
+            del missing["KUNO_LAB_FROZEN_GU_MATH"]
+            with self.assertRaises(ValueError):
+                GUARD.memory_limit(missing, arguments)
+            with self.assertRaises(ValueError):
+                GUARD.selected_target_policy(candidate, mtp=False)
+
 
 if __name__ == "__main__":
     unittest.main()

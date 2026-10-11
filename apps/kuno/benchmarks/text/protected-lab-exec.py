@@ -6,6 +6,10 @@ import sys
 
 def selected_target_policy(environment, mtp=False):
     selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
+    if "KUNO_LAB_FROZEN_GU_SCHEDULE" in selected:
+        frozen_gu_integer_scope(environment)
+        if not mtp or selected.pop("KUNO_LAB_FROZEN_GU_SCHEDULE") != "four-public":
+            raise ValueError("GU scheduling requires canonical fixed public integer scope")
     if "KUNO_LAB_FROZEN_GU_MATH" in selected:
         frozen_gu_integer_scope(environment)
         if not mtp or selected.pop("KUNO_LAB_FROZEN_GU_MATH") != "integer-public":
@@ -126,7 +130,7 @@ def selected_target_policy(environment, mtp=False):
     return selected
 
 def frozen_gu_integer_scope(environment):
-    if "KUNO_LAB_FROZEN_GU_MATH" not in environment:
+    if not any(key in environment for key in ("KUNO_LAB_FROZEN_GU_MATH", "KUNO_LAB_FROZEN_GU_SCHEDULE")):
         return
     spec = environment.get("KUNO_LAB_SPECULATIVE_PUBLIC_ONLY") == "1"
     language = environment.get("KUNO_LAB_LANGUAGE_PUBLIC_ONLY") == "1"
@@ -150,6 +154,7 @@ def frozen_gu_integer_scope(environment):
         "KUNO_LAB_TARGET_MOE", "KUNO_LAB_MTP_PROFILE", "KUNO_LAB_MTP_VOCAB",
     )
     if (any(environment.get(key) != value for key, value in required.items())
+            or environment.get("KUNO_LAB_FROZEN_GU_SCHEDULE") not in (None, "four-public")
             or spec == language
             or spec and environment.get("KUNO_LAB_WARM_REPLAY") != "once"
             or environment.get("KUNO_LAB_MTP_Q8_HEAD") not in (None, "shared-public")
