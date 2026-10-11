@@ -2464,10 +2464,66 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         gu_stride_four: bool,
         cancel: &AtomicBool,
     ) -> Result<crate::public_host_expert_attachment::Attachment<'plan, 'm, 'f>> {
+        // SAFETY: unchanged verified caller contract; default DOWN schedule.
+        unsafe {
+            self.attach_public_host_sources_with_schedules(
+                executor,
+                prepared,
+                device,
+                reserved,
+                inactive_partition_exit,
+                private_tables,
+                workgroup_tables,
+                shared_down_scales,
+                shared_gate_up_factors,
+                four_row_down,
+                two_row_gate_up,
+                packed_host_staging,
+                three_members,
+                gu_integer,
+                gu_stride_four,
+                false,
+                cancel,
+            )
+        }
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) unsafe fn attach_public_host_sources_with_schedules<'plan>(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+        prepared: &'plan crate::public_host_expert_attachment::PreparedPlan<'m, 'f>,
+        device: &wgpu::Device,
+        reserved: u64,
+        inactive_partition_exit: bool,
+        private_tables: bool,
+        workgroup_tables: bool,
+        shared_down_scales: bool,
+        shared_gate_up_factors: bool,
+        four_row_down: bool,
+        two_row_gate_up: bool,
+        packed_host_staging: bool,
+        three_members: bool,
+        gu_integer: bool,
+        gu_stride_four: bool,
+        down_stride_four: bool,
+        cancel: &AtomicBool,
+    ) -> Result<crate::public_host_expert_attachment::Attachment<'plan, 'm, 'f>> {
         u::cancel(cancel)?;
         batch_moe::frozen_sources::Sources::validate_gu_schedule_policy(
             gu_integer,
             gu_stride_four,
+        )?;
+        batch_moe::frozen_sources::Sources::validate_down_stride_four_policy(
+            down_stride_four,
+            inactive_partition_exit,
+            four_row_down,
+            private_tables,
+            workgroup_tables,
+            shared_down_scales,
+            shared_gate_up_factors,
+            packed_host_staging,
+            three_members,
+            two_row_gate_up,
         )?;
         if self.poisoned
             || self.retired.load(Ordering::Acquire)
@@ -2481,12 +2537,12 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         let native = self.native_batch.as_ref().ok_or(error())?;
         if !native.public_frozen_host_sources
             || native.moe.frozen_host_sources_enabled()
-            || gu_integer
+            || (gu_integer || down_stride_four)
                 && (native.target_rows.is_none()
                     || !native.latest_target_checkpoint_reserved
                     || native.public_target_request_io.is_some()
                         == native.public_language_request_io.is_some()
-                    || !executor.target_frozen_gu_integer_reserved
+                    || (gu_integer && !executor.target_frozen_gu_integer_reserved)
                     || !executor.target_verify3_dense
                     || !executor.target_verify3_fused
                     || !executor.token_io_checkpoint
@@ -2517,7 +2573,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         // SAFETY: fixed-public caller verified original source hashes and
         // immutability. All actual bank/family/device checks above precede import.
         unsafe {
-            prepared.attach_with_gu_schedule(
+            prepared.attach_with_schedules(
                 device,
                 self.arena.client().map_err(u::fault)?,
                 executor,
@@ -2535,6 +2591,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 three_members,
                 gu_integer,
                 gu_stride_four,
+                down_stride_four,
                 cancel,
             )
         }
@@ -2668,6 +2725,18 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             return Err(error());
         }
         native.moe.frozen_host_source_gu_stride_four()
+    }
+    #[allow(dead_code)] // Root owns the public controller opt-in/receipt.
+    pub(crate) fn native_frozen_source_down_stride_four(
+        &self,
+        executor: &GpuExecutor<'_>,
+    ) -> Result<bool> {
+        self.completed_native_projection_boundary(executor)?;
+        let native = self.native_batch.as_ref().ok_or(error())?;
+        if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
+            return Err(error());
+        }
+        native.moe.frozen_host_source_down_stride_four()
     }
     pub(crate) fn native_frozen_source_packed_staging(
         &self,

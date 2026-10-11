@@ -228,6 +228,7 @@ pub(crate) struct Sources {
     packed_host_staging: bool,
     gu_integer: bool,
     gu_stride_four: bool,
+    down_stride_four: bool,
 }
 fn initial_metadata(layers: usize, pages: usize, banks: usize) -> Result<usize> {
     let bytes = std::mem::size_of::<Sources>()
@@ -451,6 +452,34 @@ impl Sources {
         }
         Ok(())
     }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn validate_down_stride_four_policy(
+        selected: bool,
+        exit: bool,
+        four_rows: bool,
+        private: bool,
+        workgroup: bool,
+        scales: bool,
+        factors: bool,
+        staging: bool,
+        three_members: bool,
+        paired_gu: bool,
+    ) -> Result<()> {
+        if selected
+            && (!exit
+                || !four_rows
+                || private
+                || workgroup
+                || scales
+                || factors
+                || staging
+                || three_members
+                || paired_gu)
+        {
+            return Err(reject());
+        }
+        Ok(())
+    }
     pub(crate) fn validate_staging_policy(
         selected: bool,
         inactive_partition_exit: bool,
@@ -584,7 +613,59 @@ impl Sources {
         gu_integer: bool,
         gu_stride_four: bool,
     ) -> Result<Arc<Self>> {
+        Self::new_with_policy_and_schedules(
+            executor,
+            graph,
+            plan,
+            pages,
+            reserved_host_bytes,
+            inactive_partition_exit,
+            private_tables,
+            workgroup_tables,
+            shared_down_scales,
+            shared_gate_up_factors,
+            four_row_down,
+            two_row_gate_up,
+            packed_host_staging,
+            three_members,
+            gu_integer,
+            gu_stride_four,
+            false,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_with_policy_and_schedules(
+        executor: &GpuExecutor<'_>,
+        graph: BoundGraph<'_, '_>,
+        plan: &plan::Plan<'_, '_>,
+        pages: Vec<RegisteredPage>,
+        reserved_host_bytes: u64,
+        inactive_partition_exit: bool,
+        private_tables: bool,
+        workgroup_tables: bool,
+        shared_down_scales: bool,
+        shared_gate_up_factors: bool,
+        four_row_down: bool,
+        two_row_gate_up: bool,
+        packed_host_staging: bool,
+        three_members: bool,
+        gu_integer: bool,
+        gu_stride_four: bool,
+        down_stride_four: bool,
+    ) -> Result<Arc<Self>> {
         Self::validate_gu_schedule_policy(gu_integer, gu_stride_four)?;
+        Self::validate_down_stride_four_policy(
+            down_stride_four,
+            inactive_partition_exit,
+            four_row_down,
+            private_tables,
+            workgroup_tables,
+            shared_down_scales,
+            shared_gate_up_factors,
+            packed_host_staging,
+            three_members,
+            two_row_gate_up,
+        )?;
         Self::validate_kernel_policies(
             inactive_partition_exit,
             private_tables,
@@ -623,7 +704,7 @@ impl Sources {
             three_members,
         )?;
         if gu_integer != executor.target_frozen_gu_integer_reserved
-            || gu_integer
+            || (gu_integer || down_stride_four)
                 && (!executor.target_frozen_host_router_reserved
                     || !executor.target_batch_router_reserved
                     || !executor.target_rows_reserved
@@ -858,6 +939,7 @@ impl Sources {
             packed_host_staging,
             gu_integer,
             gu_stride_four,
+            down_stride_four,
         }))
     }
     pub(crate) fn gu_integer(&self) -> bool {
@@ -865,6 +947,9 @@ impl Sources {
     }
     pub(crate) fn gu_stride_four(&self) -> bool {
         self.gu_stride_four
+    }
+    pub(crate) fn down_stride_four(&self) -> bool {
+        self.down_stride_four
     }
     pub(crate) fn three_members(&self) -> bool {
         self.layers[0].geometry.three_member_arithmetic()
@@ -1089,6 +1174,7 @@ impl Sources {
             || staging.is_some() && router.len() != 3
             || self.gu_integer != gu_integer.is_some()
             || gu_integer.is_some() && (router.len() != 3 || staging.is_some())
+            || self.down_stride_four && router.len() != 3
         {
             return Err(reject());
         }
@@ -1294,6 +1380,29 @@ impl GuIntegerDispatch {
         Ok(())
     }
 }
+#[derive(Clone, Copy)]
+struct DownStrideFourDispatch {
+    layer: usize,
+    count: usize,
+    dispatches: u64,
+}
+impl DownStrideFourDispatch {
+    fn validate(self, layer: usize, count: usize) -> Result<()> {
+        if self.layer != layer
+            || layer >= 48
+            || self.count != count
+            || !(1..=3).contains(&count)
+            || self.dispatches != 5
+        {
+            return Err(reject());
+        }
+        Ok(())
+    }
+}
+struct SourceLaunch {
+    gu_integer: Option<GuIntegerDispatch>,
+    down_stride_four: Option<DownStrideFourDispatch>,
+}
 pub(super) struct Proof {
     pub(super) source: Arc<Sources>,
     pairs: Zeroizing<[(u32, u32); 30]>,
@@ -1302,6 +1411,7 @@ pub(super) struct Proof {
     vram: u64,
     host: u64,
     gu_integer_launch: Option<GuIntegerDispatch>,
+    down_stride_four_launch: Option<DownStrideFourDispatch>,
     pub(super) router_owners: Option<Zeroizing<[BufferId; 3]>>,
 }
 impl Drop for Proof {
@@ -1309,6 +1419,7 @@ impl Drop for Proof {
         self.vram.zeroize();
         self.host.zeroize();
         self.gu_integer_launch = None;
+        self.down_stride_four_launch = None;
     }
 }
 impl Proof {
@@ -1337,6 +1448,7 @@ impl Proof {
             vram: 0,
             host: 0,
             gu_integer_launch: None,
+            down_stride_four_launch: None,
             router_owners: None,
         };
         for (i, &expert) in union.protected_experts().iter().enumerate() {
@@ -1371,6 +1483,7 @@ impl Proof {
             vram: 0,
             host: 0,
             gu_integer_launch: None,
+            down_stride_four_launch: None,
             router_owners: Some(Zeroizing::new(router_owners)),
         })
     }
@@ -1385,6 +1498,25 @@ impl Proof {
         if let Some(receipt) = receipt {
             receipt.validate(layer, *self.count, self.source.gu_stride_four)?;
             self.gu_integer_launch = Some(receipt);
+        }
+        Ok(())
+    }
+    fn record_down_stride_four_launch(
+        &mut self,
+        layer: usize,
+        receipt: Option<DownStrideFourDispatch>,
+    ) -> Result<()> {
+        if self.down_stride_four_launch.is_some()
+            || self.source.down_stride_four != receipt.is_some()
+        {
+            return Err(reject());
+        }
+        if let Some(receipt) = receipt {
+            receipt.validate(layer, *self.count)?;
+            if self.router_owners.is_none() {
+                return Err(reject());
+            }
+            self.down_stride_four_launch = Some(receipt);
         }
         Ok(())
     }
@@ -1444,6 +1576,15 @@ impl Proof {
         if let Some(receipt) = self.gu_integer_launch {
             receipt.validate(layer, *self.count, self.source.gu_stride_four)?;
         }
+        if self.source.down_stride_four != self.down_stride_four_launch.is_some() {
+            return Err(reject());
+        }
+        if let Some(receipt) = self.down_stride_four_launch {
+            receipt.validate(layer, *self.count)?;
+            if self.router_owners.is_none() {
+                return Err(reject());
+            }
+        }
         if *self.len == 0
             || *self.len > 30
             || !(1..=3).contains(&*self.count)
@@ -1498,6 +1639,23 @@ fn gu_stride_four_completed_flag(
     }
     Ok(selected)
 }
+fn down_stride_four_completed_flag(
+    selected: bool,
+    layers: u64,
+    dispatches: u64,
+    source_dispatches: u64,
+) -> Result<bool> {
+    if if selected {
+        layers == 0
+            || layers.checked_mul(5) != Some(dispatches)
+            || layers.checked_mul(10) != Some(source_dispatches)
+    } else {
+        layers != 0 || dispatches != 0
+    } {
+        return Err(reject());
+    }
+    Ok(selected)
+}
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct Counters {
     pub vram_routes: u64,
@@ -1507,6 +1665,8 @@ pub(crate) struct Counters {
     pub gu_integer_dispatches: u64,
     pub gu_stride_four_dispatches: u64,
     pub gu_integer_audits: u64,
+    pub down_stride_four_layers: u64,
+    pub down_stride_four_dispatches: u64,
     pub staging_dispatches: u64,
     pub staged_unique_host_groups: u64,
     pub staged_packed_bytes: u64,
@@ -1522,6 +1682,14 @@ impl Counters {
             _ => return Err(reject()),
         };
         let stride_four = p.gu_integer_launch.map_or(0, |r| r.stride_four_dispatches);
+        let down_stride_four = match p.down_stride_four_launch {
+            Some(receipt) if p.source.down_stride_four && p.router_owners.is_some() => {
+                receipt.validate(layer, *p.count)?;
+                receipt.dispatches
+            }
+            None if !p.source.down_stride_four => 0,
+            _ => return Err(reject()),
+        };
         let (groups, bytes) = if p.source.packed_host_staging {
             let geometry = p.source.layers.get(layer).ok_or_else(reject)?.geometry;
             let groups = p.pairs[..*p.len]
@@ -1568,6 +1736,14 @@ impl Counters {
             gu_integer_audits: self
                 .gu_integer_audits
                 .checked_add(u64::from(gu != 0))
+                .ok_or(Error::ArithmeticOverflow)?,
+            down_stride_four_layers: self
+                .down_stride_four_layers
+                .checked_add(u64::from(down_stride_four != 0))
+                .ok_or(Error::ArithmeticOverflow)?,
+            down_stride_four_dispatches: self
+                .down_stride_four_dispatches
+                .checked_add(down_stride_four)
                 .ok_or(Error::ArithmeticOverflow)?,
             source_dispatches: self
                 .source_dispatches
@@ -1674,6 +1850,16 @@ impl Workspace {
             counters.gu_stride_four_dispatches,
         )
     }
+    pub(crate) fn frozen_host_source_down_stride_four(&self) -> Result<bool> {
+        let source = self.frozen_sources.as_ref().ok_or_else(reject)?;
+        let counters = self.frozen_source_counters;
+        down_stride_four_completed_flag(
+            source.down_stride_four(),
+            counters.down_stride_four_layers,
+            counters.down_stride_four_dispatches,
+            counters.source_dispatches,
+        )
+    }
     pub(crate) fn frozen_host_source_packed_staging(&self) -> Result<bool> {
         Ok(self
             .frozen_sources
@@ -1696,6 +1882,18 @@ impl Workspace {
     ) -> Result<()> {
         self.validate_public_warm_boundary(executor, graph, arena)?;
         Sources::validate_gu_schedule_policy(sources.gu_integer(), sources.gu_stride_four())?;
+        Sources::validate_down_stride_four_policy(
+            sources.down_stride_four(),
+            sources.inactive_partition_exit(),
+            sources.four_row_down(),
+            sources.private_tables(),
+            sources.workgroup_tables(),
+            sources.shared_down_scales(),
+            sources.shared_gate_up_factors(),
+            sources.packed_host_staging(),
+            sources.three_members(),
+            sources.two_row_gate_up(),
+        )?;
         if self.frozen_sources.is_some()
             || self.batch_router.is_some()
                 && (!self.frozen_host_batch_router_reserved()
@@ -1711,6 +1909,7 @@ impl Workspace {
             || sources.gu_integer() != self.frozen_gu_integer.is_some()
             || sources.gu_integer() != executor.target_frozen_gu_integer_reserved
             || sources.gu_integer() && !self.frozen_host_batch_router_reserved()
+            || sources.down_stride_four() && !self.frozen_host_batch_router_reserved()
             || sources.packed_host_staging() && !self.frozen_host_batch_router_reserved()
             || sources.three_members() && !self.frozen_host_batch_router_reserved()
             || sources.binding != self.binding
@@ -1895,7 +2094,7 @@ impl GpuExecutor<'_> {
             )?;
             // Fixed maximum union only schedules work. Each original kernel
             // consumes the actual GPU MAP group/rank header, never forced IDs.
-            let integer_launch = source.launch(
+            let source_launch = source.launch(
                 arena,
                 layer,
                 bank,
@@ -1908,7 +2107,8 @@ impl GpuExecutor<'_> {
                 views.count(),
                 s.stamp.fault,
             )?;
-            proof.record_gu_integer_launch(layer, integer_launch)?;
+            proof.record_gu_integer_launch(layer, source_launch.gu_integer)?;
+            proof.record_down_stride_four_launch(layer, source_launch.down_stride_four)?;
             launch_finite_for_count(arena, g, &spans, &ids, views.count())?;
             fold(
                 arena,
@@ -2183,7 +2383,7 @@ impl Sources {
         gu_integer: Option<BufferId>,
         count: usize,
         fault: BufferId,
-    ) -> Result<Option<GuIntegerDispatch>> {
+    ) -> Result<SourceLaunch> {
         let l = self.check_layer(layer, bank)?;
         if self.packed_host_staging != staging.is_some()
             || g != l.geometry
@@ -2193,6 +2393,9 @@ impl Sources {
             return Err(reject());
         }
         Self::validate_gu_schedule_policy(self.gu_integer, self.gu_stride_four)?;
+        if self.down_stride_four && (groups != 30 || !(1..=3).contains(&count)) {
+            return Err(reject());
+        }
         let [gate, up, down] = g.projections();
         let client = arena.client().map_err(u::fault)?;
         let integer_handles = if let Some(scratch) = gu_integer {
@@ -2214,6 +2417,7 @@ impl Sources {
         };
         let mut integer_dispatches = 0u64;
         let mut stride_four_dispatches = 0u64;
+        let mut down_stride_four_dispatches = 0u64;
         for shard in 0..5 {
             let ga = &l.pages[shard];
             let up_page = &l.pages[5 + shard];
@@ -2402,29 +2606,67 @@ impl Sources {
                     }
                 }
             }
-            match down {
-                DownKernel::ThreeMembers => dispatch_down!(grouped_down_frozen_three_members),
-                DownKernel::FourRowsThreeMembers => {
-                    dispatch_down!(grouped_down_frozen_four_rows_three_members)
+            if self.down_stride_four {
+                if down != DownKernel::FourRows || staged_shard {
+                    return Err(reject());
                 }
-                DownKernel::StagedThreeMembers => {
-                    dispatch_down!(grouped_down_frozen_staged_three_members)
+                // Same original source handles/runtime addresses and INFO; only
+                // the distinct entry/grid changes. Credit follows enqueue.
+                unsafe {
+                    k::grouped_down_frozen_four_rows_stride_four::launch_unchecked::<WgpuRuntime>(
+                        client,
+                        CubeCount::Static(640, 4, 1),
+                        CubeDim::new_1d(64),
+                        ArrayArg::from_raw_parts(down_handle.clone(), down_words),
+                        arg(arena, ids[ACT])?,
+                        arg(arena, ids[MAP])?,
+                        arg(arena, ids[PART])?,
+                        arg(arena, ids[STATUS])?,
+                        s.map_first(),
+                        s.act_first(),
+                        s.act_stride(),
+                        s.partial_first(),
+                        s.partial_stride(),
+                        s.status_first(),
+                        FIRST[shard],
+                        PARTS[shard],
+                        g.hidden(),
+                        g.ff(),
+                        g.projections()[2].dtype(),
+                        g.projections()[2].row_bytes(),
+                        g.tile(),
+                    );
                 }
-                DownKernel::StagedFourRowsThreeMembers => {
-                    dispatch_down!(grouped_down_frozen_staged_four_rows_three_members)
-                }
-                DownKernel::Original => dispatch_down!(grouped_down),
-                DownKernel::StagedFrozen => dispatch_down!(grouped_down_frozen_staged),
-                DownKernel::StagedFourRows => dispatch_down!(grouped_down_frozen_staged_four_rows),
-                DownKernel::Frozen => dispatch_down!(grouped_down_frozen),
-                DownKernel::SharedScales => dispatch_down!(grouped_down_frozen_shared_scales),
-                DownKernel::FourRows => dispatch_down!(grouped_down_frozen_four_rows),
-                DownKernel::FourRowsSharedScales => {
-                    dispatch_down!(grouped_down_frozen_four_rows_shared_scales)
+                down_stride_four_dispatches = down_stride_four_dispatches
+                    .checked_add(1)
+                    .ok_or(Error::ArithmeticOverflow)?;
+            } else {
+                match down {
+                    DownKernel::ThreeMembers => dispatch_down!(grouped_down_frozen_three_members),
+                    DownKernel::FourRowsThreeMembers => {
+                        dispatch_down!(grouped_down_frozen_four_rows_three_members)
+                    }
+                    DownKernel::StagedThreeMembers => {
+                        dispatch_down!(grouped_down_frozen_staged_three_members)
+                    }
+                    DownKernel::StagedFourRowsThreeMembers => {
+                        dispatch_down!(grouped_down_frozen_staged_four_rows_three_members)
+                    }
+                    DownKernel::Original => dispatch_down!(grouped_down),
+                    DownKernel::StagedFrozen => dispatch_down!(grouped_down_frozen_staged),
+                    DownKernel::StagedFourRows => {
+                        dispatch_down!(grouped_down_frozen_staged_four_rows)
+                    }
+                    DownKernel::Frozen => dispatch_down!(grouped_down_frozen),
+                    DownKernel::SharedScales => dispatch_down!(grouped_down_frozen_shared_scales),
+                    DownKernel::FourRows => dispatch_down!(grouped_down_frozen_four_rows),
+                    DownKernel::FourRowsSharedScales => {
+                        dispatch_down!(grouped_down_frozen_four_rows_shared_scales)
+                    }
                 }
             }
         }
-        if let Some((_, scratch)) = integer_handles {
+        let gu_integer = if let Some((_, scratch)) = integer_handles {
             crate::quant_matvec::frozen_gu_integer::audit(
                 client,
                 scratch,
@@ -2438,15 +2680,133 @@ impl Sources {
                 stride_four_dispatches,
             };
             receipt.validate(layer, count, self.gu_stride_four)?;
-            Ok(Some(receipt))
+            Some(receipt)
         } else {
-            Ok(None)
-        }
+            None
+        };
+        let down_stride_four = if self.down_stride_four {
+            let receipt = DownStrideFourDispatch {
+                layer,
+                count,
+                dispatches: down_stride_four_dispatches,
+            };
+            receipt.validate(layer, count)?;
+            Some(receipt)
+        } else {
+            None
+        };
+        Ok(SourceLaunch {
+            gu_integer,
+            down_stride_four,
+        })
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn down_stride_four_policy_requires_four_rows_and_rejects_every_competing_source_mode() {
+        for selected in [false, true] {
+            for bits in 0u16..512 {
+                assert_eq!(
+                    Sources::validate_down_stride_four_policy(
+                        selected,
+                        bits & 1 != 0,
+                        bits & 2 != 0,
+                        bits & 4 != 0,
+                        bits & 8 != 0,
+                        bits & 16 != 0,
+                        bits & 32 != 0,
+                        bits & 64 != 0,
+                        bits & 128 != 0,
+                        bits & 256 != 0,
+                    )
+                    .is_ok(),
+                    !selected || bits == 3
+                );
+            }
+        }
+        // GU arithmetic/scheduling remains an independent axis, including the
+        // original plain GU path; DOWN has no prepared activation owner.
+        for gu_integer in [false, true] {
+            for gu_stride_four in [false, true] {
+                assert_eq!(
+                    Sources::validate_gu_schedule_policy(gu_integer, gu_stride_four).is_ok(),
+                    !gu_stride_four || gu_integer
+                );
+                Sources::validate_down_stride_four_policy(
+                    true, true, true, false, false, false, false, false, false, false,
+                )
+                .unwrap();
+            }
+        }
+    }
+    #[test]
+    fn down_stride_four_completed_flag_requires_actual_positive_five_per_layer() {
+        assert!(!down_stride_four_completed_flag(false, 0, 0, 480).unwrap());
+        assert!(down_stride_four_completed_flag(true, 1, 5, 10).unwrap());
+        assert!(down_stride_four_completed_flag(true, 48, 240, 480).unwrap());
+        for (layers, down, source) in [
+            (0, 0, 0),
+            (0, 5, 10),
+            (1, 4, 10),
+            (1, 6, 10),
+            (1, 5, 0),
+            (1, 5, 9),
+            (1, 5, 11),
+            (u64::MAX, u64::MAX, u64::MAX),
+        ] {
+            assert!(down_stride_four_completed_flag(true, layers, down, source).is_err());
+        }
+        for (layers, down) in [(1, 0), (0, 5), (1, 5)] {
+            assert!(down_stride_four_completed_flag(false, layers, down, 10).is_err());
+        }
+    }
+    #[test]
+    fn down_stride_four_actual_receipt_requires_exact_layer_count_and_all_five_sources() {
+        for layer in 0..48 {
+            for count in 1..=3 {
+                let receipt = DownStrideFourDispatch {
+                    layer,
+                    count,
+                    dispatches: 5,
+                };
+                receipt.validate(layer, count).unwrap();
+                assert!(receipt.validate((layer + 1) % 48, count).is_err());
+                assert!(receipt.validate(layer, count + 1).is_err());
+                for dispatches in [0, 1, 4, 6, 10] {
+                    assert!(
+                        DownStrideFourDispatch {
+                            dispatches,
+                            ..receipt
+                        }
+                        .validate(layer, count)
+                        .is_err()
+                    );
+                }
+            }
+        }
+        for count in [0, 4, 8] {
+            assert!(
+                DownStrideFourDispatch {
+                    layer: 0,
+                    count,
+                    dispatches: 5
+                }
+                .validate(0, count)
+                .is_err()
+            );
+        }
+        assert!(
+            DownStrideFourDispatch {
+                layer: 48,
+                count: 1,
+                dispatches: 5
+            }
+            .validate(48, 1)
+            .is_err()
+        );
+    }
     #[test]
     fn frozen_gu_integer_policy_rejects_every_conflict_and_keeps_original_down_geometry() {
         for selected in [false, true] {
