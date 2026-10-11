@@ -55,6 +55,7 @@ pub(crate) struct Inputs {
     pub(crate) frozen_gu_integer: bool,
     pub(crate) frozen_down_integer: bool,
     pub(crate) public_iq4_decoder: bool,
+    pub(crate) bank_fill: crate::executor::PublicHostBankFillPolicy,
     pub(crate) target_submission_backlog: cubecl_runtime::server::PublicTargetSubmissionBacklog,
     pub(crate) frozen_gu_stride_four: bool,
     pub(crate) frozen_down_stride_four: bool,
@@ -123,6 +124,7 @@ pub(crate) fn registration(
                     | "KUNO_LAB_FROZEN_GU_MATH"
                     | "KUNO_LAB_FROZEN_DOWN_MATH"
                     | "KUNO_LAB_TARGET_IQ4_DECODER"
+                    | "KUNO_LAB_FROZEN_BANK_FILL"
                     | "KUNO_LAB_TARGET_SUBMISSION_BACKLOG"
                     | "KUNO_LAB_FROZEN_GU_SCHEDULE"
                     | "KUNO_LAB_FROZEN_DOWN_SCHEDULE"
@@ -516,6 +518,35 @@ pub(crate) fn registration(
             && !live_member_reduction
             && !frozen_down_stride_four,
     )?;
+    let raw_bank_fill = values.remove(OsStr::new("KUNO_LAB_FROZEN_BANK_FILL"));
+    let bank_fill = crate::target_lab_build::public_host_bank_fill(
+        raw_bank_fill.as_deref(),
+        frozen_host_sources
+            && frozen_host_router
+            && frozen_partition_exit
+            && verify3_dense
+            && verify3_fused
+            && request_reuse
+            && chunk_io
+            && inline_dispatch
+            && public_existing_fill
+            && warm_replay
+            && mtp_device == crate::target_lab_build::MtpDevice::Intel
+            && fused_sweeps
+            && draft_profile == Profile::SelfContainedQ8
+            && !mtp_q8_head_broadcast
+            && !mtp_english_vocab
+            && !frozen_private_tables
+            && !frozen_workgroup_tables
+            && !frozen_shared_down_scales
+            && !frozen_shared_gate_up_factors
+            && !frozen_two_row_gate_up
+            && !frozen_packed_host_staging
+            && !frozen_three_members
+            && !preserve_routed_bank
+            && !prepared_experts
+            && !live_member_reduction,
+    )?;
     let raw_backlog = values.remove(OsStr::new("KUNO_LAB_TARGET_SUBMISSION_BACKLOG"));
     let target_submission_backlog = crate::target_lab_build::public_target_submission_backlog(
         raw_backlog.as_deref(),
@@ -625,6 +656,7 @@ pub(crate) fn registration(
         frozen_gu_integer,
         frozen_down_integer,
         public_iq4_decoder,
+        bank_fill,
         target_submission_backlog,
         frozen_gu_stride_four,
         frozen_down_stride_four,
@@ -966,6 +998,7 @@ pub(crate) fn run(
         let prepared_host = std::cell::OnceCell::new();
         let mut host_attachment = None;
         let mut host_setup = None;
+        let mut bank_fill_setup_experts = None;
         let mut target = ResidentModel::new_with_native_batch(
             graph.bound_graph(),
             client.clone(),
@@ -1003,6 +1036,18 @@ pub(crate) fn run(
                     {
                         return Err("speculative initial real cursor rejected".into());
                     }
+                    let expected_bank_fill = if replay == 1 {
+                        input.bank_fill
+                    } else {
+                        crate::executor::PublicHostBankFillPolicy::Original
+                    };
+                    let initial_bank_fill = target.native_frozen_source_bank_fill(&executor)?;
+                    let initial_prefill_bank_fill_receipt =
+                        crate::target_lab_build::public_host_bank_fill_record(
+                            expected_bank_fill,
+                            initial_bank_fill,
+                            bank_fill_setup_experts,
+                        )?;
                     let (initial_iq4_decoder, initial_iq4_dispatches) =
                         executor.public_target_iq4_decoder()?;
                     let initial_prefill_target_iq4_decoder_receipt =
@@ -1324,18 +1369,15 @@ pub(crate) fn run(
                         target.native_public_fill_counters(&executor)?;
                     let frozen_routes = if executor.target_frozen_host_source_identity.is_some() {
                         let counts = target.native_frozen_source_counters(&executor)?;
-                        // The canonical diagnostic placement must exercise both
-                        // actual source tiers. The explicit preserve variant
-                        // keeps the replay's actual routed residents; reading
-                        // every routed expert from VRAM is its measurement.
-                        let tiers_valid = if input.preserve_routed_bank {
-                            counts.vram_routes != 0
-                        } else {
-                            counts.host_routes != 0 && counts.vram_routes != 0
-                        };
-                        if !tiers_valid {
-                            return Err("public CPU13 actual source tier policy rejected".into());
-                        }
+                        // Ranked filler preserves the cold residents, so this
+                        // candidate can be all-hit. The unchanged original
+                        // diagnostic still requires actual HOST and VRAM work.
+                        crate::target_lab_build::public_host_bank_fill_tiers(
+                            expected_bank_fill,
+                            input.preserve_routed_bank,
+                            counts.vram_routes,
+                            counts.host_routes,
+                        )?;
                         Some(serde_json::json!({"vram_routes":counts.vram_routes,
                             "host_routes":counts.host_routes,"source_dispatches":counts.source_dispatches,"staging_dispatches":counts.staging_dispatches,"staged_unique_host_groups":counts.staged_unique_host_groups,"staged_packed_bytes":counts.staged_packed_bytes,"gu_integer_preparations":counts.gu_integer_preparations,"gu_integer_dispatches":counts.gu_integer_dispatches,"gu_integer_audits":counts.gu_integer_audits,"gu_stride_four_dispatches":counts.gu_stride_four_dispatches,"down_stride_four_layers":counts.down_stride_four_layers,"down_stride_four_dispatches":counts.down_stride_four_dispatches}))
                     } else {
@@ -1580,13 +1622,44 @@ pub(crate) fn run(
                     if actual_direct != input.public_existing_fill {
                         return Err("public fill frozen selection changed".into());
                     }
-                    let placement_scope = if input.preserve_routed_bank {
+                    let completed_bank_fill = target.native_frozen_source_bank_fill(&executor)?;
+                    let bank_fill_receipt = crate::target_lab_build::public_host_bank_fill_record(
+                        expected_bank_fill,
+                        completed_bank_fill,
+                        bank_fill_setup_experts,
+                    )?;
+                    if bank_fill_receipt != initial_prefill_bank_fill_receipt {
+                        return Err("public bank filler immutable setup receipt changed".into());
+                    }
+                    let placement_scope = if expected_bank_fill
+                        == crate::executor::PublicHostBankFillPolicy::StrataRankedFiller
+                    {
+                        "preserved actual residents with fixed public profile-ranked empty-slot filler"
+                    } else if input.preserve_routed_bank {
                         "preserved actual routed VRAM resident set"
                     } else {
                         "deterministic diagnostic VRAM placement"
                     };
                     let mut record = serde_json::json!({"replay":replay,"device_router":(input.device_router || input.frozen_host_router) && replay == 1,"frozen_host_gpu_router":input.frozen_host_router && replay == 1,"frozen_host_inactive_partition_exit":frozen_partition_exit,"frozen_host_private_tables":frozen_private_tables,"frozen_host_workgroup_tables":frozen_workgroup_tables,"frozen_host_shared_down_scales":frozen_shared_down_scales,"frozen_host_shared_gate_up_factors":frozen_shared_gate_up_factors,"mtp_q8_head_broadcast":mtp_q8_head_broadcast,"mtp_q8_head_shared_scales":mtp_q8_head_shared_scales,"mtp_english_vocab":mtp_english_vocab,"mtp_english_vocab_receipt":mtp_english_vocab_receipt,"frozen_host_four_row_down":frozen_four_row_down,"frozen_host_two_row_gate_up":frozen_two_row_gate_up,"frozen_packed_host_staging":frozen_packed_host_staging,"frozen_three_member_arithmetic":frozen_three_members,"frozen_gu_integer":frozen_gu_integer,"frozen_gu_integer_counters":frozen_gu_integer_counters,"frozen_down_integer":frozen_down_integer,"frozen_down_integer_counters":frozen_down_integer_counters,"frozen_gu_stride_four":frozen_gu_stride_four,"frozen_gu_stride_four_counters":frozen_gu_stride_four_counters,"frozen_down_stride_four":frozen_down_stride_four,"frozen_down_stride_four_counters":frozen_down_stride_four_counters,"target_grouped_ple_reads":public_grouped_ple_reads,"target_grouped_ple_reads_receipt":grouped_ple_reads_receipt,"target_grouped_status_folds":public_grouped_status_folds,"target_grouped_status_folds_receipt":grouped_status_folds_receipt,"initial_prefill_target_grouped_status_folds":initial_prefill_target_grouped_status_folds,"initial_prefill_target_grouped_status_folds_receipt":initial_prefill_target_grouped_status_folds_receipt,"target_three_gdn_streaming":three_gdn_streaming,"target_three_gdn_completed_chunks":three_gdn_completed_chunks,"frozen_bank_placement":if input.preserve_routed_bank && replay == 1 {"preserve-routed"} else {"cpu13-diagnostic"},"device_router_scope":if input.frozen_host_router {"authenticated actual512 VRAM/host sources; deferred strict original IDs and full vectors, experimental F32 probabilities"} else {"conditional actual all-hit warm13; strict original IDs and full vectors, experimental F32 probabilities"},"request_scope_closed_and_audited":input.request_reuse,"request_scope":request_scope_receipt,"request_close_ns_inside_timing":request_close_ns,"host_io":host_io,"model_weights_warm":replay==1,"initial_prefill_ns":initial_prefill_ns,"initial_prefill_frozen_gu_integer":initial_prefill_frozen_gu_integer,"initial_prefill_frozen_gu_integer_counters":initial_prefill_frozen_gu_integer_counters,"initial_prefill_frozen_down_integer":initial_prefill_frozen_down_integer,"initial_prefill_frozen_down_integer_counters":initial_prefill_frozen_down_integer_counters,"initial_prefill_frozen_gu_stride_four":initial_prefill_frozen_gu_stride_four,"initial_prefill_frozen_gu_stride_four_counters":initial_prefill_frozen_gu_stride_four_counters,"initial_prefill_frozen_down_stride_four":initial_prefill_frozen_down_stride_four,"initial_prefill_frozen_down_stride_four_counters":initial_prefill_frozen_down_stride_four_counters,"gpu_router_calls":executor.gpu_router_calls-before_gpu_routers,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"verify3_fused_calls":executor.target_verify3_fused_calls-before_fused,"target_host_phase_ns":host_phase_ns,"load_and_initial_prefill_physical_read_bytes":load_disk_after.checked_sub(replay_disk_before).ok_or("public process read counter regressed")?,"timed_physical_read_bytes":timed_physical_read_bytes,"target_fill_counters_before":fill_counter_record(before_fills),"target_fill_counters_after":fill_counter_record(after_fills),"frozen_source_routes":frozen_routes,"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"timing_scope":if input.frozen_host_router && replay == 1 {format!("original CPU13 routes and weights; {placement_scope} plus immutable direct host sources and deferred original GPU route audits, no demand expert uploads; full vectors and actual repair included")} else if input.frozen_host_sources && replay == 1 {format!("original CPU13 routes and weights; {placement_scope} plus immutable direct host sources, no demand expert uploads; full vectors and actual repair included")} else if input.device_router && replay == 1 {"conditional actual all-hit GPU routing; deferred original-route audit, public checks and actual repair included".to_string()} else {"original normal routing/demand uploads; public checks and actual repair included".to_string()},"load_and_initial_prefill_cumulative_ns":load_ns,"accepted_tokens":accepted_tokens,"elapsed_ns":elapsed_ns,"accepted_tokens_per_second":accepted_tokens as f64*1e9/elapsed_ns as f64,"proposed_drafts":proposed_tokens,"accepted_drafts":accepted_drafts,"rounds":rounds,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"draft_traffic":{"host_read_calls":after.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after.host_read_bytes-before_traffic.host_read_bytes,"explicit_dispatches":after.explicit_dispatches-before_traffic.explicit_dispatches,"private_upload_calls":after.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after.followup_copy_calls-before_traffic.followup_copy_calls}});
                     record["target_submission_backlog"] = target_submission_backlog_receipt.clone();
+                    record["frozen_bank_fill"] =
+                        crate::target_lab_build::public_host_bank_fill_name(
+                            completed_bank_fill.policy,
+                        )
+                        .into();
+                    record["frozen_bank_fill_receipt"] = bank_fill_receipt;
+                    record["initial_prefill_frozen_bank_fill"] =
+                        crate::target_lab_build::public_host_bank_fill_name(
+                            initial_bank_fill.policy,
+                        )
+                        .into();
+                    record["initial_prefill_frozen_bank_fill_receipt"] =
+                        initial_prefill_bank_fill_receipt;
+                    if expected_bank_fill
+                        == crate::executor::PublicHostBankFillPolicy::StrataRankedFiller
+                    {
+                        record["frozen_bank_placement"] = "preserve-routed-profile-filler".into();
+                    }
                     record["target_iq4_decoder"] =
                         crate::target_lab_build::public_iq4_decoder_name(actual_iq4_decoder).into();
                     record["target_iq4_decoder_receipt"] = target_iq4_decoder_receipt;
@@ -1605,11 +1678,27 @@ pub(crate) fn run(
                     if input.frozen_host_sources {
                         println!("public_frozen_host_prepare_start");
                         let preparation = Instant::now();
-                        let (plan, fills) = target.prepare_public_host_sources(
-                            &mut executor,
-                            &cancel,
-                            input.preserve_routed_bank,
-                        )?;
+                        let (plan, fills) = if input.bank_fill
+                            == crate::executor::PublicHostBankFillPolicy::StrataRankedFiller
+                        {
+                            target.prepare_public_host_sources_with_fill_policy(
+                                &mut executor,
+                                &cancel,
+                                input.preserve_routed_bank,
+                                input.bank_fill,
+                            )?
+                        } else {
+                            target.prepare_public_host_sources(
+                                &mut executor,
+                                &cancel,
+                                input.preserve_routed_bank,
+                            )?
+                        };
+                        if input.bank_fill
+                            == crate::executor::PublicHostBankFillPolicy::StrataRankedFiller
+                        {
+                            bank_fill_setup_experts = Some(fills.experts);
+                        }
                         println!("public_frozen_host_prepare_complete");
                         prepared_host
                             .set(plan)
@@ -1840,6 +1929,10 @@ pub(crate) fn run(
         return Err("immutable target backlog policy changed before full close".into());
     }
     let mut value = serde_json::json!({"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"scope":if input.mtp_device == crate::target_lab_build::MtpDevice::Intel {"fixed-public-DASLab13-real-independent-stream-greedy-speculation"}else{"fixed-public-DASLab13-real-dual-GPU-greedy-speculation"},"target_card":"B70","draft_card":if input.mtp_device == crate::target_lab_build::MtpDevice::Intel {"B70"}else{"RTX3060"},"mtp_device_requested":input.mtp_device.name(),"mtp_device":mtp_device_receipt,"intel_mtp_admission":intel_mtp_admission,"draft_profile":input.draft_profile.name(),"gpu_chronological_qsa_selector":input.gpu_qsa_selector,"qsa_extra_runtime_info_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_INFO_BYTES_PER_CHUNK}else{0},"qsa_extra_host_reserved_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_HOST_BYTES_PER_CHUNK}else{0},"draft_public_reserved_bytes":input.draft_profile.public_bytes_with_english(input.mtp_english_vocab)?,"frozen_gu_integer_requested":input.frozen_gu_integer,"frozen_down_math":if input.frozen_down_integer {"integer-public"}else{"original"},"frozen_down_integer_requested":input.frozen_down_integer,"frozen_down_integer_extra_main_bytes":if input.frozen_down_integer{65536}else{0},"frozen_down_integer_extra_host_bytes":if input.frozen_down_integer{65536}else{0},"frozen_down_integer_extra_info_bytes":if input.frozen_down_integer{196608}else{0},"frozen_down_integer_extra_runtime_bytes":if input.frozen_down_integer{462848}else{0},"frozen_gu_stride_four_requested":input.frozen_gu_stride_four,"frozen_down_schedule":if input.frozen_down_stride_four {"four-public"} else {"original"},"frozen_down_stride_four_requested":input.frozen_down_stride_four,"target_ple_reads":if input.public_grouped_ple_reads {"grouped-public"} else {"original"},"target_grouped_ple_reads_requested":input.public_grouped_ple_reads,"target_status_folds":if input.public_grouped_status_folds {"grouped-public"} else {"original"},"target_grouped_status_folds_requested":input.public_grouped_status_folds,"frozen_gu_integer_extra_main_bytes":if input.frozen_gu_integer {65536} else {0},"frozen_gu_integer_extra_host_bytes":if input.frozen_gu_integer {65536} else {0},"frozen_gu_integer_extra_info_bytes":if input.frozen_gu_integer {196608} else {0},"frozen_gu_integer_extra_runtime_bytes":if input.frozen_gu_integer {462848} else {0},"verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"live_member_reduction":input.live_member_reduction,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"request_reuse_metadata_reserved_bytes":if input.request_reuse {4*1024*1024}else{0},"request_binding_capacity":if input.request_reuse {4096}else{0},"fused_mtp_sweeps":input.fused_sweeps,"warm_replay":input.warm_replay,"warm_reset":warm_reset,"compiled_token0":0,"seed":424242,"temperature":0,"oracle_forcing":false,"expert_route_forcing":false,"passes":passes,"draft_close":{"private_buffers":draft_close.private.buffers,"private_bytes":draft_close.private.bytes,"public_bytes":draft_close.public_bytes,"main_reserved":draft_close.main_reserved},"private_or_production_accepted":false});
+    value["frozen_bank_fill_mode"] =
+        crate::target_lab_build::public_host_bank_fill_name(input.bank_fill).into();
+    value["frozen_bank_fill_requested"] =
+        (input.bank_fill == crate::executor::PublicHostBankFillPolicy::StrataRankedFiller).into();
     value["target_iq4_decoder_mode"] = if input.public_iq4_decoder {
         "packed-registers-public"
     } else {
@@ -1861,6 +1954,171 @@ pub(crate) fn run(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn profile_ranked_bank_filler_default_off_and_composes_original_public_policies() {
+        use crate::executor::PublicHostBankFillPolicy as P;
+        let args = ["lab", "intel", "daslab-speculative-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        let base = intel_mtp_env();
+        assert_eq!(
+            registration(&args, base.clone(), build).unwrap().bank_fill,
+            P::Original
+        );
+        for (gu_integer, down_integer, down_stride, iq4) in [
+            (false, false, false, false),
+            (true, false, false, true),
+            (true, true, false, true),
+            (false, false, true, false),
+        ] {
+            let mut selected = base.clone();
+            for (key, value) in [
+                ("KUNO_LAB_FROZEN_BANK_FILL", "profile-ranked-public"),
+                ("KUNO_LAB_TARGET_SUBMISSION_BACKLOG", "queued-2048-public"),
+                ("KUNO_LAB_MTP_Q8_HEAD", "shared-public"),
+                ("KUNO_LAB_TARGET_PLE_READS", "grouped-public"),
+                ("KUNO_LAB_TARGET_STATUS_FOLDS", "grouped-public"),
+                ("KUNO_LAB_TARGET_QSA", "chronological-public"),
+                ("KUNO_LAB_TARGET_GDN", "three-streaming-public"),
+            ] {
+                selected.push((key.into(), value.into()));
+            }
+            if gu_integer {
+                selected.push(("KUNO_LAB_FROZEN_GU_MATH".into(), "integer-public".into()));
+                selected.push(("KUNO_LAB_FROZEN_GU_SCHEDULE".into(), "four-public".into()));
+            }
+            if down_integer {
+                selected.push(("KUNO_LAB_FROZEN_DOWN_MATH".into(), "integer-public".into()));
+            } else {
+                selected.push(("KUNO_LAB_FROZEN_DOWN_ROWS".into(), "four-public".into()));
+                if down_stride {
+                    selected.push(("KUNO_LAB_FROZEN_DOWN_SCHEDULE".into(), "four-public".into()));
+                }
+            }
+            if iq4 {
+                selected.push((
+                    "KUNO_LAB_TARGET_IQ4_DECODER".into(),
+                    "packed-registers-public".into(),
+                ));
+            }
+            let got = registration(&args, selected, build).unwrap();
+            assert_eq!(got.bank_fill, P::StrataRankedFiller);
+            assert_eq!(got.frozen_gu_integer, gu_integer);
+            assert_eq!(got.frozen_down_integer, down_integer);
+            assert_eq!(got.frozen_down_stride_four, down_stride);
+            assert_eq!(got.public_iq4_decoder, iq4);
+            assert!(
+                got.public_grouped_ple_reads
+                    && got.public_grouped_status_folds
+                    && got.three_gdn_streaming
+                    && got.gpu_qsa_selector
+            );
+        }
+    }
+
+    #[test]
+    fn profile_ranked_bank_filler_rejects_unrelated_scope_and_untrusted_profile_inputs() {
+        let args = ["lab", "intel", "daslab-speculative-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        let mut base = intel_mtp_env();
+        base.push((
+            "KUNO_LAB_FROZEN_BANK_FILL".into(),
+            "profile-ranked-public".into(),
+        ));
+        for key in [
+            "KUNO_LAB_DEVICE_DISPATCH",
+            "KUNO_LAB_TARGET_FILL",
+            "KUNO_LAB_TARGET_DENSE",
+            "KUNO_LAB_TARGET_IO",
+            "KUNO_LAB_TARGET_REUSE",
+            "KUNO_LAB_TARGET_SOURCES",
+            "KUNO_LAB_FROZEN_PARTITION_EXIT",
+            "KUNO_LAB_TARGET_ROUTER",
+            "KUNO_LAB_MTP_SWEEPS",
+            "KUNO_LAB_WARM_REPLAY",
+        ] {
+            let mut invalid = base.clone();
+            invalid.retain(|(k, _)| k != key);
+            assert!(registration(&args, invalid, build).is_err(), "{key}");
+        }
+        for (key, value) in [
+            ("KUNO_LAB_MTP_PROFILE", "strata-q2"),
+            ("KUNO_LAB_MTP_Q8_HEAD", "broadcast-public"),
+            ("KUNO_LAB_MTP_VOCAB", "english-public"),
+            ("KUNO_LAB_FROZEN_TABLES", "private-public"),
+            ("KUNO_LAB_FROZEN_DOWN_SCALES", "shared-public"),
+            ("KUNO_LAB_FROZEN_GU_FACTORS", "shared-public"),
+            ("KUNO_LAB_FROZEN_GU_ROWS", "two-public"),
+            ("KUNO_LAB_FROZEN_HOST_STAGE", "packed-public"),
+            ("KUNO_LAB_FROZEN_MEMBERS", "three-public"),
+            ("KUNO_LAB_FROZEN_BANK_PLACEMENT", "preserve-public"),
+            ("KUNO_LAB_TARGET_EXPERTS", "prepared-verify3"),
+            ("KUNO_LAB_TARGET_MOE", "live"),
+            ("KUNO_PUBLIC_BANK_PROFILE_PATH", "/untrusted/profile"),
+            ("KUNO_PUBLIC_BANK_PROFILE_SHA256", "untrusted"),
+        ] {
+            let mut invalid = base.clone();
+            invalid.push((key.into(), value.into()));
+            assert!(registration(&args, invalid, build).is_err(), "{key}");
+        }
+        let mut duplicate = base.clone();
+        duplicate.push((
+            "KUNO_LAB_FROZEN_BANK_FILL".into(),
+            "profile-ranked-public".into(),
+        ));
+        assert!(registration(&args, duplicate, build).is_err());
+        assert!(registration(&args, base, crate::target_lab_build::Build::Threaded).is_err());
+    }
+
+    #[test]
+    fn profile_ranked_bank_filler_does_not_change_unselected_legacy_device_scopes() {
+        use crate::executor::PublicHostBankFillPolicy as P;
+        let args = ["lab", "intel", "daslab-speculative-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        let mut legacy = intel_mtp_env();
+        legacy.retain(|(key, _)| {
+            ![
+                "KUNO_LAB_MTP_DEVICE",
+                "KUNO_PUBLIC_MTP_INTEL_TOTAL_BYTES",
+                "KUNO_PUBLIC_MTP_INTEL_USED_BYTES",
+                "KUNO_PUBLIC_MTP_INTEL_DEVICE_ID",
+            ]
+            .iter()
+            .any(|removed| key == removed)
+        });
+        assert_eq!(
+            registration(&args, legacy.clone(), build)
+                .unwrap()
+                .bank_fill,
+            P::Original
+        );
+        legacy.push((
+            "KUNO_LAB_FROZEN_BANK_FILL".into(),
+            "profile-ranked-public".into(),
+        ));
+        assert!(registration(&args, legacy, build).is_err());
+        let mut legacy_preserve = intel_mtp_env();
+        legacy_preserve.retain(|(key, _)| {
+            ![
+                "KUNO_LAB_MTP_DEVICE",
+                "KUNO_PUBLIC_MTP_INTEL_TOTAL_BYTES",
+                "KUNO_PUBLIC_MTP_INTEL_USED_BYTES",
+                "KUNO_PUBLIC_MTP_INTEL_DEVICE_ID",
+            ]
+            .iter()
+            .any(|removed| key == removed)
+        });
+        legacy_preserve.push((
+            "KUNO_LAB_FROZEN_BANK_PLACEMENT".into(),
+            "preserve-public".into(),
+        ));
+        assert_eq!(
+            registration(&args, legacy_preserve, build)
+                .unwrap()
+                .bank_fill,
+            P::Original
+        );
+    }
+
     #[test]
     fn target_backlog_default_off_and_original_public_compositions() {
         use cubecl_runtime::server::PublicTargetSubmissionBacklog as P;

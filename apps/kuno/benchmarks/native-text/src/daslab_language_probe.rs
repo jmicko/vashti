@@ -133,6 +133,7 @@ pub(crate) struct Inputs {
     pub(crate) frozen_gu_integer: bool,
     pub(crate) frozen_down_integer: bool,
     pub(crate) public_iq4_decoder: bool,
+    pub(crate) bank_fill: crate::executor::PublicHostBankFillPolicy,
     pub(crate) target_submission_backlog: cubecl_runtime::server::PublicTargetSubmissionBacklog,
     pub(crate) frozen_gu_stride_four: bool,
     pub(crate) frozen_down_stride_four: bool,
@@ -199,6 +200,7 @@ pub(crate) fn registration(
                     | "KUNO_LAB_FROZEN_GU_MATH"
                     | "KUNO_LAB_FROZEN_DOWN_MATH"
                     | "KUNO_LAB_TARGET_IQ4_DECODER"
+                    | "KUNO_LAB_FROZEN_BANK_FILL"
                     | "KUNO_LAB_TARGET_SUBMISSION_BACKLOG"
                     | "KUNO_LAB_FROZEN_GU_SCHEDULE"
                     | "KUNO_LAB_FROZEN_DOWN_SCHEDULE"
@@ -514,6 +516,17 @@ pub(crate) fn registration(
             && !mtp_english_vocab
             && !frozen_down_stride_four,
     )?;
+    let raw_bank_fill = values.remove(OsStr::new("KUNO_LAB_FROZEN_BANK_FILL"));
+    let bank_fill = crate::target_lab_build::public_host_bank_fill(
+        raw_bank_fill.as_deref(),
+        decode_mode == DecodeMode::Speculative
+            && original_public_target_scope
+            && mtp_device == crate::target_lab_build::MtpDevice::Intel
+            && fused_sweeps
+            && draft_profile == Profile::SelfContainedQ8
+            && !mtp_q8_head_broadcast
+            && !mtp_english_vocab,
+    )?;
     let raw_backlog = values.remove(OsStr::new("KUNO_LAB_TARGET_SUBMISSION_BACKLOG"));
     let target_submission_backlog = crate::target_lab_build::public_target_submission_backlog(
         raw_backlog.as_deref(),
@@ -566,6 +579,7 @@ pub(crate) fn registration(
         frozen_gu_integer,
         frozen_down_integer,
         public_iq4_decoder,
+        bank_fill,
         target_submission_backlog,
         frozen_gu_stride_four,
         frozen_down_stride_four,
@@ -1084,6 +1098,7 @@ pub(crate) fn run(
         let prepared_host = std::cell::OnceCell::new();
         let mut host_attachment = None;
         let mut host_setup = None;
+        let mut bank_fill_setup_experts = None;
         let mut target = ResidentModel::new_with_native_batch(
             graph.bound_graph(),
             client.clone(),
@@ -1187,12 +1202,33 @@ pub(crate) fn run(
                     initial_iq4_dispatches,
                     executor.target_verify3_dense_calls,
                 )?;
+            let initial_bank_fill = target.native_frozen_source_bank_fill(&executor)?;
+            let initial_prefill_bank_fill_receipt =
+                crate::target_lab_build::public_host_bank_fill_record(
+                    crate::executor::PublicHostBankFillPolicy::Original,
+                    initial_bank_fill,
+                    None,
+                )?;
             let prefill_ns = elapsed(prefill)?;
             if input.frozen_host_sources {
                 println!("public_frozen_host_prepare_start");
                 let preparation = Instant::now();
-                let (plan, fills) =
-                    target.prepare_public_host_sources(&mut executor, &cancel, false)?;
+                let (plan, fills) = if input.bank_fill
+                    == crate::executor::PublicHostBankFillPolicy::StrataRankedFiller
+                {
+                    target.prepare_public_host_sources_with_fill_policy(
+                        &mut executor,
+                        &cancel,
+                        false,
+                        input.bank_fill,
+                    )?
+                } else {
+                    target.prepare_public_host_sources(&mut executor, &cancel, false)?
+                };
+                if input.bank_fill == crate::executor::PublicHostBankFillPolicy::StrataRankedFiller
+                {
+                    bank_fill_setup_experts = Some(fills.experts);
+                }
                 println!("public_frozen_host_prepare_complete");
                 prepared_host
                     .set(plan)
@@ -1294,6 +1330,12 @@ pub(crate) fn run(
                 }
                 println!("public_frozen_host_attach_complete");
             }
+            let attached_bank_fill = target.native_frozen_source_bank_fill(&executor)?;
+            let attached_bank_fill_receipt = crate::target_lab_build::public_host_bank_fill_record(
+                input.bank_fill,
+                attached_bank_fill,
+                bank_fill_setup_experts,
+            )?;
             if input.public_iq4_decoder {
                 executor.activate_public_target_iq4_decoder()?;
             }
@@ -1838,10 +1880,27 @@ pub(crate) fn run(
             {
                 return Err("language construction-fixed policy changed".into());
             }
+            let completed_bank_fill = target.native_frozen_source_bank_fill(&executor)?;
+            let bank_fill_receipt = crate::target_lab_build::public_host_bank_fill_record(
+                input.bank_fill,
+                completed_bank_fill,
+                bank_fill_setup_experts,
+            )?;
+            if bank_fill_receipt != attached_bank_fill_receipt {
+                return Err("language bank filler immutable setup receipt changed".into());
+            }
             let physical_read_bytes = process_disk_read_bytes()?
                 .checked_sub(load_disk_after)
                 .ok_or("language process read counter regressed")?;
             let mut record = serde_json::json!({"fixture":input.fixture.name(),"prompt_tokens":prompt.len(),"context_capacity":input.fixture.context(),"compiled_prompt_template_revision":TEMPLATE_REVISION,"compiled_prompt_template_file":TEMPLATE_FILE,"load_ns":load_ns,"prefill_ns_including_real_teacher_kv":prefill_ns,"prefill_teacher_kv_executed":draft.is_some(),"prefill_first_output_count":1,"prefill_first_output_generation_pick_timed":false,"first_output_emission_timed":true,"emitted_tokens_including_eos":emitted.len(),"post_prefill_target_continuations":stats.continuations,"stop_reason":if confirmed==graph.eos_token(){"eos"}else{"limit"},"nonempty_text":nonempty_text,"elapsed_ns":elapsed_ns,"continuation_tokens_per_second":stats.continuations as f64*1e9/elapsed_ns as f64,"emitted_tokens_per_second":emitted.len()as f64*1e9/elapsed_ns as f64,"rounds":stats.rounds,"frozen_host_gpu_router":input.frozen_host_router,"frozen_host_inactive_partition_exit":frozen_partition_exit,"frozen_host_private_tables":frozen_private_tables,"frozen_host_workgroup_tables":frozen_workgroup_tables,"frozen_host_shared_down_scales":frozen_shared_down_scales,"frozen_host_shared_gate_up_factors":frozen_shared_gate_up_factors,"mtp_q8_head_broadcast":mtp_q8_head_broadcast,"mtp_q8_head_shared_scales":mtp_q8_head_shared_scales,"mtp_english_vocab":mtp_english_vocab,"mtp_english_vocab_receipt":mtp_english_vocab_receipt,"frozen_host_four_row_down":frozen_four_row_down,"frozen_host_two_row_gate_up":frozen_two_row_gate_up,"frozen_packed_host_staging":frozen_packed_host_staging,"frozen_three_member_arithmetic":frozen_three_members,"frozen_gu_integer":frozen_gu_integer,"frozen_gu_integer_counters":frozen_gu_integer_counters,"frozen_down_integer":frozen_down_integer,"frozen_down_integer_counters":frozen_down_integer_counters,"frozen_gu_stride_four":frozen_gu_stride_four,"frozen_gu_stride_four_counters":frozen_gu_stride_four_counters,"frozen_down_stride_four":frozen_down_stride_four,"frozen_down_stride_four_counters":frozen_down_stride_four_counters,"target_grouped_ple_reads":public_grouped_ple_reads,"target_grouped_ple_reads_receipt":grouped_ple_reads_receipt,"target_grouped_status_folds":public_grouped_status_folds,"target_grouped_status_folds_receipt":grouped_status_folds_receipt,"initial_prefill_target_grouped_status_folds":initial_prefill_target_grouped_status_folds,"initial_prefill_frozen_down_integer":initial_prefill_frozen_down_integer,"initial_prefill_frozen_down_integer_counters":initial_prefill_frozen_down_integer_counters,"initial_prefill_target_grouped_status_folds_receipt":initial_prefill_target_grouped_status_folds_receipt,"target_three_gdn_streaming":three_gdn_streaming,"target_three_gdn_completed_chunks":three_gdn_completed_chunks,"gpu_router_calls":executor.gpu_router_calls-before_gpu_routers,"proposed_drafts":stats.proposed,"accepted_drafts":stats.accepted_drafts,"draft_ns":stats.draft_ns,"verify_ns_full_packets":stats.verify_ns,"repair_ns_including_vector_checks":stats.repair_ns,"actual_target_recomputations":stats.repairs,"repair_logit_max_abs":stats.repair_logit_max,"repair_hidden_max_abs":stats.repair_hidden_max,"repair_abs_tolerance":ABS,"repair_rel_tolerance":REL,"fixture_peak_host_bytes":fixture_peak,"request_scope":request_scope,"request_close_ns_inside_timing":request_close_ns,"host_io":host_io,"target_host_phase_ns":phase_ns,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"verify3_fused_calls":executor.target_verify3_fused_calls-before_fused,"load_and_prefill_physical_read_bytes":load_disk_after.checked_sub(load_disk_before).ok_or("language process read counter regressed")?,"generation_physical_read_bytes":physical_read_bytes,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"target_fill_counters_before":fill_counter_record(before_fills),"target_fill_counters_after":fill_counter_record(after_fills),"frozen_source_routes":frozen_routes,"draft_executed":draft.is_some(),"target_only_counters":target_only_counters,"decode_mode":input.decode_mode.name(),"draft_traffic":draft_traffic});
+            record["frozen_bank_fill"] =
+                crate::target_lab_build::public_host_bank_fill_name(completed_bank_fill.policy)
+                    .into();
+            record["frozen_bank_fill_receipt"] = bank_fill_receipt;
+            record["initial_prefill_frozen_bank_fill"] =
+                crate::target_lab_build::public_host_bank_fill_name(initial_bank_fill.policy)
+                    .into();
+            record["initial_prefill_frozen_bank_fill_receipt"] = initial_prefill_bank_fill_receipt;
             record["target_iq4_decoder"] =
                 crate::target_lab_build::public_iq4_decoder_name(actual_iq4_decoder).into();
             record["target_iq4_decoder_receipt"] = target_iq4_decoder_receipt;
@@ -1969,6 +2028,10 @@ pub(crate) fn run(
     } else if input.mtp_device == crate::target_lab_build::MtpDevice::Intel {
         "compiled-public-language200-real-single-physical-device-independent-stream-greedy"
     } else { "compiled-public-language200-real-dual-device-greedy" },"decode_mode":input.decode_mode.name(),"draft_executed":draft_executed,"target_card":"B70","draft_card":if draft_executed {Some(if input.mtp_device == crate::target_lab_build::MtpDevice::Intel {"B70"}else{"RTX3060"})}else{None},"mtp_device_requested":if draft_executed {Some(input.mtp_device.name())}else{None},"mtp_device":mtp_device_receipt,"intel_mtp_admission":intel_mtp_admission,"draft_profile":if draft_executed{Some(input.draft_profile.name())}else{None},"gpu_chronological_qsa_selector":input.gpu_qsa_selector,"qsa_extra_runtime_info_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_INFO_BYTES_PER_CHUNK}else{0},"qsa_extra_host_reserved_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_HOST_BYTES_PER_CHUNK}else{0},"draft_public_reserved_bytes":if draft_executed{input.draft_profile.public_bytes_with_english(input.mtp_english_vocab)?}else{0},"frozen_gu_integer_requested":input.frozen_gu_integer,"frozen_down_math":if input.frozen_down_integer {"integer-public"}else{"original"},"frozen_down_integer_requested":input.frozen_down_integer,"frozen_down_integer_extra_main_bytes":if input.frozen_down_integer{65536}else{0},"frozen_down_integer_extra_host_bytes":if input.frozen_down_integer{65536}else{0},"frozen_down_integer_extra_info_bytes":if input.frozen_down_integer{196608}else{0},"frozen_down_integer_extra_runtime_bytes":if input.frozen_down_integer{462848}else{0},"frozen_gu_stride_four_requested":input.frozen_gu_stride_four,"frozen_down_schedule":if input.frozen_down_stride_four {"four-public"} else {"original"},"frozen_down_stride_four_requested":input.frozen_down_stride_four,"target_ple_reads":if input.public_grouped_ple_reads {"grouped-public"} else {"original"},"target_grouped_ple_reads_requested":input.public_grouped_ple_reads,"target_status_folds":if input.public_grouped_status_folds {"grouped-public"} else {"original"},"target_grouped_status_folds_requested":input.public_grouped_status_folds,"frozen_gu_integer_extra_main_bytes":if input.frozen_gu_integer {65536} else {0},"frozen_gu_integer_extra_host_bytes":if input.frozen_gu_integer {65536} else {0},"frozen_gu_integer_extra_info_bytes":if input.frozen_gu_integer {196608} else {0},"frozen_gu_integer_extra_runtime_bytes":if input.frozen_gu_integer {462848} else {0},"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"temperature":0,"seed":424242,"repetition_penalty":1.0,"presence_penalty":0.0,"frequency_penalty":0.0,"thinking":false,"max_outputs":MAX_OUTPUTS,"verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"live_member_reduction":input.live_member_reduction,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"fused_mtp_sweeps":input.fused_sweeps,"fixture_host_reserved_bytes":FIXTURE_HOST_BYTES,"tokenizer_host_cap_bytes":TOKENIZER_HOST_BYTES,"request_reuse_metadata_reserved_bytes":if input.request_reuse{4*1024*1024}else{0},"full_target_packets_retained":true,"greedy_target_verification":true,"repair_original_prefix_vector_checks":input.decode_mode == DecodeMode::Speculative,"independent_cpu200_reference_accepted":false,"forced_oracle_tokens":false,"forced_experts":false,"private_or_production_accepted":false,"record":record,"draft_close":draft_close});
+    value["frozen_bank_fill_mode"] =
+        crate::target_lab_build::public_host_bank_fill_name(input.bank_fill).into();
+    value["frozen_bank_fill_requested"] =
+        (input.bank_fill == crate::executor::PublicHostBankFillPolicy::StrataRankedFiller).into();
     value["target_iq4_decoder_mode"] = if input.public_iq4_decoder {
         "packed-registers-public"
     } else {
@@ -1990,6 +2053,175 @@ pub(crate) fn run(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn profile_ranked_bank_filler_default_off_and_composes_original_public_policies() {
+        use crate::executor::PublicHostBankFillPolicy as P;
+        let args = ["lab", "intel", "daslab-language-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        let base = intel_mtp_env();
+        assert_eq!(
+            registration(&args, base.clone(), build).unwrap().bank_fill,
+            P::Original
+        );
+        for (gu_integer, down_integer, down_stride, iq4) in [
+            (false, false, false, false),
+            (true, false, false, true),
+            (true, true, false, true),
+            (false, false, true, false),
+        ] {
+            let mut selected = base.clone();
+            for (key, value) in [
+                ("KUNO_LAB_FROZEN_BANK_FILL", "profile-ranked-public"),
+                ("KUNO_LAB_TARGET_SUBMISSION_BACKLOG", "queued-2048-public"),
+                ("KUNO_LAB_MTP_Q8_HEAD", "shared-public"),
+                ("KUNO_LAB_TARGET_PLE_READS", "grouped-public"),
+                ("KUNO_LAB_TARGET_STATUS_FOLDS", "grouped-public"),
+                ("KUNO_LAB_TARGET_QSA", "chronological-public"),
+                ("KUNO_LAB_TARGET_GDN", "three-streaming-public"),
+            ] {
+                selected.push((key.into(), value.into()));
+            }
+            if gu_integer {
+                selected.push(("KUNO_LAB_FROZEN_GU_MATH".into(), "integer-public".into()));
+                selected.push(("KUNO_LAB_FROZEN_GU_SCHEDULE".into(), "four-public".into()));
+            }
+            if down_integer {
+                selected.push(("KUNO_LAB_FROZEN_DOWN_MATH".into(), "integer-public".into()));
+            } else {
+                selected.push(("KUNO_LAB_FROZEN_DOWN_ROWS".into(), "four-public".into()));
+                if down_stride {
+                    selected.push(("KUNO_LAB_FROZEN_DOWN_SCHEDULE".into(), "four-public".into()));
+                }
+            }
+            if iq4 {
+                selected.push((
+                    "KUNO_LAB_TARGET_IQ4_DECODER".into(),
+                    "packed-registers-public".into(),
+                ));
+            }
+            let got = registration(&args, selected, build).unwrap();
+            assert_eq!(got.bank_fill, P::StrataRankedFiller);
+            assert_eq!(got.frozen_gu_integer, gu_integer);
+            assert_eq!(got.frozen_down_integer, down_integer);
+            assert_eq!(got.frozen_down_stride_four, down_stride);
+            assert_eq!(got.public_iq4_decoder, iq4);
+            assert!(
+                got.public_grouped_ple_reads
+                    && got.public_grouped_status_folds
+                    && got.three_gdn_streaming
+                    && got.gpu_qsa_selector
+            );
+        }
+    }
+
+    #[test]
+    fn profile_ranked_bank_filler_rejects_unrelated_scope_and_untrusted_profile_inputs() {
+        let args = ["lab", "intel", "daslab-language-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        let mut base = intel_mtp_env();
+        base.push((
+            "KUNO_LAB_FROZEN_BANK_FILL".into(),
+            "profile-ranked-public".into(),
+        ));
+        for key in [
+            "KUNO_LAB_DEVICE_DISPATCH",
+            "KUNO_LAB_TARGET_FILL",
+            "KUNO_LAB_TARGET_DENSE",
+            "KUNO_LAB_TARGET_IO",
+            "KUNO_LAB_TARGET_REUSE",
+            "KUNO_LAB_TARGET_SOURCES",
+            "KUNO_LAB_FROZEN_PARTITION_EXIT",
+            "KUNO_LAB_TARGET_ROUTER",
+            "KUNO_LAB_MTP_SWEEPS",
+        ] {
+            let mut invalid = base.clone();
+            invalid.retain(|(k, _)| k != key);
+            assert!(registration(&args, invalid, build).is_err(), "{key}");
+        }
+        for (key, value) in [
+            ("KUNO_LAB_MTP_PROFILE", "strata-q2"),
+            ("KUNO_LAB_MTP_Q8_HEAD", "broadcast-public"),
+            ("KUNO_LAB_MTP_VOCAB", "english-public"),
+            ("KUNO_LAB_FROZEN_TABLES", "private-public"),
+            ("KUNO_LAB_FROZEN_DOWN_SCALES", "shared-public"),
+            ("KUNO_LAB_FROZEN_GU_FACTORS", "shared-public"),
+            ("KUNO_LAB_FROZEN_GU_ROWS", "two-public"),
+            ("KUNO_LAB_FROZEN_HOST_STAGE", "packed-public"),
+            ("KUNO_LAB_FROZEN_MEMBERS", "three-public"),
+            ("KUNO_LAB_FROZEN_BANK_PLACEMENT", "preserve-public"),
+            ("KUNO_LAB_TARGET_EXPERTS", "prepared-verify3"),
+            ("KUNO_LAB_TARGET_MOE", "live"),
+            ("KUNO_PUBLIC_BANK_PROFILE_PATH", "/untrusted/profile"),
+            ("KUNO_PUBLIC_BANK_PROFILE_SHA256", "untrusted"),
+        ] {
+            let mut invalid = base.clone();
+            invalid.push((key.into(), value.into()));
+            assert!(registration(&args, invalid, build).is_err(), "{key}");
+        }
+        let mut duplicate = base.clone();
+        duplicate.push((
+            "KUNO_LAB_FROZEN_BANK_FILL".into(),
+            "profile-ranked-public".into(),
+        ));
+        assert!(registration(&args, duplicate, build).is_err());
+        assert!(registration(&args, base, crate::target_lab_build::Build::Threaded).is_err());
+    }
+
+    #[test]
+    fn profile_ranked_bank_filler_does_not_change_unselected_legacy_device_scopes() {
+        use crate::executor::PublicHostBankFillPolicy as P;
+        let args = ["lab", "intel", "daslab-language-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        let mut legacy = intel_mtp_env();
+        legacy.retain(|(key, _)| {
+            ![
+                "KUNO_LAB_MTP_DEVICE",
+                "KUNO_PUBLIC_MTP_INTEL_TOTAL_BYTES",
+                "KUNO_PUBLIC_MTP_INTEL_USED_BYTES",
+                "KUNO_PUBLIC_MTP_INTEL_DEVICE_ID",
+            ]
+            .iter()
+            .any(|removed| key == removed)
+        });
+        assert_eq!(
+            registration(&args, legacy.clone(), build)
+                .unwrap()
+                .bank_fill,
+            P::Original
+        );
+        legacy.push((
+            "KUNO_LAB_FROZEN_BANK_FILL".into(),
+            "profile-ranked-public".into(),
+        ));
+        assert!(registration(&args, legacy, build).is_err());
+        let mut target_only = target_only_env();
+        assert_eq!(
+            registration(&args, target_only.clone(), build)
+                .unwrap()
+                .bank_fill,
+            P::Original
+        );
+        target_only.push((
+            "KUNO_LAB_FROZEN_BANK_FILL".into(),
+            "profile-ranked-public".into(),
+        ));
+        assert!(registration(&args, target_only, build).is_err());
+        let mut prose = intel_mtp_env();
+        for (key, value) in &mut prose {
+            if key == "KUNO_LAB_LANGUAGE_FIXTURE" {
+                *value = "warm-prose".into();
+            }
+        }
+        prose.push((
+            "KUNO_LAB_FROZEN_BANK_FILL".into(),
+            "profile-ranked-public".into(),
+        ));
+        assert_eq!(
+            registration(&args, prose, build).unwrap().bank_fill,
+            P::StrataRankedFiller
+        );
+    }
+
     #[test]
     fn target_backlog_default_off_and_original_public_compositions() {
         use cubecl_runtime::server::PublicTargetSubmissionBacklog as P;

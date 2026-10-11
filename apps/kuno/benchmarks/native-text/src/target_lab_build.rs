@@ -390,6 +390,91 @@ pub(crate) fn request_reuse(
     }
 }
 
+/// A fixed compiled public ranking changes only empty-slot setup selection.
+pub(crate) fn public_host_bank_fill(
+    raw: Option<&OsStr>,
+    original_intel_full_q8_scope: bool,
+) -> Result<crate::executor::PublicHostBankFillPolicy, &'static str> {
+    use crate::executor::PublicHostBankFillPolicy as P;
+    match raw {
+        None => Ok(P::Original),
+        Some(value) if value == "profile-ranked-public" && original_intel_full_q8_scope => {
+            Ok(P::StrataRankedFiller)
+        }
+        _ => Err("bank filler requires canonical original Intel full-Q8 frozen public scope"),
+    }
+}
+
+pub(crate) fn public_host_bank_fill_name(
+    policy: crate::executor::PublicHostBankFillPolicy,
+) -> &'static str {
+    match policy {
+        crate::executor::PublicHostBankFillPolicy::Original => "original",
+        crate::executor::PublicHostBankFillPolicy::StrataRankedFiller => "profile-ranked-public",
+    }
+}
+
+/// Setup credit is joined to the actual published plan and original fill result,
+/// never inferred from a requested selector, maps or observed routing history.
+pub(crate) fn public_host_bank_fill_record(
+    requested: crate::executor::PublicHostBankFillPolicy,
+    completed: crate::executor::CompletedPublicHostBankFill,
+    actual_setup_experts: Option<u64>,
+) -> Result<serde_json::Value, &'static str> {
+    use crate::executor::PublicHostBankFillPolicy as P;
+    let selected = requested == P::StrataRankedFiller;
+    if requested != completed.policy
+        || if selected {
+            completed.completed_layers != 48
+                || completed
+                    .filler_experts
+                    .checked_add(completed.preserved_residents)
+                    != Some(48 * 144)
+                || actual_setup_experts != Some(completed.filler_experts)
+        } else {
+            completed.completed_layers != 0
+                || completed.filler_experts != 0
+                || completed.preserved_residents != 0
+                || actual_setup_experts.is_some()
+        }
+    {
+        return Err("bank filler actual published setup receipt rejected");
+    }
+    Ok(serde_json::json!({
+        "selected": selected,
+        "actual_policy": public_host_bank_fill_name(completed.policy),
+        "completed_layers": completed.completed_layers,
+        "filler_experts": completed.filler_experts,
+        "preserved_residents": completed.preserved_residents,
+        "bank_completion_experts": actual_setup_experts,
+        "public_profile_sha256": selected.then_some(crate::executor::PUBLIC_STRATA_BANK_PROFILE_SHA256),
+        "selected_public_rank_table_bytes": if selected {
+            crate::executor::PUBLIC_STRATA_BANK_PROFILE_BYTES
+        } else { 0 },
+        "completed_setup_only": selected,
+        "route_history_persisted": false,
+        "new_gpu_owner_bytes": 0,
+    }))
+}
+
+/// Ranked filling preserves cold CPU13 residents and may legitimately have no
+/// HOST routes. The unchanged canonical diagnostic must still exercise both.
+pub(crate) fn public_host_bank_fill_tiers(
+    policy: crate::executor::PublicHostBankFillPolicy,
+    legacy_preserve: bool,
+    vram_routes: u64,
+    host_routes: u64,
+) -> Result<(), &'static str> {
+    use crate::executor::PublicHostBankFillPolicy as P;
+    if policy == P::StrataRankedFiller && legacy_preserve
+        || vram_routes == 0
+        || policy == P::Original && !legacy_preserve && host_routes == 0
+    {
+        return Err("public CPU13 actual source tier policy rejected");
+    }
+    Ok(())
+}
+
 /// Initial runtime construction policy, distinct from warm-only model math.
 pub(crate) fn public_target_submission_backlog(
     raw: Option<&OsStr>,
@@ -926,6 +1011,159 @@ pub(crate) fn name(inline: bool) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn profile_ranked_bank_filler_parser_is_canonical_and_default_off() {
+        use crate::executor::PublicHostBankFillPolicy as P;
+        for scope in [false, true] {
+            assert_eq!(public_host_bank_fill(None, scope), Ok(P::Original));
+            for raw in [
+                "profile-ranked-public",
+                "",
+                "profile-ranked-public ",
+                "profile-ranked-public\n",
+                "strata-rank-public",
+                "original",
+                "1",
+            ] {
+                assert_eq!(
+                    public_host_bank_fill(Some(OsStr::new(raw)), scope).is_ok(),
+                    scope && raw == "profile-ranked-public",
+                    "{raw:?} scope={scope}",
+                );
+            }
+        }
+        assert_eq!(public_host_bank_fill_name(P::Original), "original");
+        assert_eq!(
+            public_host_bank_fill_name(P::StrataRankedFiller),
+            "profile-ranked-public"
+        );
+    }
+
+    #[test]
+    fn profile_ranked_bank_filler_receipt_requires_actual_setup_publication_and_join() {
+        use crate::executor::{CompletedPublicHostBankFill as C, PublicHostBankFillPolicy as P};
+        let original = C {
+            policy: P::Original,
+            completed_layers: 0,
+            filler_experts: 0,
+            preserved_residents: 0,
+        };
+        let zero = public_host_bank_fill_record(P::Original, original, None).unwrap();
+        assert_eq!(zero["selected"], false);
+        assert_eq!(zero["public_profile_sha256"], serde_json::Value::Null);
+        assert_eq!(zero["selected_public_rank_table_bytes"], 0);
+        for filler_experts in [0, 1, 1769, 6912] {
+            let completed = C {
+                policy: P::StrataRankedFiller,
+                completed_layers: 48,
+                filler_experts,
+                preserved_residents: 6912 - filler_experts,
+            };
+            let record = public_host_bank_fill_record(
+                P::StrataRankedFiller,
+                completed,
+                Some(filler_experts),
+            )
+            .unwrap();
+            assert_eq!(record["selected"], true);
+            assert_eq!(record["completed_layers"], 48);
+            assert_eq!(record["filler_experts"], filler_experts);
+            assert_eq!(record["preserved_residents"], 6912 - filler_experts);
+            assert_eq!(record["bank_completion_experts"], filler_experts);
+            assert_eq!(
+                record["public_profile_sha256"],
+                crate::executor::PUBLIC_STRATA_BANK_PROFILE_SHA256
+            );
+            assert_eq!(record["selected_public_rank_table_bytes"], 13824);
+            assert_eq!(record["completed_setup_only"], true);
+            assert_eq!(record["route_history_persisted"], false);
+            assert_eq!(record["new_gpu_owner_bytes"], 0);
+            assert!(public_host_bank_fill_record(P::StrataRankedFiller, completed, None).is_err());
+            assert!(
+                public_host_bank_fill_record(
+                    P::StrataRankedFiller,
+                    completed,
+                    Some(filler_experts + 1)
+                )
+                .is_err()
+            );
+            assert!(
+                public_host_bank_fill_record(P::Original, completed, Some(filler_experts)).is_err()
+            );
+        }
+        let accepted = C {
+            policy: P::StrataRankedFiller,
+            completed_layers: 48,
+            filler_experts: 1769,
+            preserved_residents: 5143,
+        };
+        for completed in [
+            original,
+            C {
+                policy: P::Original,
+                ..accepted
+            },
+            C {
+                completed_layers: 47,
+                ..accepted
+            },
+            C {
+                completed_layers: 49,
+                ..accepted
+            },
+            C {
+                preserved_residents: 5142,
+                ..accepted
+            },
+            C {
+                preserved_residents: 5144,
+                ..accepted
+            },
+            C {
+                filler_experts: u64::MAX,
+                preserved_residents: 1,
+                ..accepted
+            },
+        ] {
+            assert!(
+                public_host_bank_fill_record(P::StrataRankedFiller, completed, Some(1769)).is_err()
+            );
+        }
+        for completed in [
+            C {
+                completed_layers: 1,
+                ..original
+            },
+            C {
+                filler_experts: 1,
+                ..original
+            },
+            C {
+                preserved_residents: 1,
+                ..original
+            },
+        ] {
+            assert!(public_host_bank_fill_record(P::Original, completed, None).is_err());
+        }
+        assert!(public_host_bank_fill_record(P::Original, original, Some(0)).is_err());
+    }
+
+    #[test]
+    fn profile_ranked_cpu13_tier_scope_preserves_the_original_host_diagnostic() {
+        use crate::executor::PublicHostBankFillPolicy as P;
+        assert!(public_host_bank_fill_tiers(P::Original, false, 1, 1).is_ok());
+        assert!(public_host_bank_fill_tiers(P::Original, false, 1, 0).is_err());
+        assert!(public_host_bank_fill_tiers(P::Original, true, 1, 0).is_ok());
+        assert!(public_host_bank_fill_tiers(P::StrataRankedFiller, false, 1, 0).is_ok());
+        assert!(public_host_bank_fill_tiers(P::StrataRankedFiller, false, 1, 1).is_ok());
+        assert!(public_host_bank_fill_tiers(P::StrataRankedFiller, true, 1, 1).is_err());
+        for policy in [P::Original, P::StrataRankedFiller] {
+            for host in [0, 1, u64::MAX] {
+                assert!(public_host_bank_fill_tiers(policy, false, 0, host).is_err());
+            }
+        }
+    }
+
     #[test]
     fn target_backlog_selector_requires_exact_value_and_original_intel_full_q8_scope() {
         use cubecl_runtime::server::PublicTargetSubmissionBacklog as P;
