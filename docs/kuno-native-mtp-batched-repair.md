@@ -90,3 +90,22 @@ condition/HC/projection, clear/guard and failure bodies unchanged. No model,
 GPU, service or production integration is invoked by these checks. Strict
 pure-direct all-target Clippy with `-j2 -- -D warnings`, scoped formatting and
 diff checks also pass.
+
+
+## Physical acceptance, 2026-10-11
+
+Frozen v173 source970f8f4141adc903212fe102ada504b4a42edfe8 and pure-direct binary
+69bc565a1396d85d9f9fdaa702620d94b44795c15b4541329f7f4d502c8ec0ec pass
+unchanged original CPU13 cold/warm full vectors/carries/greedy and actual repairs.
+Default cold counters remain0; warm actual6 calls/7 appended cells/6 fault gates
+complete without new owners. Same-artifact compiler-idle code200 ordered pair
+measures10.533053 original versus10.603973 batched real continuations/s,
++0.67percent. Both199 continuations,130of138 accepted drafts/69 rounds/five
+real target recomputations. Batched69 calls/130 cells/69 gates reduce total MTP
+reads337to207 and bytes15564800to11304960. Actual repair interval1.802to1.590s
+includes necessary target recomputations and checks; do not credit it entirely
+to readback reduction. All1382MAIN/828997632B,42 draft private/11698176B and432
+HOST/36147609600B owners close. Same-boot physical memory/service/fault recovery
+passes. This is one ordered code pair, not repeated/prose/independentCPU200 or
+production acceptance. Exact aggregate evidence is checked in under
+v173_intel_mtp_batched_repair_and_bank_backing_physical.

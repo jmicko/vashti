@@ -9,7 +9,10 @@ User steering after the completed three-way comparison: continue optimization
 with target and full Q8 MTP on Intel B70 only; defer Nvidia experiments.
 Ordinary installed defaults remain unchanged until their own integration gate.
 
-Latest normal Intel comparison is v167: **10.482354 real continuations/s**
+Latest normal Intel comparison is v173: **10.533053 original scalar repair**
+and **10.603973 batched repair real continuations/s**. The latter is one
+ordered code200 pair (+0.67percent), not a repeated speed acceptance. The selected
+pre-v173 baseline was v167 at10.482354 real continuations/s
 with original bank filling, original512 queue/IQ4 decoder, grouped PLE,
 integer GU plus stride-four, integer DOWN and shared full-Q8 Intel MTP.
 The public profile filler measured10.478727 and remains unselected. See the
@@ -35,11 +38,38 @@ to a failure. v171 exposed cumulative full-owner I/O audits exceeding128MiB;
 v172 uses the existing complete audited sanitizer after every pair, retaining
 the cap and recording432.422ms total cleanup outside both operator arms.
 
-Original-math batched MTP cache repair and content-free actual resident-bank
-backing telemetry are source-integrated, default-unused and awaiting v173
-originalCPU13/full owner/recovery and same-artifact normal speed gates. Native
-30tokens/s remains unachieved. A separate four-row dense projection leaf is
-being prepared; it does not establish connected four-row target execution.
+Original-math batched MTP repair passes v173 original CPU13 cold/warm full
+vectors/carries/greedy and actual rejection repair on frozen source
+970f8f4141adc903212fe102ada504b4a42edfe8, pure-direct binary SHA256
+69bc565a1396d85d9f9fdaa702620d94b44795c15b4541329f7f4d502c8ec0ec.
+One compiler-idle same-artifact code200 pair measures10.533053 original versus
+10.603973 batched real continuations/s (+0.67percent); both199 continuations,
+130of138 actual drafts/69 rounds/five real target recomputations. New repair
+actually completes69 joined calls/130 appended cells/69 final fault gates,
+reducing MTP reads337to207. The1.802to1.590s repair interval includes necessary
+real target recomputation/full checks, not only readback cost. Keep the explicit
+implemented leaf; the next separate four-row candidate retains original scalar
+repair and needs its own numerical/whole-model gates. Native30tokens/s remains
+unachieved. No repeatedABBA/prose/independentCPU200 or installed/default claim.
+
+Actual accepted bank backing is14,557,240,448B for14,144,716,800B logical payload:
+412,523,648B actual padding versus4,166,132,608B unused conservative admission
+allowance. All48 layers/288 distinct original VRAM buffers are measured without
+GPU queries or additional owners; attached and successful-close snapshots match.
+The unused conservative bound is not additional physical VRAM. Existing cold/
+warm/normal owner closures pass:1382 target MAIN/828997632B,42 draft private
+owners/11698176B and432 HOST allocations/36147609600B freed, backing0.
+Last recovery21:43:44UTC: same boot, B70baseline50688000B, Nvidia compute0,
+allHTTP200, unpaused/idle/no recovery latch and all classified GPU faults0.
+Exact source, admission, counters and complete receipts are recorded in
+v173_intel_mtp_batched_repair_and_bank_backing_physical.
+
+Next source candidate is genuine four-row verification with three real MTP
+proposals, original tails/scalar repair and new count4 arithmetic/metadata paths.
+Three isolated source owners are preparing dense/MoE kernels, the all-family
+parent and the fixed-public controller. It remains source-only until integrated
+full-vector/carry/greedy/actual repair and closure/recovery gates pass; no cap,
+reference or tolerance change is authorized.
 
 Accepted GU scheduling physical source isac78f00/v159, frozen binarySHA256
 `c04d49a6ca11115c0bba0b1acc38019ae2f6f4b1f323cc0f9b6608eaa639bc7d`.

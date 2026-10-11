@@ -60,3 +60,18 @@ Attachment capacity/phase/release tests pass. Locked all-target
 checks pass. The isolated branch is based on root `22e72798`; no root checkout,
 GPU, service or installed artifact was modified. Actual physical buffer sums
 remain pending root's frozen-artifact receipt wiring and device acceptance.
+
+
+## Actual physical receipt, 2026-10-11
+
+Frozen v173 on Intel B70 measures the complete original48-layer/288-buffer
+source: logical14144716800B, actual Wgpu buffer backing14557240448B,
+padding412523648B and conservative allowance18723373056B. The4166132608B
+unused allowance is not additional physical memory. All warm and normal
+attached/close snapshots match, HOST mirror remains excluded and no erasure/
+release/admission credit is emitted. OriginalCPU13 full numerical gates and
+complete target/draft/HOST closures plus same-boot physical recovery pass.
+Actual combined admission remains34167361536B including the unchanged512MiB
+driver margin, with24248320B beyond that margin on the fresh baseline. No
+capacity change or driver-heap sizing claim follows. Exact source/binary and
+aggregate evidence are in v173_intel_mtp_batched_repair_and_bank_backing_physical.

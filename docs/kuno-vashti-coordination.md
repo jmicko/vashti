@@ -3868,3 +3868,35 @@ comparison remain required for MTP repair. Telemetry distinguishes actual
 backing padding from unused conservative admission headroom; neither is yet
 measured on-device or credited as additional capacity. A separate four-row
 dense leaf is being prepared without changing original count3 behavior.
+
+
+### Intel MTP repair and exact bank backing accepted, 2026-10-11
+
+Frozen v173 source970f8f4141adc903212fe102ada504b4a42edfe8, pure-direct binary
+69bc565a1396d85d9f9fdaa702620d94b44795c15b4541329f7f4d502c8ec0ec, passes
+unchanged originalCPU13 cold/warm full vectors/carries/greedy/actual repairs.
+Same-artifact compiler-idle ordered code200 pair measures10.533053 original
+scalar versus10.603973 batched repair continuations/s (+0.67percent). Both199
+real continuations/130of138 accepted drafts/69 rounds/five real target repairs.
+Actual new69 joined repair calls/130 cells/69 fault gates reduce MTP reads
+337to207. Repair phase1.802to1.590s includes true target recomputation/checks,
+not isolated readback cost. The explicit leaf is retained; original scalar
+repair remains the separate four-row candidate control. One pair does not
+establish repeated/prose/independentCPU200 or30tokens/s acceptance.
+
+Exact48-layer/288-buffer bank telemetry reports14,144,716,800B logical payload,
+14,557,240,448B actual buffer backing,412,523,648B padding and4,166,132,608B
+unused conservative allowance. Attached/close snapshots match. The latter is
+not free physical VRAM or additional admission credit. No capacity or GPU
+owner changes. Complete1382MAIN/828997632B,42 draft private owners/11698176B
+and432 HOST/36147609600B closure passes. Last normal recovery21:43:44UTC:
+same boot, B70used50688000B, Nvidia compute0, allHTTP200, admission idle and
+unpaused/no recovery latch, classified faults0. Exact sources/actual counters/
+admission/closures are in v173_intel_mtp_batched_repair_and_bank_backing_physical.
+
+Next isolated source candidate is genuine four-row target verification with
+three actual Intel full-Q8 MTP proposals, original scalar repair and unchanged
+original tails/caps/reference. Read the normative parent/dense/MoE/controller
+contracts when integrated. Physical acceptance remains separate. Canonical
+Vashti, installed services/defaults, API and release are unchanged. Required
+Vashti changes:none. Nvidia remains deferred at the user's direction.
