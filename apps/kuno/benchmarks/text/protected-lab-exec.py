@@ -30,6 +30,10 @@ def selected_target_policy(environment, mtp=False):
         private_table_scope(environment)
         if not mtp or selected.pop("KUNO_LAB_FROZEN_HOST_STAGE") != "packed-public":
             raise ValueError("Packed staging requires canonical frozen public GPU router scope")
+    if "KUNO_LAB_FROZEN_MEMBERS" in selected:
+        private_table_scope(environment)
+        if not mtp or selected.pop("KUNO_LAB_FROZEN_MEMBERS") != "three-public":
+            raise ValueError("Three-member arithmetic requires canonical frozen public GPU router scope")
     if "KUNO_LAB_FROZEN_PARTITION_EXIT" in selected:
         if (not mtp or selected.pop("KUNO_LAB_FROZEN_PARTITION_EXIT") != "1"
                 or selected.get("KUNO_LAB_TARGET_SOURCES") != "frozen-host-public"):
@@ -110,7 +114,7 @@ def selected_target_policy(environment, mtp=False):
     return selected
 
 def private_table_scope(environment):
-    if any(key in environment for key in ("KUNO_LAB_FROZEN_TABLES", "KUNO_LAB_FROZEN_DOWN_SCALES", "KUNO_LAB_FROZEN_GU_FACTORS", "KUNO_LAB_FROZEN_DOWN_ROWS", "KUNO_LAB_FROZEN_GU_ROWS", "KUNO_LAB_FROZEN_HOST_STAGE")):
+    if any(key in environment for key in ("KUNO_LAB_FROZEN_TABLES", "KUNO_LAB_FROZEN_DOWN_SCALES", "KUNO_LAB_FROZEN_GU_FACTORS", "KUNO_LAB_FROZEN_DOWN_ROWS", "KUNO_LAB_FROZEN_GU_ROWS", "KUNO_LAB_FROZEN_HOST_STAGE", "KUNO_LAB_FROZEN_MEMBERS")):
         spec = environment.get("KUNO_LAB_SPECULATIVE_PUBLIC_ONLY") == "1"
         language = environment.get("KUNO_LAB_LANGUAGE_PUBLIC_ONLY") == "1"
         if (environment.get("KUNO_LAB_FROZEN_TABLES") not in (None, "private-public", "workgroup-public")
@@ -119,9 +123,13 @@ def private_table_scope(environment):
                 or environment.get("KUNO_LAB_FROZEN_DOWN_ROWS") not in (None, "four-public")
                 or environment.get("KUNO_LAB_FROZEN_GU_ROWS") not in (None, "two-public")
                 or environment.get("KUNO_LAB_FROZEN_HOST_STAGE") not in (None, "packed-public")
+                or environment.get("KUNO_LAB_FROZEN_MEMBERS") not in (None, "three-public")
                 or environment.get("KUNO_LAB_FROZEN_HOST_STAGE") is not None and (
                     environment.get("KUNO_LAB_TARGET_ROUTER") != "device-frozen-public"
                     or any(key in environment for key in ("KUNO_LAB_FROZEN_TABLES", "KUNO_LAB_FROZEN_GU_FACTORS", "KUNO_LAB_FROZEN_DOWN_SCALES")))
+                or environment.get("KUNO_LAB_FROZEN_MEMBERS") is not None and (
+                    environment.get("KUNO_LAB_TARGET_ROUTER") != "device-frozen-public"
+                    or any(key in environment for key in ("KUNO_LAB_FROZEN_TABLES", "KUNO_LAB_FROZEN_GU_FACTORS", "KUNO_LAB_FROZEN_DOWN_SCALES", "KUNO_LAB_FROZEN_GU_ROWS")))
                 or environment.get("KUNO_LAB_FROZEN_GU_ROWS") is not None and any(
                     key in environment for key in ("KUNO_LAB_FROZEN_TABLES", "KUNO_LAB_FROZEN_GU_FACTORS"))
                 or environment.get("KUNO_LAB_TARGET_SOURCES") != "frozen-host-public"
