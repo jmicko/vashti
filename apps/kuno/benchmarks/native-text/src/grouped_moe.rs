@@ -10,8 +10,8 @@
 //! Parent owns physical owner/alias/epoch/device-limit validation and acceptance.
 
 use super::{
-    IQ2_S, IQ3_S, IQ3_XXS, IQ4_NL, Q4_K, binary16, iq_gate_up_factor, iq_gate_up_value_with_factor,
-    iq4_nl_scale, iq4_nl_value_with_scale, packed_value,
+    IQ2_S, IQ3_S, IQ3_XXS, IQ4_NL, Q2_0, Q4_K, binary16, iq_gate_up_factor,
+    iq_gate_up_value_with_factor, iq4_nl_scale, iq4_nl_value_with_scale, packed_value,
 };
 use cubecl::prelude::*;
 use zeroize::Zeroize;
@@ -3008,6 +3008,7 @@ pub fn grouped_down_frozen_four_rows(
         map,
         partials,
         status,
+        CUBE_POS_Y as usize,
         map_first,
         act_first,
         act_stride,
@@ -3056,6 +3057,7 @@ pub fn grouped_down_frozen_four_rows_three_members(
         map,
         partials,
         status,
+        CUBE_POS_Y as usize,
         map_first,
         act_first,
         act_stride,
@@ -3104,6 +3106,7 @@ pub fn grouped_down_frozen_staged_four_rows(
         map,
         partials,
         status,
+        CUBE_POS_Y as usize,
         map_first,
         act_first,
         act_stride,
@@ -3152,6 +3155,7 @@ pub fn grouped_down_frozen_staged_four_rows_three_members(
         map,
         partials,
         status,
+        CUBE_POS_Y as usize,
         map_first,
         act_first,
         act_stride,
@@ -3201,6 +3205,7 @@ pub fn grouped_down_frozen_four_rows_shared_scales(
         map,
         partials,
         status,
+        CUBE_POS_Y as usize,
         map_first,
         act_first,
         act_stride,
@@ -3220,9 +3225,31 @@ pub fn grouped_down_frozen_four_rows_shared_scales(
     );
 }
 
+/// Uniform private MAP predicate used by the distinct bounded scheduling path.
+/// It never reads source weights or allocates/initializes shared memory.
 #[cube]
+#[allow(clippy::collapsible_if)]
+fn down_stride_four_group_active(
+    map: &Array<u32>,
+    map_first: usize,
+    group: usize,
+    first_slot: usize,
+    slot_count: usize,
+    #[comptime] tile: usize,
+) -> bool {
+    let mut active = frozen_three_wave(map, map_first, 0_usize)
+        && group_active(map, map_first, group, first_slot, slot_count, tile);
+    if active {
+        active = map[map_first + 3] as usize <= map[map_first] as usize * RANKS;
+    }
+    active
+}
+
+/// Explicit four-y-workgroup schedule over the original public30-group
+/// envelope. Every valid group invokes the same original virtual64 arithmetic.
+#[cube(launch, launch_unchecked)]
 #[allow(clippy::too_many_arguments, clippy::collapsible_if)]
-fn grouped_down_four_rows_inner(
+pub fn grouped_down_frozen_four_rows_stride_four(
     down: &Array<u32>,
     activations: &Array<f32>,
     map: &Array<u32>,
@@ -3241,12 +3268,90 @@ fn grouped_down_four_rows_inner(
     #[comptime] down_dtype: u32,
     #[comptime] down_row_bytes: usize,
     #[comptime] tile: usize,
+) {
+    if comptime!(
+        hidden != 2560 || ff != 640 || tile != 8 || (down_dtype != IQ4_NL && down_dtype != Q2_0)
+    ) {
+        terminate!();
+    }
+    if CUBE_POS_X as usize >= comptime!(hidden / 4) || CUBE_POS_Y >= 4 || CUBE_POS_Z != 0 {
+        terminate!();
+    }
+    // The scan and exit are identical for every physical lane. No source
+    // payload read, reduction reset or barrier occurs before one valid group.
+    let mut any_valid = false;
+    let mut scan = CUBE_POS_Y as usize;
+    while scan < 30 {
+        if down_stride_four_group_active(map, map_first, scan, first_slot, slot_count, tile) {
+            any_valid = true;
+        }
+        scan += 4;
+    }
+    if !any_valid {
+        terminate!();
+    }
+    let mut group = CUBE_POS_Y as usize;
+    while group < 30 {
+        if down_stride_four_group_active(map, map_first, group, first_slot, slot_count, tile) {
+            grouped_down_four_rows_inner(
+                down,
+                activations,
+                map,
+                partials,
+                status,
+                group,
+                map_first,
+                act_first,
+                act_stride,
+                partial_first,
+                partial_stride,
+                status_first,
+                first_slot,
+                slot_count,
+                hidden,
+                ff,
+                down_dtype,
+                down_row_bytes,
+                tile,
+                false,
+                false,
+                tile,
+            );
+            // Every lane finishes all shared reads and output before any lane
+            // resets that same full shared owner for another original group.
+            sync_cube();
+        }
+        group += 4;
+    }
+}
+
+#[cube]
+#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
+fn grouped_down_four_rows_inner(
+    down: &Array<u32>,
+    activations: &Array<f32>,
+    map: &Array<u32>,
+    partials: &mut Array<f32>,
+    status: &mut Array<u32>,
+    group: usize,
+    map_first: usize,
+    act_first: usize,
+    act_stride: usize,
+    partial_first: usize,
+    partial_stride: usize,
+    status_first: usize,
+    first_slot: usize,
+    slot_count: usize,
+    #[comptime] hidden: usize,
+    #[comptime] ff: usize,
+    #[comptime] down_dtype: u32,
+    #[comptime] down_row_bytes: usize,
+    #[comptime] tile: usize,
     #[comptime] shared_down_scales: bool,
     #[comptime] staged_host_weights: bool,
     #[comptime] arithmetic_members: usize,
 ) {
     let first_feature = CUBE_POS_X as usize * 4;
-    let group = CUBE_POS_Y as usize;
     let first_member = CUBE_POS_Z as usize * tile;
     let lane = UNIT_POS_X as usize;
     let row = lane / 16;
@@ -6552,6 +6657,7 @@ mod tests {
     include!("iq4_down_scale_tests.rs");
     include!("iq_gate_up_factor_tests.rs");
     include!("down_four_row_tests.rs");
+    include!("down_stride_four_tests.rs");
     include!("gate_up_two_row_tests.rs");
     include!("three_member_arithmetic_tests.rs");
 }
