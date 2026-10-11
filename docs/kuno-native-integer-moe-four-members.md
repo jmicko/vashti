@@ -20,8 +20,8 @@ Workspace selection is defaultfalse and occurs only at a healthy completed
 accepted public warm boundary, before Sources attachment or router activation.
 `set_public_four_members_policy(executor,graph,arena,enabled)` requires the
 real target_four_rows_reserved permission, original DAS144/full target owners,
-GPU-router reservation and both existing integer scratch owners. It adds no
-allocation. The parent owns Source reconstruction/immutable flag parity,
+GPU-router reservation, actual constructor-reserved four-member router
+logical span and both existing integer scratch owners. It adds no allocation. The parent owns Source reconstruction/immutable flag parity,
 actual MAX40 router groups, all-family transactions and completed counters.
 
 ## Separate exactcount4 entries
@@ -67,9 +67,15 @@ new tests prove original XYZ arithmetic bodies, the fourth real member,
 all four GU/two DOWN formats, exact MAX8 owners, MAX40 groups, default hash
 identity, full64KiB reset/tails and incompatible geometry rejection.
 
-The accepted-boundary Workspace activation is a following parent-seam delta.
-It must authenticate actual four-capacity router construction (META18 with
-448224 logical audit words inside the original2MiB physical owner), not
-merely the reservation flag. Strict all-target Clippy is pending that parent
-dependency; the standalone executor reservation currently has no call site.
-No GPU operator or whole-model count4 result is claimed.
+The following accepted-boundary Workspace delta requires the actual
+constructor-reserved four-capacity router (META18,448224 logical audit words
+inside the original2MiB physical owner), in addition to the executor flag.
+The full-layout check uses that constructor reservation before activation;
+default448128 logical words remain unchanged. Two additional workspace
+source tests pass, including equal physical/different logical router layouts.
+Thirteen original resident-MoE and two original count-aware geometry tests
+also pass:42 unique focused/regression tests in total.
+
+Strict combined all-target Clippy remains the integrating parent's check;
+the standalone reservation/router dependency has temporarily unconsumed
+entrypoints. No GPU operator or whole-model count4 result is claimed.

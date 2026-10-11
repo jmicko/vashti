@@ -405,6 +405,7 @@ pub(crate) struct Workspace {
     prepared_verify3: Option<BufferId>,
     // Constructor-frozen public experiment; never read from ambient settings.
     public_existing_fill: bool,
+    public_four_members: bool,
     public_fill_counters: PublicFillCounters,
     frozen_sources: Option<Arc<frozen_sources::Sources>>,
     frozen_source_counters: frozen_sources::Counters,
@@ -530,6 +531,68 @@ fn hybrid_worker_geometry(count: usize, pooled: bool) -> bool {
 impl Workspace {
     pub(crate) fn live_member_reduction_enabled(&self) -> bool {
         self.layout.geometries[0].live_member_reduction()
+    }
+    pub(crate) fn public_four_members_policy(&self) -> bool {
+        self.public_four_members
+    }
+    /// Immutable optional four-row permission after accepted original warm
+    /// completion, before frozen Source attachment/GPU-router activation.
+    pub(crate) fn set_public_four_members_policy(
+        &mut self,
+        executor: &GpuExecutor<'_>,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+        enabled: bool,
+    ) -> Result<()> {
+        self.validate_public_warm_boundary(executor, graph, arena)?;
+        if self.public_four_members && !enabled {
+            return Err(err("native four-member policy is immutable"));
+        }
+        if !enabled {
+            return Ok(());
+        }
+        if !executor.target_four_rows_reserved
+            || !executor.target_rows_reserved
+            || !executor.target_frozen_host_router_reserved
+            || !executor.target_batch_router_reserved
+            || !executor.target_frozen_gu_integer_reserved
+            || !executor.target_frozen_down_integer_reserved
+            || self.frozen_gu_integer.is_none()
+            || self.frozen_down_integer.is_none()
+            || !self.frozen_host_batch_router_reserved()
+            || !self.four_member_router_reserved()
+            || self.batch_router_active()
+            || self.frozen_sources.is_some()
+            || self.frozen_staging.is_some()
+            || self.prepared_verify3.is_some()
+            || self.hybrid.is_some()
+            || self.resident_router.is_some()
+            || self.public_existing_fill
+            || self.live_member_reduction_enabled()
+            || self.layout.geometries.len() != 48
+            || self.layout.capacity != 144
+            || self.layout.tile != 8
+            || self.layout.gate_policy != k::GatePolicy::Generic
+            || executor.packed_profile != crate::expert_banks::OriginalPackedProfile::DaslabIq3
+            || executor.adaptive.is_some()
+            || executor.secondary.is_some()
+            || executor.secondary_frequency.is_some()
+            || executor.resident_router_reserved
+            || executor.target_frozen_host_source_identity.is_some()
+        {
+            return Err(err("native four-member accepted public policy"));
+        }
+        // Prove all actual original model geometries BEFORE changing the flag.
+        // Source attachment independently reconstructs the same full geometry.
+        for &original in &self.layout.geometries {
+            original
+                .with_frozen_host_sources()
+                .and_then(k::Geometry::with_inactive_partition_exit)
+                .and_then(k::Geometry::with_four_members)
+                .map_err(err)?;
+        }
+        self.public_four_members = true;
+        Ok(())
     }
     pub(crate) fn public_existing_fill_enabled(&self) -> bool {
         self.public_existing_fill
@@ -976,6 +1039,7 @@ impl Workspace {
                 batch_router: None,
                 prepared_verify3: None,
                 public_existing_fill,
+                public_four_members: false,
                 public_fill_counters: PublicFillCounters::default(),
                 frozen_sources: None,
                 frozen_source_counters: frozen_sources::Counters::default(),
@@ -1176,7 +1240,14 @@ impl Workspace {
                     || self.resident_router.is_some()
                     || arena.layout(id).map_err(u::fault)?
                         != BufferLayout::new(
-                            [48 * 512, crate::resident_batch_router_gpu::AUDIT_WORDS][i],
+                            [
+                                48 * 512,
+                                if self.four_member_router_reserved() {
+                                    crate::resident_batch_router_gpu::four::AUDIT_WORDS
+                                } else {
+                                    crate::resident_batch_router_gpu::AUDIT_WORDS
+                                },
+                            ][i],
                         )
                         .map_err(u::fault)?
                 {
@@ -1487,7 +1558,7 @@ impl GpuExecutor<'_> {
             w.begin_resident_router_token(self, graph, arena, start, count, cancel)?;
             w.begin_batch_router_chunk(arena, start, count)?;
             if w.frozen_host_sources_enabled()
-                && (!(1..=3).contains(&count)
+                && (!(1..=if w.public_four_members_policy() { 4 } else { 3 }).contains(&count)
                     || !self.resident_banks_frozen
                     || self.target_frozen_host_source_identity
                         != w.frozen_sources.as_ref().map(|s| s.plan_identity())
@@ -3672,3 +3743,7 @@ mod live_member_reduction_tests {
         assert_eq!(HOST_PRIVATE, 2 * 1024 * 1024);
     }
 }
+
+#[cfg(test)]
+#[path = "resident_moe_four_member_tests.rs"]
+mod four_member_tests;
