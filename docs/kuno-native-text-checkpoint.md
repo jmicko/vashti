@@ -3621,3 +3621,80 @@ experiment as scoped there is wrong, and no engine source has been changed.
    which are zero in the frozen design, so neither experiment's payoff can
    be predicted from existing receipts; the placement variant would decide
    the memory-versus-compute question directly.
+
+### HANDOFF: preserve-placement experiment implemented, NOT yet run (2026-10-10)
+
+User selected the hot-placement measurement over kernel decode work. Source
+landed and committed; the physical trial has NOT run yet (user hit usage
+limit). Everything a fresh session needs to go straight to the trial:
+
+## What was implemented (commit 4fad434 on codex/kuno-native-text)
+
+`KUNO_LAB_FROZEN_BANK_PLACEMENT=preserve-public` keeps the warm replay's
+actual routed VRAM residents (left by replay=0's demand uploads) instead of
+the canonical CPU13 diagnostic set 0..143. Architecture verified sound: the
+five frozen source partitions cover ALL 512 experts with immutable host
+pages; VRAM residency is a per-expert overlay (by_expert slot < 144) that
+check_mapping already validates against the actual bank - the language path
+runs arbitrary LRU resident sets through the same machinery every trial.
+
+Files changed:
+- `resident_model_batch.rs prepare_public_host_sources`: new
+  `preserve_routed_bank: bool` parameter; canonical 0..143 branch only for
+  context-13 warm replay AND NOT preserve; otherwise `complete_public_host_banks`.
+- `daslab_speculative_probe.rs`: allowlist `KUNO_LAB_FROZEN_BANK_PLACEMENT`;
+  parse canonical `preserve-public`, requires frozen sources + warm replay;
+  new `preserve_routed_bank` input; receipt field
+  `frozen_bank_placement` (`preserve-routed` | `cpu13-diagnostic`);
+  `timing_scope` string names the actual placement; tier check: canonical
+  requires host>0 AND vram>0, preserve requires vram>0 only (host may be 0 -
+  that IS the measurement).
+- `daslab_language_probe.rs`: passes `false` (behavior unchanged).
+- `protected-lab-exec.py`: `bank_placement_scope()` early check in
+  `memory_limit` (no-mode envs reach the fallback without the speculative
+  block, so the flag must be validated up front) + pop block in
+  `selected_target_policy` so the permitted-set check never sees it.
+- Local helper labels: `warm-preservebank-host` (placement only) and
+  `warm-preservebank-fast-host` (placement + exit kernel, composed).
+- Tests all pass: 46 daslab / 31 frozen / 66 router, Clippy -D warnings,
+  fmt, 103 Python launcher tests, 26-trial helper env oracle test.
+
+## To run the experiment (next session)
+
+1. Freeze a fresh build (`build-direct-target.py native-next-v146-...`) from
+   HEAD - the placement variant is source-new, no acceptance transfers.
+2. Host gates for the variant, in order (sudo in the Demons shell; fresh
+   output dirs each):
+   - `mkdir native-next-v146-preserve-gate && sudo -n python3
+     /media/jmicko/faststore/kuno-development/run-native-strata-public-protected-20261009.py
+     <build> native-next-v146-preserve-gate warm-preservebank-host`
+     Expect: FULL CPU13 vectors/carries/greedies/repair acceptance (placement
+     changes only WHERE weights are read from, never the arithmetic), receipt
+     `frozen_bank_placement: preserve-routed`, both tier counters recorded.
+   - Optional control side-by-side on the SAME artifact:
+     `warm-host` (already run for v145) and/or `warm-preservebank-fast-host`
+     for placement+exit.
+3. Read the decision from the receipts: compare `accepted_tokens_per_second`
+   and `frozen_source_routes` host vs vram counts. If the preserve runs are
+   much faster with host_routes near 0, PCIe host streaming was the
+   bottleneck and VRAM-resident routing is the roadmap (then consider
+   increasing bank capacity beyond 144, or hot-set policies for production).
+   If speed is unchanged, decode/ALU dominates and the operative-path
+   per-block metadata staging work (see the correction section above,
+   quant_matvec `packed_value` block-metadata redundancy) is the next kernel
+   target.
+4. Record in the receipt and checkpoint with the same discipline: artifact
+   hashes, actual route counts, exact rates, limitations, and keep terminal
+   recovery verification (Intel 50,688,000 B, admission normal, fault counts
+   unchanged).
+
+## Do NOT
+
+- Do not treat warm-gate numbers with the preserve placement as the accepted
+  CPU13 control: the canonical control is the 0..143 placement; the preserve
+  variant is a diagnostic that answers the memory-versus-compute question.
+- Do not delete the tier-check branch: the canonical gates still require
+  both tiers, which is what keeps the accepted fixture honest.
+
+Host state at handoff: baseline 50,688,000 B, admission normal, no GPU trial
+launched for the placement variant yet. Working tree clean at 4fad434.
