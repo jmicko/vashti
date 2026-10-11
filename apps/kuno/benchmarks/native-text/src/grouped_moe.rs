@@ -164,6 +164,7 @@ pub struct Geometry {
     shared_down_scales: bool,
     shared_gate_up_factors: bool,
     four_row_down: bool,
+    two_row_gate_up: bool,
 }
 impl Geometry {
     pub fn new(
@@ -224,6 +225,7 @@ impl Geometry {
             shared_down_scales: false,
             shared_gate_up_factors: false,
             four_row_down: false,
+            two_row_gate_up: false,
         })
     }
     /// Explicit source-only public profile. These virtual slots are NOT
@@ -289,6 +291,7 @@ impl Geometry {
             || self.reduction_policy != ReductionPolicy::AllMembers
             || self.private_tables
             || self.workgroup_tables
+            || self.two_row_gate_up
         {
             return Err("grouped frozen private-table policy");
         }
@@ -309,6 +312,7 @@ impl Geometry {
             || self.reduction_policy != ReductionPolicy::AllMembers
             || self.private_tables
             || self.workgroup_tables
+            || self.two_row_gate_up
         {
             return Err("grouped frozen workgroup-table policy");
         }
@@ -351,6 +355,7 @@ impl Geometry {
             || self.gate_policy != GatePolicy::Generic
             || self.reduction_policy != ReductionPolicy::AllMembers
             || self.shared_gate_up_factors
+            || self.two_row_gate_up
         {
             return Err("grouped frozen shared-gate-up-factor policy");
         }
@@ -359,6 +364,38 @@ impl Geometry {
     }
     pub(crate) fn shared_gate_up_factors(self) -> bool {
         self.shared_gate_up_factors
+    }
+    /// Two complete GU output rows per64-thread cube. Each thread retains two
+    /// original virtual lanes; table/factor microexperiments are incompatible.
+    #[allow(dead_code)]
+    pub(crate) fn with_two_row_gate_up(mut self) -> Result<Self, &'static str> {
+        if !self.frozen_host_sources
+            || !self.inactive_partition_exit
+            || self.capacity != 512
+            || self.tile != 8
+            || self.hidden != 2560
+            || self.ff != 640
+            || self.secondary_partition
+            || self.gate_policy != GatePolicy::Generic
+            || self.reduction_policy != ReductionPolicy::AllMembers
+            || self.private_tables
+            || self.workgroup_tables
+            || self.shared_gate_up_factors
+            || self.two_row_gate_up
+            || !matches!(
+                self.projections[0].dtype,
+                IQ2_S | IQ3_XXS | IQ3_S | super::IQ4_XS
+            )
+            || self.projections[0] != self.projections[1]
+        {
+            return Err("grouped frozen two-row-gate-up policy");
+        }
+        self.two_row_gate_up = true;
+        Ok(self)
+    }
+    #[allow(dead_code)]
+    pub(crate) fn two_row_gate_up(self) -> bool {
+        self.two_row_gate_up
     }
     /// Four output rows per64-thread cube, retaining the original64 virtual
     /// lane accumulators and exact tree. Storage owners and route maps do not
@@ -511,7 +548,7 @@ impl Geometry {
             if down {
                 self.hidden / if self.four_row_down { 4 } else { 1 }
             } else {
-                self.ff
+                self.ff / if self.two_row_gate_up { 2 } else { 1 }
             } as u32,
             groups as u32,
             (self.member_capacity() / self.tile) as u32,
@@ -1873,6 +1910,135 @@ fn grouped_gate_up_inner(
     }
 }
 
+/// Two complete original GU rows per64-thread cube. The named entrypoint must
+/// consume Geometry::two_row_gate_up's paired grid; original entrypoints remain
+/// unchanged. Every source-exit predicate is workgroup-uniform.
+#[cube(launch, launch_unchecked)]
+#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
+pub fn grouped_gate_up_frozen_two_rows(
+    gate: &Array<u32>,
+    up: &Array<u32>,
+    input: &Array<f32>,
+    map: &Array<u32>,
+    activations: &mut Array<f32>,
+    status: &mut Array<u32>,
+    map_first: usize,
+    input_first: usize,
+    input_stride: usize,
+    act_first: usize,
+    act_stride: usize,
+    status_first: usize,
+    first_slot: usize,
+    slot_count: usize,
+    #[comptime] hidden: usize,
+    #[comptime] ff: usize,
+    #[comptime] gate_dtype: u32,
+    #[comptime] up_dtype: u32,
+    #[comptime] gate_row_bytes: usize,
+    #[comptime] up_row_bytes: usize,
+    #[comptime] tile: usize,
+    #[comptime] q4_block: bool,
+) {
+    // Public generic-only admission has no Q4 block specialization.
+    if comptime!(q4_block) {
+        terminate!();
+    }
+    let first_feature = CUBE_POS_X as usize * 2;
+    let group = CUBE_POS_Y as usize;
+    let first_member = CUBE_POS_Z as usize * tile;
+    let physical_lane = UNIT_POS_X as usize;
+    let row = physical_lane / 32;
+    let row_lane = physical_lane % 32;
+    let feature = first_feature + row;
+    // Frozen FF640 admits whole pairs. Never return on a per-row predicate:
+    // both physical rows must reach every shared reduction fence together.
+    let mut active =
+        group_active(map, map_first, group, first_slot, slot_count, tile) && first_feature + 1 < ff;
+    if active {
+        if first_member >= map[map_first + LENGTHS + group] as usize {
+            active = false;
+        }
+    }
+    if !active {
+        terminate!();
+    }
+    let slot = map[map_first + SLOTS + group] as usize - first_slot;
+    let length = map[map_first + LENGTHS + group] as usize;
+    let source_row = slot * ff + feature;
+    let gate_offset = source_row * gate_row_bytes;
+    let up_offset = source_row * up_row_bytes;
+    let mut gates = Array::<f32>::new(comptime!(2 * tile));
+    let mut ups = Array::<f32>::new(comptime!(2 * tile));
+    #[unroll]
+    for virtual_lane in 0_usize..2 {
+        #[unroll]
+        for member in 0..tile {
+            gates[virtual_lane * tile + member] = 0.;
+            ups[virtual_lane * tile + member] = 0.;
+        }
+    }
+    for column_tile in 0..comptime!(hidden.div_ceil(LANES)) {
+        #[unroll]
+        for virtual_lane in 0_usize..2 {
+            let column = column_tile * LANES + row_lane + virtual_lane * 32;
+            if column < hidden {
+                let g = packed_value(gate, gate_offset, column, gate_dtype);
+                let u = packed_value(up, up_offset, column, up_dtype);
+                #[unroll]
+                for member in 0..tile {
+                    if first_member + member < length {
+                        let route = map
+                            [map_first + MEMBERS + group * MAX_BATCH + first_member + member]
+                            as usize;
+                        let x = input[input_first + route / RANKS * input_stride + column];
+                        gates[virtual_lane * tile + member] += g * x;
+                        ups[virtual_lane * tile + member] += u * x;
+                    }
+                }
+            }
+        }
+    }
+    let mut gate_sums = SharedMemory::<f32>::new(comptime!(2 * 32 * tile));
+    let mut up_sums = SharedMemory::<f32>::new(comptime!(2 * 32 * tile));
+    #[unroll]
+    for member in 0..tile {
+        let index = (row * tile + member) * 32 + row_lane;
+        // Exactly the original stride32 operands and order. The remaining
+        // original strides16,8,4,2,1 use the same shared F32 additions.
+        gate_sums[index] = gates[member] + gates[tile + member];
+        up_sums[index] = ups[member] + ups[tile + member];
+    }
+    sync_cube();
+    let mut stride = 16_usize;
+    while stride > 0 {
+        if row_lane < stride {
+            #[unroll]
+            for member in 0..tile {
+                let index = (row * tile + member) * 32 + row_lane;
+                gate_sums[index] += gate_sums[index + stride];
+                up_sums[index] += up_sums[index + stride];
+            }
+        }
+        sync_cube();
+        stride /= 2;
+    }
+    if row_lane == 0 {
+        #[unroll]
+        for member in 0..tile {
+            if first_member + member < length {
+                let route =
+                    map[map_first + MEMBERS + group * MAX_BATCH + first_member + member] as usize;
+                let index = (row * tile + member) * 32;
+                activations[act_first + route * act_stride + feature] =
+                    grouped_silu(gate_sums[index]) * up_sums[index];
+                if feature == 0 {
+                    status[status_first + route] = 1;
+                }
+            }
+        }
+    }
+}
+
 /// Five storage buffers plus INFO. Same original64-lane tree for each route.
 #[cube(launch, launch_unchecked)]
 #[allow(clippy::too_many_arguments, clippy::collapsible_if)]
@@ -2895,6 +3061,7 @@ mod tests {
             shared_down_scales: false,
             shared_gate_up_factors: false,
             four_row_down: false,
+            two_row_gate_up: false,
         };
         assert_eq!(g.scratch_bytes(true).unwrap(), 4480 * 1024);
     }
@@ -5619,6 +5786,7 @@ mod tests {
     include!("iq4_down_scale_tests.rs");
     include!("iq_gate_up_factor_tests.rs");
     include!("down_four_row_tests.rs");
+    include!("gate_up_two_row_tests.rs");
 }
 #[cfg(test)]
 mod frozen_source_tests {
