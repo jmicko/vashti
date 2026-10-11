@@ -5,6 +5,8 @@
 //! target model immediately before calling; this module cannot mint that proof.
 //! No routing trace, guessed expert substitution, source freeze or persistence.
 use super::*;
+#[path = "public_host_cpu_gpu_launch.rs"]
+mod cpu_gpu_launch;
 use crate::{
     bank_slots::{BankSlots, CompletionGeneration, Plan},
     private_arena::{BufferId, PrivateArena},

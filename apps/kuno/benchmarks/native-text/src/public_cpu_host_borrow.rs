@@ -73,12 +73,13 @@ fn check_full_handle(handle: &Handle, bytes: u64) -> Result<()> {
 /// No Clone/Debug/serialization, raw source Handle or mutable byte interface.
 pub(crate) struct CpuLayerBorrow<'borrow, 'reader, 'model, 'file> {
     prepared: &'borrow PreparedPlan<'model, 'file>,
+    sources: &'borrow Sources,
     weights: PackedExperts<'reader, 'file>,
     maps: mirror::ReadOnlyLayer<'borrow>,
     owners: [&'borrow PublicExternalHandle; PAGE_COUNT],
     client: &'borrow ComputeClient<WgpuRuntime>,
-    _executor: &'borrow GpuExecutor<'file>,
-    _workspace: &'borrow batch_moe::Workspace,
+    executor: &'borrow GpuExecutor<'file>,
+    workspace: &'borrow batch_moe::Workspace,
     _exclusive: PhantomData<&'borrow mut ()>,
     layer: Zeroizing<usize>,
     geometry: k::Geometry,
@@ -192,12 +193,13 @@ impl<'plan, 'model, 'file> Attachment<'plan, 'model, 'file> {
             .map_err(Error::InvalidFormat)?;
         Ok(CpuLayerBorrow {
             prepared,
+            sources: self.sources.as_ref().ok_or_else(rejected)?,
             weights,
             maps,
             owners,
             client: &self.client,
-            _executor: executor,
-            _workspace: workspace,
+            executor,
+            workspace,
             _exclusive: PhantomData,
             layer: Zeroizing::new(layer),
             geometry,
@@ -377,6 +379,62 @@ impl CpuLayerBorrow<'_, '_, '_, '_> {
         let result = self.enqueue_original(arena, spans, &ids, groups, cancel);
         let joined = self.join(); // including partial enqueue/error
         result.and(joined)
+    }
+    /// Default-unused count3 all-source control; actual GPU completion is joined.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn launch_all_original_gpu_partials(
+        &self,
+        arena: &PrivateArena,
+        spans: &k::Spans,
+        ids: [BufferId; 7],
+        groups: usize,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        self.launch_overlap_partitions(arena, spans, ids, groups, true, cancel)
+    }
+    /// Default-unused resident arm. The coordinator must call this joined method
+    /// while the separately scoped CPU task is running, before CPU task join.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn launch_resident_original_gpu_partials(
+        &self,
+        arena: &PrivateArena,
+        spans: &k::Spans,
+        ids: [BufferId; 7],
+        groups: usize,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        self.launch_overlap_partitions(arena, spans, ids, groups, false, cancel)
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn launch_overlap_partitions(
+        &self,
+        arena: &PrivateArena,
+        spans: &k::Spans,
+        ids: [BufferId; 7],
+        groups: usize,
+        all: bool,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        u::cancel(cancel)?;
+        // Armed before authentication/enqueue: all partial/error/unwind work
+        // must join before this guard or immutable mapped views may drop.
+        self.gpu_armed.set(true);
+        let queued = self.executor.enqueue_public_host_cpu_overlap(
+            &self.prepared.plan,
+            self.prepared.graph,
+            self.sources,
+            self.workspace,
+            *self.layer,
+            self.owners,
+            arena,
+            spans,
+            ids,
+            groups,
+            all,
+            cancel,
+        );
+        let joined = self.join();
+        queued.and(joined)
     }
     fn enqueue_original(
         &self,

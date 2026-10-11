@@ -35,6 +35,8 @@ use std::{
 #[path = "public_cpu_host_borrow.rs"]
 mod cpu_host_borrow;
 pub(crate) use cpu_host_borrow::CpuLayerBorrow;
+#[path = "public_host_cpu_overlap_probe.rs"]
+pub(crate) mod overlap_probe;
 
 pub(crate) const ATTACHMENT_HOST_BYTES: u64 = 256 * 1024;
 pub(crate) const REGISTRY_HOST_BYTES: u64 = MAX_METADATA_BYTES as u64;

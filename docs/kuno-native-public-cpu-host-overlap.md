@@ -1,11 +1,13 @@
 # Original three-row CPU HOST / GPU resident overlap operator
 
-## Proposed scope, 2026-10-11
+## Approved source scope, 2026-10-11
 
-This is a review proposal, not an implemented or accepted execution path. The
-isolated branch starts at root `2dbc897`. Implementation requires root's review
-of this contract. No compilation, device operation, service change, source
-activation, public API, installation or performance claim accompanies it.
+Root approved this contract before implementation. The isolated branch starts
+at root `2dbc897`; the early plan was committed as `49b169b`. Source checks
+are in progress. This remains default-unused and physically unaccepted; no
+GPU/service operation, normal-model activation, installation or speed claim
+accompanies source validation. Root owns fixed main registration and every
+protected physical run.
 
 The first candidate is one fixed original DASLab layer (`layer0`, H2560,
 FF640, 512 original experts), with **exactly three real synthetic input rows**.
@@ -164,7 +166,7 @@ CPU workers as additional HOST payloads.
 | Reference OUTPUT | 20480 | 131072 |
 | Private rank owners | bounded fixed header/masks, at most256 | 32768 |
 
-Total backing is **3964928B**, leaving229376B below4194304B. This is a
+Total backing is **3866624B**, leaving327680B below4194304B. This is a
 source quote, not an allocation receipt. Authenticate exact original layout,
 actual owning spans, physical roots/aliases and aggregate charged bytes before
 private fill. No global MAIN cap, source/cache reservation, bank geometry,
@@ -178,8 +180,10 @@ fill. Use the leaf's checked byte API and actual capacities, not these payload
 totals alone. Reject if the complete phase cannot fit; no worker fallback.
 The encoding phase retains only the307200B CPU output,524288B encoding owner
 and admitted headers. Release packet/input readback leases before that phase.
-Perform post-run reference reads one full131072B row owner at a time, keeping
-all simultaneous capacities within the same cap. Scoped controller/pool
+Post-run numeric comparisons retain at most two full131072B row inspection
+leases (candidate and GPU-owned reference), after joined CPU output/worker/input
+owners release. Their262144B plus the admitted headers stay within the same
+1MiB cap. No CPU reference-weight or full reference-vector mirror is added. Scoped controller/pool
 headers and tasks are counted; OS/pool history erasure is not claimed.
 
 The existing configured transient runtime remains capped at128MiB. Before
@@ -191,6 +195,35 @@ leases and audit/sanitize transient I/O between arms and after post-run owning
 checks; never accumulate the old operator's180 pairs without checkpoints.
 Source bindings/maps and the existing model are retained across these I/O
 checkpoints; no context, epoch, poison or public source is reset.
+
+The source-frozen dispatch/readback manifest is below. Each kernel has one
+original2048B INFO owner; writes/readbacks use the existing transient controller,
+with its actual owner-capacity and full erasure audit. These are source schedule
+counts, not hardware allocation/timing receipts. There is no additional runtime
+cap or allocation credit.
+
+| Phase | Cube dispatches | Full private uploads | Full readback owner bytes |
+| --- | ---: | ---: | ---: |
+| Arm clear, outside compute wall | 10 | 0 | 0 |
+| AllGpu complete compute wall | 16 | 0 | 32768 |
+| Mixed serial/concurrent compute wall | 11 | 557056 | 131072 |
+| Resident-only split compute wall | 10 | 32768 | 32768 |
+| HOST-only split compute wall | 7 | 557056 | 131072 |
+| AllGpu full post-run owning checks | 109 | 32768 | 6651904 |
+| Split full post-run owning checks | 94 | 0 | 6094848 |
+| One fixed reference snapshot | 3 | 0 | 0 |
+
+The ordinary post-run comparison reads44 owning131072B row leases across ACT,
+PART, CPU upload and OUTPUT; only two are live simultaneously. AllGpu's separate
+original-reduce/new-merge bitwise control reads four more such leases. The other
+readbacks are the full INPUT/STATUS/rank-owner packets, original handoff MAP,
+PROB and input, and finite fault owners. The largest109-dispatch phase stays
+below512. Count actual successful partial/CPU calls separately from this quote.
+Initial case uploads are196608B (MAP+PROB+INPUT) and are sanitized before arm
+compute. Every clear, compute, postcomparison and source/owner close boundary
+uses the existing audited cleanup after all leases drop. There is no accumulation
+across75 measured/numeric/priming arms or the five reference runs.
+
 
 ## Numeric and timing acceptance
 
@@ -234,21 +267,34 @@ written to disk/logs. Content-free failure stages do not publish partial timing.
 
 ## Implementation boundary and later gates
 
-After review, proposed owned additions are a new fixed-public operator/merge
-module, the opaque resident/all-partitions launcher in the existing borrow,
-and the narrow executor bank helper. Root owns main registration and protected
-runner policy. Proposed fixed mode is `public-host-cpu-overlap-probe` with
+The approved implementation adds a new fixed-public operator/merge module,
+the opaque resident/all-partitions launcher in the existing borrow, and the
+narrow executor bank helper. Root owns main registration and protected runner
+policy. Its fixed mode is `public-host-cpu-overlap-probe` with
 `KUNO_LAB_HOST_CPU_OVERLAP_PUBLIC_ONLY=1`, the existing fixed8GiB cache,
 original source directory, CPU13 reference and public receipt. Reject inherited
 conflicting/unknown Kuno laboratory flags before any device/model access.
 No new runtime environment flag activates this in inference.
 
-Source checks cover private owner arithmetic/aliases, actual source-scope
-classification, same full original kernels, scoped joined scheduling on both
-errors/panics, sparse/shared/disjoint original-rank math and exact capacity
-phase ordering. Existing CPU batch source/math tests remain unchanged.
-Build/Clippy and protected physical acceptance are separate. Do not compile or
-use a GPU during root's benchmark holds.
+Six focused checks pass: fixed registration and inherited-policy rejection,
+all fifteen private owner charges and phased HOST bounds, aligned full owning
+inspection and the unchanged partial tolerance, the scoped enqueue/join
+source order, typed sparse owner/readiness packets, and the actual checked
+and direct merge shader through Naga (seven payload bindings plus one INFO
+binding). The complete attachment/borrow filter passes fifteen tests,
+including those six; the unchanged CPU-batch operator passes five and bank
+completion passes ten. Strict direct-device all-target Clippy with denied
+warnings, formatter check and diff check pass. These are CPU/source checks,
+not evidence of GPU numerical agreement, actual overlap or faster inference.
+
+The probe contains eleven fixed physical negative controls for malformed
+count/owner/readiness/logical padding, missing original GPU status, a zero
+probability with a nonfinite partial, prior sticky fault, physical padding,
+private alias and invalid CPU source classification/range. They have not yet
+been run on the device. Same-artifact complete raw/merged comparisons, source
+and owner checks, closure and timing acceptance remain pending the protected
+physical run. Existing CPU batch source/math tests remain unchanged. Do not
+compile or use a GPU during root's benchmark holds.
 
 Only a later separately approved model consumer could use these results. It
 would require actual dynamic route export, whole-model source/owner budgets,

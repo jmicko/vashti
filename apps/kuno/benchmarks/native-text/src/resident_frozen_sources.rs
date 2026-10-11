@@ -1468,7 +1468,7 @@ impl Sources {
             .map(|p| p.handle.clone())
             .collect())
     }
-    pub(super) fn validate_source_layer(
+    pub(crate) fn validate_source_layer(
         &self,
         client: &ComputeClient<WgpuRuntime>,
         layer: usize,
