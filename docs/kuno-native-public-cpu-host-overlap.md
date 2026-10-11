@@ -330,3 +330,17 @@ original shapes,144-to-frozen512 conversion and inactive exit/count3, rejects
 count4 and proves all five source extents. Six overlap checks and strict direct
 all-target Clippy/fmt/diff pass. No timing is credited to the unrun earlier
 geometry. Arithmetic, source proofs and all original caps remain unchanged.
+
+## Protected operator connection
+
+The root guard and external runner add only the fixed
+`cpu-host-overlap-intel-host` trial. Exactly the dedicated Intel mode, six
+required laboratory/path keys, inline dispatch and original8GiB static cache
+are admitted; inherited policies and other models are rejected. The existing
+48GiB process envelope, swap0/core0, fresh Xe31GiB target+4MiB operator+512MiB
+margin and original source/reference hashes stay unchanged. Four new admission
+tests plus15 existing CPU-batch/four-lookahead/Intel-placement/target-only
+controls pass (19total); both Python sources compile. Eight frozen executable
+negative cases additionally reject before GPU initialization, with core dumps
+disabled. Their aggregate receipt is v179 build/registration-negative.json.
+Actual same-artifact operator numerical/negative/timing/closing remains pending.

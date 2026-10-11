@@ -532,6 +532,24 @@ def memory_limit(environment, arguments):
                 or selected["KUNO_LAB_DEVICE_DISPATCH"] != "inline"):
             raise ValueError("Verify4 operator rejects model inputs and inherited experiments")
         return 8 * 1024**3
+    if ("KUNO_LAB_HOST_CPU_OVERLAP_PUBLIC_ONLY" in environment
+            or len(arguments) > 2 and arguments[2] == "public-host-cpu-overlap-probe"):
+        selected = {key: value for key, value in environment.items()
+                    if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
+        required = {"KUNO_LAB_HOST_CPU_OVERLAP_PUBLIC_ONLY", "KUNO_LAB_DEVICE_DISPATCH",
+                    "KUNO_LAB_STATIC_CACHE_BYTES",
+                    "KUNO_TEST_Q3_DIR", "KUNO_PUBLIC_TARGET_CARRY13_REFERENCE",
+                    "KUNO_PUBLIC_RECEIPT"}
+        if (set(selected) != required or any(not value for value in selected.values())
+                or selected["KUNO_LAB_HOST_CPU_OVERLAP_PUBLIC_ONLY"] != "1"
+                or selected["KUNO_LAB_DEVICE_DISPATCH"] != "inline"
+                or selected["KUNO_LAB_STATIC_CACHE_BYTES"] != "8589934592"
+                or len(arguments) != 3
+                or arguments[1:] != ["intel", "public-host-cpu-overlap-probe"]):
+            raise ValueError("HOST CPU overlap requires the fixed Intel original public operator")
+        # The original model/cache/mirror envelope is retained. This is not
+        # extra private capacity: CPU1MiB/GPU operator owners remain independent.
+        return 48 * 1024**3
     if ("KUNO_LAB_HOST_CPU_BATCH_PUBLIC_ONLY" in environment
             or len(arguments) > 2 and arguments[2] == "public-host-cpu-batch-probe"):
         selected = {key: value for key, value in environment.items()

@@ -3949,9 +3949,13 @@ v177_actual_frozen_four_cpu13_acceptance and
 v177_original_vs_four_normal_intel_pair.
 
 Read the current [owner handoff](kuno-native-next-model-handoff.md) and
-[four-row contract](kuno-native-target-four-rows.md). Next candidate corrects
-GDN's bypass of the existing retained-metadata policy; physical correctness
-and frozen before/after timing remain required. A bounded original three-row
+[four-row contract](kuno-native-target-four-rows.md). GDN's retained-metadata correction (`cd638c7`) passes original/four cold/warm
+CPU13, full closures/recovery and normal code200. v17810.704157 versus
+v177four10.740576 gives no measured gain (about0.34percent slower in one
+frozen comparison). Real work/repair/prefix counts match. Its35 source checks
+and strict direct Clippy pass, with original arithmetic/shaders/caps unchanged.
+See v178_gdn_retained_metadata_cpu13_acceptance and
+v178_gdn_retained_metadata_four_normal. A bounded original three-row
 CPU-HOST/GPU-resident overlap operator is separately prepared, with no model
 consumer or measured gain yet. The unused exact persistent144 bank leaf
 (`e16ac7a`) grants no additional physical capacity or slots. No API, installed

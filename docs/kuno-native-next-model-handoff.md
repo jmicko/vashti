@@ -93,9 +93,15 @@ not establish repeated/prose/independentCPU200/native30 acceptance. See
 v177_actual_frozen_four_cpu13_acceptance and
 v177_original_vs_four_normal_intel_pair in the numeric receipt.
 
-Next candidate connects native GDN validation to the already admitted retained
-metadata helper, preserving all eight owner proofs and arithmetic. It avoids
-unnecessary mid-layer queue submissions; no measured gain is claimed yet.
+GDN retained metadata correction (`cd638c7`, original leaf`b3480fe`) passes
+both original/four cold/warm full CPU13 and complete closures/recovery. Frozen
+v178 code200 measures10.704157 versus v177four10.740576, about0.34percent
+slower in one comparison: no measured gain. Both do identical real work,
+147of155 drafts/52 rounds/five genuine repairs and zero repaired-vector error.
+Its35 source checks/strict Clippy pass; all arithmetic/shaders/caps are unchanged.
+It removes the omitted metadata queue submission but this receipt grants no
+isolated GDN speed claim. See v178_gdn_retained_metadata_cpu13_acceptance and
+v178_gdn_retained_metadata_four_normal.
 The separate original three-row CPU-HOST/GPU-resident overlap operator has no
 whole-model consumer or measured gain. Both retain default-off lab scope.
 

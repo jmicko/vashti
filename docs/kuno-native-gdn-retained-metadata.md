@@ -85,3 +85,34 @@ original or genuine-four configuration across these frozen artifacts. This is
 an artifact comparison, not a claimed same-artifact toggle or isolated GPU
 cost measurement. Compiler-idle paired normal timing is required; the existing
 v177 three/four pair does not measure this correction.
+
+## Physical correctness receipt, v178 (2026-10-11)
+
+Frozen sourcecd638c70be6281f729bc0de7d2d23391bfbb313c, pure-direct binarySHA256
+b53866265161a112da91bf9e94a1ed35db3c0f68fa70a874eeaec48fb0dcb63d,
+passes both original and selected-four cold/warm full CPU13 vectors/carries/
+greedies and real rejection repair using the unchanged original reference and
+absolute0.006/relative0.0003 bounds. Selected work completes three genuine
+count4 chunks/2256 equal Verify4 calls with original tail behavior; default/
+cold/prefill count4 stays false/zero. The unchanged v174 numerical operators
+are reused because this helper correction changes no arithmetic, shader or cap.
+Complete original target/draft/432 HOST owner closures and same-boot baseline
+50688000B, all HTTP200, idle/unpaused admission and zero classified GPU faults
+pass after both runs. Aggregate receipts are in
+v178_gdn_retained_metadata_cpu13_acceptance. Correctness work overlapped CPU
+source compilation; its short-fixture rates carry no performance credit.
+Compiler-idle frozen before/after normal timing is separately pending.
+
+## Normal frozen before/after result
+
+Compiler-idle selected-four code200 on v178 completes199 real continuations,
+147of155 actual drafts/52 rounds/51 count4 chunks and five genuine target
+recomputations, with zero repaired-vector maximum absolute error and all owner
+closures/recovery. It measures10.704157 real continuations/s versus v177's
+10.740576: about0.34percent slower in this one before/after comparison, so
+there is no measured speed gain. Verify13.196322s versus13.227285s is nearly
+unchanged; draft3.145481s versus3.049685s differs between runs. Global waits
+608versus526 and wait/map timers are overlapping dual-runtime diagnostics,
+not isolated GDN costs. The real accepted work/prefix counts are identical.
+No repeatedABBA/prose/native30 or installed acceptance is claimed. Exact raw
+aggregate/source/host receipts: v178_gdn_retained_metadata_four_normal.
