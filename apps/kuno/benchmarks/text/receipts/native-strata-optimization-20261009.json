@@ -17214,5 +17214,89 @@
         "time": "2026-10-11T16:30:44.457717+00:00"
       }
     }
+  },
+  "v160_intel_mtp_registration_failure": {
+    "source": {
+      "commit": "748b235bca23914d666006a2ffc826bb68b90fea",
+      "binary_sha256": "3f40995d660bd24dae9502dcf28fbb491f4da77e9ba8578f898dd6575d953e1d",
+      "features": [
+        "direct-device"
+      ],
+      "protected_launcher_sha256": "4a97bbe1a2365b71ef0282d8db611eaf70922c622dd35ab3a2e88896e2ea1b62",
+      "helper_sha256": "f84abcd252a814de4ed6be193fd418e81e06cd2a07a705c03c0db0ab4b6c51a6",
+      "public_trial": "warm-intel-mtp-gu-stride-four-down-shared-head-gpu-host",
+      "seed": 424242,
+      "temperature": 0,
+      "frozen_partition_exit_requested": true,
+      "frozen_bank_preserve_requested": false,
+      "frozen_private_tables_requested": false,
+      "frozen_workgroup_tables_requested": false,
+      "frozen_shared_down_scales_requested": false,
+      "frozen_shared_gate_up_factors_requested": false,
+      "mtp_q8_head_broadcast_requested": false,
+      "frozen_four_row_down_requested": true,
+      "mtp_q8_head_shared_scales_requested": true,
+      "frozen_two_row_gate_up_requested": false,
+      "frozen_packed_host_staging_requested": false,
+      "frozen_three_member_arithmetic_requested": false,
+      "draft_profile_requested": "self-contained-q8",
+      "three_gdn_streaming_requested": false,
+      "mtp_english_vocab_requested": false,
+      "frozen_gu_integer_requested": true,
+      "frozen_gu_stride_four_requested": true,
+      "target_only_requested": false,
+      "intel_mtp_requested": true,
+      "ordinary_demand_performance_claimed": false,
+      "native_30_tokens_per_second_accepted": false
+    },
+    "physical_memory_before_models": {
+      "time": "2026-10-11T16:50:46.221083+00:00",
+      "pci": "0000:2d:00.0",
+      "device_id": 57891,
+      "total_bytes": 34242297856,
+      "used_bytes": 50688000,
+      "query": "Xe MEM_REGIONS",
+      "admission_paused_before_query": true
+    },
+    "failure_stage": "independent Wgpu device identity before model allocation",
+    "authored_error": "MTP cannot share the target Wgpu device",
+    "model_allocation_reached": false,
+    "timing_or_numerical_acceptance": false,
+    "diagnosis": "Pinned wgpu29 CoreDevice equality compares registry-local .id only; separate Instance contexts can give independently requested devices equal IDs. Replace cross-instance safe handle equality with bounded actual live Vulkan logical-device identity; retain distinct runtime and full physical adapter/admission checks.",
+    "host_after": {
+      "time": "2026-10-11T16:50:47.608721+00:00",
+      "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+      "http_statuses": {
+        "kuno": 200,
+        "ollama": 200,
+        "vashti": 200
+      },
+      "kernel_fault_counts": {
+        "nvidia_xid": 0,
+        "xe_memory_faults": 0,
+        "xe_reset_failures": 0,
+        "xe_timeouts": 0,
+        "xe_wedged": 0
+      },
+      "nvidia_compute_process_count": 0
+    },
+    "recovered_admission": {
+      "active": false,
+      "completed": 59,
+      "paused": false,
+      "recovery_required": false,
+      "rejected": 0,
+      "waiting": 0
+    },
+    "recovered_intel_memory": [
+      {
+        "total_bytes": 34242297856,
+        "used_bytes": 50688000
+      }
+    ],
+    "limits": [
+      "No model allocation, inference, Intel numerical acceptance or speed measured.",
+      "No caps, references, profile, slots or installed services changed."
+    ]
   }
 }

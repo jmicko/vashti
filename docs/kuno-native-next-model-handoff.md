@@ -26,6 +26,15 @@ NVIDIA. Intel uses a separate device/runtime on the same physical target GPU;
 fresh privileged Xe memory data and full combined owning charges must pass
 before either model allocation. No smaller slots, widened caps or implicit Q2
 fallback. Full144-bank/Q8 admission is tight; reject rather than force it.
+The first v160 physical Intel attempt rejected before model allocation with
+`MTP cannot share the target Wgpu device`. Fresh Xe query/admission passed;
+physical recovery returned baseline with all HTTP200 and no new faults.
+Pinned wgpu29 CoreDevice equality compares registry-local IDs; independently
+created Instance contexts can reuse those IDs. This is an identity-check bug,
+not evidence that Intel inference or memory fit failed. Fix actual live Vulkan
+logical-device identity while preserving runtime/adapter/owner checks, then
+freeze a new artifact and rerun original physical gates. See checked-in
+`v160_intel_mtp_registration_failure`; no Intel timing accepted yet.
 The three-way comparison must use identical target math, prompt, seed, expert
 capacity and draft profile where applicable. Intel and target-only physical
 acceptance and timings are still pending. Backend-only; no API/UI changes.

@@ -3426,3 +3426,12 @@ unselected candidates for later numerical/speed gates.
 Existing30tokens/s goal remains unachieved. Root owns GPUs/services. Canonical
 Vashti, installed services and public contracts unchanged. Required Vashti
 changes:none; no install/release or other-task message is authorized by this note.
+
+
+v160 Intel physical attempt rejected before model allocation at the independent
+Wgpu device identity check. Fresh Xe accounting/full admission passed, and
+recovery16:50:47UTC returned baseline/allHTTP200/no new faults. Pinned wgpu29
+compares registry-local IDs across independent Instance contexts incorrectly
+for this purpose; actual live Vulkan logical-device comparison is being fixed.
+No Intel inference/timing/memory-fit claim follows from this failure. See
+`v160_intel_mtp_registration_failure`; freeze a new artifact for the retry.
