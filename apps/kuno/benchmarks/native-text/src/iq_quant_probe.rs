@@ -10,6 +10,7 @@ const TYPES: [u32; 7] = [IQ3_XXS, IQ4_NL, IQ4_XS, IQ2_S, IQ3_S, Q5_K, Q2_0];
 const ORACLE_PREFIXES: [usize; 2] = [0, 3];
 const PROJECTION_CASES: usize = TYPES.len() * 3 * (4 * 3 + 1);
 const SHARED_TYPES: [u32; 3] = [IQ4_NL, IQ4_XS, Q5_K];
+const REGISTER_TYPES: [u32; 2] = [IQ4_NL, IQ4_XS];
 const SHARED_DENSE_CASES: usize = 120;
 
 /// Checked before device selection/allocation. This entry only consumes its
@@ -195,18 +196,32 @@ fn oracle_stage<T>(oracle: &Oracle, phase: &'static str, result: Result<T>) -> R
     result
 }
 
+fn oracle_types(shared: bool, decoder: crate::next_shared::Iq4Decoder) -> Result<&'static [u32]> {
+    Ok(
+        if decoder == crate::next_shared::Iq4Decoder::PackedRegisters {
+            if !shared {
+                return Err("IQ4 register oracle requires shared public decoder".into());
+            }
+            &REGISTER_TYPES
+        } else if shared {
+            &SHARED_TYPES
+        } else {
+            &TYPES
+        },
+    )
+}
+
 fn oracle_cases(
     client: &ComputeClient<WgpuRuntime>,
     arena: &mut PrivateArena,
     oracles: &[Oracle],
     retired: &AtomicBool,
     shared: bool,
+    decoder: crate::next_shared::Iq4Decoder,
 ) -> Result<Vec<serde_json::Value>> {
-    let mut reports = Vec::with_capacity(TYPES.len() * ORACLE_PREFIXES.len());
-    for oracle in oracles
-        .iter()
-        .filter(|o| !shared || SHARED_TYPES.contains(&o.dtype))
-    {
+    let types = oracle_types(shared, decoder)?;
+    let mut reports = Vec::with_capacity(types.len() * ORACLE_PREFIXES.len());
+    for oracle in oracles.iter().filter(|o| types.contains(&o.dtype)) {
         println!(
             "public_iq_oracle dtype={} prefix={} blocks={} values={}",
             oracle.dtype,
@@ -266,7 +281,8 @@ fn oracle_cases(
         if shared {
             crate::next_shared::public_fixture_values(
                 client,
-                crate::next_shared::MatrixSpec::new(oracle.rows, oracle.columns, oracle.dtype)?,
+                crate::next_shared::MatrixSpec::new(oracle.rows, oracle.columns, oracle.dtype)?
+                    .with_iq4_decoder(decoder)?,
                 oracle.handle.clone(),
                 retained.clone(),
                 oracle.prefix,
@@ -348,16 +364,11 @@ fn oracle_cases(
             "values":oracle.expected.len(),"packed_prefix_bytes":oracle.prefix,
             "packed_row_bytes":crate::quant_matvec::block_layout(oracle.dtype).unwrap().1,
             "independent_c_bits_exact":true,"shared_packed_vec4_decoder":shared,"gaps_and_full_padding_preserved":true,
+            "iq4_decoder":if decoder==crate::next_shared::Iq4Decoder::Original {"original"} else {"packed-registers"},
             "main_erased":true,"public_cache_preserved":true,"io":receipt(io)}),
         );
     }
-    if reports.len()
-        != if shared {
-            SHARED_TYPES.len()
-        } else {
-            TYPES.len()
-        } * ORACLE_PREFIXES.len()
-    {
+    if reports.len() != types.len() * ORACLE_PREFIXES.len() {
         return Err("fixed IQ oracle inventory incomplete".into());
     }
     Ok(reports)
@@ -748,16 +759,25 @@ pub fn run(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
         PrivateArena::new_transient_on_configured(client.clone(), MAIN_BUDGET, retired.clone())?;
     arena.enable_public_owned_zero_audit()?;
     let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<_> {
-        let oracle = oracle_cases(client, &mut arena, &oracles, &retired, false)?;
-        let shared_oracle = oracle_cases(client, &mut arena, &oracles, &retired, true)?;
+        let original = crate::next_shared::Iq4Decoder::Original;
+        let oracle = oracle_cases(client, &mut arena, &oracles, &retired, false, original)?;
+        let shared_oracle = oracle_cases(client, &mut arena, &oracles, &retired, true, original)?;
+        let register_oracle = oracle_cases(
+            client,
+            &mut arena,
+            &oracles,
+            &retired,
+            true,
+            crate::next_shared::Iq4Decoder::PackedRegisters,
+        )?;
         let projections = cases(client, &mut arena, &matrices, &retired)?;
         if projections.len() != PROJECTION_CASES {
             return Err("fixed IQ projection inventory incomplete".into());
         }
-        Ok((oracle, projections, shared_oracle))
+        Ok((oracle, projections, shared_oracle, register_oracle))
     }));
     let closed = arena.close();
-    let (oracle, projections, shared_oracle) =
+    let (oracle, projections, shared_oracle, register_oracle) =
         match (attempt, closed, retired.load(Ordering::Acquire)) {
             (Ok(Ok(reports)), Ok(()), false) => reports,
             _ => return Err("fixed IQ operators failed; no success receipt".into()),
@@ -797,6 +817,9 @@ pub fn run(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
         "finite_case_count":TYPES.len()*4,"finite":finite,
         "single_subgroup_case_count":TYPES.len()*4,"single_subgroup":single,
         "shared_vec4_exact_c_oracles":shared_oracle,"shared_vec4_dense":shared_dense,
+        "packed_register_exact_c_oracles":register_oracle,
+        "packed_register_oracle_case_count":REGISTER_TYPES.len()*ORACLE_PREFIXES.len(),
+        "packed_register_decoded_c_values":oracles.iter().filter(|o|REGISTER_TYPES.contains(&o.dtype)).map(|o|o.expected.len()).sum::<usize>(),
         "main_cap_bytes":MAIN_BUDGET,"runtime_io_cap_bytes":IO_BUDGET,
         "main_erased_bytes":zero.bytes,"main_erased_buffers":zero.buffers,
         "context_retired":false,"whole_model_or_performance_accepted":false});
@@ -834,6 +857,39 @@ mod tests {
         ] {
             assert!(registration(3, receipt, model, timing).is_err());
         }
+    }
+
+    #[test]
+    fn register_c_oracle_adds_only_iq4_original_records_and_preserves_all_controls() {
+        use crate::next_shared::Iq4Decoder;
+        assert_eq!(oracle_types(false, Iq4Decoder::Original).unwrap(), TYPES);
+        assert_eq!(
+            oracle_types(true, Iq4Decoder::Original).unwrap(),
+            SHARED_TYPES
+        );
+        assert_eq!(
+            oracle_types(true, Iq4Decoder::PackedRegisters).unwrap(),
+            REGISTER_TYPES
+        );
+        assert!(oracle_types(false, Iq4Decoder::PackedRegisters).is_err());
+        assert_eq!(ORACLE_PREFIXES, [0, 3]);
+        let mut values = 0;
+        for dtype in REGISTER_TYPES {
+            let (block, bytes) = crate::quant_matvec::block_layout(dtype).unwrap();
+            let (records, _) = iq_fixtures::records(dtype);
+            let rows = records.len() / (bytes + 4 * block);
+            for _ in ORACLE_PREFIXES {
+                let spec = crate::next_shared::MatrixSpec::new(rows, block, dtype)
+                    .unwrap()
+                    .with_iq4_decoder(Iq4Decoder::PackedRegisters)
+                    .unwrap();
+                assert_eq!(spec.iq4_decoder(), Iq4Decoder::PackedRegisters);
+                values += rows * block;
+            }
+        }
+        assert_eq!(REGISTER_TYPES.len() * ORACLE_PREFIXES.len(), 4);
+        assert_eq!(values, 9408);
+        assert_eq!(SHARED_DENSE_CASES, 120);
     }
 
     #[test]

@@ -6,7 +6,7 @@
 //! source pages, inactive regions and transient I/O retain their own checks.
 
 use crate::main_admission::{self, MainAdmission};
-use crate::next_shared::{self, MatrixSpec};
+use crate::next_shared::{self, Iq4Decoder, MatrixSpec};
 use crate::private_arena::{BufferLayout, PrivateArena};
 use crate::quant_matvec::{iq_fixtures, matmul::BatchSpans};
 use cubecl::prelude::*;
@@ -77,6 +77,18 @@ const NORMAL_CASES: usize = TYPES.len() * WIDTHS.len() * 3;
 const FAULT_CASES: usize = TYPES.len() * 2;
 const FUSED_FAULT_KINDS: [usize; 7] = [1, 2, 3, 4, 5, 7, 8];
 const FUSED_FAULT_CASES: usize = TYPES.len() * 3 * FUSED_FAULT_KINDS.len();
+const REGISTER_TYPES: [u32; 2] = [20, 23];
+const REGISTER_NORMAL_CASES: usize = REGISTER_TYPES.len() * WIDTHS.len() * 3;
+const REGISTER_FAULT_CASES: usize = REGISTER_TYPES.len() * 2;
+const REGISTER_FUSED_FAULT_CASES: usize = REGISTER_TYPES.len() * 3 * FUSED_FAULT_KINDS.len();
+
+fn decoder_policies(dtype: u32) -> &'static [Iq4Decoder] {
+    if REGISTER_TYPES.contains(&dtype) {
+        &[Iq4Decoder::Original, Iq4Decoder::PackedRegisters]
+    } else {
+        &[Iq4Decoder::Original]
+    }
+}
 
 #[derive(Clone, Copy)]
 struct Layout {
@@ -406,6 +418,7 @@ fn validate_case_inventory(columns: usize, count: usize, bad: usize, fused: bool
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // Fixed original fixture plus explicit public decoder policy.
 fn case(
     client: &ComputeClient<WgpuRuntime>,
     arena: &mut PrivateArena,
@@ -414,8 +427,11 @@ fn case(
     count: usize,
     bad: usize,
     fused: bool,
+    decoder: Iq4Decoder,
 ) -> Result<serde_json::Value> {
     validate_case_inventory(m.columns, count, bad, fused)?;
+    let original_spec = MatrixSpec::new(ROWS, m.columns, m.dtype)?;
+    let spec = original_spec.with_iq4_decoder(decoder)?;
     let x = layout(m.columns, count)?;
     let values = input(x, m.columns, count, bad);
     let references = Zeroizing::new(expected(&m.decoded, m.columns, x, &values, count));
@@ -492,7 +508,6 @@ fn case(
     {
         return Err("Verify3 logical fault escaped full owner".into());
     }
-    let spec = MatrixSpec::new(ROWS, m.columns, m.dtype)?;
     let spans = BatchSpans::new(
         count,
         0,
@@ -576,7 +591,7 @@ fn case(
     for token in 0..count {
         next_shared::matrix(
             client,
-            spec,
+            original_spec,
             m.view.clone(),
             handles[0].clone(),
             handles[2].clone(),
@@ -645,6 +660,7 @@ fn case(
     Ok(
         serde_json::json!({"dtype":m.dtype,"columns":m.columns,"rows":ROWS,
         "count":count,"fault_case":bad,"source_prefix_bytes":m.prefix,
+        "iq4_decoder":if decoder==Iq4Decoder::Original {"original"} else {"packed-registers"},
         "logical_finite_fused":fused,"external_candidate_finite_scan":!fused,
         "projection_tiles":if fused && m.dtype==0 {2}else{1},
         "max_cpu_f64_abs_error":maximum,"max_old_gpu_abs_error":baseline_error,
@@ -748,40 +764,81 @@ fn run_inner(
             FAULT_CASES
         };
         let mut reports = Vec::with_capacity(NORMAL_CASES + faults);
+        let mut register_reports = Vec::with_capacity(
+            REGISTER_NORMAL_CASES
+                + if fused {
+                    REGISTER_FUSED_FAULT_CASES
+                } else {
+                    REGISTER_FAULT_CASES
+                },
+        );
         for m in &sources {
-            for count in 1..=3 {
-                reports.push(case(client, &mut arena, &mut ledger, m, count, 0, fused)?);
-                client.memory_cleanup();
-                cubecl::future::block_on(client.sync()).map_err(|_| "Verify3 case completion")?;
-                ledger.completed_fence(sample(client)?)?;
-            }
-            if m.columns == 2560 {
-                for count in if fused { 1..=3 } else { 3..=3 } {
-                    let kinds: &[usize] = if fused { &FUSED_FAULT_KINDS } else { &[1, 2] };
-                    for &bad in kinds {
-                        reports.push(case(client, &mut arena, &mut ledger, m, count, bad, fused)?);
-                        client.memory_cleanup();
-                        cubecl::future::block_on(client.sync())
-                            .map_err(|_| "Verify3 fault case completion")?;
-                        ledger.completed_fence(sample(client)?)?;
+            for &decoder in decoder_policies(m.dtype) {
+                let selected_reports = if decoder == Iq4Decoder::Original {
+                    &mut reports
+                } else {
+                    &mut register_reports
+                };
+                for count in 1..=3 {
+                    selected_reports.push(case(
+                        client,
+                        &mut arena,
+                        &mut ledger,
+                        m,
+                        count,
+                        0,
+                        fused,
+                        decoder,
+                    )?);
+                    client.memory_cleanup();
+                    cubecl::future::block_on(client.sync())
+                        .map_err(|_| "Verify3 case completion")?;
+                    ledger.completed_fence(sample(client)?)?;
+                }
+                if m.columns == 2560 {
+                    for count in if fused { 1..=3 } else { 3..=3 } {
+                        let kinds: &[usize] = if fused { &FUSED_FAULT_KINDS } else { &[1, 2] };
+                        for &bad in kinds {
+                            selected_reports.push(case(
+                                client,
+                                &mut arena,
+                                &mut ledger,
+                                m,
+                                count,
+                                bad,
+                                fused,
+                                decoder,
+                            )?);
+                            client.memory_cleanup();
+                            cubecl::future::block_on(client.sync())
+                                .map_err(|_| "Verify3 fault case completion")?;
+                            ledger.completed_fence(sample(client)?)?;
+                        }
                     }
                 }
             }
         }
-        Ok(reports)
+        Ok((reports, register_reports))
     }));
     let closed = arena.close();
-    let reports = match (attempt, closed, retired.load(Ordering::Acquire)) {
-        (Ok(Ok(r)), Ok(()), false)
+    let (reports, register_reports) = match (attempt, closed, retired.load(Ordering::Acquire)) {
+        (Ok(Ok((r, registers))), Ok(()), false)
             if r.len()
                 == NORMAL_CASES
                     + if fused {
                         FUSED_FAULT_CASES
                     } else {
                         FAULT_CASES
-                    } =>
+                    }
+                && registers.len()
+                    == REGISTER_NORMAL_CASES
+                        + if fused {
+                            REGISTER_FUSED_FAULT_CASES
+                        } else {
+                            REGISTER_FAULT_CASES
+                        } =>
         {
-            r
+            (r, registers)
         }
         _ => return Err("Verify3 fixed public operators failed; no accepted receipt".into()),
     };
@@ -826,6 +883,10 @@ fn run_inner(
         "format_count":TYPES.len(),"numeric_cases":NORMAL_CASES,
         "fault_cases":if fused {FUSED_FAULT_CASES} else {FAULT_CASES},
         "max_runtime_count":3,"owning_member_capacity":MAX8,"cases":reports,
+        "packed_register_format_count":REGISTER_TYPES.len(),
+        "packed_register_numeric_cases":REGISTER_NORMAL_CASES,
+        "packed_register_fault_cases":if fused {REGISTER_FUSED_FAULT_CASES} else {REGISTER_FAULT_CASES},
+        "packed_register_cases":register_reports,
         "absolute_tolerance":ABS,"relative_tolerance":REL,"cpu_decoded_f64_reference":true,
         "old_original_gpu_control":true,"prior_fault_preserved":true,
         "active_nan_and_unused_output_nan_faults_rejected":true,
@@ -841,6 +902,74 @@ fn run_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn register_inventory_adds_only_iq4_and_preserves_original_complete_case_sets() {
+        for fused in [false, true] {
+            let mut original = [0usize; 2];
+            let mut registers = [0usize; 2];
+            for dtype in TYPES {
+                for columns in WIDTHS {
+                    for &decoder in decoder_policies(dtype) {
+                        let spec = MatrixSpec::new(ROWS, columns, dtype)
+                            .unwrap()
+                            .with_iq4_decoder(decoder)
+                            .unwrap();
+                        let counts = if decoder == Iq4Decoder::Original {
+                            &mut original
+                        } else {
+                            assert!(REGISTER_TYPES.contains(&dtype));
+                            &mut registers
+                        };
+                        assert_eq!(spec.iq4_decoder(), decoder);
+                        for count in 1..=3 {
+                            validate_case_inventory(columns, count, 0, fused).unwrap();
+                            counts[0] += 1;
+                        }
+                        if columns == 2560 {
+                            for count in if fused { 1..=3 } else { 3..=3 } {
+                                for &bad in if fused {
+                                    &FUSED_FAULT_KINDS[..]
+                                } else {
+                                    &[1, 2]
+                                } {
+                                    validate_case_inventory(columns, count, bad, fused).unwrap();
+                                    counts[1] += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            assert_eq!(
+                original,
+                [
+                    NORMAL_CASES,
+                    if fused {
+                        FUSED_FAULT_CASES
+                    } else {
+                        FAULT_CASES
+                    }
+                ]
+            );
+            assert_eq!(
+                registers,
+                [
+                    REGISTER_NORMAL_CASES,
+                    if fused {
+                        REGISTER_FUSED_FAULT_CASES
+                    } else {
+                        REGISTER_FAULT_CASES
+                    }
+                ]
+            );
+            assert_eq!(registers, [12, if fused { 42 } else { 4 }]);
+        }
+        for dtype in [0, 1, 6, 8, 12, 13, 14, 30, 42, u32::MAX] {
+            assert_eq!(decoder_policies(dtype), [Iq4Decoder::Original]);
+        }
+    }
+
     #[test]
     fn registration_is_exact_default_public_only_and_has_no_model_inputs() {
         let env = || {

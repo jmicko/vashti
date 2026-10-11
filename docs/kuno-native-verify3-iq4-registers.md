@@ -84,7 +84,45 @@ family/owner closes and physical recovery. Only afterward compare the same
 frozen artifact with compiler-idle ordered normal-language timings. Removing
 a Function array does not itself prove Intel spills or a speed gain.
 
-Implementation is source-only at this checkpoint: focused tests, shader
-compilation, strict Clippy and physical GPU acceptance are pending the root
-benchmark coordinator's CPU release. No service, public API, frontend,
-installation or release changes are included.
+## Existing fixed public physical fixtures
+
+The existing compiled-public operator modes now execute additional register
+decoder cases without replacing any original control or introducing a new
+selector, mode or general inference API. Use the ordinary default binary;
+the existing Verify3 registration rejects featured builds, and the original
+dispatch guard remains unchanged for IQ fixtures. The root
+coordinator retains swap/core-dump protection, exclusive Intel adapter setup
+and physical recovery checks. No new Nvidia trial is requested by this change.
+
+| Existing command | Existing fixed environment gate | Original coverage retained | Added register coverage |
+| --- | --- | --- | --- |
+|`intel iq-quant-probe`|existing IQ public-fixture registration and `KUNO_PUBLIC_RECEIPT`|all original IQ cases,120 shared dense cases and18,112 shared exact C values|4 exact C decoder cases,9,408 values across IQ4_NL/IQ4_XS and byte prefixes0/3|
+|`intel verify3-dense-probe`|`KUNO_LAB_VERIFY3_DENSE_PUBLIC_ONLY=1` and `KUNO_PUBLIC_RECEIPT`|60 normal +20 fault cases|12 normal +4 fault cases|
+|`intel verify3-finite-probe`|`KUNO_LAB_VERIFY3_FINITE_PUBLIC_ONLY=1` and `KUNO_PUBLIC_RECEIPT`|60 normal +210 fault cases|12 normal +42 fault cases|
+
+Verify3 adds both original IQ4 formats at widths256/2560 and runtime counts1..3
+with nine output rows (partial final subgroup), the same exact source views
+and full MAX8 owners. Every candidate case independently compares the old
+scalar Original GPU control and original decoded-C/f64 projections. Fused
+faults cover each count, active input NaN/infinities and logical output prefix,
+gap, inactive row and tail. Independent full physical padding, sticky fault
+owner and erasure checks remain unchanged.
+Each candidate transaction reuses the existing bounded arena after the same
+complete reset. Public source and peak private/INFO/I/O bounds are unchanged.
+
+Original report arrays/counts remain intact. `iq-quant-probe` separately emits
+`packed_register_exact_c_oracles`, `packed_register_oracle_case_count=4` and
+`packed_register_decoded_c_values=9408`. Verify3 separately emits
+`packed_register_cases`, `packed_register_format_count=2`,
+`packed_register_numeric_cases=12` and `packed_register_fault_cases=4` or42.
+Every per-case decoder field records `original` or `packed-registers` only
+after the actual selected leaf, complete numerical/fault/source proof and
+owner erasure succeed. Receipt creation remains fail-closed and create-new.
+
+The leaf and additive physical-fixture source pass36 focused checks: five
+register-decoder tests, seven independent-decoder/probe tests, nine Verify3
+fixture tests, ten original shared-dense tests and five original finite tests.
+Strict direct-device all-target Clippy with warnings denied, formatting and
+whitespace checks also pass. All physical GPU acceptance remains pending at
+this checkpoint. No service, public API, frontend, installation or release
+changes are included.
