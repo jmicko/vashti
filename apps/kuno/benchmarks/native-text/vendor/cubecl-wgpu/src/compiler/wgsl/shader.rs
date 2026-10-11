@@ -129,6 +129,12 @@ impl ComputeShader {
             .iter()
             .map(|it| it.size as usize * it.item.size())
             .chain(self.shared_values.iter().map(|it| it.item.size()))
+            .chain(
+                self.constant_arrays
+                    .iter()
+                    .filter(|_| self.kernel_name == "grouped_gate_up_frozen_workgroup_grid")
+                    .map(|it| it.size as usize * it.item.size()),
+            )
             .sum()
     }
 }
@@ -204,7 +210,16 @@ var<{location}, {visibility}> info: info_st;
         // Pointer indexing avoids Naga's per-access whole-composite Function
         // spill; module Private storage is still per invocation, not shared SLM.
         let private_iq_tables = self.kernel_name == "grouped_gate_up_frozen_private_grid";
+        let workgroup_iq_tables = self.kernel_name == "grouped_gate_up_frozen_workgroup_grid";
         for array in self.constant_arrays.iter() {
+            if workgroup_iq_tables {
+                writeln!(
+                    f,
+                    "var<workgroup> arrays_{}: array<{}, {}>;\n",
+                    array.index, array.item, array.size
+                )?;
+                continue;
+            }
             let declaration = if private_iq_tables {
                 if array.item != Item::Scalar(Elem::U32)
                     || !matches!(array.size, 256 | 512 | 2048)

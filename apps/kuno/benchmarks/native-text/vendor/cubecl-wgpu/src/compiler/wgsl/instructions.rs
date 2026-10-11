@@ -56,6 +56,10 @@ pub enum Instruction {
     Break,
     Unreachable,
     WorkgroupBarrier,
+    /// Compiled PUBLIC IQ words only, after the original uniform shard exit.
+    InitializePublicIqTables {
+        arrays: Vec<super::ConstantArray>,
+    },
     StorageBarrier,
     // Index handles casting to correct local variable.
     Index {
@@ -883,6 +887,24 @@ for (var {i}: {i_ty} = {start}; {i} {cmp} {end}; {increment}) {{
             Instruction::Return => f.write_str("return;\n"),
             Instruction::Break => f.write_str("break;\n"),
             Instruction::WorkgroupBarrier => f.write_str("workgroupBarrier();\n"),
+            Instruction::InitializePublicIqTables { arrays } => {
+                f.write_str("switch local_invocation_id.x {\n")?;
+                for lane in 0..64 {
+                    writeln!(f, "case {lane}u: {{")?;
+                    for array in arrays {
+                        for index in (lane..array.values.len()).step_by(64) {
+                            writeln!(
+                                f,
+                                "arrays_{}[{index}u] = {};",
+                                array.index,
+                                array.values[index].fmt_cast_to(array.item)
+                            )?;
+                        }
+                    }
+                    f.write_str("}\n")?;
+                }
+                f.write_str("default: {}\n}\nworkgroupBarrier();\n")
+            }
             Instruction::StorageBarrier => f.write_str("storageBarrier();\n"),
             Instruction::Length { var, out } => {
                 let out = out.fmt_left();

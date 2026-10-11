@@ -157,6 +157,7 @@ pub struct Geometry {
     frozen_host_sources: bool,
     inactive_partition_exit: bool,
     private_tables: bool,
+    workgroup_tables: bool,
 }
 impl Geometry {
     pub fn new(
@@ -213,6 +214,7 @@ impl Geometry {
             frozen_host_sources: false,
             inactive_partition_exit: false,
             private_tables: false,
+            workgroup_tables: false,
         })
     }
     /// Explicit source-only public profile. These virtual slots are NOT
@@ -277,6 +279,7 @@ impl Geometry {
             || self.gate_policy != GatePolicy::Generic
             || self.reduction_policy != ReductionPolicy::AllMembers
             || self.private_tables
+            || self.workgroup_tables
         {
             return Err("grouped frozen private-table policy");
         }
@@ -285,6 +288,26 @@ impl Geometry {
     }
     pub(crate) fn private_tables(self) -> bool {
         self.private_tables
+    }
+    /// Explicit public workgroup codebooks; exact original64 math and owners.
+    pub(crate) fn with_workgroup_tables(mut self) -> Result<Self, &'static str> {
+        if !self.frozen_host_sources
+            || !self.inactive_partition_exit
+            || self.capacity != 512
+            || self.tile != 8
+            || self.secondary_partition
+            || self.gate_policy != GatePolicy::Generic
+            || self.reduction_policy != ReductionPolicy::AllMembers
+            || self.private_tables
+            || self.workgroup_tables
+        {
+            return Err("grouped frozen workgroup-table policy");
+        }
+        self.workgroup_tables = true;
+        Ok(self)
+    }
+    pub(crate) fn workgroup_tables(self) -> bool {
+        self.workgroup_tables
     }
     /// Narrow immutable32+16 partition; ordinary flat48 remains unchanged.
     pub(crate) fn stationary_secondary(projections: [Projection; 3]) -> Result<Self, &'static str> {
@@ -1174,6 +1197,62 @@ pub fn grouped_gate_up_frozen(
 #[cube(launch, launch_unchecked)]
 #[allow(clippy::too_many_arguments, clippy::collapsible_if)]
 pub fn grouped_gate_up_frozen_private_grid(
+    gate: &Array<u32>,
+    up: &Array<u32>,
+    input: &Array<f32>,
+    map: &Array<u32>,
+    activations: &mut Array<f32>,
+    status: &mut Array<u32>,
+    map_first: usize,
+    input_first: usize,
+    input_stride: usize,
+    act_first: usize,
+    act_stride: usize,
+    status_first: usize,
+    first_slot: usize,
+    slot_count: usize,
+    #[comptime] hidden: usize,
+    #[comptime] ff: usize,
+    #[comptime] gate_dtype: u32,
+    #[comptime] up_dtype: u32,
+    #[comptime] gate_row_bytes: usize,
+    #[comptime] up_row_bytes: usize,
+    #[comptime] tile: usize,
+    #[comptime] q4_block: bool,
+) {
+    grouped_gate_up_inner(
+        gate,
+        up,
+        input,
+        map,
+        activations,
+        status,
+        map_first,
+        input_first,
+        input_stride,
+        act_first,
+        act_stride,
+        status_first,
+        first_slot,
+        slot_count,
+        hidden,
+        ff,
+        gate_dtype,
+        up_dtype,
+        gate_row_bytes,
+        up_row_bytes,
+        tile,
+        q4_block,
+        false,
+        true,
+    );
+}
+
+/// Explicit immutable public IQ table-storage candidate. The exact entrypoint
+/// name selects bounded workgroup codebook lowering; all math is shared.
+#[cube(launch, launch_unchecked)]
+#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
+pub fn grouped_gate_up_frozen_workgroup_grid(
     gate: &Array<u32>,
     up: &Array<u32>,
     input: &Array<f32>,
@@ -2162,6 +2241,7 @@ mod tests {
             frozen_host_sources: false,
             inactive_partition_exit: false,
             private_tables: false,
+            workgroup_tables: false,
         };
         assert_eq!(g.scratch_bytes(true).unwrap(), 4480 * 1024);
     }
@@ -2908,7 +2988,9 @@ mod tests {
                 let status_first = b.scalar(uint).into();
                 let first_slot = b.scalar(uint).into();
                 let slot_count = b.scalar(uint).into();
-                let expand = if g.private_tables() {
+                let expand = if g.workgroup_tables() {
+                    grouped_gate_up_frozen_workgroup_grid::expand
+                } else if g.private_tables() {
                     grouped_gate_up_frozen_private_grid::expand
                 } else if g.inactive_partition_exit() {
                     grouped_gate_up_frozen::expand
@@ -3062,7 +3144,9 @@ mod tests {
                 b.build(
                     KernelSettings::default()
                         .cube_dim(CubeDim::new_1d(64))
-                        .kernel_name(if kind == 0 && g.private_tables() {
+                        .kernel_name(if kind == 0 && g.workgroup_tables() {
+                            "grouped_gate_up_frozen_workgroup_grid"
+                        } else if kind == 0 && g.private_tables() {
                             "grouped_gate_up_frozen_private_grid"
                         } else {
                             "grouped_moe_operator"
@@ -3251,84 +3335,6 @@ mod tests {
         // Inspect actual Naga SPIR-V. A dynamic value-array access spills its
         // entire initializer into a Function variable; pointer indexing must
         // eliminate both that variable and every whole-composite store to it.
-        fn spirv_tables(module: &wgpu::naga::Module) -> (usize, usize, usize) {
-            use std::collections::HashMap;
-            let info = wgpu::naga::valid::Validator::new(
-                wgpu::naga::valid::ValidationFlags::all(),
-                wgpu::naga::valid::Capabilities::empty(),
-            )
-            .validate(module)
-            .unwrap();
-            let words = wgpu::naga::back::spv::write_vec(
-                module,
-                &info,
-                &wgpu::naga::back::spv::Options {
-                    lang_version: (1, 3),
-                    ..Default::default()
-                },
-                Some(&wgpu::naga::back::spv::PipelineOptions {
-                    shader_stage: wgpu::naga::ShaderStage::Compute,
-                    entry_point: module.entry_points[0].name.clone(),
-                }),
-            )
-            .unwrap();
-            let mut instructions = Vec::new();
-            let mut cursor = 5;
-            while cursor < words.len() {
-                let len = (words[cursor] >> 16) as usize;
-                assert!(len > 0);
-                instructions.push((words[cursor] & 0xffff, &words[cursor + 1..cursor + len]));
-                cursor += len;
-            }
-            assert_eq!(cursor, words.len());
-            let mut constants = HashMap::new();
-            let mut arrays = HashMap::new();
-            let mut pointers = HashMap::new();
-            for &(opcode, operands) in &instructions {
-                match opcode {
-                    43 if operands.len() == 3 => {
-                        constants.insert(operands[1], operands[2]);
-                    }
-                    28 => {
-                        arrays.insert(operands[0], operands[2]);
-                    }
-                    32 => {
-                        pointers.insert(operands[0], (operands[1], operands[2]));
-                    }
-                    _ => {}
-                }
-            }
-            let mut functions = Vec::new();
-            let mut private = Vec::new();
-            for &(opcode, operands) in &instructions {
-                if opcode != 59 {
-                    continue;
-                }
-                if let Some(&(space, pointee)) = pointers.get(&operands[0])
-                    && arrays
-                        .get(&pointee)
-                        .and_then(|id| constants.get(id))
-                        .is_some_and(|&n| matches!(n, 256 | 512 | 2048))
-                {
-                    match space {
-                        7 => functions.push(operands[1]),
-                        6 => private.push(operands[1]),
-                        _ => {}
-                    }
-                }
-            }
-            let stores = instructions
-                .iter()
-                .filter(|(opcode, operands)| *opcode == 62 && functions.contains(&operands[0]))
-                .count();
-            assert!(
-                !instructions
-                    .iter()
-                    .any(|(opcode, operands)| { *opcode == 62 && private.contains(&operands[0]) }),
-                "public private table was mutated after its initializer"
-            );
-            (functions.len(), private.len(), stores)
-        }
 
         let mut profiles = Vec::new();
         for layer in 0..48 {
@@ -3487,6 +3493,340 @@ mod tests {
         )
         .unwrap();
         assert_public_tables_immutable(&module);
+    }
+
+    fn spirv_tables(module: &wgpu::naga::Module) -> (usize, usize, usize) {
+        use std::collections::HashMap;
+        let info = wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::empty(),
+        )
+        .validate(module)
+        .unwrap();
+        let words = wgpu::naga::back::spv::write_vec(
+            module,
+            &info,
+            &wgpu::naga::back::spv::Options {
+                lang_version: (1, 3),
+                ..Default::default()
+            },
+            Some(&wgpu::naga::back::spv::PipelineOptions {
+                shader_stage: wgpu::naga::ShaderStage::Compute,
+                entry_point: module.entry_points[0].name.clone(),
+            }),
+        )
+        .unwrap();
+        let mut instructions = Vec::new();
+        let mut cursor = 5;
+        while cursor < words.len() {
+            let len = (words[cursor] >> 16) as usize;
+            assert!(len > 0);
+            instructions.push((words[cursor] & 0xffff, &words[cursor + 1..cursor + len]));
+            cursor += len;
+        }
+        assert_eq!(cursor, words.len());
+        let mut constants = HashMap::new();
+        let mut arrays = HashMap::new();
+        let mut pointers = HashMap::new();
+        for &(opcode, operands) in &instructions {
+            match opcode {
+                43 if operands.len() == 3 => {
+                    constants.insert(operands[1], operands[2]);
+                }
+                28 => {
+                    arrays.insert(operands[0], operands[2]);
+                }
+                32 => {
+                    pointers.insert(operands[0], (operands[1], operands[2]));
+                }
+                _ => {}
+            }
+        }
+        let mut functions = Vec::new();
+        let mut private = Vec::new();
+        for &(opcode, operands) in &instructions {
+            if opcode != 59 {
+                continue;
+            }
+            if let Some(&(space, pointee)) = pointers.get(&operands[0])
+                && arrays
+                    .get(&pointee)
+                    .and_then(|id| constants.get(id))
+                    .is_some_and(|&n| matches!(n, 256 | 512 | 2048))
+            {
+                match space {
+                    7 => functions.push(operands[1]),
+                    6 => private.push(operands[1]),
+                    _ => {}
+                }
+            }
+        }
+        let stores = instructions
+            .iter()
+            .filter(|(opcode, operands)| *opcode == 62 && functions.contains(&operands[0]))
+            .count();
+        assert!(
+            !instructions
+                .iter()
+                .any(|(opcode, operands)| { *opcode == 62 && private.contains(&operands[0]) }),
+            "public private table was mutated after its initializer"
+        );
+        (functions.len(), private.len(), stores)
+    }
+
+    fn assert_workgroup_tables_immutable_after_init(module: &wgpu::naga::Module) {
+        use wgpu::naga::{Expression, Function, Statement};
+        fn global(
+            function: &Function,
+            pointer: wgpu::naga::Handle<Expression>,
+        ) -> Option<wgpu::naga::Handle<wgpu::naga::GlobalVariable>> {
+            match function.expressions[pointer] {
+                Expression::GlobalVariable(var) => Some(var),
+                Expression::Access { base, .. } | Expression::AccessIndex { base, .. } => {
+                    global(function, base)
+                }
+                _ => None,
+            }
+        }
+        fn visit(module: &wgpu::naga::Module, function: &Function, body: &wgpu::naga::Block) {
+            for statement in body {
+                match statement {
+                    Statement::Store { pointer, .. } => {
+                        if let Some(var) = global(function, *pointer) {
+                            assert!(
+                                !module.global_variables[var]
+                                    .name
+                                    .as_deref()
+                                    .is_some_and(|n| n.starts_with("arrays_")),
+                                "public workgroup table or element was mutated after init"
+                            );
+                        }
+                    }
+                    Statement::Block(b) => visit(module, function, b),
+                    Statement::If { accept, reject, .. } => {
+                        visit(module, function, accept);
+                        visit(module, function, reject);
+                    }
+                    Statement::Switch { cases, .. } => {
+                        for case in cases {
+                            visit(module, function, &case.body);
+                        }
+                    }
+                    Statement::Loop {
+                        body, continuing, ..
+                    } => {
+                        visit(module, function, body);
+                        visit(module, function, continuing);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let function = &module.entry_points[0].function;
+        let barrier = function
+            .body
+            .iter()
+            .position(|s| matches!(s, Statement::ControlBarrier(_)))
+            .unwrap();
+        for statement in function.body.iter().skip(barrier + 1) {
+            visit(
+                module,
+                function,
+                &wgpu::naga::Block::from_vec(vec![statement.clone()]),
+            );
+        }
+        for (_, function) in module.functions.iter() {
+            visit(module, function, &function.body);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "public workgroup table or element was mutated after init")]
+    fn workgroup_table_element_store_cannot_bypass_immutability_proof() {
+        let module = wgpu::naga::front::wgsl::parse_str(
+            "var<workgroup> arrays_0: array<u32,256>; @compute @workgroup_size(64) fn main(@builtin(local_invocation_id) id:vec3<u32>) { workgroupBarrier(); if id.x==0u {arrays_0[id.x]=1u;} }"
+        ).unwrap();
+        assert_workgroup_tables_immutable_after_init(&module);
+    }
+
+    #[test]
+    fn workgroup_table_actual_mixed_shaders_literal_init_and_unchanged_math() {
+        use cubecl::server::ExecutionMode;
+        use wgpu::naga::{
+            AddressSpace, ArraySize, Expression, Literal, Statement, SwitchValue, TypeInner,
+        };
+        let mut profiles = Vec::new();
+        for layer in 0..48 {
+            let profile = crate::daslab_profile::routed_types(layer).unwrap();
+            if !profiles.contains(&profile) {
+                profiles.push(profile);
+            }
+        }
+        for [gate, up, down] in profiles {
+            assert_eq!(gate, up);
+            let old = Geometry::new(
+                [
+                    Projection::new(gate, 2560, 640, 512).unwrap(),
+                    Projection::new(up, 2560, 640, 512).unwrap(),
+                    Projection::new(down, 640, 2560, 512).unwrap(),
+                ],
+                8,
+                144,
+            )
+            .unwrap()
+            .with_frozen_host_sources()
+            .unwrap()
+            .with_inactive_partition_exit()
+            .unwrap();
+            let new = old.with_workgroup_tables().unwrap();
+            let expected: Vec<u32> = match gate {
+                IQ3_XXS => kuno_text::quant::IQ3_XXS_GRID.to_vec(),
+                crate::quant_matvec::IQ3_S => kuno_text::quant::IQ3_S_GRID.to_vec(),
+                crate::quant_matvec::IQ2_S => kuno_text::quant::IQ2_S_GRID
+                    .iter()
+                    .flat_map(|v| [*v as u32, (*v >> 32) as u32])
+                    .collect(),
+                _ => Vec::new(),
+            };
+            for mode in [ExecutionMode::Checked, ExecutionMode::Unchecked] {
+                let source = shader(0, new, mode);
+                validate_shader(&source, 8, true);
+                let candidate = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
+                let original = wgpu::naga::front::wgsl::parse_str(&shader(0, old, mode)).unwrap();
+                let grids: Vec<_> = candidate
+                    .global_variables
+                    .iter()
+                    .filter(|(_, var)| {
+                        var.name
+                            .as_deref()
+                            .is_some_and(|n| n.starts_with("arrays_"))
+                    })
+                    .collect();
+                assert_eq!(grids.len(), usize::from(!expected.is_empty()));
+                let shared_bytes: u32 = candidate
+                    .global_variables
+                    .iter()
+                    .filter(|(_, var)| var.space == AddressSpace::WorkGroup)
+                    .map(|(_, var)| match candidate.types[var.ty].inner {
+                        TypeInner::Array {
+                            size: ArraySize::Constant(n),
+                            stride,
+                            ..
+                        } => n.get() * stride,
+                        ref t => panic!("unexpected shared owner {t:?}"),
+                    })
+                    .sum();
+                assert_eq!(shared_bytes, 4096 + expected.len() as u32 * 4);
+                let mut events = memory_events(&candidate);
+                if !expected.is_empty() {
+                    let (grid, variable) = grids[0];
+                    assert_eq!(variable.space, AddressSpace::WorkGroup);
+                    assert!(variable.init.is_none());
+                    let function = &candidate.entry_points[0].function;
+                    let (switch_index, cases) = function
+                        .body
+                        .iter()
+                        .enumerate()
+                        .find_map(|(i, statement)| match statement {
+                            Statement::Switch { cases, .. } => Some((i, cases)),
+                            _ => None,
+                        })
+                        .expect("top-level literal-lane initializer");
+                    assert_eq!(cases.len(), 65);
+                    assert!(matches!(
+                        function.body[switch_index + 1],
+                        Statement::ControlBarrier(_)
+                    ));
+                    // Only the original uniform exit precedes initialization;
+                    // every lane reaches the initializer barrier together.
+                    assert!(
+                        memory_events(&candidate)
+                            .iter()
+                            .position(|&e| e == 'r')
+                            .unwrap()
+                            < events.iter().position(|&e| e == 'w').unwrap()
+                    );
+                    let mut words = vec![None; expected.len()];
+                    for case in cases {
+                        assert!(!case.fall_through);
+                        let lane = match case.value {
+                            SwitchValue::U32(v) => v as usize,
+                            SwitchValue::Default => {
+                                assert!(case.body.is_empty());
+                                continue;
+                            }
+                            _ => panic!("public unsigned lane literal required"),
+                        };
+                        assert!(lane < 64);
+                        for statement in &case.body {
+                            if matches!(statement, Statement::Emit(_)) {
+                                continue;
+                            }
+                            let Statement::Store { pointer, value } = *statement else {
+                                panic!("only public literal stores in initializer");
+                            };
+                            let (base, index) = match function.expressions[pointer] {
+                                Expression::AccessIndex { base, index } => (base, index as usize),
+                                Expression::Access { base, index } => {
+                                    let Expression::Literal(Literal::U32(index)) =
+                                        function.expressions[index]
+                                    else {
+                                        panic!("literal table index required");
+                                    };
+                                    (base, index as usize)
+                                }
+                                _ => panic!("direct table element required"),
+                            };
+                            assert!(
+                                matches!(function.expressions[base], Expression::GlobalVariable(v) if v == grid)
+                            );
+                            let Expression::Literal(Literal::U32(word)) =
+                                function.expressions[value]
+                            else {
+                                panic!("literal public word required");
+                            };
+                            assert_eq!(index % 64, lane);
+                            assert_eq!(word, expected[index]);
+                            assert!(words[index].replace(word).is_none());
+                        }
+                    }
+                    assert_eq!(
+                        words,
+                        expected.iter().copied().map(Some).collect::<Vec<_>>()
+                    );
+                    assert_workgroup_tables_immutable_after_init(&candidate);
+                    let first = events.iter().position(|&e| e == 'w').unwrap();
+                    assert!(
+                        events[first..first + expected.len()]
+                            .iter()
+                            .all(|&e| e == 'w')
+                    );
+                    assert_eq!(events[first + expected.len()], 'b');
+                    events.drain(first..first + expected.len() + 1);
+                }
+                assert_eq!(events, memory_events(&original));
+                // Literal-index initialization adds no runtime arithmetic.
+                assert_eq!(
+                    arithmetic_operations(&candidate),
+                    arithmetic_operations(&original)
+                );
+                assert_eq!(
+                    unconditional_barriers(&candidate.entry_points[0].function.body, false),
+                    2 + usize::from(!expected.is_empty())
+                );
+                assert_eq!(spirv_tables(&candidate), (0, 0, 0));
+                for kind in [1, 2, 3] {
+                    let a = wgpu::naga::front::wgsl::parse_str(&shader(kind, old, mode)).unwrap();
+                    let b = wgpu::naga::front::wgsl::parse_str(&shader(kind, new, mode)).unwrap();
+                    assert_eq!(memory_events(&a), memory_events(&b));
+                    assert_eq!(arithmetic_operations(&a), arithmetic_operations(&b));
+                }
+                eprintln!(
+                    "workgroup_table gate={gate} mode={mode:?} words={} shared_bytes={shared_bytes} no_function_or_private_tables=true",
+                    expected.len()
+                );
+            }
+        }
     }
 
     fn arithmetic_operations(module: &wgpu::naga::Module) -> Vec<String> {
@@ -4516,6 +4856,49 @@ mod frozen_source_tests {
             assert!(!old.private_tables());
             assert!(new.private_tables());
             assert!(new.with_private_tables().is_err());
+            assert!(new.with_live_member_reduction().is_err());
+            assert_ne!(hash(old), hash(new));
+            assert_eq!(old.projections(), new.projections());
+            assert_eq!(old.member_capacity(), new.member_capacity());
+            assert_eq!(old.status_words(), new.status_words());
+            for io in [false, true] {
+                assert_eq!(old.scratch_bytes(io), new.scratch_bytes(io));
+            }
+            for groups in [1, 10, 20, 30] {
+                for down in [false, true] {
+                    assert_eq!(
+                        format!("{:?}", old.grid(groups, down).unwrap()),
+                        format!("{:?}", new.grid(groups, down).unwrap())
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn workgroup_table_policy_requires_frozen_exit_and_preserves_owners() {
+        use std::hash::{DefaultHasher, Hash, Hasher};
+        let hash = |g: Geometry| {
+            let mut h = DefaultHasher::new();
+            g.hash(&mut h);
+            h.finish()
+        };
+        for layer in 0..48 {
+            let ordinary = geometry(layer);
+            assert!(ordinary.with_workgroup_tables().is_err());
+            let frozen = ordinary.with_frozen_host_sources().unwrap();
+            assert!(frozen.with_workgroup_tables().is_err());
+            let old = frozen.with_inactive_partition_exit().unwrap();
+            let new = old.with_workgroup_tables().unwrap();
+            assert!(!old.workgroup_tables());
+            assert!(new.workgroup_tables());
+            assert!(new.with_workgroup_tables().is_err());
+            assert!(new.with_private_tables().is_err());
+            assert!(
+                old.with_private_tables()
+                    .unwrap()
+                    .with_workgroup_tables()
+                    .is_err()
+            );
             assert!(new.with_live_member_reduction().is_err());
             assert_ne!(hash(old), hash(new));
             assert_eq!(old.projections(), new.projections());

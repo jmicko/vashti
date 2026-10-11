@@ -152,6 +152,7 @@ impl Sources {
             reserved_host_bytes,
             false,
             false,
+            false,
         )
     }
     /// Explicit matched-control candidate, frozen before any source descriptors
@@ -170,6 +171,7 @@ impl Sources {
             pages,
             reserved_host_bytes,
             true,
+            false,
             false,
         )
     }
@@ -191,8 +193,30 @@ impl Sources {
             reserved_host_bytes,
             true,
             true,
+            false,
         )
     }
+    /// Literal-lane initialization of one shared immutable public IQ grid.
+    #[allow(dead_code)]
+    pub(crate) fn new_with_workgroup_tables(
+        executor: &GpuExecutor<'_>,
+        graph: BoundGraph<'_, '_>,
+        plan: &plan::Plan<'_, '_>,
+        pages: Vec<RegisteredPage>,
+        reserved_host_bytes: u64,
+    ) -> Result<Arc<Self>> {
+        Self::new_with_policy(
+            executor,
+            graph,
+            plan,
+            pages,
+            reserved_host_bytes,
+            true,
+            false,
+            true,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
     fn new_with_policy(
         executor: &GpuExecutor<'_>,
         graph: BoundGraph<'_, '_>,
@@ -201,8 +225,10 @@ impl Sources {
         reserved_host_bytes: u64,
         inactive_partition_exit: bool,
         private_tables: bool,
+        workgroup_tables: bool,
     ) -> Result<Arc<Self>> {
-        if private_tables && !inactive_partition_exit
+        if (private_tables || workgroup_tables) && !inactive_partition_exit
+            || private_tables && workgroup_tables
             || reserved_host_bytes < EXTRA_HOST_BYTES
             || graph.binding_id() != plan.binding()
             || executor.packed_profile != crate::expert_banks::OriginalPackedProfile::DaslabIq3
@@ -256,6 +282,9 @@ impl Sources {
             }
             if private_tables {
                 geometry = geometry.with_private_tables().map_err(err)?;
+            }
+            if workgroup_tables {
+                geometry = geometry.with_workgroup_tables().map_err(err)?;
             }
             let layer_bound = StagedSlots::bounded_native_metadata_bytes(144)
                 .map_err(|_| reject())?
@@ -411,6 +440,9 @@ impl Sources {
     }
     pub(crate) fn private_tables(&self) -> bool {
         self.layers[0].geometry.private_tables()
+    }
+    pub(crate) fn workgroup_tables(&self) -> bool {
+        self.layers[0].geometry.workgroup_tables()
     }
     fn check_layer(&self, layer: usize, bank: &ExpertBanks) -> Result<&Layer> {
         let l = self.layers.get(layer).ok_or(reject())?;
@@ -932,6 +964,14 @@ impl Workspace {
             .ok_or_else(reject)?
             .private_tables())
     }
+    #[allow(dead_code)]
+    pub(crate) fn frozen_host_source_workgroup_tables(&self) -> Result<bool> {
+        Ok(self
+            .frozen_sources
+            .as_ref()
+            .ok_or_else(reject)?
+            .workgroup_tables())
+    }
     pub(crate) fn frozen_source_counters(&self) -> Counters {
         self.frozen_source_counters
     }
@@ -997,6 +1037,9 @@ impl Workspace {
             }
             if sources.private_tables() {
                 g = g.with_private_tables().map_err(err)?;
+            }
+            if sources.workgroup_tables() {
+                g = g.with_workgroup_tables().map_err(err)?;
             }
             if g != sources.geometry(layer, bank)? {
                 return Err(reject());
@@ -1444,7 +1487,9 @@ impl Sources {
                     }
                 };
             }
-            if g.private_tables() {
+            if g.workgroup_tables() {
+                dispatch!(grouped_gate_up_frozen_workgroup_grid, grouped_down_frozen);
+            } else if g.private_tables() {
                 dispatch!(grouped_gate_up_frozen_private_grid, grouped_down_frozen);
             } else if g.inactive_partition_exit() {
                 dispatch!(grouped_gate_up_frozen, grouped_down_frozen);

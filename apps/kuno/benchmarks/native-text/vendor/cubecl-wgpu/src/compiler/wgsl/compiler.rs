@@ -45,6 +45,8 @@ pub struct WgslCompiler {
     shared_arrays: Vec<SharedArray>,
     shared_values: Vec<SharedValue>,
     const_arrays: Vec<ConstantArray>,
+    // Exact named laboratory entrypoint only; public literal equality aliases.
+    constant_array_aliases: Vec<(cube::Id, cube::Id)>,
     local_arrays: Vec<LocalArray>,
     #[allow(dead_code)]
     compilation_options: WgpuCompilationOptions,
@@ -123,7 +125,43 @@ impl WgslCompiler {
         self.info = Info::new(&value.scalars, metadata, address_type);
 
         let address_type = self.compile_storage_type(address_type);
-        let instructions = self.compile_scope(&mut value.body);
+        let mut instructions = self.compile_scope(&mut value.body);
+        if self.kernel_name == "grouped_gate_up_frozen_workgroup_grid"
+            && !self.const_arrays.is_empty()
+        {
+            let exit = instructions.iter().position(|instruction| {
+                matches!(instruction, wgsl::Instruction::If { instructions, .. }
+                    if instructions.len() == 1 && matches!(instructions[0], wgsl::Instruction::Return))
+            }).ok_or_else(|| CompilationError::Validation {
+                reason: "public workgroup IQ initialization requires original uniform exit".into(),
+                backtrace: BackTrace::capture(),
+            })?;
+            if value.cube_dim != CubeDim::new_1d(64)
+                || !self.local_invocation_id
+                || self.const_arrays.iter().any(|array| {
+                    array.item != Item::Scalar(wgsl::Elem::U32)
+                        || !matches!(array.size, 256 | 512 | 2048)
+                        || array.values.len() != array.size as usize
+                        || array.values.iter().any(|v| {
+                            !matches!(
+                                v,
+                                wgsl::Variable::Constant(_, Item::Scalar(wgsl::Elem::U32))
+                            )
+                        })
+                })
+            {
+                return Err(CompilationError::Validation {
+                    reason: "public workgroup IQ geometry or literals rejected".into(),
+                    backtrace: BackTrace::capture(),
+                });
+            }
+            instructions.insert(
+                exit + 1,
+                wgsl::Instruction::InitializePublicIqTables {
+                    arrays: self.const_arrays.clone(),
+                },
+            );
+        }
         let extensions = register_extensions(&instructions);
         let body = wgsl::Body {
             instructions,
@@ -314,6 +352,11 @@ impl WgslCompiler {
             }
             cube::VariableKind::ConstantArray { id, length, .. } => {
                 let item = self.compile_type(item);
+                let id = self
+                    .constant_array_aliases
+                    .iter()
+                    .find_map(|&(from, to)| (from == id).then_some(to))
+                    .unwrap_or(id);
                 wgsl::Variable::ConstantArray(id, item, length as u32)
             }
             cube::VariableKind::LocalArray {
@@ -459,7 +502,22 @@ impl WgslCompiler {
                     .collect(),
             })
             .collect::<Vec<_>>();
-        self.const_arrays.extend(const_arrays);
+        if self.kernel_name == "grouped_gate_up_frozen_workgroup_grid" {
+            for array in const_arrays {
+                if let Some(original) = self.const_arrays.iter().find(|other| {
+                    other.item == array.item
+                        && other.size == array.size
+                        && other.values == array.values
+                }) {
+                    self.constant_array_aliases
+                        .push((array.index, original.index));
+                } else {
+                    self.const_arrays.push(array);
+                }
+            }
+        } else {
+            self.const_arrays.extend(const_arrays);
+        }
 
         let checked_io: Box<dyn Processor> = Box::new(CheckedIoProcessor::new(
             self.strategy,
