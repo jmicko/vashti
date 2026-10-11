@@ -8,18 +8,18 @@ original DOWN/finite/fold/transaction gates remain mandatory and unchanged.
 Source acceptance does not establish physical numerical parity or speed.
 
 The original `launch(...)` and `Kernel::Project` retain one routed group per
-workgroup. With the actual public envelope30, each of five source partitions
-dispatches80 row tiles times30 groups:12,000 GU workgroups per layer. At most
-30 real routed groups are active across all partitions, so at most2,400 are
+workgroup. With the actual public envelope 30, each of five source partitions
+dispatches 80 row tiles times 30 groups: 12,000 GU workgroups per layer. At most
+30 real routed groups are active across all partitions, so at most 2,400 are
 useful. Each inactive workgroup still incurs scheduling and uniform guards.
 
 `launch_group_stride4(...)` has the same arguments and owners. Its separate
-`ProjectStride4` pipeline dispatches exactly `(80,4,1)`,64 threads per group:
+`ProjectStride4` pipeline dispatches exactly `(80,4,1)`, 64 threads per group:
 1,600 total GU workgroups per layer. Each y group considers original routed
-groups `g=y; g<envelope; g+=4`. The envelope remains the caller's checked1..80
-value, carried in INFO word6 (`p.g`); default `Project` continues to require
-that word to be zero. The actual MAP groups remain bounded by10 times public
-count1..3. Neither the public count, routes, source identities, envelope nor
+groups `g=y; g<envelope; g+=4`. The envelope remains the caller's checked 1..80
+value, carried in INFO word 6 (`p.g`); default `Project` continues to require
+that word to be zero. The actual MAP groups remain bounded by 10 times public
+count 1..3. Neither the public count, routes, source identities, envelope nor
 memory addresses enter pipeline keys. The kernel discriminant, dtype and
 row bytes identify the distinct scheduling pipeline.
 
@@ -31,11 +31,11 @@ uniform loop rechecks every group and runs the same extracted arithmetic
 body for each valid group. Scalar/vector accumulators are freshly initialized
 per group; every reduction cell, including inactive member cells, is assigned
 before reduction. The body retains the original initialization barrier and
-tree4/2/1 barriers. An additional barrier after output ensures every lane has
+tree 4/2/1 barriers. An additional barrier after output ensures every lane has
 finished reading its reduction before the next group resets shared cells.
 Different valid groups retain distinct original output route addresses.
 
-The prepared64KiB owner, fixed `(1,3,1)` prepare dispatch, complete128-group
+The prepared 64 KiB owner, fixed `(1,3,1)` prepare dispatch, complete 128-group
 audit, storage binding count, workgroup-memory maxima and all MAIN/HOST/INFO/
 runtime reservations are unchanged. No new persistent allocation, source
 page, CPU route readback, transfer, or hidden cache is introduced.

@@ -26,13 +26,13 @@ explicitly pass false for stride-four scheduling. New opt-in methods append
 - `Sources::new_with_policy_and_gu_schedule(..., three_members, gu_integer,
   gu_stride_four)`.
 
-Each selected layer prepares the original64KiB owner once, invokes the actual
+Each selected layer prepares the original 64 KiB owner once, invokes the actual
 `launch_group_stride4(...)` leaf on all five original GU source partitions,
 retains each original DOWN call and finishes the full-owner integer audit.
 Only each successful alternative leaf call increases a local stride-four
 dispatch count. The sealed `GuIntegerDispatch` completion witness requires
 exactly five such calls when selected and exactly zero when unselected. It
-also retains exact layer0..47, count1..3 and all five integer dispatch checks.
+also retains exact layer 0..47, count 1..3 and all five integer dispatch checks.
 The witness is accepted only through the original pending-router and full
 model transaction. Selection alone and DOWN dispatches cannot credit it.
 
@@ -45,14 +45,33 @@ equal integer dispatches. Unselected sources require zero stride-four credit.
 There is no permissive geometry/math/scheduling fallback.
 
 No new owner or precharge is needed. The integer target MAIN extent remains
-828,932,096B with the same full64KiB scratch, HOST increment65,536B, INFO
-increment196,608B and runtime increment462,848B. Existing dynamic source
+828,932,096 B with the same full 64 KiB scratch, HOST increment 65,536 B, INFO
+increment 196,608 B and runtime increment 462,848 B. Existing dynamic source
 metadata bounds remain enforced. Default constructors and ordinary wrappers
 select false, and unchanged warm lifecycle means explicitly selected sources
-also use the candidate for the warm initial count1 token.
+also use the candidate for the warm initial count 1 token.
 
 Focused CPU tests additionally cover all source-selection combinations,
 missing/extra/wrong-policy actual receipts, positive joined completion counters
 and rejection of zero or mismatched credits. No controller, public API,
 Vashti, installed service, GPU reset or release behavior changes in this
 integration. Root owns explicit lab selector registration and physical tests.
+
+## Source validation receipt
+
+Source commits are `b751403` (separate scheduling leaf) and `42a0c62`
+(immutable parent integration), based on `e10e9fb`. On 2026-10-11, all 13
+focused integer GU tests passed: seven leaf tests and six parent/owner tests.
+The command was `cargo test --manifest-path
+apps/kuno/benchmarks/native-text/Cargo.toml --locked --features direct-device
+--bin kuno-text-lab -j2 frozen_gu_integer -- --test-threads=1` using the shared
+oracle target. Strict `cargo clippy` with the same manifest, locked dependencies,
+direct-device feature, `--all-targets -j2 -- -D warnings` also passed. Formatting
+and `git diff --check` passed. All compiler/test jobs were stopped by 15:55:58 UTC.
+
+These receipts use the original per-quartet decoder from `e10e9fb`; they do not
+include the independent encoded-register preparation candidate `6992246`.
+That source composes through the shared arithmetic BODY but requires its own
+integrated verification. No physical GPU correctness, original-reference
+acceptance, full-language speed, installed service or release receipt is
+claimed here.
