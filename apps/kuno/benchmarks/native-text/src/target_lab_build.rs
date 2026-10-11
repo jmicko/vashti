@@ -336,6 +336,64 @@ pub(crate) fn frozen_gu_stride_four(
     }
 }
 
+/// Original DOWN arithmetic has no dependency on the selected MTP profile or
+/// GU math. Its compiled controller supplies the full original target scope.
+pub(crate) fn frozen_down_stride_four(
+    raw: Option<&OsStr>,
+    original_four_row_scope: bool,
+) -> Result<bool, &'static str> {
+    match raw {
+        None => Ok(false),
+        Some(value) if value == "four-public" && original_four_row_scope => Ok(true),
+        _ => Err("four-stride DOWN requires canonical original public frozen four-row scope"),
+    }
+}
+
+pub(crate) fn frozen_down_stride_four_record(
+    selected: bool,
+    actual: bool,
+    layers: u64,
+    down_dispatches: u64,
+    source_dispatches: u64,
+) -> Result<serde_json::Value, &'static str> {
+    if selected != actual
+        || if selected {
+            layers == 0
+                || !layers.is_multiple_of(48)
+                || layers.checked_mul(5) != Some(down_dispatches)
+                || layers.checked_mul(10) != Some(source_dispatches)
+        } else {
+            layers != 0 || down_dispatches != 0
+        }
+    {
+        return Err("four-stride DOWN actual all-layer joined dispatch receipt rejected");
+    }
+    Ok(
+        serde_json::json!({"layers":layers,"down_dispatches":down_dispatches,
+        "source_dispatches":source_dispatches}),
+    )
+}
+
+pub(crate) fn frozen_down_stride_four_initial_record(
+    selected: bool,
+    actual: bool,
+    layers: u64,
+    down_dispatches: u64,
+    source_dispatches: u64,
+) -> Result<serde_json::Value, &'static str> {
+    let record = frozen_down_stride_four_record(
+        selected,
+        actual,
+        layers,
+        down_dispatches,
+        source_dispatches,
+    )?;
+    if selected && (layers != 48 || down_dispatches != 240 || source_dispatches != 480) {
+        return Err("four-stride DOWN original initial count1 receipt rejected");
+    }
+    Ok(record)
+}
+
 pub(crate) fn frozen_gu_stride_four_record(
     selected: bool,
     actual: bool,
@@ -767,6 +825,66 @@ mod tests {
                 assert!(validate_public_target_only_close(integer, buffers, bytes).is_err());
             }
             assert!(validate_public_target_only_close(!integer, buffers, bytes).is_err());
+        }
+    }
+    #[test]
+    fn frozen_down_stride_four_controller_flag_is_canonical_and_default_off() {
+        for scope in [false, true] {
+            assert_eq!(frozen_down_stride_four(None, scope), Ok(false));
+            for raw in ["four-public", "four", "true", "", "four-public "] {
+                assert_eq!(
+                    frozen_down_stride_four(Some(OsStr::new(raw)), scope).is_ok(),
+                    scope && raw == "four-public"
+                );
+            }
+        }
+    }
+    #[test]
+    fn frozen_down_stride_four_controller_receipt_requires_complete_actual_layers() {
+        assert!(frozen_down_stride_four_record(false, false, 0, 0, 0).is_ok());
+        assert!(frozen_down_stride_four_record(false, false, 0, 0, 480).is_ok());
+        for layers in [48, 96, 144, 48 * 200] {
+            let record =
+                frozen_down_stride_four_record(true, true, layers, layers * 5, layers * 10)
+                    .unwrap();
+            assert_eq!(record["layers"], layers);
+            assert_eq!(record["down_dispatches"], layers * 5);
+            assert_eq!(record["source_dispatches"], layers * 10);
+        }
+        for (selected, actual, layers, down, source) in [
+            (true, false, 48, 240, 480),
+            (false, true, 48, 240, 480),
+            (true, true, 0, 0, 0),
+            (true, true, 1, 5, 10),
+            (true, true, 47, 235, 470),
+            (true, true, 48, 239, 480),
+            (true, true, 48, 241, 480),
+            (true, true, 48, 240, 479),
+            (true, true, 48, 240, 481),
+            (true, true, u64::MAX - 15, u64::MAX, u64::MAX),
+            (false, false, 1, 0, 480),
+            (false, false, 0, 5, 480),
+        ] {
+            assert!(
+                frozen_down_stride_four_record(selected, actual, layers, down, source).is_err()
+            );
+        }
+    }
+    #[test]
+    fn frozen_down_stride_four_controller_initial_count1_requires_exact_first_batch() {
+        assert!(frozen_down_stride_four_initial_record(false, false, 0, 0, 0).is_ok());
+        assert!(frozen_down_stride_four_initial_record(true, true, 48, 240, 480).is_ok());
+        for (actual, layers, down, source) in [
+            (false, 48, 240, 480),
+            (true, 0, 0, 0),
+            (true, 1, 5, 10),
+            (true, 96, 480, 960),
+            (true, 48, 240, 479),
+            (true, 48, 239, 480),
+        ] {
+            assert!(
+                frozen_down_stride_four_initial_record(true, actual, layers, down, source).is_err()
+            );
         }
     }
     #[test]

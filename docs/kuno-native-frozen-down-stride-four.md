@@ -90,8 +90,45 @@ joined positive completion credit, missing/extra credit and arithmetic overflow.
 Existing four-row tests retain the independent original C weight fixtures and
 bitwise original64 versus four-row dot comparison.
 
-Root must still add the explicit controller selector and receipts, freeze a new
-artifact, pass the unchanged original CPU13 target/carry/greedy/real-repair gate,
+## Compiled public controllers
+
+Both fixed-public controllers now recognize only the explicit
+`KUNO_LAB_FROZEN_DOWN_SCHEDULE=four-public` value. Absence retains original DOWN
+scheduling; aliases, whitespace, unknown values and duplicate registration are
+rejected. This selector requires the original authenticated frozen source/router,
+partition exit, four-row DOWN, direct public fill, inline device dispatch,
+Verify3 fused target, chunk checkpoint and reusable request scope, with the same
+target-math exclusions as the parent. The original-arithmetic DOWN schedule adds
+no restriction on MTP profile or MTP sweep policy. Plain GU with original Q8 or
+Strata Q2 draft is supported; GU integer/stride retain their existing separate
+prerequisites. Normal target-only code and prose also retain all three GU choices
+without constructing a draft engine.
+
+Selected attachment calls `attach_public_host_sources_with_schedules`, passing
+both immutable GU choices and the independent DOWN choice. Outer receipts keep
+the schedule mode and requested boolean separate from actual execution.
+Completed per-pass records use the healthy actual getter and source counters,
+require positive whole48-layer batches, exactly five DOWN and ten total source
+dispatches per layer, and require zero dedicated credit for unselected execution.
+Warm replay's first original-reference count1 additionally requires exactly
+48 accepted DOWN layers, 240 actual DOWN stride dispatches and 480 source
+dispatches. Cold replay has no attached immutable sources and reports no DOWN
+credit. Target-only final actual layers must equal 48 times real post-prefill
+count1 continuations. All original target/draft budgets and owner closure checks
+are unchanged.
+
+The complete source/controller scope passed 13 focused DOWN checks, three
+existing original four-row checks (including independent C fixture weights and
+bitwise F32 tree equivalence), and 24 GU integer/stride regressions on the final
+source. Strict locked direct-device all-target Clippy with warnings denied and
+two CPU jobs also passed. The generated fence test excludes the compiler's
+trailing function return from memory events while still requiring the last
+shared/storage/barrier event to be the reuse fence after all output writes.
+Independent read-only reviews found no source blocker in the leaf/parent or
+compiled controller. These remain source-only receipts.
+
+Root must still register the protected launcher selector, freeze a new artifact,
+pass the unchanged original CPU13 target/carry/greedy/real-repair gate,
 complete full owner erasure and physical GPU memory recovery, then measure
 matched normal language throughput with all CPU builders idle. No numerical
 tolerance is widened and no speed gain is claimed by this source handoff.
