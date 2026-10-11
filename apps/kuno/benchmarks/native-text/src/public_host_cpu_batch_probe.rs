@@ -88,6 +88,11 @@ pub(crate) fn registration(
     {
         return Err("attached HOST CPU batch public gate required");
     }
+    if selected.remove(&OsString::from("KUNO_LAB_STATIC_CACHE_BYTES"))
+        != Some(OsString::from("8589934592"))
+    {
+        return Err("attached HOST CPU batch fixed 8GiB static cache required");
+    }
     let inline_dispatch = build.selected(
         selected
             .remove(&OsString::from("KUNO_LAB_DEVICE_DISPATCH"))
@@ -886,12 +891,36 @@ mod tests {
         let env = [
             ("KUNO_LAB_HOST_CPU_BATCH_PUBLIC_ONLY", "1"),
             ("KUNO_LAB_DEVICE_DISPATCH", "inline"),
+            ("KUNO_LAB_STATIC_CACHE_BYTES", "8589934592"),
             ("KUNO_TEST_Q3_DIR", "model"),
             ("KUNO_PUBLIC_TARGET_CARRY13_REFERENCE", "reference"),
             ("KUNO_PUBLIC_RECEIPT", "new-receipt"),
         ]
         .map(|(k, v)| (OsString::from(k), OsString::from(v)));
         assert!(registration(&args, env.clone(), crate::target_lab_build::Build::Inline).is_ok());
+        assert!(
+            registration(
+                &args,
+                env.clone()
+                    .into_iter()
+                    .filter(|(key, _)| key != "KUNO_LAB_STATIC_CACHE_BYTES"),
+                crate::target_lab_build::Build::Inline,
+            )
+            .is_err()
+        );
+        for value in ["0", "8589934591", "8589934593", "08589934592", "8GiB"] {
+            let wrong = env.clone().into_iter().map(|(key, original)| {
+                (
+                    key.clone(),
+                    if key == "KUNO_LAB_STATIC_CACHE_BYTES" {
+                        OsString::from(value)
+                    } else {
+                        original
+                    },
+                )
+            });
+            assert!(registration(&args, wrong, crate::target_lab_build::Build::Inline).is_err());
+        }
         for key in [
             "KUNO_LAB_FROZEN_GU_MATH",
             "KUNO_LAB_LANGUAGE_DECODE",

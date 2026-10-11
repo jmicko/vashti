@@ -13,8 +13,10 @@ API, installed selection or cancellation policy is introduced.
 The dedicated compiled-public entry is `intel public-host-cpu-batch-probe`.
 It accepts only `KUNO_LAB_HOST_CPU_BATCH_PUBLIC_ONLY=1`, matching
 `KUNO_LAB_DEVICE_DISPATCH=inline` in the direct-device build,
-`KUNO_TEST_Q3_DIR`, `KUNO_PUBLIC_TARGET_CARRY13_REFERENCE`, and
-`KUNO_PUBLIC_RECEIPT`. Missing, duplicate and inherited policy keys reject
+canonical `KUNO_LAB_STATIC_CACHE_BYTES=8589934592`, `KUNO_TEST_Q3_DIR`,
+`KUNO_PUBLIC_TARGET_CARRY13_REFERENCE`, and
+`KUNO_PUBLIC_RECEIPT`. These are the six allowed keys. Missing, duplicate,
+noncanonical static-cache and inherited policy keys reject
 before device/model construction. There is no MTP sidecar or draft device.
 The existing original target construction uses the8GiB static cache,
 144slots/layer and31GiB complete target capacity plan, including its shared
