@@ -2108,6 +2108,8 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         reserved: u64,
         inactive_partition_exit: bool,
         private_tables: bool,
+        workgroup_tables: bool,
+        shared_down_scales: bool,
         cancel: &AtomicBool,
     ) -> Result<crate::public_host_expert_attachment::Attachment<'plan, 'm, 'f>> {
         u::cancel(cancel)?;
@@ -2152,6 +2154,8 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 reserved,
                 inactive_partition_exit,
                 private_tables,
+                workgroup_tables,
+                shared_down_scales,
                 cancel,
             )
         }
@@ -2190,6 +2194,30 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             return Err(error());
         }
         native.moe.frozen_host_source_private_tables()
+    }
+
+    pub(crate) fn native_frozen_source_workgroup_tables(
+        &self,
+        executor: &GpuExecutor<'f>,
+    ) -> Result<bool> {
+        self.completed_native_projection_boundary(executor)?;
+        let native = self.native_batch.as_ref().ok_or(error())?;
+        if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
+            return Err(error());
+        }
+        native.moe.frozen_host_source_workgroup_tables()
+    }
+
+    pub(crate) fn native_frozen_source_shared_down_scales(
+        &self,
+        executor: &GpuExecutor<'f>,
+    ) -> Result<bool> {
+        self.completed_native_projection_boundary(executor)?;
+        let native = self.native_batch.as_ref().ok_or(error())?;
+        if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
+            return Err(error());
+        }
+        native.moe.frozen_host_source_shared_down_scales()
     }
 
     pub(crate) fn activate_public_frozen_host_batch_router(

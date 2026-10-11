@@ -8,8 +8,12 @@ def selected_target_policy(environment, mtp=False):
     selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
     if "KUNO_LAB_FROZEN_TABLES" in selected:
         private_table_scope(environment)
-        if not mtp or selected.pop("KUNO_LAB_FROZEN_TABLES") != "private-public":
-            raise ValueError("Private tables require the canonical frozen public target scope")
+        if not mtp or selected.pop("KUNO_LAB_FROZEN_TABLES") not in ("private-public", "workgroup-public"):
+            raise ValueError("Public tables require the canonical frozen public target scope")
+    if "KUNO_LAB_FROZEN_DOWN_SCALES" in selected:
+        private_table_scope(environment)
+        if not mtp or selected.pop("KUNO_LAB_FROZEN_DOWN_SCALES") != "shared-public":
+            raise ValueError("Down scales require canonical frozen public target scope")
     if "KUNO_LAB_FROZEN_PARTITION_EXIT" in selected:
         if (not mtp or selected.pop("KUNO_LAB_FROZEN_PARTITION_EXIT") != "1"
                 or selected.get("KUNO_LAB_TARGET_SOURCES") != "frozen-host-public"):
@@ -85,15 +89,16 @@ def selected_target_policy(environment, mtp=False):
     return selected
 
 def private_table_scope(environment):
-    if "KUNO_LAB_FROZEN_TABLES" in environment:
+    if "KUNO_LAB_FROZEN_TABLES" in environment or "KUNO_LAB_FROZEN_DOWN_SCALES" in environment:
         spec = environment.get("KUNO_LAB_SPECULATIVE_PUBLIC_ONLY") == "1"
         language = environment.get("KUNO_LAB_LANGUAGE_PUBLIC_ONLY") == "1"
-        if (environment.get("KUNO_LAB_FROZEN_TABLES") != "private-public"
+        if (environment.get("KUNO_LAB_FROZEN_TABLES") not in (None, "private-public", "workgroup-public")
+                or environment.get("KUNO_LAB_FROZEN_DOWN_SCALES") not in (None, "shared-public")
                 or environment.get("KUNO_LAB_TARGET_SOURCES") != "frozen-host-public"
                 or environment.get("KUNO_LAB_FROZEN_PARTITION_EXIT") != "1"
                 or spec == language
                 or spec and environment.get("KUNO_LAB_WARM_REPLAY") != "once"):
-            raise ValueError("Private tables require the canonical frozen public partition-exit scope")
+            raise ValueError("Cooperative kernels require the canonical frozen public partition-exit scope")
 
 
 def bank_placement_scope(environment):

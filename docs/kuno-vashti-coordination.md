@@ -3177,3 +3177,22 @@ owners, admission idle/unpaused/no recovery latch, allthree services HTTP200 and
 classified GPU faults0. Installed services and canonical frontend are unchanged.
 Confirm current GPU availability/sudo again before resuming; this is a historical
 host snapshot. The optimization goal remains paused.
+
+
+### Active native kernel optimization resumption, 2026-10-11
+
+User restored GPU access and sudo and resumed the existing30tokens/s goal.
+Native work continues in `codex/kuno-native-text`, isolated from the unchanged
+canonical Vashti checkout. GU workgroup and down-scale source leaves are now
+integrated as `4f23abd`/`ce78d39`; root guarded selection, actual completed-policy
+receipts and composed runtime dispatch are being tested. Exact laboratory
+contract is in the final section of the all-row plan. This supersedes the
+previous statement that parent selection remains pending; GPU acceptance and
+normal throughput measurements still remain pending at this source checkpoint.
+
+Fresh host check2026-10-11 12:10:52UTC: the retained managed image worker was
+identified by parent/cgroup and cleanly evicted through Kuno's existing empty
+Ollama unload request. B70 returned to50,688,000B; NVIDIA compute owners0;
+admission idle/unpaused/no recovery; allthree HTTP services200; GPU faults0.
+No reset, driver/service installation or private content inspection was needed.
+Installed services and public API are unchanged. Required Vashti changes:none.

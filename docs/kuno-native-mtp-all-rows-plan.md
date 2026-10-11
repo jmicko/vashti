@@ -483,3 +483,29 @@ carries, greedies, actual repair and full owner/physical recovery gates before
 normal-generation comparisons. Neither source acceptance nor an isolated
 operator establishes whole-model speed. See the current checkpoint for exact
 worktrees, commits and final host state. No production/API/Vashti change.
+
+### Composed cooperative policies, 2026-10-11
+
+Root source integrates GU workgroup leaf `4f23abd` (original `3594b76`) and
+IQ4 down-scale leaf `ce78d39` (original `b56af6a`). Explicit laboratory selection
+now uses `KUNO_LAB_FROZEN_TABLES=workgroup-public` for the GU codebooks and
+`KUNO_LAB_FROZEN_DOWN_SCALES=shared-public` for the down scales. Both require
+frozen original public host sources and inactive-partition exit, plus the
+existing fixed public/request/direct-fill guards. Absence preserves the control.
+The single table selector excludes private/workgroup coexistence; shared down
+scales compose independently with either table mode or the exit-only control.
+Invalid spellings, duplicates and missing prerequisites reject before attachment.
+
+Completed actual attachments must match requested `frozen_host_workgroup_tables`
+and `frozen_host_shared_down_scales` in numeric receipts; the speculative cold
+replay must report false for both. Runtime dispatch explicitly selects the GU
+and down entrypoints independently and has an all48-profile composition test.
+Original models, routes, arithmetic/reduction, memory/source budgets, owners,
+references and tolerances remain unchanged. The launcher retains the same
+48GiB CPU13 and48GiB+196MiB language limits and no-swap/core protection.
+
+Source tests and shader proofs do not establish GPU acceptance or throughput.
+Require fresh original CPU13 full-logit/carry/greedy/repair and complete closing
+proofs before same-artifact language200 control/candidate timing. Preserve failed
+trial evidence and verify actual memory recovery. No public API/production or
+Vashti change is part of this internal experiment.

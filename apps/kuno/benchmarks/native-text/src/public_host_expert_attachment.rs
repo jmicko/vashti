@@ -158,10 +158,14 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
         exact_reserved_host: u64,
         inactive_partition_exit: bool,
         private_tables: bool,
+        workgroup_tables: bool,
+        shared_down_scales: bool,
         cancel: &AtomicBool,
     ) -> Result<Attachment<'plan, 'model, 'file>> {
         u::cancel(cancel)?;
-        if private_tables && !inactive_partition_exit {
+        if ((private_tables || workgroup_tables || shared_down_scales) && !inactive_partition_exit)
+            || (private_tables && workgroup_tables)
+        {
             return Err(rejected());
         }
         self.budget.check_exact(exact_reserved_host)?;
@@ -273,7 +277,35 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
         if owners.len() != mirror::PAGES || registered.len() != mirror::PAGES {
             return Err(rejected());
         }
-        let sources = if private_tables {
+        let sources = if shared_down_scales && (private_tables || workgroup_tables) {
+            Sources::new_with_policy(
+                executor,
+                self.graph,
+                &self.plan,
+                registered,
+                self.budget.shared_model_source_host_bytes,
+                inactive_partition_exit,
+                private_tables,
+                workgroup_tables,
+                shared_down_scales,
+            )
+        } else if workgroup_tables {
+            Sources::new_with_workgroup_tables(
+                executor,
+                self.graph,
+                &self.plan,
+                registered,
+                self.budget.shared_model_source_host_bytes,
+            )
+        } else if shared_down_scales {
+            Sources::new_with_shared_down_scales(
+                executor,
+                self.graph,
+                &self.plan,
+                registered,
+                self.budget.shared_model_source_host_bytes,
+            )
+        } else if private_tables {
             Sources::new_with_private_tables(
                 executor,
                 self.graph,

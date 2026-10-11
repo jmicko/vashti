@@ -14,6 +14,40 @@ pub(crate) const PHYSICAL_HOST_BYTES: u64 = 8 * 1024;
 pub(crate) const EXTRA_HOST_BYTES: u64 = SOURCE_SET_HOST_BYTES + PHYSICAL_HOST_BYTES;
 pub(crate) const EXTRA_RUNTIME_BYTES_PER_CHUNK: u64 = EXTRA_INFO_BYTES_PER_CHUNK;
 pub(crate) const EXTRA_HOST_BYTES_PER_CHUNK: u64 = EXTRA_HOST_BYTES;
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GateKernel {
+    Original,
+    Frozen,
+    PrivateTables,
+    WorkgroupTables,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DownKernel {
+    Original,
+    Frozen,
+    SharedScales,
+}
+// This selector is used by actual dispatch, so compound policy tests cover the
+// runtime entrypoints rather than just the stored attachment flags.
+fn kernel_policy(g: k::Geometry) -> (GateKernel, DownKernel) {
+    let gate = if g.workgroup_tables() {
+        GateKernel::WorkgroupTables
+    } else if g.private_tables() {
+        GateKernel::PrivateTables
+    } else if g.inactive_partition_exit() {
+        GateKernel::Frozen
+    } else {
+        GateKernel::Original
+    };
+    let down = if g.shared_down_scales() {
+        DownKernel::SharedScales
+    } else if g.inactive_partition_exit() {
+        DownKernel::Frozen
+    } else {
+        DownKernel::Original
+    };
+    (gate, down)
+}
 const PARTS: [usize; 5] = [72, 72, 144, 144, 80];
 const FIRST: [usize; 5] = [0, 72, 144, 288, 432];
 const ROLES: [Role; 3] = [Role::Gate, Role::Up, Role::Down];
@@ -1530,30 +1564,31 @@ impl Sources {
                     }
                 };
             }
-            if g.workgroup_tables() {
-                if g.shared_down_scales() {
-                    dispatch!(
-                        grouped_gate_up_frozen_workgroup_grid,
-                        grouped_down_frozen_shared_scales
-                    );
-                } else {
-                    dispatch!(grouped_gate_up_frozen_workgroup_grid, grouped_down_frozen);
+            match kernel_policy(g) {
+                (GateKernel::WorkgroupTables, DownKernel::SharedScales) => dispatch!(
+                    grouped_gate_up_frozen_workgroup_grid,
+                    grouped_down_frozen_shared_scales
+                ),
+                (GateKernel::WorkgroupTables, DownKernel::Frozen) => {
+                    dispatch!(grouped_gate_up_frozen_workgroup_grid, grouped_down_frozen)
                 }
-            } else if g.private_tables() {
-                if g.shared_down_scales() {
-                    dispatch!(
-                        grouped_gate_up_frozen_private_grid,
-                        grouped_down_frozen_shared_scales
-                    );
-                } else {
-                    dispatch!(grouped_gate_up_frozen_private_grid, grouped_down_frozen);
+                (GateKernel::PrivateTables, DownKernel::SharedScales) => dispatch!(
+                    grouped_gate_up_frozen_private_grid,
+                    grouped_down_frozen_shared_scales
+                ),
+                (GateKernel::PrivateTables, DownKernel::Frozen) => {
+                    dispatch!(grouped_gate_up_frozen_private_grid, grouped_down_frozen)
                 }
-            } else if g.shared_down_scales() {
-                dispatch!(grouped_gate_up_frozen, grouped_down_frozen_shared_scales);
-            } else if g.inactive_partition_exit() {
-                dispatch!(grouped_gate_up_frozen, grouped_down_frozen);
-            } else {
-                dispatch!(grouped_gate_up, grouped_down);
+                (GateKernel::Frozen, DownKernel::SharedScales) => {
+                    dispatch!(grouped_gate_up_frozen, grouped_down_frozen_shared_scales)
+                }
+                (GateKernel::Frozen, DownKernel::Frozen) => {
+                    dispatch!(grouped_gate_up_frozen, grouped_down_frozen)
+                }
+                (GateKernel::Original, DownKernel::Original) => {
+                    dispatch!(grouped_gate_up, grouped_down)
+                }
+                _ => return Err(reject()),
             }
         }
         Ok(())
@@ -1562,6 +1597,46 @@ impl Sources {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn actual_entrypoints_preserve_compound_table_and_scale_policies() {
+        for layer in 0..48 {
+            let [gate, up, down] = crate::daslab_profile::routed_types(layer).unwrap();
+            let original = k::Geometry::new(
+                [
+                    k::Projection::new(gate, 2560, 640, 512).unwrap(),
+                    k::Projection::new(up, 2560, 640, 512).unwrap(),
+                    k::Projection::new(down, 640, 2560, 512).unwrap(),
+                ],
+                8,
+                144,
+            )
+            .unwrap()
+            .with_frozen_host_sources()
+            .unwrap();
+            assert_eq!(
+                kernel_policy(original),
+                (GateKernel::Original, DownKernel::Original)
+            );
+            let frozen = original.with_inactive_partition_exit().unwrap();
+            for table in [
+                GateKernel::Frozen,
+                GateKernel::PrivateTables,
+                GateKernel::WorkgroupTables,
+            ] {
+                let selected = match table {
+                    GateKernel::Frozen => frozen,
+                    GateKernel::PrivateTables => frozen.with_private_tables().unwrap(),
+                    GateKernel::WorkgroupTables => frozen.with_workgroup_tables().unwrap(),
+                    GateKernel::Original => unreachable!(),
+                };
+                assert_eq!(kernel_policy(selected), (table, DownKernel::Frozen));
+                assert_eq!(
+                    kernel_policy(selected.with_shared_down_scales().unwrap()),
+                    (table, DownKernel::SharedScales)
+                );
+            }
+        }
+    }
     fn full_bank() -> crate::bank_slots::BankSlots {
         let mut bank = crate::bank_slots::BankSlots::new(144, 512).unwrap();
         for batch in 0..9 {
