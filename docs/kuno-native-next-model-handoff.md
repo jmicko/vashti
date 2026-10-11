@@ -819,3 +819,33 @@ regression/Clippy and controller integration remain pending. Read both integer
 DOWN normative contracts. Mandatory original physical accuracy/repair/closure
 and matched timing remain required; no accepted new arithmetic or speed yet.
 Required Vashti changes:none; installedAPI/services/canonicalcheckout unchanged.
+
+
+### Intel-only integer DOWN integrated source gate,2026-10-11
+
+Separate default-off integerDOWN is source-integrated: leaf58b7f50(original730e135),
+parent28d8ed6(original87a6fbf), tested annotation/deltaee4f200(originaldce5b5b),
+controller6d1bb47(original0ed0d59). Read the linked integer DOWN leaf/parent and
+[controller](kuno-native-public-frozen-down-integer-controller.md) contracts.
+The source keeps original experts/routes/packed weights, full-Q8 speculative
+MTP scope and original reference/tolerances, with separate alternate math.
+Intel combined admission adds exact65536MAIN+462848runtime while reserving
+65536HOST separately;196608INFO is already included in runtime. Original144banks,
+8GiBcache, fullQ8 owning inventory and512MiB driver margin remain unchanged.
+
+Leaf7new+17existing quantizer/oracle checks, parent13focused/281resident/20source/
+13MoE/4constructor/17existing oracle checks, controller99Rust/38guard checks
+and strict direct-device all-targetClippy/fmt/diff pass. Parent counts overlap.
+Independent read-only parent review finds no blocker. Root integrated250Python
+checks and three fixed Intel-only helper labels/caps pass; synthetic Xe metadata
+used only in source checks. Actual physical launches require fresh privileged
+Xe accounting after paused/drained admission. No scope or profile fallback.
+
+Frozenv164 source6d1bb47cd54937a2dd08cb05d11062313168c862,
+SHAe5baf349d6d697e388ceff2d27a24bc4a09c99f3ef196505ee44c0a596b5b52b,
+pure direct-device, is undergoing originalCPU13 accuracy/repair/owningclose
+and physical recovery. Paired normal speed remains pending. Current trial
+retains PLE/GUstride/sharedQ8Intel; original DOWNrows/stride and groupedstatus
+stay off to isolate new DOWN arithmetic. Source success does not establish
+physical accuracy or speed. Required Vashti changes:none; installedAPI/services/
+canonicalcheckout unchanged. No30tokens/s or release acceptance.
