@@ -3279,3 +3279,11 @@ counters. Controls and all experiment defaults are unchanged. Source gate passes
 all-target direct Clippy and fmt/diff. Full original GPU CPU13 and normal speed
 remain pending. No API/configuration/installed service change or release claim.
 Required Vashti changes:none. Work remains in the native isolated checkout.
+
+Initial v152/c3e9403 rejected before target allocation: the executor's independent
+exact MAIN check omitted the new staging extent. Recovered snapshot13:48:38UTC
+retains baseline GPU memory, idle admission/healthy HTTP and zero classified
+faults. Followup adds explicit default-off executor staging reservation, Config
+parity and exact precharged byte acceptance;4focused root checks and strict
+direct Clippy pass. New frozen artifact/full GPU gate remains required. No
+numerical/throughput acceptance or installed-service/API/Vashti change.

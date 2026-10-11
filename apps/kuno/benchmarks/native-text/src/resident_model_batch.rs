@@ -1085,6 +1085,7 @@ impl Plan {
         if (config.public_warm_batch_router || config.public_frozen_host_router)
             != executor.target_batch_router_reserved
             || config.public_frozen_host_router != executor.target_frozen_host_router_reserved
+            || config.public_frozen_host_staging != executor.target_frozen_host_staging_reserved
         {
             return Err(error());
         }

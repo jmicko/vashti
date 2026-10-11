@@ -10628,5 +10628,78 @@
       "Original complete CPU13 and real target repair pass; normal candidate slowed relative to historical v150",
       "All experiment selectors remain off by default; no production, install or 30 tokens/s acceptance"
     ]
+  },
+  "v152_packed_staging_construction_rejection": {
+    "source": {
+      "commit": "c3e9403195f9f596e40f0244997fbc1eb49ee751",
+      "binary_sha256": "a8e71ffe44e281837076bbc1c14f6d80bf19116260f177d0566344fe138c3f1b",
+      "features": [
+        "direct-device"
+      ],
+      "protected_launcher_sha256": "c1e200702c866703f6f484032c7cb04b08b13eb011938517cabbe47eab4f9ae6",
+      "helper_sha256": "8cd79d8e3b35937a97338d94c41fba32bf37d21beb4952ac2b8ce44cace88d63",
+      "public_trial": "warm-four-down-shared-head-packed-stage-gpu-host",
+      "seed": 424242,
+      "temperature": 0,
+      "frozen_partition_exit_requested": true,
+      "frozen_bank_preserve_requested": false,
+      "frozen_private_tables_requested": false,
+      "frozen_workgroup_tables_requested": false,
+      "frozen_shared_down_scales_requested": false,
+      "frozen_shared_gate_up_factors_requested": false,
+      "mtp_q8_head_broadcast_requested": false,
+      "frozen_four_row_down_requested": true,
+      "mtp_q8_head_shared_scales_requested": true,
+      "frozen_two_row_gate_up_requested": false,
+      "frozen_packed_host_staging_requested": true,
+      "ordinary_demand_performance_claimed": false,
+      "native_30_tokens_per_second_accepted": false
+    },
+    "accepted": false,
+    "stage": "before target allocation/inference",
+    "error": "native target rows explicit construction policy",
+    "cause": "executor begin_resident exact private MAIN validation omitted reserved 100663296B staging owners",
+    "host_after": {
+      "admission": {
+        "action": "status",
+        "state": {
+          "admission": {
+            "active": false,
+            "completed": 59,
+            "paused": false,
+            "recovery_required": false,
+            "rejected": 0,
+            "waiting": 0
+          }
+        },
+        "status": 200
+      },
+      "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+      "http_statuses": {
+        "kuno": 200,
+        "ollama": 200,
+        "vashti": 200
+      },
+      "intel": {
+        "xe_memory": [
+          {
+            "total_bytes": 34242297856,
+            "used_bytes": 50688000
+          }
+        ]
+      },
+      "kernel": "7.0.0-38-generic",
+      "kernel_fault_counts": {
+        "nvidia_xid": 0,
+        "xe_memory_faults": 0,
+        "xe_reset_failures": 0,
+        "xe_timeouts": 0,
+        "xe_wedged": 0
+      },
+      "nvidia_compute_process_count": 0,
+      "nvidia_memory_mib": 619,
+      "time": "2026-10-11T13:48:24.889365+00:00"
+    },
+    "followup": "Explicit default-off executor reservation, exact Config parity and strict charged extent test; new frozen artifact required"
   }
 }

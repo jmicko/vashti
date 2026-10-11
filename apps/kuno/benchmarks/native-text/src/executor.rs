@@ -846,6 +846,7 @@ pub struct GpuExecutor<'a> {
     pub(crate) target_rows_reserved: bool,
     pub(crate) target_batch_router_reserved: bool,
     pub(crate) target_frozen_host_router_reserved: bool,
+    pub(crate) target_frozen_host_staging_reserved: bool,
     pub(crate) target_frozen_host_source_identity:
         Option<crate::public_host_expert_plan::PlanIdentity>,
     pub(crate) target_verify3_dense: bool,
@@ -1086,6 +1087,7 @@ impl<'a> GpuExecutor<'a> {
             target_rows_reserved: false,
             target_batch_router_reserved: false,
             target_frozen_host_router_reserved: false,
+            target_frozen_host_staging_reserved: false,
             target_frozen_host_source_identity: None,
             target_verify3_dense: false,
             target_verify3_dense_calls: 0,
@@ -1242,6 +1244,7 @@ impl<'a> GpuExecutor<'a> {
         self.resident_banks_frozen = false;
         self.target_frozen_host_source_identity = None;
         self.target_frozen_host_router_reserved = false;
+        self.target_frozen_host_staging_reserved = false;
         self.batch_moe = None;
         self.bank_reserved = 0;
         // All previous commands completed before public cache handles release.
@@ -1885,6 +1888,13 @@ impl<'a> GpuExecutor<'a> {
         }
     }
     pub(crate) fn check_target_rows_policy(&self) -> Result<()> {
+        if self.target_frozen_host_staging_reserved
+            && (!self.target_rows_reserved
+                || !self.target_batch_router_reserved
+                || !self.target_frozen_host_router_reserved)
+        {
+            return Err(Error::InvalidFormat("packed staging construction scope"));
+        }
         validate_target_frozen_host_policy(
             self.resident_banks_frozen,
             self.target_frozen_host_source_identity.is_some(),
@@ -1971,15 +1981,19 @@ impl<'a> GpuExecutor<'a> {
                     "public batch router construction policy",
                 ));
             }
-            private_owned
-                == crate::resident_model::batch::TARGET_ROWS_PRIVATE_MAIN
-                    + batch_moe::batch_router::MAIN_BYTES
+            target_rows_private_extent(
+                private_owned,
+                true,
+                self.target_frozen_host_router_reserved,
+                self.target_frozen_host_staging_reserved,
+            )
         } else {
-            [
-                crate::resident_model::batch::TARGET_ROWS_PRIVATE_MAIN,
-                crate::resident_model::batch::TARGET_ROWS_PREPARED_VERIFY3_MAIN,
-            ]
-            .contains(&private_owned)
+            target_rows_private_extent(
+                private_owned,
+                false,
+                false,
+                self.target_frozen_host_staging_reserved,
+            )
         };
         if self.target_rows_reserved && !target_private {
             return Err(Error::InvalidFormat(
@@ -3396,6 +3410,7 @@ impl Drop for GpuExecutor<'_> {
         self.resident_banks_frozen = false;
         self.target_frozen_host_source_identity = None;
         self.target_frozen_host_router_reserved = false;
+        self.target_frozen_host_staging_reserved = false;
         self.bank_reserved = 0;
         self.client.memory_cleanup();
         let _ = cubecl::future::block_on(self.client.sync());
@@ -4514,9 +4529,48 @@ mod construction_lock_tests {
     }
 }
 
+fn target_rows_private_extent(private: u64, batch: bool, frozen: bool, stage: bool) -> bool {
+    if stage && (!batch || !frozen) {
+        return false;
+    }
+    if batch {
+        private
+            == crate::resident_model::batch::TARGET_ROWS_PRIVATE_MAIN
+                + batch_moe::batch_router::MAIN_BYTES
+                + if stage {
+                    batch_moe::FROZEN_STAGING_MAIN_BYTES
+                } else {
+                    0
+                }
+    } else {
+        [
+            crate::resident_model::batch::TARGET_ROWS_PRIVATE_MAIN,
+            crate::resident_model::batch::TARGET_ROWS_PREPARED_VERIFY3_MAIN,
+        ]
+        .contains(&private)
+    }
+}
+
 #[cfg(test)]
 mod frozen_host_policy_tests {
     use super::*;
+    #[test]
+    fn packed_staging_accepts_only_exact_precharged_frozen_router_extent() {
+        let plain = crate::resident_model::batch::TARGET_ROWS_PRIVATE_MAIN;
+        let routed = plain + batch_moe::batch_router::MAIN_BYTES;
+        let staged = routed + batch_moe::FROZEN_STAGING_MAIN_BYTES;
+        assert!(target_rows_private_extent(plain, false, false, false));
+        assert!(target_rows_private_extent(routed, true, false, false));
+        assert!(target_rows_private_extent(routed, true, true, false));
+        assert!(target_rows_private_extent(staged, true, true, true));
+        for bytes in [plain, routed, staged - 1, staged + 1] {
+            assert!(!target_rows_private_extent(bytes, true, true, true));
+        }
+        assert!(!target_rows_private_extent(staged, true, true, false));
+        for (batch, frozen) in [(false, false), (false, true), (true, false)] {
+            assert!(!target_rows_private_extent(staged, batch, frozen, true));
+        }
+    }
     #[test]
     fn target_freeze_requires_matching_authenticated_source_domain() {
         let p = expert_banks::OriginalPackedProfile::DaslabIq3;

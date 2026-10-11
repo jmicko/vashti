@@ -497,6 +497,7 @@ pub(crate) fn run(
     executor.target_rows_reserved = true;
     executor.target_batch_router_reserved = input.device_router || input.frozen_host_router;
     executor.target_frozen_host_router_reserved = input.frozen_host_router;
+    executor.target_frozen_host_staging_reserved = input.frozen_packed_host_staging;
     executor.target_verify3_dense = input.verify3_dense;
     executor.target_verify3_fused = input.verify3_fused;
     executor.token_io_checkpoint = input.chunk_io;

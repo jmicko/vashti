@@ -628,6 +628,15 @@ scope/limits checks and strict direct all-target Clippy pass. Physical acceptanc
 and speed timing remain pending. Required Vashti changes:none; installed services
 unchanged.
 
+The initial v152/c3e9403 physical attempt rejected before target allocation:
+the executor's separate exact private MAIN extent check still admitted only the
+old router inventory. No numerical/staging acceptance is claimed for v152; host
+recovered with no new faults. Parent now threads an explicit default-off executor
+staging reservation, requires Config parity and frozen-router/target-row scope,
+and admits exactly the old routed MAIN plus100,663,296B. The new pure extent
+test rejects omitted/extra bytes and wrong scopes;4focused parent checks and
+strict direct Clippy pass. A new frozen artifact must rerun the original GPU gate.
+
 
 ### Paired frozen public gate/up parent selection, 2026-10-11
 

@@ -23,6 +23,12 @@ scope/memory checks, strict direct all-target Clippy, fmt/diff. Full GPU origina
 CPU13 and normal same-artifact timing remain pending. See the final all-row plan
 contract and staging leaf note. Do not claim source-only checks prove speed.
 
+v152/c3e9403 stopped before target allocation because a separate executor MAIN
+extent guard lacked the staged inventory. It recovered both GPUs/services with
+no faults. The followup threads explicit executor staging authority, Config
+parity and exact charged bytes, with4focused root checks and strict Clippy passing.
+Freeze a new artifact and rerun the full gate; v152 has no physical acceptance.
+
 Last recovered host2026-10-11 13:39:03UTC: same boot, B70baseline50,688,000B,
 NVIDIA compute0, admission unpaused/idle/no recovery, allthree HTTP200, GPU faults0.
 This is historical evidence; verify current state before a new trial. Sudo was
