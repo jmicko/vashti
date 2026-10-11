@@ -665,6 +665,45 @@ impl GpuExecutor<'_> {
         }
         Ok(banks)
     }
+
+    /// Read-only post-attachment authentication for the scoped CPU/GPU public
+    /// operator comparison. It returns no bank/source handles and deliberately
+    /// leaves the pre-attachment completion accessor unchanged.
+    pub(crate) fn check_public_host_cpu_borrow(
+        &self,
+        plan: &crate::public_host_expert_plan::Plan<'_, '_>,
+        graph: BoundGraph<'_, '_>,
+        client: &ComputeClient<WgpuRuntime>,
+    ) -> Result<()> {
+        self.check_client(client)?;
+        self.check_target_rows_policy()?;
+        if !self.target_rows_reserved
+            || self.packed_profile != expert_banks::OriginalPackedProfile::DaslabIq3
+            || self.bank_slots != CAPACITY
+            || self.banks.len() != LAYERS
+            || !self.resident_banks_frozen
+            || self.target_frozen_host_source_identity != Some(plan.identity())
+            || self.transient_resident.is_none()
+            || self.oracle_trace.is_some()
+            || self.adaptive.is_some()
+            || self.secondary.is_some()
+            || self.secondary_frequency.is_some()
+        {
+            return Err(reject());
+        }
+        let first = self
+            .banks
+            .get("blk.0.ffn_gate_exps.weight")
+            .ok_or_else(reject)?;
+        let mut banks = [first; LAYERS];
+        for (layer, result) in banks.iter_mut().enumerate() {
+            *result = self
+                .banks
+                .get(&format!("blk.{layer}.ffn_gate_exps.weight"))
+                .ok_or_else(reject)?;
+        }
+        plan.check_frozen(graph, self.model, banks)
+    }
 }
 
 #[cfg(test)]
