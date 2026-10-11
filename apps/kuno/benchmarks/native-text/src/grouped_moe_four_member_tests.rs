@@ -127,13 +127,13 @@ fn actual_four_map_keeps_all40_ranks_and_full_inactive_coverage_without_default_
     map.validate_geometry(four).unwrap();
     assert!(map.validate_geometry(old).is_err());
     assert_eq!((map.count(), map.groups()), (4, 40));
-    for route in 0..40 {
+    for (route, probability) in probabilities.iter().enumerate().take(40) {
         assert_eq!(map.words[SLOTS + route], route as u32);
         assert_eq!(map.words[LENGTHS + route], 1);
         assert_eq!(map.words[MEMBERS + route * MAX_BATCH], route as u32);
         assert_eq!(
             map.probabilities[route].to_bits(),
-            probabilities[route].to_bits()
+            probability.to_bits()
         );
     }
     for index in [
