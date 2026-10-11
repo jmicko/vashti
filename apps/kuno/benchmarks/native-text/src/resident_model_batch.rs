@@ -305,6 +305,7 @@ pub(crate) struct Config {
     public_frozen_host_sources: bool,
     public_frozen_host_router: bool,
     public_frozen_host_staging: bool,
+    public_frozen_gu_integer: bool,
 }
 fn prepared_verify3_configuration(
     target_rows: bool,
@@ -373,6 +374,17 @@ fn frozen_staging_configuration(selected: bool, sources: bool, router: bool) -> 
     }
     Ok(())
 }
+fn frozen_gu_integer_configuration(
+    selected: bool,
+    sources: bool,
+    router: bool,
+    stage: bool,
+) -> Result<()> {
+    if selected && (!sources || !router || stage) {
+        return Err(error());
+    }
+    Ok(())
+}
 impl Config {
     fn qsa_host_reservation(&self) -> Result<(usize, usize)> {
         if self.public_frozen_host_router
@@ -392,6 +404,12 @@ impl Config {
             self.public_frozen_host_staging,
             self.public_frozen_host_sources,
             self.public_frozen_host_router,
+        )?;
+        frozen_gu_integer_configuration(
+            self.public_frozen_gu_integer,
+            self.public_frozen_host_sources,
+            self.public_frozen_host_router,
+            self.public_frozen_host_staging,
         )?;
         let (reserved, limit) = host_reservation_with_verify3(
             self.cpu_operator.is_some(),
@@ -417,6 +435,13 @@ impl Config {
             .and_then(|n| {
                 n.checked_add(if self.public_frozen_host_router {
                     usize::try_from(batch_moe::frozen_sources::ROUTER_HOST_BYTES).ok()?
+                } else {
+                    0
+                })
+            })
+            .and_then(|n| {
+                n.checked_add(if self.public_frozen_gu_integer {
+                    batch_moe::FROZEN_GU_INTEGER_HOST_BYTES
                 } else {
                     0
                 })
@@ -456,6 +481,7 @@ impl Config {
             public_frozen_host_sources: false,
             public_frozen_host_router: false,
             public_frozen_host_staging: false,
+            public_frozen_gu_integer: false,
         })
     }
     /// Construction-fixed, one-shot empty PRIVATE-state replay after the
@@ -551,7 +577,27 @@ impl Config {
             self.public_frozen_host_router,
         )?;
         self.qsa_host_reservation()?;
+        if self.public_frozen_gu_integer {
+            return Err(error());
+        }
         self.public_frozen_host_staging = true;
+        Ok(self)
+    }
+    /// Explicit private preparation page for the immutable public GU candidate.
+    /// The original target rows/router must be independently precharged first.
+    #[allow(dead_code)] // Root owns fixed-public controller registration.
+    pub(crate) fn reserve_public_frozen_gu_integer(mut self) -> Result<Self> {
+        if self.public_frozen_gu_integer {
+            return Err(error());
+        }
+        frozen_gu_integer_configuration(
+            true,
+            self.public_frozen_host_sources,
+            self.public_frozen_host_router,
+            self.public_frozen_host_staging,
+        )?;
+        self.public_frozen_gu_integer = true;
+        self.qsa_host_reservation()?;
         Ok(self)
     }
     /// Construction-fixed original-F32 reduction of actual grouped members.
@@ -1096,11 +1142,15 @@ impl Plan {
             != executor.target_batch_router_reserved
             || config.public_frozen_host_router != executor.target_frozen_host_router_reserved
             || config.public_frozen_host_staging != executor.target_frozen_host_staging_reserved
+            || config.public_frozen_gu_integer != executor.target_frozen_gu_integer_reserved
         {
             return Err(error());
         }
         if config.public_frozen_host_staging {
             requests.extend([batch_moe::FROZEN_STAGING_OWNER_BYTES; 3]);
+        }
+        if config.public_frozen_gu_integer {
+            requests.push(batch_moe::FROZEN_GU_INTEGER_MAIN_BYTES);
         }
         let extra = if config.public_frozen_host_router {
             batch_moe::frozen_sources::ROUTER_MAIN_BYTES
@@ -1110,6 +1160,10 @@ impl Plan {
             0
         } + if config.public_frozen_host_staging {
             batch_moe::FROZEN_STAGING_MAIN_BYTES
+        } else {
+            0
+        } + if config.public_frozen_gu_integer {
+            batch_moe::FROZEN_GU_INTEGER_MAIN_BYTES
         } else {
             0
         } + if hybrid { HYBRID_MAIN } else { 0 }
@@ -1131,6 +1185,7 @@ impl Plan {
         if requests.len()
             != 90
                 + usize::from(config.public_frozen_host_staging) * 3
+                + usize::from(config.public_frozen_gu_integer)
                 + usize::from(hybrid) * 2
                 + usize::from(router) * 2
                 + usize::from(target_rows) * 2
@@ -1211,6 +1266,13 @@ impl Plan {
                 batch_moe::FROZEN_STAGING_RUNTIME_BYTES
             } else {
                 0
+            })
+            .and_then(|n| {
+                n.checked_add(if config.public_frozen_gu_integer {
+                    batch_moe::FROZEN_GU_INTEGER_RUNTIME_BYTES
+                } else {
+                    0
+                })
             })
             .ok_or(Error::ArithmeticOverflow)?;
         if runtime > executor.resident_runtime_io_limit()
@@ -1632,6 +1694,9 @@ impl Workspace {
         if config.public_frozen_host_staging {
             moe.reserve_frozen_host_staging(&mut model.arena, allocation)?;
         }
+        if config.public_frozen_gu_integer {
+            moe.reserve_frozen_gu_integer(&mut model.arena, allocation)?;
+        }
         if config.prepared_verify3_experts_reserved {
             moe.reserve_prepared_verify3(&mut model.arena, allocation)?;
         }
@@ -1722,6 +1787,13 @@ impl Workspace {
                     (batch_moe::FROZEN_STAGING_OWNER_BYTES / 4) as usize,
                 )?);
             }
+        }
+        if let Some(owner) = self.moe.frozen_gu_integer_owner_id() {
+            handles.push(gr::full_private(
+                &model.arena,
+                owner,
+                batch_moe::FROZEN_GU_INTEGER_SCRATCH_WORDS,
+            )?);
         }
         if let Some(owner) = self.moe.prepared_verify3_owner_id() {
             handles.push(gr::full_private(
@@ -3924,6 +3996,40 @@ mod tests {
         assert_eq!(candidate, 10);
         // No mutable current is lent to preflight; late failure can abandon it.
         assert_eq!(current, 9);
+    }
+    #[test]
+    fn frozen_gu_integer_full_page_and_independent_transient_charges_are_exact() {
+        for sources in [false, true] {
+            for router in [false, true] {
+                for staging in [false, true] {
+                    assert!(
+                        frozen_gu_integer_configuration(false, sources, router, staging).is_ok()
+                    );
+                    assert_eq!(
+                        frozen_gu_integer_configuration(true, sources, router, staging).is_ok(),
+                        sources && router && !staging
+                    );
+                }
+            }
+        }
+        let bytes =
+            crate::private_arena::BufferLayout::new(batch_moe::FROZEN_GU_INTEGER_SCRATCH_WORDS)
+                .unwrap();
+        assert_eq!(bytes.logical_words, 16384);
+        assert_eq!(
+            bytes.owned_bytes as u64,
+            batch_moe::FROZEN_GU_INTEGER_MAIN_BYTES
+        );
+        assert_eq!(bytes.owned_bytes, 65536);
+        assert_eq!(batch_moe::FROZEN_GU_INTEGER_INFO_BYTES, 196608);
+        assert_eq!(batch_moe::FROZEN_GU_INTEGER_RUNTIME_BYTES, 462848);
+        assert_eq!(batch_moe::FROZEN_GU_INTEGER_HOST_BYTES, 65536);
+        assert_eq!(
+            TARGET_ROWS_PRIVATE_MAIN
+                + batch_moe::frozen_sources::ROUTER_MAIN_BYTES
+                + batch_moe::FROZEN_GU_INTEGER_MAIN_BYTES,
+            828932096
+        );
     }
     #[test]
     fn frozen_staging_budget_requires_both_original_sources_and_gpu_router() {

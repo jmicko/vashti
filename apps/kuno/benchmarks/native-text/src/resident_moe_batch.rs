@@ -33,6 +33,14 @@ pub(crate) mod prepared_verify3;
 pub(crate) const FROZEN_STAGING_OWNER_BYTES: u64 = 32 * 1024 * 1024;
 pub(crate) const FROZEN_STAGING_MAIN_BYTES: u64 = 3 * FROZEN_STAGING_OWNER_BYTES;
 pub(crate) const FROZEN_STAGING_RUNTIME_BYTES: u64 = 6 * 48 * 2048;
+// Construction-only charge for the explicit frozen public GU candidate.
+// Whole pages and transient INFO/HOST reservations remain independent.
+pub(crate) const FROZEN_GU_INTEGER_SCRATCH_WORDS: usize = 16384;
+pub(crate) const FROZEN_GU_INTEGER_MAIN_BYTES: u64 = 65536;
+pub(crate) const FROZEN_GU_INTEGER_HOST_BYTES: usize = 65536;
+pub(crate) const FROZEN_GU_INTEGER_INFO_BYTES: u64 = 2 * 48 * 2048;
+pub(crate) const FROZEN_GU_INTEGER_RUNTIME_BYTES: u64 =
+    FROZEN_GU_INTEGER_INFO_BYTES + 2 * 2048 + 4 * FROZEN_GU_INTEGER_MAIN_BYTES;
 const MAX_LAYERS: usize = 64;
 const N: usize = 5;
 const MAP: usize = 0;
@@ -394,6 +402,7 @@ pub(crate) struct Workspace {
     frozen_sources: Option<Arc<frozen_sources::Sources>>,
     frozen_source_counters: frozen_sources::Counters,
     frozen_staging: Option<Zeroizing<[BufferId; 3]>>,
+    frozen_gu_integer: Option<BufferId>,
 }
 
 /// Aggregate successfully queued demand-fill diagnostics, not publication or
@@ -959,6 +968,7 @@ impl Workspace {
                 frozen_sources: None,
                 frozen_source_counters: frozen_sources::Counters::default(),
                 frozen_staging: None,
+                frozen_gu_integer: None,
             };
             out.validate_ids(arena)?;
             u::cancel(cancel)?;
@@ -981,6 +991,7 @@ impl Workspace {
         self.validate_ids(arena)?;
         if self.poison.load(Ordering::Acquire)
             || self.frozen_staging.is_some()
+            || self.frozen_gu_integer.is_some()
             || *self.policy.chunk != 0
             || self.frozen_sources.is_some()
             || !self.frozen_host_batch_router_reserved()
@@ -1003,6 +1014,45 @@ impl Workspace {
             *id = arena.allocate_zeroed(words).map_err(u::fault)?;
         }
         self.frozen_staging = Some(ids);
+        self.validate_ids(arena)
+    }
+    pub(crate) fn frozen_gu_integer_owner_id(&self) -> Option<BufferId> {
+        self.frozen_gu_integer
+    }
+    /// Reserve one complete private page using the already-held MAIN origin.
+    /// This establishes no source or execution authority.
+    pub(crate) fn reserve_frozen_gu_integer(
+        &mut self,
+        arena: &mut PrivateArena,
+        allocation: &ModelConstructionAllocation<'_>,
+    ) -> Result<()> {
+        allocation.check(&self.admission)?;
+        self.validate_ids(arena)?;
+        if self.poison.load(Ordering::Acquire)
+            || self.frozen_gu_integer.is_some()
+            || self.frozen_staging.is_some()
+            || *self.policy.chunk != 0
+            || self.policy.phase != Phase::Idle
+            || self.frozen_sources.is_some()
+            || !self.frozen_host_batch_router_reserved()
+            || self.batch_router_active()
+            || self.hybrid.is_some()
+            || self.resident_router.is_some()
+            || self.prepared_verify3.is_some()
+            || self.live_member_reduction_enabled()
+            || !arena.public_owned_zero_audit_enabled()
+            || arena
+                .charged_bytes()
+                .checked_add(FROZEN_GU_INTEGER_MAIN_BYTES as usize)
+                .is_none_or(|n| n > arena.budget_bytes())
+        {
+            return Err(err("frozen GU integer construction rejected"));
+        }
+        self.frozen_gu_integer = Some(
+            arena
+                .allocate_zeroed(FROZEN_GU_INTEGER_SCRATCH_WORDS)
+                .map_err(u::fault)?,
+        );
         self.validate_ids(arena)
     }
     fn healthy(&self, arena: &PrivateArena) -> Result<()> {
@@ -1097,6 +1147,21 @@ impl Workspace {
                 {
                     return Err(err("frozen host staging complete owner layout"));
                 }
+            }
+        }
+        if let Some(id) = self.frozen_gu_integer {
+            if self.ids.contains(&id)
+                || self.batch_router_ids().is_none_or(|ids| ids.contains(&id))
+                || self.frozen_staging.is_some()
+                || self.hybrid.is_some()
+                || self.resident_router.is_some()
+                || self.prepared_verify3.is_some()
+                || self.live_member_reduction_enabled()
+                || !arena.public_owned_zero_audit_enabled()
+                || arena.layout(id).map_err(u::fault)?
+                    != BufferLayout::new(FROZEN_GU_INTEGER_SCRATCH_WORDS).map_err(u::fault)?
+            {
+                return Err(err("frozen GU integer complete owner layout"));
             }
         }
         if let Some(id) = self.prepared_verify3
@@ -2035,6 +2100,9 @@ fn physical_with_packet(
     if let Some(staging) = w.frozen_staging_owner_ids() {
         all.extend_from_slice(&staging);
     }
+    if let Some(owner) = w.frozen_gu_integer_owner_id() {
+        all.push(owner);
+    }
     let banks = [bank.gate(), bank.up(), bank.down()];
     let count = original_shard_count(w.layout.capacity, banks.map(|b| b.segments().len()))?;
     if bank.slots.capacity() != w.layout.capacity
@@ -2054,7 +2122,7 @@ fn physical_with_packet(
         .checked_add(public.len())
         .ok_or(Error::ArithmeticOverflow)?;
     if extent_count
-        > if w.frozen_staging.is_some() {
+        > if w.frozen_staging.is_some() || w.frozen_gu_integer.is_some() {
             20
         } else if w.resident_router.is_some() || w.batch_router.is_some() {
             19

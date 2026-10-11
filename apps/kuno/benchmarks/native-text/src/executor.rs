@@ -847,6 +847,7 @@ pub struct GpuExecutor<'a> {
     pub(crate) target_batch_router_reserved: bool,
     pub(crate) target_frozen_host_router_reserved: bool,
     pub(crate) target_frozen_host_staging_reserved: bool,
+    pub(crate) target_frozen_gu_integer_reserved: bool,
     pub(crate) target_frozen_host_source_identity:
         Option<crate::public_host_expert_plan::PlanIdentity>,
     pub(crate) target_verify3_dense: bool,
@@ -1088,6 +1089,7 @@ impl<'a> GpuExecutor<'a> {
             target_batch_router_reserved: false,
             target_frozen_host_router_reserved: false,
             target_frozen_host_staging_reserved: false,
+            target_frozen_gu_integer_reserved: false,
             target_frozen_host_source_identity: None,
             target_verify3_dense: false,
             target_verify3_dense_calls: 0,
@@ -1245,6 +1247,7 @@ impl<'a> GpuExecutor<'a> {
         self.target_frozen_host_source_identity = None;
         self.target_frozen_host_router_reserved = false;
         self.target_frozen_host_staging_reserved = false;
+        self.target_frozen_gu_integer_reserved = false;
         self.batch_moe = None;
         self.bank_reserved = 0;
         // All previous commands completed before public cache handles release.
@@ -1895,6 +1898,14 @@ impl<'a> GpuExecutor<'a> {
         {
             return Err(Error::InvalidFormat("packed staging construction scope"));
         }
+        if self.target_frozen_gu_integer_reserved
+            && (!self.target_rows_reserved
+                || !self.target_batch_router_reserved
+                || !self.target_frozen_host_router_reserved
+                || self.target_frozen_host_staging_reserved)
+        {
+            return Err(Error::InvalidFormat("frozen GU integer construction scope"));
+        }
         validate_target_frozen_host_policy(
             self.resident_banks_frozen,
             self.target_frozen_host_source_identity.is_some(),
@@ -1986,6 +1997,7 @@ impl<'a> GpuExecutor<'a> {
                 true,
                 self.target_frozen_host_router_reserved,
                 self.target_frozen_host_staging_reserved,
+                self.target_frozen_gu_integer_reserved,
             )
         } else {
             target_rows_private_extent(
@@ -1993,6 +2005,7 @@ impl<'a> GpuExecutor<'a> {
                 false,
                 false,
                 self.target_frozen_host_staging_reserved,
+                self.target_frozen_gu_integer_reserved,
             )
         };
         if self.target_rows_reserved && !target_private {
@@ -3411,6 +3424,7 @@ impl Drop for GpuExecutor<'_> {
         self.target_frozen_host_source_identity = None;
         self.target_frozen_host_router_reserved = false;
         self.target_frozen_host_staging_reserved = false;
+        self.target_frozen_gu_integer_reserved = false;
         self.bank_reserved = 0;
         self.client.memory_cleanup();
         let _ = cubecl::future::block_on(self.client.sync());
@@ -4529,8 +4543,14 @@ mod construction_lock_tests {
     }
 }
 
-fn target_rows_private_extent(private: u64, batch: bool, frozen: bool, stage: bool) -> bool {
-    if stage && (!batch || !frozen) {
+fn target_rows_private_extent(
+    private: u64,
+    batch: bool,
+    frozen: bool,
+    stage: bool,
+    gu_integer: bool,
+) -> bool {
+    if (stage || gu_integer) && (!batch || !frozen) || stage && gu_integer {
         return false;
     }
     if batch {
@@ -4539,6 +4559,11 @@ fn target_rows_private_extent(private: u64, batch: bool, frozen: bool, stage: bo
                 + batch_moe::batch_router::MAIN_BYTES
                 + if stage {
                     batch_moe::FROZEN_STAGING_MAIN_BYTES
+                } else {
+                    0
+                }
+                + if gu_integer {
+                    batch_moe::FROZEN_GU_INTEGER_MAIN_BYTES
                 } else {
                     0
                 }
@@ -4559,16 +4584,45 @@ mod frozen_host_policy_tests {
         let plain = crate::resident_model::batch::TARGET_ROWS_PRIVATE_MAIN;
         let routed = plain + batch_moe::batch_router::MAIN_BYTES;
         let staged = routed + batch_moe::FROZEN_STAGING_MAIN_BYTES;
-        assert!(target_rows_private_extent(plain, false, false, false));
-        assert!(target_rows_private_extent(routed, true, false, false));
-        assert!(target_rows_private_extent(routed, true, true, false));
-        assert!(target_rows_private_extent(staged, true, true, true));
+        assert!(target_rows_private_extent(
+            plain, false, false, false, false
+        ));
+        assert!(target_rows_private_extent(
+            routed, true, false, false, false
+        ));
+        assert!(target_rows_private_extent(routed, true, true, false, false));
+        assert!(target_rows_private_extent(staged, true, true, true, false));
         for bytes in [plain, routed, staged - 1, staged + 1] {
-            assert!(!target_rows_private_extent(bytes, true, true, true));
+            assert!(!target_rows_private_extent(bytes, true, true, true, false));
         }
-        assert!(!target_rows_private_extent(staged, true, true, false));
+        assert!(!target_rows_private_extent(
+            staged, true, true, false, false
+        ));
         for (batch, frozen) in [(false, false), (false, true), (true, false)] {
-            assert!(!target_rows_private_extent(staged, batch, frozen, true));
+            assert!(!target_rows_private_extent(
+                staged, batch, frozen, true, false
+            ));
+        }
+    }
+    #[test]
+    fn frozen_gu_integer_accepts_only_exact_precharged_frozen_router_extent() {
+        let routed = crate::resident_model::batch::TARGET_ROWS_PRIVATE_MAIN
+            + batch_moe::batch_router::MAIN_BYTES;
+        let exact = routed + batch_moe::FROZEN_GU_INTEGER_MAIN_BYTES;
+        assert!(target_rows_private_extent(exact, true, true, false, true));
+        for bytes in [routed, exact - 1, exact + 1] {
+            assert!(!target_rows_private_extent(bytes, true, true, false, true));
+        }
+        assert!(!target_rows_private_extent(exact, true, true, false, false));
+        for (batch, frozen, stage) in [
+            (false, false, false),
+            (false, true, false),
+            (true, false, false),
+            (true, true, true),
+        ] {
+            assert!(!target_rows_private_extent(
+                exact, batch, frozen, stage, true
+            ));
         }
     }
     #[test]
