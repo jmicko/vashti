@@ -740,3 +740,27 @@ keep them off in the PLEpair. Next separate source work prepares immutable
 grouped GR/GDN/QSA status folds (defaultoff), preserving all original checks.
 CanonicalVashti/API/installedservices unchanged; requiredVashti changes:none.
 No30tokens/s, normalprose, independentCPU200, production or release claim.
+
+
+### Completed Intel-only v162 schedule comparison,2026-10-11 18:00UTC
+
+The remaining DOWNstride and combined groupedPLE+DOWNstride gates pass original
+CPU13 cold/warm vectors/carries/greedy, real repair and full source/owner closure
+on frozen66bdd0f/v162. Warm DOWN reports432layers/2160DOWN/4320source calls;
+combined also reports8actual groupedPLE chunks. Original reference/tolerances
+and all admission/owner limits remain unchanged.
+
+Compiler-idle same-artifact normalcode200:9.886106control,10.022470groupedPLE,
+9.567741DOWNstride and9.558671combined continuations/s, each199timed and
+130/138drafts/69rounds/5repairs. DOWNstride reports3552layers/17760DOWN/35520
+source calls; combined also reports74groupedPLE chunks. These are single ordered
+measurements, not repeated gain estimates. Keep DOWNstride off for the next
+internal speed comparison; retain the preliminarily fastest groupedPLE selection.
+
+Final recovery18:00:12UTC: B70baseline50688000B,Nvidia compute0,allHTTP200,
+idle/unpaused/no recovery and no classifiedGPUfaults on the sameboot. Exact
+numeric/source/admission/closure records join v162_intel_grouped_reads_and_down_schedule.
+Next separate candidates are grouped status folds and packed-integer DOWN;
+neither is physically accepted yet. Root owns shared GPUs and source isolation.
+Required Vashti changes:none; installedAPI/services/canonical checkout unchanged.
+No30tokens/s, normalprose, independentCPU200, production or release acceptance.

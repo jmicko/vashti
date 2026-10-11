@@ -20390,14 +20390,2145 @@
       "gpu_submission_wait_count_unchanged": 618,
       "all_physical_gates_passed": true
     },
-    "down_stride_physical_pending": true,
-    "combined_physical_pending": true,
+    "down_stride_physical_pending": false,
+    "combined_physical_pending": false,
     "limitations": [
       "No repeated ABBA or normal prose acceptance",
       "No independent CPU200/private/production acceptance",
       "New schedules and reads remain default-off",
       "No installed runtime/API/frontend or release changes",
       "30 accepted continuation tokens/s goal remains unachieved"
-    ]
+    ],
+    "down_stride": {
+      "warm_gate": {
+        "output_directory": "/media/jmicko/faststore/kuno-development/native-next-v162-warm-intel-down-stride-20261011",
+        "source": {
+          "commit": "66bdd0f6e351821047b6f90d4e99c59d73f95396",
+          "binary_sha256": "498736a0bacd6a6d31c9610931658fff0c04cdee790fa996f20a9331ae19a9d2",
+          "features": [
+            "direct-device"
+          ],
+          "protected_launcher_sha256": "e7d635280af8ea7ec11f962f0e918e633c7c5593ef1003a0ce9a5c84ac349855",
+          "helper_sha256": "31a99e0f3c5bbacb8d086839b6d71d2ac93fd3c4d4c703c403fecebacd82e54d",
+          "public_trial": "warm-intel-mtp-down-stride-gu-stride-four-down-shared-head-gpu-host",
+          "seed": 424242,
+          "temperature": 0,
+          "frozen_partition_exit_requested": true,
+          "frozen_bank_preserve_requested": false,
+          "frozen_private_tables_requested": false,
+          "frozen_workgroup_tables_requested": false,
+          "frozen_shared_down_scales_requested": false,
+          "frozen_shared_gate_up_factors_requested": false,
+          "mtp_q8_head_broadcast_requested": false,
+          "frozen_four_row_down_requested": true,
+          "mtp_q8_head_shared_scales_requested": true,
+          "frozen_two_row_gate_up_requested": false,
+          "frozen_packed_host_staging_requested": false,
+          "frozen_three_member_arithmetic_requested": false,
+          "draft_profile_requested": "self-contained-q8",
+          "three_gdn_streaming_requested": false,
+          "mtp_english_vocab_requested": false,
+          "frozen_gu_integer_requested": true,
+          "frozen_gu_stride_four_requested": true,
+          "target_only_requested": false,
+          "intel_mtp_requested": true,
+          "target_grouped_ple_requested": false,
+          "frozen_down_stride_four_requested": true,
+          "ordinary_demand_performance_claimed": false,
+          "native_30_tokens_per_second_accepted": false
+        },
+        "public_record": {
+          "chunk_io_checkpoint": true,
+          "compiled_token0": 0,
+          "device_dispatch": "inline",
+          "draft_card": "B70",
+          "draft_close": {
+            "main_reserved": 0,
+            "private_buffers": 42,
+            "private_bytes": 11698176,
+            "public_bytes": 5011668992
+          },
+          "draft_profile": "self-contained-q8",
+          "draft_public_reserved_bytes": 5011668992,
+          "expert_route_forcing": false,
+          "frozen_down_schedule": "four-public",
+          "frozen_down_stride_four_requested": true,
+          "frozen_gu_integer_extra_host_bytes": 65536,
+          "frozen_gu_integer_extra_info_bytes": 196608,
+          "frozen_gu_integer_extra_main_bytes": 65536,
+          "frozen_gu_integer_extra_runtime_bytes": 462848,
+          "frozen_gu_integer_requested": true,
+          "frozen_gu_stride_four_requested": true,
+          "fused_mtp_sweeps": true,
+          "gpu_chronological_qsa_selector": true,
+          "intel_mtp_admission": {
+            "combined_reserved_bytes": 34166833152,
+            "draft_private_cap_bytes": 16777216,
+            "draft_public_bytes": 5011668992,
+            "draft_runtime_io_bytes": 67108864,
+            "draft_source_cap_bytes": 134217728,
+            "physical_available_bytes": 34191609856,
+            "physical_device_id": 57891,
+            "physical_total_bytes": 34242297856,
+            "physical_used_bytes": 50688000,
+            "remaining_beyond_margin_bytes": 24776704,
+            "shared_driver_margin_bytes": 536870912,
+            "source": "protected-xe-memory-regions",
+            "target_bank_bytes": 18723373056,
+            "target_baseline_bytes": 0,
+            "target_io_bytes": 67108864,
+            "target_main_bytes": 828932096,
+            "target_runtime_io_bytes": 134217728,
+            "target_slots": 144,
+            "target_source_page_bytes": 31457280,
+            "target_static_cache_bytes": 8589934592,
+            "target_vector_bytes": 25165824
+          },
+          "live_member_reduction": false,
+          "mtp_device": {
+            "actual_device_id": 57891,
+            "actual_draft_runtime_id": 1,
+            "actual_pci_bus_id": "0000:2d:00.0",
+            "actual_target_device_id": 57891,
+            "actual_target_pci_bus_id": "0000:2d:00.0",
+            "actual_target_vendor_id": 32902,
+            "actual_vendor_id": 32902,
+            "distinct_runtime": true,
+            "distinct_wgpu_device": true,
+            "draft_private_arena_shared": false,
+            "draft_request_io_shared": false,
+            "logical_device_identity": "borrowed-vulkan-device-handles",
+            "requested": "intel-public",
+            "same_physical_as_target": true
+          },
+          "mtp_device_requested": "intel-public",
+          "observed_inline_device_dispatch": true,
+          "oracle_forcing": false,
+          "passes": [
+            {
+              "accepted_drafts": 6,
+              "accepted_tokens": 12,
+              "accepted_tokens_per_second": 1.2106704885430113,
+              "device_router": false,
+              "device_router_scope": "authenticated actual512 VRAM/host sources; deferred strict original IDs and full vectors, experimental F32 probabilities",
+              "draft_traffic": {
+                "explicit_dispatches": 2216,
+                "followup_copy_calls": 5,
+                "host_read_bytes": 1048576,
+                "host_read_calls": 22,
+                "minimal_packet_reads": 10,
+                "private_upload_bytes": 1179648,
+                "private_upload_calls": 24
+              },
+              "elapsed_ns": 9911862983,
+              "expert_hits": 6329,
+              "expert_uploads": 2311,
+              "frozen_bank_placement": "cpu13-diagnostic",
+              "frozen_down_stride_four": false,
+              "frozen_down_stride_four_counters": {
+                "down_dispatches": 0,
+                "layers": 0,
+                "source_dispatches": 0
+              },
+              "frozen_gu_integer": false,
+              "frozen_gu_integer_counters": {
+                "full_owner_audits": 0,
+                "gu_dispatches": 0,
+                "preparations": 0
+              },
+              "frozen_gu_stride_four": false,
+              "frozen_gu_stride_four_counters": {
+                "gu_dispatches": 0
+              },
+              "frozen_host_four_row_down": false,
+              "frozen_host_gpu_router": false,
+              "frozen_host_inactive_partition_exit": false,
+              "frozen_host_private_tables": false,
+              "frozen_host_shared_down_scales": false,
+              "frozen_host_shared_gate_up_factors": false,
+              "frozen_host_two_row_gate_up": false,
+              "frozen_host_workgroup_tables": false,
+              "frozen_packed_host_staging": false,
+              "frozen_source_routes": null,
+              "frozen_three_member_arithmetic": false,
+              "gpu_router_calls": 0,
+              "host_io": {
+                "gpu_submission_wait_ns": 337473,
+                "gpu_submission_waits": 65,
+                "inline_readback_batches": 515,
+                "provenance": "process-global whole public dual-device timed interval",
+                "scoped_read_flush_ns": 27574215,
+                "scoped_read_map_ns": 1564834185,
+                "scoped_read_setup_ns": 1403042
+              },
+              "initial_prefill_frozen_down_stride_four": false,
+              "initial_prefill_frozen_down_stride_four_counters": {
+                "down_dispatches": 0,
+                "layers": 0,
+                "source_dispatches": 0
+              },
+              "initial_prefill_frozen_gu_integer": false,
+              "initial_prefill_frozen_gu_integer_counters": {
+                "full_owner_audits": 0,
+                "gu_dispatches": 0,
+                "preparations": 0
+              },
+              "initial_prefill_frozen_gu_stride_four": false,
+              "initial_prefill_frozen_gu_stride_four_counters": {
+                "gu_dispatches": 0
+              },
+              "initial_prefill_ns": 6763639032,
+              "load_and_initial_prefill_cumulative_ns": 13174525160,
+              "load_and_initial_prefill_physical_read_bytes": 8396337152,
+              "model_weights_warm": false,
+              "mtp_english_vocab": false,
+              "mtp_english_vocab_receipt": null,
+              "mtp_q8_head_broadcast": false,
+              "mtp_q8_head_shared_scales": true,
+              "proposed_drafts": 10,
+              "replay": 0,
+              "request_close_ns_inside_timing": 3728469,
+              "request_scope": {
+                "binding_capacity": 4096,
+                "binding_stats": [
+                  6,
+                  45,
+                  45,
+                  357775,
+                  9790
+                ],
+                "closing_audit_ns": 3714169,
+                "counter_provenance": "admission-local request checkpoints; checked process-global binding/INFO/request-reuse deltas",
+                "full_io_audit": true,
+                "info_stats": [
+                  20554,
+                  4038,
+                  286
+                ],
+                "metadata_reserved_bytes": 4194304,
+                "request_checkpoints": 411,
+                "request_io_reuses": 1090,
+                "runtime_limit_bytes": 134217728,
+                "scope_closed": true,
+                "scope_sequence": 1,
+                "target_stream_configured": true
+              },
+              "request_scope_closed_and_audited": true,
+              "rounds": [
+                {
+                  "accepted_drafts": 0,
+                  "accepted_outputs": 1,
+                  "draft_completed_cell": 1,
+                  "draft_ns": 452091518,
+                  "proposed_drafts": 2,
+                  "repair_ns": 343932704,
+                  "target_completed_cursor": 2,
+                  "target_start": 1,
+                  "total_ns": 3995198733,
+                  "verify_ns_including_public_vector_checks": 3199174081
+                },
+                {
+                  "accepted_drafts": 2,
+                  "accepted_outputs": 3,
+                  "draft_completed_cell": 4,
+                  "draft_ns": 74627351,
+                  "proposed_drafts": 2,
+                  "repair_ns": 18496721,
+                  "target_completed_cursor": 5,
+                  "target_start": 2,
+                  "total_ns": 1562981204,
+                  "verify_ns_including_public_vector_checks": 1469856692
+                },
+                {
+                  "accepted_drafts": 0,
+                  "accepted_outputs": 1,
+                  "draft_completed_cell": 5,
+                  "draft_ns": 35608847,
+                  "proposed_drafts": 2,
+                  "repair_ns": 154780097,
+                  "target_completed_cursor": 6,
+                  "target_start": 5,
+                  "total_ns": 1649768319,
+                  "verify_ns_including_public_vector_checks": 1459379005
+                },
+                {
+                  "accepted_drafts": 2,
+                  "accepted_outputs": 3,
+                  "draft_completed_cell": 8,
+                  "draft_ns": 35014091,
+                  "proposed_drafts": 2,
+                  "repair_ns": 19799434,
+                  "target_completed_cursor": 9,
+                  "target_start": 6,
+                  "total_ns": 1540270258,
+                  "verify_ns_including_public_vector_checks": 1485456383
+                },
+                {
+                  "accepted_drafts": 2,
+                  "accepted_outputs": 3,
+                  "draft_completed_cell": 11,
+                  "draft_ns": 45298097,
+                  "proposed_drafts": 2,
+                  "repair_ns": 17582722,
+                  "target_completed_cursor": 12,
+                  "target_start": 9,
+                  "total_ns": 715808131,
+                  "verify_ns_including_public_vector_checks": 652926912
+                },
+                {
+                  "accepted_drafts": 0,
+                  "accepted_outputs": 1,
+                  "draft_completed_cell": 12,
+                  "draft_ns": 30,
+                  "proposed_drafts": 0,
+                  "repair_ns": 7818880,
+                  "target_completed_cursor": 13,
+                  "target_start": 12,
+                  "total_ns": 443837445,
+                  "verify_ns_including_public_vector_checks": 436018285
+                }
+              ],
+              "target_fill_counters_after": {
+                "direct_bytes": 5759232000,
+                "direct_components": 8373,
+                "direct_windows": 411,
+                "evictions": 0,
+                "first_touch_fills": 2791
+              },
+              "target_fill_counters_before": {
+                "direct_bytes": 982272000,
+                "direct_components": 1440,
+                "direct_windows": 48,
+                "evictions": 0,
+                "first_touch_fills": 480
+              },
+              "target_grouped_ple_reads": false,
+              "target_grouped_ple_reads_receipt": {
+                "completed_chunks": 0,
+                "selected": false
+              },
+              "target_host_phase_ns": {
+                "native_all_family_commit": 5487826,
+                "native_all_family_preflight": 3556638,
+                "native_attention_and_gr_enqueue": 214861222,
+                "native_completed_final_proofs": 106138135,
+                "native_ffn_gr_and_router_enqueue": 13511868,
+                "native_final_head_enqueue": 448887,
+                "native_route_and_expert_enqueue": 6970451530,
+                "native_router_fence": 1826026518,
+                "native_shared_and_ffn_combine_enqueue": 19673150
+              },
+              "target_three_gdn_completed_chunks": 0,
+              "target_three_gdn_streaming": false,
+              "timed_physical_read_bytes": 4427702272,
+              "timing_scope": "original normal routing/demand uploads; public checks and actual repair included",
+              "uploaded_bytes": 4776960000,
+              "verify3_dense_calls": 6016,
+              "verify3_fused_calls": 6016,
+              "weight_read_ns": 5982409424,
+              "weight_upload_enqueue_ns": 3302281
+            },
+            {
+              "accepted_drafts": 6,
+              "accepted_tokens": 12,
+              "accepted_tokens_per_second": 6.404590602180963,
+              "device_router": true,
+              "device_router_scope": "authenticated actual512 VRAM/host sources; deferred strict original IDs and full vectors, experimental F32 probabilities",
+              "draft_traffic": {
+                "explicit_dispatches": 2216,
+                "followup_copy_calls": 5,
+                "host_read_bytes": 1048576,
+                "host_read_calls": 22,
+                "minimal_packet_reads": 10,
+                "private_upload_bytes": 1179648,
+                "private_upload_calls": 24
+              },
+              "elapsed_ns": 1873656061,
+              "expert_hits": 0,
+              "expert_uploads": 0,
+              "frozen_bank_placement": "cpu13-diagnostic",
+              "frozen_down_stride_four": true,
+              "frozen_down_stride_four_counters": {
+                "down_dispatches": 2160,
+                "layers": 432,
+                "source_dispatches": 4320
+              },
+              "frozen_gu_integer": true,
+              "frozen_gu_integer_counters": {
+                "full_owner_audits": 432,
+                "gu_dispatches": 2160,
+                "preparations": 432
+              },
+              "frozen_gu_stride_four": true,
+              "frozen_gu_stride_four_counters": {
+                "gu_dispatches": 2160
+              },
+              "frozen_host_close": {
+                "detached_pages": 432,
+                "live_backing_bytes": 0,
+                "metadata_owned_bytes": 1458688,
+                "physical_allocated_bytes": 36147609600,
+                "physical_freed_bytes": 36147609600,
+                "registered_pages": 432,
+                "source_window_peak_bytes": 1048576
+              },
+              "frozen_host_four_row_down": true,
+              "frozen_host_gpu_router": true,
+              "frozen_host_inactive_partition_exit": true,
+              "frozen_host_private_tables": false,
+              "frozen_host_setup": {
+                "attach_ns": 42168646934,
+                "bank_completion_experts": 6132,
+                "bank_completion_read_ns": 14601346855,
+                "bank_completion_upload_ns": 8596142,
+                "bank_completion_uploaded_bytes": 12535603200,
+                "prepare_ns": 18197080834,
+                "separate_host_reserved_bytes": 36166705152
+              },
+              "frozen_host_shared_down_scales": false,
+              "frozen_host_shared_gate_up_factors": false,
+              "frozen_host_two_row_gate_up": false,
+              "frozen_host_workgroup_tables": false,
+              "frozen_packed_host_staging": false,
+              "frozen_source_routes": {
+                "down_stride_four_dispatches": 2160,
+                "down_stride_four_layers": 432,
+                "gu_integer_audits": 432,
+                "gu_integer_dispatches": 2160,
+                "gu_integer_preparations": 432,
+                "gu_stride_four_dispatches": 2160,
+                "host_routes": 6530,
+                "source_dispatches": 4320,
+                "staged_packed_bytes": 0,
+                "staged_unique_host_groups": 0,
+                "staging_dispatches": 0,
+                "vram_routes": 2590
+              },
+              "frozen_three_member_arithmetic": false,
+              "gpu_router_calls": 384,
+              "host_io": {
+                "gpu_submission_wait_ns": 872692904,
+                "gpu_submission_waits": 62,
+                "inline_readback_batches": 51,
+                "provenance": "process-global whole public dual-device timed interval",
+                "scoped_read_flush_ns": 2508730,
+                "scoped_read_map_ns": 311516153,
+                "scoped_read_setup_ns": 90650
+              },
+              "initial_prefill_frozen_down_stride_four": true,
+              "initial_prefill_frozen_down_stride_four_counters": {
+                "down_dispatches": 240,
+                "layers": 48,
+                "source_dispatches": 480
+              },
+              "initial_prefill_frozen_gu_integer": true,
+              "initial_prefill_frozen_gu_integer_counters": {
+                "full_owner_audits": 48,
+                "gu_dispatches": 240,
+                "preparations": 48
+              },
+              "initial_prefill_frozen_gu_stride_four": true,
+              "initial_prefill_frozen_gu_stride_four_counters": {
+                "gu_dispatches": 240
+              },
+              "initial_prefill_ns": 826395159,
+              "load_and_initial_prefill_cumulative_ns": 85811868028,
+              "load_and_initial_prefill_physical_read_bytes": 696320,
+              "model_weights_warm": true,
+              "mtp_english_vocab": false,
+              "mtp_english_vocab_receipt": null,
+              "mtp_q8_head_broadcast": false,
+              "mtp_q8_head_shared_scales": true,
+              "proposed_drafts": 10,
+              "replay": 1,
+              "request_close_ns_inside_timing": 12530876,
+              "request_scope": {
+                "binding_capacity": 4096,
+                "binding_stats": [
+                  23829,
+                  7619,
+                  7619,
+                  39992516,
+                  8514757
+                ],
+                "closing_audit_ns": 12520466,
+                "counter_provenance": "admission-local request checkpoints; checked process-global binding/INFO/request-reuse deltas",
+                "full_io_audit": true,
+                "info_stats": [
+                  26825,
+                  1231,
+                  199
+                ],
+                "metadata_reserved_bytes": 4194304,
+                "request_checkpoints": 35,
+                "request_io_reuses": 376,
+                "runtime_limit_bytes": 134217728,
+                "scope_closed": true,
+                "scope_sequence": 2,
+                "target_stream_configured": true
+              },
+              "request_scope_closed_and_audited": true,
+              "rounds": [
+                {
+                  "accepted_drafts": 0,
+                  "accepted_outputs": 1,
+                  "draft_completed_cell": 1,
+                  "draft_ns": 35298516,
+                  "proposed_drafts": 2,
+                  "repair_ns": 147382794,
+                  "target_completed_cursor": 2,
+                  "target_start": 1,
+                  "total_ns": 430781416,
+                  "verify_ns_including_public_vector_checks": 248099716
+                },
+                {
+                  "accepted_drafts": 2,
+                  "accepted_outputs": 3,
+                  "draft_completed_cell": 4,
+                  "draft_ns": 35865321,
+                  "proposed_drafts": 2,
+                  "repair_ns": 17482836,
+                  "target_completed_cursor": 5,
+                  "target_start": 2,
+                  "total_ns": 283465823,
+                  "verify_ns_including_public_vector_checks": 230117156
+                },
+                {
+                  "accepted_drafts": 0,
+                  "accepted_outputs": 1,
+                  "draft_completed_cell": 5,
+                  "draft_ns": 36032002,
+                  "proposed_drafts": 2,
+                  "repair_ns": 139894947,
+                  "target_completed_cursor": 6,
+                  "target_start": 5,
+                  "total_ns": 412435919,
+                  "verify_ns_including_public_vector_checks": 236508570
+                },
+                {
+                  "accepted_drafts": 2,
+                  "accepted_outputs": 3,
+                  "draft_completed_cell": 8,
+                  "draft_ns": 35367386,
+                  "proposed_drafts": 2,
+                  "repair_ns": 16840509,
+                  "target_completed_cursor": 9,
+                  "target_start": 6,
+                  "total_ns": 302218020,
+                  "verify_ns_including_public_vector_checks": 250008995
+                },
+                {
+                  "accepted_drafts": 2,
+                  "accepted_outputs": 3,
+                  "draft_completed_cell": 11,
+                  "draft_ns": 35187994,
+                  "proposed_drafts": 2,
+                  "repair_ns": 18058942,
+                  "target_completed_cursor": 12,
+                  "target_start": 9,
+                  "total_ns": 280724494,
+                  "verify_ns_including_public_vector_checks": 227477208
+                },
+                {
+                  "accepted_drafts": 0,
+                  "accepted_outputs": 1,
+                  "draft_completed_cell": 12,
+                  "draft_ns": 20,
+                  "proposed_drafts": 0,
+                  "repair_ns": 8376185,
+                  "target_completed_cursor": 13,
+                  "target_start": 12,
+                  "total_ns": 151267392,
+                  "verify_ns_including_public_vector_checks": 142890897
+                }
+              ],
+              "target_close": {
+                "main_buffers": 1381,
+                "main_bytes": 828932096,
+                "source_buffers": 0,
+                "source_bytes": 0
+              },
+              "target_fill_counters_after": {
+                "direct_bytes": 5759232000,
+                "direct_components": 8373,
+                "direct_windows": 411,
+                "evictions": 0,
+                "first_touch_fills": 2791
+              },
+              "target_fill_counters_before": {
+                "direct_bytes": 5759232000,
+                "direct_components": 8373,
+                "direct_windows": 411,
+                "evictions": 0,
+                "first_touch_fills": 2791
+              },
+              "target_grouped_ple_reads": false,
+              "target_grouped_ple_reads_receipt": {
+                "completed_chunks": 0,
+                "selected": false
+              },
+              "target_host_phase_ns": {
+                "native_all_family_commit": 3386073,
+                "native_all_family_preflight": 4517665,
+                "native_attention_and_gr_enqueue": 973512552,
+                "native_completed_final_proofs": 470996618,
+                "native_device_router_and_expert_enqueue": 22460588,
+                "native_device_router_audit": 74864824,
+                "native_ffn_gr_and_router_enqueue": 13372295,
+                "native_final_head_enqueue": 388764,
+                "native_route_and_expert_enqueue": 0,
+                "native_router_fence": 0,
+                "native_shared_and_ffn_combine_enqueue": 12242804
+              },
+              "target_three_gdn_completed_chunks": 0,
+              "target_three_gdn_streaming": false,
+              "timed_physical_read_bytes": 622592,
+              "timing_scope": "original CPU13 routes and weights; deterministic diagnostic VRAM placement plus immutable direct host sources and deferred original GPU route audits, no demand expert uploads; full vectors and actual repair included",
+              "uploaded_bytes": 0,
+              "verify3_dense_calls": 6016,
+              "verify3_fused_calls": 6016,
+              "weight_read_ns": 0,
+              "weight_upload_enqueue_ns": 0
+            }
+          ],
+          "prepared_verify3_experts": false,
+          "private_or_production_accepted": false,
+          "public_existing_fill": true,
+          "qsa_extra_host_reserved_bytes": 4096,
+          "qsa_extra_runtime_info_bytes": 49152,
+          "request_binding_capacity": 4096,
+          "request_io_reuse": true,
+          "request_reuse_metadata_reserved_bytes": 4194304,
+          "scope": "fixed-public-DASLab13-real-independent-stream-greedy-speculation",
+          "seed": 424242,
+          "target_card": "B70",
+          "target_grouped_ple_reads_requested": false,
+          "target_ple_reads": "original",
+          "temperature": 0,
+          "verify3_dense": true,
+          "verify3_logical_finite_fused": true,
+          "warm_replay": true,
+          "warm_reset": {
+            "admission_and_public_banks_retained": true,
+            "ledger_epoch_or_poison_reset": false,
+            "main_buffers": 1381,
+            "main_bytes": 828932096,
+            "source_buffers": 0,
+            "source_bytes": 0,
+            "transient_binding_info_caches_retained": false
+          }
+        },
+        "host_after": {
+          "admission": {
+            "action": "status",
+            "state": {
+              "admission": {
+                "active": false,
+                "completed": 59,
+                "paused": false,
+                "recovery_required": false,
+                "rejected": 0,
+                "waiting": 0
+              }
+            },
+            "status": 200
+          },
+          "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+          "http_statuses": {
+            "kuno": 200,
+            "ollama": 200,
+            "vashti": 200
+          },
+          "intel": {
+            "xe_memory": [
+              {
+                "total_bytes": 34242297856,
+                "used_bytes": 50688000
+              }
+            ]
+          },
+          "kernel": "7.0.0-38-generic",
+          "kernel_fault_counts": {
+            "nvidia_xid": 0,
+            "xe_memory_faults": 0,
+            "xe_reset_failures": 0,
+            "xe_timeouts": 0,
+            "xe_wedged": 0
+          },
+          "nvidia_compute_process_count": 0,
+          "nvidia_memory_mib": 727,
+          "time": "2026-10-11T17:45:33.586604+00:00"
+        },
+        "full_original_sources": {
+          "full_original_shards_verified": [
+            {
+              "shard": 1,
+              "bytes": 54817524224,
+              "sha256": "4c1eb2ceb4915e1192f4f386021897bde56a97f40a0bb78bb86465e0f7d2aca3"
+            },
+            {
+              "shard": 2,
+              "bytes": 28800138432,
+              "sha256": "316b46f3a2dbd68c900f43136ab9449f9dcc3725dfd8c794847c204bc161e113"
+            }
+          ],
+          "elapsed_ns": 102084704182,
+          "source_file_cache_warmed_before_model_setup": true
+        },
+        "fresh_intel_admission_snapshot": {
+          "time": "2026-10-11T17:43:47.318133+00:00",
+          "pci": "0000:2d:00.0",
+          "device_id": 57891,
+          "total_bytes": 34242297856,
+          "used_bytes": 50688000,
+          "query": "Xe MEM_REGIONS",
+          "admission_paused_before_query": true
+        }
+      },
+      "candidate": {
+        "output_directory": "/media/jmicko/faststore/kuno-development/native-next-v162-code-intel-down-candidate-c1-20261011",
+        "source": {
+          "commit": "66bdd0f6e351821047b6f90d4e99c59d73f95396",
+          "binary_sha256": "498736a0bacd6a6d31c9610931658fff0c04cdee790fa996f20a9331ae19a9d2",
+          "features": [
+            "direct-device"
+          ],
+          "protected_launcher_sha256": "e7d635280af8ea7ec11f962f0e918e633c7c5593ef1003a0ce9a5c84ac349855",
+          "helper_sha256": "31a99e0f3c5bbacb8d086839b6d71d2ac93fd3c4d4c703c403fecebacd82e54d",
+          "public_trial": "language-code-intel-mtp-down-stride-gu-stride-four-down-shared-head-gpu-host",
+          "seed": 424242,
+          "temperature": 0,
+          "frozen_partition_exit_requested": true,
+          "frozen_bank_preserve_requested": false,
+          "frozen_private_tables_requested": false,
+          "frozen_workgroup_tables_requested": false,
+          "frozen_shared_down_scales_requested": false,
+          "frozen_shared_gate_up_factors_requested": false,
+          "mtp_q8_head_broadcast_requested": false,
+          "frozen_four_row_down_requested": true,
+          "mtp_q8_head_shared_scales_requested": true,
+          "frozen_two_row_gate_up_requested": false,
+          "frozen_packed_host_staging_requested": false,
+          "frozen_three_member_arithmetic_requested": false,
+          "draft_profile_requested": "self-contained-q8",
+          "three_gdn_streaming_requested": false,
+          "mtp_english_vocab_requested": false,
+          "frozen_gu_integer_requested": true,
+          "frozen_gu_stride_four_requested": true,
+          "target_only_requested": false,
+          "intel_mtp_requested": true,
+          "target_grouped_ple_requested": false,
+          "frozen_down_stride_four_requested": true,
+          "ordinary_demand_performance_claimed": true,
+          "native_30_tokens_per_second_accepted": false
+        },
+        "public_record": {
+          "chunk_io_checkpoint": true,
+          "decode_mode": "speculative",
+          "device_dispatch": "inline",
+          "draft_card": "B70",
+          "draft_close": {
+            "main_reserved": 0,
+            "private_buffers": 42,
+            "private_bytes": 11698176,
+            "public_bytes": 5011668992
+          },
+          "draft_executed": true,
+          "draft_profile": "self-contained-q8",
+          "draft_public_reserved_bytes": 5011668992,
+          "fixture_host_reserved_bytes": 4194304,
+          "forced_experts": false,
+          "forced_oracle_tokens": false,
+          "frequency_penalty": 0.0,
+          "frozen_down_schedule": "four-public",
+          "frozen_down_stride_four_requested": true,
+          "frozen_gu_integer_extra_host_bytes": 65536,
+          "frozen_gu_integer_extra_info_bytes": 196608,
+          "frozen_gu_integer_extra_main_bytes": 65536,
+          "frozen_gu_integer_extra_runtime_bytes": 462848,
+          "frozen_gu_integer_requested": true,
+          "frozen_gu_stride_four_requested": true,
+          "full_target_packets_retained": true,
+          "fused_mtp_sweeps": true,
+          "gpu_chronological_qsa_selector": true,
+          "greedy_target_verification": true,
+          "independent_cpu200_reference_accepted": false,
+          "intel_mtp_admission": {
+            "combined_reserved_bytes": 34166833152,
+            "draft_private_cap_bytes": 16777216,
+            "draft_public_bytes": 5011668992,
+            "draft_runtime_io_bytes": 67108864,
+            "draft_source_cap_bytes": 134217728,
+            "physical_available_bytes": 34191609856,
+            "physical_device_id": 57891,
+            "physical_total_bytes": 34242297856,
+            "physical_used_bytes": 50688000,
+            "remaining_beyond_margin_bytes": 24776704,
+            "shared_driver_margin_bytes": 536870912,
+            "source": "protected-xe-memory-regions",
+            "target_bank_bytes": 18723373056,
+            "target_baseline_bytes": 0,
+            "target_io_bytes": 67108864,
+            "target_main_bytes": 828932096,
+            "target_runtime_io_bytes": 134217728,
+            "target_slots": 144,
+            "target_source_page_bytes": 31457280,
+            "target_static_cache_bytes": 8589934592,
+            "target_vector_bytes": 25165824
+          },
+          "live_member_reduction": false,
+          "max_outputs": 200,
+          "mtp_device": {
+            "actual_device_id": 57891,
+            "actual_draft_runtime_id": 1,
+            "actual_pci_bus_id": "0000:2d:00.0",
+            "actual_target_device_id": 57891,
+            "actual_target_pci_bus_id": "0000:2d:00.0",
+            "actual_target_vendor_id": 32902,
+            "actual_vendor_id": 32902,
+            "distinct_runtime": true,
+            "distinct_wgpu_device": true,
+            "draft_private_arena_shared": false,
+            "draft_request_io_shared": false,
+            "logical_device_identity": "borrowed-vulkan-device-handles",
+            "requested": "intel-public",
+            "same_physical_as_target": true
+          },
+          "mtp_device_requested": "intel-public",
+          "observed_inline_device_dispatch": true,
+          "prepared_verify3_experts": false,
+          "presence_penalty": 0.0,
+          "private_or_production_accepted": false,
+          "public_existing_fill": true,
+          "qsa_extra_host_reserved_bytes": 4096,
+          "qsa_extra_runtime_info_bytes": 49152,
+          "record": {
+            "accepted_drafts": 130,
+            "actual_target_recomputations": 5,
+            "compiled_prompt_template_file": "serve/chat_template.jinja",
+            "compiled_prompt_template_revision": "fb58e0dbc8399662c0e47c76578c6e878b14f6cf",
+            "context_capacity": 235,
+            "continuation_tokens_per_second": 9.567741027258494,
+            "decode_mode": "speculative",
+            "draft_executed": true,
+            "draft_ns": 2894999969,
+            "draft_traffic": {
+              "explicit_dispatches": 32852,
+              "followup_copy_calls": 69,
+              "host_read_bytes": 15564800,
+              "host_read_calls": 337,
+              "minimal_packet_reads": 138,
+              "private_upload_bytes": 19562496,
+              "private_upload_calls": 398
+            },
+            "elapsed_ns": 20799057942,
+            "emitted_tokens_including_eos": 200,
+            "emitted_tokens_per_second": 9.615820127897983,
+            "expert_hits": 0,
+            "expert_uploads": 0,
+            "first_output_emission_timed": true,
+            "fixture": "first-code",
+            "fixture_peak_host_bytes": 2111616,
+            "frozen_down_stride_four": true,
+            "frozen_down_stride_four_counters": {
+              "down_dispatches": 17760,
+              "layers": 3552,
+              "source_dispatches": 35520
+            },
+            "frozen_gu_integer": true,
+            "frozen_gu_integer_counters": {
+              "full_owner_audits": 3552,
+              "gu_dispatches": 17760,
+              "preparations": 3552
+            },
+            "frozen_gu_stride_four": true,
+            "frozen_gu_stride_four_counters": {
+              "gu_dispatches": 17760
+            },
+            "frozen_host_close": {
+              "detached_pages": 432,
+              "live_backing_bytes": 0,
+              "metadata_owned_bytes": 1458688,
+              "physical_allocated_bytes": 36147609600,
+              "physical_freed_bytes": 36147609600,
+              "registered_pages": 432,
+              "source_window_peak_bytes": 1048576
+            },
+            "frozen_host_four_row_down": true,
+            "frozen_host_gpu_router": true,
+            "frozen_host_inactive_partition_exit": true,
+            "frozen_host_private_tables": false,
+            "frozen_host_setup": {
+              "attach_ns": 47334477176,
+              "bank_completion_experts": 1769,
+              "bank_completion_read_ns": 4177901774,
+              "bank_completion_upload_ns": 2838411,
+              "bank_completion_uploaded_bytes": 3586201600,
+              "prepare_and_attach_ns": 52532338768,
+              "separate_host_reserved_bytes": 36166705152
+            },
+            "frozen_host_shared_down_scales": false,
+            "frozen_host_shared_gate_up_factors": false,
+            "frozen_host_two_row_gate_up": false,
+            "frozen_host_workgroup_tables": false,
+            "frozen_packed_host_staging": false,
+            "frozen_source_routes": {
+              "down_stride_four_dispatches": 17760,
+              "down_stride_four_layers": 3552,
+              "gu_integer_audits": 3552,
+              "gu_integer_dispatches": 17760,
+              "gu_integer_preparations": 3552,
+              "gu_stride_four_dispatches": 17760,
+              "host_routes": 46376,
+              "source_dispatches": 35520,
+              "staged_packed_bytes": 0,
+              "staged_unique_host_groups": 0,
+              "staging_dispatches": 0,
+              "vram_routes": 56344
+            },
+            "frozen_three_member_arithmetic": false,
+            "generation_physical_read_bytes": 12750848,
+            "gpu_router_calls": 3552,
+            "host_io": {
+              "gpu_submission_wait_ns": 9201306335,
+              "gpu_submission_waits": 618,
+              "inline_readback_batches": 450,
+              "provenance": "process-global whole public dual-device timed interval",
+              "scoped_read_flush_ns": 21378870,
+              "scoped_read_map_ns": 2724908653,
+              "scoped_read_setup_ns": 686355
+            },
+            "load_and_prefill_physical_read_bytes": 56642646016,
+            "load_ns": 6389522587,
+            "mtp_english_vocab": false,
+            "mtp_english_vocab_receipt": null,
+            "mtp_q8_head_broadcast": false,
+            "mtp_q8_head_shared_scales": true,
+            "nonempty_text": true,
+            "post_prefill_target_continuations": 199,
+            "prefill_first_output_count": 1,
+            "prefill_first_output_generation_pick_timed": false,
+            "prefill_ns_including_real_teacher_kv": 25698987828,
+            "prefill_teacher_kv_executed": true,
+            "prompt_tokens": 35,
+            "proposed_drafts": 138,
+            "repair_abs_tolerance": 0.006000000052154064,
+            "repair_hidden_max_abs": 0.0,
+            "repair_logit_max_abs": 0.0,
+            "repair_ns_including_vector_checks": 1840680503,
+            "repair_rel_tolerance": 0.0003000000142492354,
+            "request_close_ns_inside_timing": 14983641,
+            "request_scope": {
+              "closing_audit_ns": 14976691,
+              "full_io_audit": true,
+              "scope_closed": true,
+              "scope_sequence": 1
+            },
+            "rounds": 69,
+            "stop_reason": "limit",
+            "target_close": {
+              "main_buffers": 1381,
+              "main_bytes": 828932096,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "target_fill_counters_after": {
+              "direct_bytes": 10756531200,
+              "direct_components": 15702,
+              "direct_windows": 797,
+              "evictions": 91,
+              "first_touch_fills": 5143
+            },
+            "target_fill_counters_before": {
+              "direct_bytes": 10756531200,
+              "direct_components": 15702,
+              "direct_windows": 797,
+              "evictions": 91,
+              "first_touch_fills": 5143
+            },
+            "target_grouped_ple_reads": false,
+            "target_grouped_ple_reads_receipt": {
+              "completed_chunks": 0,
+              "selected": false
+            },
+            "target_host_phase_ns": {
+              "native_all_family_commit": 34103532,
+              "native_all_family_preflight": 46163247,
+              "native_attention_and_gr_enqueue": 10379663482,
+              "native_completed_final_proofs": 4201180390,
+              "native_device_router_and_expert_enqueue": 745681456,
+              "native_device_router_audit": 761751537,
+              "native_ffn_gr_and_router_enqueue": 129931651,
+              "native_final_head_enqueue": 3891117,
+              "native_route_and_expert_enqueue": 0,
+              "native_router_fence": 0,
+              "native_shared_and_ffn_combine_enqueue": 118098943
+            },
+            "target_only_counters": null,
+            "target_three_gdn_completed_chunks": 0,
+            "target_three_gdn_streaming": false,
+            "uploaded_bytes": 0,
+            "verify3_dense_calls": 55648,
+            "verify3_fused_calls": 55648,
+            "verify_ns_full_packets": 16044298949,
+            "weight_read_ns": 0,
+            "weight_upload_enqueue_ns": 0
+          },
+          "repair_original_prefix_vector_checks": true,
+          "repetition_penalty": 1.0,
+          "request_io_reuse": true,
+          "request_reuse_metadata_reserved_bytes": 4194304,
+          "scope": "compiled-public-language200-real-single-physical-device-independent-stream-greedy",
+          "seed": 424242,
+          "target_card": "B70",
+          "target_grouped_ple_reads_requested": false,
+          "target_ple_reads": "original",
+          "temperature": 0,
+          "thinking": false,
+          "tokenizer_host_cap_bytes": 201326592,
+          "verify3_dense": true,
+          "verify3_logical_finite_fused": true
+        },
+        "host_after": {
+          "admission": {
+            "action": "status",
+            "state": {
+              "admission": {
+                "active": false,
+                "completed": 59,
+                "paused": false,
+                "recovery_required": false,
+                "rejected": 0,
+                "waiting": 0
+              }
+            },
+            "status": 200
+          },
+          "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+          "http_statuses": {
+            "kuno": 200,
+            "ollama": 200,
+            "vashti": 200
+          },
+          "intel": {
+            "xe_memory": [
+              {
+                "total_bytes": 34242297856,
+                "used_bytes": 50688000
+              }
+            ]
+          },
+          "kernel": "7.0.0-38-generic",
+          "kernel_fault_counts": {
+            "nvidia_xid": 0,
+            "xe_memory_faults": 0,
+            "xe_reset_failures": 0,
+            "xe_timeouts": 0,
+            "xe_wedged": 0
+          },
+          "nvidia_compute_process_count": 0,
+          "nvidia_memory_mib": 727,
+          "time": "2026-10-11T17:55:24.557215+00:00"
+        },
+        "full_original_sources": {
+          "full_original_shards_verified": [
+            {
+              "shard": 1,
+              "bytes": 54817524224,
+              "sha256": "4c1eb2ceb4915e1192f4f386021897bde56a97f40a0bb78bb86465e0f7d2aca3"
+            },
+            {
+              "shard": 2,
+              "bytes": 28800138432,
+              "sha256": "316b46f3a2dbd68c900f43136ab9449f9dcc3725dfd8c794847c204bc161e113"
+            }
+          ],
+          "elapsed_ns": 102814128255,
+          "source_file_cache_warmed_before_model_setup": true
+        },
+        "fresh_intel_admission_snapshot": {
+          "time": "2026-10-11T17:53:20.246859+00:00",
+          "pci": "0000:2d:00.0",
+          "device_id": 57891,
+          "total_bytes": 34242297856,
+          "used_bytes": 50688000,
+          "query": "Xe MEM_REGIONS",
+          "admission_paused_before_query": true
+        }
+      },
+      "all_original_physical_gates_passed": true,
+      "compiler_jobs_idle_for_normal_trial": true,
+      "selected_for_next_speed_trial": false,
+      "single_ordered_speed_ratio_to_ple_control": 0.9677966939239369
+    },
+    "combined": {
+      "warm_gate": {
+        "output_directory": "/media/jmicko/faststore/kuno-development/native-next-v162-warm-intel-ple-down-20261011",
+        "source": {
+          "commit": "66bdd0f6e351821047b6f90d4e99c59d73f95396",
+          "binary_sha256": "498736a0bacd6a6d31c9610931658fff0c04cdee790fa996f20a9331ae19a9d2",
+          "features": [
+            "direct-device"
+          ],
+          "protected_launcher_sha256": "e7d635280af8ea7ec11f962f0e918e633c7c5593ef1003a0ce9a5c84ac349855",
+          "helper_sha256": "31a99e0f3c5bbacb8d086839b6d71d2ac93fd3c4d4c703c403fecebacd82e54d",
+          "public_trial": "warm-intel-mtp-grouped-ple-down-stride-gu-stride-four-down-shared-head-gpu-host",
+          "seed": 424242,
+          "temperature": 0,
+          "frozen_partition_exit_requested": true,
+          "frozen_bank_preserve_requested": false,
+          "frozen_private_tables_requested": false,
+          "frozen_workgroup_tables_requested": false,
+          "frozen_shared_down_scales_requested": false,
+          "frozen_shared_gate_up_factors_requested": false,
+          "mtp_q8_head_broadcast_requested": false,
+          "frozen_four_row_down_requested": true,
+          "mtp_q8_head_shared_scales_requested": true,
+          "frozen_two_row_gate_up_requested": false,
+          "frozen_packed_host_staging_requested": false,
+          "frozen_three_member_arithmetic_requested": false,
+          "draft_profile_requested": "self-contained-q8",
+          "three_gdn_streaming_requested": false,
+          "mtp_english_vocab_requested": false,
+          "frozen_gu_integer_requested": true,
+          "frozen_gu_stride_four_requested": true,
+          "target_only_requested": false,
+          "intel_mtp_requested": true,
+          "target_grouped_ple_requested": true,
+          "frozen_down_stride_four_requested": true,
+          "ordinary_demand_performance_claimed": false,
+          "native_30_tokens_per_second_accepted": false
+        },
+        "public_record": {
+          "chunk_io_checkpoint": true,
+          "compiled_token0": 0,
+          "device_dispatch": "inline",
+          "draft_card": "B70",
+          "draft_close": {
+            "main_reserved": 0,
+            "private_buffers": 42,
+            "private_bytes": 11698176,
+            "public_bytes": 5011668992
+          },
+          "draft_profile": "self-contained-q8",
+          "draft_public_reserved_bytes": 5011668992,
+          "expert_route_forcing": false,
+          "frozen_down_schedule": "four-public",
+          "frozen_down_stride_four_requested": true,
+          "frozen_gu_integer_extra_host_bytes": 65536,
+          "frozen_gu_integer_extra_info_bytes": 196608,
+          "frozen_gu_integer_extra_main_bytes": 65536,
+          "frozen_gu_integer_extra_runtime_bytes": 462848,
+          "frozen_gu_integer_requested": true,
+          "frozen_gu_stride_four_requested": true,
+          "fused_mtp_sweeps": true,
+          "gpu_chronological_qsa_selector": true,
+          "intel_mtp_admission": {
+            "combined_reserved_bytes": 34166833152,
+            "draft_private_cap_bytes": 16777216,
+            "draft_public_bytes": 5011668992,
+            "draft_runtime_io_bytes": 67108864,
+            "draft_source_cap_bytes": 134217728,
+            "physical_available_bytes": 34191609856,
+            "physical_device_id": 57891,
+            "physical_total_bytes": 34242297856,
+            "physical_used_bytes": 50688000,
+            "remaining_beyond_margin_bytes": 24776704,
+            "shared_driver_margin_bytes": 536870912,
+            "source": "protected-xe-memory-regions",
+            "target_bank_bytes": 18723373056,
+            "target_baseline_bytes": 0,
+            "target_io_bytes": 67108864,
+            "target_main_bytes": 828932096,
+            "target_runtime_io_bytes": 134217728,
+            "target_slots": 144,
+            "target_source_page_bytes": 31457280,
+            "target_static_cache_bytes": 8589934592,
+            "target_vector_bytes": 25165824
+          },
+          "live_member_reduction": false,
+          "mtp_device": {
+            "actual_device_id": 57891,
+            "actual_draft_runtime_id": 1,
+            "actual_pci_bus_id": "0000:2d:00.0",
+            "actual_target_device_id": 57891,
+            "actual_target_pci_bus_id": "0000:2d:00.0",
+            "actual_target_vendor_id": 32902,
+            "actual_vendor_id": 32902,
+            "distinct_runtime": true,
+            "distinct_wgpu_device": true,
+            "draft_private_arena_shared": false,
+            "draft_request_io_shared": false,
+            "logical_device_identity": "borrowed-vulkan-device-handles",
+            "requested": "intel-public",
+            "same_physical_as_target": true
+          },
+          "mtp_device_requested": "intel-public",
+          "observed_inline_device_dispatch": true,
+          "oracle_forcing": false,
+          "passes": [
+            {
+              "accepted_drafts": 6,
+              "accepted_tokens": 12,
+              "accepted_tokens_per_second": 1.1838265459838753,
+              "device_router": false,
+              "device_router_scope": "authenticated actual512 VRAM/host sources; deferred strict original IDs and full vectors, experimental F32 probabilities",
+              "draft_traffic": {
+                "explicit_dispatches": 2216,
+                "followup_copy_calls": 5,
+                "host_read_bytes": 1048576,
+                "host_read_calls": 22,
+                "minimal_packet_reads": 10,
+                "private_upload_bytes": 1179648,
+                "private_upload_calls": 24
+              },
+              "elapsed_ns": 10136620133,
+              "expert_hits": 6329,
+              "expert_uploads": 2311,
+              "frozen_bank_placement": "cpu13-diagnostic",
+              "frozen_down_stride_four": false,
+              "frozen_down_stride_four_counters": {
+                "down_dispatches": 0,
+                "layers": 0,
+                "source_dispatches": 0
+              },
+              "frozen_gu_integer": false,
+              "frozen_gu_integer_counters": {
+                "full_owner_audits": 0,
+                "gu_dispatches": 0,
+                "preparations": 0
+              },
+              "frozen_gu_stride_four": false,
+              "frozen_gu_stride_four_counters": {
+                "gu_dispatches": 0
+              },
+              "frozen_host_four_row_down": false,
+              "frozen_host_gpu_router": false,
+              "frozen_host_inactive_partition_exit": false,
+              "frozen_host_private_tables": false,
+              "frozen_host_shared_down_scales": false,
+              "frozen_host_shared_gate_up_factors": false,
+              "frozen_host_two_row_gate_up": false,
+              "frozen_host_workgroup_tables": false,
+              "frozen_packed_host_staging": false,
+              "frozen_source_routes": null,
+              "frozen_three_member_arithmetic": false,
+              "gpu_router_calls": 0,
+              "host_io": {
+                "gpu_submission_wait_ns": 323823,
+                "gpu_submission_waits": 65,
+                "inline_readback_batches": 515,
+                "provenance": "process-global whole public dual-device timed interval",
+                "scoped_read_flush_ns": 28363633,
+                "scoped_read_map_ns": 1689247101,
+                "scoped_read_setup_ns": 1482374
+              },
+              "initial_prefill_frozen_down_stride_four": false,
+              "initial_prefill_frozen_down_stride_four_counters": {
+                "down_dispatches": 0,
+                "layers": 0,
+                "source_dispatches": 0
+              },
+              "initial_prefill_frozen_gu_integer": false,
+              "initial_prefill_frozen_gu_integer_counters": {
+                "full_owner_audits": 0,
+                "gu_dispatches": 0,
+                "preparations": 0
+              },
+              "initial_prefill_frozen_gu_stride_four": false,
+              "initial_prefill_frozen_gu_stride_four_counters": {
+                "gu_dispatches": 0
+              },
+              "initial_prefill_ns": 6778811370,
+              "load_and_initial_prefill_cumulative_ns": 13179153425,
+              "load_and_initial_prefill_physical_read_bytes": 8509284352,
+              "model_weights_warm": false,
+              "mtp_english_vocab": false,
+              "mtp_english_vocab_receipt": null,
+              "mtp_q8_head_broadcast": false,
+              "mtp_q8_head_shared_scales": true,
+              "proposed_drafts": 10,
+              "replay": 0,
+              "request_close_ns_inside_timing": 3448882,
+              "request_scope": {
+                "binding_capacity": 4096,
+                "binding_stats": [
+                  6,
+                  45,
+                  45,
+                  407074,
+                  14110
+                ],
+                "closing_audit_ns": 3433792,
+                "counter_provenance": "admission-local request checkpoints; checked process-global binding/INFO/request-reuse deltas",
+                "full_io_audit": true,
+                "info_stats": [
+                  20554,
+                  4038,
+                  286
+                ],
+                "metadata_reserved_bytes": 4194304,
+                "request_checkpoints": 411,
+                "request_io_reuses": 1090,
+                "runtime_limit_bytes": 134217728,
+                "scope_closed": true,
+                "scope_sequence": 1,
+                "target_stream_configured": true
+              },
+              "request_scope_closed_and_audited": true,
+              "rounds": [
+                {
+                  "accepted_drafts": 0,
+                  "accepted_outputs": 1,
+                  "draft_completed_cell": 1,
+                  "draft_ns": 432361530,
+                  "proposed_drafts": 2,
+                  "repair_ns": 332727120,
+                  "target_completed_cursor": 2,
+                  "target_start": 1,
+                  "total_ns": 3977962389,
+                  "verify_ns_including_public_vector_checks": 3212873409
+                },
+                {
+                  "accepted_drafts": 2,
+                  "accepted_outputs": 3,
+                  "draft_completed_cell": 4,
+                  "draft_ns": 74259498,
+                  "proposed_drafts": 2,
+                  "repair_ns": 22448091,
+                  "target_completed_cursor": 5,
+                  "target_start": 2,
+                  "total_ns": 1599500179,
+                  "verify_ns_including_public_vector_checks": 1502792230
+                },
+                {
+                  "accepted_drafts": 0,
+                  "accepted_outputs": 1,
+                  "draft_completed_cell": 5,
+                  "draft_ns": 46825770,
+                  "proposed_drafts": 2,
+                  "repair_ns": 156025376,
+                  "target_completed_cursor": 6,
+                  "target_start": 5,
+                  "total_ns": 1780166731,
+                  "verify_ns_including_public_vector_checks": 1577315245
+                },
+                {
+                  "accepted_drafts": 2,
+                  "accepted_outputs": 3,
+                  "draft_completed_cell": 8,
+                  "draft_ns": 34476673,
+                  "proposed_drafts": 2,
+                  "repair_ns": 25547580,
+                  "target_completed_cursor": 9,
+                  "target_start": 6,
+                  "total_ns": 1559146387,
+                  "verify_ns_including_public_vector_checks": 1499121784
+                },
+                {
+                  "accepted_drafts": 2,
+                  "accepted_outputs": 3,
+                  "draft_completed_cell": 11,
+                  "draft_ns": 60095565,
+                  "proposed_drafts": 2,
+                  "repair_ns": 19260171,
+                  "target_completed_cursor": 12,
+                  "target_start": 9,
+                  "total_ns": 761859356,
+                  "verify_ns_including_public_vector_checks": 682503280
+                },
+                {
+                  "accepted_drafts": 0,
+                  "accepted_outputs": 1,
+                  "draft_completed_cell": 12,
+                  "draft_ns": 30,
+                  "proposed_drafts": 0,
+                  "repair_ns": 8495699,
+                  "target_completed_cursor": 13,
+                  "target_start": 12,
+                  "total_ns": 454300536,
+                  "verify_ns_including_public_vector_checks": 445804467
+                }
+              ],
+              "target_fill_counters_after": {
+                "direct_bytes": 5759232000,
+                "direct_components": 8373,
+                "direct_windows": 411,
+                "evictions": 0,
+                "first_touch_fills": 2791
+              },
+              "target_fill_counters_before": {
+                "direct_bytes": 982272000,
+                "direct_components": 1440,
+                "direct_windows": 48,
+                "evictions": 0,
+                "first_touch_fills": 480
+              },
+              "target_grouped_ple_reads": false,
+              "target_grouped_ple_reads_receipt": {
+                "completed_chunks": 0,
+                "selected": false
+              },
+              "target_host_phase_ns": {
+                "native_all_family_commit": 5474972,
+                "native_all_family_preflight": 3419771,
+                "native_attention_and_gr_enqueue": 215386313,
+                "native_completed_final_proofs": 111110315,
+                "native_ffn_gr_and_router_enqueue": 13565044,
+                "native_final_head_enqueue": 448765,
+                "native_route_and_expert_enqueue": 7048066222,
+                "native_router_fence": 1948303417,
+                "native_shared_and_ffn_combine_enqueue": 19687513
+              },
+              "target_three_gdn_completed_chunks": 0,
+              "target_three_gdn_streaming": false,
+              "timed_physical_read_bytes": 4460908544,
+              "timing_scope": "original normal routing/demand uploads; public checks and actual repair included",
+              "uploaded_bytes": 4776960000,
+              "verify3_dense_calls": 6016,
+              "verify3_fused_calls": 6016,
+              "weight_read_ns": 6050524927,
+              "weight_upload_enqueue_ns": 3393329
+            },
+            {
+              "accepted_drafts": 6,
+              "accepted_tokens": 12,
+              "accepted_tokens_per_second": 6.3987229445810465,
+              "device_router": true,
+              "device_router_scope": "authenticated actual512 VRAM/host sources; deferred strict original IDs and full vectors, experimental F32 probabilities",
+              "draft_traffic": {
+                "explicit_dispatches": 2216,
+                "followup_copy_calls": 5,
+                "host_read_bytes": 1048576,
+                "host_read_calls": 22,
+                "minimal_packet_reads": 10,
+                "private_upload_bytes": 1179648,
+                "private_upload_calls": 24
+              },
+              "elapsed_ns": 1875374212,
+              "expert_hits": 0,
+              "expert_uploads": 0,
+              "frozen_bank_placement": "cpu13-diagnostic",
+              "frozen_down_stride_four": true,
+              "frozen_down_stride_four_counters": {
+                "down_dispatches": 2160,
+                "layers": 432,
+                "source_dispatches": 4320
+              },
+              "frozen_gu_integer": true,
+              "frozen_gu_integer_counters": {
+                "full_owner_audits": 432,
+                "gu_dispatches": 2160,
+                "preparations": 432
+              },
+              "frozen_gu_stride_four": true,
+              "frozen_gu_stride_four_counters": {
+                "gu_dispatches": 2160
+              },
+              "frozen_host_close": {
+                "detached_pages": 432,
+                "live_backing_bytes": 0,
+                "metadata_owned_bytes": 1458688,
+                "physical_allocated_bytes": 36147609600,
+                "physical_freed_bytes": 36147609600,
+                "registered_pages": 432,
+                "source_window_peak_bytes": 1048576
+              },
+              "frozen_host_four_row_down": true,
+              "frozen_host_gpu_router": true,
+              "frozen_host_inactive_partition_exit": true,
+              "frozen_host_private_tables": false,
+              "frozen_host_setup": {
+                "attach_ns": 43823253273,
+                "bank_completion_experts": 6132,
+                "bank_completion_read_ns": 14722537675,
+                "bank_completion_upload_ns": 8032899,
+                "bank_completion_uploaded_bytes": 12535603200,
+                "prepare_ns": 18305673293,
+                "separate_host_reserved_bytes": 36166705152
+              },
+              "frozen_host_shared_down_scales": false,
+              "frozen_host_shared_gate_up_factors": false,
+              "frozen_host_two_row_gate_up": false,
+              "frozen_host_workgroup_tables": false,
+              "frozen_packed_host_staging": false,
+              "frozen_source_routes": {
+                "down_stride_four_dispatches": 2160,
+                "down_stride_four_layers": 432,
+                "gu_integer_audits": 432,
+                "gu_integer_dispatches": 2160,
+                "gu_integer_preparations": 432,
+                "gu_stride_four_dispatches": 2160,
+                "host_routes": 6530,
+                "source_dispatches": 4320,
+                "staged_packed_bytes": 0,
+                "staged_unique_host_groups": 0,
+                "staging_dispatches": 0,
+                "vram_routes": 2590
+              },
+              "frozen_three_member_arithmetic": false,
+              "gpu_router_calls": 384,
+              "host_io": {
+                "gpu_submission_wait_ns": 870829671,
+                "gpu_submission_waits": 62,
+                "inline_readback_batches": 35,
+                "provenance": "process-global whole public dual-device timed interval",
+                "scoped_read_flush_ns": 1864157,
+                "scoped_read_map_ns": 312423918,
+                "scoped_read_setup_ns": 85181
+              },
+              "initial_prefill_frozen_down_stride_four": true,
+              "initial_prefill_frozen_down_stride_four_counters": {
+                "down_dispatches": 240,
+                "layers": 48,
+                "source_dispatches": 480
+              },
+              "initial_prefill_frozen_gu_integer": true,
+              "initial_prefill_frozen_gu_integer_counters": {
+                "full_owner_audits": 48,
+                "gu_dispatches": 240,
+                "preparations": 48
+              },
+              "initial_prefill_frozen_gu_stride_four": true,
+              "initial_prefill_frozen_gu_stride_four_counters": {
+                "gu_dispatches": 240
+              },
+              "initial_prefill_ns": 883788905,
+              "load_and_initial_prefill_cumulative_ns": 87799720749,
+              "load_and_initial_prefill_physical_read_bytes": 749568,
+              "model_weights_warm": true,
+              "mtp_english_vocab": false,
+              "mtp_english_vocab_receipt": null,
+              "mtp_q8_head_broadcast": false,
+              "mtp_q8_head_shared_scales": true,
+              "proposed_drafts": 10,
+              "replay": 1,
+              "request_close_ns_inside_timing": 11535117,
+              "request_scope": {
+                "binding_capacity": 4096,
+                "binding_stats": [
+                  23829,
+                  7619,
+                  7619,
+                  39826563,
+                  9258225
+                ],
+                "closing_audit_ns": 11526007,
+                "counter_provenance": "admission-local request checkpoints; checked process-global binding/INFO/request-reuse deltas",
+                "full_io_audit": true,
+                "info_stats": [
+                  26825,
+                  1231,
+                  199
+                ],
+                "metadata_reserved_bytes": 4194304,
+                "request_checkpoints": 35,
+                "request_io_reuses": 376,
+                "runtime_limit_bytes": 134217728,
+                "scope_closed": true,
+                "scope_sequence": 2,
+                "target_stream_configured": true
+              },
+              "request_scope_closed_and_audited": true,
+              "rounds": [
+                {
+                  "accepted_drafts": 0,
+                  "accepted_outputs": 1,
+                  "draft_completed_cell": 1,
+                  "draft_ns": 35400127,
+                  "proposed_drafts": 2,
+                  "repair_ns": 141434508,
+                  "target_completed_cursor": 2,
+                  "target_start": 1,
+                  "total_ns": 425814848,
+                  "verify_ns_including_public_vector_checks": 248979933
+                },
+                {
+                  "accepted_drafts": 2,
+                  "accepted_outputs": 3,
+                  "draft_completed_cell": 4,
+                  "draft_ns": 35935053,
+                  "proposed_drafts": 2,
+                  "repair_ns": 19342189,
+                  "target_completed_cursor": 5,
+                  "target_start": 2,
+                  "total_ns": 286283788,
+                  "verify_ns_including_public_vector_checks": 231006226
+                },
+                {
+                  "accepted_drafts": 0,
+                  "accepted_outputs": 1,
+                  "draft_completed_cell": 5,
+                  "draft_ns": 35907082,
+                  "proposed_drafts": 2,
+                  "repair_ns": 140691201,
+                  "target_completed_cursor": 6,
+                  "target_start": 5,
+                  "total_ns": 413681376,
+                  "verify_ns_including_public_vector_checks": 237082743
+                },
+                {
+                  "accepted_drafts": 2,
+                  "accepted_outputs": 3,
+                  "draft_completed_cell": 8,
+                  "draft_ns": 36504507,
+                  "proposed_drafts": 2,
+                  "repair_ns": 18533052,
+                  "target_completed_cursor": 9,
+                  "target_start": 6,
+                  "total_ns": 305839308,
+                  "verify_ns_including_public_vector_checks": 250801419
+                },
+                {
+                  "accepted_drafts": 2,
+                  "accepted_outputs": 3,
+                  "draft_completed_cell": 11,
+                  "draft_ns": 35527189,
+                  "proposed_drafts": 2,
+                  "repair_ns": 18513762,
+                  "target_completed_cursor": 12,
+                  "target_start": 9,
+                  "total_ns": 280595095,
+                  "verify_ns_including_public_vector_checks": 226553864
+                },
+                {
+                  "accepted_drafts": 0,
+                  "accepted_outputs": 1,
+                  "draft_completed_cell": 12,
+                  "draft_ns": 30,
+                  "proposed_drafts": 0,
+                  "repair_ns": 8611200,
+                  "target_completed_cursor": 13,
+                  "target_start": 12,
+                  "total_ns": 151410090,
+                  "verify_ns_including_public_vector_checks": 142798600
+                }
+              ],
+              "target_close": {
+                "main_buffers": 1381,
+                "main_bytes": 828932096,
+                "source_buffers": 0,
+                "source_bytes": 0
+              },
+              "target_fill_counters_after": {
+                "direct_bytes": 5759232000,
+                "direct_components": 8373,
+                "direct_windows": 411,
+                "evictions": 0,
+                "first_touch_fills": 2791
+              },
+              "target_fill_counters_before": {
+                "direct_bytes": 5759232000,
+                "direct_components": 8373,
+                "direct_windows": 411,
+                "evictions": 0,
+                "first_touch_fills": 2791
+              },
+              "target_grouped_ple_reads": true,
+              "target_grouped_ple_reads_receipt": {
+                "completed_chunks": 8,
+                "selected": true
+              },
+              "target_host_phase_ns": {
+                "native_all_family_commit": 3303559,
+                "native_all_family_preflight": 4122759,
+                "native_attention_and_gr_enqueue": 974316157,
+                "native_completed_final_proofs": 468781176,
+                "native_device_router_and_expert_enqueue": 22723681,
+                "native_device_router_audit": 72987275,
+                "native_ffn_gr_and_router_enqueue": 13586836,
+                "native_final_head_enqueue": 376302,
+                "native_route_and_expert_enqueue": 0,
+                "native_router_fence": 0,
+                "native_shared_and_ffn_combine_enqueue": 12388962
+              },
+              "target_three_gdn_completed_chunks": 0,
+              "target_three_gdn_streaming": false,
+              "timed_physical_read_bytes": 540672,
+              "timing_scope": "original CPU13 routes and weights; deterministic diagnostic VRAM placement plus immutable direct host sources and deferred original GPU route audits, no demand expert uploads; full vectors and actual repair included",
+              "uploaded_bytes": 0,
+              "verify3_dense_calls": 6016,
+              "verify3_fused_calls": 6016,
+              "weight_read_ns": 0,
+              "weight_upload_enqueue_ns": 0
+            }
+          ],
+          "prepared_verify3_experts": false,
+          "private_or_production_accepted": false,
+          "public_existing_fill": true,
+          "qsa_extra_host_reserved_bytes": 4096,
+          "qsa_extra_runtime_info_bytes": 49152,
+          "request_binding_capacity": 4096,
+          "request_io_reuse": true,
+          "request_reuse_metadata_reserved_bytes": 4194304,
+          "scope": "fixed-public-DASLab13-real-independent-stream-greedy-speculation",
+          "seed": 424242,
+          "target_card": "B70",
+          "target_grouped_ple_reads_requested": true,
+          "target_ple_reads": "grouped-public",
+          "temperature": 0,
+          "verify3_dense": true,
+          "verify3_logical_finite_fused": true,
+          "warm_replay": true,
+          "warm_reset": {
+            "admission_and_public_banks_retained": true,
+            "ledger_epoch_or_poison_reset": false,
+            "main_buffers": 1381,
+            "main_bytes": 828932096,
+            "source_buffers": 0,
+            "source_bytes": 0,
+            "transient_binding_info_caches_retained": false
+          }
+        },
+        "host_after": {
+          "admission": {
+            "action": "status",
+            "state": {
+              "admission": {
+                "active": false,
+                "completed": 59,
+                "paused": false,
+                "recovery_required": false,
+                "rejected": 0,
+                "waiting": 0
+              }
+            },
+            "status": 200
+          },
+          "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+          "http_statuses": {
+            "kuno": 200,
+            "ollama": 200,
+            "vashti": 200
+          },
+          "intel": {
+            "xe_memory": [
+              {
+                "total_bytes": 34242297856,
+                "used_bytes": 50688000
+              }
+            ]
+          },
+          "kernel": "7.0.0-38-generic",
+          "kernel_fault_counts": {
+            "nvidia_xid": 0,
+            "xe_memory_faults": 0,
+            "xe_reset_failures": 0,
+            "xe_timeouts": 0,
+            "xe_wedged": 0
+          },
+          "nvidia_compute_process_count": 0,
+          "nvidia_memory_mib": 728,
+          "time": "2026-10-11T17:50:28.000360+00:00"
+        },
+        "full_original_sources": {
+          "full_original_shards_verified": [
+            {
+              "shard": 1,
+              "bytes": 54817524224,
+              "sha256": "4c1eb2ceb4915e1192f4f386021897bde56a97f40a0bb78bb86465e0f7d2aca3"
+            },
+            {
+              "shard": 2,
+              "bytes": 28800138432,
+              "sha256": "316b46f3a2dbd68c900f43136ab9449f9dcc3725dfd8c794847c204bc161e113"
+            }
+          ],
+          "elapsed_ns": 101379570446,
+          "source_file_cache_warmed_before_model_setup": true
+        },
+        "fresh_intel_admission_snapshot": {
+          "time": "2026-10-11T17:48:39.379625+00:00",
+          "pci": "0000:2d:00.0",
+          "device_id": 57891,
+          "total_bytes": 34242297856,
+          "used_bytes": 50688000,
+          "query": "Xe MEM_REGIONS",
+          "admission_paused_before_query": true
+        }
+      },
+      "candidate": {
+        "output_directory": "/media/jmicko/faststore/kuno-development/native-next-v162-code-intel-ple-down-candidate-d1-20261011",
+        "source": {
+          "commit": "66bdd0f6e351821047b6f90d4e99c59d73f95396",
+          "binary_sha256": "498736a0bacd6a6d31c9610931658fff0c04cdee790fa996f20a9331ae19a9d2",
+          "features": [
+            "direct-device"
+          ],
+          "protected_launcher_sha256": "e7d635280af8ea7ec11f962f0e918e633c7c5593ef1003a0ce9a5c84ac349855",
+          "helper_sha256": "31a99e0f3c5bbacb8d086839b6d71d2ac93fd3c4d4c703c403fecebacd82e54d",
+          "public_trial": "language-code-intel-mtp-grouped-ple-down-stride-gu-stride-four-down-shared-head-gpu-host",
+          "seed": 424242,
+          "temperature": 0,
+          "frozen_partition_exit_requested": true,
+          "frozen_bank_preserve_requested": false,
+          "frozen_private_tables_requested": false,
+          "frozen_workgroup_tables_requested": false,
+          "frozen_shared_down_scales_requested": false,
+          "frozen_shared_gate_up_factors_requested": false,
+          "mtp_q8_head_broadcast_requested": false,
+          "frozen_four_row_down_requested": true,
+          "mtp_q8_head_shared_scales_requested": true,
+          "frozen_two_row_gate_up_requested": false,
+          "frozen_packed_host_staging_requested": false,
+          "frozen_three_member_arithmetic_requested": false,
+          "draft_profile_requested": "self-contained-q8",
+          "three_gdn_streaming_requested": false,
+          "mtp_english_vocab_requested": false,
+          "frozen_gu_integer_requested": true,
+          "frozen_gu_stride_four_requested": true,
+          "target_only_requested": false,
+          "intel_mtp_requested": true,
+          "target_grouped_ple_requested": true,
+          "frozen_down_stride_four_requested": true,
+          "ordinary_demand_performance_claimed": true,
+          "native_30_tokens_per_second_accepted": false
+        },
+        "public_record": {
+          "chunk_io_checkpoint": true,
+          "decode_mode": "speculative",
+          "device_dispatch": "inline",
+          "draft_card": "B70",
+          "draft_close": {
+            "main_reserved": 0,
+            "private_buffers": 42,
+            "private_bytes": 11698176,
+            "public_bytes": 5011668992
+          },
+          "draft_executed": true,
+          "draft_profile": "self-contained-q8",
+          "draft_public_reserved_bytes": 5011668992,
+          "fixture_host_reserved_bytes": 4194304,
+          "forced_experts": false,
+          "forced_oracle_tokens": false,
+          "frequency_penalty": 0.0,
+          "frozen_down_schedule": "four-public",
+          "frozen_down_stride_four_requested": true,
+          "frozen_gu_integer_extra_host_bytes": 65536,
+          "frozen_gu_integer_extra_info_bytes": 196608,
+          "frozen_gu_integer_extra_main_bytes": 65536,
+          "frozen_gu_integer_extra_runtime_bytes": 462848,
+          "frozen_gu_integer_requested": true,
+          "frozen_gu_stride_four_requested": true,
+          "full_target_packets_retained": true,
+          "fused_mtp_sweeps": true,
+          "gpu_chronological_qsa_selector": true,
+          "greedy_target_verification": true,
+          "independent_cpu200_reference_accepted": false,
+          "intel_mtp_admission": {
+            "combined_reserved_bytes": 34166833152,
+            "draft_private_cap_bytes": 16777216,
+            "draft_public_bytes": 5011668992,
+            "draft_runtime_io_bytes": 67108864,
+            "draft_source_cap_bytes": 134217728,
+            "physical_available_bytes": 34191609856,
+            "physical_device_id": 57891,
+            "physical_total_bytes": 34242297856,
+            "physical_used_bytes": 50688000,
+            "remaining_beyond_margin_bytes": 24776704,
+            "shared_driver_margin_bytes": 536870912,
+            "source": "protected-xe-memory-regions",
+            "target_bank_bytes": 18723373056,
+            "target_baseline_bytes": 0,
+            "target_io_bytes": 67108864,
+            "target_main_bytes": 828932096,
+            "target_runtime_io_bytes": 134217728,
+            "target_slots": 144,
+            "target_source_page_bytes": 31457280,
+            "target_static_cache_bytes": 8589934592,
+            "target_vector_bytes": 25165824
+          },
+          "live_member_reduction": false,
+          "max_outputs": 200,
+          "mtp_device": {
+            "actual_device_id": 57891,
+            "actual_draft_runtime_id": 1,
+            "actual_pci_bus_id": "0000:2d:00.0",
+            "actual_target_device_id": 57891,
+            "actual_target_pci_bus_id": "0000:2d:00.0",
+            "actual_target_vendor_id": 32902,
+            "actual_vendor_id": 32902,
+            "distinct_runtime": true,
+            "distinct_wgpu_device": true,
+            "draft_private_arena_shared": false,
+            "draft_request_io_shared": false,
+            "logical_device_identity": "borrowed-vulkan-device-handles",
+            "requested": "intel-public",
+            "same_physical_as_target": true
+          },
+          "mtp_device_requested": "intel-public",
+          "observed_inline_device_dispatch": true,
+          "prepared_verify3_experts": false,
+          "presence_penalty": 0.0,
+          "private_or_production_accepted": false,
+          "public_existing_fill": true,
+          "qsa_extra_host_reserved_bytes": 4096,
+          "qsa_extra_runtime_info_bytes": 49152,
+          "record": {
+            "accepted_drafts": 130,
+            "actual_target_recomputations": 5,
+            "compiled_prompt_template_file": "serve/chat_template.jinja",
+            "compiled_prompt_template_revision": "fb58e0dbc8399662c0e47c76578c6e878b14f6cf",
+            "context_capacity": 235,
+            "continuation_tokens_per_second": 9.558671152135773,
+            "decode_mode": "speculative",
+            "draft_executed": true,
+            "draft_ns": 2934695355,
+            "draft_traffic": {
+              "explicit_dispatches": 32852,
+              "followup_copy_calls": 69,
+              "host_read_bytes": 15564800,
+              "host_read_calls": 337,
+              "minimal_packet_reads": 138,
+              "private_upload_bytes": 19562496,
+              "private_upload_calls": 398
+            },
+            "elapsed_ns": 20818793411,
+            "emitted_tokens_including_eos": 200,
+            "emitted_tokens_per_second": 9.60670467551334,
+            "expert_hits": 0,
+            "expert_uploads": 0,
+            "first_output_emission_timed": true,
+            "fixture": "first-code",
+            "fixture_peak_host_bytes": 2111616,
+            "frozen_down_stride_four": true,
+            "frozen_down_stride_four_counters": {
+              "down_dispatches": 17760,
+              "layers": 3552,
+              "source_dispatches": 35520
+            },
+            "frozen_gu_integer": true,
+            "frozen_gu_integer_counters": {
+              "full_owner_audits": 3552,
+              "gu_dispatches": 17760,
+              "preparations": 3552
+            },
+            "frozen_gu_stride_four": true,
+            "frozen_gu_stride_four_counters": {
+              "gu_dispatches": 17760
+            },
+            "frozen_host_close": {
+              "detached_pages": 432,
+              "live_backing_bytes": 0,
+              "metadata_owned_bytes": 1458688,
+              "physical_allocated_bytes": 36147609600,
+              "physical_freed_bytes": 36147609600,
+              "registered_pages": 432,
+              "source_window_peak_bytes": 1048576
+            },
+            "frozen_host_four_row_down": true,
+            "frozen_host_gpu_router": true,
+            "frozen_host_inactive_partition_exit": true,
+            "frozen_host_private_tables": false,
+            "frozen_host_setup": {
+              "attach_ns": 47984009266,
+              "bank_completion_experts": 1769,
+              "bank_completion_read_ns": 4303216392,
+              "bank_completion_upload_ns": 2938126,
+              "bank_completion_uploaded_bytes": 3586201600,
+              "prepare_and_attach_ns": 53331790693,
+              "separate_host_reserved_bytes": 36166705152
+            },
+            "frozen_host_shared_down_scales": false,
+            "frozen_host_shared_gate_up_factors": false,
+            "frozen_host_two_row_gate_up": false,
+            "frozen_host_workgroup_tables": false,
+            "frozen_packed_host_staging": false,
+            "frozen_source_routes": {
+              "down_stride_four_dispatches": 17760,
+              "down_stride_four_layers": 3552,
+              "gu_integer_audits": 3552,
+              "gu_integer_dispatches": 17760,
+              "gu_integer_preparations": 3552,
+              "gu_stride_four_dispatches": 17760,
+              "host_routes": 46376,
+              "source_dispatches": 35520,
+              "staged_packed_bytes": 0,
+              "staged_unique_host_groups": 0,
+              "staging_dispatches": 0,
+              "vram_routes": 56344
+            },
+            "frozen_three_member_arithmetic": false,
+            "generation_physical_read_bytes": 12206080,
+            "gpu_router_calls": 3552,
+            "host_io": {
+              "gpu_submission_wait_ns": 9256164150,
+              "gpu_submission_waits": 618,
+              "inline_readback_batches": 302,
+              "provenance": "process-global whole public dual-device timed interval",
+              "scoped_read_flush_ns": 15463064,
+              "scoped_read_map_ns": 2718243688,
+              "scoped_read_setup_ns": 597257
+            },
+            "load_and_prefill_physical_read_bytes": 55247540224,
+            "load_ns": 6528305040,
+            "mtp_english_vocab": false,
+            "mtp_english_vocab_receipt": null,
+            "mtp_q8_head_broadcast": false,
+            "mtp_q8_head_shared_scales": true,
+            "nonempty_text": true,
+            "post_prefill_target_continuations": 199,
+            "prefill_first_output_count": 1,
+            "prefill_first_output_generation_pick_timed": false,
+            "prefill_ns_including_real_teacher_kv": 26035205459,
+            "prefill_teacher_kv_executed": true,
+            "prompt_tokens": 35,
+            "proposed_drafts": 138,
+            "repair_abs_tolerance": 0.006000000052154064,
+            "repair_hidden_max_abs": 0.0,
+            "repair_logit_max_abs": 0.0,
+            "repair_ns_including_vector_checks": 1859345730,
+            "repair_rel_tolerance": 0.0003000000142492354,
+            "request_close_ns_inside_timing": 16117757,
+            "request_scope": {
+              "closing_audit_ns": 16110117,
+              "full_io_audit": true,
+              "scope_closed": true,
+              "scope_sequence": 1
+            },
+            "rounds": 69,
+            "stop_reason": "limit",
+            "target_close": {
+              "main_buffers": 1381,
+              "main_bytes": 828932096,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "target_fill_counters_after": {
+              "direct_bytes": 10756531200,
+              "direct_components": 15702,
+              "direct_windows": 797,
+              "evictions": 91,
+              "first_touch_fills": 5143
+            },
+            "target_fill_counters_before": {
+              "direct_bytes": 10756531200,
+              "direct_components": 15702,
+              "direct_windows": 797,
+              "evictions": 91,
+              "first_touch_fills": 5143
+            },
+            "target_grouped_ple_reads": true,
+            "target_grouped_ple_reads_receipt": {
+              "completed_chunks": 74,
+              "selected": true
+            },
+            "target_host_phase_ns": {
+              "native_all_family_commit": 32167255,
+              "native_all_family_preflight": 44287115,
+              "native_attention_and_gr_enqueue": 10291914734,
+              "native_completed_final_proofs": 4185522946,
+              "native_device_router_and_expert_enqueue": 842426797,
+              "native_device_router_audit": 748017760,
+              "native_ffn_gr_and_router_enqueue": 124604470,
+              "native_final_head_enqueue": 3638101,
+              "native_route_and_expert_enqueue": 0,
+              "native_router_fence": 0,
+              "native_shared_and_ffn_combine_enqueue": 113613450
+            },
+            "target_only_counters": null,
+            "target_three_gdn_completed_chunks": 0,
+            "target_three_gdn_streaming": false,
+            "uploaded_bytes": 0,
+            "verify3_dense_calls": 55648,
+            "verify3_fused_calls": 55648,
+            "verify_ns_full_packets": 16004676046,
+            "weight_read_ns": 0,
+            "weight_upload_enqueue_ns": 0
+          },
+          "repair_original_prefix_vector_checks": true,
+          "repetition_penalty": 1.0,
+          "request_io_reuse": true,
+          "request_reuse_metadata_reserved_bytes": 4194304,
+          "scope": "compiled-public-language200-real-single-physical-device-independent-stream-greedy",
+          "seed": 424242,
+          "target_card": "B70",
+          "target_grouped_ple_reads_requested": true,
+          "target_ple_reads": "grouped-public",
+          "temperature": 0,
+          "thinking": false,
+          "tokenizer_host_cap_bytes": 201326592,
+          "verify3_dense": true,
+          "verify3_logical_finite_fused": true
+        },
+        "host_after": {
+          "admission": {
+            "action": "status",
+            "state": {
+              "admission": {
+                "active": false,
+                "completed": 59,
+                "paused": false,
+                "recovery_required": false,
+                "rejected": 0,
+                "waiting": 0
+              }
+            },
+            "status": 200
+          },
+          "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+          "http_statuses": {
+            "kuno": 200,
+            "ollama": 200,
+            "vashti": 200
+          },
+          "intel": {
+            "xe_memory": [
+              {
+                "total_bytes": 34242297856,
+                "used_bytes": 50688000
+              }
+            ]
+          },
+          "kernel": "7.0.0-38-generic",
+          "kernel_fault_counts": {
+            "nvidia_xid": 0,
+            "xe_memory_faults": 0,
+            "xe_reset_failures": 0,
+            "xe_timeouts": 0,
+            "xe_wedged": 0
+          },
+          "nvidia_compute_process_count": 0,
+          "nvidia_memory_mib": 729,
+          "time": "2026-10-11T18:00:12.982609+00:00"
+        },
+        "full_original_sources": {
+          "full_original_shards_verified": [
+            {
+              "shard": 1,
+              "bytes": 54817524224,
+              "sha256": "4c1eb2ceb4915e1192f4f386021897bde56a97f40a0bb78bb86465e0f7d2aca3"
+            },
+            {
+              "shard": 2,
+              "bytes": 28800138432,
+              "sha256": "316b46f3a2dbd68c900f43136ab9449f9dcc3725dfd8c794847c204bc161e113"
+            }
+          ],
+          "elapsed_ns": 103059208392,
+          "source_file_cache_warmed_before_model_setup": true
+        },
+        "fresh_intel_admission_snapshot": {
+          "time": "2026-10-11T17:58:07.270165+00:00",
+          "pci": "0000:2d:00.0",
+          "device_id": 57891,
+          "total_bytes": 34242297856,
+          "used_bytes": 50688000,
+          "query": "Xe MEM_REGIONS",
+          "admission_paused_before_query": true
+        }
+      },
+      "all_original_physical_gates_passed": true,
+      "compiler_jobs_idle_for_normal_trial": true,
+      "selected_for_next_speed_trial": false,
+      "single_ordered_speed_ratio_to_ple_control": 0.9668792573907924
+    },
+    "next_internal_selection": {
+      "intel_target_and_full_q8_mtp": true,
+      "grouped_ple": true,
+      "down_stride_four": false,
+      "same_artifact_best_preliminary_tps": 10.022470008589886,
+      "no_installed_defaults_changed": true
+    }
   }
 }
