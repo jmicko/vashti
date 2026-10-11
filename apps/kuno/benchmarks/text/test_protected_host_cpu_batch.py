@@ -8,6 +8,7 @@ class HostCpuBatchAdmission(unittest.TestCase):
         self.environment = {
             "KUNO_LAB_HOST_CPU_BATCH_PUBLIC_ONLY": "1",
             "KUNO_LAB_DEVICE_DISPATCH": "inline",
+            "KUNO_LAB_STATIC_CACHE_BYTES": "8589934592",
             "KUNO_TEST_Q3_DIR": "/fixed/public/model",
             "KUNO_PUBLIC_TARGET_CARRY13_REFERENCE": "/fixed/public/reference",
             "KUNO_PUBLIC_RECEIPT": "/fixed/public/numeric.json",
@@ -30,7 +31,8 @@ class HostCpuBatchAdmission(unittest.TestCase):
             del bad[key]
             self.reject(bad)
             self.reject(dict(self.environment, **{key: ""}))
-        for key in ("KUNO_LAB_HOST_CPU_BATCH_PUBLIC_ONLY", "KUNO_LAB_DEVICE_DISPATCH"):
+        for key in ("KUNO_LAB_HOST_CPU_BATCH_PUBLIC_ONLY", "KUNO_LAB_DEVICE_DISPATCH",
+                    "KUNO_LAB_STATIC_CACHE_BYTES"):
             self.reject(dict(self.environment, **{key: self.environment[key] + " "}))
 
     def test_other_device_mode_and_extra_arguments_are_not_admitted(self):
@@ -53,6 +55,7 @@ class HostCpuBatchAdmission(unittest.TestCase):
             "KUNO_LAB_HOST_CPU_BATCH_WORKERS": "32",
             "KUNO_PUBLIC_PROMPT": "private",
             "KUNO_PUBLIC_CPU_HOST_BYTES": "2097152",
+            "KUNO_LAB_STATIC_CACHE_BYTES": "6442450944",
         }.items():
             self.reject(dict(self.environment, **{key: value}))
 

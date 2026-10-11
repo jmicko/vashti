@@ -475,11 +475,13 @@ def memory_limit(environment, arguments):
         selected = {key: value for key, value in environment.items()
                     if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
         required = {"KUNO_LAB_HOST_CPU_BATCH_PUBLIC_ONLY", "KUNO_LAB_DEVICE_DISPATCH",
+                    "KUNO_LAB_STATIC_CACHE_BYTES",
                     "KUNO_TEST_Q3_DIR", "KUNO_PUBLIC_TARGET_CARRY13_REFERENCE",
                     "KUNO_PUBLIC_RECEIPT"}
         if (set(selected) != required or any(not value for value in selected.values())
                 or selected["KUNO_LAB_HOST_CPU_BATCH_PUBLIC_ONLY"] != "1"
                 or selected["KUNO_LAB_DEVICE_DISPATCH"] != "inline"
+                or selected["KUNO_LAB_STATIC_CACHE_BYTES"] != "8589934592"
                 or len(arguments) != 3
                 or arguments[1:] != ["intel", "public-host-cpu-batch-probe"]):
             raise ValueError("HOST CPU batches require the fixed Intel original public operator")
