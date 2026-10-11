@@ -108,7 +108,9 @@ fn down_stride_four_actual_checked_unchecked_shader_uses_original_owner_and_grou
             let output = events.iter().rposition(|&event| event == 's').unwrap();
             let reuse_fence = events.iter().rposition(|&event| event == 'b').unwrap();
             assert!(output < reuse_fence);
-            assert_eq!(events.last(), Some(&'b'));
+            // The compiler adds a final function return after the loop. The
+            // last shared/storage/barrier event must still be the reuse fence.
+            assert_eq!(events.iter().rev().find(|&&event| event != 'r'), Some(&'b'));
         }
     }
 }
