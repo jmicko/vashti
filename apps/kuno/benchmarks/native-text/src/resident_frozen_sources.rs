@@ -431,7 +431,6 @@ impl Sources {
         }
         Ok(())
     }
-    #[allow(clippy::too_many_arguments)] // Independent immutable source-policy axes.
     pub(crate) fn down_integer(&self) -> bool {
         self.down_integer
     }
@@ -465,6 +464,7 @@ impl Sources {
         }
         Ok(())
     }
+    #[allow(clippy::too_many_arguments)] // Independent immutable source-policy axes.
     pub(crate) fn validate_gu_integer_policy(
         selected: bool,
         exit: bool,

@@ -106,3 +106,13 @@ policies, exact default/selected phase ordering, strict actual receipt joins,
 independent GU/DOWN owner and runtime charges, and constructor exact-private
 extent rejection. Leaf shader/arithmetic checks and parent CPU checks are
 separate from mandatory original physical gates and matched generation timing.
+
+Source validation on the standalone native-text manifest with `direct-device`
+and two CPU jobs passes all 13 focused integer-DOWN tests (seven leaf and six
+parent), 281 resident regressions, 20 frozen-source policy/receipt tests, 13 MOE
+workspace/publication tests, four constructor scope/extent tests and 17 existing
+integer decoder/quantizer/prepared/oracle tests. Strict all-target Clippy with
+warnings denied passes. Focused formatting and whitespace checks pass. These
+overlapping test groups are separate checks, not an additive unique-test count.
+No GPU operation was performed by the parent task; original numerical and
+physical placement acceptance remain pending.
