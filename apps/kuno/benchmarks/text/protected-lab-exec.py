@@ -6,6 +6,10 @@ import sys
 
 def selected_target_policy(environment, mtp=False):
     selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
+    if "KUNO_LAB_TARGET_GDN" in selected:
+        three_gdn_scope(environment)
+        if not mtp or selected.pop("KUNO_LAB_TARGET_GDN") != "three-streaming-public":
+            raise ValueError("Three-token GDN requires the canonical fixed public target")
     if "KUNO_LAB_FROZEN_TABLES" in selected:
         private_table_scope(environment)
         if not mtp or selected.pop("KUNO_LAB_FROZEN_TABLES") not in ("private-public", "workgroup-public"):
@@ -113,6 +117,28 @@ def selected_target_policy(environment, mtp=False):
             raise ValueError("Warm replay requires the one-shot public fixture")
     return selected
 
+def three_gdn_scope(environment):
+    if "KUNO_LAB_TARGET_GDN" not in environment:
+        return
+    spec = environment.get("KUNO_LAB_SPECULATIVE_PUBLIC_ONLY") == "1"
+    language = environment.get("KUNO_LAB_LANGUAGE_PUBLIC_ONLY") == "1"
+    required = {
+        "KUNO_LAB_TARGET_GDN": "three-streaming-public",
+        "KUNO_LAB_TARGET_SOURCES": "frozen-host-public",
+        "KUNO_LAB_FROZEN_PARTITION_EXIT": "1",
+        "KUNO_LAB_TARGET_ROUTER": "device-frozen-public",
+        "KUNO_LAB_TARGET_REUSE": "request",
+        "KUNO_LAB_TARGET_FILL": "direct-public",
+        "KUNO_LAB_DEVICE_DISPATCH": "inline",
+        "KUNO_LAB_TARGET_IO": "chunk",
+        "KUNO_LAB_TARGET_DENSE": "verify3-fused",
+    }
+    if (any(environment.get(key) != value for key, value in required.items())
+            or spec == language
+            or spec and environment.get("KUNO_LAB_WARM_REPLAY") != "once"
+            or any(key in environment for key in ("KUNO_LAB_TARGET_MOE", "KUNO_LAB_TARGET_EXPERTS"))):
+        raise ValueError("Three-token GDN requires original fixed public frozen Verify3 scope")
+
 def private_table_scope(environment):
     if any(key in environment for key in ("KUNO_LAB_FROZEN_TABLES", "KUNO_LAB_FROZEN_DOWN_SCALES", "KUNO_LAB_FROZEN_GU_FACTORS", "KUNO_LAB_FROZEN_DOWN_ROWS", "KUNO_LAB_FROZEN_GU_ROWS", "KUNO_LAB_FROZEN_HOST_STAGE", "KUNO_LAB_FROZEN_MEMBERS")):
         spec = environment.get("KUNO_LAB_SPECULATIVE_PUBLIC_ONLY") == "1"
@@ -149,6 +175,7 @@ def bank_placement_scope(environment):
 
 
 def memory_limit(environment, arguments):
+    three_gdn_scope(environment)
     private_table_scope(environment)
     bank_placement_scope(environment)
     if "KUNO_LAB_PUBLIC_HOST_CUBECL_ONLY" in environment or (len(arguments) > 2 and arguments[2] == "public-host-weight-cubecl-probe"):
