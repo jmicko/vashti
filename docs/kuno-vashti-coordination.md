@@ -3196,3 +3196,29 @@ Ollama unload request. B70 returned to50,688,000B; NVIDIA compute owners0;
 admission idle/unpaused/no recovery; allthree HTTP services200; GPU faults0.
 No reset, driver/service installation or private content inspection was needed.
 Installed services and public API are unchanged. Required Vashti changes:none.
+
+### Active internal expert-factor/draft-head experiments, 2026-10-11
+
+v148/76ffd66 passed complete original CPU13 target/carry/greedy/repair gates and
+full owner closure. Normal same-artifact ordered code200 is7.73410 control versus
+6.90538 workgroup-codebook/shared-down-scale candidate; no speed gain. Candidate
+remains default-off. Both trials restored admission, all HTTP services and GPU
+memory (B70 baseline50,688,000B, NVIDIA compute0), with no new classified faults.
+Numeric evidence is under `v148_cooperative_physical` in the native optimization
+receipt; latest physical snapshot12:33:49UTC is historical, not future availability.
+
+Next source candidates: GU factor leafa8e81a1 integrated1ba718e; Q8-head broadcast
+leafc4cd6c3 integrated0675594. Parent selectors and actual completed-policy receipts
+are integrated with runtime dispatch composition. Exact default-off internal
+contract is the final section of the all-row plan. Source validation passes:
+9exact-public registration/policy checks,5compound runtime/parser checks,5GU
+factor checks,4Q8operative/selection checks and6original projection regressions;
+107Python launcher checks,9fixed-trial scope/limit checks, strict pure-direct
+all-target Clippy, formatting and diff checks. No GPU numerical or throughput
+claim is made for these new candidates until a new frozen artifact passes the
+original CPU13 gate and normal language timing. Further four-row down kernel and
+cooperative draft-head scale candidates are isolated source work in progress.
+
+This is backend-only lab optimization. Installed services/public API/production
+configuration and the canonical Vashti checkout remain unchanged. No release or
+installation is authorized by this source handoff. Required Vashti changes:none.

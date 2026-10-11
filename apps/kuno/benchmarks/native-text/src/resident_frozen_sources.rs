@@ -34,9 +34,13 @@ enum DownKernel {
 // runtime entrypoints rather than just the stored attachment flags.
 fn kernel_policy(g: k::Geometry) -> (GateKernel, DownKernel) {
     let gate = if g.shared_gate_up_factors() {
-        if g.workgroup_tables() { GateKernel::WorkgroupFactors }
-        else if g.private_tables() { GateKernel::PrivateFactors }
-        else { GateKernel::SharedFactors }
+        if g.workgroup_tables() {
+            GateKernel::WorkgroupFactors
+        } else if g.private_tables() {
+            GateKernel::PrivateFactors
+        } else {
+            GateKernel::SharedFactors
+        }
     } else if g.workgroup_tables() {
         GateKernel::WorkgroupTables
     } else if g.private_tables() {
@@ -1623,21 +1627,24 @@ impl Sources {
                     grouped_down_frozen_shared_scales
                 ),
                 (GateKernel::WorkgroupFactors, DownKernel::Frozen) => dispatch!(
-                    grouped_gate_up_frozen_workgroup_grid_shared_factors, grouped_down_frozen
+                    grouped_gate_up_frozen_workgroup_grid_shared_factors,
+                    grouped_down_frozen
                 ),
                 (GateKernel::PrivateFactors, DownKernel::SharedScales) => dispatch!(
                     grouped_gate_up_frozen_private_grid_shared_factors,
                     grouped_down_frozen_shared_scales
                 ),
                 (GateKernel::PrivateFactors, DownKernel::Frozen) => dispatch!(
-                    grouped_gate_up_frozen_private_grid_shared_factors, grouped_down_frozen
+                    grouped_gate_up_frozen_private_grid_shared_factors,
+                    grouped_down_frozen
                 ),
                 (GateKernel::SharedFactors, DownKernel::SharedScales) => dispatch!(
-                    grouped_gate_up_frozen_shared_factors, grouped_down_frozen_shared_scales
+                    grouped_gate_up_frozen_shared_factors,
+                    grouped_down_frozen_shared_scales
                 ),
-                (GateKernel::SharedFactors, DownKernel::Frozen) => dispatch!(
-                    grouped_gate_up_frozen_shared_factors, grouped_down_frozen
-                ),
+                (GateKernel::SharedFactors, DownKernel::Frozen) => {
+                    dispatch!(grouped_gate_up_frozen_shared_factors, grouped_down_frozen)
+                }
                 (GateKernel::WorkgroupTables, DownKernel::SharedScales) => dispatch!(
                     grouped_gate_up_frozen_workgroup_grid,
                     grouped_down_frozen_shared_scales
@@ -1710,8 +1717,10 @@ mod tests {
                 };
                 let factors = selected.with_shared_gate_up_factors().unwrap();
                 assert_eq!(kernel_policy(factors), (factor, DownKernel::Frozen));
-                assert_eq!(kernel_policy(factors.with_shared_down_scales().unwrap()),
-                    (factor, DownKernel::SharedScales));
+                assert_eq!(
+                    kernel_policy(factors.with_shared_down_scales().unwrap()),
+                    (factor, DownKernel::SharedScales)
+                );
                 assert_eq!(kernel_policy(selected), (table, DownKernel::Frozen));
                 assert_eq!(
                     kernel_policy(selected.with_shared_down_scales().unwrap()),

@@ -509,3 +509,39 @@ Require fresh original CPU13 full-logit/carry/greedy/repair and complete closing
 proofs before same-artifact language200 control/candidate timing. Preserve failed
 trial evidence and verify actual memory recovery. No public API/production or
 Vashti change is part of this internal experiment.
+
+### Frozen public factor and Q8 draft-head candidates, 2026-10-11
+
+These independent laboratory policies remain default-off and do not change
+installed Kuno, model names or public APIs. The original target model, references,
+source hashes, route membership, probabilities, floating-point operation order,
+repair checks and owning closure remain authoritative.
+
+`KUNO_LAB_FROZEN_GU_FACTORS=shared-public` selects cooperative IQ2_S/IQ3_XXS/IQ3_S
+block-factor staging only for authenticated frozen public sources with explicit
+partition exit. It composes with private/workgroup table and shared down-scale
+policies; private/workgroup table modes still exclude one another. IQ4_XS is
+unchanged. Parent registration rejects wrong spelling, duplicate keys and missing
+source/request/exit prerequisites. Runtime dispatch uses the actual geometry
+policy, and completed attachment receipt `frozen_host_shared_gate_up_factors`
+must match selection. Cold CPU13 replay retains original target dispatch; only
+warm replay uses frozen expert policies.
+
+`KUNO_LAB_MTP_Q8_HEAD=broadcast-public` selects the original Q8 output.weight
+head with subgroup-shared half-to-F32 scales. It is valid only in the explicit
+public speculative/language controllers with the self-contained Q8 draft profile.
+The selector must reject alternate Q2 profiles. Selection is fixed before the
+first draft/KV operation, and actual completed full-forward receipt
+`mtp_q8_head_broadcast` is captured before owner close. No other Q8 projection
+or target quantization changes; original accumulation/reduction and fault
+coverage remain. Both CPU13 replays use the selected draft head, independently
+of target frozen policy replay.
+
+Each candidate needs CPU/shader source checks, full original CPU13 physical
+acceptance, same-artifact normal language timing and recovered GPU/service state.
+Source-only operation counts are not latency or performance evidence. Reduced
+per-lane conversion count may still cost more broadcast/barrier work. The prior
+workgroup-table plus shared-down-scale candidate passed CPU13 but regressed the
+single normal ordered code200 pair (7.73410 to6.90538tokens/s); do not turn it on
+implicitly when evaluating these candidates. Neither30tokens/s nor production
+acceptance is established here. Required Vashti changes:none.

@@ -2110,6 +2110,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         private_tables: bool,
         workgroup_tables: bool,
         shared_down_scales: bool,
+        shared_gate_up_factors: bool,
         cancel: &AtomicBool,
     ) -> Result<crate::public_host_expert_attachment::Attachment<'plan, 'm, 'f>> {
         u::cancel(cancel)?;
@@ -2156,6 +2157,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 private_tables,
                 workgroup_tables,
                 shared_down_scales,
+                shared_gate_up_factors,
                 cancel,
             )
         }
@@ -2218,6 +2220,17 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             return Err(error());
         }
         native.moe.frozen_host_source_shared_down_scales()
+    }
+    pub(crate) fn native_frozen_source_shared_gate_up_factors(
+        &self,
+        executor: &GpuExecutor<'f>,
+    ) -> Result<bool> {
+        self.completed_native_projection_boundary(executor)?;
+        let native = self.native_batch.as_ref().ok_or(error())?;
+        if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
+            return Err(error());
+        }
+        native.moe.frozen_host_source_shared_gate_up_factors()
     }
 
     pub(crate) fn activate_public_frozen_host_batch_router(

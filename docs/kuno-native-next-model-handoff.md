@@ -26,7 +26,7 @@ source-only tests or this short CPU13 fixture. Two further isolated source
 experiments are being prepared: GU block-factor staging and Q8-draft-head scale
 broadcast, preserving original arithmetic. Neither yet has GPU acceptance.
 
-Fresh recovery2026-10-11 12:35:44UTC: Intel50,688,000B, NVIDIA compute0,
+Fresh recovery2026-10-11 12:33:49UTC: Intel50,688,000B, NVIDIA compute0,
 admission normal/idle, allthree services HTTP200, sameboot and GPU faults0.
 Protected benchmark owns admission temporarily for each following GPU trial;
 root controls shared devices and agents must hold CPU builds during timed decode.
