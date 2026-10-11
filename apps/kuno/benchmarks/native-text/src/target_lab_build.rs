@@ -78,6 +78,73 @@ pub(crate) fn three_gdn_streaming(
     }
 }
 
+/// The immutable GU arithmetic candidate is admitted only by the two compiled
+/// public controllers after every original source and request prerequisite.
+pub(crate) fn frozen_gu_integer(
+    raw: Option<&OsStr>,
+    public_frozen_scope: bool,
+) -> Result<bool, &'static str> {
+    match raw {
+        None => Ok(false),
+        Some(value) if value == "integer-public" && public_frozen_scope => Ok(true),
+        _ => Err("integer GU requires canonical original public frozen Verify3 scope"),
+    }
+}
+
+/// These are completed source-specific counts, never requested settings or
+/// generic projection dispatches. Every accepted target batch visits 48 layers.
+pub(crate) fn frozen_gu_integer_record(
+    selected: bool,
+    actual: bool,
+    preparations: u64,
+    dispatches: u64,
+    audits: u64,
+) -> Result<serde_json::Value, &'static str> {
+    if selected != actual
+        || if selected {
+            preparations == 0
+                || !preparations.is_multiple_of(48)
+                || preparations.checked_mul(5) != Some(dispatches)
+                || preparations != audits
+        } else {
+            preparations != 0 || dispatches != 0 || audits != 0
+        }
+    {
+        return Err("integer GU actual joined dispatch receipt rejected");
+    }
+    Ok(serde_json::json!({"preparations":preparations,
+        "gu_dispatches":dispatches,"full_owner_audits":audits}))
+}
+
+/// The warm replay's first original-reference token consumes exactly one real
+/// count1 batch after immutable source attachment at cursor0.
+pub(crate) fn frozen_gu_integer_initial_record(
+    selected: bool,
+    actual: bool,
+    preparations: u64,
+    dispatches: u64,
+    audits: u64,
+) -> Result<serde_json::Value, &'static str> {
+    let record = frozen_gu_integer_record(selected, actual, preparations, dispatches, audits)?;
+    if selected && (preparations != 48 || dispatches != 240 || audits != 48) {
+        return Err("integer GU original initial count1 receipt rejected");
+    }
+    Ok(record)
+}
+
+/// Initial numeric acceptance fixes every optional owner policy. Other public
+/// controllers retain their existing close validation and exact owner proofs.
+pub(crate) fn validate_frozen_gu_integer_close(
+    selected: bool,
+    main_buffers: u64,
+    main_bytes: u64,
+) -> Result<(), &'static str> {
+    if selected && (main_buffers != 1381 || main_bytes != 828_932_096) {
+        return Err("integer GU complete MAIN owner closure rejected");
+    }
+    Ok(())
+}
+
 pub(crate) fn host_io_snapshot() -> [u64; 6] {
     let (setup, flush, map) = cubecl::wgpu::transient_scoped_read_ns();
     let (wait_ns, waits) = cubecl::wgpu::transient_gpu_submission_wait_stats();
@@ -150,6 +217,82 @@ pub(crate) fn name(inline: bool) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn frozen_gu_integer_controller_flag_is_canonical_and_default_off() {
+        for scope in [false, true] {
+            assert_eq!(frozen_gu_integer(None, scope), Ok(false));
+            for value in ["integer-public", "integer", "true", "", "integer-public "] {
+                assert_eq!(
+                    frozen_gu_integer(Some(OsStr::new(value)), scope).is_ok(),
+                    scope && value == "integer-public"
+                );
+            }
+        }
+    }
+    #[test]
+    fn frozen_gu_integer_controller_receipts_require_actual_all_layer_joined_evidence() {
+        assert_eq!(
+            frozen_gu_integer_record(false, false, 0, 0, 0).unwrap(),
+            serde_json::json!({"preparations":0,"gu_dispatches":0,"full_owner_audits":0})
+        );
+        for batches in [1, 9, 74] {
+            let preparations = batches * 48;
+            assert_eq!(
+                frozen_gu_integer_record(true, true, preparations, preparations * 5, preparations)
+                    .unwrap(),
+                serde_json::json!({"preparations":preparations,
+                    "gu_dispatches":preparations*5,"full_owner_audits":preparations})
+            );
+        }
+        for (selected, actual, preparations, dispatches, audits) in [
+            (true, false, 48, 240, 48),
+            (false, true, 48, 240, 48),
+            (true, true, 0, 0, 0),
+            (true, true, 1, 5, 1),
+            (true, true, 48, 239, 48),
+            (true, true, 48, 240, 47),
+            (true, true, u64::MAX / 48 * 48, 0, 0),
+            (false, false, 48, 240, 48),
+            (false, false, 0, 1, 0),
+            (false, false, 0, 0, 1),
+        ] {
+            assert!(
+                frozen_gu_integer_record(selected, actual, preparations, dispatches, audits)
+                    .is_err()
+            );
+        }
+    }
+    #[test]
+    fn frozen_gu_integer_controller_close_requires_complete_extra_owner() {
+        assert!(validate_frozen_gu_integer_close(true, 1381, 828_932_096).is_ok());
+        for (buffers, bytes) in [
+            (1380, 828_866_560),
+            (1380, 828_932_096),
+            (1381, 828_866_560),
+            (1382, 828_932_096),
+            (1381, 828_932_095),
+            (1381, 828_932_097),
+        ] {
+            assert!(validate_frozen_gu_integer_close(true, buffers, bytes).is_err());
+            assert!(validate_frozen_gu_integer_close(false, buffers, bytes).is_ok());
+        }
+    }
+    #[test]
+    fn frozen_gu_integer_controller_initial_count1_requires_exact_first_batch() {
+        assert!(frozen_gu_integer_initial_record(false, false, 0, 0, 0).is_ok());
+        assert!(frozen_gu_integer_initial_record(true, true, 48, 240, 48).is_ok());
+        for (actual, preparations, dispatches, audits) in [
+            (false, 48, 240, 48),
+            (true, 0, 0, 0),
+            (true, 96, 480, 96),
+            (true, 48, 240, 47),
+        ] {
+            assert!(
+                frozen_gu_integer_initial_record(true, actual, preparations, dispatches, audits)
+                    .is_err()
+            );
+        }
+    }
     #[test]
     fn exact_build_flag_matrix_rejects_every_cpu_feature_combination() {
         for direct in [false, true] {

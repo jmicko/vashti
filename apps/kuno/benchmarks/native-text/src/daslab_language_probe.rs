@@ -107,6 +107,7 @@ pub(crate) struct Inputs {
     pub(crate) frozen_two_row_gate_up: bool,
     pub(crate) frozen_packed_host_staging: bool,
     pub(crate) frozen_three_members: bool,
+    pub(crate) frozen_gu_integer: bool,
     pub(crate) three_gdn_streaming: bool,
     pub(crate) verify3_dense: bool,
     pub(crate) verify3_fused: bool,
@@ -160,6 +161,7 @@ pub(crate) fn registration(
                     | "KUNO_LAB_FROZEN_GU_ROWS"
                     | "KUNO_LAB_FROZEN_HOST_STAGE"
                     | "KUNO_LAB_FROZEN_MEMBERS"
+                    | "KUNO_LAB_FROZEN_GU_MATH"
                     | "KUNO_LAB_TARGET_GDN"
                     | "KUNO_LAB_TARGET_ROUTER"
                     | "KUNO_LAB_TARGET_DENSE"
@@ -360,6 +362,32 @@ pub(crate) fn registration(
             && !live_member_reduction,
         mtp_q8_head_broadcast,
     )?;
+    let raw_gu_math = values.remove(OsStr::new("KUNO_LAB_FROZEN_GU_MATH"));
+    let frozen_gu_integer = crate::target_lab_build::frozen_gu_integer(
+        raw_gu_math.as_deref(),
+        frozen_host_sources
+            && frozen_host_router
+            && frozen_partition_exit
+            && verify3_dense
+            && verify3_fused
+            && request_reuse
+            && chunk_io
+            && inline_dispatch
+            && public_existing_fill
+            && fused_sweeps
+            && draft_profile == Profile::SelfContainedQ8
+            && !mtp_q8_head_broadcast
+            && !mtp_english_vocab
+            && !frozen_private_tables
+            && !frozen_workgroup_tables
+            && !frozen_shared_down_scales
+            && !frozen_shared_gate_up_factors
+            && !frozen_two_row_gate_up
+            && !frozen_packed_host_staging
+            && !frozen_three_members
+            && !prepared_experts
+            && !live_member_reduction,
+    )?;
     let mut path = |key: &str| {
         values
             .remove(OsStr::new(key))
@@ -385,6 +413,7 @@ pub(crate) fn registration(
         frozen_two_row_gate_up,
         frozen_packed_host_staging,
         frozen_three_members,
+        frozen_gu_integer,
         three_gdn_streaming,
         verify3_dense,
         verify3_fused,
@@ -716,6 +745,7 @@ pub(crate) fn run(
     executor.target_batch_router_reserved = input.frozen_host_router;
     executor.target_frozen_host_router_reserved = input.frozen_host_router;
     executor.target_frozen_host_staging_reserved = input.frozen_packed_host_staging;
+    executor.target_frozen_gu_integer_reserved = input.frozen_gu_integer;
     executor.target_verify3_dense = input.verify3_dense;
     executor.target_verify3_fused = input.verify3_fused;
     executor.token_io_checkpoint = input.chunk_io;
@@ -751,6 +781,9 @@ pub(crate) fn run(
         }
         if input.frozen_packed_host_staging {
             config = config.reserve_public_frozen_host_staging()?;
+        }
+        if input.frozen_gu_integer {
+            config = config.reserve_public_frozen_gu_integer()?;
         }
         let prepared_host = std::cell::OnceCell::new();
         let mut host_attachment = None;
@@ -826,22 +859,42 @@ pub(crate) fn run(
                 // SAFETY: protected runner verified full immutable public
                 // source hashes before opening the original model descriptors.
                 host_attachment = Some(unsafe {
-                    target.attach_public_host_sources(
-                        &mut executor,
-                        prepared,
-                        host_device.ok_or("public exact device absent")?,
-                        reserved,
-                        input.frozen_partition_exit,
-                        input.frozen_private_tables,
-                        input.frozen_workgroup_tables,
-                        input.frozen_shared_down_scales,
-                        input.frozen_shared_gate_up_factors,
-                        input.frozen_four_row_down,
-                        input.frozen_two_row_gate_up,
-                        input.frozen_packed_host_staging,
-                        input.frozen_three_members,
-                        &cancel,
-                    )?
+                    if input.frozen_gu_integer {
+                        target.attach_public_host_sources_with_gu_math(
+                            &mut executor,
+                            prepared,
+                            host_device.ok_or("public exact device absent")?,
+                            reserved,
+                            input.frozen_partition_exit,
+                            input.frozen_private_tables,
+                            input.frozen_workgroup_tables,
+                            input.frozen_shared_down_scales,
+                            input.frozen_shared_gate_up_factors,
+                            input.frozen_four_row_down,
+                            input.frozen_two_row_gate_up,
+                            input.frozen_packed_host_staging,
+                            input.frozen_three_members,
+                            input.frozen_gu_integer,
+                            &cancel,
+                        )?
+                    } else {
+                        target.attach_public_host_sources(
+                            &mut executor,
+                            prepared,
+                            host_device.ok_or("public exact device absent")?,
+                            reserved,
+                            input.frozen_partition_exit,
+                            input.frozen_private_tables,
+                            input.frozen_workgroup_tables,
+                            input.frozen_shared_down_scales,
+                            input.frozen_shared_gate_up_factors,
+                            input.frozen_four_row_down,
+                            input.frozen_two_row_gate_up,
+                            input.frozen_packed_host_staging,
+                            input.frozen_three_members,
+                            &cancel,
+                        )?
+                    }
                 });
                 host_setup = Some(serde_json::json!({"bank_completion_experts":fills.experts,
                     "bank_completion_uploaded_bytes":fills.bytes,"bank_completion_read_ns":fills.read_ns,
@@ -1074,10 +1127,33 @@ pub(crate) fn run(
             let frozen_routes = if executor.target_frozen_host_source_identity.is_some() {
                 let counts = target.native_frozen_source_counters(&executor)?;
                 Some(serde_json::json!({"vram_routes":counts.vram_routes,
-                    "host_routes":counts.host_routes,"source_dispatches":counts.source_dispatches,"staging_dispatches":counts.staging_dispatches,"staged_unique_host_groups":counts.staged_unique_host_groups,"staged_packed_bytes":counts.staged_packed_bytes}))
+                    "host_routes":counts.host_routes,"source_dispatches":counts.source_dispatches,"staging_dispatches":counts.staging_dispatches,"staged_unique_host_groups":counts.staged_unique_host_groups,"staged_packed_bytes":counts.staged_packed_bytes,"gu_integer_preparations":counts.gu_integer_preparations,"gu_integer_dispatches":counts.gu_integer_dispatches,"gu_integer_audits":counts.gu_integer_audits}))
             } else {
                 None
             };
+            let frozen_gu_integer = if executor.target_frozen_host_source_identity.is_some() {
+                target.native_frozen_source_gu_integer(&executor)?
+            } else {
+                false
+            };
+            let (gu_preparations, gu_dispatches, gu_audits) =
+                if executor.target_frozen_host_source_identity.is_some() {
+                    let counts = target.native_frozen_source_counters(&executor)?;
+                    (
+                        counts.gu_integer_preparations,
+                        counts.gu_integer_dispatches,
+                        counts.gu_integer_audits,
+                    )
+                } else {
+                    (0, 0, 0)
+                };
+            let frozen_gu_integer_counters = crate::target_lab_build::frozen_gu_integer_record(
+                input.frozen_gu_integer,
+                frozen_gu_integer,
+                gu_preparations,
+                gu_dispatches,
+                gu_audits,
+            )?;
             let (three_gdn_streaming, three_gdn_completed_chunks) =
                 target.completed_public_three_gdn_streaming(&executor)?;
             if three_gdn_streaming != input.three_gdn_streaming {
@@ -1184,7 +1260,7 @@ pub(crate) fn run(
                 .checked_sub(load_disk_after)
                 .ok_or("language process read counter regressed")?;
             Ok(
-                serde_json::json!({"fixture":input.fixture.name(),"prompt_tokens":prompt.len(),"context_capacity":input.fixture.context(),"compiled_prompt_template_revision":TEMPLATE_REVISION,"compiled_prompt_template_file":TEMPLATE_FILE,"load_ns":load_ns,"prefill_ns_including_real_teacher_kv":prefill_ns,"prefill_first_output_count":1,"prefill_first_output_generation_pick_timed":false,"first_output_emission_timed":true,"emitted_tokens_including_eos":emitted.len(),"post_prefill_target_continuations":stats.continuations,"stop_reason":if confirmed==graph.eos_token(){"eos"}else{"limit"},"nonempty_text":nonempty_text,"elapsed_ns":elapsed_ns,"continuation_tokens_per_second":stats.continuations as f64*1e9/elapsed_ns as f64,"emitted_tokens_per_second":emitted.len()as f64*1e9/elapsed_ns as f64,"rounds":stats.rounds,"frozen_host_gpu_router":input.frozen_host_router,"frozen_host_inactive_partition_exit":frozen_partition_exit,"frozen_host_private_tables":frozen_private_tables,"frozen_host_workgroup_tables":frozen_workgroup_tables,"frozen_host_shared_down_scales":frozen_shared_down_scales,"frozen_host_shared_gate_up_factors":frozen_shared_gate_up_factors,"mtp_q8_head_broadcast":mtp_q8_head_broadcast,"mtp_q8_head_shared_scales":mtp_q8_head_shared_scales,"mtp_english_vocab":mtp_english_vocab,"mtp_english_vocab_receipt":mtp_english_vocab_receipt,"frozen_host_four_row_down":frozen_four_row_down,"frozen_host_two_row_gate_up":frozen_two_row_gate_up,"frozen_packed_host_staging":frozen_packed_host_staging,"frozen_three_member_arithmetic":frozen_three_members,"target_three_gdn_streaming":three_gdn_streaming,"target_three_gdn_completed_chunks":three_gdn_completed_chunks,"gpu_router_calls":executor.gpu_router_calls-before_gpu_routers,"proposed_drafts":stats.proposed,"accepted_drafts":stats.accepted_drafts,"draft_ns":stats.draft_ns,"verify_ns_full_packets":stats.verify_ns,"repair_ns_including_vector_checks":stats.repair_ns,"actual_target_recomputations":stats.repairs,"repair_logit_max_abs":stats.repair_logit_max,"repair_hidden_max_abs":stats.repair_hidden_max,"repair_abs_tolerance":ABS,"repair_rel_tolerance":REL,"fixture_peak_host_bytes":fixture_peak,"request_scope":request_scope,"request_close_ns_inside_timing":request_close_ns,"host_io":host_io,"target_host_phase_ns":phase_ns,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"verify3_fused_calls":executor.target_verify3_fused_calls-before_fused,"load_and_prefill_physical_read_bytes":load_disk_after.checked_sub(load_disk_before).ok_or("language process read counter regressed")?,"generation_physical_read_bytes":physical_read_bytes,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"target_fill_counters_before":fill_counter_record(before_fills),"target_fill_counters_after":fill_counter_record(after_fills),"frozen_source_routes":frozen_routes,"draft_traffic":{"host_read_calls":after_traffic.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after_traffic.host_read_bytes-before_traffic.host_read_bytes,"explicit_dispatches":after_traffic.explicit_dispatches-before_traffic.explicit_dispatches,"private_upload_calls":after_traffic.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after_traffic.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after_traffic.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after_traffic.followup_copy_calls-before_traffic.followup_copy_calls}}),
+                serde_json::json!({"fixture":input.fixture.name(),"prompt_tokens":prompt.len(),"context_capacity":input.fixture.context(),"compiled_prompt_template_revision":TEMPLATE_REVISION,"compiled_prompt_template_file":TEMPLATE_FILE,"load_ns":load_ns,"prefill_ns_including_real_teacher_kv":prefill_ns,"prefill_first_output_count":1,"prefill_first_output_generation_pick_timed":false,"first_output_emission_timed":true,"emitted_tokens_including_eos":emitted.len(),"post_prefill_target_continuations":stats.continuations,"stop_reason":if confirmed==graph.eos_token(){"eos"}else{"limit"},"nonempty_text":nonempty_text,"elapsed_ns":elapsed_ns,"continuation_tokens_per_second":stats.continuations as f64*1e9/elapsed_ns as f64,"emitted_tokens_per_second":emitted.len()as f64*1e9/elapsed_ns as f64,"rounds":stats.rounds,"frozen_host_gpu_router":input.frozen_host_router,"frozen_host_inactive_partition_exit":frozen_partition_exit,"frozen_host_private_tables":frozen_private_tables,"frozen_host_workgroup_tables":frozen_workgroup_tables,"frozen_host_shared_down_scales":frozen_shared_down_scales,"frozen_host_shared_gate_up_factors":frozen_shared_gate_up_factors,"mtp_q8_head_broadcast":mtp_q8_head_broadcast,"mtp_q8_head_shared_scales":mtp_q8_head_shared_scales,"mtp_english_vocab":mtp_english_vocab,"mtp_english_vocab_receipt":mtp_english_vocab_receipt,"frozen_host_four_row_down":frozen_four_row_down,"frozen_host_two_row_gate_up":frozen_two_row_gate_up,"frozen_packed_host_staging":frozen_packed_host_staging,"frozen_three_member_arithmetic":frozen_three_members,"frozen_gu_integer":frozen_gu_integer,"frozen_gu_integer_counters":frozen_gu_integer_counters,"target_three_gdn_streaming":three_gdn_streaming,"target_three_gdn_completed_chunks":three_gdn_completed_chunks,"gpu_router_calls":executor.gpu_router_calls-before_gpu_routers,"proposed_drafts":stats.proposed,"accepted_drafts":stats.accepted_drafts,"draft_ns":stats.draft_ns,"verify_ns_full_packets":stats.verify_ns,"repair_ns_including_vector_checks":stats.repair_ns,"actual_target_recomputations":stats.repairs,"repair_logit_max_abs":stats.repair_logit_max,"repair_hidden_max_abs":stats.repair_hidden_max,"repair_abs_tolerance":ABS,"repair_rel_tolerance":REL,"fixture_peak_host_bytes":fixture_peak,"request_scope":request_scope,"request_close_ns_inside_timing":request_close_ns,"host_io":host_io,"target_host_phase_ns":phase_ns,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"verify3_fused_calls":executor.target_verify3_fused_calls-before_fused,"load_and_prefill_physical_read_bytes":load_disk_after.checked_sub(load_disk_before).ok_or("language process read counter regressed")?,"generation_physical_read_bytes":physical_read_bytes,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"target_fill_counters_before":fill_counter_record(before_fills),"target_fill_counters_after":fill_counter_record(after_fills),"frozen_source_routes":frozen_routes,"draft_traffic":{"host_read_calls":after_traffic.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after_traffic.host_read_bytes-before_traffic.host_read_bytes,"explicit_dispatches":after_traffic.explicit_dispatches-before_traffic.explicit_dispatches,"private_upload_calls":after_traffic.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after_traffic.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after_traffic.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after_traffic.followup_copy_calls-before_traffic.followup_copy_calls}}),
             )
         })();
         let close = target.close();
@@ -1200,6 +1276,11 @@ pub(crate) fn run(
             } else {
                 None
             };
+            crate::target_lab_build::validate_frozen_gu_integer_close(
+                input.frozen_gu_integer,
+                main.buffers,
+                main.bytes,
+            )?;
             Ok((main, sources, host_close))
         })();
         if runs.is_err() {
@@ -1256,7 +1337,7 @@ pub(crate) fn run(
     if client.public_target_request_io_configured()? != input.request_reuse {
         return Err("language target stream configuration changed".into());
     }
-    let value = serde_json::json!({"scope":"compiled-public-language200-real-dual-device-greedy","target_card":"B70","draft_card":"RTX3060","draft_profile":input.draft_profile.name(),"gpu_chronological_qsa_selector":input.gpu_qsa_selector,"qsa_extra_runtime_info_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_INFO_BYTES_PER_CHUNK}else{0},"qsa_extra_host_reserved_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_HOST_BYTES_PER_CHUNK}else{0},"draft_public_reserved_bytes":input.draft_profile.public_bytes_with_english(input.mtp_english_vocab)?,"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"temperature":0,"seed":424242,"repetition_penalty":1.0,"presence_penalty":0.0,"frequency_penalty":0.0,"thinking":false,"max_outputs":MAX_OUTPUTS,"verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"live_member_reduction":input.live_member_reduction,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"fused_mtp_sweeps":input.fused_sweeps,"fixture_host_reserved_bytes":FIXTURE_HOST_BYTES,"tokenizer_host_cap_bytes":TOKENIZER_HOST_BYTES,"request_reuse_metadata_reserved_bytes":if input.request_reuse{4*1024*1024}else{0},"full_target_packets_retained":true,"greedy_target_verification":true,"repair_original_prefix_vector_checks":true,"independent_cpu200_reference_accepted":false,"forced_oracle_tokens":false,"forced_experts":false,"private_or_production_accepted":false,"record":record,"draft_close":{"private_buffers":draft_close.private.buffers,"private_bytes":draft_close.private.bytes,"public_bytes":draft_close.public_bytes,"main_reserved":draft_close.main_reserved}});
+    let value = serde_json::json!({"scope":"compiled-public-language200-real-dual-device-greedy","target_card":"B70","draft_card":"RTX3060","draft_profile":input.draft_profile.name(),"gpu_chronological_qsa_selector":input.gpu_qsa_selector,"qsa_extra_runtime_info_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_INFO_BYTES_PER_CHUNK}else{0},"qsa_extra_host_reserved_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_HOST_BYTES_PER_CHUNK}else{0},"draft_public_reserved_bytes":input.draft_profile.public_bytes_with_english(input.mtp_english_vocab)?,"frozen_gu_integer_requested":input.frozen_gu_integer,"frozen_gu_integer_extra_main_bytes":if input.frozen_gu_integer {65536} else {0},"frozen_gu_integer_extra_host_bytes":if input.frozen_gu_integer {65536} else {0},"frozen_gu_integer_extra_info_bytes":if input.frozen_gu_integer {196608} else {0},"frozen_gu_integer_extra_runtime_bytes":if input.frozen_gu_integer {462848} else {0},"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"temperature":0,"seed":424242,"repetition_penalty":1.0,"presence_penalty":0.0,"frequency_penalty":0.0,"thinking":false,"max_outputs":MAX_OUTPUTS,"verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"live_member_reduction":input.live_member_reduction,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"fused_mtp_sweeps":input.fused_sweeps,"fixture_host_reserved_bytes":FIXTURE_HOST_BYTES,"tokenizer_host_cap_bytes":TOKENIZER_HOST_BYTES,"request_reuse_metadata_reserved_bytes":if input.request_reuse{4*1024*1024}else{0},"full_target_packets_retained":true,"greedy_target_verification":true,"repair_original_prefix_vector_checks":true,"independent_cpu200_reference_accepted":false,"forced_oracle_tokens":false,"forced_experts":false,"private_or_production_accepted":false,"record":record,"draft_close":{"private_buffers":draft_close.private.buffers,"private_bytes":draft_close.private.bytes,"public_bytes":draft_close.public_bytes,"main_reserved":draft_close.main_reserved}});
     serde_json::to_writer_pretty(
         std::fs::OpenOptions::new()
             .write(true)
@@ -1288,6 +1369,118 @@ mod tests {
         .map(|(k, v)| (k.into(), v.into()))
         .to_vec()
     }
+    #[test]
+    fn frozen_gu_integer_controller_registration_requires_complete_original_public_scope() {
+        let args = ["lab", "intel", "daslab-language-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        let mut base = env();
+        for (key, value) in [
+            ("KUNO_LAB_DEVICE_DISPATCH", "inline"),
+            ("KUNO_LAB_TARGET_FILL", "direct-public"),
+            ("KUNO_LAB_TARGET_DENSE", "verify3-fused"),
+            ("KUNO_LAB_TARGET_IO", "chunk"),
+            ("KUNO_LAB_TARGET_REUSE", "request"),
+            ("KUNO_LAB_TARGET_SOURCES", "frozen-host-public"),
+            ("KUNO_LAB_FROZEN_PARTITION_EXIT", "1"),
+            ("KUNO_LAB_TARGET_ROUTER", "device-frozen-public"),
+            ("KUNO_LAB_MTP_SWEEPS", "fused"),
+        ] {
+            base.push((key.into(), value.into()));
+        }
+        assert!(
+            !registration(&args, base.clone(), build)
+                .unwrap()
+                .frozen_gu_integer
+        );
+        base.push(("KUNO_LAB_FROZEN_GU_MATH".into(), "integer-public".into()));
+        for qsa in [false, true] {
+            for four_down in [false, true] {
+                for shared_head in [false, true] {
+                    for three_gdn in [false, true] {
+                        let mut valid = base.clone();
+                        if qsa {
+                            valid.push((
+                                "KUNO_LAB_TARGET_QSA".into(),
+                                "chronological-public".into(),
+                            ));
+                        }
+                        if four_down {
+                            valid.push(("KUNO_LAB_FROZEN_DOWN_ROWS".into(), "four-public".into()));
+                        }
+                        if shared_head {
+                            valid.push(("KUNO_LAB_MTP_Q8_HEAD".into(), "shared-public".into()));
+                        }
+                        if three_gdn {
+                            valid.push((
+                                "KUNO_LAB_TARGET_GDN".into(),
+                                "three-streaming-public".into(),
+                            ));
+                        }
+                        let got = registration(&args, valid, build).unwrap();
+                        assert!(got.frozen_gu_integer);
+                        assert_eq!(got.gpu_qsa_selector, qsa);
+                        assert_eq!(got.frozen_four_row_down, four_down);
+                        assert_eq!(got.mtp_q8_head_shared_scales, shared_head);
+                        assert_eq!(got.three_gdn_streaming, three_gdn);
+                    }
+                }
+            }
+        }
+        for key in [
+            "KUNO_LAB_DEVICE_DISPATCH",
+            "KUNO_LAB_TARGET_FILL",
+            "KUNO_LAB_TARGET_DENSE",
+            "KUNO_LAB_TARGET_IO",
+            "KUNO_LAB_TARGET_REUSE",
+            "KUNO_LAB_TARGET_SOURCES",
+            "KUNO_LAB_FROZEN_PARTITION_EXIT",
+            "KUNO_LAB_TARGET_ROUTER",
+            "KUNO_LAB_MTP_SWEEPS",
+        ] {
+            let mut bad = base.clone();
+            bad.retain(|(k, _)| k != key);
+            assert!(registration(&args, bad, build).is_err(), "{key}");
+        }
+        for (key, value) in [
+            ("KUNO_LAB_FROZEN_GU_MATH", "integer-public"),
+            ("KUNO_LAB_FROZEN_TABLES", "private-public"),
+            ("KUNO_LAB_FROZEN_TABLES", "workgroup-public"),
+            ("KUNO_LAB_FROZEN_DOWN_SCALES", "shared-public"),
+            ("KUNO_LAB_FROZEN_GU_FACTORS", "shared-public"),
+            ("KUNO_LAB_FROZEN_GU_ROWS", "two-public"),
+            ("KUNO_LAB_FROZEN_HOST_STAGE", "packed-public"),
+            ("KUNO_LAB_FROZEN_MEMBERS", "three-public"),
+            ("KUNO_LAB_TARGET_EXPERTS", "prepared-verify3"),
+            ("KUNO_LAB_TARGET_MOE", "live"),
+            ("KUNO_LAB_MTP_Q8_HEAD", "broadcast-public"),
+            ("KUNO_LAB_MTP_PROFILE", "strata-q2"),
+            ("KUNO_LAB_MTP_VOCAB", "english-public"),
+        ] {
+            let mut bad = base.clone();
+            bad.push((key.into(), value.into()));
+            assert!(registration(&args, bad, build).is_err(), "{key}");
+        }
+        for value in ["", "integer", "true", "integer-public "] {
+            let mut bad = base.clone();
+            bad.last_mut().unwrap().1 = value.into();
+            assert!(registration(&args, bad, build).is_err());
+        }
+        let mut prose = base.clone();
+        for (key, value) in &mut prose {
+            if key == "KUNO_LAB_LANGUAGE_FIXTURE" {
+                *value = "warm-prose".into();
+            }
+        }
+        assert!(registration(&args, prose, build).unwrap().frozen_gu_integer);
+        let mut wrong_dense = base.clone();
+        for (key, value) in &mut wrong_dense {
+            if key == "KUNO_LAB_TARGET_DENSE" {
+                *value = "verify3".into();
+            }
+        }
+        assert!(registration(&args, wrong_dense, build).is_err());
+    }
+
     #[test]
     fn english_draft_vocabulary_requires_complete_fixed_public_scope() {
         let args = ["lab", "intel", "daslab-language-probe"].map(OsString::from);
