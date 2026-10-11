@@ -113,3 +113,89 @@ fn unselected_geometry_hash_remains_the_original_derived_payload() {
     assert_eq!(hash(&old), hash(&g));
     assert_ne!(hash(&g), hash(&g.with_four_members().unwrap()));
 }
+
+#[test]
+fn actual_four_map_keeps_all40_ranks_and_full_inactive_coverage_without_default_widening() {
+    let old = frozen();
+    let four = old.with_four_members().unwrap();
+    let experts: Vec<u32> = (0..40).collect();
+    let probabilities = vec![0.1f32; 40];
+    let protected: Vec<_> = experts.iter().copied().map(|e| (e, e)).collect();
+    assert!(GroupMap::new_frozen_sources(4, &experts, &probabilities, &protected, old).is_err());
+    let mut map =
+        GroupMap::new_frozen_sources(4, &experts, &probabilities, &protected, four).unwrap();
+    map.validate_geometry(four).unwrap();
+    assert!(map.validate_geometry(old).is_err());
+    assert_eq!((map.count(), map.groups()), (4, 40));
+    for route in 0..40 {
+        assert_eq!(map.words[SLOTS + route], route as u32);
+        assert_eq!(map.words[LENGTHS + route], 1);
+        assert_eq!(map.words[MEMBERS + route * MAX_BATCH], route as u32);
+        assert_eq!(
+            map.probabilities[route].to_bits(),
+            probabilities[route].to_bits()
+        );
+    }
+    for index in [
+        0,
+        SLOTS + 40,
+        LENGTHS + 40,
+        MEMBERS + 39 * MAX_BATCH,
+        MEMBERS + 39 * MAX_BATCH + 1,
+        MAP_WORDS - 1,
+    ] {
+        let previous = map.words[index];
+        map.words[index] = previous ^ 1;
+        assert!(map.validate(&experts, &probabilities, 512).is_err());
+        map.words[index] = previous;
+    }
+    for index in [40, 79] {
+        map.probabilities[index] = 0.1;
+        assert!(map.validate(&experts, &probabilities, 512).is_err());
+        map.probabilities[index] = 0.;
+    }
+    for count in 1..=3 {
+        let n = count * RANKS;
+        let old_map = GroupMap::new_frozen_sources(
+            count,
+            &experts[..n],
+            &probabilities[..n],
+            &protected[..n],
+            old,
+        )
+        .unwrap();
+        let selected = GroupMap::new_frozen_sources(
+            count,
+            &experts[..n],
+            &probabilities[..n],
+            &protected[..n],
+            four,
+        )
+        .unwrap();
+        assert_eq!(old_map.words(), selected.words());
+        assert_eq!(old_map.probabilities(), selected.probabilities());
+        selected.validate_geometry(four).unwrap();
+    }
+    let row = [503, 2, 111, 11, 271, 5, 77, 94, 201, 511];
+    let shared: Vec<u32> = row.into_iter().cycle().take(40).collect();
+    let mut union: Vec<_> = row.into_iter().map(|e| (e, e)).collect();
+    union.sort_unstable();
+    let map = GroupMap::new_frozen_sources(4, &shared, &probabilities, &union, four).unwrap();
+    assert_eq!(map.groups(), 10);
+    for (group, &(expert, _)) in union.iter().enumerate() {
+        let rank = row.iter().position(|&e| e == expert).unwrap();
+        assert_eq!(map.words[LENGTHS + group], 4);
+        for token in 0..4 {
+            assert_eq!(
+                map.words[MEMBERS + group * MAX_BATCH + token],
+                (token * RANKS + rank) as u32
+            );
+        }
+        assert!(
+            map.words[MEMBERS + group * MAX_BATCH + 4..MEMBERS + (group + 1) * MAX_BATCH]
+                .iter()
+                .all(|&w| w == 0)
+        );
+    }
+    map.validate(&shared, &probabilities, 512).unwrap();
+}

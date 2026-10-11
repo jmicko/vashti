@@ -767,12 +767,13 @@ pub struct GroupMap<'a> {
     probabilities: Box<[f32; MAX_ROUTES]>,
     protected: &'a [(u32, u32)],
     frozen_host_sources: bool,
+    four_members: bool,
 }
-fn source_map_capacity(frozen: bool, capacity: usize, count: usize) -> bool {
+fn source_map_capacity(frozen: bool, four_members: bool, capacity: usize, count: usize) -> bool {
     if frozen {
-        capacity == 512 && (1..=3).contains(&count)
+        capacity == 512 && (1..=if four_members { 4 } else { 3 }).contains(&count)
     } else {
-        crate::bank_slots::routed_capacity(capacity)
+        !four_members && crate::bank_slots::routed_capacity(capacity)
     }
 }
 impl<'a> GroupMap<'a> {
@@ -794,6 +795,7 @@ impl<'a> GroupMap<'a> {
             probabilities,
             protected,
             capacity,
+            false,
             false,
         )
     }
@@ -819,6 +821,7 @@ impl<'a> GroupMap<'a> {
             protected,
             512,
             true,
+            geometry.four_members(),
         )
     }
     #[allow(clippy::too_many_arguments)]
@@ -831,12 +834,14 @@ impl<'a> GroupMap<'a> {
         protected: &'a [(u32, u32)],
         capacity: usize,
         frozen_host_sources: bool,
+        four_members: bool,
     ) -> Result<Self, &'static str> {
         let mut map = Self {
             words: Box::new([0; MAP_WORDS]),
             probabilities: Box::new([0.; MAX_ROUTES]),
             protected,
             frozen_host_sources,
+            four_members,
         };
         if !(1..=MAX_BATCH).contains(&count)
             || wave_count == 0
@@ -845,7 +850,7 @@ impl<'a> GroupMap<'a> {
                 .is_none_or(|end| end > count)
             || experts.len() != count * RANKS
             || probabilities.len() != count * RANKS
-            || !source_map_capacity(frozen_host_sources, capacity, count)
+            || !source_map_capacity(frozen_host_sources, four_members, capacity, count)
             || protected.is_empty()
             || protected.len() > capacity.min(MAX_GROUPS)
         {
@@ -920,7 +925,9 @@ impl<'a> GroupMap<'a> {
     /// Canonical route/probability validation remains separately mandatory.
     pub fn validate_geometry(&self, geometry: Geometry) -> Result<(), &'static str> {
         geometry.validate_count(self.count())?;
-        if geometry.frozen_host_sources != self.frozen_host_sources {
+        if geometry.frozen_host_sources != self.frozen_host_sources
+            || geometry.four_members != self.four_members
+        {
             return Err("grouped map source policy mismatch");
         }
         if geometry.tile() == 1
@@ -948,7 +955,7 @@ impl<'a> GroupMap<'a> {
         if !(1..=MAX_BATCH).contains(&count)
             || wave == 0
             || first.checked_add(wave).is_none_or(|end| end > count)
-            || !source_map_capacity(self.frozen_host_sources, capacity, count)
+            || !source_map_capacity(self.frozen_host_sources, self.four_members, capacity, count)
             || groups == 0
             || groups != self.protected.len()
             || groups > MAX_GROUPS.min(capacity)

@@ -84,3 +84,12 @@ The completed pending-source acceptance repeats the selected3/4 count bound
 and validates that count against the actual reconstructed Source geometry
 before full physical joins/publication. A focused source proof covers this
 separate acceptance guard; its final test run belongs to parent integration.
+
+The canonical Geometry-aware frozen GroupMap factory stores only the immutable
+public four-member capacity flag separately from its unchanged804 MAP/80
+probability words. Both construction and canonical revalidation use that flag
+for the3/4 bound, and geometry validation proves exact flag parity. Default
+frozen maps retaincount3; selected tails retain bit-identical count1..3 wire
+words/probabilities. A40-distinct-rank/four-members-per-shared-expert regression
+checks original rank placement and rejects altered inactive members/groups/
+probabilities before any upload. Parent integration runs this final source test.
