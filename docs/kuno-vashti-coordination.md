@@ -3756,3 +3756,62 @@ borrowed CPU-batch leaf is being prepared to compute existing RAM-resident
 expert weights with original Rust AVX2 math; it is not whole-model inference
 or a speed claim. Root owns cache scheduling, shared GPU tests and physical
 recovery; separate source branches retain ownership boundaries.
+
+
+### Intel public ranking tested; CPU/GPU splitting next, 2026-10-11
+
+Fixed profile source is integrated through e5f1689, after normative7c9da20
+(original192d662) and leaf1d14a14(original53e889a). Read
+[kuno-native-public-profile-ranked-bank-filler.md](kuno-native-public-profile-ranked-bank-filler.md)
+and its controller contract. Frozen v167 pure-direct source is
+`e5f168916cfeccca051f53b4c5ead8958fbe90f2`, binary SHA256
+`03379e116acddc20c0bbf73f253913f8156145f592e8fbd5b4fd635edf1c0430`.
+Both separate canonical and selected cold/warm CPU13 gates pass unchanged full
+vectors/carries/greedy/real repair, original tolerances, actual original512
+queue/full-Q8 Intel MTP, full1382 MAIN/828997632B,42 draft and432 HOST closures.
+Selected warm publishes48 layers,4121 filler/2791 preserved residents and
+actually serves9120 VRAM/zero HOST members; the separate canonical diagnostic
+serves2590 VRAM/6530 HOST. Preserving the preceding cold replay's residents can
+make that replay all-hit; it cannot replace HOST coverage or credit a profile
+benefit on unseen normal generation. The warm12-token reference-check intervals
+are6.647453 versus11.553927 accepted tokens/s, not normal200-token throughput.
+
+The compiler-idle same-artifact ordered normal code200 pair is10.482354 original
+versus10.478727 profile filler (-0.035percent), both199 real continuations,
+130of138 drafts,69 rounds and five actual repairs. Actual VRAM/HOST members
+are56344/46376 versus56079/46641; VRAM share54.852percent versus54.594percent.
+Selected normal setup preserves5143 residents and fills1769 empty slots;
+actual48-layer publication and unchanged original full512 map are accepted.
+There is no measured gain. Keep Original bank filling for subsequent trials,
+original512 queue, original IQ4 decoder, grouped PLE and integer GU/DOWN/stride
+with shared full-Q8 head; Nvidia remains deferred by the user. Counters are
+routed members, not unique weight reads or PCIe bytes.
+
+Exact source, original numerical and setup receipts, aggregate tiers, complete
+owner/closure and recovery are recorded in
+`v167_intel_profile_filler_physical` of the native Strata numeric receipt.
+82 distinct leaf/parent checks,120 controller/helper checks,263 protected Python
+checks plus three fixed labels/caps, and integrated strict release/direct
+all-target Clippy pass. Latest actual recovery is20:09:26UTC, same boot,
+B70 used50688000B, Nvidia compute0, allHTTP200, admission idle/unpaused without
+recovery latch and no new classified GPU faults. This is one ordered code pair;
+no ABBA/prose/independent CPU200/private/production/30tokens/s acceptance.
+Installed services, selections, public API, frontend and release are unchanged.
+Required Vashti changes:none.
+
+The separate borrowed CPU batch source is integrated as2e51bd5(original3212bc2),
+with53 CPU expert checks passing and two unchanged timing probes ignored,
+strict CPU/native direct all-target Clippy, formatting and independent review.
+Read [kuno-native-borrowed-cpu-batch.md](kuno-native-borrowed-cpu-batch.md):
+counts1..3 use original packed F32/AVX2 arithmetic, joined workers and sparse
+unweighted original-rank outputs. This leaf is default-unused; arbitrary spans
+do not authenticate payload origin. No connected CPU/GPU inference or speed
+claim follows. Separate source owners are preparing an Attachment-anchored
+read-only borrow of the SAME original Vulkan RAM and an actual one-layer CPU
+versus HOST-GPU partial comparison with readback/encoding/upload/join included.
+No duplicate model payload, disk read, new arithmetic kernel, cap relaxation or
+count3 merge is authorized by an operator result. Initial fixed-layer synthetic
+operator measurements may be unusually L3-hot; actual whole-model CPU13 and
+normal timing remain later gates. Root controls physical trials and compiler
+scheduling; agents use separate worktrees/caches and cannot independently use
+GPUs, change services or release.

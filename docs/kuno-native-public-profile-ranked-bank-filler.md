@@ -156,7 +156,8 @@ original real prompt prefill and aggregate tier counters. No gain, transfer or
 
 Leaf and immutable parent source are implemented on the isolated branch based
 exactly on77e421c. Controllers and protected labels are separate. Physical
-accuracy/admission/recovery and throughput acceptance remain pending. The selected path uses original
+accuracy/admission/recovery and throughput are now recorded below; this source
+checkpoint itself did not establish them. The selected path uses original
 `validate_empty_plan`, source windows, packed writes, full fault reads and bank
 commits; the original and diagnostic constructors retain their default branch.
 Source tests cover the full original artifact/rank table and compact SHA256,
@@ -174,3 +175,24 @@ existing distinct checks (four new checks repeat in the public-host suite).
 Strict `--all-targets -j2` Clippy with warnings denied and owned-file
 format/diff checks pass. These are CPU source checks; no model, GPU, service,
 private trace or physical admission trial was used by this leaf.
+
+
+## Root physical comparison, 2026-10-11
+
+Frozen source e5f168916cfeccca051f53b4c5ead8958fbe90f2 and pure-direct binary
+03379e116acddc20c0bbf73f253913f8156145f592e8fbd5b4fd635edf1c0430 pass both
+canonical HOST/VRAM and selected original CPU13 gates, full original vectors,
+real repair, full owner closing and actual physical recovery. Selected warm
+publishes48 layers/4121 filler/2791 preserved and all9120 VRAM members; canonical
+retains2590 VRAM/6530 HOST. This replay preservation does not establish normal
+profile coverage. No tolerance, expert, router or reference was changed.
+
+Normal compiler-idle same-artifact code200 is10.482354 control versus10.478727
+selected (-0.035percent),199 continuations each. Actual route tiers are
+56344VRAM/46376HOST versus56079VRAM/46641HOST; selected fills1769 and preserves5143
+with48 actual publications. No gain is measured; keep Original for subsequent
+trials. Original512/IQ4 remain selected; no installed default changes. Exact
+receipts and limitations are in v167_intel_profile_filler_physical. All four
+trials recover actual B7050688000B, no Nvidia compute, allHTTP200 and no new
+classified faults. Single ordered code pair, no ABBA/prose/CPU200/production
+or30tokens/s claim. CPU batching is a separate source-only experiment.

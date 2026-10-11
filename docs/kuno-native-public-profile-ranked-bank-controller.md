@@ -104,3 +104,10 @@ their original profile/selection/source regressions remain independently owned.
 Physical original CPU13, canonical HOST control, source/owner closure, recovery
 and compiler-idle matched code/prose timing belong to root. No throughput gain
 or 30 tokens/s acceptance is claimed by this source work.
+
+
+Root completed both original CPU13 gates and one same-artifact code200 pair on
+frozen e5f1689. Numerical, actual setup, full owner closing and physical recovery
+pass; the selected profile shows no measured normal speed gain. See the linked
+leaf contract's root physical comparison and v167_intel_profile_filler_physical.
+The default remains Original; no API, installed service or frontend change.
