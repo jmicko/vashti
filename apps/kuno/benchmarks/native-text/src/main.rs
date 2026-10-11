@@ -47,6 +47,7 @@ mod ple_batch_gpu;
 mod ple_chunk;
 mod ple_chunk_probe;
 mod private_arena;
+mod public_host_cpu_batch_probe;
 #[allow(dead_code)] // Numeric/source admission helpers are public-lab-only.
 mod public_host_expert_attachment;
 #[allow(dead_code)]
@@ -1091,6 +1092,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => return Err("expected intel or nvidia".into()),
     };
     let mode = std::env::args().nth(2).unwrap_or("probe".into());
+    let public_host_cpu_batch_inputs = if mode == "public-host-cpu-batch-probe" {
+        Some(public_host_cpu_batch_probe::registration(
+            &std::env::args_os().collect::<Vec<_>>(),
+            std::env::vars_os(),
+            target_lab_build::Build::compiled(),
+        )?)
+    } else {
+        if std::env::var_os("KUNO_LAB_HOST_CPU_BATCH_PUBLIC_ONLY").is_some() {
+            return Err("attached HOST CPU batch requires its dedicated public probe".into());
+        }
+        None
+    };
     let verify3_finite_probe = mode == "verify3-finite-probe";
     let verify3_dense_receipt = if mode == "verify3-dense-probe" || verify3_finite_probe {
         Some(next_verify3_dense_probe::registration(
@@ -1547,6 +1560,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .or_else(|| target_repair_inputs.as_ref().map(|p| p.inline_dispatch))
         .or_else(|| target_rows_inputs.as_ref().map(|p| p.inline_dispatch))
         .or_else(|| language_inputs.as_ref().map(|p| p.inline_dispatch))
+        .or_else(|| {
+            public_host_cpu_batch_inputs
+                .as_ref()
+                .map(|p| p.inline_dispatch)
+        })
         .or_else(|| strata_mtp_inputs.as_ref().map(|_| inline_dispatch))
         .or_else(|| public_host_weight_receipt.as_ref().map(|_| inline_dispatch))
         .or_else(|| public_host_cubecl_receipt.as_ref().map(|_| inline_dispatch))
@@ -2137,6 +2155,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if target_rows_inputs.is_some()
             || target_repair_inputs.is_some()
             || speculative_inputs.is_some()
+            || public_host_cpu_batch_inputs.is_some()
         {
             daslab_target_rows_probe::validate_limits(&adapter.limits())?;
         }
@@ -2171,6 +2190,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             executor::batch_moe::prepared_verify3::validate_limits(&adapter.limits())?;
         }
         if verify3_dense_receipt.is_some()
+            || public_host_cpu_batch_inputs.is_some()
             || target_rows_inputs.as_ref().is_some_and(|i| i.verify3_dense)
             || target_repair_inputs
                 .as_ref()
@@ -2186,6 +2206,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )?;
         }
         if verify3_finite_probe
+            || public_host_cpu_batch_inputs.is_some()
             || target_rows_inputs.as_ref().is_some_and(|i| i.verify3_fused)
             || target_repair_inputs
                 .as_ref()
@@ -2316,7 +2337,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .is_some_and(|p| p.frozen_host_sources)
             || language_inputs
                 .as_ref()
-                .is_some_and(|p| p.frozen_host_sources))
+                .is_some_and(|p| p.frozen_host_sources)
+            || public_host_cpu_batch_inputs.is_some())
         .then(|| device.clone());
         let selected = init_device(
             WgpuSetup {
@@ -2332,6 +2354,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     || target_repair_inputs.is_some()
                     || speculative_inputs.is_some()
                     || language_inputs.is_some()
+                    || public_host_cpu_batch_inputs.is_some()
                     || resident_mtp_inputs.is_some()
                 {
                     256
@@ -2409,6 +2432,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )?;
             println!("public_batch_router_operator_complete owners_erased=true");
             return Ok(());
+        }
+        if let Some(inputs) = public_host_cpu_batch_inputs {
+            return public_host_cpu_batch_probe::run(
+                &client,
+                &grouped_limits,
+                inputs,
+                public_model_host_device
+                    .as_ref()
+                    .ok_or("attached HOST CPU batch actual target device missing")?,
+            );
         }
         if let Some(inputs) = language_inputs {
             return daslab_language_probe::run(

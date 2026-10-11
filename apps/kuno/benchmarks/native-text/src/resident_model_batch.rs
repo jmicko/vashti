@@ -2556,6 +2556,31 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .shared_vector_calls)
     }
 
+    /// Fixed public operator-only borrow. Original complete native health and
+    /// actual workspace proof precede the attachment's private source mapping.
+    /// Shared model/executor borrows prevent reset/fill through the returned
+    /// guard; no source pointer, bank or independently usable GPU handle escapes.
+    pub(crate) fn borrow_public_host_cpu_layer<'borrow, 'reader, 'plan>(
+        &'borrow self,
+        attachment: &'borrow mut crate::public_host_expert_attachment::Attachment<'plan, 'm, 'f>,
+        prepared: &'borrow crate::public_host_expert_attachment::PreparedPlan<'m, 'f>,
+        reader: &'reader kuno_text::gguf::PositionalReader<'f>,
+        executor: &'borrow GpuExecutor<'f>,
+        layer: usize,
+        cancel: &AtomicBool,
+    ) -> Result<crate::public_host_expert_attachment::CpuLayerBorrow<'borrow, 'reader, 'm, 'f>>
+    {
+        self.completed_native_projection_boundary(executor)?;
+        attachment.borrow_cpu_layer(
+            prepared,
+            reader,
+            executor,
+            &self.native_batch.as_ref().ok_or(error())?.moe,
+            layer,
+            cancel,
+        )
+    }
+
     /// Public-only source preparation follows an actual committed whole-model
     /// boundary. Empty slots receive original weights; existing residents stay.
     pub(crate) fn prepare_public_host_sources(

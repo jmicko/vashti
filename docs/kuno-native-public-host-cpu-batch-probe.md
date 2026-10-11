@@ -2,13 +2,34 @@
 
 ## Scope and status
 
-This is the proposed first physical comparison for the borrowed CPU expert leaf.
+This specifies the first physical comparison for the borrowed CPU expert leaf.
 It is an operator gate, not connected hybrid model inference or a tokens/second
 claim. Source implementation and physical acceptance are separate receipts.
 The approved first scope is one fixed public DASLab layer, one to three members,
 original F32 CPU arithmetic and the unchanged frozen HOST GPU projection kernels.
 No CPU/GPU rank-merge kernel, router substitution, alternate reference, ordinary
 API, installed selection or cancellation policy is introduced.
+
+The dedicated compiled-public entry is `intel public-host-cpu-batch-probe`.
+It accepts only `KUNO_LAB_HOST_CPU_BATCH_PUBLIC_ONLY=1`, matching
+`KUNO_LAB_DEVICE_DISPATCH=inline` in the direct-device build,
+`KUNO_TEST_Q3_DIR`, `KUNO_PUBLIC_TARGET_CARRY13_REFERENCE`, and
+`KUNO_PUBLIC_RECEIPT`. Missing, duplicate and inherited policy keys reject
+before device/model construction. There is no MTP sidecar or draft device.
+The existing original target construction uses the8GiB static cache,
+144slots/layer and31GiB complete target capacity plan, including its shared
+128MiB runtime I/O ceiling. Separate operator owners fit under4MiB. Root's
+protected runner admits that complete plan against fresh physical Intel memory
+with the unchanged512MiB driver margin before entering this mode.
+
+Actual source preparation follows all13 original cold count1 rows, with full
+logits/hidden vectors, greedy reference and completed cursor checked each time.
+It retains the existing CPU13 diagnostic bank placement, prepares at cursor13,
+performs the original accepted warm reset, attaches the real full mirror and
+activates the original frozen GPU router. Real warm token0 is checked against
+the same full reference before any CPU borrow. The model wrapper delegates
+only after its existing complete native projection boundary, retaining the
+shared actual model workspace/executor and exclusive attachment borrow.
 
 The original full CPU13 vectors, tolerance, greedy IDs, real speculative repair,
 all-family fault and ownership closure remain authoritative and unchanged. A
@@ -18,8 +39,10 @@ not establish that acceptance.
 ## Source and mapping authority
 
 The gate borrows the existing actual attached public HOST mirror. It must not
-materialize a second model mirror, copy packed expert payloads, map the model
-file, reopen source paths, or issue weight reads while comparing operators.
+materialize a second model mirror, copy packed expert payloads, add a CPU-borrow
+model-file mapping, reopen source paths, or issue weight reads while comparing
+operators. Initial original target loading/source preparation retains its
+existing mapped-weight and payload-read path before the operator interval.
 The full mirror remains 432 original allocations with
 36,147,609,600 logical public RAM bytes and its existing physical envelope.
 Existing actual loaded resident banks and their complete frozen512 maps remain
@@ -78,7 +101,14 @@ packet mapping apply. It does not invoke the complete five-shard Sources launch
 and mislabel it HOST-only. It adds no arithmetic kernel or mutable source policy.
 Each successful comparison verifies all selected unweighted partials, exact
 inactive/tail rules, finite status, owning fault, unchanged sources and joined
-GPU completion. Original numeric bounds are preserved; no tolerance is widened.
+GPU completion. The existing original partial bounds are absolute1e-4 and
+relative3e-4; no tolerance is widened. Full-model bounds remain unchanged.
+
+This initial control uses original F32 HOST GU/DOWN arithmetic. The selected
+normal benchmark uses integer GU/DOWN arithmetic. A CPU win here establishes
+neither a win against the best integer GPU path nor a whole-model speed gain.
+The receipt records the control arithmetic and that the integer control was
+not compared. Extending that comparison is a separate gate.
 
 The dual source adapter must provide an opaque bounded dispatch/callback tied
 to its live attachment borrow. A public accessor returning independently
@@ -106,8 +136,28 @@ Its measured interval includes actual input/packet handoff to guarded host
 owners, borrowed CPU batch execution and all worker joins, complete returned
 partial encoding/upload into a separate owning GPU page, GPU finite/owner
 checks and queue completion. At H2560 the leaf's complete three-member/ten-rank
-logical output is307200bytes; inactive slots remain bitwise+0. There is no
+logical output is307200bytes; inactive slots remain bitwise+0. The current
+private upload controller requires an owned byte vector. After CPU workers have
+joined and their input/activation/scratch owners have been erased and released,
+the gate permits one bounded524288byte full-owner encoding copy alongside the
+retained307200byte CPU result. The encoded owner's217088byte tail is exact zero;
+the combined output phase is831488bytes before retained headers. Actual
+capacities and retained caller headers remain
+under the unchanged1MiB phased host cap. Encoding and upload cost are included
+in the completed CPU interval and copied byte counts are reported. No unsafe
+float-vector allocator reinterpretation is allowed. There is no
 zero-cost host-input shortcut or fabricated GPU completion.
+
+The original full input owner is131072bytes and the MAP/PROB owners are32768
+bytes each. The CPU arm reads and validates the full packet owners sequentially,
+releasing them before CPU computation. An existing GPU copy copies the first
+three actual member inputs into a separate full32768byte handoff owner; that
+copy and read are timed. Typed readback views require explicit four-byte
+alignment, complete word extent and little-endian checks. No unaligned cast or
+extra uncharged input-vector copy is permitted. The full original MAX8 input,
+all eight partial rows, remaining full-owner partial/activation padding,
+untouched output owner, readiness/status tails and uploaded CPU owner are
+checked during separate untimed numeric acceptance in both arms.
 
 The GPU arm starts with the same resident input and packet and measures the
 original HOST GU/DOWN projections, finite/owner checks and queue completion.
@@ -129,9 +179,9 @@ fit, reject that explicit case or choose a documented smaller fixed count;
 never widen the cap. Release phase-local input/scratch owners before encoding
 when necessary, without dropping source lifetime or returned output early.
 The first worker points are explicit fixed physical-core sets of8,12,15 when
-admitted. Borrow/cast the completed307200-byte CPU output directly into the
-existing transient upload interface; do not allocate another same-size host
-encoding copy merely to change its element type.
+admitted. The bounded encoding phase above uses the existing owned transient
+upload controller rather than adding a vendor upload API. Full weight bytes
+are never duplicated.
 
 Charge every additional GPU owner, runtime upload/read capacity and bounded
 map/header allocation explicitly. Existing MAIN/private/runtime caps, HOST
@@ -170,3 +220,13 @@ full span/padding proof, private budget rejection, sparse exact-zero output,
 default-unused behavior and failure/unwind joins. Passing them does not
 establish physical speed, same-allocation execution, full model correctness,
 or installed service stability.
+
+## Source validation checkpoint
+
+The controller and narrow model wrapper passed53 matching `public_host_`
+tests, including four new selector, partial-bound, alignment and padded-owner
+checks. Strict all-target direct-device Clippy with warnings denied and two
+build jobs passed. Formatting and whitespace checks passed. The source adapter
+has separate attachment/mirror/plan test coverage. Physical same-allocation
+numeric acceptance and timing remain pending; these source checks do not
+establish a speed gain.
