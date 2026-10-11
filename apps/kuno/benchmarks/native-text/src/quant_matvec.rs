@@ -262,6 +262,66 @@ pub(super) fn iq4_nl_value_with_scale(
     scale * iq4_value(code as usize)
 }
 
+/// One original IQ gate/up factor for a16-value IQ2_S or32-value IQ3 subgroup.
+#[cube]
+pub(super) fn iq_gate_up_factor(
+    words: &Array<u32>,
+    row_offset: usize,
+    column: usize,
+    #[comptime] dtype: u32,
+) -> f32 {
+    let mut factor = 0.0_f32;
+    if comptime!(dtype == IQ2_S) {
+        factor = daslab::iq2_s_factor(words, row_offset, column);
+    } else if comptime!(dtype == IQ3_S) {
+        factor = daslab::iq3_s_factor(words, row_offset, column);
+    } else if comptime!(dtype == IQ3_XXS) {
+        let base = row_offset + (column / 256) * 98;
+        let group = (column % 256) / 32;
+        let word = u32_at(words, base + 66 + group * 4);
+        factor = binary16(u16_at(words, base)) * (0.5_f32 + (word >> 28) as f32) * 0.5;
+    }
+    factor
+}
+
+/// Original magnitude/sign decoding, supplied with its exactly staged factor.
+#[cube]
+pub(super) fn iq_gate_up_value_with_factor(
+    words: &Array<u32>,
+    row_offset: usize,
+    column: usize,
+    factor: f32,
+    #[comptime] dtype: u32,
+) -> f32 {
+    let mut value = 0.0_f32;
+    if comptime!(dtype == IQ2_S) {
+        value = daslab::iq2_s_value_with_factor(words, row_offset, column, factor);
+    } else if comptime!(dtype == IQ3_S) {
+        value = daslab::iq3_s_value_with_factor(words, row_offset, column, factor);
+    } else if comptime!(dtype == IQ3_XXS) {
+        let base = row_offset + (column / 256) * 98;
+        let within = column % 256;
+        let group = within / 32;
+        let octet = (within % 32) / 8;
+        let lane = within % 8;
+        let word = u32_at(words, base + 66 + group * 4);
+        let sign_code = (word >> ((octet * 7) as u32)) & 127;
+        let mut parity = sign_code ^ (sign_code >> 4);
+        parity ^= parity >> 2;
+        parity ^= parity >> 1;
+        let signs = sign_code | ((parity & 1) << 7);
+        let grid_index = byte_at(words, base + 2 + group * 8 + octet * 2 + lane / 4);
+        let grid = iq3_grid_word(grid_index as usize);
+        let magnitude = (grid >> (((lane % 4) * 8) as u32)) & 255;
+        let mut sign = 1.0_f32;
+        if ((signs >> (lane as u32)) & 1) != 0 {
+            sign = -1.0;
+        }
+        value = factor * magnitude as f32 * sign;
+    }
+    value
+}
+
 /// F32 callers must use a four-byte-aligned row_offset. Validated tightly
 /// packed F32 rows are columns*4 bytes; whole-row tile/expert views preserve
 /// alignment. Quantized rows keep their original byte addressing below.

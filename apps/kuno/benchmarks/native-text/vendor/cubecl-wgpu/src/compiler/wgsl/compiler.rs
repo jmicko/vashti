@@ -126,8 +126,11 @@ impl WgslCompiler {
 
         let address_type = self.compile_storage_type(address_type);
         let mut instructions = self.compile_scope(&mut value.body);
-        if self.kernel_name == "grouped_gate_up_frozen_workgroup_grid"
-            && !self.const_arrays.is_empty()
+        if matches!(
+            self.kernel_name.as_str(),
+            "grouped_gate_up_frozen_workgroup_grid"
+                | "grouped_gate_up_frozen_workgroup_grid_shared_factors"
+        ) && !self.const_arrays.is_empty()
         {
             let exit = instructions.iter().position(|instruction| {
                 matches!(instruction, wgsl::Instruction::If { instructions, .. }
@@ -502,7 +505,11 @@ impl WgslCompiler {
                     .collect(),
             })
             .collect::<Vec<_>>();
-        if self.kernel_name == "grouped_gate_up_frozen_workgroup_grid" {
+        if matches!(
+            self.kernel_name.as_str(),
+            "grouped_gate_up_frozen_workgroup_grid"
+                | "grouped_gate_up_frozen_workgroup_grid_shared_factors"
+        ) {
             for array in const_arrays {
                 if let Some(original) = self.const_arrays.iter().find(|other| {
                     other.item == array.item

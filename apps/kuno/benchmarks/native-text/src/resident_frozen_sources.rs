@@ -20,6 +20,9 @@ enum GateKernel {
     Frozen,
     PrivateTables,
     WorkgroupTables,
+    SharedFactors,
+    PrivateFactors,
+    WorkgroupFactors,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DownKernel {
@@ -30,7 +33,11 @@ enum DownKernel {
 // This selector is used by actual dispatch, so compound policy tests cover the
 // runtime entrypoints rather than just the stored attachment flags.
 fn kernel_policy(g: k::Geometry) -> (GateKernel, DownKernel) {
-    let gate = if g.workgroup_tables() {
+    let gate = if g.shared_gate_up_factors() {
+        if g.workgroup_tables() { GateKernel::WorkgroupFactors }
+        else if g.private_tables() { GateKernel::PrivateFactors }
+        else { GateKernel::SharedFactors }
+    } else if g.workgroup_tables() {
         GateKernel::WorkgroupTables
     } else if g.private_tables() {
         GateKernel::PrivateTables
@@ -188,6 +195,7 @@ impl Sources {
             false,
             false,
             false,
+            false,
         )
     }
     /// Explicit matched-control candidate, frozen before any source descriptors
@@ -206,6 +214,7 @@ impl Sources {
             pages,
             reserved_host_bytes,
             true,
+            false,
             false,
             false,
             false,
@@ -231,6 +240,7 @@ impl Sources {
             true,
             false,
             false,
+            false,
         )
     }
     /// Literal-lane initialization of one shared immutable public IQ grid.
@@ -251,6 +261,7 @@ impl Sources {
             true,
             false,
             true,
+            false,
             false,
         )
     }
@@ -274,6 +285,29 @@ impl Sources {
             false,
             false,
             true,
+            false,
+        )
+    }
+    /// Explicit frozen IQ2/IQ3 subgroup-factor staging candidate.
+    #[allow(dead_code)]
+    pub(crate) fn new_with_shared_gate_up_factors(
+        executor: &GpuExecutor<'_>,
+        graph: BoundGraph<'_, '_>,
+        plan: &plan::Plan<'_, '_>,
+        pages: Vec<RegisteredPage>,
+        reserved_host_bytes: u64,
+    ) -> Result<Arc<Self>> {
+        Self::new_with_policy(
+            executor,
+            graph,
+            plan,
+            pages,
+            reserved_host_bytes,
+            true,
+            false,
+            false,
+            false,
+            true,
         )
     }
     #[allow(clippy::too_many_arguments)]
@@ -287,8 +321,10 @@ impl Sources {
         private_tables: bool,
         workgroup_tables: bool,
         shared_down_scales: bool,
+        shared_gate_up_factors: bool,
     ) -> Result<Arc<Self>> {
-        if (private_tables || workgroup_tables || shared_down_scales) && !inactive_partition_exit
+        if (private_tables || workgroup_tables || shared_down_scales || shared_gate_up_factors)
+            && !inactive_partition_exit
             || private_tables && workgroup_tables
             || reserved_host_bytes < EXTRA_HOST_BYTES
             || graph.binding_id() != plan.binding()
@@ -349,6 +385,9 @@ impl Sources {
             }
             if shared_down_scales {
                 geometry = geometry.with_shared_down_scales().map_err(err)?;
+            }
+            if shared_gate_up_factors {
+                geometry = geometry.with_shared_gate_up_factors().map_err(err)?;
             }
             let layer_bound = StagedSlots::bounded_native_metadata_bytes(144)
                 .map_err(|_| reject())?
@@ -510,6 +549,9 @@ impl Sources {
     }
     pub(crate) fn shared_down_scales(&self) -> bool {
         self.layers[0].geometry.shared_down_scales()
+    }
+    pub(crate) fn shared_gate_up_factors(&self) -> bool {
+        self.layers[0].geometry.shared_gate_up_factors()
     }
     fn check_layer(&self, layer: usize, bank: &ExpertBanks) -> Result<&Layer> {
         let l = self.layers.get(layer).ok_or(reject())?;
@@ -1046,6 +1088,14 @@ impl Workspace {
             .ok_or_else(reject)?
             .shared_down_scales())
     }
+    #[allow(dead_code)]
+    pub(crate) fn frozen_host_source_shared_gate_up_factors(&self) -> Result<bool> {
+        Ok(self
+            .frozen_sources
+            .as_ref()
+            .ok_or_else(reject)?
+            .shared_gate_up_factors())
+    }
     pub(crate) fn frozen_source_counters(&self) -> Counters {
         self.frozen_source_counters
     }
@@ -1117,6 +1167,9 @@ impl Workspace {
             }
             if sources.shared_down_scales() {
                 g = g.with_shared_down_scales().map_err(err)?;
+            }
+            if sources.shared_gate_up_factors() {
+                g = g.with_shared_gate_up_factors().map_err(err)?;
             }
             if g != sources.geometry(layer, bank)? {
                 return Err(reject());
@@ -1565,6 +1618,26 @@ impl Sources {
                 };
             }
             match kernel_policy(g) {
+                (GateKernel::WorkgroupFactors, DownKernel::SharedScales) => dispatch!(
+                    grouped_gate_up_frozen_workgroup_grid_shared_factors,
+                    grouped_down_frozen_shared_scales
+                ),
+                (GateKernel::WorkgroupFactors, DownKernel::Frozen) => dispatch!(
+                    grouped_gate_up_frozen_workgroup_grid_shared_factors, grouped_down_frozen
+                ),
+                (GateKernel::PrivateFactors, DownKernel::SharedScales) => dispatch!(
+                    grouped_gate_up_frozen_private_grid_shared_factors,
+                    grouped_down_frozen_shared_scales
+                ),
+                (GateKernel::PrivateFactors, DownKernel::Frozen) => dispatch!(
+                    grouped_gate_up_frozen_private_grid_shared_factors, grouped_down_frozen
+                ),
+                (GateKernel::SharedFactors, DownKernel::SharedScales) => dispatch!(
+                    grouped_gate_up_frozen_shared_factors, grouped_down_frozen_shared_scales
+                ),
+                (GateKernel::SharedFactors, DownKernel::Frozen) => dispatch!(
+                    grouped_gate_up_frozen_shared_factors, grouped_down_frozen
+                ),
                 (GateKernel::WorkgroupTables, DownKernel::SharedScales) => dispatch!(
                     grouped_gate_up_frozen_workgroup_grid,
                     grouped_down_frozen_shared_scales
@@ -1627,8 +1700,18 @@ mod tests {
                     GateKernel::Frozen => frozen,
                     GateKernel::PrivateTables => frozen.with_private_tables().unwrap(),
                     GateKernel::WorkgroupTables => frozen.with_workgroup_tables().unwrap(),
-                    GateKernel::Original => unreachable!(),
+                    _ => unreachable!(),
                 };
+                let factor = match table {
+                    GateKernel::Frozen => GateKernel::SharedFactors,
+                    GateKernel::PrivateTables => GateKernel::PrivateFactors,
+                    GateKernel::WorkgroupTables => GateKernel::WorkgroupFactors,
+                    _ => unreachable!(),
+                };
+                let factors = selected.with_shared_gate_up_factors().unwrap();
+                assert_eq!(kernel_policy(factors), (factor, DownKernel::Frozen));
+                assert_eq!(kernel_policy(factors.with_shared_down_scales().unwrap()),
+                    (factor, DownKernel::SharedScales));
                 assert_eq!(kernel_policy(selected), (table, DownKernel::Frozen));
                 assert_eq!(
                     kernel_policy(selected.with_shared_down_scales().unwrap()),

@@ -75,6 +75,82 @@ pub(super) fn iq3_s(words: &Array<u32>, row: usize, column: usize) -> f32 {
     value
 }
 
+// Staged subgroup factors retain the original scalar multiply order. The
+// original decoders above remain unchanged for every unselected entrypoint.
+#[cube]
+pub(super) fn iq2_s_factor(words: &Array<u32>, row: usize, column: usize) -> f32 {
+    let base = row + (column / 256) * 82;
+    let index = column % 256;
+    let group = index / 32;
+    let scales = byte_at(words, base + 74 + group);
+    let mut scale = scales & 15;
+    if index % 32 >= 16 {
+        scale = scales >> 4;
+    }
+    binary16(u16_at(words, base)) * (0.5 + scale as f32) * 0.25
+}
+
+#[cube]
+pub(super) fn iq2_s_value_with_factor(
+    words: &Array<u32>,
+    row: usize,
+    column: usize,
+    factor: f32,
+) -> f32 {
+    let base = row + (column / 256) * 82;
+    let index = column % 256;
+    let group = index / 32;
+    let octet = (index % 32) / 8;
+    let lane = index % 8;
+    let low = byte_at(words, base + 2 + group * 4 + octet);
+    let high = (byte_at(words, base + 66 + group) >> ((2 * octet) as u32)) & 3;
+    let grid = iq2_grid_word((low | (high << 8)) as usize, lane / 4);
+    let quant = (grid >> (((lane % 4) * 8) as u32)) & 255;
+    let mut value = factor * quant as f32;
+    let signs = byte_at(words, base + 34 + group * 4 + octet);
+    if ((signs >> (lane as u32)) & 1) != 0 {
+        value *= -1.0;
+    }
+    value
+}
+
+#[cube]
+pub(super) fn iq3_s_factor(words: &Array<u32>, row: usize, column: usize) -> f32 {
+    let base = row + (column / 256) * 110;
+    let group = (column % 256) / 32;
+    let scales = byte_at(words, base + 106 + group / 2);
+    let mut scale = scales & 15;
+    if (group & 1) != 0 {
+        scale = scales >> 4;
+    }
+    binary16(u16_at(words, base)) * (1 + 2 * scale) as f32
+}
+
+#[cube]
+pub(super) fn iq3_s_value_with_factor(
+    words: &Array<u32>,
+    row: usize,
+    column: usize,
+    factor: f32,
+) -> f32 {
+    let base = row + (column / 256) * 110;
+    let index = column % 256;
+    let group = index / 32;
+    let octet = (index % 32) / 8;
+    let lane = index % 8;
+    let quartet = octet * 2 + lane / 4;
+    let low = byte_at(words, base + 2 + group * 8 + quartet);
+    let high = (byte_at(words, base + 66 + group) >> (quartet as u32)) & 1;
+    let grid = iq3_grid_word((low | (high << 8)) as usize);
+    let quant = (grid >> (((lane % 4) * 8) as u32)) & 255;
+    let mut value = factor * quant as f32;
+    let signs = byte_at(words, base + 74 + group * 4 + octet);
+    if ((signs >> (lane as u32)) & 1) != 0 {
+        value *= -1.0;
+    }
+    value
+}
+
 #[cube]
 pub(super) fn q2_0(words: &Array<u32>, row: usize, column: usize) -> f32 {
     let base = row + (column / 64) * 18;

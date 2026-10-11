@@ -9,7 +9,10 @@
 //! No bank fill, commit, graph hook, CPU fallback or device action lives here.
 //! Parent owns physical owner/alias/epoch/device-limit validation and acceptance.
 
-use super::{IQ4_NL, Q4_K, binary16, iq4_nl_scale, iq4_nl_value_with_scale, packed_value};
+use super::{
+    IQ2_S, IQ3_S, IQ3_XXS, IQ4_NL, Q4_K, binary16, iq_gate_up_factor, iq_gate_up_value_with_factor,
+    iq4_nl_scale, iq4_nl_value_with_scale, packed_value,
+};
 use cubecl::prelude::*;
 use zeroize::Zeroize;
 
@@ -159,6 +162,7 @@ pub struct Geometry {
     private_tables: bool,
     workgroup_tables: bool,
     shared_down_scales: bool,
+    shared_gate_up_factors: bool,
 }
 impl Geometry {
     pub fn new(
@@ -217,6 +221,7 @@ impl Geometry {
             private_tables: false,
             workgroup_tables: false,
             shared_down_scales: false,
+            shared_gate_up_factors: false,
         })
     }
     /// Explicit source-only public profile. These virtual slots are NOT
@@ -331,6 +336,27 @@ impl Geometry {
     }
     pub(crate) fn shared_down_scales(self) -> bool {
         self.shared_down_scales
+    }
+    /// Original IQ2/IQ3 subgroup factors shared by the active frozen row.
+    /// Public codebook placement and down scales remain independent policies.
+    #[allow(dead_code)]
+    pub(crate) fn with_shared_gate_up_factors(mut self) -> Result<Self, &'static str> {
+        if !self.frozen_host_sources
+            || !self.inactive_partition_exit
+            || self.capacity != 512
+            || self.tile != 8
+            || self.secondary_partition
+            || self.gate_policy != GatePolicy::Generic
+            || self.reduction_policy != ReductionPolicy::AllMembers
+            || self.shared_gate_up_factors
+        {
+            return Err("grouped frozen shared-gate-up-factor policy");
+        }
+        self.shared_gate_up_factors = true;
+        Ok(self)
+    }
+    pub(crate) fn shared_gate_up_factors(self) -> bool {
+        self.shared_gate_up_factors
     }
     /// Narrow immutable32+16 partition; ordinary flat48 remains unchanged.
     pub(crate) fn stationary_secondary(projections: [Projection; 3]) -> Result<Self, &'static str> {
@@ -1157,6 +1183,7 @@ pub fn grouped_gate_up(
         q4_block,
         false,
         false,
+        false,
     );
 }
 
@@ -1212,6 +1239,7 @@ pub fn grouped_gate_up_frozen(
         q4_block,
         false,
         true,
+        false,
     );
 }
 
@@ -1268,6 +1296,7 @@ pub fn grouped_gate_up_frozen_private_grid(
         q4_block,
         false,
         true,
+        false,
     );
 }
 
@@ -1324,6 +1353,175 @@ pub fn grouped_gate_up_frozen_workgroup_grid(
         q4_block,
         false,
         true,
+        false,
+    );
+}
+
+/// Original frozen IQ subgroup factors; exact original code/sign and tree.
+#[cube(launch, launch_unchecked)]
+#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
+pub fn grouped_gate_up_frozen_shared_factors(
+    gate: &Array<u32>,
+    up: &Array<u32>,
+    input: &Array<f32>,
+    map: &Array<u32>,
+    activations: &mut Array<f32>,
+    status: &mut Array<u32>,
+    map_first: usize,
+    input_first: usize,
+    input_stride: usize,
+    act_first: usize,
+    act_stride: usize,
+    status_first: usize,
+    first_slot: usize,
+    slot_count: usize,
+    #[comptime] hidden: usize,
+    #[comptime] ff: usize,
+    #[comptime] gate_dtype: u32,
+    #[comptime] up_dtype: u32,
+    #[comptime] gate_row_bytes: usize,
+    #[comptime] up_row_bytes: usize,
+    #[comptime] tile: usize,
+    #[comptime] q4_block: bool,
+) {
+    grouped_gate_up_inner(
+        gate,
+        up,
+        input,
+        map,
+        activations,
+        status,
+        map_first,
+        input_first,
+        input_stride,
+        act_first,
+        act_stride,
+        status_first,
+        first_slot,
+        slot_count,
+        hidden,
+        ff,
+        gate_dtype,
+        up_dtype,
+        gate_row_bytes,
+        up_row_bytes,
+        tile,
+        q4_block,
+        false,
+        true,
+        true,
+    );
+}
+
+/// Original frozen IQ subgroup factors; exact original code/sign and tree.
+#[cube(launch, launch_unchecked)]
+#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
+pub fn grouped_gate_up_frozen_private_grid_shared_factors(
+    gate: &Array<u32>,
+    up: &Array<u32>,
+    input: &Array<f32>,
+    map: &Array<u32>,
+    activations: &mut Array<f32>,
+    status: &mut Array<u32>,
+    map_first: usize,
+    input_first: usize,
+    input_stride: usize,
+    act_first: usize,
+    act_stride: usize,
+    status_first: usize,
+    first_slot: usize,
+    slot_count: usize,
+    #[comptime] hidden: usize,
+    #[comptime] ff: usize,
+    #[comptime] gate_dtype: u32,
+    #[comptime] up_dtype: u32,
+    #[comptime] gate_row_bytes: usize,
+    #[comptime] up_row_bytes: usize,
+    #[comptime] tile: usize,
+    #[comptime] q4_block: bool,
+) {
+    grouped_gate_up_inner(
+        gate,
+        up,
+        input,
+        map,
+        activations,
+        status,
+        map_first,
+        input_first,
+        input_stride,
+        act_first,
+        act_stride,
+        status_first,
+        first_slot,
+        slot_count,
+        hidden,
+        ff,
+        gate_dtype,
+        up_dtype,
+        gate_row_bytes,
+        up_row_bytes,
+        tile,
+        q4_block,
+        false,
+        true,
+        true,
+    );
+}
+
+/// Original frozen IQ subgroup factors; exact original code/sign and tree.
+#[cube(launch, launch_unchecked)]
+#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
+pub fn grouped_gate_up_frozen_workgroup_grid_shared_factors(
+    gate: &Array<u32>,
+    up: &Array<u32>,
+    input: &Array<f32>,
+    map: &Array<u32>,
+    activations: &mut Array<f32>,
+    status: &mut Array<u32>,
+    map_first: usize,
+    input_first: usize,
+    input_stride: usize,
+    act_first: usize,
+    act_stride: usize,
+    status_first: usize,
+    first_slot: usize,
+    slot_count: usize,
+    #[comptime] hidden: usize,
+    #[comptime] ff: usize,
+    #[comptime] gate_dtype: u32,
+    #[comptime] up_dtype: u32,
+    #[comptime] gate_row_bytes: usize,
+    #[comptime] up_row_bytes: usize,
+    #[comptime] tile: usize,
+    #[comptime] q4_block: bool,
+) {
+    grouped_gate_up_inner(
+        gate,
+        up,
+        input,
+        map,
+        activations,
+        status,
+        map_first,
+        input_first,
+        input_stride,
+        act_first,
+        act_stride,
+        status_first,
+        first_slot,
+        slot_count,
+        hidden,
+        ff,
+        gate_dtype,
+        up_dtype,
+        gate_row_bytes,
+        up_row_bytes,
+        tile,
+        q4_block,
+        false,
+        true,
+        true,
     );
 }
 
@@ -1379,6 +1577,7 @@ pub fn grouped_gate_up_live(
         q4_block,
         true,
         false,
+        false,
     );
 }
 
@@ -1409,6 +1608,7 @@ fn grouped_gate_up_inner(
     #[comptime] q4_block: bool,
     #[comptime] live_member_reduction: bool,
     #[comptime] inactive_partition_exit: bool,
+    #[comptime] shared_gate_up_factors: bool,
 ) {
     let feature = CUBE_POS_X as usize;
     let group = CUBE_POS_Y as usize;
@@ -1496,6 +1696,64 @@ fn grouped_gate_up_inner(
                     let x = input[input_base + column];
                     gates[0] += g * x;
                     ups[0] += u * x;
+                }
+            }
+        } else if comptime!(
+            shared_gate_up_factors
+                && (gate_dtype == IQ2_S || gate_dtype == IQ3_XXS || gate_dtype == IQ3_S)
+        ) {
+            // Frozen geometry proves equal GU dtypes and2560 input columns.
+            // Every active lane reaches the barrier; each factor is written
+            // exactly once by its lane-strided index before any factor read.
+            let factor_width = comptime!(if gate_dtype == IQ2_S { 16 } else { 32 });
+            let factors_per_row = comptime!(hidden / factor_width);
+            let mut factors = SharedMemory::<f32>::new(comptime!(factors_per_row * 2));
+            for factor_tile in 0..comptime!((factors_per_row * 2).div_ceil(LANES)) {
+                let index = factor_tile * LANES + lane;
+                if index < comptime!(factors_per_row * 2) {
+                    if index < comptime!(factors_per_row) {
+                        factors[index] =
+                            iq_gate_up_factor(gate, gate_offset, index * factor_width, gate_dtype);
+                    } else {
+                        factors[index] = iq_gate_up_factor(
+                            up,
+                            up_offset,
+                            (index - factors_per_row) * factor_width,
+                            up_dtype,
+                        );
+                    }
+                }
+            }
+            sync_cube();
+            for column_tile in 0..comptime!(hidden.div_ceil(LANES)) {
+                let column = column_tile * LANES + lane;
+                if column < hidden {
+                    let factor_index = column / factor_width;
+                    let g = iq_gate_up_value_with_factor(
+                        gate,
+                        gate_offset,
+                        column,
+                        factors[factor_index],
+                        gate_dtype,
+                    );
+                    let u = iq_gate_up_value_with_factor(
+                        up,
+                        up_offset,
+                        column,
+                        factors[factors_per_row + factor_index],
+                        up_dtype,
+                    );
+                    #[unroll]
+                    for member in 0..tile {
+                        if first_member + member < length {
+                            let route = map
+                                [map_first + MEMBERS + group * MAX_BATCH + first_member + member]
+                                as usize;
+                            let x = input[input_first + route / RANKS * input_stride + column];
+                            gates[member] += g * x;
+                            ups[member] += u * x;
+                        }
+                    }
                 }
             }
         } else {
@@ -2347,6 +2605,7 @@ mod tests {
             private_tables: false,
             workgroup_tables: false,
             shared_down_scales: false,
+            shared_gate_up_factors: false,
         };
         assert_eq!(g.scratch_bytes(true).unwrap(), 4480 * 1024);
     }
@@ -5069,6 +5328,7 @@ mod tests {
         assert_eq!(SCRATCH_WIPES.with(|n| n.get()), before + 5);
     }
     include!("iq4_down_scale_tests.rs");
+    include!("iq_gate_up_factor_tests.rs");
 }
 #[cfg(test)]
 mod frozen_source_tests {
