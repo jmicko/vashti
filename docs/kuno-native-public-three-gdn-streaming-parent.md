@@ -105,3 +105,20 @@ blocker after the actual partition-exit/deferred-I/O predicates were included.
 Root-owned protected registration, full original device gates, throughput and
 physical recovery remain pending. No GPU, service or installed test was run by
 this parent integration.
+
+
+## Root physical acceptance,2026-10-11
+
+Integrated sourcee16c549 / frozenv156 binarySHA256
+`0a4ddf0f1725922ffff94572a1751aa92e2450faf2a7f8fdae3c0eb062a3f907`
+passes the complete original CPU13 coldChunk/warmThreeGdn gate and actual
+repair/full closure. Warm replay records8completedThreeGdn chunks. Normal
+code200 records74completedThreeGdn chunks,130/138drafts/69rounds and199timed
+continuations in23.441199195s (8.489327t/s). Warm diagnostic5.479043 is not normal
+speed. Both retain four-rowDOWN/shared-Q8-head, no three-memberMoE/staging.
+Same-artifact control is8.542111t/s, but agentClippy may overlap its timing;
+this is not a compiler-idle causal pair. No improvement is established; defaultoff.
+Full1380MAIN/828866560B,432HOST pages/36147609600B and draft42private owners
+close; recovered14:51:03UTC B70baseline/NVIDIAcompute0/allHTTP200/idle admission/
+no classified GPU faults. Exact hashes/numeric receipts: v156_three_gdn_streaming_physical.
+IndependentCPU200, private/production and release acceptance remain unclaimed.

@@ -3324,3 +3324,22 @@ isolated original-arithmetic three-token GDN streaming source to remove a large
 private column array. Neither is physically accepted yet. Root owns all shared
 GPU/services. Backend-only lab; required Vashti changes:none, installed services
 and public API unchanged. No30tokens/s or release/production acceptance.
+
+
+### Active native backend optimization checkpoint,2026-10-11 14:51UTC
+
+Latest sourcee16c549/v156 three-token GDN passes original CPU13 and normal
+code200 full greedy/repair/owning closure:8.489327continuationt/s,199timed,
+130/138drafts/69rounds,74actualThreeGdn chunks. Same-artifact control is8.542111t/s but agentClippy may overlap;
+no compiler-idle causal pair or gain claimed. Original Q2 with previous three-member/four-DOWN target
+also passes at7.949402; its public GPU weight budget falls to2,539,257,856B,
+but no faster inference is established. Earlier staging and three-member
+physical gates are accepted and their slower preliminary timings remain defaultoff.
+Read the updated next-model handoff and exact numeric receipt sections
+v155_original_q2_frozen_physical /v156_three_gdn_streaming_physical.
+Root owns sharedGPU trials; leaf work proceeds in separate managed worktrees.
+Next draft-only experiment is the pinned static English/code vocabulary;
+source work is not GPU/throughput acceptance. Last recovery14:51:03UTC restores
+baseline GPUs, idle/unpaused/no-recovery admission, allHTTP200, classifiedfaults0.
+No30tokens/s/private/production claim; installedservices/API/canonicalVashti
+unchanged. Backend-only internal work; required Vashti changes:none.
