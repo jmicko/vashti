@@ -119,6 +119,19 @@ fn three_member_geometry(g: k::Geometry, enabled: bool) -> Result<k::Geometry> {
         Ok(g)
     }
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SourcePhase {
+    Interleaved,
+    GateOnly,
+    PrepareAndDown,
+}
+fn source_phases(down_integer: bool) -> &'static [SourcePhase] {
+    if down_integer {
+        &[SourcePhase::GateOnly, SourcePhase::PrepareAndDown]
+    } else {
+        &[SourcePhase::Interleaved]
+    }
+}
 const PARTS: [usize; 5] = [72, 72, 144, 144, 80];
 const FIRST: [usize; 5] = [0, 72, 144, 288, 432];
 const ROLES: [Role; 3] = [Role::Gate, Role::Up, Role::Down];
@@ -229,6 +242,7 @@ pub(crate) struct Sources {
     gu_integer: bool,
     gu_stride_four: bool,
     down_stride_four: bool,
+    down_integer: bool,
 }
 fn initial_metadata(layers: usize, pages: usize, banks: usize) -> Result<usize> {
     let bytes = std::mem::size_of::<Sources>()
@@ -418,6 +432,39 @@ impl Sources {
         Ok(())
     }
     #[allow(clippy::too_many_arguments)] // Independent immutable source-policy axes.
+    pub(crate) fn down_integer(&self) -> bool {
+        self.down_integer
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn validate_down_integer_policy(
+        selected: bool,
+        exit: bool,
+        private: bool,
+        workgroup: bool,
+        scales: bool,
+        factors: bool,
+        four_rows: bool,
+        two_gu: bool,
+        staging: bool,
+        three_members: bool,
+        stride_four: bool,
+    ) -> Result<()> {
+        if selected
+            && (!exit
+                || private
+                || workgroup
+                || scales
+                || factors
+                || four_rows
+                || two_gu
+                || staging
+                || three_members
+                || stride_four)
+        {
+            return Err(reject());
+        }
+        Ok(())
+    }
     pub(crate) fn validate_gu_integer_policy(
         selected: bool,
         exit: bool,
@@ -653,6 +700,62 @@ impl Sources {
         gu_stride_four: bool,
         down_stride_four: bool,
     ) -> Result<Arc<Self>> {
+        // Original entry retains its exact default arithmetic policy.
+        Self::new_with_policy_and_down_math(
+            executor,
+            graph,
+            plan,
+            pages,
+            reserved_host_bytes,
+            inactive_partition_exit,
+            private_tables,
+            workgroup_tables,
+            shared_down_scales,
+            shared_gate_up_factors,
+            four_row_down,
+            two_row_gate_up,
+            packed_host_staging,
+            three_members,
+            gu_integer,
+            gu_stride_four,
+            down_stride_four,
+            false,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_with_policy_and_down_math(
+        executor: &GpuExecutor<'_>,
+        graph: BoundGraph<'_, '_>,
+        plan: &plan::Plan<'_, '_>,
+        pages: Vec<RegisteredPage>,
+        reserved_host_bytes: u64,
+        inactive_partition_exit: bool,
+        private_tables: bool,
+        workgroup_tables: bool,
+        shared_down_scales: bool,
+        shared_gate_up_factors: bool,
+        four_row_down: bool,
+        two_row_gate_up: bool,
+        packed_host_staging: bool,
+        three_members: bool,
+        gu_integer: bool,
+        gu_stride_four: bool,
+        down_stride_four: bool,
+        down_integer: bool,
+    ) -> Result<Arc<Self>> {
+        Self::validate_down_integer_policy(
+            down_integer,
+            inactive_partition_exit,
+            private_tables,
+            workgroup_tables,
+            shared_down_scales,
+            shared_gate_up_factors,
+            four_row_down,
+            two_row_gate_up,
+            packed_host_staging,
+            three_members,
+            down_stride_four,
+        )?;
         Self::validate_gu_schedule_policy(gu_integer, gu_stride_four)?;
         Self::validate_down_stride_four_policy(
             down_stride_four,
@@ -703,8 +806,9 @@ impl Sources {
             packed_host_staging,
             three_members,
         )?;
-        if gu_integer != executor.target_frozen_gu_integer_reserved
-            || (gu_integer || down_stride_four)
+        if down_integer != executor.target_frozen_down_integer_reserved
+            || gu_integer != executor.target_frozen_gu_integer_reserved
+            || (gu_integer || down_stride_four || down_integer)
                 && (!executor.target_frozen_host_router_reserved
                     || !executor.target_batch_router_reserved
                     || !executor.target_rows_reserved
@@ -791,6 +895,9 @@ impl Sources {
             geometry = three_member_geometry(geometry, three_members)?;
             if gu_integer {
                 crate::quant_matvec::frozen_gu_integer::validate_geometry(geometry)?;
+            }
+            if down_integer {
+                crate::quant_matvec::frozen_down_integer::validate_geometry(geometry)?;
             }
             let layer_bound = StagedSlots::bounded_native_metadata_bytes(144)
                 .map_err(|_| reject())?
@@ -940,6 +1047,7 @@ impl Sources {
             gu_integer,
             gu_stride_four,
             down_stride_four,
+            down_integer,
         }))
     }
     pub(crate) fn gu_integer(&self) -> bool {
@@ -1129,6 +1237,7 @@ impl Sources {
             &[],
             None,
             None,
+            None,
         )
     }
     #[allow(clippy::too_many_arguments)]
@@ -1143,6 +1252,7 @@ impl Sources {
         router: &[BufferId; 3],
         staging: Option<&[BufferId; 3]>,
         gu_integer: Option<BufferId>,
+        down_integer: Option<BufferId>,
     ) -> Result<()> {
         self.physical_inner(
             arena,
@@ -1154,6 +1264,7 @@ impl Sources {
             router,
             staging,
             gu_integer,
+            down_integer,
         )
     }
     #[allow(clippy::too_many_arguments)]
@@ -1168,12 +1279,15 @@ impl Sources {
         router: &[BufferId],
         staging: Option<&[BufferId; 3]>,
         gu_integer: Option<BufferId>,
+        down_integer: Option<BufferId>,
     ) -> Result<()> {
         if !matches!(router.len(), 0 | 3)
             || self.packed_host_staging != staging.is_some()
             || staging.is_some() && router.len() != 3
             || self.gu_integer != gu_integer.is_some()
             || gu_integer.is_some() && (router.len() != 3 || staging.is_some())
+            || self.down_integer != down_integer.is_some()
+            || down_integer.is_some() && (router.len() != 3 || staging.is_some())
             || self.down_stride_four && router.len() != 3
         {
             return Err(reject());
@@ -1183,7 +1297,11 @@ impl Sources {
         bank.check_client(client)?;
         let stream = arena.handle(fault).map_err(u::fault)?.stream;
         let stage_ids = staging.map_or(&[][..], |ids| &ids[..]);
-        let private = 8 + router.len() + stage_ids.len() + usize::from(gu_integer.is_some());
+        let private = 8
+            + router.len()
+            + stage_ids.len()
+            + usize::from(gu_integer.is_some())
+            + usize::from(down_integer.is_some());
         let extent_count = private + PAGES;
         let mut handles = Vec::with_capacity(extent_count);
         let mut extents = Zeroizing::new([(0u64, 0u64); ROUTER_EXTENTS]);
@@ -1194,6 +1312,7 @@ impl Sources {
             .chain(router.iter().copied())
             .chain(stage_ids.iter().copied())
             .chain(gu_integer)
+            .chain(down_integer)
             .enumerate()
         {
             if ids[..i.min(ids.len())].contains(&id) {
@@ -1212,6 +1331,13 @@ impl Sources {
                 && (bytes != FROZEN_GU_INTEGER_MAIN_BYTES
                     || arena.layout(id).map_err(u::fault)?.logical_words
                         != FROZEN_GU_INTEGER_SCRATCH_WORDS)
+            {
+                return Err(reject());
+            }
+            if down_integer == Some(id)
+                && (bytes != FROZEN_DOWN_INTEGER_MAIN_BYTES
+                    || arena.layout(id).map_err(u::fault)?.logical_words
+                        != FROZEN_DOWN_INTEGER_SCRATCH_WORDS)
             {
                 return Err(reject());
             }
@@ -1399,9 +1525,33 @@ impl DownStrideFourDispatch {
         Ok(())
     }
 }
+#[derive(Clone, Copy)]
+struct DownIntegerDispatch {
+    layer: usize,
+    count: usize,
+    preparations: u64,
+    dispatches: u64,
+    audits: u64,
+}
+impl DownIntegerDispatch {
+    fn validate(self, layer: usize, count: usize) -> Result<()> {
+        if self.layer != layer
+            || layer >= 48
+            || self.count != count
+            || !(1..=3).contains(&count)
+            || self.preparations != 1
+            || self.dispatches != 5
+            || self.audits != 1
+        {
+            return Err(reject());
+        }
+        Ok(())
+    }
+}
 struct SourceLaunch {
     gu_integer: Option<GuIntegerDispatch>,
     down_stride_four: Option<DownStrideFourDispatch>,
+    down_integer: Option<DownIntegerDispatch>,
 }
 pub(super) struct Proof {
     pub(super) source: Arc<Sources>,
@@ -1412,6 +1562,7 @@ pub(super) struct Proof {
     host: u64,
     gu_integer_launch: Option<GuIntegerDispatch>,
     down_stride_four_launch: Option<DownStrideFourDispatch>,
+    down_integer_launch: Option<DownIntegerDispatch>,
     pub(super) router_owners: Option<Zeroizing<[BufferId; 3]>>,
 }
 impl Drop for Proof {
@@ -1420,6 +1571,7 @@ impl Drop for Proof {
         self.host.zeroize();
         self.gu_integer_launch = None;
         self.down_stride_four_launch = None;
+        self.down_integer_launch = None;
     }
 }
 impl Proof {
@@ -1449,6 +1601,7 @@ impl Proof {
             host: 0,
             gu_integer_launch: None,
             down_stride_four_launch: None,
+            down_integer_launch: None,
             router_owners: None,
         };
         for (i, &expert) in union.protected_experts().iter().enumerate() {
@@ -1484,6 +1637,7 @@ impl Proof {
             host: 0,
             gu_integer_launch: None,
             down_stride_four_launch: None,
+            down_integer_launch: None,
             router_owners: Some(Zeroizing::new(router_owners)),
         })
     }
@@ -1517,6 +1671,23 @@ impl Proof {
                 return Err(reject());
             }
             self.down_stride_four_launch = Some(receipt);
+        }
+        Ok(())
+    }
+    fn record_down_integer_launch(
+        &mut self,
+        layer: usize,
+        receipt: Option<DownIntegerDispatch>,
+    ) -> Result<()> {
+        if self.down_integer_launch.is_some() || self.source.down_integer != receipt.is_some() {
+            return Err(reject());
+        }
+        if let Some(receipt) = receipt {
+            receipt.validate(layer, *self.count)?;
+            if self.router_owners.is_none() {
+                return Err(reject());
+            }
+            self.down_integer_launch = Some(receipt);
         }
         Ok(())
     }
@@ -1656,6 +1827,19 @@ fn down_stride_four_completed_flag(
     }
     Ok(selected)
 }
+fn down_integer_completed_flag(
+    selected: bool,
+    preparations: u64,
+    dispatches: u64,
+    audits: u64,
+    source_dispatches: u64,
+) -> Result<bool> {
+    gu_integer_completed_flag(selected, preparations, dispatches, audits)?;
+    if selected && preparations.checked_mul(10) != Some(source_dispatches) {
+        return Err(reject());
+    }
+    Ok(selected)
+}
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct Counters {
     pub vram_routes: u64,
@@ -1667,6 +1851,9 @@ pub(crate) struct Counters {
     pub gu_integer_audits: u64,
     pub down_stride_four_layers: u64,
     pub down_stride_four_dispatches: u64,
+    pub down_integer_preparations: u64,
+    pub down_integer_dispatches: u64,
+    pub down_integer_audits: u64,
     pub staging_dispatches: u64,
     pub staged_unique_host_groups: u64,
     pub staged_packed_bytes: u64,
@@ -1688,6 +1875,14 @@ impl Counters {
                 receipt.dispatches
             }
             None if !p.source.down_stride_four => 0,
+            _ => return Err(reject()),
+        };
+        let down_integer = match p.down_integer_launch {
+            Some(receipt) if p.source.down_integer && p.router_owners.is_some() => {
+                receipt.validate(layer, *p.count)?;
+                receipt.dispatches
+            }
+            None if !p.source.down_integer => 0,
             _ => return Err(reject()),
         };
         let (groups, bytes) = if p.source.packed_host_staging {
@@ -1744,6 +1939,18 @@ impl Counters {
             down_stride_four_dispatches: self
                 .down_stride_four_dispatches
                 .checked_add(down_stride_four)
+                .ok_or(Error::ArithmeticOverflow)?,
+            down_integer_preparations: self
+                .down_integer_preparations
+                .checked_add(u64::from(down_integer != 0))
+                .ok_or(Error::ArithmeticOverflow)?,
+            down_integer_dispatches: self
+                .down_integer_dispatches
+                .checked_add(down_integer)
+                .ok_or(Error::ArithmeticOverflow)?,
+            down_integer_audits: self
+                .down_integer_audits
+                .checked_add(u64::from(down_integer != 0))
                 .ok_or(Error::ArithmeticOverflow)?,
             source_dispatches: self
                 .source_dispatches
@@ -1850,6 +2057,22 @@ impl Workspace {
             counters.gu_stride_four_dispatches,
         )
     }
+    pub(crate) fn frozen_host_source_down_integer_selected(&self) -> bool {
+        self.frozen_sources
+            .as_ref()
+            .is_some_and(|source| source.down_integer())
+    }
+    pub(crate) fn frozen_host_source_down_integer(&self) -> Result<bool> {
+        let source = self.frozen_sources.as_ref().ok_or(reject())?;
+        let c = self.frozen_source_counters;
+        down_integer_completed_flag(
+            source.down_integer(),
+            c.down_integer_preparations,
+            c.down_integer_dispatches,
+            c.down_integer_audits,
+            c.source_dispatches,
+        )
+    }
     pub(crate) fn frozen_host_source_down_stride_four(&self) -> Result<bool> {
         let source = self.frozen_sources.as_ref().ok_or_else(reject)?;
         let counters = self.frozen_source_counters;
@@ -1881,6 +2104,19 @@ impl Workspace {
         reserved_host_bytes: u64,
     ) -> Result<()> {
         self.validate_public_warm_boundary(executor, graph, arena)?;
+        Sources::validate_down_integer_policy(
+            sources.down_integer(),
+            sources.inactive_partition_exit(),
+            sources.private_tables(),
+            sources.workgroup_tables(),
+            sources.shared_down_scales(),
+            sources.shared_gate_up_factors(),
+            sources.four_row_down(),
+            sources.two_row_gate_up(),
+            sources.packed_host_staging(),
+            sources.three_members(),
+            sources.down_stride_four(),
+        )?;
         Sources::validate_gu_schedule_policy(sources.gu_integer(), sources.gu_stride_four())?;
         Sources::validate_down_stride_four_policy(
             sources.down_stride_four(),
@@ -1906,6 +2142,9 @@ impl Workspace {
             || executor.target_frozen_host_router_reserved
                 != self.frozen_host_batch_router_reserved()
             || sources.packed_host_staging() != self.frozen_staging.is_some()
+            || sources.down_integer() != self.frozen_down_integer.is_some()
+            || sources.down_integer() != executor.target_frozen_down_integer_reserved
+            || sources.down_integer() && !self.frozen_host_batch_router_reserved()
             || sources.gu_integer() != self.frozen_gu_integer.is_some()
             || sources.gu_integer() != executor.target_frozen_gu_integer_reserved
             || sources.gu_integer() && !self.frozen_host_batch_router_reserved()
@@ -1971,6 +2210,9 @@ impl Workspace {
             g = three_member_geometry(g, sources.three_members())?;
             if sources.gu_integer() {
                 crate::quant_matvec::frozen_gu_integer::validate_geometry(g)?;
+            }
+            if sources.down_integer() {
+                crate::quant_matvec::frozen_down_integer::validate_geometry(g)?;
             }
             if g != sources.geometry(layer, bank)? {
                 return Err(reject());
@@ -2066,6 +2308,7 @@ impl GpuExecutor<'_> {
                 &router_owners,
                 w.frozen_staging_owner_ids().as_ref(),
                 w.frozen_gu_integer_owner_id(),
+                w.frozen_down_integer_owner_id(),
             )?;
             let handle = |id| arena.handle(id).cloned().map_err(u::fault);
             let handles = [
@@ -2104,11 +2347,13 @@ impl GpuExecutor<'_> {
                 30,
                 w.frozen_staging_owner_ids().as_ref(),
                 w.frozen_gu_integer_owner_id(),
+                w.frozen_down_integer_owner_id(),
                 views.count(),
                 s.stamp.fault,
             )?;
             proof.record_gu_integer_launch(layer, source_launch.gu_integer)?;
             proof.record_down_stride_four_launch(layer, source_launch.down_stride_four)?;
+            proof.record_down_integer_launch(layer, source_launch.down_integer)?;
             launch_finite_for_count(arena, g, &spans, &ids, views.count())?;
             fold(
                 arena,
@@ -2299,6 +2544,7 @@ impl GpuExecutor<'_> {
             map.groups(),
             None,
             None,
+            None,
             routes.count(),
             s.stamp.fault,
         )?;
@@ -2381,12 +2627,15 @@ impl Sources {
         groups: usize,
         staging: Option<&[BufferId; 3]>,
         gu_integer: Option<BufferId>,
+        down_integer: Option<BufferId>,
         count: usize,
         fault: BufferId,
     ) -> Result<SourceLaunch> {
         let l = self.check_layer(layer, bank)?;
         if self.packed_host_staging != staging.is_some()
             || g != l.geometry
+            || self.down_integer != down_integer.is_some()
+            || self.down_integer && (groups != 30 || staging.is_some() || !(1..=3).contains(&count))
             || self.gu_integer != gu_integer.is_some()
             || self.gu_integer && (staging.is_some() || !(1..=3).contains(&count))
         {
@@ -2415,107 +2664,264 @@ impl Sources {
         } else {
             None
         };
+        let down_integer_handles = if let Some(scratch) = down_integer {
+            crate::quant_matvec::frozen_down_integer::validate_geometry(g)?;
+            let handles = ids.map(|id| arena.handle(id).cloned().map_err(u::fault));
+            let [a, b, c, d, e, f, h] = handles;
+            Some((
+                [a?, b?, c?, d?, e?, f?, h?],
+                arena.handle(scratch).cloned().map_err(u::fault)?,
+            ))
+        } else {
+            None
+        };
+        let mut down_integer_preparations = 0u64;
+        let mut down_integer_dispatches = 0u64;
         let mut integer_dispatches = 0u64;
         let mut stride_four_dispatches = 0u64;
         let mut down_stride_four_dispatches = 0u64;
-        for shard in 0..5 {
-            let ga = &l.pages[shard];
-            let up_page = &l.pages[5 + shard];
-            let down_page = &l.pages[10 + shard];
-            let staged_shard = self.packed_host_staging && shard >= 2;
-            let (gate_handle, gate_words, up_handle, up_words, down_handle, down_words) =
-                if staged_shard {
-                    let stage = staging.ok_or_else(reject)?;
-                    let shape = k::frozen_host_staging::Shape::new(g).map_err(err)?;
-                    // Original public sources remain pinned and unchanged. Each role
-                    // copy precedes every matching consumer on this exact stream.
-                    unsafe {
-                        k::frozen_host_staging::stage_gate_up::launch_unchecked::<WgpuRuntime>(
-                            client,
-                            shape.copy_grid(false),
-                            CubeDim::new_1d(256),
-                            ArrayArg::from_raw_parts(ga.handle.clone(), ga.words),
-                            ArrayArg::from_raw_parts(up_page.handle.clone(), up_page.words),
-                            arg(arena, ids[MAP])?,
-                            arg(arena, stage[0])?,
-                            arg(arena, stage[1])?,
-                            arg(arena, fault)?,
-                            s.map_first(),
-                            FIRST[shard],
-                            PARTS[shard],
-                            shape.gate_up_words(),
-                        );
-                        k::frozen_host_staging::stage_down::launch_unchecked::<WgpuRuntime>(
-                            client,
-                            shape.copy_grid(true),
-                            CubeDim::new_1d(256),
-                            ArrayArg::from_raw_parts(down_page.handle.clone(), down_page.words),
-                            arg(arena, ids[MAP])?,
-                            arg(arena, stage[2])?,
-                            arg(arena, fault)?,
-                            s.map_first(),
-                            FIRST[shard],
-                            PARTS[shard],
-                            shape.down_words(),
-                        );
-                    }
-                    (
-                        arena.handle(stage[0]).map_err(u::fault)?.clone(),
-                        (FROZEN_STAGING_OWNER_BYTES / 4) as usize,
-                        arena.handle(stage[1]).map_err(u::fault)?.clone(),
-                        (FROZEN_STAGING_OWNER_BYTES / 4) as usize,
-                        arena.handle(stage[2]).map_err(u::fault)?.clone(),
-                        (FROZEN_STAGING_OWNER_BYTES / 4) as usize,
-                    )
-                } else {
-                    (
-                        ga.handle.clone(),
-                        ga.words,
-                        up_page.handle.clone(),
-                        up_page.words,
-                        down_page.handle.clone(),
-                        down_page.words,
-                    )
-                };
-            macro_rules! dispatch_gate {
-                ($gate:ident) => {
-                    unsafe {
-                        k::$gate::launch_unchecked::<WgpuRuntime>(
-                            client,
-                            g.grid(groups, false).map_err(err)?,
-                            CubeDim::new_1d(64),
-                            ArrayArg::from_raw_parts(gate_handle.clone(), gate_words),
-                            ArrayArg::from_raw_parts(up_handle.clone(), up_words),
-                            arg(arena, ids[INPUT])?,
-                            arg(arena, ids[MAP])?,
-                            arg(arena, ids[ACT])?,
-                            arg(arena, ids[STATUS])?,
-                            s.map_first(),
-                            s.input_first(),
-                            s.input_stride(),
-                            s.act_first(),
-                            s.act_stride(),
-                            s.status_first(),
-                            FIRST[shard],
-                            PARTS[shard],
-                            g.hidden(),
-                            g.ff(),
-                            gate.dtype(),
-                            up.dtype(),
-                            gate.row_bytes(),
-                            up.row_bytes(),
-                            g.tile(),
-                            false,
-                        );
-                    }
-                };
+        // Original source schedule stays interleaved. Alternate DOWN needs
+        // every real-route ACT completed before one route-indexed preparation.
+        for &phase in source_phases(self.down_integer) {
+            if phase == SourcePhase::PrepareAndDown {
+                let (handles, scratch) = down_integer_handles.as_ref().ok_or_else(reject)?;
+                crate::quant_matvec::frozen_down_integer::prepare(
+                    client,
+                    g,
+                    s,
+                    handles.clone(),
+                    scratch.clone(),
+                    count,
+                )?;
+                down_integer_preparations = down_integer_preparations
+                    .checked_add(1)
+                    .ok_or(Error::ArithmeticOverflow)?;
             }
-            macro_rules! dispatch_down {
-                ($down:ident) => {
-                    unsafe {
-                        k::$down::launch_unchecked::<WgpuRuntime>(
+            for shard in 0..5 {
+                let ga = &l.pages[shard];
+                let up_page = &l.pages[5 + shard];
+                let down_page = &l.pages[10 + shard];
+                let staged_shard = self.packed_host_staging && shard >= 2;
+                let (gate_handle, gate_words, up_handle, up_words, down_handle, down_words) =
+                    if staged_shard {
+                        let stage = staging.ok_or_else(reject)?;
+                        let shape = k::frozen_host_staging::Shape::new(g).map_err(err)?;
+                        // Original public sources remain pinned and unchanged. Each role
+                        // copy precedes every matching consumer on this exact stream.
+                        unsafe {
+                            k::frozen_host_staging::stage_gate_up::launch_unchecked::<WgpuRuntime>(
+                                client,
+                                shape.copy_grid(false),
+                                CubeDim::new_1d(256),
+                                ArrayArg::from_raw_parts(ga.handle.clone(), ga.words),
+                                ArrayArg::from_raw_parts(up_page.handle.clone(), up_page.words),
+                                arg(arena, ids[MAP])?,
+                                arg(arena, stage[0])?,
+                                arg(arena, stage[1])?,
+                                arg(arena, fault)?,
+                                s.map_first(),
+                                FIRST[shard],
+                                PARTS[shard],
+                                shape.gate_up_words(),
+                            );
+                            k::frozen_host_staging::stage_down::launch_unchecked::<WgpuRuntime>(
+                                client,
+                                shape.copy_grid(true),
+                                CubeDim::new_1d(256),
+                                ArrayArg::from_raw_parts(down_page.handle.clone(), down_page.words),
+                                arg(arena, ids[MAP])?,
+                                arg(arena, stage[2])?,
+                                arg(arena, fault)?,
+                                s.map_first(),
+                                FIRST[shard],
+                                PARTS[shard],
+                                shape.down_words(),
+                            );
+                        }
+                        (
+                            arena.handle(stage[0]).map_err(u::fault)?.clone(),
+                            (FROZEN_STAGING_OWNER_BYTES / 4) as usize,
+                            arena.handle(stage[1]).map_err(u::fault)?.clone(),
+                            (FROZEN_STAGING_OWNER_BYTES / 4) as usize,
+                            arena.handle(stage[2]).map_err(u::fault)?.clone(),
+                            (FROZEN_STAGING_OWNER_BYTES / 4) as usize,
+                        )
+                    } else {
+                        (
+                            ga.handle.clone(),
+                            ga.words,
+                            up_page.handle.clone(),
+                            up_page.words,
+                            down_page.handle.clone(),
+                            down_page.words,
+                        )
+                    };
+                macro_rules! dispatch_gate {
+                    ($gate:ident) => {
+                        unsafe {
+                            k::$gate::launch_unchecked::<WgpuRuntime>(
+                                client,
+                                g.grid(groups, false).map_err(err)?,
+                                CubeDim::new_1d(64),
+                                ArrayArg::from_raw_parts(gate_handle.clone(), gate_words),
+                                ArrayArg::from_raw_parts(up_handle.clone(), up_words),
+                                arg(arena, ids[INPUT])?,
+                                arg(arena, ids[MAP])?,
+                                arg(arena, ids[ACT])?,
+                                arg(arena, ids[STATUS])?,
+                                s.map_first(),
+                                s.input_first(),
+                                s.input_stride(),
+                                s.act_first(),
+                                s.act_stride(),
+                                s.status_first(),
+                                FIRST[shard],
+                                PARTS[shard],
+                                g.hidden(),
+                                g.ff(),
+                                gate.dtype(),
+                                up.dtype(),
+                                gate.row_bytes(),
+                                up.row_bytes(),
+                                g.tile(),
+                                false,
+                            );
+                        }
+                    };
+                }
+                macro_rules! dispatch_down {
+                    ($down:ident) => {
+                        unsafe {
+                            k::$down::launch_unchecked::<WgpuRuntime>(
+                                client,
+                                g.grid(groups, true).map_err(err)?,
+                                CubeDim::new_1d(64),
+                                ArrayArg::from_raw_parts(down_handle.clone(), down_words),
+                                arg(arena, ids[ACT])?,
+                                arg(arena, ids[MAP])?,
+                                arg(arena, ids[PART])?,
+                                arg(arena, ids[STATUS])?,
+                                s.map_first(),
+                                s.act_first(),
+                                s.act_stride(),
+                                s.partial_first(),
+                                s.partial_stride(),
+                                s.status_first(),
+                                FIRST[shard],
+                                PARTS[shard],
+                                g.hidden(),
+                                g.ff(),
+                                down.dtype(),
+                                down.row_bytes(),
+                                g.tile(),
+                            );
+                        }
+                    };
+                }
+                let (gate, down) = source_kernel_policy(g, staged_shard)?;
+                if (gate == GateKernel::Original) != (down == DownKernel::Original) {
+                    return Err(reject());
+                }
+                if phase != SourcePhase::PrepareAndDown {
+                    if let Some((handles, scratch)) = &integer_handles {
+                        if gate != GateKernel::Frozen || staged_shard {
+                            return Err(reject());
+                        }
+                        let launch = if self.gu_stride_four {
+                            crate::quant_matvec::frozen_gu_integer::launch_group_stride4
+                        } else {
+                            crate::quant_matvec::frozen_gu_integer::launch
+                        };
+                        launch(
                             client,
-                            g.grid(groups, true).map_err(err)?,
+                            g,
+                            s,
+                            [gate_handle.clone(), up_handle.clone()],
+                            handles.clone(),
+                            scratch.clone(),
+                            FIRST[shard],
+                            PARTS[shard],
+                            groups,
+                            count,
+                        )?;
+                        // Only an actual successful alternative leaf call creates
+                        // stride-four credit; neither selection nor DOWN can credit it.
+                        if self.gu_stride_four {
+                            stride_four_dispatches = stride_four_dispatches
+                                .checked_add(1)
+                                .ok_or(Error::ArithmeticOverflow)?;
+                        }
+                        integer_dispatches = integer_dispatches
+                            .checked_add(1)
+                            .ok_or(Error::ArithmeticOverflow)?;
+                    } else {
+                        match gate {
+                            GateKernel::ThreeMembers => {
+                                dispatch_gate!(grouped_gate_up_frozen_three_members)
+                            }
+                            GateKernel::StagedThreeMembers => {
+                                dispatch_gate!(grouped_gate_up_frozen_staged_three_members)
+                            }
+                            GateKernel::StagedTwoRows => {
+                                dispatch_gate!(grouped_gate_up_frozen_staged_two_rows)
+                            }
+                            GateKernel::StagedFrozen => {
+                                dispatch_gate!(grouped_gate_up_frozen_staged)
+                            }
+                            GateKernel::TwoRows => dispatch_gate!(grouped_gate_up_frozen_two_rows),
+                            GateKernel::Original => dispatch_gate!(grouped_gate_up),
+                            GateKernel::Frozen => dispatch_gate!(grouped_gate_up_frozen),
+                            GateKernel::PrivateTables => {
+                                dispatch_gate!(grouped_gate_up_frozen_private_grid)
+                            }
+                            GateKernel::WorkgroupTables => {
+                                dispatch_gate!(grouped_gate_up_frozen_workgroup_grid)
+                            }
+                            GateKernel::SharedFactors => {
+                                dispatch_gate!(grouped_gate_up_frozen_shared_factors)
+                            }
+                            GateKernel::PrivateFactors => {
+                                dispatch_gate!(grouped_gate_up_frozen_private_grid_shared_factors)
+                            }
+                            GateKernel::WorkgroupFactors => {
+                                dispatch_gate!(grouped_gate_up_frozen_workgroup_grid_shared_factors)
+                            }
+                        }
+                    }
+                }
+                if self.down_integer {
+                    if phase == SourcePhase::PrepareAndDown {
+                        if down != DownKernel::Frozen || staged_shard {
+                            return Err(reject());
+                        }
+                        let (handles, scratch) =
+                            down_integer_handles.as_ref().ok_or_else(reject)?;
+                        crate::quant_matvec::frozen_down_integer::launch(
+                            client,
+                            g,
+                            s,
+                            down_handle.clone(),
+                            handles.clone(),
+                            scratch.clone(),
+                            FIRST[shard],
+                            PARTS[shard],
+                            groups,
+                            count,
+                        )?;
+                        down_integer_dispatches = down_integer_dispatches
+                            .checked_add(1)
+                            .ok_or(Error::ArithmeticOverflow)?;
+                    }
+                } else if self.down_stride_four {
+                    if down != DownKernel::FourRows || staged_shard {
+                        return Err(reject());
+                    }
+                    // Same original source handles/runtime addresses and INFO; only
+                    // the distinct entry/grid changes. Credit follows enqueue.
+                    unsafe {
+                        k::grouped_down_frozen_four_rows_stride_four::launch_unchecked::<WgpuRuntime>(
+                            client,
+                            CubeCount::Static(640, 4, 1),
                             CubeDim::new_1d(64),
                             ArrayArg::from_raw_parts(down_handle.clone(), down_words),
                             arg(arena, ids[ACT])?,
@@ -2532,136 +2938,41 @@ impl Sources {
                             PARTS[shard],
                             g.hidden(),
                             g.ff(),
-                            down.dtype(),
-                            down.row_bytes(),
+                            g.projections()[2].dtype(),
+                            g.projections()[2].row_bytes(),
                             g.tile(),
                         );
                     }
-                };
-            }
-            let (gate, down) = source_kernel_policy(g, staged_shard)?;
-            if (gate == GateKernel::Original) != (down == DownKernel::Original) {
-                return Err(reject());
-            }
-            if let Some((handles, scratch)) = &integer_handles {
-                if gate != GateKernel::Frozen || staged_shard {
-                    return Err(reject());
-                }
-                let launch = if self.gu_stride_four {
-                    crate::quant_matvec::frozen_gu_integer::launch_group_stride4
-                } else {
-                    crate::quant_matvec::frozen_gu_integer::launch
-                };
-                launch(
-                    client,
-                    g,
-                    s,
-                    [gate_handle.clone(), up_handle.clone()],
-                    handles.clone(),
-                    scratch.clone(),
-                    FIRST[shard],
-                    PARTS[shard],
-                    groups,
-                    count,
-                )?;
-                // Only an actual successful alternative leaf call creates
-                // stride-four credit; neither selection nor DOWN can credit it.
-                if self.gu_stride_four {
-                    stride_four_dispatches = stride_four_dispatches
+                    down_stride_four_dispatches = down_stride_four_dispatches
                         .checked_add(1)
                         .ok_or(Error::ArithmeticOverflow)?;
-                }
-                integer_dispatches = integer_dispatches
-                    .checked_add(1)
-                    .ok_or(Error::ArithmeticOverflow)?;
-            } else {
-                match gate {
-                    GateKernel::ThreeMembers => {
-                        dispatch_gate!(grouped_gate_up_frozen_three_members)
-                    }
-                    GateKernel::StagedThreeMembers => {
-                        dispatch_gate!(grouped_gate_up_frozen_staged_three_members)
-                    }
-                    GateKernel::StagedTwoRows => {
-                        dispatch_gate!(grouped_gate_up_frozen_staged_two_rows)
-                    }
-                    GateKernel::StagedFrozen => dispatch_gate!(grouped_gate_up_frozen_staged),
-                    GateKernel::TwoRows => dispatch_gate!(grouped_gate_up_frozen_two_rows),
-                    GateKernel::Original => dispatch_gate!(grouped_gate_up),
-                    GateKernel::Frozen => dispatch_gate!(grouped_gate_up_frozen),
-                    GateKernel::PrivateTables => {
-                        dispatch_gate!(grouped_gate_up_frozen_private_grid)
-                    }
-                    GateKernel::WorkgroupTables => {
-                        dispatch_gate!(grouped_gate_up_frozen_workgroup_grid)
-                    }
-                    GateKernel::SharedFactors => {
-                        dispatch_gate!(grouped_gate_up_frozen_shared_factors)
-                    }
-                    GateKernel::PrivateFactors => {
-                        dispatch_gate!(grouped_gate_up_frozen_private_grid_shared_factors)
-                    }
-                    GateKernel::WorkgroupFactors => {
-                        dispatch_gate!(grouped_gate_up_frozen_workgroup_grid_shared_factors)
-                    }
-                }
-            }
-            if self.down_stride_four {
-                if down != DownKernel::FourRows || staged_shard {
-                    return Err(reject());
-                }
-                // Same original source handles/runtime addresses and INFO; only
-                // the distinct entry/grid changes. Credit follows enqueue.
-                unsafe {
-                    k::grouped_down_frozen_four_rows_stride_four::launch_unchecked::<WgpuRuntime>(
-                        client,
-                        CubeCount::Static(640, 4, 1),
-                        CubeDim::new_1d(64),
-                        ArrayArg::from_raw_parts(down_handle.clone(), down_words),
-                        arg(arena, ids[ACT])?,
-                        arg(arena, ids[MAP])?,
-                        arg(arena, ids[PART])?,
-                        arg(arena, ids[STATUS])?,
-                        s.map_first(),
-                        s.act_first(),
-                        s.act_stride(),
-                        s.partial_first(),
-                        s.partial_stride(),
-                        s.status_first(),
-                        FIRST[shard],
-                        PARTS[shard],
-                        g.hidden(),
-                        g.ff(),
-                        g.projections()[2].dtype(),
-                        g.projections()[2].row_bytes(),
-                        g.tile(),
-                    );
-                }
-                down_stride_four_dispatches = down_stride_four_dispatches
-                    .checked_add(1)
-                    .ok_or(Error::ArithmeticOverflow)?;
-            } else {
-                match down {
-                    DownKernel::ThreeMembers => dispatch_down!(grouped_down_frozen_three_members),
-                    DownKernel::FourRowsThreeMembers => {
-                        dispatch_down!(grouped_down_frozen_four_rows_three_members)
-                    }
-                    DownKernel::StagedThreeMembers => {
-                        dispatch_down!(grouped_down_frozen_staged_three_members)
-                    }
-                    DownKernel::StagedFourRowsThreeMembers => {
-                        dispatch_down!(grouped_down_frozen_staged_four_rows_three_members)
-                    }
-                    DownKernel::Original => dispatch_down!(grouped_down),
-                    DownKernel::StagedFrozen => dispatch_down!(grouped_down_frozen_staged),
-                    DownKernel::StagedFourRows => {
-                        dispatch_down!(grouped_down_frozen_staged_four_rows)
-                    }
-                    DownKernel::Frozen => dispatch_down!(grouped_down_frozen),
-                    DownKernel::SharedScales => dispatch_down!(grouped_down_frozen_shared_scales),
-                    DownKernel::FourRows => dispatch_down!(grouped_down_frozen_four_rows),
-                    DownKernel::FourRowsSharedScales => {
-                        dispatch_down!(grouped_down_frozen_four_rows_shared_scales)
+                } else {
+                    match down {
+                        DownKernel::ThreeMembers => {
+                            dispatch_down!(grouped_down_frozen_three_members)
+                        }
+                        DownKernel::FourRowsThreeMembers => {
+                            dispatch_down!(grouped_down_frozen_four_rows_three_members)
+                        }
+                        DownKernel::StagedThreeMembers => {
+                            dispatch_down!(grouped_down_frozen_staged_three_members)
+                        }
+                        DownKernel::StagedFourRowsThreeMembers => {
+                            dispatch_down!(grouped_down_frozen_staged_four_rows_three_members)
+                        }
+                        DownKernel::Original => dispatch_down!(grouped_down),
+                        DownKernel::StagedFrozen => dispatch_down!(grouped_down_frozen_staged),
+                        DownKernel::StagedFourRows => {
+                            dispatch_down!(grouped_down_frozen_staged_four_rows)
+                        }
+                        DownKernel::Frozen => dispatch_down!(grouped_down_frozen),
+                        DownKernel::SharedScales => {
+                            dispatch_down!(grouped_down_frozen_shared_scales)
+                        }
+                        DownKernel::FourRows => dispatch_down!(grouped_down_frozen_four_rows),
+                        DownKernel::FourRowsSharedScales => {
+                            dispatch_down!(grouped_down_frozen_four_rows_shared_scales)
+                        }
                     }
                 }
             }
@@ -2695,14 +3006,239 @@ impl Sources {
         } else {
             None
         };
+        let down_integer = if let Some((_, scratch)) = down_integer_handles {
+            crate::quant_matvec::frozen_down_integer::audit(
+                client,
+                scratch,
+                arena.handle(fault).cloned().map_err(u::fault)?,
+                count,
+            )?;
+            let receipt = DownIntegerDispatch {
+                layer,
+                count,
+                preparations: down_integer_preparations,
+                dispatches: down_integer_dispatches,
+                audits: 1,
+            };
+            receipt.validate(layer, count)?;
+            Some(receipt)
+        } else {
+            None
+        };
         Ok(SourceLaunch {
             gu_integer,
             down_stride_four,
+            down_integer,
         })
     }
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn frozen_down_integer_policy_preserves_all_original_source_types_and_rejects_competitors() {
+        for mask in 0usize..512 {
+            let f: [bool; 9] = std::array::from_fn(|i| mask & (1 << i) != 0);
+            for selected in [false, true] {
+                for exit in [false, true] {
+                    assert_eq!(
+                        Sources::validate_down_integer_policy(
+                            selected, exit, f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7], f[8]
+                        )
+                        .is_ok(),
+                        !selected || exit && mask == 0
+                    );
+                }
+            }
+        }
+        for layer in 0..48 {
+            let [gate, up, down] = crate::daslab_profile::routed_types(layer).unwrap();
+            let g = k::Geometry::new(
+                [
+                    k::Projection::new(gate, 2560, 640, 512).unwrap(),
+                    k::Projection::new(up, 2560, 640, 512).unwrap(),
+                    k::Projection::new(down, 640, 2560, 512).unwrap(),
+                ],
+                8,
+                144,
+            )
+            .unwrap()
+            .with_frozen_host_sources()
+            .unwrap()
+            .with_inactive_partition_exit()
+            .unwrap();
+            crate::quant_matvec::frozen_down_integer::validate_geometry(g).unwrap();
+            crate::quant_matvec::frozen_gu_integer::validate_geometry(g).unwrap();
+            assert_eq!(kernel_policy(g), (GateKernel::Frozen, DownKernel::Frozen));
+            assert!(!g.four_row_down());
+            assert_eq!(g.tile(), 8);
+            for gu in [false, true] {
+                for stride in [false, true] {
+                    assert_eq!(
+                        Sources::validate_gu_schedule_policy(gu, stride).is_ok(),
+                        !stride || gu
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn frozen_down_integer_actual_receipt_requires_prepare_five_down_and_full_audit() {
+        for layer in 0..48 {
+            for count in 1..=3 {
+                let r = DownIntegerDispatch {
+                    layer,
+                    count,
+                    preparations: 1,
+                    dispatches: 5,
+                    audits: 1,
+                };
+                r.validate(layer, count).unwrap();
+                assert!(r.validate((layer + 1) % 48, count).is_err());
+                assert!(r.validate(layer, count + 1).is_err());
+                for n in [0, 2, u64::MAX] {
+                    assert!(
+                        DownIntegerDispatch {
+                            preparations: n,
+                            ..r
+                        }
+                        .validate(layer, count)
+                        .is_err()
+                    );
+                    assert!(
+                        DownIntegerDispatch { audits: n, ..r }
+                            .validate(layer, count)
+                            .is_err()
+                    );
+                }
+                for n in [0, 1, 4, 6, 10, u64::MAX] {
+                    assert!(
+                        DownIntegerDispatch { dispatches: n, ..r }
+                            .validate(layer, count)
+                            .is_err()
+                    );
+                }
+            }
+        }
+        for count in [0, 4, 8] {
+            assert!(
+                DownIntegerDispatch {
+                    layer: 0,
+                    count,
+                    preparations: 1,
+                    dispatches: 5,
+                    audits: 1
+                }
+                .validate(0, count)
+                .is_err()
+            );
+        }
+        assert!(
+            DownIntegerDispatch {
+                layer: 48,
+                count: 1,
+                preparations: 1,
+                dispatches: 5,
+                audits: 1
+            }
+            .validate(48, 1)
+            .is_err()
+        );
+        use crate::quant_matvec::frozen_down_integer as i;
+        assert_eq!(
+            (
+                i::SCRATCH_WORDS,
+                i::MAIN_BYTES,
+                i::HOST_INCREMENT,
+                i::INFO_INCREMENT,
+                i::RUNTIME_INCREMENT
+            ),
+            (
+                FROZEN_DOWN_INTEGER_SCRATCH_WORDS,
+                FROZEN_DOWN_INTEGER_MAIN_BYTES,
+                FROZEN_DOWN_INTEGER_HOST_BYTES,
+                FROZEN_DOWN_INTEGER_INFO_BYTES,
+                FROZEN_DOWN_INTEGER_RUNTIME_BYTES
+            )
+        );
+        assert_eq!(i::LOGICAL_WORDS, 10864);
+        assert_eq!(8 + 3 + 2 + PAGES, 28); // Two distinct integer roots fit original30 metadata bound.
+        const {
+            assert!(28 <= ROUTER_EXTENTS);
+        };
+    }
+    #[test]
+    fn frozen_down_integer_completed_receipt_never_credits_attempts_or_missing_source_shards() {
+        assert!(!down_integer_completed_flag(false, 0, 0, 0, 480).unwrap());
+        for n in [1u64, 48, 48 * 74] {
+            assert!(down_integer_completed_flag(true, n, 5 * n, n, 10 * n).unwrap());
+            for source in [0, 10 * n - 1, 10 * n + 1] {
+                assert!(down_integer_completed_flag(true, n, 5 * n, n, source).is_err());
+            }
+        }
+        for (p, d, a) in [
+            (0, 0, 0),
+            (1, 4, 1),
+            (1, 6, 1),
+            (1, 5, 0),
+            (1, 5, 2),
+            (u64::MAX, u64::MAX, u64::MAX),
+        ] {
+            assert!(down_integer_completed_flag(true, p, d, a, 10).is_err());
+        }
+        for (p, d, a) in [(1, 0, 0), (0, 5, 0), (0, 0, 1), (1, 5, 1)] {
+            assert!(down_integer_completed_flag(false, p, d, a, 10).is_err());
+        }
+    }
+    #[test]
+    fn frozen_down_integer_real_schedule_finishes_every_gate_before_route_preparation() {
+        fn events(integer: bool) -> Vec<(char, usize)> {
+            let mut e = Vec::new();
+            for &phase in source_phases(integer) {
+                if phase == SourcePhase::PrepareAndDown {
+                    e.push(('P', 0));
+                }
+                for shard in 0..5 {
+                    if phase != SourcePhase::PrepareAndDown {
+                        e.push(('G', shard));
+                    }
+                    if !integer || phase == SourcePhase::PrepareAndDown {
+                        e.push(('D', shard));
+                    }
+                }
+            }
+            if integer {
+                e.push(('A', 0));
+            }
+            e
+        }
+        assert_eq!(
+            events(false),
+            (0..5)
+                .flat_map(|i| [('G', i), ('D', i)])
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            events(true),
+            vec![
+                ('G', 0),
+                ('G', 1),
+                ('G', 2),
+                ('G', 3),
+                ('G', 4),
+                ('P', 0),
+                ('D', 0),
+                ('D', 1),
+                ('D', 2),
+                ('D', 3),
+                ('D', 4),
+                ('A', 0)
+            ]
+        );
+        assert_eq!(FIRST, [0, 72, 144, 288, 432]);
+        assert_eq!(PARTS, [72, 72, 144, 144, 80]);
+        assert_eq!(PARTS.iter().sum::<usize>(), 512);
+    }
+
     use super::*;
     #[test]
     fn down_stride_four_policy_requires_four_rows_and_rejects_every_competing_source_mode() {

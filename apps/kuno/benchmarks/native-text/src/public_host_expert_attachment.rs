@@ -306,7 +306,70 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
         down_stride_four: bool,
         cancel: &AtomicBool,
     ) -> Result<Attachment<'plan, 'model, 'file>> {
+        // Original entry retains its exact default arithmetic policy.
+        unsafe {
+            self.attach_with_down_math(
+                device,
+                client,
+                executor,
+                workspace,
+                arena,
+                exact_reserved_host,
+                inactive_partition_exit,
+                private_tables,
+                workgroup_tables,
+                shared_down_scales,
+                shared_gate_up_factors,
+                four_row_down,
+                two_row_gate_up,
+                packed_host_staging,
+                three_members,
+                gu_integer,
+                gu_stride_four,
+                down_stride_four,
+                false,
+                cancel,
+            )
+        }
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) unsafe fn attach_with_down_math<'plan>(
+        &'plan self,
+        device: &wgpu::Device,
+        client: &ComputeClient<WgpuRuntime>,
+        executor: &mut GpuExecutor<'file>,
+        workspace: &mut batch_moe::Workspace,
+        arena: &PrivateArena,
+        exact_reserved_host: u64,
+        inactive_partition_exit: bool,
+        private_tables: bool,
+        workgroup_tables: bool,
+        shared_down_scales: bool,
+        shared_gate_up_factors: bool,
+        four_row_down: bool,
+        two_row_gate_up: bool,
+        packed_host_staging: bool,
+        three_members: bool,
+        gu_integer: bool,
+        gu_stride_four: bool,
+        down_stride_four: bool,
+        down_integer: bool,
+        cancel: &AtomicBool,
+    ) -> Result<Attachment<'plan, 'model, 'file>> {
         u::cancel(cancel)?;
+        Sources::validate_down_integer_policy(
+            down_integer,
+            inactive_partition_exit,
+            private_tables,
+            workgroup_tables,
+            shared_down_scales,
+            shared_gate_up_factors,
+            four_row_down,
+            two_row_gate_up,
+            packed_host_staging,
+            three_members,
+            down_stride_four,
+        )?;
         Sources::validate_gu_schedule_policy(gu_integer, gu_stride_four)?;
         Sources::validate_down_stride_four_policy(
             down_stride_four,
@@ -357,9 +420,12 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
             packed_host_staging,
             three_members,
         )?;
-        if gu_integer != executor.target_frozen_gu_integer_reserved
+        if down_integer != executor.target_frozen_down_integer_reserved
+            || down_integer != workspace.frozen_down_integer_owner_id().is_some()
+            || gu_integer != executor.target_frozen_gu_integer_reserved
             || gu_integer != workspace.frozen_gu_integer_owner_id().is_some()
-            || (gu_integer || down_stride_four) && !executor.target_frozen_host_router_reserved
+            || (gu_integer || down_stride_four || down_integer)
+                && !executor.target_frozen_host_router_reserved
         {
             return Err(rejected());
         }
@@ -479,6 +545,7 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
             return Err(rejected());
         }
         let sources = if gu_integer
+            || down_integer
             || three_members
             || packed_host_staging
             || two_row_gate_up
@@ -486,7 +553,7 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
             || shared_gate_up_factors
             || shared_down_scales && (private_tables || workgroup_tables)
         {
-            Sources::new_with_policy_and_schedules(
+            Sources::new_with_policy_and_down_math(
                 executor,
                 self.graph,
                 &self.plan,
@@ -504,6 +571,7 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
                 gu_integer,
                 gu_stride_four,
                 down_stride_four,
+                down_integer,
             )
         } else if workgroup_tables {
             Sources::new_with_workgroup_tables(

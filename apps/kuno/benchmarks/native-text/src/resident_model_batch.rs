@@ -306,6 +306,7 @@ pub(crate) struct Config {
     public_frozen_host_router: bool,
     public_frozen_host_staging: bool,
     public_frozen_gu_integer: bool,
+    public_frozen_down_integer: bool,
     public_grouped_ple_reads_reserved: bool,
     public_grouped_status_folds_reserved: bool,
 }
@@ -388,6 +389,24 @@ fn frozen_gu_integer_configuration(
     Ok(())
 }
 impl Config {
+    fn validate_public_frozen_down_integer(&self) -> Result<()> {
+        if self.public_frozen_down_integer
+            && (!self.target_rows_reserved
+                || !self.latest_target_checkpoint_reserved
+                || self.public_target_request_io == self.public_language_request_io.is_some()
+                || !self.public_frozen_host_sources
+                || !self.public_frozen_host_router
+                || self.public_frozen_host_staging
+                || self.cpu_operator.is_some()
+                || self.resident_router_reserved
+                || self.prepared_verify3_experts_reserved
+                || self.live_member_reduction
+                || self.tile != 8)
+        {
+            return Err(error());
+        }
+        Ok(())
+    }
     fn validate_public_grouped_ple_reads(&self) -> Result<()> {
         if self.public_grouped_ple_reads_reserved
             && (!self.target_rows_reserved
@@ -424,6 +443,7 @@ impl Config {
         Ok(())
     }
     fn qsa_host_reservation(&self) -> Result<(usize, usize)> {
+        self.validate_public_frozen_down_integer()?;
         self.validate_public_grouped_ple_reads()?;
         self.validate_public_grouped_status_folds()?;
         if self.public_frozen_host_router
@@ -485,6 +505,13 @@ impl Config {
                     0
                 })
             })
+            .and_then(|n| {
+                n.checked_add(if self.public_frozen_down_integer {
+                    batch_moe::FROZEN_DOWN_INTEGER_HOST_BYTES
+                } else {
+                    0
+                })
+            })
             .ok_or(Error::ArithmeticOverflow)?;
         Ok((
             reserved
@@ -521,6 +548,7 @@ impl Config {
             public_frozen_host_router: false,
             public_frozen_host_staging: false,
             public_frozen_gu_integer: false,
+            public_frozen_down_integer: false,
             public_grouped_ple_reads_reserved: false,
             public_grouped_status_folds_reserved: false,
         })
@@ -618,7 +646,7 @@ impl Config {
             self.public_frozen_host_router,
         )?;
         self.qsa_host_reservation()?;
-        if self.public_frozen_gu_integer {
+        if self.public_frozen_gu_integer || self.public_frozen_down_integer {
             return Err(error());
         }
         self.public_frozen_host_staging = true;
@@ -638,6 +666,16 @@ impl Config {
             self.public_frozen_host_staging,
         )?;
         self.public_frozen_gu_integer = true;
+        self.qsa_host_reservation()?;
+        Ok(self)
+    }
+    /// Independent full route preparation owner for the alternate DOWN math.
+    #[allow(dead_code)] // Fixed-public controller registration is separate.
+    pub(crate) fn reserve_public_frozen_down_integer(mut self) -> Result<Self> {
+        if self.public_frozen_down_integer {
+            return Err(error());
+        }
+        self.public_frozen_down_integer = true;
         self.qsa_host_reservation()?;
         Ok(self)
     }
@@ -941,6 +979,9 @@ impl Plan {
         if config.public_frozen_gu_integer {
             crate::quant_matvec::frozen_gu_integer::validate_limits(&config.limits)?;
         }
+        if config.public_frozen_down_integer {
+            crate::quant_matvec::frozen_down_integer::validate_limits(&config.limits)?;
+        }
         config.qsa_host_reservation()?;
         frozen_host_source_configuration(
             config.public_frozen_host_sources,
@@ -1209,6 +1250,7 @@ impl Plan {
             || config.public_frozen_host_router != executor.target_frozen_host_router_reserved
             || config.public_frozen_host_staging != executor.target_frozen_host_staging_reserved
             || config.public_frozen_gu_integer != executor.target_frozen_gu_integer_reserved
+            || config.public_frozen_down_integer != executor.target_frozen_down_integer_reserved
         {
             return Err(error());
         }
@@ -1217,6 +1259,9 @@ impl Plan {
         }
         if config.public_frozen_gu_integer {
             requests.push(batch_moe::FROZEN_GU_INTEGER_MAIN_BYTES);
+        }
+        if config.public_frozen_down_integer {
+            requests.push(batch_moe::FROZEN_DOWN_INTEGER_MAIN_BYTES);
         }
         let extra = if config.public_frozen_host_router {
             batch_moe::frozen_sources::ROUTER_MAIN_BYTES
@@ -1230,6 +1275,10 @@ impl Plan {
             0
         } + if config.public_frozen_gu_integer {
             batch_moe::FROZEN_GU_INTEGER_MAIN_BYTES
+        } else {
+            0
+        } + if config.public_frozen_down_integer {
+            batch_moe::FROZEN_DOWN_INTEGER_MAIN_BYTES
         } else {
             0
         } + if hybrid { HYBRID_MAIN } else { 0 }
@@ -1252,6 +1301,7 @@ impl Plan {
             != 90
                 + usize::from(config.public_frozen_host_staging) * 3
                 + usize::from(config.public_frozen_gu_integer)
+                + usize::from(config.public_frozen_down_integer)
                 + usize::from(hybrid) * 2
                 + usize::from(router) * 2
                 + usize::from(target_rows) * 2
@@ -1336,6 +1386,13 @@ impl Plan {
             .and_then(|n| {
                 n.checked_add(if config.public_frozen_gu_integer {
                     batch_moe::FROZEN_GU_INTEGER_RUNTIME_BYTES
+                } else {
+                    0
+                })
+            })
+            .and_then(|n| {
+                n.checked_add(if config.public_frozen_down_integer {
+                    batch_moe::FROZEN_DOWN_INTEGER_RUNTIME_BYTES
                 } else {
                     0
                 })
@@ -1594,6 +1651,14 @@ impl Workspace {
         executor: &GpuExecutor<'_>,
         admission: &crate::executor::ResidentAdmission,
     ) -> Result<()> {
+        if self.moe.frozen_host_source_down_integer_selected() {
+            if !executor.target_frozen_down_integer_reserved
+                || self.moe.frozen_down_integer_owner_id().is_none()
+            {
+                return Err(error());
+            }
+            self.three_gdn_scope(executor, admission)?.validate()?;
+        }
         if self.ple.public_grouped_reads() {
             if !self.public_grouped_ple_reads_reserved {
                 return Err(error());
@@ -1829,6 +1894,9 @@ impl Workspace {
         if config.public_frozen_gu_integer {
             moe.reserve_frozen_gu_integer(&mut model.arena, allocation)?;
         }
+        if config.public_frozen_down_integer {
+            moe.reserve_frozen_down_integer(&mut model.arena, allocation)?;
+        }
         if config.prepared_verify3_experts_reserved {
             moe.reserve_prepared_verify3(&mut model.arena, allocation)?;
         }
@@ -1929,6 +1997,13 @@ impl Workspace {
                 &model.arena,
                 owner,
                 batch_moe::FROZEN_GU_INTEGER_SCRATCH_WORDS,
+            )?);
+        }
+        if let Some(owner) = self.moe.frozen_down_integer_owner_id() {
+            handles.push(gr::full_private(
+                &model.arena,
+                owner,
+                batch_moe::FROZEN_DOWN_INTEGER_SCRATCH_WORDS,
             )?);
         }
         if let Some(owner) = self.moe.prepared_verify3_owner_id() {
@@ -2033,6 +2108,13 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
     ) -> Result<usize> {
         let actual = self.native_decode_kernels()?;
         if !projection_policy_allows_tile(actual, tile)
+            || self
+                .native_batch
+                .as_ref()
+                .ok_or(error())?
+                .moe
+                .frozen_host_source_down_integer_selected()
+                && tile != 8
             || self
                 .native_batch
                 .as_ref()
@@ -2656,7 +2738,66 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         down_stride_four: bool,
         cancel: &AtomicBool,
     ) -> Result<crate::public_host_expert_attachment::Attachment<'plan, 'm, 'f>> {
+        // Original entry retains its exact default arithmetic policy.
+        unsafe {
+            self.attach_public_host_sources_with_down_math(
+                executor,
+                prepared,
+                device,
+                reserved,
+                inactive_partition_exit,
+                private_tables,
+                workgroup_tables,
+                shared_down_scales,
+                shared_gate_up_factors,
+                four_row_down,
+                two_row_gate_up,
+                packed_host_staging,
+                three_members,
+                gu_integer,
+                gu_stride_four,
+                down_stride_four,
+                false,
+                cancel,
+            )
+        }
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) unsafe fn attach_public_host_sources_with_down_math<'plan>(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+        prepared: &'plan crate::public_host_expert_attachment::PreparedPlan<'m, 'f>,
+        device: &wgpu::Device,
+        reserved: u64,
+        inactive_partition_exit: bool,
+        private_tables: bool,
+        workgroup_tables: bool,
+        shared_down_scales: bool,
+        shared_gate_up_factors: bool,
+        four_row_down: bool,
+        two_row_gate_up: bool,
+        packed_host_staging: bool,
+        three_members: bool,
+        gu_integer: bool,
+        gu_stride_four: bool,
+        down_stride_four: bool,
+        down_integer: bool,
+        cancel: &AtomicBool,
+    ) -> Result<crate::public_host_expert_attachment::Attachment<'plan, 'm, 'f>> {
         u::cancel(cancel)?;
+        batch_moe::frozen_sources::Sources::validate_down_integer_policy(
+            down_integer,
+            inactive_partition_exit,
+            private_tables,
+            workgroup_tables,
+            shared_down_scales,
+            shared_gate_up_factors,
+            four_row_down,
+            two_row_gate_up,
+            packed_host_staging,
+            three_members,
+            down_stride_four,
+        )?;
         batch_moe::frozen_sources::Sources::validate_gu_schedule_policy(
             gu_integer,
             gu_stride_four,
@@ -2685,12 +2826,13 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         let native = self.native_batch.as_ref().ok_or(error())?;
         if !native.public_frozen_host_sources
             || native.moe.frozen_host_sources_enabled()
-            || (gu_integer || down_stride_four)
+            || (gu_integer || down_stride_four || down_integer)
                 && (native.target_rows.is_none()
                     || !native.latest_target_checkpoint_reserved
                     || native.public_target_request_io.is_some()
                         == native.public_language_request_io.is_some()
                     || (gu_integer && !executor.target_frozen_gu_integer_reserved)
+                    || (down_integer && !executor.target_frozen_down_integer_reserved)
                     || !executor.target_verify3_dense
                     || !executor.target_verify3_fused
                     || !executor.token_io_checkpoint
@@ -2701,6 +2843,31 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                     || executor.native_projection_member_capacity() != 8)
         {
             return Err(error());
+        }
+        if down_integer {
+            let accepted_prefill = match (
+                &native.public_target_request_io,
+                &native.public_language_request_io,
+            ) {
+                (Some(_), None) => {
+                    self.context == 13
+                        && self.position == 0
+                        && native
+                            .public_warm_replay
+                            .as_ref()
+                            .is_some_and(|p| p.reset_consumed())
+                }
+                (None, Some(permit)) => {
+                    permit
+                        .identity(self.graph.binding_id(), self.context)
+                        .is_ok()
+                        && permit.validate_begin(self.position, false).is_ok()
+                }
+                _ => false,
+            };
+            if !accepted_prefill || native.decode_kernels()? != NativeDecodeKernels::Chunk {
+                return Err(error());
+            }
         }
         if self.position == 0 {
             if self.context != 13
@@ -2721,7 +2888,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         // SAFETY: fixed-public caller verified original source hashes and
         // immutability. All actual bank/family/device checks above precede import.
         unsafe {
-            prepared.attach_with_schedules(
+            prepared.attach_with_down_math(
                 device,
                 self.arena.client().map_err(u::fault)?,
                 executor,
@@ -2740,6 +2907,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 gu_integer,
                 gu_stride_four,
                 down_stride_four,
+                down_integer,
                 cancel,
             )
         }
@@ -2861,6 +3029,21 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             return Err(error());
         }
         native.moe.frozen_host_source_gu_integer()
+    }
+    #[allow(dead_code)] // Root owns public receipt registration.
+    pub(crate) fn native_frozen_source_down_integer(
+        &self,
+        executor: &GpuExecutor<'_>,
+    ) -> Result<bool> {
+        self.completed_native_projection_boundary(executor)?;
+        let native = self.native_batch.as_ref().ok_or(error())?;
+        if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
+            return Err(error());
+        }
+        if native.moe.frozen_host_source_down_integer_selected() {
+            native.validate_target_decode_policy(executor, &self.admission)?;
+        }
+        native.moe.frozen_host_source_down_integer()
     }
     #[allow(dead_code)] // Root owns the public scheduling receipt/selector.
     pub(crate) fn native_frozen_source_gu_stride_four(
@@ -2993,7 +3176,13 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         cancel: &AtomicBool,
     ) -> Result<usize> {
         u::cancel(cancel)?;
-        if cap > 10
+        if self
+            .native_batch
+            .as_ref()
+            .ok_or(error())?
+            .moe
+            .frozen_host_source_down_integer_selected()
+            || cap > 10
             || self
                 .native_batch
                 .as_ref()
@@ -3279,7 +3468,15 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         cancel: &AtomicBool,
     ) -> Result<NativeDecodeKernels> {
         u::cancel(cancel)?;
-        if policy == NativeDecodeKernels::ThreeGdn {
+        if policy == NativeDecodeKernels::ThreeGdn
+            || self
+                .native_batch
+                .as_ref()
+                .ok_or(error())?
+                .moe
+                .frozen_host_source_down_integer_selected()
+                && policy != NativeDecodeKernels::Chunk
+        {
             return Err(error());
         }
         if self
@@ -3575,6 +3772,11 @@ impl Workspace {
         let (grouped_status_folds, grouped_status_before) = self.grouped_status_state()?;
         if !grouped_ple_run_allowed(grouped_ple_reads, tokens.len(), purpose)
             || !grouped_ple_run_allowed(grouped_status_folds, tokens.len(), purpose)
+            || !grouped_ple_run_allowed(
+                self.moe.frozen_host_source_down_integer_selected(),
+                tokens.len(),
+                purpose,
+            )
         {
             return Err(error());
         }
@@ -4728,6 +4930,47 @@ mod tests {
         assert_eq!(candidate, 10);
         // No mutable current is lent to preflight; late failure can abandon it.
         assert_eq!(current, 9);
+    }
+    #[test]
+    fn frozen_down_integer_exact_owner_and_independent_gu_down_budget_increments() {
+        use crate::quant_matvec::frozen_down_integer as i;
+        let full = BufferLayout::new(i::SCRATCH_WORDS).unwrap();
+        assert_eq!(full.logical_words, 16384);
+        assert_eq!(full.owned_bytes, 65536);
+        assert_eq!(
+            full.owned_bytes as u64,
+            batch_moe::FROZEN_DOWN_INTEGER_MAIN_BYTES
+        );
+        assert_eq!(batch_moe::FROZEN_DOWN_INTEGER_HOST_BYTES, 65536);
+        assert_eq!(batch_moe::FROZEN_DOWN_INTEGER_INFO_BYTES, 196608);
+        assert_eq!(batch_moe::FROZEN_DOWN_INTEGER_RUNTIME_BYTES, 462848);
+        assert_eq!(
+            BufferLayout::new(i::LOGICAL_WORDS).unwrap().owned_bytes,
+            65536
+        );
+        for gu in [false, true] {
+            for down in [false, true] {
+                let increments = u64::from(gu) * batch_moe::FROZEN_GU_INTEGER_MAIN_BYTES
+                    + u64::from(down) * batch_moe::FROZEN_DOWN_INTEGER_MAIN_BYTES;
+                assert_eq!(increments, u64::from(gu as u8 + down as u8) * 65536);
+                let runtime = runtime_bytes(38).unwrap()
+                    + u64::from(gu) * batch_moe::FROZEN_GU_INTEGER_RUNTIME_BYTES
+                    + u64::from(down) * batch_moe::FROZEN_DOWN_INTEGER_RUNTIME_BYTES;
+                assert!(runtime < TARGET_ROWS_RUNTIME_LIMIT);
+            }
+        }
+        for count in 0..=8 {
+            for purpose in [
+                Purpose::Advance,
+                Purpose::LastLogits,
+                Purpose::AllRowsWithCarry,
+            ] {
+                assert_eq!(
+                    grouped_ple_run_allowed(true, count, purpose),
+                    (1..=3).contains(&count) && purpose == Purpose::AllRowsWithCarry
+                );
+            }
+        }
     }
     #[test]
     fn frozen_gu_integer_full_page_and_independent_transient_charges_are_exact() {

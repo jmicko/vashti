@@ -848,6 +848,7 @@ pub struct GpuExecutor<'a> {
     pub(crate) target_frozen_host_router_reserved: bool,
     pub(crate) target_frozen_host_staging_reserved: bool,
     pub(crate) target_frozen_gu_integer_reserved: bool,
+    pub(crate) target_frozen_down_integer_reserved: bool,
     pub(crate) target_frozen_host_source_identity:
         Option<crate::public_host_expert_plan::PlanIdentity>,
     pub(crate) target_verify3_dense: bool,
@@ -1090,6 +1091,7 @@ impl<'a> GpuExecutor<'a> {
             target_frozen_host_router_reserved: false,
             target_frozen_host_staging_reserved: false,
             target_frozen_gu_integer_reserved: false,
+            target_frozen_down_integer_reserved: false,
             target_frozen_host_source_identity: None,
             target_verify3_dense: false,
             target_verify3_dense_calls: 0,
@@ -1248,6 +1250,7 @@ impl<'a> GpuExecutor<'a> {
         self.target_frozen_host_router_reserved = false;
         self.target_frozen_host_staging_reserved = false;
         self.target_frozen_gu_integer_reserved = false;
+        self.target_frozen_down_integer_reserved = false;
         self.batch_moe = None;
         self.bank_reserved = 0;
         // All previous commands completed before public cache handles release.
@@ -1906,6 +1909,16 @@ impl<'a> GpuExecutor<'a> {
         {
             return Err(Error::InvalidFormat("frozen GU integer construction scope"));
         }
+        if self.target_frozen_down_integer_reserved
+            && (!self.target_rows_reserved
+                || !self.target_batch_router_reserved
+                || !self.target_frozen_host_router_reserved
+                || self.target_frozen_host_staging_reserved)
+        {
+            return Err(Error::InvalidFormat(
+                "frozen DOWN integer construction scope",
+            ));
+        }
         validate_target_frozen_host_policy(
             self.resident_banks_frozen,
             self.target_frozen_host_source_identity.is_some(),
@@ -1992,20 +2005,22 @@ impl<'a> GpuExecutor<'a> {
                     "public batch router construction policy",
                 ));
             }
-            target_rows_private_extent(
+            target_rows_private_extent_with_down_math(
                 private_owned,
                 true,
                 self.target_frozen_host_router_reserved,
                 self.target_frozen_host_staging_reserved,
                 self.target_frozen_gu_integer_reserved,
+                self.target_frozen_down_integer_reserved,
             )
         } else {
-            target_rows_private_extent(
+            target_rows_private_extent_with_down_math(
                 private_owned,
                 false,
                 false,
                 self.target_frozen_host_staging_reserved,
                 self.target_frozen_gu_integer_reserved,
+                self.target_frozen_down_integer_reserved,
             )
         };
         if self.target_rows_reserved && !target_private {
@@ -3425,6 +3440,7 @@ impl Drop for GpuExecutor<'_> {
         self.target_frozen_host_router_reserved = false;
         self.target_frozen_host_staging_reserved = false;
         self.target_frozen_gu_integer_reserved = false;
+        self.target_frozen_down_integer_reserved = false;
         self.bank_reserved = 0;
         self.client.memory_cleanup();
         let _ = cubecl::future::block_on(self.client.sync());
@@ -4543,6 +4559,7 @@ mod construction_lock_tests {
     }
 }
 
+#[cfg(test)]
 fn target_rows_private_extent(
     private: u64,
     batch: bool,
@@ -4550,7 +4567,19 @@ fn target_rows_private_extent(
     stage: bool,
     gu_integer: bool,
 ) -> bool {
-    if (stage || gu_integer) && (!batch || !frozen) || stage && gu_integer {
+    target_rows_private_extent_with_down_math(private, batch, frozen, stage, gu_integer, false)
+}
+fn target_rows_private_extent_with_down_math(
+    private: u64,
+    batch: bool,
+    frozen: bool,
+    stage: bool,
+    gu_integer: bool,
+    down_integer: bool,
+) -> bool {
+    if (stage || gu_integer || down_integer) && (!batch || !frozen)
+        || stage && (gu_integer || down_integer)
+    {
         return false;
     }
     if batch {
@@ -4567,6 +4596,11 @@ fn target_rows_private_extent(
                 } else {
                     0
                 }
+                + if down_integer {
+                    batch_moe::FROZEN_DOWN_INTEGER_MAIN_BYTES
+                } else {
+                    0
+                }
     } else {
         [
             crate::resident_model::batch::TARGET_ROWS_PRIVATE_MAIN,
@@ -4578,6 +4612,41 @@ fn target_rows_private_extent(
 
 #[cfg(test)]
 mod frozen_host_policy_tests {
+    #[test]
+    fn frozen_down_integer_constructor_requires_each_exact_independent_scratch_charge() {
+        let base = crate::resident_model::batch::TARGET_ROWS_PRIVATE_MAIN
+            + batch_moe::batch_router::MAIN_BYTES;
+        for gu in [false, true] {
+            for down in [false, true] {
+                let exact = base
+                    + u64::from(gu) * batch_moe::FROZEN_GU_INTEGER_MAIN_BYTES
+                    + u64::from(down) * batch_moe::FROZEN_DOWN_INTEGER_MAIN_BYTES;
+                assert!(target_rows_private_extent_with_down_math(
+                    exact, true, true, false, gu, down
+                ));
+                for n in [exact - 1, exact + 1, exact + 65536] {
+                    assert!(!target_rows_private_extent_with_down_math(
+                        n, true, true, false, gu, down
+                    ));
+                }
+                if down {
+                    assert!(!target_rows_private_extent_with_down_math(
+                        exact, false, true, false, gu, down
+                    ));
+                    assert!(!target_rows_private_extent_with_down_math(
+                        exact, true, false, false, gu, down
+                    ));
+                    assert!(!target_rows_private_extent_with_down_math(
+                        exact, true, true, true, gu, down
+                    ));
+                    assert!(!target_rows_private_extent_with_down_math(
+                        exact, true, true, false, gu, false
+                    ));
+                }
+            }
+        }
+    }
+
     use super::*;
     #[test]
     fn packed_staging_accepts_only_exact_precharged_frozen_router_extent() {
