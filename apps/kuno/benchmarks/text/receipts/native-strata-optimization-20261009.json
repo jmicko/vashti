@@ -33569,5 +33569,290 @@
       "The separate borrowed CPU batch leaf is source-only and unconnected to these physical GPU trials; no CPU hybrid speed claim.",
       "No installed defaults, API, frontend or release change."
     ]
+  },
+  "v168_v170_attached_cpu_operator_setup_failures": {
+    "scope": "fixed public synthetic attached HOST partial operator setup",
+    "failures": [
+      {
+        "version": 168,
+        "source": {
+          "commit": "c29d28b0124722a3587c6a2d2661aca7e815e27b",
+          "binary_sha256": "1c617d46d2d3fca3426f26b46c71b8fa4fe691e4b5147784269f03066169520c",
+          "features": [
+            "direct-device"
+          ],
+          "protected_launcher_sha256": "7ba1804db2fdc1ef1f762290104e49646f620d36adbee4f5c3c77eb4e30bd5dc",
+          "helper_sha256": "9d16cd89185954285af694879c5f60125da074625a630f4c453f75ba93c68461",
+          "public_trial": "cpu-host-batch-intel-host",
+          "seed": 424242,
+          "temperature": 0,
+          "frozen_partition_exit_requested": false,
+          "frozen_bank_preserve_requested": false,
+          "frozen_private_tables_requested": false,
+          "frozen_workgroup_tables_requested": false,
+          "frozen_shared_down_scales_requested": false,
+          "frozen_shared_gate_up_factors_requested": false,
+          "mtp_q8_head_broadcast_requested": false,
+          "frozen_four_row_down_requested": false,
+          "mtp_q8_head_shared_scales_requested": false,
+          "frozen_two_row_gate_up_requested": false,
+          "frozen_packed_host_staging_requested": false,
+          "frozen_three_member_arithmetic_requested": false,
+          "draft_profile_requested": "self-contained-q8",
+          "three_gdn_streaming_requested": false,
+          "mtp_english_vocab_requested": false,
+          "frozen_gu_integer_requested": false,
+          "frozen_gu_stride_four_requested": false,
+          "target_only_requested": false,
+          "intel_mtp_requested": false,
+          "target_grouped_ple_requested": false,
+          "frozen_down_stride_four_requested": false,
+          "target_grouped_status_folds_requested": false,
+          "frozen_down_integer_requested": false,
+          "target_iq4_registers_requested": false,
+          "target_submission_backlog_requested": false,
+          "profile_ranked_bank_fill_requested": false,
+          "host_cpu_batch_operator_requested": true,
+          "synthetic_one_layer_operator_only": true,
+          "ordinary_demand_performance_claimed": false,
+          "native_30_tokens_per_second_accepted": false
+        },
+        "output_directory": "/media/jmicko/faststore/kuno-development/native-next-v168-cpu-host-operator-intel-20261011",
+        "reason": "Original constructor required explicit canonical static cache; no operator timing.",
+        "cold_original_cpu13_completed": false,
+        "original_warm_token0_checked": false,
+        "operator_timing_available": false,
+        "full_owner_close_numeric_receipt_available": false,
+        "physical_recovery": {
+          "admission": {
+            "action": "status",
+            "state": {
+              "admission": {
+                "active": false,
+                "completed": 59,
+                "paused": false,
+                "recovery_required": false,
+                "rejected": 0,
+                "waiting": 0
+              }
+            },
+            "status": 200
+          },
+          "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+          "http_statuses": {
+            "kuno": 200,
+            "ollama": 200,
+            "vashti": 200
+          },
+          "intel": {
+            "xe_memory": [
+              {
+                "total_bytes": 34242297856,
+                "used_bytes": 50688000
+              }
+            ]
+          },
+          "kernel": "7.0.0-38-generic",
+          "kernel_fault_counts": {
+            "nvidia_xid": 0,
+            "xe_memory_faults": 0,
+            "xe_reset_failures": 0,
+            "xe_timeouts": 0,
+            "xe_wedged": 0
+          },
+          "nvidia_compute_process_count": 0,
+          "nvidia_memory_mib": 629,
+          "time": "2026-10-11T20:37:39.908705+00:00"
+        }
+      },
+      {
+        "version": 169,
+        "source": {
+          "commit": "bbf325cb9fe84a2167e8a71a1d3afc122f8a0989",
+          "binary_sha256": "360eb1d6e97fc331e3e70607d7046dbe07a3e90658072d4ecf359b40179baf9b",
+          "features": [
+            "direct-device"
+          ],
+          "protected_launcher_sha256": "191dea3cf868b5bdaca3d87bef0ed398d198cca4a22eaa02fd64d304ec2f199a",
+          "helper_sha256": "e5e165da5e8b977666d8ae4b1ab4646d7e30f67654befed3327f3eb8ddfca7a6",
+          "public_trial": "cpu-host-batch-intel-host",
+          "seed": 424242,
+          "temperature": 0,
+          "frozen_partition_exit_requested": false,
+          "frozen_bank_preserve_requested": false,
+          "frozen_private_tables_requested": false,
+          "frozen_workgroup_tables_requested": false,
+          "frozen_shared_down_scales_requested": false,
+          "frozen_shared_gate_up_factors_requested": false,
+          "mtp_q8_head_broadcast_requested": false,
+          "frozen_four_row_down_requested": false,
+          "mtp_q8_head_shared_scales_requested": false,
+          "frozen_two_row_gate_up_requested": false,
+          "frozen_packed_host_staging_requested": false,
+          "frozen_three_member_arithmetic_requested": false,
+          "draft_profile_requested": "self-contained-q8",
+          "three_gdn_streaming_requested": false,
+          "mtp_english_vocab_requested": false,
+          "frozen_gu_integer_requested": false,
+          "frozen_gu_stride_four_requested": false,
+          "target_only_requested": false,
+          "intel_mtp_requested": false,
+          "target_grouped_ple_requested": false,
+          "frozen_down_stride_four_requested": false,
+          "target_grouped_status_folds_requested": false,
+          "frozen_down_integer_requested": false,
+          "target_iq4_registers_requested": false,
+          "target_submission_backlog_requested": false,
+          "profile_ranked_bank_fill_requested": false,
+          "host_cpu_batch_operator_requested": true,
+          "synthetic_one_layer_operator_only": true,
+          "ordinary_demand_performance_claimed": false,
+          "native_30_tokens_per_second_accepted": false
+        },
+        "output_directory": "/media/jmicko/faststore/kuno-development/native-next-v169-cpu-host-operator-intel-20261011",
+        "reason": "Original frozen router configuration required public target request I/O and real cold request scope; no operator timing.",
+        "cold_original_cpu13_completed": false,
+        "original_warm_token0_checked": false,
+        "operator_timing_available": false,
+        "full_owner_close_numeric_receipt_available": false,
+        "physical_recovery": {
+          "admission": {
+            "action": "status",
+            "state": {
+              "admission": {
+                "active": false,
+                "completed": 59,
+                "paused": false,
+                "recovery_required": false,
+                "rejected": 0,
+                "waiting": 0
+              }
+            },
+            "status": 200
+          },
+          "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+          "http_statuses": {
+            "kuno": 200,
+            "ollama": 200,
+            "vashti": 200
+          },
+          "intel": {
+            "xe_memory": [
+              {
+                "total_bytes": 34242297856,
+                "used_bytes": 50688000
+              }
+            ]
+          },
+          "kernel": "7.0.0-38-generic",
+          "kernel_fault_counts": {
+            "nvidia_xid": 0,
+            "xe_memory_faults": 0,
+            "xe_reset_failures": 0,
+            "xe_timeouts": 0,
+            "xe_wedged": 0
+          },
+          "nvidia_compute_process_count": 0,
+          "nvidia_memory_mib": 608,
+          "time": "2026-10-11T20:43:38.918854+00:00"
+        }
+      },
+      {
+        "version": 170,
+        "source": {
+          "commit": "9453a4b017e5af85d0d26b717abbdd22e555c826",
+          "binary_sha256": "ae811a430318018f1b856233ff605c00357e1dbf83b5fdef148c2c1ef3b4efc8",
+          "features": [
+            "direct-device"
+          ],
+          "protected_launcher_sha256": "191dea3cf868b5bdaca3d87bef0ed398d198cca4a22eaa02fd64d304ec2f199a",
+          "helper_sha256": "e5e165da5e8b977666d8ae4b1ab4646d7e30f67654befed3327f3eb8ddfca7a6",
+          "public_trial": "cpu-host-batch-intel-host",
+          "seed": 424242,
+          "temperature": 0,
+          "frozen_partition_exit_requested": false,
+          "frozen_bank_preserve_requested": false,
+          "frozen_private_tables_requested": false,
+          "frozen_workgroup_tables_requested": false,
+          "frozen_shared_down_scales_requested": false,
+          "frozen_shared_gate_up_factors_requested": false,
+          "mtp_q8_head_broadcast_requested": false,
+          "frozen_four_row_down_requested": false,
+          "mtp_q8_head_shared_scales_requested": false,
+          "frozen_two_row_gate_up_requested": false,
+          "frozen_packed_host_staging_requested": false,
+          "frozen_three_member_arithmetic_requested": false,
+          "draft_profile_requested": "self-contained-q8",
+          "three_gdn_streaming_requested": false,
+          "mtp_english_vocab_requested": false,
+          "frozen_gu_integer_requested": false,
+          "frozen_gu_stride_four_requested": false,
+          "target_only_requested": false,
+          "intel_mtp_requested": false,
+          "target_grouped_ple_requested": false,
+          "frozen_down_stride_four_requested": false,
+          "target_grouped_status_folds_requested": false,
+          "frozen_down_integer_requested": false,
+          "target_iq4_registers_requested": false,
+          "target_submission_backlog_requested": false,
+          "profile_ranked_bank_fill_requested": false,
+          "host_cpu_batch_operator_requested": true,
+          "synthetic_one_layer_operator_only": true,
+          "ordinary_demand_performance_claimed": false,
+          "native_30_tokens_per_second_accepted": false
+        },
+        "output_directory": "/media/jmicko/faststore/kuno-development/native-next-v170-cpu-host-operator-intel-20261011",
+        "reason": "Full owning private handle had explicit zero-valued offsets rejected as trimmed; no operator timing.",
+        "cold_original_cpu13_completed": true,
+        "original_warm_token0_checked": true,
+        "operator_timing_available": false,
+        "full_owner_close_numeric_receipt_available": false,
+        "physical_recovery": {
+          "admission": {
+            "action": "status",
+            "state": {
+              "admission": {
+                "active": false,
+                "completed": 59,
+                "paused": false,
+                "recovery_required": false,
+                "rejected": 0,
+                "waiting": 0
+              }
+            },
+            "status": 200
+          },
+          "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+          "http_statuses": {
+            "kuno": 200,
+            "ollama": 200,
+            "vashti": 200
+          },
+          "intel": {
+            "xe_memory": [
+              {
+                "total_bytes": 34242297856,
+                "used_bytes": 50688000
+              }
+            ]
+          },
+          "kernel": "7.0.0-38-generic",
+          "kernel_fault_counts": {
+            "nvidia_xid": 0,
+            "xe_memory_faults": 0,
+            "xe_reset_failures": 0,
+            "xe_timeouts": 0,
+            "xe_wedged": 0
+          },
+          "nvidia_compute_process_count": 0,
+          "nvidia_memory_mib": 700,
+          "time": "2026-10-11T20:55:56.965620+00:00"
+        }
+      }
+    ],
+    "whole_model_cpu_hybrid_accepted": false,
+    "performance_gain_claimed": false,
+    "normal_selected_intel_path_unchanged": true,
+    "next": "Repair exact full-span optional-offset representation and repeat physical operator."
   }
 }

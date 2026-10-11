@@ -9,6 +9,24 @@ User steering after the completed three-way comparison: continue optimization
 with target and full Q8 MTP on Intel B70 only; defer Nvidia experiments.
 Ordinary installed defaults remain unchanged until their own integration gate.
 
+Latest normal Intel comparison is v167: **10.482354 real continuations/s**
+with original bank filling, original512 queue/IQ4 decoder, grouped PLE,
+integer GU plus stride-four, integer DOWN and shared full-Q8 Intel MTP.
+The public profile filler measured10.478727 and remains unselected. See the
+completed v167 receipt below; these are one ordered code200 pair, not30tokens/s.
+
+The borrowed CPU leaf/actual same-RAM bridge and fixed one-layer operator
+controller are integrated through9453a4b. Three setup attempts v168–v170 failed
+before operator timing: explicit static-cache admission, original request-I/O
+setup/scope, then rejection of an actual full private owner represented by
+zero-valued optional offsets. The failed setups are recorded separately in
+`v168_v170_attached_cpu_operator_setup_failures`; every attempt returned normal
+services, B70 used50688000B and unchanged classified fault counts. v170 passed
+original coldCPU13 and warm token0 full-vector checks before its bridge failure.
+No CPU hybrid speed or complete numeric closure receipt follows from a failure.
+The next gate applies the tested full-span representation fix and repeats the
+same operator. Source-only batched MTP cache repair is being prepared separately.
+
 Accepted GU scheduling physical source isac78f00/v159, frozen binarySHA256
 `c04d49a6ca11115c0bba0b1acc38019ae2f6f4b1f323cc0f9b6608eaa639bc7d`.
 Encoded-register preparation and explicit GU stride-four pass the unchanged

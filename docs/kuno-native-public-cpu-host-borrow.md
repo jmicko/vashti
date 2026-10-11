@@ -79,6 +79,11 @@ the seven actual private arena IDs in native order
 bounded by count*10. Complete MAX8/MAX80 owner spans, actual client/stream,
 offsets, typed lengths and no-alias checks precede payload dispatch.
 
+Full private owners may use absent offsets or explicit zero-valued offsets,
+as produced by the original contiguous allocator. Both represent the same
+complete span. Nonzero trims reject before any unchecked used-size subtraction;
+exact allocation, used extent and actual physical buffer checks remain required.
+
 The method privately obtains the original registered source handles; it never
 returns a handle or passes one to a caller callback. It calls only the existing
 original-F32 `grouped_gate_up_frozen` and `grouped_down_frozen` wrappers, through
