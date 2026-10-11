@@ -3,6 +3,19 @@
 Prepared 2026-10-09 after the user stopped optimization to conserve usage.
 This is a standalone resume guide, not authorization to restart GPU work.
 
+**2026-10-10 resume notice:** the user explicitly resumed this backend pass.
+The original acceptance/status below is historical. Subsequent GLM work passed
+the v144/v145 gates and GPU-routed public code200 ABBA: v145 control mean
+7.54493 and exit candidate mean **8.33810 continuation tokens/s** (+10.51%).
+The preserve-placement opt-in `4fad434` changes only the short CPU13 replay;
+normal language already preserves its post-prefill resident set. The first
+v146 preserve replay now passes, with all 9,120 rank-member routes in VRAM and
+5.72541 tokens/s; this is a diagnostic, not normal-generation throughput.
+See the latest entries in [the checkpoint](kuno-native-text-checkpoint.md) and
+[coordination guide](kuno-vashti-coordination.md) for current source, tests,
+acceptance and pending private-table compiler experiment. Do not repeat the
+already accepted v144/v145 investigations from the historical next steps below.
+
 ## Read this first
 
 We have a working Rust inference laboratory for Qwen3.8-Flash-Next, including

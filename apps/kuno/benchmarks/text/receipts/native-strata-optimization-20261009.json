@@ -6106,5 +6106,123 @@
       "The kuno restart cleared the resident image model; image-generation users pay one model reload",
       "Exit kernel and router effects remain workload-dependent; the 30 tokens/s objective needs the packed IQ3 block decoding and row-grouping kernels"
     ]
+  },
+  "v146_preserve_placement_physical": {
+    "artifacts": "/media/jmicko/faststore/kuno-development/native-next-v146-preserve-gate-20261010",
+    "source": {
+      "commit": "1d0d7c8dca900fc5b3c1e8a5a77d2ee281c06111",
+      "binary_sha256": "d5a449cd87ce6a12b24de5611adddf47b179006af9607f5f010206ac7ef16549",
+      "features": [
+        "direct-device"
+      ],
+      "protected_launcher_sha256": "c34a0a1f049611a826269067374a09ab34657a53af094776d8057960270389c0",
+      "helper_sha256": "3fecc63fa7b111980505662912a8d58689bc0f4c84cb78c7648ab168a3708352",
+      "public_trial": "warm-preservebank-host",
+      "seed": 424242,
+      "temperature": 0,
+      "frozen_partition_exit_requested": false,
+      "frozen_bank_preserve_requested": true,
+      "ordinary_demand_performance_claimed": false,
+      "native_30_tokens_per_second_accepted": false
+    },
+    "warm_replay": {
+      "accepted_tokens": 12,
+      "elapsed_ns": 2095918815,
+      "accepted_tokens_per_second": 5.725412603827405,
+      "frozen_bank_placement": "preserve-routed",
+      "frozen_source_routes": {
+        "host_routes": 0,
+        "source_dispatches": 4320,
+        "vram_routes": 9120
+      },
+      "expert_uploads": 0,
+      "uploaded_bytes": 0,
+      "timed_physical_read_bytes": 1658880,
+      "frozen_host_gpu_router": false,
+      "frozen_host_inactive_partition_exit": false,
+      "target_close": {
+        "main_buffers": 1378,
+        "main_bytes": 826638336,
+        "source_buffers": 0,
+        "source_bytes": 0
+      },
+      "frozen_host_close": {
+        "detached_pages": 432,
+        "live_backing_bytes": 0,
+        "metadata_owned_bytes": 1458688,
+        "physical_allocated_bytes": 36147609600,
+        "physical_freed_bytes": 36147609600,
+        "registered_pages": 432,
+        "source_window_peak_bytes": 1048576
+      },
+      "frozen_host_setup": {
+        "attach_ns": 47974012793,
+        "bank_completion_experts": 4121,
+        "bank_completion_read_ns": 10118582849,
+        "bank_completion_upload_ns": 7509545,
+        "bank_completion_uploaded_bytes": 8385484800,
+        "prepare_ns": 12747751308,
+        "separate_host_reserved_bytes": 36166705152
+      }
+    },
+    "complete_original_cpu13_vectors_carries_greedies_real_repair_accepted": true,
+    "preserved_actual_routed_residents_no_route_forcing": true,
+    "normal_language_speed_claimed": false,
+    "matched_canonical_control_pending": false,
+    "host_after": {
+      "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+      "time": "2026-10-11T01:00:48.873116+00:00",
+      "admission": {
+        "active": false,
+        "completed": 0,
+        "paused": false,
+        "recovery_required": false,
+        "rejected": 0,
+        "waiting": 0
+      },
+      "http_statuses": {
+        "kuno": 200,
+        "ollama": 200,
+        "vashti": 200
+      },
+      "kernel_fault_counts": {
+        "nvidia_xid": 0,
+        "xe_memory_faults": 0,
+        "xe_reset_failures": 0,
+        "xe_timeouts": 0,
+        "xe_wedged": 0
+      },
+      "intel": {
+        "xe_memory": [
+          {
+            "total_bytes": 34242297856,
+            "used_bytes": 50688000
+          }
+        ]
+      },
+      "nvidia_compute_process_count": 0
+    },
+    "limits": [
+      "Twelve repeated public continuations with preserved prior actual resident set; setup excluded",
+      "Normal language already preserves post-prefill residents; this is not a new language placement optimization",
+      "No GPU-side immutable RAM reads selected during warm replay; counters do not measure all PCIe traffic",
+      "One ordered same-artifact short replay pair; normal-language performance is not established",
+      "No API/frontend/production installation/release changes"
+    ],
+    "matched_canonical_control": {
+      "artifacts": "/media/jmicko/faststore/kuno-development/native-next-v146-canonical-control-20261010",
+      "accepted_tokens": 12,
+      "elapsed_ns": 2783044584,
+      "accepted_tokens_per_second": 4.311824564000589,
+      "frozen_bank_placement": "cpu13-diagnostic",
+      "frozen_source_routes": {
+        "host_routes": 6530,
+        "source_dispatches": 4320,
+        "vram_routes": 2590
+      },
+      "expert_uploads": 0,
+      "full_original_cpu13_gate_and_recovery_accepted": true
+    },
+    "matched_short_replay_speedup_percent": 32.783987818726644
   }
 }

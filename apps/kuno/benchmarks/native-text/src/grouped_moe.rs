@@ -3304,17 +3304,16 @@ mod tests {
                 if opcode != 59 {
                     continue;
                 }
-                if let Some(&(space, pointee)) = pointers.get(&operands[0]) {
-                    if arrays
+                if let Some(&(space, pointee)) = pointers.get(&operands[0])
+                    && arrays
                         .get(&pointee)
                         .and_then(|id| constants.get(id))
                         .is_some_and(|&n| matches!(n, 256 | 512 | 2048))
-                    {
-                        match space {
-                            7 => functions.push(operands[1]),
-                            6 => private.push(operands[1]),
-                            _ => {}
-                        }
+                {
+                    match space {
+                        7 => functions.push(operands[1]),
+                        6 => private.push(operands[1]),
+                        _ => {}
                     }
                 }
             }
@@ -3361,6 +3360,7 @@ mod tests {
                 assert!(new_source.contains("fn grouped_gate_up_frozen_private_grid"));
                 let original = wgpu::naga::front::wgsl::parse_str(&old_source).unwrap();
                 let candidate = wgpu::naga::front::wgsl::parse_str(&new_source).unwrap();
+                assert_public_tables_immutable(&candidate);
                 let old_tables = table_values(&original, false);
                 let new_tables = table_values(&candidate, true);
                 assert_eq!(old_tables, new_tables);
@@ -3417,6 +3417,76 @@ mod tests {
                 assert_eq!(memory_events(&old_down), memory_events(&new_down));
             }
         }
+    }
+
+    fn assert_public_tables_immutable(module: &wgpu::naga::Module) {
+        use wgpu::naga::{AddressSpace, Expression, Function, Statement};
+        fn global(
+            function: &Function,
+            pointer: wgpu::naga::Handle<Expression>,
+        ) -> Option<wgpu::naga::Handle<wgpu::naga::GlobalVariable>> {
+            match function.expressions[pointer] {
+                Expression::GlobalVariable(var) => Some(var),
+                Expression::Access { base, .. } | Expression::AccessIndex { base, .. } => {
+                    global(function, base)
+                }
+                _ => None,
+            }
+        }
+        fn visit(module: &wgpu::naga::Module, function: &Function, body: &wgpu::naga::Block) {
+            for statement in body {
+                match statement {
+                    Statement::Store { pointer, .. } => {
+                        if let Some(var) = global(function, *pointer) {
+                            let var = &module.global_variables[var];
+                            assert!(
+                                !(var.space == AddressSpace::Private
+                                    && var
+                                        .name
+                                        .as_deref()
+                                        .is_some_and(|n| n.starts_with("arrays_"))),
+                                "public private table or element was mutated"
+                            );
+                        }
+                    }
+                    Statement::Block(block) => visit(module, function, block),
+                    Statement::If { accept, reject, .. } => {
+                        visit(module, function, accept);
+                        visit(module, function, reject);
+                    }
+                    Statement::Switch { cases, .. } => {
+                        for case in cases {
+                            visit(module, function, &case.body);
+                        }
+                    }
+                    Statement::Loop {
+                        body, continuing, ..
+                    } => {
+                        visit(module, function, body);
+                        visit(module, function, continuing);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        for entry in &module.entry_points {
+            visit(module, &entry.function, &entry.function.body);
+        }
+        for (_, function) in module.functions.iter() {
+            visit(module, function, &function.body);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "public private table or element was mutated")]
+    fn private_table_element_store_cannot_bypass_immutability_proof() {
+        let module = wgpu::naga::front::wgsl::parse_str(
+            "var<private> arrays_0: array<u32,256>;\n\
+             @compute @workgroup_size(64) fn main(\
+             @builtin(local_invocation_id) id: vec3<u32>) { arrays_0[id.x] = 1u; }",
+        )
+        .unwrap();
+        assert_public_tables_immutable(&module);
     }
 
     fn arithmetic_operations(module: &wgpu::naga::Module) -> Vec<String> {

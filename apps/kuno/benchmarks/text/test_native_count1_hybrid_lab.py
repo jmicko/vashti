@@ -1904,6 +1904,36 @@ class StrataInspiredGuards(unittest.TestCase):
         rawhost={"KUNO_LAB_PUBLIC_HOST_WEIGHT_ONLY":"1","KUNO_PUBLIC_RECEIPT":"/public/numeric","KUNO_LAB_FROZEN_PARTITION_EXIT":"1"}
         with self.assertRaises(ValueError):guard.memory_limit(rawhost,["/frozen/binary","intel","public-host-weight-probe"])
 
+    def test_private_tables_require_frozen_exit_and_unchanged_public_limits(self):
+        guard=self.guard()
+        common={"KUNO_LAB_STATIC_CACHE_BYTES":"8589934592","KUNO_TEST_Q3_DIR":"/original",
+            "KUNO_TEST_MTP":"/original/draft","KUNO_PUBLIC_RECEIPT":"/public/numeric",
+            "KUNO_LAB_DEVICE_DISPATCH":"inline","KUNO_LAB_TARGET_IO":"chunk",
+            "KUNO_LAB_TARGET_REUSE":"request","KUNO_LAB_TARGET_FILL":"direct-public",
+            "KUNO_LAB_TARGET_SOURCES":"frozen-host-public","KUNO_LAB_FROZEN_PARTITION_EXIT":"1"}
+        for language in (False,True):
+            env=dict(common)
+            if language:
+                env.update(KUNO_LAB_LANGUAGE_PUBLIC_ONLY="1",KUNO_LAB_LANGUAGE_FIXTURE="first-code")
+                args=["/frozen/binary","intel","daslab-language-probe"]
+                limit=48*1024**3+196*1024**2
+            else:
+                env.update(KUNO_LAB_SPECULATIVE_PUBLIC_ONLY="1",KUNO_LAB_WARM_REPLAY="once",
+                    KUNO_PUBLIC_TARGET_CARRY13_REFERENCE="/public/reference")
+                args=["/frozen/binary","intel","daslab-speculative-probe"]
+                limit=48*1024**3
+            enabled=dict(env,KUNO_LAB_FROZEN_TABLES="private-public")
+            for router in (None,"device-frozen-public"):
+                valid=dict(enabled)
+                if router is not None:valid["KUNO_LAB_TARGET_ROUTER"]=router
+                self.assertEqual(guard.memory_limit(valid,args),limit)
+            for raw in ("","private","true","1","private-public "):
+                with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_FROZEN_TABLES=raw),args)
+            for key in ("KUNO_LAB_TARGET_SOURCES","KUNO_LAB_FROZEN_PARTITION_EXIT"):
+                bad=dict(enabled);bad.pop(key)
+                with self.assertRaises(ValueError):guard.memory_limit(bad,args)
+        with self.assertRaises(ValueError):guard.memory_limit({"KUNO_LAB_FROZEN_TABLES":"private-public"},["/frozen/binary","intel","batch-router-gpu-probe"])
+
     def test_bank_placement_requires_warm_frozen_speculative_scope_and_keeps_limits(self):
         guard=self.guard()
         common={"KUNO_LAB_STATIC_CACHE_BYTES":"8589934592","KUNO_TEST_Q3_DIR":"/original",

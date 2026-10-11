@@ -427,3 +427,28 @@ Construction owners, grids and budgets stay the same. Compiler/source checks do
 not establish full-model or speed acceptance; see the current checkpoint before
 selecting this mode for physical validation. These are laboratory contracts,
 not production API/configuration/Vashti changes.
+
+### Operative public lookup-table lowering experiment, 2026-10-10
+
+An explicit laboratory candidate `KUNO_LAB_FROZEN_TABLES=private-public` requires
+`KUNO_LAB_TARGET_SOURCES=frozen-host-public` and
+`KUNO_LAB_FROZEN_PARTITION_EXIT=1`. It applies only to the fixed public CPU13
+and language200 controllers, with unchanged original models/references and Q8
+draft comparison. Absent selection preserves the existing source/compilation.
+
+The selected immutable source geometry dispatches a distinct gate/up entrypoint
+whose public quantization tables lower as module `var<private>` rather than
+by-value WGSL `const` arrays. This targets Naga's repeated whole-array Function
+spill on dynamic lookup. The term private here is a shader address space for
+the fixed **public codebook**, not retained user content. The guarded compiler
+selection must use the exact kernel entrypoint, not ambient environment values,
+and admit only the expected original public u32 table geometries/literals.
+
+Packed weights, table entries, lane/column accumulation order, F32 factors,
+64-lane reductions, inactive-partition semantics, down kernels, runtime maps,
+owner reservations, binding counts, source identity and erasure remain unchanged.
+Receipts compare the completed actual source's `frozen_host_private_tables` flag
+with the requested mode. Source shader/SPIR-V checks are prerequisites, not GPU
+acceptance or a performance claim. Require original CPU13/repair/full-owner gates
+before ordinary same-artifact language timing. If GPU compilation or execution
+fails, retain the old path and failure evidence; do not weaken numerical guards.

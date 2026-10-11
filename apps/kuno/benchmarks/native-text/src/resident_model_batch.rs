@@ -2099,6 +2099,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
     }
     /// The parent retains exact public hash/source proofs and PreparedPlan.
     /// No model/workspace borrow escapes into the imported-page lifetime.
+    #[allow(clippy::too_many_arguments)] // Explicit immutable source policies belong to this attachment.
     pub(crate) unsafe fn attach_public_host_sources<'plan>(
         &mut self,
         executor: &mut GpuExecutor<'f>,
@@ -2106,6 +2107,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         device: &wgpu::Device,
         reserved: u64,
         inactive_partition_exit: bool,
+        private_tables: bool,
         cancel: &AtomicBool,
     ) -> Result<crate::public_host_expert_attachment::Attachment<'plan, 'm, 'f>> {
         u::cancel(cancel)?;
@@ -2149,6 +2151,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 &self.arena,
                 reserved,
                 inactive_partition_exit,
+                private_tables,
                 cancel,
             )
         }
@@ -2175,6 +2178,18 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             return Err(error());
         }
         native.moe.frozen_host_source_partition_exit()
+    }
+
+    pub(crate) fn native_frozen_source_private_tables(
+        &self,
+        executor: &GpuExecutor<'f>,
+    ) -> Result<bool> {
+        self.completed_native_projection_boundary(executor)?;
+        let native = self.native_batch.as_ref().ok_or(error())?;
+        if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
+            return Err(error());
+        }
+        native.moe.frozen_host_source_private_tables()
     }
 
     pub(crate) fn activate_public_frozen_host_batch_router(

@@ -3123,3 +3123,28 @@ and speed acceptance remain pending, as does full-model frozen512 routing.
 The physical accepted control remainsv143/`f0e088b`; see checkpoint for exact
 source chain, protected helper limitation and the ordered next gates. No more
 benchmarks are authorized within this stopped pass.
+
+### Active handoff: native lookup-table speed experiment resumed, 2026-10-10
+
+The user explicitly resumed backend optimization after GLM/free-model work,
+requesting progress toward20tokens/s. This supersedes the stopped-pass status
+above. Inspection found no blocking defect in the router-activation ledger fix
+`8c7d838` or preserve-bank diagnostic `4fad434`. v145/fd39cd1 has full physical
+CPU13 gates and GPU-routed code200 ABBA: control7.54493/candidate8.33810tokens/s,
+matched exit-kernel gain10.51%. No production/API/release acceptance is implied.
+
+The fresh v146/1d0d7c8 preserve-bank replay passes original CPU13 vectors,
+greedies/real repair and full closes:12continuations/2.095918815s=5.72541tokens/s,
+9120VRAM/0host rank-member routes,0expert uploads. Memory/admission/services and
+fault counts recover. The matched canonical control is4.31182tokens/s (ordered pair,+32.78%);
+this diagnostic does not establish a normal-language placement optimization,
+because code200 already preserves its post-prefill residents.
+
+Next candidate targets repeated by-value codebook array spills in the actual
+CubeCL quantized gate/up kernels. Exact opt-in contract is in the
+[all-row plan](kuno-native-mtp-all-rows-plan.md#operative-public-lookup-table-lowering-experiment-2026-10-10).
+Private-table leaf`120e94d` is integrated as`e054d70`; the guarded public controller
+and negative element-write proof are in the follow-up source commit. Root owns
+the shared GPUs. Physical candidate acceptance is pending.
+No API, frontend, catalogue, installation or release change is included.
+Required Vashti changes:none. Preserve canonical application work.

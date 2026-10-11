@@ -157,9 +157,13 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
         arena: &PrivateArena,
         exact_reserved_host: u64,
         inactive_partition_exit: bool,
+        private_tables: bool,
         cancel: &AtomicBool,
     ) -> Result<Attachment<'plan, 'model, 'file>> {
         u::cancel(cancel)?;
+        if private_tables && !inactive_partition_exit {
+            return Err(rejected());
+        }
         self.budget.check_exact(exact_reserved_host)?;
         executor.check_client(client)?;
         workspace.validate_public_warm_boundary(executor, self.graph, arena)?;
@@ -269,7 +273,15 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
         if owners.len() != mirror::PAGES || registered.len() != mirror::PAGES {
             return Err(rejected());
         }
-        let sources = if inactive_partition_exit {
+        let sources = if private_tables {
+            Sources::new_with_private_tables(
+                executor,
+                self.graph,
+                &self.plan,
+                registered,
+                self.budget.shared_model_source_host_bytes,
+            )
+        } else if inactive_partition_exit {
             Sources::new_with_inactive_partition_exit(
                 executor,
                 self.graph,

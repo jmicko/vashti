@@ -6,6 +6,10 @@ import sys
 
 def selected_target_policy(environment, mtp=False):
     selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
+    if "KUNO_LAB_FROZEN_TABLES" in selected:
+        private_table_scope(environment)
+        if not mtp or selected.pop("KUNO_LAB_FROZEN_TABLES") != "private-public":
+            raise ValueError("Private tables require the canonical frozen public target scope")
     if "KUNO_LAB_FROZEN_PARTITION_EXIT" in selected:
         if (not mtp or selected.pop("KUNO_LAB_FROZEN_PARTITION_EXIT") != "1"
                 or selected.get("KUNO_LAB_TARGET_SOURCES") != "frozen-host-public"):
@@ -80,6 +84,18 @@ def selected_target_policy(environment, mtp=False):
             raise ValueError("Warm replay requires the one-shot public fixture")
     return selected
 
+def private_table_scope(environment):
+    if "KUNO_LAB_FROZEN_TABLES" in environment:
+        spec = environment.get("KUNO_LAB_SPECULATIVE_PUBLIC_ONLY") == "1"
+        language = environment.get("KUNO_LAB_LANGUAGE_PUBLIC_ONLY") == "1"
+        if (environment.get("KUNO_LAB_FROZEN_TABLES") != "private-public"
+                or environment.get("KUNO_LAB_TARGET_SOURCES") != "frozen-host-public"
+                or environment.get("KUNO_LAB_FROZEN_PARTITION_EXIT") != "1"
+                or spec == language
+                or spec and environment.get("KUNO_LAB_WARM_REPLAY") != "once"):
+            raise ValueError("Private tables require the canonical frozen public partition-exit scope")
+
+
 def bank_placement_scope(environment):
     if "KUNO_LAB_FROZEN_BANK_PLACEMENT" in environment:
         if (environment.get("KUNO_LAB_FROZEN_BANK_PLACEMENT") != "preserve-public"
@@ -90,6 +106,7 @@ def bank_placement_scope(environment):
 
 
 def memory_limit(environment, arguments):
+    private_table_scope(environment)
     bank_placement_scope(environment)
     if "KUNO_LAB_PUBLIC_HOST_CUBECL_ONLY" in environment or (len(arguments) > 2 and arguments[2] == "public-host-weight-cubecl-probe"):
         selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
