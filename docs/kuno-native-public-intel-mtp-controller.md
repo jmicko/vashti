@@ -68,9 +68,14 @@ ensure query freshness and unchanged physical load through construction.
 
 The draft selects exactly one Intel discrete adapter and must match the
 parent target's complete actual adapter identity, including PCI bus ID when
-reported. It requests a new Wgpu device/queue on that physical GPU and calls `init_device`
-again with the original custom exclusive allocator. The independently created
-ComputeClient must have a different utilities/stream identity from the target.
+reported. It requests a new Wgpu device/queue on that physical GPU. When a
+parent target device is retained, it borrows both Vulkan HAL devices and
+requires two present, nonnull, different `VkDevice` handles while both guards
+are alive. No raw API calls, handle logging, retained raw handles or destruction
+occur. Wgpu 29 core device equality uses context-local IDs and cannot establish
+identity across independent Instances; that equality is deliberately unused.
+The draft calls `init_device` again with the original custom exclusive
+allocator. The independently created ComputeClient must have a different utilities/stream identity from the target.
 Target request I/O is never configured on the draft; the draft retains its own
 64MiB transient I/O, retirement flag and private arena. The original MTP fresh
 client check, all 42 private-owner audits, public-page checks and complete close
@@ -79,7 +84,12 @@ are retained. Moving placement changes no kernel or reference arithmetic.
 Receipts separate `mtp_device_requested` from actual `mtp_device` vendor,
 device, PCI bus ID, shared physical GPU, distinct Wgpu device/runtime and draft
 runtime ID evidence. Legacy non-frozen default scopes without a parent Wgpu
-device report unknown physical target fields as null rather than guessing. `intel_mtp_admission` records the fresh physical memory,
+device report unknown physical target fields and `distinct_wgpu_device` as null
+with `logical_device_identity=unverified-no-parent`; actual runtime independence
+and separate creation are still mandatory. A retained target always requires
+verified distinct Vulkan handles, and Intel always requires a retained target.
+Verified trials report `logical_device_identity=borrowed-vulkan-device-handles`.
+`intel_mtp_admission` records the fresh physical memory,
 every combined charge and remaining capacity beyond the driver margin. No
 prompts, token values, vectors or per-expert routing history are added.
 
@@ -90,9 +100,16 @@ acceptance gates. No physical placement or performance acceptance is claimed
 by source tests alone. No API, service, installed engine or release changes
 are included.
 
-Source validation on this controller: all 26 language-controller tests, all 21
+Initial controller source validation: all 26 language-controller tests, all 21
 CPU13-controller tests and all 15 target-build helper tests pass. The five Intel
 selection/admission/identity tests were rerun after the final receipt and exact
 comparison-policy assertions. Strict all-target Clippy with `direct-device`,
 `-j2` and `-D warnings`, formatting and diff whitespace checks pass. No GPU,
 service, root command or live memory query was run by this controller task.
+
+The first Intel physical attempt passed combined memory admission but stopped
+before model allocation because the earlier cross-Instance Wgpu-ID comparison
+reported a false identity match. The Vulkan handle comparison corrects that
+source check. Source tests cover absent/null/equal/distinct typed handles and
+strict verified versus unverified receipt scopes; live placement acceptance
+remains a separate root-owned gate.

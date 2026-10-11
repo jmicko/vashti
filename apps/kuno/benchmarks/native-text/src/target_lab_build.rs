@@ -238,11 +238,43 @@ pub(crate) fn intel_mtp_preflight(
         .map_err(Into::into)
 }
 
+/// Read only live, borrowed Vulkan device identities. Wgpu's local core IDs
+/// cannot prove device independence across separately created Instances.
+pub(crate) fn mtp_distinct_vulkan_devices(
+    target: &wgpu::Device,
+    draft: &wgpu::Device,
+) -> Result<bool, &'static str> {
+    // SAFETY: read borrowed identities only while both Wgpu/HAL guards remain
+    // alive. No raw object is destroyed, retained, mutated or submitted through
+    // these handles. Device ownership and submission remain with Wgpu.
+    let target = unsafe { target.as_hal::<wgpu::hal::api::Vulkan>() };
+    let draft = unsafe { draft.as_hal::<wgpu::hal::api::Vulkan>() };
+    validate_mtp_vulkan_handles(
+        target.as_ref().map(|device| device.raw_device().handle()),
+        draft.as_ref().map(|device| device.raw_device().handle()),
+    )
+}
+fn validate_mtp_vulkan_handles(
+    target: Option<ash::vk::Device>,
+    draft: Option<ash::vk::Device>,
+) -> Result<bool, &'static str> {
+    match (target, draft) {
+        (Some(target), Some(draft))
+            if target != ash::vk::Device::null()
+                && draft != ash::vk::Device::null()
+                && target != draft =>
+        {
+            Ok(true)
+        }
+        _ => Err("MTP requires two live distinct Vulkan logical devices"),
+    }
+}
+
 pub(crate) fn mtp_device_receipt(
     selected: MtpDevice,
     target: Option<&wgpu::AdapterInfo>,
     draft: &wgpu::AdapterInfo,
-    distinct_device: bool,
+    distinct_device: Option<bool>,
     distinct_runtime: bool,
     draft_runtime_id: u32,
 ) -> Result<serde_json::Value, &'static str> {
@@ -255,7 +287,8 @@ pub(crate) fn mtp_device_receipt(
     if draft.vendor != selected.vendor()
         || draft.device_type != wgpu::DeviceType::DiscreteGpu
         || draft.backend != wgpu::Backend::Vulkan
-        || !distinct_device
+        || distinct_device == Some(false)
+        || distinct_device.is_some() != target.is_some()
         || !distinct_runtime
         || draft_runtime_id > u16::MAX as u32
         || selected == MtpDevice::Intel && (same != Some(true) || target != Some(draft))
@@ -270,6 +303,7 @@ pub(crate) fn mtp_device_receipt(
         "actual_target_device_id":target.map(|info|info.device),
         "actual_target_pci_bus_id":target.map(|info|&info.device_pci_bus_id),
         "distinct_wgpu_device":distinct_device,"distinct_runtime":distinct_runtime,
+        "logical_device_identity":if distinct_device.is_some(){"borrowed-vulkan-device-handles"}else{"unverified-no-parent"},
         "actual_draft_runtime_id":draft_runtime_id,"draft_request_io_shared":false,
         "draft_private_arena_shared":false}),
     )
@@ -757,25 +791,72 @@ mod tests {
         }
     }
     #[test]
+    fn intel_mtp_vulkan_identity_requires_two_present_nonnull_distinct_live_handles() {
+        use ash::vk::Handle;
+        let first = ash::vk::Device::from_raw(1);
+        let second = ash::vk::Device::from_raw(2);
+        assert_eq!(
+            validate_mtp_vulkan_handles(Some(first), Some(second)),
+            Ok(true)
+        );
+        assert_eq!(
+            validate_mtp_vulkan_handles(Some(second), Some(first)),
+            Ok(true)
+        );
+        for (target, draft) in [
+            (None, None),
+            (None, Some(second)),
+            (Some(first), None),
+            (Some(ash::vk::Device::null()), Some(second)),
+            (Some(first), Some(ash::vk::Device::null())),
+            (Some(ash::vk::Device::null()), Some(ash::vk::Device::null())),
+            (Some(first), Some(first)),
+        ] {
+            assert!(validate_mtp_vulkan_handles(target, draft).is_err());
+        }
+    }
+    #[test]
     fn intel_mtp_actual_device_receipt_requires_distinct_runtime_on_same_verified_physical_gpu() {
         let target = mtp_adapter(0x8086, 4660);
         let nvidia = mtp_adapter(0x10de, 123);
         let intel = target.clone();
         let actual =
-            mtp_device_receipt(MtpDevice::Intel, Some(&target), &intel, true, true, 1).unwrap();
+            mtp_device_receipt(MtpDevice::Intel, Some(&target), &intel, Some(true), true, 1)
+                .unwrap();
         assert_eq!(actual["same_physical_as_target"], true);
         assert_eq!(actual["actual_target_device_id"], 4660);
-        let unknown = mtp_device_receipt(MtpDevice::Nvidia, None, &nvidia, true, true, 1).unwrap();
+        let unknown = mtp_device_receipt(MtpDevice::Nvidia, None, &nvidia, None, true, 1).unwrap();
         assert!(unknown["same_physical_as_target"].is_null());
         assert!(unknown["actual_target_device_id"].is_null());
-        assert!(mtp_device_receipt(MtpDevice::Intel, Some(&target), &intel, true, true, 1).is_ok());
+        assert!(unknown["distinct_wgpu_device"].is_null());
+        assert_eq!(unknown["logical_device_identity"], "unverified-no-parent");
+        assert_eq!(
+            actual["logical_device_identity"],
+            "borrowed-vulkan-device-handles"
+        );
+        assert!(mtp_device_receipt(MtpDevice::Nvidia, None, &nvidia, Some(true), true, 1).is_err());
         assert!(
-            mtp_device_receipt(MtpDevice::Nvidia, Some(&target), &nvidia, true, true, 1).is_ok()
+            mtp_device_receipt(MtpDevice::Intel, Some(&target), &intel, Some(true), true, 1)
+                .is_ok()
+        );
+        assert!(
+            mtp_device_receipt(
+                MtpDevice::Nvidia,
+                Some(&target),
+                &nvidia,
+                Some(true),
+                true,
+                1
+            )
+            .is_ok()
         );
         for (device, actual) in [(MtpDevice::Intel, &intel), (MtpDevice::Nvidia, &nvidia)] {
-            for (distinct_device, distinct_runtime, id) in
-                [(false, true, 1), (true, false, 1), (true, true, 65536)]
-            {
+            for (distinct_device, distinct_runtime, id) in [
+                (Some(false), true, 1),
+                (None, true, 1),
+                (Some(true), false, 1),
+                (Some(true), true, 65536),
+            ] {
                 assert!(
                     mtp_device_receipt(
                         device,
@@ -789,27 +870,67 @@ mod tests {
                 );
             }
         }
-        assert!(mtp_device_receipt(MtpDevice::Intel, None, &intel, true, true, 1).is_err());
+        assert!(mtp_device_receipt(MtpDevice::Intel, None, &intel, Some(true), true, 1).is_err());
         assert!(
-            mtp_device_receipt(MtpDevice::Intel, Some(&target), &nvidia, true, true, 1).is_err()
+            mtp_device_receipt(
+                MtpDevice::Intel,
+                Some(&target),
+                &nvidia,
+                Some(true),
+                true,
+                1
+            )
+            .is_err()
         );
         assert!(
-            mtp_device_receipt(MtpDevice::Nvidia, Some(&target), &intel, true, true, 1).is_err()
+            mtp_device_receipt(
+                MtpDevice::Nvidia,
+                Some(&target),
+                &intel,
+                Some(true),
+                true,
+                1
+            )
+            .is_err()
         );
         let mut changed = intel.clone();
         changed.device_pci_bus_id = "0000:02:00.0".into();
         assert!(
-            mtp_device_receipt(MtpDevice::Intel, Some(&target), &changed, true, true, 1).is_err()
+            mtp_device_receipt(
+                MtpDevice::Intel,
+                Some(&target),
+                &changed,
+                Some(true),
+                true,
+                1
+            )
+            .is_err()
         );
         changed = intel.clone();
         changed.device += 1;
         assert!(
-            mtp_device_receipt(MtpDevice::Intel, Some(&target), &changed, true, true, 1).is_err()
+            mtp_device_receipt(
+                MtpDevice::Intel,
+                Some(&target),
+                &changed,
+                Some(true),
+                true,
+                1
+            )
+            .is_err()
         );
         changed = intel;
         changed.device_type = wgpu::DeviceType::IntegratedGpu;
         assert!(
-            mtp_device_receipt(MtpDevice::Intel, Some(&target), &changed, true, true, 1).is_err()
+            mtp_device_receipt(
+                MtpDevice::Intel,
+                Some(&target),
+                &changed,
+                Some(true),
+                true,
+                1
+            )
+            .is_err()
         );
     }
     #[test]

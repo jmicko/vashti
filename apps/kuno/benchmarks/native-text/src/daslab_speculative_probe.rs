@@ -562,10 +562,9 @@ async fn draft_client(
         })
         .await
         .map_err(|_| "speculative draft device setup failed")?;
-    let distinct_device = target_device.is_none_or(|target| target != &device);
-    if !distinct_device {
-        return Err("MTP cannot share the target Wgpu device".into());
-    }
+    let distinct_device = target_device
+        .map(|target| crate::target_lab_build::mtp_distinct_vulkan_devices(target, &device))
+        .transpose()?;
     let selected = init_device(
         WgpuSetup {
             instance,
