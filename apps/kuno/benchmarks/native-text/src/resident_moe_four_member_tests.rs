@@ -23,6 +23,7 @@ fn four_member_workspace_selection_uses_real_permission_and_original_completed_b
         "self.frozen_sources.is_some()",
         "self.batch_router_active()",
         "!self.four_member_router_reserved()",
+        "!self.public_existing_fill",
         "self.layout.capacity != 144",
         "self.layout.geometries.len() != 48",
         "self.public_four_members && !enabled",

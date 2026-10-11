@@ -567,7 +567,7 @@ impl Workspace {
             || self.prepared_verify3.is_some()
             || self.hybrid.is_some()
             || self.resident_router.is_some()
-            || self.public_existing_fill
+            || !self.public_existing_fill
             || self.live_member_reduction_enabled()
             || self.layout.geometries.len() != 48
             || self.layout.capacity != 144

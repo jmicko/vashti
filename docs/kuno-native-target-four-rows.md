@@ -120,3 +120,16 @@ checks passed on the final source. No GPU test, service change, model
 acceptance or speed claim was made by this parent task. Root owns independent
 Verify4 physical operators, original CPU13/real repair/full closure/recovery
 and compiler-idle timing.
+
+## Mandatory original direct-fill attachment boundary
+
+The optional four-member setter requires the actual constructor's original
+`public_existing_fill` flag to be true, matching the fixed-public controller's
+`existing-public` requirement. v175's original CPU13 passes and selected
+constructor passes cold CPU13 after the capacity repair, but the earlier
+setter incorrectly rejected that required flag at attachment. The corrected
+condition rejects missing direct fill, retaining every other completed warm
+boundary, real GU/DOWN/router owner, source-absence and original geometry
+check. This is a setup predicate repair, not changed model arithmetic,
+reference, cap, source mapping, or permission for an alternate fill mode.
+Physical selected acceptance remains pending a newly frozen retry.
