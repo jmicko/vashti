@@ -470,6 +470,22 @@ def bank_placement_scope(environment):
 
 
 def memory_limit(environment, arguments):
+    if ("KUNO_LAB_HOST_CPU_BATCH_PUBLIC_ONLY" in environment
+            or len(arguments) > 2 and arguments[2] == "public-host-cpu-batch-probe"):
+        selected = {key: value for key, value in environment.items()
+                    if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
+        required = {"KUNO_LAB_HOST_CPU_BATCH_PUBLIC_ONLY", "KUNO_LAB_DEVICE_DISPATCH",
+                    "KUNO_TEST_Q3_DIR", "KUNO_PUBLIC_TARGET_CARRY13_REFERENCE",
+                    "KUNO_PUBLIC_RECEIPT"}
+        if (set(selected) != required or any(not value for value in selected.values())
+                or selected["KUNO_LAB_HOST_CPU_BATCH_PUBLIC_ONLY"] != "1"
+                or selected["KUNO_LAB_DEVICE_DISPATCH"] != "inline"
+                or len(arguments) != 3
+                or arguments[1:] != ["intel", "public-host-cpu-batch-probe"]):
+            raise ValueError("HOST CPU batches require the fixed Intel original public operator")
+        # The original model/cache/mirror envelope is retained. This is not
+        # extra private capacity: CPU1MiB/GPU operator owners remain independent.
+        return 48 * 1024**3
     target_only_scope(environment)
     intel_mtp_scope(environment)
     frozen_down_integer_scope(environment)
