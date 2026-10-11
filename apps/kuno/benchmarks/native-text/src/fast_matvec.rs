@@ -343,6 +343,93 @@ pub fn packed_q8_head_broadcast_fault(
     }
 }
 
+/// Separate head experiment: cooperatively decode the original public Q8
+/// scales once per four-row workgroup. Every bounded slot is initialized even
+/// for inactive tail cubes; packed reads use the actual source row/count guard.
+/// The uniform fence precedes all scale reads and the unchanged original tree.
+#[cube(launch, launch_unchecked)]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::collapsible_if,
+    clippy::neg_cmp_op_on_partial_ord
+)]
+pub fn packed_q8_head_shared_scales_fault(
+    packed: &Array<u32>,
+    input: &Array<f32>,
+    output: &mut Array<f32>,
+    fault: &mut Array<Atomic<u32>>,
+    count: usize,
+    packed_first: usize,
+    input_first: usize,
+    output_first: usize,
+    matrix_first: usize,
+    #[comptime] rows: usize,
+    #[comptime] columns: usize,
+    #[comptime] row_bytes: usize,
+    #[comptime] matrix_rows: usize,
+    #[comptime] check_tail: bool,
+) {
+    let blocks = comptime!(columns / 32);
+    let mut scales = SharedMemory::<f32>::new(comptime!(ROWS_PER_CUBE * columns / 32));
+    #[unroll]
+    for slice in
+        0..comptime!((ROWS_PER_CUBE * columns / 32).div_ceil(ROWS_PER_CUBE * PHYSICAL_LANES))
+    {
+        let index = UNIT_POS_X as usize + slice * ROWS_PER_CUBE * PHYSICAL_LANES;
+        if index < ROWS_PER_CUBE * blocks {
+            let source_row = CUBE_POS_X as usize * ROWS_PER_CUBE + index / blocks;
+            let mut scale = 0.0_f32;
+            if source_row < rows && count == 1 {
+                let base = packed_first + source_row * row_bytes + (index % blocks) * 34;
+                scale = binary16(u16_at(packed, base));
+            }
+            scales[index] = scale;
+        }
+    }
+    sync_cube();
+    let slot = local_row();
+    let row = CUBE_POS_X as usize * ROWS_PER_CUBE + slot;
+    let active = row < rows && count == 1;
+    let logical_lane = lane();
+    let mut low = 0.0_f32;
+    let mut high = 0.0_f32;
+    if active {
+        for tile in 0..comptime!(columns.div_ceil(64)) {
+            let base = packed_first + row * row_bytes + tile * 68;
+            let col = tile * 64 + logical_lane;
+            if col < columns {
+                let quant = signed_byte(byte_at(packed, base + 2 + logical_lane));
+                low += (scales[slot * blocks + tile * 2] * quant as f32) * input[input_first + col];
+            }
+            if col + 32 < columns {
+                let quant = signed_byte(byte_at(packed, base + 36 + logical_lane));
+                high += (scales[slot * blocks + tile * 2 + 1] * quant as f32)
+                    * input[input_first + col + 32];
+            }
+        }
+    }
+    let value = reduce_original64(low, high);
+    if lane() == 0 && active {
+        output[output_first + row] = value;
+        if !(value.abs() <= f32::MAX) {
+            fault[0].fetch_or(1);
+        }
+    }
+    if comptime!(check_tail) {
+        let index = ABSOLUTE_POS;
+        if index < output.len() {
+            if !active_output(index, matrix_first, matrix_rows) {
+                if !(output[index].abs() <= f32::MAX) {
+                    fault[0].fetch_or(1);
+                }
+            }
+        }
+    }
+    if lane() == 0 && count != 1 {
+        fault[0].fetch_or(1);
+    }
+}
+
 pub fn fault_grid(rows: usize, output_words: usize, check_tail: bool) -> CubeCount {
     let cubes = rows.div_ceil(ROWS_PER_CUBE);
     let cubes = if check_tail {
@@ -356,6 +443,10 @@ pub fn fault_grid(rows: usize, output_words: usize, check_tail: bool) -> CubeCou
 #[cfg(test)]
 #[path = "q8_head_broadcast_tests.rs"]
 mod q8_head_broadcast_tests;
+
+#[cfg(test)]
+#[path = "q8_head_shared_scale_tests.rs"]
+mod q8_head_shared_scale_tests;
 
 #[cfg(test)]
 mod tests {

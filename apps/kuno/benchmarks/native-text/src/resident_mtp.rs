@@ -505,6 +505,8 @@ pub struct ResidentMtp<'g, 'f> {
     q8_head_broadcast: bool,
     q8_head_policy_locked: bool,
     q8_head_broadcast_completed: bool,
+    q8_head_shared_scales: bool,
+    q8_head_shared_scales_completed: bool,
 }
 
 fn validate_q8_head_broadcast_selection(
@@ -517,6 +519,15 @@ fn validate_q8_head_broadcast_selection(
     if profile != MtpProfile::SelfContainedQ8 || closed || poisoned || position != 0 || locked {
         return Err(Error::InvalidFormat(
             "MTP Q8 head selection requires unused Q8 workspace",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_q8_head_modes(broadcast: bool, shared_scales: bool) -> Result<()> {
+    if broadcast && shared_scales {
+        return Err(Error::InvalidFormat(
+            "MTP Q8 head experiments are mutually exclusive",
         ));
     }
     Ok(())
@@ -1037,6 +1048,8 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             q8_head_broadcast: false,
             q8_head_policy_locked: false,
             q8_head_broadcast_completed: false,
+            q8_head_shared_scales: false,
+            q8_head_shared_scales_completed: false,
         };
         let result = workspace.load_public();
         match result {
@@ -1721,6 +1734,7 @@ impl ResidentMtp<'_, '_> {
             self.position,
             self.q8_head_policy_locked,
         )?;
+        validate_q8_head_modes(enabled, self.q8_head_shared_scales)?;
         self.verify_source()?;
         self.physical()?;
         self.q8_head_broadcast = enabled;
@@ -1737,6 +1751,33 @@ impl ResidentMtp<'_, '_> {
         }
         self.physical()?;
         Ok(self.q8_head_broadcast_completed)
+    }
+    /// Separate pre-run cooperative-scale choice, exclusive with broadcast.
+    #[allow(dead_code)] // Protected runner selection is integrated separately.
+    pub fn set_q8_head_shared_scales(&mut self, enabled: bool) -> Result<()> {
+        validate_q8_head_broadcast_selection(
+            self.graph.profile(),
+            self.closed,
+            self.poisoned || self.retired.load(Ordering::Acquire),
+            self.position,
+            self.q8_head_policy_locked,
+        )?;
+        validate_q8_head_modes(self.q8_head_broadcast, enabled)?;
+        self.verify_source()?;
+        self.physical()?;
+        self.q8_head_shared_scales = enabled;
+        Ok(())
+    }
+    /// Actual successful full-forward use, captured with live owners before close.
+    #[allow(dead_code)] // Protected runner receipts are integrated separately.
+    pub fn completed_q8_head_shared_scales(&self) -> Result<bool> {
+        if self.closed || self.poisoned || self.retired.load(Ordering::Acquire) {
+            return Err(Error::InvalidFormat(
+                "MTP completed Q8 shared scale policy unavailable",
+            ));
+        }
+        self.physical()?;
+        Ok(self.q8_head_shared_scales_completed)
     }
     fn public(&self) -> Result<&Public> {
         self.public
@@ -1768,6 +1809,36 @@ impl ResidentMtp<'_, '_> {
             // SAFETY: exact original role geometry, complete disjoint owners and
             // source/finite/tail preflight precede all unchecked leaf launches.
             unsafe {
+                if self.q8_head_shared_scales && name == "output.weight" {
+                    validate_q8_head_modes(self.q8_head_broadcast, self.q8_head_shared_scales)?;
+                    if self.graph.profile() != MtpProfile::SelfContainedQ8
+                        || spec.dtype != quant_matvec::Q8_0
+                        || spec.columns != k::D
+                        || spec.rows != k::VOCAB
+                    {
+                        return Err(Error::InvalidFormat("MTP Q8 head shared scale geometry"));
+                    }
+                    fast::packed_q8_head_shared_scales_fault::launch_unchecked::<WgpuRuntime>(
+                        self.client()?,
+                        fast::fault_grid(page.rows, spec.rows, index + 1 == pages.len()),
+                        CubeDim::new_1d(128),
+                        Self::public_arg(page)?,
+                        self.a(input)?,
+                        self.a(output)?,
+                        self.a(B::Fault)?,
+                        1,
+                        0,
+                        0,
+                        page.first,
+                        0,
+                        page.rows,
+                        spec.columns,
+                        row_bytes,
+                        spec.rows,
+                        index + 1 == pages.len(),
+                    );
+                    continue;
+                }
                 if self.q8_head_broadcast && name == "output.weight" {
                     if self.graph.profile() != MtpProfile::SelfContainedQ8
                         || spec.dtype != quant_matvec::Q8_0
@@ -2473,6 +2544,7 @@ impl ResidentMtp<'_, '_> {
         self.position += 1;
         self.poisoned = false;
         self.q8_head_broadcast_completed = self.q8_head_broadcast;
+        self.q8_head_shared_scales_completed = self.q8_head_shared_scales;
         self.last_forward = Some(LastForward {
             binding: self.binding,
             start,
@@ -2858,6 +2930,15 @@ fn q8_head_broadcast_selection_rejects_used_or_non_q8_workspaces() {
                 .is_err()
         );
     }
+}
+
+#[cfg(test)]
+#[test]
+fn q8_head_shared_scales_selection_is_exclusive_with_broadcast() {
+    assert!(validate_q8_head_modes(false, false).is_ok());
+    assert!(validate_q8_head_modes(true, false).is_ok());
+    assert!(validate_q8_head_modes(false, true).is_ok());
+    assert!(validate_q8_head_modes(true, true).is_err());
 }
 
 fn validate_input(token: u32, carry: &[f32], position: usize) -> Result<()> {

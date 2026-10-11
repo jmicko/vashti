@@ -66,7 +66,7 @@ fn shader(rows: usize, columns: usize, tail: bool, mode: ExecutionMode) -> Strin
         .to_string()
 }
 
-fn validate_runtime_spirv(module: &naga::Module) -> Vec<u32> {
+pub(super) fn validate_runtime_spirv(module: &naga::Module) -> Vec<u32> {
     let info = naga::valid::Validator::new(
         naga::valid::ValidationFlags::all(),
         naga::valid::Capabilities::SUBGROUP,
@@ -131,7 +131,7 @@ fn assert_converged_broadcasts(function: &naga::Function) {
     assert_eq!(count, 2);
 }
 
-fn root_global(
+pub(super) fn root_global(
     function: &naga::Function,
     pointer: naga::Handle<Expression>,
 ) -> Option<naga::Handle<naga::GlobalVariable>> {
@@ -144,7 +144,7 @@ fn root_global(
     }
 }
 
-fn active_condition(
+pub(super) fn active_condition(
     function: &naga::Function,
     expression: naga::Handle<Expression>,
     rows: usize,
@@ -188,7 +188,22 @@ fn active_condition(
             None
         }
     };
-    function.body.iter().any(|statement| {
+    fn phi_matches(block: &naga::Block, predicate: &impl Fn(&Statement) -> bool) -> bool {
+        block.iter().any(|statement| {
+            predicate(statement)
+                || match statement {
+                    Statement::If { accept, reject, .. } => {
+                        phi_matches(accept, predicate) || phi_matches(reject, predicate)
+                    }
+                    Statement::Loop {
+                        body, continuing, ..
+                    } => phi_matches(body, predicate) || phi_matches(continuing, predicate),
+                    Statement::Block(block) => phi_matches(block, predicate),
+                    _ => false,
+                }
+        })
+    }
+    phi_matches(&function.body, &|statement| {
         if let Statement::If {
             condition,
             accept,
@@ -211,7 +226,7 @@ fn active_condition(
 
 // Every payload load must be dominated by the actual row<rows/count==1
 // predicate and another bounds/leader guard. Generic nested ifs are insufficient.
-fn assert_weight_input_reads_guarded(module: &naga::Module, rows: usize) {
+pub(super) fn assert_weight_input_reads_guarded(module: &naga::Module, rows: usize) {
     fn walk(
         module: &naga::Module,
         function: &naga::Function,
@@ -410,7 +425,7 @@ fn q8_head_broadcast_proof_rejects_divergent_collective_and_hoisted_reads() {
     assert!(std::panic::catch_unwind(|| assert_weight_input_reads_guarded(&module, 7)).is_err());
 }
 
-fn original_tree(weights: &[f32], input: &[f32]) -> f32 {
+pub(super) fn original_tree(weights: &[f32], input: &[f32]) -> f32 {
     let mut partial = [0.0_f32; 64];
     for (lane, accumulator) in partial.iter_mut().enumerate() {
         for column in (lane..weights.len()).step_by(64) {
