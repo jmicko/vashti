@@ -5,6 +5,9 @@
 use super::{Q4_K, binary16, byte_at, packed_value, signed_byte, u16_at};
 use cubecl::prelude::*;
 
+#[path = "mtp_pruned_head.rs"]
+pub(crate) mod pruned_head;
+
 pub const ROWS_PER_CUBE: usize = 4;
 pub const PHYSICAL_LANES: usize = 32;
 
