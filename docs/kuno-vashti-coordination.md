@@ -3927,27 +3927,33 @@ canonical Vashti and frontend unchanged; required Vashti changes:none.
 ### Intel-only native optimization continuation, 2026-10-11
 
 Latest user direction is Intel B70 target and full-Q8 MTP only; defer Nvidia.
-Latest normal accepted comparison remains v17310.533053 original versus
-10.603973 batched repair real continuations/s, one ordered code200 pair.
-The integrated four-row candidate passes the unchanged independent v174
-Verify4 operators and original v175 CPU13 controls. Two setup predicates were
-repaired without changing arithmetic: immutable reserved head capacity
-(`e6baa7e`) and mandatory original direct-fill attachment (`2dbc897`).
+Latest accepted normal comparison is v177 on26295f6:10.442972 original
+three-row versus10.740576 genuine four-row real continuations/s (+2.85percent),
+one compiler-idle same-artifact ordered code200 pair. Both emit200/time199
+real continuations, complete all real repairs with zero repaired-vector error,
+close every original target/draft/HOST owner, and recover normal services and
+same-boot B70baseline50688000B with no new classified faults. Four accepts
+147of155 proposals over52 rounds/51 actual count4 chunks; original130of138
+over69 rounds. Independent third-draft CPU oracle, repeatedABBA/prose and
+independentCPU200 acceptance remain absent. Native30tokens/s is unachieved.
 
-Selected v176 on2dbc897 now passes cold CPU13, actual frozen Source attachment
-and warm initial prefill. First genuine count4 then hits the older direct
-demand-fill count1..3 guard. The next repair must authenticate the real
-attached frozen-four capability before that guard; original demand loading
-stays capped at3. Selected whole-model four-row acceptance and throughput are
-still pending. v176 explicitly cleans target/draft and restores same-boot
-B70baseline50688000B, Nvidia compute0, allHTTP200, admission idle/unpaused
-without recovery latch and no new classified GPU fault. Exact source and
-recovery are in v176_actual_first_four_direct_fill_guard_rejection.
+Original and selected cold/warm full CPU13 vectors/carries/greedies and real
+repair pass on the same artifact. The unchanged independent v174 Verify4
+operators are reused after three arithmetic-free setup repairs: immutable
+reserved head capacity (`e6baa7e`), mandatory original direct-fill attachment
+(`2dbc897`) and actual frozen-four authority (`26295f6`). Original direct
+demand loading stays capped at3. Natural prefixes1..4 occur across CPU13 and
+normal fixtures. Failed v174..176 runs retain their distinct failure receipts.
+Exact source/owners/recovery and limitations are in
+v177_actual_frozen_four_cpu13_acceptance and
+v177_original_vs_four_normal_intel_pair.
 
 Read the current [owner handoff](kuno-native-next-model-handoff.md) and
-[four-row contract](kuno-native-target-four-rows.md) before resuming. The
-unused exact persistent144 bank leaf (`e16ac7a`) grants no additional physical
-capacity or slots. A separate bounded CPU-HOST/GPU-resident overlap operator
-is being prepared and has no model consumer or measured gain yet. No API,
-installed service, canonical Vashti, frontend or release change; required
-Vashti changes:none. The30tokens/s goal is unachieved.
+[four-row contract](kuno-native-target-four-rows.md). Next candidate corrects
+GDN's bypass of the existing retained-metadata policy; physical correctness
+and frozen before/after timing remain required. A bounded original three-row
+CPU-HOST/GPU-resident overlap operator is separately prepared, with no model
+consumer or measured gain yet. The unused exact persistent144 bank leaf
+(`e16ac7a`) grants no additional physical capacity or slots. No API, installed
+service, canonical Vashti, frontend or release change; required Vashti
+changes:none.

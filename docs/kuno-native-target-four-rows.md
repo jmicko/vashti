@@ -133,3 +133,23 @@ boundary, real GU/DOWN/router owner, source-absence and original geometry
 check. This is a setup predicate repair, not changed model arithmetic,
 reference, cap, source mapping, or permission for an alternate fill mode.
 Physical selected acceptance remains pending a newly frozen retry.
+
+## Superseding physical acceptance, v177 (2026-10-11)
+
+Source26295f6, pure-direct binarySHA256
+062edd01fc7728f34742243a1a59dd08b9c268142a279f9948ca3bda88c1ec2f,
+passes unchanged original and selected cold/warm full CPU13 vectors/carries/
+greedies, actual rejection repair, all owner closures and same-boot recovery.
+The v174 independent operators remain valid: setup predicates changed no
+arithmetic, shader, reference, tolerance or cap. Across selected CPU13 and
+code200, natural prefix lengths1..4 occur; no independent third-draft CPU
+oracle is claimed. Original/cold/prefill counters stay false/zero.
+
+One compiler-idle same-artifact original/four code200 pair measures10.442972
+versus10.740576 real continuations/s (+2.85percent),199 continuations each.
+Selected completes51 actual count4 chunks/38352 equal Verify4 calls and five
+real target recomputations with zero repaired-vector maximum absolute error.
+This supersedes pending physical statements above, but grants no repeated
+ABBA/prose/independentCPU200/native30/installed-default acceptance. Exact
+receipts: v177_actual_frozen_four_cpu13_acceptance and
+v177_original_vs_four_normal_intel_pair in the aggregate numeric record.

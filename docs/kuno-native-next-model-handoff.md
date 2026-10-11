@@ -9,9 +9,12 @@ User steering after the completed three-way comparison: continue optimization
 with target and full Q8 MTP on Intel B70 only; defer Nvidia experiments.
 Ordinary installed defaults remain unchanged until their own integration gate.
 
-Latest normal Intel comparison is v173: **10.533053 original scalar repair**
-and **10.603973 batched repair real continuations/s**. The latter is one
-ordered code200 pair (+0.67percent), not a repeated speed acceptance. The selected
+Latest normal Intel comparison is v177: **10.442972 original three-row**
+and **10.740576 genuine four-row real continuations/s** on source26295f6.
+This is one compiler-idle same-artifact ordered code200 pair (+2.85percent),
+with199 actual continuations/200 emitted in each arm, not repeated speed
+acceptance or native30tokens/s. The earlier v173 repair comparison measured
+10.533053 original scalar versus10.603973 batched (+0.67percent). The selected
 pre-v173 baseline was v167 at10.482354 real continuations/s
 with original bank filling, original512 queue/IQ4 decoder, grouped PLE,
 integer GU plus stride-four, integer DOWN and shared full-Q8 Intel MTP.
@@ -66,15 +69,35 @@ v173_intel_mtp_batched_repair_and_bank_backing_physical.
 
 Current integrated candidate is genuine four-row verification with three real
 MTP proposals, original tails/scalar repair and new count4 arithmetic/metadata
-paths. Independent plain/fused Verify4 operators and original CPU13 controls
-pass. Selected v176 on source2dbc897 passes original cold CPU13, real frozen
-Source attachment and warm initial prefill, but its first actual count4 chunk
-hits the unchanged demand-fill count1..3 guard before expert work begins.
-Repair only that admission boundary using actual attached frozen-four
-Source/router/bank/constructor authority; retain the original demand guard.
-Selected full-vector/carry/greedy/real repair and complete closure/recovery
-acceptance remain pending. No four-row speed or30tokens/s claim follows.
-See v176_actual_first_four_direct_fill_guard_rejection in the numeric receipt.
+paths. v177 on26295f6 passes both original and selected cold/warm full CPU13
+vectors/carries/greedies, real rejection repair, complete close and recovery.
+Actual selected warm work completes3 count4 chunks with2256 successful equal
+Verify4 dense/fused calls: accepted prefixes1once/4twice, plus one original
+count3 tail. Two of3 actual third proposals are accepted; conditional on the
+first two being accepted,2of2 thirds are accepted. No independent third-draft
+CPU oracle is claimed. Normal code200 adds actual prefix2/3 coverage. Cold/prefill/default
+four counters stay false/zero. All1382 original MAIN owners and432 HOST pages
+close, and target/draft/source zero/free checks complete. The earlier v176
+guard failure is repaired using actual attached frozen-four authority while
+original direct demand loading remains capped at3. v174 operators are reused
+because these setup fixes change no arithmetic/shader/reference/tolerance/cap.
+Normal same-artifact code200 measures10.442972 original versus10.740576
+four (+2.85percent). Selected work completes51 count4 chunks and38352 equal
+Verify4 calls, accepting147of155 real drafts over52 rounds;46of48 third
+proposals whose first two are accepted also accept. Five real recomputations
+complete, with repaired hidden/logit maximum absolute error0 and full closures.
+Original completes69 rounds/130of138 drafts/five recomputations. All natural
+prefix lengths1..4 occur across the two fixtures. Both arms restore same-boot
+normal services/B70baseline and zero classified faults. One ordered pair does
+not establish repeated/prose/independentCPU200/native30 acceptance. See
+v177_actual_frozen_four_cpu13_acceptance and
+v177_original_vs_four_normal_intel_pair in the numeric receipt.
+
+Next candidate connects native GDN validation to the already admitted retained
+metadata helper, preserving all eight owner proofs and arithmetic. It avoids
+unnecessary mid-layer queue submissions; no measured gain is claimed yet.
+The separate original three-row CPU-HOST/GPU-resident overlap operator has no
+whole-model consumer or measured gain. Both retain default-off lab scope.
 
 Accepted GU scheduling physical source isac78f00/v159, frozen binarySHA256
 `c04d49a6ca11115c0bba0b1acc38019ae2f6f4b1f323cc0f9b6608eaa639bc7d`.
