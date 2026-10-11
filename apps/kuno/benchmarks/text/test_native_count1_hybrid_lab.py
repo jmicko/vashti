@@ -2031,6 +2031,33 @@ class StrataInspiredGuards(unittest.TestCase):
             with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_FROZEN_DOWN_ROWS=raw),args)
         with self.assertRaises(ValueError):guard.selected_target_policy({"KUNO_LAB_FROZEN_DOWN_ROWS":"four-public"},False)
 
+    def test_two_row_gate_up_preserves_scope_and_excludes_table_factor_modes(self):
+        guard=self.guard()
+        env={"KUNO_LAB_LANGUAGE_PUBLIC_ONLY":"1","KUNO_LAB_LANGUAGE_FIXTURE":"first-code",
+            "KUNO_LAB_STATIC_CACHE_BYTES":"8589934592","KUNO_TEST_Q3_DIR":"/original",
+            "KUNO_TEST_MTP":"/original/draft","KUNO_PUBLIC_RECEIPT":"/public/numeric",
+            "KUNO_LAB_DEVICE_DISPATCH":"inline","KUNO_LAB_TARGET_IO":"chunk",
+            "KUNO_LAB_TARGET_REUSE":"request","KUNO_LAB_TARGET_FILL":"direct-public",
+            "KUNO_LAB_TARGET_SOURCES":"frozen-host-public","KUNO_LAB_FROZEN_PARTITION_EXIT":"1",
+            "KUNO_LAB_FROZEN_GU_ROWS":"two-public"}
+        args=["/frozen/binary","intel","daslab-language-probe"]
+        for down in (None,"four-public"):
+            for scales in (None,"shared-public"):
+                valid=dict(env)
+                if down:valid["KUNO_LAB_FROZEN_DOWN_ROWS"]=down
+                if scales:valid["KUNO_LAB_FROZEN_DOWN_SCALES"]=scales
+                self.assertEqual(guard.memory_limit(valid,args),48*1024**3+196*1024**2)
+        for key in ("KUNO_LAB_TARGET_SOURCES","KUNO_LAB_FROZEN_PARTITION_EXIT","KUNO_LAB_TARGET_REUSE"):
+            bad=dict(env);bad.pop(key)
+            with self.assertRaises(ValueError):guard.memory_limit(bad,args)
+        for key, value in [("KUNO_LAB_FROZEN_TABLES","private-public"),
+                           ("KUNO_LAB_FROZEN_TABLES","workgroup-public"),
+                           ("KUNO_LAB_FROZEN_GU_FACTORS","shared-public")]:
+            with self.assertRaises(ValueError):guard.memory_limit(dict(env,**{key:value}),args)
+        for raw in ("","two","true","two-public "):
+            with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_FROZEN_GU_ROWS=raw),args)
+        with self.assertRaises(ValueError):guard.selected_target_policy({"KUNO_LAB_FROZEN_GU_ROWS":"two-public"},False)
+
     def test_bank_placement_requires_warm_frozen_speculative_scope_and_keeps_limits(self):
         guard=self.guard()
         common={"KUNO_LAB_STATIC_CACHE_BYTES":"8589934592","KUNO_TEST_Q3_DIR":"/original",

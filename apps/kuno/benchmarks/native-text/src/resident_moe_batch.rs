@@ -966,9 +966,15 @@ impl Workspace {
         })
     }
     /// Construction-only owners; no source attachment, routes or use authority.
-    pub(crate) fn reserve_frozen_host_staging(&mut self, arena: &mut PrivateArena) -> Result<()> {
+    pub(crate) fn reserve_frozen_host_staging(
+        &mut self,
+        arena: &mut PrivateArena,
+        allocation: &ModelConstructionAllocation<'_>,
+    ) -> Result<()> {
+        allocation.check(&self.admission)?;
         self.healthy(arena)?;
         if self.frozen_staging.is_some()
+            || *self.policy.chunk != 0
             || self.frozen_sources.is_some()
             || !self.frozen_host_batch_router_reserved()
             || self.batch_router_active()

@@ -22,6 +22,10 @@ def selected_target_policy(environment, mtp=False):
         private_table_scope(environment)
         if not mtp or selected.pop("KUNO_LAB_FROZEN_DOWN_ROWS") != "four-public":
             raise ValueError("Down rows require canonical frozen public target scope")
+    if "KUNO_LAB_FROZEN_GU_ROWS" in selected:
+        private_table_scope(environment)
+        if not mtp or selected.pop("KUNO_LAB_FROZEN_GU_ROWS") != "two-public":
+            raise ValueError("Gate/up rows require canonical frozen public target scope")
     if "KUNO_LAB_FROZEN_PARTITION_EXIT" in selected:
         if (not mtp or selected.pop("KUNO_LAB_FROZEN_PARTITION_EXIT") != "1"
                 or selected.get("KUNO_LAB_TARGET_SOURCES") != "frozen-host-public"):
@@ -102,13 +106,16 @@ def selected_target_policy(environment, mtp=False):
     return selected
 
 def private_table_scope(environment):
-    if any(key in environment for key in ("KUNO_LAB_FROZEN_TABLES", "KUNO_LAB_FROZEN_DOWN_SCALES", "KUNO_LAB_FROZEN_GU_FACTORS", "KUNO_LAB_FROZEN_DOWN_ROWS")):
+    if any(key in environment for key in ("KUNO_LAB_FROZEN_TABLES", "KUNO_LAB_FROZEN_DOWN_SCALES", "KUNO_LAB_FROZEN_GU_FACTORS", "KUNO_LAB_FROZEN_DOWN_ROWS", "KUNO_LAB_FROZEN_GU_ROWS")):
         spec = environment.get("KUNO_LAB_SPECULATIVE_PUBLIC_ONLY") == "1"
         language = environment.get("KUNO_LAB_LANGUAGE_PUBLIC_ONLY") == "1"
         if (environment.get("KUNO_LAB_FROZEN_TABLES") not in (None, "private-public", "workgroup-public")
                 or environment.get("KUNO_LAB_FROZEN_DOWN_SCALES") not in (None, "shared-public")
                 or environment.get("KUNO_LAB_FROZEN_GU_FACTORS") not in (None, "shared-public")
                 or environment.get("KUNO_LAB_FROZEN_DOWN_ROWS") not in (None, "four-public")
+                or environment.get("KUNO_LAB_FROZEN_GU_ROWS") not in (None, "two-public")
+                or environment.get("KUNO_LAB_FROZEN_GU_ROWS") is not None and any(
+                    key in environment for key in ("KUNO_LAB_FROZEN_TABLES", "KUNO_LAB_FROZEN_GU_FACTORS"))
                 or environment.get("KUNO_LAB_TARGET_SOURCES") != "frozen-host-public"
                 or environment.get("KUNO_LAB_FROZEN_PARTITION_EXIT") != "1"
                 or spec == language

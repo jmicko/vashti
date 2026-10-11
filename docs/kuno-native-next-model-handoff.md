@@ -5,31 +5,29 @@ Updated2026-10-11: the user restored GPU access/sudo and resumed the existing
 This supersedes the historical stop instructions below; it does not authorize
 API/UI changes, installation or release. Canonical Vashti is unchanged.
 
-Current integrated source includes original GU factor and Q8-head broadcast
-leaves1ba718e/0675594 and completed parent selection030a20c. Frozen v149 SHA256
-`cd1c32acca4004a3ca3ba485cc658a0cee8331270bd18f1c2c417bfd1e57e57f`
-passes original full cold/warm CPU13 vectors/carries/greedies/actual repair and
-full owner closure. Warm12/2.389274810s=5.02244tokens/s is a placement diagnostic.
-Normal ordered code200 is8.11398 control /7.68506 GU factors; no gain. Broadcast
-head-only normal timing was not run; do not claim its speed from combined CPU13.
-Both policies remain default-off. v148 cooperative table/down-scale candidate
-also regressed normal code200 (7.73410→6.90538). Numeric evidence is in the root
-optimization receipt v148/v149 sections. Neither30t/s nor production accepted.
+Current physical result: frozen v150/3ed26fe SHA256
+`f0a443a152f789035b8f9ea177c5abd1026c369413d41c348b76efd1737e0245`
+passes full original cold/warm CPU13, actual repair, full model/source closure
+and recovered host. Four-row DOWN + cooperative Q8-head scales yields the first
+ordered same-artifact public code200 pair8.11952 control /8.48473 candidate
+(+4.50%). Draft5.748s ->5.037s accounts for most improvement. No repeated ABBA,
+prose or independent CPU200 acceptance; do not call this a production speed gain.
+Warm12/2.054006934s=5.84224tokens/s is a placement/correctness diagnostic only.
+Prior v148 tables/down scales and v149 GU factors regressed normal code200;
+all experiments remain default-off. Exact numeric evidence/owners/source hashes
+are in the root optimization receipt. Neither30t/s nor production accepted.
 
-Next integrated source-only leaves are four-row DOWNf7bb253 and cooperative
-Q8-head scales9dde5da. Parent actual-selection/receipt composition and guarded
-launchers are being frozen for v150. Exact default-off selectors are in the final
-all-row plan sections. Full original GPU CPU13 and normal timing remain pending
-for these new policies. Two-row GU is separate source work in progress; bounded
-RAM→VRAM staging is a further proposed internal candidate. No installed/API/UI
-change. Canonical Vashti remains unchanged; required Vashti changes:none.
-
-Root owns shared hardware; CPU builds must hold during timed decode. All finished
-trials restore B70baseline50,688,000B, NVIDIA compute0, normal admission/allthree
-HTTPservices200 and unchanged classified faults. These recovery snapshots are
-historical; check live state before later runs. Root preserves fixed public
-seed424242, original files/vectors/tolerances, target greedy verification, real
-repair and private owning erasure. No prompt/output/routing IDs saved in receipts.
+Root integrated two-row GU0353369 + guarded parent5d26186, and default-off staging
+precharge10e3d1c. GU root launcher/selection source checks are being frozen for
+v151; original full CPU13 and normal timing remain pending. The three32MiB staging
+owners and589,824B extra INFO contract is in the final all-row plan section;
+source copy/consumer implementation remains isolated and unaccepted physically.
+Read the current source/tests before activating it; allocation, alias/stream and
+original-source proofs must include every owner. Required Vashti changes:none.
+Last recovered host snapshot2026-10-11 13:23:00UTC: B70baseline50,688,000B,
+NVIDIA compute0, admission idle/unpaused/no recovery, allthree HTTP200, GPUfaults0.
+That is historical evidence, not a guarantee of future availability. Installed
+services/canonical Vashti unchanged; the existing30tokens/s goal remains active.
 
 ## Historical stop checkpoint from 2026-10-10
 

@@ -601,7 +601,7 @@ same validated stream. For an originally selected host group, source addressing
 is `(MAP.slot-first_slot)*expert_words+word`, scratch addressing is
 `group*expert_words+word`; original MAP, expert IDs, slot guards, members, ranks,
 probabilities, quantization and arithmetic stay unchanged. A256-thread copy uses
-four adjacent words per thread and grid`ceil(expert_words/1024) x30`. The largest
+four coalesced256-word stripes per workgroup and grid`ceil(expert_words/1024) x30`. The largest
 GU/down logical extents26,112,000/27,648,000B fit32MiB. Consumer staging addressing
 is selected only after the original shard/member guard; inactive groups and stale
 tails remain unread. The two resident VRAM shards keep their original bindings.
@@ -619,3 +619,26 @@ storage, free original backing early or eliminate compulsory PCIe transfer.
 
 Source implementation and physical acceptance are pending at this contract
 checkpoint. Required Vashti changes:none. Installed services remain unchanged.
+
+
+### Paired frozen public gate/up parent selection, 2026-10-11
+
+`KUNO_LAB_FROZEN_GU_ROWS=two-public` selects two original GU rows per64-thread
+workgroup in fixed public frozen/partition-exit controllers. It defaults off,
+rejects private/workgroup tables and GU factors, and permits four-row down and
+shared-down scales. Exact runtime GateKernel::TwoRows and grid320 are selected
+atomically; cold CPU13 retains original GU dispatch. Actual completed receipt
+`frozen_host_two_row_gate_up` requires the completed owner boundary and nonzero
+accepted frozen source dispatches, rather than attachment alone. Original MAP,
+quantization, F32 accumulation/reduction/SiLU, source identity, full zero-audit
+and public-only limits remain. Detailed kernel contract is in the two-row leaf
+note. Source checks alone do not establish GPU or throughput acceptance.
+
+v150 four-row DOWN plus shared Q8 head scales passed original cold/warm CPU13,
+real repair and full closure. The first ordered same-artifact code200 pair is
+8.11952 control /8.48473 candidate (+4.50%); draft5.748s ->5.037s accounts for
+most of the difference. This is preliminary, not repeated ABBA or production
+acceptance. Both trials restored B70 to50,688,000B and NVIDIA compute0 with all
+HTTP services200 and no new GPU faults. Exact frozen source/hash and numeric
+receipts are under v150_rows_shared_head_physical. New paired GU physical gates
+remain pending. No installed/public API/Vashti change.

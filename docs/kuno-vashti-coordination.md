@@ -3244,3 +3244,19 @@ language timing remain pending for v150. Source-only counts are not speed proof.
 Backend lab only; installed services/public API and canonical Vashti unchanged.
 Required Vashti changes:none. Additional two-row GU and transient host-weight
 staging experiments remain separate source work, with no physical acceptance.
+
+
+### Active paired-GU / bounded transfer experiment, 2026-10-11
+
+v150/3ed26fe passes complete original CPU13, actual repair, full closure and
+physical recovery. First normal ordered code200 pair8.11952 control /8.48473
+four-DOWN/shared-head candidate (+4.50%) is preliminary; repeated ABBA/prose
+remain untested. Exact evidence is v150_rows_shared_head_physical in the native
+receipt. Last recovered snapshot13:23:00UTC has B70baseline50,688,000B,
+NVIDIA compute0, unpaused idle/no-recovery admission, allthree HTTP200 and faults0.
+
+Two-row GU leaf0353369/parent5d26186 and staging precharge10e3d1c are integrated
+source-only; exact default-off selectors and bounded owner/runtime contract are
+in the final all-row plan sections. GPU validation for paired GU and full staging
+integration/validation remain pending. No30tokens/s, production, install or
+release acceptance. Backend lab only; required Vashti changes:none.

@@ -812,6 +812,14 @@ impl Plan {
             return Err(error());
         }
         validate_limits(&config.limits, config.tile)?;
+        if config.public_frozen_host_staging
+            && (config.limits.max_compute_invocations_per_workgroup < 256
+                || config.limits.max_compute_workgroup_size_x < 256)
+        {
+            return Err(Error::LimitExceeded(
+                "frozen host staging copy device limits",
+            ));
+        }
         config.qsa_host_reservation()?;
         frozen_host_source_configuration(
             config.public_frozen_host_sources,
@@ -1498,7 +1506,7 @@ impl Workspace {
             moe.reserve_frozen_host_batch_router(&mut model.arena, allocation, model.context)?;
         }
         if config.public_frozen_host_staging {
-            moe.reserve_frozen_host_staging(&mut model.arena)?;
+            moe.reserve_frozen_host_staging(&mut model.arena, allocation)?;
         }
         if config.prepared_verify3_experts_reserved {
             moe.reserve_prepared_verify3(&mut model.arena, allocation)?;
