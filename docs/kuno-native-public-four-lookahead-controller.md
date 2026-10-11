@@ -136,3 +136,35 @@ check. Strict pure direct-device all-target Clippy with warnings denied and
 `-j2`, scoped formatting and diff checks also pass. A physical rerun is still
 required; source acceptance does not establish cold-prefill or selected warm
 execution on the card.
+
+### Frozen four-row entry versus original demand loading
+
+After accepted cold execution, source attachment and warm prefill, the first
+real four-row request reached the original direct-demand-fill count check,
+which admits only count1..3. The constructor direct-fill flag remains enabled
+through the frozen replay, but that replay uses authenticated original Source
+pages rather than the demand-loading path.
+
+The original `public_existing_count` helper remains unchanged. Original
+count1..3 and disabled/default behavior still use it. A distinct count4 entry
+requires actual attached four-member Sources and Workspace capability, both
+integer Source/scratch-owner/reservation joins, reserved and active target4,
+actual frozen constructor-capacity4 router, matching Source identity and frozen
+banks, original DAS144/tile8/48-layer geometry and absence of alternate modes.
+Before enqueue it repeats all 48 original bank-generation/full512-map/active
+router-table/instance checks and Source geometry count4 proof. Existing later
+per-layer, owner and frozen-source checks remain mandatory. These are CPU
+metadata checks; no new GPU readback, allocation or arithmetic is added.
+
+The separate demand `batch_checked` entry still rejects attached frozen Sources
+before applying its unchanged count1..3 demand guard. A requested flag alone
+never authorizes four-row execution or demand loading.
+
+Eighteen distinct source checks pass: five four-member checks (two new actual
+scope/count/wave regressions and three original reservation/acceptance checks)
+and thirteen original routed-MoE checks, including unchanged demand count4
+rejection, full owner/finite acceptance and sticky failure cleanup. Strict pure
+direct-device all-target Clippy with warnings denied and `-j2`, scoped
+formatting and diff checks pass. The actual first four-row GPU computation and
+its complete whole-model numerical/repair gate remain unverified by this source
+correction and require the integrating owner's physical rerun.

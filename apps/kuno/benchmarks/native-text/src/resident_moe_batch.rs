@@ -464,6 +464,50 @@ fn public_existing_count(enabled: bool, count: usize, waves: usize) -> Result<()
     Ok(())
 }
 
+/// Actual facts from the attached frozen Source, original Workspace owners and
+/// selected target/router permissions. A requested four-row flag is insufficient.
+#[derive(Clone, Copy)]
+struct FrozenFourChunkScope {
+    source_four: bool,
+    workspace_four: bool,
+    target_four_reserved: bool,
+    target_four_active: bool,
+    target_rows_reserved: bool,
+    frozen_router_reserved: bool,
+    frozen_router_active: bool,
+    router_four_reserved: bool,
+    banks_frozen: bool,
+    source_identity_matches: bool,
+    gu_integer_sources_and_owners: bool,
+    down_integer_sources_and_owners: bool,
+    original_geometry: bool,
+    ordinary_modes_absent: bool,
+}
+impl FrozenFourChunkScope {
+    fn validate(self, count: usize, waves: usize) -> Result<()> {
+        if count != 4
+            || waves != 1
+            || !self.source_four
+            || !self.workspace_four
+            || !self.target_four_reserved
+            || !self.target_four_active
+            || !self.target_rows_reserved
+            || !self.frozen_router_reserved
+            || !self.frozen_router_active
+            || !self.router_four_reserved
+            || !self.banks_frozen
+            || !self.source_identity_matches
+            || !self.gu_integer_sources_and_owners
+            || !self.down_integer_sources_and_owners
+            || !self.original_geometry
+            || !self.ordinary_modes_absent
+        {
+            return Err(err("native actual frozen four-member chunk policy"));
+        }
+        Ok(())
+    }
+}
+
 /// Valid canonical single-wave misses read the untouched committed ledger.
 /// No staged advance intervenes for the admitted count1..3 /144-slot geometry.
 fn classify_public_fills(
@@ -534,6 +578,79 @@ impl Workspace {
     }
     pub(crate) fn public_four_members_policy(&self) -> bool {
         self.public_four_members
+    }
+    /// The original direct demand-fill path remains bounded to count1..3.
+    /// Count4 is a separate no-fill Source path, authenticated before enqueue.
+    fn validate_public_existing_chunk_count(
+        &self,
+        executor: &GpuExecutor<'_>,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+        count: usize,
+        waves: usize,
+    ) -> Result<()> {
+        if !self.public_existing_fill || count != 4 {
+            return public_existing_count(self.public_existing_fill, count, waves);
+        }
+        let source = self
+            .frozen_sources
+            .as_ref()
+            .ok_or(err("native actual frozen four-member source absent"))?;
+        FrozenFourChunkScope {
+            source_four: source.four_members(),
+            workspace_four: self.public_four_members_policy(),
+            target_four_reserved: executor.target_four_rows_reserved,
+            target_four_active: executor.target_four_rows_active,
+            target_rows_reserved: executor.target_rows_reserved,
+            frozen_router_reserved: executor.target_frozen_host_router_reserved
+                && executor.target_batch_router_reserved
+                && self.frozen_host_batch_router_reserved(),
+            frozen_router_active: self.frozen_host_batch_router_active(),
+            router_four_reserved: self.four_member_router_reserved(),
+            banks_frozen: executor.resident_banks_frozen,
+            source_identity_matches: executor.target_frozen_host_source_identity
+                == Some(source.plan_identity()),
+            gu_integer_sources_and_owners: source.gu_integer()
+                && executor.target_frozen_gu_integer_reserved
+                && self.frozen_gu_integer.is_some(),
+            down_integer_sources_and_owners: source.down_integer()
+                && executor.target_frozen_down_integer_reserved
+                && self.frozen_down_integer.is_some(),
+            original_geometry: executor.packed_profile
+                == expert_banks::OriginalPackedProfile::DaslabIq3
+                && executor.bank_slots == 144
+                && self.layout.capacity == 144
+                && self.layout.tile == 8
+                && self.layout.geometries.len() == 48
+                && graph.geometry().layers == 48,
+            ordinary_modes_absent: self.hybrid.is_none()
+                && self.resident_router.is_none()
+                && self.prepared_verify3.is_none()
+                && self.frozen_staging.is_none()
+                && !self.live_member_reduction_enabled()
+                && executor.adaptive.is_none()
+                && executor.secondary.is_none()
+                && executor.secondary_frequency.is_none()
+                && !executor.resident_router_reserved,
+        }
+        .validate(count, waves)?;
+        executor.check_target_rows_policy()?;
+        // Reuse the accepted original bank generations, full512 mapping and
+        // active router-table/instance checks; no device query or readback.
+        for layer in 0..48 {
+            self.check_batch_router_bank(executor, graph, arena, layer)?;
+            let original = weights(graph, layer)?;
+            let bank = executor
+                .banks
+                .get(original.gate.info().name())
+                .ok_or(err("native actual frozen four-member bank absent"))?;
+            let geometry = source.geometry(layer, bank)?;
+            if !geometry.four_members() {
+                return Err(err("native actual frozen four-member source geometry"));
+            }
+            geometry.validate_count(count).map_err(err)?;
+        }
+        Ok(())
     }
     /// Immutable optional four-row permission after accepted original warm
     /// completion, before frozen Source attachment/GPU-router activation.
@@ -1528,7 +1645,7 @@ impl GpuExecutor<'_> {
                 w.hybrid.is_some(),
                 w.resident_router.is_some() || self.resident_router_reserved,
             )?;
-            public_existing_count(w.public_existing_fill, count, 1)?;
+            w.validate_public_existing_chunk_count(self, graph, arena, count, 1)?;
             if w.prepared_verify3.is_some() {
                 prepared_verify3::validate_count(
                     count,
