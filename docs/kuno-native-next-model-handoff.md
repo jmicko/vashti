@@ -764,3 +764,29 @@ Next separate candidates are grouped status folds and packed-integer DOWN;
 neither is physically accepted yet. Root owns shared GPUs and source isolation.
 Required Vashti changes:none; installedAPI/services/canonical checkout unchanged.
 No30tokens/s, normalprose, independentCPU200, production or release acceptance.
+
+
+### Grouped-status integrated source gate,2026-10-11
+
+Grouped status leaf/parent0cdb291 (originalb9ebef5) and public controllers453d2b7
+(originalff2578e) are integrated after the completedv162 Intel-only schedule
+comparison. Read the normative [status folds](kuno-native-public-grouped-status-folds.md)
+and [controller contract](kuno-native-public-grouped-status-controller.md).
+Policies remain independent/default-off; original equations, both whole fault
+proofs, all-family commit and source/owner closure remain mandatory. Completed
+counts publish only after accepted commits and join97GR/36GDN/12QSA per chunk.
+
+Source gates:25focused status checks plus280resident regressions in isolated
+parent,90controller/helperRust and33protected guard checks in isolated controller,
+strict direct all-target Clippy/fmt/diff pass. Root integrated245textPython checks
+and six fixed Intel-only status/PLE+status selector/cap labels pass; synthetic Xe
+metadata used solely for source checks. Physical launch still requires fresh
+privileged Xe accounting after paused/drained admission.
+
+Frozenv163 source453d2b76bb74a03e5c6aacacc586d48f2fc806a5,
+binarySHA256bddc741e8b7af8a45f00023e709c9008d5bdc6e25d3ad2289403c8cae289f67a,
+pure direct-device, is undergoing originalCPU13 acceptance. Same-artifact
+compiler-idle Intel normal comparison remains required; source acceptance is
+not physical numerical or speed acceptance. DOWNstride remains off. Separate
+integer DOWN source/parent/controller work is isolated and unselected. Required
+Vashti changes:none; installedAPI/services/canonicalcheckout unchanged.
