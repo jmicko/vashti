@@ -88,7 +88,28 @@ impl Fixture {
         ))
     }
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DecodeMode {
+    Speculative,
+    TargetOnly,
+}
+impl DecodeMode {
+    fn parse(raw: Option<&OsStr>) -> std::result::Result<Self, &'static str> {
+        match raw {
+            None => Ok(Self::Speculative),
+            Some(raw) if raw == "target-only-public" => Ok(Self::TargetOnly),
+            _ => Err("language decode requires canonical public target-only selection"),
+        }
+    }
+    fn name(self) -> &'static str {
+        match self {
+            Self::Speculative => "speculative",
+            Self::TargetOnly => "target-only-public",
+        }
+    }
+}
 pub(crate) struct Inputs {
+    pub(crate) decode_mode: DecodeMode,
     pub(crate) inline_dispatch: bool,
     pub(crate) fused_sweeps: bool,
     draft_profile: Profile,
@@ -142,6 +163,7 @@ pub(crate) fn registration(
             key.to_str(),
             Some(
                 "KUNO_LAB_LANGUAGE_PUBLIC_ONLY"
+                    | "KUNO_LAB_LANGUAGE_DECODE"
                     | "KUNO_LAB_LANGUAGE_FIXTURE"
                     | "KUNO_TEST_Q3_DIR"
                     | "KUNO_TEST_MTP"
@@ -183,6 +205,23 @@ pub(crate) fn registration(
         || values.remove(OsStr::new("KUNO_LAB_STATIC_CACHE_BYTES")) != Some("8589934592".into())
     {
         return Err("compiled language/cache gates missing");
+    }
+    let decode_mode = DecodeMode::parse(
+        values
+            .remove(OsStr::new("KUNO_LAB_LANGUAGE_DECODE"))
+            .as_deref(),
+    )?;
+    if decode_mode == DecodeMode::TargetOnly
+        && [
+            "KUNO_LAB_MTP_SWEEPS",
+            "KUNO_LAB_MTP_VOCAB",
+            "KUNO_LAB_MTP_PROFILE",
+            "KUNO_LAB_MTP_Q8_HEAD",
+        ]
+        .iter()
+        .any(|key| values.contains_key(OsStr::new(key)))
+    {
+        return Err("target-only language rejects every MTP selector");
     }
     let raw = values.remove(OsStr::new("KUNO_LAB_DEVICE_DISPATCH"));
     let inline_dispatch = build.selected(raw.as_deref())?;
@@ -364,32 +403,44 @@ pub(crate) fn registration(
             && !live_member_reduction,
         mtp_q8_head_broadcast,
     )?;
+    let original_public_target_scope = frozen_host_sources
+        && frozen_host_router
+        && frozen_partition_exit
+        && verify3_dense
+        && verify3_fused
+        && request_reuse
+        && chunk_io
+        && inline_dispatch
+        && public_existing_fill
+        && !frozen_private_tables
+        && !frozen_workgroup_tables
+        && !frozen_shared_down_scales
+        && !frozen_shared_gate_up_factors
+        && !frozen_two_row_gate_up
+        && !frozen_packed_host_staging
+        && !frozen_three_members
+        && !prepared_experts
+        && !live_member_reduction;
+    if decode_mode == DecodeMode::TargetOnly
+        && (!original_public_target_scope || three_gdn_streaming)
+    {
+        return Err("target-only language requires the fixed original frozen public target scope");
+    }
+    let integer_scope = original_public_target_scope
+        && match decode_mode {
+            DecodeMode::Speculative => {
+                fused_sweeps
+                    && draft_profile == Profile::SelfContainedQ8
+                    && !mtp_q8_head_broadcast
+                    && !mtp_english_vocab
+            }
+            // Target-only has no draft engine, so no draft-sweep prerequisite is
+            // fabricated. Every original target prerequisite remains mandatory.
+            DecodeMode::TargetOnly => true,
+        };
     let raw_gu_math = values.remove(OsStr::new("KUNO_LAB_FROZEN_GU_MATH"));
-    let frozen_gu_integer = crate::target_lab_build::frozen_gu_integer(
-        raw_gu_math.as_deref(),
-        frozen_host_sources
-            && frozen_host_router
-            && frozen_partition_exit
-            && verify3_dense
-            && verify3_fused
-            && request_reuse
-            && chunk_io
-            && inline_dispatch
-            && public_existing_fill
-            && fused_sweeps
-            && draft_profile == Profile::SelfContainedQ8
-            && !mtp_q8_head_broadcast
-            && !mtp_english_vocab
-            && !frozen_private_tables
-            && !frozen_workgroup_tables
-            && !frozen_shared_down_scales
-            && !frozen_shared_gate_up_factors
-            && !frozen_two_row_gate_up
-            && !frozen_packed_host_staging
-            && !frozen_three_members
-            && !prepared_experts
-            && !live_member_reduction,
-    )?;
+    let frozen_gu_integer =
+        crate::target_lab_build::frozen_gu_integer(raw_gu_math.as_deref(), integer_scope)?;
     let raw_gu_schedule = values.remove(OsStr::new("KUNO_LAB_FROZEN_GU_SCHEDULE"));
     let frozen_gu_stride_four = crate::target_lab_build::frozen_gu_stride_four(
         raw_gu_schedule.as_deref(),
@@ -402,6 +453,7 @@ pub(crate) fn registration(
             .ok_or("language public path missing")
     };
     Ok(Inputs {
+        decode_mode,
         inline_dispatch,
         fused_sweeps,
         draft_profile,
@@ -559,6 +611,37 @@ struct Statistics {
     repair_hidden_max: f32,
 }
 impl Statistics {
+    fn target_only_record(
+        &self,
+        mode: DecodeMode,
+        draft_present: bool,
+        emitted: usize,
+    ) -> Result<Option<serde_json::Value>> {
+        if mode == DecodeMode::Speculative {
+            if !draft_present {
+                return Err("speculative actual draft missing".into());
+            }
+            return Ok(None);
+        }
+        if draft_present
+            || !(1..=MAX_OUTPUTS).contains(&emitted)
+            || self.rounds != self.continuations
+            || self.continuations != (emitted - 1) as u64
+            || self.proposed != 0
+            || self.accepted_drafts != 0
+            || self.draft_ns != 0
+            || self.repair_ns != 0
+            || self.repairs != 0
+            || self.repair_logit_max != 0.
+            || self.repair_hidden_max != 0.
+            || self.continuations > 0 && self.verify_ns == 0
+        {
+            return Err("target-only actual count1/no-draft accounting rejected".into());
+        }
+        Ok(Some(serde_json::json!({"count1_chunks":self.rounds,
+            "completed_target_rows":self.continuations,"draft_executed":false,
+            "draft_steps":0,"target_repair_recomputations":0})))
+    }
     fn add(
         &mut self,
         count: usize,
@@ -691,16 +774,26 @@ pub(crate) fn run(
             .map(|(name, t)| (name.as_str(), t.dtype().gguf_id())),
     )
     .map_err(|_| "language original DAS inventory rejected")?;
-    let sidecar = GgufFile::open(&input.mtp, GgufLimits::default())?;
-    input.draft_profile.validate_sidecar(&sidecar)?;
-    // SAFETY: root's protected runner exclusively verifies immutable original
-    // two-shard DAS and explicitly selected original MTP files before this mode.
+    let sidecar = if input.decode_mode == DecodeMode::TargetOnly {
+        None
+    } else {
+        let sidecar = GgufFile::open(&input.mtp, GgufLimits::default())?;
+        input.draft_profile.validate_sidecar(&sidecar)?;
+        Some(sidecar)
+    };
+    // SAFETY: root's protected runner verifies the immutable original target
+    // shards and, only for speculative mode, the explicitly selected sidecar.
     unsafe {
         file.enable_mapped_weights()?;
-        sidecar.enable_mapped_weights()?;
+        if let Some(sidecar) = &sidecar {
+            sidecar.enable_mapped_weights()?;
+        }
     }
     let graph = Qwen4Exp::bind(&file)?;
-    let draft_graph = input.draft_profile.bind(&sidecar, graph.bound_graph())?;
+    let draft_graph = sidecar
+        .as_ref()
+        .map(|sidecar| input.draft_profile.bind(sidecar, graph.bound_graph()))
+        .transpose()?;
     let (tokenizer, prompt) = tokenize(&file, input.fixture, graph.eos_token())?;
     crate::resident_util::select_retained_metadata(true);
     crate::resident_util::select_compute_scratch_clear(true);
@@ -709,37 +802,54 @@ pub(crate) fn run(
     } else {
         client.configure_transient_io(128 * 1024 * 1024)?;
     }
-    let (draft_client, draft_limits) = cubecl::future::block_on(draft_client(input.fused_sweeps))?;
-    draft_client.configure_transient_io(64 * 1024 * 1024)?;
-    if draft_client.public_target_request_io_configured()? {
-        return Err("language target runtime leaked to draft stream".into());
-    }
+    let draft_gpu = if draft_graph.is_some() {
+        let (draft_client, draft_limits) =
+            cubecl::future::block_on(draft_client(input.fused_sweeps))?;
+        draft_client.configure_transient_io(64 * 1024 * 1024)?;
+        if draft_client.public_target_request_io_configured()? {
+            return Err("language target runtime leaked to draft stream".into());
+        }
+        Some((draft_client, draft_limits))
+    } else {
+        None
+    };
     let target_retired = Arc::new(AtomicBool::new(false));
     let draft_retired = Arc::new(AtomicBool::new(false));
     let cancel = AtomicBool::new(false);
     let whole = Instant::now();
     let load_disk_before = process_disk_read_bytes()?;
-    let mut draft = if input.mtp_english_vocab {
-        crate::resident_mtp::ResidentMtp::new_public_english_with_fused_sweeps(
-            &draft_graph,
-            draft_client,
-            &draft_limits,
-            draft_retired.clone(),
-        )?
+    let mut draft = if let Some((draft_client, draft_limits)) = draft_gpu {
+        let draft_graph = draft_graph
+            .as_ref()
+            .ok_or("speculative bound draft graph absent")?;
+        let mut draft = if input.mtp_english_vocab {
+            crate::resident_mtp::ResidentMtp::new_public_english_with_fused_sweeps(
+                draft_graph,
+                draft_client,
+                &draft_limits,
+                draft_retired.clone(),
+            )?
+        } else {
+            input.draft_profile.resident(
+                draft_graph,
+                draft_client,
+                &draft_limits,
+                draft_retired.clone(),
+                input.fused_sweeps,
+            )?
+        };
+        if input.mtp_q8_head_broadcast {
+            draft.set_q8_head_broadcast(true)?;
+        }
+        if input.mtp_q8_head_shared_scales {
+            draft.set_q8_head_shared_scales(true)?;
+        }
+        Some(draft)
     } else {
-        input.draft_profile.resident(
-            &draft_graph,
-            draft_client,
-            &draft_limits,
-            draft_retired.clone(),
-            input.fused_sweeps,
-        )?
+        None
     };
-    if input.mtp_q8_head_broadcast {
-        draft.set_q8_head_broadcast(true)?;
-    }
-    if input.mtp_q8_head_shared_scales {
-        draft.set_q8_head_shared_scales(true)?;
+    if draft.is_none() != (input.decode_mode == DecodeMode::TargetOnly) {
+        return Err("language actual draft construction scope rejected".into());
     }
     let mut executor = GpuExecutor::new_with_profile(
         &file,
@@ -830,11 +940,22 @@ pub(crate) fn run(
                     if rows.position(row)? != position {
                         return Err("language prompt consumed position rejected".into());
                     }
-                    if let Some(token) = teacher_input(&prompt, position, draft.position())? {
-                        draft.append_kv(token, rows.hidden(row)?, &cancel)?;
+                    if let Some(draft) = draft.as_mut() {
+                        if let Some(token) = teacher_input(&prompt, position, draft.position())? {
+                            draft.append_kv(token, rows.hidden(row)?, &cancel)?;
+                        } else {
+                            confirmed = greedy(rows.logits(row)?)?;
+                            carry.copy_from_slice(rows.hidden(row)?);
+                        }
                     } else {
-                        confirmed = greedy(rows.logits(row)?)?;
-                        carry.copy_from_slice(rows.hidden(row)?);
+                        // Original prompt chunks still execute every target
+                        // family. Read full real packets without teacher KV.
+                        let predicted = greedy(rows.logits(row)?)?;
+                        let hidden = rows.hidden(row)?;
+                        if position + 1 == prompt.len() {
+                            confirmed = predicted;
+                            carry.copy_from_slice(hidden);
+                        }
                     }
                 }
                 drop(rows);
@@ -843,7 +964,9 @@ pub(crate) fn run(
                 }
             }
             if target.completed_target_rows_cursor(&executor)? != prompt.len()
-                || draft.position() != prompt.len() - 1
+                || draft
+                    .as_ref()
+                    .is_some_and(|draft| draft.position() != prompt.len() - 1)
             {
                 return Err("language initial target/draft alignment rejected".into());
             }
@@ -948,7 +1071,7 @@ pub(crate) fn run(
             let before_dense = executor.target_verify3_dense_calls;
             let before_fused = executor.target_verify3_fused_calls;
             let before_phases = target.phase_ns.clone();
-            let before_traffic = draft.traffic();
+            let before_traffic = draft.as_ref().map(|draft| draft.traffic());
             let before_host = crate::target_lab_build::host_io_snapshot();
             let (actual_direct, before_fills) = target.native_public_fill_counters(&executor)?;
             if actual_direct != input.public_existing_fill {
@@ -974,10 +1097,39 @@ pub(crate) fn run(
             while emitted.len() < MAX_OUTPUTS && confirmed != graph.eos_token() {
                 let position = target.completed_target_rows_cursor(&executor)?;
                 if position != prompt.len() + stats.continuations as usize
-                    || draft.position() != position - 1
+                    || draft
+                        .as_ref()
+                        .is_some_and(|draft| draft.position() != position - 1)
                 {
                     return Err("language real target/draft cursor rejected".into());
                 }
+                if input.decode_mode == DecodeMode::TargetOnly {
+                    let verifying = Instant::now();
+                    let rows =
+                        target.prefill_chunk_with_carry(&mut executor, &[confirmed], &cancel)?;
+                    if rows.start() != position
+                        || rows.count() != 1
+                        || rows.position(0)? != position
+                        || rows.binding_id() != graph.bound_graph().binding_id()
+                    {
+                        return Err("target-only actual count1 packet identity rejected".into());
+                    }
+                    confirmed = greedy(rows.logits(0)?)?;
+                    carry.copy_from_slice(rows.hidden(0)?);
+                    drop(rows);
+                    if target.completed_target_rows_cursor(&executor)? != position + 1 {
+                        return Err("target-only actual count1 cursor rejected".into());
+                    }
+                    emitted.push(confirmed);
+                    if confirmed != graph.eos_token() {
+                        let text =
+                            Zeroizing::new(decoder.push_bytes(tokenizer.token_bytes(confirmed)?)?);
+                        nonempty_text |= !text.is_empty();
+                    }
+                    stats.add(1, 1, 0, elapsed(verifying)?, 0, false)?;
+                    continue;
+                }
+                let draft = draft.as_mut().ok_or("speculative actual draft absent")?;
                 let count = (MAX_OUTPUTS - emitted.len()).min(3);
                 let mut inputs = Zeroizing::new(Vec::with_capacity(count));
                 inputs.push(confirmed);
@@ -1149,7 +1301,21 @@ pub(crate) fn run(
                 .iter()
                 .map(|(n, v)| (*n, v - before_phases.get(n).copied().unwrap_or(0)))
                 .collect();
-            let after_traffic = draft.traffic();
+            let after_traffic = draft.as_ref().map(|draft| draft.traffic());
+            let draft_traffic = match (before_traffic, after_traffic) {
+                (Some(before), Some(after)) => Some(serde_json::json!({
+                    "host_read_calls":after.host_read_calls-before.host_read_calls,
+                    "host_read_bytes":after.host_read_bytes-before.host_read_bytes,
+                    "explicit_dispatches":after.explicit_dispatches-before.explicit_dispatches,
+                    "private_upload_calls":after.private_upload_calls-before.private_upload_calls,
+                    "private_upload_bytes":after.private_upload_bytes-before.private_upload_bytes,
+                    "minimal_packet_reads":after.minimal_packet_reads-before.minimal_packet_reads,
+                    "followup_copy_calls":after.followup_copy_calls-before.followup_copy_calls})),
+                (None, None) if input.decode_mode == DecodeMode::TargetOnly => None,
+                _ => return Err("language actual draft traffic scope changed".into()),
+            };
+            let target_only_counters =
+                stats.target_only_record(input.decode_mode, draft.is_some(), emitted.len())?;
             let (actual_direct, after_fills) = target.native_public_fill_counters(&executor)?;
             let frozen_routes = if executor.target_frozen_host_source_identity.is_some() {
                 let counts = target.native_frozen_source_counters(&executor)?;
@@ -1181,6 +1347,16 @@ pub(crate) fn run(
                 gu_dispatches,
                 gu_audits,
             )?;
+            if input.decode_mode == DecodeMode::TargetOnly
+                && frozen_gu_integer
+                && gu_preparations
+                    != stats
+                        .continuations
+                        .checked_mul(48)
+                        .ok_or("target-only integer batch count overflow")?
+            {
+                return Err("target-only actual integer count1 batch accounting rejected".into());
+            }
             let frozen_gu_stride_four = if executor.target_frozen_host_source_identity.is_some() {
                 target.native_frozen_source_gu_stride_four(&executor)?
             } else {
@@ -1266,20 +1442,37 @@ pub(crate) fn run(
             if frozen_two_row_gate_up != input.frozen_two_row_gate_up {
                 return Err("actual two-row gate/up policy mismatch".into());
             }
-            let mtp_english_vocab = draft.completed_public_english_vocab()?;
+            let mtp_english_vocab = draft
+                .as_ref()
+                .map(|draft| draft.completed_public_english_vocab())
+                .transpose()?
+                .unwrap_or(false);
             if mtp_english_vocab != input.mtp_english_vocab {
                 return Err("actual completed English vocabulary mismatch".into());
             }
             let mtp_english_vocab_receipt = if mtp_english_vocab {
-                Some(draft.public_english_vocab_receipt()?)
+                Some(
+                    draft
+                        .as_ref()
+                        .ok_or("English actual draft absent")?
+                        .public_english_vocab_receipt()?,
+                )
             } else {
                 None
             };
-            let mtp_q8_head_shared_scales = draft.completed_q8_head_shared_scales()?;
+            let mtp_q8_head_shared_scales = draft
+                .as_ref()
+                .map(|draft| draft.completed_q8_head_shared_scales())
+                .transpose()?
+                .unwrap_or(false);
             if mtp_q8_head_shared_scales != input.mtp_q8_head_shared_scales {
                 return Err("actual MTP shared head scales mismatch".into());
             }
-            let mtp_q8_head_broadcast = draft.completed_q8_head_broadcast()?;
+            let mtp_q8_head_broadcast = draft
+                .as_ref()
+                .map(|draft| draft.completed_q8_head_broadcast())
+                .transpose()?
+                .unwrap_or(false);
             if mtp_q8_head_broadcast != input.mtp_q8_head_broadcast {
                 return Err("actual completed MTP Q8 head policy mismatch".into());
             }
@@ -1307,7 +1500,7 @@ pub(crate) fn run(
                 .checked_sub(load_disk_after)
                 .ok_or("language process read counter regressed")?;
             Ok(
-                serde_json::json!({"fixture":input.fixture.name(),"prompt_tokens":prompt.len(),"context_capacity":input.fixture.context(),"compiled_prompt_template_revision":TEMPLATE_REVISION,"compiled_prompt_template_file":TEMPLATE_FILE,"load_ns":load_ns,"prefill_ns_including_real_teacher_kv":prefill_ns,"prefill_first_output_count":1,"prefill_first_output_generation_pick_timed":false,"first_output_emission_timed":true,"emitted_tokens_including_eos":emitted.len(),"post_prefill_target_continuations":stats.continuations,"stop_reason":if confirmed==graph.eos_token(){"eos"}else{"limit"},"nonempty_text":nonempty_text,"elapsed_ns":elapsed_ns,"continuation_tokens_per_second":stats.continuations as f64*1e9/elapsed_ns as f64,"emitted_tokens_per_second":emitted.len()as f64*1e9/elapsed_ns as f64,"rounds":stats.rounds,"frozen_host_gpu_router":input.frozen_host_router,"frozen_host_inactive_partition_exit":frozen_partition_exit,"frozen_host_private_tables":frozen_private_tables,"frozen_host_workgroup_tables":frozen_workgroup_tables,"frozen_host_shared_down_scales":frozen_shared_down_scales,"frozen_host_shared_gate_up_factors":frozen_shared_gate_up_factors,"mtp_q8_head_broadcast":mtp_q8_head_broadcast,"mtp_q8_head_shared_scales":mtp_q8_head_shared_scales,"mtp_english_vocab":mtp_english_vocab,"mtp_english_vocab_receipt":mtp_english_vocab_receipt,"frozen_host_four_row_down":frozen_four_row_down,"frozen_host_two_row_gate_up":frozen_two_row_gate_up,"frozen_packed_host_staging":frozen_packed_host_staging,"frozen_three_member_arithmetic":frozen_three_members,"frozen_gu_integer":frozen_gu_integer,"frozen_gu_integer_counters":frozen_gu_integer_counters,"frozen_gu_stride_four":frozen_gu_stride_four,"frozen_gu_stride_four_counters":frozen_gu_stride_four_counters,"target_three_gdn_streaming":three_gdn_streaming,"target_three_gdn_completed_chunks":three_gdn_completed_chunks,"gpu_router_calls":executor.gpu_router_calls-before_gpu_routers,"proposed_drafts":stats.proposed,"accepted_drafts":stats.accepted_drafts,"draft_ns":stats.draft_ns,"verify_ns_full_packets":stats.verify_ns,"repair_ns_including_vector_checks":stats.repair_ns,"actual_target_recomputations":stats.repairs,"repair_logit_max_abs":stats.repair_logit_max,"repair_hidden_max_abs":stats.repair_hidden_max,"repair_abs_tolerance":ABS,"repair_rel_tolerance":REL,"fixture_peak_host_bytes":fixture_peak,"request_scope":request_scope,"request_close_ns_inside_timing":request_close_ns,"host_io":host_io,"target_host_phase_ns":phase_ns,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"verify3_fused_calls":executor.target_verify3_fused_calls-before_fused,"load_and_prefill_physical_read_bytes":load_disk_after.checked_sub(load_disk_before).ok_or("language process read counter regressed")?,"generation_physical_read_bytes":physical_read_bytes,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"target_fill_counters_before":fill_counter_record(before_fills),"target_fill_counters_after":fill_counter_record(after_fills),"frozen_source_routes":frozen_routes,"draft_traffic":{"host_read_calls":after_traffic.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after_traffic.host_read_bytes-before_traffic.host_read_bytes,"explicit_dispatches":after_traffic.explicit_dispatches-before_traffic.explicit_dispatches,"private_upload_calls":after_traffic.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after_traffic.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after_traffic.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after_traffic.followup_copy_calls-before_traffic.followup_copy_calls}}),
+                serde_json::json!({"fixture":input.fixture.name(),"prompt_tokens":prompt.len(),"context_capacity":input.fixture.context(),"compiled_prompt_template_revision":TEMPLATE_REVISION,"compiled_prompt_template_file":TEMPLATE_FILE,"load_ns":load_ns,"prefill_ns_including_real_teacher_kv":prefill_ns,"prefill_teacher_kv_executed":draft.is_some(),"prefill_first_output_count":1,"prefill_first_output_generation_pick_timed":false,"first_output_emission_timed":true,"emitted_tokens_including_eos":emitted.len(),"post_prefill_target_continuations":stats.continuations,"stop_reason":if confirmed==graph.eos_token(){"eos"}else{"limit"},"nonempty_text":nonempty_text,"elapsed_ns":elapsed_ns,"continuation_tokens_per_second":stats.continuations as f64*1e9/elapsed_ns as f64,"emitted_tokens_per_second":emitted.len()as f64*1e9/elapsed_ns as f64,"rounds":stats.rounds,"frozen_host_gpu_router":input.frozen_host_router,"frozen_host_inactive_partition_exit":frozen_partition_exit,"frozen_host_private_tables":frozen_private_tables,"frozen_host_workgroup_tables":frozen_workgroup_tables,"frozen_host_shared_down_scales":frozen_shared_down_scales,"frozen_host_shared_gate_up_factors":frozen_shared_gate_up_factors,"mtp_q8_head_broadcast":mtp_q8_head_broadcast,"mtp_q8_head_shared_scales":mtp_q8_head_shared_scales,"mtp_english_vocab":mtp_english_vocab,"mtp_english_vocab_receipt":mtp_english_vocab_receipt,"frozen_host_four_row_down":frozen_four_row_down,"frozen_host_two_row_gate_up":frozen_two_row_gate_up,"frozen_packed_host_staging":frozen_packed_host_staging,"frozen_three_member_arithmetic":frozen_three_members,"frozen_gu_integer":frozen_gu_integer,"frozen_gu_integer_counters":frozen_gu_integer_counters,"frozen_gu_stride_four":frozen_gu_stride_four,"frozen_gu_stride_four_counters":frozen_gu_stride_four_counters,"target_three_gdn_streaming":three_gdn_streaming,"target_three_gdn_completed_chunks":three_gdn_completed_chunks,"gpu_router_calls":executor.gpu_router_calls-before_gpu_routers,"proposed_drafts":stats.proposed,"accepted_drafts":stats.accepted_drafts,"draft_ns":stats.draft_ns,"verify_ns_full_packets":stats.verify_ns,"repair_ns_including_vector_checks":stats.repair_ns,"actual_target_recomputations":stats.repairs,"repair_logit_max_abs":stats.repair_logit_max,"repair_hidden_max_abs":stats.repair_hidden_max,"repair_abs_tolerance":ABS,"repair_rel_tolerance":REL,"fixture_peak_host_bytes":fixture_peak,"request_scope":request_scope,"request_close_ns_inside_timing":request_close_ns,"host_io":host_io,"target_host_phase_ns":phase_ns,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"verify3_fused_calls":executor.target_verify3_fused_calls-before_fused,"load_and_prefill_physical_read_bytes":load_disk_after.checked_sub(load_disk_before).ok_or("language process read counter regressed")?,"generation_physical_read_bytes":physical_read_bytes,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"target_fill_counters_before":fill_counter_record(before_fills),"target_fill_counters_after":fill_counter_record(after_fills),"frozen_source_routes":frozen_routes,"draft_executed":draft.is_some(),"target_only_counters":target_only_counters,"decode_mode":input.decode_mode.name(),"draft_traffic":draft_traffic}),
             )
         })();
         let close = target.close();
@@ -1328,6 +1521,13 @@ pub(crate) fn run(
                 main.buffers,
                 main.bytes,
             )?;
+            if input.decode_mode == DecodeMode::TargetOnly {
+                crate::target_lab_build::validate_public_target_only_close(
+                    input.frozen_gu_integer,
+                    main.buffers,
+                    main.bytes,
+                )?;
+            }
             Ok((main, sources, host_close))
         })();
         if runs.is_err() {
@@ -1357,12 +1557,14 @@ pub(crate) fn run(
     })();
     let target_close = executor.close_transient_resident();
     drop(executor);
-    let draft_close = draft.close();
+    let draft_close = draft.as_mut().map(|draft| draft.close()).transpose();
     drop(draft);
     let draft_close = draft_close.and_then(|closed| {
-        input
-            .draft_profile
-            .validate_close_with_english(&closed, input.mtp_english_vocab)?;
+        if let Some(closed) = &closed {
+            input
+                .draft_profile
+                .validate_close_with_english(closed, input.mtp_english_vocab)?;
+        }
         Ok(closed)
     });
     if attempt.is_err() {
@@ -1375,16 +1577,29 @@ pub(crate) fn run(
     let record = attempt?;
     target_close?;
     let draft_close = draft_close?;
+    if draft_close.is_none() != (input.decode_mode == DecodeMode::TargetOnly) {
+        return Err("language actual draft closing scope rejected".into());
+    }
     if target_retired.load(Ordering::Acquire) || draft_retired.load(Ordering::Acquire) {
         return Err("language physical stream retired".into());
     }
     file.verify_file_unchanged()?;
-    sidecar.verify_file_unchanged()?;
+    if let Some(sidecar) = &sidecar {
+        sidecar.verify_file_unchanged()?;
+    }
     crate::target_lab_build::validate_runtime(input.inline_dispatch)?;
     if client.public_target_request_io_configured()? != input.request_reuse {
         return Err("language target stream configuration changed".into());
     }
-    let value = serde_json::json!({"scope":"compiled-public-language200-real-dual-device-greedy","target_card":"B70","draft_card":"RTX3060","draft_profile":input.draft_profile.name(),"gpu_chronological_qsa_selector":input.gpu_qsa_selector,"qsa_extra_runtime_info_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_INFO_BYTES_PER_CHUNK}else{0},"qsa_extra_host_reserved_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_HOST_BYTES_PER_CHUNK}else{0},"draft_public_reserved_bytes":input.draft_profile.public_bytes_with_english(input.mtp_english_vocab)?,"frozen_gu_integer_requested":input.frozen_gu_integer,"frozen_gu_stride_four_requested":input.frozen_gu_stride_four,"frozen_gu_integer_extra_main_bytes":if input.frozen_gu_integer {65536} else {0},"frozen_gu_integer_extra_host_bytes":if input.frozen_gu_integer {65536} else {0},"frozen_gu_integer_extra_info_bytes":if input.frozen_gu_integer {196608} else {0},"frozen_gu_integer_extra_runtime_bytes":if input.frozen_gu_integer {462848} else {0},"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"temperature":0,"seed":424242,"repetition_penalty":1.0,"presence_penalty":0.0,"frequency_penalty":0.0,"thinking":false,"max_outputs":MAX_OUTPUTS,"verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"live_member_reduction":input.live_member_reduction,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"fused_mtp_sweeps":input.fused_sweeps,"fixture_host_reserved_bytes":FIXTURE_HOST_BYTES,"tokenizer_host_cap_bytes":TOKENIZER_HOST_BYTES,"request_reuse_metadata_reserved_bytes":if input.request_reuse{4*1024*1024}else{0},"full_target_packets_retained":true,"greedy_target_verification":true,"repair_original_prefix_vector_checks":true,"independent_cpu200_reference_accepted":false,"forced_oracle_tokens":false,"forced_experts":false,"private_or_production_accepted":false,"record":record,"draft_close":{"private_buffers":draft_close.private.buffers,"private_bytes":draft_close.private.bytes,"public_bytes":draft_close.public_bytes,"main_reserved":draft_close.main_reserved}});
+    let draft_close = draft_close.map(|closed| {
+        serde_json::json!({
+        "private_buffers":closed.private.buffers,"private_bytes":closed.private.bytes,
+        "public_bytes":closed.public_bytes,"main_reserved":closed.main_reserved})
+    });
+    let draft_executed = draft_close.is_some();
+    let value = serde_json::json!({"scope":if input.decode_mode == DecodeMode::TargetOnly {
+        "compiled-public-language200-real-target-only-greedy"
+    } else { "compiled-public-language200-real-dual-device-greedy" },"decode_mode":input.decode_mode.name(),"draft_executed":draft_executed,"target_card":"B70","draft_card":if draft_executed {Some("RTX3060")}else{None},"draft_profile":if draft_executed{Some(input.draft_profile.name())}else{None},"gpu_chronological_qsa_selector":input.gpu_qsa_selector,"qsa_extra_runtime_info_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_INFO_BYTES_PER_CHUNK}else{0},"qsa_extra_host_reserved_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_HOST_BYTES_PER_CHUNK}else{0},"draft_public_reserved_bytes":if draft_executed{input.draft_profile.public_bytes_with_english(input.mtp_english_vocab)?}else{0},"frozen_gu_integer_requested":input.frozen_gu_integer,"frozen_gu_stride_four_requested":input.frozen_gu_stride_four,"frozen_gu_integer_extra_main_bytes":if input.frozen_gu_integer {65536} else {0},"frozen_gu_integer_extra_host_bytes":if input.frozen_gu_integer {65536} else {0},"frozen_gu_integer_extra_info_bytes":if input.frozen_gu_integer {196608} else {0},"frozen_gu_integer_extra_runtime_bytes":if input.frozen_gu_integer {462848} else {0},"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"temperature":0,"seed":424242,"repetition_penalty":1.0,"presence_penalty":0.0,"frequency_penalty":0.0,"thinking":false,"max_outputs":MAX_OUTPUTS,"verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"live_member_reduction":input.live_member_reduction,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"fused_mtp_sweeps":input.fused_sweeps,"fixture_host_reserved_bytes":FIXTURE_HOST_BYTES,"tokenizer_host_cap_bytes":TOKENIZER_HOST_BYTES,"request_reuse_metadata_reserved_bytes":if input.request_reuse{4*1024*1024}else{0},"full_target_packets_retained":true,"greedy_target_verification":true,"repair_original_prefix_vector_checks":input.decode_mode == DecodeMode::Speculative,"independent_cpu200_reference_accepted":false,"forced_oracle_tokens":false,"forced_experts":false,"private_or_production_accepted":false,"record":record,"draft_close":draft_close});
     serde_json::to_writer_pretty(
         std::fs::OpenOptions::new()
             .write(true)
@@ -1415,6 +1630,209 @@ mod tests {
         ]
         .map(|(k, v)| (k.into(), v.into()))
         .to_vec()
+    }
+    fn target_only_env() -> Vec<(OsString, OsString)> {
+        let mut base = env();
+        for (key, value) in [
+            ("KUNO_LAB_LANGUAGE_DECODE", "target-only-public"),
+            ("KUNO_LAB_DEVICE_DISPATCH", "inline"),
+            ("KUNO_LAB_TARGET_FILL", "direct-public"),
+            ("KUNO_LAB_TARGET_DENSE", "verify3-fused"),
+            ("KUNO_LAB_TARGET_IO", "chunk"),
+            ("KUNO_LAB_TARGET_REUSE", "request"),
+            ("KUNO_LAB_TARGET_SOURCES", "frozen-host-public"),
+            ("KUNO_LAB_FROZEN_PARTITION_EXIT", "1"),
+            ("KUNO_LAB_TARGET_ROUTER", "device-frozen-public"),
+        ] {
+            base.push((key.into(), value.into()));
+        }
+        base
+    }
+    #[test]
+    fn target_only_registration_is_canonical_and_retains_fixed_original_target_scope() {
+        let build = crate::target_lab_build::Build::Inline;
+        assert_eq!(
+            registration(&args(), env(), crate::target_lab_build::Build::Threaded)
+                .unwrap()
+                .decode_mode,
+            DecodeMode::Speculative
+        );
+        let base = target_only_env();
+        for fixture in ["first-code", "warm-prose"] {
+            for integer in [false, true] {
+                for stride in [false, true] {
+                    let mut valid = base.clone();
+                    for (key, value) in &mut valid {
+                        if key == "KUNO_LAB_LANGUAGE_FIXTURE" {
+                            *value = fixture.into();
+                        }
+                    }
+                    if integer {
+                        valid.push(("KUNO_LAB_FROZEN_GU_MATH".into(), "integer-public".into()));
+                    }
+                    if stride {
+                        valid.push(("KUNO_LAB_FROZEN_GU_SCHEDULE".into(), "four-public".into()));
+                    }
+                    valid.push(("KUNO_LAB_TARGET_QSA".into(), "chronological-public".into()));
+                    valid.push(("KUNO_LAB_FROZEN_DOWN_ROWS".into(), "four-public".into()));
+                    let got = registration(&args(), valid, build);
+                    assert_eq!(got.is_ok(), !stride || integer);
+                    if let Ok(got) = got {
+                        assert_eq!(got.decode_mode, DecodeMode::TargetOnly);
+                        assert_eq!(got.frozen_gu_integer, integer);
+                        assert_eq!(got.frozen_gu_stride_four, stride);
+                        assert!(got.gpu_qsa_selector && got.frozen_four_row_down);
+                        assert!(
+                            !got.fused_sweeps
+                                && !got.mtp_english_vocab
+                                && !got.mtp_q8_head_broadcast
+                                && !got.mtp_q8_head_shared_scales
+                        );
+                    }
+                }
+            }
+        }
+        for key in [
+            "KUNO_LAB_DEVICE_DISPATCH",
+            "KUNO_LAB_TARGET_FILL",
+            "KUNO_LAB_TARGET_DENSE",
+            "KUNO_LAB_TARGET_IO",
+            "KUNO_LAB_TARGET_REUSE",
+            "KUNO_LAB_TARGET_SOURCES",
+            "KUNO_LAB_FROZEN_PARTITION_EXIT",
+            "KUNO_LAB_TARGET_ROUTER",
+        ] {
+            let mut bad = base.clone();
+            bad.retain(|(k, _)| k != key);
+            assert!(registration(&args(), bad, build).is_err(), "{key}");
+        }
+        for raw in [
+            "target-only",
+            "speculative",
+            "true",
+            "",
+            "target-only-public ",
+        ] {
+            let mut bad = base.clone();
+            bad.iter_mut()
+                .find(|(k, _)| k == "KUNO_LAB_LANGUAGE_DECODE")
+                .unwrap()
+                .1 = raw.into();
+            assert!(registration(&args(), bad, build).is_err());
+        }
+        let mut duplicate = base.clone();
+        duplicate.push((
+            "KUNO_LAB_LANGUAGE_DECODE".into(),
+            "target-only-public".into(),
+        ));
+        assert!(registration(&args(), duplicate, build).is_err());
+        for build in [
+            crate::target_lab_build::Build::Threaded,
+            crate::target_lab_build::Build::Rejected,
+        ] {
+            assert!(registration(&args(), base.clone(), build).is_err());
+        }
+    }
+    #[test]
+    fn target_only_registration_rejects_draft_and_nonoriginal_target_experiments() {
+        let build = crate::target_lab_build::Build::Inline;
+        for (key, value) in [
+            ("KUNO_LAB_MTP_PROFILE", "self-contained-q8"),
+            ("KUNO_LAB_MTP_PROFILE", "strata-q2"),
+            ("KUNO_LAB_MTP_SWEEPS", "fused"),
+            ("KUNO_LAB_MTP_Q8_HEAD", "shared-public"),
+            ("KUNO_LAB_MTP_Q8_HEAD", "broadcast-public"),
+            ("KUNO_LAB_MTP_VOCAB", "english-public"),
+            ("KUNO_LAB_FROZEN_TABLES", "private-public"),
+            ("KUNO_LAB_FROZEN_TABLES", "workgroup-public"),
+            ("KUNO_LAB_FROZEN_DOWN_SCALES", "shared-public"),
+            ("KUNO_LAB_FROZEN_GU_FACTORS", "shared-public"),
+            ("KUNO_LAB_FROZEN_GU_ROWS", "two-public"),
+            ("KUNO_LAB_FROZEN_HOST_STAGE", "packed-public"),
+            ("KUNO_LAB_FROZEN_MEMBERS", "three-public"),
+            ("KUNO_LAB_TARGET_EXPERTS", "prepared-verify3"),
+            ("KUNO_LAB_TARGET_MOE", "live"),
+            ("KUNO_LAB_TARGET_GDN", "three-streaming-public"),
+        ] {
+            let mut bad = target_only_env();
+            bad.push((key.into(), value.into()));
+            assert!(registration(&args(), bad, build).is_err(), "{key}");
+        }
+        // A parsed sidecar path remains a transport field. Registration does
+        // not require it to exist; run() never opens it in target-only mode.
+        let mut unopened = target_only_env();
+        unopened
+            .iter_mut()
+            .find(|(k, _)| k == "KUNO_TEST_MTP")
+            .unwrap()
+            .1 = "/does/not/exist".into();
+        assert_eq!(
+            registration(&args(), unopened, build).unwrap().decode_mode,
+            DecodeMode::TargetOnly
+        );
+    }
+    #[test]
+    fn target_only_completed_counters_require_real_count1_and_no_draft_or_repair_credit() {
+        for continuations in [0, 1, 37, 199] {
+            let mut stats = Statistics::default();
+            for _ in 0..continuations {
+                stats.add(1, 1, 0, 10, 0, false).unwrap();
+            }
+            assert_eq!(
+                stats
+                    .target_only_record(DecodeMode::TargetOnly, false, continuations + 1)
+                    .unwrap(),
+                Some(
+                    serde_json::json!({"count1_chunks":continuations,"completed_target_rows":continuations,
+                    "draft_executed":false,"draft_steps":0,"target_repair_recomputations":0})
+                )
+            );
+            assert!(
+                stats
+                    .target_only_record(DecodeMode::TargetOnly, true, continuations + 1)
+                    .is_err()
+            );
+            assert!(
+                stats
+                    .target_only_record(DecodeMode::TargetOnly, false, continuations + 2)
+                    .is_err()
+            );
+            assert!(
+                stats
+                    .target_only_record(DecodeMode::Speculative, false, continuations + 1)
+                    .is_err()
+            );
+            assert!(
+                stats
+                    .target_only_record(DecodeMode::Speculative, true, continuations + 1)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        for (count, accepted, draft_ns, repair_ns, repaired) in [
+            (2, 1, 0, 0, false),
+            (2, 2, 0, 0, false),
+            (1, 1, 1, 0, false),
+            (1, 1, 0, 1, false),
+            (1, 1, 0, 0, true),
+        ] {
+            let mut stats = Statistics::default();
+            stats
+                .add(count, accepted, draft_ns, 10, repair_ns, repaired)
+                .unwrap();
+            assert!(
+                stats
+                    .target_only_record(DecodeMode::TargetOnly, false, accepted + 1)
+                    .is_err()
+            );
+        }
+        let mut missing = Statistics::default();
+        missing.add(1, 1, 0, 0, 0, false).unwrap();
+        assert!(
+            missing
+                .target_only_record(DecodeMode::TargetOnly, false, 2)
+                .is_err()
+        );
     }
     #[test]
     fn frozen_gu_stride_four_controller_registration_is_explicit_and_integer_only() {

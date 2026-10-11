@@ -167,6 +167,22 @@ pub(crate) fn frozen_gu_integer_initial_record(
 
 /// Initial numeric acceptance fixes every optional owner policy. Other public
 /// controllers retain their existing close validation and exact owner proofs.
+pub(crate) fn validate_public_target_only_close(
+    integer: bool,
+    main_buffers: u64,
+    main_bytes: u64,
+) -> Result<(), &'static str> {
+    let expected = if integer {
+        (1381, 828_932_096)
+    } else {
+        (1380, 828_866_560)
+    };
+    if (main_buffers, main_bytes) != expected {
+        return Err("target-only complete original target owner closing extent rejected");
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_frozen_gu_integer_close(
     selected: bool,
     main_buffers: u64,
@@ -250,6 +266,21 @@ pub(crate) fn name(inline: bool) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn target_only_close_requires_exact_original_complete_owner_extent() {
+        for (integer, buffers, bytes) in [(false, 1380, 828_866_560), (true, 1381, 828_932_096)] {
+            assert!(validate_public_target_only_close(integer, buffers, bytes).is_ok());
+            for (buffers, bytes) in [
+                (buffers - 1, bytes),
+                (buffers + 1, bytes),
+                (buffers, bytes - 1),
+                (buffers, bytes + 1),
+            ] {
+                assert!(validate_public_target_only_close(integer, buffers, bytes).is_err());
+            }
+            assert!(validate_public_target_only_close(!integer, buffers, bytes).is_err());
+        }
+    }
     #[test]
     fn frozen_gu_stride_four_controller_flag_requires_canonical_integer_dependency() {
         for integer in [false, true] {
