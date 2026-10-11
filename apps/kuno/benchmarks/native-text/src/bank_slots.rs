@@ -112,6 +112,27 @@ pub struct BankSlots {
     state: State,
 }
 
+/// Narrow setup publication witness. No IDs, routes, serialization or Debug.
+/// Existing full StagedSlots snapshots remain the attached source authority.
+pub(crate) struct CompletionGeneration {
+    bank_id: u64,
+    revision: u64,
+}
+impl CompletionGeneration {
+    pub(crate) fn validate(&self, bank: &BankSlots) -> Result<()> {
+        if self.bank_id != bank.bank_id || self.revision != bank.state.revision {
+            return Err(BankError::StalePlan);
+        }
+        Ok(())
+    }
+}
+impl Drop for CompletionGeneration {
+    fn drop(&mut self) {
+        self.bank_id.zeroize();
+        self.revision.zeroize();
+    }
+}
+
 /// Ordered slot IDs and required uploads for one selected set. Uploads contain
 /// only misses, in the request's order. Public fields are checked on commit.
 /// Dropping a plan leaves committed host state unchanged.
@@ -206,6 +227,13 @@ impl BankSlots {
                 revision: 0,
             },
         })
+    }
+
+    pub(crate) fn completion_generation(&self) -> CompletionGeneration {
+        CompletionGeneration {
+            bank_id: self.bank_id,
+            revision: self.state.revision,
+        }
     }
 
     pub fn capacity(&self) -> usize {

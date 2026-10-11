@@ -1,6 +1,6 @@
 # Fixed-public profile-ranked empty-bank filler
 
-This is an approved source plan for a separate default-off placement experiment
+This records the approved separate default-off placement experiment
 on `77e421c`, after the target-backlog comparison. No numerical, admission or
 throughput acceptance follows from this plan. Original expert arithmetic,
 routers, probabilities, absolute IDs, source tensors, full owner proofs,
@@ -64,7 +64,11 @@ slots. Walk the prefix in its original per-layer order and take the first
 144-r nonresidents. There is no low-ID, random, oracle or partial-table fallback.
 The full pinned artifact remains an independent test fixture; it is not a
 release runtime input or environment-selected path. The compact table creates
-no GPU binding, MAIN/INFO owner or release heap allocation.
+no GPU binding, MAIN/INFO owner or release heap allocation. Its derived
+SHA256 is `7bb7a111617d13f3daeed4a3b406e0f7a34b2a7fb07a1ee3845161a08ab57a5d`.
+The compiled source and independent original fixture are under
+`apps/kuno/benchmarks/native-text/fixtures/strata-bank-profile`; the executor
+exports only fixed public provenance constants, never a profile input path.
 
 Charge the fixed13,824-byte public table explicitly within the existing
 192-KiB completion-plan allowance, alongside the original selected vector,
@@ -73,7 +77,7 @@ full owning bank/pages, HOST metadata and RAM caps remain unchanged. The table
 is model-independent public data; resident selections retain the existing
 transient wiping owners.
 
-## Proposed immutable leaf and parent contract
+## Immutable leaf and parent contract
 
 The typed policy is `crate::executor::PublicHostBankFillPolicy` with
 `Original` (default) and `StrataRankedFiller`. The existing
@@ -91,6 +95,18 @@ retains the owning completed-fault checkpoints, and publishes only after all48
 layers succeed. A failed selected construction remains terminal. An immutable
 private publication witness accompanies the PreparedPlan and actual Source;
 full graph/model/bank-map/source identity stays joined through attachment.
+
+The setup witness contains only48 opaque bank identity/revision pairs and the
+aggregate completed record. It rejects swapped banks or any later recency
+commit before the existing PreparedPlan full bank/generation snapshots are
+captured, then is dropped with wiping scalar fields. Its inline size plus the
+288-byte per-layer prefix is compile-time bounded by the existing4-KiB misc
+allowance. The accepted record is retained by that Plan and actual immutable
+FrozenSources. Their existing full snapshots/maps remain authoritative; the
+getter rechecks actual Source/graph/epoch and every bank map at the original
+completed native boundary. No separate route history, resident selection owner
+or general lifecycle mechanism is retained.
+
 
 `native_frozen_source_bank_fill(executor)` returns
 `CompletedPublicHostBankFill` containing `policy`, `completed_layers`,
@@ -111,7 +127,7 @@ checks. It may become all-hit and cannot substitute for the separate canonical
 0..143 HOST/VRAM numerical diagnostic. No HOST/VRAM coverage may be fabricated.
 Language completes the real accepted prompt before filling and attachment.
 
-Proposed separate canonical selector:
+Separate canonical selector:
 `KUNO_LAB_FROZEN_BANK_FILL=profile-ranked-public`. Controllers and protected
 labels remain separately owned. Initial scope is explicit original Intel
 speculative/fused full-Q8 MTP with frozen GPU router/partition exit/direct fill,
@@ -135,3 +151,26 @@ closing/recovery gates, while retaining the canonical HOST-path control. Normal
 language comparisons must use the same source/artifact, compiler-idle timing,
 original real prompt prefill and aggregate tier counters. No gain, transfer or
 30-token/s claim is made before those actual trials.
+
+## Source checkpoint
+
+Leaf and immutable parent source are implemented on the isolated branch based
+exactly on77e421c. Controllers and protected labels are separate. Physical
+accuracy/admission/recovery and throughput acceptance remain pending. The selected path uses original
+`validate_empty_plan`, source windows, packed writes, full fault reads and bank
+commits; the original and diagnostic constructors retain their default branch.
+Source tests cover the full original artifact/rank table and compact SHA256,
+all48 layers with resident counts0..144, malformed prefixes/changed plans,
+stale/reordered bank generations, exact selected/default metadata charging,
+completed counter joins and selected source scope. Linux fixture hash checks
+use the installed SHA256 tool and the fixed test artifact, not runtime input.
+
+CPU source checks completed with the existing
+`oracle-native-target-20261009` cache, standalone native-text manifest,
+`--no-default-features --features direct-device --bin kuno-text-lab -j2`:
+`ranked_`6/6, fixed profile module2/2, `public_host_`43/43, original
+`bank_slots::tests`15/15 and frozen Source module20/20. These cover8 new and74
+existing distinct checks (four new checks repeat in the public-host suite).
+Strict `--all-targets -j2` Clippy with warnings denied and owned-file
+format/diff checks pass. These are CPU source checks; no model, GPU, service,
+private trace or physical admission trial was used by this leaf.

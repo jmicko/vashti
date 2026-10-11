@@ -6,7 +6,7 @@
 //! No routing trace, guessed expert substitution, source freeze or persistence.
 use super::*;
 use crate::{
-    bank_slots::{BankSlots, Plan},
+    bank_slots::{BankSlots, CompletionGeneration, Plan},
     private_arena::{BufferId, PrivateArena},
     resident_model::{batch::CompletedNativeProjectionBoundary, batch_io as resident_batch_io},
 };
@@ -24,14 +24,84 @@ const PLAN_MISC_BYTES: usize = 4096;
 const WRITE_METADATA_BYTES: usize = 8192;
 const SOURCE_LIMIT: u64 = 40 * 1024 * 1024;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum PublicHostBankFillPolicy {
+    #[default]
+    Original,
+    StrataRankedFiller,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CompletedPublicHostBankFill {
+    pub(crate) policy: PublicHostBankFillPolicy,
+    pub(crate) completed_layers: u64,
+    pub(crate) filler_experts: u64,
+    pub(crate) preserved_residents: u64,
+}
+impl CompletedPublicHostBankFill {
+    fn selected(filler_experts: u64) -> Result<Self> {
+        let preserved_residents = (LAYERS * CAPACITY) as u64;
+        let preserved_residents = preserved_residents
+            .checked_sub(filler_experts)
+            .ok_or_else(reject)?;
+        Ok(Self {
+            policy: PublicHostBankFillPolicy::StrataRankedFiller,
+            completed_layers: LAYERS as u64,
+            filler_experts,
+            preserved_residents,
+        })
+    }
+    pub(crate) fn validate(self) -> Result<()> {
+        match self.policy {
+            PublicHostBankFillPolicy::Original if self == Self::default() => Ok(()),
+            PublicHostBankFillPolicy::StrataRankedFiller
+                if self.completed_layers == LAYERS as u64
+                    && self.filler_experts.checked_add(self.preserved_residents)
+                        == Some((LAYERS * CAPACITY) as u64) =>
+            {
+                Ok(())
+            }
+            _ => Err(reject()),
+        }
+    }
+}
+/// Minted only after every original selected write/audit/commit completed.
+/// Consumed into the existing immutable Plan; the inline tokens cannot expose IDs.
+pub(crate) struct BankFillPublication {
+    completed: CompletedPublicHostBankFill,
+    generations: [CompletionGeneration; LAYERS],
+}
+// Inline publication tokens and per-layer PUBLIC prefix share the original
+// completion misc allowance. No new application heap or private owner charge.
+const _: () = assert!(std::mem::size_of::<BankFillPublication>() + 144 * 2 <= PLAN_MISC_BYTES);
+impl BankFillPublication {
+    pub(crate) fn completed(
+        &self,
+        banks: [&expert_banks::ExpertBanks; LAYERS],
+    ) -> Result<CompletedPublicHostBankFill> {
+        self.validate_generations(banks.map(|bank| &bank.slots))?;
+        Ok(self.completed)
+    }
+    fn validate_generations(&self, banks: [&BankSlots; LAYERS]) -> Result<()> {
+        self.completed.validate()?;
+        for (origin, bank) in self.generations.iter().zip(banks) {
+            origin.validate(bank).map_err(|_| reject())?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy)]
 enum Placement {
     PreserveResidents,
+    StrataRankedFiller,
     // Compiled CPU13 placement diagnostic only. Routing is never changed.
     ValidateHostComplement,
 }
 impl Placement {
-    fn selection(self, bank: &BankSlots) -> Result<Zeroizing<Vec<usize>>> {
+    fn selection(self, bank: &BankSlots, layer: usize) -> Result<Zeroizing<Vec<usize>>> {
+        if matches!(self, Self::StrataRankedFiller) {
+            return ranked_completion_selection(bank, &public_strata_bank_profile::prefix(layer)?);
+        }
         let mut selected = completion_selection(bank)?;
         if matches!(self, Self::ValidateHostComplement) {
             for (expert, id) in selected.iter_mut().enumerate() {
@@ -43,7 +113,9 @@ impl Placement {
 
     fn validate(self, bank: &BankSlots, plan: &Plan, selected: &[usize]) -> Result<()> {
         match self {
-            Self::PreserveResidents => validate_empty_plan(bank, plan, selected),
+            Self::PreserveResidents | Self::StrataRankedFiller => {
+                validate_empty_plan(bank, plan, selected)
+            }
             Self::ValidateHostComplement => validate_canonical_plan(bank, plan, selected),
         }
     }
@@ -82,6 +154,46 @@ fn completion_selection(bank: &BankSlots) -> Result<Zeroizing<Vec<usize>>> {
         if selected.len() == CAPACITY {
             break;
         }
+        if bank.resident_slot(expert).map_err(|_| reject())?.is_none() {
+            selected.push(expert);
+        }
+    }
+    if selected.len() != CAPACITY {
+        return Err(reject());
+    }
+    Ok(selected)
+}
+
+/// Existing residents retain SLOT order; only the fixed PUBLIC prefix fills
+/// empties. Its144 distinct IDs contain at least144-r nonresidents for any r.
+fn ranked_completion_selection(bank: &BankSlots, prefix: &[u16]) -> Result<Zeroizing<Vec<usize>>> {
+    public_strata_bank_profile::validate_prefix(prefix)?;
+    if bank.capacity() != CAPACITY || bank.experts() != EXPERTS {
+        return Err(reject());
+    }
+    let mut selected = Zeroizing::new(Vec::new());
+    selected
+        .try_reserve_exact(CAPACITY)
+        .map_err(|_| Error::LimitExceeded("public host completion selection"))?;
+    if selected.capacity() != CAPACITY {
+        return Err(reject());
+    }
+    for slot in 0..CAPACITY {
+        if let Some(expert) = bank.resident_expert(slot).map_err(|_| reject())? {
+            if expert >= EXPERTS
+                || selected.contains(&expert)
+                || bank.resident_slot(expert).map_err(|_| reject())? != Some(slot)
+            {
+                return Err(reject());
+            }
+            selected.push(expert);
+        }
+    }
+    for &expert in prefix {
+        if selected.len() == CAPACITY {
+            break;
+        }
+        let expert = usize::from(expert);
         if bank.resident_slot(expert).map_err(|_| reject())?.is_none() {
             selected.push(expert);
         }
@@ -175,6 +287,26 @@ fn plan_host_bytes(selected: &Vec<usize>, plan: &Plan, request_capacity: usize) 
         .and_then(|n| n.checked_add(request_capacity.checked_mul(std::mem::size_of::<u64>())?))
         .and_then(|n| n.checked_add(WRITE_METADATA_BYTES))
         .and_then(|n| n.checked_add(PLAN_MISC_BYTES))
+        .ok_or(Error::ArithmeticOverflow)?;
+    if bytes > PLAN_HOST_LIMIT {
+        return Err(Error::LimitExceeded("public host completion plan metadata"));
+    }
+    Ok(bytes)
+}
+
+fn placement_plan_host_bytes(
+    placement: Placement,
+    selected: &Vec<usize>,
+    plan: &Plan,
+    requests: usize,
+) -> Result<usize> {
+    let bytes = plan_host_bytes(selected, plan, requests)?;
+    let bytes = bytes
+        .checked_add(if matches!(placement, Placement::StrataRankedFiller) {
+            PUBLIC_STRATA_BANK_PROFILE_BYTES
+        } else {
+            0
+        })
         .ok_or(Error::ArithmeticOverflow)?;
     if bytes > PLAN_HOST_LIMIT {
         return Err(Error::LimitExceeded("public host completion plan metadata"));
@@ -310,6 +442,40 @@ impl GpuExecutor<'_> {
         )
     }
 
+    /// Same original writes/fault proofs; only empty-slot selection differs.
+    pub(crate) fn complete_public_host_ranked_banks(
+        &mut self,
+        boundary: &CompletedNativeProjectionBoundary,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+        fault: BufferId,
+        cancel: &AtomicBool,
+    ) -> Result<(expert_banks::FillStats, BankFillPublication)> {
+        let result = (|| {
+            let fills = self.complete_public_host_banks_for(
+                boundary,
+                graph,
+                arena,
+                fault,
+                cancel,
+                Placement::StrataRankedFiller,
+            )?;
+            let banks = self.public_host_completed_banks(graph)?;
+            let publication = BankFillPublication {
+                completed: CompletedPublicHostBankFill::selected(fills.experts)?,
+                generations: std::array::from_fn(|layer| {
+                    banks[layer].slots.completion_generation()
+                }),
+            };
+            publication.completed(banks)?;
+            Ok((fills, publication))
+        })();
+        if result.is_err() {
+            self.poison_resident();
+        }
+        result
+    }
+
     fn complete_public_host_banks_for(
         &mut self,
         _boundary: &CompletedNativeProjectionBoundary,
@@ -357,10 +523,10 @@ impl GpuExecutor<'_> {
             }
             let key = format!("blk.{layer}.ffn_gate_exps.weight");
             let bank = self.banks.get_mut(&key).ok_or_else(reject)?;
-            let selected = placement.selection(&bank.slots)?;
+            let selected = placement.selection(&bank.slots, layer)?;
             let plan = bank.slots.plan(&selected).map_err(|_| reject())?;
             placement.validate(&bank.slots, &plan, &selected)?;
-            plan_host_bytes(&selected, &plan, 0)?;
+            placement_plan_host_bytes(placement, &selected, &plan, 0)?;
             let [gate, up, down] = bank.source_names().map(|name| graph.tensor(name));
             let weights = RoutedWeights {
                 gate: gate?,
@@ -377,7 +543,7 @@ impl GpuExecutor<'_> {
                     false,
                     self.expert_batch_bytes,
                 )?;
-                plan_host_bytes(&selected, &plan, requests.capacity())?;
+                placement_plan_host_bytes(placement, &selected, &plan, requests.capacity())?;
                 let charged = requests.iter().try_fold(0u64, |n, &b| {
                     n.checked_add(main_admission::page_bytes(b).map_err(admission_error)?)
                         .ok_or(Error::ArithmeticOverflow)
@@ -505,6 +671,148 @@ impl GpuExecutor<'_> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn ranked_filler_all_layers_and_resident_counts_preserve_exact_slots() {
+        for layer in 0..LAYERS {
+            let prefix = public_strata_bank_profile::prefix(layer).unwrap();
+            for residents in 0..=CAPACITY {
+                // Independently fixed, noncontiguous public test IDs, not routes.
+                let ids: Vec<_> = (0..residents)
+                    .map(|i| (i * 7 + layer * 13) % EXPERTS)
+                    .collect();
+                let mut bank = BankSlots::new(CAPACITY, EXPERTS).unwrap();
+                seed(&mut bank, &ids);
+                let selected = Placement::StrataRankedFiller
+                    .selection(&bank, layer)
+                    .unwrap();
+                assert_eq!(&selected[..residents], &ids);
+                let expected: Vec<_> = prefix
+                    .iter()
+                    .map(|&id| usize::from(id))
+                    .filter(|id| !ids.contains(id))
+                    .take(CAPACITY - residents)
+                    .collect();
+                assert_eq!(&selected[residents..], &expected);
+                let generation = bank.completion_generation();
+                let plan = bank.plan(&selected).unwrap();
+                Placement::StrataRankedFiller
+                    .validate(&bank, &plan, &selected)
+                    .unwrap();
+                assert_eq!(plan.uploads.len(), CAPACITY - residents);
+                let original_charge = plan_host_bytes(&selected, &plan, 30).unwrap();
+                assert_eq!(
+                    placement_plan_host_bytes(Placement::StrataRankedFiller, &selected, &plan, 30)
+                        .unwrap(),
+                    original_charge + PUBLIC_STRATA_BANK_PROFILE_BYTES
+                );
+                assert_eq!(
+                    placement_plan_host_bytes(Placement::PreserveResidents, &selected, &plan, 30)
+                        .unwrap(),
+                    original_charge
+                );
+                if plan.uploads.is_empty() {
+                    generation.validate(&bank).unwrap();
+                } else {
+                    bank.commit(plan).unwrap();
+                    assert!(generation.validate(&bank).is_err());
+                }
+                for (slot, id) in ids.iter().enumerate() {
+                    assert_eq!(bank.resident_expert(slot).unwrap(), Some(*id));
+                }
+                assert!((0..CAPACITY).all(|slot| bank.resident_expert(slot).unwrap().is_some()));
+            }
+        }
+    }
+
+    #[test]
+    fn ranked_filler_rejects_corrupt_prefix_and_changed_pending_plan() {
+        let mut bank = BankSlots::new(CAPACITY, EXPERTS).unwrap();
+        seed(&mut bank, &[511, 300, 7]);
+        let mut prefix = public_strata_bank_profile::prefix(0).unwrap();
+        prefix[1] = prefix[0];
+        assert!(ranked_completion_selection(&bank, &prefix).is_err());
+        prefix[1] = 512;
+        assert!(ranked_completion_selection(&bank, &prefix).is_err());
+        let selected = Placement::StrataRankedFiller.selection(&bank, 0).unwrap();
+        let mut plan = bank.plan(&selected).unwrap();
+        plan.uploads[0].0 = 511;
+        assert!(
+            Placement::StrataRankedFiller
+                .validate(&bank, &plan, &selected)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn ranked_publication_rejects_reordered_and_recency_changed_banks() {
+        let mut banks: [BankSlots; LAYERS] =
+            std::array::from_fn(|_| BankSlots::new(CAPACITY, EXPERTS).unwrap());
+        for bank in &mut banks {
+            seed(bank, &(0..CAPACITY).collect::<Vec<_>>());
+        }
+        let publication = BankFillPublication {
+            completed: CompletedPublicHostBankFill::selected(6912).unwrap(),
+            generations: std::array::from_fn(|layer| banks[layer].completion_generation()),
+        };
+        publication
+            .validate_generations(std::array::from_fn(|i| &banks[i]))
+            .unwrap();
+        assert!(
+            publication
+                .validate_generations(std::array::from_fn(|i| &banks[(i + 1) % LAYERS]))
+                .is_err()
+        );
+        seed(&mut banks[17], &(0..CAPACITY).collect::<Vec<_>>());
+        assert!(
+            publication
+                .validate_generations(std::array::from_fn(|i| &banks[i]))
+                .is_err()
+        );
+        let bank = &mut banks[0];
+        let selected = Placement::StrataRankedFiller.selection(bank, 0).unwrap();
+        let plan = bank.plan(&selected).unwrap();
+        let original = plan_host_bytes(&selected, &plan, 0).unwrap();
+        let near_limit = (PLAN_HOST_LIMIT - original) / std::mem::size_of::<u64>();
+        assert!(plan_host_bytes(&selected, &plan, near_limit).is_ok());
+        assert!(
+            placement_plan_host_bytes(Placement::StrataRankedFiller, &selected, &plan, near_limit)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn ranked_publication_counts_and_inline_witness_stay_bounded() {
+        assert!(std::mem::size_of::<BankFillPublication>() < PLAN_MISC_BYTES);
+        assert_eq!(
+            CompletedPublicHostBankFill::default().policy,
+            PublicHostBankFillPolicy::Original
+        );
+        for filler in 0..=(LAYERS * CAPACITY) as u64 {
+            let completed = CompletedPublicHostBankFill::selected(filler).unwrap();
+            completed.validate().unwrap();
+            assert_eq!(
+                completed.filler_experts + completed.preserved_residents,
+                6912
+            );
+        }
+        assert!(CompletedPublicHostBankFill::selected(6913).is_err());
+        let mut bad = CompletedPublicHostBankFill::selected(10).unwrap();
+        bad.completed_layers = 47;
+        assert!(bad.validate().is_err());
+        bad = CompletedPublicHostBankFill::selected(10).unwrap();
+        bad.policy = PublicHostBankFillPolicy::Original;
+        assert!(bad.validate().is_err());
+        let mut a = BankSlots::new(CAPACITY, EXPERTS).unwrap();
+        let b = BankSlots::new(CAPACITY, EXPERTS).unwrap();
+        let origin = a.completion_generation();
+        assert!(origin.validate(&b).is_err());
+        seed(&mut a, &[7]);
+        assert!(origin.validate(&a).is_err());
+        let origin = a.completion_generation();
+        seed(&mut a, &[7]); // Same map, real recency-only commit must reject reuse.
+        assert!(origin.validate(&a).is_err());
+    }
+
     fn seed(bank: &mut BankSlots, ids: &[usize]) {
         let plan = bank.plan(ids).unwrap();
         bank.validate_pending(&plan, ids).unwrap();
@@ -552,9 +860,11 @@ mod tests {
         ] {
             let mut bank = BankSlots::new(CAPACITY, EXPERTS).unwrap();
             seed(&mut bank, &ids);
-            let preserved = Placement::PreserveResidents.selection(&bank).unwrap();
+            let preserved = Placement::PreserveResidents.selection(&bank, 0).unwrap();
             assert_eq!(&preserved[..ids.len()], &ids);
-            let selected = Placement::ValidateHostComplement.selection(&bank).unwrap();
+            let selected = Placement::ValidateHostComplement
+                .selection(&bank, 0)
+                .unwrap();
             assert!(selected.iter().copied().eq(0..CAPACITY));
             let plan = bank.plan(&selected).unwrap();
             Placement::ValidateHostComplement
@@ -592,7 +902,10 @@ mod tests {
                 );
             }
             assert_eq!(
-                Placement::PreserveResidents.selection(&bank).unwrap().len(),
+                Placement::PreserveResidents
+                    .selection(&bank, 0)
+                    .unwrap()
+                    .len(),
                 CAPACITY
             );
         }
@@ -602,14 +915,16 @@ mod tests {
     fn diagnostic_rejects_any_other_set_or_modified_actual_replacement() {
         let mut bank = BankSlots::new(CAPACITY, EXPERTS).unwrap();
         seed(&mut bank, &[511, 7, 300]);
-        let normal = Placement::PreserveResidents.selection(&bank).unwrap();
+        let normal = Placement::PreserveResidents.selection(&bank, 0).unwrap();
         let plan = bank.plan(&normal).unwrap();
         assert!(
             Placement::ValidateHostComplement
                 .validate(&bank, &plan, &normal)
                 .is_err()
         );
-        let selected = Placement::ValidateHostComplement.selection(&bank).unwrap();
+        let selected = Placement::ValidateHostComplement
+            .selection(&bank, 0)
+            .unwrap();
         let mut plan = bank.plan(&selected).unwrap();
         plan.uploads[0].1 = 1; // overwrite the protected real ID7 hit
         assert!(

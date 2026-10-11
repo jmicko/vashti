@@ -452,6 +452,7 @@ impl Budget {
 
 pub(crate) struct Plan<'model, 'file> {
     identity: PlanIdentity,
+    bank_fill: crate::executor::CompletedPublicHostBankFill,
     graph: BoundGraph<'model, 'file>,
     model: &'file GgufFile,
     binding: GraphBindingId,
@@ -467,6 +468,19 @@ impl<'model, 'file> Plan<'model, 'file> {
         banks: [&ExpertBanks; LAYERS],
         allocation_alignment: u64,
     ) -> Result<Self> {
+        Self::from_completed_banks_with_fill(graph, model, banks, allocation_alignment, None)
+    }
+    pub(crate) fn from_completed_banks_with_fill(
+        graph: BoundGraph<'model, 'file>,
+        model: &'file GgufFile,
+        banks: [&ExpertBanks; LAYERS],
+        allocation_alignment: u64,
+        publication: Option<&crate::executor::BankFillPublication>,
+    ) -> Result<Self> {
+        let bank_fill = publication
+            .map(|p| p.completed(banks))
+            .transpose()?
+            .unwrap_or_default();
         round_physical(4, allocation_alignment)?;
         if model.shard_count() != 2 || model.tensors().len() != daslab_profile::TENSOR_COUNT {
             return Err(reject());
@@ -552,6 +566,7 @@ impl<'model, 'file> Plan<'model, 'file> {
         }
         let plan = Self {
             identity: fresh_identity(&NEXT_PLAN_IDENTITY)?,
+            bank_fill,
             graph,
             model,
             binding: graph.binding_id(),
@@ -569,6 +584,10 @@ impl<'model, 'file> Plan<'model, 'file> {
         plan.check_frozen(graph, model, banks)
             .map_err(|_| Error::InvalidFormat("public host plan final immutable identity"))?;
         Ok(plan)
+    }
+    pub(crate) fn bank_fill(&self) -> Result<crate::executor::CompletedPublicHostBankFill> {
+        self.bank_fill.validate()?;
+        Ok(self.bank_fill)
     }
     pub(crate) fn identity(&self) -> PlanIdentity {
         self.identity

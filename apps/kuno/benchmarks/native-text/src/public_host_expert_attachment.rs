@@ -120,12 +120,42 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
         plan_metadata_reserved: u64,
         cancel: &AtomicBool,
     ) -> Result<Self> {
+        Self::new_with_fill_publication(
+            graph,
+            model,
+            executor,
+            allocation_alignment,
+            plan_metadata_reserved,
+            cancel,
+            None,
+        )
+    }
+    #[allow(clippy::too_many_arguments)] // Same original plan inputs plus opaque actual publication.
+    pub(crate) fn new_with_fill_publication(
+        graph: BoundGraph<'model, 'file>,
+        model: &'file GgufFile,
+        executor: &GpuExecutor<'file>,
+        allocation_alignment: u64,
+        plan_metadata_reserved: u64,
+        cancel: &AtomicBool,
+        publication: Option<crate::executor::BankFillPublication>,
+    ) -> Result<Self> {
         u::cancel(cancel)?;
         if plan_metadata_reserved != plan::METADATA_HOST_CAP {
             return Err(rejected());
         }
         let banks = executor.public_host_completed_banks(graph)?;
-        let plan = Plan::from_completed_banks(graph, model, banks, allocation_alignment)?;
+        let plan = if let Some(publication) = publication.as_ref() {
+            Plan::from_completed_banks_with_fill(
+                graph,
+                model,
+                banks,
+                allocation_alignment,
+                Some(publication),
+            )?
+        } else {
+            Plan::from_completed_banks(graph, model, banks, allocation_alignment)?
+        };
         let budget = AttachmentBudget::new(plan.budget().physical_public_ram_envelope_bytes)?;
         u::cancel(cancel)?;
         Ok(Self {

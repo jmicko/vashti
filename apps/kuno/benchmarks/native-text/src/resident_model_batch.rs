@@ -3,6 +3,36 @@
 //! Source-only until parent completes physical whole-model validation. No
 //! default/API/catalog change, replay, fallback or private checkpoint export.
 pub(crate) struct CompletedAdaptiveBoundary(());
+#[cfg(test)]
+mod bank_fill_policy_tests {
+    use super::*;
+    use crate::executor::PublicHostBankFillPolicy::{Original, StrataRankedFiller};
+    #[test]
+    fn ranked_fill_policy_never_reinterprets_legacy_preserve_or_default_scope() {
+        for preserve in [false, true] {
+            for scope in [false, true] {
+                assert!(validate_bank_fill_selection(Original, preserve, scope).is_ok());
+                assert_eq!(
+                    validate_bank_fill_selection(StrataRankedFiller, preserve, scope).is_ok(),
+                    !preserve && scope
+                );
+            }
+        }
+    }
+}
+fn validate_bank_fill_selection(
+    policy: crate::executor::PublicHostBankFillPolicy,
+    preserve: bool,
+    original_scope: bool,
+) -> Result<()> {
+    if policy == crate::executor::PublicHostBankFillPolicy::StrataRankedFiller
+        && (preserve || !original_scope)
+    {
+        return Err(Error::InvalidFormat("fixed public ranked bank fill scope"));
+    }
+    Ok(())
+}
+
 use super::*;
 use crate::{
     executor::{GpuExecutor, NativeProjectionTile, batch_moe},
@@ -2537,6 +2567,24 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         crate::public_host_expert_attachment::PreparedPlan<'m, 'f>,
         crate::expert_banks::FillStats,
     )> {
+        self.prepare_public_host_sources_with_fill_policy(
+            executor,
+            cancel,
+            preserve_routed_bank,
+            crate::executor::PublicHostBankFillPolicy::Original,
+        )
+    }
+    #[allow(dead_code)] // Separate fixed-public controller owns opt-in registration.
+    pub(crate) fn prepare_public_host_sources_with_fill_policy(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+        cancel: &AtomicBool,
+        preserve_routed_bank: bool,
+        policy: crate::executor::PublicHostBankFillPolicy,
+    ) -> Result<(
+        crate::public_host_expert_attachment::PreparedPlan<'m, 'f>,
+        crate::expert_banks::FillStats,
+    )> {
         u::cancel(cancel)?;
         let native = self.native_batch.as_ref().ok_or(error())?;
         if !native.public_frozen_host_sources {
@@ -2549,6 +2597,29 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 "public host prepare source already attached",
             ));
         }
+        let ranked = policy == crate::executor::PublicHostBankFillPolicy::StrataRankedFiller;
+        validate_bank_fill_selection(
+            policy,
+            preserve_routed_bank,
+            native.public_frozen_host_router
+                && native.target_rows.is_some()
+                && native.latest_target_checkpoint_reserved
+                && (native.public_target_request_io.is_some()
+                    != native.public_language_request_io.is_some())
+                && executor.target_frozen_host_router_reserved
+                && executor.target_batch_router_reserved
+                && executor.target_verify3_dense
+                && executor.target_verify3_fused
+                && executor.token_io_checkpoint
+                && self.admission.deferred_token_io()
+                && self.admission.transient_io()
+                && native.moe.projection_tile() == 8
+                && native.dense_member_capacity == 8
+                && executor.native_projection_tile() == 8
+                && executor.native_projection_member_capacity() == 8
+                && executor.packed_profile == crate::expert_banks::OriginalPackedProfile::DaslabIq3,
+        )?;
+
         if self.admission.request_io_reuse_active() {
             return Err(Error::InvalidFormat("public host prepare live request I/O"));
         }
@@ -2559,8 +2630,20 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .moe
             .validate_public_warm_boundary(executor, self.graph, &self.arena)
             .map_err(|_| Error::InvalidFormat("public host prepare routed completed boundary"))?;
-        let fills =
-            if self.context == 13 && native.public_warm_replay.is_some() && !preserve_routed_bank {
+        let (fills, publication) = if ranked {
+            let (fills, publication) = executor.complete_public_host_ranked_banks(
+                &boundary,
+                self.graph,
+                &self.arena,
+                self.b.fault,
+                cancel,
+            )?;
+            (fills, Some(publication))
+        } else {
+            let fills = if self.context == 13
+                && native.public_warm_replay.is_some()
+                && !preserve_routed_bank
+            {
                 // Deterministic PHYSICAL placement exercises both actual tiers in
                 // the complete CPU13 numerical gate. It never changes routing.
                 executor.complete_public_host_validation_banks(
@@ -2579,17 +2662,39 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                     cancel,
                 )?
             };
-        self.completed_native_projection_boundary(executor)
-            .map_err(|_| Error::InvalidFormat("public host prepare filled completed boundary"))?;
-        let prepared = crate::public_host_expert_attachment::PreparedPlan::new(
-            self.graph,
-            executor.public_host_model(),
-            executor,
-            65536,
-            crate::public_host_expert_plan::METADATA_HOST_CAP,
-            cancel,
-        )?;
-        Ok((prepared, fills))
+            (fills, None)
+        };
+        let result = (|| {
+            self.completed_native_projection_boundary(executor)
+                .map_err(|_| {
+                    Error::InvalidFormat("public host prepare filled completed boundary")
+                })?;
+            let prepared = if let Some(publication) = publication {
+                crate::public_host_expert_attachment::PreparedPlan::new_with_fill_publication(
+                    self.graph,
+                    executor.public_host_model(),
+                    executor,
+                    65536,
+                    crate::public_host_expert_plan::METADATA_HOST_CAP,
+                    cancel,
+                    Some(publication),
+                )?
+            } else {
+                crate::public_host_expert_attachment::PreparedPlan::new(
+                    self.graph,
+                    executor.public_host_model(),
+                    executor,
+                    65536,
+                    crate::public_host_expert_plan::METADATA_HOST_CAP,
+                    cancel,
+                )?
+            };
+            Ok((prepared, fills))
+        })();
+        if ranked && result.is_err() {
+            self.poisoned = true;
+        }
+        result
     }
     /// The parent retains exact public hash/source proofs and PreparedPlan.
     /// No model/workspace borrow escapes into the imported-page lifetime.
@@ -2912,6 +3017,18 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             )
         }
     }
+    #[allow(dead_code)] // Actual immutable setup receipt for separately owned public controller.
+    pub(crate) fn native_frozen_source_bank_fill(
+        &self,
+        executor: &GpuExecutor<'f>,
+    ) -> Result<crate::executor::CompletedPublicHostBankFill> {
+        self.completed_native_projection_boundary(executor)?;
+        let native = self.native_batch.as_ref().ok_or(error())?;
+        native
+            .moe
+            .frozen_host_source_bank_fill(executor, self.graph)
+    }
+
     pub(crate) fn native_frozen_source_counters(
         &self,
         executor: &GpuExecutor<'f>,

@@ -58,6 +58,16 @@ impl NativeProjectionTile {
 #[allow(dead_code)] // Shared public-only construction and numerical probe seam.
 #[path = "public_host_bank_completion.rs"]
 mod public_host_bank_completion;
+#[allow(dead_code)] // Fixed PUBLIC placement candidate; explicit parent registration.
+#[path = "public_strata_bank_profile.rs"]
+mod public_strata_bank_profile;
+pub(crate) use public_host_bank_completion::{
+    BankFillPublication, CompletedPublicHostBankFill, PublicHostBankFillPolicy,
+};
+#[allow(unused_imports)] // Controller separately consumes the immutable provenance pin.
+pub(crate) use public_strata_bank_profile::{
+    PUBLIC_STRATA_BANK_PROFILE_BYTES, PUBLIC_STRATA_BANK_PROFILE_SHA256,
+};
 
 fn validate_target_frozen_host_policy(
     frozen: bool,

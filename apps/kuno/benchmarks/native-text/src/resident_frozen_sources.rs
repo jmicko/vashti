@@ -236,6 +236,7 @@ struct Layer {
 pub(crate) struct Sources {
     binding: GraphBindingId,
     plan_identity: plan::PlanIdentity,
+    bank_fill: crate::executor::CompletedPublicHostBankFill,
     layers: Vec<Layer>,
     metadata_bytes: usize,
     packed_host_staging: bool,
@@ -255,6 +256,43 @@ fn initial_metadata(layers: usize, pages: usize, banks: usize) -> Result<usize> 
         return Err(reject());
     }
     Ok(bytes)
+}
+fn validate_ranked_fill_source_policy(
+    completed: crate::executor::CompletedPublicHostBankFill,
+    partition_exit: bool,
+    competing_modes: [bool; 7],
+) -> Result<()> {
+    completed.validate()?;
+    if completed.policy == crate::executor::PublicHostBankFillPolicy::StrataRankedFiller
+        && (!partition_exit || competing_modes.into_iter().any(|mode| mode))
+    {
+        return Err(reject());
+    }
+    Ok(())
+}
+#[cfg(test)]
+mod ranked_fill_source_tests {
+    use super::*;
+    #[test]
+    fn ranked_fill_requires_actual_publication_and_original_source_scope() {
+        let selected = crate::executor::CompletedPublicHostBankFill {
+            policy: crate::executor::PublicHostBankFillPolicy::StrataRankedFiller,
+            completed_layers: 48,
+            filler_experts: 1769,
+            preserved_residents: 5143,
+        };
+        assert!(validate_ranked_fill_source_policy(selected, true, [false; 7]).is_ok());
+        assert!(validate_ranked_fill_source_policy(selected, false, [false; 7]).is_err());
+        for i in 0..7 {
+            let mut modes = [false; 7];
+            modes[i] = true;
+            assert!(validate_ranked_fill_source_policy(selected, true, modes).is_err());
+            assert!(validate_ranked_fill_source_policy(Default::default(), false, modes).is_ok());
+        }
+        let mut bad = selected;
+        bad.completed_layers = 0;
+        assert!(validate_ranked_fill_source_policy(bad, true, [false; 7]).is_err());
+    }
 }
 impl Sources {
     /// Parent completes all original consumers and freezes every actual full
@@ -846,6 +884,21 @@ impl Sources {
         }
         let bank_array: [&ExpertBanks; 48] = banks.as_slice().try_into().map_err(|_| reject())?;
         plan.check_frozen(graph, executor.model, bank_array)?;
+        let bank_fill = plan.bank_fill()?;
+        validate_ranked_fill_source_policy(
+            bank_fill,
+            inactive_partition_exit,
+            [
+                private_tables,
+                workgroup_tables,
+                shared_down_scales,
+                shared_gate_up_factors,
+                two_row_gate_up,
+                packed_host_staging,
+                three_members,
+            ],
+        )?;
+
         let mut layers = Vec::with_capacity(48);
         let mut metadata_bytes =
             initial_metadata(layers.capacity(), pages.capacity(), banks.capacity())?;
@@ -1041,6 +1094,7 @@ impl Sources {
         Ok(Arc::new(Self {
             binding: graph.binding_id(),
             plan_identity: plan.identity(),
+            bank_fill,
             layers,
             metadata_bytes,
             packed_host_staging,
@@ -1974,6 +2028,30 @@ impl Counters {
 impl Workspace {
     pub(crate) fn frozen_host_sources_enabled(&self) -> bool {
         self.frozen_sources.is_some()
+    }
+    pub(crate) fn frozen_host_source_bank_fill(
+        &self,
+        executor: &GpuExecutor<'_>,
+        graph: BoundGraph<'_, '_>,
+    ) -> Result<crate::executor::CompletedPublicHostBankFill> {
+        let Some(source) = self.frozen_sources.as_ref() else {
+            return Ok(Default::default());
+        };
+        if !executor.resident_banks_frozen
+            || executor.target_frozen_host_source_identity != Some(source.plan_identity)
+            || source.binding != graph.binding_id()
+            || self.binding != source.binding
+        {
+            return Err(reject());
+        }
+        graph.verify_unchanged()?;
+        executor.model.verify_file_unchanged()?;
+        source.bank_fill.validate()?;
+        for layer in 0..48 {
+            let key = format!("blk.{layer}.ffn_gate_exps.weight");
+            source.check_layer(layer, executor.banks.get(&key).ok_or_else(reject)?)?;
+        }
+        Ok(source.bank_fill)
     }
     pub(crate) fn frozen_host_source_partition_exit(&self) -> Result<bool> {
         Ok(self
