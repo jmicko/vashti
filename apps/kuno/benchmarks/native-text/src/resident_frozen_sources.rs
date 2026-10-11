@@ -16,6 +16,8 @@ pub(crate) const EXTRA_RUNTIME_BYTES_PER_CHUNK: u64 = EXTRA_INFO_BYTES_PER_CHUNK
 pub(crate) const EXTRA_HOST_BYTES_PER_CHUNK: u64 = EXTRA_HOST_BYTES;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum GateKernel {
+    StagedFrozen,
+    StagedTwoRows,
     Original,
     Frozen,
     PrivateTables,
@@ -27,6 +29,8 @@ enum GateKernel {
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DownKernel {
+    StagedFrozen,
+    StagedFourRows,
     Original,
     Frozen,
     SharedScales,
@@ -70,12 +74,30 @@ fn kernel_policy(g: k::Geometry) -> (GateKernel, DownKernel) {
     };
     (gate, down)
 }
+fn source_kernel_policy(g: k::Geometry, staged_shard: bool) -> Result<(GateKernel, DownKernel)> {
+    let (gate, down) = kernel_policy(g);
+    if !staged_shard {
+        return Ok((gate, down));
+    }
+    k::frozen_host_staging::Shape::new(g).map_err(err)?;
+    let gate = match gate {
+        GateKernel::Frozen => GateKernel::StagedFrozen,
+        GateKernel::TwoRows => GateKernel::StagedTwoRows,
+        _ => return Err(reject()),
+    };
+    let down = match down {
+        DownKernel::Frozen => DownKernel::StagedFrozen,
+        DownKernel::FourRows => DownKernel::StagedFourRows,
+        _ => return Err(reject()),
+    };
+    Ok((gate, down))
+}
 const PARTS: [usize; 5] = [72, 72, 144, 144, 80];
 const FIRST: [usize; 5] = [0, 72, 144, 288, 432];
 const ROLES: [Role; 3] = [Role::Gate, Role::Up, Role::Down];
 const PAGES: usize = 15;
 const EXTENTS: usize = 8 + PAGES;
-const ROUTER_EXTENTS: usize = EXTENTS + 3;
+const ROUTER_EXTENTS: usize = EXTENTS + 3 + 3;
 pub(crate) const ROUTER_MAIN_BYTES: u64 = super::batch_router::MAIN_BYTES;
 pub(crate) const ROUTER_RUNTIME_BYTES: u64 = super::batch_router::RUNTIME_BYTES;
 pub(crate) const ROUTER_HOST_BYTES: u64 = super::batch_router::HOST_BYTES as u64;
@@ -176,6 +198,7 @@ pub(crate) struct Sources {
     plan_identity: plan::PlanIdentity,
     layers: Vec<Layer>,
     metadata_bytes: usize,
+    packed_host_staging: bool,
 }
 fn initial_metadata(layers: usize, pages: usize, banks: usize) -> Result<usize> {
     let bytes = std::mem::size_of::<Sources>()
@@ -213,6 +236,7 @@ impl Sources {
             false,
             false,
             false,
+            false,
         )
     }
     /// Explicit matched-control candidate, frozen before any source descriptors
@@ -231,6 +255,7 @@ impl Sources {
             pages,
             reserved_host_bytes,
             true,
+            false,
             false,
             false,
             false,
@@ -262,6 +287,7 @@ impl Sources {
             false,
             false,
             false,
+            false,
         )
     }
     /// Literal-lane initialization of one shared immutable public IQ grid.
@@ -282,6 +308,7 @@ impl Sources {
             true,
             false,
             true,
+            false,
             false,
             false,
             false,
@@ -311,6 +338,7 @@ impl Sources {
             false,
             false,
             false,
+            false,
         )
     }
     /// Explicit frozen IQ2/IQ3 subgroup-factor staging candidate.
@@ -335,7 +363,27 @@ impl Sources {
             true,
             false,
             false,
+            false,
         )
+    }
+    pub(crate) fn validate_staging_policy(
+        selected: bool,
+        inactive_partition_exit: bool,
+        private_tables: bool,
+        workgroup_tables: bool,
+        shared_down_scales: bool,
+        shared_gate_up_factors: bool,
+    ) -> Result<()> {
+        if selected
+            && (!inactive_partition_exit
+                || private_tables
+                || workgroup_tables
+                || shared_down_scales
+                || shared_gate_up_factors)
+        {
+            return Err(reject());
+        }
+        Ok(())
     }
     pub(crate) fn validate_kernel_policies(
         inactive_partition_exit: bool,
@@ -374,6 +422,7 @@ impl Sources {
         shared_gate_up_factors: bool,
         four_row_down: bool,
         two_row_gate_up: bool,
+        packed_host_staging: bool,
     ) -> Result<Arc<Self>> {
         Self::validate_kernel_policies(
             inactive_partition_exit,
@@ -383,6 +432,14 @@ impl Sources {
             shared_gate_up_factors,
             four_row_down,
             two_row_gate_up,
+        )?;
+        Self::validate_staging_policy(
+            packed_host_staging,
+            inactive_partition_exit,
+            private_tables,
+            workgroup_tables,
+            shared_down_scales,
+            shared_gate_up_factors,
         )?;
         if reserved_host_bytes < EXTRA_HOST_BYTES
             || graph.binding_id() != plan.binding()
@@ -495,6 +552,9 @@ impl Sources {
             {
                 return Err(reject());
             }
+            if packed_host_staging {
+                k::frozen_host_staging::Shape::new(geometry).map_err(err)?;
+            }
             let projections = geometry.projections();
             for (role_index, role) in ROLES.into_iter().enumerate() {
                 let resident = [bank.gate(), bank.up(), bank.down()][role_index];
@@ -594,7 +654,11 @@ impl Sources {
             plan_identity: plan.identity(),
             layers,
             metadata_bytes,
+            packed_host_staging,
         }))
+    }
+    pub(crate) fn packed_host_staging(&self) -> bool {
+        self.packed_host_staging
     }
     pub(crate) fn plan_identity(&self) -> plan::PlanIdentity {
         self.plan_identity
@@ -758,7 +822,7 @@ impl Sources {
         fault: BufferId,
         pending_pins: Option<&[Handle]>,
     ) -> Result<()> {
-        self.physical_inner(arena, layer, bank, ids, fault, pending_pins, &[])
+        self.physical_inner(arena, layer, bank, ids, fault, pending_pins, &[], None)
     }
     #[allow(clippy::too_many_arguments)]
     pub(super) fn physical_with_router(
@@ -770,8 +834,18 @@ impl Sources {
         fault: BufferId,
         pending_pins: Option<&[Handle]>,
         router: &[BufferId; 3],
+        staging: Option<&[BufferId; 3]>,
     ) -> Result<()> {
-        self.physical_inner(arena, layer, bank, ids, fault, pending_pins, router)
+        self.physical_inner(
+            arena,
+            layer,
+            bank,
+            ids,
+            fault,
+            pending_pins,
+            router,
+            staging,
+        )
     }
     #[allow(clippy::too_many_arguments)]
     fn physical_inner(
@@ -783,15 +857,20 @@ impl Sources {
         fault: BufferId,
         pending_pins: Option<&[Handle]>,
         router: &[BufferId],
+        staging: Option<&[BufferId; 3]>,
     ) -> Result<()> {
-        if !matches!(router.len(), 0 | 3) {
+        if !matches!(router.len(), 0 | 3)
+            || self.packed_host_staging != staging.is_some()
+            || staging.is_some() && router.len() != 3
+        {
             return Err(reject());
         }
         let l = self.check_layer(layer, bank)?;
         let client = arena.client().map_err(u::fault)?;
         bank.check_client(client)?;
         let stream = arena.handle(fault).map_err(u::fault)?.stream;
-        let private = 8 + router.len();
+        let stage_ids = staging.map_or(&[][..], |ids| &ids[..]);
+        let private = 8 + router.len() + stage_ids.len();
         let extent_count = private + PAGES;
         let mut handles = Vec::with_capacity(extent_count);
         let mut extents = Zeroizing::new([(0u64, 0u64); ROUTER_EXTENTS]);
@@ -800,6 +879,7 @@ impl Sources {
             .copied()
             .chain(std::iter::once(fault))
             .chain(router.iter().copied())
+            .chain(stage_ids.iter().copied())
             .enumerate()
         {
             if ids[..i.min(ids.len())].contains(&id) {
@@ -808,6 +888,9 @@ impl Sources {
             let h = arena.handle(id).map_err(u::fault)?;
             let bytes = arena.layout(id).map_err(u::fault)?.owned_bytes as u64;
             full_handle(h, bytes)?;
+            if i >= 8 + router.len() && bytes != FROZEN_STAGING_OWNER_BYTES {
+                return Err(reject());
+            }
             if h.stream != stream || is_public_external_binding(&h.clone().binding()) {
                 return Err(reject());
             }
@@ -1105,9 +1188,34 @@ pub(crate) struct Counters {
     pub vram_routes: u64,
     pub host_routes: u64,
     pub source_dispatches: u64,
+    pub staging_dispatches: u64,
+    pub staged_unique_host_groups: u64,
+    pub staged_packed_bytes: u64,
 }
 impl Counters {
-    pub(super) fn add(self, p: &Proof) -> Result<Self> {
+    pub(super) fn add(self, p: &Proof, layer: usize) -> Result<Self> {
+        let (groups, bytes) = if p.source.packed_host_staging {
+            let geometry = p.source.layers.get(layer).ok_or_else(reject)?.geometry;
+            let groups = p.pairs[..*p.len]
+                .iter()
+                .filter(|(_, slot)| *slot >= 144)
+                .count() as u64;
+            let stride = geometry
+                .projections()
+                .into_iter()
+                .try_fold(0u64, |sum, projection| {
+                    sum.checked_add(projection.expert_bytes() as u64)
+                        .ok_or(Error::ArithmeticOverflow)
+                })?;
+            (
+                groups,
+                groups
+                    .checked_mul(stride)
+                    .ok_or(Error::ArithmeticOverflow)?,
+            )
+        } else {
+            (0, 0)
+        };
         Ok(Self {
             vram_routes: self
                 .vram_routes
@@ -1120,6 +1228,18 @@ impl Counters {
             source_dispatches: self
                 .source_dispatches
                 .checked_add(10)
+                .ok_or(Error::ArithmeticOverflow)?,
+            staging_dispatches: self
+                .staging_dispatches
+                .checked_add(if p.source.packed_host_staging { 6 } else { 0 })
+                .ok_or(Error::ArithmeticOverflow)?,
+            staged_unique_host_groups: self
+                .staged_unique_host_groups
+                .checked_add(groups)
+                .ok_or(Error::ArithmeticOverflow)?,
+            staged_packed_bytes: self
+                .staged_packed_bytes
+                .checked_add(bytes)
                 .ok_or(Error::ArithmeticOverflow)?,
         })
     }
@@ -1181,6 +1301,13 @@ impl Workspace {
         }
         Ok(enabled)
     }
+    pub(crate) fn frozen_host_source_packed_staging(&self) -> Result<bool> {
+        Ok(self
+            .frozen_sources
+            .as_ref()
+            .ok_or_else(reject)?
+            .packed_host_staging())
+    }
     pub(crate) fn frozen_source_counters(&self) -> Counters {
         self.frozen_source_counters
     }
@@ -1206,6 +1333,8 @@ impl Workspace {
             || self.resident_router.is_some()
             || executor.target_frozen_host_router_reserved
                 != self.frozen_host_batch_router_reserved()
+            || sources.packed_host_staging() != self.frozen_staging.is_some()
+            || sources.packed_host_staging() && !self.frozen_host_batch_router_reserved()
             || sources.binding != self.binding
             || sources.layers.len() != 48
             || self.layout.capacity != 144
@@ -1354,6 +1483,7 @@ impl GpuExecutor<'_> {
                 s.stamp.fault,
                 None,
                 &router_owners,
+                w.frozen_staging_owner_ids().as_ref(),
             )?;
             let handle = |id| arena.handle(id).cloned().map_err(u::fault);
             let handles = [
@@ -1382,7 +1512,17 @@ impl GpuExecutor<'_> {
             )?;
             // Fixed maximum union only schedules work. Each original kernel
             // consumes the actual GPU MAP group/rank header, never forced IDs.
-            source.launch(arena, layer, bank, g, &spans, &ids, 30)?;
+            source.launch(
+                arena,
+                layer,
+                bank,
+                g,
+                &spans,
+                &ids,
+                30,
+                w.frozen_staging_owner_ids().as_ref(),
+                s.stamp.fault,
+            )?;
             launch_finite_for_count(arena, g, &spans, &ids, views.count())?;
             fold(
                 arena,
@@ -1563,7 +1703,17 @@ impl GpuExecutor<'_> {
         }
         write_words(arena, ids[PROB], &*probs, &w.poison)?;
         source.physical(arena, layer, bank, &ids, s.stamp.fault, None)?;
-        source.launch(arena, layer, bank, g, &spans, &ids, map.groups())?;
+        source.launch(
+            arena,
+            layer,
+            bank,
+            g,
+            &spans,
+            &ids,
+            map.groups(),
+            None,
+            s.stamp.fault,
+        )?;
         launch_finite_for_count(arena, g, &spans, &ids, routes.count())?;
         fold(
             arena,
@@ -1641,9 +1791,11 @@ impl Sources {
         s: &k::Spans,
         ids: &[BufferId; 7],
         groups: usize,
+        staging: Option<&[BufferId; 3]>,
+        fault: BufferId,
     ) -> Result<()> {
         let l = self.check_layer(layer, bank)?;
-        if g != l.geometry {
+        if self.packed_host_staging != staging.is_some() || g != l.geometry {
             return Err(reject());
         }
         let [gate, up, down] = g.projections();
@@ -1652,6 +1804,61 @@ impl Sources {
             let ga = &l.pages[shard];
             let up_page = &l.pages[5 + shard];
             let down_page = &l.pages[10 + shard];
+            let staged_shard = self.packed_host_staging && shard >= 2;
+            let (gate_handle, gate_words, up_handle, up_words, down_handle, down_words) =
+                if staged_shard {
+                    let stage = staging.ok_or_else(reject)?;
+                    let shape = k::frozen_host_staging::Shape::new(g).map_err(err)?;
+                    // Original public sources remain pinned and unchanged. Each role
+                    // copy precedes every matching consumer on this exact stream.
+                    unsafe {
+                        k::frozen_host_staging::stage_gate_up::launch_unchecked::<WgpuRuntime>(
+                            client,
+                            shape.copy_grid(false),
+                            CubeDim::new_1d(256),
+                            ArrayArg::from_raw_parts(ga.handle.clone(), ga.words),
+                            ArrayArg::from_raw_parts(up_page.handle.clone(), up_page.words),
+                            arg(arena, ids[MAP])?,
+                            arg(arena, stage[0])?,
+                            arg(arena, stage[1])?,
+                            arg(arena, fault)?,
+                            s.map_first(),
+                            FIRST[shard],
+                            PARTS[shard],
+                            shape.gate_up_words(),
+                        );
+                        k::frozen_host_staging::stage_down::launch_unchecked::<WgpuRuntime>(
+                            client,
+                            shape.copy_grid(true),
+                            CubeDim::new_1d(256),
+                            ArrayArg::from_raw_parts(down_page.handle.clone(), down_page.words),
+                            arg(arena, ids[MAP])?,
+                            arg(arena, stage[2])?,
+                            arg(arena, fault)?,
+                            s.map_first(),
+                            FIRST[shard],
+                            PARTS[shard],
+                            shape.down_words(),
+                        );
+                    }
+                    (
+                        arena.handle(stage[0]).map_err(u::fault)?.clone(),
+                        (FROZEN_STAGING_OWNER_BYTES / 4) as usize,
+                        arena.handle(stage[1]).map_err(u::fault)?.clone(),
+                        (FROZEN_STAGING_OWNER_BYTES / 4) as usize,
+                        arena.handle(stage[2]).map_err(u::fault)?.clone(),
+                        (FROZEN_STAGING_OWNER_BYTES / 4) as usize,
+                    )
+                } else {
+                    (
+                        ga.handle.clone(),
+                        ga.words,
+                        up_page.handle.clone(),
+                        up_page.words,
+                        down_page.handle.clone(),
+                        down_page.words,
+                    )
+                };
             macro_rules! dispatch_gate {
                 ($gate:ident) => {
                     unsafe {
@@ -1659,8 +1866,8 @@ impl Sources {
                             client,
                             g.grid(groups, false).map_err(err)?,
                             CubeDim::new_1d(64),
-                            ArrayArg::from_raw_parts(ga.handle.clone(), ga.words),
-                            ArrayArg::from_raw_parts(up_page.handle.clone(), up_page.words),
+                            ArrayArg::from_raw_parts(gate_handle.clone(), gate_words),
+                            ArrayArg::from_raw_parts(up_handle.clone(), up_words),
                             arg(arena, ids[INPUT])?,
                             arg(arena, ids[MAP])?,
                             arg(arena, ids[ACT])?,
@@ -1692,7 +1899,7 @@ impl Sources {
                             client,
                             g.grid(groups, true).map_err(err)?,
                             CubeDim::new_1d(64),
-                            ArrayArg::from_raw_parts(down_page.handle.clone(), down_page.words),
+                            ArrayArg::from_raw_parts(down_handle.clone(), down_words),
                             arg(arena, ids[ACT])?,
                             arg(arena, ids[MAP])?,
                             arg(arena, ids[PART])?,
@@ -1714,11 +1921,13 @@ impl Sources {
                     }
                 };
             }
-            let (gate, down) = kernel_policy(g);
+            let (gate, down) = source_kernel_policy(g, staged_shard)?;
             if (gate == GateKernel::Original) != (down == DownKernel::Original) {
                 return Err(reject());
             }
             match gate {
+                GateKernel::StagedTwoRows => dispatch_gate!(grouped_gate_up_frozen_staged_two_rows),
+                GateKernel::StagedFrozen => dispatch_gate!(grouped_gate_up_frozen_staged),
                 GateKernel::TwoRows => dispatch_gate!(grouped_gate_up_frozen_two_rows),
                 GateKernel::Original => dispatch_gate!(grouped_gate_up),
                 GateKernel::Frozen => dispatch_gate!(grouped_gate_up_frozen),
@@ -1736,6 +1945,8 @@ impl Sources {
             }
             match down {
                 DownKernel::Original => dispatch_down!(grouped_down),
+                DownKernel::StagedFrozen => dispatch_down!(grouped_down_frozen_staged),
+                DownKernel::StagedFourRows => dispatch_down!(grouped_down_frozen_staged_four_rows),
                 DownKernel::Frozen => dispatch_down!(grouped_down_frozen),
                 DownKernel::SharedScales => dispatch_down!(grouped_down_frozen_shared_scales),
                 DownKernel::FourRows => dispatch_down!(grouped_down_frozen_four_rows),
@@ -1750,6 +1961,78 @@ impl Sources {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn packed_staging_source_scope_and_actual_host_dispatch_are_sealed() {
+        assert!(Sources::validate_staging_policy(false, false, true, true, true, true).is_ok());
+        assert!(Sources::validate_staging_policy(true, false, false, false, false, false).is_err());
+        for flags in [
+            [true, false, false, false],
+            [false, true, false, false],
+            [false, false, true, false],
+            [false, false, false, true],
+        ] {
+            assert!(
+                Sources::validate_staging_policy(
+                    true, true, flags[0], flags[1], flags[2], flags[3]
+                )
+                .is_err()
+            );
+        }
+        for layer in 0..48 {
+            let [gate, up, down] = crate::daslab_profile::routed_types(layer).unwrap();
+            let base = k::Geometry::new(
+                [
+                    k::Projection::new(gate, 2560, 640, 512).unwrap(),
+                    k::Projection::new(up, 2560, 640, 512).unwrap(),
+                    k::Projection::new(down, 640, 2560, 512).unwrap(),
+                ],
+                8,
+                144,
+            )
+            .unwrap()
+            .with_frozen_host_sources()
+            .unwrap()
+            .with_inactive_partition_exit()
+            .unwrap();
+            for two in [false, true] {
+                for four in [false, true] {
+                    let g = if two {
+                        base.with_two_row_gate_up().unwrap()
+                    } else {
+                        base
+                    };
+                    let g = if four {
+                        g.with_four_row_down().unwrap()
+                    } else {
+                        g
+                    };
+                    assert_eq!(source_kernel_policy(g, false).unwrap(), kernel_policy(g));
+                    assert_eq!(
+                        source_kernel_policy(g, true).unwrap(),
+                        (
+                            if two {
+                                GateKernel::StagedTwoRows
+                            } else {
+                                GateKernel::StagedFrozen
+                            },
+                            if four {
+                                DownKernel::StagedFourRows
+                            } else {
+                                DownKernel::StagedFrozen
+                            },
+                        )
+                    );
+                    let shape = k::frozen_host_staging::Shape::new(g).unwrap();
+                    assert_eq!(
+                        shape.stage_words().map(|w| w as u64 * 4),
+                        [FROZEN_STAGING_OWNER_BYTES; 3]
+                    );
+                }
+            }
+            assert!(source_kernel_policy(base.with_private_tables().unwrap(), true).is_err());
+            assert!(source_kernel_policy(base.with_shared_down_scales().unwrap(), true).is_err());
+        }
+    }
     #[test]
     fn actual_entrypoints_preserve_compound_table_and_scale_policies() {
         for layer in 0..48 {

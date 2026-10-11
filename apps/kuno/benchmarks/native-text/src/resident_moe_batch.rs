@@ -965,6 +965,9 @@ impl Workspace {
             Ok(out)
         })
     }
+    pub(crate) fn frozen_staging_owner_ids(&self) -> Option<[BufferId; 3]> {
+        self.frozen_staging.as_ref().map(|ids| **ids)
+    }
     /// Construction-only owners; no source attachment, routes or use authority.
     pub(crate) fn reserve_frozen_host_staging(
         &mut self,
@@ -2025,6 +2028,9 @@ fn physical_with_packet(
     if let Some(packet) = packet {
         all.push(packet);
     }
+    if let Some(staging) = w.frozen_staging_owner_ids() {
+        all.extend_from_slice(&staging);
+    }
     let banks = [bank.gate(), bank.up(), bank.down()];
     let count = original_shard_count(w.layout.capacity, banks.map(|b| b.segments().len()))?;
     if bank.slots.capacity() != w.layout.capacity
@@ -2044,7 +2050,9 @@ fn physical_with_packet(
         .checked_add(public.len())
         .ok_or(Error::ArithmeticOverflow)?;
     if extent_count
-        > if w.resident_router.is_some() || w.batch_router.is_some() {
+        > if w.frozen_staging.is_some() {
+            20
+        } else if w.resident_router.is_some() || w.batch_router.is_some() {
             19
         } else {
             16
@@ -2056,7 +2064,7 @@ fn physical_with_packet(
     handles
         .try_reserve_exact(extent_count)
         .map_err(|_| Error::LimitExceeded("native routed physical metadata"))?;
-    let mut extents = Zeroizing::new([(0u64, 0u64); 19]);
+    let mut extents = Zeroizing::new([(0u64, 0u64); 20]);
     for (i, &id) in all.iter().enumerate() {
         if all[..i].contains(&id) {
             return Err(err("native routed owning alias"));
@@ -2552,6 +2560,7 @@ impl Workspace {
                     s.stamp.fault,
                     Some(&p.pins),
                     router,
+                    self.frozen_staging_owner_ids().as_ref(),
                 ),
                 None => source.physical(arena, *p.layer, bank, &ids, s.stamp.fault, Some(&p.pins)),
             };
@@ -2713,7 +2722,7 @@ impl Acceptance<'_, '_> {
                 return Err(err("native routed invalid publication"));
             }
             if let Some(proof) = &p.frozen_sources {
-                let counters = self.workspace.frozen_source_counters.add(proof)?;
+                let counters = self.workspace.frozen_source_counters.add(proof, *p.layer)?;
                 u::cancel(cancel)?;
                 self.workspace.policy.commit(*p.layer)?;
                 self.workspace.frozen_source_counters = counters;

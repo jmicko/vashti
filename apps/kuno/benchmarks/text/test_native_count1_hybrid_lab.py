@@ -2058,6 +2058,43 @@ class StrataInspiredGuards(unittest.TestCase):
             with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_FROZEN_GU_ROWS=raw),args)
         with self.assertRaises(ValueError):guard.selected_target_policy({"KUNO_LAB_FROZEN_GU_ROWS":"two-public"},False)
 
+    def test_packed_staging_requires_public_gpu_router_and_plain_quantization(self):
+        guard=self.guard()
+        common={"KUNO_LAB_STATIC_CACHE_BYTES":"8589934592","KUNO_TEST_Q3_DIR":"/original",
+            "KUNO_TEST_MTP":"/original/draft","KUNO_PUBLIC_RECEIPT":"/public/numeric",
+            "KUNO_LAB_DEVICE_DISPATCH":"inline","KUNO_LAB_TARGET_IO":"chunk",
+            "KUNO_LAB_TARGET_REUSE":"request","KUNO_LAB_TARGET_FILL":"direct-public",
+            "KUNO_LAB_TARGET_SOURCES":"frozen-host-public","KUNO_LAB_FROZEN_PARTITION_EXIT":"1",
+            "KUNO_LAB_TARGET_ROUTER":"device-frozen-public","KUNO_LAB_FROZEN_HOST_STAGE":"packed-public"}
+        for mode in ("language", "speculative"):
+            env=dict(common)
+            if mode=="language":
+                env.update(KUNO_LAB_LANGUAGE_PUBLIC_ONLY="1",KUNO_LAB_LANGUAGE_FIXTURE="first-code")
+                limit=48*1024**3+196*1024**2
+            else:
+                env.update(KUNO_LAB_SPECULATIVE_PUBLIC_ONLY="1",KUNO_LAB_WARM_REPLAY="once",
+                    KUNO_PUBLIC_TARGET_CARRY13_REFERENCE="/public/reference")
+                limit=48*1024**3
+            args=["/frozen/binary","intel",f"daslab-{mode}-probe"]
+            for paired in (False,True):
+                valid=dict(env,KUNO_LAB_FROZEN_DOWN_ROWS="four-public",KUNO_LAB_MTP_Q8_HEAD="shared-public")
+                if paired:valid["KUNO_LAB_FROZEN_GU_ROWS"]="two-public"
+                self.assertEqual(guard.memory_limit(valid,args),limit)
+            self.assertEqual(guard.memory_limit(env,args),limit)
+            for key in ("KUNO_LAB_TARGET_SOURCES","KUNO_LAB_FROZEN_PARTITION_EXIT",
+                        "KUNO_LAB_TARGET_REUSE","KUNO_LAB_TARGET_ROUTER"):
+                bad=dict(env);bad.pop(key)
+                with self.assertRaises(ValueError):guard.memory_limit(bad,args)
+            for key,value in (("KUNO_LAB_FROZEN_TABLES","private-public"),
+                              ("KUNO_LAB_FROZEN_TABLES","workgroup-public"),
+                              ("KUNO_LAB_FROZEN_GU_FACTORS","shared-public"),
+                              ("KUNO_LAB_FROZEN_DOWN_SCALES","shared-public"),
+                              ("KUNO_LAB_TARGET_ROUTER","device-warm-public")):
+                with self.assertRaises(ValueError):guard.memory_limit(dict(env,**{key:value}),args)
+            for raw in ("","packed","true","packed-public "):
+                with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_FROZEN_HOST_STAGE=raw),args)
+        with self.assertRaises(ValueError):guard.selected_target_policy({"KUNO_LAB_FROZEN_HOST_STAGE":"packed-public"},False)
+
     def test_bank_placement_requires_warm_frozen_speculative_scope_and_keeps_limits(self):
         guard=self.guard()
         common={"KUNO_LAB_STATIC_CACHE_BYTES":"8589934592","KUNO_TEST_Q3_DIR":"/original",

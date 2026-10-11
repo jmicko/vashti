@@ -531,7 +531,6 @@ impl Config {
         Ok(self)
     }
     /// Bounded original packed host-weight copies; charge before device owners.
-    #[allow(dead_code)] // Default-off parent selection is wired in the staging leaf integration.
     pub(crate) fn reserve_public_frozen_host_staging(mut self) -> Result<Self> {
         if self.public_frozen_host_staging {
             return Err(error());
@@ -1589,6 +1588,15 @@ impl Workspace {
                 handles.push(gr::full_private(&model.arena, id, words)?);
             }
         }
+        if let Some(ids) = self.moe.frozen_staging_owner_ids() {
+            for id in ids {
+                handles.push(gr::full_private(
+                    &model.arena,
+                    id,
+                    (batch_moe::FROZEN_STAGING_OWNER_BYTES / 4) as usize,
+                )?);
+            }
+        }
         if let Some(owner) = self.moe.prepared_verify3_owner_id() {
             handles.push(gr::full_private(
                 &model.arena,
@@ -2167,6 +2175,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         shared_gate_up_factors: bool,
         four_row_down: bool,
         two_row_gate_up: bool,
+        packed_host_staging: bool,
         cancel: &AtomicBool,
     ) -> Result<crate::public_host_expert_attachment::Attachment<'plan, 'm, 'f>> {
         u::cancel(cancel)?;
@@ -2216,6 +2225,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 shared_gate_up_factors,
                 four_row_down,
                 two_row_gate_up,
+                packed_host_staging,
                 cancel,
             )
         }
@@ -2315,6 +2325,21 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         native.moe.frozen_host_source_two_row_gate_up()
     }
 
+    pub(crate) fn native_frozen_source_packed_staging(
+        &self,
+        executor: &GpuExecutor<'_>,
+    ) -> Result<bool> {
+        self.completed_native_projection_boundary(executor)?;
+        let native = self.native_batch.as_ref().ok_or(error())?;
+        if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
+            return Err(error());
+        }
+        let selected = native.moe.frozen_host_source_packed_staging()?;
+        if selected && native.moe.frozen_source_counters().staging_dispatches == 0 {
+            return Err(error());
+        }
+        Ok(selected)
+    }
     pub(crate) fn activate_public_frozen_host_batch_router(
         &mut self,
         executor: &GpuExecutor<'f>,

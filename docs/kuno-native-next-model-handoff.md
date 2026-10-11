@@ -1,33 +1,32 @@
 # Native Kuno text engine: next-model handoff
 
-Updated2026-10-11: the user restored GPU access/sudo and resumed the existing
-30tokens/s optimization goal. Work is ACTIVE in the native engine checkout.
-This supersedes the historical stop instructions below; it does not authorize
-API/UI changes, installation or release. Canonical Vashti is unchanged.
+Updated2026-10-11: ACTIVE native Rust optimization, existing30tokens/s goal.
+Canonical Vashti/public APIs/installed services remain unchanged. Work checkout
+is `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
+`codex/kuno-native-text`. Required Vashti changes:none.
 
-Current physical result: frozen v150/3ed26fe SHA256
-`f0a443a152f789035b8f9ea177c5abd1026c369413d41c348b76efd1737e0245`
-passes full original cold/warm CPU13, actual repair, full model/source closure
-and recovered host. Four-row DOWN + cooperative Q8-head scales yields the first
-ordered same-artifact public code200 pair8.11952 control /8.48473 candidate
-(+4.50%). Draft5.748s ->5.037s accounts for most improvement. No repeated ABBA,
-prose or independent CPU200 acceptance; do not call this a production speed gain.
-Warm12/2.054006934s=5.84224tokens/s is a placement/correctness diagnostic only.
-Prior v148 tables/down scales and v149 GU factors regressed normal code200;
-all experiments remain default-off. Exact numeric evidence/owners/source hashes
-are in the root optimization receipt. Neither30t/s nor production accepted.
+Latest physical paired-GU v151/e3983c3 artifactSHA256
+`8e89cf791965ff95e9e1afbd3a183c77f4c274079ee08ac8dfeb404fe90101ae`
+passes original complete CPU13/real repair/all owners and recovered host. Normal
+public code200 is199/28.098057325s=7.08234 continuation tokens/s; this is slower
+than historical v150 four-DOWN/shared-Q8-head8.48473. No same-artifact v151 normal
+control was measured. Paired GU remains default-off. v150's8.11952/8.48473 ordered
+pair (+4.50%) remains preliminary, without ABBA/prose/independent CPU200.
+No30tokens/s or production acceptance. Exact numeric results are in root receipt
+sections v150_rows_shared_head_physical and v151_paired_gu_physical.
 
-Root integrated two-row GU0353369 + guarded parent5d26186, and default-off staging
-precharge10e3d1c. GU root launcher/selection source checks are being frozen for
-v151; original full CPU13 and normal timing remain pending. The three32MiB staging
-owners and589,824B extra INFO contract is in the final all-row plan section;
-source copy/consumer implementation remains isolated and unaccepted physically.
-Read the current source/tests before activating it; allocation, alias/stream and
-original-source proofs must include every owner. Required Vashti changes:none.
-Last recovered host snapshot2026-10-11 13:23:00UTC: B70baseline50,688,000B,
-NVIDIA compute0, admission idle/unpaused/no recovery, allthree HTTP200, GPUfaults0.
-That is historical evidence, not a guarantee of future availability. Installed
-services/canonical Vashti unchanged; the existing30tokens/s goal remains active.
+Packed HOST staging leafd640ab2/c3b5f8d is now integrated through bounded
+construction reservations, full owner/source proofs, exact dispatch, public
+selectors and actual completed-policy/copy counters. Source gate passes5leaf
+checks,3parent parser/actual-dispatch checks,110Python tests,9fixed-label flag/
+scope/memory checks, strict direct all-target Clippy, fmt/diff. Full GPU original
+CPU13 and normal same-artifact timing remain pending. See the final all-row plan
+contract and staging leaf note. Do not claim source-only checks prove speed.
+
+Last recovered host2026-10-11 13:39:03UTC: same boot, B70baseline50,688,000B,
+NVIDIA compute0, admission unpaused/idle/no recovery, allthree HTTP200, GPU faults0.
+This is historical evidence; verify current state before a new trial. Sudo was
+refreshed after the completed trial. No runtime installation or API/UI work.
 
 ## Historical stop checkpoint from 2026-10-10
 

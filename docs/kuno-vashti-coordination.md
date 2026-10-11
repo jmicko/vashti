@@ -3260,3 +3260,22 @@ source-only; exact default-off selectors and bounded owner/runtime contract are
 in the final all-row plan sections. GPU validation for paired GU and full staging
 integration/validation remain pending. No30tokens/s, production, install or
 release acceptance. Backend lab only; required Vashti changes:none.
+
+### Active exact packed HOST staging source gate, 2026-10-11
+
+v151/e3983c3 passes complete original CPU13, repair/full closure and host recovery.
+Its paired GU/four DOWN/shared Q8 head normal code200 is7.08234 continuationt/s;
+no matched normal control, so no paired-GU gain is claimed. Latest recovered
+snapshot13:39:03UTC: B70baseline50,688,000B, NVIDIA compute0, unpaused idle/no
+recovery admission, allthree HTTP200 and classified faults0. Full evidence is
+v151_paired_gu_physical in the root native optimization receipt.
+
+Leafd640ab2/c3b5f8d packed staging is integrated with the exact final all-row plan
+contract: three32MiB MAIN owners,589,824B extra INFO,256-thread copy capability,
+full outer/MoE/source alias/stream proofs, original frozen MAP/expert identity,
+same-stream copies and consumers, completed actual policy/accepted logical byte
+counters. Controls and all experiment defaults are unchanged. Source gate passes
+5leaf checks,3root checks,110Python tests,9strict fixed-label scope/memory checks,
+all-target direct Clippy and fmt/diff. Full original GPU CPU13 and normal speed
+remain pending. No API/configuration/installed service change or release claim.
+Required Vashti changes:none. Work remains in the native isolated checkout.

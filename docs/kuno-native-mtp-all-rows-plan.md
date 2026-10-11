@@ -617,8 +617,16 @@ zero audit and recovered host precede normal same-artifact generation timing.
 Original immutable RAM sources remain available; staging does not change model
 storage, free original backing early or eliminate compulsory PCIe transfer.
 
-Source implementation and physical acceptance are pending at this contract
-checkpoint. Required Vashti changes:none. Installed services remain unchanged.
+Source parent integration now implements this exact contract. All three owners
+are covered by full-model and MoE physical proofs and the29-extent frozen-source
+proof; constructor limits require256-thread copy support. Actual completed flag
+`frozen_packed_host_staging` and counters `staging_dispatches`,
+`staged_unique_host_groups`, `staged_packed_bytes` require accepted original route
+proofs. Copy traffic remains HOST traffic. No private/production selector exists.
+Five leaf proofs,3root parser/actual dispatch checks,110Python checks,9fixed-label
+scope/limits checks and strict direct all-target Clippy pass. Physical acceptance
+and speed timing remain pending. Required Vashti changes:none; installed services
+unchanged.
 
 
 ### Paired frozen public gate/up parent selection, 2026-10-11

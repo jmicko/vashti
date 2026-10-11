@@ -72,7 +72,8 @@ corresponding original entrypoints for every actual quantization family.
 The first compile needed an explicit `8_usize` CubeCL literal. The first copy
 reflection check omitted INFO: actual GU/DOWN storage bindings are 7/5, including
 INFO. Both were repaired and the focused tests passed. Strict Clippy then found
-four routine lints, now repaired; its final rerun and proof rerun after those
-lint-only edits remain held for the parent's next CPU window. All CPU jobs ended
+four routine lints, now repaired. Root reran all5focused proofs after those edits
+and strict pure-direct all-target Clippy after parent integration; both pass.
+All leaf CPU jobs ended
 at 13:30:48 UTC, before the 13:30:55 freeze. No GPU, services or installed runtime
 were used here.
