@@ -308,3 +308,25 @@ unchanged full CPU13 absolute0.006 + relative0.0003 logit/hidden checks, exact
 greedy/expert identity, real speculation/repair and normal200-token timings.
 This synthetic layer proposal grants none of that authority and predicts no
 tokens/s gain. Four-row and adaptive placement remain separate candidates.
+
+## Root registration source receipt, 2026-10-11
+
+The root connects the existing nested `overlap_probe` entry in the dedicated
+public mode only. The marker is rejected in all other modes before device
+creation. Its dispatch selection, original target-row/Verify3 dense and finite
+limits, actual device retention and256-task bound mirror the original CPU
+operator; its early run returns before ordinary inference. All old conditions
+remain unchanged when the new Inputs is absent. A separate read-only peer
+review accepts this exact main diff. Strict pure-direct all-target Clippy with
+warnings denied and two jobs, formatter and diff checks pass on the combined
+GDN/overlap/root-registration source. The protected launcher/helper connection
+and physical operator acceptance remain pending.
+
+The initial source-only overlap launcher used ordinary geometry capacity512,
+which is rejected before frozen-source conversion. `dd396db` (original leaf
+`f8e27422460cf4987926af6b759a96e7ce335532`) corrects only this constructor to
+original DAS144. A real metadata test uses layer0 quantizations[18,18,20],
+original shapes,144-to-frozen512 conversion and inactive exit/count3, rejects
+count4 and proves all five source extents. Six overlap checks and strict direct
+all-target Clippy/fmt/diff pass. No timing is credited to the unrun earlier
+geometry. Arithmetic, source proofs and all original caps remain unchanged.

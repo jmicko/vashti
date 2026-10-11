@@ -52,7 +52,7 @@ shape, default/selected wrapper and backend paths, and validation before both
 actual recurrence launch wrappers. Original GDN numerical and shader tests
 remain required. CPU source checks establish no hardware gain. Root-owned
 protected original CPU13/full-vector/greedy/repair and closing/recovery gates,
-followed by compiler-idle same-artifact normal measurements, remain necessary
+followed by compiler-idle frozen before/after artifact measurements, remain necessary
 before any performance or physical acceptance claim.
 
 ## Source validation receipt
@@ -71,3 +71,17 @@ A source comparison also confirms that every non-validator production line in
 byte-identical to the base. The test-module declaration is the only other
 change to that file. These 35 CPU checks do not establish physical acceptance
 or a performance improvement.
+
+## Frozen comparison contract
+
+There is deliberately no new GDN selector. The selected canonical metadata
+policy was already enabled; this correction connects its omitted validator.
+The before artifact is v177 on26295f6; the after artifact is v178 oncd638c7.
+Their executable production source differs only in this validator; intervening
+v177 receipt edits are documentation/aggregate data. Pin both binary/source
+hashes, unchanged protected launcher/helper, original model/reference, Intel
+placement, public prompt/seed and all selected policies. Compare the same
+original or genuine-four configuration across these frozen artifacts. This is
+an artifact comparison, not a claimed same-artifact toggle or isolated GPU
+cost measurement. Compiler-idle paired normal timing is required; the existing
+v177 three/four pair does not measure this correction.

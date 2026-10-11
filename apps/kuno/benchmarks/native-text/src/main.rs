@@ -1105,6 +1105,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         None
     };
+    let public_host_cpu_overlap_inputs = if mode == "public-host-cpu-overlap-probe" {
+        Some(public_host_expert_attachment::overlap_probe::registration(
+            &std::env::args_os().collect::<Vec<_>>(),
+            std::env::vars_os(),
+            target_lab_build::Build::compiled(),
+        )?)
+    } else {
+        if std::env::var_os("KUNO_LAB_HOST_CPU_OVERLAP_PUBLIC_ONLY").is_some() {
+            return Err("attached HOST CPU overlap requires its dedicated public probe".into());
+        }
+        None
+    };
     let verify4_finite_probe = mode == "verify4-finite-probe";
     let verify4_dense_receipt = if mode == "verify4-dense-probe" || verify4_finite_probe {
         Some(next_verify4_dense_probe::registration(
@@ -1578,6 +1590,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .or_else(|| language_inputs.as_ref().map(|p| p.inline_dispatch))
         .or_else(|| {
             public_host_cpu_batch_inputs
+                .as_ref()
+                .map(|p| p.inline_dispatch)
+        })
+        .or_else(|| {
+            public_host_cpu_overlap_inputs
                 .as_ref()
                 .map(|p| p.inline_dispatch)
         })
@@ -2173,6 +2190,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             || target_repair_inputs.is_some()
             || speculative_inputs.is_some()
             || public_host_cpu_batch_inputs.is_some()
+            || public_host_cpu_overlap_inputs.is_some()
         {
             daslab_target_rows_probe::validate_limits(&adapter.limits())?;
         }
@@ -2227,6 +2245,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         if verify3_dense_receipt.is_some()
             || public_host_cpu_batch_inputs.is_some()
+            || public_host_cpu_overlap_inputs.is_some()
             || target_rows_inputs.as_ref().is_some_and(|i| i.verify3_dense)
             || target_repair_inputs
                 .as_ref()
@@ -2243,6 +2262,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         if verify3_finite_probe
             || public_host_cpu_batch_inputs.is_some()
+            || public_host_cpu_overlap_inputs.is_some()
             || target_rows_inputs.as_ref().is_some_and(|i| i.verify3_fused)
             || target_repair_inputs
                 .as_ref()
@@ -2374,7 +2394,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             || language_inputs
                 .as_ref()
                 .is_some_and(|p| p.frozen_host_sources)
-            || public_host_cpu_batch_inputs.is_some())
+            || public_host_cpu_batch_inputs.is_some()
+            || public_host_cpu_overlap_inputs.is_some())
         .then(|| device.clone());
         let selected = init_device(
             WgpuSetup {
@@ -2391,6 +2412,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     || speculative_inputs.is_some()
                     || language_inputs.is_some()
                     || public_host_cpu_batch_inputs.is_some()
+                    || public_host_cpu_overlap_inputs.is_some()
                     || resident_mtp_inputs.is_some()
                 {
                     256
@@ -2500,6 +2522,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 public_model_host_device
                     .as_ref()
                     .ok_or("attached HOST CPU batch actual target device missing")?,
+            );
+        }
+        if let Some(inputs) = public_host_cpu_overlap_inputs {
+            return public_host_expert_attachment::overlap_probe::run(
+                &client,
+                &grouped_limits,
+                inputs,
+                public_model_host_device
+                    .as_ref()
+                    .ok_or("attached HOST CPU overlap requires original device-owned HOST pages")?,
             );
         }
         if let Some(inputs) = language_inputs {
