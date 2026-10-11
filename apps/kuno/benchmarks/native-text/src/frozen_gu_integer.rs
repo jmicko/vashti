@@ -539,3 +539,6 @@ pub(crate) fn audit(
 #[cfg(test)]
 #[path = "frozen_gu_integer_tests.rs"]
 mod tests;
+
+#[path = "frozen_gu_integer_four.rs"]
+pub(crate) mod four;

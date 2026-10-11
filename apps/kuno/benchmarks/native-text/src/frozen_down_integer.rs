@@ -402,3 +402,6 @@ pub(crate) fn audit(
 #[cfg(test)]
 #[path = "frozen_down_integer_tests.rs"]
 mod tests;
+
+#[path = "frozen_down_integer_four.rs"]
+pub(crate) mod four;

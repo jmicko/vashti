@@ -734,3 +734,6 @@ fn frozen_down_integer_original_map_full_wave_routes_and_partitions_remain_exact
     assert_eq!(HEADER_WORDS + MAX_ROUTES * FRAME_WORDS, LOGICAL_WORDS);
     assert_eq!(5 * 320 * 30, 48000);
 }
+
+#[path = "frozen_down_integer_four_tests.rs"]
+mod four_tests;

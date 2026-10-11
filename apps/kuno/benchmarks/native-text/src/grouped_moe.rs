@@ -150,7 +150,7 @@ pub enum ReductionPolicy {
     LiveMembers,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Geometry {
     projections: [Projection; 3],
     hidden: usize,
@@ -169,6 +169,33 @@ pub struct Geometry {
     four_row_down: bool,
     two_row_gate_up: bool,
     three_member_arithmetic: bool,
+    four_members: bool,
+}
+// Retain every old geometry hash payload when unselected. The explicit public
+// fourth-member policy has an additional discriminator, never private values.
+impl std::hash::Hash for Geometry {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.projections.hash(state);
+        self.hidden.hash(state);
+        self.ff.hash(state);
+        self.tile.hash(state);
+        self.capacity.hash(state);
+        self.gate_policy.hash(state);
+        self.reduction_policy.hash(state);
+        self.secondary_partition.hash(state);
+        self.frozen_host_sources.hash(state);
+        self.inactive_partition_exit.hash(state);
+        self.private_tables.hash(state);
+        self.workgroup_tables.hash(state);
+        self.shared_down_scales.hash(state);
+        self.shared_gate_up_factors.hash(state);
+        self.four_row_down.hash(state);
+        self.two_row_gate_up.hash(state);
+        self.three_member_arithmetic.hash(state);
+        if self.four_members {
+            "frozen-four-members".hash(state);
+        }
+    }
 }
 impl Geometry {
     pub fn new(
@@ -231,6 +258,7 @@ impl Geometry {
             four_row_down: false,
             two_row_gate_up: false,
             three_member_arithmetic: false,
+            four_members: false,
         })
     }
     /// Explicit source-only public profile. These virtual slots are NOT
@@ -298,6 +326,7 @@ impl Geometry {
             || self.workgroup_tables
             || self.two_row_gate_up
             || self.three_member_arithmetic
+            || self.four_members
         {
             return Err("grouped frozen private-table policy");
         }
@@ -320,6 +349,7 @@ impl Geometry {
             || self.workgroup_tables
             || self.two_row_gate_up
             || self.three_member_arithmetic
+            || self.four_members
         {
             return Err("grouped frozen workgroup-table policy");
         }
@@ -342,6 +372,7 @@ impl Geometry {
             || self.reduction_policy != ReductionPolicy::AllMembers
             || self.shared_down_scales
             || self.three_member_arithmetic
+            || self.four_members
         {
             return Err("grouped frozen shared-down-scale policy");
         }
@@ -365,6 +396,7 @@ impl Geometry {
             || self.shared_gate_up_factors
             || self.two_row_gate_up
             || self.three_member_arithmetic
+            || self.four_members
         {
             return Err("grouped frozen shared-gate-up-factor policy");
         }
@@ -397,6 +429,7 @@ impl Geometry {
             )
             || self.projections[0] != self.projections[1]
             || self.three_member_arithmetic
+            || self.four_members
         {
             return Err("grouped frozen two-row-gate-up policy");
         }
@@ -423,6 +456,7 @@ impl Geometry {
             || self.reduction_policy != ReductionPolicy::AllMembers
             || !matches!(self.projections[2].dtype, super::IQ4_NL | super::Q2_0)
             || self.four_row_down
+            || self.four_members
         {
             return Err("grouped frozen four-row-down policy");
         }
@@ -452,6 +486,7 @@ impl Geometry {
             || self.shared_down_scales
             || self.two_row_gate_up
             || self.three_member_arithmetic
+            || self.four_members
         {
             return Err("grouped frozen three-member arithmetic policy");
         }
@@ -526,6 +561,7 @@ impl Geometry {
             || self.gate_policy != GatePolicy::Generic
             || self.secondary_partition
             || self.inactive_partition_exit
+            || self.four_members
         {
             return Err("grouped live-member public policy");
         }
@@ -545,8 +581,46 @@ impl Geometry {
     pub fn member_capacity(self) -> usize {
         if self.tile == 1 { 1 } else { MAX_BATCH }
     }
+    /// Fixed public four-member integer path; owning MAX8/MAP limits stay.
+    #[allow(dead_code)] // Parent selection is independently guarded.
+    pub(crate) fn with_four_members(mut self) -> Result<Self, &'static str> {
+        if !self.frozen_host_sources
+            || !self.inactive_partition_exit
+            || self.capacity != 512
+            || self.tile != 8
+            || self.hidden != 2560
+            || self.ff != 640
+            || self.secondary_partition
+            || self.gate_policy != GatePolicy::Generic
+            || self.reduction_policy != ReductionPolicy::AllMembers
+            || self.private_tables
+            || self.workgroup_tables
+            || self.shared_down_scales
+            || self.shared_gate_up_factors
+            || self.four_row_down
+            || self.two_row_gate_up
+            || self.three_member_arithmetic
+            || self.four_members
+        {
+            return Err("grouped frozen four-member integer policy");
+        }
+        self.four_members = true;
+        Ok(self)
+    }
+    #[allow(dead_code)]
+    pub(crate) fn four_members(self) -> bool {
+        self.four_members
+    }
+    /// Runtime frozen count bound only, never full owning/storage capacity.
+    pub(crate) fn member_limit(self) -> usize {
+        if self.frozen_host_sources {
+            if self.four_members { 4 } else { 3 }
+        } else {
+            self.member_capacity()
+        }
+    }
     pub fn validate_count(self, count: usize) -> Result<(), &'static str> {
-        if !(1..=self.member_capacity()).contains(&count) || self.frozen_host_sources && count > 3 {
+        if !(1..=self.member_limit()).contains(&count) {
             return Err("grouped public member policy count");
         }
         Ok(())
@@ -3933,6 +4007,7 @@ mod tests {
             four_row_down: false,
             two_row_gate_up: false,
             three_member_arithmetic: false,
+            four_members: false,
         };
         assert_eq!(g.scratch_bytes(true).unwrap(), 4480 * 1024);
     }
@@ -6927,3 +7002,7 @@ mod frozen_source_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "grouped_moe_four_member_tests.rs"]
+mod four_member_tests;

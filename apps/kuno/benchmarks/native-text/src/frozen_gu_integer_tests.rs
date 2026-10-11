@@ -822,3 +822,6 @@ fn frozen_gu_integer_eight_rows_three_real_routes_match_independent_full_project
         }
     }
 }
+
+#[path = "frozen_gu_integer_four_tests.rs"]
+mod four_tests;
