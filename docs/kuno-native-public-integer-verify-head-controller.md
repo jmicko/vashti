@@ -78,3 +78,14 @@ carries, greedies and real repair remain the physical authority. Original
 three-row and genuine four-row GPU gates and same-artifact normal timing are
 root-owned and pending until explicitly recorded. No installed service or
 frontend change is required.
+
+Controller source validation: all eight new focused checks passed, then all
+53 target-helper and 133 DAS controller/profile/reference checks passed
+(186 distinct checks; the eight new checks overlap those groups). Tests used
+two threads. Integrated prerequisites were leaf `59c03a4` and sealed parent
+`82d4137`; their separate source receipts remain authoritative. Pure
+`direct-device` all-target Clippy with two compilation workers and warnings
+denied passed, as did scoped formatting and diff checks. These tests ran in
+the isolated controller worktree and its existing runtime-review cache. No
+GPU, installed-service, admission, or physical acceptance command was run by
+this controller task.
