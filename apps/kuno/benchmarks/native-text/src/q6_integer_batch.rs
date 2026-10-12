@@ -111,6 +111,8 @@ enum Kernel {
     Prepare(usize),
     ProjectThree(Spec, bool, bool),
     ProjectFour(Spec, bool, bool),
+    ProjectPairedThree(Spec, bool, bool),
+    ProjectPairedFour(Spec, bool, bool),
 }
 fn section(source: &str, begin: &str, end: &str, keep: bool) -> String {
     let (before, rest) = source.split_once(begin).unwrap();
@@ -137,7 +139,7 @@ fn weight_helpers(wide: bool) -> String {
 }
 impl Kernel {
     fn source(self) -> String {
-        let (prepare_guard, project) = include_str!("q6_integer_batch.wgsl")
+        let (prepare_guard, stages) = include_str!("q6_integer_batch.wgsl")
             .split_once("// PROJECT_BATCH_STAGE")
             .unwrap();
         if let Self::Prepare(columns) = self {
@@ -157,12 +159,33 @@ impl Kernel {
                     "(bitcast<u32>(x)&0x7fffffffu)>=0x7f7fffffu",
                 );
         }
-        let (spec, tail, wide, four) = match self {
-            Self::ProjectThree(spec, tail, wide) => (spec, tail, wide, false),
-            Self::ProjectFour(spec, tail, wide) => (spec, tail, wide, true),
+        let (spec, tail, wide, four, paired) = match self {
+            Self::ProjectThree(spec, tail, wide) => (spec, tail, wide, false, false),
+            Self::ProjectFour(spec, tail, wide) => (spec, tail, wide, true, false),
+            Self::ProjectPairedThree(spec, tail, wide) => (spec, tail, wide, false, true),
+            Self::ProjectPairedFour(spec, tail, wide) => (spec, tail, wide, true, true),
             Self::Prepare(_) => unreachable!(),
         };
+        let (project, paired_stage) = stages.split_once("// PROJECT_PAIRED_STAGE").unwrap();
         let mut body = project.to_owned();
+        if paired {
+            let (helpers, paired_loop) = paired_stage.split_once("// PAIRED_LOOP").unwrap();
+            let paired_loop = paired_loop.strip_prefix('\n').unwrap();
+            let (before, rest) = body
+                .split_once("        for(var group=lane;group<COLUMNS/16u;group+=width) {")
+                .unwrap();
+            let (_, after) = rest
+                .split_once("    }\n    let total=subgroupAdd(sum);")
+                .unwrap();
+            let payload = if wide {
+                "fn pair_words_at(at:u32)->vec4<u32> {return words_at(at);}\n"
+            } else {
+                "fn pair_words_at(at:u32)->vec4<u32> {return vec4<u32>(word_at(at),word_at(at+4u),word_at(at+8u),word_at(at+12u));}\n"
+            };
+            body = format!(
+                "{payload}{helpers}{before}{paired_loop}    }}\n    let total=subgroupAdd(sum);{after}"
+            );
+        }
         for (begin, end) in [
             ("// FOUR_SUM_BEGIN", "// FOUR_SUM_END"),
             ("// FOUR_FINITE_BEGIN", "// FOUR_FINITE_END"),
@@ -192,6 +215,8 @@ impl KernelMetadata for Kernel {
             Self::Prepare(_) => "Q6ResidualQ8BatchPrepare",
             Self::ProjectThree(_, _, _) => "Q6IntegerBatchThree",
             Self::ProjectFour(_, _, _) => "Q6IntegerBatchFour",
+            Self::ProjectPairedThree(_, _, _) => "Q6IntegerBatchPairedThree",
+            Self::ProjectPairedFour(_, _, _) => "Q6IntegerBatchPairedFour",
         }
     }
     fn id(&self) -> KernelId {
@@ -313,9 +338,9 @@ pub(crate) fn project(
     }
     let wide = wide_weight_view(weight_words);
     let kernel = if spans.count == 4 {
-        Kernel::ProjectFour(spec, audit_tail, wide)
+        Kernel::ProjectPairedFour(spec, audit_tail, wide)
     } else {
-        Kernel::ProjectThree(spec, audit_tail, wide)
+        Kernel::ProjectPairedThree(spec, audit_tail, wide)
     };
     let args = KernelArguments::new()
         .with_buffer(weights.binding())

@@ -107,3 +107,53 @@ fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(local_invocation_index) loca
         }
     }
 }
+// PROJECT_PAIRED_STAGE
+// Paired original32-value mapping follows pinned MIT Strata fb58e0's wide
+// Q6 kernel. q6_integer_fixtures/NOTICE retains its original MIT notice.
+struct PairedCodes {lower:vec4<u32>,upper:vec4<u32>}
+fn paired_codes(base:u32,position:u32)->PairedCodes {
+    let shift=2u*((position&3u)>>1u);
+    let high_index=2u*(position>>2u)+(position&1u);
+    let low=pair_words_at(base+16u*position);
+    let high=pair_words_at(base+128u+16u*high_index)>>vec4<u32>(shift);
+    let lower=(low&vec4<u32>(0x0f0f0f0fu))
+        |((high<<vec4<u32>(4u))&vec4<u32>(0x30303030u));
+    let upper=((low>>vec4<u32>(4u))&vec4<u32>(0x0f0f0f0fu))
+        |(((high>>vec4<u32>(4u))<<vec4<u32>(4u))&vec4<u32>(0x30303030u));
+    return PairedCodes((lower+vec4<u32>(0x60606060u))^vec4<u32>(0x80808080u),
+        (upper+vec4<u32>(0x60606060u))^vec4<u32>(0x80808080u));
+}
+// PAIRED_LOOP
+        let position=lane&7u;let initial_block=lane>>3u;
+        let scale_offset=8u*(position>>2u)+(position&3u);
+        for(var block=initial_block;block<COLUMNS/256u;block+=width/8u) {
+            let base=row_base+block*210u;
+            let half_bits=byte_at(base+208u)|(byte_at(base+209u)<<8u);
+            let d=unpack2x16float(half_bits).x;
+            let factor0=d*f32(signed_byte(byte_at(base+192u+scale_offset)));
+            let factor1=d*f32(signed_byte(byte_at(base+192u+scale_offset+4u)));
+            let codes=paired_codes(base,position);
+            let group0=block*16u+scale_offset;let group1=group0+4u;
+            let x0=member_pair(codes.lower,group0,0u);
+            let x1=member_pair(codes.upper,group1,0u);
+            if !finite(factor0) || !finite(factor1) || !finite(x0) || !finite(x1) {atomicOr(&fault[p.d],1u);}
+            sum.x+=factor0*x0;sum.x+=factor1*x1;
+            if p.g>=2u {
+                let y0=member_pair(codes.lower,group0,1u);
+                let y1=member_pair(codes.upper,group1,1u);
+                if !finite(factor0) || !finite(factor1) || !finite(y0) || !finite(y1) {atomicOr(&fault[p.d],1u);}
+                sum.y+=factor0*y0;sum.y+=factor1*y1;
+            }
+            if p.g>=3u {
+                let z0=member_pair(codes.lower,group0,2u);
+                let z1=member_pair(codes.upper,group1,2u);
+                if !finite(factor0) || !finite(factor1) || !finite(z0) || !finite(z1) {atomicOr(&fault[p.d],1u);}
+                sum.z+=factor0*z0;sum.z+=factor1*z1;
+            }
+            // FOUR_SUM_BEGIN
+            let w0=member_pair(codes.lower,group0,3u);
+            let w1=member_pair(codes.upper,group1,3u);
+            if !finite(factor0) || !finite(factor1) || !finite(w0) || !finite(w1) {atomicOr(&fault[p.d],1u);}
+            sum.w+=factor0*w0;sum.w+=factor1*w1;
+            // FOUR_SUM_END
+        }

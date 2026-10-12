@@ -348,6 +348,8 @@ fn emitted_real_sources_lower_with_none_spirv_and_no_project_function_arrays() {
             for tail in [false, true] {
                 kernels.push(Kernel::ProjectThree(spec, tail, wide));
                 kernels.push(Kernel::ProjectFour(spec, tail, wide));
+                kernels.push(Kernel::ProjectPairedThree(spec, tail, wide));
+                kernels.push(Kernel::ProjectPairedFour(spec, tail, wide));
             }
         }
         for kernel in kernels {
@@ -378,7 +380,21 @@ fn emitted_real_sources_lower_with_none_spirv_and_no_project_function_arrays() {
                         ));
                     }
                 }
-                assert_eq!(source.matches("let codes=q6_words(base,sub)").count(), 1);
+                if matches!(
+                    kernel,
+                    Kernel::ProjectPairedThree(..) | Kernel::ProjectPairedFour(..)
+                ) {
+                    assert_eq!(
+                        source
+                            .matches("let codes=paired_codes(base,position)")
+                            .count(),
+                        1
+                    );
+                    assert_eq!(source.matches("let low=pair_words_at(").count(), 1);
+                    assert_eq!(source.matches("let high=pair_words_at(").count(), 1);
+                } else {
+                    assert_eq!(source.matches("let codes=q6_words(base,sub)").count(), 1);
+                }
                 assert!(source.contains("d*f32(a)+rd*f32(b)"));
                 assert!(source.contains("subgroupAdd(sum)"));
             }
@@ -438,5 +454,207 @@ fn immutable_keys_original_weight_helpers_and_checked_info_are_separate() {
         assert!(main.contains("p.g-1u>(pl-PLANE_WORDS)/p.h"));
         assert!(main.contains("p.g-1u>(ml-p.f)/p.i"));
         assert!(main.contains("i>=first && i<first+p.f"));
+    }
+}
+
+// Direct packed-payload replay of the paired shader; the natural C-backed
+// oracle below independently supplies its16-value codes and half/subscales.
+fn paired_decode(wire: &[u8], block: usize, position: usize) -> [([i8; 16], f32); 2] {
+    let base = block * 210;
+    let words = |at| {
+        std::array::from_fn::<_, 4, _>(|i| {
+            u32::from_le_bytes(wire[at + 4 * i..at + 4 * i + 4].try_into().unwrap())
+        })
+    };
+    let shift = 2 * ((position & 3) >> 1);
+    let low = words(base + 16 * position);
+    let high =
+        words(base + 128 + 16 * (2 * (position >> 2) + (position & 1))).map(|word| word >> shift);
+    let scale_offset = 8 * (position >> 2) + (position & 3);
+    let d = kuno_text::quant::f16_to_f32(u16::from_le_bytes([wire[base + 208], wire[base + 209]]));
+    std::array::from_fn(|half| {
+        let packed: [u32; 4] = std::array::from_fn(|word| {
+            let codes = if half == 0 {
+                (low[word] & 0x0f0f0f0f) | ((high[word] << 4) & 0x30303030)
+            } else {
+                ((low[word] >> 4) & 0x0f0f0f0f) | (((high[word] >> 4) << 4) & 0x30303030)
+            };
+            (codes + 0x60606060) ^ 0x80808080
+        });
+        let codes = std::array::from_fn(|i| (packed[i / 4] >> (8 * (i % 4))) as u8 as i8);
+        let factor = d * f32::from(wire[base + 192 + scale_offset + 4 * half] as i8);
+        (codes, factor)
+    })
+}
+
+#[test]
+fn paired_raw_payloads_and_each_signed_scale_match_every_independent_c_code() {
+    assert_eq!(oracle::validate_fixture().unwrap(), 6400);
+    for record in oracle::FIXTURE.chunks_exact(oracle::RECORD_BYTES).take(25) {
+        let wire = &record[..210];
+        let mut seen = [0u8; 16];
+        for position in 0..8 {
+            let scale_offset = 8 * (position >> 2) + (position & 3);
+            for (half, (codes, factor)) in paired_decode(wire, 0, position).into_iter().enumerate()
+            {
+                let group = scale_offset + 4 * half;
+                let (expected, expected_factor) = oracle::unpack16(wire, 256, group).unwrap();
+                assert_eq!(codes, expected);
+                assert_eq!(factor.to_bits(), expected_factor.to_bits());
+                seen[group] += 1;
+            }
+            // Actual aligned payload envelopes remain inside the original
+            // complete block, for every original row/block byte alignment.
+            for prefix in 0..16 {
+                for offset in [
+                    16 * position,
+                    128 + 16 * (2 * (position >> 2) + (position & 1)),
+                ] {
+                    let at = prefix + offset;
+                    let end = at / 16 * 16 + if at % 16 == 0 { 16 } else { 32 };
+                    assert!(end <= prefix + 210);
+                }
+            }
+        }
+        assert_eq!(seen, [1; 16]);
+    }
+    for record in oracle::FIXTURE.chunks_exact(oracle::RECORD_BYTES).skip(25) {
+        assert!(
+            paired_decode(&record[..210], 0, 0)
+                .iter()
+                .any(|(_, factor)| !factor.is_finite())
+        );
+    }
+}
+
+#[test]
+fn paired_lane_order_replays_true_members_exactly_and_retains_original_oracle_bound() {
+    for columns in [256, 512, 2560] {
+        let wire = oracle::public_rows(3, columns).unwrap();
+        for count in 1..=4 {
+            let planes: Vec<_> = (0..count)
+                .map(|member| oracle::Planes::new(&oracle::public_input(columns, member)).unwrap())
+                .collect();
+            for row in wire.chunks_exact(columns / 256 * 210) {
+                for width in [16, 32] {
+                    let mut packed_lanes = vec![vec![0f32; width]; count];
+                    let mut scalar_lanes = vec![vec![0f32; width]; count];
+                    let mut seen = vec![0u8; columns / 16];
+                    for lane in 0..width {
+                        let position = lane & 7;
+                        let scale_offset = 8 * (position >> 2) + (position & 3);
+                        for block in (lane >> 3..columns / 256).step_by(width / 8) {
+                            for (half, (codes, factor)) in
+                                paired_decode(row, block, position).into_iter().enumerate()
+                            {
+                                let group = block * 16 + scale_offset + 4 * half;
+                                let (natural, natural_factor) =
+                                    oracle::unpack16(row, columns, group).unwrap();
+                                seen[group] += 1;
+                                for (member, plan) in planes.iter().enumerate() {
+                                    let words = plan.words();
+                                    packed_lanes[member][lane] +=
+                                        factor * pair(&codes, &words, columns, group);
+                                    let mut first = 0i64;
+                                    let mut residual = 0i64;
+                                    for (i, &weight) in natural.iter().enumerate() {
+                                        let at = group * 16 + i;
+                                        let shift = (at % 4) * 8;
+                                        first += i64::from(weight)
+                                            * i64::from((words[at / 4] >> shift) as u8 as i8);
+                                        residual += i64::from(weight)
+                                            * i64::from(
+                                                (words[columns / 4 + at / 4] >> shift) as u8 as i8,
+                                            );
+                                    }
+                                    let d = f32::from_bits(words[columns / 2 + group / 2]);
+                                    let rd = f32::from_bits(
+                                        words[columns / 2 + columns / 32 + group / 2],
+                                    );
+                                    scalar_lanes[member][lane] +=
+                                        natural_factor * (d * first as f32 + rd * residual as f32);
+                                }
+                            }
+                        }
+                    }
+                    assert!(seen.iter().all(|&n| n == 1));
+                    for (member, (actual, expected)) in
+                        packed_lanes.into_iter().zip(scalar_lanes).enumerate()
+                    {
+                        let actual = reduce(actual);
+                        assert_eq!(actual.to_bits(), reduce(expected).to_bits());
+                        let independent = oracle::project(row, &planes[member]).unwrap();
+                        // The existing alternate operator bound is unchanged.
+                        assert!((actual - independent).abs() <= 2e-4 * (1. + independent.abs()));
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn paired_sources_keep_all_original_guards_and_distinct_append_only_keys() {
+    let spec = Spec::new(7, 2560).unwrap();
+    for wide in [false, true] {
+        for tail in [false, true] {
+            for (original, paired, members) in [
+                (
+                    Kernel::ProjectThree(spec, tail, wide),
+                    Kernel::ProjectPairedThree(spec, tail, wide),
+                    3,
+                ),
+                (
+                    Kernel::ProjectFour(spec, tail, wide),
+                    Kernel::ProjectPairedFour(spec, tail, wide),
+                    4,
+                ),
+            ] {
+                assert_ne!(original.id(), paired.id());
+                let old = original.source();
+                let new = paired.source();
+                assert!(!old.contains("PairedCodes"));
+                assert!(new.contains("block+=width/8u"));
+                assert!(new.contains("position=lane&7u;let initial_block=lane>>3u"));
+                assert!(new.contains("group0=block*16u+scale_offset;let group1=group0+4u"));
+                assert_eq!(
+                    new.matches("member_pair(codes.lower,group0,").count(),
+                    members
+                );
+                assert_eq!(
+                    new.matches("member_pair(codes.upper,group1,").count(),
+                    members
+                );
+                let old_main = old.split_once("fn main(").unwrap().1;
+                let new_main = new.split_once("fn main(").unwrap().1;
+                assert_eq!(
+                    old_main
+                        .split_once("        for(var group=lane;")
+                        .unwrap()
+                        .0,
+                    new_main
+                        .split_once("        let position=lane&7u;")
+                        .unwrap()
+                        .0,
+                );
+                assert_eq!(
+                    old_main
+                        .split_once("    let total=subgroupAdd(sum);")
+                        .unwrap()
+                        .1,
+                    new_main
+                        .split_once("    let total=subgroupAdd(sum);")
+                        .unwrap()
+                        .1,
+                );
+                for component in ["x", "y", "z", "w"].into_iter().take(members) {
+                    assert!(new.contains(&format!("sum.{component}+=factor0*{component}0;sum.{component}+=factor1*{component}1")));
+                }
+                assert!(
+                    new_main.find("if !valid").unwrap()
+                        < new_main.find("let codes=paired_codes").unwrap()
+                );
+            }
+        }
     }
 }
