@@ -50432,5 +50432,15 @@
     "full_owners_erased_and_normal_recovery": true,
     "speed_claim": false,
     "normal_timing_pending": true
+  },
+  "v184_target_profile_setup_failure": {
+    "source_commit": "c74299812a0d2b3c8c04101ea59301d47f924ac9",
+    "frozen_sha256": "87778052f5d0d1ae1b552b36f6d9e69e1df3bae897013817ce16a7879445f43a",
+    "directory": "/media/jmicko/faststore/kuno-development/native-next-v184-original-head-four-profile-intel-20261012",
+    "failure": "CubeClRuntimeConfig second set panics by contract before model loading",
+    "target_model_loaded": false,
+    "profile_or_performance_claim": false,
+    "recovery_complete": true,
+    "fix": "aa90a95 keeps Basic configured process-once and pauses both clients at construction; only target first-warm verification can resume"
   }
 }
