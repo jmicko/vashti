@@ -58,6 +58,7 @@ pub(crate) struct Inputs {
     pub(crate) frozen_down_integer: bool,
     pub(crate) public_iq4_decoder: bool,
     pub(crate) public_integer_verify_head: bool,
+    pub(crate) profile_first_warm_chunk: bool,
     pub(crate) bank_fill: crate::executor::PublicHostBankFillPolicy,
     pub(crate) target_submission_backlog: cubecl_runtime::server::PublicTargetSubmissionBacklog,
     pub(crate) frozen_gu_stride_four: bool,
@@ -130,6 +131,7 @@ pub(crate) fn registration(
                     | "KUNO_LAB_FROZEN_DOWN_MATH"
                     | "KUNO_LAB_TARGET_IQ4_DECODER"
                     | "KUNO_LAB_TARGET_HEAD"
+                    | "KUNO_LAB_TARGET_PROFILE"
                     | "KUNO_LAB_FROZEN_BANK_FILL"
                     | "KUNO_LAB_TARGET_SUBMISSION_BACKLOG"
                     | "KUNO_LAB_FROZEN_GU_SCHEDULE"
@@ -699,40 +701,46 @@ pub(crate) fn registration(
             && !prepared_experts
             && !live_member_reduction,
     )?;
+    let integer_verify_head_scope = frozen_host_sources
+        && frozen_host_router
+        && frozen_partition_exit
+        && verify3_dense
+        && verify3_fused
+        && request_reuse
+        && chunk_io
+        && inline_dispatch
+        && public_existing_fill
+        && warm_replay
+        && !frozen_private_tables
+        && !frozen_workgroup_tables
+        && !frozen_shared_down_scales
+        && !frozen_shared_gate_up_factors
+        && !frozen_two_row_gate_up
+        && !frozen_packed_host_staging
+        && !frozen_three_members
+        && !preserve_routed_bank
+        && !prepared_experts
+        && !live_member_reduction
+        && mtp_device == crate::target_lab_build::MtpDevice::Intel
+        && fused_sweeps
+        && draft_profile == Profile::SelfContainedQ8
+        && !mtp_q8_head_broadcast
+        && !mtp_english_vocab
+        && frozen_gu_integer
+        && frozen_down_integer
+        && public_grouped_ple_reads
+        && !public_iq4_decoder
+        && bank_fill == crate::executor::PublicHostBankFillPolicy::Original;
     let raw_head = values.remove(OsStr::new("KUNO_LAB_TARGET_HEAD"));
     let public_integer_verify_head = crate::target_lab_build::public_integer_verify_head(
         raw_head.as_deref(),
-        frozen_host_sources
-            && frozen_host_router
-            && frozen_partition_exit
-            && verify3_dense
-            && verify3_fused
-            && request_reuse
-            && chunk_io
-            && inline_dispatch
-            && public_existing_fill
-            && warm_replay
-            && !frozen_private_tables
-            && !frozen_workgroup_tables
-            && !frozen_shared_down_scales
-            && !frozen_shared_gate_up_factors
-            && !frozen_two_row_gate_up
-            && !frozen_packed_host_staging
-            && !frozen_three_members
-            && !preserve_routed_bank
-            && !prepared_experts
-            && !live_member_reduction
-            && mtp_device == crate::target_lab_build::MtpDevice::Intel
-            && fused_sweeps
-            && draft_profile == Profile::SelfContainedQ8
-            && !mtp_q8_head_broadcast
-            && !mtp_english_vocab
-            && frozen_gu_integer
-            && frozen_down_integer
-            && public_grouped_ple_reads
-            && !public_iq4_decoder
-            && bank_fill == crate::executor::PublicHostBankFillPolicy::Original,
+        integer_verify_head_scope,
     )?;
+    let profile_first_warm_chunk = match values.remove(OsStr::new("KUNO_LAB_TARGET_PROFILE")) {
+        None => false,
+        Some(v) if v == "first-warm-chunk" && integer_verify_head_scope => true,
+        _ => return Err("target profiling requires the fixed public warm integer scope"),
+    };
     let mut path = |name: &str| {
         values
             .remove(OsStr::new(name))
@@ -766,6 +774,7 @@ pub(crate) fn registration(
         frozen_down_integer,
         public_iq4_decoder,
         public_integer_verify_head,
+        profile_first_warm_chunk,
         bank_fill,
         target_submission_backlog,
         frozen_gu_stride_four,
@@ -788,6 +797,45 @@ pub(crate) fn registration(
         reference: path("KUNO_PUBLIC_TARGET_CARRY13_REFERENCE")?,
         receipt: path("KUNO_PUBLIC_RECEIPT")?,
     })
+}
+
+fn first_warm_profile_round(selected: bool, replay: usize, completed_rounds: usize) -> bool {
+    selected && replay == 1 && completed_rounds == 0
+}
+
+/// Pause even when verification fails. The closure touches only the target's
+/// already configured profiler; it cannot enable a disabled logger.
+struct TargetProfileGuard<F: Fn(bool)>(F);
+impl<F: Fn(bool)> TargetProfileGuard<F> {
+    fn new(set_paused: F) -> Self {
+        set_paused(false);
+        Self(set_paused)
+    }
+}
+impl<F: Fn(bool)> Drop for TargetProfileGuard<F> {
+    fn drop(&mut self) {
+        (self.0)(true);
+    }
+}
+
+fn target_profile_record(
+    selected: bool,
+    completed_rounds: u64,
+    method: cubecl_common::profile::TimingMethod,
+) -> std::result::Result<serde_json::Value, &'static str> {
+    if completed_rounds != u64::from(selected)
+        || (selected && method != cubecl_common::profile::TimingMethod::Device)
+    {
+        return Err("target profiling actual scope/timing method rejected");
+    }
+    Ok(serde_json::json!({
+        "selected":selected,
+        "scope":if selected {"first-warm-target-round-verify-only"} else {"disabled"},
+        "completed_target_rounds":completed_rounds,
+        "timing_method":method.to_string(),
+        "diagnostic_only":selected,
+        "normal_throughput_comparable":!selected,
+    }))
 }
 
 /// All rows are real target outputs. A first mismatch contributes only the
@@ -916,6 +964,12 @@ pub(crate) fn run(
 ) -> Result<()> {
     if input.frozen_host_sources != host_device.is_some() {
         return Err("public frozen sources require exact parent device selection".into());
+    }
+    if input.profile_first_warm_chunk {
+        if client.properties().timing_method != cubecl_common::profile::TimingMethod::Device {
+            return Err("target profiling requires actual device timestamps".into());
+        }
+        client.set_profiling_paused(true);
     }
     crate::target_lab_build::validate_runtime(input.inline_dispatch)?;
     std::panic::set_hook(Box::new(|_| {
@@ -1356,6 +1410,7 @@ pub(crate) fn run(
                     let mut proposed_tokens = 0usize;
                     let mut accepted_drafts = 0usize;
                     let mut rounds = Vec::new();
+                    let mut profiled_target_rounds = 0u64;
                     let mut target_recomputations = 0u64;
                     let before_traffic = draft.traffic();
                     let selected_mtp_batch_repair = input.mtp_batch_repair && replay == 1;
@@ -1438,7 +1493,24 @@ pub(crate) fn run(
                         let verifying = Instant::now();
                         let mut round =
                             LatestTargetRound::begin(&mut target, &mut executor, &inputs, &cancel)?;
+                        let profile_this_round = first_warm_profile_round(
+                            input.profile_first_warm_chunk,
+                            replay,
+                            rounds.len(),
+                        );
+                        let profile_guard = profile_this_round.then(|| {
+                            TargetProfileGuard::new(|paused| client.set_profiling_paused(paused))
+                        });
                         let rows = round.verify(&cancel)?;
+                        drop(profile_guard);
+                        if profile_this_round {
+                            profiled_target_rounds = profiled_target_rounds
+                                .checked_add(1)
+                                .ok_or("target profiling round count overflow")?;
+                            // Flush the configured Basic summary while paused;
+                            // neither vector checks nor repairs are profiled.
+                            cubecl::future::block_on(client.sync())?;
+                        }
                         if rows.start() != position
                             || rows.count() != count
                             || rows.binding_id() != graph.bound_graph().binding_id()
@@ -1977,6 +2049,11 @@ pub(crate) fn run(
                     record["frozen_bank_fill_receipt"] = bank_fill_receipt;
                     record["target_integer_head_requested"] =
                         input.public_integer_verify_head.into();
+                    record["target_profile"] = target_profile_record(
+                        input.profile_first_warm_chunk && replay == 1,
+                        profiled_target_rounds,
+                        client.properties().timing_method,
+                    )?;
                     record["target_integer_head_receipt"] = target_integer_head_receipt;
                     record["initial_prefill_target_integer_head_receipt"] =
                         initial_prefill_target_integer_head_receipt;
@@ -2294,6 +2371,12 @@ pub(crate) fn run(
         "original"
     }
     .into();
+    value["target_profile_requested"] = if input.profile_first_warm_chunk {
+        "first-warm-chunk"
+    } else {
+        "disabled"
+    }
+    .into();
     value["target_submission_backlog"] = final_backlog_receipt;
     value["target_lookahead_requested"] = if input.four_lookahead {
         "four-public"
@@ -2323,6 +2406,152 @@ pub(crate) fn run(
 
 #[cfg(test)]
 mod tests {
+    fn target_profile_env() -> Vec<(OsString, OsString)> {
+        let mut base = intel_mtp_env();
+        for (key, value) in [
+            ("KUNO_LAB_TARGET_PROFILE", "first-warm-chunk"),
+            ("KUNO_LAB_FROZEN_GU_MATH", "integer-public"),
+            ("KUNO_LAB_FROZEN_DOWN_MATH", "integer-public"),
+            ("KUNO_LAB_TARGET_PLE_READS", "grouped-public"),
+        ] {
+            base.push((key.into(), value.into()));
+        }
+        base
+    }
+
+    #[test]
+    fn target_profile_canonical_default_and_three_four_head_repair_composition() {
+        let args = ["lab", "intel", "daslab-speculative-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        assert!(
+            !registration(&args, intel_mtp_env(), build)
+                .unwrap()
+                .profile_first_warm_chunk
+        );
+        for four in [false, true] {
+            for head in [false, true] {
+                for repair in [false, true] {
+                    let mut selected = target_profile_env();
+                    if four {
+                        selected.push(("KUNO_LAB_TARGET_LOOKAHEAD".into(), "four-public".into()));
+                    }
+                    if head {
+                        selected.push(("KUNO_LAB_TARGET_HEAD".into(), "integer-public".into()));
+                    }
+                    if repair {
+                        selected.push(("KUNO_LAB_MTP_REPAIR".into(), "batch-public".into()));
+                    }
+                    let got = registration(&args, selected, build).unwrap();
+                    assert!(got.profile_first_warm_chunk);
+                    assert_eq!(got.four_lookahead, four);
+                    assert_eq!(got.public_integer_verify_head, head);
+                    assert_eq!(got.mtp_batch_repair, repair);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn target_profile_rejects_missing_scope_noncanonical_and_alternate_policies() {
+        let args = ["lab", "intel", "daslab-speculative-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        let base = target_profile_env();
+        for key in [
+            "KUNO_LAB_WARM_REPLAY",
+            "KUNO_LAB_MTP_DEVICE",
+            "KUNO_LAB_MTP_SWEEPS",
+            "KUNO_LAB_DEVICE_DISPATCH",
+            "KUNO_LAB_TARGET_FILL",
+            "KUNO_LAB_TARGET_DENSE",
+            "KUNO_LAB_TARGET_IO",
+            "KUNO_LAB_TARGET_REUSE",
+            "KUNO_LAB_TARGET_SOURCES",
+            "KUNO_LAB_TARGET_ROUTER",
+            "KUNO_LAB_FROZEN_PARTITION_EXIT",
+            "KUNO_LAB_FROZEN_GU_MATH",
+            "KUNO_LAB_FROZEN_DOWN_MATH",
+            "KUNO_LAB_TARGET_PLE_READS",
+        ] {
+            let mut bad = base.clone();
+            bad.retain(|(k, _)| k != key);
+            assert!(registration(&args, bad, build).is_err(), "{key}");
+        }
+        for (key, value) in [
+            ("KUNO_LAB_TARGET_PROFILE", "first"),
+            ("KUNO_LAB_TARGET_PROFILE", "first-warm-chunk "),
+            ("KUNO_LAB_TARGET_PROFILE", ""),
+            ("KUNO_LAB_MTP_PROFILE", "strata-q2"),
+            ("KUNO_LAB_MTP_Q8_HEAD", "broadcast-public"),
+            ("KUNO_LAB_MTP_VOCAB", "english-public"),
+            ("KUNO_LAB_TARGET_IQ4_DECODER", "packed-registers-public"),
+            ("KUNO_LAB_FROZEN_BANK_FILL", "profile-ranked-public"),
+            ("KUNO_LAB_FROZEN_BANK_PLACEMENT", "preserve-public"),
+            ("KUNO_LAB_FROZEN_TABLES", "private-public"),
+            ("KUNO_LAB_FROZEN_TABLES", "workgroup-public"),
+            ("KUNO_LAB_FROZEN_DOWN_SCALES", "shared-public"),
+            ("KUNO_LAB_FROZEN_GU_FACTORS", "shared-public"),
+            ("KUNO_LAB_FROZEN_GU_ROWS", "two-public"),
+            ("KUNO_LAB_FROZEN_HOST_STAGE", "packed-public"),
+            ("KUNO_LAB_FROZEN_MEMBERS", "three-public"),
+            ("KUNO_LAB_TARGET_EXPERTS", "prepared-verify3"),
+            ("KUNO_LAB_TARGET_MOE", "live"),
+        ] {
+            let mut bad = base.clone();
+            bad.retain(|(k, _)| k != key);
+            bad.push((key.into(), value.into()));
+            assert!(registration(&args, bad, build).is_err(), "{key}");
+        }
+        let mut duplicate = base.clone();
+        duplicate.push(("KUNO_LAB_TARGET_PROFILE".into(), "first-warm-chunk".into()));
+        assert!(registration(&args, duplicate, build).is_err());
+        assert!(registration(&args, base, crate::target_lab_build::Build::Threaded).is_err());
+    }
+
+    #[test]
+    fn target_profile_selects_only_first_warm_verification_and_exact_device_receipt() {
+        use cubecl_common::profile::TimingMethod::{Device, System};
+        for selected in [false, true] {
+            for replay in 0..3 {
+                for rounds in 0..4 {
+                    assert_eq!(
+                        first_warm_profile_round(selected, replay, rounds),
+                        selected && replay == 1 && rounds == 0
+                    );
+                }
+            }
+        }
+        let cold = target_profile_record(false, 0, Device).unwrap();
+        assert_eq!(cold["selected"], false);
+        assert_eq!(cold["completed_target_rounds"], 0);
+        let warm = target_profile_record(true, 1, Device).unwrap();
+        assert_eq!(warm["timing_method"], "device");
+        assert_eq!(warm["scope"], "first-warm-target-round-verify-only");
+        assert_eq!(warm["normal_throughput_comparable"], false);
+        assert!(target_profile_record(true, 0, Device).is_err());
+        assert!(target_profile_record(true, 2, Device).is_err());
+        assert!(target_profile_record(false, 1, Device).is_err());
+        assert!(target_profile_record(true, 1, System).is_err());
+        assert!(target_profile_record(false, 0, System).is_ok());
+    }
+
+    #[test]
+    fn target_profile_guard_pauses_after_success_and_verification_error() {
+        use std::cell::RefCell;
+        for fail in [false, true] {
+            let events = RefCell::new(Vec::new());
+            let verify = || -> std::result::Result<(), &'static str> {
+                let guard = TargetProfileGuard::new(|paused| events.borrow_mut().push(paused));
+                if fail {
+                    return Err("fixed public verification fault");
+                }
+                drop(guard);
+                Ok(())
+            };
+            assert_eq!(verify().is_err(), fail);
+            assert_eq!(*events.borrow(), [false, true]);
+        }
+    }
+
     #[test]
     fn integer_verify_head_default_off_and_original_three_four_composition() {
         let args = ["lab", "intel", "daslab-speculative-probe"].map(OsString::from);
