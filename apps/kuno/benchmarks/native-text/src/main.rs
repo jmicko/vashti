@@ -1259,6 +1259,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         return Err("target head selector requires its fixed public target controller".into());
     }
+    if std::env::var_os("KUNO_LAB_TARGET_PROFILE").is_some() && speculative_inputs.is_none() {
+        return Err("target profiling requires its fixed public warm controller".into());
+    }
+    let public_target_profile = speculative_inputs
+        .as_ref()
+        .is_some_and(|input| input.profile_first_warm_chunk);
     let target_repair_inputs = if mode == "daslab-target-repair-probe" {
         Some(daslab_target_repair_probe::registration(
             &std::env::args_os().collect::<Vec<_>>(),
@@ -1980,7 +1986,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if cpu_q8 && !count1_pooled {
         return Err("Q8 CPU activation arithmetic requires explicit pooled workers".into());
     }
-    if kernel_profile {
+    if kernel_profile || public_target_profile {
         use cubecl_runtime::config::{
             CubeClRuntimeConfig, RuntimeConfig, profiling::ProfilingLogLevel,
         };
@@ -2338,6 +2344,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 info.name, info.vendor, info.device, info.backend
             );
         }
+        if public_target_profile
+            && !adapter.features().contains(
+                wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES,
+            )
+        {
+            return Err("public target profiling requires device timestamp queries".into());
+        }
         let device_result = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("Kuno public synthetic Rust kernel"),
@@ -2352,7 +2365,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 wgpu::Features::empty()
                             }
                             | wgpu::Features::SUBGROUP
-                            | if kernel_profile {
+                            | if kernel_profile || public_target_profile {
                                 wgpu::Features::TIMESTAMP_QUERY
                                     | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES
                             } else {
@@ -2429,6 +2442,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         );
         let client = WgpuRuntime::client(&selected);
+        if public_target_profile {
+            use cubecl_runtime::config::{CubeClRuntimeConfig, RuntimeConfig};
+            // The target logger captured Basic at creation. Keep its prefill paused
+            // and restore the global default before creating the independent draft.
+            client.set_profiling_paused(true);
+            CubeClRuntimeConfig::set(CubeClRuntimeConfig::default());
+            if client.properties().timing_method != cubecl_common::profile::TimingMethod::Device {
+                return Err("public target profiling requires actual device timing".into());
+            }
+        }
         if let Some(receipt) = public_host_cubecl_receipt {
             std::panic::set_hook(Box::new(|_| {
                 eprintln!("public_host_cubecl_failure panic=true")
