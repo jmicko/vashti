@@ -76,7 +76,7 @@ and recomputed prefixes, exact sixteen-tile joins, positive completion,
 overflow, and false or partial credit. Existing original CPU13 full vectors,
 carries, greedies and real repair remain the physical authority. Original
 three-row and genuine four-row GPU gates and same-artifact normal timing are
-root-owned and pending until explicitly recorded. No installed service or
+root-owned and require their separate receipts below. No installed service or
 frontend change is required.
 
 Controller source validation: all eight new focused checks passed, then all
@@ -89,3 +89,51 @@ denied passed, as did scoped formatting and diff checks. These tests ran in
 the isolated controller worktree and its existing runtime-review cache. No
 GPU, installed-service, admission, or physical acceptance command was run by
 this controller task.
+
+## Genuine four-row physical CPU13 acceptance
+
+Root's protected v182 gate passed on 2026-10-12 UTC. Frozen source was
+`dab13e2ead7d90bc5f652b2a62027aae0815e94f`; binary SHA256 was
+`4b5f5ece164aefaf5465bf20992e3d49a3dfcf6c07ec9cdec205ba197ff6cf44`.
+Exact content-free evidence is under
+`/media/jmicko/faststore/kuno-development/native-next-v182-integer-head-four-warm-intel-20261012`
+(`source.json`, `intel.json`, `intel.log`, original-source verification,
+fresh Intel admission, and host-before/after receipts). Both original target
+shards were fully hash-verified before model construction; the runner enforced
+swap disabled, no core dumps, and the existing 48 GiB process cap.
+
+Original cold CPU13 and the selected warm first-token prefill retained the
+original head, with actual false/zero head receipts. The selected warm replay
+then passed all unchanged original logits/carries, greedies, genuine target
+verification and real repair through the full thirteen-position authority.
+Its four real rounds were three count-four rounds and one count-three tail;
+the first count-four round accepted one member and genuinely recomputed that
+one-member prefix. Thus five completed heads produced exactly eighty tile
+projections and sixteen members: twelve count-four verification members,
+three tail members, and one real repair member. Actual and expected head
+counts match exactly. Generic Verify4 dense/fused counts both remained genuine
+2,208 calls (736 per count-four chunk), with no credit for the new head tiles.
+Fused-four batched MTP repair and the original batched tail both completed;
+no expert or output token was forced, and no expert was uploaded during the
+warm replay.
+
+Target and Q8 MTP ran on the same verified physical Intel device
+`0000:2d:00.0`/`8086:e223` using distinct actual Vulkan logical devices and
+runtimes. Original 144-slot admission and its 512 MiB shared driver margin
+remained unchanged. Request closing passed the full original 128 MiB I/O
+audit. Final target MAIN closure was 1,382 buffers/828,997,632 bytes; the
+432-page HOST attachment freed all 36,147,609,600 physical bytes, leaving zero
+live backing. Draft private/public closure and original complete erasure
+checks passed. Attached and closed resident-bank snapshots matched.
+
+Host recovery passed on the same boot: Intel memory returned to its exact
+50,688,000-byte baseline, no classified Xe/Nvidia fault count increased,
+no Nvidia compute owner remained, all Kuno/Ollama/Vashti health responses were
+HTTP 200, and admission was idle/unpaused without recovery required.
+
+This establishes the selected head's original CPU13 correctness and ownership
+for the reserved four-row configuration, including its real count-three tail
+and count-one repair. It does not establish the separate original three-row
+owner configuration, normal code/prose generation speed, a long-run stability
+claim, or installed inference acceptance. Correctness preparation overlapped
+CPU source checks, so its diagnostic timing is not a speed comparison.
