@@ -1,11 +1,37 @@
 # Native Kuno text engine: next-model handoff
 
-Updated2026-10-12: PAUSED at the user's request. The current Intel operator
-retry and approved MTP repair source block are complete. The existing30tokens/s
-goal remains unachieved; do not start another optimization until resumed.
-Canonical Vashti/public APIs/installed services remain unchanged. Work checkout
-is `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
-`codex/kuno-native-text`. Required Vashti changes:none.
+Updated2026-10-12: user authorized a new manual optimization pass with Astra
+while the automated goal remains paused. Intel-only target/full-Q8 MTP is the
+current scope. Native30tokens/s remains unachieved; latest normal generation
+is10.7tokens/s. Work checkout is
+`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
+`codex/kuno-native-text`. Canonical Vashti/public APIs/installed services remain
+unchanged; required Vashti changes:none.
+
+v181 on8f2a2e4 accepts the pending fused-four MTP repair with original cold and
+selected warm full CPU13 vectors/carries/greedies, actual rejected-prefix
+repair, full closure and physical recovery. Selected work joins three real
+count4 repairs/six appended cells plus one original tail/two cells, with four
+aggregate final fault gates. Original prefill remains false/zero. This is a
+correctness run, not a new whole-model speed claim. Normal services recover
+01:12:45UTC on the same boot, B70used50688000B, Nvidia compute0, no classified
+faults. See `v181_four_lookahead_batched_repair_cpu13_acceptance`.
+
+Selected next experiment: true batched integer output head. Pinned MIT Strata
+fb58e0d SYCL verify.cpp1537-1541 prepares allT head inputs then native_mmvq;
+its wide Q6 implementation uses packed integer dots and reuses weight decode
+across RHS. Kuno's selected Verify3/4 head already shares weight reads across
+RHS but still computes F32 products. New default-off head reuses original
+210-byte Q6 blocks,16 cached tiles and existing GR scratch; no new VRAM owner.
+Use original full CPU13 tolerances, actual separate head counters and
+same-artifact whole-generation comparison before claiming any speed gain.
+The separate leaf/parent/controller contracts are normative when integrated.
+Protected fixed selector is `KUNO_LAB_TARGET_HEAD=integer-public` (17ab067).
+All17 Python admission checks pass and six helper trial labels retain caps.
+Strata's B70 also uses direct pinned-HOST reads rather than its A750 CPU
+fallback. Existing v180 one-layer CPU overlap is not a selected whole-model
+optimization. Host enqueue/phase timers include GPU backpressure and must not
+be treated as device-exclusive kernel times.
 
 User steering after the completed three-way comparison: continue optimization
 with target and full Q8 MTP on Intel B70 only; defer Nvidia experiments.
