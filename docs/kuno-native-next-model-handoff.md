@@ -60,6 +60,84 @@ A single-plane alternative needs its own numerical gate, never silent tolerance
 relaxation. Packed weights already use u32 loads; byte decoding is not evidence
 of byte-sized PCIe reads. Compaction is the next prioritized experiment.
 
+## Start here when the user authorizes resuming
+
+The checkpoint above and this section are the authoritative directions.
+Everything under **Historical evidence** below is an older receipt or plan;
+older headings saying “current”, “latest” or “resume” do not override this section.
+This document is in the Kuno worktree, not the ordinary Vashti checkout. Start
+from the full path above. The verified starting implementation is `ec5ea8f` on
+`codex/kuno-native-text`; the following documentation commit only clarifies
+this handoff. Inspect `git status`, branch and recent commits before editing.
+Preserve the unrelated untracked `apps/kuno/benchmarks/text/__pycache__/`.
+
+1. Read `AGENTS.md`, the latest native text checkpoint at the end of
+   `docs/kuno-vashti-coordination.md`, and
+   `docs/kuno-native-public-target-profile.md`. Work remains stopped until the
+   user requests continuation. The service/GPU snapshot above was measured at
+   the stated time; recheck current availability and sudo before GPU tests.
+2. Implement **only per-Source expert group compaction** first, using the design
+   above. It is not implemented anywhere. Main files:
+   `resident_frozen_sources.rs`, `frozen_gu_integer_four.rs/.wgsl`, and
+   `frozen_down_integer_four.rs/.wgsl` under
+   `apps/kuno/benchmarks/native-text/src`. Preserve the original kernels as
+   control paths and give the compact variants separate kernel identities.
+   Target and full-Q8 MTP stay on Intel; defer Nvidia, BF16, CPU placement,
+   single-plane Q8 and API/frontend work.
+3. Test the stable partition lists, original group identity, zero-group shards,
+   indirect-view bounds, malformed-plan rejection, whole-owner audit/erasure,
+   source lowering and original paths. Keep full numerical tolerances and
+   original selected experts. Do not substitute experts, force acceptance,
+   relax tolerances or count speculative proposals as output tokens.
+4. Run focused source tests, formatting and warnings-denied pure
+   `direct-device` Clippy before freezing a committed binary. Use two compiler
+   workers and one owner per cache. Root cache is
+   `/media/jmicko/faststore/kuno-development/root-native-text-target-20261005`.
+   Build helper: `helpers-20261008/build-direct-target.py` under that development
+   base. It is hardcoded to the Kuno root worktree; do not accidentally build
+   from a leaf worktree or edit root source while it compiles. Choose fresh
+   build/output directories; never overwrite v181..v185 evidence.
+5. Root owns GPU and service work. Use
+   `/media/jmicko/faststore/kuno-development/run-native-strata-public-protected-20261009.py`
+   in the shared Demons `shell`, after reading it to confirm it is idle.
+   The runner requires build-directory basename, a fresh precreated output
+   directory basename, and one exact trial label. First numerical gate:
+   `warm-intel-mtp-four-lookahead-batch-repair-down-integer-grouped-ple-gu-stride-shared-head-gpu-host`.
+   Require complete original cold/warm CPU13 vectors, carries and greedy
+   outputs, actual compact-path execution, original tails, all closes and
+   physical GPU recovery. Merely passing shader/unit tests is insufficient.
+6. Only then use the normal timing label
+   `language-code-intel-mtp-four-lookahead-batch-repair-down-integer-grouped-ple-gu-stride-shared-head-gpu-host`.
+   All compilers must be idle during timing; profiling must be disabled.
+   Compare against the preserved v185 control build if the new source has no
+   same-artifact control selector. Clearly label this a different-artifact
+   comparison; do not claim same-artifact acceptance. Public prompt:
+   “Write a Python function that merges two sorted lists of integers into one
+   sorted list. Explain its time and space complexity.” Seed424242, temperature0.
+   Report actual `continuation_tokens_per_second` (normally199 continuations
+   from200 emitted tokens), acceptance/recomputation counts and full closure.
+   The current10.88 result is one ordered pair, not a repeated performance guarantee.
+7. Preserve transient privacy: no private prompts, generated answers, route
+   traces, images or summaries on disk. The protected runner retains swap/core
+   restrictions and restores admission in cleanup. If sudo is unavailable,
+   stop protected work at a documented checkpoint; do not improvise workarounds.
+   Do not reboot/reset GPUs without fresh authorization. Finish by verifying
+   actual Intel memory recovery, Nvidia compute0, idle/unpaused admission and
+   healthy Kuno/Ollama/Vashti. Record exact commits, binary/helper hashes,
+   physical receipts and limitations, then update this top checkpoint.
+
+Optional separate branches are clean at `7c0fbb8` and contain no compaction code:
+`codex/kuno-compact-source-groups-parent` in
+`/home/jmicko/.codex/worktrees/kuno-cpu-batch-leaf/vashti`, and
+`codex/kuno-four-compact-expert-groups` in
+`/home/jmicko/.codex/worktrees/kuno-verify4-dense/vashti`.
+For sequential work use the root checkout; for concurrent work rebase/create
+separate worktrees from the agreed root integration commit before editing.
+Shelved BF16 commit `a9cff9e` remains on its own branch and should not be merged
+as part of compaction. Normal services are shared even across worktrees.
+
+## Historical evidence — not the current work queue
+
 v181 on8f2a2e4 accepts the pending fused-four MTP repair with original cold and
 selected warm full CPU13 vectors/carries/greedies, actual rejected-prefix
 repair, full closure and physical recovery. Selected work joins three real
@@ -69,7 +147,7 @@ correctness run, not a new whole-model speed claim. Normal services recover
 01:12:45UTC on the same boot, B70used50688000B, Nvidia compute0, no classified
 faults. See `v181_four_lookahead_batched_repair_cpu13_acceptance`.
 
-Current manual pass: batched integer output head is source/device accepted, but
+Completed v182/v183 manual-pass record: batched integer output head is source/device accepted, but
 its first16-value variant is neutral in normal generation. v182 on dab13e2,
 frozen SHA4b5f5ece164aefaf5465bf20992e3d49a3dfcf6c07ec9cdec205ba197ff6cf44,
 measures10.882673 original versus10.880799 integer real continuations/s in one
@@ -99,7 +177,7 @@ User steering after the completed three-way comparison: continue optimization
 with target and full Q8 MTP on Intel B70 only; defer Nvidia experiments.
 Ordinary installed defaults remain unchanged until their own integration gate.
 
-Latest normal Intel comparison is v177: **10.442972 original three-row**
+Earlier normal Intel comparison v177 (superseded by v182 above): **10.442972 original three-row**
 and **10.740576 genuine four-row real continuations/s** on source26295f6.
 This is one compiler-idle same-artifact ordered code200 pair (+2.85percent),
 with199 actual continuations/200 emitted in each arm, not repeated speed
@@ -219,7 +297,7 @@ crate formatting and diff checks pass on83967bc after integration. CPU/compiler
 jobs are idle at this checkpoint. See the complete source-only receipt
 `paused_intel_only_mtp_four_repair_source_checkpoint_20261012`.
 
-Resume first with the [four-row repair controller contract](kuno-native-public-four-batched-mtp-repair-controller.md).
+Historical resume direction, superseded by the compaction queue above: the [four-row repair controller contract](kuno-native-public-four-batched-mtp-repair-controller.md).
 Root must register the exact combined protected scope/fixed labels, freeze a
 fresh artifact, then run original cold/selected warm full CPU13, all genuine
 prefix/repair/closure checks and a same-artifact scalar-four versus joined-four
@@ -360,7 +438,7 @@ Updated2026-10-10 after the user requested a few final tests, a stop and a usabl
 system. GPU/CPU work is STOPPED and the goal remains paused. This file does not
 authorize further GPU occupancy, service changes or installation.
 
-## Current checkpoint
+## Historical checkpoint
 
 We have real Rust inference with original DASLab IQ3_S Qwen3.8-Flash-Next and Q8
 MTP on the3060, but have NOT reached20 or30 tokens/s. Prior repeated v145 GPU
@@ -505,7 +583,7 @@ residents**. F32 route probabilities remain experimental at 2e-6 absolute /
 2e-5 relative tolerance; original selected IDs/order must still match exactly
 through the deferred actual-score audit before model commit.
 
-## Current candidate: the next highest-priority experiment
+## Historical candidate: previously prioritized experiment
 
 Five immutable expert source partitions share the same 30-group gate/down
 dispatch geometry. Much of each partition's scheduled work belongs to groups
