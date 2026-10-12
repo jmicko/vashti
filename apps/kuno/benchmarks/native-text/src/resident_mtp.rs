@@ -65,6 +65,10 @@ const INFO_BYTES: u64 = MAX_TOKEN_DISPATCHES as u64 * 2048;
 //39-clear/84-guard scalar cells. Original condition/HC/KV math uses46 calls.
 const MAX_BATCHED_REPAIR_DISPATCHES: usize = 40 + 1 + N + 2 * (39 + 2 * N + 46);
 const _: () = assert!(MAX_BATCHED_REPAIR_DISPATCHES <= MAX_TOKEN_DISPATCHES);
+// Separate unused fused-only envelope. Every original owner is still checked;
+// fused sweeps group those checks without changing their mathematical work.
+const MAX_FUSED_FOUR_REPAIR_DISPATCHES: usize = 6 + 1 + 8 + 3 * (7 + 16 + 46);
+const _: () = assert!(MAX_FUSED_FOUR_REPAIR_DISPATCHES <= MAX_TOKEN_DISPATCHES);
 const PUBLIC_ENGLISH_IDS: u32 = u32::MAX;
 static NEXT_BINDING: AtomicU64 = AtomicU64::new(1);
 const MAX_LIVE_OUTPUTS: usize = 4;
@@ -142,6 +146,46 @@ impl AcceptedCacheRepair {
         Ok(Self {
             rewind,
             first_row: usize::from(rewind),
+            end,
+        })
+    }
+
+    fn new_fused_four(
+        old: usize,
+        start: usize,
+        completed_forward: bool,
+        fused_sweeps: bool,
+        tokens: &[u32],
+        preceding: &[f32],
+        carries: &[f32],
+    ) -> Result<Self> {
+        if !fused_sweeps || !completed_forward || start.checked_add(2) != Some(old) {
+            return Err(Error::InvalidFormat("MTP fused four repair draft boundary"));
+        }
+        let count = tokens.len();
+        if !(1..=4).contains(&count)
+            || start == 0
+            || old > k::CONTEXT
+            || carries.len() != count * k::WIDE
+            || carries.iter().any(|x| !x.is_finite())
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        let end = start
+            .checked_add(count - 1)
+            .filter(|&end| end <= k::CONTEXT)
+            .ok_or(Error::OutOfBounds)?;
+        for (row, &token) in tokens.iter().enumerate() {
+            let carry = if row == 0 {
+                preceding
+            } else {
+                &carries[(row - 1) * k::WIDE..row * k::WIDE]
+            };
+            validate_input(token, carry, start + row - 1)?;
+        }
+        Ok(Self {
+            rewind: true,
+            first_row: 1,
             end,
         })
     }
@@ -3254,6 +3298,48 @@ impl ResidentMtp<'_, '_> {
             }
         }
     }
+    /// Unused fused-only join after three actual completed drafts. Caller
+    /// supplies the already accepted target prefix; this does not accept it.
+    pub(crate) fn repair_accepted_cache_fused_four(
+        &mut self,
+        target_start: usize,
+        accepted_tokens: &[u32],
+        preceding_carry: &[f32],
+        accepted_carries: &[f32],
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        u::cancel(cancel)?;
+        if !self.fused_sweeps
+            || self.poisoned
+            || self.closed
+            || self.retired.load(Ordering::Acquire)
+            || self.live_outputs.load(Ordering::Acquire) != 0
+            || self.graph.profile() != MtpProfile::SelfContainedQ8
+            || self.public_english_vocab.is_some()
+        {
+            return Err(Error::InvalidFormat("MTP fused four repair workspace"));
+        }
+        let plan = AcceptedCacheRepair::new_fused_four(
+            self.position,
+            target_start,
+            self.last_forward
+                .as_ref()
+                .is_some_and(|stamp| stamp.valid(self.binding, self.position)),
+            self.fused_sweeps,
+            accepted_tokens,
+            preceding_carry,
+            accepted_carries,
+        )?;
+        self.repair_accepted_cache_plan(
+            plan,
+            target_start,
+            accepted_tokens,
+            preceding_carry,
+            accepted_carries,
+            cancel,
+            MAX_FUSED_FOUR_REPAIR_DISPATCHES,
+        )
+    }
     /// Join original cache rewind/catch-up for one actually accepted target
     /// prefix. Caller retains target numerical authority; there is no proposal
     /// or prefix acceptance here. Cursor/ledger credit follows one full gate.
@@ -3285,6 +3371,29 @@ impl ResidentMtp<'_, '_> {
             preceding_carry,
             accepted_carries,
         )?;
+        self.repair_accepted_cache_plan(
+            plan,
+            target_start,
+            accepted_tokens,
+            preceding_carry,
+            accepted_carries,
+            cancel,
+            MAX_TOKEN_DISPATCHES,
+        )
+    }
+    // Both wrappers retain this original queue, catch/unwind and wiping order.
+    // The limit is applied to actual tick accounting before any publication.
+    #[allow(clippy::too_many_arguments)]
+    fn repair_accepted_cache_plan(
+        &mut self,
+        plan: AcceptedCacheRepair,
+        target_start: usize,
+        accepted_tokens: &[u32],
+        preceding_carry: &[f32],
+        accepted_carries: &[f32],
+        cancel: &AtomicBool,
+        dispatch_limit: usize,
+    ) -> Result<()> {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<()> {
             self.verify_source()?;
             self.physical()?;
@@ -3341,6 +3450,9 @@ impl ResidentMtp<'_, '_> {
                 self.key_value_at(position)?;
                 self.guard_private(position + 1)?;
                 self.verify_source()?;
+            }
+            if self.dispatches > dispatch_limit {
+                return Err(Error::LimitExceeded("MTP accepted repair INFO records"));
             }
             self.check_fault()?;
             self.verify_source()?;
@@ -3527,6 +3639,10 @@ mod tests;
 #[cfg(test)]
 #[path = "resident_mtp_batched_repair_tests.rs"]
 mod batched_repair_tests;
+
+#[cfg(test)]
+#[path = "resident_mtp_fused_four_repair_tests.rs"]
+mod fused_four_repair_tests;
 
 #[cfg(test)]
 #[test]
