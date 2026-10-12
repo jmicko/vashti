@@ -906,6 +906,90 @@ pub(crate) fn three_gdn_streaming(
     }
 }
 
+/// Fixed-public batched Q6 verifier head; original cold/prefill is not selected.
+pub(crate) fn public_integer_verify_head(
+    raw: Option<&OsStr>,
+    scope: bool,
+) -> Result<bool, &'static str> {
+    match raw {
+        None => Ok(false),
+        Some(value) if value == "integer-public" && scope => Ok(true),
+        _ => Err("integer target head requires canonical Intel full-Q8 frozen public scope"),
+    }
+}
+
+/// Real verification plus actual accepted-prefix recomputation, never forced rows.
+#[derive(Default)]
+pub(crate) struct IntegerVerifyHeadStatistics {
+    prepares: u64,
+    members: u64,
+}
+impl IntegerVerifyHeadStatistics {
+    pub(crate) fn add(
+        &mut self,
+        count: usize,
+        accepted: usize,
+        recomputed: bool,
+    ) -> Result<(), &'static str> {
+        if !(1..=4).contains(&count)
+            || accepted == 0
+            || accepted > count
+            || recomputed != (accepted < count)
+        {
+            return Err("integer target head actual round geometry rejected");
+        }
+        let prepares = self
+            .prepares
+            .checked_add(1 + u64::from(recomputed))
+            .ok_or("integer target head prepare count overflow")?;
+        let members = self
+            .members
+            .checked_add(count as u64)
+            .and_then(|n| n.checked_add(if recomputed { accepted as u64 } else { 0 }))
+            .ok_or("integer target head member count overflow")?;
+        self.prepares = prepares;
+        self.members = members;
+        Ok(())
+    }
+
+    pub(crate) fn record(
+        &self,
+        selected: bool,
+        actual: bool,
+        prepares: u64,
+        tiles: u64,
+        members: u64,
+    ) -> Result<serde_json::Value, &'static str> {
+        let expected_tiles = self
+            .prepares
+            .checked_mul(16)
+            .ok_or("integer target head tile count overflow")?;
+        if selected != actual
+            || if selected {
+                self.prepares == 0
+                    || self.members == 0
+                    || prepares != self.prepares
+                    || tiles != expected_tiles
+                    || members != self.members
+            } else {
+                self.prepares != 0
+                    || self.members != 0
+                    || prepares != 0
+                    || tiles != 0
+                    || members != 0
+            }
+        {
+            return Err("integer target head completed work receipt rejected");
+        }
+        Ok(
+            serde_json::json!({"selected":actual,"completed_prepares":prepares,
+            "completed_tiles":tiles,"completed_members":members,
+            "expected_prepares":self.prepares,"expected_members":self.members,
+            "tiles_per_head":16}),
+        )
+    }
+}
+
 /// Fixed-public four-row target lookahead; no production/default expansion.
 pub(crate) fn public_four_lookahead(
     raw: Option<&OsStr>,
@@ -1455,6 +1539,93 @@ pub(crate) fn name(inline: bool) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn integer_verify_head_selector_is_canonical_and_default_off() {
+        for scope in [false, true] {
+            assert_eq!(public_integer_verify_head(None, scope), Ok(false));
+            assert_eq!(
+                public_integer_verify_head(Some(OsStr::new("integer-public")), scope).is_ok(),
+                scope
+            );
+            for bad in ["", "original", "integer", "INTEGER-PUBLIC"] {
+                assert!(public_integer_verify_head(Some(OsStr::new(bad)), scope).is_err());
+            }
+        }
+    }
+    #[test]
+    fn integer_verify_head_receipt_joins_actual_three_four_tails_and_real_repairs() {
+        let mut stats = IntegerVerifyHeadStatistics::default();
+        for (count, accepted, recomputed) in [
+            (4, 4, false),
+            (4, 2, true),
+            (3, 1, true),
+            (2, 2, false),
+            (1, 1, false),
+        ] {
+            stats.add(count, accepted, recomputed).unwrap();
+        }
+        let record = stats.record(true, true, 7, 112, 17).unwrap();
+        assert_eq!(record["completed_prepares"], 7);
+        assert_eq!(record["completed_tiles"], 112);
+        assert_eq!(record["completed_members"], 17);
+        assert_eq!(record["expected_members"], 17);
+        for (prepares, tiles, members) in [(6, 112, 17), (7, 111, 17), (7, 112, 16), (8, 128, 21)] {
+            assert!(stats.record(true, true, prepares, tiles, members).is_err());
+        }
+        assert!(stats.record(false, false, 0, 0, 0).is_err());
+    }
+    #[test]
+    fn integer_verify_head_default_prefill_zero_and_positive_completion_are_distinct() {
+        let zero = IntegerVerifyHeadStatistics::default();
+        assert_eq!(
+            zero.record(false, false, 0, 0, 0).unwrap()["selected"],
+            false
+        );
+        assert!(zero.record(true, true, 0, 0, 0).is_err());
+        for (selected, actual, prepares, tiles, members) in [
+            (true, false, 0, 0, 0),
+            (false, true, 0, 0, 0),
+            (false, false, 1, 0, 0),
+            (false, false, 0, 1, 0),
+            (false, false, 0, 0, 1),
+        ] {
+            assert!(
+                zero.record(selected, actual, prepares, tiles, members)
+                    .is_err()
+            );
+        }
+        let mut one = IntegerVerifyHeadStatistics::default();
+        one.add(1, 1, false).unwrap();
+        assert!(one.record(true, true, 1, 16, 1).is_ok());
+        assert!(one.record(true, false, 1, 16, 1).is_err());
+    }
+    #[test]
+    fn integer_verify_head_geometry_and_counter_overflow_reject_without_credit() {
+        let mut stats = IntegerVerifyHeadStatistics::default();
+        for (count, accepted) in [(0, 0), (5, 5), (1, 0), (2, 3)] {
+            assert!(stats.add(count, accepted, false).is_err());
+        }
+        assert!(stats.add(3, 3, true).is_err());
+        assert!(stats.add(3, 2, false).is_err());
+        assert_eq!((stats.prepares, stats.members), (0, 0));
+        let mut prepare = IntegerVerifyHeadStatistics {
+            prepares: u64::MAX,
+            members: 0,
+        };
+        assert!(prepare.add(1, 1, false).is_err());
+        assert_eq!(prepare.members, 0);
+        let mut members = IntegerVerifyHeadStatistics {
+            prepares: 0,
+            members: u64::MAX,
+        };
+        assert!(members.add(4, 3, true).is_err());
+        assert_eq!(members.prepares, 0);
+        let tiles = IntegerVerifyHeadStatistics {
+            prepares: u64::MAX / 16 + 1,
+            members: 1,
+        };
+        assert!(tiles.record(true, true, tiles.prepares, 0, 1).is_err());
+    }
     #[test]
     fn four_lookahead_selector_is_canonical_default_off_and_fixed_scope_only() {
         for scope in [false, true] {

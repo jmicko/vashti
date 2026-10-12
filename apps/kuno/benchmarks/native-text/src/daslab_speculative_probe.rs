@@ -57,6 +57,7 @@ pub(crate) struct Inputs {
     pub(crate) frozen_gu_integer: bool,
     pub(crate) frozen_down_integer: bool,
     pub(crate) public_iq4_decoder: bool,
+    pub(crate) public_integer_verify_head: bool,
     pub(crate) bank_fill: crate::executor::PublicHostBankFillPolicy,
     pub(crate) target_submission_backlog: cubecl_runtime::server::PublicTargetSubmissionBacklog,
     pub(crate) frozen_gu_stride_four: bool,
@@ -128,6 +129,7 @@ pub(crate) fn registration(
                     | "KUNO_LAB_FROZEN_GU_MATH"
                     | "KUNO_LAB_FROZEN_DOWN_MATH"
                     | "KUNO_LAB_TARGET_IQ4_DECODER"
+                    | "KUNO_LAB_TARGET_HEAD"
                     | "KUNO_LAB_FROZEN_BANK_FILL"
                     | "KUNO_LAB_TARGET_SUBMISSION_BACKLOG"
                     | "KUNO_LAB_FROZEN_GU_SCHEDULE"
@@ -697,6 +699,40 @@ pub(crate) fn registration(
             && !prepared_experts
             && !live_member_reduction,
     )?;
+    let raw_head = values.remove(OsStr::new("KUNO_LAB_TARGET_HEAD"));
+    let public_integer_verify_head = crate::target_lab_build::public_integer_verify_head(
+        raw_head.as_deref(),
+        frozen_host_sources
+            && frozen_host_router
+            && frozen_partition_exit
+            && verify3_dense
+            && verify3_fused
+            && request_reuse
+            && chunk_io
+            && inline_dispatch
+            && public_existing_fill
+            && warm_replay
+            && !frozen_private_tables
+            && !frozen_workgroup_tables
+            && !frozen_shared_down_scales
+            && !frozen_shared_gate_up_factors
+            && !frozen_two_row_gate_up
+            && !frozen_packed_host_staging
+            && !frozen_three_members
+            && !preserve_routed_bank
+            && !prepared_experts
+            && !live_member_reduction
+            && mtp_device == crate::target_lab_build::MtpDevice::Intel
+            && fused_sweeps
+            && draft_profile == Profile::SelfContainedQ8
+            && !mtp_q8_head_broadcast
+            && !mtp_english_vocab
+            && frozen_gu_integer
+            && frozen_down_integer
+            && public_grouped_ple_reads
+            && !public_iq4_decoder
+            && bank_fill == crate::executor::PublicHostBankFillPolicy::Original,
+    )?;
     let mut path = |name: &str| {
         values
             .remove(OsStr::new(name))
@@ -729,6 +765,7 @@ pub(crate) fn registration(
         frozen_gu_integer,
         frozen_down_integer,
         public_iq4_decoder,
+        public_integer_verify_head,
         bank_fill,
         target_submission_backlog,
         frozen_gu_stride_four,
@@ -1280,6 +1317,20 @@ pub(crate) fn run(
                             before_prefill_repair,
                             draft.traffic(),
                         )?;
+                    let (
+                        initial_integer_head,
+                        initial_head_prepares,
+                        initial_head_tiles,
+                        initial_head_members,
+                    ) = target.completed_public_q6_integer_verify_head(&executor)?;
+                    let initial_prefill_target_integer_head_receipt =
+                        crate::target_lab_build::IntegerVerifyHeadStatistics::default().record(
+                            false,
+                            initial_integer_head,
+                            initial_head_prepares,
+                            initial_head_tiles,
+                            initial_head_members,
+                        )?;
                     let selected_four_lookahead = input.four_lookahead && replay == 1;
                     if selected_four_lookahead {
                         target.set_public_four_rows(&mut executor, &cancel)?;
@@ -1293,6 +1344,12 @@ pub(crate) fn run(
                     if input.public_grouped_status_folds && replay == 1 {
                         target.set_public_grouped_status_folds(&executor, true, &cancel)?;
                     }
+                    let selected_integer_head = input.public_integer_verify_head && replay == 1;
+                    if selected_integer_head {
+                        target.activate_public_q6_integer_verify_head(&mut executor, &cancel)?;
+                    }
+                    let mut integer_head_stats =
+                        crate::target_lab_build::IntegerVerifyHeadStatistics::default();
                     let load_ns = loading.elapsed().as_nanos() as u64;
                     let initial_prefill_ns = replay_prefill.elapsed().as_nanos() as u64;
                     let mut accepted_tokens = 0usize;
@@ -1413,6 +1470,7 @@ pub(crate) fn run(
                         drop(rows);
                         let verify_ns = verifying.elapsed().as_nanos() as u64;
                         let repair = Instant::now();
+                        let before_recomputations = target_recomputations;
                         if let Some(recomputed) = round.finish(accepted, &cancel)? {
                             target_recomputations = target_recomputations
                                 .checked_add(1)
@@ -1490,6 +1548,13 @@ pub(crate) fn run(
                         proposed_tokens += count - 1;
                         accepted_drafts += accepted - 1;
                         let repair_ns = u64::try_from(repair.elapsed().as_nanos())?;
+                        if selected_integer_head {
+                            integer_head_stats.add(
+                                count,
+                                accepted,
+                                target_recomputations != before_recomputations,
+                            )?;
+                        }
                         lookahead_stats.add(
                             selected_four_lookahead,
                             count,
@@ -1526,6 +1591,15 @@ pub(crate) fn run(
                         0
                     };
                     let elapsed_ns = start.elapsed().as_nanos() as u64;
+                    let (actual_integer_head, head_prepares, head_tiles, head_members) =
+                        target.completed_public_q6_integer_verify_head(&executor)?;
+                    let target_integer_head_receipt = integer_head_stats.record(
+                        selected_integer_head,
+                        actual_integer_head,
+                        head_prepares,
+                        head_tiles,
+                        head_members,
+                    )?;
                     let (actual_four_rows, completed_count4_chunks) =
                         target.completed_public_four_rows(&executor)?;
                     let four_lookahead_receipt = lookahead_stats.record_with_mtp_repair(
@@ -1901,6 +1975,11 @@ pub(crate) fn run(
                         )
                         .into();
                     record["frozen_bank_fill_receipt"] = bank_fill_receipt;
+                    record["target_integer_head_requested"] =
+                        input.public_integer_verify_head.into();
+                    record["target_integer_head_receipt"] = target_integer_head_receipt;
+                    record["initial_prefill_target_integer_head_receipt"] =
+                        initial_prefill_target_integer_head_receipt;
                     record["target_four_lookahead_receipt"] = four_lookahead_receipt;
                     record["initial_prefill_target_four_lookahead_receipt"] =
                         initial_four_lookahead_receipt;
@@ -2209,6 +2288,12 @@ pub(crate) fn run(
     }
     .into();
     value["target_iq4_decoder_requested"] = input.public_iq4_decoder.into();
+    value["target_head_requested"] = if input.public_integer_verify_head {
+        "integer-public"
+    } else {
+        "original"
+    }
+    .into();
     value["target_submission_backlog"] = final_backlog_receipt;
     value["target_lookahead_requested"] = if input.four_lookahead {
         "four-public"
@@ -2238,6 +2323,140 @@ pub(crate) fn run(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn integer_verify_head_default_off_and_original_three_four_composition() {
+        let args = ["lab", "intel", "daslab-speculative-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        let base = intel_mtp_env();
+        assert!(
+            !registration(&args, base.clone(), build)
+                .unwrap()
+                .public_integer_verify_head
+        );
+        for four in [false, true] {
+            for extra in [false, true] {
+                let mut selected = base.clone();
+                for (key, value) in [
+                    ("KUNO_LAB_TARGET_HEAD", "integer-public"),
+                    ("KUNO_LAB_FROZEN_GU_MATH", "integer-public"),
+                    ("KUNO_LAB_FROZEN_DOWN_MATH", "integer-public"),
+                    ("KUNO_LAB_TARGET_PLE_READS", "grouped-public"),
+                ] {
+                    selected.push((key.into(), value.into()));
+                }
+                if four {
+                    selected.push(("KUNO_LAB_TARGET_LOOKAHEAD".into(), "four-public".into()));
+                }
+                if extra {
+                    for (key, value) in [
+                        ("KUNO_LAB_MTP_REPAIR", "batch-public"),
+                        ("KUNO_LAB_MTP_Q8_HEAD", "shared-public"),
+                        ("KUNO_LAB_FROZEN_GU_SCHEDULE", "four-public"),
+                        ("KUNO_LAB_TARGET_STATUS_FOLDS", "grouped-public"),
+                        ("KUNO_LAB_TARGET_QSA", "chronological-public"),
+                        ("KUNO_LAB_TARGET_SUBMISSION_BACKLOG", "queued-2048-public"),
+                    ] {
+                        selected.push((key.into(), value.into()));
+                    }
+                }
+                let got = registration(&args, selected, build).unwrap();
+                // ThreeStreaming is a separate approved three-row policy.
+                if !four && extra {
+                    let mut three = intel_mtp_env();
+                    for (key, value) in [
+                        ("KUNO_LAB_TARGET_HEAD", "integer-public"),
+                        ("KUNO_LAB_FROZEN_GU_MATH", "integer-public"),
+                        ("KUNO_LAB_FROZEN_DOWN_MATH", "integer-public"),
+                        ("KUNO_LAB_TARGET_PLE_READS", "grouped-public"),
+                        ("KUNO_LAB_TARGET_GDN", "three-streaming-public"),
+                    ] {
+                        three.push((key.into(), value.into()));
+                    }
+                    let three = registration(&args, three, build).unwrap();
+                    assert!(three.public_integer_verify_head && three.three_gdn_streaming);
+                }
+                assert!(
+                    got.public_integer_verify_head
+                        && got.frozen_gu_integer
+                        && got.frozen_down_integer
+                        && got.public_grouped_ple_reads
+                );
+                assert_eq!(got.four_lookahead, four);
+                assert_eq!(got.mtp_batch_repair, extra);
+            }
+        }
+    }
+    #[test]
+    fn integer_verify_head_rejects_missing_scope_unknown_values_and_alternate_math() {
+        let args = ["lab", "intel", "daslab-speculative-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        let mut base = intel_mtp_env();
+        for (key, value) in [
+            ("KUNO_LAB_TARGET_HEAD", "integer-public"),
+            ("KUNO_LAB_FROZEN_GU_MATH", "integer-public"),
+            ("KUNO_LAB_FROZEN_DOWN_MATH", "integer-public"),
+            ("KUNO_LAB_TARGET_PLE_READS", "grouped-public"),
+        ] {
+            base.push((key.into(), value.into()));
+        }
+        for key in [
+            "KUNO_LAB_FROZEN_GU_MATH",
+            "KUNO_LAB_FROZEN_DOWN_MATH",
+            "KUNO_LAB_TARGET_PLE_READS",
+            "KUNO_LAB_DEVICE_DISPATCH",
+            "KUNO_LAB_TARGET_FILL",
+            "KUNO_LAB_TARGET_DENSE",
+            "KUNO_LAB_TARGET_IO",
+            "KUNO_LAB_TARGET_REUSE",
+            "KUNO_LAB_TARGET_SOURCES",
+            "KUNO_LAB_FROZEN_PARTITION_EXIT",
+            "KUNO_LAB_TARGET_ROUTER",
+            "KUNO_LAB_MTP_SWEEPS",
+            "KUNO_LAB_MTP_DEVICE",
+            "KUNO_LAB_WARM_REPLAY",
+        ] {
+            let mut invalid = base.clone();
+            invalid.retain(|(k, _)| k != key);
+            assert!(registration(&args, invalid, build).is_err(), "{key}");
+        }
+        for (key, value) in [
+            ("KUNO_LAB_TARGET_HEAD", "integer"),
+            ("KUNO_LAB_TARGET_HEAD", "original"),
+            ("KUNO_LAB_TARGET_HEAD", ""),
+            ("KUNO_LAB_MTP_PROFILE", "strata-q2"),
+            ("KUNO_LAB_MTP_Q8_HEAD", "broadcast-public"),
+            ("KUNO_LAB_MTP_VOCAB", "english-public"),
+            ("KUNO_LAB_TARGET_IQ4_DECODER", "packed-registers-public"),
+            ("KUNO_LAB_FROZEN_BANK_FILL", "profile-ranked-public"),
+            ("KUNO_LAB_FROZEN_TABLES", "private-public"),
+            ("KUNO_LAB_FROZEN_TABLES", "workgroup-public"),
+            ("KUNO_LAB_FROZEN_DOWN_SCALES", "shared-public"),
+            ("KUNO_LAB_FROZEN_GU_FACTORS", "shared-public"),
+            ("KUNO_LAB_FROZEN_DOWN_ROWS", "four-public"),
+            ("KUNO_LAB_FROZEN_DOWN_SCHEDULE", "four-public"),
+            ("KUNO_LAB_FROZEN_GU_ROWS", "two-public"),
+            ("KUNO_LAB_FROZEN_HOST_STAGE", "packed-public"),
+            ("KUNO_LAB_FROZEN_MEMBERS", "three-public"),
+            ("KUNO_LAB_TARGET_EXPERTS", "prepared-verify3"),
+            ("KUNO_LAB_TARGET_MOE", "live"),
+        ] {
+            let mut invalid = base.clone();
+            invalid.retain(|(k, _)| k != key);
+            invalid.push((key.into(), value.into()));
+            assert!(registration(&args, invalid, build).is_err(), "{key}");
+        }
+        assert!(
+            registration(
+                &args,
+                base.clone(),
+                crate::target_lab_build::Build::Threaded
+            )
+            .is_err()
+        );
+        let mut duplicate = base;
+        duplicate.push(("KUNO_LAB_TARGET_HEAD".into(), "integer-public".into()));
+        assert!(registration(&args, duplicate, build).is_err());
+    }
     #[test]
     fn fused_four_batch_repair_registration_requires_exact_composition() {
         let args = ["lab", "intel", "daslab-speculative-probe"].map(OsString::from);
