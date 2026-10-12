@@ -11,6 +11,7 @@ const OWNERS: usize = 256;
 const ROUTES: usize = 30;
 const MAX_ROUTES: usize = 80;
 const VERSION: u32 = 1;
+const EXPONENT_MASK: u32 = 0x7f80_0000;
 fn reject() -> Error {
     Error::InvalidFormat("public CPU overlap rank merge rejected")
 }
@@ -29,7 +30,7 @@ pub(super) fn packet(masks: [u16; 3], cpu_joined: bool) -> Result<[u32; OWNERS]>
     }
     Ok(words)
 }
-#[allow(clippy::eq_op, clippy::collapsible_if)] // Same original portable finite predicate; guarded reads.
+#[allow(clippy::collapsible_if)] // Guarded reads dominate each original-rank payload.
 #[cube(launch)]
 pub(super) fn original_rank_merge(
     gpu: &Array<f32>,
@@ -66,12 +67,16 @@ pub(super) fn original_rank_merge(
             }
             let p = prob[route];
             // Evaluate even when p==0: non-finite partials must never hide.
-            if p != p || p.abs() > f32::MAX || part != part || part.abs() > f32::MAX {
+            // Raw exponent bits cover every NaN and both infinities, including
+            // p==0. Do not rely on self comparisons or downstream float folds.
+            if u32::reinterpret(p) & EXPONENT_MASK == EXPONENT_MASK
+                || u32::reinterpret(part) & EXPONENT_MASK == EXPONENT_MASK
+            {
                 ready = false;
             }
             sum += p * part;
         }
-        if sum != sum || sum.abs() > f32::MAX {
+        if u32::reinterpret(sum) & EXPONENT_MASK == EXPONENT_MASK {
             ready = false;
         }
         for i in 4 + 2 * ROUTES..OWNERS {
@@ -158,6 +163,26 @@ mod tests {
         assert!(packet([1024, 0, 0], true).is_err());
         assert!(packet([0; 3], false).is_ok());
     }
+    #[test]
+    fn raw_exponent_finite_predicate_rejects_every_nan_class_and_infinity() {
+        for sign in [0, 0x8000_0000] {
+            for exponent in 0..=255 {
+                for fraction in [0, 1, 0x0040_0000, 0x007f_ffff] {
+                    let bits = sign | exponent << 23 | fraction;
+                    assert_eq!(
+                        bits & EXPONENT_MASK != EXPONENT_MASK,
+                        f32::from_bits(bits).is_finite()
+                    );
+                }
+            }
+        }
+        for bits in [0x7fc0_0000, 0x7f80_0001, 0xff80_0001] {
+            let part = f32::from_bits(bits);
+            assert!(part.is_nan());
+            assert_eq!(bits & EXPONENT_MASK, EXPONENT_MASK);
+            assert!((0.0 * part).is_nan());
+        }
+    }
 }
 #[cfg(test)]
 mod shader_tests {
@@ -210,6 +235,8 @@ mod shader_tests {
             .validate(&module)
             .unwrap();
             assert!(source.contains("atomicOr"));
+            assert!(source.contains("2139095040")); // Original F32 all-ones exponent.
+            assert!(source.matches("bitcast<u32>").count() >= 3);
             assert_eq!(
                 module
                     .global_variables

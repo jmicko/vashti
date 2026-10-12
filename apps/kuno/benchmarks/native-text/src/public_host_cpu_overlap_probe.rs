@@ -926,11 +926,11 @@ fn mutate(a: &PrivateArena, id: BufferId, index: usize, value: u32) -> Result<()
     );
     Ok(())
 }
-fn expect_fault(a: &PrivateArena, b: &Buffers) -> Result<()> {
+fn expect_fault(a: &PrivateArena, b: &Buffers, stage: &'static str) -> Result<()> {
     let f = read(a, b.fault)?;
     let w = aligned_words(&f.0)?;
     if w[0] == 0 || w[1..].iter().any(|v| *v != 0) {
-        return Err("overlap negative sticky fault missing".into());
+        return Err(stage.into());
     }
     Ok(())
 }
@@ -948,37 +948,53 @@ fn negative_controls(
     }
     let original = merge::packet([0; 3], false)?;
     // Original actual all-GPU status/partials and reference snapshots remain.
-    for bad in [0usize, 4, 34, 64] {
+    for (bad, stage) in [
+        (0usize, "overlap negative01 count sticky fault missing"),
+        (4, "overlap negative02 owner sticky fault missing"),
+        (34, "overlap negative03 readiness sticky fault missing"),
+        (
+            64,
+            "overlap negative04 logical padding sticky fault missing",
+        ),
+    ] {
         let mut packet = original;
         packet[bad] = if bad == 0 { 4 } else { 2 };
         upload(a, b.owners, &packet)?;
         u::zero(a, b.fault)?;
         b.merge(a)?;
-        expect_fault(a, b)?;
+        expect_fault(a, b, stage)?;
     }
     upload(a, b.owners, &original)?;
     // Missing genuine GPU GU readiness is rejected, with unchanged rank payload.
     mutate(a, b.ids[6], 0, 0)?;
     u::zero(a, b.fault)?;
     b.merge(a)?;
-    expect_fault(a, b)?;
+    expect_fault(
+        a,
+        b,
+        "overlap negative05 GPU readiness sticky fault missing",
+    )?;
     mutate(a, b.ids[6], 0, 1)?;
     // A p=0 route still checks its full original partial for NaN.
     mutate(a, b.ids[3], 0, f32::NAN.to_bits())?;
     u::zero(a, b.fault)?;
     b.merge(a)?;
-    expect_fault(a, b)?;
+    expect_fault(
+        a,
+        b,
+        "overlap negative06 zero probability NaN sticky fault missing",
+    )?;
     b.copy_full(a, b.reference_part, b.ids[3])?;
     // A prior sticky fault survives a successful subsequent valid merge.
     upload(a, b.fault, &[1])?;
     b.merge(a)?;
-    expect_fault(a, b)?;
+    expect_fault(a, b, "overlap negative07 prior sticky fault missing")?;
     // Logical and physical inactive rank-packet padding are fully inspected.
     u::zero(a, b.fault)?;
     upload(a, b.owners, &original)?;
     mutate(a, b.owners, RANK_OWNER_WORDS + 1, 7)?;
     if check_rank_owners(a, b, &original).is_ok() {
-        return Err("overlap physical packet padding mutation accepted".into());
+        return Err("overlap negative08 physical packet padding mutation accepted".into());
     }
     upload(a, b.owners, &original)?;
     let mut aliases = b.ids;
@@ -987,10 +1003,13 @@ fn negative_controls(
         .launch_resident_original_gpu_partials(a, &b.spans, aliases, p.protected.len(), cancel)
         .is_ok()
     {
-        return Err("overlap actual owner alias mutation accepted".into());
+        return Err("overlap negative09 actual owner alias mutation accepted".into());
     }
-    if source.expert(source.resident_expert(0)?).is_ok() || source.expert(512).is_ok() {
-        return Err("overlap HOST source classification mutation accepted".into());
+    if source.expert(source.resident_expert(0)?).is_ok() {
+        return Err("overlap negative10 HOST source classification mutation accepted".into());
+    }
+    if source.expert(512).is_ok() {
+        return Err("overlap negative11 HOST source range mutation accepted".into());
     }
     u::zero(a, b.fault)?;
     u::zero(a, b.ids[5])?;

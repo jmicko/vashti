@@ -302,6 +302,20 @@ and owner checks, closure and timing acceptance remain pending the protected
 physical run. Existing CPU batch source/math tests remain unchanged. Do not
 compile or use a GPU during root's benchmark holds.
 
+The first protected overlap attempt reached the sparse case's negative
+controls after the preceding four case comparisons, but reported a missing
+sticky fault before any success/timing receipt. Its generic diagnostic did
+not establish which control failed. Checked/direct generated WGSL retained
+the original self comparisons, so Cube-level NaN folding was not established.
+Each negative now has a fixed, content-free ordinal diagnostic. The merge's
+finite guard uses the raw F32 exponent bits for probabilities, partials and
+the accumulated sum, retaining the same finite set and all original ordered
+arithmetic. A seventh focused test compares both signs/all exponent classes
+and representative payloads with the independent Rust finite predicate;
+the actual checked/direct shader test also requires all three bitcasts and
+the exponent mask. Physical negatives and the complete comparison remain
+pending a retry; no speed or numerical acceptance follows from this change.
+
 Only a later separately approved model consumer could use these results. It
 would require actual dynamic route export, whole-model source/owner budgets,
 unchanged full CPU13 absolute0.006 + relative0.0003 logit/hidden checks, exact
