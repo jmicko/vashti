@@ -857,6 +857,7 @@ fn accepted_prefix(inputs: &[u32], predicted: &[u32]) -> std::result::Result<usi
 
 async fn draft_client(
     fused_sweeps: bool,
+    profile_first_warm_chunk: bool,
     selection: crate::target_lab_build::MtpDevice,
     target_client: &ComputeClient<WgpuRuntime>,
     target_device: Option<&wgpu::Device>,
@@ -923,6 +924,9 @@ async fn draft_client(
         },
     );
     let client = WgpuRuntime::client(&selected);
+    if profile_first_warm_chunk {
+        client.set_profiling_paused(true);
+    }
     let distinct_runtime = !std::ptr::eq(client.info(), target_client.info());
     let runtime_id = match selected {
         cubecl::wgpu::WgpuDevice::Existing(id) => id,
@@ -1040,6 +1044,7 @@ pub(crate) fn run(
     };
     let (draft_client, draft_limits, mtp_device_receipt) = cubecl::future::block_on(draft_client(
         input.fused_sweeps,
+        input.profile_first_warm_chunk,
         input.mtp_device,
         client,
         host_device,

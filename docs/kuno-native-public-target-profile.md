@@ -14,9 +14,12 @@ is added.
 Root registration uses the public `Inputs.profile_first_warm_chunk` flag to
 configure only Basic stdout profiling before target client creation, require
 actual device timestamp features and `TimingMethod::Device`, pause that client,
-and immediately restore the global configuration to Default before constructing
-the independent MTP client. The probe also requires the actual Device method and
-pauses profiling before model construction. Default execution is unchanged.
+and keep the global configuration set exactly once. The runtime intentionally
+rejects a second configuration set. The independent MTP client inherits the
+Basic logger but is immediately paused after its creation, before any draft
+kernel, and remains paused throughout the run. Only the target client is armed
+by the scoped guard. The probe also requires the actual Device method and pauses
+target profiling before model construction. Default execution is unchanged.
 
 Only the first real warm `LatestTargetRound::verify` is profiled: replay one,
 zero previously completed target rounds. A scoped guard unpauses the already
