@@ -315,14 +315,17 @@ def target_four_lookahead_scope(environment):
     }
     conflicts = (
         "KUNO_LAB_MTP_PROFILE", "KUNO_LAB_LANGUAGE_DECODE",
-        "KUNO_LAB_MTP_REPAIR", "KUNO_LAB_TARGET_GDN",
+        "KUNO_LAB_TARGET_GDN",
         "KUNO_LAB_TARGET_IQ4_DECODER", "KUNO_LAB_FROZEN_BANK_FILL",
         "KUNO_LAB_FROZEN_DOWN_ROWS", "KUNO_LAB_FROZEN_DOWN_SCHEDULE",
     )
     if (any(environment.get(key) != value for key, value in required.items())
             or environment.get("KUNO_LAB_MTP_Q8_HEAD") not in (None, "shared-public")
+            or environment.get("KUNO_LAB_MTP_REPAIR") not in (None, "batch-public")
+            or ("KUNO_LAB_MTP_REPAIR" in environment
+                and environment.get("KUNO_LAB_TARGET_PLE_READS") != "grouped-public")
             or any(key in environment for key in conflicts)):
-        raise ValueError("Four-row lookahead requires original Intel full-Q8, integer GU/DOWN and scalar repair")
+        raise ValueError("Four-row lookahead requires original Intel full-Q8, integer GU/DOWN and scoped repair")
 
 
 def frozen_gu_integer_scope(environment):

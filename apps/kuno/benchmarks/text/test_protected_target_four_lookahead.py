@@ -57,7 +57,6 @@ class FourLookaheadAdmission(unittest.TestCase):
         conflicts = dict(CONFLICTS, KUNO_LAB_MTP_PROFILE="strata-q2",
                          KUNO_LAB_MTP_VOCAB="english-public",
                          KUNO_LAB_MTP_Q8_HEAD="broadcast-public",
-                         KUNO_LAB_MTP_REPAIR="batch-public",
                          KUNO_LAB_TARGET_GDN="three-streaming-public",
                          KUNO_LAB_TARGET_IQ4_DECODER="packed-registers-public",
                          KUNO_LAB_FROZEN_BANK_FILL="profile-ranked-public",
@@ -73,6 +72,17 @@ class FourLookaheadAdmission(unittest.TestCase):
         for fixture in ("first-code", "warm-prose"):
             other, args, _ = target_scope(fixture, "target-only")
             self.rejected(dict(other, **{SELECTOR: "four-public"}), args)
+
+    def test_joined_four_repair_requires_grouped_ple_and_retains_caps(self):
+        for fixture in FIXTURES:
+            environment, args, cap = selected_scope(fixture)
+            environment["KUNO_LAB_MTP_REPAIR"] = "batch-public"
+            self.rejected(environment, args)
+            environment["KUNO_LAB_TARGET_PLE_READS"] = "grouped-public"
+            self.assertEqual(GUARD.memory_limit(environment, args), cap)
+            for value in ("", "batch", "batch-public ", "original"):
+                self.rejected(dict(environment, KUNO_LAB_MTP_REPAIR=value), args)
+            self.rejected(dict(environment, KUNO_LAB_MTP_DEVICE="nvidia-public"), args)
 
     def test_no_generic_scope_capacity_change_or_extra_argument(self):
         for fixture in FIXTURES:
