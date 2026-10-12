@@ -16,6 +16,9 @@ use kuno_text::{Error, Result};
 #[path = "q6_integer_oracle.rs"]
 pub(crate) mod oracle;
 
+#[path = "q6_integer_batch.rs"]
+pub(crate) mod batch;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Spec {
     rows: usize,
