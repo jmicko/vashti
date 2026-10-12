@@ -102,8 +102,15 @@ Its35 source checks/strict Clippy pass; all arithmetic/shaders/caps are unchange
 It removes the omitted metadata queue submission but this receipt grants no
 isolated GDN speed claim. See v178_gdn_retained_metadata_cpu13_acceptance and
 v178_gdn_retained_metadata_four_normal.
-The separate original three-row CPU-HOST/GPU-resident overlap operator has no
-whole-model consumer or measured gain. Both retain default-off lab scope.
+The separate original three-row CPU-HOST/GPU-resident overlap operator is
+registered on d587d9b, with protected admission19checks and frozen entry8
+negatives passing. First v179 physical run reaches four complete case progress
+sequences then fails sparse negative fault checking; no completed numeric or
+timing receipt is credited. All normal services and actual GPU memory recover,
+with no new faults. Root owns the retry after correction. No model consumer or
+measured gain. The unused fused-four MTP cache-repair extension is separately
+being prepared, preserving original1..3/default behavior and caps. No normal
+API/installed/default selection is changed.
 
 Accepted GU scheduling physical source isac78f00/v159, frozen binarySHA256
 `c04d49a6ca11115c0bba0b1acc38019ae2f6f4b1f323cc0f9b6608eaa639bc7d`.

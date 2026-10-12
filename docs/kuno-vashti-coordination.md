@@ -3955,9 +3955,13 @@ v177four10.740576 gives no measured gain (about0.34percent slower in one
 frozen comparison). Real work/repair/prefix counts match. Its35 source checks
 and strict direct Clippy pass, with original arithmetic/shaders/caps unchanged.
 See v178_gdn_retained_metadata_cpu13_acceptance and
-v178_gdn_retained_metadata_four_normal. A bounded original three-row
-CPU-HOST/GPU-resident overlap operator is separately prepared, with no model
-consumer or measured gain yet. The unused exact persistent144 bank leaf
+v178_gdn_retained_metadata_four_normal. A bounded original three-row CPU-HOST/GPU-resident overlap operator is
+registered on d587d9b (source/admission checks pass). First v179 physical attempt
+fails a sparse negative fault check after earlier case progress; no timing or
+completed numeric credit is claimed. Actual GPU memory/normal services recover
+with no new classified faults. Correction/retry is pending; no model consumer
+or measured gain. An unused fused-four MTP repair extension is separately
+being prepared; old1..3/default paths and all caps stay unchanged. The unused exact persistent144 bank leaf
 (`e16ac7a`) grants no additional physical capacity or slots. No API, installed
 service, canonical Vashti, frontend or release change; required Vashti
 changes:none.

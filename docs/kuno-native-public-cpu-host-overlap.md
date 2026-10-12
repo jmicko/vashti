@@ -344,3 +344,18 @@ controls pass (19total); both Python sources compile. Eight frozen executable
 negative cases additionally reject before GPU initialization, with core dumps
 disabled. Their aggregate receipt is v179 build/registration-negative.json.
 Actual same-artifact operator numerical/negative/timing/closing remains pending.
+
+## First physical attempt, v179: not accepted
+
+Frozen sourced587d9baed94c125fe9cf61aae07cb9ecfe3e0b1, pure-direct binarySHA256
+8ead366d3a04370175cac982636379fd894a825de46e176769e57852312be5a7,
+passes original coldCPU13/setup and reaches the fixed original three-row
+operator. Progress reaches all arms of cases0..3, then the sparse-case
+negative suite fails with static `overlap negative sticky fault missing`.
+The failing negative ordinal is not yet identified. No aggregate numeric/
+timing receipt is published, and no partial timing/full-owner closure credit
+is claimed. The fixed tests and tolerances must stay unchanged; repair the
+actual cause before retrying. Root verifies same-boot B70baseline50688000B,
+Nvidia compute0, all HTTP200, idle/unpaused/no recovery latch and unchanged
+zero classified GPU faults after failure. No reset or reboot occurred. Exact
+failure/source/recovery is v179_cpu_host_overlap_sparse_negative_failure.

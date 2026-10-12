@@ -48185,5 +48185,152 @@
     "all_owner_closures_and_same_boot_recovery_accepted": true,
     "isolated_gdn_gpu_time_or_removable_wait_claimed": false,
     "repeated_abba_prose_independent_cpu200_or_native30_accepted": false
+  },
+  "v179_cpu_host_overlap_sparse_negative_failure": {
+    "status": "failed late sparse fixed negative fault check; no completed numeric or timing receipt",
+    "directory": "/media/jmicko/faststore/kuno-development/native-next-v179-cpu-host-overlap-intel-20261011",
+    "source": {
+      "commit": "d587d9baed94c125fe9cf61aae07cb9ecfe3e0b1",
+      "binary_sha256": "8ead366d3a04370175cac982636379fd894a825de46e176769e57852312be5a7",
+      "features": [
+        "direct-device"
+      ],
+      "protected_launcher_sha256": "eb76be9acceb0c90ef34ca2c7eb78aac662976461dac32ff39fe67930a62d281",
+      "helper_sha256": "519568f9dbc49678f18aacd0aa03fb1a0e94f1842562aab3e5782ff88765b4c1",
+      "public_trial": "cpu-host-overlap-intel-host",
+      "seed": 424242,
+      "temperature": 0,
+      "frozen_partition_exit_requested": false,
+      "frozen_bank_preserve_requested": false,
+      "frozen_private_tables_requested": false,
+      "frozen_workgroup_tables_requested": false,
+      "frozen_shared_down_scales_requested": false,
+      "frozen_shared_gate_up_factors_requested": false,
+      "mtp_q8_head_broadcast_requested": false,
+      "frozen_four_row_down_requested": false,
+      "mtp_q8_head_shared_scales_requested": false,
+      "frozen_two_row_gate_up_requested": false,
+      "frozen_packed_host_staging_requested": false,
+      "frozen_three_member_arithmetic_requested": false,
+      "draft_profile_requested": "self-contained-q8",
+      "three_gdn_streaming_requested": false,
+      "mtp_english_vocab_requested": false,
+      "frozen_gu_integer_requested": false,
+      "frozen_gu_stride_four_requested": false,
+      "target_only_requested": false,
+      "intel_mtp_requested": false,
+      "target_grouped_ple_requested": false,
+      "frozen_down_stride_four_requested": false,
+      "target_grouped_status_folds_requested": false,
+      "frozen_down_integer_requested": false,
+      "target_iq4_registers_requested": false,
+      "target_submission_backlog_requested": false,
+      "profile_ranked_bank_fill_requested": false,
+      "mtp_batched_cache_repair_requested": false,
+      "four_row_target_lookahead_requested": false,
+      "host_cpu_batch_operator_requested": false,
+      "host_cpu_overlap_operator_requested": true,
+      "synthetic_one_layer_operator_only": true,
+      "ordinary_demand_performance_claimed": false,
+      "native_30_tokens_per_second_accepted": false
+    },
+    "host_after": {
+      "admission": {
+        "action": "status",
+        "state": {
+          "admission": {
+            "active": false,
+            "completed": 59,
+            "paused": false,
+            "recovery_required": false,
+            "rejected": 0,
+            "waiting": 0
+          }
+        },
+        "status": 200
+      },
+      "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+      "http_statuses": {
+        "kuno": 200,
+        "ollama": 200,
+        "vashti": 200
+      },
+      "intel": {
+        "xe_memory": [
+          {
+            "total_bytes": 34242297856,
+            "used_bytes": 50688000
+          }
+        ]
+      },
+      "kernel": "7.0.0-38-generic",
+      "kernel_fault_counts": {
+        "nvidia_xid": 0,
+        "xe_memory_faults": 0,
+        "xe_reset_failures": 0,
+        "xe_timeouts": 0,
+        "xe_wedged": 0
+      },
+      "nvidia_compute_process_count": 0,
+      "nvidia_memory_mib": 615,
+      "time": "2026-10-11T23:58:56.680023+00:00"
+    },
+    "frozen_registration_negative_controls": {
+      "source_commit": "d587d9baed94c125fe9cf61aae07cb9ecfe3e0b1",
+      "binary_sha256": "8ead366d3a04370175cac982636379fd894a825de46e176769e57852312be5a7",
+      "cases": [
+        {
+          "case": "wrong-mode",
+          "rejected_before_gpu_initialization": true,
+          "exit": 1
+        },
+        {
+          "case": "wrong-device",
+          "rejected_before_gpu_initialization": true,
+          "exit": 1
+        },
+        {
+          "case": "extra-argument",
+          "rejected_before_gpu_initialization": true,
+          "exit": 1
+        },
+        {
+          "case": "larger-cache",
+          "rejected_before_gpu_initialization": true,
+          "exit": 1
+        },
+        {
+          "case": "extra-model",
+          "rejected_before_gpu_initialization": true,
+          "exit": 1
+        },
+        {
+          "case": "count4-policy",
+          "rejected_before_gpu_initialization": true,
+          "exit": 1
+        },
+        {
+          "case": "wrong-marker",
+          "rejected_before_gpu_initialization": true,
+          "exit": 1
+        },
+        {
+          "case": "missing-reference",
+          "rejected_before_gpu_initialization": true,
+          "exit": 1
+        }
+      ],
+      "core_dump_disabled": true
+    },
+    "actual_stage": "after cases0..3 arm progress; sparse case reference/audit then negative_controls",
+    "content_free_error": "overlap negative sticky fault missing",
+    "failed_negative_ordinal_not_yet_known": true,
+    "numeric_or_timing_credit": false,
+    "full_operator_or_target_owner_closure_receipt_accepted": false,
+    "physical_same_boot_memory_and_normal_service_recovery_accepted": true,
+    "reboot_or_reset_performed": false,
+    "root_combined_direct_clippy_fmt_diff_accepted": true,
+    "protected_admission_checks_accepted": 19,
+    "whole_model_cpu_hybrid_accepted": false
   }
 }
