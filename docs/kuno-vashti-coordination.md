@@ -3968,11 +3968,19 @@ recover without a new classified fault, reset or reboot. See the
 [operator contract](kuno-native-public-cpu-host-overlap.md) and full receipt
 `v180_attached_cpu_overlap_physical`.
 
-The user paused the goal2026-10-12UTC: finish the current benchmark/source
-block, then stop. Native30tokens/s remains unachieved; latest whole-model
+The user paused the goal2026-10-12UTC; the current benchmark/source block
+is complete and no further GPU run is started. Native30tokens/s remains
+unachieved; latest whole-model
 result remains10.7tokens/s. Unused fused-four MTP repair leaf `bd46b2b`
 (original `7ea302c`) passes56 focused tests/strict direct Clippy. Approved
-controller composition is still in progress; protected activation and
+controller composition `83967bc` (original `fc0948c`) passes225 distinct
+focused tests/strict direct Clippy. Only actual count4 uses fused repair,
+tails keep original repair, and actual completion counters join both paths.
+Read the [exact controller contract](kuno-native-public-four-batched-mtp-repair-controller.md).
+Root combined strict direct all-target Clippy, full native formatting and diff
+checks pass after integration; compiler/CPU/GPU test jobs are idle. The source-only
+receipt is `paused_intel_only_mtp_four_repair_source_checkpoint_20261012`.
+Protected activation and
 unchanged physical CPU13/repair/full timings remain pending. Old1..3/default
 paths, math,42 owners and all caps stay unchanged. Read the
 [owner checkpoint](kuno-native-next-model-handoff.md) before resuming.

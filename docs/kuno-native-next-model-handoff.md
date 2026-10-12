@@ -1,8 +1,8 @@
 # Native Kuno text engine: next-model handoff
 
-Updated2026-10-12: user paused the existing30tokens/s goal. Finish the current
-Intel operator retry and approved MTP repair source block, then stop at a clean
-checkpoint; do not start another optimization until resumed.
+Updated2026-10-12: PAUSED at the user's request. The current Intel operator
+retry and approved MTP repair source block are complete. The existing30tokens/s
+goal remains unachieved; do not start another optimization until resumed.
 Canonical Vashti/public APIs/installed services remain unchanged. Work checkout
 is `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
 `codex/kuno-native-text`. Required Vashti changes:none.
@@ -118,9 +118,27 @@ activated. See `v180_attached_cpu_overlap_physical` and the operator contract.
 The unused fused-four MTP cache-repair extension is integrated
 as `bd46b2b` (original `7ea302c`), preserving original1..3/default behavior,
 math, 42 owners and caps. Its56 focused tests and strict direct Clippy pass.
-The approved separate controller composition is still being implemented;
-no protected selector or actual model consumer is selected yet. No normal
+The approved separate controller composition is integrated as `83967bc`
+(original `fc0948c`). Its225 distinct focused tests and strict direct Clippy
+pass. Only actual count4 rounds use the fused-four leaf; tails retain old
+repair. Actual completed counters join the separate four/tail records to the
+full observed Traffic delta, preserving the old max-two receipt. No protected
+selector or actual model GPU consumer is selected yet. No normal
 API/installed/default selection is changed.
+
+Root combined pure-direct all-target Clippy with warnings denied, full native
+crate formatting and diff checks pass on83967bc after integration. CPU/compiler
+jobs are idle at this checkpoint. See the complete source-only receipt
+`paused_intel_only_mtp_four_repair_source_checkpoint_20261012`.
+
+Resume first with the [four-row repair controller contract](kuno-native-public-four-batched-mtp-repair-controller.md).
+Root must register the exact combined protected scope/fixed labels, freeze a
+fresh artifact, then run original cold/selected warm full CPU13, all genuine
+prefix/repair/closure checks and a same-artifact scalar-four versus joined-four
+normal code200 comparison. Keep the original model, CPU13 reference, public
+prompt/seed and tolerances. The current artifact v180 tested only the separate
+CPU-overlap operator on47f4c8e, before MTP composition; it cannot credit that
+new controller. Do not skip physical acceptance or claim30tokens/s.
 
 ### Next speed candidate after the paused checkpoint
 

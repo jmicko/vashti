@@ -1,7 +1,11 @@
 # Unused fused four-row MTP cache repair
 
 This internal leaf is based on `45c0b26efc865952b35c62ce6ff253088011aa7c`.
-It has no controller, selector, public API or connected model consumer.
+It was source-validated without a controller in `7ea302c` (root `bd46b2b`).
+The approved separate controller is now implemented in `fc0948c` (root
+`83967bc`); see [its contract](kuno-native-public-four-batched-mtp-repair-controller.md).
+Protected activation and actual model GPU acceptance are still pending.
+No installed selector or public API is changed.
 `repair_accepted_cache` and `AcceptedCacheRepair::new` retain their original
 one-to-three-input behavior, including rejection of a third-draft cursor.
 
@@ -40,10 +44,11 @@ audits remain mandatory.
 Required source checks cover prefixes 1/2/3/4, exact cell positions and carry
 bits, old-API rejection, non-fused/stale/mixed-binding/cursor/span/finite/context
 failures, actual dispatch accounting and sticky-fault/error cleanup ordering.
-Original MTP repair/cache tests remain controls. No compilation or GPU acceptance
-is implied by this source contract. Future controller/guard integration and
-unchanged protected CPU13 full-vector/greedy/repair, closure/recovery and paired
-normal timing gates require separate approval.
+Original MTP repair/cache tests remain controls. This contract alone grants
+no GPU acceptance. The separate controller composition has been approved and
+source-tested; guard integration and unchanged protected CPU13 full-vector/
+greedy/repair, closure/recovery and paired normal timing gates remain pending
+at the user's paused checkpoint.
 
 The v177 four-row record contains 155 drafts, 52 rounds, 147 accepted drafts and
 five necessary target recomputations. A future joined repair could reduce 199

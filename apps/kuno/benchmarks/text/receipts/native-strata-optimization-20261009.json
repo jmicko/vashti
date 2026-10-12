@@ -49806,5 +49806,37 @@
     "whole_model_cpu_hybrid_accepted": false,
     "best_integer_gpu_control_compared": false,
     "native_30_tokens_per_second_accepted": false
+  },
+  "paused_intel_only_mtp_four_repair_source_checkpoint_20261012": {
+    "status": "source-tested only; protected activation and actual GPU/model/timing acceptance pending; user paused goal",
+    "root_source_commit": "83967bc44388fd4467bae10dc0200406621ed976",
+    "leaf_original_commit": "7ea302cc8a547229a1e8d5f35bf98013972af7b1",
+    "leaf_root_commit": "bd46b2ba014254c2b89f934188811f5e1c3c8e83",
+    "controller_original_commit": "fc0948c0968ae1fa5869635afe164372cef1f9ec",
+    "controller_root_commit": "83967bc44388fd4467bae10dc0200406621ed976",
+    "leaf_focused_checks": 56,
+    "controller_distinct_checks": 225,
+    "controller_checks_by_scope": {
+      "target_lab_build": 49,
+      "daslab_selector_controller_profile": 129,
+      "resident_mtp": 47
+    },
+    "new_controller_checks": 7,
+    "old_mtp_parser_and_both_max_two_receipt_functions_byte_identical": true,
+    "strict_direct_all_target_clippy_passed_in_leaf_and_controller_worktrees": true,
+    "root_combined_direct_all_target_clippy_warnings_denied": true,
+    "root_combined_format_and_diff_passed": true,
+    "current_four_row_scope_preserves_original_scalar_and_tails": true,
+    "new_three_cell_receipt_joins_actual_completed_four_and_tail_traffic": true,
+    "original_reference_math_tolerances_owners_caps_unchanged": true,
+    "protected_combined_selector_activated": false,
+    "physical_combined_cpu13_or_normal_timing_accepted": false,
+    "public_api_or_installed_default_or_frontend_changed": false,
+    "required_vashti_changes": [],
+    "native_30_tokens_per_second_accepted": false,
+    "latest_normal_real_continuations_per_second": 10.704156746900038,
+    "highest_recorded_selected_four_normal_real_continuations_per_second": 10.740575905564095,
+    "next_first_gate": "root fixed combined protected selectors then frozen unchanged full CPU13/actual repair/closure plus paired normal code200",
+    "next_speed_candidate_after_acceptance": "real batched Q6 integer verification head; read-only hypothesis, no implementation or measured head share"
   }
 }
