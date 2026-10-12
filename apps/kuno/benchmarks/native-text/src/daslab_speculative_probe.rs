@@ -672,7 +672,7 @@ pub(crate) fn registration(
             && draft_profile == Profile::SelfContainedQ8
             && !mtp_q8_head_broadcast
             && !mtp_english_vocab
-            && !mtp_batch_repair
+            && (!mtp_batch_repair || public_grouped_ple_reads)
             && !public_iq4_decoder
             && !three_gdn_streaming
             && bank_fill == crate::executor::PublicHostBankFillPolicy::Original
@@ -1099,6 +1099,7 @@ pub(crate) fn run(
                 };
                 let replay_prefill = Instant::now();
                 let pass = (|| -> Result<serde_json::Value> {
+                    let before_prefill_repair = draft.traffic();
                     let initial = target.prefill_chunk_with_carry(&mut executor, &[0], &cancel)?;
                     if initial.start() != 0
                         || initial.count() != 1
@@ -1263,6 +1264,22 @@ pub(crate) fn run(
                             executor.target_verify4_dense_calls,
                             executor.target_verify4_fused_calls,
                         )?;
+                    let initial_prefill_mtp_batch_repair =
+                        crate::target_lab_build::public_mtp_batch_repair_traffic_record(
+                            false,
+                            before_prefill_repair,
+                            draft.traffic(),
+                            0,
+                            0,
+                        )?;
+                    let initial_prefill_mtp_fused_four_repair =
+                        crate::target_lab_build::FourMtpRepairStatistics::default().record(
+                            false,
+                            initial_four_rows,
+                            &crate::target_lab_build::LookaheadStatistics::default(),
+                            before_prefill_repair,
+                            draft.traffic(),
+                        )?;
                     let selected_four_lookahead = input.four_lookahead && replay == 1;
                     if selected_four_lookahead {
                         target.set_public_four_rows(&mut executor, &cancel)?;
@@ -1286,6 +1303,10 @@ pub(crate) fn run(
                     let before_traffic = draft.traffic();
                     let selected_mtp_batch_repair = input.mtp_batch_repair && replay == 1;
                     let mut mtp_batch_repair_cells = 0u64;
+                    let selected_four_batch_repair =
+                        selected_four_lookahead && selected_mtp_batch_repair;
+                    let mut four_batch_repair =
+                        crate::target_lab_build::FourMtpRepairStatistics::default();
                     let before_uploads = executor.expert_uploads;
                     let before_hits = executor.expert_hits;
                     let before_gpu_routers = executor.gpu_router_calls;
@@ -1412,16 +1433,36 @@ pub(crate) fn run(
                             return Err("speculative repaired actual cursor rejected".into());
                         }
                         if selected_mtp_batch_repair {
-                            draft.repair_accepted_cache(
-                                position,
-                                &inputs[..accepted],
-                                &carry,
-                                &real_carries,
-                                &cancel,
-                            )?;
-                            mtp_batch_repair_cells = mtp_batch_repair_cells
-                                .checked_add(if count > 1 { accepted - 1 } else { 1 } as u64)
-                                .ok_or("MTP batch repair appended cell count overflow")?;
+                            let repair_before = draft.traffic();
+                            if selected_four_batch_repair && count == 4 {
+                                draft.repair_accepted_cache_fused_four(
+                                    position,
+                                    &inputs[..accepted],
+                                    &carry,
+                                    &real_carries,
+                                    &cancel,
+                                )?;
+                            } else {
+                                draft.repair_accepted_cache(
+                                    position,
+                                    &inputs[..accepted],
+                                    &carry,
+                                    &real_carries,
+                                    &cancel,
+                                )?;
+                            }
+                            if selected_four_batch_repair {
+                                four_batch_repair.observe(
+                                    count,
+                                    accepted,
+                                    repair_before,
+                                    draft.traffic(),
+                                )?;
+                            } else {
+                                mtp_batch_repair_cells = mtp_batch_repair_cells
+                                    .checked_add(if count > 1 { accepted - 1 } else { 1 } as u64)
+                                    .ok_or("MTP batch repair appended cell count overflow")?;
+                            }
                         } else if count > 1 {
                             // First cell used real target carry. Keep that exact KV;
                             // replace only subsequent provisional cells with reality.
@@ -1487,7 +1528,7 @@ pub(crate) fn run(
                     let elapsed_ns = start.elapsed().as_nanos() as u64;
                     let (actual_four_rows, completed_count4_chunks) =
                         target.completed_public_four_rows(&executor)?;
-                    let four_lookahead_receipt = lookahead_stats.record(
+                    let four_lookahead_receipt = lookahead_stats.record_with_mtp_repair(
                         selected_four_lookahead,
                         actual_four_rows,
                         completed_count4_chunks,
@@ -1499,6 +1540,7 @@ pub(crate) fn run(
                             .target_verify4_fused_calls
                             .checked_sub(before_four_fused)
                             .ok_or("Verify4 fused counter regressed")?,
+                        selected_four_batch_repair,
                     )?;
                     let host_io = crate::target_lab_build::host_io_delta(
                         before_host_io,
@@ -1530,7 +1572,16 @@ pub(crate) fn run(
                         .checked_sub(load_disk_after)
                         .ok_or("public process read counter regressed")?;
                     let after = draft.traffic();
-                    let mtp_batch_repair_receipt =
+                    let mtp_fused_four_repair_receipt = four_batch_repair.record(
+                        selected_four_batch_repair,
+                        actual_four_rows,
+                        &lookahead_stats,
+                        before_traffic,
+                        after,
+                    )?;
+                    let mtp_batch_repair_receipt = if selected_four_batch_repair {
+                        mtp_fused_four_repair_receipt["original_batched_tails"].clone()
+                    } else {
                         crate::target_lab_build::public_mtp_batch_repair_traffic_record(
                             selected_mtp_batch_repair,
                             before_traffic,
@@ -1541,7 +1592,8 @@ pub(crate) fn run(
                                 0
                             },
                             mtp_batch_repair_cells,
-                        )?;
+                        )?
+                    };
                     let (actual_direct, after_fills) =
                         target.native_public_fill_counters(&executor)?;
                     let frozen_routes = if executor.target_frozen_host_source_identity.is_some() {
@@ -1821,12 +1873,28 @@ pub(crate) fn run(
                     record["target_submission_backlog"] = target_submission_backlog_receipt.clone();
                     record["mtp_batch_repair_requested"] = input.mtp_batch_repair.into();
                     record["mtp_batch_repair"] = mtp_batch_repair_receipt;
-                    record["draft_traffic"]["batched_repair_calls"] =
-                        record["mtp_batch_repair"]["completed_calls"].clone();
-                    record["draft_traffic"]["batched_repair_cells"] =
-                        record["mtp_batch_repair"]["appended_cells"].clone();
+                    record["draft_traffic"]["batched_repair_calls"] = if selected_four_batch_repair
+                    {
+                        mtp_fused_four_repair_receipt["aggregate_completed_calls"].clone()
+                    } else {
+                        record["mtp_batch_repair"]["completed_calls"].clone()
+                    };
+                    record["draft_traffic"]["batched_repair_cells"] = if selected_four_batch_repair
+                    {
+                        mtp_fused_four_repair_receipt["aggregate_appended_cells"].clone()
+                    } else {
+                        record["mtp_batch_repair"]["appended_cells"].clone()
+                    };
                     record["draft_traffic"]["batched_repair_fault_gates"] =
-                        record["mtp_batch_repair"]["completed_fault_gates"].clone();
+                        if selected_four_batch_repair {
+                            mtp_fused_four_repair_receipt["aggregate_completed_fault_gates"].clone()
+                        } else {
+                            record["mtp_batch_repair"]["completed_fault_gates"].clone()
+                        };
+                    record["mtp_fused_four_repair"] = mtp_fused_four_repair_receipt;
+                    record["initial_prefill_mtp_batch_repair"] = initial_prefill_mtp_batch_repair;
+                    record["initial_prefill_mtp_fused_four_repair"] =
+                        initial_prefill_mtp_fused_four_repair;
                     record["frozen_bank_fill"] =
                         crate::target_lab_build::public_host_bank_fill_name(
                             completed_bank_fill.policy,
@@ -2148,7 +2216,9 @@ pub(crate) fn run(
         "original-three"
     }
     .into();
-    value["mtp_repair_mode"] = if input.mtp_batch_repair {
+    value["mtp_repair_mode"] = if input.four_lookahead && input.mtp_batch_repair {
+        "batch-public-fused-four-with-original-tails"
+    } else if input.mtp_batch_repair {
         "batch-public"
     } else {
         "original"
@@ -2168,6 +2238,86 @@ pub(crate) fn run(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn fused_four_batch_repair_registration_requires_exact_composition() {
+        let args = ["lab", "intel", "daslab-speculative-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        let mut base = intel_mtp_env();
+        for (key, value) in [
+            ("KUNO_LAB_TARGET_LOOKAHEAD", "four-public"),
+            ("KUNO_LAB_MTP_REPAIR", "batch-public"),
+            ("KUNO_LAB_FROZEN_GU_MATH", "integer-public"),
+            ("KUNO_LAB_FROZEN_DOWN_MATH", "integer-public"),
+            ("KUNO_LAB_TARGET_PLE_READS", "grouped-public"),
+        ] {
+            base.push((key.into(), value.into()));
+        }
+        for extra in [false, true] {
+            let mut selected = base.clone();
+            if extra {
+                for (key, value) in [
+                    ("KUNO_LAB_MTP_Q8_HEAD", "shared-public"),
+                    ("KUNO_LAB_FROZEN_GU_SCHEDULE", "four-public"),
+                    ("KUNO_LAB_TARGET_STATUS_FOLDS", "grouped-public"),
+                    ("KUNO_LAB_TARGET_QSA", "chronological-public"),
+                    ("KUNO_LAB_TARGET_SUBMISSION_BACKLOG", "queued-2048-public"),
+                ] {
+                    selected.push((key.into(), value.into()));
+                }
+            }
+            let got = registration(&args, selected, build).unwrap();
+            assert!(got.four_lookahead && got.mtp_batch_repair && got.public_grouped_ple_reads);
+            assert!(got.frozen_gu_integer && got.frozen_down_integer);
+            assert_eq!(got.frozen_gu_stride_four, extra);
+        }
+        for key in [
+            "KUNO_LAB_FROZEN_GU_MATH",
+            "KUNO_LAB_FROZEN_DOWN_MATH",
+            "KUNO_LAB_TARGET_PLE_READS",
+        ] {
+            let mut invalid = base.clone();
+            invalid.retain(|(k, _)| k != key);
+            assert!(registration(&args, invalid, build).is_err(), "{key}");
+        }
+        for (key, value) in [
+            ("KUNO_LAB_MTP_PROFILE", "strata-q2"),
+            ("KUNO_LAB_MTP_Q8_HEAD", "broadcast-public"),
+            ("KUNO_LAB_MTP_VOCAB", "english-public"),
+            ("KUNO_LAB_TARGET_IQ4_DECODER", "packed-registers-public"),
+            ("KUNO_LAB_TARGET_GDN", "three-streaming-public"),
+            ("KUNO_LAB_FROZEN_BANK_FILL", "profile-ranked-public"),
+            ("KUNO_LAB_FROZEN_DOWN_ROWS", "four-public"),
+            ("KUNO_LAB_FROZEN_GU_ROWS", "two-public"),
+        ] {
+            let mut invalid = base.clone();
+            invalid.retain(|(k, _)| k != key);
+            invalid.push((key.into(), value.into()));
+            assert!(registration(&args, invalid, build).is_err(), "{key}");
+        }
+        // Removing either new composition selector retains its original scope.
+        let mut scalar_four = base.clone();
+        scalar_four.retain(|(k, _)| k != "KUNO_LAB_MTP_REPAIR" && k != "KUNO_LAB_TARGET_PLE_READS");
+        let got = registration(&args, scalar_four, build).unwrap();
+        assert!(got.four_lookahead && !got.mtp_batch_repair && !got.public_grouped_ple_reads);
+        base.retain(|(k, _)| {
+            !matches!(
+                k.to_str(),
+                Some(
+                    "KUNO_LAB_TARGET_LOOKAHEAD"
+                        | "KUNO_LAB_FROZEN_GU_MATH"
+                        | "KUNO_LAB_FROZEN_DOWN_MATH"
+                        | "KUNO_LAB_TARGET_PLE_READS"
+                )
+            )
+        });
+        let got = registration(&args, base, build).unwrap();
+        assert!(
+            got.mtp_batch_repair
+                && !got.four_lookahead
+                && !got.frozen_gu_integer
+                && !got.frozen_down_integer
+        );
+    }
     #[test]
     fn four_lookahead_registration_preserves_default_and_admits_original_composition() {
         let args = ["lab", "intel", "daslab-speculative-probe"].map(OsString::from);

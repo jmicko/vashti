@@ -579,7 +579,7 @@ pub(crate) fn registration(
             && draft_profile == Profile::SelfContainedQ8
             && !mtp_q8_head_broadcast
             && !mtp_english_vocab
-            && !mtp_batch_repair
+            && (!mtp_batch_repair || public_grouped_ple_reads)
             && !public_iq4_decoder
             && !three_gdn_streaming
             && bank_fill == crate::executor::PublicHostBankFillPolicy::Original,
@@ -1181,6 +1181,7 @@ pub(crate) fn run(
         let runs = (|| -> Result<serde_json::Value> {
             let load_ns = elapsed(whole)?;
             let prefill = Instant::now();
+            let before_prefill_repair = draft.as_ref().map(|draft| draft.traffic());
             let mut carry = Zeroizing::new(vec![0f32; HIDDEN]);
             let mut confirmed = 0u32;
             // Teacher cells contain the real next prompt token and actual
@@ -1430,6 +1431,28 @@ pub(crate) fn run(
                     executor.target_verify4_dense_calls,
                     executor.target_verify4_fused_calls,
                 )?;
+            let initial_prefill_mtp_batch_repair =
+                crate::target_lab_build::public_mtp_batch_repair_traffic_record(
+                    false,
+                    before_prefill_repair.unwrap_or_default(),
+                    draft
+                        .as_ref()
+                        .map(|draft| draft.traffic())
+                        .unwrap_or_default(),
+                    0,
+                    0,
+                )?;
+            let initial_prefill_mtp_fused_four_repair =
+                crate::target_lab_build::FourMtpRepairStatistics::default().record(
+                    false,
+                    initial_four_rows,
+                    &crate::target_lab_build::LookaheadStatistics::default(),
+                    before_prefill_repair.unwrap_or_default(),
+                    draft
+                        .as_ref()
+                        .map(|draft| draft.traffic())
+                        .unwrap_or_default(),
+                )?;
             let selected_four_lookahead = input.four_lookahead;
             if selected_four_lookahead {
                 target.set_public_four_rows(&mut executor, &cancel)?;
@@ -1458,6 +1481,8 @@ pub(crate) fn run(
             let before_phases = target.phase_ns.clone();
             let before_traffic = draft.as_ref().map(|draft| draft.traffic());
             let mut mtp_batch_repair_cells = 0u64;
+            let selected_four_batch_repair = selected_four_lookahead && input.mtp_batch_repair;
+            let mut four_batch_repair = crate::target_lab_build::FourMtpRepairStatistics::default();
             let before_host = crate::target_lab_build::host_io_snapshot();
             let (actual_direct, before_fills) = target.native_public_fill_counters(&executor)?;
             if actual_direct != input.public_existing_fill {
@@ -1632,16 +1657,36 @@ pub(crate) fn run(
                     return Err("language repaired actual cursor rejected".into());
                 }
                 if input.mtp_batch_repair {
-                    draft.repair_accepted_cache(
-                        position,
-                        &inputs[..accepted],
-                        &carry,
-                        &actual_carries,
-                        &cancel,
-                    )?;
-                    mtp_batch_repair_cells = mtp_batch_repair_cells
-                        .checked_add(if count > 1 { accepted - 1 } else { 1 } as u64)
-                        .ok_or("language MTP batch repair appended cell count overflow")?;
+                    let repair_before = draft.traffic();
+                    if selected_four_batch_repair && count == 4 {
+                        draft.repair_accepted_cache_fused_four(
+                            position,
+                            &inputs[..accepted],
+                            &carry,
+                            &actual_carries,
+                            &cancel,
+                        )?;
+                    } else {
+                        draft.repair_accepted_cache(
+                            position,
+                            &inputs[..accepted],
+                            &carry,
+                            &actual_carries,
+                            &cancel,
+                        )?;
+                    }
+                    if selected_four_batch_repair {
+                        four_batch_repair.observe(
+                            count,
+                            accepted,
+                            repair_before,
+                            draft.traffic(),
+                        )?;
+                    } else {
+                        mtp_batch_repair_cells = mtp_batch_repair_cells
+                            .checked_add(if count > 1 { accepted - 1 } else { 1 } as u64)
+                            .ok_or("language MTP batch repair appended cell count overflow")?;
+                    }
                 } else if count > 1 {
                     // Retain first real cell; replace only provisional cells
                     // with actual accepted target carry/token conditioning.
@@ -1711,7 +1756,7 @@ pub(crate) fn run(
             let elapsed_ns = elapsed(start)?;
             let (actual_four_rows, completed_count4_chunks) =
                 target.completed_public_four_rows(&executor)?;
-            let four_lookahead_receipt = lookahead_stats.record(
+            let four_lookahead_receipt = lookahead_stats.record_with_mtp_repair(
                 selected_four_lookahead,
                 actual_four_rows,
                 completed_count4_chunks,
@@ -1723,6 +1768,7 @@ pub(crate) fn run(
                     .target_verify4_fused_calls
                     .checked_sub(before_four_fused)
                     .ok_or("Verify4 fused counter regressed")?,
+                selected_four_batch_repair,
             )?;
             let host_io = crate::target_lab_build::host_io_delta(
                 before_host,
@@ -1741,7 +1787,16 @@ pub(crate) fn run(
                 .map(|(n, v)| (*n, v - before_phases.get(n).copied().unwrap_or(0)))
                 .collect();
             let after_traffic = draft.as_ref().map(|draft| draft.traffic());
-            let mtp_batch_repair_receipt =
+            let mtp_fused_four_repair_receipt = four_batch_repair.record(
+                selected_four_batch_repair,
+                actual_four_rows,
+                &lookahead_stats,
+                before_traffic.unwrap_or_default(),
+                after_traffic.unwrap_or_default(),
+            )?;
+            let mtp_batch_repair_receipt = if selected_four_batch_repair {
+                mtp_fused_four_repair_receipt["original_batched_tails"].clone()
+            } else {
                 crate::target_lab_build::public_mtp_batch_repair_traffic_record(
                     input.mtp_batch_repair,
                     before_traffic.unwrap_or_default(),
@@ -1752,7 +1807,8 @@ pub(crate) fn run(
                         0
                     },
                     mtp_batch_repair_cells,
-                )?;
+                )?
+            };
             let draft_traffic = match (before_traffic, after_traffic) {
                 (Some(before), Some(after)) => Some(serde_json::json!({
                     "host_read_calls":after.host_read_calls-before.host_read_calls,
@@ -1762,9 +1818,15 @@ pub(crate) fn run(
                     "private_upload_bytes":after.private_upload_bytes-before.private_upload_bytes,
                     "minimal_packet_reads":after.minimal_packet_reads-before.minimal_packet_reads,
                     "followup_copy_calls":after.followup_copy_calls-before.followup_copy_calls,
-                    "batched_repair_calls":mtp_batch_repair_receipt["completed_calls"],
-                    "batched_repair_cells":mtp_batch_repair_receipt["appended_cells"],
-                    "batched_repair_fault_gates":mtp_batch_repair_receipt["completed_fault_gates"]})),
+                    "batched_repair_calls":if selected_four_batch_repair {
+                        &mtp_fused_four_repair_receipt["aggregate_completed_calls"]
+                    } else {&mtp_batch_repair_receipt["completed_calls"]},
+                    "batched_repair_cells":if selected_four_batch_repair {
+                        &mtp_fused_four_repair_receipt["aggregate_appended_cells"]
+                    } else {&mtp_batch_repair_receipt["appended_cells"]},
+                    "batched_repair_fault_gates":if selected_four_batch_repair {
+                        &mtp_fused_four_repair_receipt["aggregate_completed_fault_gates"]
+                    } else {&mtp_batch_repair_receipt["completed_fault_gates"]}})),
                 (None, None) if input.decode_mode == DecodeMode::TargetOnly => None,
                 _ => return Err("language actual draft traffic scope changed".into()),
             };
@@ -2055,6 +2117,9 @@ pub(crate) fn run(
                     .into();
             record["mtp_batch_repair_requested"] = input.mtp_batch_repair.into();
             record["mtp_batch_repair"] = mtp_batch_repair_receipt;
+            record["mtp_fused_four_repair"] = mtp_fused_four_repair_receipt;
+            record["initial_prefill_mtp_batch_repair"] = initial_prefill_mtp_batch_repair;
+            record["initial_prefill_mtp_fused_four_repair"] = initial_prefill_mtp_fused_four_repair;
             record["frozen_bank_fill_receipt"] = bank_fill_receipt;
             record["target_four_lookahead_receipt"] = four_lookahead_receipt;
             record["initial_prefill_target_four_lookahead_receipt"] =
@@ -2221,7 +2286,9 @@ pub(crate) fn run(
         "original-three"
     }
     .into();
-    value["mtp_repair_mode"] = if input.mtp_batch_repair {
+    value["mtp_repair_mode"] = if input.four_lookahead && input.mtp_batch_repair {
+        "batch-public-fused-four-with-original-tails"
+    } else if input.mtp_batch_repair {
         "batch-public"
     } else {
         "original"
@@ -2241,6 +2308,86 @@ pub(crate) fn run(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn fused_four_batch_repair_registration_requires_exact_composition() {
+        let args = ["lab", "intel", "daslab-language-probe"].map(OsString::from);
+        let build = crate::target_lab_build::Build::Inline;
+        let mut base = intel_mtp_env();
+        for (key, value) in [
+            ("KUNO_LAB_TARGET_LOOKAHEAD", "four-public"),
+            ("KUNO_LAB_MTP_REPAIR", "batch-public"),
+            ("KUNO_LAB_FROZEN_GU_MATH", "integer-public"),
+            ("KUNO_LAB_FROZEN_DOWN_MATH", "integer-public"),
+            ("KUNO_LAB_TARGET_PLE_READS", "grouped-public"),
+        ] {
+            base.push((key.into(), value.into()));
+        }
+        for extra in [false, true] {
+            let mut selected = base.clone();
+            if extra {
+                for (key, value) in [
+                    ("KUNO_LAB_MTP_Q8_HEAD", "shared-public"),
+                    ("KUNO_LAB_FROZEN_GU_SCHEDULE", "four-public"),
+                    ("KUNO_LAB_TARGET_STATUS_FOLDS", "grouped-public"),
+                    ("KUNO_LAB_TARGET_QSA", "chronological-public"),
+                    ("KUNO_LAB_TARGET_SUBMISSION_BACKLOG", "queued-2048-public"),
+                ] {
+                    selected.push((key.into(), value.into()));
+                }
+            }
+            let got = registration(&args, selected, build).unwrap();
+            assert!(got.four_lookahead && got.mtp_batch_repair && got.public_grouped_ple_reads);
+            assert!(got.frozen_gu_integer && got.frozen_down_integer);
+            assert_eq!(got.frozen_gu_stride_four, extra);
+        }
+        for key in [
+            "KUNO_LAB_FROZEN_GU_MATH",
+            "KUNO_LAB_FROZEN_DOWN_MATH",
+            "KUNO_LAB_TARGET_PLE_READS",
+        ] {
+            let mut invalid = base.clone();
+            invalid.retain(|(k, _)| k != key);
+            assert!(registration(&args, invalid, build).is_err(), "{key}");
+        }
+        for (key, value) in [
+            ("KUNO_LAB_MTP_PROFILE", "strata-q2"),
+            ("KUNO_LAB_MTP_Q8_HEAD", "broadcast-public"),
+            ("KUNO_LAB_MTP_VOCAB", "english-public"),
+            ("KUNO_LAB_TARGET_IQ4_DECODER", "packed-registers-public"),
+            ("KUNO_LAB_TARGET_GDN", "three-streaming-public"),
+            ("KUNO_LAB_FROZEN_BANK_FILL", "profile-ranked-public"),
+            ("KUNO_LAB_FROZEN_DOWN_ROWS", "four-public"),
+            ("KUNO_LAB_FROZEN_GU_ROWS", "two-public"),
+            ("KUNO_LAB_LANGUAGE_DECODE", "target-only-public"),
+        ] {
+            let mut invalid = base.clone();
+            invalid.retain(|(k, _)| k != key);
+            invalid.push((key.into(), value.into()));
+            assert!(registration(&args, invalid, build).is_err(), "{key}");
+        }
+        let mut scalar_four = base.clone();
+        scalar_four.retain(|(k, _)| k != "KUNO_LAB_MTP_REPAIR" && k != "KUNO_LAB_TARGET_PLE_READS");
+        let got = registration(&args, scalar_four, build).unwrap();
+        assert!(got.four_lookahead && !got.mtp_batch_repair && !got.public_grouped_ple_reads);
+        base.retain(|(k, _)| {
+            !matches!(
+                k.to_str(),
+                Some(
+                    "KUNO_LAB_TARGET_LOOKAHEAD"
+                        | "KUNO_LAB_FROZEN_GU_MATH"
+                        | "KUNO_LAB_FROZEN_DOWN_MATH"
+                        | "KUNO_LAB_TARGET_PLE_READS"
+                )
+            )
+        });
+        let got = registration(&args, base, build).unwrap();
+        assert!(
+            got.mtp_batch_repair
+                && !got.four_lookahead
+                && !got.frozen_gu_integer
+                && !got.frozen_down_integer
+        );
+    }
     #[test]
     fn four_completed_statistics_preserve_default_three_and_count_true_four_rows() {
         let phase = crate::target_lab_build::LookaheadPhase {

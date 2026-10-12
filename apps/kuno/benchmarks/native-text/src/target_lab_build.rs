@@ -462,6 +462,151 @@ pub(crate) fn public_mtp_batch_repair_traffic_record(
     )
 }
 
+/// Actual completion deltas from the two distinct leaf methods. This ledger is
+/// used only by the composed four-row controller; the old <=2 receipt stays
+/// authoritative for each original one-to-three-row tail.
+#[derive(Default)]
+pub(crate) struct FourMtpRepairStatistics {
+    four: MtpRepairCompletion,
+    tails: MtpRepairCompletion,
+    tail_expected_cells: u64,
+}
+#[derive(Default, PartialEq, Eq)]
+struct MtpRepairCompletion {
+    calls: u64,
+    cells: u64,
+    fault_gates: u64,
+}
+impl MtpRepairCompletion {
+    fn delta(
+        before: crate::resident_mtp::Traffic,
+        after: crate::resident_mtp::Traffic,
+    ) -> Result<Self, &'static str> {
+        let delta = |a: u64, b: u64| b.checked_sub(a).ok_or("four-row MTP traffic regressed");
+        Ok(Self {
+            calls: delta(before.batched_repair_calls, after.batched_repair_calls)?,
+            cells: delta(before.batched_repair_cells, after.batched_repair_cells)?,
+            fault_gates: delta(
+                before.batched_repair_fault_gates,
+                after.batched_repair_fault_gates,
+            )?,
+        })
+    }
+    fn joined(&self, other: &Self) -> Result<Self, &'static str> {
+        let add = |a: u64, b: u64| a.checked_add(b).ok_or("four-row MTP completion overflow");
+        Ok(Self {
+            calls: add(self.calls, other.calls)?,
+            cells: add(self.cells, other.cells)?,
+            fault_gates: add(self.fault_gates, other.fault_gates)?,
+        })
+    }
+}
+impl FourMtpRepairStatistics {
+    /// Called only after a successful actual leaf repair with actual target
+    /// count/prefix. Counter deltas are observed, never synthesized from intent.
+    pub(crate) fn observe(
+        &mut self,
+        count: usize,
+        accepted: usize,
+        before: crate::resident_mtp::Traffic,
+        after: crate::resident_mtp::Traffic,
+    ) -> Result<(), &'static str> {
+        if !(1..=4).contains(&count) || accepted == 0 || accepted > count {
+            return Err("four-row MTP actual repair range rejected");
+        }
+        let expected_cells = if count == 1 { 1 } else { accepted - 1 } as u64;
+        let completed = MtpRepairCompletion::delta(before, after)?;
+        if completed.calls != 1 || completed.fault_gates != 1 || completed.cells != expected_cells {
+            return Err("four-row MTP actual leaf completion rejected");
+        }
+        if count == 4 {
+            self.four = self.four.joined(&completed)?;
+        } else {
+            let expected = self
+                .tail_expected_cells
+                .checked_add(expected_cells)
+                .ok_or("four-row MTP tail expected cells overflow")?;
+            self.tails = self.tails.joined(&completed)?;
+            self.tail_expected_cells = expected;
+        }
+        Ok(())
+    }
+    pub(crate) fn record(
+        &self,
+        selected: bool,
+        actual_four_rows: bool,
+        lookahead: &LookaheadStatistics,
+        before: crate::resident_mtp::Traffic,
+        after: crate::resident_mtp::Traffic,
+    ) -> Result<serde_json::Value, &'static str> {
+        let aggregate = self.four.joined(&self.tails)?;
+        let (expected_calls, expected_cells, tail_calls) = if selected {
+            let four_prefixes = lookahead
+                .count4_prefixes
+                .iter()
+                .try_fold(0u64, |sum, &n| sum.checked_add(n))
+                .ok_or("four-row MTP accepted-prefix count overflow")?;
+            let four_cells = lookahead
+                .count4_prefixes
+                .iter()
+                .enumerate()
+                .try_fold(0u64, |sum, (prefix, &calls)| {
+                    calls
+                        .checked_mul(prefix as u64)
+                        .and_then(|n| sum.checked_add(n))
+                })
+                .ok_or("four-row MTP accepted-prefix cells overflow")?;
+            let tail_calls = lookahead.rounds_by_count[..3]
+                .iter()
+                .try_fold(0u64, |sum, &n| sum.checked_add(n))
+                .ok_or("four-row MTP tail rounds overflow")?;
+            if !actual_four_rows
+                || lookahead.rounds_by_count[3] == 0
+                || four_prefixes != lookahead.rounds_by_count[3]
+                || self.four.calls != lookahead.rounds_by_count[3]
+                || self.four.cells != four_cells
+                || self.four.fault_gates != self.four.calls
+                || self.four.cells
+                    > self
+                        .four
+                        .calls
+                        .checked_mul(3)
+                        .ok_or("four-row MTP cell bound overflow")?
+                || self.tails.calls != tail_calls
+                || aggregate != MtpRepairCompletion::delta(before, after)?
+            {
+                return Err("four-row MTP actual round/completion aggregate rejected");
+            }
+            (self.four.calls, four_cells, tail_calls)
+        } else {
+            if aggregate != MtpRepairCompletion::default() || self.tail_expected_cells != 0 {
+                return Err("unselected four-row MTP acquired completion credit");
+            }
+            (0, 0, 0)
+        };
+        // Empty tails carry no completion credit even when the composed path
+        // is requested. Nonempty tails retain the byte-identical old <=2 gate.
+        let tails = public_mtp_batch_repair_record(
+            selected && tail_calls > 0,
+            self.tails.calls,
+            self.tails.cells,
+            self.tails.fault_gates,
+            tail_calls,
+            self.tail_expected_cells,
+        )?;
+        Ok(serde_json::json!({"selected":selected,
+            "actual_four_rows":actual_four_rows,
+            "completed_calls":self.four.calls,"appended_cells":self.four.cells,
+            "completed_fault_gates":self.four.fault_gates,
+            "expected_count4_calls":expected_calls,"accepted_prefix_cells":expected_cells,
+            "aggregate_completed_calls":aggregate.calls,
+            "aggregate_appended_cells":aggregate.cells,
+            "aggregate_completed_fault_gates":aggregate.fault_gates,
+            "original_batched_tails_requested":selected,"original_batched_tails":tails,
+            "new_private_owners":0}))
+    }
+}
+
 /// Report actual attached VRAM roots only after the terminal source snapshot
 /// matches. Neither these bytes nor a source-handle clone grant admission or
 /// erasure credit; HOST mirror pages are outside this fixed measurement.
@@ -770,7 +915,7 @@ pub(crate) fn public_four_lookahead(
         None => Ok(false),
         Some(value) if value == "four-public" && scope => Ok(true),
         _ => {
-            Err("four-row lookahead requires canonical original Intel full-Q8 scalar-repair scope")
+            Err("four-row lookahead requires canonical original Intel full-Q8 public repair scope")
         }
     }
 }
@@ -922,6 +1067,24 @@ impl LookaheadStatistics {
             "repair_ns":self.phases.repair_ns,"mtp_repair":if selected {"original-scalar"}else{"existing-controller-choice"},
             "third_draft_independent_cpu_oracle":false}),
         )
+    }
+    pub(crate) fn record_with_mtp_repair(
+        &self,
+        selected: bool,
+        actual: bool,
+        completed: u64,
+        dense_calls: u64,
+        fused_calls: u64,
+        fused_four_repair: bool,
+    ) -> Result<serde_json::Value, &'static str> {
+        let mut record = self.record(selected, actual, completed, dense_calls, fused_calls)?;
+        if fused_four_repair {
+            if !selected {
+                return Err("fused four-row MTP repair requires actual selected four rows");
+            }
+            record["mtp_repair"] = "fused-four-with-original-batched-tails".into();
+        }
+        Ok(record)
     }
 }
 
@@ -1416,6 +1579,215 @@ mod tests {
         invalid = four_phase(3);
         invalid.third_follow_ns = 1;
         assert!(stats.add(true, 3, 3, invalid).is_err());
+    }
+    fn repair_traffic(calls: u64, cells: u64, gates: u64) -> crate::resident_mtp::Traffic {
+        crate::resident_mtp::Traffic {
+            batched_repair_calls: calls,
+            batched_repair_cells: cells,
+            batched_repair_fault_gates: gates,
+            ..crate::resident_mtp::Traffic::default()
+        }
+    }
+    #[test]
+    fn fused_four_repair_receipt_separates_all_prefixes_original_tails_and_total_traffic() {
+        let before = repair_traffic(8, 12, 8);
+        let mut after = before;
+        let mut repairs = FourMtpRepairStatistics::default();
+        let mut rounds = LookaheadStatistics::default();
+        for (count, accepted) in [(4, 1), (4, 2), (4, 3), (4, 4), (1, 1), (2, 1), (3, 3)] {
+            let cells = if count == 1 { 1 } else { accepted - 1 };
+            let next = repair_traffic(
+                after.batched_repair_calls + 1,
+                after.batched_repair_cells + cells as u64,
+                after.batched_repair_fault_gates + 1,
+            );
+            repairs.observe(count, accepted, after, next).unwrap();
+            rounds
+                .add(true, count, accepted, four_phase(count))
+                .unwrap();
+            after = next;
+        }
+        let receipt = repairs.record(true, true, &rounds, before, after).unwrap();
+        assert_eq!(receipt["completed_calls"], 4);
+        assert_eq!(receipt["appended_cells"], 6);
+        assert_eq!(receipt["completed_fault_gates"], 4);
+        assert_eq!(receipt["aggregate_completed_calls"], 7);
+        assert_eq!(receipt["aggregate_appended_cells"], 9);
+        assert_eq!(receipt["aggregate_completed_fault_gates"], 7);
+        assert_eq!(receipt["original_batched_tails"]["completed_calls"], 3);
+        assert_eq!(receipt["original_batched_tails"]["appended_cells"], 3);
+        let lookahead = rounds
+            .record_with_mtp_repair(true, true, 4, 280, 280, true)
+            .unwrap();
+        assert_eq!(
+            lookahead["mtp_repair"],
+            "fused-four-with-original-batched-tails"
+        );
+        assert_eq!(
+            rounds.record(true, true, 4, 280, 280).unwrap()["mtp_repair"],
+            "original-scalar"
+        );
+        assert!(repairs.record(false, true, &rounds, before, after).is_err());
+        assert!(repairs.record(true, false, &rounds, before, after).is_err());
+        for invalid in [
+            repair_traffic(7, 12, 8),
+            repair_traffic(
+                after.batched_repair_calls + 1,
+                after.batched_repair_cells,
+                after.batched_repair_fault_gates,
+            ),
+            repair_traffic(
+                after.batched_repair_calls,
+                after.batched_repair_cells + 1,
+                after.batched_repair_fault_gates,
+            ),
+            repair_traffic(
+                after.batched_repair_calls,
+                after.batched_repair_cells,
+                after.batched_repair_fault_gates + 1,
+            ),
+        ] {
+            assert!(
+                repairs
+                    .record(true, true, &rounds, before, invalid)
+                    .is_err()
+            );
+        }
+        let mut wrong = rounds;
+        wrong.count4_prefixes = [0, 0, 0, 4];
+        assert!(repairs.record(true, true, &wrong, before, after).is_err());
+        wrong.count4_prefixes = [0; 4];
+        assert!(repairs.record(true, true, &wrong, before, after).is_err());
+    }
+    #[test]
+    fn fused_four_repair_observes_only_one_completed_leaf_and_exact_real_cells() {
+        let before = repair_traffic(3, 4, 3);
+        for count in 1..=4 {
+            for accepted in 1..=count {
+                let cells = if count == 1 { 1 } else { accepted - 1 } as u64;
+                for (calls, actual_cells, gates, valid) in [
+                    (4, 4 + cells, 4, true),
+                    (3, 4 + cells, 4, false),
+                    (5, 4 + cells, 4, false),
+                    (4, 5 + cells, 4, false),
+                    (4, 4 + cells, 3, false),
+                    (2, 3, 2, false),
+                ] {
+                    let mut stats = FourMtpRepairStatistics::default();
+                    assert_eq!(
+                        stats
+                            .observe(
+                                count,
+                                accepted,
+                                before,
+                                repair_traffic(calls, actual_cells, gates)
+                            )
+                            .is_ok(),
+                        valid,
+                    );
+                }
+            }
+        }
+        for (count, accepted) in [(0, 1), (5, 1), (4, 0), (4, 5)] {
+            assert!(
+                FourMtpRepairStatistics::default()
+                    .observe(count, accepted, before, before)
+                    .is_err()
+            );
+        }
+    }
+    #[test]
+    fn fused_four_repair_all_four_rounds_allow_no_tail_credit_and_max_three_cells() {
+        let before = repair_traffic(0, 0, 0);
+        let after = repair_traffic(1, 3, 1);
+        let mut stats = FourMtpRepairStatistics::default();
+        stats.observe(4, 4, before, after).unwrap();
+        let mut rounds = LookaheadStatistics::default();
+        rounds.add(true, 4, 4, four_phase(4)).unwrap();
+        let receipt = stats.record(true, true, &rounds, before, after).unwrap();
+        assert_eq!(receipt["appended_cells"], 3);
+        assert_eq!(receipt["original_batched_tails_requested"], true);
+        assert_eq!(receipt["original_batched_tails"]["selected"], false);
+        assert_eq!(receipt["original_batched_tails"]["completed_calls"], 0);
+        assert!(public_mtp_batch_repair_record(true, 1, 3, 1, 1, 3).is_err());
+        // A third cell on the old count3 path is still impossible.
+        assert!(
+            FourMtpRepairStatistics::default()
+                .observe(3, 3, before, after)
+                .is_err()
+        );
+    }
+    #[test]
+    fn fused_four_repair_default_cold_prefill_and_scalar_four_claim_no_completion() {
+        let stats = FourMtpRepairStatistics::default();
+        let rounds = LookaheadStatistics::default();
+        let traffic = repair_traffic(5, 7, 5);
+        for actual_four in [false, true] {
+            let r = stats
+                .record(false, actual_four, &rounds, traffic, traffic)
+                .unwrap();
+            assert_eq!(r["selected"], false);
+            assert_eq!(r["completed_calls"], 0);
+            assert_eq!(r["aggregate_completed_calls"], 0);
+            assert_eq!(r["actual_four_rows"], actual_four);
+        }
+        assert!(stats.record(true, true, &rounds, traffic, traffic).is_err());
+        assert!(
+            rounds
+                .record_with_mtp_repair(false, false, 0, 0, 0, true)
+                .is_err()
+        );
+        assert_eq!(
+            rounds
+                .record_with_mtp_repair(false, false, 0, 0, 0, false)
+                .unwrap(),
+            rounds.record(false, false, 0, 0, 0).unwrap()
+        );
+        assert!(
+            public_mtp_batch_repair_traffic_record(false, traffic, repair_traffic(6, 7, 6), 0, 0)
+                .is_err()
+        );
+    }
+    #[test]
+    fn fused_four_repair_counter_and_prefix_overflow_cannot_acquire_credit() {
+        let before = repair_traffic(0, 0, 0);
+        let mut stats = FourMtpRepairStatistics {
+            four: MtpRepairCompletion {
+                calls: u64::MAX,
+                ..MtpRepairCompletion::default()
+            },
+            ..FourMtpRepairStatistics::default()
+        };
+        assert!(
+            stats
+                .observe(4, 1, before, repair_traffic(1, 0, 1))
+                .is_err()
+        );
+        let mut stats = FourMtpRepairStatistics {
+            tail_expected_cells: u64::MAX,
+            ..FourMtpRepairStatistics::default()
+        };
+        assert!(
+            stats
+                .observe(1, 1, before, repair_traffic(1, 1, 1))
+                .is_err()
+        );
+        let mut rounds = LookaheadStatistics {
+            rounds_by_count: [0, 0, 0, 1],
+            count4_prefixes: [0, 0, 0, u64::MAX],
+            ..LookaheadStatistics::default()
+        };
+        assert!(
+            FourMtpRepairStatistics::default()
+                .record(true, true, &rounds, before, before)
+                .is_err()
+        );
+        rounds.count4_prefixes = [u64::MAX, 1, 0, 0];
+        assert!(
+            FourMtpRepairStatistics::default()
+                .record(true, true, &rounds, before, before)
+                .is_err()
+        );
     }
     fn resident_bank_backing_fixture(
         extra: u64,
