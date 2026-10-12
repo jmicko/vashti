@@ -50405,5 +50405,32 @@
       "Diagnostic cold/warm CPU13 rate is not normal throughput",
       "No production/default/API change"
     ]
+  },
+  "v183_paired32_integer_head_cpu13_acceptance": {
+    "source_commit": "f95caee1655ac3ea3da9243da19a5efceaf1610d",
+    "frozen_sha256": "81f7bb356ac30022cb7fbffa3c97a83c321fcfee4cc99c5ade1b79e6426f60a3",
+    "directory": "/media/jmicko/faststore/kuno-development/native-next-v183-paired-head-four-warm-intel-20261012",
+    "cold_and_warm_full_original_vectors_carries_greedy_accepted": true,
+    "actual_integer_head_cold": {
+      "completed_members": 0,
+      "completed_prepares": 0,
+      "completed_tiles": 0,
+      "expected_members": 0,
+      "expected_prepares": 0,
+      "selected": false,
+      "tiles_per_head": 16
+    },
+    "actual_integer_head_warm": {
+      "completed_members": 16,
+      "completed_prepares": 5,
+      "completed_tiles": 80,
+      "expected_members": 16,
+      "expected_prepares": 5,
+      "selected": true,
+      "tiles_per_head": 16
+    },
+    "full_owners_erased_and_normal_recovery": true,
+    "speed_claim": false,
+    "normal_timing_pending": true
   }
 }

@@ -3,7 +3,7 @@
 Updated2026-10-12: user authorized a new manual optimization pass with Astra
 while the automated goal remains paused. Intel-only target/full-Q8 MTP is the
 current scope. Native30tokens/s remains unachieved; latest normal generation
-is10.7tokens/s. Work checkout is
+is10.88tokens/s. Work checkout is
 `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
 `codex/kuno-native-text`. Canonical Vashti/public APIs/installed services remain
 unchanged; required Vashti changes:none.
@@ -17,21 +17,31 @@ correctness run, not a new whole-model speed claim. Normal services recover
 01:12:45UTC on the same boot, B70used50688000B, Nvidia compute0, no classified
 faults. See `v181_four_lookahead_batched_repair_cpu13_acceptance`.
 
-Selected next experiment: true batched integer output head. Pinned MIT Strata
-fb58e0d SYCL verify.cpp1537-1541 prepares allT head inputs then native_mmvq;
-its wide Q6 implementation uses packed integer dots and reuses weight decode
-across RHS. Kuno's selected Verify3/4 head already shares weight reads across
-RHS but still computes F32 products. New default-off head reuses original
-210-byte Q6 blocks,16 cached tiles and existing GR scratch; no new VRAM owner.
-Use original full CPU13 tolerances, actual separate head counters and
-same-artifact whole-generation comparison before claiming any speed gain.
-The separate leaf/parent/controller contracts are normative when integrated.
-Protected fixed selector is `KUNO_LAB_TARGET_HEAD=integer-public` (17ab067).
-All17 Python admission checks pass and six helper trial labels retain caps.
-Strata's B70 also uses direct pinned-HOST reads rather than its A750 CPU
-fallback. Existing v180 one-layer CPU overlap is not a selected whole-model
-optimization. Host enqueue/phase timers include GPU backpressure and must not
-be treated as device-exclusive kernel times.
+Current manual pass: batched integer output head is source/device accepted, but
+its first16-value variant is neutral in normal generation. v182 on dab13e2,
+frozen SHA4b5f5ece164aefaf5465bf20992e3d49a3dfcf6c07ec9cdec205ba197ff6cf44,
+measures10.882673 original versus10.880799 integer real continuations/s in one
+same-artifact compiler-idle code200 pair. Both199 timed continuations,52 real
+rounds,147of155 actual proposals accepted and5 real recomputations. Full cold/
+warm CPU13 vectors/carries/greedy and full erasure/recovery pass. Do not call
+this a speedup. The paired32 load variant on f95caee / v183 also passes full
+cold/warm CPU13; its normal speed is still pending. Neither head variant is
+selected for installed/default inference.
+
+Pinned MIT Strata fb58e0d SYCL verify.cpp1537-1541 prepares allT head inputs
+then native_mmvq; its wide Q6 kernel uses packed integer dots and32values per
+lane. Kuno's old Verify3/4 head already shares weight reads across RHS. The
+new head retains original210-byte blocks,16cached tiles and existing GR
+scratch; it adds no model owner. Strata B70 also uses direct pinned HOST
+expert reads, and replays captured verification graphs. Next priority is a
+measured bottleneck: default-off fixed-public first-warm-target-round kernel
+profiling on source c742998 / v184. Read
+[kernel diagnostic contract](kuno-native-public-target-profile.md). Root strict
+pure-direct Clippy,52 controller tests and77 protected-scope Python tests pass;
+physical timestamp profile pending. Profiling itself changes scheduling and
+is never a normal-throughput result. Existing host enqueue/phase timers
+include GPU backpressure and are not device-exclusive times. No CPU overlap,
+new hybrid placement, API or frontend work is selected by this experiment.
 
 User steering after the completed three-way comparison: continue optimization
 with target and full Q8 MTP on Intel B70 only; defer Nvidia experiments.
