@@ -384,6 +384,19 @@ impl KernelMetadata for Kernel {
             Self::Router => "NextRouter",
             Self::MatrixVerify3(_) => "NextVerify3Dense",
             Self::MatrixVerify3Finite(_, _) => "NextVerify3DenseFinite",
+            Self::MatrixVerify4(spec) | Self::MatrixVerify4Finite(spec, _)
+                if spec.dtype == 30 && spec.columns == 320 =>
+            {
+                "NextVerify4Bf16Up"
+            }
+            Self::MatrixVerify4(spec) | Self::MatrixVerify4Finite(spec, _)
+                if spec.dtype == 30 && spec.rows == 320 =>
+            {
+                "NextVerify4Bf16Down"
+            }
+            Self::MatrixVerify4(spec) | Self::MatrixVerify4Finite(spec, _) if spec.dtype == 14 => {
+                "NextVerify4Q6"
+            }
             Self::MatrixVerify4(_) => "NextVerify4Dense",
             Self::MatrixVerify4Finite(_, _) => "NextVerify4DenseFinite",
             Self::PublicValues(_) => "NextPublicPackedValues",
