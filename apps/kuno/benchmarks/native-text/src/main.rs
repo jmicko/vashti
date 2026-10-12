@@ -2443,11 +2443,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         let client = WgpuRuntime::client(&selected);
         if public_target_profile {
-            use cubecl_runtime::config::{CubeClRuntimeConfig, RuntimeConfig};
-            // The target logger captured Basic at creation. Keep its prefill paused
-            // and restore the global default before creating the independent draft.
+            // Configuration is process-once. Each client starts paused; only the
+            // target's selected verification round may arm its own logger.
             client.set_profiling_paused(true);
-            CubeClRuntimeConfig::set(CubeClRuntimeConfig::default());
             if client.properties().timing_method != cubecl_common::profile::TimingMethod::Device {
                 return Err("public target profiling requires actual device timing".into());
             }
