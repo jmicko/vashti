@@ -1,12 +1,64 @@
 # Native Kuno text engine: next-model handoff
 
-Updated2026-10-12: user authorized a new manual optimization pass with Astra
-while the automated goal remains paused. Intel-only target/full-Q8 MTP is the
-current scope. Native30tokens/s remains unachieved; latest normal generation
-is10.88tokens/s. Work checkout is
-`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
-`codex/kuno-native-text`. Canonical Vashti/public APIs/installed services remain
-unchanged; required Vashti changes:none.
+Updated2026-10-12 02:12UTC: user requested stopping this manual pass to conserve
+usage. Automated goal remains paused; no queued CPU/GPU work. Normal Kuno,
+Ollama and Vashti respond HTTP200; admission idle/unpaused/no recovery latch,
+B70 used50688000B, Nvidia compute0, all classified faults0, same boot/kernel38.
+Final fresh state: `native-next-manual-pause-20261012.json` under the development
+base. No installed/default/API/frontend/release changes. Required Vashti changes:none.
+Native30tokens/s remains unachieved; latest normal throughput is10.88tokens/s.
+Work checkout: `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
+`codex/kuno-native-text`. Do not resume automatically.
+
+**Measured next target:** v185 onaa90a95 physically profiles exactly the first
+real warm count4 verification using Device timestamps. Full original CPU13,
+actual profile cold0/warm1, all owner closures and recovery pass. The4051 kernel
+spans total250.572596ms: integer GU105.174727ms, DOWN69.876932ms (combined69.86%),
+router MAP audit16.633231ms, other dense15.632980ms, Q6dense9.058119ms,
+GDN8.013746ms, BF16DOWN6.197714ms and BF16UP2.611979ms (1.04%). This is one
+scheduling-altered diagnostic chunk, never a normal-throughput result. Exact
+artifact SHA, scope and evidence: `v185_first_warm_actual_device_kernel_profile`.
+The prior v184 setup failure is separately recorded; CubeCl config is process-once.
+Fix pauses BOTH target and independent draft clients at creation and only arms
+the selected target round. Do not attempt a second global config set.
+
+The tested source-only BF16 two-row candidate a9cff9e is shelved on branch
+`codex/kuno-bf16-up-row-pair`, isolated `kuno-verify4-dense/vashti`. Its34 tests,
+strict direct Clippy/fmt pass, but it is not root-integrated or GPU-tested:
+profiling shows too little time there to prioritize it. Paired32 Q6 head
+remains root-integrated/default-off and CPU13-accepted; normal timing pending.
+
+**Next approved design, not implemented:** compact the original routed group
+indices on GPU for the five frozen Source partitions. Today every shard scans
+or launches the same union and rejects groups belonging elsewhere. Pinned
+Strata SYCL verify.cpp1355-1396 builds separate VRAM/PCIe group plans. First
+candidate is truecount4 only with existing frozenSources/four-members,
+integerGU+DOWN and GUstride4; all tails/other paths remain original. Reserve
+existing GU scratch words6144..6383 as five48-word records: ready,count,
+GU dispatch[80,min(4,count),1], DOWN[320,count,1],40 stable ORIGINAL group IDs.
+GUprepare gains the original MAP binding; after its existing clear/barriers,
+token0 lanes0..4 independently construct disjoint shard records using
+FIRST[0,72,144,288,432]/PARTS[72,72,144,144,80]. Separate DOWNprepare leaves GU
+plans intact. Derive checked12-byte indirect views only from authenticated
+full64KiB GU owner, byte24576+192*shard+8/+20; MAIN already has INDIRECT usage.
+GU keeps ordinal+=4 codebook reuse, maps ordinal to original group, then all
+original payload/member checks and arithmetic; DOWN adds fullGU readonly binding.
+After all DOWN consumers, replacement GUaudit reconstructs each stable list
+from unchanged MAP, validates all headers/counts/triplets/inactive entries,
+stickies the original fault on failure and erases each disjoint record. Preserve
+all other full-owner plane/padding audits. No extra kernel/INFO/model owner/cap
+or CPU route fence should be needed. New private kernel IDs; no API selector.
+Prove source/indirect bounds/barriers and unchanged fullCPU13 before normal
+code timings. Compaction may still be neutral; it has no measured win yet.
+
+At stop, compaction branches in `kuno-cpu-batch-leaf/vashti` and
+`kuno-verify4-dense/vashti` are clean at7c0fbb8; no implementation or jobs remain.
+Parent owns `resident_frozen_sources.rs`; leaf owns frozenGU/DOWNfour kernels.
+Further read-only finding: our two residual Q8 activation planes double packed
+integer dot work versus Strata's one plane without doubling weight bytes.
+A single-plane alternative needs its own numerical gate, never silent tolerance
+relaxation. Packed weights already use u32 loads; byte decoding is not evidence
+of byte-sized PCIe reads. Compaction is the next prioritized experiment.
 
 v181 on8f2a2e4 accepts the pending fused-four MTP repair with original cold and
 selected warm full CPU13 vectors/carries/greedies, actual rejected-prefix
@@ -38,7 +90,7 @@ measured bottleneck: default-off fixed-public first-warm-target-round kernel
 profiling on source c742998 / v184. Read
 [kernel diagnostic contract](kuno-native-public-target-profile.md). Root strict
 pure-direct Clippy,52 controller tests and77 protected-scope Python tests pass;
-physical timestamp profile pending. Profiling itself changes scheduling and
+physical timestamp profile passes in v185 (see current checkpoint above). Profiling itself changes scheduling and
 is never a normal-throughput result. Existing host enqueue/phase timers
 include GPU backpressure and are not device-exclusive times. No CPU overlap,
 new hybrid placement, API or frontend work is selected by this experiment.

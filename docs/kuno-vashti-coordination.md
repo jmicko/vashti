@@ -3988,3 +3988,28 @@ The unused exact persistent144 bank leaf
 (`e16ac7a`) grants no additional physical capacity or slots. No API, installed
 service, canonical Vashti, frontend or release change; required Vashti
 changes:none.
+
+
+### Latest native text checkpoint — paused after measured profiling (2026-10-12)
+
+This supersedes the preceding pending fused-four-repair checkpoint. User stopped
+the Astra manual pass to conserve usage. Native goal remains paused, no queued
+CPU/GPU work. Fused-four repair and optional integer target head pass full
+CPU13/closures. Normal v182 control10.882673 versus integer16head10.880799
+real continuations/s is neutral, with matching generation/acceptance counts.
+Paired32 head passes CPU13 but has no normal-speed result. No30tokens/s claim.
+
+v185 onaa90a95 physically profiles the first warm target round: expert GU/DOWN
+consume69.86% of250.572596ms measured kernel time; BF16UP only1.04%. Shelve
+source-only BF16pair a9cff9e; next approved design is GPU-only compact Source
+group lists, not implemented. Preserve exact routes, original arithmetic,
+full audits and scratch-owner limits. Resume from the
+[owner handoff](kuno-native-next-model-handoff.md) and
+[profile contract](kuno-native-public-target-profile.md), with source/artifact,
+checks, design and limitations recorded there and in the aggregate receipts.
+
+Fresh02:12:05UTC recovery confirms Kuno/Ollama/Vashti HTTP200, admission idle
+and unpaused, B70baseline50688000B, Nvidia compute0 and all classified faults0.
+Same boot/kernel38. All root/agent compiler and GPU jobs are idle. Canonical
+Vashti, installed defaults, public API, frontend and release remain unchanged;
+required Vashti changes:none. Do not automatically resume work.

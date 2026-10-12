@@ -64,3 +64,12 @@ only after validation in the existing MTP branch. The original 48 GiB process
 cap and all ordinary admission scopes remain unchanged. Four new focused Python
 checks and all 73 existing protected-scope checks pass (77 distinct), with diff
 checks clean. Root still owns main registration and the physical runner.
+
+Physical acceptance2026-10-12: v185 onaa90a95 passes original full CPU13 cold
+and warm, actual Device timestamp cold0/warm1, full owning close and recovery.
+The first count4 round records4051 kernels totaling250.572596ms; integer GU
+plus DOWN account for69.86%, BF16UP1.04%. This is a diagnostic scheduling mode,
+not normal speed. v184 before-model second-config-set failure is separately
+recorded; corrected code configures once and pauses BOTH clients at creation.
+Root combined strict direct all-target Clippy passes. Full numeric evidence is
+`v185_first_warm_actual_device_kernel_profile` in the aggregate receipt.

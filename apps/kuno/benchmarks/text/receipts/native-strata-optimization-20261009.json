@@ -50442,5 +50442,102 @@
     "profile_or_performance_claim": false,
     "recovery_complete": true,
     "fix": "aa90a95 keeps Basic configured process-once and pauses both clients at construction; only target first-warm verification can resume"
+  },
+  "v185_first_warm_actual_device_kernel_profile": {
+    "source_commit": "aa90a9506c6f8b76ccbb7755d25aeb8b81e1a310",
+    "frozen_sha256": "987ab9f95ccbd238496494e7e480b6fbfc0f62fd8e08b4c96772182c82959482",
+    "directory": "/media/jmicko/faststore/kuno-development/native-next-v185-original-head-four-profile-intel-20261012",
+    "actual_profile_receipts": [
+      {
+        "completed_target_rounds": 0,
+        "diagnostic_only": false,
+        "normal_throughput_comparable": true,
+        "scope": "disabled",
+        "selected": false,
+        "timing_method": "device"
+      },
+      {
+        "completed_target_rounds": 1,
+        "diagnostic_only": true,
+        "normal_throughput_comparable": false,
+        "scope": "first-warm-target-round-verify-only",
+        "selected": true,
+        "timing_method": "device"
+      }
+    ],
+    "full_original_cpu13_vectors_carries_greedy_and_closure_accepted": true,
+    "profiled_round_kernel_count": 4051,
+    "profiled_round_total_ms": 250.572596,
+    "gpu_family_ms": {
+      "GU_integer_four_stride4": 105.174727,
+      "DOWN_integer_four": 69.876932,
+      "router_four_map_audit": 16.633231,
+      "other_dense_finite": 15.63298,
+      "Q6_dense": 9.058119,
+      "GDN_four_streaming": 8.013746,
+      "BF16_down": 6.197714,
+      "grouped_RMS": 3.599577,
+      "BF16_up": 2.611979
+    },
+    "expert_GU_DOWN_fraction": 0.6986065587156227,
+    "normal_throughput_claim": false,
+    "limitations": [
+      "One first warm CPU13 target verification round, not full normal generation",
+      "Profiling changes submission scheduling and adds timestamp/runtime allocations",
+      "MTP draft, repairs, later rounds and cold/prefill excluded",
+      "The source compaction candidate is designed but not implemented"
+    ]
+  },
+  "manual_pause_20261012_after_profile": {
+    "user_requested_stop": true,
+    "goal_status": "paused",
+    "latest_normal_real_continuations_per_second": 10.882673340960425,
+    "native_30_achieved": false,
+    "final_host_receipt": "/media/jmicko/faststore/kuno-development/native-next-manual-pause-20261012.json",
+    "final_host_state": {
+      "admission": {
+        "action": "status",
+        "state": {
+          "admission": {
+            "active": false,
+            "completed": 59,
+            "paused": false,
+            "recovery_required": false,
+            "rejected": 0,
+            "waiting": 0
+          }
+        },
+        "status": 200
+      },
+      "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+      "http_statuses": {
+        "kuno": 200,
+        "ollama": 200,
+        "vashti": 200
+      },
+      "intel": {
+        "xe_memory": [
+          {
+            "total_bytes": 34242297856,
+            "used_bytes": 50688000
+          }
+        ]
+      },
+      "kernel": "7.0.0-38-generic",
+      "kernel_fault_counts": {
+        "nvidia_xid": 0,
+        "xe_memory_faults": 0,
+        "xe_reset_failures": 0,
+        "xe_timeouts": 0,
+        "xe_wedged": 0
+      },
+      "nvidia_compute_process_count": 0,
+      "nvidia_memory_mib": 544,
+      "time": "2026-10-12T02:12:05.586864+00:00"
+    },
+    "all_cpu_gpu_benchmark_jobs_idle": true,
+    "installed_defaults_api_frontend_unchanged": true,
+    "shelved_bf16_candidate_commit": "a9cff9ef2922eaf79fef8648edd62ff60c53b510",
+    "next_candidate": "GPU-only per-Source stable group-list compaction, original routes and math unchanged; not implemented or tested"
   }
 }
