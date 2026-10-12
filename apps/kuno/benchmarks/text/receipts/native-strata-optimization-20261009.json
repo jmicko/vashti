@@ -50297,5 +50297,113 @@
     "cpu_compilation_may_overlap_correctness_only": true,
     "normal_generation_timing_accepted": false,
     "native_30_tokens_per_second_accepted": false
+  },
+  "v182_batched_integer_head_cpu13_and_neutral_normal_comparison": {
+    "source_commit": "dab13e2ead7d90bc5f652b2a62027aae0815e94f",
+    "frozen_sha256": "4b5f5ece164aefaf5465bf20992e3d49a3dfcf6c07ec9cdec205ba197ff6cf44",
+    "cpu13_directory": "/media/jmicko/faststore/kuno-development/native-next-v182-integer-head-four-warm-intel-20261012",
+    "cpu13_full_original_vectors_carries_greedy_accepted": true,
+    "same_artifact_compiler_idle_ordered_code200_pair": {
+      "original": {
+        "directory": "/media/jmicko/faststore/kuno-development/native-next-v182-original-head-four-code-intel-20261012",
+        "continuation_tokens_per_second": 10.882673340960425,
+        "elapsed_ns": 18285948109,
+        "real_continuations": 199,
+        "emitted": 200,
+        "target_four_lookahead_receipt": {
+          "accepted_third_proposals": 46,
+          "actual_four_rows": true,
+          "actual_third_proposals": 51,
+          "completed_count4_chunks": 51,
+          "count4_accepted_prefixes_1_to_4": [
+            0,
+            3,
+            2,
+            46
+          ],
+          "draft_ns": 3029771759,
+          "earlier_two_proposals_accepted": 48,
+          "mtp_repair": "fused-four-with-original-batched-tails",
+          "repair_ns": 1993620903,
+          "rounds_by_target_count_1_to_4": [
+            0,
+            0,
+            1,
+            51
+          ],
+          "selected": true,
+          "third_conditional_acceptance": 0.9583333333333334,
+          "third_draft_independent_cpu_oracle": false,
+          "third_follow_ns": 950426009,
+          "verify4_dense_calls": 38352,
+          "verify4_fused_calls": 38352,
+          "verify_ns": 13244397849
+        },
+        "target_integer_head_receipt": {
+          "completed_members": 0,
+          "completed_prepares": 0,
+          "completed_tiles": 0,
+          "expected_members": 0,
+          "expected_prepares": 0,
+          "selected": false,
+          "tiles_per_head": 16
+        }
+      },
+      "integer16": {
+        "directory": "/media/jmicko/faststore/kuno-development/native-next-v182-integer-head-four-code-intel-20261012",
+        "continuation_tokens_per_second": 10.880798622711572,
+        "elapsed_ns": 18289098705,
+        "real_continuations": 199,
+        "emitted": 200,
+        "target_four_lookahead_receipt": {
+          "accepted_third_proposals": 46,
+          "actual_four_rows": true,
+          "actual_third_proposals": 51,
+          "completed_count4_chunks": 51,
+          "count4_accepted_prefixes_1_to_4": [
+            0,
+            3,
+            2,
+            46
+          ],
+          "draft_ns": 3045936692,
+          "earlier_two_proposals_accepted": 48,
+          "mtp_repair": "fused-four-with-original-batched-tails",
+          "repair_ns": 1996600930,
+          "rounds_by_target_count_1_to_4": [
+            0,
+            0,
+            1,
+            51
+          ],
+          "selected": true,
+          "third_conditional_acceptance": 0.9583333333333334,
+          "third_draft_independent_cpu_oracle": false,
+          "third_follow_ns": 957419730,
+          "verify4_dense_calls": 37536,
+          "verify4_fused_calls": 37536,
+          "verify_ns": 13228281011
+        },
+        "target_integer_head_receipt": {
+          "completed_members": 219,
+          "completed_prepares": 57,
+          "completed_tiles": 912,
+          "expected_members": 219,
+          "expected_prepares": 57,
+          "selected": true,
+          "tiles_per_head": 16
+        }
+      }
+    },
+    "speed_change_percent": -0.01722663347614173,
+    "significant_speedup_established": false,
+    "same_generation_acceptance_and_repair_counts": true,
+    "normal_admission_and_gpu_baseline_restored_both_arms": true,
+    "limitations": [
+      "One ordered pair, not repeated speed acceptance",
+      "No independent CPU200 oracle",
+      "Diagnostic cold/warm CPU13 rate is not normal throughput",
+      "No production/default/API change"
+    ]
   }
 }
