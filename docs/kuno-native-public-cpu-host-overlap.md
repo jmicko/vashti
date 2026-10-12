@@ -3,11 +3,10 @@
 ## Approved source scope, 2026-10-11
 
 Root approved this contract before implementation. The isolated branch starts
-at root `2dbc897`; the early plan was committed as `49b169b`. Source checks
-are in progress. This remains default-unused and physically unaccepted; no
-GPU/service operation, normal-model activation, installation or speed claim
-accompanies source validation. Root owns fixed main registration and every
-protected physical run.
+at root `2dbc897`; the early plan was committed as `49b169b`. The fixed
+one-layer operator now passes v180 physical acceptance below. It remains
+default-unused, with no whole-model hybrid consumer or installed selection.
+Root owns fixed main registration and every protected physical run.
 
 The first candidate is one fixed original DASLab layer (`layer0`, H2560,
 FF640, 512 original experts), with **exactly three real synthetic input rows**.
@@ -373,3 +372,46 @@ actual cause before retrying. Root verifies same-boot B70baseline50688000B,
 Nvidia compute0, all HTTP200, idle/unpaused/no recovery latch and unchanged
 zero classified GPU faults after failure. No reset or reboot occurred. Exact
 failure/source/recovery is v179_cpu_host_overlap_sparse_negative_failure.
+
+## Completed physical retry, v180, 2026-10-12 UTC
+
+Source `47f4c8e8e9584cd8273e49fa64ae7624f694eeed` hardens finite checks using
+the actual F32 exponent bits and labels each of the unchanged11 negative
+controls. Its seven focused overlap tests and strict direct all-target Clippy,
+formatting and diff checks pass. The old failed negative ordinal was not
+identified; do not claim a proven compiler cause from that earlier failure.
+Frozen direct binary SHA256 is
+`b265f49b8293c478d80b2db5b035ac21725820d0137bf063f3107aad5c2d548b`.
+
+The same protected fixed trial passes original cold full CPU13 vectors,
+original warm token0, all five cases/75 complete arm calls and all11 negative
+controls. Full partial/inactive/padding/source/rank/merged checks remain under
+the original bounds. Maximum partial error is1.0710209608078003e-8 and merged
+error2.7939677238464355e-9. All-GPU new merge matches original rank reduction
+bitwise. All15 operator owners/3866624B,1380 target MAIN owners/828866560B
+and432 attached HOST pages/36147609600B close, with live backing0.
+
+Compiler-idle median complete joined compute/upload/merge/I/O-cleanup timings,
+three rotated warm repetitions each, are:
+
+| HOST ranks/member | Pattern | All GPU ms | Serial CPU/GPU ms | Concurrent ms |
+| --- | --- | ---: | ---: | ---: |
+| 5 | shared | 2.989060 | 4.358870 | 3.904877 |
+| 5 | disjoint | 5.763659 | 6.621065 | 3.892857 |
+| 0 | shared, no CPU work | 1.946533 | 1.883622 | 1.866133 |
+| 10 | shared, no resident work | 3.611554 | 4.339519 | 4.302030 |
+| 3 | sparse shared | 2.553318 | 3.678795 | 2.964400 |
+
+Concurrent computation wins the disjoint case against this original-F32
+control, but loses the other actual mixed cases. Zero/all-HOST cases grant no
+overlap credit. Device timestamp overlap and the selected integer GPU control
+were not measured. Repeated experts/priming condition caches. This is a
+one-layer operator result, not a whole-model throughput gain or permission to
+enable CPU offloading. A model consumer would also add48 real route fences
+and must be evaluated separately.
+
+At00:13:43UTC the same boot recovers B70baseline50688000B, Nvidia compute0,
+all HTTP200, idle/unpaused/no recovery latch and unchanged zero classified
+faults. No reset/reboot is used. Full source/owner/timing/recovery receipts are
+in `v180_attached_cpu_overlap_physical`. The user paused the goal; no further
+GPU optimization is started in this checkpoint.

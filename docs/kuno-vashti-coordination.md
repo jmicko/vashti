@@ -3958,10 +3958,25 @@ See v178_gdn_retained_metadata_cpu13_acceptance and
 v178_gdn_retained_metadata_four_normal. A bounded original three-row CPU-HOST/GPU-resident overlap operator is
 registered on d587d9b (source/admission checks pass). First v179 physical attempt
 fails a sparse negative fault check after earlier case progress; no timing or
-completed numeric credit is claimed. Actual GPU memory/normal services recover
-with no new classified faults. Correction/retry is pending; no model consumer
-or measured gain. An unused fused-four MTP repair extension is separately
-being prepared; old1..3/default paths and all caps stay unchanged. The unused exact persistent144 bank leaf
+completed numeric credit is claimed for that failure. Correction `47f4c8e`
+passes v180 original CPU13/warm token0, all five cases/75 full arm calls,
+all11 negative controls and complete source/owner/recovery checks. Concurrent
+CPU/GPU wins disjoint HOST work against the original-F32 control, but loses
+the other actual mixed cases. No whole-model or selected-integer GPU speed
+claim/consumer is granted. Same-boot normal services/B70baseline50688000B
+recover without a new classified fault, reset or reboot. See the
+[operator contract](kuno-native-public-cpu-host-overlap.md) and full receipt
+`v180_attached_cpu_overlap_physical`.
+
+The user paused the goal2026-10-12UTC: finish the current benchmark/source
+block, then stop. Native30tokens/s remains unachieved; latest whole-model
+result remains10.7tokens/s. Unused fused-four MTP repair leaf `bd46b2b`
+(original `7ea302c`) passes56 focused tests/strict direct Clippy. Approved
+controller composition is still in progress; protected activation and
+unchanged physical CPU13/repair/full timings remain pending. Old1..3/default
+paths, math,42 owners and all caps stay unchanged. Read the
+[owner checkpoint](kuno-native-next-model-handoff.md) before resuming.
+The unused exact persistent144 bank leaf
 (`e16ac7a`) grants no additional physical capacity or slots. No API, installed
 service, canonical Vashti, frontend or release change; required Vashti
 changes:none.

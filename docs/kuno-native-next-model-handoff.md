@@ -1,6 +1,8 @@
 # Native Kuno text engine: next-model handoff
 
-Updated2026-10-11: ACTIVE native Rust optimization, existing30tokens/s goal.
+Updated2026-10-12: user paused the existing30tokens/s goal. Finish the current
+Intel operator retry and approved MTP repair source block, then stop at a clean
+checkpoint; do not start another optimization until resumed.
 Canonical Vashti/public APIs/installed services remain unchanged. Work checkout
 is `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
 `codex/kuno-native-text`. Required Vashti changes:none.
@@ -106,11 +108,40 @@ The separate original three-row CPU-HOST/GPU-resident overlap operator is
 registered on d587d9b, with protected admission19checks and frozen entry8
 negatives passing. First v179 physical run reaches four complete case progress
 sequences then fails sparse negative fault checking; no completed numeric or
-timing receipt is credited. All normal services and actual GPU memory recover,
-with no new faults. Root owns the retry after correction. No model consumer or
-measured gain. The unused fused-four MTP cache-repair extension is separately
-being prepared, preserving original1..3/default behavior and caps. No normal
+timing receipt is credited to that failed run. Finite guards/diagnostics are
+hardened in `47f4c8e`. The v180 retry passes all five cases/75 full arm calls,
+all11 negative controls and complete source/owner/recovery checks. Concurrent
+CPU/GPU is3.893ms versus5.764ms original-F32 GPU for disjoint HOST experts,
+but3.905ms versus2.989ms for shared experts and2.964ms versus2.553ms sparse.
+This grants no whole-model or selected-integer GPU speed claim; no consumer is
+activated. See `v180_attached_cpu_overlap_physical` and the operator contract.
+The unused fused-four MTP cache-repair extension is integrated
+as `bd46b2b` (original `7ea302c`), preserving original1..3/default behavior,
+math, 42 owners and caps. Its56 focused tests and strict direct Clippy pass.
+The approved separate controller composition is still being implemented;
+no protected selector or actual model consumer is selected yet. No normal
 API/installed/default selection is changed.
+
+### Next speed candidate after the paused checkpoint
+
+Read-only inspection of `resident_gr_batch::enqueue_final_head_with_target_capacity`
+finds that `FinalAllRows`/`FinalFourRows` intentionally use the ordinary F32
+`enqueue_batch` output projection, bypassing the accepted count1 integer Q6
+head. A separate real batched integer head for counts3/4 is the next narrow
+candidate after fused-four repair. Its proposed four prepared input planes use
+23040B in existing NORM scratch; authenticate the full owner, lifetimes and
+arithmetic before implementation. No new allocation or device acceptance is
+claimed. Independent packed Q6 fixtures/count1..4 and unchanged full CPU13,
+real rejection repair and paired normal timings remain required.
+
+Target verification accounts for13.2s of the18.5s selected normal generation;
+the head's device share is unmeasured, so this is not a throughput promise.
+Global overlapping HOST I/O timers do not isolate removable device latency.
+More resident experts need a separate capacity/source design: the measured
+actual bank padding is412523648B, and unused conservative admission is not
+physical free VRAM. CPU overlap would add48 actual per-layer routing fences;
+its original-F32 isolated comparison cannot establish a gain for the selected
+integer whole-model path. Do not begin these candidates while the goal is paused.
 
 Accepted GU scheduling physical source isac78f00/v159, frozen binarySHA256
 `c04d49a6ca11115c0bba0b1acc38019ae2f6f4b1f323cc0f9b6608eaa639bc7d`.
