@@ -10,6 +10,7 @@ def selected_target_policy(environment, mtp=False):
     mtp_cache_repair_scope(environment)
     target_four_lookahead_scope(environment)
     target_integer_head_scope(environment)
+    target_profile_scope(environment)
     frozen_down_integer_scope(environment)
     iq4_register_scope(environment)
     target_submission_backlog_scope(environment)
@@ -35,6 +36,9 @@ def selected_target_policy(environment, mtp=False):
     if "KUNO_LAB_TARGET_HEAD" in selected:
         if not mtp or selected.pop("KUNO_LAB_TARGET_HEAD") != "integer-public":
             raise ValueError("Integer target head requires fixed Intel full-Q8 scope")
+    if "KUNO_LAB_TARGET_PROFILE" in selected:
+        if not mtp or selected.pop("KUNO_LAB_TARGET_PROFILE") != "first-warm-chunk":
+            raise ValueError("Target profiling requires fixed warm CPU13 scope")
     if "KUNO_LAB_TARGET_STATUS_FOLDS" in selected:
         if not mtp or selected.pop("KUNO_LAB_TARGET_STATUS_FOLDS") != "grouped-public":
             raise ValueError("Grouped status folds require the canonical fixed public target")
@@ -337,6 +341,26 @@ def target_integer_head_scope(environment):
     if selector not in environment:
         return
     original_frozen_target_scope(environment, selector, "integer-public", full_vocab=True)
+    integer_head_prerequisites(environment)
+
+
+def target_profile_scope(environment):
+    selector = "KUNO_LAB_TARGET_PROFILE"
+    if selector not in environment:
+        return
+    original_frozen_target_scope(environment, selector, "first-warm-chunk", full_vocab=True)
+    integer_head_prerequisites(environment)
+    if (environment.get("KUNO_LAB_SPECULATIVE_PUBLIC_ONLY") != "1"
+            or environment.get("KUNO_LAB_WARM_REPLAY") != "once"
+            or environment.get("KUNO_LAB_TARGET_HEAD") not in (None, "integer-public")
+            or any(key in environment for key in (
+                "KUNO_LAB_LANGUAGE_PUBLIC_ONLY", "KUNO_LAB_LANGUAGE_FIXTURE",
+            ))):
+        raise ValueError("Target profiling requires only the first fixed CPU13 warm verification")
+
+
+def integer_head_prerequisites(environment):
+    """Identical fixed integer scope shared by head selection and CPU13 profiling."""
     required = {
         "KUNO_LAB_MTP_DEVICE": "intel-public",
         "KUNO_LAB_MTP_SWEEPS": "fused",
@@ -605,6 +629,7 @@ def memory_limit(environment, arguments):
     mtp_cache_repair_scope(environment)
     target_four_lookahead_scope(environment)
     target_integer_head_scope(environment)
+    target_profile_scope(environment)
     frozen_down_integer_scope(environment)
     iq4_register_scope(environment)
     target_submission_backlog_scope(environment)

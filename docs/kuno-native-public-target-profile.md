@@ -53,3 +53,11 @@ pass (52 distinct). Strict pure `direct-device` all-target Clippy with warnings
 denied and two compilation workers, scoped formatting and diff checks pass.
 The isolated source base is `e880ab5`; root registration/protected scope and
 physical GPU evidence remain separate. No hardware timing was run here.
+
+Protected runner validation also requires the same canonical integer-head
+prerequisites, warm CPU13 marker and `once` replay; it rejects language markers,
+other modes and non-MTP selection. Profiling is removed from the policy map
+only after validation in the existing MTP branch. The original 48 GiB process
+cap and all ordinary admission scopes remain unchanged. Four new focused Python
+checks and all 73 existing protected-scope checks pass (77 distinct), with diff
+checks clean. Root still owns main registration and the physical runner.
