@@ -629,6 +629,57 @@ impl FinalHeadScratch<'_> {
         )
     }
 }
+
+/// A distinct all-row capability, minted after FinalAllRows/FinalFourRows mix
+/// and its status folds. Constructor capacity is independent of active count;
+/// it authorizes the same dead full NORM owner, never a narrowed plane view.
+pub struct BatchedFinalHeadScratch<'a> {
+    arena: &'a PrivateArena,
+    ids: Zeroizing<[BufferId; 4]>,
+    kind: Kind,
+    count: usize,
+    four_reserved: bool,
+}
+impl BatchedFinalHeadScratch<'_> {
+    pub(crate) fn into_planes(
+        self,
+        arena: &PrivateArena,
+        input: BufferId,
+        output: BufferId,
+        fault: BufferId,
+        spans: &BatchSpans,
+    ) -> Result<(BufferId, bool)> {
+        batched_final_head_roles(self.kind, self.count, self.four_reserved, spans)?;
+        let planes = final_head_roles(
+            &self.ids,
+            std::ptr::eq(self.arena, arena),
+            input,
+            output,
+            fault,
+        )?;
+        Ok((planes, self.four_reserved))
+    }
+}
+fn batched_final_head_roles(
+    kind: Kind,
+    count: usize,
+    four_reserved: bool,
+    spans: &BatchSpans,
+) -> Result<()> {
+    let expected = final_head_spans(kind, count, 2560, 248320)?;
+    if !matches!(kind, Kind::FinalAllRows | Kind::FinalFourRows)
+        || (kind == Kind::FinalFourRows && (!four_reserved || count != 4))
+        || spans.count() != expected.count()
+        || spans.packed_first() != 0
+        || spans.input_first() != expected.input_first()
+        || spans.input_stride() != expected.input_stride()
+        || spans.output_first() != expected.output_first()
+        || spans.output_stride() != expected.output_stride()
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    Ok(())
+}
 fn final_head_roles(
     ids: &[BufferId; 4],
     same_arena: bool,
@@ -764,16 +815,32 @@ impl Prepared<'_, '_> {
         let all_rows = matches!(self.kind, Kind::FinalAllRows | Kind::FinalFourRows);
         let spans = final_head_spans(self.kind, self.count[0], width, vocabulary)?;
         if all_rows {
-            // Explicit original arithmetic for all-row verification, even for
-            // a count1 call; do not lend NORM to the alternative integer head.
-            projector.enqueue_batch(
+            let scratch = BatchedFinalHeadScratch {
+                arena: self.arena,
+                ids: Zeroizing::new([
+                    self.workspace.ids[MIXED],
+                    self.workspace.ids[NORM],
+                    logits,
+                    self.fault,
+                ]),
+                kind: self.kind,
+                count: self.count[0],
+                four_reserved,
+            };
+            // Default projectors retain original arithmetic. The explicit
+            // integer variant consumes every prepared row before full erase.
+            let used = projector.enqueue_batched_final_head(
                 BoundProjection { tensor, matrix },
                 self.arena,
                 self.workspace.ids[MIXED],
                 logits,
                 &spans,
+                scratch,
                 self.cancel,
             )?;
+            if used {
+                u::zero(self.arena, self.workspace.ids[NORM])?;
+            }
             u::cancel(self.cancel)?;
             self.consumed = true;
             self.workspace.phase = Phase::Available;
@@ -973,6 +1040,62 @@ mod tests {
         let actual = 1 + tiles + 1;
         let admitted = 2 * tiles + 1;
         assert!(actual <= admitted);
+    }
+    #[test]
+    fn batched_q6_capability_binds_real_count_and_constructor_capacity() {
+        for count in 1..=3 {
+            let spans = final_head_spans(Kind::FinalAllRows, count, 2560, 248320).unwrap();
+            for reserved in [false, true] {
+                batched_final_head_roles(Kind::FinalAllRows, count, reserved, &spans).unwrap();
+            }
+            assert!(batched_final_head_roles(Kind::FinalFourRows, count, true, &spans).is_err());
+            let wrong = BatchSpans::new(count, 0, 1, 2560, 0, 248320);
+            assert!(batched_final_head_roles(Kind::FinalAllRows, count, false, &wrong).is_err());
+        }
+        let four = final_head_spans(Kind::FinalFourRows, 4, 2560, 248320).unwrap();
+        batched_final_head_roles(Kind::FinalFourRows, 4, true, &four).unwrap();
+        assert!(batched_final_head_roles(Kind::FinalFourRows, 4, false, &four).is_err());
+        assert!(batched_final_head_roles(Kind::FinalAllRows, 4, true, &four).is_err());
+        assert!(batched_final_head_roles(Kind::Final, 1, false, &four).is_err());
+        for wrong in [
+            BatchSpans::new(4, 1, 0, 2560, 0, 248320),
+            BatchSpans::new(4, 0, 0, 2561, 0, 248320),
+            BatchSpans::new(4, 0, 0, 2560, 1, 248320),
+            BatchSpans::new(4, 0, 0, 2560, 0, 248321),
+        ] {
+            assert!(batched_final_head_roles(Kind::FinalFourRows, 4, true, &wrong).is_err());
+        }
+    }
+    #[test]
+    fn batched_q6_four_planes_fit_full_original_norm_with_no_extra_charge() {
+        let layout = Layout::new(4, 2560, 320).unwrap();
+        let requests = layout.requests().unwrap();
+        let norm = layout.words().unwrap()[NORM];
+        let spec = crate::q6_integer_matvec::Spec::new(16384, 2560).unwrap();
+        assert_eq!(norm, 81920);
+        assert_eq!(requests[NORM], 524288);
+        for count in 1..=4 {
+            assert_eq!(count * spec.plane_words(), count * 1440);
+            assert!(count * spec.plane_words() < norm);
+            let owner = final_head_owner_words(
+                if count == 4 {
+                    Kind::FinalFourRows
+                } else {
+                    Kind::FinalAllRows
+                },
+                count,
+                248320,
+                count == 4,
+            )
+            .unwrap();
+            assert_eq!(owner, if count == 4 { 993280 } else { 744960 });
+        }
+        let tiles = 248320usize.div_ceil(spec.rows());
+        let actual = 1 + tiles + 1;
+        let admitted = 2 * tiles + 1;
+        assert_eq!((actual, admitted), (18, 33));
+        assert!(actual * 2048 < admitted * 2048);
+        assert_eq!(layout.requests().unwrap(), requests);
     }
     #[test]
     fn full_owner_proof_rejects_interior_resource_and_hidden_physical_tail() {

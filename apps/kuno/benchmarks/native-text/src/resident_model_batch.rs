@@ -1629,6 +1629,20 @@ fn four_rows_selection_allowed(
 ) -> bool {
     accepted_prefill && !request_active && policy == NativeDecodeKernels::Chunk
 }
+fn q6_verify_head_selection_allowed(
+    policy: NativeDecodeKernels,
+    accepted_prefill: bool,
+    request_active: bool,
+) -> bool {
+    accepted_prefill
+        && !request_active
+        && matches!(
+            policy,
+            NativeDecodeKernels::Chunk
+                | NativeDecodeKernels::ThreeGdn
+                | NativeDecodeKernels::FourGdn
+        )
+}
 fn next_three_gdn_chunks(policy: NativeDecodeKernels, current: u64) -> Result<u64> {
     if policy == NativeDecodeKernels::ThreeGdn {
         current.checked_add(1).ok_or(Error::ArithmeticOverflow)
@@ -3424,6 +3438,77 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         self.admission.end_request_io_reuse()
     }
 
+    /// Activate only after accepted original prefill and actual source import.
+    /// This does not replace the original count1 head or reserve another owner.
+    #[allow(dead_code)] // Dedicated controller is integrated separately.
+    pub(crate) fn activate_public_q6_integer_verify_head(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        u::cancel(cancel)?;
+        self.completed_native_projection_boundary(executor)?;
+        let native = self.native_batch.as_ref().ok_or(error())?;
+        let accepted_prefill = match (
+            &native.public_target_request_io,
+            &native.public_language_request_io,
+        ) {
+            (Some(_), None) => {
+                self.context == 13
+                    && self.position == 1
+                    && native
+                        .public_warm_replay
+                        .as_ref()
+                        .is_some_and(|p| p.reset_consumed())
+            }
+            (None, Some(permit)) => {
+                permit
+                    .identity(self.graph.binding_id(), self.context)
+                    .is_ok()
+                    && permit.validate_begin(self.position, false).is_ok()
+            }
+            _ => false,
+        };
+        if !q6_verify_head_selection_allowed(
+            native.decode_kernels()?,
+            accepted_prefill,
+            self.admission.request_io_reuse_active(),
+        ) || !native.moe.frozen_host_sources_enabled()
+            || native.moe.frozen_gu_integer_owner_id().is_none()
+            || !native.moe.frozen_host_source_down_integer_selected()
+            || !native.ple.public_grouped_reads()
+        {
+            return Err(error());
+        }
+        let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            executor.activate_public_q6_integer_verify_head()?;
+            u::cancel(cancel)
+        }));
+        match attempt {
+            Ok(Ok(())) => Ok(()),
+            _ => {
+                self.admission
+                    .sequence_poison()
+                    .store(true, Ordering::Release);
+                self.poisoned = true;
+                executor.poison_resident();
+                let _ = self.close();
+                let _ = executor.close_transient_resident();
+                Err(error())
+            }
+        }
+    }
+    /// Actual enqueue counters are publishable only at the unchanged completed
+    /// all-family boundary. Prefix rollback never undoes completed head work.
+    #[allow(dead_code)] // Dedicated controller is integrated separately.
+    pub(crate) fn completed_public_q6_integer_verify_head(
+        &self,
+        executor: &GpuExecutor<'f>,
+    ) -> Result<(bool, u64, u64, u64)> {
+        self.completed_native_projection_boundary(executor)?;
+        executor.public_q6_integer_verify_head()
+    }
+
     /// Explicit reserved count1 lab only. The original completed all-family
     /// boundary remains the sole authority; this performs no inference/commit.
     pub(crate) fn set_lab_count1_cpu_misses(
@@ -5044,6 +5129,30 @@ impl Workspace {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn q6_verifier_activation_keeps_original_prefill_and_request_boundary() {
+        use super::{NativeDecodeKernels as K, q6_verify_head_selection_allowed};
+        for policy in [
+            K::Chunk,
+            K::ThreeGdn,
+            K::FourGdn,
+            K::SingleAll,
+            K::SingleGdn,
+            K::SingleMoe,
+            K::SingleQ4All,
+        ] {
+            for accepted in [false, true] {
+                for active in [false, true] {
+                    assert_eq!(
+                        q6_verify_head_selection_allowed(policy, accepted, active),
+                        accepted
+                            && !active
+                            && matches!(policy, K::Chunk | K::ThreeGdn | K::FourGdn)
+                    );
+                }
+            }
+        }
+    }
     #[test]
     fn four_rows_policy_and_actual_completion_preserve_original_prefill_and_repair_tails() {
         use NativeDecodeKernels::{Chunk, FourGdn, ThreeGdn};

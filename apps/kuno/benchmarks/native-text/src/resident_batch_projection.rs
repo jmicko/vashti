@@ -67,6 +67,22 @@ pub trait BatchedResidentProjector {
         self.enqueue_batch(projection, arena, input, output, spans, cancel)?;
         Ok(false)
     }
+    /// Separate sealed all-row scratch. The default retains original F32 head
+    /// arithmetic; true requires the GR owner to clear its entire NORM page.
+    #[allow(clippy::too_many_arguments)]
+    fn enqueue_batched_final_head(
+        &mut self,
+        projection: BoundProjection<'_>,
+        arena: &PrivateArena,
+        input: BufferId,
+        output: BufferId,
+        spans: &BatchSpans,
+        _scratch: crate::resident_gr::batch::BatchedFinalHeadScratch<'_>,
+        cancel: &AtomicBool,
+    ) -> Result<bool> {
+        self.enqueue_batch(projection, arena, input, output, spans, cancel)?;
+        Ok(false)
+    }
 }
 
 #[allow(dead_code)]
@@ -176,6 +192,57 @@ impl BatchedResidentProjector for ResidentBatchProjection<'_, '_> {
         // original whole-model completion/commit/erase remains the caller's.
         unsafe {
             self.executor.enqueue_q6_integer_final_head(
+                projection.tensor,
+                &owners[0],
+                &owners[1],
+                &owners[2],
+                &owners[3],
+                spans,
+                cancel,
+            )?;
+        }
+        u::cancel(cancel)?;
+        Ok(true)
+    }
+    fn enqueue_batched_final_head(
+        &mut self,
+        projection: BoundProjection<'_>,
+        arena: &PrivateArena,
+        input: BufferId,
+        output: BufferId,
+        spans: &BatchSpans,
+        scratch: crate::resident_gr::batch::BatchedFinalHeadScratch<'_>,
+        cancel: &AtomicBool,
+    ) -> Result<bool> {
+        if !self.executor.q6_integer_verify_head {
+            self.enqueue_batch(projection, arena, input, output, spans, cancel)?;
+            return Ok(false);
+        }
+        u::cancel(cancel)?;
+        self.executor
+            .check_client(arena.client().map_err(u::fault)?)?;
+        let (planes, four_reserved) =
+            scratch.into_planes(arena, input, output, self.fault, spans)?;
+        if four_reserved != self.executor.target_four_rows_reserved
+            || u::words(arena, self.fault)? != 1
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        let ids = [input, planes, output, self.fault];
+        let mut owners = Vec::with_capacity(ids.len());
+        for id in ids {
+            owners.push(crate::resident_gr::batch::full_private(
+                arena,
+                id,
+                u::words(arena, id)?,
+            )?);
+        }
+        crate::resident_gr::batch::physical(arena, &owners)?;
+        // SAFETY: consumed authentic all-row capability, actual distinct full
+        // private owners on the admitted stream, exact immutable constructor
+        // capacity, and original GR completion/erasure retained by the caller.
+        unsafe {
+            self.executor.enqueue_q6_integer_verify_head(
                 projection.tensor,
                 &owners[0],
                 &owners[1],

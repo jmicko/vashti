@@ -892,6 +892,10 @@ pub struct GpuExecutor<'a> {
     #[allow(dead_code)] // Inert until parent wires the separate original-MoE leaf.
     pub(crate) q3_shared_original_moe: bool,
     pub(crate) q6_integer_head: bool,
+    pub(crate) q6_integer_verify_head: bool,
+    pub(crate) q6_integer_verify_head_prepares: u64,
+    pub(crate) q6_integer_verify_head_tiles: u64,
+    pub(crate) q6_integer_verify_head_members: u64,
     pub(crate) resident_router_reserved: bool,
     pub(crate) target_rows_reserved: bool,
     pub(crate) target_four_rows_reserved: bool,
@@ -1013,6 +1017,70 @@ fn validate_q6_final_head(
     {
         return Err(Error::InvalidFormat(
             "Q6 integer fixed-public final head contract",
+        ));
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_q6_verify_head(
+    profile: expert_banks::OriginalPackedProfile,
+    admitted: bool,
+    member_capacity: usize,
+    tile: usize,
+    four_reserved: bool,
+    four_active: bool,
+    name: &str,
+    dtype: u32,
+    columns: usize,
+    rows: usize,
+    experts: usize,
+    spans: &quant_matvec::matmul::BatchSpans,
+) -> Result<()> {
+    if profile != expert_banks::OriginalPackedProfile::DaslabIq3
+        || !admitted
+        || member_capacity != 8
+        || tile != 8
+        || four_active && !four_reserved
+        || !(1..=if four_active { 4 } else { 3 }).contains(&spans.count())
+        || name != "output.weight"
+        || dtype != 14
+        || columns != 2560
+        || rows != 248320
+        || experts != 1
+        || spans.packed_first() != 0
+        || spans.input_first() != 0
+        || spans.input_stride() != 2560
+        || spans.output_first() != 0
+        || spans.output_stride() != 248320
+    {
+        return Err(Error::InvalidFormat(
+            "Q6 integer fixed-public verifier head contract",
+        ));
+    }
+    Ok(())
+}
+fn activate_q6_verify_head(previous: bool, scope: bool) -> Result<bool> {
+    if previous || !scope {
+        return Err(Error::InvalidFormat(
+            "Q6 verifier head immutable public selection",
+        ));
+    }
+    Ok(true)
+}
+fn validate_q6_verify_counters(
+    selected: bool,
+    prepares: u64,
+    tiles: u64,
+    members: u64,
+) -> Result<()> {
+    if !selected && (prepares != 0 || tiles != 0 || members != 0)
+        || tiles != prepares.checked_mul(16).ok_or(Error::ArithmeticOverflow)?
+        || members < prepares
+        || members > prepares.checked_mul(4).ok_or(Error::ArithmeticOverflow)?
+    {
+        return Err(Error::InvalidFormat(
+            "Q6 verifier head actual completed counters",
         ));
     }
     Ok(())
@@ -1141,6 +1209,10 @@ impl<'a> GpuExecutor<'a> {
             q3_integer_moe: false,
             q3_shared_original_moe: false,
             q6_integer_head: false,
+            q6_integer_verify_head: false,
+            q6_integer_verify_head_prepares: 0,
+            q6_integer_verify_head_tiles: 0,
+            q6_integer_verify_head_members: 0,
             resident_router_reserved: false,
             target_rows_reserved: false,
             target_four_rows_reserved: false,
@@ -1315,6 +1387,10 @@ impl<'a> GpuExecutor<'a> {
         self.target_frozen_down_integer_reserved = false;
         self.target_iq4_decoder = crate::next_shared::Iq4Decoder::Original;
         self.target_iq4_decoder_calls = 0;
+        self.q6_integer_verify_head = false;
+        self.q6_integer_verify_head_prepares = 0;
+        self.q6_integer_verify_head_tiles = 0;
+        self.q6_integer_verify_head_members = 0;
         self.batch_moe = None;
         self.bank_reserved = 0;
         // All previous commands completed before public cache handles release.
@@ -2001,6 +2077,65 @@ impl<'a> GpuExecutor<'a> {
             .active()?;
         Ok((self.target_iq4_decoder, self.target_iq4_decoder_calls))
     }
+    fn q6_verify_head_scope(&self) -> bool {
+        self.target_rows_reserved
+            && self.target_verify3_dense
+            && self.target_verify3_fused
+            && self.token_io_checkpoint
+            && self.resident_banks_frozen
+            && self.target_frozen_host_source_identity.is_some()
+            && self.target_frozen_gu_integer_reserved
+            && self.target_frozen_down_integer_reserved
+            && self.packed_profile == expert_banks::OriginalPackedProfile::DaslabIq3
+            && self.bank_slots == 144
+            && self.native_projection_member_capacity() == 8
+            && self.native_projection_tile() == 8
+            && !self.q6_integer_head
+            && self.target_iq4_decoder == crate::next_shared::Iq4Decoder::Original
+    }
+    /// Called only by the completed model boundary wrapper, after original
+    /// prefill and actual source attachment; selection never allocates owners.
+    pub(crate) fn activate_public_q6_integer_verify_head(&mut self) -> Result<()> {
+        self.check_target_rows_policy()?;
+        self.resident_admission
+            .as_ref()
+            .ok_or(Error::InvalidBufferLength)?
+            .active()?;
+        validate_q6_verify_counters(
+            self.q6_integer_verify_head,
+            self.q6_integer_verify_head_prepares,
+            self.q6_integer_verify_head_tiles,
+            self.q6_integer_verify_head_members,
+        )?;
+        self.q6_integer_verify_head = activate_q6_verify_head(
+            self.q6_integer_verify_head,
+            self.q6_verify_head_scope()
+                && self
+                    .client
+                    .public_target_request_io_configured()
+                    .map_err(|_| Error::InvalidFormat("Q6 verifier target runtime selection"))?,
+        )?;
+        Ok(())
+    }
+    pub(crate) fn public_q6_integer_verify_head(&self) -> Result<(bool, u64, u64, u64)> {
+        self.check_target_rows_policy()?;
+        self.resident_admission
+            .as_ref()
+            .ok_or(Error::InvalidBufferLength)?
+            .active()?;
+        validate_q6_verify_counters(
+            self.q6_integer_verify_head,
+            self.q6_integer_verify_head_prepares,
+            self.q6_integer_verify_head_tiles,
+            self.q6_integer_verify_head_members,
+        )?;
+        Ok((
+            self.q6_integer_verify_head,
+            self.q6_integer_verify_head_prepares,
+            self.q6_integer_verify_head_tiles,
+            self.q6_integer_verify_head_members,
+        ))
+    }
     /// Construction-only capability; this never activates a four-row chunk.
     #[allow(dead_code)] // Construction-only until the isolated four-row parent is integrated.
     pub(crate) fn reserve_public_four_rows(&mut self) -> Result<()> {
@@ -2025,6 +2160,14 @@ impl<'a> GpuExecutor<'a> {
         Ok(())
     }
     pub(crate) fn check_target_rows_policy(&self) -> Result<()> {
+        if self.q6_integer_verify_head && !self.q6_verify_head_scope()
+            || !self.q6_integer_verify_head
+                && (self.q6_integer_verify_head_prepares != 0
+                    || self.q6_integer_verify_head_tiles != 0
+                    || self.q6_integer_verify_head_members != 0)
+        {
+            return Err(Error::InvalidFormat("Q6 verifier head actual source scope"));
+        }
         if self
             .resident_admission
             .as_ref()
@@ -2207,6 +2350,10 @@ impl<'a> GpuExecutor<'a> {
             || !self.banks.is_empty()
             || self.target_iq4_decoder != crate::next_shared::Iq4Decoder::Original
             || self.target_iq4_decoder_calls != 0
+            || self.q6_integer_verify_head
+            || self.q6_integer_verify_head_prepares != 0
+            || self.q6_integer_verify_head_tiles != 0
+            || self.q6_integer_verify_head_members != 0
         {
             return Err(Error::InvalidFormat("resident executor already used"));
         }
@@ -3324,6 +3471,160 @@ impl<'a> GpuExecutor<'a> {
         Ok(())
     }
 
+    /// Fixed-public all-row verifier head only, using the unchanged sixteen tiles. The sealed GR caller
+    /// lends its dead full NORM page; no owner, cache format/key or allocation
+    /// changes. This explicitly changes activation/reduction arithmetic.
+    /// # Safety
+    /// x/planes/y/fault are distinct complete same-stream private arena owners,
+    /// frozen through all queued tiles and the original whole-model proof.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) unsafe fn enqueue_q6_integer_verify_head(
+        &mut self,
+        tensor: TensorView<'_>,
+        x: &Handle,
+        planes: &Handle,
+        y: &Handle,
+        fault: &Handle,
+        spans: &quant_matvec::matmul::BatchSpans,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        use crate::q6_integer_matvec::{
+            Spec,
+            batch::{self as q6, PrepareSpans, ProjectSpans},
+        };
+        self.check_target_rows_policy()?;
+        if !self.q6_integer_verify_head || !tensor.belongs_to(self.model) {
+            return Err(Error::InvalidFormat("Q6 integer verifier head selection"));
+        }
+        self.model.verify_file_unchanged()?;
+        let matrix = Matrix::new(tensor)?;
+        validate_q6_verify_head(
+            self.packed_profile,
+            self.resident_admission.is_some() && self.transient_resident.is_some(),
+            self.native_projection_members,
+            self.native_projection_tile(),
+            self.target_four_rows_reserved,
+            self.target_four_rows_active,
+            tensor.info().name(),
+            tensor.info().dtype().gguf_id(),
+            matrix.inputs(),
+            matrix.outputs(),
+            matrix.experts(),
+            spans,
+        )?;
+        self.resident_admission
+            .as_ref()
+            .ok_or(Error::InvalidBufferLength)?
+            .active()?;
+        let mut extents = [0usize; 4];
+        for (h, extent) in [x, planes, y, fault].into_iter().zip(&mut extents) {
+            if h.stream != x.stream
+                || h.offset_start.unwrap_or(0) != 0
+                || h.offset_end.unwrap_or(0) != 0
+                || h.size() != h.size_in_used()
+                || !h.size().is_multiple_of(4)
+                || h.size() / 4 > u32::MAX as u64
+            {
+                return Err(Error::InvalidBufferLength);
+            }
+            *extent = h.size() as usize / 4;
+        }
+        let prepare_spec = Spec::new(16384, 2560)?;
+        let prepare_spans = PrepareSpans {
+            count: spans.count(),
+            input_first: spans.input_first(),
+            input_stride: spans.input_stride(),
+            planes_first: 0,
+            planes_stride: prepare_spec.plane_words(),
+            fault_first: 0,
+        };
+        prepare_spans.validate(prepare_spec, [extents[0], extents[1], extents[3]])?;
+        // Exact unchanged cache partition: fifteen16384-row tiles and2560
+        // final rows. Prove every predicted source/output before preparation.
+        for first in (0..248320).step_by(16384) {
+            let rows = 16384.min(248320 - first);
+            let spec = Spec::new(rows, 2560)?;
+            ProjectSpans {
+                count: spans.count(),
+                packed_first: 0,
+                planes_first: 0,
+                planes_stride: prepare_spec.plane_words(),
+                output_first: first,
+                output_stride: spans.output_stride(),
+                fault_first: 0,
+                matrix_first: 0,
+                matrix_rows: 248320,
+            }
+            .validate(
+                spec,
+                spec.weight_bytes(),
+                [extents[1], extents[2], extents[3]],
+            )?;
+        }
+        if cancel.load(Ordering::Acquire) {
+            return Err(Error::InvalidFormat("Q6 integer verifier head cancelled"));
+        }
+        let members = self
+            .q6_integer_verify_head_members
+            .checked_add(spans.count() as u64)
+            .ok_or(Error::ArithmeticOverflow)?;
+        let prepares = self
+            .q6_integer_verify_head_prepares
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow)?;
+        q6::prepare(
+            &self.client,
+            prepare_spec,
+            x.clone(),
+            planes.clone(),
+            fault.clone(),
+            prepare_spans,
+        )?;
+        self.q6_integer_verify_head_prepares = prepares;
+        for first in (0..248320).step_by(16384) {
+            if cancel.load(Ordering::Acquire) {
+                return Err(Error::InvalidFormat("Q6 integer verifier head cancelled"));
+            }
+            let rows = 16384.min(248320 - first);
+            let spec = Spec::new(rows, 2560)?;
+            let packet = ProjectSpans {
+                count: spans.count(),
+                packed_first: 0,
+                planes_first: 0,
+                planes_stride: prepare_spec.plane_words(),
+                output_first: first,
+                output_stride: spans.output_stride(),
+                fault_first: 0,
+                matrix_first: 0,
+                matrix_rows: 248320,
+            };
+            let (weights, words) = self.weight(tensor, 0, first, rows)?;
+            packet.validate(spec, words * 4, [extents[1], extents[2], extents[3]])?;
+            let tiles = self
+                .q6_integer_verify_head_tiles
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow)?;
+            let calls = self.calls.checked_add(1).ok_or(Error::ArithmeticOverflow)?;
+            q6::project(
+                &self.client,
+                spec,
+                weights,
+                planes.clone(),
+                y.clone(),
+                fault.clone(),
+                packet,
+                first + rows == 248320,
+            )?;
+            self.q6_integer_verify_head_tiles = tiles;
+            self.calls = calls;
+        }
+        if cancel.load(Ordering::Acquire) {
+            return Err(Error::InvalidFormat("Q6 integer verifier head cancelled"));
+        }
+        self.q6_integer_verify_head_members = members;
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     unsafe fn enqueue_matrix_inner(
         &mut self,
@@ -3659,6 +3960,10 @@ impl Drop for GpuExecutor<'_> {
         self.target_frozen_down_integer_reserved = false;
         self.target_iq4_decoder = crate::next_shared::Iq4Decoder::Original;
         self.target_iq4_decoder_calls = 0;
+        self.q6_integer_verify_head = false;
+        self.q6_integer_verify_head_prepares = 0;
+        self.q6_integer_verify_head_tiles = 0;
+        self.q6_integer_verify_head_members = 0;
         self.bank_reserved = 0;
         self.client.memory_cleanup();
         let _ = cubecl::future::block_on(self.client.sync());
@@ -5009,6 +5314,197 @@ mod frozen_host_policy_tests {
                     frozen, identity, rows, p, capacity, router, false
                 )
                 .is_err()
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod q6_verify_head_tests {
+    use super::*;
+    use quant_matvec::matmul::BatchSpans;
+
+    #[test]
+    fn q6_verifier_requires_actual_max8_policy_not_active_row_capacity() {
+        let profile = expert_banks::OriginalPackedProfile::DaslabIq3;
+        for count in 1..=4 {
+            let spans = BatchSpans::new(count, 0, 0, 2560, 0, 248320);
+            for four_reserved in [false, true] {
+                for four_active in [false, true] {
+                    let expected = (!four_active || four_reserved) && (count <= 3 || four_active);
+                    let result = validate_q6_verify_head(
+                        profile,
+                        true,
+                        8,
+                        8,
+                        four_reserved,
+                        four_active,
+                        "output.weight",
+                        14,
+                        2560,
+                        248320,
+                        1,
+                        &spans,
+                    );
+                    assert_eq!(result.is_ok(), expected);
+                }
+            }
+            for (members, tile) in [(1, 1), (3, 3), (4, 4), (4, 8), (8, 4)] {
+                assert!(
+                    validate_q6_verify_head(
+                        profile,
+                        true,
+                        members,
+                        tile,
+                        true,
+                        true,
+                        "output.weight",
+                        14,
+                        2560,
+                        248320,
+                        1,
+                        &spans
+                    )
+                    .is_err()
+                );
+            }
+        }
+    }
+    #[test]
+    fn q6_verifier_rejects_wrong_original_artifact_and_views() {
+        use expert_banks::OriginalPackedProfile as P;
+        let spans = BatchSpans::new(3, 0, 0, 2560, 0, 248320);
+        for (profile, admitted, name, dtype, columns, rows, experts) in [
+            (P::Q4, true, "output.weight", 14, 2560, 248320, 1),
+            (P::UnslothQ3, true, "output.weight", 14, 2560, 248320, 1),
+            (P::DaslabIq3, false, "output.weight", 14, 2560, 248320, 1),
+            (P::DaslabIq3, true, "token_embd.weight", 14, 2560, 248320, 1),
+            (P::DaslabIq3, true, "output.weight", 12, 2560, 248320, 1),
+            (P::DaslabIq3, true, "output.weight", 14, 256, 248320, 1),
+            (P::DaslabIq3, true, "output.weight", 14, 2560, 16384, 1),
+            (P::DaslabIq3, true, "output.weight", 14, 2560, 248320, 512),
+        ] {
+            assert!(
+                validate_q6_verify_head(
+                    profile, admitted, 8, 8, true, true, name, dtype, columns, rows, experts,
+                    &spans
+                )
+                .is_err()
+            );
+        }
+        for wrong in [
+            BatchSpans::new(0, 0, 0, 2560, 0, 248320),
+            BatchSpans::new(5, 0, 0, 2560, 0, 248320),
+            BatchSpans::new(3, 1, 0, 2560, 0, 248320),
+            BatchSpans::new(3, 0, 1, 2560, 0, 248320),
+            BatchSpans::new(3, 0, 0, 2561, 0, 248320),
+            BatchSpans::new(3, 0, 0, 2560, 1, 248320),
+            BatchSpans::new(3, 0, 0, 2560, 0, 248321),
+        ] {
+            assert!(
+                validate_q6_verify_head(
+                    P::DaslabIq3,
+                    true,
+                    8,
+                    8,
+                    true,
+                    true,
+                    "output.weight",
+                    14,
+                    2560,
+                    248320,
+                    1,
+                    &wrong
+                )
+                .is_err()
+            );
+        }
+    }
+    #[test]
+    fn q6_verifier_immutable_activation_and_actual_completed_counters() {
+        assert!(activate_q6_verify_head(false, true).unwrap());
+        for args in [(false, false), (true, false), (true, true)] {
+            assert!(activate_q6_verify_head(args.0, args.1).is_err());
+        }
+        validate_q6_verify_counters(false, 0, 0, 0).unwrap();
+        validate_q6_verify_counters(true, 0, 0, 0).unwrap();
+        for members in 3..=12 {
+            validate_q6_verify_counters(true, 3, 48, members).unwrap();
+        }
+        for (selected, prepares, tiles, members) in [
+            (false, 1, 16, 1),
+            (true, 1, 0, 0),
+            (true, 1, 15, 1),
+            (true, 1, 17, 1),
+            (true, 3, 48, 2),
+            (true, 3, 48, 13),
+            (true, u64::MAX, 0, 0),
+        ] {
+            assert!(validate_q6_verify_counters(selected, prepares, tiles, members).is_err());
+        }
+    }
+    #[test]
+    fn q6_verifier_preflights_all_original_tiles_for_every_real_member() {
+        use crate::q6_integer_matvec::{
+            Spec,
+            batch::{PrepareSpans, ProjectSpans},
+        };
+        let prepare_spec = Spec::new(16384, 2560).unwrap();
+        for count in 1..=4 {
+            let output_words = if count == 4 { 993280 } else { 744960 };
+            let prepare = PrepareSpans {
+                count,
+                input_first: 0,
+                input_stride: 2560,
+                planes_first: 0,
+                planes_stride: 1440,
+                fault_first: 0,
+            };
+            prepare
+                .validate(prepare_spec, [20480, 81920, 8192])
+                .unwrap();
+            let mut total_rows = 0;
+            let mut total_bytes = 0;
+            let mut tiles = 0;
+            for first in (0..248320).step_by(16384) {
+                let rows = 16384.min(248320 - first);
+                let spec = Spec::new(rows, 2560).unwrap();
+                let packet = ProjectSpans {
+                    count,
+                    packed_first: 0,
+                    planes_first: 0,
+                    planes_stride: 1440,
+                    output_first: first,
+                    output_stride: 248320,
+                    fault_first: 0,
+                    matrix_first: 0,
+                    matrix_rows: 248320,
+                };
+                packet
+                    .validate(spec, spec.weight_bytes(), [81920, output_words, 8192])
+                    .unwrap();
+                assert!(
+                    packet
+                        .validate(spec, spec.weight_bytes() - 1, [81920, output_words, 8192])
+                        .is_err()
+                );
+                for member in 0..count {
+                    assert!(member * 248320 + first + rows <= output_words);
+                }
+                total_rows += rows;
+                total_bytes += spec.weight_bytes();
+                tiles += 1;
+            }
+            assert_eq!((tiles, total_rows, total_bytes), (16, 248320, 521472000));
+            assert!(
+                prepare
+                    .validate(prepare_spec, [count * 2560 - 1, 81920, 8192])
+                    .is_err()
+            );
+            assert!(
+                prepare
+                    .validate(prepare_spec, [20480, count * 1440 - 1, 8192])
+                    .is_err()
             );
         }
     }
