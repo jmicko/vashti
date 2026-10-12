@@ -9,6 +9,7 @@ def selected_target_policy(environment, mtp=False):
     intel_mtp_scope(environment)
     mtp_cache_repair_scope(environment)
     target_four_lookahead_scope(environment)
+    target_integer_head_scope(environment)
     frozen_down_integer_scope(environment)
     iq4_register_scope(environment)
     target_submission_backlog_scope(environment)
@@ -31,6 +32,9 @@ def selected_target_policy(environment, mtp=False):
     if "KUNO_LAB_TARGET_LOOKAHEAD" in selected:
         if not mtp or selected.pop("KUNO_LAB_TARGET_LOOKAHEAD") != "four-public":
             raise ValueError("Four-row lookahead requires fixed Intel full-Q8 scope")
+    if "KUNO_LAB_TARGET_HEAD" in selected:
+        if not mtp or selected.pop("KUNO_LAB_TARGET_HEAD") != "integer-public":
+            raise ValueError("Integer target head requires fixed Intel full-Q8 scope")
     if "KUNO_LAB_TARGET_STATUS_FOLDS" in selected:
         if not mtp or selected.pop("KUNO_LAB_TARGET_STATUS_FOLDS") != "grouped-public":
             raise ValueError("Grouped status folds require the canonical fixed public target")
@@ -328,6 +332,31 @@ def target_four_lookahead_scope(environment):
         raise ValueError("Four-row lookahead requires original Intel full-Q8, integer GU/DOWN and scoped repair")
 
 
+def target_integer_head_scope(environment):
+    selector = "KUNO_LAB_TARGET_HEAD"
+    if selector not in environment:
+        return
+    original_frozen_target_scope(environment, selector, "integer-public", full_vocab=True)
+    required = {
+        "KUNO_LAB_MTP_DEVICE": "intel-public",
+        "KUNO_LAB_MTP_SWEEPS": "fused",
+        "KUNO_LAB_FROZEN_GU_MATH": "integer-public",
+        "KUNO_LAB_FROZEN_DOWN_MATH": "integer-public",
+        "KUNO_LAB_TARGET_PLE_READS": "grouped-public",
+    }
+    conflicts = (
+        "KUNO_LAB_MTP_PROFILE", "KUNO_LAB_LANGUAGE_DECODE",
+        "KUNO_LAB_TARGET_IQ4_DECODER", "KUNO_LAB_FROZEN_BANK_FILL",
+        "KUNO_LAB_FROZEN_DOWN_ROWS", "KUNO_LAB_FROZEN_DOWN_SCHEDULE",
+    )
+    if (any(environment.get(key) != value for key, value in required.items())
+            or environment.get("KUNO_LAB_MTP_Q8_HEAD") not in (None, "shared-public")
+            or environment.get("KUNO_LAB_MTP_REPAIR") not in (None, "batch-public")
+            or environment.get("KUNO_LAB_TARGET_LOOKAHEAD") not in (None, "four-public")
+            or any(key in environment for key in conflicts)):
+        raise ValueError("Integer target head requires original Intel full-Q8 and grouped integer GU/DOWN scope")
+
+
 def frozen_gu_integer_scope(environment):
     if not any(key in environment for key in ("KUNO_LAB_FROZEN_GU_MATH", "KUNO_LAB_FROZEN_GU_SCHEDULE")):
         return
@@ -575,6 +604,7 @@ def memory_limit(environment, arguments):
     intel_mtp_scope(environment)
     mtp_cache_repair_scope(environment)
     target_four_lookahead_scope(environment)
+    target_integer_head_scope(environment)
     frozen_down_integer_scope(environment)
     iq4_register_scope(environment)
     target_submission_backlog_scope(environment)

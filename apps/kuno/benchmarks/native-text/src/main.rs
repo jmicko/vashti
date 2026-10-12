@@ -1253,6 +1253,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         return Err("QSA selector requires its fixed public target controller".into());
     }
+    if std::env::var_os("KUNO_LAB_TARGET_HEAD").is_some()
+        && speculative_inputs.is_none()
+        && language_inputs.is_none()
+    {
+        return Err("target head selector requires its fixed public target controller".into());
+    }
     let target_repair_inputs = if mode == "daslab-target-repair-probe" {
         Some(daslab_target_repair_probe::registration(
             &std::env::args_os().collect::<Vec<_>>(),
