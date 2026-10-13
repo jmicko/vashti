@@ -10,7 +10,7 @@ use cubecl_runtime::public_external::is_public_external_binding;
 
 pub(crate) const EXTRA_INFO_BYTES_PER_CHUNK: u64 = 6 * 48 * 2048;
 pub(crate) const SOURCE_SET_HOST_BYTES: u64 =
-    (2 + if crate::strata_port::enabled() { 4 } else { 0 }) * 1024 * 1024;
+    (2 + if crate::strata_port::enabled() { 22 } else { 0 }) * 1024 * 1024;
 pub(crate) const PHYSICAL_HOST_BYTES: u64 = 8 * 1024;
 pub(crate) const EXTRA_HOST_BYTES: u64 = SOURCE_SET_HOST_BYTES + PHYSICAL_HOST_BYTES;
 pub(crate) const EXTRA_RUNTIME_BYTES_PER_CHUNK: u64 = EXTRA_INFO_BYTES_PER_CHUNK;
@@ -1492,65 +1492,81 @@ impl Sources {
             return Ok(0);
         }
         cubecl::future::block_on(client.sync()).map_err(|_| reject())?;
-        for &swap in swaps.iter() {
-            let [layer, _, _, resident, host] = swap;
-            let l = self.layers.get(layer).ok_or_else(reject)?;
-            let ordinal = host.checked_sub(144).ok_or_else(reject)?;
-            let host_page = ordinal / 144;
-            let host_local = ordinal % 144;
-            let mut moved = 0;
-            for role in 0..3 {
-                let page = &l.pages[role * 5 + resident / 72];
-                if page.words % 72 != 0 {
-                    return Err(reject());
+        // The policy produces at most two swaps per layer. Group their six
+        // public role reads/uploads into one joined transfer batch, rather
+        // than thousands of separately mapped/sanitized role operations.
+        for group in swaps.chunks(2) {
+            let mut descriptors = Vec::with_capacity(group.len() * 3);
+            for &swap in group {
+                let [layer, _, _, resident, host] = swap;
+                let l = self.layers.get(layer).ok_or_else(reject)?;
+                let ordinal = host.checked_sub(144).ok_or_else(reject)?;
+                for role in 0..3 {
+                    let page = &l.pages[role * 5 + resident / 72];
+                    if page.words % 72 != 0 {
+                        return Err(reject());
+                    }
+                    let bytes = page.words * 4 / 72;
+                    let first = (resident % 72) * bytes;
+                    if bytes > 1024 * 1024 || first + bytes > page.handle.size() as usize {
+                        return Err(reject());
+                    }
+                    let view = page
+                        .handle
+                        .clone()
+                        .offset_start(first as u64)
+                        .offset_end(page.handle.size() - (first + bytes) as u64);
+                    descriptors.push((
+                        view,
+                        layer,
+                        role,
+                        ordinal / 144,
+                        (ordinal % 144) * bytes,
+                        bytes,
+                    ));
                 }
-                let bytes = page.words * 4 / 72;
-                let first = (resident % 72) * bytes;
-                if bytes > 1024 * 1024 || first + bytes > page.handle.size() as usize {
-                    return Err(reject());
-                }
-                let view = page
-                    .handle
-                    .clone()
-                    .offset_start(first as u64)
-                    .offset_end(page.handle.size() - (first + bytes) as u64);
-                let mut outgoing = client
-                    .read_one(view.clone())
-                    .map_err(|_| err("Strata cache victim readback"))?;
+            }
+            let mut read = cubecl::future::block_on(
+                client.read_async(descriptors.iter().map(|d| d.0.clone()).collect()),
+            )
+            .map_err(|_| err("Strata grouped cache victim readback"))?;
+            if read.len() != descriptors.len() {
+                return Err(reject());
+            }
+            let mut writes = Vec::with_capacity(descriptors.len());
+            let mut totals = [0u64; 2];
+            for (i, ((view, layer, role, page, first, bytes), outgoing)) in
+                descriptors.into_iter().zip(read.iter_mut()).enumerate()
+            {
                 if outgoing.len() != bytes {
                     return Err(reject());
                 }
-                // SAFETY: this serialized joined boundary owns mutation of
-                // public cache payloads; the native source mapping is not yet
-                // published, and no readonly layer borrow survives here.
+                // SAFETY: joined serialized public cache boundary; all roles
+                // publish a new logical bijection only after the grouped copy.
                 let mut incoming = unsafe {
                     mirror
-                        .swap_strata_public_role(
-                            layer,
-                            role,
-                            host_page,
-                            host_local * bytes,
-                            &outgoing,
-                        )
+                        .swap_strata_public_role(layer, role, page, first, outgoing)
                         .map_err(err)?
                 };
                 outgoing.zeroize();
-                // Wiping contents does not release the readback lease. It must
-                // drop before the next mutation and owning I/O sanitizer.
-                drop(outgoing);
-                client
-                    .write_public_owned_batch(vec![(view, std::mem::take(&mut *incoming))])
-                    .map_err(|_| err("Strata cache public promotion upload"))?;
-                cubecl::future::block_on(client.sync())
-                    .map_err(|_| err("Strata cache promotion completion"))?;
-                let audit = cubecl::future::block_on(client.sanitize_transient_io_audited())
-                    .map_err(|_| err("Strata cache promotion I/O erasure"))?;
-                if audit.inspected_bytes > 128 * 1024 * 1024 {
-                    return Err(reject());
-                }
-                moved += bytes as u64;
+                writes.push((view, std::mem::take(&mut *incoming)));
+                totals[i / 3] += bytes as u64;
             }
-            cache.commit(swap, moved)?;
+            // Every mapped lease is actually released before mutation/audit.
+            drop(read);
+            client
+                .write_public_owned_batch(writes)
+                .map_err(|_| err("Strata grouped cache promotion upload"))?;
+            cubecl::future::block_on(client.sync())
+                .map_err(|_| err("Strata grouped cache promotion completion"))?;
+            let audit = cubecl::future::block_on(client.sanitize_transient_io_audited())
+                .map_err(|_| err("Strata grouped cache promotion erasure"))?;
+            if audit.inspected_bytes > 128 * 1024 * 1024 {
+                return Err(reject());
+            }
+            for (i, &swap) in group.iter().enumerate() {
+                cache.commit(swap, totals[i])?;
+            }
         }
         cache.adaptation_ns += u64::try_from(clock.elapsed().as_nanos()).map_err(|_| reject())?;
         Ok(swaps.len() as u64)

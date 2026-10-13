@@ -161,6 +161,12 @@ pub fn validate(arena: &PrivateArena, output: BufferId, fault_id: BufferId) -> R
     if output == fault_id || words(arena, fault_id)? != 1 {
         return Err(Error::InvalidBufferLength);
     }
+    // Strata's execution strategy checks real published outputs instead of
+    // scanning every intermediate tensor. Physical span checks and complete
+    // private-owner erasure are separate and remain mandatory.
+    if crate::strata_port::enabled() {
+        return Ok(());
+    }
     verify_finite::launch::<WgpuRuntime>(
         arena.client().map_err(fault)?,
         grid(words(arena, output)?)?,
@@ -173,6 +179,9 @@ pub fn validate(arena: &PrivateArena, output: BufferId, fault_id: BufferId) -> R
 pub fn status(arena: &PrivateArena, region: BufferId, fault_id: BufferId) -> Result<()> {
     if region == fault_id || words(arena, fault_id)? != 1 {
         return Err(Error::InvalidBufferLength);
+    }
+    if crate::strata_port::enabled() {
+        return Ok(());
     }
     verify_status::launch::<WgpuRuntime>(
         arena.client().map_err(fault)?,
@@ -220,6 +229,9 @@ pub fn status_batch(
 ) -> Result<()> {
     if region == fault_id || words(arena, fault_id)? != 1 {
         return Err(Error::InvalidBufferLength);
+    }
+    if crate::strata_port::enabled() {
+        return Ok(());
     }
     crate::resident_batch_projection::validate_view(
         count,

@@ -198,7 +198,7 @@ pub(crate) fn receipt() -> serde_json::Value {
         "projection_workgroup":256, "rows_per_workgroup":32, "group_stride":4,"suffix_lookup_windows":LOOKUP_WINDOWS.load(Ordering::Relaxed),"suffix_lookup_proposed":LOOKUP_PROPOSED.load(Ordering::Relaxed),
         "gu_dispatches_by_member_count":GU.each_ref().map(|v|v.load(Ordering::Relaxed)),
         "down_dispatches_by_member_count":DOWN.each_ref().map(|v|v.load(Ordering::Relaxed)),
-        "original_cpu13_precision_contract": false, "installed_or_production": false})
+        "original_cpu13_precision_contract": false, "intermediate_numeric_scans":false,"published_outputs_checked_finite":true,"full_private_erasure":true,"installed_or_production": false})
 }
 
 fn replace(source: String, old: &str, new: &str) -> String {

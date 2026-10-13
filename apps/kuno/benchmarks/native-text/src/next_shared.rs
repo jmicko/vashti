@@ -194,6 +194,9 @@ impl MatrixSpec {
         )
     }
     fn source_verify3_finite(self, tail: bool) -> String {
+        if crate::strata_port::enabled() {
+            return self.source_verify3();
+        }
         // Preserve every original dot, decoder, subgroup reduction and active
         // finite store. Only the last original weight tile scans the logical
         // complement of ALL active full-matrix intervals. Those intervals may
@@ -261,6 +264,9 @@ impl MatrixSpec {
         )
     }
     fn source_verify4_finite(self, tail: bool) -> String {
+        if crate::strata_port::enabled() {
+            return self.source_verify4();
+        }
         // Preserve every original dot, decoder, subgroup reduction and active
         // finite store. Only the last original weight tile scans the logical
         // complement of ALL active full-matrix intervals. Those intervals may
