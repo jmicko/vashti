@@ -338,7 +338,7 @@ pub(crate) fn public_preview(text: &str) {
 }
 pub(crate) fn receipt() -> serde_json::Value {
     serde_json::json!({"enabled": enabled(), "upstream_revision": "fb58e0dbc8399662c0e47c76578c6e878b14f6cf",
-        "backend": "Rust/WGSL/Vulkan", "coherent_intel_core":crate::strata_intel_core::enabled(), "native_vulkan_graph_process_totals":cubecl::wgpu::compute::native_strata_graph_stats(), "shared_read_only_iq_table_bytes":if crate::strata_intel_core::enabled(){crate::strata_intel_core::PUBLIC_TABLE_BYTES}else{0}, "verify_capacity":verify_capacity(),"profile_first_residency":profile_first(), "activation_planes": 1, "activation_scale": "fp16-q8_1",
+        "backend": "Rust/WGSL/Vulkan", "coherent_intel_core":crate::strata_intel_core::enabled(), "native_vulkan_graph_process_totals":cubecl::wgpu::native_strata_graph_stats(), "shared_read_only_iq_table_bytes":if crate::strata_intel_core::enabled(){crate::strata_intel_core::PUBLIC_TABLE_BYTES}else{0}, "verify_capacity":verify_capacity(),"profile_first_residency":profile_first(), "activation_planes": 1, "activation_scale": "fp16-q8_1",
         "projection_workgroup":256, "rows_per_workgroup":256/expert_lanes(), "expert_dot_lanes":expert_lanes(), "aligned_vector_expert_reads":wide_experts(), "group_stride":if independent_groups() {verify_capacity()*10} else {4},"independent_expert_groups":independent_groups(),"unrolled_packed_dots":unrolled_dots(),"constant_iq_codebook":constant_codebook(),"suffix_lookup_windows":LOOKUP_WINDOWS.load(Ordering::Relaxed),"suffix_lookup_proposed":LOOKUP_PROPOSED.load(Ordering::Relaxed),
         "gu_dispatches_by_member_count":GU.each_ref().map(|v|v.load(Ordering::Relaxed)),
         "down_dispatches_by_member_count":DOWN.each_ref().map(|v|v.load(Ordering::Relaxed)),

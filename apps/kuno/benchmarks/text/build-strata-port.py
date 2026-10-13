@@ -15,6 +15,8 @@ commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).st
 env=dict(os.environ,CARGO_TARGET_DIR='/media/jmicko/faststore/kuno-development/root-native-text-target-20261005',CARGO_BUILD_JOBS='2')
 with (out/'cargo-artifacts.jsonl').open('w') as stdout,(out/'cargo-build.log').open('w') as stderr:
  subprocess.run(['cargo','build','--locked','--release','--manifest-path','apps/kuno/benchmarks/native-text/Cargo.toml','--bin','kuno-strata-rust','--features',','.join(features),'--message-format=json'],cwd=root,env=env,stdout=stdout,stderr=stderr,check=True)
+subprocess.run(['git','diff','--quiet','HEAD','--',*source_paths],cwd=root,check=True)
+if subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()!=commit:raise ValueError('source changed during build')
 records=[json.loads(x) for x in (out/'cargo-artifacts.jsonl').read_text().splitlines()]
 paths=[x['executable'] for x in records if x.get('reason')=='compiler-artifact' and x['target']['name']=='kuno-strata-rust' and x.get('executable')]
 assert len(paths)==1
