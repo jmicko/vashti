@@ -304,7 +304,9 @@ pub(crate) fn router_shader(mut source: String) -> String {
             "var<workgroup> minimum_gap:f32;\nvar<workgroup> row_gap:array<f32,4>;",
         )
         .replace("index+=64u", "index+=128u");
-    source
+    source.replace("fn main(@builtin(local_invocation_index) local:u32) {",
+        "fn main(@builtin(local_invocation_index) local:u32,@builtin(subgroup_id) sg:u32,@builtin(subgroup_invocation_id) lane:u32,@builtin(subgroup_size) width:u32) {")
+        .replace("if !shape() {reject(1u);}","if !shape() || (width!=16u && width!=32u) {reject(1u);}")
 }
 
 /// Single Q8_1 plane. Codes use the unrounded F32 scale; the dot's scale is

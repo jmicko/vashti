@@ -1,27 +1,26 @@
-    // Strata-style parallel token routing: each32-lane logical row selects
-    // its own top11 while all four rows progress through shared barriers.
-    let row=local/32u;let lane=local%32u;let live=row<p.count;
+    // Each hardware subgroup owns one real row. Cache the512 logits once,
+    // then remove each chosen value from its lane-local candidate list. This
+    // avoids rereading scores and checking all previous picks at every rank.
+    let row=sg;let live=row<p.count;
+    var candidates:array<f32,32>;
+    for(var i=0u;i<32u;i++) {
+        var value=bitcast<f32>(0xff7fffffu);
+        let id=lane+i*width;
+        if live && id<512u {value=bitcast<f32>(router[row*512u+id]);}
+        candidates[i]=value;
+    }
     for(var rank=0u;rank<11u;rank++) {
         var value=bitcast<f32>(0xff7fffffu);var chosen=512u;
-        if live {
-            for(var candidate=lane;candidate<512u;candidate+=32u) {
-                var used=false;
-                for(var previous=0u;previous<rank;previous++) {if picked[row*11u+previous]==candidate {used=true;}}
-                let x=bitcast<f32>(router[row*512u+candidate]);
-                if !used && (x>value || (x==value && candidate<chosen)) {value=x;chosen=candidate;}
-            }
+        for(var i=0u;i<512u/width;i++) {
+            let x=candidates[i];let id=lane+i*width;
+            if x>value || (x==value && id<chosen) {value=x;chosen=id;}
         }
-        best[local]=value;best_id[local]=chosen;workgroupBarrier();
-        for(var stride=16u;stride>0u;stride/=2u) {
-            if lane<stride {
-                let other=best[local+stride];let id=best_id[local+stride];
-                if other>best[local] || (other==best[local] && id<best_id[local]) {best[local]=other;best_id[local]=id;}
-            }
-            workgroupBarrier();
-        }
-        if live && lane==0u {picked[row*11u+rank]=best_id[local];score[row*11u+rank]=best[local];}
-        workgroupBarrier();
+        let maximum=subgroupMax(value);
+        let id=subgroupMin(select(512u,chosen,value==maximum));
+        if live && lane==0u {picked[row*11u+rank]=id;score[row*11u+rank]=maximum;}
+        if id<512u && id%width==lane {candidates[id/width]=bitcast<f32>(0xff7fffffu);}
     }
+    workgroupBarrier();
     if lane==0u {
         var gap_min=bitcast<f32>(0x7f7fffffu);
         if live {
@@ -45,7 +44,7 @@
                 if abs(sum-1.0)>0.000005 {reject(2u);}
             }
         }
-        row_gap[row]=gap_min;
+        if row<4u {row_gap[row]=gap_min;}
     }
     workgroupBarrier();
     if local==0u {for(var r=0u;r<p.count;r++) {minimum_gap=min(minimum_gap,row_gap[r]);}}
