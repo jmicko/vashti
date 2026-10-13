@@ -17,14 +17,14 @@ Q8_PREPARE_VALUE
 @compute @workgroup_size(128)
 fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) local:u32) {
     // Every count/owner/grid predicate is uniform and precedes any access.
-    if (p.h<5u || p.h>8u) || arrayLength(&planes)!=112728u || group.x!=0u || group.y>=8u || group.z!=0u {return;}
+    if (p.h<5u || p.h>8u) || arrayLength(&planes)!=16384u || group.x!=0u || group.y>=8u || group.z!=0u {return;}
     let token=group.y;let frame=64u+token*1440u;
     // Disjoint frame stores and a single header/tail writer: no cross-WG race.
     if local==0u {planes[token]=0u;}
     for(var i=local;i<1440u;i+=128u) {planes[frame+i]=0u;}
     if token==0u {
         if local>=8u && local<64u {planes[local]=0u;}
-        for(var i=11584u+local;i<112728u;i+=128u) {planes[i]=0u;}
+        for(var i=11584u+local;i<16384u;i+=128u) {planes[i]=0u;}
     }
     var valid=token<p.h && p.c>=2560u;
     if p.b>arrayLength(&input) {valid=false;}
@@ -60,7 +60,7 @@ var<workgroup> gate_sums:array<f32,512>;
 var<workgroup> up_sums:array<f32,512>;
 GRID_DECLARATION_VALUE
 fn valid_group(group:u32)->bool {
-    if (p.h<5u || p.h>8u) || arrayLength(&planes)!=112728u || p.g!=0u {return false;}
+    if (p.h<5u || p.h>8u) || arrayLength(&planes)!=16384u || p.g!=0u {return false;}
     if p.a>arrayLength(&map) {return false;}
     if 804u>arrayLength(&map)-p.a {return false;}
     if map[p.a]!=p.h || map[p.a+1u]!=0u || map[p.a+2u]!=p.h {return false;}
@@ -119,7 +119,7 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
     // Fixed8-lane tree4/2/1. Separate rows never share arithmetic cells.
     for(var stride=4u;stride>0u;stride/=2u) {
         if lane<stride {
-            for(var j=0u;j<8u;j++) {gate_sums[local*8u+j]+=gate_sums[(local+stride)*4u+j];up_sums[local*8u+j]+=up_sums[(local+stride)*4u+j];}
+            for(var j=0u;j<8u;j++) {gate_sums[local*8u+j]+=gate_sums[(local+stride)*8u+j];up_sums[local*8u+j]+=up_sums[(local+stride)*8u+j];}
         }
         workgroupBarrier();
     }
@@ -168,8 +168,8 @@ struct Params {count:u32,r0:u32,r1:u32,r2:u32,r3:u32,r4:u32,r5:u32,r6:u32}
 fn main(@builtin(global_invocation_id) global:vec3<u32>) {
     if arrayLength(&fault)!=8192u {return;}
     if (p.count<5u || p.count>8u) || p.r0!=0u || p.r1!=0u || p.r2!=0u || p.r3!=0u || p.r4!=0u || p.r5!=0u || p.r6!=0u
-        || arrayLength(&planes)!=112728u {if global.x==0u {atomicOr(&fault[0],8u);}return;}
-    let at=global.x;if at>=112728u {return;}let word=planes[at];var valid=true;
+        || arrayLength(&planes)!=16384u {if global.x==0u {atomicOr(&fault[0],8u);}return;}
+    let at=global.x;if at>=16384u {return;}let word=planes[at];var valid=true;
     if at<64u {valid=word==select(0u,1u,at<p.count);}
     else if at<11584u {
         let frame=(at-64u)/1440u;let offset=(at-64u)%1440u;
@@ -215,14 +215,14 @@ fn shard_parts(shard:u32)->u32 {
 @compute @workgroup_size(128)
 fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) local:u32) {
     // Every count/owner/grid predicate is uniform and precedes any access.
-    if (p.h<5u || p.h>8u) || arrayLength(&planes)!=112728u || group.x!=0u || group.y>=8u || group.z!=0u {return;}
+    if (p.h<5u || p.h>8u) || arrayLength(&planes)!=16384u || group.x!=0u || group.y>=8u || group.z!=0u {return;}
     let token=group.y;let frame=64u+token*1440u;
     // Disjoint frame stores and a single header/tail writer: no cross-WG race.
     if local==0u {planes[token]=0u;}
     for(var i=local;i<1440u;i+=128u) {planes[frame+i]=0u;}
     if token==0u {
         if local>=8u && local<64u {planes[local]=0u;}
-        for(var i=11584u+local;i<112728u;i+=128u) {planes[i]=0u;}
+        for(var i=11584u+local;i<16384u;i+=128u) {planes[i]=0u;}
     }
     var valid=token<p.h && p.c>=2560u;
     if p.b>arrayLength(&input) {valid=false;}
@@ -338,14 +338,14 @@ fn main(@builtin(global_invocation_id) global:vec3<u32>,@builtin(workgroup_id) w
     @builtin(local_invocation_index) local:u32) {
     if arrayLength(&fault)!=8192u {return;}
     if (p.count<5u || p.count>8u) || p.r2!=0u || p.r3!=0u || p.r4!=0u || p.r5!=0u || p.r6!=0u
-        || p.r1<1u || p.r1>80u || arrayLength(&planes)!=112728u {
+        || p.r1<1u || p.r1>80u || arrayLength(&planes)!=16384u {
         if global.x==0u {atomicOr(&fault[0],8u);}
         return;
     }
     if workgroup.x<128u {
         // Original per-word validation; the five shard records are validated
         // and erased only by the dedicated workgroup below.
-        let at=global.x;if at>=112728u {return;}var valid=true;
+        let at=global.x;if at>=16384u {return;}var valid=true;
         if at<64u {valid=planes[at]==select(0u,1u,at<p.count);}
         else if at<11584u {
             let frame=(at-64u)/1440u;let offset=(at-64u)%1440u;

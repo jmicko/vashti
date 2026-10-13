@@ -45,10 +45,10 @@ pub(crate) fn expert_lanes() -> usize {
 pub(crate) fn profile_target() -> bool {
     enabled() && std::env::var("KUNO_STRATA_PROFILE_TARGET").as_deref() == Ok("round-8")
 }
-static GU: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
-static DOWN: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
+static GU: [AtomicU64; 8] = [const { AtomicU64::new(0) }; 8];
+static DOWN: [AtomicU64; 8] = [const { AtomicU64::new(0) }; 8];
 pub(crate) fn credit(down: bool, count: usize) {
-    if enabled() && (1..=4).contains(&count) {
+    if enabled() && (1..=verify_capacity()).contains(&count) {
         (if down { &DOWN } else { &GU })[count - 1].fetch_add(1, Ordering::Relaxed);
     }
 }
@@ -573,7 +573,7 @@ fn reduction(mut source: String, down: bool, members: usize) -> String {
         } {
             source = source.replace(
                 &format!("{old}[local*{members}u+{i}u]"),
-                &format!("{new}.{axis}"),
+                &format!("{new}{axis}"),
             );
         }
     }
@@ -701,7 +701,13 @@ pub(crate) fn shader(mut source: String, down_projection: bool, members: usize) 
         return source;
     }
     if down_projection && verify_capacity() == 8 {
-        source = source.replace("16384u", "32768u");
+        source = source
+            .replace(
+                "arrayLength(&planes)!=16384u",
+                "arrayLength(&planes)!=32768u",
+            )
+            .replace("i<16384u", "i<32768u")
+            .replace("at>=16384u", "at>=32768u");
     }
     if source.contains("fn prepare_q8(block:u32)") {
         source = quantizer(source);

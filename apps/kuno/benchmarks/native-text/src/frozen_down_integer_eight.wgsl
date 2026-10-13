@@ -109,7 +109,7 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
     for(var j=0u;j<8u;j++) {sums[local*8u+j]=values[j];}
     workgroupBarrier();
     for(var stride=4u;stride>0u;stride/=2u) {
-        if lane<stride {for(var j=0u;j<8u;j++) {sums[local*8u+j]+=sums[(local+stride)*4u+j];}}
+        if lane<stride {for(var j=0u;j<8u;j++) {sums[local*8u+j]+=sums[(local+stride)*8u+j];}}
         workgroupBarrier();
     }
     if lane==0u {OUTPUT_MEMBERS_VALUE}
@@ -205,7 +205,7 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
     for(var j=0u;j<8u;j++) {sums[local*8u+j]=values[j];}
     workgroupBarrier();
     for(var stride=4u;stride>0u;stride/=2u) {
-        if lane<stride {for(var j=0u;j<8u;j++) {sums[local*8u+j]+=sums[(local+stride)*4u+j];}}
+        if lane<stride {for(var j=0u;j<8u;j++) {sums[local*8u+j]+=sums[(local+stride)*8u+j];}}
         workgroupBarrier();
     }
     if lane==0u {OUTPUT_MEMBERS_VALUE}

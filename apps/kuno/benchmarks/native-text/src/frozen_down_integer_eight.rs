@@ -301,7 +301,7 @@ pub(crate) fn prepare(
     // SAFETY: parent supplies physical owner proofs; all40 reset spans/flags and
     // the single header/tail writer are disjoint, including inactive routes.
     unsafe {
-        client.launch_unchecked(Box::new(Kernel::Prepare), CubeCount::Static(1, 40, 1), args);
+        client.launch_unchecked(Box::new(Kernel::Prepare), CubeCount::Static(1, 80, 1), args);
     }
     Ok(())
 }
