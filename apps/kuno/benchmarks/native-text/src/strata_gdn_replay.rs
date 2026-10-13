@@ -187,7 +187,7 @@ impl PrefixReplay<'_, '_> {
                 ids[STATUS + 3],
             ]),
             cancel,
-            workspace.recurrence_policy,
+            RecurrencePolicy::ThreeStreaming,
         )?;
         prefix_validate::launch::<WgpuRuntime>(
             client,

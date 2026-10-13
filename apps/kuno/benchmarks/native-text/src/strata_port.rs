@@ -84,6 +84,9 @@ pub(crate) struct DraftPolicy {
     bad: [f64; 4],
     last: [f64; 5],
     rounds: f64,
+    mtp_ok: [f64; 3],
+    mtp_bad: [f64; 3],
+    chosen: [u64; 5],
 }
 impl DraftPolicy {
     fn bucket(matched: usize) -> usize {
@@ -115,6 +118,40 @@ impl DraftPolicy {
         } else {
             SHAPE[t]
         }
+    }
+    pub(crate) fn choose_mtp(&mut self, maximum: usize) -> usize {
+        if !enabled() || !(1..=4).contains(&maximum) {
+            return maximum;
+        }
+        let mut selected = maximum;
+        // Keep the existing four-row path during warm-up, then estimate each
+        // tested prefix from position-specific conditional acceptance. Rejected
+        // suffixes never count as additional failed positions.
+        if self.rounds >= 12. && maximum >= 3 {
+            let mut expected = [0.; 5];
+            expected[1] = 1.;
+            let mut probability = 1.;
+            for position in 0..maximum - 1 {
+                probability *= (self.mtp_ok[position] + 4. * 0.86)
+                    / (self.mtp_ok[position] + self.mtp_bad[position] + 4.);
+                expected[position + 2] = expected[position + 1] + probability;
+            }
+            let baseline = expected[maximum] / self.cost_ms(maximum).max(0.001);
+            let mut best = baseline;
+            for count in 2..maximum {
+                let rate = expected[count] / self.cost_ms(count).max(0.001);
+                if rate > best * 1.03 {
+                    best = rate;
+                    selected = count;
+                }
+            }
+        }
+        self.chosen[selected] += 1;
+        selected
+    }
+    pub(crate) fn receipt(&self) -> serde_json::Value {
+        serde_json::json!({"adaptive_mtp_length":true,"chosen_window_counts":self.chosen,
+            "mtp_conditional_accepted":self.mtp_ok,"mtp_conditional_rejected":self.mtp_bad,"history_persisted":false})
     }
     pub(crate) fn choose(&self, t: usize, proposal: &Lookup) -> Option<usize> {
         let bucket = Self::bucket(proposal.matched);
@@ -160,6 +197,17 @@ impl DraftPolicy {
             self.ok[b] = 0.97 * self.ok[b] + (accepted - 1) as f64;
             self.bad[b] = 0.97 * self.bad[b] + if accepted < t { 1. } else { 0. };
         } else {
+            for position in 0..t - 1 {
+                if position <= accepted - 1 {
+                    self.mtp_ok[position] *= 0.97;
+                    self.mtp_bad[position] *= 0.97;
+                    if position < accepted - 1 {
+                        self.mtp_ok[position] += 1.;
+                    } else {
+                        self.mtp_bad[position] += 1.;
+                    }
+                }
+            }
             self.mtp_tok[t] = if self.mtp_n[t] > 0. {
                 0.95 * self.mtp_tok[t] + 0.05 * accepted as f64
             } else {
@@ -180,6 +228,9 @@ impl Drop for DraftPolicy {
         self.bad.zeroize();
         self.last.zeroize();
         self.rounds.zeroize();
+        self.mtp_ok.zeroize();
+        self.mtp_bad.zeroize();
+        self.chosen.zeroize();
     }
 }
 pub(crate) fn public_preview(text: &str) {

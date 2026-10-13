@@ -1607,8 +1607,9 @@ pub(crate) fn run(
                     continue;
                 }
                 let draft = draft.as_mut().ok_or("speculative actual draft absent")?;
-                let mut count =
-                    (MAX_OUTPUTS - emitted.len()).min(if selected_four_lookahead { 4 } else { 3 });
+                let mut count = draft_policy.choose_mtp(
+                    (MAX_OUTPUTS - emitted.len()).min(if selected_four_lookahead { 4 } else { 3 }),
+                );
                 let mut inputs = Zeroizing::new(Vec::with_capacity(count));
                 inputs.push(confirmed);
                 let drafting = Instant::now();
@@ -2293,6 +2294,7 @@ pub(crate) fn run(
                 initial_prefill_target_integer_head_receipt;
             if crate::strata_port::enabled() {
                 record["repair_logit_max_abs"] = serde_json::Value::Null;
+                record["strata_draft_policy"] = draft_policy.receipt();
                 record["target_packet"] = serde_json::json!({"gpu_argmax":true,"full_logit_readback":false,"vocabulary_rows_evaluated":VOCAB,"carry_rows_retained":true,"packet_bytes":(8+4+4*HIDDEN)*4});
             }
             if crate::strata_port::enabled() {
