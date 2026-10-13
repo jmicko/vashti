@@ -60,6 +60,20 @@ def run():
   good=not after['admission']['state']['admission']['paused'] and after['kernel_fault_counts']==before['kernel_fault_counts'] and not after['nvidia_compute_process_count'] and all(r['used_bytes']<160*1024**2 for r in after['intel']['xe_memory'])
   print(json.dumps({'normal_admission_restored':not after['admission']['state']['admission']['paused'],'faults_unchanged':after['kernel_fault_counts']==before['kernel_fault_counts'],'intel_used_bytes':[r['used_bytes'] for r in after['intel']['xe_memory']],'cleanup_accepted':good}),flush=True)
   if not good:raise ValueError('cleanup evidence failed')
+def registration_probe():
+ # An explicitly synthetic parser check: no privileged query, model load or GPU.
+ build=BASE/sys.argv[2];profile=sys.argv[3]
+ binary=next(build.glob('kuno-strata-rust-*'))
+ label='language-code-intel-mtp-four-lookahead-down-integer-grouped-ple-gu-stride-shared-head-gpu-host'
+ env,_,_=protected.select_trial(label,BASE/'unused-registration-probe.json')
+ env.pop('KUNO_LAB_MTP_REPAIR',None)
+ if profile=='q2':
+  env['KUNO_TEST_MTP']=str(BASE/'kuno-strata-mtp-q2-20261009/mtp-q2_0.gguf')
+  env['KUNO_LAB_MTP_PROFILE']='strata-q2';env.pop('KUNO_LAB_MTP_Q8_HEAD',None)
+ env.update({'KUNO_PUBLIC_MTP_INTEL_TOTAL_BYTES':str(32*1024**3),'KUNO_PUBLIC_MTP_INTEL_USED_BYTES':str(50*1024**2),'KUNO_PUBLIC_MTP_INTEL_DEVICE_ID':str(0xe223)})
+ child={k:v for k,v in os.environ.items() if not k.startswith(('KUNO_LAB_','KUNO_TEST_','KUNO_PUBLIC_'))};child.update(env)
+ return subprocess.call([str(binary),'--validate-port-registration'],env=child)
 if __name__=='__main__':
+ if len(sys.argv)==4 and sys.argv[1]=='--registration-only':sys.exit(registration_probe())
  try:run()
  except Exception as e:print(json.dumps({'error_type':type(e).__name__}),flush=True);raise

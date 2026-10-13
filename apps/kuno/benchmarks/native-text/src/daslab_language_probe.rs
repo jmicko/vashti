@@ -5570,3 +5570,26 @@ mod tests {
         assert!(registration(&wrong, env(), threaded).is_err());
     }
 }
+
+/// Final registration-only acceptance for the complete port preset. The caller
+/// supplies explicitly synthetic memory fields; this never constructs a device.
+pub(crate) fn strata_registration_probe() -> Result<()> {
+    if !crate::strata_port::enabled() {
+        return Err("port feature required".into());
+    }
+    let args = vec![
+        OsString::from("kuno-strata-rust"),
+        OsString::from("intel"),
+        OsString::from("daslab-language-probe"),
+    ];
+    let input = registration(
+        &args,
+        std::env::vars_os(),
+        crate::target_lab_build::Build::compiled(),
+    )?;
+    println!(
+        "{}",
+        serde_json::json!({"registration_only":true,"gpu_created":false,"memory_fields_are_synthetic":true,"draft_profile":input.draft_profile.name(),"four_lookahead":input.four_lookahead,"gu_integer":input.frozen_gu_integer,"down_integer":input.frozen_down_integer,"transient_request_io":input.request_reuse,"actual_gpu_admission_still_required":true})
+    );
+    Ok(())
+}

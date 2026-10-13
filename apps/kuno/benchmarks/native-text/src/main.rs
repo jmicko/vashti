@@ -1088,6 +1088,9 @@ fn report_public_owned_zero_audit(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().nth(1).as_deref() == Some("--validate-port-registration") {
+        return daslab_language_probe::strata_registration_probe();
+    }
     if std::env::args().nth(1).as_deref() == Some("--strata-license") {
         print!("{}", include_str!("strata-port-NOTICE.txt"));
         return Ok(());
