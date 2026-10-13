@@ -16,8 +16,8 @@ use cubecl_runtime::server::{ExecutionMode, Handle, KernelArguments, MetadataBin
 use kuno_text::{Error, Result};
 
 // Fixed-public laboratory build selection. Not a Kuno inference/API default.
-// Keep the original entry available; unchanged CPU13 gates this experiment.
-pub(crate) const FIRST_PLANE_PUBLIC_PROBE: bool = true;
+// Rejected by unchanged full CPU13 in v195; retain only as an unused probe.
+pub(crate) const FIRST_PLANE_PUBLIC_PROBE: bool = false;
 pub(crate) const MAX_COUNT: usize = 4;
 pub(crate) const MAX_ROUTES: usize = MAX_COUNT * 10;
 pub(crate) const GROUP_STRIDE_FOUR: u32 = 4;

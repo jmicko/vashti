@@ -2,8 +2,9 @@
 
 This unused internal leaf probes the cost of the second Q8 activation plane in
 frozen DASLab gate/up projection. It is not selected by an environment variable,
-feature, API, parent policy or installed worker. It is an explicit approximation
-and has no physical numerical, quality or speed acceptance yet.
+feature, API or installed worker. The fixed-public experiment was rejected by
+unchanged full CPU13 checks and its compile-time parent selection is now false.
+It is an explicit approximation with no quality or speed acceptance.
 
 `frozen_gu_integer::four::launch_compact_first_plane` requires the same original
 count4 compact geometry and full owners as `launch_compact`. Both entrypoints
@@ -43,24 +44,26 @@ those tolerances or force reference routes. If accepted, compare normal
 compiler-idle whole-model timing separately from a profiled diagnostic. This
 leaf needs no Vashti/API/installed-default change.
 
-## Source-only checkpoint
+## Validation and rejected physical experiment
 
-The candidate and its two focused regression tests are implemented in an
-isolated worktree based on `62594d0`. Rust formatting and `git diff --check`
-pass. **Tests, compilation, Clippy and GPU validation have not been run for
-this leaf**: the parent owns the shared build cache and is keeping compilers
-idle during the current normal compaction benchmark. The test descriptions
-above state intended coverage, not a passing receipt. Parent integration must
-run the focused tests and strict direct-device lint before any physical trial.
+Root integrated leaf `3bb2c20` as `fd9c319`: focused tests and strict Clippy
+passed. Frozen source `fdd2732` selected only count4 compact GU through
+`FIRST_PLANE_PUBLIC_PROBE`; both probe receipts expose that compiled setting.
+The full direct-device suite passed 1,340 tests with one ignored, and formatting
+and strict Clippy passed. Those checks do not establish model-level accuracy.
 
-## Fixed-public experiment selection
+Physical v195 build SHA256
+`28e21d4107b56b200f8dc842fa24c634644a3c9c5e457f5c20245ade599e1ee7`
+passed the original cold CPU13 and warm initial prefill but failed the warm
+full carry fixture with `fixed public thirteen-position DASLab carry fixture
+rejected`. No threshold changed and no normal speed test followed. Failed-owner
+and both device cleanups completed; HTTP services and actual GPU baselines
+recovered, with no new classified kernel faults.
 
-The experimental build uses the compile-time `FIRST_PLANE_PUBLIC_PROBE` constant
-for the count4 compact GU call only. Both probe receipts report that compiled
-selection explicitly. Counts1..3, original noncompact GU, DOWN, original model
-weights, routing and all acceptance limits remain unchanged. This code is in
-the standalone laboratory, outside deployed Kuno. Reject and deselect it if the
-unchanged full cold/warm CPU13 gate fails; do not relax tolerances.
-
-Root validation of the unselected leaf passed its two focused tests and strict
-Clippy. Physical validation of the selected build is pending.
+**`FIRST_PLANE_PUBLIC_PROBE = false` is required at this checkpoint.** Retain
+the leaf only as an unselected approximation experiment. Count1..3, DOWN,
+original model weights and routes remain unchanged. Evidence is in
+`v195_primary_plane_gu_rejected` in the aggregate optimization receipts and
+`native-next-v195-first-plane-warm-intel-20261012` under the development base.
+Do not infer this candidate meets the existing numerical contract or reactivate
+it without a separately agreed precision policy. No installed/API/Vashti change.
