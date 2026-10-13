@@ -62,79 +62,94 @@ of byte-sized PCIe reads. Compaction is the next prioritized experiment.
 
 ## Start here when the user authorizes resuming
 
-The checkpoint above and this section are the authoritative directions.
-Everything under **Historical evidence** below is an older receipt or plan;
-older headings saying “current”, “latest” or “resume” do not override this section.
-This document is in the Kuno worktree, not the ordinary Vashti checkout. Start
-from the full path above. The verified starting implementation is `ec5ea8f` on
-`codex/kuno-native-text`; the following documentation commit only clarifies
-this handoff. Inspect `git status`, branch and recent commits before editing.
-Preserve the unrelated untracked `apps/kuno/benchmarks/text/__pycache__/`.
+**Superseded by the 2026-10-12 compaction checkpoint below.** Read the newer
+section first; the older resume list that used to start here is preserved under
+**Historical evidence**.
 
-1. Read `AGENTS.md`, the latest native text checkpoint at the end of
-   `docs/kuno-vashti-coordination.md`, and
-   `docs/kuno-native-public-target-profile.md`. Work remains stopped until the
-   user requests continuation. The service/GPU snapshot above was measured at
-   the stated time; recheck current availability and sudo before GPU tests.
-2. Implement **only per-Source expert group compaction** first, using the design
-   above. It is not implemented anywhere. Main files:
-   `resident_frozen_sources.rs`, `frozen_gu_integer_four.rs/.wgsl`, and
-   `frozen_down_integer_four.rs/.wgsl` under
-   `apps/kuno/benchmarks/native-text/src`. Preserve the original kernels as
-   control paths and give the compact variants separate kernel identities.
-   Target and full-Q8 MTP stay on Intel; defer Nvidia, BF16, CPU placement,
-   single-plane Q8 and API/frontend work.
-3. Test the stable partition lists, original group identity, zero-group shards,
-   indirect-view bounds, malformed-plan rejection, whole-owner audit/erasure,
-   source lowering and original paths. Keep full numerical tolerances and
-   original selected experts. Do not substitute experts, force acceptance,
-   relax tolerances or count speculative proposals as output tokens.
-4. Run focused source tests, formatting and warnings-denied pure
-   `direct-device` Clippy before freezing a committed binary. Use two compiler
-   workers and one owner per cache. Root cache is
-   `/media/jmicko/faststore/kuno-development/root-native-text-target-20261005`.
-   Build helper: `helpers-20261008/build-direct-target.py` under that development
-   base. It is hardcoded to the Kuno root worktree; do not accidentally build
-   from a leaf worktree or edit root source while it compiles. Choose fresh
-   build/output directories; never overwrite v181..v185 evidence.
-5. Root owns GPU and service work. Use
-   `/media/jmicko/faststore/kuno-development/run-native-strata-public-protected-20261009.py`
-   in the shared Demons `shell`, after reading it to confirm it is idle.
-   The runner requires build-directory basename, a fresh precreated output
-   directory basename, and one exact trial label. First numerical gate:
-   `warm-intel-mtp-four-lookahead-batch-repair-down-integer-grouped-ple-gu-stride-shared-head-gpu-host`.
-   Require complete original cold/warm CPU13 vectors, carries and greedy
-   outputs, actual compact-path execution, original tails, all closes and
-   physical GPU recovery. Merely passing shader/unit tests is insufficient.
-6. Only then use the normal timing label
-   `language-code-intel-mtp-four-lookahead-batch-repair-down-integer-grouped-ple-gu-stride-shared-head-gpu-host`.
-   All compilers must be idle during timing; profiling must be disabled.
-   Compare against the preserved v185 control build if the new source has no
-   same-artifact control selector. Clearly label this a different-artifact
-   comparison; do not claim same-artifact acceptance. Public prompt:
-   “Write a Python function that merges two sorted lists of integers into one
-   sorted list. Explain its time and space complexity.” Seed424242, temperature0.
-   Report actual `continuation_tokens_per_second` (normally199 continuations
-   from200 emitted tokens), acceptance/recomputation counts and full closure.
-   The current10.88 result is one ordered pair, not a repeated performance guarantee.
-7. Preserve transient privacy: no private prompts, generated answers, route
-   traces, images or summaries on disk. The protected runner retains swap/core
-   restrictions and restores admission in cleanup. If sudo is unavailable,
-   stop protected work at a documented checkpoint; do not improvise workarounds.
-   Do not reboot/reset GPUs without fresh authorization. Finish by verifying
-   actual Intel memory recovery, Nvidia compute0, idle/unpaused admission and
-   healthy Kuno/Ollama/Vashti. Record exact commits, binary/helper hashes,
-   physical receipts and limitations, then update this top checkpoint.
+### Current state (2026-10-12, session interrupted mid-debug)
 
-Optional separate branches are clean at `7c0fbb8` and contain no compaction code:
-`codex/kuno-compact-source-groups-parent` in
-`/home/jmicko/.codex/worktrees/kuno-cpu-batch-leaf/vashti`, and
-`codex/kuno-four-compact-expert-groups` in
-`/home/jmicko/.codex/worktrees/kuno-verify4-dense/vashti`.
-For sequential work use the root checkout; for concurrent work rebase/create
-separate worktrees from the agreed root integration commit before editing.
-Shelved BF16 commit `a9cff9e` remains on its own branch and should not be merged
-as part of compaction. Normal services are shared even across worktrees.
+Branch `codex/kuno-native-text`, HEAD `0b72be5` (count-generic compaction).
+Committed work, all with full native-text suite green (1336 passed/0 failed),
+clippy `-D warnings` clean and fmt clean:
+
+- `c42379b` — per-Source expert group compaction for the count4 integer
+  GU/DOWN leaves, parent wiring, compaction receipts, probe evidence counters.
+- `ce6ffe5` — coordination checkpoint.
+- `f6a233a` — the same compaction for the count1..3 integer leaves. This was
+  needed because the protected harness keeps `KUNO_LAB_FROZEN_DOWN_ROWS`
+  (four members) mutually exclusive with integer DOWN
+  (`apps/kuno/benchmarks/text/protected-lab-exec.py`, `frozen_down_integer_scope`),
+  so no protected label could reach count4+integer; the count1..3 path is the
+  one the normal language-code label exercises.
+- `0b72be5` — records take the exact routed group count from the MAP header and
+  accept it within the caller's capacity bound, instead of demanding equality
+  with that bound (the parent passes the geometry capacity 30/40).
+
+Mechanism: GU prepare builds five disjoint shard records in the already-owned
+zeroed tail (words 6144..6383, 48 words each: ready, count, GU `[80,min(4,count),1]`,
+DOWN `[320,count,1]`, then stable ascending original group IDs). GU and DOWN then
+run one indirect dispatch per shard through checked 12-byte views of the
+authenticated full 64KiB owner (`CubeCount::Dynamic`). Arithmetic, decoder,
+member order, routes, IDs and owners are unchanged; both compact projections
+reuse the original body verbatim and the record audit reconstructs each list
+from the unchanged MAP, stickies faults, and erases records only after every
+shard validates. Host receipts require actual credit of five GU plus five DOWN
+indirect dispatches and one record audit per layer, and both daslab probes
+report `compact_gu_dispatches`, `compact_down_dispatches`, `compact_audits`.
+
+**Uncommitted debug instrumentation must be reverted before any real work:**
+`resident_moe_batch.rs` (`guarded` now prints `DIAG_chunk_error`/`DIAG_chunk_panic`),
+`frozen_gu_integer.rs` and `frozen_gu_integer_four.rs` (a `DIAG_reject line N` /
+`DIAG4_reject line N` marker before every `Err(rejected())`). Run
+`git checkout -- apps/kuno/benchmarks/native-text/src` on those three files
+(or `git stash`) — no other uncommitted work exists except the unrelated
+untracked `apps/kuno/benchmarks/text/__pycache__/`.
+
+**Open failure, reproduced three times on the B70.** Trial
+`warm-intel-mtp-four-lookahead-batch-repair-down-integer-grouped-ple-gu-stride-shared-head-gpu-host`
+fails during the warm replay with `InvalidFormat("native routed chunk failed")`.
+`guarded` swallows the real cause; the instrumented build showed it is
+`Error::InvalidFormat("public frozen GU integer eight-lane candidate")` raised
+by the **four-member** leaf, at the first guard of `record_dispatch_view` in
+`frozen_gu_integer_four.rs` (pre-instrumentation line 518):
+
+```rust
+if scratch.size() != MAIN_BYTES
+    || scratch.size_in_used() != MAIN_BYTES
+    || scratch.offset_start.is_some()
+    || scratch.offset_end.is_some()
+{ return Err(rejected()); }
+```
+
+This guard was added late as a hardening change. The original code paths never
+call it, and their equivalent `full_handles` checks pass in this same trial, so
+the next step is to print the four values (`size`, `size_in_used`,
+`offset_start`, `offset_end`) and the caller's handle provenance — note
+`record_dispatch_view` is reached from **both** GU and DOWN compact launches,
+and the DOWN path passes the GU owner obtained from `integer_handles` in
+`resident_frozen_sources.rs`. Verify which caller and which field fails before
+changing anything; the likely candidates are a non-None `offset_*` on the arena
+scratch handle or an owned size above `MAIN_BYTES`. Empirically the trial *does*
+reach the four-member leaf (`count == 4`), which contradicts the earlier
+conclusion that no protected label enables four members — re-verify that
+assumption.
+
+Debug artifacts already on disk: frozen builds
+`frozen-native-text-diag4-v192-20261012` (instrumented),
+`frozen-native-text-compact-v188-20261012` (clean, from `0b72be5`); trial dirs
+`trial-diag4-v192-20261012`, `trial-compact-v188-warm-20261012`,
+`trial-compact-v187-warm-20261012` under `/media/jmicko/faststore/kuno-development`.
+
+Host state: `kuno.service` must be running for the harness control plane
+(`host-state.py` reads `/etc/kuno/control-token` and 127.0.0.1:11432, and needs
+root), while the B70 must be at baseline 50,688,000 B for the runner's idle
+check. The resident image worker holds 16 GB when it preloads; starting
+`kuno.service` on a fresh boot left the B70 at baseline with no resident worker,
+which is the working combination. Run trials as `sudo -n python3
+run-native-strata-public-protected-20261009.py <build-dir> <fresh-out-dir> <trial>`
+from the Demons "shell" pane, which holds the sudo credential (it expires;
+refresh with `sudo -v`). No speed claim exists yet: the v185 control is 10.882673
+tok/s on `language-code-intel-mtp-four-lookahead-batch-repair-down-integer-grouped-ple-gu-stride-shared-head-gpu-host`.
 
 ## Historical evidence — not the current work queue
 
