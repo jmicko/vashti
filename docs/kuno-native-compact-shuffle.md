@@ -1,8 +1,8 @@
 # Count4 compact expert shuffle reduction
 
 This is an internal native-text candidate based on the accepted compact source
-schedule at `fb7b420`. Root now explicitly selects it for the fixed-public
-laboratory probes described below. There is no API, environment switch,
+schedule at `fb7b420`. Root explicitly selected it for the fixed-public
+laboratory probes below and has now deselected it after neutral timing. There is no API, environment switch,
 installed default or consumer change. It preserves
 the two residual Q8 planes and all existing numerical tolerances.
 
@@ -65,6 +65,8 @@ classified kernel faults recover after the trial. Independent normal code200
 measured10.955189006 continuations/s:199 continuations in18.164907962s,
 52 rounds,147 accepted drafts and5 recomputations. Previous compaction was
 10.906246956; this single-run difference is neutral, not a meaningful speedup.
-No original numerical threshold or route changed. This candidate remains the
-explicit lab base for a separate staged-activation experiment, not a deployed
-performance recommendation.
+No original numerical threshold or route changed. The candidate is the basis
+for the separate source-tested staged-activation experiment, not a deployed
+performance recommendation. At the user-requested stop, `PUBLIC_PROBE` is false;
+original accepted compaction is selected. The frozen v196/v197 artifacts retain
+their recorded experiment selections for future comparisons.

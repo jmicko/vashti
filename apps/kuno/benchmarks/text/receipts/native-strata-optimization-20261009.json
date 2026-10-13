@@ -52002,5 +52002,87 @@
     "comparison": "10.95518900598325 versus compaction10.906246956475458; neutral single-run difference, no meaningful speedup claim",
     "profile_enabled": false,
     "compilers_idle": true
+  },
+  "v197_staged_down_source_checkpoint": {
+    "source_commit": "d8b58b6a6bccd5fea9a68f15e04ec4b2be362a6e",
+    "frozen_sha256": "358f23af90229acbef58c00a90000169c86395120ce783985d186db47f67f802",
+    "build_directory": "/media/jmicko/faststore/kuno-development/native-next-v197-staged-down-build-20261013",
+    "source_tests_passed": 1346,
+    "source_tests_ignored": 1,
+    "strict_direct_clippy_passed": true,
+    "gpu_tested": false,
+    "reason_pending": "Usage interruption; sudo expired; user requested finish and stop",
+    "frozen_artifact_shuffle_selected": true,
+    "frozen_artifact_staged_down_selected": true,
+    "checkout_shuffle_selected_at_stop": false,
+    "checkout_staged_down_selected_at_stop": false,
+    "checkout_primary_plane_selected_at_stop": false,
+    "normal_throughput_claim": false
+  },
+  "manual_stop_20261013": {
+    "reason": "User requested finish current block and stop until tomorrow",
+    "automated_goal_left_paused": true,
+    "benchmark_and_compiler_processes_running": false,
+    "unprivileged_final_state": {
+      "time": "2026-10-13T06:41:36.735500+00:00",
+      "scope": "unprivileged final checkpoint; protected Intel memory/admission last verified by v196 runner",
+      "http_statuses": {
+        "kuno": 200,
+        "ollama": 200,
+        "vashti": 200
+      },
+      "services": {
+        "exit": 0,
+        "output": "active\nactive\ninactive"
+      },
+      "nvidia_compute_processes": {
+        "exit": 0,
+        "output": ""
+      }
+    },
+    "last_privileged_recovery": {
+      "admission": {
+        "action": "status",
+        "state": {
+          "admission": {
+            "active": false,
+            "completed": 0,
+            "paused": false,
+            "recovery_required": false,
+            "rejected": 0,
+            "waiting": 0
+          }
+        },
+        "status": 200
+      },
+      "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+      "http_statuses": {
+        "kuno": 200,
+        "ollama": 200,
+        "vashti": 200
+      },
+      "intel": {
+        "xe_memory": [
+          {
+            "total_bytes": 34242297856,
+            "used_bytes": 50688000
+          }
+        ]
+      },
+      "kernel": "7.0.0-38-generic",
+      "kernel_fault_counts": {
+        "nvidia_xid": 0,
+        "xe_memory_faults": 0,
+        "xe_reset_failures": 0,
+        "xe_timeouts": 0,
+        "xe_wedged": 0
+      },
+      "nvidia_compute_process_count": 0,
+      "nvidia_memory_mib": 609,
+      "time": "2026-10-13T04:26:09.886150+00:00"
+    },
+    "no_benchmark_after_last_privileged_recovery": true,
+    "privileged_state_not_refreshed_after_sudo_expired": true,
+    "installed_defaults_api_frontend_unchanged": true
   }
 }

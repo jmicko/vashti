@@ -1,7 +1,8 @@
 # Count4 compact shuffle DOWN activation staging
 
-This unused source-only candidate extends the explicit exact-tree shuffle leaf
-at `efb7930`. No parent, environment, API, feature or installed selector changes.
+This currently unselected candidate extends the explicit exact-tree shuffle leaf
+at `efb7930`. Root integration and source validation are complete; the GPU gate
+is pending. There is no environment, API, feature or installed selector change.
 `launch_compact_shuffle_staged` shares every original compact launch check and
 uses the separate appended `ProjectCompactShuffleStaged` kernel identity.
 Original compact/shuffle entries and count1..3 tails are unchanged.
@@ -44,13 +45,19 @@ Projection checks compare original and staged bits for both formats. These are
 source proofs; full original CPU13 vectors/carries/greedies, real repair,
 owner/source closure and fresh normal timings remain required before acceptance.
 
-**Tests, compilation, Clippy and GPU validation have not been run for this
-leaf.** Root owns the shared cache and is retaining compiler-idle timings.
-Rust formatting and whitespace checks pass at this source-only handoff.
+Root integrated `5a64362` as `41b9d3d`, selected the fixed-public trial in
+`d8b58b6a6bccd5fea9a68f15e04ec4b2be362a6e`, and completed the full direct-device
+suite: **1346 passed, one ignored**. Strict release direct-device Clippy,
+formatting and diff checks pass. The frozen v197 build completed with SHA256
+`358f23af90229acbef58c00a90000169c86395120ce783985d186db47f67f802`.
+**No v197 GPU trial has run.** Sudo expired during the usage-limit interruption,
+and the user requested a clean stop. Both staged and shuffle compile-time
+selectors are now false. Do not mistake source acceptance for GPU or speed
+acceptance; use the retained selected artifact for the next public CPU13 gate.
 
 ## Fixed-public root experiment
 
-Root integration selects this leaf only under the existing selected count4
+Root integration can select this leaf only under the count4
 compact shuffle path, through compile-time `STAGED_PUBLIC_PROBE`. Host adapter
 admission calls `validate_staged_limits` for the applicable protected inputs;
 shader subgroup/full-coverage and original source guards remain in force. Both

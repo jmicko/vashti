@@ -3,8 +3,8 @@
 //! planes, per-lane accumulation, routing, bounds and output identities derive
 //! from the accepted original compact source. Selection is laboratory-only.
 
-// Immutable public experiment selector, reported by both protected probes.
-pub(crate) const PUBLIC_PROBE: bool = true;
+// Accepted numerically, neutral in v196 timing; unselected at manual stop.
+pub(crate) const PUBLIC_PROBE: bool = false;
 
 fn replace_once(source: String, before: &str, after: &str) -> String {
     // These are fixed source templates, never model or request content. Refuse
