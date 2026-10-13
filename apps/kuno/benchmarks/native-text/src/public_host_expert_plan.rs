@@ -764,6 +764,46 @@ mod tests {
             assert_eq!(ids, (1..=256).collect::<Vec<_>>());
         });
     }
+    #[cfg(feature = "strata-resident-224")]
+    #[test]
+    fn expanded_residency_preserves_all_original_addresses_and_role_bounds() {
+        // Validate the new physical page layout across the actual mixed dtypes,
+        // especially the final non-empty page and the RAM exchange addresses.
+        assert_eq!(VRAM_SLOTS, 224);
+        assert!(address(EXPERTS).is_err());
+        let mut addressed = std::collections::BTreeSet::new();
+        for slot in 0..EXPERTS {
+            let a = address(slot).unwrap();
+            assert_eq!(a.virtual_slot, slot);
+            assert!(addressed.insert((a.tier as u8, a.page, a.local_slot)));
+            if slot < VRAM_SLOTS {
+                assert_eq!(a.tier, Tier::Vram);
+                assert!(a.page < 2 && a.local_slot < 112);
+            } else {
+                assert_eq!(a.tier, Tier::Host);
+                assert!(a.page < 3 && a.local_slot < PAGE_COUNTS[a.page]);
+            }
+        }
+        assert_eq!(addressed.len(), EXPERTS);
+        for layer in 0..LAYERS {
+            for r in ROLES {
+                let pages = role(layer, r, 4096);
+                let mut end = VRAM_SLOTS;
+                for p in pages {
+                    assert!(p.slots > 0 && p.logical_bytes <= MAX_BINDING_BYTES);
+                    assert_eq!(p.first_virtual_slot, end);
+                    for slot in end..end + p.slots {
+                        let a = address(slot).unwrap();
+                        assert_eq!(pages[a.page].first_virtual_slot + a.local_slot, slot);
+                        assert!((a.local_slot as u64 + 1) * p.expert_bytes <= p.logical_bytes);
+                    }
+                    end += p.slots;
+                }
+                assert_eq!(end, EXPERTS);
+            }
+        }
+    }
+
     fn slots() -> [Option<usize>; VRAM_SLOTS] {
         std::array::from_fn(|i| Some((i * 3 + 11) % EXPERTS))
     }
