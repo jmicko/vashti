@@ -43,10 +43,10 @@ fn slot_table(slots: &crate::bank_slots::BankSlots) -> Result<Zeroizing<[u32; 51
         return Err(reject());
     }
     let mut out = Zeroizing::new([u32::MAX; 512]);
-    let mut seen = [false; 144];
+    let mut seen = [false; crate::daslab_profile::BANK_SLOTS];
     for (id, cell) in out.iter_mut().enumerate() {
         if let Some(slot) = slots.resident_slot(id).map_err(|_| reject())? {
-            if slot >= 144
+            if slot >= crate::daslab_profile::BANK_SLOTS
                 || seen[slot]
                 || slots.resident_expert(slot).map_err(|_| reject())? != Some(id)
             {
