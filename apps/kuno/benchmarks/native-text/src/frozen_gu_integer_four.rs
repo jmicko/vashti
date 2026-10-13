@@ -1,5 +1,5 @@
 // Separate exactcount4 leaf. All original count1..3 entries remain unchanged.
-//! Frozen GU two-residual-Q8 math plus an unused compact primary-plane probe.
+//! Frozen GU two-residual-Q8 math plus a fixed-public primary-plane probe.
 //! Original public banks, private rank MAP, DOWN and all owning spans remain
 //! caller-owned. This is alternate arithmetic, never original64 F32 parity.
 //! Packing/quantizer provenance and MIT notices: iq_moe_integer-NOTICE.txt.
@@ -15,6 +15,9 @@ use cubecl_runtime::kernel::{CompiledKernel, KernelMetadata};
 use cubecl_runtime::server::{ExecutionMode, Handle, KernelArguments, MetadataBindingInfo};
 use kuno_text::{Error, Result};
 
+// Fixed-public laboratory build selection. Not a Kuno inference/API default.
+// Keep the original entry available; unchanged CPU13 gates this experiment.
+pub(crate) const FIRST_PLANE_PUBLIC_PROBE: bool = true;
 pub(crate) const MAX_COUNT: usize = 4;
 pub(crate) const MAX_ROUTES: usize = MAX_COUNT * 10;
 pub(crate) const GROUP_STRIDE_FOUR: u32 = 4;
@@ -633,7 +636,7 @@ pub(crate) fn launch_compact(
     )
 }
 
-/// Unconnected fixed-public experiment: original compact count4 GU with only
+/// Separately selected fixed-public experiment: original compact count4 GU with only
 /// the primary Q8 activation plane. Prepare/audit still own both full planes.
 /// The original CPU13 vector/carry/greedy gate must accept before timing credit.
 #[allow(clippy::too_many_arguments)]

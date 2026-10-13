@@ -52,3 +52,15 @@ this leaf**: the parent owns the shared build cache and is keeping compilers
 idle during the current normal compaction benchmark. The test descriptions
 above state intended coverage, not a passing receipt. Parent integration must
 run the focused tests and strict direct-device lint before any physical trial.
+
+## Fixed-public experiment selection
+
+The experimental build uses the compile-time `FIRST_PLANE_PUBLIC_PROBE` constant
+for the count4 compact GU call only. Both probe receipts report that compiled
+selection explicitly. Counts1..3, original noncompact GU, DOWN, original model
+weights, routing and all acceptance limits remain unchanged. This code is in
+the standalone laboratory, outside deployed Kuno. Reject and deselect it if the
+unchanged full cold/warm CPU13 gate fails; do not relax tolerances.
+
+Root validation of the unselected leaf passed its two focused tests and strict
+Clippy. Physical validation of the selected build is pending.

@@ -3292,7 +3292,11 @@ impl Sources {
                             // Compaction: one indirect dispatch per shard, driven
                             // by the records built in the original owner tail.
                             (if count == 4 {
-                                crate::quant_matvec::frozen_gu_integer::four::launch_compact
+                                if crate::quant_matvec::frozen_gu_integer::four::FIRST_PLANE_PUBLIC_PROBE {
+                                    crate::quant_matvec::frozen_gu_integer::four::launch_compact_first_plane
+                                } else {
+                                    crate::quant_matvec::frozen_gu_integer::four::launch_compact
+                                }
                             } else {
                                 crate::quant_matvec::frozen_gu_integer::launch_compact
                             })(
