@@ -1469,7 +1469,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             // Strata runtime conversion. Borrow original GGUF rows, convert in
             // RAM, and upload once. No converted weight artifact is persisted.
             let columns = tensor.info().dimensions()[0] as usize;
-            if columns % 32 != 0 || logical != rows * (columns / 32) * 34 {
+            if !columns.is_multiple_of(32) || logical != rows * (columns / 32) * 34 {
                 return Err(Error::InvalidBufferLength);
             }
             let mut packed = Zeroizing::new(vec![0u8; tensor.info().row_bytes() as usize]);

@@ -103,7 +103,7 @@ impl DraftPolicy {
             return self.cost[t];
         }
         let (mut numerator, mut denominator) = (0., 0.);
-        for u in 1..=4 {
+        for (u, _) in SHAPE.iter().enumerate().skip(1) {
             if self.cost_n[u] > 0. {
                 let w = self.cost_n[u].min(20.);
                 numerator += w * self.cost[u] * SHAPE[t] / SHAPE[u];

@@ -943,8 +943,8 @@ impl<'plan, 'model, 'file> Mirror<'plan, 'model, 'file> {
             || page >= 3
             || outgoing.is_empty()
             || outgoing.len() > 1024 * 1024
-            || first % 4 != 0
-            || outgoing.len() % 4 != 0
+            || !first.is_multiple_of(4)
+            || !outgoing.len().is_multiple_of(4)
         {
             return Err(rejected());
         }

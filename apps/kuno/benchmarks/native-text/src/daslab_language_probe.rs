@@ -1621,18 +1621,17 @@ pub(crate) fn run(
                     inputs.push(output.greedy());
                     drop(output);
                     if let Some(candidate) = candidate.filter(|p| p.tokens.first() == inputs.get(1))
+                        && let Some(selected) = draft_policy.choose(count, &candidate)
                     {
-                        if let Some(selected) = draft_policy.choose(count, &candidate) {
-                            count = selected;
-                            crate::strata_port::credit_lookup(count - 1);
-                            for &token in candidate.tokens.iter().skip(1).take(count - 2) {
-                                // First cell is the real MTP forward; provisional
-                                // follow cells are repaired from real target carries.
-                                draft.append_kv(*inputs.last().unwrap(), &carry, &cancel)?;
-                                inputs.push(token);
-                            }
-                            lookup = Some(candidate);
+                        count = selected;
+                        crate::strata_port::credit_lookup(count - 1);
+                        for &token in candidate.tokens.iter().skip(1).take(count - 2) {
+                            // First cell is the real MTP forward; provisional
+                            // follow cells are repaired from real target carries.
+                            draft.append_kv(*inputs.last().unwrap(), &carry, &cancel)?;
+                            inputs.push(token);
                         }
+                        lookup = Some(candidate);
                     }
                     if count > 2 && lookup.is_none() {
                         let output = draft.follow_draft(&cancel)?;

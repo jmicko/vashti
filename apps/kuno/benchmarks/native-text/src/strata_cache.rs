@@ -62,7 +62,7 @@ impl Cache {
     pub(crate) fn plan(&mut self) -> Result<Zeroizing<Vec<[usize; 5]>>> {
         self.clock += 1;
         let mut swaps = Zeroizing::new(Vec::with_capacity(96));
-        if self.clock % 4 != 0 {
+        if !self.clock.is_multiple_of(4) {
             return Ok(swaps);
         }
         for layer in 0..LAYERS {
