@@ -59,7 +59,17 @@ const OUTPUT: usize = 5;
 const STATUS: usize = 6;
 const PRIVATE_BYTES: u64 = 1_409_024;
 const IO_INCREMENT: u64 = 512 * 1024;
-const HOST_PRIVATE: u64 = 2 * 1024 * 1024;
+const HOST_PRIVATE: u64 = if cfg!(feature = "strata-rust-port") {
+    4
+} else {
+    2
+} * 1024
+    * 1024;
+const METADATA_PER_LAYER: usize = if cfg!(feature = "strata-rust-port") {
+    64
+} else {
+    32
+} * 1024;
 const CPU_WORDS: usize = 10 * 2560;
 const OWNER_WORDS: usize = 4 + 80 * 3;
 const HYBRID_HOST: usize = 1024 * 1024;
@@ -1124,8 +1134,8 @@ impl Workspace {
                         + 6 * std::mem::size_of::<Handle>()
                         + std::mem::size_of::<Last>(),
                 )
-                .is_none_or(|n| n > 32 * 1024)
-                || 48 * 32 * 1024 + 512 * 1024 > HOST_PRIVATE as usize
+                .is_none_or(|n| n > METADATA_PER_LAYER)
+                || 48 * METADATA_PER_LAYER + 512 * 1024 > HOST_PRIVATE as usize
             {
                 return Err(Error::LimitExceeded("native routed complete metadata plan"));
             }
@@ -2204,7 +2214,7 @@ impl GpuExecutor<'_> {
                     + std::mem::size_of::<Last>()
                     + pins.capacity() * std::mem::size_of::<Handle>(),
             )
-            .is_none_or(|n| n > 32 * 1024)
+            .is_none_or(|n| n > METADATA_PER_LAYER)
         {
             return Err(Error::LimitExceeded("native routed pending host envelope"));
         }

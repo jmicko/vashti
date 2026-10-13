@@ -18,6 +18,9 @@
 //! Drop leaks exposed backing/device rather than free potentially live memory.
 //! No private erasure, pinning, whole-model performance or production claim.
 
+#[path = "strata_gpu_exchange.rs"]
+pub(crate) mod strata_gpu_exchange;
+
 use crate::{
     expert_banks::ExpertBanks,
     public_host_expert_plan::{self as plan, Plan, PlanIdentity, Role},
@@ -590,6 +593,7 @@ pub(crate) struct Mirror<'plan, 'model, 'file> {
     device: wgpu::Device,
     pages: Vec<PageOwner>,
     ledger: Ledger,
+    strata_exchange: Option<strata_gpu_exchange::ExchangeRuntime>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Close {
@@ -820,6 +824,7 @@ impl<'plan, 'model, 'file> Mirror<'plan, 'model, 'file> {
             device: device.clone(),
             pages,
             ledger,
+            strata_exchange: None,
         })
     }
     pub(crate) fn ledger(&self) -> Ledger {
@@ -923,6 +928,7 @@ impl<'plan, 'model, 'file> Mirror<'plan, 'model, 'file> {
     /// Strata's parent has joined all GPU consumers and excluded every CPU
     /// read borrow. Only original public weight bytes may enter this swap;
     /// all three roles and the logical slot bijection publish together later.
+    #[allow(dead_code)] // Reference staging path, no longer selected by the port.
     pub(crate) unsafe fn swap_strata_public_role(
         &mut self,
         layer: usize,

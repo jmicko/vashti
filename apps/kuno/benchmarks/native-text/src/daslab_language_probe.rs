@@ -984,6 +984,7 @@ pub(crate) fn run(
     limits: &wgpu::Limits,
     input: Inputs,
     host_device: Option<&wgpu::Device>,
+    host_queue: Option<&wgpu::Queue>,
 ) -> Result<()> {
     if input.frozen_host_sources != host_device.is_some() {
         return Err("public frozen sources require exact parent device selection".into());
@@ -1856,6 +1857,7 @@ pub(crate) fn run(
                             .as_mut()
                             .ok_or("Strata adaptive attachment absent")?,
                         &cancel,
+                        host_queue.ok_or("Strata original target queue absent")?,
                     )?;
                     if stats.rounds % 4 == 0 {
                         println!("strata_adapt_complete round={}", stats.rounds);

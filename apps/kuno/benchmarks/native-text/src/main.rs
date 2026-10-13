@@ -2449,6 +2449,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             || public_host_cpu_batch_inputs.is_some()
             || public_host_cpu_overlap_inputs.is_some())
         .then(|| device.clone());
+        let public_model_host_queue = public_model_host_device.as_ref().map(|_| queue.clone());
         let selected = init_device(
             WgpuSetup {
                 instance,
@@ -2600,6 +2601,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &grouped_limits,
                 inputs,
                 public_model_host_device.as_ref(),
+                public_model_host_queue.as_ref(),
             );
         }
         if let Some(inputs) = speculative_inputs {

@@ -515,6 +515,7 @@ pub(crate) fn validate_shader_set() -> Result<(), Box<dyn std::error::Error>> {
     for source in [
         router_shader(include_str!("resident_batch_router_gpu.wgsl").into()),
         router_shader(include_str!("resident_batch_router_gpu_four.wgsl").into()),
+        crate::public_host_expert_mirror::strata_gpu_exchange::SHADER.into(),
         include_str!("strata-packet.wgsl").into(),
     ] {
         let module = n::front::wgsl::parse_str(&source).map_err(|e| e.emit_to_string(&source))?;

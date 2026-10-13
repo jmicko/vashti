@@ -3641,6 +3641,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &mut GpuExecutor<'f>,
         attachment: &mut crate::public_host_expert_attachment::Attachment<'_, '_, '_>,
         cancel: &AtomicBool,
+        queue: &wgpu::Queue,
     ) -> Result<()> {
         if !crate::strata_port::enabled() {
             return Err(error());
@@ -3656,7 +3657,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .check_no_live_output()?;
         // SAFETY: actual all-family completed boundary and released output
         // leases; adaptation joins the target queue before public cache writes.
-        let swaps = unsafe { attachment.adapt_strata()? };
+        let swaps = unsafe { attachment.adapt_strata(queue)? };
         if swaps > 0 {
             self.native_batch
                 .as_mut()

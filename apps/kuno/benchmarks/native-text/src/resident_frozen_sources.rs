@@ -1489,6 +1489,7 @@ impl Sources {
         &self,
         client: &ComputeClient<WgpuRuntime>,
         mirror: &mut crate::public_host_expert_mirror::Mirror<'_, '_, '_>,
+        queue: &wgpu::Queue,
     ) -> Result<u64> {
         let Some(cache) = &self.adaptive else {
             return Ok(0);
@@ -1500,83 +1501,51 @@ impl Sources {
             return Ok(0);
         }
         cubecl::future::block_on(client.sync()).map_err(|_| reject())?;
-        // The policy produces at most two swaps per layer. Group their six
-        // public role reads/uploads into one joined transfer batch, rather
-        // than thousands of separately mapped/sanitized role operations.
-        for group in swaps.chunks(2) {
-            let mut descriptors = Vec::with_capacity(group.len() * 3);
-            for &swap in group {
-                let [layer, _, _, resident, host] = swap;
-                let l = self.layers.get(layer).ok_or_else(reject)?;
-                let ordinal = host
-                    .checked_sub(crate::daslab_profile::BANK_SLOTS)
-                    .ok_or_else(reject)?;
-                for role in 0..3 {
-                    let page = &l.pages[role * 5 + resident / crate::daslab_profile::SEGMENT_SLOTS];
-                    if page.words % crate::daslab_profile::SEGMENT_SLOTS != 0 {
-                        return Err(reject());
-                    }
-                    let bytes = page.words * 4 / crate::daslab_profile::SEGMENT_SLOTS;
-                    let first = (resident % crate::daslab_profile::SEGMENT_SLOTS) * bytes;
-                    if bytes > 1024 * 1024 || first + bytes > page.handle.size() as usize {
-                        return Err(reject());
-                    }
-                    let view = page
-                        .handle
-                        .clone()
-                        .offset_start(first as u64)
-                        .offset_end(page.handle.size() - (first + bytes) as u64);
-                    descriptors.push((
-                        view,
-                        layer,
-                        role,
-                        ordinal / 144,
-                        (ordinal % 144) * bytes,
-                        bytes,
-                    ));
-                }
-            }
-            let mut read = cubecl::future::block_on(
-                client.read_async(descriptors.iter().map(|d| d.0.clone()).collect()),
-            )
-            .map_err(|_| err("Strata grouped cache victim readback"))?;
-            if read.len() != descriptors.len() {
-                return Err(reject());
-            }
-            let mut writes = Vec::with_capacity(descriptors.len());
-            let mut totals = [0u64; 2];
-            for (i, ((view, layer, role, page, first, bytes), outgoing)) in
-                descriptors.into_iter().zip(read.iter_mut()).enumerate()
-            {
-                if outgoing.len() != bytes {
+        use crate::public_host_expert_mirror::strata_gpu_exchange::GpuExpertExchange;
+        let mut exchanges = Vec::with_capacity(swaps.len() * 3);
+        let mut totals = vec![0u64; swaps.len()];
+        for (index, &swap) in swaps.iter().enumerate() {
+            let [layer, _, _, resident, host] = swap;
+            let l = self.layers.get(layer).ok_or_else(reject)?;
+            let ordinal = host
+                .checked_sub(crate::daslab_profile::BANK_SLOTS)
+                .ok_or_else(reject)?;
+            for role in 0..3 {
+                let page = &l.pages[role * 5 + resident / crate::daslab_profile::SEGMENT_SLOTS];
+                if page.words % crate::daslab_profile::SEGMENT_SLOTS != 0 {
                     return Err(reject());
                 }
-                // SAFETY: joined serialized public cache boundary; all roles
-                // publish a new logical bijection only after the grouped copy.
-                let mut incoming = unsafe {
-                    mirror
-                        .swap_strata_public_role(layer, role, page, first, outgoing)
-                        .map_err(err)?
-                };
-                outgoing.zeroize();
-                writes.push((view, std::mem::take(&mut *incoming)));
-                totals[i / 3] += bytes as u64;
+                let bytes = page.words * 4 / crate::daslab_profile::SEGMENT_SLOTS;
+                let first = (resident % crate::daslab_profile::SEGMENT_SLOTS) * bytes;
+                if bytes > 1024 * 1024 || first + bytes > page.handle.size() as usize {
+                    return Err(reject());
+                }
+                let view = page
+                    .handle
+                    .clone()
+                    .offset_start(first as u64)
+                    .offset_end(page.handle.size() - (first + bytes) as u64);
+                let resource = client.get_resource(view).map_err(|_| reject())?;
+                exchanges.push(GpuExpertExchange {
+                    resident: resource.resource().clone(),
+                    layer,
+                    role,
+                    page: ordinal / 144,
+                    host_first: (ordinal % 144) * bytes,
+                    bytes,
+                });
+                totals[index] += bytes as u64;
             }
-            // Every mapped lease is actually released before mutation/audit.
-            drop(read);
-            client
-                .write_public_owned_batch(writes)
-                .map_err(|_| err("Strata grouped cache promotion upload"))?;
-            cubecl::future::block_on(client.sync())
-                .map_err(|_| err("Strata grouped cache promotion completion"))?;
-            let audit = cubecl::future::block_on(client.sanitize_transient_io_audited())
-                .map_err(|_| err("Strata grouped cache promotion erasure"))?;
-            if audit.inspected_bytes > 128 * 1024 * 1024 {
-                return Err(reject());
-            }
-            for (i, &swap) in group.iter().enumerate() {
-                cache.commit(swap, totals[i])?;
-            }
+        }
+        // SAFETY: actual joined target boundary, checked original resident role
+        // cells and retained mapped public model sources. No activation binding.
+        unsafe {
+            mirror.exchange_strata_gpu(queue, &exchanges).map_err(err)?;
+        }
+        // The GPU queue has completed ALL three roles of EVERY swap before a
+        // single request-local logical association changes or consumer restarts.
+        for (swap, bytes) in swaps.iter().copied().zip(totals) {
+            cache.commit(swap, bytes)?;
         }
         cache.adaptation_ns += u64::try_from(clock.elapsed().as_nanos()).map_err(|_| reject())?;
         Ok(swaps.len() as u64)
@@ -1587,7 +1556,7 @@ impl Sources {
         };
         let cache = cache.lock().map_err(|_| reject())?;
         Ok(
-            serde_json::json!({"all_resident_slots_adaptive":true,"slots_per_layer":crate::daslab_profile::BANK_SLOTS,"adapt_every_rounds":4,"decay":0.7,"max_swaps_per_boundary":96,"public_bytes_moved":cache.bytes,"swaps":cache.swaps,"adaptation_ns":cache.adaptation_ns,"history_persisted":false,"evicted_weights_preserved_in_ram":true}),
+            serde_json::json!({"all_resident_slots_adaptive":true,"slots_per_layer":crate::daslab_profile::BANK_SLOTS,"adapt_every_rounds":4,"decay":0.7,"max_swaps_per_boundary":96,"public_bytes_moved":cache.bytes,"swaps":cache.swaps,"adaptation_ns":cache.adaptation_ns,"history_persisted":false,"evicted_weights_preserved_in_ram":true,"gpu_direct_two_way_exchange":true,"cpu_weight_staging":false}),
         )
     }
     pub(super) fn slot_table(
