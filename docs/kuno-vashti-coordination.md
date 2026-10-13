@@ -4204,3 +4204,40 @@ Read the [current paused port handoff](kuno-strata-rust-port.md) and
 for exact identities, checks, packet-receipt caveat and remaining coverage.
 Next candidate is selected HOST expert staging/promotion, not API integration.
 Do not infer sudo authorization or free GPUs from these historical notes.
+
+
+### Latest native text checkpoint — combined residency complete; coherent port next (2026-10-13)
+
+This supersedes preceding native-engine next-step proposals. User directs a
+connected rewrite of the pinned MIT Strata Intel core before whole-model speed
+judgment, followed by integration debugging. Do not performance-gate individual
+ingredients while upstream dependencies remain missing. This remains native
+backend laboratory work; no Vashti/API/connector/UI changes are required.
+
+Working fallback v260, runtime source
+`86a98a4def023ce4bd5834a0cdf40087dd938f1e`, SHA256
+`b34e3b83dc3fa5297199ef22ef1e15f1ee4860a65b1d40f0768f014b96667392`:
+14.063997 code / 14.300613 prose timed continuations/s on Intel B70 only, public
+seed424242/temp0 fixtures. Exact static allocations, 5 GiB static cap, 240
+resident experts/layer, ranked empty-slot fill and eight cache promotions are
+combined. Four-row MTP, real target verification, 36/95 state-only repairs,
+zero full target recomputations. These are single runs, not matched-output
+Ollama controls or private/production acceptance. **30 and full rewrite unmet.**
+
+Later optional full-profile initialization v261 gives13.884123code; single local
+negative comparisons do not reject the complete upstream design. Latest checked
+source a0bd715 passes strict selected port Clippy, two targeted port tests and
+1,346 original direct-device tests /1ignored. Frozen v260/v261 shader sets pass.
+Read the [current port checkpoint](kuno-strata-rust-port.md) and
+[aggregate receipt](../apps/kuno/benchmarks/text/receipts/strata-rust-port-20261013.json)
+for exact commits, options, limits, failed startup trials and remaining gaps.
+
+At23:11:21UTC all three listeners200, admission idle/unpaused/no latch,
+B70used50,688,000B, Nvidia compute0, classified GPU faults0. No benchmark/compiler
+or sudo refresher remains; goal controller paused. Development branch is
+`codex/strata-rust-port` in the separate `kuno-image-speed` worktree; canonical
+Vashti and deployed binaries unchanged. One graceful Kuno restart evicted idle
+image residency before trials; no device reset/rebind/reboot. No frontend handoff,
+release or installed performance claim is implied. Next scope is connected
+placement/weight-access/router/group-execution/quantized-kernel/verification/state
+commit parity with explicit Vulkan substitutions, keeping v260 as fallback.

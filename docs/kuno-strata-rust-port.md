@@ -1,38 +1,51 @@
 # Strata Rust whole-model port experiment
 
-## Current work: Strata Intel schedule comparison, October 13
+## Current checkpoint: combined residency measurements; coherent Intel port next
 
-The user requested a breaking point to use the GPUs. The goal is paused; no
-benchmark or sudo refresher remains. Kuno/Ollama/Vashti all return HTTP 200,
-admission is idle/unpaused without a recovery latch, B70 memory is back to
-50,688,000 bytes, Nvidia has no compute process, and all classified GPU fault
-counts remain zero. No reset, rebind, reboot or installed service change occurred.
-Work remains on `codex/strata-rust-port` in
-`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`. Canonical Vashti is
-untouched. Required consumer changes: **none**.
+The latest user instruction supersedes all incremental next-step proposals below:
+**port the connected Strata Intel core first, then benchmark the whole model and
+fix integration bugs.** A negative speed measurement of an isolated ingredient
+must not veto it while its upstream dependencies are still missing. The prior
+pass drifted into individual comparisons again; do not continue that pattern.
+Keep loading/placement/public weight access, device routing/group planning,
+quantized operators, draft/target verification and accepted-state commit in one
+implementation scope. Follow the pinned MIT source, retain attribution, and
+record any necessary Vulkan/WGSL substitutions rather than claiming exact parity.
+Do not expand this request into API, UI or release work.
 
-**Selected performance artifact remains v236**, source
-`3e01731379291b93e85dd312e5b52777b6cc5a2c`, SHA256
-`d21039dabbd8b2c8e25d16304f011c0e32284c05de9f82e9511774420cda664f`:
-13.004114 code / 13.189027 prose accepted continuations/s with optional
-`--cache-eight` (eight cache promotions, not eight verification rows).
+Work stays on `codex/strata-rust-port` in
+`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`. Canonical Vashti remains
+untouched. Goal controller is still paused. This completed manual pass leaves no
+GPU/compiler job queued; the bounded sudo refresher was stopped deliberately.
+No deployed binary or application contract changed.
 
-The optional eight-row implementation now completes whole-model generation.
-Tested v252 source `2780e7a5b8eef7c5beb25c20a2bbfcf75e8620e2`, artifact SHA256
-`33a568e1b2fa6b492381e14c6488c8f80fac12c4611a2d73ac4c457bf556bff4`:
-12.372330 code with wider adaptive MTP and 12.894535 with normal four-row MTP.
-Both emit 362 tokens including EOS, pass real target verification and complete
-private owner erasure, then physically recover. **No throughput gain is claimed;
-30 tokens/s and complete upstream Strata parity remain unmet.** Wider mode is
-optional/unselected. Source-only helper deduplication `383248a` follows the tested
-artifact; it passes strict Clippy but has no new hardware run after the pause.
+**Working fallback is v260**, runtime source
+`86a98a4def023ce4bd5834a0cdf40087dd938f1e`, artifact SHA256
+`b34e3b83dc3fa5297199ef22ef1e15f1ee4860a65b1d40f0768f014b96667392`:
+**14.063997 code / 14.300613 prose timed continuations/s**. It combines exact
+public static allocations, a 5 GiB static cap, 240 resident experts per layer,
+public-ranked empty-slot fillers and eight cache promotions per boundary.
+This is four-row MTP, not eight-row verification. These are single public runs,
+not medians, exact-output Ollama comparisons or private-input acceptance.
+**30 tokens/s and the complete Strata rewrite remain unmet.**
 
-Read the latest wider-window receipt at the end before resuming. Earlier active
-and paused sections below are historical. Original accepted engine remains
-`codex/kuno-native-text`/`6792453`. The user's coherent-port-first strategy remains
-authoritative; real target routing, source/physical bounds, transient privacy,
-swap/core-disabled execution and actual recovery remain required. No private
-input path, API/UI integration, installed binary or release is added.
+Latest checked source is `a0bd7153f3385e1fd994ae7a88e2178c8d110515`.
+Later commits add optional profile-owned initialization, its tests, and keep
+feature-off static admission unchanged. Do not substitute the latest source hash
+for the frozen v260 artifact's tested runtime identity. Original accepted engine
+remains `codex/kuno-native-text`/`6792453`.
+
+Fresh protected host receipt at 23:11:21 UTC: Kuno/Ollama/Vashti HTTP 200,
+admission idle/unpaused/no latch, B70 50,688,000 bytes, Nvidia compute zero;
+classified GPU faults all zero. No reset/rebind/reboot was used. Kuno had one
+graceful restart to evict an idle image worker before these trials. No further
+benchmark is queued; recheck live ownership and sudo before the next pass.
+
+Read the completed October 13 receipt at the end and the aggregate JSON. All
+intermediate active/paused next-work sections below are historical and superseded
+by this section. Preserve transient privacy, swap/core-disabled GPU runs and
+physical recovery. Bounds and shader validity remain necessary for safe execution;
+standalone throughput gains are not prerequisites for implementing dependencies.
 
 ## Connected implementation
 
@@ -507,3 +520,147 @@ optional comparison (`--independent-groups`) launches one compact GU workgroup
 row per actual distinct expert, preserving original weights, per-group dot and
 reduction, record audit/erasure and allocations. A/B control remains four lanes.
 No performance or full Strata parity claim before whole-model measurement.
+
+### Intel source-led comparison follow-up (historical implementation notes)
+
+Verified against upstream MIT pin `fb58e0d`, not a CUDA-only inference summary:
+- `sycl/src/core/verify.cpp` device-only grouped execution has full expert-group
+  parallelism. `206e09a` optional independent GU groups measures 12.830527 code
+  versus 13.240844 same-binary four-lane control. Both 362 EOS / 36 prefix repairs;
+  independent groups is unselected after this negative result.
+- `sycl/src/kernels/cuda/iq_kernels.dp.cpp` defaults `STRATA_GRID_SLM=0` and has
+  explicitly unrolled packed byte dots. `d0093c1` adds optional constant-index
+  unrolling; `6b815de` optional constant IQ table removes per-workgroup staging.
+  Combined trial 11.116707 code, unrolling alone 12.914608; both 362 EOS, no
+  full target recomputations and clean recovery. Both options stay off. A WGSL
+  constant array is an experimental analogue, not proof of identical SYCL
+  machine code or a public GPU constant-buffer implementation.
+- Measured v254 actual VRAM at decode: 27,945,762,816 bytes of 34,242,297,856.
+  Its plan reserves approximately 31.76 GB. Native dense original tensor payload
+  (excluding routed expert triples and PLE table) totals 4,514,173,440 bytes.
+  Our ordinary cache charges power-of-two allocation bins and has an 8 GiB cap;
+  Strata native buffers/residency instead use available memory more directly.
+
+`23944be`/`ef7187d` implement a separately compiled `strata-resident-224` trial:
+exact persistent original-public dense allocations, aligned conservative physical
+charges and actual backing-root bounds; 5 GiB static cap / 224 experts per layer.
+Expert segments are 112+112; host partitions 128+128+32, preserving all 512
+original expert identities. The preflight still charges private state, draft,
+source/runtime I/O and driver margin together before loading. This is not a
+runtime auto-sizing feature. These preparation notes predate the completed v257/v260 measurements below;
+the later receipt establishes the measured geometry and physical recovery.
+Build helper accepts `--resident-224`; the runner derives the canonical 5 GiB
+cache selector from that artifact's feature manifest. No manual arbitrary cap.
+`60addeb` adds a root-only aggregate physical-memory observation at decode;
+request content/IDs are not recorded. Do not confuse it with reserved caps.
+
+### Exact initial profile residency comparison (preparation notes; v261 below)
+
+Strata `sycl/src/program/generate.cpp` defines `--expert-profile` to choose
+residency instead of first-use admission. Our older `profile-ranked-public`
+filler preserves prompt-touched residents, so its 224-slot 13.869639 code result
+is not full initialization parity. New optional `--profile-first` chooses the
+compiled pinned PUBLIC profile's entire per-layer selected set at the completed
+post-prefill setup boundary, retaining wanted existing hits in their old slots
+and replacing only unwanted experts via original pending-plan/upload/fault/commit
+proofs. No private state/routing trace is saved or consulted. Source profiles
+remain per-layer fixed capacities, not Strata's global variable allocation.
+This changes only initialization; original non-port preservation stays unchanged.
+The completed v261 trial below supersedes this preparation status.
+
+## Completed combined residency pass, October 13, 23:11 UTC
+
+All trials use the fixed public code/prose fixtures, seed 424242, temperature 0,
+DASLab IQ3_S target and Q2 MTP on B70 only. First confirmed token is excluded from
+rates. Generated answers were displayed transiently, not saved. Complete target
+verification remains authoritative; no forced expert substitutions are used.
+
+| Frozen candidate | Connected configuration | Code continuations/s | Prose continuations/s |
+| --- | --- | --- | --- |
+| v257 / c1ccb46 | exact static cache, 224 resident/layer | 13.737579 | 13.636417 |
+| v258 / 2e5eb68 | 224 plus public-ranked empty-slot fill | 13.869639 | not run |
+| v260 / 86a98a4 | 240 plus exact cache and ranked fill | 14.063997 | 14.300613 |
+| v261 / bb336a1 | 240 plus full per-layer public-profile initialization | 13.884123 | not run |
+
+Selected v260 emits 362 including EOS / 361 timed continuations for code,
+512 / 511 at cap for prose. Timed durations are 25.668379 / 35.732735 seconds;
+verification 17.278097 / 24.430213 seconds. State-only prefix repairs: 36 / 95;
+full target recomputations: zero. HOST routes: 28,600 / 207,360 code, 22,702 /
+338,400 prose. Cache adaptation: 2.386399 / 2.122040 seconds, 7,353 / 6,662 swaps.
+One-leg exchange payload: 14,885,068,800 / 13,402,086,400 bytes; combined two-way
+traffic is twice that. Both runs complete private erasure and physical recovery.
+
+240 experts per layer means 11,520 resident experts, two 120-slot GPU segments
+and HOST partitions 128+128+16. Exact expert banks use 23,574,528,000 bytes in
+288 roots. Static public tensors account for 4,166,067,200 bytes; static cap is
+5,368,709,120. This leaves more physical memory for banks than the old binned
+8 GiB cap. Combined preflight is 33,254,625,280 bytes, including 512 MiB shared
+driver margin. Code's actual decode VRAM is 32,260,292,608 of 34,242,297,856 bytes.
+This is fixed laboratory geometry, not autosizing or Strata's variable allocation.
+Target erasure covers 1,562 buffers / 863,207,424 bytes; MTP 43 / 11,730,944.
+
+v261 initializes all selected per-layer slots from the pinned public profile,
+protects wanted existing hits and replaces unwanted prompt-touched residents.
+It uploaded 7,819 experts, retained 3,701 wanted hits, and completes real code
+verification/erasure/recovery. Its single 13.884123 result does not establish a
+statistically significant loss or reject Strata's complete allocation design.
+Known descriptive limitation: profile digest/table-byte receipt fields retain
+legacy top144 values; do not quote them as a top240 digest. Full existing public
+profile is read for the new setup; no request routing history is persisted.
+
+Negative local comparisons remain available but optional: independent GU groups
+12.830527 versus same-binary four-lane control 13.240844; unrolled packed dots
+12.914608; unrolling plus WGSL constant IQ array 11.116707. These are incomplete
+translations, not evidence against the connected upstream strategy. In particular
+WGSL const-array lowering is not Strata's shared GPU read-only table. Do not keep
+running these standalone comparisons as the next development gate.
+
+Failed v256 rejected stale host-page geometry before generation; c1ccb46 fixes
+all expert addresses. v259 rejected the old 640 KiB host-metadata allowance;
+86a98a4 raises only the 240 fixture to 704 KiB. Both physically cleaned up.
+A v257 ranked-fill parser rejection preceded GPU work and was fixed in 2e5eb68.
+Do not treat those attempts as throughput results.
+
+Latest a0bd715 checks pass: release port Clippy with `strata-resident-240` and
+`-D warnings`, fmt/whitespace, 1,346 original direct-device tests / 1 ignored,
+and two selected port tests (all original addresses/role bounds, profile wanted-hit
+protection/redirected-write rejection). Frozen v260/v261 shader checks pass 49
+projection variants plus controller/dense sources. Original regression proves
+feature-off isolation; it is not the full Strata-feature unit suite. No independent
+full-model state-vector oracle, long soak, private worker, deployment or complete
+upstream parity is established.
+
+Immutable fallback build:
+`/media/jmicko/faststore/kuno-development/native-next-v260-strata-resident240-build-20261013`.
+Completed results: `native-next-v260-strata-ranked240-code-intel-20261013` and
+`native-next-v260-strata-ranked240-prose-intel-20261013`, under the same base.
+Reproduction: build fresh with `build-strata-port.py FRESH_BUILD --resident-240`;
+protected runner `run-strata-port.py BUILD FRESH_OUT code q2 --cache-eight
+--ranked-fill` (or `prose`). Full profile candidate additionally uses
+`--profile-first`. Artifact identity and all output directories must be fresh.
+
+Final host evidence:
+`/media/jmicko/faststore/kuno-development/native-strata-source-match-final-state-20261013.json`.
+Bounded sudo refresher 3648310 stopped at 23:12 UTC; no benchmark/compiler/helper
+remains. Canonical checkout and deployed binaries are unchanged.
+
+### Next scope: connected upstream Intel core, not another microbenchmark
+
+The user explicitly reiterated that interdependent changes should be implemented
+as a system before throughput judgment. Use MIT source pin
+`fb58e0dbc8399662c0e47c76578c6e878b14f6cf` and the existing attributed Rust port.
+Inventory every connected loading/placement, router/group-planning, quantized
+execution, MTP verification and state-commit dependency. Implement that connected
+path, compile/check shaders, then run whole-model code/prose and debug failures.
+Keep v260 intact as fallback. Do not require each ingredient to outperform v260
+on its own; do not call an experimental analogue a faithful finished port.
+
+Known gaps to resolve in that inventory are global variable expert allocation
+versus fixed per-layer capacity; a real shared read-only GPU IQ table versus
+workgroup staging/const-array lowering; unified pointer group execution versus
+our segmented descriptor/dispatch plans; and connected graph/fusion/dense
+quantized execution. These are source differences, not individually proven
+causes of the speed gap. Document unavoidable Vulkan/WGSL substitutions and
+remaining missing operators precisely. Retain transient memory, real routing,
+complete target verification and actual cleanup. No API/UI scope or release
+acceptance is implied by this native-engine checkpoint.
