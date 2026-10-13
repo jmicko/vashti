@@ -1759,7 +1759,7 @@ pub(crate) fn run(
                             counts.host_routes,
                         )?;
                         Some(serde_json::json!({"vram_routes":counts.vram_routes,
-                            "host_routes":counts.host_routes,"source_dispatches":counts.source_dispatches,"staging_dispatches":counts.staging_dispatches,"staged_unique_host_groups":counts.staged_unique_host_groups,"staged_packed_bytes":counts.staged_packed_bytes,"gu_integer_preparations":counts.gu_integer_preparations,"gu_integer_dispatches":counts.gu_integer_dispatches,"gu_integer_audits":counts.gu_integer_audits,"gu_stride_four_dispatches":counts.gu_stride_four_dispatches,"down_stride_four_layers":counts.down_stride_four_layers,"down_stride_four_dispatches":counts.down_stride_four_dispatches}))
+                            "host_routes":counts.host_routes,"source_dispatches":counts.source_dispatches,"staging_dispatches":counts.staging_dispatches,"staged_unique_host_groups":counts.staged_unique_host_groups,"staged_packed_bytes":counts.staged_packed_bytes,"gu_integer_preparations":counts.gu_integer_preparations,"gu_integer_dispatches":counts.gu_integer_dispatches,"gu_integer_audits":counts.gu_integer_audits,"gu_stride_four_dispatches":counts.gu_stride_four_dispatches,"compact_gu_dispatches":counts.compact_gu_dispatches,"compact_down_dispatches":counts.compact_down_dispatches,"compact_audits":counts.compact_audits,"down_stride_four_layers":counts.down_stride_four_layers,"down_stride_four_dispatches":counts.down_stride_four_dispatches}))
                     } else {
                         None
                     };

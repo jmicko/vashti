@@ -31,6 +31,14 @@ pub(crate) const MAX_SHARED_BYTES: u32 = MAX_PREPARE_SHARED_BYTES;
 // Prepare and audit are additional to the original five GU/five DOWN calls.
 pub(crate) const INFO_INCREMENT: u64 = 2 * 48 * 2048;
 pub(crate) const RUNTIME_INCREMENT: u64 = INFO_INCREMENT + 2 * 2048 + 4 * MAIN_BYTES;
+// Original frozen source partitions; the compact shard records follow them.
+pub(crate) const FIRST: [usize; 5] = [0, 72, 144, 288, 432];
+pub(crate) const PARTS: [usize; 5] = [72, 72, 144, 144, 80];
+pub(crate) const RECORD_BASE_WORD: usize = 6144;
+pub(crate) const RECORD_WORDS: usize = 48;
+pub(crate) const RECORD_GROUP_IDS: usize = 40;
+pub(crate) const RECORD_DISPATCH_BYTES: u64 = 12;
+pub(crate) const RECORD_BYTES: u64 = (RECORD_WORDS * 4) as u64;
 
 fn rejected() -> Error {
     Error::InvalidFormat("public frozen GU integer eight-lane candidate")
@@ -51,6 +59,9 @@ pub(super) enum Kernel {
     Project { dtype: u32, row_bytes: usize },
     ProjectStride4 { dtype: u32, row_bytes: usize },
     Audit,
+    PrepareCompact,
+    ProjectCompact { dtype: u32, row_bytes: usize },
+    AuditCompact,
 }
 
 fn members(body: &str) -> String {
@@ -87,12 +98,39 @@ impl Kernel {
                     .replace("BLOCKS_VALUE", "80")
             }
             Self::Audit => template("AUDIT").to_owned(),
-            Self::Project { dtype, row_bytes } | Self::ProjectStride4 { dtype, row_bytes } => {
-                let stride_four = matches!(self, Self::ProjectStride4 { .. });
+            Self::PrepareCompact => {
+                let quantizer = include_str!("iq_moe_integer.wgsl")
+                    .split_once("// Q8_PREPARE_BEGIN\n")
+                    .unwrap()
+                    .1
+                    .split_once("// Q8_PREPARE_END")
+                    .unwrap()
+                    .0;
+                template("PREPARE_COMPACT")
+                    .replace("Q8_PREPARE_VALUE", quantizer)
+                    .replace("BLOCKS_VALUE", "80")
+            }
+            Self::AuditCompact => template("COMPACT_AUDIT").to_owned(),
+            Self::Project { dtype, row_bytes }
+            | Self::ProjectStride4 { dtype, row_bytes }
+            | Self::ProjectCompact { dtype, row_bytes } => {
+                let stride_four = !matches!(self, Self::Project { .. });
                 // Both schedules use one arithmetic body. This keeps decoder,
                 // member order and the fixed lane tree identical by construction.
                 let project = template("PROJECT");
-                let source = if stride_four {
+                let source = if matches!(self, Self::ProjectCompact { .. }) {
+                    let prefix = project
+                        .split_once("@compute @workgroup_size(64)")
+                        .unwrap()
+                        .0;
+                    format!(
+                        "{prefix}{}",
+                        template("PROJECT_COMPACT_MAIN")
+                            .replace("PROJECT_BODY_VALUE", template("PROJECT_BODY"))
+                    )
+                    // p.g is this launch's shard index in the compact variant.
+                    .replace("p.g!=0u", "p.g>4u")
+                } else if stride_four {
                     let prefix = project
                         .split_once("@compute @workgroup_size(64)")
                         .unwrap()
@@ -107,10 +145,10 @@ impl Kernel {
                 } else {
                     project.to_owned()
                 };
-                let group_index = if stride_four {
-                    "routed_group"
-                } else {
+                let group_index = if matches!(self, Self::Project { .. }) {
                     "group.y"
+                } else {
+                    "routed_group"
                 };
                 let (grid, initialize) = grid_source(dtype);
                 let helpers = include_str!("iq_moe_integer.wgsl")
@@ -158,6 +196,9 @@ impl KernelMetadata for Kernel {
             Self::Project { .. } => "FrozenGuIntegerFourEightLanes",
             Self::ProjectStride4 { .. } => "FrozenGuIntegerFourEightLanesStride4",
             Self::Audit => "FrozenGuIntegerFourAudit",
+            Self::PrepareCompact => "FrozenGuIntegerFourPrepareCompact",
+            Self::ProjectCompact { .. } => "FrozenGuIntegerFourEightLanesCompact",
+            Self::AuditCompact => "FrozenGuIntegerFourAuditCompact",
         }
     }
     fn id(&self) -> KernelId {
@@ -447,6 +488,218 @@ pub(crate) fn audit(
     // SAFETY: reads the entire authenticated owner; never resets a fault word.
     unsafe {
         client.launch_unchecked(Box::new(Kernel::Audit), CubeCount::Static(128, 1, 1), args);
+    }
+    Ok(())
+}
+
+/// Original partition index of one (first_slot, slot_count) shard pair.
+pub(crate) fn shard_index(first_slot: usize, slot_count: usize) -> Result<usize> {
+    let Some(shard) = FIRST.iter().position(|&first| first == first_slot) else {
+        return Err(rejected());
+    };
+    if PARTS[shard] != slot_count {
+        return Err(rejected());
+    }
+    Ok(shard)
+}
+
+/// Checked 12-byte indirect dispatch view derived only from an authenticated
+/// full64KiB owner. GU views bytes+8, DOWN views bytes+20 of the record.
+pub(crate) fn record_dispatch_view(
+    scratch: &Handle,
+    shard: usize,
+    down: bool,
+) -> Result<cubecl_runtime::server::Binding> {
+    if scratch.size() != MAIN_BYTES
+        || scratch.size_in_used() != MAIN_BYTES
+        || scratch.offset_start.is_some()
+        || scratch.offset_end.is_some()
+    {
+        return Err(rejected());
+    }
+    let offset =
+        RECORD_BASE_WORD as u64 * 4 + RECORD_BYTES * shard as u64 + if down { 20 } else { 8 };
+    if offset
+        .checked_add(RECORD_DISPATCH_BYTES)
+        .is_none_or(|end| end > MAIN_BYTES)
+    {
+        return Err(rejected());
+    }
+    Ok(scratch
+        .clone()
+        .offset_start(offset)
+        .offset_end(MAIN_BYTES - offset - RECORD_DISPATCH_BYTES)
+        .binding())
+}
+
+/// Compact variant: identical four-frame preparation plus the five disjoint
+/// shard records derived from the immutable MAP. Parent retains all original
+/// physical root/owner/transaction authentication.
+pub(crate) fn prepare_compact(
+    client: &ComputeClient<WgpuRuntime>,
+    geometry: g::Geometry,
+    spans: &g::Spans,
+    owners: [Handle; 7],
+    scratch: Handle,
+    count: usize,
+    groups: usize,
+) -> Result<()> {
+    validate_layout(
+        geometry,
+        spans,
+        owners.each_ref().map(|h| h.size_in_used() as usize / 4),
+        scratch.size_in_used() as usize / 4,
+        count,
+        groups,
+    )?;
+    if !(1..=RECORD_GROUP_IDS).contains(&groups) {
+        return Err(rejected());
+    }
+    full_handles(owners.iter().chain([&scratch]), owners[0].stream)?;
+    let args = KernelArguments::new()
+        .with_buffer(owners[1].clone().binding())
+        .with_buffer(scratch.binding())
+        .with_buffer(owners[0].clone().binding())
+        .with_info(info([
+            0,
+            spans.input_first(),
+            spans.input_stride(),
+            spans.map_first(),
+            groups,
+            0,
+            0,
+            count,
+        ]));
+    // SAFETY: complete input/owner spans are checked above; fixed four frames
+    // are disjoint, and token0's five record lanes write disjoint tail words.
+    unsafe {
+        client.launch_unchecked(
+            Box::new(Kernel::PrepareCompact),
+            CubeCount::Static(1, 4, 1),
+            args,
+        );
+    }
+    Ok(())
+}
+
+/// Compact variant for one original frozen source partition. The immutable
+/// shard record's GU dispatch triplet drives an indirect launch; group
+/// selection, member order and arithmetic stay the original stride-four body.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn launch_compact(
+    client: &ComputeClient<WgpuRuntime>,
+    geometry: g::Geometry,
+    spans: &g::Spans,
+    banks: [Handle; 2],
+    owners: [Handle; 7],
+    scratch: Handle,
+    first_slot: usize,
+    slot_count: usize,
+    groups: usize,
+    count: usize,
+) -> Result<()> {
+    let shard = shard_index(first_slot, slot_count)?;
+    validate_layout(
+        geometry,
+        spans,
+        owners.each_ref().map(|h| h.size_in_used() as usize / 4),
+        scratch.size_in_used() as usize / 4,
+        count,
+        groups,
+    )?;
+    let [gate, up, down] = geometry.projections();
+    geometry
+        .validate_shard(
+            first_slot,
+            slot_count,
+            [
+                gate.segment_words(slot_count)
+                    .map_err(Error::InvalidFormat)?,
+                up.segment_words(slot_count).map_err(Error::InvalidFormat)?,
+                down.segment_words(slot_count)
+                    .map_err(Error::InvalidFormat)?,
+            ],
+        )
+        .map_err(Error::InvalidFormat)?;
+    for (projection, bank) in [gate, up].into_iter().zip(&banks) {
+        if bank.size_in_used()
+            != projection
+                .segment_words(slot_count)
+                .map_err(Error::InvalidFormat)? as u64
+                * 4
+        {
+            return Err(rejected());
+        }
+    }
+    full_handles(
+        banks.iter().chain(&owners).chain([&scratch]),
+        owners[0].stream,
+    )?;
+    let dispatch = record_dispatch_view(&scratch, shard, false)?;
+    let mut args = KernelArguments::new();
+    for h in [
+        &banks[0], &banks[1], &owners[0], &owners[2], &owners[6], &scratch,
+    ] {
+        args = args.with_buffer(h.clone().binding());
+    }
+    args = args.with_info(info([
+        spans.map_first(),
+        first_slot,
+        slot_count,
+        spans.act_first(),
+        spans.act_stride(),
+        spans.status_first(),
+        shard,
+        count,
+    ]));
+    // SAFETY: parent retains frozen source identity/pending rank protection;
+    // the record bounds every list access and the shard dispatch uniformly.
+    unsafe {
+        client.launch_unchecked(
+            Box::new(Kernel::ProjectCompact {
+                dtype: gate.dtype(),
+                row_bytes: gate.row_bytes(),
+            }),
+            CubeCount::Dynamic(dispatch),
+            args,
+        );
+    }
+    Ok(())
+}
+
+/// Replacement audit for the compact path: validates the whole owner, the five
+/// reconstructed shard records, then erases each disjoint record. A failed
+/// validation keeps the records and stickies the original fault.
+pub(crate) fn audit_compact(
+    client: &ComputeClient<WgpuRuntime>,
+    scratch: Handle,
+    fault: Handle,
+    map: Handle,
+    count: usize,
+    groups: usize,
+    map_first: usize,
+) -> Result<()> {
+    validate_count(count)?;
+    if scratch.size_in_used() != MAIN_BYTES || fault.size_in_used() != 32768 {
+        return Err(rejected());
+    }
+    if !(1..=RECORD_GROUP_IDS).contains(&groups) {
+        return Err(rejected());
+    }
+    full_handles([&scratch, &fault, &map], scratch.stream)?;
+    let args = KernelArguments::new()
+        .with_buffer(scratch.binding())
+        .with_buffer(fault.binding())
+        .with_buffer(map.binding())
+        .with_info(info([count, map_first, groups, 0, 0, 0, 0, 0]));
+    // SAFETY: reads/erases the authenticated owner after all consumers; the
+    // fault word is never reset.
+    unsafe {
+        client.launch_unchecked(
+            Box::new(Kernel::AuditCompact),
+            CubeCount::Static(129, 1, 1),
+            args,
+        );
     }
     Ok(())
 }

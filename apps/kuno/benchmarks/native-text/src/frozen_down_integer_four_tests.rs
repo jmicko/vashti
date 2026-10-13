@@ -233,3 +233,45 @@ fn four_down_full64k_reset_and_audit_cover_route39_and_every_physical_tail_word(
     }
     assert!(four::Kernel::Audit.source().contains("p.count!=4u"));
 }
+
+#[test]
+fn four_down_compact_projection_keeps_original_arithmetic_and_record_bounded_dispatch() {
+    for dtype in [crate::quant_matvec::IQ4_NL, crate::quant_matvec::Q2_0] {
+        let row_bytes = TensorType::from_gguf_id(dtype)
+            .unwrap()
+            .row_bytes(640)
+            .unwrap() as usize;
+        let kernel = four::Kernel::ProjectCompact { dtype, row_bytes };
+        let source = kernel.source();
+        let module = lower(kernel);
+        assert_eq!(shared_bytes(&module), 1024);
+        assert_eq!(barriers(&module.entry_points[0].function.body), 2);
+        // The compact schedule reuses the original decoder body verbatim; only
+        // the group list comes from this shard's authenticated record.
+        let start = "    let row=group.x*8u+local/8u;";
+        let four_source = four::Kernel::Project { dtype, row_bytes }.source();
+        assert!(
+            source.contains(
+                &four_source
+                    .split_once(start)
+                    .unwrap()
+                    .1
+                    .replace("group.y", "routed_group")
+                    .replace("!valid_group(group.y)", "")
+            )
+        );
+        // p.g is the shard, and every access stays inside the record bounds.
+        assert!(source.contains("p.g>4u"));
+        assert!(source.contains("let base=6144u+48u*p.g;"));
+        assert!(source.contains("planes[base]!=1u"));
+        assert!(
+            source.contains("ordinal=group.y;ordinal<shard_count;ordinal+=4u")
+                || source.contains("let routed_group=gu_planes[base+8u+group.y];")
+        );
+        assert!(source.contains("let routed_group=gu_planes[base+8u+group.y];"));
+        assert!(source.contains("if !valid_group(routed_group) {return;}"));
+        assert!(source.contains("@group(0) @binding(5) var<storage,read> gu_planes"));
+        assert_ne!(kernel.id(), Kernel::Project { dtype, row_bytes }.id());
+        assert_ne!(kernel.id(), four::Kernel::Project { dtype, row_bytes }.id());
+    }
+}

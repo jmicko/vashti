@@ -179,3 +179,227 @@ fn main(@builtin(global_invocation_id) global:vec3<u32>) {
     if !valid {atomicOr(&fault[0],8u);}
 }
 // FROZEN_GU_AUDIT_END
+// FROZEN_GU_PREPARE_COMPACT_BEGIN
+// Compaction variant: identical frame preparation plus five disjoint shard
+// records in the zeroed owning tail. Token0 lanes0..4 derive each record from
+// the immutable MAP using the original partition ranges; the records drive
+// indirect GU/DOWN dispatch and are audited and erased after all consumers.
+const COLUMNS:u32=2560u;
+struct Params {a:u32,b:u32,c:u32,d:u32,e:u32,f:u32,g:u32,h:u32}
+@group(0) @binding(0) var<storage,read> input:array<f32>;
+@group(0) @binding(1) var<storage,read_write> planes:array<u32>;
+@group(0) @binding(2) var<storage,read> map:array<u32>;
+@group(0) @binding(3) var<uniform> p:Params;
+var<workgroup> cached_input:array<f32,2560>;
+var<workgroup> packed_first:array<u32,640>;
+var<workgroup> packed_second:array<u32,640>;
+var<workgroup> scale_first:array<f32,80>;
+var<workgroup> scale_second:array<f32,80>;
+var<workgroup> quant_fault:atomic<u32>;
+Q8_PREPARE_VALUE
+fn shard_first(shard:u32)->u32 {
+    var first=0u;
+    if shard==1u {first=72u;}
+    if shard==2u {first=144u;}
+    if shard==3u {first=288u;}
+    if shard==4u {first=432u;}
+    return first;
+}
+fn shard_parts(shard:u32)->u32 {
+    var parts=72u;
+    if shard==2u {parts=144u;}
+    if shard==3u {parts=144u;}
+    if shard==4u {parts=80u;}
+    return parts;
+}
+@compute @workgroup_size(128)
+fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) local:u32) {
+    // Every count/owner/grid predicate is uniform and precedes any access.
+    if p.h!=4u || arrayLength(&planes)!=16384u || group.x!=0u || group.y>=4u || group.z!=0u {return;}
+    let token=group.y;let frame=64u+token*1440u;
+    // Disjoint frame stores and a single header/tail writer: no cross-WG race.
+    if local==0u {planes[token]=0u;}
+    for(var i=local;i<1440u;i+=128u) {planes[frame+i]=0u;}
+    if token==0u {
+        if local>=4u && local<64u {planes[local]=0u;}
+        for(var i=5824u+local;i<16384u;i+=128u) {planes[i]=0u;}
+    }
+    var valid=token<p.h && p.c>=2560u;
+    if p.b>arrayLength(&input) {valid=false;}
+    else if 2560u>arrayLength(&input)-p.b {valid=false;}
+    else if valid && token>(arrayLength(&input)-p.b-2560u)/p.c {valid=false;}
+    if local==0u {atomicStore(&quant_fault,0u);}
+    for(var i=local;i<2560u;i+=128u) {
+        var x=0.0;if valid {x=input[p.b+token*p.c+i];}cached_input[i]=x;
+    }
+    workgroupBarrier();prepare_q8(local);workgroupBarrier();
+    if valid && atomicLoad(&quant_fault)==0u {
+        for(var i=local;i<640u;i+=128u) {planes[frame+i]=packed_first[i];planes[frame+640u+i]=packed_second[i];}
+        for(var i=local;i<80u;i+=128u) {
+            planes[frame+1280u+i]=bitcast<u32>(scale_first[i]);
+            planes[frame+1360u+i]=bitcast<u32>(scale_second[i]);
+        }
+        if local==0u {planes[token]=1u;}
+    }
+    // Records build only from a valid immutable MAP header; a failed build
+    // leaves the cleared tail zeros, and every consumer exits on ready!=1.
+    if token==0u && local<5u {
+        let shard=local;
+        let first=shard_first(shard);let parts=shard_parts(shard);
+        var map_valid=p.d<=arrayLength(&map) && 804u<=arrayLength(&map)-p.d;
+        var groups=0u;
+        if map_valid {
+            if map[p.d]!=p.h || map[p.d+1u]!=0u || map[p.d+2u]!=p.h {map_valid=false;}
+            else {groups=map[p.d+3u];}
+        }
+        if map_valid && (p.e<1u || p.e>40u || groups!=p.e) {map_valid=false;}
+        if map_valid {
+            var count=0u;
+            for(var g=0u;g<groups;g+=1u) {
+                let slot=map[p.d+4u+g];
+                if slot>=first && slot-first<parts {
+                    planes[6144u+48u*shard+8u+count]=g;
+                    count+=1u;
+                }
+            }
+            var gu_y=count;if gu_y>4u {gu_y=4u;}
+            planes[6144u+48u*shard+0u]=1u;
+            planes[6144u+48u*shard+1u]=count;
+            planes[6144u+48u*shard+2u]=80u;
+            planes[6144u+48u*shard+3u]=gu_y;
+            planes[6144u+48u*shard+4u]=1u;
+            planes[6144u+48u*shard+5u]=320u;
+            planes[6144u+48u*shard+6u]=count;
+            planes[6144u+48u*shard+7u]=1u;
+        }
+    }
+}
+// FROZEN_GU_PREPARE_COMPACT_END
+// FROZEN_GU_PROJECT_COMPACT_MAIN_BEGIN
+@compute @workgroup_size(64)
+fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) local:u32) {
+    // p.g is this launch's shard; the record bounds every dispatch and list
+    // access. A shard whose record never built exits before any codebook write.
+    if group.x>=80u || group.y>=4u || group.z!=0u || p.h!=4u || p.g>4u {return;}
+    let base=6144u+48u*p.g;
+    if planes[base]!=1u {return;}
+    let shard_count=planes[base+1u];
+    if group.y>=shard_count {return;}
+    let row=group.x*8u+local/8u;let lane=local%8u;
+    GRID_INITIALIZE_VALUE
+    workgroupBarrier();
+    // One indirect dispatch already bounded the shards; the ordinal stride
+    // keeps the original codebook reuse and per-group arithmetic order.
+    for(var ordinal=group.y;ordinal<shard_count;ordinal+=4u) {
+        let routed_group=planes[base+8u+ordinal];
+        if valid_group(routed_group) {
+            let length=map[p.a+84u+routed_group];let slot=map[p.a+4u+routed_group]-p.b;
+            let offset=(slot*640u+row)*ROW_BYTES;
+            var frames=vec4<u32>(0u);
+            FRAME_MEMBERS_VALUE
+            // Each group's scalar/vector accumulators and every reduction
+            // cell reset in the shared body; arithmetic order is unchanged.
+            PROJECT_BODY_VALUE
+            // All lanes finish reading their reduction before the next group
+            // can overwrite any shared cell, including unused member cells.
+            workgroupBarrier();
+        }
+    }
+}
+// FROZEN_GU_PROJECT_COMPACT_MAIN_END
+// FROZEN_GU_COMPACT_AUDIT_BEGIN
+struct Params {count:u32,r0:u32,r1:u32,r2:u32,r3:u32,r4:u32,r5:u32,r6:u32}
+@group(0) @binding(0) var<storage,read_write> planes:array<u32>;
+@group(0) @binding(1) var<storage,read_write> fault:array<atomic<u32>>;
+@group(0) @binding(2) var<storage,read> map:array<u32>;
+@group(0) @binding(3) var<uniform> p:Params;
+var<workgroup> records_valid:atomic<u32>;
+fn audit_shard_first(shard:u32)->u32 {
+    var first=0u;
+    if shard==1u {first=72u;}
+    if shard==2u {first=144u;}
+    if shard==3u {first=288u;}
+    if shard==4u {first=432u;}
+    return first;
+}
+fn audit_shard_parts(shard:u32)->u32 {
+    var parts=72u;
+    if shard==2u {parts=144u;}
+    if shard==3u {parts=144u;}
+    if shard==4u {parts=80u;}
+    return parts;
+}
+@compute @workgroup_size(128)
+fn main(@builtin(global_invocation_id) global:vec3<u32>,@builtin(workgroup_id) workgroup:vec3<u32>,
+    @builtin(local_invocation_index) local:u32) {
+    if arrayLength(&fault)!=8192u {return;}
+    if p.count!=4u || p.r2!=0u || p.r3!=0u || p.r4!=0u || p.r5!=0u || p.r6!=0u
+        || p.r1<1u || p.r1>40u || arrayLength(&planes)!=16384u {
+        if global.x==0u {atomicOr(&fault[0],8u);}
+        return;
+    }
+    if workgroup.x<128u {
+        // Original per-word validation; the five shard records are validated
+        // and erased only by the dedicated workgroup below.
+        let at=global.x;if at>=16384u {return;}var valid=true;
+        if at<64u {valid=planes[at]==select(0u,1u,at<p.count);}
+        else if at<5824u {
+            let frame=(at-64u)/1440u;let offset=(at-64u)%1440u;
+            if frame>=p.count {valid=planes[at]==0u;}
+            else if offset>=1280u {
+                let scale=bitcast<f32>(planes[at]);
+                valid=scale>=0.0 && scale<=3.4028234663852886e38;
+            }
+        } else if at<6144u {valid=planes[at]==0u;}
+        else if at<6384u {return;}
+        else {valid=planes[at]==0u;}
+        if !valid {atomicOr(&fault[0],8u);}
+        return;
+    }
+    if global.x>=16512u {return;}
+    if local==0u {atomicStore(&records_valid,1u);}
+    workgroupBarrier();
+    if local<5u {
+        let shard=local;
+        let base=6144u+48u*shard;
+        let first=audit_shard_first(shard);let parts=audit_shard_parts(shard);
+        // Reconstruct with the builder's exact rule from the unchanged MAP.
+        var map_valid=p.r0<=arrayLength(&map) && 804u<=arrayLength(&map)-p.r0;
+        var groups=0u;
+        if map_valid {
+            if map[p.r0]!=p.count || map[p.r0+1u]!=0u || map[p.r0+2u]!=p.count {map_valid=false;}
+            else {groups=map[p.r0+3u];}
+        }
+        if map_valid && groups!=p.r1 {map_valid=false;}
+        if !map_valid {
+            for(var i=0u;i<48u;i+=1u) {
+                if planes[base+i]!=0u {atomicStore(&records_valid,0u);atomicOr(&fault[0],8u);}
+            }
+        } else {
+            var count=0u;
+            for(var g=0u;g<groups;g+=1u) {
+                let slot=map[p.r0+4u+g];
+                if slot>=first && slot-first<parts {
+                    if planes[base+8u+count]!=g {atomicStore(&records_valid,0u);atomicOr(&fault[0],8u);}
+                    count+=1u;
+                }
+            }
+            var gu_y=count;if gu_y>4u {gu_y=4u;}
+            if planes[base+0u]!=1u || planes[base+1u]!=count
+                || planes[base+2u]!=80u || planes[base+3u]!=gu_y || planes[base+4u]!=1u
+                || planes[base+5u]!=320u || planes[base+6u]!=count || planes[base+7u]!=1u
+            {atomicStore(&records_valid,0u);atomicOr(&fault[0],8u);}
+            for(var i=count;i<40u;i+=1u) {
+                if planes[base+8u+i]!=0u {atomicStore(&records_valid,0u);atomicOr(&fault[0],8u);}
+            }
+        }
+    }
+    workgroupBarrier();
+    // Erase each disjoint record only after every shard validated; a failed
+    // validation keeps the records as evidence with the sticky fault set.
+    if atomicLoad(&records_valid)==1u && local<5u {
+        let shard=local;
+        for(var i=0u;i<48u;i+=1u) {planes[6144u+48u*shard+i]=0u;}
+    }
+}
+// FROZEN_GU_COMPACT_AUDIT_END

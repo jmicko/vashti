@@ -46,6 +46,7 @@ fn template(section: &str) -> &'static str {
 pub(super) enum Kernel {
     Prepare,
     Project { dtype: u32, row_bytes: usize },
+    ProjectCompact { dtype: u32, row_bytes: usize },
     Audit,
 }
 
@@ -82,7 +83,7 @@ impl Kernel {
                     .replace("BLOCKS_VALUE", "20")
             }
             Self::Audit => template("AUDIT").to_owned(),
-            Self::Project { dtype, row_bytes } => {
+            Self::Project { dtype, row_bytes } | Self::ProjectCompact { dtype, row_bytes } => {
                 let helpers = include_str!("iq_moe_integer.wgsl")
                     .split_once("fn iq4_byte")
                     .unwrap()
@@ -90,14 +91,24 @@ impl Kernel {
                     .split_once("// Original byte-addressed")
                     .unwrap()
                     .0;
-                template("PROJECT")
+                let group_index = if matches!(self, Self::Project { .. }) {
+                    "group.y"
+                } else {
+                    "routed_group"
+                };
+                let section = if matches!(self, Self::Project { .. }) {
+                    template("PROJECT")
+                } else {
+                    template("PROJECT_COMPACT")
+                };
+                section
                     .replace("ROW_BYTES_VALUE", &row_bytes.to_string())
                     .replace("DECODE_HELPERS_VALUE", &format!("fn iq4_byte{helpers}"))
                     .replace("PROJECTION_HELPERS_VALUE", &decode(dtype))
-                    .replace("FRAME_MEMBERS_VALUE", &members("frames.AXIS=64u+map[p.a+164u+group.y*8u+MEMBER_INDEXu]*360u;\n"))
+                    .replace("FRAME_MEMBERS_VALUE", &members(&format!("frames.AXIS=64u+map[p.a+164u+{group_index}*8u+MEMBER_INDEXu]*360u;\n")))
                     .replace("DOT_MEMBERS_VALUE", &members("{first.AXIS+=dot4I8Packed(q,planes[frames.AXIS+at]);second.AXIS+=dot4I8Packed(q,planes[frames.AXIS+160u+at]);}\n"))
                     .replace("SCALE_MEMBERS_VALUE", &members("{let a=bitcast<f32>(planes[frames.AXIS+320u+block]);let b=bitcast<f32>(planes[frames.AXIS+340u+block]);let pair=a*f32(first.AXIS)+b*f32(second.AXIS);values.AXIS+=d*pair;}\n"))
-                    .replace("OUTPUT_MEMBERS_VALUE", &members("{let route=map[p.a+164u+group.y*8u+MEMBER_INDEXu];output[p.d+route*p.e+row]=sums[local*4u+MEMBER_INDEXu];if row==0u {status[p.f+80u+route]=1u;}}\n"))
+                    .replace("OUTPUT_MEMBERS_VALUE", &members(&format!("{{let route=map[p.a+164u+{group_index}*8u+MEMBER_INDEXu];output[p.d+route*p.e+row]=sums[local*4u+MEMBER_INDEXu];if row==0u {{status[p.f+80u+route]=1u;}}}}\n")))
             }
         }
     }
@@ -107,6 +118,7 @@ impl KernelMetadata for Kernel {
         match self {
             Self::Prepare => "FrozenDownIntegerFourPrepare",
             Self::Project { .. } => "FrozenDownIntegerFourEightLanes",
+            Self::ProjectCompact { .. } => "FrozenDownIntegerFourEightLanesCompact",
             Self::Audit => "FrozenDownIntegerFourAudit",
         }
     }
@@ -154,8 +166,8 @@ pub(crate) fn validate_limits(limits: &wgpu::Limits) -> Result<()> {
     if limits.max_compute_invocations_per_workgroup < 64
         || limits.max_compute_workgroup_size_x < 64
         || limits.max_compute_workgroup_storage_size < MAX_SHARED_BYTES
-        || limits.max_storage_buffers_per_shader_stage < 5
-        || limits.max_bindings_per_bind_group < 6
+        || limits.max_storage_buffers_per_shader_stage < 6
+        || limits.max_bindings_per_bind_group < 7
         || limits.max_uniform_buffer_binding_size < 32
         || limits.max_compute_workgroups_per_dimension < 320
         || limits.max_storage_buffer_binding_size < MAIN_BYTES
@@ -345,6 +357,106 @@ pub(crate) fn audit(
     // SAFETY: same full, authenticated owners; the sticky fault is never reset.
     unsafe {
         client.launch_unchecked(Box::new(Kernel::Audit), CubeCount::Static(256, 1, 1), args);
+    }
+    Ok(())
+}
+
+/// Compact variant for one original frozen source partition. The immutable GU
+/// shard record's DOWN dispatch triplet drives an indirect launch; the full GU
+/// owner is bound read-only for the record and stays unchanged here.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn launch_compact(
+    client: &ComputeClient<WgpuRuntime>,
+    geometry: g::Geometry,
+    spans: &g::Spans,
+    down: Handle,
+    owners: [Handle; 7],
+    scratch: Handle,
+    gu_scratch: Handle,
+    first_slot: usize,
+    slot_count: usize,
+    groups: usize,
+    count: usize,
+) -> Result<()> {
+    let shard = crate::quant_matvec::frozen_gu_integer::four::shard_index(first_slot, slot_count)?;
+    validate_layout(
+        geometry,
+        spans,
+        owners.each_ref().map(|h| h.size_in_used() as usize / 4),
+        scratch.size_in_used() as usize / 4,
+        count,
+        groups,
+    )?;
+    if ![(0, 72), (72, 72), (144, 144), (288, 144), (432, 80)].contains(&(first_slot, slot_count)) {
+        return Err(rejected());
+    }
+    let projections = geometry.projections();
+    let segments = projections.map(|p| p.segment_words(slot_count));
+    let [a, b, c] = segments;
+    geometry
+        .validate_shard(
+            first_slot,
+            slot_count,
+            [
+                a.map_err(Error::InvalidFormat)?,
+                b.map_err(Error::InvalidFormat)?,
+                c.map_err(Error::InvalidFormat)?,
+            ],
+        )
+        .map_err(Error::InvalidFormat)?;
+    let projection = projections[2];
+    if down.size_in_used()
+        != projection
+            .segment_words(slot_count)
+            .map_err(Error::InvalidFormat)? as u64
+            * 4
+    {
+        return Err(rejected());
+    }
+    full_handles(
+        [&down]
+            .into_iter()
+            .chain(&owners)
+            .chain([&scratch, &gu_scratch]),
+        owners[0].stream,
+    )?;
+    let dispatch = crate::quant_matvec::frozen_gu_integer::four::record_dispatch_view(
+        &gu_scratch,
+        shard,
+        true,
+    )?;
+    let mut args = KernelArguments::new();
+    for h in [
+        &down,
+        &owners[0],
+        &owners[3],
+        &owners[6],
+        &scratch,
+        &gu_scratch,
+    ] {
+        args = args.with_buffer(h.clone().binding());
+    }
+    args = args.with_info(info([
+        spans.map_first(),
+        first_slot,
+        slot_count,
+        spans.partial_first(),
+        spans.partial_stride(),
+        spans.status_first(),
+        shard,
+        count,
+    ]));
+    // SAFETY: the record bounds every list access and the shard dispatch
+    // uniformly; the GU owner is bound read-only and never written here.
+    unsafe {
+        client.launch_unchecked(
+            Box::new(Kernel::ProjectCompact {
+                dtype: projection.dtype(),
+                row_bytes: projection.row_bytes(),
+            }),
+            CubeCount::Dynamic(dispatch),
+            args,
+        );
     }
     Ok(())
 }

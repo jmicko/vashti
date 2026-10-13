@@ -245,3 +245,171 @@ fn four_gu_prepare_resets_every_full_owner_word_once_and_checks_new_header_tail(
     let audit = four::Kernel::Audit.source();
     assert!(audit.contains("p.count!=4u") && audit.contains("at<5824u"));
 }
+
+#[test]
+fn compact_records_lay_out_the_five_original_partitions_inside_the_owner_tail() {
+    assert_eq!(four::RECORD_BASE_WORD, 6144);
+    assert_eq!(four::RECORD_BASE_WORD + 5 * four::RECORD_WORDS, 6384);
+    const { assert!(6384 <= four::SCRATCH_WORDS) };
+    assert_eq!(four::RECORD_BYTES, 192);
+    assert_eq!(four::FIRST, [0, 72, 144, 288, 432]);
+    assert_eq!(four::PARTS, [72, 72, 144, 144, 80]);
+    for (shard, (&first, &parts)) in four::FIRST.iter().zip(&four::PARTS).enumerate() {
+        assert_eq!(four::shard_index(first, parts).unwrap(), shard);
+    }
+    for (first, parts) in [
+        (0usize, 0usize),
+        (1, 72),
+        (72, 144),
+        (144, 72),
+        (288, 145),
+        (432, 81),
+        (512, 80),
+    ] {
+        assert!(four::shard_index(first, parts).is_err());
+    }
+    // Each checked 12-byte dispatch view addresses its record's exact words
+    // and never escapes the authenticated full owner.
+    let stream = cubecl::stream_id::StreamId::current();
+    let scratch = cubecl::server::Handle::new(stream, four::MAIN_BYTES);
+    for shard in 0..5u64 {
+        let gu = four::record_dispatch_view(&scratch, shard as usize, false).unwrap();
+        let down = four::record_dispatch_view(&scratch, shard as usize, true).unwrap();
+        assert_eq!(gu.offset_start, Some(24576 + 192 * shard + 8));
+        assert_eq!(down.offset_start, Some(24576 + 192 * shard + 20));
+        assert_eq!(gu.size_in_used(), four::RECORD_DISPATCH_BYTES);
+        assert_eq!(down.size_in_used(), four::RECORD_DISPATCH_BYTES);
+        assert_eq!(gu.size, four::MAIN_BYTES);
+        assert_eq!(
+            down.offset_end,
+            Some(four::MAIN_BYTES - 24576 - 192 * shard - 20 - 12)
+        );
+    }
+    for bytes in [24576u64 + 8, 24576 + 192 * 4 + 20, 16384, 65535] {
+        let short = cubecl::server::Handle::new(stream, bytes);
+        for shard in 0..5usize {
+            assert!(four::record_dispatch_view(&short, shard, false).is_err());
+            assert!(four::record_dispatch_view(&short, shard, true).is_err());
+        }
+    }
+}
+
+#[test]
+fn compact_prepare_lowers_with_builder_rules_and_zero_group_shards() {
+    let module = lower(four::Kernel::PrepareCompact);
+    assert_eq!(shared_bytes(&module), MAX_PREPARE_SHARED_BYTES);
+    assert_eq!(barriers(&module.entry_points[0].function.body), 2);
+    let source = four::Kernel::PrepareCompact.source();
+    // Only token0 lanes0..4 build records; every predicate precedes access.
+    assert!(source.contains("token==0u && local<5u"));
+    assert!(source.find("p.h!=4u").unwrap() < source.find("planes[token]=0u").unwrap());
+    // The builder derives each disjoint shard from the immutable MAP using the
+    // original partition ranges and the caller's exact group bound.
+    assert!(source.contains("shard_first(shard)") && source.contains("shard_parts(shard)"));
+    assert!(source.contains("groups!=p.e"));
+    for shard in 0..5 {
+        assert!(
+            source.contains(&format!("6144u+48u*{}u", shard)) || source.contains("6144u+48u*shard")
+        );
+    }
+    assert!(source.contains("6144u+48u*shard+8u+count]=g"));
+    assert!(source.contains("gu_y=count;if gu_y>4u {gu_y=4u;}"));
+    // A zero-group shard still publishes ready1/count0 with bounded dispatches.
+    assert!(source.contains("planes[6144u+48u*shard+0u]=1u"));
+    assert!(source.contains("planes[6144u+48u*shard+6u]=count"));
+    assert!(source.contains("map[p.d+4u+g]"));
+    // Records build only behind the original immutable MAP header gate.
+    assert!(source.contains("map[p.d]!=p.h || map[p.d+1u]!=0u || map[p.d+2u]!=p.h"));
+    assert!(source.contains("804u<=arrayLength(&map)-p.d"));
+}
+
+#[test]
+fn compact_gu_projection_keeps_original_arithmetic_and_record_bounded_dispatch() {
+    for dtype in [
+        crate::quant_matvec::IQ2_S,
+        crate::quant_matvec::IQ3_XXS,
+        crate::quant_matvec::IQ3_S,
+        crate::quant_matvec::IQ4_XS,
+    ] {
+        let row_bytes = TensorType::from_gguf_id(dtype)
+            .unwrap()
+            .row_bytes(2560)
+            .unwrap() as usize;
+        let old = Kernel::Project { dtype, row_bytes }.source();
+        let begin = "// FROZEN_GU_PROJECT_BODY_BEGIN\n";
+        let end = "// FROZEN_GU_PROJECT_BODY_END";
+        let old_body = old.split_once(begin).unwrap().1.split_once(end).unwrap().0;
+        // The compact schedule reuses the same single arithmetic body, so the
+        // only difference from the count4 original is the ordinal loop.
+        let four_source = four::Kernel::Project { dtype, row_bytes }.source();
+        let four_body = four_source
+            .split_once(begin)
+            .unwrap()
+            .1
+            .split_once(end)
+            .unwrap()
+            .0;
+        assert_eq!(remove_fourth(four_body), old_body);
+        let kernel = four::Kernel::ProjectCompact { dtype, row_bytes };
+        let source = kernel.source();
+        assert!(source.contains(&four_body.replace("group.y", "routed_group")));
+        let module = lower(kernel);
+        assert_eq!(
+            shared_bytes(&module),
+            integer::original_grid_words(dtype).len() as u32 * 4 + 2048
+        );
+        assert_eq!(barriers(&module.entry_points[0].function.body), 4);
+        // p.g is the shard; every list access is record-bounded and the ordinal
+        // keeps the original codebook reuse with stride-four.
+        assert!(source.contains("p.g>4u"));
+        assert!(source.contains("let base=6144u+48u*p.g;"));
+        assert!(source.contains("planes[base]!=1u"));
+        assert!(source.contains("ordinal=group.y;ordinal<shard_count;ordinal+=4u"));
+        assert!(source.contains("let routed_group=planes[base+8u+ordinal];"));
+        assert!(source.contains("if valid_group(routed_group)"));
+        assert!(
+            source.rfind("status[p.f+route]=1u").unwrap()
+                < source.rfind("workgroupBarrier();").unwrap()
+        );
+        // Distinct private kernel identity from both original schedules.
+        assert_ne!(kernel.id(), Kernel::Project { dtype, row_bytes }.id());
+        assert_ne!(
+            kernel.id(),
+            Kernel::ProjectStride4 { dtype, row_bytes }.id()
+        );
+    }
+}
+
+#[test]
+fn compact_audit_reconstructs_validates_and_erases_each_disjoint_record() {
+    let module = lower(four::Kernel::AuditCompact);
+    // Only the records_valid barrier latch needs workgroup storage.
+    assert_eq!(shared_bytes(&module), 4);
+    let source = four::Kernel::AuditCompact.source();
+    // The word audit keeps every original header/frame/tail check except the
+    // record range, which the dedicated workgroup validates and erases.
+    assert!(source.contains("at<64u") && source.contains("at<5824u"));
+    assert!(source.contains("at<6144u") && source.contains("at<6384u"));
+    // Reconstruction follows the builder's exact rule from the unchanged MAP.
+    assert!(source.contains("map[p.r0]!=p.count || map[p.r0+1u]!=0u || map[p.r0+2u]!=p.count"));
+    assert!(source.contains("groups!=p.r1"));
+    assert!(
+        source.contains("audit_shard_first(shard)") && source.contains("audit_shard_parts(shard)")
+    );
+    // Headers, counts, both dispatch triplets, list identity and inactive zeros.
+    assert!(source.contains("planes[base+8u+count]!=g"));
+    assert!(source.contains("planes[base+3u]!=gu_y"));
+    assert!(source.contains("planes[base+6u]!=count"));
+    assert!(source.contains("i=count;i<40u"));
+    // A failed validation stickies the fault and keeps the records.
+    assert!(source.contains("atomicOr(&fault[0],8u);"));
+    assert!(source.contains("atomicStore(&records_valid,0u);"));
+    // Erasure happens only after every shard record validated.
+    assert!(
+        source.find("atomicLoad(&records_valid)==1u").unwrap()
+            > source.find("workgroupBarrier();").unwrap()
+    );
+    assert!(source.contains("planes[6144u+48u*shard+i]=0u;"));
+    // A builderless (invalid MAP) round must leave all-zero records.
+    assert!(source.contains("for(var i=0u;i<48u;i+=1u)"));
+}
