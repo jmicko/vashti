@@ -423,6 +423,48 @@ impl LatestPleCheckpoint {
             checkpoint: self,
             workspace,
             restore,
+            accepted: 0,
+        })
+    }
+    pub(crate) fn prepare_prefix<'a>(
+        mut self,
+        workspace: &'a mut PleBatchWorkspace,
+        c: Preparation<'a, '_, '_>,
+        accepted: usize,
+        cancel: &AtomicBool,
+    ) -> Result<LatestPleRestore<'a>> {
+        self.validate_parts(
+            workspace,
+            c.graph,
+            c.arena,
+            c.position,
+            c.conv,
+            c.history,
+            c.anchor.is_some(),
+            *c.owner_poisoned,
+            c.retired,
+            cancel,
+        )?;
+        if !crate::strata_port::enabled() || accepted == 0 || accepted >= self.metadata.count {
+            return Err(error());
+        }
+        let restore = self
+            .snapshot
+            .take()
+            .ok_or(error())?
+            .prepare_accepted_prefix(
+                c.conv,
+                c.history,
+                &self.metadata.tokens[..self.metadata.count],
+                accepted,
+                cancel,
+            )
+            .map_err(u::fault)?;
+        Ok(LatestPleRestore {
+            checkpoint: self,
+            workspace,
+            restore,
+            accepted,
         })
     }
     pub(crate) fn accept_completed(
@@ -449,11 +491,12 @@ pub(crate) struct LatestPleRestore<'a> {
     checkpoint: LatestPleCheckpoint,
     workspace: &'a mut PleBatchWorkspace,
     restore: ops::ple_checkpoint::Restore<'a>,
+    accepted: usize,
 }
 impl LatestPleRestore<'_> {
     pub(crate) fn commit(mut self) {
         self.restore.commit();
-        self.workspace.next = self.checkpoint.metadata.start;
+        self.workspace.next = self.checkpoint.metadata.start + self.accepted;
         self.checkpoint.armed = false;
     }
 }

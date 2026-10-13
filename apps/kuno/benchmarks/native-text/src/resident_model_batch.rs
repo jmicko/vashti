@@ -65,7 +65,7 @@ pub(crate) const TARGET_ROWS_PRIVATE_MAIN: u64 = TOTAL_MAIN + target_rows::MAIN_
 pub(crate) const TARGET_ROWS_PREPARED_VERIFY3_MAIN: u64 =
     TARGET_ROWS_PRIVATE_MAIN + batch_moe::prepared_verify3::MAIN_BYTES;
 
-const OLD_MAIN: u64 = 785_186_816;
+const OLD_MAIN: u64 = 785_186_816 + gdn::strata_replay::MAIN_BYTES;
 const NEW_MAIN: u64 = 33_062_912;
 const TOTAL_MAIN: u64 = OLD_MAIN + NEW_MAIN;
 const PUBLIC_MAIN: u64 = 25_165_824;
@@ -1013,7 +1013,7 @@ impl Plan {
         graph.verify_unchanged()?;
         if !std::ptr::eq(client.info(), config.client.info())
             || sum(old)? != OLD_MAIN
-            || old.len() != 1286
+            || old.len() != 1286 + gdn::strata_replay::EXTRA_BUFFERS as usize
         {
             return Err(error());
         }

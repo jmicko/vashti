@@ -363,6 +363,10 @@ impl<'a, 'm, 'f> LatestTargetRound<'a, 'm, 'f> {
             u::cancel(cancel)?;
             return Ok(None);
         }
+        if crate::strata_port::enabled() {
+            self.replay_prefix(parts, accepted, cancel)?;
+            return Ok(None);
+        }
         self.restore(parts, cancel)?;
         let output = self.model.prefill_chunk_with_carry(
             self.executor,
@@ -378,6 +382,89 @@ impl<'a, 'm, 'f> LatestTargetRound<'a, 'm, 'f> {
             return Err(rejected());
         }
         Ok(Some(output))
+    }
+    fn replay_prefix(
+        &mut self,
+        parts: latest_checkpoint::Parts,
+        accepted: usize,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        let model = &mut *self.model;
+        let native = model.native_batch.as_mut().ok_or(rejected())?;
+        let start = parts.start();
+        let mut gp = Vec::with_capacity(36);
+        let mut qp = Vec::with_capacity(12);
+        let mut cleared = Vec::with_capacity(12);
+        let mut gd = parts.gdn.into_iter();
+        let mut qs = parts.qsa.into_iter();
+        for owner in &mut model.layers {
+            match owner {
+                Layer::Gdn(stage, public) => gp.push((
+                    gd.next().ok_or(rejected())?.prepare_prefix(
+                        stage,
+                        &native.gdn,
+                        &model.arena,
+                        accepted,
+                        cancel,
+                    )?,
+                    public,
+                )),
+                Layer::Qsa(stage, _) => qp.push(qs.next().ok_or(rejected())?.prepare_prefix(
+                    stage,
+                    &native.qsa,
+                    &model.arena,
+                    accepted,
+                    cancel,
+                )?),
+            }
+        }
+        if gd.next().is_some() || qs.next().is_some() {
+            return Err(rejected());
+        }
+        let pp = parts.ple.prepare_prefix(
+            &mut native.ple,
+            ple_batch::Preparation {
+                graph: model.graph,
+                arena: &model.arena,
+                admission: &model.admission,
+                retired: &model.retired,
+                context: model.context,
+                position: model.position,
+                owner_poisoned: &mut model.poisoned,
+                sequence_poison: &model.ple_batch_poison,
+                conv: &mut model.ple_conv,
+                history: &mut model.ple_history,
+                anchor: &mut model.ple_batch_pending,
+                fault: model.b.fault,
+                scalar_ids: [model.b.ple_emb, model.b.ple_key, model.b.ple_value],
+            },
+            accepted,
+            cancel,
+        )?;
+        native.gr.validate_all_consumers_queued()?;
+        native.shared.validate_all_consumers_queued()?;
+        model.graph.verify_unchanged()?;
+        u::cancel(cancel)?;
+        for (permit, public) in &gp {
+            permit.enqueue(&native.gdn, public, &model.arena, model.b.fault, cancel)?;
+        }
+        for permit in qp {
+            cleared.push(permit.enqueue_clear(&model.arena, model.b.fault, cancel)?);
+        }
+        commit_repair_after_fence(
+            || batch_io::read_fault(&model.arena, &model.admission, model.b.fault, cancel),
+            cancel,
+            || {
+                for (permit, _) in gp {
+                    permit.commit();
+                }
+                for permit in cleared {
+                    permit.commit();
+                }
+                pp.commit();
+                model.position = start + accepted;
+            },
+        )
     }
     fn restore(&mut self, parts: latest_checkpoint::Parts, cancel: &AtomicBool) -> Result<()> {
         let model = &mut *self.model;

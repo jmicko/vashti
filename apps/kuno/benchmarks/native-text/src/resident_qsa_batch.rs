@@ -1903,7 +1903,23 @@ impl LatestQsaCheckpoint {
         Ok(LatestQsaRestore {
             checkpoint: self,
             stage,
+            accepted: 0,
         })
+    }
+    pub(crate) fn prepare_prefix<'a, 'f>(
+        self,
+        stage: &'a mut ResidentQsa<'f>,
+        workspace: &QsaBatchWorkspace,
+        arena: &PrivateArena,
+        accepted: usize,
+        cancel: &AtomicBool,
+    ) -> Result<LatestQsaRestore<'a, 'f>> {
+        if !crate::strata_port::enabled() || accepted == 0 || accepted >= self.metadata.count {
+            return Err(fault("QSA prefix commit extent"));
+        }
+        let mut permit = self.prepare_restore(stage, workspace, arena, cancel)?;
+        permit.accepted = accepted;
+        Ok(permit)
     }
     pub(crate) fn accept_completed(
         mut self,
@@ -1935,10 +1951,12 @@ impl Drop for LatestQsaCheckpoint {
 pub(crate) struct LatestQsaRestore<'a, 'f> {
     checkpoint: LatestQsaCheckpoint,
     stage: &'a mut ResidentQsa<'f>,
+    accepted: usize,
 }
 pub(crate) struct LatestQsaCleared<'a, 'f> {
     checkpoint: LatestQsaCheckpoint,
     stage: &'a mut ResidentQsa<'f>,
+    accepted: usize,
 }
 pub(crate) const LATEST_QSA_RUNTIME_INFO: u64 = 12 * 2 * 2048;
 impl<'a, 'f> LatestQsaRestore<'a, 'f> {
@@ -1960,15 +1978,15 @@ impl<'a, 'f> LatestQsaRestore<'a, 'f> {
         {
             return Err(fault("native latest QSA clear fault owner"));
         }
-        let words = self.checkpoint.metadata.count * qsa::TOKEN;
+        let words = (self.checkpoint.metadata.count - self.accepted) * qsa::TOKEN;
         clear_latest_suffix::launch::<WgpuRuntime>(
             arena.client().map_err(arena_fault)?,
             u::grid(words)?,
             CubeDim::new_1d(64),
             u::arg(arena, ids[0])?,
             u::arg(arena, ids[1])?,
-            self.checkpoint.metadata.start as usize,
-            self.checkpoint.metadata.count,
+            self.checkpoint.metadata.start as usize + self.accepted,
+            self.checkpoint.metadata.count - self.accepted,
         );
         verify_latest_cleared::launch::<WgpuRuntime>(
             arena.client().map_err(arena_fault)?,
@@ -1977,13 +1995,14 @@ impl<'a, 'f> LatestQsaRestore<'a, 'f> {
             u::arg(arena, ids[0])?,
             u::arg(arena, ids[1])?,
             u::arg(arena, fault_id)?,
-            self.checkpoint.metadata.start as usize,
-            self.checkpoint.metadata.count,
+            self.checkpoint.metadata.start as usize + self.accepted,
+            self.checkpoint.metadata.count - self.accepted,
         );
         cancelled(cancel)?;
         Ok(LatestQsaCleared {
             checkpoint: self.checkpoint,
             stage: self.stage,
+            accepted: self.accepted,
         })
     }
 }
@@ -1991,7 +2010,8 @@ impl LatestQsaCleared<'_, '_> {
     /// External completed original fault/audit proof is required first. All
     /// fallible work precedes this cursor publication; monotonic policy stays.
     pub(crate) fn commit(mut self) {
-        self.stage.lifecycle.phase = Phase::Ready(self.checkpoint.metadata.start);
+        self.stage.lifecycle.phase =
+            Phase::Ready(self.checkpoint.metadata.start + self.accepted as u64);
         self.checkpoint.armed = false;
     }
 }

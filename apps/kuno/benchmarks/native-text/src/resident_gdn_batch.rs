@@ -17,6 +17,8 @@ use crate::{
 use std::sync::Arc;
 use zeroize::{Zeroize, Zeroizing};
 
+#[path = "strata_gdn_replay.rs"]
+pub(crate) mod strata_replay;
 const N: usize = 16;
 const MAX_LAYERS: usize = 64;
 const QKV: usize = 0;
@@ -993,6 +995,15 @@ impl ResidentGdn<'_> {
                     p.shape.value_heads,
                 ),
                 Operation::Recurrence => {
+                    if let Some(cache) = &mut self.strata_inputs {
+                        cache.retain(
+                            arena,
+                            [ids[QKV], ids[Q], ids[K], ids[V], ids[CONTROL]],
+                            start,
+                            count,
+                            chunk,
+                        )?;
+                    }
                     if workspace.shared_vector {
                         gdn_chunk::enqueue_shared_count1(
                             arena,

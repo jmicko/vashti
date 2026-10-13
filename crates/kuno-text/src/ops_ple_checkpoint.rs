@@ -93,6 +93,51 @@ impl Checkpoint {
             tokens,
         })
     }
+    /// Prepare the accepted prefix of the one completed chunk. Its first
+    /// normalized rows are retained in the live nine-row convolution history;
+    /// merge them with the captured old history instead of rerunning projections.
+    pub fn prepare_accepted_prefix<'a>(
+        mut self,
+        conv: &'a mut CausalConvState,
+        tokens: &'a mut PleTokenHistory,
+        proposed: &[u32],
+        accepted: usize,
+        cancel: &AtomicBool,
+    ) -> Result<Restore<'a>> {
+        self.preflight(conv, tokens, cancel)?;
+        if !(2..=4).contains(&proposed.len())
+            || accepted == 0
+            || accepted >= proposed.len()
+            || proposed.iter().any(|&t| t >= 248320)
+            || conv.history.iter().any(|x| !x.is_finite())
+        {
+            return Err(OpsError::InvalidParameter(CONTEXT));
+        }
+        let mut expected = Zeroizing::new(*self.tokens);
+        for &token in proposed {
+            expected[0] = expected[1];
+            expected[1] = token as i32;
+        }
+        if tokens.tokens.as_slice() != expected.as_slice() {
+            return Err(OpsError::InvalidParameter(CONTEXT));
+        }
+        for channel in 0..10240 {
+            let first = channel * 9;
+            self.history.copy_within(first + accepted..first + 9, first);
+            let incoming = first + 9 - proposed.len();
+            self.history[first + 9 - accepted..first + 9]
+                .copy_from_slice(&conv.history[incoming..incoming + accepted]);
+        }
+        for &token in &proposed[..accepted] {
+            self.tokens[0] = self.tokens[1];
+            self.tokens[1] = token as i32;
+        }
+        Ok(Restore {
+            checkpoint: self,
+            conv,
+            tokens,
+        })
+    }
     fn wipe(&mut self) {
         clear_f32_capacity(&mut self.history);
         self.tokens.zeroize();
@@ -128,7 +173,7 @@ impl Restore<'_> {
 mod tests {
     use super::*;
     use crate::ops::{PleHashConfig, ple_transition};
-    fn state() -> (CausalConvState, PleTokenHistory, PleHashConfig) {
+    pub(super) fn state() -> (CausalConvState, PleTokenHistory, PleHashConfig) {
         let config = PleHashConfig::qwen38();
         let mut conv = CausalConvState::new(10240, 4, 3).unwrap();
         for (i, x) in conv.history.iter_mut().enumerate() {
@@ -235,5 +280,65 @@ mod tests {
         assert!(checkpoint.history.iter().all(|x| x.to_bits() == 0));
         assert_eq!(*checkpoint.tokens, [0; 2]);
         assert_eq!(*checkpoint.owners, [0; 2]);
+    }
+}
+
+#[cfg(test)]
+mod accepted_prefix_tests {
+    use super::*;
+    use crate::ops::PleHashConfig;
+    #[test]
+    fn prefix_commit_matches_actual_sequential_owner_history_for_all_partial_windows() {
+        let cancel = AtomicBool::new(false);
+        for count in 2..=4 {
+            for accepted in 1..count {
+                let (mut live, mut live_tokens, _) = super::tests::state();
+                let (mut expected, mut expected_tokens, _) = super::tests::state();
+                let snapshot = Checkpoint::capture(&live, &live_tokens, MAX_OWNED_BYTES).unwrap();
+                let proposed: Vec<_> = (0..count).map(|i| 100 + i as u32).collect();
+                for (i, &token) in proposed.iter().enumerate() {
+                    let row: Vec<_> = (0..10240).map(|j| (j + i * 37) as f32 / 101.).collect();
+                    live.advance(&row);
+                    live_tokens.tokens[0] = live_tokens.tokens[1];
+                    live_tokens.tokens[1] = token as i32;
+                    if i < accepted {
+                        expected.advance(&row);
+                        expected_tokens.tokens[0] = expected_tokens.tokens[1];
+                        expected_tokens.tokens[1] = token as i32;
+                    }
+                }
+                snapshot
+                    .prepare_accepted_prefix(
+                        &mut live,
+                        &mut live_tokens,
+                        &proposed,
+                        accepted,
+                        &cancel,
+                    )
+                    .unwrap()
+                    .commit();
+                assert_eq!(live.history(), expected.history());
+                assert_eq!(live_tokens.tokens(), expected_tokens.tokens());
+            }
+        }
+    }
+    #[test]
+    fn a_different_completed_token_history_cannot_authorize_prefix_mutation() {
+        let mut live = CausalConvState::new(10240, 4, 3).unwrap();
+        let mut tokens = PleTokenHistory::new(&PleHashConfig::qwen38());
+        let snapshot = Checkpoint::capture(&live, &tokens, MAX_OWNED_BYTES).unwrap();
+        assert!(
+            snapshot
+                .prepare_accepted_prefix(
+                    &mut live,
+                    &mut tokens,
+                    &[100, 101],
+                    1,
+                    &AtomicBool::new(false)
+                )
+                .is_err()
+        );
+        assert!(live.history().iter().all(|&v| v == 0.));
+        assert_eq!(tokens.tokens(), [-1, -1]);
     }
 }

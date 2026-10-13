@@ -576,6 +576,7 @@ pub struct ResidentGdn<'file> {
     lifecycle: Lifecycle,
     batch_pending: Option<batch::StageAnchor>,
     batch_poison: Option<std::sync::Arc<AtomicBool>>,
+    strata_inputs: Option<batch::strata_replay::InputCache>,
 }
 
 impl<'file> ResidentGdn<'file> {
@@ -648,6 +649,7 @@ impl<'file> ResidentGdn<'file> {
             .map_err(|_| fault("resident GDN slot count"))?;
         let buffers = Buffers::from_slots(slots, layout);
         validate_physical_regions(arena, &buffers, public)?;
+        let strata_inputs = batch::strata_replay::InputCache::allocate(arena, layout)?;
         Ok(Self {
             binding: graph.binding_id(),
             layer,
@@ -660,6 +662,7 @@ impl<'file> ResidentGdn<'file> {
             lifecycle: Lifecycle::new(layout.max_context),
             batch_pending: None,
             batch_poison: None,
+            strata_inputs,
         })
     }
     pub fn layout(&self) -> StageLayout {

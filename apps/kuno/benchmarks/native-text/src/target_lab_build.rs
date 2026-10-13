@@ -164,6 +164,7 @@ impl IntelMtpMemory {
             down_integer,
         } = owners;
         let expected_main = 828_866_560
+            + crate::resident_gdn::batch::strata_replay::MAIN_BYTES
             + if gu_integer { 65_536 } else { 0 }
             + if down_integer { 65_536 } else { 0 };
         if self.used == 0
@@ -298,7 +299,10 @@ pub(crate) fn intel_mtp_preflight_with_down_math(
                         0
                     },
                 IntelTargetOwners {
-                    main: 828_866_560 + if integer { 65_536 } else { 0 } + 65_536,
+                    main: 828_866_560
+                        + crate::resident_gdn::batch::strata_replay::MAIN_BYTES
+                        + if integer { 65_536 } else { 0 }
+                        + 65_536,
                     banks,
                     source_pages,
                     baseline: usage.bytes_reserved,
@@ -1308,7 +1312,12 @@ pub(crate) fn validate_frozen_integer_math_close(
     } else {
         (1381, 828_932_096)
     };
-    if (buffers, bytes) != expected {
+    if (buffers, bytes)
+        != (
+            expected.0 + crate::resident_gdn::batch::strata_replay::EXTRA_BUFFERS,
+            expected.1 + crate::resident_gdn::batch::strata_replay::MAIN_BYTES,
+        )
+    {
         return Err("integer DOWN complete extra MAIN owner closure rejected");
     }
     Ok(())

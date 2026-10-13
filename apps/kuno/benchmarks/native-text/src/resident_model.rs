@@ -167,9 +167,13 @@ fn private_requests(graph: BoundGraph<'_, '_>) -> Result<Vec<u64>> {
     let mut words = Vec::new();
     for layer in 0..g.layers {
         match graph.layer_kind(layer)? {
-            AttentionKind::Gdn => words.extend(
-                crate::resident_gdn::StageLayout::from_graph(graph, layer)?.allocation_words(),
-            ),
+            AttentionKind::Gdn => {
+                let layout = crate::resident_gdn::StageLayout::from_graph(graph, layer)?;
+                words.extend(layout.allocation_words());
+                words.extend(crate::resident_gdn::batch::strata_replay::allocation_words(
+                    layout,
+                ));
+            }
             AttentionKind::Qsa => words.extend(
                 crate::resident_qsa::StageLayout::from_graph(graph, layer)?.allocation_words(),
             ),
