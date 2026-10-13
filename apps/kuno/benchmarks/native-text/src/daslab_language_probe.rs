@@ -593,7 +593,8 @@ pub(crate) fn registration(
             && (!mtp_batch_repair || public_grouped_ple_reads)
             && !public_iq4_decoder
             && !three_gdn_streaming
-            && bank_fill == crate::executor::PublicHostBankFillPolicy::Original,
+            && (bank_fill == crate::executor::PublicHostBankFillPolicy::Original
+                || crate::strata_port::enabled()),
     )?;
     let raw_head = values.remove(OsStr::new("KUNO_LAB_TARGET_HEAD"));
     let public_integer_verify_head = crate::target_lab_build::public_integer_verify_head(
