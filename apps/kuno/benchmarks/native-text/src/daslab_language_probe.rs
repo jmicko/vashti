@@ -1841,9 +1841,7 @@ pub(crate) fn run(
             let (actual_four_rows, completed_count4_chunks) =
                 target.completed_public_four_rows(&executor)?;
             let four_lookahead_receipt = if crate::strata_port::enabled() {
-                Some(
-                    serde_json::json!({"selected":selected_four_lookahead,"actual_count4_chunks":completed_count4_chunks,"actual_four_rows":actual_four_rows,"policy":"strata-suffix-or-mtp-target-verified-four"}),
-                )
+                serde_json::json!({"selected":selected_four_lookahead,"actual_count4_chunks":completed_count4_chunks,"actual_four_rows":actual_four_rows,"policy":"strata-suffix-or-mtp-target-verified-four"})
             } else {
                 lookahead_stats.record_with_mtp_repair(
                     selected_four_lookahead,
