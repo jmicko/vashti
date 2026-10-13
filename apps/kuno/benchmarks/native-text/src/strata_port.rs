@@ -15,13 +15,24 @@ pub(crate) fn fused_sources() -> bool {
         })
 }
 pub(crate) fn wide_experts() -> bool {
-    enabled() && std::env::var("KUNO_STRATA_WIDE_EXPERTS").as_deref() == Ok("aligned-vector-public")
+    static WIDE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    enabled()
+        && *WIDE.get_or_init(|| {
+            std::env::var("KUNO_STRATA_WIDE_EXPERTS").as_deref() == Ok("aligned-vector-public")
+        })
 }
 pub(crate) fn expert_lanes() -> usize {
-    if enabled() && std::env::var("KUNO_STRATA_EXPERT_LANES").as_deref() == Ok("sixteen-public") {
-        16
-    } else {
+    static LANES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    if !enabled() {
         8
+    } else {
+        *LANES.get_or_init(|| {
+            if std::env::var("KUNO_STRATA_EXPERT_LANES").as_deref() == Ok("sixteen-public") {
+                16
+            } else {
+                8
+            }
+        })
     }
 }
 pub(crate) fn profile_target() -> bool {

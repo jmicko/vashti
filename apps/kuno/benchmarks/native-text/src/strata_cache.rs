@@ -15,7 +15,7 @@ pub(crate) fn max_swaps_per_layer() -> usize {
         }
     })
 }
-pub(crate) const METADATA_BYTES: usize = LAYERS * EXPERTS * (2 + 4 + 8) + 4096;
+pub(crate) const METADATA_BYTES: usize = LAYERS * EXPERTS * (2 + 4 + 8) + 16 * 1024;
 pub(crate) struct Cache {
     map: Zeroizing<Vec<u16>>,
     score: Zeroizing<Vec<f32>>,
