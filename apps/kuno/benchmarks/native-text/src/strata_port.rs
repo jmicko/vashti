@@ -153,9 +153,10 @@ fn rows(source: String, down: bool) -> String {
 fn reduction(mut source: String, down: bool, members: usize) -> String {
     let vec = format!("vec{members}<f32>");
     let (first, last) = if down {
-        let first = source
-            .find("    // Explicit initialization includes every unused RHS column.")
-            .unwrap();
+        let marker =
+            format!("for(var j=0u;j<{members}u;j++) {{sums[local*{members}u+j]=values[j];}}");
+        let at = source.find(&marker).expect("DOWN tree");
+        let first = source[..at].rfind('\n').unwrap() + 1;
         let last = first + source[first..].find("    if lane==0u").unwrap();
         (first, last)
     } else {

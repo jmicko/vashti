@@ -1088,6 +1088,10 @@ fn report_public_owned_zero_audit(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().nth(1).as_deref() == Some("--strata-license") {
+        print!("{}", include_str!("strata-port-NOTICE.txt"));
+        return Ok(());
+    }
     if std::env::args().nth(1).as_deref() == Some("--validate-port-shaders") {
         return strata_port::validate_shader_set();
     }
