@@ -1,9 +1,9 @@
     // Strata-style parallel token routing: each32-lane logical row selects
     // its own top11 while all four rows progress through shared barriers.
-    let row=local/32u;let lane=local%32u;let active=row<p.count;
+    let row=local/32u;let lane=local%32u;let live=row<p.count;
     for(var rank=0u;rank<11u;rank++) {
         var value=bitcast<f32>(0xff7fffffu);var chosen=512u;
-        if active {
+        if live {
             for(var candidate=lane;candidate<512u;candidate+=32u) {
                 var used=false;
                 for(var previous=0u;previous<rank;previous++) {if picked[row*11u+previous]==candidate {used=true;}}
@@ -19,12 +19,12 @@
             }
             workgroupBarrier();
         }
-        if active && lane==0u {picked[row*11u+rank]=best_id[local];score[row*11u+rank]=best[local];}
+        if live && lane==0u {picked[row*11u+rank]=best_id[local];score[row*11u+rank]=best[local];}
         workgroupBarrier();
     }
     if lane==0u {
         var gap_min=bitcast<f32>(0x7f7fffffu);
-        if active {
+        if live {
             var denominator=0.0;
             for(var rank=0u;rank<10u;rank++) {
                 let gap=score[row*11u+rank]-score[row*11u+rank+1u];
