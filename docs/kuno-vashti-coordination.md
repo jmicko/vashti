@@ -4100,3 +4100,34 @@ limitations and first full-model command are in the
 [owner handoff](kuno-native-next-model-handoff.md). Do not use earlier port
 artifacts with the shader-cache identity bug; retain both dtype/variant and mode
 in one KernelId info tuple. No deployment/release or automatic work is queued.
+
+### Latest native text port checkpoint — paused after combined test (2026-10-13)
+
+This supersedes the preceding source-only and early combined-port checkpoints.
+User requested pausing after v221 and returning both GPUs. Automated goal stays
+paused; no benchmark/compiler job, sudo refresher or queued GPU work remains.
+Canonical Vashti, deployed binaries/defaults and API/frontend are unchanged;
+required Vashti changes: **none**. No release acceptance.
+
+Runtime source is1caf271 oncodex/strata-rust-port. Original accepted engine remains
+6792453 oncodex/kuno-native-text. Broad port now connects parallel routing,
+compact real argmax/carry, Rust/RAM Q2 dense conversion,106299-token proposal
+vocabulary, suffix policy and request-local adaptive two-way cache. Newest source
+has exact persistent192-slot banks and a GPU-driven VRAM/mapped-RAM exchange.
+The complete v215144-slot/staged-exchange run measured8.458796 continuations/s
+through362 emitted tokens.30tokens/s and the full upstream rewrite remain unmet.
+
+v221 reaches cold prefill/materialization but rejects a four-row DOWN launch
+using two old partition tables. d682e04 fixes those;1caf271 passes strict port
+Clippy/fmt and original direct-device compilation. **No GPU rerun after the fix**;
+new direct GPU exchanges have no hardware/timing acceptance. Current full
+original-engine regression is still outstanding (1346/1ignored was f0ed07a).
+Do not reuse the failed v221 artifact as working. Read the exact scope, artifact,
+failures, next acceptance and remaining verifier/prefill/rollback/KV work in the
+[port checkpoint](kuno-strata-rust-port.md) and
+[owner handoff](kuno-native-next-model-handoff.md) before explicit resume.
+
+Fresh16:29:23UTC read-only stop receipt: Kuno/Ollama/Vashti200, admission idle and
+unpaused/no latch, B70used50688000B, Nvidia compute0, classified faults all0,
+unchanged boot/kernel38. Recorded refresher3421970 exited. No prompts, outputs,
+private histories, API changes or frontend work were persisted/introduced.

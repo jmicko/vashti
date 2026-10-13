@@ -1,106 +1,167 @@
 # Strata Rust whole-model port experiment
 
-User authorization, October13: build a complete model execution candidate first,
-then run it and fix errors, instead of gating each optimization on original
-CPU13 precision. This supersedes that restriction **only for this separate
-experimental branch/feature**. The normal native engine and deployed Kuno retain
-their existing contracts.
+## Current checkpoint: paused at the user's request, October13
 
-Upstream is MIT Strata `fb58e0dbc8399662c0e47c76578c6e878b14f6cf`.
-`strata-port-NOTICE.txt` includes its license; the existing IQ notice includes
-ggml/llama.cpp attribution. The port is Rust plus Rust-generated WGSL/Vulkan;
-no Strata, llama.cpp, CUDA or SYCL engine is linked into inference.
+Stopped after the v221 whole-model test. **No further GPU work is authorized
+until the user resumes.** The automated goal is paused. Both GPUs and normal
+services have been restored, and the bounded sudo refresher is stopped.
 
-The standalone `kuno-strata-rust` target uses the existing Rust GGUF/tokenizer,
-48-layer Qwen graph, PLE hashing/grouped reads, GDN recurrence/convolutions,
-QSA compression/selection, gated residuals and model ownership foundations.
-It ports Strata's coupled execution policy across the whole target: one Q8_1
-activation plane with F16 scale, original IQ2/IQ3/IQ4 packed weights, grouped
-GU/DOWN, cooperative activation tiles,256-thread32-row workgroups, integer dots,
-subgroup reduction, FMA, GPU source plans and direct mapped-host weight reads.
-Regular counts1..3 and count4 use the same policy. Plans/audits match the new
-20 GU/80 DOWN grid. Physical spans, device limits and private erasure still hold.
+Runtime source: `1caf271922abd1dd7aaf3f3d48789e4467362571`, branch
+`codex/strata-rust-port`, checkout
+`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`.
+Original accepted engine remains on `codex/kuno-native-text` at `6792453`.
+Canonical Vashti, installed binaries/defaults, API and frontend are unchanged;
+required Vashti changes: **none**. This is a fixed-public laboratory engine,
+not a deployed private-input worker. No release acceptance is claimed.
 
-The full Q8 or original Strata Q2 drafter runs on B70. Four-token target
-verification accepts only matching target predictions. In-request suffix lookup
-can avoid full MTP forward/head work; accepted real target carries repair the
-draft KV cells. No forced reference tokens, substitute experts or persistent
-request history. Approximate vector drift is recorded rather than rejected by
-the previous two-plane CPU13 threshold; finite values and target acceptance
-remain checked.
+The user requested a coherent Rust port followed by combined execution and bug
+fixes, rather than incremental original-CPU13 precision gates. That supersedes
+those numerical gates only for this isolated branch/feature. Physical/source
+bounds, actual target verification, private erasure, swap/core-disabled GPU
+execution and actual recovery still apply.
 
-This reuses already ported Rust operators rather than duplicating them. It is a
-whole-model prototype, **not a claim that every upstream feature is implemented**:
-Strata's XMX prefill, runtime Q8-repacked/CJK-pruned sidecar, auto-sized/LRU expert
-cache and6/8-token verifier are not yet included. No API/UI/install/release change.
-The older engine is preserved at `6792453` on `codex/kuno-native-text`.
+## Connected implementation
 
-Build and runner are in `apps/kuno/benchmarks/text/build-strata-port.py` and
-`run-strata-port.py`. Runner uses only fixed public code/prose fixtures, seed424242,
-temperature0, a swap/core-disabled cgroup and an actual idle GPU check. Generated
-public text is displayed live and excluded from saved logs/receipts. Numeric
-records include actual per-member-count dispatch credit, source/artifact identity,
-MTP/lookup accounting, throughput, owner closures and recovered host state.
-Private inputs have no route into this prototype. Runtime state is transient.
+The separate `kuno-strata-rust` target/`strata-rust-port` feature reuses the
+already-written Rust GGUF/tokenizer,48-layer Qwen graph, PLE, GDN, QSA and gated
+residual operators. Rust and generated WGSL/Vulkan execute inference; no C++,
+Strata, llama.cpp or SYCL inference engine is linked.
 
-## Current checkpoint
+- One Q8_1 activation plane with F16 effective scale; original IQ2/IQ3/IQ4
+  packed target weights; grouped GU/DOWN, cooperative activation staging,
+  256-thread32-row workgroups, integer dots, subgroup reductions and FMA.
+  Counts1..3 and4 use the same policy.
+- Parallel GPU top11 routing, real GPU argmax and compact163888-byte carry
+  packet. The complete target vocabulary is still evaluated; logits are not
+  copied in full to the CPU. Final real outputs must be finite.
+- Q2 sidecar dense BF16/Q6 weights converted to Q8 in Rust/RAM at load. Q2
+  experts and IQ4 embedding remain original. No converted model file is saved.
+- Strata's106299-token draft vocabulary, sorted without adding/removing IDs;
+  only proposal logits are pruned. Full target verification remains authoritative.
+- Request-local suffix matching with real first-MTP agreement and measured
+  draft acceptance/cost policy. Lookup histories and cache maps are zeroized.
+- Adaptive expert tier using frequency/recency and decay0.7, every4 controller
+  rounds, at most2 swaps/layer. All resident slots are eligible. Evicted original
+  weights stay in the host complement; no disk reread is required for promotion.
+- The newest source uses exact persistent bank allocations and192 resident
+  experts/layer:96+96 VRAM,144+144+32 host. Both host maps and generated source
+  plans derive from shared constants; the original feature-off geometry stays
+  144/72. Actual six distinct bank roots are checked against the exact quote.
+  Public RAM complement drops from36147609600 to31432704000 logical bytes.
+- GPU-driven two-way exchange of original resident/host cells in one joined
+  queue transaction. It has no activation/prompt binding, no CPU weight staging
+  and no temporary model copy. The new logical bijection publishes only after
+  every role/swap completes. Ordinary external-source bindings stay read-only;
+  the isolated port's owning transaction alone uses this explicit raw device
+  write path. **This newest exchange has not executed successfully on hardware.**
+- Intermediate numerical scans use Strata's leaner policy; final checks and
+  complete private owner erasure remain. Public runs permit up to512 outputs
+  and respect EOS; the original engine still caps this fixture at200.
 
-The initial coherent prototype is written and built. It is not a completed
-rewrite of every Strata subsystem. Source `f0ed07a` fixes a shader-cache identity
-collision found by final checks: `.info` replaces its previous value, so the
-identity must contain BOTH the original variant/dtype and the port mode in one
-tuple. Never revert that fix. The smaller-batch DOWN transform and original
-Cargo target registration are also fixed.
+Pinned upstream: MIT Strata `fb58e0dbc8399662c0e47c76578c6e878b14f6cf`.
+`strata-port-NOTICE.txt` and existing ggml/llama.cpp attribution are retained.
 
-The final frozen v204 Rust artifact SHA256 is
-`2964f4b83814f0f39b26afab63410db03d05a6c597818f408f08be4bf9616b33`.
-Its20 generated variants pass full WGSL validation and SPIR-V lowering;
-metadata/workgroup dimensions agree. Both whole Q8 and Q2 presets pass a pure
-registration check with explicitly synthetic memory fields and no GPU created.
-Strict port Clippy passes. A single final regression check of the original
-engine, after fixing discovered bugs, passes1346 tests with one ignored.
-These are source/compiler checks, not GPU execution or model-quality evidence.
+## Actual combined results and failures
 
-**No port GPU benchmark has run and no throughput is claimed.** Sudo expired
-during implementation; one `sudo -v` prompt is waiting in the shared shell.
-The user was asked once. Do not repeatedly ask or weaken the swap/core/admission
-requirements to bypass it. No models were loaded and no services changed.
-Fresh unprivileged checkpoint confirms all three HTTP listeners200, actual
-B70used50688000B and Nvidia compute0.
+All measured rates below are **real timed continuations/s**, excluding the first
+confirmed token. Fixed public code fixture,temperature0/seed424242, Intel B70.
+Different MTP arithmetic/window lengths can produce different greedy trajectories;
+these are not an exact same-output Ollama comparison.
 
-Do not use v199–v202 artifacts: they predate the cache-identity fix. v204 is the
-artifact to test. Original native code is preserved at6792453 on its branch.
-Native30tokens/s and full upstream feature coverage remain unachieved.
+| Candidate | Scope | Rate | Evidence |
+| --- | --- | --- | --- |
+| v205 Q2 | code200 |8.220500|135/189 accepted drafts,23 repairs |
+| v205 Q8 | code200 |8.672648|137/183 accepted,21 repairs |
+| v207 Q8 | code200 |10.800044|147/155 accepted,5 repairs; no suffix window actually selected |
+| v213 Q2 combined | code200 |9.175268|145/161 accepted,7 repairs;144-slot adaptive cache, compact carry, runtime conversion/vocabulary connected |
+| v214 Q2 combined | code512 cap,362 emitted at EOS |7.976630|108 rounds,36 repairs;8.823267451s cache adaptation |
+| v215 Q2 batched transfers/checks | same cap,362 at EOS |8.458796|42.677466683s timed,6.529365052s adaptation |
 
+v213 cache performed1246 swaps,2549555200B moved,4.467331086s adaptation.
+Its resident route fraction was70888/108960 (~65.1%). v214/v215 performed2492
+swaps,5099110400B moved. v215 draft5.224239850s,verify24.334071779s,
+repair6.570197023s. These completed runs pass internal owner closure and actual
+process/GPU/service recovery. **30tokens/s and complete upstream feature parity
+are not achieved.** The last successful broader-port artifact is v215 from
+`c1b334c3a5e471e6342e5b9cf5900e520704f864`, SHA256
+`2d804b91b493466a1987f68b11ad5780e41037ed4937b021731c85c768336f79`.
+It uses144 slots and CPU-staged exchanges, not the newest192/direct-exchange code.
 
-## Exact first full-model run after sudo is restored
+Important failures fixed this pass:
 
-Read the shared shell first. When its authentication prompt completes, start
-`keep-sudo-active.py` from that same terminal with `--minutes240` and a pid file
-under the development base. The helper refreshes only an already-authorized
-cache, never asks for or reads a password, and exits after four hours or a failed
-refresh. Stop its recorded PID when ending the work; do not leave it behind.
-This addresses the missed refresh during the initial broad implementation.
+- v204 Q2 exact-Q8 admission rejection (`27f14fb`); v204 Q8 receipt permissions
+  (`ec21023`). Missing v204 timings must not be inferred.
+- v208/v209 shader launch failure hidden behind retained metadata. Router used
+  WGSL-reserved `active`; renamed `live` in `9815e85`. Full new shader coverage
+  now includes routers, packet and exchange, plus20 projection variants.
+- v212 held an outgoing readback lease after wiping it, blocking the sanitizer.
+  `32baf8a` explicitly drops it before mutation; v213 then succeeds.
+- v216192-slot prototype retained a144-slot whole-model constructor. Connected
+  `0f4c623`; no model execution acceptance for v216.
+- v217/v219 exposed stale router table extent and metadata budget. `93b4178`
+  sizes the table to its bank; `3e09fb6` raises only the isolated port's per-layer
+  metadata budget to64KiB/4MiB aggregate. `c627327`/`21ee0c0` preserve original
+  failure diagnostics instead of masking them with a poison notification.
+- **v221 reached successful cold prefill,432-page host materialization, frozen
+  GPU routing and decode startup, then rejected the first four-row DOWN launch.**
+  Its four-row launch wrapper still contained two literal72/144 shard tables.
+  `d682e04` connects both to the selected source partitions; `1caf271` passes
+  source checks. **No GPU rerun after this fix**, honoring the user's pause.
+  The direct GPU exchange therefore has no hardware/timing acceptance yet.
 
-From the root checkout in that terminal, use:
+The last tested but failed v221 artifact is source `3e09fb6789f1bd92d5c543671b72b2136c32375f`, SHA256
+`b6fc683d5065626c8842ea894fb613a4bc3161254b07402507e224f454ffe9a1`, under
+`native-strata-port-v221-build-20261013`. Do not select it as a working artifact
+or silently repeat it; it lacks the fixed four-row guards.
 
-```sh
-sudo -n python3 apps/kuno/benchmarks/text/run-strata-port.py native-strata-port-v204-build-20261013 native-strata-port-v204-code-q2-intel-20261013 code q2
-```
+## Checks and actual stop receipt
 
-The last path is fresh (the earlier failed sudo attempt never launched a run).
-The launcher pauses admission, captures fresh actual Intel memory, runs the
-fixed public code fixture in a swap/core-disabled cgroup, displays public text
-without saving it, records numeric results, and restores admission in finally.
-If Q2 encounters a runtime bug, retain its failure and try a fresh `code q8`
-control before changing target math. Once the whole path runs, inspect actual
-public output, target verification/repair, per-member-count GU/DOWN dispatches,
-throughput and owner/GPU recovery. Fix actual errors; do not resume the old
-per-leaf original CPU13 gate for this approximate experiment.
+- Latest source: Rust port Clippy `-D warnings`, fmt/whitespace, and original
+  `kuno-text-lab` direct-device compilation pass. Saved logs:
+  `strata-port-final-clippy2.log`, `strata-port-original-check.log`.
+- v221 full new-controller WGSL validation (including exchange) plus20 projection
+  WGSL/SPIR-V variants passes. A fresh release artifact from latest source still
+  needs its own full shader check. Compiler acceptance is not hardware execution.
+-1346 original-engine tests/1ignored passed at `f0ed07a`, **not current source**.
+  Full regression and representative code/prose runs remain outstanding.
+- v221 failure: internal private close reports complete=1; actual cleanup passes.
+  Fresh read-only16:29:23UTC receipt `native-strata-port-final-pause-20261013.json`:
+  admission idle/unpaused/no latch, all three listeners200, B70used50688000B,
+  Nvidia compute0 (679MiB desktop), classified GPU faults all0, unchanged
+  boot`b32654b7-a49b-493d-8305-46da15b6eac6`/kernel7.0.0-38-generic.
+- Recorded sudo refresher3421970 terminated and exited. No benchmark/compiler
+  job or queued GPU work is left. Do not refresh credentials automatically.
 
-The metadata/source helpers are not the engine: model execution remains Rust
-and WGSL. CLI input is still limited to these public fixtures; general private
-input/API integration and long-context KV remain separate work. The current
-cache capacity, graph/prefill implementations and4-token verifier reuse the
-existing Rust foundations and differ from the full upstream runtime. Preserve
-those limitations when reporting performance.
+All development artifacts/receipts above live under
+`/media/jmicko/faststore/kuno-development`. Benchmark logs omit generated text;
+fixed public output is displayed live only. No private input path or content
+persistence was added.
+
+## Resume only after explicit user instruction
+
+1. Read AGENTS/coordination, this checkpoint and current git status/log. Preserve
+   canonical Vashti and inherited `text/__pycache__/`; do not restore the lab to
+   main or overwrite newer work. Original accepted engine remains6792453.
+2. Build a fresh immutable `kuno-strata-rust` artifact from latest committed
+   runtime source, e.g. `python3 apps/kuno/benchmarks/text/build-strata-port.py
+   native-strata-port-v222-build-20261013`. Verify SHA/source; run its
+   `--validate-port-shaders` and registration-only preset before GPU execution.
+3. With the user's GPUs free and cached sudo available, read the Demons shell
+   before typing. Run a fresh protected code/Q2 fixture through `run-strata-port.py`.
+   It uses MemorySwapMax=0/LimitCORE=0, checks actual idle memory, pauses admission
+   and restores/physically verifies services/devices in finally. Never benchmark
+   in an ordinary swappable shell, reuse an output directory or reset a GPU.
+4. First required acceptance is the complete192-slot/direct-exchange run after
+   d682e04. Check that actual exchanges occur, real output is readable, target
+   verification and all owner closes pass, and actual memory/faults recover.
+   If it fails, preserve the real cause and fix the combined path; don't switch
+   back to isolated original-precision kernel trials or claim performance.
+5. Only after that works, evaluate initial ranked residency, faster accepted
+   prefix rollback and a6/8-row verifier. Those, XMX prefill, compact long-context
+   KV and the general private-input worker remain unfinished. The current bank
+   count is fixed192, **not auto-sized**. Do not call the whole upstream rewrite
+   complete. Request-local adaptive residency is implemented; inference history
+   must never be saved in Kuno.
+6. Finish appropriate original-engine regressions and representative code/prose
+   acceptance before selecting an artifact. Keep API/UI/release work elsewhere.
+   On losing sudo, document a clean checkpoint; avoid privilege workarounds.

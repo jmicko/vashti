@@ -1,34 +1,103 @@
 {
-  "source_commit": "f0ed07ae9ba59a069bcf9920f372de06bc92577a",
+  "source_commit": "1caf271922abd1dd7aaf3f3d48789e4467362571",
   "source_branch": "codex/strata-rust-port",
+  "status": "paused_at_user_request",
   "original_working_engine_commit": "6792453",
   "upstream_revision": "fb58e0dbc8399662c0e47c76578c6e878b14f6cf",
   "license": "MIT with Strata/ggml notices retained",
-  "rust_artifact_sha256": "2964f4b83814f0f39b26afab63410db03d05a6c597818f408f08be4bf9616b33",
-  "build_directory": "/media/jmicko/faststore/kuno-development/native-strata-port-v204-build-20261013",
-  "whole_rust_build_accepted": true,
-  "wgsl_spirv_variants_accepted": 20,
-  "whole_q8_and_q2_registration_only_accepted": true,
-  "registration_memory_values_explicitly_synthetic": true,
-  "original_engine_regression_tests_passed": 1346,
-  "original_engine_regression_tests_ignored": 1,
-  "strict_port_clippy_accepted": true,
-  "cpu13_original_precision_gate_required_for_this_experiment": false,
-  "gpu_execution_started": false,
-  "measured_tokens_per_second": null,
-  "blocking_condition": "Cached sudo expired during implementation; one shared-shell authentication prompt pending",
-  "bounded_sudo_refresh_helper_prepared_but_not_started": true,
+  "latest_source_checks": {
+    "strict_port_clippy": true,
+    "fmt": true,
+    "whitespace": true,
+    "original_direct_device_compilation": true,
+    "full_original_regression_current_source": false,
+    "last_full_regression": {
+      "commit": "f0ed07ae9ba59a069bcf9920f372de06bc92577a",
+      "pass": 1346,
+      "ignored": 1
+    }
+  },
+  "last_gpu_trial": {
+    "artifact_source_commit": "3e09fb6789f1bd92d5c543671b72b2136c32375f",
+    "artifact_sha256": "b6fc683d5065626c8842ea894fb613a4bc3161254b07402507e224f454ffe9a1",
+    "build_directory": "/media/jmicko/faststore/kuno-development/native-strata-port-v221-build-20261013",
+    "receipt_directory": "/media/jmicko/faststore/kuno-development/native-strata-port-v221-code-q2-intel-20261013",
+    "full_generated_controller_wgsl_accepted": true,
+    "projection_wgsl_spirv_variants": 20,
+    "cold_prefill_and_host_materialization_reached": true,
+    "whole_generation_passed": false,
+    "failure": "Four-row DOWN wrapper retained the old source partition tables",
+    "source_fix": "d682e04",
+    "gpu_rerun_after_fix": false,
+    "new_gpu_direct_cache_exchange_hardware_accepted": false,
+    "internal_private_close_complete": true,
+    "actual_gpu_process_cleanup_passed": true
+  },
+  "last_completed_broad_port": {
+    "source": "c1b334c3a5e471e6342e5b9cf5900e520704f864",
+    "artifact_sha256": "2d804b91b493466a1987f68b11ad5780e41037ed4937b021731c85c768336f79",
+    "fixture": "code",
+    "seed": 424242,
+    "temperature": 0,
+    "draft_profile": "strata-q2",
+    "output_cap": 512,
+    "emitted_including_eos": 362,
+    "timed_continuations": 361,
+    "continuation_tokens_per_second": 8.458796363932247,
+    "elapsed_ns": 42677466683,
+    "cache_adaptation_ns": 6529365052,
+    "swaps": 2492,
+    "bytes_moved": 5099110400,
+    "resident_slots_per_layer": 144,
+    "direct_gpu_exchange": false
+  },
+  "new_source_geometry": {
+    "resident_slots_per_layer": 192,
+    "vram_parts": [
+      96,
+      96
+    ],
+    "host_parts": [
+      144,
+      144,
+      32
+    ],
+    "logical_resident_bytes": 18859622400,
+    "logical_host_bytes": 31432704000,
+    "exact_persistent_roots": true
+  },
+  "target_30_tokens_per_second_achieved": false,
   "complete_upstream_rewrite_claimed": false,
-  "deferred_upstream_features": [
+  "unfinished": [
+    "Whole-model hardware acceptance of192/direct-exchange source",
+    "6/8-row verifier",
+    "Efficient accepted-prefix rollback",
     "XMX prefill",
-    "runtime Q8-repacked/CJK-pruned MTP",
-    "auto-sized/LRU expert cache",
-    "6/8-token verifier",
-    "long-context/int8 KV",
-    "general private-input worker/API"
+    "Compact long-context KV",
+    "Auto-sized residency",
+    "General private-input worker/API"
   ],
+  "sudo_refresher_stopped": true,
+  "queued_work": false,
+  "installed_services_changed": false,
+  "required_vashti_changes": [],
+  "host_stop_receipt": "/media/jmicko/faststore/kuno-development/native-strata-port-final-pause-20261013.json",
   "host": {
-    "time": "2026-10-13T08:12:22.314843+00:00",
+    "admission": {
+      "action": "status",
+      "state": {
+        "admission": {
+          "active": false,
+          "completed": 0,
+          "paused": false,
+          "recovery_required": false,
+          "rejected": 0,
+          "waiting": 0
+        }
+      },
+      "status": 200
+    },
+    "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
     "http_statuses": {
       "kuno": 200,
       "ollama": 200,
@@ -42,15 +111,16 @@
         }
       ]
     },
+    "kernel": "7.0.0-38-generic",
+    "kernel_fault_counts": {
+      "nvidia_xid": 0,
+      "xe_memory_faults": 0,
+      "xe_reset_failures": 0,
+      "xe_timeouts": 0,
+      "xe_wedged": 0
+    },
     "nvidia_compute_process_count": 0,
-    "gpu_benchmark_started": false,
-    "services_modified": false
-  },
-  "fixes_this_pass": {
-    "rust_report_type": "4c391b2",
-    "tail_down_transform": "6ae34e5",
-    "original_cargo_target": "182d075",
-    "shader_cache_variant_and_format_identity": "f0ed07a"
-  },
-  "do_not_use_earlier_port_artifacts": "v198 failed build; v199..v202 predate the shader-cache identity fix"
+    "nvidia_memory_mib": 679,
+    "time": "2026-10-13T16:29:23.937443+00:00"
+  }
 }
