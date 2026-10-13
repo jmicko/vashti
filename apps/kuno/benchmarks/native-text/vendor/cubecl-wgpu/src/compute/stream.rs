@@ -256,6 +256,16 @@ impl WgpuStream {
         }
     }
 
+    fn complete_native_before_readback(&mut self) -> Result<(), ServerError> {
+        if self.strata_graph.as_ref().is_some_and(|g| g.pending()) {
+            self.flush(StreamErrorMode {
+                ignore: false,
+                flush: true,
+            })?;
+        }
+        Ok(())
+    }
+
     /// Read multiple buffers lazily to [Bytes], potentially using pinned memory.
     ///
     /// # Arguments
@@ -272,6 +282,9 @@ impl WgpuStream {
     ) -> DynFut<Result<Vec<Bytes>, ServerError>> {
         if self.transient_io.is_some() {
             return self.read_private_resources(descriptors);
+        }
+        if let Err(error) = self.complete_native_before_readback() {
+            return Box::pin(async move { Err(error) });
         }
         self.compute_pass = None;
         let mut staging_info = Vec::with_capacity(descriptors.len());
@@ -766,6 +779,7 @@ impl WgpuStream {
         self.compute_pass = None;
         let scopes = super::transient_io::IoScopes::new(&self.device);
         let setup: Result<_, ServerError> = (|| {
+            self.complete_native_before_readback()?;
             let logical = usize::try_from(resource.size)
                 .map_err(|_| super::transient_io::fault("private cleanup read span overflow"))?;
             let entry = self.transient_io.as_mut().unwrap().readback(
@@ -821,6 +835,7 @@ impl WgpuStream {
         let mut pending = Vec::new();
         let setup = (|| {
             self.private_io_active()?;
+            self.complete_native_before_readback()?;
             pending
                 .try_reserve_exact(descriptors.len())
                 .map_err(|_| super::transient_io::fault("private readback metadata allocation"))?;
