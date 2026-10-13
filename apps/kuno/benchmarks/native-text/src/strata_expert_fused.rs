@@ -53,8 +53,9 @@ impl Kernel {
             .expect("packed bindings");
         let end = first
             + source[first..]
-                .find("var<workgroup>")
-                .expect("packed bindings end");
+                .find("var<uniform> p:Params;")
+                .expect("packed bindings end")
+            + "var<uniform> p:Params;".len();
         let names: &[&str] = if self.down {
             &["down"]
         } else {

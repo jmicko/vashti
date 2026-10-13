@@ -958,7 +958,7 @@ impl IntegerVerifyHeadStatistics {
         if !(1..=4).contains(&count)
             || accepted == 0
             || accepted > count
-            || recomputed != (accepted < count)
+            || recomputed != (accepted < count && !crate::strata_port::enabled())
         {
             return Err("integer target head actual round geometry rejected");
         }
@@ -1258,9 +1258,11 @@ pub(crate) fn frozen_down_integer_record(
         || if selected {
             preparations == 0
                 || !preparations.is_multiple_of(48)
-                || preparations.checked_mul(5) != Some(dispatches)
+                || preparations.checked_mul(if crate::strata_port::enabled() { 1 } else { 5 })
+                    != Some(dispatches)
                 || preparations != audits
-                || preparations.checked_mul(10) != Some(source_dispatches)
+                || preparations.checked_mul(if crate::strata_port::enabled() { 2 } else { 10 })
+                    != Some(source_dispatches)
         } else {
             preparations != 0 || dispatches != 0 || audits != 0
         }
@@ -1290,7 +1292,20 @@ pub(crate) fn frozen_down_integer_initial_record(
         source_dispatches,
     )?;
     if selected
-        && (preparations != 48 || dispatches != 240 || audits != 48 || source_dispatches != 480)
+        && (preparations != 48
+            || dispatches
+                != if crate::strata_port::enabled() {
+                    48
+                } else {
+                    240
+                }
+            || audits != 48
+            || source_dispatches
+                != if crate::strata_port::enabled() {
+                    96
+                } else {
+                    480
+                })
     {
         return Err("integer DOWN original warm first-token execution rejected");
     }
@@ -1416,7 +1431,11 @@ pub(crate) fn frozen_gu_stride_four_record(
         || if selected {
             !integer_actual
                 || integer_dispatches == 0
-                || !integer_dispatches.is_multiple_of(240)
+                || !integer_dispatches.is_multiple_of(if crate::strata_port::enabled() {
+                    48
+                } else {
+                    240
+                })
                 || stride_dispatches != integer_dispatches
         } else {
             stride_dispatches != 0
@@ -1440,7 +1459,8 @@ pub(crate) fn frozen_gu_integer_record(
         || if selected {
             preparations == 0
                 || !preparations.is_multiple_of(48)
-                || preparations.checked_mul(5) != Some(dispatches)
+                || preparations.checked_mul(if crate::strata_port::enabled() { 1 } else { 5 })
+                    != Some(dispatches)
                 || preparations != audits
         } else {
             preparations != 0 || dispatches != 0 || audits != 0
@@ -1462,7 +1482,16 @@ pub(crate) fn frozen_gu_integer_initial_record(
     audits: u64,
 ) -> Result<serde_json::Value, &'static str> {
     let record = frozen_gu_integer_record(selected, actual, preparations, dispatches, audits)?;
-    if selected && (preparations != 48 || dispatches != 240 || audits != 48) {
+    if selected
+        && (preparations != 48
+            || dispatches
+                != if crate::strata_port::enabled() {
+                    48
+                } else {
+                    240
+                }
+            || audits != 48)
+    {
         return Err("integer GU original initial count1 receipt rejected");
     }
     Ok(record)
