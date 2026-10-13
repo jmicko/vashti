@@ -18,10 +18,7 @@ use cubecl::{
     prelude::*,
     wgpu::{RuntimeOptions, WgpuRuntime, WgpuSetup, init_device},
 };
-use kuno_text::{
-    GgufFile, GgufLimits, Qwen35Tokenizer, TokenizerLimits,
-    model::{Qwen4Exp, greedy},
-};
+use kuno_text::{GgufFile, GgufLimits, Qwen35Tokenizer, TokenizerLimits, model::Qwen4Exp};
 use std::{
     collections::BTreeMap,
     ffi::{OsStr, OsString},
@@ -1241,13 +1238,13 @@ pub(crate) fn run(
                         if let Some(token) = teacher_input(&prompt, position, draft.position())? {
                             draft.append_kv(token, rows.hidden(row)?, &cancel)?;
                         } else {
-                            confirmed = greedy(rows.logits(row)?)?;
+                            confirmed = rows.greedy(row)?;
                             carry.copy_from_slice(rows.hidden(row)?);
                         }
                     } else {
                         // Original prompt chunks still execute every target
                         // family. Read full real packets without teacher KV.
-                        let predicted = greedy(rows.logits(row)?)?;
+                        let predicted = rows.greedy(row)?;
                         let hidden = rows.hidden(row)?;
                         if position + 1 == prompt.len() {
                             confirmed = predicted;
@@ -1582,7 +1579,7 @@ pub(crate) fn run(
                     {
                         return Err("target-only actual count1 packet identity rejected".into());
                     }
-                    confirmed = greedy(rows.logits(0)?)?;
+                    confirmed = rows.greedy(0)?;
                     carry.copy_from_slice(rows.hidden(0)?);
                     drop(rows);
                     if target.completed_target_rows_cursor(&executor)? != position + 1 {
@@ -1679,7 +1676,7 @@ pub(crate) fn run(
                     if rows.position(row)? != position + row {
                         return Err("language consumed target position rejected".into());
                     }
-                    predicted.push(greedy(rows.logits(row)?)?);
+                    predicted.push(rows.greedy(row)?);
                 }
                 let accepted = if count == 4 {
                     crate::target_lab_build::public_four_accepted_prefix(
@@ -1692,14 +1689,16 @@ pub(crate) fn run(
                     accepted_prefix(&inputs, &predicted, graph.eos_token())?
                 };
                 let mut actual_carries = Zeroizing::new(Vec::with_capacity(accepted * HIDDEN));
-                let mut saved_logits = Zeroizing::new(Vec::with_capacity(if accepted < count {
-                    accepted * VOCAB
-                } else {
-                    0
-                }));
+                let mut saved_logits = Zeroizing::new(Vec::with_capacity(
+                    if accepted < count && !crate::strata_port::enabled() {
+                        accepted * VOCAB
+                    } else {
+                        0
+                    },
+                ));
                 for row in 0..accepted {
                     actual_carries.extend_from_slice(rows.hidden(row)?);
-                    if accepted < count {
+                    if accepted < count && !crate::strata_port::enabled() {
                         saved_logits.extend_from_slice(rows.logits(row)?);
                     }
                 }
@@ -1723,17 +1722,19 @@ pub(crate) fn run(
                         return Err("language recomputed actual identity rejected".into());
                     }
                     for row in 0..accepted {
-                        stats.repair_logit_max = stats.repair_logit_max.max(repair_vector(
-                            &saved_logits[row * VOCAB..(row + 1) * VOCAB],
-                            recomputed.logits(row)?,
-                            VOCAB,
-                        )?);
+                        if !crate::strata_port::enabled() {
+                            stats.repair_logit_max = stats.repair_logit_max.max(repair_vector(
+                                &saved_logits[row * VOCAB..(row + 1) * VOCAB],
+                                recomputed.logits(row)?,
+                                VOCAB,
+                            )?);
+                        }
                         stats.repair_hidden_max = stats.repair_hidden_max.max(repair_vector(
                             &actual_carries[row * HIDDEN..(row + 1) * HIDDEN],
                             recomputed.hidden(row)?,
                             HIDDEN,
                         )?);
-                        if greedy(recomputed.logits(row)?)? != predicted[row] {
+                        if recomputed.greedy(row)? != predicted[row] {
                             return Err("language repair greedy changed".into());
                         }
                     }
@@ -1825,6 +1826,18 @@ pub(crate) fn run(
                         lookup.as_ref().map_or(0, |p| p.matched),
                         draft_ns + verify_ns + repair_ns,
                     );
+                }
+                if crate::strata_port::enabled()
+                    && emitted.len() < MAX_OUTPUTS
+                    && confirmed != graph.eos_token()
+                {
+                    target.adapt_strata_cache(
+                        &mut executor,
+                        host_attachment
+                            .as_mut()
+                            .ok_or("Strata adaptive attachment absent")?,
+                        &cancel,
+                    )?;
                 }
             }
             let tail = Zeroizing::new(decoder.finish());
@@ -2251,6 +2264,16 @@ pub(crate) fn run(
             record["target_integer_head_receipt"] = target_integer_head_receipt;
             record["initial_prefill_target_integer_head_receipt"] =
                 initial_prefill_target_integer_head_receipt;
+            if crate::strata_port::enabled() {
+                record["repair_logit_max_abs"] = serde_json::Value::Null;
+                record["target_packet"] = serde_json::json!({"gpu_argmax":true,"full_logit_readback":false,"vocabulary_rows_evaluated":VOCAB,"carry_rows_retained":true,"packet_bytes":(8+4+4*HIDDEN)*4});
+            }
+            if crate::strata_port::enabled() {
+                record["strata_adaptive_cache"] = host_attachment
+                    .as_ref()
+                    .ok_or("Strata cache receipt attachment absent")?
+                    .strata_cache_receipt()?;
+            }
             record["target_four_lookahead_receipt"] = four_lookahead_receipt;
             record["initial_prefill_target_four_lookahead_receipt"] =
                 initial_four_lookahead_receipt;
@@ -2397,7 +2420,7 @@ pub(crate) fn run(
         "compiled-public-language200-real-target-only-greedy"
     } else if input.mtp_device == crate::target_lab_build::MtpDevice::Intel {
         "compiled-public-language200-real-single-physical-device-independent-stream-greedy"
-    } else { "compiled-public-language200-real-dual-device-greedy" },"decode_mode":input.decode_mode.name(),"draft_executed":draft_executed,"target_card":"B70","draft_card":if draft_executed {Some(if input.mtp_device == crate::target_lab_build::MtpDevice::Intel {"B70"}else{"RTX3060"})}else{None},"mtp_device_requested":if draft_executed {Some(input.mtp_device.name())}else{None},"mtp_device":mtp_device_receipt,"intel_mtp_admission":intel_mtp_admission,"draft_profile":if draft_executed{Some(input.draft_profile.name())}else{None},"gpu_chronological_qsa_selector":input.gpu_qsa_selector,"qsa_extra_runtime_info_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_INFO_BYTES_PER_CHUNK}else{0},"qsa_extra_host_reserved_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_HOST_BYTES_PER_CHUNK}else{0},"draft_public_reserved_bytes":if draft_executed{input.draft_profile.public_bytes_with_english(input.mtp_english_vocab)?}else{0},"frozen_gu_integer_requested":input.frozen_gu_integer,"strata_rust_port":crate::strata_port::receipt(),"compiled_count4_compact_down_staged":crate::quant_matvec::frozen_down_integer::four::STAGED_PUBLIC_PROBE,"compiled_count4_compact_shuffle":crate::quant_matvec::frozen_gu_integer::four::shuffle::PUBLIC_PROBE,"compiled_count4_compact_gu_first_plane":crate::quant_matvec::frozen_gu_integer::four::FIRST_PLANE_PUBLIC_PROBE,"frozen_down_math":if input.frozen_down_integer {"integer-public"}else{"original"},"frozen_down_integer_requested":input.frozen_down_integer,"frozen_down_integer_extra_main_bytes":if input.frozen_down_integer{65536}else{0},"frozen_down_integer_extra_host_bytes":if input.frozen_down_integer{65536}else{0},"frozen_down_integer_extra_info_bytes":if input.frozen_down_integer{196608}else{0},"frozen_down_integer_extra_runtime_bytes":if input.frozen_down_integer{462848}else{0},"frozen_gu_stride_four_requested":input.frozen_gu_stride_four,"frozen_down_schedule":if input.frozen_down_stride_four {"four-public"} else {"original"},"frozen_down_stride_four_requested":input.frozen_down_stride_four,"target_ple_reads":if input.public_grouped_ple_reads {"grouped-public"} else {"original"},"target_grouped_ple_reads_requested":input.public_grouped_ple_reads,"target_status_folds":if input.public_grouped_status_folds {"grouped-public"} else {"original"},"target_grouped_status_folds_requested":input.public_grouped_status_folds,"frozen_gu_integer_extra_main_bytes":if input.frozen_gu_integer {65536} else {0},"frozen_gu_integer_extra_host_bytes":if input.frozen_gu_integer {65536} else {0},"frozen_gu_integer_extra_info_bytes":if input.frozen_gu_integer {196608} else {0},"frozen_gu_integer_extra_runtime_bytes":if input.frozen_gu_integer {462848} else {0},"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"temperature":0,"seed":424242,"repetition_penalty":1.0,"presence_penalty":0.0,"frequency_penalty":0.0,"thinking":false,"max_outputs":MAX_OUTPUTS,"verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"live_member_reduction":input.live_member_reduction,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"fused_mtp_sweeps":input.fused_sweeps,"fixture_host_reserved_bytes":FIXTURE_HOST_BYTES,"tokenizer_host_cap_bytes":TOKENIZER_HOST_BYTES,"request_reuse_metadata_reserved_bytes":if input.request_reuse{4*1024*1024}else{0},"full_target_packets_retained":true,"greedy_target_verification":true,"repair_original_prefix_vector_checks":input.decode_mode == DecodeMode::Speculative && !crate::strata_port::enabled(),"independent_cpu200_reference_accepted":false,"forced_oracle_tokens":false,"forced_experts":false,"private_or_production_accepted":false,"record":record,"draft_close":draft_close});
+    } else { "compiled-public-language200-real-dual-device-greedy" },"decode_mode":input.decode_mode.name(),"draft_executed":draft_executed,"target_card":"B70","draft_card":if draft_executed {Some(if input.mtp_device == crate::target_lab_build::MtpDevice::Intel {"B70"}else{"RTX3060"})}else{None},"mtp_device_requested":if draft_executed {Some(input.mtp_device.name())}else{None},"mtp_device":mtp_device_receipt,"intel_mtp_admission":intel_mtp_admission,"draft_profile":if draft_executed{Some(input.draft_profile.name())}else{None},"gpu_chronological_qsa_selector":input.gpu_qsa_selector,"qsa_extra_runtime_info_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_INFO_BYTES_PER_CHUNK}else{0},"qsa_extra_host_reserved_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_HOST_BYTES_PER_CHUNK}else{0},"draft_public_reserved_bytes":if draft_executed{input.draft_profile.public_bytes_with_english(input.mtp_english_vocab)?}else{0},"frozen_gu_integer_requested":input.frozen_gu_integer,"strata_rust_port":crate::strata_port::receipt(),"compiled_count4_compact_down_staged":crate::quant_matvec::frozen_down_integer::four::STAGED_PUBLIC_PROBE,"compiled_count4_compact_shuffle":crate::quant_matvec::frozen_gu_integer::four::shuffle::PUBLIC_PROBE,"compiled_count4_compact_gu_first_plane":crate::quant_matvec::frozen_gu_integer::four::FIRST_PLANE_PUBLIC_PROBE,"frozen_down_math":if input.frozen_down_integer {"integer-public"}else{"original"},"frozen_down_integer_requested":input.frozen_down_integer,"frozen_down_integer_extra_main_bytes":if input.frozen_down_integer{65536}else{0},"frozen_down_integer_extra_host_bytes":if input.frozen_down_integer{65536}else{0},"frozen_down_integer_extra_info_bytes":if input.frozen_down_integer{196608}else{0},"frozen_down_integer_extra_runtime_bytes":if input.frozen_down_integer{462848}else{0},"frozen_gu_stride_four_requested":input.frozen_gu_stride_four,"frozen_down_schedule":if input.frozen_down_stride_four {"four-public"} else {"original"},"frozen_down_stride_four_requested":input.frozen_down_stride_four,"target_ple_reads":if input.public_grouped_ple_reads {"grouped-public"} else {"original"},"target_grouped_ple_reads_requested":input.public_grouped_ple_reads,"target_status_folds":if input.public_grouped_status_folds {"grouped-public"} else {"original"},"target_grouped_status_folds_requested":input.public_grouped_status_folds,"frozen_gu_integer_extra_main_bytes":if input.frozen_gu_integer {65536} else {0},"frozen_gu_integer_extra_host_bytes":if input.frozen_gu_integer {65536} else {0},"frozen_gu_integer_extra_info_bytes":if input.frozen_gu_integer {196608} else {0},"frozen_gu_integer_extra_runtime_bytes":if input.frozen_gu_integer {462848} else {0},"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"temperature":0,"seed":424242,"repetition_penalty":1.0,"presence_penalty":0.0,"frequency_penalty":0.0,"thinking":false,"max_outputs":MAX_OUTPUTS,"verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"live_member_reduction":input.live_member_reduction,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"fused_mtp_sweeps":input.fused_sweeps,"fixture_host_reserved_bytes":FIXTURE_HOST_BYTES,"tokenizer_host_cap_bytes":TOKENIZER_HOST_BYTES,"request_reuse_metadata_reserved_bytes":if input.request_reuse{4*1024*1024}else{0},"full_target_packets_retained":!crate::strata_port::enabled(),"greedy_target_verification":true,"repair_original_prefix_vector_checks":input.decode_mode == DecodeMode::Speculative && !crate::strata_port::enabled(),"independent_cpu200_reference_accepted":false,"forced_oracle_tokens":false,"forced_experts":false,"private_or_production_accepted":false,"record":record,"draft_close":draft_close});
     value["frozen_bank_fill_mode"] =
         crate::target_lab_build::public_host_bank_fill_name(input.bank_fill).into();
     value["frozen_bank_fill_requested"] =

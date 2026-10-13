@@ -3636,6 +3636,36 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
     /// Selection plus positive accepted whole-chunk execution at the original
     /// completed boundary; requested environment flags are not evidence.
     #[allow(dead_code)] // Controller is integrated separately after source acceptance.
+    pub(crate) fn adapt_strata_cache(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+        attachment: &mut crate::public_host_expert_attachment::Attachment<'_, '_, '_>,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        if !crate::strata_port::enabled() {
+            return Err(error());
+        }
+        u::cancel(cancel)?;
+        let _boundary = self.completed_native_projection_boundary(executor)?;
+        self.native_batch
+            .as_ref()
+            .ok_or_else(error)?
+            .target_rows
+            .as_ref()
+            .ok_or_else(error)?
+            .check_no_live_output()?;
+        // SAFETY: actual all-family completed boundary and released output
+        // leases; adaptation joins the target queue before public cache writes.
+        let swaps = unsafe { attachment.adapt_strata()? };
+        if swaps > 0 {
+            self.native_batch
+                .as_mut()
+                .ok_or_else(error)?
+                .moe
+                .refresh_strata_table(executor, self.graph, &self.arena)?;
+        }
+        Ok(())
+    }
     pub(crate) fn set_public_four_rows(
         &mut self,
         executor: &mut GpuExecutor<'f>,

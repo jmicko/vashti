@@ -267,6 +267,51 @@ impl Workspace {
         owners.table = Some(table);
         Ok(())
     }
+    pub(crate) fn refresh_strata_table(
+        &mut self,
+        e: &GpuExecutor<'_>,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+    ) -> Result<()> {
+        if !crate::strata_port::enabled() {
+            return Err(reject());
+        }
+        self.healthy(arena)?;
+        self.policy.completed_boundary()?;
+        let sources = self.frozen_sources.as_ref().ok_or_else(reject)?;
+        let owners = self.batch_router.as_ref().ok_or_else(reject)?;
+        if !matches!(
+            owners.source_policy,
+            Some(SourcePolicy::FrozenHost512 { .. })
+        ) || owners.table.is_none()
+        {
+            return Err(reject());
+        }
+        let mut table = Zeroizing::new(vec![0u32; gpu::TABLE_WORDS]);
+        for layer in 0..48 {
+            let bank = e
+                .banks
+                .get(weights(graph, layer)?.gate.info().name())
+                .ok_or_else(reject)?;
+            table[layer * 512..(layer + 1) * 512]
+                .copy_from_slice(&*sources.slot_table(layer, bank)?);
+        }
+        gpu::validate_frozen_source_table(&table)?;
+        let mut bytes = Zeroizing::new(Vec::with_capacity(128 * 1024));
+        for &word in table.iter() {
+            bytes.extend_from_slice(&word.to_le_bytes());
+        }
+        arena
+            .client()
+            .map_err(u::fault)?
+            .write_private(
+                arena.handle(owners.ids[0]).map_err(u::fault)?.clone(),
+                std::mem::take(&mut *bytes),
+            )
+            .map_err(u::fault)?;
+        self.batch_router.as_mut().ok_or_else(reject)?.table = Some(table);
+        Ok(())
+    }
     pub(crate) fn begin_batch_router_chunk(
         &self,
         arena: &PrivateArena,

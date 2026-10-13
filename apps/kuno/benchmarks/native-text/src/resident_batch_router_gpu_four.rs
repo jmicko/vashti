@@ -96,8 +96,14 @@ impl KernelMetadata for Kernel {
     }
     fn id(&self) -> KernelId {
         KernelId::new::<Self>()
-            .info(*self)
-            .cube_dim(CubeDim::new_1d(if self.preflight { 256 } else { 64 }))
+            .info((*self, crate::strata_port::enabled()))
+            .cube_dim(CubeDim::new_1d(if self.preflight {
+                256
+            } else if crate::strata_port::enabled() {
+                128
+            } else {
+                64
+            }))
     }
     fn address_type(&self) -> StorageType {
         StorageType::Scalar(ElemType::UInt(UIntKind::U32))
@@ -114,9 +120,15 @@ impl CubeTask<AutoCompiler> for Kernel {
         Ok(CompiledKernel {
             entrypoint_name: if self.preflight { "preflight" } else { "main" }.into(),
             debug_name: None,
-            source: self.addressing.shader(),
+            source: crate::strata_port::router_shader(self.addressing.shader()),
             repr: None,
-            cube_dim: CubeDim::new_1d(if self.preflight { 256 } else { 64 }),
+            cube_dim: CubeDim::new_1d(if self.preflight {
+                256
+            } else if crate::strata_port::enabled() {
+                128
+            } else {
+                64
+            }),
             debug_info: None,
         })
     }

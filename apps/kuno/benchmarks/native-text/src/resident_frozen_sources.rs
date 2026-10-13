@@ -9,7 +9,8 @@ use cubecl::wgpu::WgpuResource;
 use cubecl_runtime::public_external::is_public_external_binding;
 
 pub(crate) const EXTRA_INFO_BYTES_PER_CHUNK: u64 = 6 * 48 * 2048;
-pub(crate) const SOURCE_SET_HOST_BYTES: u64 = 2 * 1024 * 1024;
+pub(crate) const SOURCE_SET_HOST_BYTES: u64 =
+    (2 + if crate::strata_port::enabled() { 4 } else { 0 }) * 1024 * 1024;
 pub(crate) const PHYSICAL_HOST_BYTES: u64 = 8 * 1024;
 pub(crate) const EXTRA_HOST_BYTES: u64 = SOURCE_SET_HOST_BYTES + PHYSICAL_HOST_BYTES;
 pub(crate) const EXTRA_RUNTIME_BYTES_PER_CHUNK: u64 = EXTRA_INFO_BYTES_PER_CHUNK;
@@ -435,6 +436,7 @@ pub(crate) struct Sources {
     down_stride_four: bool,
     down_integer: bool,
     four_members: bool,
+    adaptive: Option<std::sync::Mutex<crate::strata_cache::Cache>>,
 }
 fn initial_metadata(layers: usize, pages: usize, banks: usize) -> Result<usize> {
     let bytes = std::mem::size_of::<Sources>()
@@ -1339,7 +1341,24 @@ impl Sources {
         if actual_pages.next().is_some() || metadata_bytes as u64 > SOURCE_SET_HOST_BYTES {
             return Err(reject());
         }
+        let adaptive = if crate::strata_port::enabled() {
+            metadata_bytes = metadata_bytes
+                .checked_add(crate::strata_cache::METADATA_BYTES)
+                .ok_or(Error::ArithmeticOverflow)?;
+            if metadata_bytes as u64 > SOURCE_SET_HOST_BYTES {
+                return Err(reject());
+            }
+            Some(std::sync::Mutex::new(crate::strata_cache::Cache::new(
+                layers
+                    .iter()
+                    .flat_map(|l| l.by_expert.iter().copied())
+                    .collect(),
+            )?))
+        } else {
+            None
+        };
         Ok(Arc::new(Self {
+            adaptive,
             binding: graph.binding_id(),
             plan_identity: plan.identity(),
             bank_fill,
@@ -1447,14 +1466,107 @@ impl Sources {
         check_mapping(&l.by_expert, &bank.slots)?;
         Ok(l)
     }
+    fn mapping(&self, layer: usize) -> Result<Zeroizing<[u16; 512]>> {
+        if let Some(cache) = &self.adaptive {
+            return cache.lock().map_err(|_| reject())?.mapping(layer);
+        }
+        let mut out = Zeroizing::new([0; 512]);
+        out.copy_from_slice(&self.layers.get(layer).ok_or_else(reject)?.by_expert);
+        Ok(out)
+    }
+    /// # Safety
+    /// Parent has completed a target round, dropped all output leases, joined
+    /// the target queue and excludes a new consumer until refreshing its table.
+    pub(crate) unsafe fn adapt_strata(
+        &self,
+        client: &ComputeClient<WgpuRuntime>,
+        mirror: &mut crate::public_host_expert_mirror::Mirror<'_, '_, '_>,
+    ) -> Result<u64> {
+        let Some(cache) = &self.adaptive else {
+            return Ok(0);
+        };
+        let clock = std::time::Instant::now();
+        let mut cache = cache.lock().map_err(|_| reject())?;
+        let swaps = cache.plan()?;
+        if swaps.is_empty() {
+            return Ok(0);
+        }
+        cubecl::future::block_on(client.sync()).map_err(|_| reject())?;
+        for &swap in swaps.iter() {
+            let [layer, _, _, resident, host] = swap;
+            let l = self.layers.get(layer).ok_or_else(reject)?;
+            let ordinal = host.checked_sub(144).ok_or_else(reject)?;
+            let host_page = ordinal / 144;
+            let host_local = ordinal % 144;
+            let mut moved = 0;
+            for role in 0..3 {
+                let page = &l.pages[role * 5 + resident / 72];
+                if page.words % 72 != 0 {
+                    return Err(reject());
+                }
+                let bytes = page.words * 4 / 72;
+                let first = (resident % 72) * bytes;
+                if bytes > 1024 * 1024 || first + bytes > page.handle.size() as usize {
+                    return Err(reject());
+                }
+                let view = page
+                    .handle
+                    .clone()
+                    .offset_start(first as u64)
+                    .offset_end(page.handle.size() - (first + bytes) as u64);
+                let mut outgoing = client.read_one(view.clone()).map_err(|_| reject())?;
+                if outgoing.len() != bytes {
+                    return Err(reject());
+                }
+                // SAFETY: this serialized joined boundary owns mutation of
+                // public cache payloads; the native source mapping is not yet
+                // published, and no readonly layer borrow survives here.
+                let mut incoming = unsafe {
+                    mirror
+                        .swap_strata_public_role(
+                            layer,
+                            role,
+                            host_page,
+                            host_local * bytes,
+                            &outgoing,
+                        )
+                        .map_err(err)?
+                };
+                outgoing.zeroize();
+                client
+                    .write_public_owned_batch(vec![(view, std::mem::take(&mut *incoming))])
+                    .map_err(|_| reject())?;
+                cubecl::future::block_on(client.sync()).map_err(|_| reject())?;
+                let audit = cubecl::future::block_on(client.sanitize_transient_io_audited())
+                    .map_err(|_| reject())?;
+                if audit.inspected_bytes > 128 * 1024 * 1024 {
+                    return Err(reject());
+                }
+                moved += bytes as u64;
+            }
+            cache.commit(swap, moved)?;
+        }
+        cache.adaptation_ns += u64::try_from(clock.elapsed().as_nanos()).map_err(|_| reject())?;
+        Ok(swaps.len() as u64)
+    }
+    pub(crate) fn strata_cache_receipt(&self) -> Result<serde_json::Value> {
+        let Some(cache) = &self.adaptive else {
+            return Ok(serde_json::Value::Null);
+        };
+        let cache = cache.lock().map_err(|_| reject())?;
+        Ok(
+            serde_json::json!({"all_resident_slots_adaptive":true,"slots_per_layer":144,"adapt_every_rounds":4,"decay":0.7,"max_swaps_per_boundary":96,"public_bytes_moved":cache.bytes,"swaps":cache.swaps,"adaptation_ns":cache.adaptation_ns,"history_persisted":false,"evicted_weights_preserved_in_ram":true}),
+        )
+    }
     pub(super) fn slot_table(
         &self,
         layer: usize,
         bank: &ExpertBanks,
     ) -> Result<Zeroizing<[u32; 512]>> {
-        let l = self.check_layer(layer, bank)?;
+        self.check_layer(layer, bank)?;
+        let mapping = self.mapping(layer)?;
         Ok(Zeroizing::new(std::array::from_fn(|i| {
-            u32::from(l.by_expert[i])
+            u32::from(mapping[i])
         })))
     }
     pub(super) fn geometry(&self, layer: usize, bank: &ExpertBanks) -> Result<k::Geometry> {
@@ -1947,7 +2059,8 @@ impl Proof {
         bank: &ExpertBanks,
         routes: &token_waves::Plan,
     ) -> Result<Self> {
-        let l = source.check_layer(layer, bank)?;
+        source.check_layer(layer, bank)?;
+        let mapping = source.mapping(layer)?;
         if !(1..=source.count_limit()).contains(&routes.count()) || routes.wave_count() != 1 {
             return Err(reject());
         }
@@ -1971,12 +2084,12 @@ impl Proof {
             router_owners: None,
         };
         for (i, &expert) in union.protected_experts().iter().enumerate() {
-            let slot = *l.by_expert.get(expert as usize).ok_or(reject())?;
+            let slot = *mapping.get(expert as usize).ok_or(reject())?;
             p.pairs[i] = (expert, u32::from(slot));
         }
         for token in 0..routes.count() {
             for route in routes.token(token).ok_or(reject())? {
-                if l.by_expert[route.expert() as usize] < 144 {
+                if mapping[route.expert() as usize] < 144 {
                     p.vram += 1;
                 } else {
                     p.host += 1;
@@ -2079,10 +2192,11 @@ impl Proof {
         {
             return Err(reject());
         }
-        let l = self.source.check_layer(layer, bank)?;
+        self.source.check_layer(layer, bank)?;
+        let mapping = self.source.mapping(layer)?;
         for (i, &(id, slot)) in routes.pairs().iter().enumerate() {
             if id >= 512
-                || slot != u32::from(l.by_expert[id as usize])
+                || slot != u32::from(mapping[id as usize])
                 || routes.pairs()[..i]
                     .iter()
                     .any(|&(e, s)| e == id || s == slot)
@@ -2096,11 +2210,17 @@ impl Proof {
             if id >= 512 || !routes.pairs().iter().any(|&(e, _)| e == id) {
                 return Err(reject());
             }
-            if l.by_expert[id as usize] < 144 {
+            if mapping[id as usize] < 144 {
                 vram += 1;
             } else {
                 host += 1;
             }
+        }
+        if let Some(cache) = &self.source.adaptive {
+            cache
+                .lock()
+                .map_err(|_| reject())?
+                .observe(layer, &routes.experts()[..*self.count * 10])?;
         }
         self.pairs[..routes.groups()].copy_from_slice(routes.pairs());
         *self.len = routes.groups();
@@ -2112,7 +2232,8 @@ impl Proof {
         *self.count
     }
     pub(super) fn validate(&self, layer: usize, bank: &ExpertBanks) -> Result<()> {
-        let l = self.source.check_layer(layer, bank)?;
+        self.source.check_layer(layer, bank)?;
+        let mapping = self.source.mapping(layer)?;
         if self.source.gu_integer != self.gu_integer_launch.is_some() {
             return Err(reject());
         }
@@ -2144,7 +2265,7 @@ impl Proof {
         }
         for (i, &(expert, slot)) in self.pairs[..*self.len].iter().enumerate() {
             if expert >= 512
-                || slot != u32::from(l.by_expert[expert as usize])
+                || slot != u32::from(mapping[expert as usize])
                 || self.pairs[..i]
                     .iter()
                     .any(|&(e, s)| e == expert || s == slot)

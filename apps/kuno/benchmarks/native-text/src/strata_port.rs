@@ -222,6 +222,32 @@ fn function_end(source: &str, first: usize) -> usize {
     }
     panic!("unclosed static shader function")
 }
+pub(crate) fn router_shader(mut source: String) -> String {
+    if !enabled() {
+        return source;
+    }
+    let first = source
+        .find("    for(var row=0u;row<p.count;row++) {")
+        .expect("router selection");
+    let end = source[first..]
+        .find("    for(var index=local;index<804u;")
+        .unwrap()
+        + first;
+    source.replace_range(first..end, include_str!("strata-router-body.wgsl"));
+    source = source
+        .replace(
+            "@compute @workgroup_size(64)",
+            "@compute @workgroup_size(128)",
+        )
+        .replace("best:array<f32,64>", "best:array<f32,128>")
+        .replace("best_id:array<u32,64>", "best_id:array<u32,128>")
+        .replace(
+            "var<workgroup> minimum_gap:f32;",
+            "var<workgroup> minimum_gap:f32;\nvar<workgroup> row_gap:array<f32,4>;",
+        )
+        .replace("index+=64u", "index+=128u");
+    source
+}
 
 /// Single Q8_1 plane. Codes use the unrounded F32 scale; the dot's scale is
 /// rounded to F16, exactly the representation used by Strata's native IQ path.

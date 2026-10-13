@@ -5,6 +5,8 @@ mod bank96_probe;
 mod bank_slots;
 pub mod cpu_gpu_expert_probe;
 mod cpu_gpu_expert_schedule;
+mod strata_cache;
+mod strata_packet;
 mod strata_port;
 // Shared with the standalone CPU writer; writer-only methods are inert here.
 #[allow(dead_code)]

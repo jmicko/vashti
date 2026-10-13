@@ -919,6 +919,46 @@ impl<'plan, 'model, 'file> Mirror<'plan, 'model, 'file> {
         }
         Ok(mapped)
     }
+    /// # Safety
+    /// Strata's parent has joined all GPU consumers and excluded every CPU
+    /// read borrow. Only original public weight bytes may enter this swap;
+    /// all three roles and the logical slot bijection publish together later.
+    pub(crate) unsafe fn swap_strata_public_role(
+        &mut self,
+        layer: usize,
+        role: usize,
+        page: usize,
+        first: usize,
+        outgoing: &[u8],
+    ) -> Result<zeroize::Zeroizing<Vec<u8>>> {
+        if !crate::strata_port::enabled()
+            || layer >= 48
+            || role >= 3
+            || page >= 3
+            || outgoing.is_empty()
+            || outgoing.len() > 1024 * 1024
+            || first % 4 != 0
+            || outgoing.len() % 4 != 0
+        {
+            return Err(rejected());
+        }
+        let owner = self
+            .pages
+            .get(layer * 9 + role * 3 + page)
+            .ok_or_else(rejected)?;
+        require_readonly_phase(owner.phase)?;
+        let end = first.checked_add(outgoing.len()).ok_or_else(rejected)?;
+        if end > owner.logical as usize {
+            return Err(rejected());
+        }
+        let backing = owner.backing.as_ref().ok_or_else(rejected)?;
+        let mut map = backing.map()?;
+        map.cache(owner.placement.coherent(), false)?;
+        let incoming = zeroize::Zeroizing::new(map.bytes_mut()[first..end].to_vec());
+        map.bytes_mut()[first..end].copy_from_slice(outgoing);
+        map.cache(owner.placement.coherent(), true)?;
+        Ok(incoming)
+    }
     pub(crate) fn check_frozen(
         &self,
         graph: BoundGraph<'_, '_>,

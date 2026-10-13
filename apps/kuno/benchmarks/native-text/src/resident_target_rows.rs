@@ -58,6 +58,7 @@ pub(crate) struct NativeTargetRows {
 }
 struct Payload {
     logits: Zeroizing<Vec<f32>>,
+    greedy: Option<Zeroizing<Vec<u32>>>,
     hidden: Zeroizing<Vec<f32>>,
     coordinates: Zeroizing<[usize; 2]>,
 }
@@ -81,6 +82,22 @@ impl NativeTargetRows {
     }
     pub(crate) fn logits(&self, row: usize) -> Result<&[f32]> {
         self.payload.row(row, false)
+    }
+    pub(crate) fn greedy(&self, row: usize) -> Result<u32> {
+        if row >= self.count() {
+            return Err(Error::OutOfBounds);
+        }
+        if let Some(tokens) = &self.payload.greedy {
+            return tokens.get(row).copied().ok_or_else(rejected);
+        }
+        let logits = self.logits(row)?;
+        let mut best = 0;
+        for i in 1..logits.len() {
+            if logits[i] > logits[best] {
+                best = i;
+            }
+        }
+        Ok(best as u32)
     }
     pub(crate) fn hidden(&self, row: usize) -> Result<&[f32]> {
         self.payload.row(row, true)
@@ -204,6 +221,63 @@ fn decode_selected(bytes: &[u8], count: usize, start: usize, four: bool) -> Resu
     }
     Ok(Payload {
         logits,
+        greedy: None,
+        hidden,
+        coordinates: Zeroizing::new([start, count]),
+    })
+}
+
+const COMPACT_WORDS: usize = HEADER_WORDS + FOUR_ROWS + FOUR_ROWS * HC_WIDTH;
+fn decode_compact(bytes: &[u8], count: usize, start: usize) -> Result<Payload> {
+    coordinates_selected(count, start, true)?;
+    if bytes.len() != COMPACT_WORDS * 4 {
+        return Err(rejected());
+    }
+    for (i, v) in [
+        2,
+        count as u32,
+        start as u32,
+        VOCABULARY as u32,
+        HC_WIDTH as u32,
+        FOUR_ROWS as u32,
+        0,
+        0,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if word(bytes, i)? != v {
+            return Err(rejected());
+        }
+    }
+    let mut tokens = Zeroizing::new(Vec::with_capacity(count));
+    for row in 0..FOUR_ROWS {
+        let token = word(bytes, HEADER_WORDS + row)?;
+        if row < count {
+            if token >= VOCABULARY as u32 {
+                return Err(rejected());
+            }
+            tokens.push(token);
+        } else if token != 0 {
+            return Err(rejected());
+        }
+    }
+    let mut hidden = Zeroizing::new(Vec::with_capacity(count * HC_WIDTH));
+    for i in 0..FOUR_ROWS * HC_WIDTH {
+        let bits = word(bytes, HEADER_WORDS + FOUR_ROWS + i)?;
+        if i < count * HC_WIDTH {
+            let x = f32::from_bits(bits);
+            if !x.is_finite() {
+                return Err(rejected());
+            }
+            hidden.push(x);
+        } else if bits != 0 {
+            return Err(rejected());
+        }
+    }
+    Ok(Payload {
+        logits: Zeroizing::new(Vec::new()),
+        greedy: Some(tokens),
         hidden,
         coordinates: Zeroizing::new([start, count]),
     })
@@ -408,6 +482,32 @@ impl Owners {
             &[logits.clone(), packet.clone(), carry.clone(), fault.clone()],
         )?;
         let lease = OutputLease::acquire(&self.output_live)?;
+        if crate::strata_port::enabled() {
+            return batch_io::read_target_output(
+                arena,
+                admission,
+                packet
+                    .clone()
+                    .offset_end((OWNER_BYTES - COMPACT_WORDS * 4) as u64),
+                cancel,
+                || {
+                    crate::strata_packet::launch(
+                        arena.client().map_err(u::fault)?,
+                        [logits, carry, fault, packet],
+                        count,
+                        start,
+                    );
+                    Ok(())
+                },
+                |bytes| {
+                    Ok(NativeTargetRows {
+                        payload: decode_compact(bytes, count, start)?,
+                        binding: Some(graph.binding_id()),
+                        _lease: lease,
+                    })
+                },
+            );
+        }
         batch_io::read_target_output(
             arena,
             admission,

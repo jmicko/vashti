@@ -866,6 +866,24 @@ pub(crate) struct CloseReceipt {
     pub resident_bank_allocation: ResidentBankAllocation,
 }
 impl Attachment<'_, '_, '_> {
+    /// # Safety
+    /// Caller holds the completed, serialized target boundary, with no pending
+    /// output lease or GPU consumer. Refresh router tables before new work.
+    pub(crate) unsafe fn adapt_strata(&mut self) -> Result<u64> {
+        if self.phase != Phase::Attached || !crate::strata_port::enabled() {
+            return Err(rejected());
+        }
+        let source = self.sources.as_ref().ok_or_else(rejected)?;
+        // SAFETY: forwarded completed-boundary authority; mirror remains
+        // attached, physically retained and unavailable to another borrower.
+        unsafe { source.adapt_strata(&self.client, self.mirror.as_mut().ok_or_else(rejected)?) }
+    }
+    pub(crate) fn strata_cache_receipt(&self) -> Result<serde_json::Value> {
+        self.sources
+            .as_ref()
+            .ok_or_else(rejected)?
+            .strata_cache_receipt()
+    }
     pub(crate) fn budget(&self) -> AttachmentBudget {
         self.budget
     }
