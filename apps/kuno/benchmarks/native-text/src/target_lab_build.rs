@@ -172,7 +172,10 @@ impl IntelMtpMemory {
             || target_device != self.device
             || banks != crate::daslab_profile::bank_bytes_144().physical
             || target_main != expected_main
-            || down_integer && draft_public != crate::resident_mtp::PUBLIC_BYTES
+            || down_integer
+                && draft_public != crate::resident_mtp::PUBLIC_BYTES
+                && !(crate::strata_port::enabled()
+                    && draft_public == crate::resident_mtp::STRATA_PUBLIC_BYTES)
             || !matches!(
                 draft_public,
                 crate::resident_mtp::PUBLIC_BYTES | crate::resident_mtp::STRATA_PUBLIC_BYTES
