@@ -1514,7 +1514,9 @@ impl Sources {
                     .clone()
                     .offset_start(first as u64)
                     .offset_end(page.handle.size() - (first + bytes) as u64);
-                let mut outgoing = client.read_one(view.clone()).map_err(|_| reject())?;
+                let mut outgoing = client
+                    .read_one(view.clone())
+                    .map_err(|_| err("Strata cache victim readback"))?;
                 if outgoing.len() != bytes {
                     return Err(reject());
                 }
@@ -1533,12 +1535,16 @@ impl Sources {
                         .map_err(err)?
                 };
                 outgoing.zeroize();
+                // Wiping contents does not release the readback lease. It must
+                // drop before the next mutation and owning I/O sanitizer.
+                drop(outgoing);
                 client
                     .write_public_owned_batch(vec![(view, std::mem::take(&mut *incoming))])
-                    .map_err(|_| reject())?;
-                cubecl::future::block_on(client.sync()).map_err(|_| reject())?;
+                    .map_err(|_| err("Strata cache public promotion upload"))?;
+                cubecl::future::block_on(client.sync())
+                    .map_err(|_| err("Strata cache promotion completion"))?;
                 let audit = cubecl::future::block_on(client.sanitize_transient_io_audited())
-                    .map_err(|_| reject())?;
+                    .map_err(|_| err("Strata cache promotion I/O erasure"))?;
                 if audit.inspected_bytes > 128 * 1024 * 1024 {
                     return Err(reject());
                 }
