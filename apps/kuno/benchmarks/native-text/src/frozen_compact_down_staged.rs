@@ -14,7 +14,7 @@ fn replace_once(source: String, before: &str, after: &str) -> String {
     source.replacen(before, after, 1)
 }
 
-pub(super) const COPY: &str = r#"    // Every local lane participates after the original uniform source guards.
+pub(crate) const COPY: &str = r#"    // Every local lane participates after the original uniform source guards.
     // Actual MAP members can be noncontiguous; frames retain those original IDs.
     for(var word=local;word<1440u;word+=64u) {
         let member=word/360u;var value=0u;
@@ -25,7 +25,7 @@ pub(super) const COPY: &str = r#"    // Every local lane participates after the 
     frames=vec4<u32>(0u,360u,720u,1080u);
 "#;
 
-pub(super) fn source(source: String) -> String {
+pub(crate) fn source(source: String) -> String {
     let source = replace_once(
         source,
         "@compute @workgroup_size(64)",

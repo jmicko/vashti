@@ -8,7 +8,7 @@
 use super::{decode, g};
 
 #[path = "frozen_compact_down_staged.rs"]
-mod staged;
+pub(crate) mod staged;
 use cubecl::ir::{ElemType, StorageType, UIntKind};
 use cubecl::prelude::{ComputeClient, CubeCount, CubeDim};
 use cubecl::wgpu::{AutoCompiler, WgpuRuntime};

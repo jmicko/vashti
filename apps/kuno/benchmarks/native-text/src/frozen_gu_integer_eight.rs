@@ -7,8 +7,7 @@
 
 use super::{decode, g, grid_source};
 
-#[path = "frozen_compact_shuffle.rs"]
-pub(crate) mod shuffle;
+use super::four::shuffle;
 use cubecl::ir::{ElemType, StorageType, UIntKind};
 use cubecl::prelude::{ComputeClient, CubeCount, CubeDim};
 use cubecl::wgpu::{AutoCompiler, WgpuRuntime};
