@@ -4013,3 +4013,35 @@ and unpaused, B70baseline50688000B, Nvidia compute0 and all classified faults0.
 Same boot/kernel38. All root/agent compiler and GPU jobs are idle. Canonical
 Vashti, installed defaults, public API, frontend and release remain unchanged;
 required Vashti changes:none. Do not automatically resume work.
+
+### Native text checkpoint — count4 compaction implemented and committed (2026-10-12)
+
+Resumed on user instruction after an explicit pause. Per-Source expert group
+compaction is now implemented and committed as c42379b on
+codex/kuno-native-text. The GPU prepare leaf builds five disjoint shard
+records in the already-owned zeroed tail (words 6144..6383 of the existing
+full 64KiB owner): ready flag, count, the original GU/DOWN dispatch triplets,
+and the stable ascending original group IDs for the unchanged partition ranges
+0/72/144/288/432. GU and DOWN then run one indirect dispatch per shard through
+checked 12-byte views of that owner, so each leaf reads only its own shard's
+groups instead of scanning the routed-group union.
+
+Arithmetic, decoder, member order, routes, IDs and owners are unchanged: both
+compact projections reuse the original body verbatim, count1..3 stride-four and
+all other schedules keep their original paths, and the new record audit
+reconstructs each list from the unchanged MAP, validates headers, counts,
+triplets, identity and inactive zeros, stickies faults, and erases the records
+only after every shard validates. Counters are checked: each compact leaf
+rejects unauthenticated or short views, and the audit refuses a 16384-word
+scratch. Host receipts now require actual compaction credit (five GU and five
+DOWN indirect dispatches plus one record audit per layer) and both daslab
+probes report those counters as evidence.
+
+Checks: full native-text suite 1334 passed/0 failed/1 ignored, clippy
+-D warnings clean, fmt clean. No GPU trial has run yet. Admission is idle and
+unpaused, but an unrelated 13.3GB worker process currently holds the B70, so
+the numerical and normal gates must wait for that GPU to be free. Frozen v186
+artifact build is in progress from c42379b. No performance claim yet.
+
+Canonical Vashti, installed defaults, public API, frontend and release remain
+unchanged; required Vashti changes: none.
