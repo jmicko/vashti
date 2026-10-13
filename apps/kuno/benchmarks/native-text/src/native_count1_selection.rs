@@ -49,7 +49,11 @@ impl Proof {
         if !empty_slot_fill {
             return Ok(cap);
         }
-        if cap != 10 || gpu_limit != 10 || source.capacity() != 144 || source.experts() != 512 {
+        if cap != 10
+            || gpu_limit != 10
+            || source.capacity() != crate::daslab_profile::BANK_SLOTS
+            || source.experts() != 512
+        {
             return Err(err("native Q3 empty-slot policy"));
         }
         let mut empty = Zeroizing::new(0usize);

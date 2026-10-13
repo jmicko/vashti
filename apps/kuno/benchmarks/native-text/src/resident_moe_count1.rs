@@ -149,7 +149,9 @@ impl GpuExecutor<'_> {
         }
         let g = *w.layout.geometries.get(layer).ok_or(Error::OutOfBounds)?;
         g.validate_count(1).map_err(err)?;
-        if self.q3_skip_empty_segments && (g.tile() != 1 || g.capacity() != 144) {
+        if self.q3_skip_empty_segments
+            && (g.tile() != 1 || g.capacity() != crate::daslab_profile::BANK_SLOTS)
+        {
             return Err(err("native Q3 empty-segment count1 geometry"));
         }
         let weights = weights(graph, layer)?;
@@ -868,7 +870,17 @@ fn q3_segment_activity(
     parts: [[(usize, usize); 2]; 3],
     slots: &[usize],
 ) -> Result<[bool; 2]> {
-    if capacity != 144 || parts != [[(0, 72), (72, 72)]; 3] || slots.len() > 10 {
+    if capacity != crate::daslab_profile::BANK_SLOTS
+        || parts
+            != [[
+                (0, crate::daslab_profile::SEGMENT_SLOTS),
+                (
+                    crate::daslab_profile::SEGMENT_SLOTS,
+                    crate::daslab_profile::SEGMENT_SLOTS,
+                ),
+            ]; 3]
+        || slots.len() > 10
+    {
         return Err(err("native Q3 empty-segment original geometry"));
     }
     let mut active = Zeroizing::new([false; 2]);
@@ -876,7 +888,7 @@ fn q3_segment_activity(
         if slot >= capacity || slots[..rank].contains(&slot) {
             return Err(err("native Q3 empty-segment frozen slots"));
         }
-        active[slot / 72] = true;
+        active[slot / crate::daslab_profile::SEGMENT_SLOTS] = true;
     }
     Ok(*active)
 }
@@ -1170,7 +1182,13 @@ fn write_cpu(
 mod tests {
     use super::*;
 
-    const PARTS: [[(usize, usize); 2]; 3] = [[(0, 72), (72, 72)]; 3];
+    const PARTS: [[(usize, usize); 2]; 3] = [[
+        (0, crate::daslab_profile::SEGMENT_SLOTS),
+        (
+            crate::daslab_profile::SEGMENT_SLOTS,
+            crate::daslab_profile::SEGMENT_SLOTS,
+        ),
+    ]; 3];
 
     #[test]
     fn q3_segment_dispatch_keeps_first_last_slots_and_original_order() {

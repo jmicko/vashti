@@ -136,7 +136,7 @@ pub(crate) fn validate_geometry(geometry: g::Geometry, first: usize, slots: usiz
     if geometry.hidden() != 2560
         || geometry.ff() != 640
         || geometry.tile() != 1
-        || geometry.capacity() != 144
+        || geometry.capacity() != crate::daslab_profile::BANK_SLOTS
         || geometry.gate_policy() != g::GatePolicy::Generic
         || !matches!(gate.dtype(), IQ3_XXS | IQ4_XS)
         || up.dtype() != gate.dtype()

@@ -716,7 +716,7 @@ impl Count1Banks {
             Self::Intel72 => 72,
             Self::Intel96 => 96,
             Self::Intel128 => 128,
-            Self::Intel144 => 144,
+            Self::Intel144 => crate::daslab_profile::BANK_SLOTS,
             Self::Intel160 => 160,
             Self::Standard => {
                 if vendor == 0x8086 {
@@ -4188,7 +4188,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         serde_json::json!(true);
                     receipt["moe_alternative_activation_arithmetic"] =
                         serde_json::json!(q3_integer_moe);
-                    receipt["expert_slots_reserved"] = serde_json::json!(48 * 144);
+                    receipt["expert_slots_reserved"] =
+                        serde_json::json!(48 * crate::daslab_profile::BANK_SLOTS);
                     receipt["expert_slots_occupied_after_prefill"] = serde_json::json!(pre_slots);
                     receipt["expert_slots_occupied_after_decode"] = serde_json::json!(occupied);
                     receipt["expert_slots_filled_during_decode"] = serde_json::json!(

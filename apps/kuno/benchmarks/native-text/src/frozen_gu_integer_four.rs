@@ -38,8 +38,8 @@ pub(crate) const MAX_SHARED_BYTES: u32 = MAX_PREPARE_SHARED_BYTES;
 pub(crate) const INFO_INCREMENT: u64 = 2 * 48 * 2048;
 pub(crate) const RUNTIME_INCREMENT: u64 = INFO_INCREMENT + 2 * 2048 + 4 * MAIN_BYTES;
 // Original frozen source partitions; the compact shard records follow them.
-pub(crate) const FIRST: [usize; 5] = [0, 72, 144, 288, 432];
-pub(crate) const PARTS: [usize; 5] = [72, 72, 144, 144, 80];
+pub(crate) const FIRST: [usize; 5] = crate::daslab_profile::SOURCE_FIRST;
+pub(crate) const PARTS: [usize; 5] = crate::daslab_profile::SOURCE_PARTS;
 pub(crate) const RECORD_BASE_WORD: usize = 6144;
 pub(crate) const RECORD_WORDS: usize = 48;
 pub(crate) const RECORD_GROUP_IDS: usize = 40;
@@ -49,14 +49,15 @@ pub(crate) const RECORD_BYTES: u64 = (RECORD_WORDS * 4) as u64;
 fn rejected() -> Error {
     Error::InvalidFormat("public frozen GU integer eight-lane candidate")
 }
-fn template(section: &str) -> &'static str {
-    include_str!("frozen_gu_integer_four.wgsl")
+fn template(section: &str) -> String {
+    let source = include_str!("frozen_gu_integer_four.wgsl")
         .split_once(&format!("// FROZEN_GU_{section}_BEGIN\n"))
         .unwrap()
         .1
         .split_once(&format!("// FROZEN_GU_{section}_END"))
         .unwrap()
-        .0
+        .0;
+    crate::daslab_profile::source_geometry_shader(source)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -142,7 +143,7 @@ impl Kernel {
                     format!(
                         "{prefix}{}",
                         template("PROJECT_COMPACT_MAIN")
-                            .replace("PROJECT_BODY_VALUE", template("PROJECT_BODY"))
+                            .replace("PROJECT_BODY_VALUE", &template("PROJECT_BODY"))
                     )
                     // p.g is this launch's shard index in the compact variant.
                     .replace("p.g!=0u", "p.g>4u")
@@ -154,7 +155,7 @@ impl Kernel {
                     format!(
                         "{prefix}{}",
                         template("PROJECT_STRIDE4_MAIN")
-                            .replace("PROJECT_BODY_VALUE", template("PROJECT_BODY"))
+                            .replace("PROJECT_BODY_VALUE", &template("PROJECT_BODY"))
                     )
                     .replace("p.g!=0u", "p.g<1u || p.g>80u")
                     .replace("group>=groups", "group>=groups || group>=p.g")

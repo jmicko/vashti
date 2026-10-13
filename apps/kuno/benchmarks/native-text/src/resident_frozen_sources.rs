@@ -133,8 +133,8 @@ fn source_phases(down_integer: bool) -> &'static [SourcePhase] {
         &[SourcePhase::Interleaved]
     }
 }
-const PARTS: [usize; 5] = [72, 72, 144, 144, 80];
-const FIRST: [usize; 5] = [0, 72, 144, 288, 432];
+const PARTS: [usize; 5] = crate::daslab_profile::SOURCE_PARTS;
+const FIRST: [usize; 5] = crate::daslab_profile::SOURCE_FIRST;
 const ROLES: [Role; 3] = [Role::Gate, Role::Up, Role::Down];
 const PAGES: usize = 15;
 const EXTENTS: usize = 8 + PAGES;
@@ -253,7 +253,11 @@ impl ResidentBankAllocation {
     // Caller has proved that this is one distinct, original VRAM buffer. The
     // source constructor rejects duplicate buffers across ALL roles/layers.
     fn add_authenticated_buffer(&mut self, logical: u64, physical: u64) -> Result<()> {
-        let bound = main_admission::page_bytes(logical).map_err(admission_error)?;
+        let bound = if crate::strata_port::enabled() {
+            logical
+        } else {
+            main_admission::page_bytes(logical).map_err(admission_error)?
+        };
         if physical < logical || physical > bound {
             return Err(reject());
         }
@@ -266,7 +270,7 @@ impl ResidentBankAllocation {
         Ok(())
     }
     fn complete(mut self, layers: usize) -> Result<Self> {
-        let expected = crate::daslab_profile::bank_bytes_144();
+        let expected = crate::daslab_profile::selected_bank_bytes();
         if layers != 48
             || self.source_bindings != 48 * RESIDENT_SOURCE_PAGES.len() as u64
             || self.physical_buffers != self.source_bindings
@@ -1111,7 +1115,7 @@ impl Sources {
         if reserved_host_bytes < EXTRA_HOST_BYTES
             || graph.binding_id() != plan.binding()
             || executor.packed_profile != crate::expert_banks::OriginalPackedProfile::DaslabIq3
-            || executor.bank_slots != 144
+            || executor.bank_slots != crate::daslab_profile::BANK_SLOTS
             || executor.batch_moe.is_some()
             || pages.len() != 48 * 9
         {
@@ -1168,9 +1172,10 @@ impl Sources {
                 .map_err(err)
             });
             let [gate, up, down] = projections;
-            let mut geometry = k::Geometry::new([gate?, up?, down?], 8, 144)
-                .and_then(k::Geometry::with_frozen_host_sources)
-                .map_err(err)?;
+            let mut geometry =
+                k::Geometry::new([gate?, up?, down?], 8, crate::daslab_profile::BANK_SLOTS)
+                    .and_then(k::Geometry::with_frozen_host_sources)
+                    .map_err(err)?;
             if inactive_partition_exit {
                 geometry = geometry.with_inactive_partition_exit().map_err(err)?;
             }
@@ -1202,11 +1207,14 @@ impl Sources {
             if down_integer {
                 crate::quant_matvec::frozen_down_integer::validate_geometry(geometry)?;
             }
-            let layer_bound = StagedSlots::bounded_native_metadata_bytes(144)
-                .map_err(|_| reject())?
-                .checked_add(512 * std::mem::size_of::<u16>())
-                .and_then(|n| n.checked_add(PAGES.checked_mul(std::mem::size_of::<SourcePage>())?))
-                .ok_or(Error::ArithmeticOverflow)?;
+            let layer_bound =
+                StagedSlots::bounded_native_metadata_bytes(crate::daslab_profile::BANK_SLOTS)
+                    .map_err(|_| reject())?
+                    .checked_add(512 * std::mem::size_of::<u16>())
+                    .and_then(|n| {
+                        n.checked_add(PAGES.checked_mul(std::mem::size_of::<SourcePage>())?)
+                    })
+                    .ok_or(Error::ArithmeticOverflow)?;
             if metadata_bytes
                 .checked_add(layer_bound)
                 .is_none_or(|n| n as u64 > SOURCE_SET_HOST_BYTES)
@@ -1500,14 +1508,16 @@ impl Sources {
             for &swap in group {
                 let [layer, _, _, resident, host] = swap;
                 let l = self.layers.get(layer).ok_or_else(reject)?;
-                let ordinal = host.checked_sub(144).ok_or_else(reject)?;
+                let ordinal = host
+                    .checked_sub(crate::daslab_profile::BANK_SLOTS)
+                    .ok_or_else(reject)?;
                 for role in 0..3 {
-                    let page = &l.pages[role * 5 + resident / 72];
-                    if page.words % 72 != 0 {
+                    let page = &l.pages[role * 5 + resident / crate::daslab_profile::SEGMENT_SLOTS];
+                    if page.words % crate::daslab_profile::SEGMENT_SLOTS != 0 {
                         return Err(reject());
                     }
-                    let bytes = page.words * 4 / 72;
-                    let first = (resident % 72) * bytes;
+                    let bytes = page.words * 4 / crate::daslab_profile::SEGMENT_SLOTS;
+                    let first = (resident % crate::daslab_profile::SEGMENT_SLOTS) * bytes;
                     if bytes > 1024 * 1024 || first + bytes > page.handle.size() as usize {
                         return Err(reject());
                     }
@@ -1577,7 +1587,7 @@ impl Sources {
         };
         let cache = cache.lock().map_err(|_| reject())?;
         Ok(
-            serde_json::json!({"all_resident_slots_adaptive":true,"slots_per_layer":144,"adapt_every_rounds":4,"decay":0.7,"max_swaps_per_boundary":96,"public_bytes_moved":cache.bytes,"swaps":cache.swaps,"adaptation_ns":cache.adaptation_ns,"history_persisted":false,"evicted_weights_preserved_in_ram":true}),
+            serde_json::json!({"all_resident_slots_adaptive":true,"slots_per_layer":crate::daslab_profile::BANK_SLOTS,"adapt_every_rounds":4,"decay":0.7,"max_swaps_per_boundary":96,"public_bytes_moved":cache.bytes,"swaps":cache.swaps,"adaptation_ns":cache.adaptation_ns,"history_persisted":false,"evicted_weights_preserved_in_ram":true}),
         )
     }
     pub(super) fn slot_table(
@@ -1931,11 +1941,14 @@ impl Sources {
     }
 }
 fn check_mapping(map: &[u16], bank: &crate::bank_slots::BankSlots) -> Result<()> {
-    if map.len() != 512 || bank.capacity() != 144 || bank.experts() != 512 {
+    if map.len() != 512
+        || bank.capacity() != crate::daslab_profile::BANK_SLOTS
+        || bank.experts() != 512
+    {
         return Err(reject());
     }
     let mut seen = Zeroizing::new([false; 512]);
-    let mut next_host = 144;
+    let mut next_host = crate::daslab_profile::BANK_SLOTS;
     for (expert, &slot) in map.iter().enumerate() {
         let slot = slot as usize;
         if slot >= 512 || seen[slot] {
@@ -1943,7 +1956,7 @@ fn check_mapping(map: &[u16], bank: &crate::bank_slots::BankSlots) -> Result<()>
         }
         seen[slot] = true;
         let resident = bank.resident_slot(expert).map_err(|_| reject())?;
-        if slot < 144 {
+        if slot < crate::daslab_profile::BANK_SLOTS {
             if resident != Some(slot)
                 || bank.resident_expert(slot).map_err(|_| reject())? != Some(expert)
             {
@@ -2111,7 +2124,7 @@ impl Proof {
         }
         for token in 0..routes.count() {
             for route in routes.token(token).ok_or(reject())? {
-                if mapping[route.expert() as usize] < 144 {
+                if mapping[route.expert() as usize] < crate::daslab_profile::BANK_SLOTS as u16 {
                     p.vram += 1;
                 } else {
                     p.host += 1;
@@ -2232,7 +2245,7 @@ impl Proof {
             if id >= 512 || !routes.pairs().iter().any(|&(e, _)| e == id) {
                 return Err(reject());
             }
-            if mapping[id as usize] < 144 {
+            if mapping[id as usize] < crate::daslab_profile::BANK_SLOTS as u16 {
                 vram += 1;
             } else {
                 host += 1;
@@ -2428,7 +2441,7 @@ impl Counters {
             let geometry = p.source.layers.get(layer).ok_or_else(reject)?.geometry;
             let groups = p.pairs[..*p.len]
                 .iter()
-                .filter(|(_, slot)| *slot >= 144)
+                .filter(|(_, slot)| *slot >= crate::daslab_profile::BANK_SLOTS as u32)
                 .count() as u64;
             let stride = geometry
                 .projections()
@@ -2731,7 +2744,7 @@ impl Workspace {
             || sources.four_members() && !self.four_member_router_reserved()
             || sources.binding != self.binding
             || sources.layers.len() != 48
-            || self.layout.capacity != 144
+            || self.layout.capacity != crate::daslab_profile::BANK_SLOTS
             || self.layout.tile != 8
             || self.live_member_reduction_enabled()
             || executor.packed_profile != crate::expert_banks::OriginalPackedProfile::DaslabIq3
@@ -4744,7 +4757,8 @@ mod tests {
     #[test]
     fn metadata_initial_peak_rejects_excess_capacity_and_overflow_before_fill() {
         let initial = initial_metadata(48, 432, 48).unwrap();
-        let layer = StagedSlots::bounded_native_metadata_bytes(144).unwrap()
+        let layer = StagedSlots::bounded_native_metadata_bytes(crate::daslab_profile::BANK_SLOTS)
+            .unwrap()
             + 512 * 2
             + PAGES * std::mem::size_of::<SourcePage>();
         assert!(initial + 48 * layer < SOURCE_SET_HOST_BYTES as usize);

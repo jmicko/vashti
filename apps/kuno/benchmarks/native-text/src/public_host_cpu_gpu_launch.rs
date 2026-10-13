@@ -17,7 +17,7 @@ const PRIVATE: usize = 7;
 const METADATA_CAP: usize = 8192;
 const ORIGINAL_BANK_CAPACITY: usize = crate::daslab_profile::BANK_SLOTS;
 const FIRST: [usize; 5] = [0, 72, 144, 288, 432];
-const COUNTS: [usize; 5] = [72, 72, 144, 144, 80];
+const COUNTS: [usize; 5] = crate::daslab_profile::SOURCE_PARTS;
 fn reject_overlap() -> Error {
     Error::InvalidFormat("public CPU overlap source owners rejected")
 }

@@ -63,7 +63,7 @@ pub(super) fn check_plan(config: &Config, executor: &GpuExecutor<'_>) -> Result<
     if config.request_reuse_metadata != METADATA_BYTES
         || executor.packed_profile != OriginalPackedProfile::DaslabIq3
         || !executor.target_rows_reserved
-        || executor.resident_bank_capacity() != 144
+        || executor.resident_bank_capacity() != crate::daslab_profile::BANK_SLOTS
         || !executor.token_io_checkpoint
         || executor.resident_runtime_io_limit() != RUNTIME_BYTES
     {

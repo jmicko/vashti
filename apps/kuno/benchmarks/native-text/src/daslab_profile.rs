@@ -15,8 +15,26 @@ pub const HEADER_SHA256: [&str; 2] = [
 pub const TENSOR_COUNT: usize = 1224;
 pub const LAYER_COUNT: usize = 48;
 pub const EXPERT_COUNT: usize = 512;
-pub const BANK_SLOTS: usize = 144;
-pub const SEGMENT_SLOTS: usize = 72;
+pub const BANK_SLOTS: usize = if cfg!(feature = "strata-rust-port") {
+    192
+} else {
+    144
+};
+pub const SEGMENT_SLOTS: usize = BANK_SLOTS / 2;
+pub const SOURCE_PARTS: [usize; 5] = [
+    SEGMENT_SLOTS,
+    SEGMENT_SLOTS,
+    144,
+    144,
+    512 - BANK_SLOTS - 288,
+];
+pub const SOURCE_FIRST: [usize; 5] = [
+    0,
+    SEGMENT_SLOTS,
+    BANK_SLOTS,
+    BANK_SLOTS + 144,
+    BANK_SLOTS + 288,
+];
 const ABSENT: u32 = u32::MAX;
 
 const GLOBALS: &[(&str, u32)] = &[
@@ -291,14 +309,49 @@ pub fn bank_bytes_144() -> BankBytes {
     for layer in 0..LAYER_COUNT {
         for dtype in routed_types(layer).expect("all pinned layers have expert triples") {
             let expert = expert_bytes(dtype);
-            result.logical += expert * BANK_SLOTS as u64;
-            let segment = expert * SEGMENT_SLOTS as u64;
+            result.logical += expert * 144;
+            let segment = expert * 72;
             // Existing main_admission exclusive bins, independently per root.
             assert!(segment <= 128 * 1024 * 1024);
             result.physical += 2 * segment.max(32 * 1024).next_power_of_two();
         }
     }
     result
+}
+
+/// Selected port allocation geometry; exact persistent roots have no bin padding.
+pub fn selected_bank_bytes() -> BankBytes {
+    if !crate::strata_port::enabled() {
+        return bank_bytes_144();
+    }
+    let logical = (0..LAYER_COUNT)
+        .flat_map(|layer| routed_types(layer).unwrap())
+        .map(|dtype| expert_bytes(dtype) * BANK_SLOTS as u64)
+        .sum();
+    BankBytes {
+        logical,
+        physical: logical,
+    }
+}
+
+/// Shader shard plans and CPU source views use exactly the same fixed geometry.
+pub(crate) fn source_geometry_shader(source: &str) -> String {
+    if !crate::strata_port::enabled() {
+        return source.into();
+    }
+    let mut source = source.to_owned();
+    for (index, old) in [(1, 72), (2, 144), (3, 288), (4, 432)] {
+        source = source.replace(
+            &format!("if shard=={index}u {{first={old}u;}}"),
+            &format!("if shard=={index}u {{first={}u;}}", SOURCE_FIRST[index]),
+        );
+    }
+    source
+        .replace("var parts=72u;", &format!("var parts={}u;", SEGMENT_SLOTS))
+        .replace(
+            "if shard==4u {parts=80u;}",
+            &format!("if shard==4u {{parts={}u;}}", SOURCE_PARTS[4]),
+        )
 }
 
 #[cfg(test)]

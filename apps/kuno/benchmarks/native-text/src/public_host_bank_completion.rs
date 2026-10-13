@@ -16,7 +16,7 @@ use kuno_text::model::BoundGraph;
 use zeroize::Zeroizing;
 
 const LAYERS: usize = 48;
-const CAPACITY: usize = 144;
+const CAPACITY: usize = crate::daslab_profile::BANK_SLOTS;
 const EXPERTS: usize = 512;
 // Same bounded temporary private-plan allowance as original oracle preload.
 // Original committed-bank storage is already in the model's bank reservation;
@@ -74,7 +74,7 @@ pub(crate) struct BankFillPublication {
 }
 // Inline publication tokens and per-layer PUBLIC prefix share the original
 // completion misc allowance. No new application heap or private owner charge.
-const _: () = assert!(std::mem::size_of::<BankFillPublication>() + 144 * 2 <= PLAN_MISC_BYTES);
+const _: () = assert!(std::mem::size_of::<BankFillPublication>() + CAPACITY * 2 <= PLAN_MISC_BYTES);
 impl BankFillPublication {
     pub(crate) fn completed(
         &self,

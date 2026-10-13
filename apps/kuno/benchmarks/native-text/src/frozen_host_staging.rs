@@ -102,8 +102,11 @@ pub(super) fn host_group_active(
     slot_count: usize,
 ) -> bool {
     let mut active = false;
-    if ((first_slot == 144 || first_slot == 288) && slot_count == 144)
-        || (first_slot == 432 && slot_count == 80)
+    if ((first_slot == crate::daslab_profile::BANK_SLOTS
+        || first_slot == crate::daslab_profile::BANK_SLOTS + 144)
+        && slot_count == 144)
+        || (first_slot == crate::daslab_profile::BANK_SLOTS + 288
+            && slot_count == crate::daslab_profile::SOURCE_PARTS[4])
     {
         if first <= map.len() {
             if MAP_WORDS <= map.len() - first {

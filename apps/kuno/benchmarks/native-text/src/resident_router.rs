@@ -75,7 +75,7 @@ pub(super) struct RouterOwners {
 }
 
 fn layer_table(source: &crate::bank_slots::BankSlots) -> Result<Zeroizing<[u32; 512]>> {
-    if source.capacity() != 144 || source.experts() != 512 {
+    if source.capacity() != crate::daslab_profile::BANK_SLOTS || source.experts() != 512 {
         return Err(err("resident router exact slot geometry"));
     }
     let mut table = Zeroizing::new([u32::MAX; 512]);
@@ -185,7 +185,7 @@ impl Authorization {
             || w.identity != *self.workspace
             || !e.resident_router_reserved
             || !e.packed_profile.is_low_bit()
-            || e.bank_slots != 144
+            || e.bank_slots != crate::daslab_profile::BANK_SLOTS
             || e.adaptive.is_some()
             || e.secondary.is_some()
             || e.secondary_frequency.is_some()

@@ -36,14 +36,15 @@ use self::four::{record_dispatch_view, shard_index};
 fn rejected() -> Error {
     Error::InvalidFormat("public frozen GU integer eight-lane candidate")
 }
-fn template(section: &str) -> &'static str {
-    include_str!("frozen_gu_integer.wgsl")
+fn template(section: &str) -> String {
+    let source = include_str!("frozen_gu_integer.wgsl")
         .split_once(&format!("// FROZEN_GU_{section}_BEGIN\n"))
         .unwrap()
         .1
         .split_once(&format!("// FROZEN_GU_{section}_END"))
         .unwrap()
-        .0
+        .0;
+    crate::daslab_profile::source_geometry_shader(source)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -190,7 +191,7 @@ impl Kernel {
                     format!(
                         "{prefix}{}",
                         template("PROJECT_COMPACT_MAIN")
-                            .replace("PROJECT_BODY_VALUE", template("PROJECT_BODY"))
+                            .replace("PROJECT_BODY_VALUE", &template("PROJECT_BODY"))
                     )
                     .replace("p.g!=0u", "p.g>4u")
                 } else if stride_four {
@@ -201,7 +202,7 @@ impl Kernel {
                     format!(
                         "{prefix}{}",
                         template("PROJECT_STRIDE4_MAIN")
-                            .replace("PROJECT_BODY_VALUE", template("PROJECT_BODY"))
+                            .replace("PROJECT_BODY_VALUE", &template("PROJECT_BODY"))
                     )
                     .replace("p.g!=0u", "p.g<1u || p.g>80u")
                     .replace("group>=groups", "group>=groups || group>=p.g")

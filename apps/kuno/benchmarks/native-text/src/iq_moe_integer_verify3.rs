@@ -229,7 +229,7 @@ pub(crate) fn validate_subgroups(enabled: bool, min: u32, max: u32) -> Result<()
 pub(crate) fn validate_geometry(geometry: g::Geometry) -> Result<()> {
     let [gate, up, down] = geometry.projections();
     if geometry.tile() != 8
-        || geometry.capacity() != 144
+        || geometry.capacity() != crate::daslab_profile::BANK_SLOTS
         || geometry.hidden() != 2560
         || geometry.ff() != 640
         || gate != up

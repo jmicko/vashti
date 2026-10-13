@@ -81,13 +81,13 @@ fn validate_target_frozen_host_policy(
     if frozen_router_reserved
         && (!rows
             || profile != expert_banks::OriginalPackedProfile::DaslabIq3
-            || capacity != 144
+            || capacity != crate::daslab_profile::BANK_SLOTS
             || !batch_router)
         || authenticated_identity
             && (!frozen
                 || !rows
                 || profile != expert_banks::OriginalPackedProfile::DaslabIq3
-                || capacity != 144
+                || capacity != crate::daslab_profile::BANK_SLOTS
                 || batch_router != frozen_router_reserved)
         || rows && frozen && !authenticated_identity
     {
@@ -616,6 +616,26 @@ impl ResidentAdmission {
         self.with_ledger(|ledger| {
             checked_sequence_guard(ledger, &self.sequence_poison, |ledger| {
                 guarded_allocation(ledger, requests, || self.telemetry(), f)
+            })
+        })
+    }
+    fn allocate_banks<T>(&self, requests: &[u64], f: impl FnOnce() -> Result<T>) -> Result<T> {
+        if !crate::strata_port::enabled() {
+            return self.allocate(requests, f);
+        }
+        self.with_ledger(|ledger| {
+            checked_sequence_guard(ledger, &self.sequence_poison, |ledger| {
+                ledger
+                    .observe_before(self.telemetry()?)
+                    .map_err(admission_error)?;
+                ledger
+                    .precharge_persistent(requests, self.client.properties().memory.alignment)
+                    .map_err(admission_error)?;
+                let value = f()?;
+                ledger
+                    .observe_after(self.telemetry()?)
+                    .map_err(admission_error)?;
+                Ok(value)
             })
         })
     }
@@ -1440,7 +1460,7 @@ impl<'a> GpuExecutor<'a> {
             || self.secondary_frequency.is_some()
             || self.q3_expert_oracle
             || self.q3_router_reference.is_some()
-            || self.bank_slots != 144
+            || self.bank_slots != crate::daslab_profile::BANK_SLOTS
             || self.banks.len() != 48
             || self.gpu_expert_limit != 10
             || self.batch_moe.is_some()
@@ -1454,7 +1474,7 @@ impl<'a> GpuExecutor<'a> {
             .active()?;
         for bank in self.banks.values() {
             bank.check_client(&self.client)?;
-            if bank.slots.capacity() != 144
+            if bank.slots.capacity() != crate::daslab_profile::BANK_SLOTS
                 || bank.slots.experts() != 512
                 || bank.profile() != self.packed_profile
             {
@@ -1657,13 +1677,16 @@ impl<'a> GpuExecutor<'a> {
     }
     /// Aggregate only; never expose route-derived expert identities.
     pub(crate) fn q3_occupied_slots(&self) -> Result<usize> {
-        if !self.packed_profile.is_low_bit() || self.bank_slots != 144 || self.banks.len() != 48 {
+        if !self.packed_profile.is_low_bit()
+            || self.bank_slots != crate::daslab_profile::BANK_SLOTS
+            || self.banks.len() != 48
+        {
             return Err(Error::InvalidFormat("Q3 original slot receipt geometry"));
         }
         let mut occupied = 0;
         for bank in self.banks.values() {
             if bank.profile() != self.packed_profile
-                || bank.slots.capacity() != 144
+                || bank.slots.capacity() != crate::daslab_profile::BANK_SLOTS
                 || bank.slots.experts() != 512
             {
                 return Err(Error::InvalidFormat("Q3 original slot receipt owner"));
@@ -1685,7 +1708,7 @@ impl<'a> GpuExecutor<'a> {
         }
         if self.adaptive.as_ref().is_none_or(|c| c.ready)
             || self.secondary.is_some()
-            || self.bank_slots != 144
+            || self.bank_slots != crate::daslab_profile::BANK_SLOTS
             || self.banks.len() != 48
             || self.gpu_expert_limit != 10
             || self.batch_moe.is_some()
@@ -1865,7 +1888,7 @@ impl<'a> GpuExecutor<'a> {
             return Ok(());
         };
         if self.secondary.is_some()
-            || self.bank_slots != 144
+            || self.bank_slots != crate::daslab_profile::BANK_SLOTS
             || self.banks.len() != 48
             || !self.shared_kernels
             || self.gpu_expert_limit != 10
@@ -2053,7 +2076,7 @@ impl<'a> GpuExecutor<'a> {
                 && self.resident_banks_frozen
                 && self.target_frozen_host_source_identity.is_some()
                 && self.packed_profile == expert_banks::OriginalPackedProfile::DaslabIq3
-                && self.bank_slots == 144
+                && self.bank_slots == crate::daslab_profile::BANK_SLOTS
                 && self
                     .client
                     .public_target_request_io_configured()
@@ -2087,7 +2110,7 @@ impl<'a> GpuExecutor<'a> {
             && self.target_frozen_gu_integer_reserved
             && self.target_frozen_down_integer_reserved
             && self.packed_profile == expert_banks::OriginalPackedProfile::DaslabIq3
-            && self.bank_slots == 144
+            && self.bank_slots == crate::daslab_profile::BANK_SLOTS
             && self.native_projection_member_capacity() == 8
             && self.native_projection_tile() == 8
             && !self.q6_integer_head
@@ -2148,7 +2171,7 @@ impl<'a> GpuExecutor<'a> {
             || !self.token_io_checkpoint
             || !self.target_frozen_host_router_reserved
             || self.packed_profile != expert_banks::OriginalPackedProfile::DaslabIq3
-            || self.bank_slots != 144
+            || self.bank_slots != crate::daslab_profile::BANK_SLOTS
             || self.native_projection_member_capacity() != 8
             || self.native_projection_tile() != 8
             || self.target_frozen_host_staging_reserved
@@ -2190,7 +2213,7 @@ impl<'a> GpuExecutor<'a> {
                 || !self.resident_banks_frozen
                 || self.target_frozen_host_source_identity.is_none()
                 || self.packed_profile != expert_banks::OriginalPackedProfile::DaslabIq3
-                || self.bank_slots != 144)
+                || self.bank_slots != crate::daslab_profile::BANK_SLOTS)
             || self.target_iq4_decoder == crate::next_shared::Iq4Decoder::Original
                 && self.target_iq4_decoder_calls != 0
         {
@@ -2255,7 +2278,7 @@ impl<'a> GpuExecutor<'a> {
         if self.target_rows_reserved
             && (self.resident_router_reserved
                 || !self.packed_profile.is_low_bit()
-                || self.bank_slots != 144
+                || self.bank_slots != crate::daslab_profile::BANK_SLOTS
                 || self.transient_resident.is_none()
                 || !self.model.weights_mapped()
                 || self.adaptive.is_some()
@@ -2302,7 +2325,7 @@ impl<'a> GpuExecutor<'a> {
         let target_private = if self.target_batch_router_reserved {
             if !self.target_rows_reserved
                 || self.packed_profile != expert_banks::OriginalPackedProfile::DaslabIq3
-                || self.bank_slots != 144
+                || self.bank_slots != crate::daslab_profile::BANK_SLOTS
                 || self.resident_banks_frozen
             {
                 return Err(Error::InvalidFormat(
@@ -2334,7 +2357,7 @@ impl<'a> GpuExecutor<'a> {
         }
         if self.resident_router_reserved
             && (!self.packed_profile.is_low_bit()
-                || self.bank_slots != 144
+                || self.bank_slots != crate::daslab_profile::BANK_SLOTS
                 || self.transient_resident.is_none()
                 || !self.model.weights_mapped()
                 || self.adaptive.is_some()
@@ -2843,7 +2866,7 @@ impl<'a> GpuExecutor<'a> {
                     self.bank_slots,
                     self.packed_profile,
                 )?;
-                admission.allocate(&requests, || {
+                admission.allocate_banks(&requests, || {
                     ExpertBanks::new_with_profile(
                         &self.client,
                         weights,

@@ -447,7 +447,7 @@ fn public_existing_policy(
 ) -> Result<()> {
     if enabled
         && (profile != expert_banks::OriginalPackedProfile::DaslabIq3
-            || capacity != 144
+            || capacity != crate::daslab_profile::BANK_SLOTS
             || tile != 8
             || hybrid
             || router)
@@ -514,7 +514,10 @@ fn classify_public_fills(
     slots: &crate::bank_slots::BankSlots,
     uploads: &[(usize, usize)],
 ) -> Result<PublicFillCounters> {
-    if slots.capacity() != 144 || slots.experts() != 512 || uploads.len() > 30 {
+    if slots.capacity() != crate::daslab_profile::BANK_SLOTS
+        || slots.experts() != 512
+        || uploads.len() > 30
+    {
         return Err(err("public expert fill counter geometry"));
     }
     let mut counts = PublicFillCounters::default();
@@ -547,7 +550,7 @@ pub(crate) fn live_member_reduction_policy(
 ) -> Result<()> {
     if selected
         && (profile != crate::expert_banks::OriginalPackedProfile::DaslabIq3
-            || capacity != 144
+            || capacity != crate::daslab_profile::BANK_SLOTS
             || tile != 8
             || hybrid
             || router
@@ -618,8 +621,8 @@ impl Workspace {
                 && self.frozen_down_integer.is_some(),
             original_geometry: executor.packed_profile
                 == expert_banks::OriginalPackedProfile::DaslabIq3
-                && executor.bank_slots == 144
-                && self.layout.capacity == 144
+                && executor.bank_slots == crate::daslab_profile::BANK_SLOTS
+                && self.layout.capacity == crate::daslab_profile::BANK_SLOTS
                 && self.layout.tile == 8
                 && self.layout.geometries.len() == 48
                 && graph.geometry().layers == 48,
@@ -687,7 +690,7 @@ impl Workspace {
             || !self.public_existing_fill
             || self.live_member_reduction_enabled()
             || self.layout.geometries.len() != 48
-            || self.layout.capacity != 144
+            || self.layout.capacity != crate::daslab_profile::BANK_SLOTS
             || self.layout.tile != 8
             || self.layout.gate_policy != k::GatePolicy::Generic
             || executor.packed_profile != crate::expert_banks::OriginalPackedProfile::DaslabIq3
@@ -1915,7 +1918,7 @@ impl GpuExecutor<'_> {
         let mut stats = expert_banks::FillStats::default();
         let mut fill_counters = PublicFillCounters::default();
         let classify = self.packed_profile == expert_banks::OriginalPackedProfile::DaslabIq3
-            && w.layout.capacity == 144
+            && w.layout.capacity == crate::daslab_profile::BANK_SLOTS
             && (1..=3).contains(&routes.count())
             && routes.wave_count() == 1;
         for index in 0..routes.wave_count() {

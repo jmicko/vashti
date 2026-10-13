@@ -170,7 +170,7 @@ impl IntelMtpMemory {
             || self.used >= self.total
             || self.device == 0
             || target_device != self.device
-            || banks != crate::daslab_profile::bank_bytes_144().physical
+            || banks != crate::daslab_profile::selected_bank_bytes().physical
             || target_main != expected_main
             || down_integer
                 && draft_public != crate::resident_mtp::PUBLIC_BYTES
@@ -218,7 +218,7 @@ impl IntelMtpMemory {
         Ok(serde_json::json!({"source":"protected-xe-memory-regions",
             "physical_total_bytes":self.total,"physical_used_bytes":self.used,
             "physical_available_bytes":self.total-self.used,"physical_device_id":self.device,
-            "target_slots":144,"target_bank_bytes":banks,"target_static_cache_bytes":8u64*1024*1024*1024,
+            "target_slots":crate::daslab_profile::BANK_SLOTS,"target_bank_bytes":banks,"target_static_cache_bytes":8u64*1024*1024*1024,
             "target_main_bytes":target_main,"target_vector_bytes":25_165_824,
             "target_gu_integer":gu_integer,"target_down_integer":down_integer,
             "target_down_integer_extra_main_bytes":if down_integer {65_536}else{0},
@@ -258,7 +258,7 @@ pub(crate) fn intel_mtp_preflight_with_down_math(
     }
     let banks = crate::expert_banks::preflight_residency_with_profile(
         graph,
-        144,
+        crate::daslab_profile::BANK_SLOTS,
         8 * 1024 * 1024 * 1024,
         31 * 1024 * 1024 * 1024,
         crate::expert_banks::OriginalPackedProfile::DaslabIq3,
@@ -637,7 +637,7 @@ pub(crate) fn public_resident_bank_allocation_record(
     match (attached, closed) {
         (None, None) => Ok(serde_json::Value::Null),
         (Some(attached), Some(closed)) if attached == closed => {
-            let expected = crate::daslab_profile::bank_bytes_144();
+            let expected = crate::daslab_profile::selected_bank_bytes();
             if attached.layers != 48
                 || attached.source_bindings != 288
                 || attached.physical_buffers != attached.source_bindings
@@ -711,7 +711,7 @@ pub(crate) fn public_host_bank_fill_record(
                 || completed
                     .filler_experts
                     .checked_add(completed.preserved_residents)
-                    != Some(48 * 144)
+                    != Some(48 * crate::daslab_profile::BANK_SLOTS as u64)
                 || actual_setup_experts != Some(completed.filler_experts)
         } else {
             completed.completed_layers != 0
@@ -1983,7 +1983,7 @@ mod tests {
     fn resident_bank_backing_fixture(
         extra: u64,
     ) -> crate::public_host_expert_attachment::ResidentBankAllocation {
-        let bound = crate::daslab_profile::bank_bytes_144();
+        let bound = crate::daslab_profile::selected_bank_bytes();
         crate::public_host_expert_attachment::ResidentBankAllocation {
             layers: 48,
             source_bindings: 288,
@@ -2006,8 +2006,8 @@ mod tests {
         for extra in [
             0,
             4096,
-            crate::daslab_profile::bank_bytes_144().physical
-                - crate::daslab_profile::bank_bytes_144().logical,
+            crate::daslab_profile::selected_bank_bytes().physical
+                - crate::daslab_profile::selected_bank_bytes().logical,
         ] {
             let actual = resident_bank_backing_fixture(extra);
             let value = public_resident_bank_allocation_record(Some(actual), Some(actual)).unwrap();
@@ -2527,7 +2527,7 @@ mod tests {
         ] {
             let owners = IntelTargetOwners {
                 main: 828_866_560 + if gu { 65_536 } else { 0 } + if down { 65_536 } else { 0 },
-                banks: crate::daslab_profile::bank_bytes_144().physical,
+                banks: crate::daslab_profile::selected_bank_bytes().physical,
                 source_pages: 30 * 1024 * 1024,
                 baseline: 0,
                 gu_integer: gu,
@@ -2602,7 +2602,7 @@ mod tests {
                     4660,
                     828_997_632,
                     crate::resident_mtp::PUBLIC_BYTES,
-                    crate::daslab_profile::bank_bytes_144().physical,
+                    crate::daslab_profile::selected_bank_bytes().physical,
                     30 * 1024 * 1024,
                     0
                 )
@@ -2844,7 +2844,7 @@ mod tests {
     }
     #[test]
     fn intel_mtp_combined_admission_charges_complete_full144_target_and_each_draft_owner() {
-        let banks = crate::daslab_profile::bank_bytes_144().physical;
+        let banks = crate::daslab_profile::selected_bank_bytes().physical;
         let proof = IntelMtpMemory {
             total: 34_242_297_856,
             used: 50_688_000,

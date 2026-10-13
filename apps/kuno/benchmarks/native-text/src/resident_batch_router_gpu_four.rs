@@ -24,7 +24,7 @@ use zeroize::Zeroizing;
 
 pub(crate) const EXPERTS: usize = 512;
 pub(crate) const LAYERS: usize = 48;
-pub(crate) const SLOTS: usize = 144;
+pub(crate) const SLOTS: usize = crate::daslab_profile::BANK_SLOTS;
 pub(crate) const MAX_COUNT: usize = 4;
 pub(crate) const RANKS: usize = 10;
 pub(crate) const MAX_ROUTES: usize = 80;
@@ -73,7 +73,10 @@ impl Addressing {
     fn shader(self) -> String {
         let original = include_str!("resident_batch_router_gpu_four.wgsl");
         match self {
-            Self::Resident144 => original.into(),
+            Self::Resident144 => original.replace(
+                "const SOURCE_CAPACITY:u32=144u;",
+                &format!("const SOURCE_CAPACITY:u32={}u;", SLOTS),
+            ),
             Self::FrozenHost512 => original.replace(
                 "const SOURCE_CAPACITY:u32=144u;",
                 "const SOURCE_CAPACITY:u32=512u;",

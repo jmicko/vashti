@@ -11,22 +11,40 @@ pub(crate) const PUBLIC_STRATA_BANK_PROFILE_BYTES: usize = 48 * 144 * 2;
 const PREFIX: &[u8; PUBLIC_STRATA_BANK_PROFILE_BYTES] =
     include_bytes!("../fixtures/strata-bank-profile/top144-u16le.bin");
 
-pub(super) fn prefix(layer: usize) -> Result<[u16; 144]> {
+pub(super) fn prefix(layer: usize) -> Result<[u16; crate::daslab_profile::BANK_SLOTS]> {
     if layer >= 48 {
         return Err(Error::InvalidFormat(
             "fixed public Strata bank profile layer",
         ));
     }
-    let ids = std::array::from_fn(|i| {
-        let at = (layer * 144 + i) * 2;
-        u16::from_le_bytes([PREFIX[at], PREFIX[at + 1]])
-    });
+    let ids = if crate::strata_port::enabled() {
+        let full = include_bytes!("../fixtures/strata-bank-profile/expert-profile.bin");
+        let mut ids = [0u16; crate::daslab_profile::BANK_SLOTS];
+        let mut count = 0;
+        for rank in 0..24_576 {
+            let at = 24 + rank * 4;
+            let source_layer = u16::from_le_bytes([full[at], full[at + 1]]) as usize;
+            if source_layer == layer && count < ids.len() {
+                ids[count] = u16::from_le_bytes([full[at + 2], full[at + 3]]);
+                count += 1;
+            }
+        }
+        if count != ids.len() {
+            return Err(Error::InvalidBufferLength);
+        }
+        ids
+    } else {
+        std::array::from_fn(|i| {
+            let at = (layer * 144 + i) * 2;
+            u16::from_le_bytes([PREFIX[at], PREFIX[at + 1]])
+        })
+    };
     validate_prefix(&ids)?;
     Ok(ids)
 }
 
 pub(super) fn validate_prefix(ids: &[u16]) -> Result<()> {
-    if ids.len() != 144
+    if ids.len() != crate::daslab_profile::BANK_SLOTS
         || ids.iter().any(|&id| id >= 512)
         || ids.iter().enumerate().any(|(i, id)| ids[..i].contains(id))
     {

@@ -336,7 +336,12 @@ pub(crate) fn launch(
         count,
         groups,
     )?;
-    if ![(0, 72), (72, 72), (144, 144), (288, 144), (432, 80)].contains(&(first_slot, slot_count)) {
+    if !crate::daslab_profile::SOURCE_FIRST
+        .into_iter()
+        .zip(crate::daslab_profile::SOURCE_PARTS)
+        .collect::<Vec<_>>()
+        .contains(&(first_slot, slot_count))
+    {
         return Err(rejected());
     }
     let projections = geometry.projections();

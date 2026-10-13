@@ -34,7 +34,9 @@ impl OriginalPackedProfile {
     }
     pub(crate) fn validate_capacity(self, capacity: usize) -> Result<()> {
         validate_capacity(capacity)?;
-        if self.is_low_bit() && capacity != 144 {
+        if (self == Self::UnslothQ3 && capacity != 144)
+            || (self == Self::DaslabIq3 && capacity != crate::daslab_profile::BANK_SLOTS)
+        {
             return Err(Error::InvalidFormat(
                 "Unsloth Q3 requires 144 original slots",
             ));
@@ -598,7 +600,7 @@ fn validate_profile_residency(
         return Err(Error::InvalidFormat("Unsloth Q3 full graph page charge"));
     }
     if profile == OriginalPackedProfile::DaslabIq3
-        && total as u64 != crate::daslab_profile::bank_bytes_144().physical
+        && total as u64 != crate::daslab_profile::selected_bank_bytes().physical
     {
         return Err(Error::InvalidFormat("DASLab full graph page charge"));
     }
@@ -617,7 +619,7 @@ fn validate_profile_residency(
     {
         return Err(Error::InvalidFormat("segmented full graph page charge"));
     }
-    if matches!(capacity, 128 | 144 | 160) {
+    if matches!(capacity, 128 | 144 | 160) || crate::strata_port::enabled() && capacity == 192 {
         // Q3 uses smaller expert banks, but its mixed-precision shared weights
         // exceed the old five-GiB cache once allocator page rounding is charged.
         // Admit only the explicit measured-profile candidate, retaining Q4's
@@ -681,9 +683,15 @@ impl ExpertBanks {
             .try_fold(0usize, |total, bytes| {
                 total
                     .checked_add(
-                        (bytes as usize)
-                            .checked_next_power_of_two()
-                            .ok_or(Error::ArithmeticOverflow)?,
+                        if crate::strata_port::enabled()
+                            && profile == OriginalPackedProfile::DaslabIq3
+                        {
+                            bytes as usize
+                        } else {
+                            (bytes as usize)
+                                .checked_next_power_of_two()
+                                .ok_or(Error::ArithmeticOverflow)?
+                        },
                     )
                     .ok_or(Error::ArithmeticOverflow)
             })
@@ -701,7 +709,62 @@ impl ExpertBanks {
         capacity: usize,
         profile: OriginalPackedProfile,
     ) -> Result<Self> {
-        Self::new_inner(client, weights, capacity, false, false, profile)
+        if !crate::strata_port::enabled() || profile != OriginalPackedProfile::DaslabIq3 {
+            return Self::new_inner(client, weights, capacity, false, false, profile);
+        }
+        use cubecl_runtime::{
+            config::{CubeClRuntimeConfig, RuntimeConfig, memory::PersistentMemory},
+            memory_management::MemoryAllocationMode,
+        };
+        if !matches!(
+            CubeClRuntimeConfig::get().memory.persistent_memory,
+            PersistentMemory::Enabled
+        ) {
+            return Err(Error::InvalidFormat("port exact bank allocator config"));
+        }
+        let alignment = client.properties().memory.alignment;
+        let requests = Self::allocation_requests_with_profile(weights, capacity, profile)?;
+        if alignment == 0
+            || alignment > 4096
+            || requests.iter().any(|n| !n.is_multiple_of(alignment))
+        {
+            return Err(Error::InvalidFormat("port exact bank alignment"));
+        }
+        // The resident admission holds exclusive stream allocation authority. Scope
+        // restoration precedes all dependent operations, including failure paths.
+        let retired = AtomicBool::new(false);
+        let bank = exact_persistent::persistent_scope(
+            |mode: MemoryAllocationMode| {
+                unsafe {
+                    client.allocation_mode(mode);
+                }
+                Ok(())
+            },
+            &retired,
+            || Self::new_inner(client, weights, capacity, false, false, profile),
+        )?;
+        let mut roots = Vec::new();
+        for owner in [&bank.gate, &bank.up, &bank.down] {
+            for segment in &owner.segments {
+                let resource = client
+                    .get_resource(segment.handle.clone())
+                    .map_err(|_| Error::InvalidFormat("port exact bank root"))?;
+                let root = resource.resource();
+                let logical = segment.words as u64 * 4;
+                if root.offset != 0
+                    || root.size != logical
+                    || root.buffer.size() != logical
+                    || roots.contains(&root.buffer)
+                {
+                    return Err(Error::InvalidFormat("port exact bank physical extent"));
+                }
+                roots.push(root.buffer.clone());
+            }
+        }
+        if roots.len() != 6 {
+            return Err(Error::InvalidFormat("port exact bank root count"));
+        }
+        Ok(bank)
     }
     /// Narrow operator-lab seam: original Q4 gate/up and Q5/Q8 down, exactly
     /// sixteen slots. The original constructor/model allocation is unchanged.
@@ -804,7 +867,13 @@ impl ExpertBanks {
                 });
                 first_slot += count;
                 words += bytes / 4;
-                reserved += bytes.next_power_of_two();
+                reserved += if crate::strata_port::enabled()
+                    && profile == OriginalPackedProfile::DaslabIq3
+                {
+                    bytes
+                } else {
+                    bytes.next_power_of_two()
+                };
             }
             Ok(Bank {
                 segments,

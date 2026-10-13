@@ -123,6 +123,31 @@ impl MainAdmission {
         self.upper = upper;
         Ok(charged)
     }
+    pub(crate) fn precharge_persistent(
+        &mut self,
+        allocations: &[u64],
+        alignment: u64,
+    ) -> Result<u64> {
+        self.active()?;
+        if !crate::strata_port::enabled() || alignment == 0 || alignment > 4096 {
+            return Err(AdmissionError::InvalidAllocation);
+        }
+        let charged = allocations.iter().try_fold(0u64, |sum, &n| {
+            if n == 0 || n > MAX_PAGE_BYTES || !n.is_multiple_of(alignment) {
+                return Err(AdmissionError::InvalidAllocation);
+            }
+            sum.checked_add(n).ok_or(AdmissionError::ArithmeticOverflow)
+        })?;
+        let upper = self
+            .upper
+            .checked_add(charged)
+            .ok_or(AdmissionError::ArithmeticOverflow)?;
+        if upper > self.limit {
+            return Err(AdmissionError::LimitExceeded);
+        }
+        self.upper = upper;
+        Ok(charged)
+    }
     /// Post-allocation sample, before dependent computation/cache acceptance.
     /// Unexpected growth means an allocation owner/bin/config was missed;
     /// fail closed even when the physical sample is still below the cap.

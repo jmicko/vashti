@@ -4,7 +4,7 @@ use kuno_text::{Error, Result};
 use zeroize::{Zeroize, Zeroizing};
 pub(crate) const LAYERS: usize = 48;
 pub(crate) const EXPERTS: usize = 512;
-pub(crate) const RESIDENT: usize = 144;
+pub(crate) const RESIDENT: usize = crate::daslab_profile::BANK_SLOTS;
 pub(crate) const METADATA_BYTES: usize = LAYERS * EXPERTS * (2 + 4 + 8) + 4096;
 pub(crate) struct Cache {
     map: Zeroizing<Vec<u16>>,

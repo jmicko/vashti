@@ -78,7 +78,7 @@ impl Frequency {
         Ok(())
     }
     fn select(&self, layer: usize, primary: &BankSlots) -> Result<Zeroizing<[usize; 48]>> {
-        if layer >= LAYERS || primary.capacity() != 144 {
+        if layer >= LAYERS || primary.capacity() != crate::daslab_profile::BANK_SLOTS {
             return Err(err());
         }
         let mut rank = Zeroizing::new([0usize; 512]);

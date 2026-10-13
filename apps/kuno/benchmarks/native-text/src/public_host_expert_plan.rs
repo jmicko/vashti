@@ -32,11 +32,11 @@ use zeroize::{Zeroize, Zeroizing};
 
 pub(crate) const LAYERS: usize = 48;
 pub(crate) const EXPERTS: usize = 512;
-pub(crate) const VRAM_SLOTS: usize = 144;
+pub(crate) const VRAM_SLOTS: usize = crate::daslab_profile::BANK_SLOTS;
 pub(crate) const HOST_SLOTS: usize = EXPERTS - VRAM_SLOTS;
-pub(crate) const PAGE_COUNTS: [usize; 3] = [144, 144, 80];
+pub(crate) const PAGE_COUNTS: [usize; 3] = [144, 144, HOST_SLOTS - 288];
 pub(crate) const MAX_BINDING_BYTES: u64 = 128 * 1024 * 1024;
-pub(crate) const LOGICAL_PUBLIC_RAM_BYTES: u64 = 36_147_609_600;
+pub(crate) const LOGICAL_PUBLIC_RAM_BYTES: u64 = 36_147_609_600 / 368 * HOST_SLOTS as u64;
 /// Includes fixed map owners, opaque generation snapshots and validation peak.
 pub(crate) const METADATA_HOST_CAP: u64 = 2 * 1024 * 1024;
 /// One original expert at a time, including the largest 921600-byte down role.
@@ -123,8 +123,8 @@ fn address(slot: usize) -> Result<Address> {
         return Ok(Address {
             tier: Tier::Vram,
             virtual_slot: slot,
-            page: slot / 72,
-            local_slot: slot % 72,
+            page: slot / daslab_profile::SEGMENT_SLOTS,
+            local_slot: slot % daslab_profile::SEGMENT_SLOTS,
         });
     }
     let ordinal = slot - VRAM_SLOTS;
@@ -709,9 +709,10 @@ fn check_bank(bank: &ExpertBanks, sources: [TensorView<'_>; 3]) -> Result<()> {
             return Err(reject());
         }
         for (i, s) in b.segments().iter().enumerate() {
-            if s.first_slot() != i * 72
-                || s.capacity() != 72
-                || (s.words() as u64).checked_mul(4) != expert.checked_mul(72)
+            if s.first_slot() != i * daslab_profile::SEGMENT_SLOTS
+                || s.capacity() != daslab_profile::SEGMENT_SLOTS
+                || (s.words() as u64).checked_mul(4)
+                    != expert.checked_mul(daslab_profile::SEGMENT_SLOTS as u64)
             {
                 return Err(reject());
             }

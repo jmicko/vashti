@@ -1102,7 +1102,7 @@ impl Plan {
         }
         if config.public_frozen_host_sources
             && (executor.packed_profile != crate::expert_banks::OriginalPackedProfile::DaslabIq3
-                || executor.resident_bank_capacity() != 144
+                || executor.resident_bank_capacity() != crate::daslab_profile::BANK_SLOTS
                 || executor.target_frozen_host_source_identity.is_some()
                 || executor.resident_banks_frozen)
         {
@@ -1184,7 +1184,7 @@ impl Plan {
                 || !executor.target_rows_reserved
                 || !executor.token_io_checkpoint
                 || executor.packed_profile != crate::expert_banks::OriginalPackedProfile::DaslabIq3
-                || executor.resident_bank_capacity() != 144
+                || executor.resident_bank_capacity() != crate::daslab_profile::BANK_SLOTS
                 || executor.resident_runtime_io_limit() != public_language_request_io::RUNTIME_BYTES
             {
                 return Err(error());
@@ -1247,7 +1247,7 @@ impl Plan {
             || router
                 && (!hybrid
                     || !executor.packed_profile.is_low_bit()
-                    || executor.resident_bank_capacity() != 144)
+                    || executor.resident_bank_capacity() != crate::daslab_profile::BANK_SLOTS)
         {
             return Err(error());
         }
@@ -1264,7 +1264,7 @@ impl Plan {
                 || router
                 || config.tile != 8
                 || executor.packed_profile != crate::expert_banks::OriginalPackedProfile::DaslabIq3
-                || executor.resident_bank_capacity() != 144
+                || executor.resident_bank_capacity() != crate::daslab_profile::BANK_SLOTS
                 || executor.q3_integer_moe
                 || executor.resident_banks_frozen
                 || executor.adaptive.is_some()
@@ -1281,7 +1281,7 @@ impl Plan {
                 || router
                 || config.tile != 8
                 || executor.packed_profile != crate::expert_banks::OriginalPackedProfile::DaslabIq3
-                || executor.resident_bank_capacity() != 144
+                || executor.resident_bank_capacity() != crate::daslab_profile::BANK_SLOTS
                 || executor.resident_banks_frozen
                 || executor.adaptive.is_some()
                 || executor.secondary.is_some()
@@ -1297,7 +1297,7 @@ impl Plan {
                 || router
                 || prepared_verify3
                 || executor.packed_profile != crate::expert_banks::OriginalPackedProfile::DaslabIq3
-                || executor.resident_bank_capacity() != 144
+                || executor.resident_bank_capacity() != crate::daslab_profile::BANK_SLOTS
             {
                 return Err(error());
             }

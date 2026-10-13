@@ -39,7 +39,7 @@ fn valid_window(context: usize, start: u64, count: usize) -> bool {
             .is_some_and(|end| end <= context as u64)
 }
 fn slot_table(slots: &crate::bank_slots::BankSlots) -> Result<Zeroizing<[u32; 512]>> {
-    if slots.capacity() != 144 || slots.experts() != 512 {
+    if slots.capacity() != crate::daslab_profile::BANK_SLOTS || slots.experts() != 512 {
         return Err(reject());
     }
     let mut out = Zeroizing::new([u32::MAX; 512]);
@@ -108,7 +108,7 @@ impl Workspace {
             || self.resident_router.is_some()
             || self.prepared_verify3.is_some()
             || self.layout.tile != 8
-            || self.layout.capacity != 144
+            || self.layout.capacity != crate::daslab_profile::BANK_SLOTS
             || *self.policy.chunk != 0
         {
             return Err(reject());

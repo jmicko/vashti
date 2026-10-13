@@ -265,7 +265,7 @@ impl Geometry {
     /// BankSlots capacity; the ordinary constructor continues to reject512.
     pub(crate) fn with_frozen_host_sources(mut self) -> Result<Self, &'static str> {
         let [gate, up, down] = self.projections;
-        if self.capacity != 144
+        if self.capacity != crate::daslab_profile::BANK_SLOTS
             || self.tile != 8
             || self.secondary_partition
             || self.frozen_host_sources
@@ -282,7 +282,7 @@ impl Geometry {
             return Err("grouped frozen host source profile");
         }
         for projection in self.projections {
-            for slots in [72, 72, 144, 144, 80] {
+            for slots in crate::daslab_profile::SOURCE_PARTS {
                 projection.segment_words(slots)?;
             }
         }
@@ -638,7 +638,7 @@ impl Geometry {
     ) -> Result<(), &'static str> {
         let flat = [self.capacity];
         let parts = if self.frozen_host_sources {
-            &[72, 72, 144, 144, 80][..]
+            &crate::daslab_profile::SOURCE_PARTS[..]
         } else if self.secondary_partition {
             &[32, 16][..]
         } else {
@@ -6843,7 +6843,7 @@ mod frozen_source_tests {
             let frozen = ordinary.with_frozen_host_sources().unwrap();
             assert_eq!(frozen.capacity(), 512);
             let mut start = 0;
-            for slots in [72, 72, 144, 144, 80] {
+            for slots in crate::daslab_profile::SOURCE_PARTS {
                 let words = frozen
                     .projections()
                     .map(|p| p.segment_words(slots).unwrap());
