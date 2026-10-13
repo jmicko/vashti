@@ -4131,3 +4131,51 @@ Fresh16:29:23UTC read-only stop receipt: Kuno/Ollama/Vashti200, admission idle a
 unpaused/no latch, B70used50688000B, Nvidia compute0, classified faults all0,
 unchanged boot/kernel38. Recorded refresher3421970 exited. No prompts, outputs,
 private histories, API changes or frontend work were persisted/introduced.
+
+### Latest native text checkpoint — resumed combined optimization (2026-10-13)
+
+User explicitly resumed goal/GPU work; this supersedes the paused/v221 entry.
+Accepted v224/0f4bfcc produces12.302385code and12.241920prose continuations/s.
+192-slot direct GPU/RAM exchange and retained-input state-only prefix repair
+work; code36 and prose95 partial repairs require no full target reruns. Both
+fixtures complete private/source closure and actual GPU/service recovery.
+30tokens/s and full Strata parity remain unmet. v225 integer head and v226 fused
+five-tier projection are unaccepted candidates under combined validation.
+See exact sources, frozen hashes, measurements, limits and next work in
+[port checkpoint](kuno-strata-rust-port.md). No frontend/API/deployment change;
+required Vashti changes:none. Normal source/physical bounds and transient
+privacy remain despite approximate port arithmetic. Canonical checkout preserved.
+
+### Native text continuation — queued MTP accepted (2026-10-13)
+
+v231/01e74a7 reaches12.755259code and12.598536prose continuations/s. Consecutive
+real MTP proposals now stay queued until one final private fault/read fence;
+target verification/cache repair unchanged. One additional admitted/erased32KiB
+MTP packet; port closure43owners/11,730,944B. Both actual recovery receipts pass.
+Head/five-tier fusion tested neutral/slower and remain optional, off by default.
+v232 router/v233 aligned expert reads are candidates under validation. Exact
+contracts/measurement limits and incomplete full-rewrite scope are in the port
+checkpoint. No consumer changes, installed default or release acceptance.
+
+### Native text active checkpoint —13tokens/s and profile-directed next work
+
+v234 default prose13.000929; v232 normalcode12.796036. Latest3e01731/v236's
+optional8promotions/layer gives13.004114code with81.66%resident routes; larger
+transfer cost offsets much of faster verification. Cache-eight prose is active.
+All finished runs erase43MTP/1562target owners and physically restore services,
+GPU memory and unchanged kernel faults. Current strict port Clippy and original
+1346pass/1ignored; full49shader variants indefault/16/wide atv234.30 and full
+Strata parity unmet. Head/fusion/wide/16variants remain optional/off. The new
+profile points to mapped-HOST expert work; port guide gives exact next6/8-row
+suffix/staging directions and their ownership/shape limits. No API/UI/installed
+or release changes; required Vashti changes:none. Goal active; old stop notes
+historical. Do not infer the bounded sudo helper's availability from notes.
+
+### Completed cache-eight checkpoint — active goal, recovered host (2026-10-13)
+
+v236/3e01731 optionalcache-eight:13.004114code,13.189027prose. Both source/private
+closure and physical GPU/service/fault recovery pass. Clippy and original1346
+pass/1ignored pass. Benchmark/compiler jobs ended; bounded refresher stays for
+ongoing authorized goal. Default cache2,optional8; no deployed setting/API/UI
+change.30still unmet. Port guide now records concrete6/8-row source/ownership
+work needed for the next coherent port step and profile-based transfer options.

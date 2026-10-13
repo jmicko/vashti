@@ -1,48 +1,20 @@
 # Native Kuno text engine: next-model handoff
 
-## Current checkpoint: stopped after the combined Strata port test, October13
+## Current checkpoint: active Rust port, October13
 
-**Read [the current port checkpoint](kuno-strata-rust-port.md) first.** Work is
-paused at the user's request after v221; no GPU jobs or sudo refresher remain.
-Automated goal is paused; do not resume automatically. Both GPUs and normal
-Kuno/Ollama/Vashti services are available. Fresh16:29:23UTC recovery is recorded
-in `native-strata-port-final-pause-20261013.json` under the development base.
+Read [the current port checkpoint](kuno-strata-rust-port.md) first, including its
+latest profile/next-action section. Goal active and GPUs authorized. Default
+v234 reaches13.00prose; v232 normalcode12.80. Queued MTP and state-only prefix
+repair work. Runtime3e01731/v236 cache-eight code13.00; cache-eight prose13.19 is complete and recovered. Full model/private closure/actual recovery passes for completed trials.
+Head/fusion/wide/16-lane candidates remain optional, off after neutral/slower
+results. Current source Clippy/original1346pass/1ignored and49shader variants pass.
 
-Worktree `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
-`codex/strata-rust-port`, runtime source `1caf271922abd1dd7aaf3f3d48789e4467362571`.
-Original accepted engine remains on `codex/kuno-native-text` at6792453. Canonical
-Vashti and deployed services are unchanged; required Vashti changes:none.
-
-Connected broad port includes one-plane IQ arithmetic, parallel GPU routing,
-compact real argmax/carry, Q2-to-Q8 runtime dense conversion,106299-token Strata
-proposal vocabulary, suffix/MTP policy and request-local two-way adaptive cache.
-Newest source expands144 to192 experts/layer with exact persistent roots and
-exchanges original VRAM/mapped-RAM cells directly on the GPU in one joined
-transaction. Histories/maps remain transient; no output/model conversion is saved.
-
-Latest complete accepted broad-port run is v215/code-Q2:8.458796 real timed
-continuations/s through362 emitted tokens at EOS (512 cap). Cache adaptation
-alone took6.529365052s for2492 swaps/5.099GB moved. v207/Q8/code200 had10.800044,
-which is a different trajectory/scope.30tokens/s is unachieved.
-
-v221192/direct-exchange candidate reaches cold prefill and host materialization,
-then rejects a four-row DOWN launch due to two stale shard tables. Internal and
-actual process cleanup both pass. d682e04 fixes those tables;1caf271 passes strict
-port Clippy/fmt and original direct-device compilation. **No GPU rerun after the
-fix**, and **direct GPU exchange has not executed successfully on hardware**.
-Latest GPU artifact3e09fb6/SHA b6fc683d... is failed and must not be reused as the
-selected implementation. Build a fresh artifact from current runtime source only
-on explicit resume; the exact commands, receipts, prior defects and acceptance
-sequence are in the port checkpoint.
-
-Full original-engine1346/1ignored regression result is from f0ed07a, not current
-source. Final regressions and representative code/prose acceptance remain.
-Larger verifier, efficient prefix rollback, XMX prefill, compact KV, auto-sized
-residency and general private-input/API integration are unfinished. User explicitly
-wants the coupled Rust port, rather than more isolated exact-math leaf tuning.
-
-Everything below is historical background for the preserved original engine;
-its old source selection/resume queue is superseded by the checkpoint above.
+30tokens/s and the whole Strata rewrite remain unmet. Target profile places most
+expert cost in mapped-HOST reads; next major work is coherent6/8-row suffix
+verification or a properly owned HOST staging/prefetch design. Do not merely
+raise constants or enable the incompatible old staging flag. Exact source/hash,
+limits, active benchmark, sudo helper and safe commands are in the port guide.
+Canonical Vashti, deployed engine/API/UI/release unchanged; no consumer changes.
 
 ## Previous accepted engine checkpoint — superseded as the current work queue
 
