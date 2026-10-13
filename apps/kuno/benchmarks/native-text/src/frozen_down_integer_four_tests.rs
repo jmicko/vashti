@@ -341,3 +341,146 @@ fn four_down_compact_projection_keeps_original_arithmetic_and_record_bounded_dis
         assert_ne!(kernel.id(), four::Kernel::Project { dtype, row_bytes }.id());
     }
 }
+
+#[test]
+fn compact_shuffle_staged_down_lowers_with_exact_dots_and_bounded_shared_storage() {
+    for dtype in [crate::quant_matvec::IQ4_NL, crate::quant_matvec::Q2_0] {
+        let row_bytes = TensorType::from_gguf_id(dtype)
+            .unwrap()
+            .row_bytes(640)
+            .unwrap() as usize;
+        let old = four::Kernel::ProjectCompactShuffle { dtype, row_bytes };
+        let selected = four::Kernel::ProjectCompactShuffleStaged { dtype, row_bytes };
+        let original = old.source();
+        let source = selected.source();
+        let module = lower(selected);
+        assert_eq!(module.entry_points[0].workgroup_size, [64, 1, 1]);
+        assert_eq!(shared_bytes(&module), four::STAGED_SHARED_BYTES);
+        assert_eq!(four::STAGED_SHARED_BYTES, 5760);
+        assert_eq!(barriers(&module.entry_points[0].function.body), 1);
+        assert_ne!(selected.id(), old.id());
+        assert_ne!(selected.name(), old.name());
+        assert_eq!(source.matches("dot4I8Packed(").count(), 8);
+        assert_eq!(source.matches("workgroupBarrier();").count(), 1);
+        let copy_begin =
+            "    // Every local lane participates after the original uniform source guards.";
+        let first = source.find(copy_begin).unwrap();
+        let last = source.find("    var values=vec4<f32>(0.0);").unwrap();
+        for guard in [
+            "(width!=16u && width!=32u)",
+            "if group.y>=shard_count {return;}",
+            "if !valid_group(routed_group) {return;}",
+        ] {
+            assert!(source.find(guard).unwrap() < first);
+        }
+        let copy = &source[first..last];
+        assert!(copy.contains("word=local;word<1440u;word+=64u"));
+        assert!(copy.contains("if member<length {value=planes[frames[member]+word%360u];}"));
+        assert!(copy.contains("var value=0u;"));
+        assert!(copy.contains("frames=vec4<u32>(0u,360u,720u,1080u);"));
+        let mut without_cache = source.clone();
+        without_cache.replace_range(first..last, "");
+        without_cache =
+            without_cache.replace("var<workgroup> staged_planes:array<u32,1440>;\n", "");
+        for axis in ["x", "y", "z", "w"] {
+            without_cache = without_cache.replace(
+                &format!("staged_planes[frames.{axis}+"),
+                &format!("planes[frames.{axis}+"),
+            );
+        }
+        // Every other byte of the accepted two-plane shader is untouched,
+        // including full-owner checks, arithmetic, tree and output addresses.
+        assert_eq!(without_cache, original);
+    }
+    let mut limits = wgpu::Limits {
+        max_compute_workgroup_storage_size: four::STAGED_SHARED_BYTES,
+        ..Default::default()
+    };
+    four::validate_staged_limits(&limits).unwrap();
+    limits.max_compute_workgroup_storage_size -= 1;
+    four::validate_limits(&limits).unwrap();
+    assert!(four::validate_staged_limits(&limits).is_err());
+    limits.max_compute_workgroup_storage_size = four::STAGED_SHARED_BYTES;
+    limits.max_compute_invocations_per_workgroup = 63;
+    assert!(four::validate_staged_limits(&limits).is_err());
+}
+
+fn stage_down_frames(source: &[u32], routes: [usize; 4], length: usize) -> Vec<u32> {
+    assert!((1..=4).contains(&length));
+    assert_eq!(source.len(), four::SCRATCH_WORDS);
+    let mut staged = vec![0xDEAD_BEEF; four::STAGED_PLANE_WORDS];
+    let mut writers = vec![0u8; four::STAGED_PLANE_WORDS];
+    // Permuted lane scheduling proves there is no dependence on invocation
+    // execution order; each of the64 lanes owns disjoint word indices.
+    for local in (0..64).map(|i| i * 17 % 64) {
+        for word in (local..four::STAGED_PLANE_WORDS).step_by(64) {
+            let member = word / four::FRAME_WORDS;
+            staged[word] = if member < length {
+                source[four::HEADER_WORDS
+                    + routes[member] * four::FRAME_WORDS
+                    + word % four::FRAME_WORDS]
+            } else {
+                0
+            };
+            writers[word] += 1;
+        }
+    }
+    assert!(writers.iter().all(|&count| count == 1));
+    staged
+}
+
+#[test]
+fn compact_shuffle_staged_down_maps_noncontiguous_frames_and_preserves_all_bits() {
+    let source: Vec<u32> = (0..four::SCRATCH_WORDS)
+        .map(|i| (i as u32).wrapping_mul(0x9E37_79B9).rotate_left(13))
+        .collect();
+    let original = source.clone();
+    for routes in [[39usize, 0, 10, 20], [7, 33, 25, 14], [30, 10, 0, 20]] {
+        for length in 1..=4 {
+            let staged = stage_down_frames(&source, routes, length);
+            for (member, words) in staged.chunks_exact(four::FRAME_WORDS).enumerate() {
+                if member < length {
+                    let start = four::HEADER_WORDS + routes[member] * four::FRAME_WORDS;
+                    assert_eq!(words, &original[start..start + four::FRAME_WORDS]);
+                } else {
+                    assert!(words.iter().all(|&word| word == 0));
+                }
+            }
+        }
+    }
+    assert_eq!(source, original);
+}
+
+#[test]
+fn compact_shuffle_staged_down_keeps_both_original_projection_formats_bit_exact() {
+    let mut source = vec![0u32; four::SCRATCH_WORDS];
+    for route in 0..40 {
+        let input: Vec<f32> = (0..640)
+            .map(|i| ((i * 31 + route * 17) % 139) as f32 * 0.012 - 0.83)
+            .collect();
+        let words = oracle::Planes::new(&input).unwrap().packed_words().unwrap();
+        let start = four::HEADER_WORDS + route * four::FRAME_WORDS;
+        source[start..start + four::FRAME_WORDS].copy_from_slice(&words);
+    }
+    for dtype in [TensorType::Iq4Nl, TensorType::Q2_0] {
+        let row_bytes = dtype.row_bytes(640).unwrap() as usize;
+        let bank = iq_fixtures::packed(dtype.gguf_id(), 8, 640, 1);
+        for routes in [[39usize, 0, 10, 20], [7, 33, 25, 14], [30, 10, 0, 20]] {
+            for length in 1..=4 {
+                let staged = stage_down_frames(&source, routes, length);
+                for (member, &route) in routes.iter().take(length).enumerate() {
+                    let start = four::HEADER_WORDS + route * four::FRAME_WORDS;
+                    let original = &source[start..start + four::FRAME_WORDS];
+                    let start = member * four::FRAME_WORDS;
+                    let copied = &staged[start..start + four::FRAME_WORDS];
+                    for row in bank.chunks_exact(row_bytes) {
+                        assert_eq!(
+                            projected(dtype, row, original).to_bits(),
+                            projected(dtype, row, copied).to_bits(),
+                        );
+                    }
+                }
+            }
+        }
+    }
+}

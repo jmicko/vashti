@@ -6,6 +6,9 @@
 #![allow(dead_code)] // Separate parent and physical acceptance are required.
 
 use super::{decode, g};
+
+#[path = "frozen_compact_down_staged.rs"]
+mod staged;
 use cubecl::ir::{ElemType, StorageType, UIntKind};
 use cubecl::prelude::{ComputeClient, CubeCount, CubeDim};
 use cubecl::wgpu::{AutoCompiler, WgpuRuntime};
@@ -27,6 +30,9 @@ pub(crate) const HOST_INCREMENT: usize = MAIN_BYTES as usize;
 pub(crate) const MAX_PREPARE_SHARED_BYTES: u32 = 4004;
 pub(crate) const MAX_PROJECT_SHARED_BYTES: u32 = 1024;
 pub(crate) const MAX_SHARED_BYTES: u32 = MAX_PREPARE_SHARED_BYTES;
+// Candidate SLM only; no new MAIN/INFO owner or private allocation charge.
+pub(crate) const STAGED_PLANE_WORDS: usize = MAX_COUNT * FRAME_WORDS;
+pub(crate) const STAGED_SHARED_BYTES: u32 = (STAGED_PLANE_WORDS * 4) as u32;
 pub(crate) const INFO_INCREMENT: u64 = 2 * 48 * 2048;
 pub(crate) const RUNTIME_INCREMENT: u64 = INFO_INCREMENT + 2 * 2048 + 4 * MAIN_BYTES;
 
@@ -49,6 +55,7 @@ pub(super) enum Kernel {
     ProjectCompact { dtype: u32, row_bytes: usize },
     Audit,
     ProjectCompactShuffle { dtype: u32, row_bytes: usize },
+    ProjectCompactShuffleStaged { dtype: u32, row_bytes: usize },
 }
 
 fn members(body: &str) -> String {
@@ -89,6 +96,9 @@ impl Kernel {
                     Self::ProjectCompact { dtype, row_bytes }.source(),
                 )
             }
+            Self::ProjectCompactShuffleStaged { dtype, row_bytes } => {
+                staged::source(Self::ProjectCompactShuffle { dtype, row_bytes }.source())
+            }
             Self::Project { dtype, row_bytes } | Self::ProjectCompact { dtype, row_bytes } => {
                 let helpers = include_str!("iq_moe_integer.wgsl")
                     .split_once("fn iq4_byte")
@@ -127,6 +137,7 @@ impl KernelMetadata for Kernel {
             Self::ProjectCompact { .. } => "FrozenDownIntegerFourEightLanesCompact",
             Self::Audit => "FrozenDownIntegerFourAudit",
             Self::ProjectCompactShuffle { .. } => "FrozenDownIntegerFourCompactShuffle",
+            Self::ProjectCompactShuffleStaged { .. } => "FrozenDownIntegerFourCompactShuffleStaged",
         }
     }
     fn id(&self) -> KernelId {
@@ -184,6 +195,16 @@ pub(crate) fn validate_limits(limits: &wgpu::Limits) -> Result<()> {
     }
     Ok(())
 }
+/// Extra physical workgroup-storage bound for the explicitly selected staged
+/// leaf. Existing composed GU already needs16004B; ordinary DOWN is unchanged.
+pub(crate) fn validate_staged_limits(limits: &wgpu::Limits) -> Result<()> {
+    validate_limits(limits)?;
+    if limits.max_compute_workgroup_storage_size < STAGED_SHARED_BYTES {
+        return Err(rejected());
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_layout(
     geometry: g::Geometry,
     spans: &g::Spans,
@@ -387,7 +408,7 @@ pub(crate) fn launch_compact(
 ) -> Result<()> {
     launch_compact_impl(
         client, geometry, spans, down, owners, scratch, gu_scratch, first_slot, slot_count, groups,
-        count, false,
+        count, false, false,
     )
 }
 
@@ -408,7 +429,29 @@ pub(crate) fn launch_compact_shuffle(
 ) -> Result<()> {
     launch_compact_impl(
         client, geometry, spans, down, owners, scratch, gu_scratch, first_slot, slot_count, groups,
-        count, true,
+        count, true, false,
+    )
+}
+
+/// Unused count4 shuffle experiment with exact activation bits staged in SLM.
+/// Parent must enable16/32 subgroups and pass validate_staged_limits before use.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn launch_compact_shuffle_staged(
+    client: &ComputeClient<WgpuRuntime>,
+    geometry: g::Geometry,
+    spans: &g::Spans,
+    down: Handle,
+    owners: [Handle; 7],
+    scratch: Handle,
+    gu_scratch: Handle,
+    first_slot: usize,
+    slot_count: usize,
+    groups: usize,
+    count: usize,
+) -> Result<()> {
+    launch_compact_impl(
+        client, geometry, spans, down, owners, scratch, gu_scratch, first_slot, slot_count, groups,
+        count, true, true,
     )
 }
 
@@ -426,6 +469,7 @@ fn launch_compact_impl(
     groups: usize,
     count: usize,
     shuffle: bool,
+    staged_planes: bool,
 ) -> Result<()> {
     let shard = crate::quant_matvec::frozen_gu_integer::four::shard_index(first_slot, slot_count)?;
     validate_layout(
@@ -499,7 +543,12 @@ fn launch_compact_impl(
     // uniformly; the GU owner is bound read-only and never written here.
     unsafe {
         client.launch_unchecked(
-            Box::new(if shuffle {
+            Box::new(if staged_planes {
+                Kernel::ProjectCompactShuffleStaged {
+                    dtype: projection.dtype(),
+                    row_bytes: projection.row_bytes(),
+                }
+            } else if shuffle {
                 Kernel::ProjectCompactShuffle {
                     dtype: projection.dtype(),
                     row_bytes: projection.row_bytes(),
