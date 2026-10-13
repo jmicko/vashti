@@ -12,6 +12,10 @@ name = "flash-kernel-lab"
 path = "src/flash_fast_main.rs"
 
 [[bin]]
+name = "kuno-text-lab"
+path = "src/main.rs"
+
+[[bin]]
 name = "kuno-strata-rust"
 path = "src/main.rs"
 required-features = ["strata-rust-port"]
