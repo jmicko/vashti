@@ -2312,6 +2312,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             return Err("shared Next router requires256 workgroup lanes".into());
         }
+        if quant_matvec::frozen_gu_integer::four::shuffle::PUBLIC_PROBE
+            && quant_matvec::frozen_down_integer::four::STAGED_PUBLIC_PROBE
+            && (speculative_inputs
+                .as_ref()
+                .is_some_and(|i| i.frozen_gu_stride_four && i.frozen_down_integer)
+                || language_inputs
+                    .as_ref()
+                    .is_some_and(|i| i.frozen_gu_stride_four && i.frozen_down_integer))
+        {
+            quant_matvec::frozen_down_integer::four::validate_staged_limits(&adapter.limits())?;
+        }
         if (fast_gpu
             || (quant_matvec::frozen_gu_integer::four::shuffle::PUBLIC_PROBE
                 && (speculative_inputs

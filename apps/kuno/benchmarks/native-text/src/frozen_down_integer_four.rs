@@ -31,6 +31,8 @@ pub(crate) const MAX_PREPARE_SHARED_BYTES: u32 = 4004;
 pub(crate) const MAX_PROJECT_SHARED_BYTES: u32 = 1024;
 pub(crate) const MAX_SHARED_BYTES: u32 = MAX_PREPARE_SHARED_BYTES;
 // Candidate SLM only; no new MAIN/INFO owner or private allocation charge.
+// Fixed-public experiment only; no installed or API selector.
+pub(crate) const STAGED_PUBLIC_PROBE: bool = true;
 pub(crate) const STAGED_PLANE_WORDS: usize = MAX_COUNT * FRAME_WORDS;
 pub(crate) const STAGED_SHARED_BYTES: u32 = (STAGED_PLANE_WORDS * 4) as u32;
 pub(crate) const INFO_INCREMENT: u64 = 2 * 48 * 2048;

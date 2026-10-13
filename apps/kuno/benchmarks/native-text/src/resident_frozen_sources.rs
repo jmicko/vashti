@@ -3397,7 +3397,11 @@ impl Sources {
                             // the authenticated full GU owner.
                             (if count == 4 {
                                 if crate::quant_matvec::frozen_gu_integer::four::shuffle::PUBLIC_PROBE {
-                                    crate::quant_matvec::frozen_down_integer::four::launch_compact_shuffle
+                                    if crate::quant_matvec::frozen_down_integer::four::STAGED_PUBLIC_PROBE {
+                                        crate::quant_matvec::frozen_down_integer::four::launch_compact_shuffle_staged
+                                    } else {
+                                        crate::quant_matvec::frozen_down_integer::four::launch_compact_shuffle
+                                    }
                                 } else {
                                     crate::quant_matvec::frozen_down_integer::four::launch_compact
                                 }

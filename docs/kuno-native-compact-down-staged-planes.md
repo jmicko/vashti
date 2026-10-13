@@ -47,3 +47,14 @@ owner/source closure and fresh normal timings remain required before acceptance.
 **Tests, compilation, Clippy and GPU validation have not been run for this
 leaf.** Root owns the shared cache and is retaining compiler-idle timings.
 Rust formatting and whitespace checks pass at this source-only handoff.
+
+## Fixed-public root experiment
+
+Root integration selects this leaf only under the existing selected count4
+compact shuffle path, through compile-time `STAGED_PUBLIC_PROBE`. Host adapter
+admission calls `validate_staged_limits` for the applicable protected inputs;
+shader subgroup/full-coverage and original source guards remain in force. Both
+probe receipts expose `compiled_count4_compact_down_staged`. No runtime/API
+selector or allocation-cap change. Original primary-plane approximation is
+false. Full source tests, strict Clippy and unchanged CPU13 must pass before
+normal timing; source selection alone is not numerical or speed acceptance.
