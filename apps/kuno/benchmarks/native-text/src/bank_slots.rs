@@ -11,7 +11,9 @@ use zeroize::{Zeroize, Zeroizing};
 
 // 72 original packed Qwen experts fit the same pooled pages as 64.
 // The resident-only 96 experiment uses public 64 + 32 pages;128 uses64 +64.
-pub const MAX_CAPACITY: usize = if cfg!(feature = "strata-rust-port") {
+pub const MAX_CAPACITY: usize = if cfg!(feature = "strata-resident-224") {
+    224
+} else if cfg!(feature = "strata-rust-port") {
     192
 } else {
     160
@@ -24,11 +26,13 @@ pub fn segmented_capacities(capacity: usize) -> Option<&'static [usize]> {
         144 => Some(&[72, 72]),
         160 => Some(&[72, 72, 16]),
         192 if crate::strata_port::enabled() => Some(&[96, 96]),
+        224 if cfg!(feature = "strata-resident-224") => Some(&[112, 112]),
         _ => None,
     }
 }
 pub fn segmented_capacity(capacity: usize) -> bool {
-    matches!(capacity, 96 | 128 | 144 | 160) || (crate::strata_port::enabled() && capacity == 192)
+    matches!(capacity, 96 | 128 | 144 | 160)
+        || (crate::strata_port::enabled() && capacity == crate::daslab_profile::BANK_SLOTS)
 }
 pub fn routed_capacity(capacity: usize) -> bool {
     (MIN_ROUTED_CAPACITY..=MAX_FLAT_CAPACITY).contains(&capacity) || segmented_capacity(capacity)

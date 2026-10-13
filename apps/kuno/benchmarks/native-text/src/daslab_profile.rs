@@ -15,25 +15,32 @@ pub const HEADER_SHA256: [&str; 2] = [
 pub const TENSOR_COUNT: usize = 1224;
 pub const LAYER_COUNT: usize = 48;
 pub const EXPERT_COUNT: usize = 512;
-pub const BANK_SLOTS: usize = if cfg!(feature = "strata-rust-port") {
+pub const BANK_SLOTS: usize = if cfg!(feature = "strata-resident-224") {
+    224
+} else if cfg!(feature = "strata-rust-port") {
     192
 } else {
     144
 };
 pub const SEGMENT_SLOTS: usize = BANK_SLOTS / 2;
+pub const HOST_PART: usize = if cfg!(feature = "strata-resident-224") {
+    128
+} else {
+    144
+};
 pub const SOURCE_PARTS: [usize; 5] = [
     SEGMENT_SLOTS,
     SEGMENT_SLOTS,
-    144,
-    144,
-    512 - BANK_SLOTS - 288,
+    HOST_PART,
+    HOST_PART,
+    512 - BANK_SLOTS - 2 * HOST_PART,
 ];
 pub const SOURCE_FIRST: [usize; 5] = [
     0,
     SEGMENT_SLOTS,
     BANK_SLOTS,
-    BANK_SLOTS + 144,
-    BANK_SLOTS + 288,
+    BANK_SLOTS + HOST_PART,
+    BANK_SLOTS + 2 * HOST_PART,
 ];
 const ABSENT: u32 = u32::MAX;
 
@@ -346,6 +353,15 @@ pub(crate) fn source_geometry_shader(source: &str) -> String {
             &format!("if shard=={index}u {{first={}u;}}", SOURCE_FIRST[index]),
         );
     }
+    source = source
+        .replace(
+            "if shard==2u {parts=144u;}",
+            &format!("if shard==2u {{parts={HOST_PART}u;}}"),
+        )
+        .replace(
+            "if shard==3u {parts=144u;}",
+            &format!("if shard==3u {{parts={HOST_PART}u;}}"),
+        );
     source
         .replace("var parts=72u;", &format!("var parts={}u;", SEGMENT_SLOTS))
         .replace(

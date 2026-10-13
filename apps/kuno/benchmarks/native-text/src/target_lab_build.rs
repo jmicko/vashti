@@ -204,7 +204,7 @@ impl IntelMtpMemory {
         }
         let components = [
             banks,
-            8 * 1024 * 1024 * 1024,
+            crate::strata_port::static_cache_bytes() as u64,
             target_main,
             25_165_824,
             crate::executor::RESIDENT_IO_MAX,
@@ -232,7 +232,7 @@ impl IntelMtpMemory {
         Ok(serde_json::json!({"source":"protected-xe-memory-regions",
             "physical_total_bytes":self.total,"physical_used_bytes":self.used,
             "physical_available_bytes":self.total-self.used,"physical_device_id":self.device,
-            "target_slots":crate::daslab_profile::BANK_SLOTS,"target_bank_bytes":banks,"target_static_cache_bytes":8u64*1024*1024*1024,
+            "target_slots":crate::daslab_profile::BANK_SLOTS,"target_bank_bytes":banks,"target_static_cache_bytes":crate::strata_port::static_cache_bytes(),
             "target_main_bytes":target_main,"target_vector_bytes":25_165_824,
             "target_gu_integer":gu_integer,"target_down_integer":down_integer,
             "target_down_integer_extra_main_bytes":if down_integer {crate::executor::batch_moe::FROZEN_DOWN_INTEGER_MAIN_BYTES}else{0},
@@ -273,7 +273,7 @@ pub(crate) fn intel_mtp_preflight_with_down_math(
     let banks = crate::expert_banks::preflight_residency_with_profile(
         graph,
         crate::daslab_profile::BANK_SLOTS,
-        8 * 1024 * 1024 * 1024,
+        crate::strata_port::static_cache_bytes(),
         31 * 1024 * 1024 * 1024,
         crate::expert_banks::OriginalPackedProfile::DaslabIq3,
     )? as u64;

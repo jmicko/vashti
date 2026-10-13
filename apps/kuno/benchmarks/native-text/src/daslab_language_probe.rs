@@ -229,7 +229,8 @@ pub(crate) fn registration(
         }
     }
     if values.remove(OsStr::new("KUNO_LAB_LANGUAGE_PUBLIC_ONLY")) != Some("1".into())
-        || values.remove(OsStr::new("KUNO_LAB_STATIC_CACHE_BYTES")) != Some("8589934592".into())
+        || values.remove(OsStr::new("KUNO_LAB_STATIC_CACHE_BYTES"))
+            != Some(crate::strata_port::static_cache_bytes().to_string().into())
     {
         return Err("compiled language/cache gates missing");
     }
@@ -1169,7 +1170,7 @@ pub(crate) fn run(
     let mut executor = GpuExecutor::new_with_profile(
         &file,
         client.clone(),
-        8 * 1024 * 1024 * 1024,
+        crate::strata_port::static_cache_bytes(),
         crate::daslab_profile::BANK_SLOTS,
         31 * 1024 * 1024 * 1024,
         OriginalPackedProfile::DaslabIq3,
@@ -2383,6 +2384,10 @@ pub(crate) fn run(
                     .ok_or("Strata cache receipt attachment absent")?
                     .strata_cache_receipt()?;
             }
+            record["target_public_cache_bytes_including_banks"] = executor.cache_bytes().into();
+            record["target_exact_static_cache"] = crate::strata_port::exact_static_cache().into();
+            record["target_static_cache_limit_bytes"] =
+                crate::strata_port::static_cache_bytes().into();
             record["target_four_lookahead_receipt"] = four_lookahead_receipt;
             record["initial_prefill_target_four_lookahead_receipt"] =
                 initial_four_lookahead_receipt;

@@ -4,7 +4,9 @@ import hashlib,json,os,pathlib,shutil,subprocess,sys
 root=pathlib.Path(__file__).resolve().parents[4]
 out=pathlib.Path('/media/jmicko/faststore/kuno-development')/sys.argv[1]
 out.mkdir()
-features=['strata-rust-port']+(['strata-eight-window'] if len(sys.argv)>2 and sys.argv[2]=='--eight' else [])
+options=set(sys.argv[2:])
+if options-{'--eight','--resident-224'}:raise ValueError('build feature selector')
+features=['strata-rust-port']+(['strata-eight-window'] if '--eight' in options else [])+(['strata-resident-224'] if '--resident-224' in options else [])
 commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()
 (out/'source-commit.txt').write_text(commit+'\n')
 (out/'build-features.json').write_text(json.dumps({'features':features})+'\n')

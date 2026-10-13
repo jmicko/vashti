@@ -14,6 +14,14 @@ pub(crate) const fn verify_capacity() -> usize {
         4
     }
 }
+/// Strata-style exact public dense roots free space for additional experts.
+/// The 224-slot fixture is a separately compiled, explicitly protected trial.
+pub(crate) const fn exact_static_cache() -> bool {
+    cfg!(feature = "strata-resident-224")
+}
+pub(crate) const fn static_cache_bytes() -> usize {
+    (if exact_static_cache() { 5 } else { 8 }) * 1024 * 1024 * 1024
+}
 pub(crate) fn fused_sources() -> bool {
     static SELECTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     enabled()

@@ -2641,7 +2641,21 @@ impl<'a> GpuExecutor<'a> {
             .checked_mul(row_bytes)
             .ok_or(Error::ArithmeticOverflow)?;
         let padded = bytes.checked_add(3).ok_or(Error::ArithmeticOverflow)? / 4 * 4;
-        let reserved = padded.max(32 * 1024).next_power_of_two();
+        let exact = crate::strata_port::exact_static_cache()
+            && self.packed_profile == expert_banks::OriginalPackedProfile::DaslabIq3;
+        let alignment = self.client.properties().memory.alignment as usize;
+        if exact && (alignment == 0 || !alignment.is_power_of_two() || alignment > 4096) {
+            return Err(Error::InvalidFormat("exact public static alignment"));
+        }
+        let reserved = if exact {
+            padded
+                .checked_add(alignment - 1)
+                .ok_or(Error::ArithmeticOverflow)?
+                / alignment
+                * alignment
+        } else {
+            padded.max(32 * 1024).next_power_of_two()
+        };
         while self.cache_bytes + reserved > self.budget {
             let old = self
                 .cache
@@ -2684,13 +2698,45 @@ impl<'a> GpuExecutor<'a> {
         // GPU storage uses original little-endian byte packing; only final word
         // padding is added. No host f32 mirror/requantized model copy exists.
         let started = Instant::now();
-        let handle = if let Some(admission) = &self.resident_admission {
-            admission.allocate(&[padded as u64], || {
+        let upload = || {
+            if exact {
+                use cubecl_runtime::memory_management::MemoryAllocationMode;
+                // Same exclusive stream admission and unwind-safe allocation
+                // guard as exact expert banks. Only ORIGINAL PUBLIC weights.
+                let retired = AtomicBool::new(false);
+                expert_banks::exact_persistent::persistent_scope(
+                    |mode: MemoryAllocationMode| {
+                        // SAFETY: laboratory owns this stream's allocation scope.
+                        unsafe {
+                            self.client.allocation_mode(mode);
+                        }
+                        Ok(())
+                    },
+                    &retired,
+                    || Ok(self.client.create_public_owned(packed)),
+                )
+            } else {
                 Ok(self.client.create_public_owned(packed))
-            })?
-        } else {
-            self.client.create_public_owned(packed)
+            }
         };
+        let handle = if let Some(admission) = &self.resident_admission {
+            admission.allocate(&[reserved as u64], upload)?
+        } else {
+            upload()?
+        };
+        if exact {
+            let resource = self
+                .client
+                .get_resource(handle.clone())
+                .map_err(|_| Error::InvalidFormat("exact static root"))?;
+            let root = resource.resource();
+            if root.offset != 0
+                || root.size != padded as u64
+                || root.buffer.size() != reserved as u64
+            {
+                return Err(Error::InvalidFormat("exact public static physical extent"));
+            }
+        }
         self.weight_upload_ns += started.elapsed().as_nanos();
         self.uploaded_bytes += padded as u64;
         let words = padded / 4;

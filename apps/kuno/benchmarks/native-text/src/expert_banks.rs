@@ -619,7 +619,9 @@ fn validate_profile_residency(
     {
         return Err(Error::InvalidFormat("segmented full graph page charge"));
     }
-    if matches!(capacity, 128 | 144 | 160) || crate::strata_port::enabled() && capacity == 192 {
+    if matches!(capacity, 128 | 144 | 160)
+        || crate::strata_port::enabled() && capacity == crate::daslab_profile::BANK_SLOTS
+    {
         // Q3 uses smaller expert banks, but its mixed-precision shared weights
         // exceed the old five-GiB cache once allocator page rounding is charged.
         // Admit only the explicit measured-profile candidate, retaining Q4's
