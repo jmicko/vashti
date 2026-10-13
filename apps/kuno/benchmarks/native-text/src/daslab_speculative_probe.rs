@@ -1096,7 +1096,7 @@ pub(crate) fn run(
         &file,
         client.clone(),
         8 * 1024 * 1024 * 1024,
-        144,
+        crate::daslab_profile::BANK_SLOTS,
         31 * 1024 * 1024 * 1024,
         OriginalPackedProfile::DaslabIq3,
     )?;

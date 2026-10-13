@@ -206,7 +206,7 @@ pub(crate) fn run(
             &file,
             client.clone(),
             CACHE,
-            144,
+            crate::daslab_profile::BANK_SLOTS,
             DEVICE,
             OriginalPackedProfile::DaslabIq3,
         )?;
