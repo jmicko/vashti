@@ -7,6 +7,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub(crate) const fn enabled() -> bool {
     cfg!(feature = "strata-rust-port")
 }
+pub(crate) fn profile_target() -> bool {
+    enabled() && std::env::var("KUNO_STRATA_PROFILE_TARGET").as_deref() == Ok("round-8")
+}
 static GU: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
 static DOWN: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
 pub(crate) fn credit(down: bool, count: usize) {

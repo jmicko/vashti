@@ -1275,7 +1275,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let public_target_profile = speculative_inputs
         .as_ref()
-        .is_some_and(|input| input.profile_first_warm_chunk);
+        .is_some_and(|input| input.profile_first_warm_chunk)
+        || (language_inputs.is_some() && strata_port::profile_target());
     let target_repair_inputs = if mode == "daslab-target-repair-probe" {
         Some(daslab_target_repair_probe::registration(
             &std::env::args_os().collect::<Vec<_>>(),

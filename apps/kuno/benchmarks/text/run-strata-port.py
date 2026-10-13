@@ -10,8 +10,10 @@ def helper(name,*args):
  return json.loads(subprocess.check_output(['python3',str(BASE/'helpers-20261008'/name),*args],text=True))
 
 def run():
- if os.getuid()!=0 or len(sys.argv)!=5:raise ValueError('root BUILD OUT code|prose q8|q2')
- build=BASE/sys.argv[1];out=BASE/sys.argv[2];fixture,profile=sys.argv[3:]
+ if os.getuid()!=0 or len(sys.argv) not in (5,6):raise ValueError('root BUILD OUT code|prose q8|q2 [--profile]')
+ build=BASE/sys.argv[1];out=BASE/sys.argv[2];fixture,profile=sys.argv[3:5]
+ target_profile=len(sys.argv)==6
+ if target_profile and sys.argv[5]!='--profile':raise ValueError('profile selector')
  if out.exists():raise ValueError('fresh output required')
  out.mkdir()
  account=pwd.getpwnam('jmicko');os.chown(out,account.pw_uid,account.pw_gid)
@@ -26,6 +28,7 @@ def run():
   env['KUNO_TEST_MTP']=str(BASE/'kuno-strata-mtp-q2-20261009/mtp-q2_0.gguf')
   env['KUNO_LAB_MTP_PROFILE']='strata-q2';env.pop('KUNO_LAB_MTP_Q8_HEAD',None)
  env.pop('KUNO_LAB_MTP_REPAIR',None)
+ if target_profile:env['KUNO_STRATA_PROFILE_TARGET']='round-8'
  # Capture source identity; whole files were hashed by preceding accepted trials.
  sources=[]
  for path in sorted(protected.MODEL.glob('*.gguf')):
@@ -40,7 +43,7 @@ def run():
   env.update({'KUNO_PUBLIC_MTP_INTEL_TOTAL_BYTES':str(snapshot['total_bytes']),'KUNO_PUBLIC_MTP_INTEL_USED_BYTES':str(snapshot['used_bytes']),'KUNO_PUBLIC_MTP_INTEL_DEVICE_ID':str(snapshot['device_id'])})
   (out/'intel-mtp-memory-before-models.json').write_text(json.dumps(snapshot,indent=2)+'\n')
   # Remove only laboratory selectors from inherited environment. Secrets are never printed.
-  child={k:v for k,v in os.environ.items() if not k.startswith(('KUNO_LAB_','KUNO_TEST_','KUNO_PUBLIC_'))}
+  child={k:v for k,v in os.environ.items() if not k.startswith(('KUNO_LAB_','KUNO_TEST_','KUNO_PUBLIC_','KUNO_STRATA_'))}
   child.update(env)
   cmd=['systemd-run','--quiet','--wait','--pipe','--collect','--unit='+out.name,'--uid=jmicko','--property=MemoryMax='+str(memory),'--property=MemorySwapMax=0','--property=LimitCORE=0','--property=RuntimeMaxSec=1200']
   cmd += ['--setenv='+k+'='+v for k,v in env.items()]

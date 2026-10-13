@@ -942,6 +942,9 @@ async fn draft_client(
         },
     );
     let client = WgpuRuntime::client(&selected);
+    if crate::strata_port::profile_target() {
+        client.set_profiling_paused(true);
+    }
     let distinct_runtime = !std::ptr::eq(client.info(), target_client.info());
     let runtime_id = match selected {
         cubecl::wgpu::WgpuDevice::Existing(id) => id,
@@ -1645,7 +1648,17 @@ pub(crate) fn run(
                 let verifying = Instant::now();
                 let mut round =
                     LatestTargetRound::begin(&mut target, &mut executor, &inputs, &cancel)?;
-                let rows = round.verify(&cancel)?;
+                let profile_this_round = crate::strata_port::profile_target() && stats.rounds == 8;
+                if profile_this_round {
+                    cubecl::future::block_on(client.sync())?;
+                    client.set_profiling_paused(false);
+                }
+                let verified = round.verify(&cancel);
+                if profile_this_round {
+                    client.set_profiling_paused(true);
+                    cubecl::future::block_on(client.sync())?;
+                }
+                let rows = verified?;
                 if rows.start() != position
                     || rows.count() != count
                     || rows.binding_id() != graph.bound_graph().binding_id()
