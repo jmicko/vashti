@@ -43,5 +43,64 @@ records include actual per-member-count dispatch credit, source/artifact identit
 MTP/lookup accounting, throughput, owner closures and recovered host state.
 Private inputs have no route into this prototype. Runtime state is transient.
 
-Status: implementation written as a single pass; compilation and whole-model
-acceptance are next. Existing per-leaf numeric suites are intentionally deferred.
+## Current checkpoint
+
+The initial coherent prototype is written and built. It is not a completed
+rewrite of every Strata subsystem. Source `f0ed07a` fixes a shader-cache identity
+collision found by final checks: `.info` replaces its previous value, so the
+identity must contain BOTH the original variant/dtype and the port mode in one
+tuple. Never revert that fix. The smaller-batch DOWN transform and original
+Cargo target registration are also fixed.
+
+The final frozen v204 Rust artifact SHA256 is
+`2964f4b83814f0f39b26afab63410db03d05a6c597818f408f08be4bf9616b33`.
+Its20 generated variants pass full WGSL validation and SPIR-V lowering;
+metadata/workgroup dimensions agree. Both whole Q8 and Q2 presets pass a pure
+registration check with explicitly synthetic memory fields and no GPU created.
+Strict port Clippy passes. A single final regression check of the original
+engine, after fixing discovered bugs, passes1346 tests with one ignored.
+These are source/compiler checks, not GPU execution or model-quality evidence.
+
+**No port GPU benchmark has run and no throughput is claimed.** Sudo expired
+during implementation; one `sudo -v` prompt is waiting in the shared shell.
+The user was asked once. Do not repeatedly ask or weaken the swap/core/admission
+requirements to bypass it. No models were loaded and no services changed.
+Fresh unprivileged checkpoint confirms all three HTTP listeners200, actual
+B70used50688000B and Nvidia compute0.
+
+Do not use v199–v202 artifacts: they predate the cache-identity fix. v204 is the
+artifact to test. Original native code is preserved at6792453 on its branch.
+Native30tokens/s and full upstream feature coverage remain unachieved.
+
+
+## Exact first full-model run after sudo is restored
+
+Read the shared shell first. When its authentication prompt completes, start
+`keep-sudo-active.py` from that same terminal with `--minutes240` and a pid file
+under the development base. The helper refreshes only an already-authorized
+cache, never asks for or reads a password, and exits after four hours or a failed
+refresh. Stop its recorded PID when ending the work; do not leave it behind.
+This addresses the missed refresh during the initial broad implementation.
+
+From the root checkout in that terminal, use:
+
+```sh
+sudo -n python3 apps/kuno/benchmarks/text/run-strata-port.py native-strata-port-v204-build-20261013 native-strata-port-v204-code-q2-intel-20261013 code q2
+```
+
+The last path is fresh (the earlier failed sudo attempt never launched a run).
+The launcher pauses admission, captures fresh actual Intel memory, runs the
+fixed public code fixture in a swap/core-disabled cgroup, displays public text
+without saving it, records numeric results, and restores admission in finally.
+If Q2 encounters a runtime bug, retain its failure and try a fresh `code q8`
+control before changing target math. Once the whole path runs, inspect actual
+public output, target verification/repair, per-member-count GU/DOWN dispatches,
+throughput and owner/GPU recovery. Fix actual errors; do not resume the old
+per-leaf original CPU13 gate for this approximate experiment.
+
+The metadata/source helpers are not the engine: model execution remains Rust
+and WGSL. CLI input is still limited to these public fixtures; general private
+input/API integration and long-context KV remain separate work. The current
+cache capacity, graph/prefill implementations and4-token verifier reuse the
+existing Rust foundations and differ from the full upstream runtime. Preserve
+those limitations when reporting performance.

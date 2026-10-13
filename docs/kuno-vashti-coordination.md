@@ -4075,3 +4075,28 @@ and unpaused/no latch, B70used50688000B, Nvidia compute0, all classified GPU
 faults0, unchanged boot/kernel. No benchmark or compiler processes remain.
 No installed binary/default, public API, frontend or release change. Required
 Vashti changes: **none**. Do not resume automatically.
+
+### Native text: broad Rust Strata port checkpoint (2026-10-13)
+
+The user explicitly requested a coherent Rust port first, followed by full-model
+execution and bug fixes, superseding incremental original-CPU13-precision gates
+for this isolated experiment. Work is now on `codex/strata-rust-port` in the
+sequential Kuno worktree. Original accepted engine remains on `codex/kuno-native-text`
+at6792453; canonical Vashti is untouched. This is backend laboratory work and
+requires no consumer/API/frontend change.
+
+Prototype target math/scheduling and suffix/Q2 MTP controller are implemented;
+source `f0ed07a` passes build,20full WGSL/SPIR-V compiler variants, both pure
+registration presets, strict port Clippy, and1346original-engine regression tests
+(one ignored). It reuses existing Rust model operators. Full Strata feature
+coverage is not claimed: important cache/prefill/MTP/context features remain.
+
+**No GPU execution, quality or speed acceptance yet.** Cached sudo expired;
+one shared-shell prompt is pending. No services/models/GPUs were changed or
+loaded. Fresh unprivileged checks show all three HTTP listeners200, B70baseline
+50688000B, Nvidia compute0. Exact scope, immutable v204 artifact, defects fixed,
+limitations and first full-model command are in the
+[port checkpoint](kuno-strata-rust-port.md) and
+[owner handoff](kuno-native-next-model-handoff.md). Do not use earlier port
+artifacts with the shader-cache identity bug; retain both dtype/variant and mode
+in one KernelId info tuple. No deployment/release or automatic work is queued.

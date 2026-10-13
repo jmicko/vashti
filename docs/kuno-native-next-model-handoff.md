@@ -1,5 +1,50 @@
 # Native Kuno text engine: next-model handoff
 
+## Current work: broad Strata Rust port (2026-10-13)
+
+**Read this section first.** The user superseded the incremental CPU13-precision
+optimization queue below: implement a coherent Strata-style Rust execution path
+first, then test full inference and fix errors, allowing Strata's precision.
+Work now lives on **`codex/strata-rust-port`** in the same sequential checkout.
+Original working engine is preserved at6792453 on `codex/kuno-native-text`;
+canonical Vashti remains untouched. The older stop checkpoint below is history,
+not a command to abandon this newly authorized work.
+
+The first prototype builds. It changes the complete target IQ execution policy
+for counts1..4: single Q8_1/F16-scale plane, activation staging,256-thread32-row
+kernels, subgroup reductions, FMA, matching GPU dispatch plans, plus Q2/Q8 MTP
+registration and in-request suffix drafting with real target verification.
+It reuses the existing Rust GGUF, tokenizer, Qwen48-layer graph, GDN, QSA, PLE,
+gated residual and private ownership code. It is **not yet the full upstream
+feature set**: XMX prefill, runtime/CJK-pruned MTP, automatic/LRU cache,6/8-token
+verification, int8/long-context KV and general private-input worker are missing.
+
+Final source/artifact is `f0ed07a`, v204 SHA256
+`2964f4b83814f0f39b26afab63410db03d05a6c597818f408f08be4bf9616b33`.
+Build,20WGSL/SPIR-V variants, both registration presets, strict port Clippy
+and the original1346-test regression suite pass (one ignored). Fixes include
+smaller-batch DOWN transform, original Cargo target restoration and **kernel ID
+variant/dtype retention**: `.info(*self).info(mode)` overwrites the enum; use one
+tuple `.info((*self,mode))`. v199–v202 must not be used for GPU timing.
+
+**GPU run is pending; no speed/quality result exists.** Sudo expired during
+implementation. One password prompt/question is pending in Demons shell; do
+not ask again or type a command into its password prompt. No models or GPU jobs
+were started, services unchanged; fresh unprivileged read shows HTTP200 for
+Kuno/Ollama/Vashti, Intelused50688000B and Nvidia compute0. The bounded credential
+refresh helper is prepared but not running. Automated goal remains paused;
+this is manual work requested by the user.
+
+Resume with the exact command and scope in
+[the Rust port checkpoint](kuno-strata-rust-port.md). Run the full selected v204
+artifact with Q2 first, repair actual errors, then use a Q8 control and prose
+fixture as needed. Keep prompts/output transient; only fixed public text is
+shown live and omitted from saved logs. Aggregate source evidence:
+`apps/kuno/benchmarks/text/receipts/strata-rust-port-20261013.json`.
+There are no API, frontend, installed-service or release changes.
+
+## Previous accepted engine checkpoint — superseded as the current work queue
+
 Updated **2026-10-13 06:54 UTC / 01:54 America/Chicago**. User requested finishing
 this experiment and stopping until tomorrow. **Stopped; automated goal paused;
 no benchmark/compiler jobs or queued GPU work.** This opening checkpoint

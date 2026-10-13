@@ -1,0 +1,56 @@
+{
+  "source_commit": "f0ed07ae9ba59a069bcf9920f372de06bc92577a",
+  "source_branch": "codex/strata-rust-port",
+  "original_working_engine_commit": "6792453",
+  "upstream_revision": "fb58e0dbc8399662c0e47c76578c6e878b14f6cf",
+  "license": "MIT with Strata/ggml notices retained",
+  "rust_artifact_sha256": "2964f4b83814f0f39b26afab63410db03d05a6c597818f408f08be4bf9616b33",
+  "build_directory": "/media/jmicko/faststore/kuno-development/native-strata-port-v204-build-20261013",
+  "whole_rust_build_accepted": true,
+  "wgsl_spirv_variants_accepted": 20,
+  "whole_q8_and_q2_registration_only_accepted": true,
+  "registration_memory_values_explicitly_synthetic": true,
+  "original_engine_regression_tests_passed": 1346,
+  "original_engine_regression_tests_ignored": 1,
+  "strict_port_clippy_accepted": true,
+  "cpu13_original_precision_gate_required_for_this_experiment": false,
+  "gpu_execution_started": false,
+  "measured_tokens_per_second": null,
+  "blocking_condition": "Cached sudo expired during implementation; one shared-shell authentication prompt pending",
+  "bounded_sudo_refresh_helper_prepared_but_not_started": true,
+  "complete_upstream_rewrite_claimed": false,
+  "deferred_upstream_features": [
+    "XMX prefill",
+    "runtime Q8-repacked/CJK-pruned MTP",
+    "auto-sized/LRU expert cache",
+    "6/8-token verifier",
+    "long-context/int8 KV",
+    "general private-input worker/API"
+  ],
+  "host": {
+    "time": "2026-10-13T08:12:22.314843+00:00",
+    "http_statuses": {
+      "kuno": 200,
+      "ollama": 200,
+      "vashti": 200
+    },
+    "intel": {
+      "xe_memory": [
+        {
+          "total_bytes": 34242297856,
+          "used_bytes": 50688000
+        }
+      ]
+    },
+    "nvidia_compute_process_count": 0,
+    "gpu_benchmark_started": false,
+    "services_modified": false
+  },
+  "fixes_this_pass": {
+    "rust_report_type": "4c391b2",
+    "tail_down_transform": "6ae34e5",
+    "original_cargo_target": "182d075",
+    "shader_cache_variant_and_format_identity": "f0ed07a"
+  },
+  "do_not_use_earlier_port_artifacts": "v198 failed build; v199..v202 predate the shader-cache identity fix"
+}
