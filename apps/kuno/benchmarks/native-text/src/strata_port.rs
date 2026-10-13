@@ -342,3 +342,46 @@ pub(crate) fn validate_limits(limits: &wgpu::Limits) -> kuno_text::Result<()> {
     }
     Ok(())
 }
+
+/// Final full-set WGSL validation and SPIR-V lowering, after the one-shot port.
+pub(crate) fn validate_shader_set() -> Result<(), Box<dyn std::error::Error>> {
+    if !enabled() {
+        return Err("Strata port feature required".into());
+    }
+    use wgpu::naga as n;
+    let mut shaders = crate::quant_matvec::frozen_gu_integer::strata_compiled_sources();
+    shaders.extend(crate::quant_matvec::frozen_down_integer::strata_compiled_sources());
+    for (index, compiled) in shaders.iter().enumerate() {
+        let module = n::front::wgsl::parse_str(&compiled.source)
+            .map_err(|e| e.emit_to_string(&compiled.source))?;
+        let info = n::valid::Validator::new(
+            n::valid::ValidationFlags::all(),
+            n::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .map_err(|e| e.emit_to_string(&compiled.source))?;
+        if compiled.cube_dim != CubeDim::new_1d(module.entry_points[0].workgroup_size[0]) {
+            return Err("port metadata/WGSL dimension disagreement".into());
+        }
+        n::back::spv::write_vec(
+            &module,
+            &info,
+            &n::back::spv::Options {
+                lang_version: (1, 3),
+                zero_initialize_workgroup_memory:
+                    n::back::spv::ZeroInitializeWorkgroupMemoryMode::None,
+                ..Default::default()
+            },
+            Some(&n::back::spv::PipelineOptions {
+                shader_stage: n::ShaderStage::Compute,
+                entry_point: "main".into(),
+            }),
+        )?;
+        println!(
+            "strata_shader_accepted index={index} workgroup={}",
+            module.entry_points[0].workgroup_size[0]
+        );
+    }
+    println!("strata_shader_set_complete shaders={}", shaders.len());
+    Ok(())
+}

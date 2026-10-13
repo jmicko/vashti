@@ -524,3 +524,33 @@ mod tests;
 
 #[path = "frozen_down_integer_four.rs"]
 pub(crate) mod four;
+
+/// Whole-port shader set for the final compiler acceptance command. No GPU.
+pub(crate) fn strata_compiled_sources() -> Vec<CompiledKernel<AutoCompiler>> {
+    let mut result = Vec::new();
+    let mut emit = |kernel: &dyn CubeTask<AutoCompiler>| {
+        result.push(
+            kernel
+                .compile(
+                    &mut AutoCompiler::Wgsl(Default::default()),
+                    &Default::default(),
+                    ExecutionMode::Unchecked,
+                    StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+                )
+                .unwrap(),
+        );
+    };
+    for dtype in [super::IQ4_NL, super::Q2_0] {
+        let row_bytes = kuno_text::TensorType::from_gguf_id(dtype)
+            .unwrap()
+            .row_bytes(640)
+            .unwrap() as usize;
+        emit(&Kernel::ProjectCompact { dtype, row_bytes });
+        emit(&four::Kernel::ProjectCompact { dtype, row_bytes });
+    }
+    emit(&Kernel::Prepare);
+    emit(&Kernel::Audit);
+    emit(&four::Kernel::Prepare);
+    emit(&four::Kernel::Audit);
+    result
+}

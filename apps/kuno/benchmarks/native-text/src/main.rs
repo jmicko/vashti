@@ -1088,6 +1088,9 @@ fn report_public_owned_zero_audit(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().nth(1).as_deref() == Some("--validate-port-shaders") {
+        return strata_port::validate_shader_set();
+    }
     let vendor = match std::env::args().nth(1).as_deref() {
         Some("intel") => 0x8086,
         Some("nvidia") => 0x10de,

@@ -761,3 +761,33 @@ pub(crate) fn audit_compact(
     }
     Ok(())
 }
+
+/// Whole-port shader set for the final compiler acceptance command. No GPU.
+pub(crate) fn strata_compiled_sources() -> Vec<CompiledKernel<AutoCompiler>> {
+    let mut result = Vec::new();
+    let mut emit = |kernel: &dyn CubeTask<AutoCompiler>| {
+        result.push(
+            kernel
+                .compile(
+                    &mut AutoCompiler::Wgsl(Default::default()),
+                    &Default::default(),
+                    ExecutionMode::Unchecked,
+                    StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+                )
+                .unwrap(),
+        );
+    };
+    for dtype in [super::IQ2_S, super::IQ3_XXS, super::IQ3_S, super::IQ4_XS] {
+        let row_bytes = kuno_text::TensorType::from_gguf_id(dtype)
+            .unwrap()
+            .row_bytes(2560)
+            .unwrap() as usize;
+        emit(&Kernel::ProjectCompact { dtype, row_bytes });
+        emit(&four::Kernel::ProjectCompact { dtype, row_bytes });
+    }
+    emit(&Kernel::PrepareCompact);
+    emit(&Kernel::AuditCompact);
+    emit(&four::Kernel::PrepareCompact);
+    emit(&four::Kernel::AuditCompact);
+    result
+}
