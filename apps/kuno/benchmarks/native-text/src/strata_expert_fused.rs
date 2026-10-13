@@ -145,7 +145,7 @@ impl KernelMetadata for Kernel {
     }
     fn id(&self) -> KernelId {
         KernelId::new::<Self>()
-            .info(*self)
+            .info((*self, crate::strata_port::expert_lanes()))
             .cube_dim(CubeDim::new_1d(256))
     }
     fn address_type(&self) -> StorageType {
@@ -259,7 +259,15 @@ pub(crate) fn launch(
                 row_bytes: projection.row_bytes(),
                 four: count == 4,
             }),
-            CubeCount::Static(if down { 80 } else { 20 }, groups as u32, 1),
+            CubeCount::Static(
+                if down {
+                    2560 / (256 / crate::strata_port::expert_lanes())
+                } else {
+                    640 / (256 / crate::strata_port::expert_lanes())
+                } as u32,
+                groups as u32,
+                1,
+            ),
             args,
         );
     }

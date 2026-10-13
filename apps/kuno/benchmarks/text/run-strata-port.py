@@ -10,10 +10,10 @@ def helper(name,*args):
  return json.loads(subprocess.check_output(['python3',str(BASE/'helpers-20261008'/name),*args],text=True))
 
 def run():
- if os.getuid()!=0 or len(sys.argv) not in (5,6,7,8):raise ValueError('root BUILD OUT code|prose q8|q2 [--profile] [--integer-head] [--fused-experts]')
+ if os.getuid()!=0 or not 5<=len(sys.argv)<=10:raise ValueError('root BUILD OUT code|prose q8|q2 [--profile] [--integer-head] [--fused-experts]')
  build=BASE/sys.argv[1];out=BASE/sys.argv[2];fixture,profile=sys.argv[3:5]
  options=set(sys.argv[5:])
- if options-{'--profile','--integer-head','--fused-experts'}:raise ValueError('port selector')
+ if options-{'--profile','--integer-head','--fused-experts','--wide-experts','--expert-lanes16'}:raise ValueError('port selector')
  target_profile='--profile' in options
  if out.exists():raise ValueError('fresh output required')
  out.mkdir()
@@ -32,6 +32,8 @@ def run():
  if target_profile:env['KUNO_STRATA_PROFILE_TARGET']='round-8'
  if '--integer-head' in options:env['KUNO_LAB_TARGET_HEAD']='integer-public'
  if '--fused-experts' in options:env['KUNO_STRATA_FUSED_EXPERTS']='five-tier-public'
+ if '--wide-experts' in options:env['KUNO_STRATA_WIDE_EXPERTS']='aligned-vector-public'
+ if '--expert-lanes16' in options:env['KUNO_STRATA_EXPERT_LANES']='sixteen-public'
  # Capture source identity; whole files were hashed by preceding accepted trials.
  sources=[]
  for path in sorted(protected.MODEL.glob('*.gguf')):

@@ -144,7 +144,12 @@ impl KernelMetadata for Kernel {
     }
     fn id(&self) -> KernelId {
         KernelId::new::<Self>()
-            .info((*self, crate::strata_port::enabled()))
+            .info((
+                *self,
+                crate::strata_port::enabled(),
+                crate::strata_port::wide_experts(),
+                crate::strata_port::expert_lanes(),
+            ))
             .cube_dim(crate::strata_port::dimension(
                 CubeDim::new_1d(64),
                 matches!(self, Self::Project { .. } | Self::ProjectCompact { .. }),

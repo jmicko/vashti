@@ -28,6 +28,7 @@ impl Drop for DraftWindow {
     }
 }
 #[cube(launch)]
+#[allow(clippy::len_zero)] // Cube Array API exposes len, not is_empty.
 fn save_proposal(
     greedy: &Array<u32>,
     packet: &mut Array<u32>,

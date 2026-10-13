@@ -14,6 +14,16 @@ pub(crate) fn fused_sources() -> bool {
             std::env::var("KUNO_STRATA_FUSED_EXPERTS").as_deref() == Ok("five-tier-public")
         })
 }
+pub(crate) fn wide_experts() -> bool {
+    enabled() && std::env::var("KUNO_STRATA_WIDE_EXPERTS").as_deref() == Ok("aligned-vector-public")
+}
+pub(crate) fn expert_lanes() -> usize {
+    if enabled() && std::env::var("KUNO_STRATA_EXPERT_LANES").as_deref() == Ok("sixteen-public") {
+        16
+    } else {
+        8
+    }
+}
 pub(crate) fn profile_target() -> bool {
     enabled() && std::env::var("KUNO_STRATA_PROFILE_TARGET").as_deref() == Ok("round-8")
 }
@@ -145,8 +155,8 @@ impl DraftPolicy {
             }
             let baseline = expected[maximum] / self.cost_ms(maximum).max(0.001);
             let mut best = baseline;
-            for count in 2..maximum {
-                let rate = expected[count] / self.cost_ms(count).max(0.001);
+            for (count, expected_count) in expected.iter().enumerate().take(maximum).skip(2) {
+                let rate = expected_count / self.cost_ms(count).max(0.001);
                 if rate > best * 1.03 {
                     best = rate;
                     selected = count;
@@ -205,7 +215,7 @@ impl DraftPolicy {
             self.bad[b] = 0.97 * self.bad[b] + if accepted < t { 1. } else { 0. };
         } else {
             for position in 0..t - 1 {
-                if position <= accepted - 1 {
+                if position < accepted {
                     self.mtp_ok[position] *= 0.97;
                     self.mtp_bad[position] *= 0.97;
                     if position < accepted - 1 {
@@ -253,7 +263,7 @@ pub(crate) fn public_preview(text: &str) {
 pub(crate) fn receipt() -> serde_json::Value {
     serde_json::json!({"enabled": enabled(), "upstream_revision": "fb58e0dbc8399662c0e47c76578c6e878b14f6cf",
         "backend": "Rust/WGSL/Vulkan", "activation_planes": 1, "activation_scale": "fp16-q8_1",
-        "projection_workgroup":256, "rows_per_workgroup":32, "group_stride":4,"suffix_lookup_windows":LOOKUP_WINDOWS.load(Ordering::Relaxed),"suffix_lookup_proposed":LOOKUP_PROPOSED.load(Ordering::Relaxed),
+        "projection_workgroup":256, "rows_per_workgroup":256/expert_lanes(), "expert_dot_lanes":expert_lanes(), "aligned_vector_expert_reads":wide_experts(), "group_stride":4,"suffix_lookup_windows":LOOKUP_WINDOWS.load(Ordering::Relaxed),"suffix_lookup_proposed":LOOKUP_PROPOSED.load(Ordering::Relaxed),
         "gu_dispatches_by_member_count":GU.each_ref().map(|v|v.load(Ordering::Relaxed)),
         "down_dispatches_by_member_count":DOWN.each_ref().map(|v|v.load(Ordering::Relaxed)),
         "fused_five_tier_experts":fused_sources(), "original_cpu13_precision_contract": false, "intermediate_numeric_scans":false,"published_outputs_checked_finite":true,"full_private_erasure":true,"installed_or_production": false})
@@ -284,7 +294,7 @@ fn function_end(source: &str, first: usize) -> usize {
 /// All frozen expert role roots are complete and multiples of sixteen bytes.
 /// Scalar metadata uses one aligned vector; the IQ payload's load8 shares it.
 pub(crate) fn wide_weights(mut source: String, down_projection: bool) -> String {
-    if !enabled() {
+    if !wide_experts() {
         return source;
     }
     let names: &[&str] = if down_projection {
@@ -426,12 +436,31 @@ fn rows(source: String, down: bool) -> String {
     let source = replace(
         source,
         "let row=group.x*8u+local/8u;let lane=local%8u;",
-        "let row=group.x*32u+sg*(width/8u)+sub_lane/8u;let lane=sub_lane%8u;",
+        &format!(
+            "let row=group.x*{}u+sg*(width/{}u)+sub_lane/{}u;let lane=sub_lane%{}u;",
+            256 / expert_lanes(),
+            expert_lanes(),
+            expert_lanes(),
+            expert_lanes()
+        ),
     );
-    if down {
-        replace(source, "group.x>=320u", "group.x>=80u")
+    let source = if expert_lanes() == 16 {
+        source.replace("block+=8u", "block+=16u")
     } else {
-        replace(source, "group.x>=80u", "group.x>=20u")
+        source
+    };
+    if down {
+        replace(
+            source,
+            "group.x>=320u",
+            &format!("group.x>={}u", 2560 / (256 / expert_lanes())),
+        )
+    } else {
+        replace(
+            source,
+            "group.x>=80u",
+            &format!("group.x>={}u", 640 / (256 / expert_lanes())),
+        )
     }
 }
 
@@ -462,7 +491,10 @@ fn reduction(mut source: String, down: bool, members: usize) -> String {
             "    for(var stride=4u;stride>0u;stride/=2u) {{let g:{vec}=subgroupShuffleDown(gates,stride);let u:{vec}=subgroupShuffleDown(ups,stride);if lane<stride {{gates+=g;ups+=u;}}}}\n    "
         )
     };
-    source.replace_range(first..last, &tree);
+    source.replace_range(
+        first..last,
+        &tree.replace("stride=4u", &format!("stride={}u", expert_lanes() / 2)),
+    );
     for (i, axis) in ["x", "y", "z", "w"].iter().take(members).enumerate() {
         for (old, new) in if down {
             vec![("sums", "values")]
@@ -593,10 +625,22 @@ pub(crate) fn shader(mut source: String, down_projection: bool, members: usize) 
     }
     // Original record ownership/erasure is retained, with the actual new grid.
     source = source
-        .replace("+2u]=80u;", "+2u]=20u;")
-        .replace("+5u]=320u;", "+5u]=80u;")
-        .replace("planes[base+2u]!=80u", "planes[base+2u]!=20u")
-        .replace("planes[base+5u]!=320u", "planes[base+5u]!=80u");
+        .replace(
+            "+2u]=80u;",
+            &format!("+2u]={}u;", 640 / (256 / expert_lanes())),
+        )
+        .replace(
+            "+5u]=320u;",
+            &format!("+5u]={}u;", 2560 / (256 / expert_lanes())),
+        )
+        .replace(
+            "planes[base+2u]!=80u",
+            &format!("planes[base+2u]!={}u", 640 / (256 / expert_lanes())),
+        )
+        .replace(
+            "planes[base+5u]!=320u",
+            &format!("planes[base+5u]!={}u", 2560 / (256 / expert_lanes())),
+        );
     if source.contains("requires packed_4x8_integer_dot_product")
         && source.contains("let row=group.x*8u+local/8u;")
     {
