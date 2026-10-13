@@ -63,6 +63,9 @@ pub fn resources(
                     // PUBLIC fixtures only: static buffer/compiler lifecycle
                     // diagnostics, never an upstream inference response body.
                     eprintln!("strata_static_runtime_diagnostic={cause}");
+                    if let Err(launch) = client.flush() {
+                        eprintln!("strata_static_launch_diagnostic={launch}");
+                    }
                 }
                 Error::InvalidFormat("resident retained metadata lookup rejected")
             })?;

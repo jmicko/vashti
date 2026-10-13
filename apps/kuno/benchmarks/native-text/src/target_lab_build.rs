@@ -175,12 +175,18 @@ impl IntelMtpMemory {
             || down_integer
                 && draft_public != crate::resident_mtp::PUBLIC_BYTES
                 && !(crate::strata_port::enabled()
-                    && draft_public == crate::resident_mtp::strata_runtime_public_bytes())
+                    && (draft_public
+                        == (crate::resident_mtp::strata_runtime_public_bytes()
+                            + crate::resident_mtp::ENGLISH_VOCAB_OWNED_BYTES)
+                        || draft_public == crate::resident_mtp::ENGLISH_PUBLIC_BYTES))
             || !(matches!(
                 draft_public,
                 crate::resident_mtp::PUBLIC_BYTES | crate::resident_mtp::STRATA_PUBLIC_BYTES
             ) || crate::strata_port::enabled()
-                && draft_public == crate::resident_mtp::strata_runtime_public_bytes())
+                && (draft_public
+                    == (crate::resident_mtp::strata_runtime_public_bytes()
+                        + crate::resident_mtp::ENGLISH_VOCAB_OWNED_BYTES)
+                    || draft_public == crate::resident_mtp::ENGLISH_PUBLIC_BYTES))
             || target_source_pages != 30 * 1024 * 1024
             || target_baseline != 0
         {
@@ -285,7 +291,12 @@ pub(crate) fn intel_mtp_preflight_with_down_math(
         proof
             .admit_with_math(
                 info.device,
-                profile.public_bytes(),
+                profile.public_bytes()
+                    + if crate::strata_port::enabled() {
+                        crate::resident_mtp::ENGLISH_VOCAB_OWNED_BYTES
+                    } else {
+                        0
+                    },
                 IntelTargetOwners {
                     main: 828_866_560 + if integer { 65_536 } else { 0 } + 65_536,
                     banks,
@@ -301,7 +312,12 @@ pub(crate) fn intel_mtp_preflight_with_down_math(
             .admit(
                 info.device,
                 if integer { 828_932_096 } else { 828_866_560 },
-                profile.public_bytes(),
+                profile.public_bytes()
+                    + if crate::strata_port::enabled() {
+                        crate::resident_mtp::ENGLISH_VOCAB_OWNED_BYTES
+                    } else {
+                        0
+                    },
                 banks,
                 source_pages,
                 usage.bytes_reserved,

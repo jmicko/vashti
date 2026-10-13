@@ -11,21 +11,44 @@ use crate::mtp_resident_kernels::{D, GREEDY_CHUNK, GREEDY_WORDS, ROW_BYTES, VOCA
 use cubecl::prelude::*;
 use kuno_text::{Error, Result};
 
-pub const ENGLISH_ROWS: usize = 40_525;
+pub const ENGLISH_ROWS: usize = if crate::strata_port::enabled() {
+    106_299
+} else {
+    40_525
+};
 pub const ENGLISH_BYTES: usize = ENGLISH_ROWS * 4;
 // The native exclusive allocator reserves power-of-two bins. Cover the full
 // physical 256 KiB owner, rather than a 64 KiB-rounded 192 KiB handle inside it.
-pub const ENGLISH_OWNED_BYTES: usize = 262_144;
-pub const ENGLISH_SHA256: &str = "369151522226a5edaa5f12cfd1e2ae7db8f4fbdbd222f3dcf327dced9597fb25";
+pub const ENGLISH_OWNED_BYTES: usize = if crate::strata_port::enabled() {
+    524_288
+} else {
+    262_144
+};
+pub const ENGLISH_SHA256: &str = if crate::strata_port::enabled() {
+    "047861b9b153336c2b0e2d068af3819053622d0f7254e2f1d4df45167a78e97f"
+} else {
+    "369151522226a5edaa5f12cfd1e2ae7db8f4fbdbd222f3dcf327dced9597fb25"
+};
 pub const STRATA_REVISION: &str = "fb58e0dbc8399662c0e47c76578c6e878b14f6cf";
 pub const TILE_ROWS: usize = 16_384;
 pub const SEGMENTS: usize = VOCAB.div_ceil(TILE_ROWS);
 pub const ENGLISH_GREEDY_GROUPS: usize = ENGLISH_ROWS.div_ceil(GREEDY_CHUNK);
-const SEGMENT_ROWS: [usize; SEGMENTS] = [
-    16_384, 16_384, 2_777, 1_958, 1_503, 996, 0, 0, 0, 31, 44, 33, 26, 32, 34, 323,
-];
+const SEGMENT_ROWS: [usize; SEGMENTS] = if crate::strata_port::enabled() {
+    [
+        16384, 16384, 2850, 2080, 1610, 3367, 16367, 16384, 16384, 3376, 1958, 1952, 1875, 1887,
+        1821, 1620,
+    ]
+} else {
+    [
+        16_384, 16_384, 2_777, 1_958, 1_503, 996, 0, 0, 0, 31, 44, 33, 26, 32, 34, 323,
+    ]
+};
+#[cfg(not(feature = "strata-rust-port"))]
 pub const ENGLISH_MAP: &[u8; ENGLISH_BYTES] =
     include_bytes!("../fixtures/strata-english-vocab/draft_vocab_en.bin");
+#[cfg(feature = "strata-rust-port")]
+pub const ENGLISH_MAP: &[u8; ENGLISH_BYTES] =
+    include_bytes!("../fixtures/strata-cjk-vocab/draft_vocab_cjk_sorted.bin");
 
 fn reject() -> Error {
     Error::InvalidFormat("MTP pinned public English vocabulary")

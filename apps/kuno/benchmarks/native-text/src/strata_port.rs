@@ -512,6 +512,23 @@ pub(crate) fn validate_shader_set() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Strata port feature required".into());
     }
     use wgpu::naga as n;
+    for source in [
+        router_shader(include_str!("resident_batch_router_gpu.wgsl").into()),
+        router_shader(include_str!("resident_batch_router_gpu_four.wgsl").into()),
+        include_str!("strata-packet.wgsl").into(),
+    ] {
+        let module = n::front::wgsl::parse_str(&source).map_err(|e| e.emit_to_string(&source))?;
+        let _ = n::valid::Validator::new(
+            n::valid::ValidationFlags::all(),
+            n::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .map_err(|e| e.emit_to_string(&source))?;
+        println!(
+            "strata_new_controller_shader_accepted entries={}",
+            module.entry_points.len()
+        );
+    }
     let mut shaders = crate::quant_matvec::frozen_gu_integer::strata_compiled_sources();
     shaders.extend(crate::quant_matvec::frozen_down_integer::strata_compiled_sources());
     for (index, compiled) in shaders.iter().enumerate() {

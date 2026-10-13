@@ -437,7 +437,7 @@ pub(crate) fn registration(
             && !prepared_experts
             && !live_member_reduction,
         mtp_q8_head_broadcast,
-    )?;
+    )? || crate::strata_port::enabled();
     let original_public_target_scope = frozen_host_sources
         && frozen_host_router
         && frozen_partition_exit
@@ -467,7 +467,7 @@ pub(crate) fn registration(
                 fused_sweeps
                     && (crate::strata_port::enabled() || draft_profile == Profile::SelfContainedQ8)
                     && !mtp_q8_head_broadcast
-                    && !mtp_english_vocab
+                    && (!mtp_english_vocab || crate::strata_port::enabled())
             }
             // Target-only has no draft engine, so no draft-sweep prerequisite is
             // fabricated. Every original target prerequisite remains mandatory.
@@ -492,7 +492,7 @@ pub(crate) fn registration(
         decode_mode == DecodeMode::Speculative
             && original_public_target_scope
             && fused_sweeps
-            && !mtp_english_vocab,
+            && (!mtp_english_vocab || crate::strata_port::enabled()),
     )?;
     let total = values.remove(OsStr::new("KUNO_PUBLIC_MTP_INTEL_TOTAL_BYTES"));
     let used = values.remove(OsStr::new("KUNO_PUBLIC_MTP_INTEL_USED_BYTES"));
@@ -512,7 +512,7 @@ pub(crate) fn registration(
             && fused_sweeps
             && (crate::strata_port::enabled() || draft_profile == Profile::SelfContainedQ8)
             && !mtp_q8_head_broadcast
-            && !mtp_english_vocab,
+            && (!mtp_english_vocab || crate::strata_port::enabled()),
     )?;
     let raw_down_math = values.remove(OsStr::new("KUNO_LAB_FROZEN_DOWN_MATH"));
     let frozen_down_integer = crate::target_lab_build::frozen_down_integer(
@@ -522,7 +522,7 @@ pub(crate) fn registration(
             && fused_sweeps
             && (crate::strata_port::enabled() || draft_profile == Profile::SelfContainedQ8)
             && !mtp_q8_head_broadcast
-            && !mtp_english_vocab
+            && (!mtp_english_vocab || crate::strata_port::enabled())
             && !frozen_four_row_down
             && !frozen_down_stride_four,
     )?;
@@ -535,7 +535,7 @@ pub(crate) fn registration(
             && fused_sweeps
             && (crate::strata_port::enabled() || draft_profile == Profile::SelfContainedQ8)
             && !mtp_q8_head_broadcast
-            && !mtp_english_vocab
+            && (!mtp_english_vocab || crate::strata_port::enabled())
             && !frozen_down_stride_four,
     )?;
     let raw_bank_fill = values.remove(OsStr::new("KUNO_LAB_FROZEN_BANK_FILL"));
@@ -547,7 +547,7 @@ pub(crate) fn registration(
             && fused_sweeps
             && (crate::strata_port::enabled() || draft_profile == Profile::SelfContainedQ8)
             && !mtp_q8_head_broadcast
-            && !mtp_english_vocab,
+            && (!mtp_english_vocab || crate::strata_port::enabled()),
     )?;
     if mtp_batch_repair && bank_fill != crate::executor::PublicHostBankFillPolicy::Original {
         return Err("MTP batch repair requires original public bank fill");
@@ -561,17 +561,17 @@ pub(crate) fn registration(
             && fused_sweeps
             && (crate::strata_port::enabled() || draft_profile == Profile::SelfContainedQ8)
             && !mtp_q8_head_broadcast
-            && !mtp_english_vocab,
+            && (!mtp_english_vocab || crate::strata_port::enabled()),
     )?;
     let raw_ple_reads = values.remove(OsStr::new("KUNO_LAB_TARGET_PLE_READS"));
     let public_grouped_ple_reads = crate::target_lab_build::public_grouped_ple_reads(
         raw_ple_reads.as_deref(),
-        original_public_target_scope && !mtp_english_vocab,
+        original_public_target_scope && (!mtp_english_vocab || crate::strata_port::enabled()),
     )?;
     let raw_status_folds = values.remove(OsStr::new("KUNO_LAB_TARGET_STATUS_FOLDS"));
     let public_grouped_status_folds = crate::target_lab_build::public_grouped_status_folds(
         raw_status_folds.as_deref(),
-        original_public_target_scope && !mtp_english_vocab,
+        original_public_target_scope && (!mtp_english_vocab || crate::strata_port::enabled()),
     )?;
     let raw_lookahead = values.remove(OsStr::new("KUNO_LAB_TARGET_LOOKAHEAD"));
     let four_lookahead = crate::target_lab_build::public_four_lookahead(
@@ -584,7 +584,7 @@ pub(crate) fn registration(
             && fused_sweeps
             && (crate::strata_port::enabled() || draft_profile == Profile::SelfContainedQ8)
             && !mtp_q8_head_broadcast
-            && !mtp_english_vocab
+            && (!mtp_english_vocab || crate::strata_port::enabled())
             && (!mtp_batch_repair || public_grouped_ple_reads)
             && !public_iq4_decoder
             && !three_gdn_streaming
@@ -599,7 +599,7 @@ pub(crate) fn registration(
             && fused_sweeps
             && (crate::strata_port::enabled() || draft_profile == Profile::SelfContainedQ8)
             && !mtp_q8_head_broadcast
-            && !mtp_english_vocab
+            && (!mtp_english_vocab || crate::strata_port::enabled())
             && frozen_gu_integer
             && frozen_down_integer
             && public_grouped_ple_reads

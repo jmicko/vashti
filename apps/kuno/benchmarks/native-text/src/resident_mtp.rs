@@ -959,7 +959,7 @@ pub(crate) fn strata_runtime_public_bytes() -> u64 {
     public_plan_for(MtpProfile::StrataQ2).expect("static Strata runtime public plan")
 }
 fn public_bytes_with_english(profile: MtpProfile, english: bool) -> Result<u64> {
-    if english && profile != MtpProfile::SelfContainedQ8 {
+    if english && profile != MtpProfile::SelfContainedQ8 && !crate::strata_port::enabled() {
         return Err(Error::InvalidFormat(
             "MTP English vocabulary requires original Q8 head",
         ));
@@ -1191,7 +1191,11 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             limits,
             retired,
             true,
-            MtpProfile::SelfContainedQ8,
+            if crate::strata_port::enabled() {
+                graph.profile()
+            } else {
+                MtpProfile::SelfContainedQ8
+            },
             true,
         )
     }
@@ -2340,7 +2344,7 @@ impl ResidentMtp<'_, '_> {
         let proof = self
             .public_english_vocab
             .ok_or(Error::InvalidFormat("MTP English vocabulary absent"))?;
-        if self.graph.profile() != MtpProfile::SelfContainedQ8
+        if (self.graph.profile() != MtpProfile::SelfContainedQ8 && !crate::strata_port::enabled())
             || input != B::Mixed
             || output != B::Logits
             || WORDS[input as usize] != k::D

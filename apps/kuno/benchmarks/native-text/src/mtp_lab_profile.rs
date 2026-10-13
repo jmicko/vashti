@@ -51,7 +51,7 @@ impl Profile {
             None => Ok(false),
             Some(value)
                 if value == "english-public"
-                    && self == Self::SelfContainedQ8
+                    && (self == Self::SelfContainedQ8 || crate::strata_port::enabled())
                     && canonical_public_scope
                     && !broadcast =>
             {
@@ -63,10 +63,10 @@ impl Profile {
 
     pub(crate) fn public_bytes_with_english(self, english: bool) -> Result<u64> {
         if english {
-            if self != Self::SelfContainedQ8 {
+            if self != Self::SelfContainedQ8 && !crate::strata_port::enabled() {
                 return Err(Error::InvalidFormat("English vocabulary is Q8 only"));
             }
-            Ok(resident_mtp::ENGLISH_PUBLIC_BYTES)
+            Ok(self.public_bytes() + resident_mtp::ENGLISH_VOCAB_OWNED_BYTES)
         } else {
             Ok(self.public_bytes())
         }
