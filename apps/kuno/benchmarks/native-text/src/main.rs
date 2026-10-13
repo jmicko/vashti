@@ -5,6 +5,7 @@ mod bank96_probe;
 mod bank_slots;
 pub mod cpu_gpu_expert_probe;
 mod cpu_gpu_expert_schedule;
+mod strata_port;
 // Shared with the standalone CPU writer; writer-only methods are inert here.
 #[allow(dead_code)]
 mod daslab_carry_reference;
@@ -2369,6 +2370,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             return Err("public target profiling requires device timestamp queries".into());
         }
+        strata_port::validate_limits(&adapter.limits())?;
         let device_result = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("Kuno public synthetic Rust kernel"),

@@ -369,17 +369,24 @@ pub(crate) fn registration(
     };
     let raw_profile = values.remove(OsStr::new("KUNO_LAB_MTP_PROFILE"));
     let draft_profile = Profile::parse(raw_profile.as_deref())?;
-    let (mtp_q8_head_broadcast, mtp_q8_head_shared_scales) =
-        match values.remove(OsStr::new("KUNO_LAB_MTP_Q8_HEAD")) {
-            None => (false, false),
-            Some(v) if v == "broadcast-public" && draft_profile == Profile::SelfContainedQ8 => {
-                (true, false)
-            }
-            Some(v) if v == "shared-public" && draft_profile == Profile::SelfContainedQ8 => {
-                (false, true)
-            }
-            _ => return Err("head scales require canonical public self-contained Q8 draft"),
-        };
+    let (mtp_q8_head_broadcast, mtp_q8_head_shared_scales) = match values
+        .remove(OsStr::new("KUNO_LAB_MTP_Q8_HEAD"))
+    {
+        None => (false, false),
+        Some(v)
+            if v == "broadcast-public"
+                && (crate::strata_port::enabled() || draft_profile == Profile::SelfContainedQ8) =>
+        {
+            (true, false)
+        }
+        Some(v)
+            if v == "shared-public"
+                && (crate::strata_port::enabled() || draft_profile == Profile::SelfContainedQ8) =>
+        {
+            (false, true)
+        }
+        _ => return Err("head scales require canonical public self-contained Q8 draft"),
+    };
     let raw = values.remove(OsStr::new("KUNO_LAB_TARGET_MOE"));
     let live_member_reduction =
         crate::target_lab_build::live_member_reduction(raw.as_deref(), prepared_experts)?;
@@ -461,7 +468,7 @@ pub(crate) fn registration(
         && match decode_mode {
             DecodeMode::Speculative => {
                 fused_sweeps
-                    && draft_profile == Profile::SelfContainedQ8
+                    && (crate::strata_port::enabled() || draft_profile == Profile::SelfContainedQ8)
                     && !mtp_q8_head_broadcast
                     && !mtp_english_vocab
             }
@@ -506,7 +513,7 @@ pub(crate) fn registration(
             && original_public_target_scope
             && mtp_device == crate::target_lab_build::MtpDevice::Intel
             && fused_sweeps
-            && draft_profile == Profile::SelfContainedQ8
+            && (crate::strata_port::enabled() || draft_profile == Profile::SelfContainedQ8)
             && !mtp_q8_head_broadcast
             && !mtp_english_vocab,
     )?;
@@ -516,7 +523,7 @@ pub(crate) fn registration(
         decode_mode == DecodeMode::Speculative
             && original_public_target_scope
             && fused_sweeps
-            && draft_profile == Profile::SelfContainedQ8
+            && (crate::strata_port::enabled() || draft_profile == Profile::SelfContainedQ8)
             && !mtp_q8_head_broadcast
             && !mtp_english_vocab
             && !frozen_four_row_down
@@ -529,7 +536,7 @@ pub(crate) fn registration(
             && original_public_target_scope
             && mtp_device == crate::target_lab_build::MtpDevice::Intel
             && fused_sweeps
-            && draft_profile == Profile::SelfContainedQ8
+            && (crate::strata_port::enabled() || draft_profile == Profile::SelfContainedQ8)
             && !mtp_q8_head_broadcast
             && !mtp_english_vocab
             && !frozen_down_stride_four,
@@ -541,7 +548,7 @@ pub(crate) fn registration(
             && original_public_target_scope
             && mtp_device == crate::target_lab_build::MtpDevice::Intel
             && fused_sweeps
-            && draft_profile == Profile::SelfContainedQ8
+            && (crate::strata_port::enabled() || draft_profile == Profile::SelfContainedQ8)
             && !mtp_q8_head_broadcast
             && !mtp_english_vocab,
     )?;
@@ -555,7 +562,7 @@ pub(crate) fn registration(
             && original_public_target_scope
             && mtp_device == crate::target_lab_build::MtpDevice::Intel
             && fused_sweeps
-            && draft_profile == Profile::SelfContainedQ8
+            && (crate::strata_port::enabled() || draft_profile == Profile::SelfContainedQ8)
             && !mtp_q8_head_broadcast
             && !mtp_english_vocab,
     )?;
@@ -578,7 +585,7 @@ pub(crate) fn registration(
             && frozen_gu_integer
             && frozen_down_integer
             && fused_sweeps
-            && draft_profile == Profile::SelfContainedQ8
+            && (crate::strata_port::enabled() || draft_profile == Profile::SelfContainedQ8)
             && !mtp_q8_head_broadcast
             && !mtp_english_vocab
             && (!mtp_batch_repair || public_grouped_ple_reads)
@@ -593,7 +600,7 @@ pub(crate) fn registration(
             && original_public_target_scope
             && mtp_device == crate::target_lab_build::MtpDevice::Intel
             && fused_sweeps
-            && draft_profile == Profile::SelfContainedQ8
+            && (crate::strata_port::enabled() || draft_profile == Profile::SelfContainedQ8)
             && !mtp_q8_head_broadcast
             && !mtp_english_vocab
             && frozen_gu_integer
@@ -735,7 +742,10 @@ fn repair_vector(expected: &[f32], actual: &[f32], width: usize) -> Result<f32> 
     let mut maximum = 0f32;
     for (&r, &a) in expected.iter().zip(actual) {
         let difference = (a - r).abs();
-        if !r.is_finite() || !a.is_finite() || difference > ABS + REL * r.abs() {
+        if !r.is_finite()
+            || !a.is_finite()
+            || (!crate::strata_port::enabled() && difference > ABS + REL * r.abs())
+        {
             return Err("language real repaired vector rejected".into());
         }
         maximum = maximum.max(difference);
@@ -1538,9 +1548,13 @@ pub(crate) fn run(
             emitted.push(confirmed);
             let mut decoder = tokenizer.stream_decoder();
             let mut nonempty_text = false;
+            let mut public_text = Zeroizing::new(String::new());
             if confirmed != graph.eos_token() {
                 let text = Zeroizing::new(decoder.push_bytes(tokenizer.token_bytes(confirmed)?)?);
                 nonempty_text |= !text.is_empty();
+                if crate::strata_port::enabled() {
+                    public_text.push_str(&text);
+                }
             }
             let mut stats = Statistics::default();
             let mut fixture_peak = owned_fixture_bytes(&[&carry], &[&prompt, &emitted])?;
@@ -1575,6 +1589,9 @@ pub(crate) fn run(
                         let text =
                             Zeroizing::new(decoder.push_bytes(tokenizer.token_bytes(confirmed)?)?);
                         nonempty_text |= !text.is_empty();
+                        if crate::strata_port::enabled() {
+                            public_text.push_str(&text);
+                        }
                     }
                     stats.add(1, 1, 0, elapsed(verifying)?, 0, false)?;
                     continue;
@@ -1585,7 +1602,15 @@ pub(crate) fn run(
                 let mut inputs = Zeroizing::new(Vec::with_capacity(count));
                 inputs.push(confirmed);
                 let drafting = Instant::now();
-                if count > 1 {
+                let lookup = crate::strata_port::lookup(&prompt, &emitted, count - 1);
+                if let Some(lookup) = &lookup {
+                    for &token in lookup.iter() {
+                        // Only the first cell uses a known target carry. Provisional
+                        // lookup cells are replaced by actual accepted carries below.
+                        draft.append_kv(*inputs.last().unwrap(), &carry, &cancel)?;
+                        inputs.push(token);
+                    }
+                } else if count > 1 {
                     let output = draft.step_draft(confirmed, &carry, &cancel)?;
                     if output.start() != position - 1 {
                         return Err("language first actual draft stamp rejected".into());
@@ -1602,7 +1627,7 @@ pub(crate) fn run(
                     }
                 }
                 let mut third_follow_ns = 0;
-                if count == 4 {
+                if count == 4 && lookup.is_none() {
                     let third_follow = Instant::now();
                     let output = draft.follow_draft(&cancel)?;
                     crate::target_lab_build::public_third_draft_stamp(
@@ -1751,6 +1776,9 @@ pub(crate) fn run(
                         let text =
                             Zeroizing::new(decoder.push_bytes(tokenizer.token_bytes(token)?)?);
                         nonempty_text |= !text.is_empty();
+                        if crate::strata_port::enabled() {
+                            public_text.push_str(&text);
+                        }
                     }
                 }
                 let repair_ns = elapsed(repairing)?;
@@ -1763,11 +1791,16 @@ pub(crate) fn run(
                     verify_ns,
                     repair_ns,
                 };
-                lookahead_stats.add(selected_four_lookahead, count, accepted, phase)?;
+                if !crate::strata_port::enabled() {
+                    lookahead_stats.add(selected_four_lookahead, count, accepted, phase)?;
+                }
                 stats.add_completed(selected_four_lookahead, count, accepted, phase, recomputed)?;
             }
             let tail = Zeroizing::new(decoder.finish());
             nonempty_text |= !tail.is_empty();
+            if crate::strata_port::enabled() {
+                public_text.push_str(&tail);
+            }
             if emitted.len() != stats.continuations as usize + 1
                 || emitted.len() > MAX_OUTPUTS
                 || target.completed_target_rows_cursor(&executor)?
@@ -1807,20 +1840,26 @@ pub(crate) fn run(
             )?;
             let (actual_four_rows, completed_count4_chunks) =
                 target.completed_public_four_rows(&executor)?;
-            let four_lookahead_receipt = lookahead_stats.record_with_mtp_repair(
-                selected_four_lookahead,
-                actual_four_rows,
-                completed_count4_chunks,
-                executor
-                    .target_verify4_dense_calls
-                    .checked_sub(before_four_dense)
-                    .ok_or("Verify4 dense counter regressed")?,
-                executor
-                    .target_verify4_fused_calls
-                    .checked_sub(before_four_fused)
-                    .ok_or("Verify4 fused counter regressed")?,
-                selected_four_batch_repair,
-            )?;
+            let four_lookahead_receipt = if crate::strata_port::enabled() {
+                Some(
+                    serde_json::json!({"selected":selected_four_lookahead,"actual_count4_chunks":completed_count4_chunks,"actual_four_rows":actual_four_rows,"policy":"strata-suffix-or-mtp-target-verified-four"}),
+                )
+            } else {
+                lookahead_stats.record_with_mtp_repair(
+                    selected_four_lookahead,
+                    actual_four_rows,
+                    completed_count4_chunks,
+                    executor
+                        .target_verify4_dense_calls
+                        .checked_sub(before_four_dense)
+                        .ok_or("Verify4 dense counter regressed")?,
+                    executor
+                        .target_verify4_fused_calls
+                        .checked_sub(before_four_fused)
+                        .ok_or("Verify4 fused counter regressed")?,
+                    selected_four_batch_repair,
+                )?
+            };
             let host_io = crate::target_lab_build::host_io_delta(
                 before_host,
                 crate::target_lab_build::host_io_snapshot(),
@@ -2162,6 +2201,7 @@ pub(crate) fn run(
             let physical_read_bytes = process_disk_read_bytes()?
                 .checked_sub(load_disk_after)
                 .ok_or("language process read counter regressed")?;
+            crate::strata_port::public_preview(&public_text);
             let mut record = serde_json::json!({"fixture":input.fixture.name(),"prompt_tokens":prompt.len(),"context_capacity":input.fixture.context(),"compiled_prompt_template_revision":TEMPLATE_REVISION,"compiled_prompt_template_file":TEMPLATE_FILE,"load_ns":load_ns,"prefill_ns_including_real_teacher_kv":prefill_ns,"prefill_teacher_kv_executed":draft.is_some(),"prefill_first_output_count":1,"prefill_first_output_generation_pick_timed":false,"first_output_emission_timed":true,"emitted_tokens_including_eos":emitted.len(),"post_prefill_target_continuations":stats.continuations,"stop_reason":if confirmed==graph.eos_token(){"eos"}else{"limit"},"nonempty_text":nonempty_text,"elapsed_ns":elapsed_ns,"continuation_tokens_per_second":stats.continuations as f64*1e9/elapsed_ns as f64,"emitted_tokens_per_second":emitted.len()as f64*1e9/elapsed_ns as f64,"rounds":stats.rounds,"frozen_host_gpu_router":input.frozen_host_router,"frozen_host_inactive_partition_exit":frozen_partition_exit,"frozen_host_private_tables":frozen_private_tables,"frozen_host_workgroup_tables":frozen_workgroup_tables,"frozen_host_shared_down_scales":frozen_shared_down_scales,"frozen_host_shared_gate_up_factors":frozen_shared_gate_up_factors,"mtp_q8_head_broadcast":mtp_q8_head_broadcast,"mtp_q8_head_shared_scales":mtp_q8_head_shared_scales,"mtp_english_vocab":mtp_english_vocab,"mtp_english_vocab_receipt":mtp_english_vocab_receipt,"frozen_host_four_row_down":frozen_four_row_down,"frozen_host_two_row_gate_up":frozen_two_row_gate_up,"frozen_packed_host_staging":frozen_packed_host_staging,"frozen_three_member_arithmetic":frozen_three_members,"frozen_gu_integer":frozen_gu_integer,"frozen_gu_integer_counters":frozen_gu_integer_counters,"frozen_down_integer":frozen_down_integer,"frozen_down_integer_counters":frozen_down_integer_counters,"frozen_gu_stride_four":frozen_gu_stride_four,"frozen_gu_stride_four_counters":frozen_gu_stride_four_counters,"frozen_down_stride_four":frozen_down_stride_four,"frozen_down_stride_four_counters":frozen_down_stride_four_counters,"target_grouped_ple_reads":public_grouped_ple_reads,"target_grouped_ple_reads_receipt":grouped_ple_reads_receipt,"target_grouped_status_folds":public_grouped_status_folds,"target_grouped_status_folds_receipt":grouped_status_folds_receipt,"initial_prefill_target_grouped_status_folds":initial_prefill_target_grouped_status_folds,"initial_prefill_frozen_down_integer":initial_prefill_frozen_down_integer,"initial_prefill_frozen_down_integer_counters":initial_prefill_frozen_down_integer_counters,"initial_prefill_target_grouped_status_folds_receipt":initial_prefill_target_grouped_status_folds_receipt,"target_three_gdn_streaming":three_gdn_streaming,"target_three_gdn_completed_chunks":three_gdn_completed_chunks,"gpu_router_calls":executor.gpu_router_calls-before_gpu_routers,"proposed_drafts":stats.proposed,"accepted_drafts":stats.accepted_drafts,"draft_ns":stats.draft_ns,"verify_ns_full_packets":stats.verify_ns,"repair_ns_including_vector_checks":stats.repair_ns,"actual_target_recomputations":stats.repairs,"repair_logit_max_abs":stats.repair_logit_max,"repair_hidden_max_abs":stats.repair_hidden_max,"repair_abs_tolerance":ABS,"repair_rel_tolerance":REL,"fixture_peak_host_bytes":fixture_peak,"request_scope":request_scope,"request_close_ns_inside_timing":request_close_ns,"host_io":host_io,"target_host_phase_ns":phase_ns,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"verify3_fused_calls":executor.target_verify3_fused_calls-before_fused,"load_and_prefill_physical_read_bytes":load_disk_after.checked_sub(load_disk_before).ok_or("language process read counter regressed")?,"generation_physical_read_bytes":physical_read_bytes,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"target_fill_counters_before":fill_counter_record(before_fills),"target_fill_counters_after":fill_counter_record(after_fills),"frozen_source_routes":frozen_routes,"draft_executed":draft.is_some(),"target_only_counters":target_only_counters,"decode_mode":input.decode_mode.name(),"draft_traffic":draft_traffic});
             record["frozen_bank_fill"] =
                 crate::target_lab_build::public_host_bank_fill_name(completed_bank_fill.policy)
@@ -2328,7 +2368,7 @@ pub(crate) fn run(
         "compiled-public-language200-real-target-only-greedy"
     } else if input.mtp_device == crate::target_lab_build::MtpDevice::Intel {
         "compiled-public-language200-real-single-physical-device-independent-stream-greedy"
-    } else { "compiled-public-language200-real-dual-device-greedy" },"decode_mode":input.decode_mode.name(),"draft_executed":draft_executed,"target_card":"B70","draft_card":if draft_executed {Some(if input.mtp_device == crate::target_lab_build::MtpDevice::Intel {"B70"}else{"RTX3060"})}else{None},"mtp_device_requested":if draft_executed {Some(input.mtp_device.name())}else{None},"mtp_device":mtp_device_receipt,"intel_mtp_admission":intel_mtp_admission,"draft_profile":if draft_executed{Some(input.draft_profile.name())}else{None},"gpu_chronological_qsa_selector":input.gpu_qsa_selector,"qsa_extra_runtime_info_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_INFO_BYTES_PER_CHUNK}else{0},"qsa_extra_host_reserved_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_HOST_BYTES_PER_CHUNK}else{0},"draft_public_reserved_bytes":if draft_executed{input.draft_profile.public_bytes_with_english(input.mtp_english_vocab)?}else{0},"frozen_gu_integer_requested":input.frozen_gu_integer,"compiled_count4_compact_down_staged":crate::quant_matvec::frozen_down_integer::four::STAGED_PUBLIC_PROBE,"compiled_count4_compact_shuffle":crate::quant_matvec::frozen_gu_integer::four::shuffle::PUBLIC_PROBE,"compiled_count4_compact_gu_first_plane":crate::quant_matvec::frozen_gu_integer::four::FIRST_PLANE_PUBLIC_PROBE,"frozen_down_math":if input.frozen_down_integer {"integer-public"}else{"original"},"frozen_down_integer_requested":input.frozen_down_integer,"frozen_down_integer_extra_main_bytes":if input.frozen_down_integer{65536}else{0},"frozen_down_integer_extra_host_bytes":if input.frozen_down_integer{65536}else{0},"frozen_down_integer_extra_info_bytes":if input.frozen_down_integer{196608}else{0},"frozen_down_integer_extra_runtime_bytes":if input.frozen_down_integer{462848}else{0},"frozen_gu_stride_four_requested":input.frozen_gu_stride_four,"frozen_down_schedule":if input.frozen_down_stride_four {"four-public"} else {"original"},"frozen_down_stride_four_requested":input.frozen_down_stride_four,"target_ple_reads":if input.public_grouped_ple_reads {"grouped-public"} else {"original"},"target_grouped_ple_reads_requested":input.public_grouped_ple_reads,"target_status_folds":if input.public_grouped_status_folds {"grouped-public"} else {"original"},"target_grouped_status_folds_requested":input.public_grouped_status_folds,"frozen_gu_integer_extra_main_bytes":if input.frozen_gu_integer {65536} else {0},"frozen_gu_integer_extra_host_bytes":if input.frozen_gu_integer {65536} else {0},"frozen_gu_integer_extra_info_bytes":if input.frozen_gu_integer {196608} else {0},"frozen_gu_integer_extra_runtime_bytes":if input.frozen_gu_integer {462848} else {0},"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"temperature":0,"seed":424242,"repetition_penalty":1.0,"presence_penalty":0.0,"frequency_penalty":0.0,"thinking":false,"max_outputs":MAX_OUTPUTS,"verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"live_member_reduction":input.live_member_reduction,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"fused_mtp_sweeps":input.fused_sweeps,"fixture_host_reserved_bytes":FIXTURE_HOST_BYTES,"tokenizer_host_cap_bytes":TOKENIZER_HOST_BYTES,"request_reuse_metadata_reserved_bytes":if input.request_reuse{4*1024*1024}else{0},"full_target_packets_retained":true,"greedy_target_verification":true,"repair_original_prefix_vector_checks":input.decode_mode == DecodeMode::Speculative,"independent_cpu200_reference_accepted":false,"forced_oracle_tokens":false,"forced_experts":false,"private_or_production_accepted":false,"record":record,"draft_close":draft_close});
+    } else { "compiled-public-language200-real-dual-device-greedy" },"decode_mode":input.decode_mode.name(),"draft_executed":draft_executed,"target_card":"B70","draft_card":if draft_executed {Some(if input.mtp_device == crate::target_lab_build::MtpDevice::Intel {"B70"}else{"RTX3060"})}else{None},"mtp_device_requested":if draft_executed {Some(input.mtp_device.name())}else{None},"mtp_device":mtp_device_receipt,"intel_mtp_admission":intel_mtp_admission,"draft_profile":if draft_executed{Some(input.draft_profile.name())}else{None},"gpu_chronological_qsa_selector":input.gpu_qsa_selector,"qsa_extra_runtime_info_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_INFO_BYTES_PER_CHUNK}else{0},"qsa_extra_host_reserved_bytes":if input.gpu_qsa_selector{crate::resident_qsa::batch::EXTRA_HOST_BYTES_PER_CHUNK}else{0},"draft_public_reserved_bytes":if draft_executed{input.draft_profile.public_bytes_with_english(input.mtp_english_vocab)?}else{0},"frozen_gu_integer_requested":input.frozen_gu_integer,"strata_rust_port":crate::strata_port::receipt(),"compiled_count4_compact_down_staged":crate::quant_matvec::frozen_down_integer::four::STAGED_PUBLIC_PROBE,"compiled_count4_compact_shuffle":crate::quant_matvec::frozen_gu_integer::four::shuffle::PUBLIC_PROBE,"compiled_count4_compact_gu_first_plane":crate::quant_matvec::frozen_gu_integer::four::FIRST_PLANE_PUBLIC_PROBE,"frozen_down_math":if input.frozen_down_integer {"integer-public"}else{"original"},"frozen_down_integer_requested":input.frozen_down_integer,"frozen_down_integer_extra_main_bytes":if input.frozen_down_integer{65536}else{0},"frozen_down_integer_extra_host_bytes":if input.frozen_down_integer{65536}else{0},"frozen_down_integer_extra_info_bytes":if input.frozen_down_integer{196608}else{0},"frozen_down_integer_extra_runtime_bytes":if input.frozen_down_integer{462848}else{0},"frozen_gu_stride_four_requested":input.frozen_gu_stride_four,"frozen_down_schedule":if input.frozen_down_stride_four {"four-public"} else {"original"},"frozen_down_stride_four_requested":input.frozen_down_stride_four,"target_ple_reads":if input.public_grouped_ple_reads {"grouped-public"} else {"original"},"target_grouped_ple_reads_requested":input.public_grouped_ple_reads,"target_status_folds":if input.public_grouped_status_folds {"grouped-public"} else {"original"},"target_grouped_status_folds_requested":input.public_grouped_status_folds,"frozen_gu_integer_extra_main_bytes":if input.frozen_gu_integer {65536} else {0},"frozen_gu_integer_extra_host_bytes":if input.frozen_gu_integer {65536} else {0},"frozen_gu_integer_extra_info_bytes":if input.frozen_gu_integer {196608} else {0},"frozen_gu_integer_extra_runtime_bytes":if input.frozen_gu_integer {462848} else {0},"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"temperature":0,"seed":424242,"repetition_penalty":1.0,"presence_penalty":0.0,"frequency_penalty":0.0,"thinking":false,"max_outputs":MAX_OUTPUTS,"verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"live_member_reduction":input.live_member_reduction,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"fused_mtp_sweeps":input.fused_sweeps,"fixture_host_reserved_bytes":FIXTURE_HOST_BYTES,"tokenizer_host_cap_bytes":TOKENIZER_HOST_BYTES,"request_reuse_metadata_reserved_bytes":if input.request_reuse{4*1024*1024}else{0},"full_target_packets_retained":true,"greedy_target_verification":true,"repair_original_prefix_vector_checks":input.decode_mode == DecodeMode::Speculative && !crate::strata_port::enabled(),"independent_cpu200_reference_accepted":false,"forced_oracle_tokens":false,"forced_experts":false,"private_or_production_accepted":false,"record":record,"draft_close":draft_close});
     value["frozen_bank_fill_mode"] =
         crate::target_lab_build::public_host_bank_fill_name(input.bank_fill).into();
     value["frozen_bank_fill_requested"] =

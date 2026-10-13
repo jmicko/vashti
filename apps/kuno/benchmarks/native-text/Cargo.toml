@@ -11,6 +11,11 @@ path = "src/ornith_main.rs"
 name = "flash-kernel-lab"
 path = "src/flash_fast_main.rs"
 
+[[bin]]
+name = "kuno-strata-rust"
+path = "src/main.rs"
+required-features = ["strata-rust-port"]
+
 [dependencies]
 ash = "=0.38.0"
 cubecl-common = "=0.10.0"
@@ -30,6 +35,8 @@ cubecl-wgpu = { path = "vendor/cubecl-wgpu" }
 [features]
 # Compiled experiment; every invocation must explicitly select it in the runner.
 direct-device = ["cubecl-common/kuno-direct-device"]
+# Whole-model Strata precision/scheduling port; isolated from installed Kuno.
+strata-rust-port = ["direct-device"]
 # Separate arithmetic candidate: original weights, explicit FMA/32-lane CPU.
 cpu-fma = []
 cpu-buffered-weights = []

@@ -206,19 +206,26 @@ impl Kernel {
         }
     }
     fn dim(self) -> CubeDim {
-        CubeDim::new_1d(
-            if matches!(
-                self,
-                Self::Project { .. }
-                    | Self::ProjectStride4 { .. }
-                    | Self::ProjectCompact { .. }
-                    | Self::ProjectCompactFirstPlane { .. }
-                    | Self::ProjectCompactShuffle { .. }
-            ) {
-                64
-            } else {
-                128
-            },
+        let port_project = matches!(
+            self,
+            Self::Project { .. } | Self::ProjectStride4 { .. } | Self::ProjectCompact { .. }
+        );
+        crate::strata_port::dimension(
+            CubeDim::new_1d(
+                if matches!(
+                    self,
+                    Self::Project { .. }
+                        | Self::ProjectStride4 { .. }
+                        | Self::ProjectCompact { .. }
+                        | Self::ProjectCompactFirstPlane { .. }
+                        | Self::ProjectCompactShuffle { .. }
+                ) {
+                    64
+                } else {
+                    128
+                },
+            ),
+            port_project,
         )
     }
 }
@@ -239,7 +246,10 @@ impl KernelMetadata for Kernel {
         }
     }
     fn id(&self) -> KernelId {
-        KernelId::new::<Self>().info(*self).cube_dim(self.dim())
+        KernelId::new::<Self>()
+            .info(*self)
+            .info(crate::strata_port::enabled())
+            .cube_dim(self.dim())
     }
     fn address_type(&self) -> StorageType {
         StorageType::Scalar(ElemType::UInt(UIntKind::U32))
@@ -256,7 +266,7 @@ impl CubeTask<AutoCompiler> for Kernel {
         Ok(CompiledKernel {
             entrypoint_name: "main".into(),
             debug_name: None,
-            source: self.source(),
+            source: crate::strata_port::shader(self.source(), false, 4),
             repr: None,
             cube_dim: self.dim(),
             debug_info: None,

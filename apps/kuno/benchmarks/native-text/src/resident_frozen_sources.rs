@@ -3313,6 +3313,7 @@ impl Sources {
                                 groups,
                                 count,
                             )?;
+                            crate::strata_port::credit(false, count);
                             compact_gu_dispatches = compact_gu_dispatches
                                 .checked_add(1)
                                 .ok_or(Error::ArithmeticOverflow)?;
@@ -3420,6 +3421,7 @@ impl Sources {
                                 groups,
                                 count,
                             )?;
+                            crate::strata_port::credit(true, count);
                             compact_down_dispatches = compact_down_dispatches
                                 .checked_add(1)
                                 .ok_or(Error::ArithmeticOverflow)?;
