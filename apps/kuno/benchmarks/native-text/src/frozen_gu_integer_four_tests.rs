@@ -483,3 +483,147 @@ fn compact_audit_reconstructs_validates_and_erases_each_disjoint_record() {
     // A builderless (invalid MAP) round must leave all-zero records.
     assert!(source.contains("for(var i=0u;i<48u;i+=1u)"));
 }
+
+#[test]
+fn first_plane_compact_gu_lowers_all_formats_with_only_residual_math_removed() {
+    for dtype in [
+        crate::quant_matvec::IQ2_S,
+        crate::quant_matvec::IQ3_XXS,
+        crate::quant_matvec::IQ3_S,
+        crate::quant_matvec::IQ4_XS,
+    ] {
+        let row_bytes = TensorType::from_gguf_id(dtype)
+            .unwrap()
+            .row_bytes(2560)
+            .unwrap() as usize;
+        let original = four::Kernel::ProjectCompact { dtype, row_bytes };
+        let selected = four::Kernel::ProjectCompactFirstPlane { dtype, row_bytes };
+        let old = original.source();
+        let source = selected.source();
+        let module = lower(selected);
+        assert_eq!(module.entry_points[0].workgroup_size, [64, 1, 1]);
+        assert_eq!(barriers(&module.entry_points[0].function.body), 4);
+        assert_eq!(
+            shared_bytes(&module),
+            integer::original_grid_words(dtype).len() as u32 * 4 + 2048
+        );
+        assert_ne!(selected.id(), original.id());
+        assert_ne!(selected.name(), original.name());
+        assert_eq!(old.matches("dot4I8Packed(").count(), 16);
+        assert_eq!(source.matches("dot4I8Packed(").count(), 8);
+        // The complete emitted shader can differ only at the two arithmetic
+        // substitutions. All record, source, route, output and barrier guards
+        // remain exactly the accepted compact implementation.
+        let mut only_primary = old;
+        for axis in ["x", "y", "z", "w"] {
+            only_primary = only_primary
+                .replace(&format!("let second=planes[frames.{axis}+640u+at];"), "")
+                .replace(&format!("gs.{axis}+=dot4I8Packed(gq,second);"), "")
+                .replace(&format!("us.{axis}+=dot4I8Packed(uq,second);"), "")
+                .replace(
+                    &format!("let b=bitcast<f32>(planes[frames.{axis}+1360u+block]);"),
+                    "",
+                )
+                .replace(&format!("+b*f32(gs.{axis})"), "")
+                .replace(&format!("+b*f32(us.{axis})"), "");
+        }
+        assert_eq!(source, only_primary);
+    }
+}
+
+// Scalar model of the selected packed instruction order, using the separately
+// C-fixtured register decoder. The independent expectation below instead uses
+// full dequantized weights, direct per32 quantization and an F64 scalar sum.
+fn primary_prepared_dot(dtype: TensorType, bytes: &[u8], packed: &[u32]) -> f32 {
+    let mut wire = Wire { bytes, loads: 0 };
+    let mut lanes = [0f32; 8];
+    for (lane, sum) in lanes.iter_mut().enumerate() {
+        for block in (lane..80).step_by(8) {
+            let encoded = wire.prepare(dtype, 0, block);
+            for half in 0..if dtype == TensorType::Iq2S { 2 } else { 1 } {
+                let quartets = if dtype == TensorType::Iq2S { 4 } else { 8 };
+                let mut dot = 0i32;
+                for quartet in half * quartets..(half + 1) * quartets {
+                    let weights = encoded.packed(dtype, quartet).to_le_bytes();
+                    let values = packed[block * 8 + quartet].to_le_bytes();
+                    for (&weight, &value) in weights.iter().zip(&values) {
+                        dot += i32::from(weight as i8) * i32::from(value as i8);
+                    }
+                }
+                let primary = f32::from_bits(packed[1280 + block]) * dot as f32;
+                *sum += encoded.factor(dtype, half) * primary;
+            }
+        }
+    }
+    for stride in [4, 2, 1] {
+        for lane in 0..stride {
+            lanes[lane] += lanes[lane + stride];
+        }
+    }
+    lanes[0]
+}
+
+#[test]
+fn first_plane_compact_gu_matches_independent_primary_f64_and_ignores_residual_values() {
+    let inputs: Vec<_> = (0..4)
+        .map(|token| {
+            (0..2560)
+                .map(|i| ((i * (17 + token * 7)) % 311) as f32 / 193. - 0.7)
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let packed: Vec<_> = inputs
+        .iter()
+        .map(|input| oracle::Planes::new(input).unwrap().packed_words().unwrap())
+        .collect();
+    let mut differs_from_two_planes = false;
+    for dtype in [
+        TensorType::Iq2S,
+        TensorType::Iq3Xxs,
+        TensorType::Iq3S,
+        TensorType::Iq4Xs,
+    ] {
+        let row_bytes = dtype.row_bytes(2560).unwrap() as usize;
+        for phase in [1, 3] {
+            let bank = iq_fixtures::packed(dtype.gguf_id(), 8, 2560, phase);
+            for route in [37usize, 3, 15, 27] {
+                let token = route / 10;
+                for row in bank.chunks_exact(row_bytes) {
+                    let actual = primary_prepared_dot(dtype, row, &packed[token]);
+                    let mut weights = vec![0f32; 2560];
+                    dtype.decode(row, &mut weights).unwrap();
+                    let mut expected = 0f64;
+                    for (input, weights) in
+                        inputs[token].chunks_exact(32).zip(weights.chunks_exact(32))
+                    {
+                        let scale = input.iter().map(|x| x.abs()).fold(0f32, f32::max) / 127.;
+                        for (&value, &weight) in input.iter().zip(weights) {
+                            let q = if scale == 0. {
+                                0.
+                            } else {
+                                (value / scale).round_ties_even().clamp(-127., 127.)
+                            };
+                            expected += f64::from(weight) * f64::from(scale) * f64::from(q);
+                        }
+                    }
+                    // Existing leaf rounding allowance against the declared
+                    // quantized-input oracle; this is NOT the model CPU13 gate.
+                    assert!((f64::from(actual) - expected).abs() <= 1e-4 + 3e-4 * expected.abs());
+                    let mut altered = packed[token].to_vec();
+                    altered[640..1280].fill(0x8080_8080);
+                    altered[1360..1440].fill(123f32.to_bits());
+                    assert_eq!(
+                        actual.to_bits(),
+                        primary_prepared_dot(dtype, row, &altered).to_bits()
+                    );
+                    differs_from_two_planes |=
+                        actual.to_bits() != prepared_dot(dtype, row, &packed[token]).to_bits();
+                }
+            }
+        }
+    }
+    assert!(
+        differs_from_two_planes,
+        "the candidate must actually omit residual arithmetic"
+    );
+}

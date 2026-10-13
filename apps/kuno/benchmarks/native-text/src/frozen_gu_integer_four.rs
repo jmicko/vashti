@@ -1,5 +1,5 @@
 // Separate exactcount4 leaf. All original count1..3 entries remain unchanged.
-//! Explicit frozen GU-only two-residual-Q8/packed-dot candidate.
+//! Frozen GU two-residual-Q8 math plus an unused compact primary-plane probe.
 //! Original public banks, private rank MAP, DOWN and all owning spans remain
 //! caller-owned. This is alternate arithmetic, never original64 F32 parity.
 //! Packing/quantizer provenance and MIT notices: iq_moe_integer-NOTICE.txt.
@@ -62,6 +62,7 @@ pub(super) enum Kernel {
     PrepareCompact,
     ProjectCompact { dtype: u32, row_bytes: usize },
     AuditCompact,
+    ProjectCompactFirstPlane { dtype: u32, row_bytes: usize },
 }
 
 fn members(body: &str) -> String {
@@ -113,12 +114,17 @@ impl Kernel {
             Self::AuditCompact => template("COMPACT_AUDIT").to_owned(),
             Self::Project { dtype, row_bytes }
             | Self::ProjectStride4 { dtype, row_bytes }
-            | Self::ProjectCompact { dtype, row_bytes } => {
+            | Self::ProjectCompact { dtype, row_bytes }
+            | Self::ProjectCompactFirstPlane { dtype, row_bytes } => {
                 let stride_four = !matches!(self, Self::Project { .. });
-                // Both schedules use one arithmetic body. This keeps decoder,
-                // member order and the fixed lane tree identical by construction.
+                let first_plane = matches!(self, Self::ProjectCompactFirstPlane { .. });
+                // Schedules share all decoding, guards and reduction. Only the
+                // explicit first-plane candidate omits residual dot/scale terms.
                 let project = template("PROJECT");
-                let source = if matches!(self, Self::ProjectCompact { .. }) {
+                let source = if matches!(
+                    self,
+                    Self::ProjectCompact { .. } | Self::ProjectCompactFirstPlane { .. }
+                ) {
                     let prefix = project
                         .split_once("@compute @workgroup_size(64)")
                         .unwrap()
@@ -164,6 +170,16 @@ impl Kernel {
                     1
                 };
                 let quartets = if halves == 2 { 4 } else { 8 };
+                let dots = if first_plane {
+                    "{let first=planes[frames.AXIS+at];gf.AXIS+=dot4I8Packed(gq,first);uf.AXIS+=dot4I8Packed(uq,first);}\n"
+                } else {
+                    "{let first=planes[frames.AXIS+at];let second=planes[frames.AXIS+640u+at];gf.AXIS+=dot4I8Packed(gq,first);gs.AXIS+=dot4I8Packed(gq,second);uf.AXIS+=dot4I8Packed(uq,first);us.AXIS+=dot4I8Packed(uq,second);}\n"
+                };
+                let scales = if first_plane {
+                    "{let a=bitcast<f32>(planes[frames.AXIS+1280u+block]);let gp=a*f32(gf.AXIS);let up=a*f32(uf.AXIS);gates.AXIS+=gd*gp;ups.AXIS+=ud*up;}\n"
+                } else {
+                    "{let a=bitcast<f32>(planes[frames.AXIS+1280u+block]);let b=bitcast<f32>(planes[frames.AXIS+1360u+block]);let gp=a*f32(gf.AXIS)+b*f32(gs.AXIS);let up=a*f32(uf.AXIS)+b*f32(us.AXIS);gates.AXIS+=gd*gp;ups.AXIS+=ud*up;}\n"
+                };
                 source
                     .replace("GRID_DECLARATION_VALUE", &grid)
                     .replace("GRID_INITIALIZE_VALUE", &initialize)
@@ -173,8 +189,8 @@ impl Kernel {
                     .replace("HALVES_VALUE", &halves.to_string())
                     .replace("QUARTETS_VALUE", &quartets.to_string())
                     .replace("FRAME_MEMBERS_VALUE", &members(&format!("frames.AXIS=64u+(map[p.a+164u+{group_index}*8u+MEMBER_INDEXu]/10u)*1440u;\n")))
-                    .replace("DOT_MEMBERS_VALUE", &members("{let first=planes[frames.AXIS+at];let second=planes[frames.AXIS+640u+at];gf.AXIS+=dot4I8Packed(gq,first);gs.AXIS+=dot4I8Packed(gq,second);uf.AXIS+=dot4I8Packed(uq,first);us.AXIS+=dot4I8Packed(uq,second);}\n"))
-                    .replace("SCALE_MEMBERS_VALUE", &members("{let a=bitcast<f32>(planes[frames.AXIS+1280u+block]);let b=bitcast<f32>(planes[frames.AXIS+1360u+block]);let gp=a*f32(gf.AXIS)+b*f32(gs.AXIS);let up=a*f32(uf.AXIS)+b*f32(us.AXIS);gates.AXIS+=gd*gp;ups.AXIS+=ud*up;}\n"))
+                    .replace("DOT_MEMBERS_VALUE", &members(dots))
+                    .replace("SCALE_MEMBERS_VALUE", &members(scales))
                     .replace("OUTPUT_MEMBERS_VALUE", &members(&format!("{{let route=map[p.a+164u+{group_index}*8u+MEMBER_INDEXu];output[p.d+route*p.e+row]=silu(gate_sums[local*4u+MEMBER_INDEXu])*up_sums[local*4u+MEMBER_INDEXu];if row==0u {{status[p.f+route]=1u;}}}}\n")))
             }
         }
@@ -183,7 +199,10 @@ impl Kernel {
         CubeDim::new_1d(
             if matches!(
                 self,
-                Self::Project { .. } | Self::ProjectStride4 { .. } | Self::ProjectCompact { .. }
+                Self::Project { .. }
+                    | Self::ProjectStride4 { .. }
+                    | Self::ProjectCompact { .. }
+                    | Self::ProjectCompactFirstPlane { .. }
             ) {
                 64
             } else {
@@ -201,6 +220,9 @@ impl KernelMetadata for Kernel {
             Self::Audit => "FrozenGuIntegerFourAudit",
             Self::PrepareCompact => "FrozenGuIntegerFourPrepareCompact",
             Self::ProjectCompact { .. } => "FrozenGuIntegerFourEightLanesCompact",
+            Self::ProjectCompactFirstPlane { .. } => {
+                "FrozenGuIntegerFourEightLanesCompactFirstPlane"
+            }
             Self::AuditCompact => "FrozenGuIntegerFourAuditCompact",
         }
     }
@@ -605,6 +627,48 @@ pub(crate) fn launch_compact(
     groups: usize,
     count: usize,
 ) -> Result<()> {
+    launch_compact_inner(
+        client, geometry, spans, banks, owners, scratch, first_slot, slot_count, groups, count,
+        false,
+    )
+}
+
+/// Unconnected fixed-public experiment: original compact count4 GU with only
+/// the primary Q8 activation plane. Prepare/audit still own both full planes.
+/// The original CPU13 vector/carry/greedy gate must accept before timing credit.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn launch_compact_first_plane(
+    client: &ComputeClient<WgpuRuntime>,
+    geometry: g::Geometry,
+    spans: &g::Spans,
+    banks: [Handle; 2],
+    owners: [Handle; 7],
+    scratch: Handle,
+    first_slot: usize,
+    slot_count: usize,
+    groups: usize,
+    count: usize,
+) -> Result<()> {
+    launch_compact_inner(
+        client, geometry, spans, banks, owners, scratch, first_slot, slot_count, groups, count,
+        true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn launch_compact_inner(
+    client: &ComputeClient<WgpuRuntime>,
+    geometry: g::Geometry,
+    spans: &g::Spans,
+    banks: [Handle; 2],
+    owners: [Handle; 7],
+    scratch: Handle,
+    first_slot: usize,
+    slot_count: usize,
+    groups: usize,
+    count: usize,
+    first_plane: bool,
+) -> Result<()> {
     let shard = shard_index(first_slot, slot_count)?;
     validate_layout(
         geometry,
@@ -663,9 +727,16 @@ pub(crate) fn launch_compact(
     // the record bounds every list access and the shard dispatch uniformly.
     unsafe {
         client.launch_unchecked(
-            Box::new(Kernel::ProjectCompact {
-                dtype: gate.dtype(),
-                row_bytes: gate.row_bytes(),
+            Box::new(if first_plane {
+                Kernel::ProjectCompactFirstPlane {
+                    dtype: gate.dtype(),
+                    row_bytes: gate.row_bytes(),
+                }
+            } else {
+                Kernel::ProjectCompact {
+                    dtype: gate.dtype(),
+                    row_bytes: gate.row_bytes(),
+                }
             }),
             CubeCount::Dynamic(dispatch),
             args,
