@@ -387,6 +387,14 @@ pub(crate) fn wide_router_template(source: &str) -> String {
         .replace("76064u", "75680u")
         .replace("j==16u", "j==24u")
         .replace("j==17u", "j==25u")
+        .replace(
+            "if index==0u && arrayLength(&fault)>0u {atomicOr(&fault[0],1u);}",
+            "if index==0u && arrayLength(&fault)>0u {atomicOr(&fault[0],257u);}",
+        )
+        .replace(
+            "if bad {atomicOr(&fault[0],1u);}",
+            "if bad {atomicOr(&fault[0],513u);}",
+        )
 }
 
 pub(crate) fn router_shader(mut source: String) -> String {
@@ -708,6 +716,17 @@ pub(crate) fn shader(mut source: String, down_projection: bool, members: usize) 
             )
             .replace("i<16384u", "i<32768u")
             .replace("at>=16384u", "at>=32768u");
+    }
+    if verify_capacity() == 8 && source.contains("var<storage,read_write> fault:array<atomic<u32>>")
+    {
+        source = source.replace(
+            "atomicOr(&fault[0],8u)",
+            if down_projection {
+                "atomicOr(&fault[0],2056u)"
+            } else {
+                "atomicOr(&fault[0],1032u)"
+            },
+        );
     }
     if source.contains("fn prepare_q8(block:u32)") {
         source = quantizer(source);

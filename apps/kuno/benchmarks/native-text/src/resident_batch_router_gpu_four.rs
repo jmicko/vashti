@@ -148,7 +148,7 @@ impl CubeTask<AutoCompiler> for Kernel {
 }
 fn coordinates(layer: usize, start: u64, count: usize) -> Result<()> {
     if layer >= LAYERS
-        || count != MAX_COUNT
+        || !(4..=MAX_COUNT).contains(&count)
         || start.checked_add(count as u64).is_none_or(|end| end > 4096)
     {
         return Err(Error::InvalidFormat("batch device router coordinates"));

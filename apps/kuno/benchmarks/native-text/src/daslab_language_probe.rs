@@ -1664,12 +1664,19 @@ pub(crate) fn run(
                 let queued_window =
                     crate::strata_port::enabled() && candidate.is_none() && count > 1;
                 if queued_window {
-                    let output =
-                        draft.draft_window(confirmed, &carry, (count - 1).min(3), &cancel)?;
+                    let output = draft.draft_window(
+                        confirmed,
+                        &carry,
+                        (count - 1).min(crate::strata_port::verify_capacity() - 1),
+                        &cancel,
+                    )?;
                     if output.start != position - 1
                         || output.binding != draft.binding()
-                        || output.tokens().len() != (count - 1).min(3)
-                        || draft.position() != position + (count - 1).min(3) - 1
+                        || output.tokens().len()
+                            != (count - 1).min(crate::strata_port::verify_capacity() - 1)
+                        || draft.position()
+                            != position + (count - 1).min(crate::strata_port::verify_capacity() - 1)
+                                - 1
                     {
                         return Err("language completed queued draft identity rejected".into());
                     }

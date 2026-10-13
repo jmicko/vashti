@@ -4,6 +4,8 @@
 use super::*;
 use std::time::Instant;
 
+pub(super) const PACKET_WORDS: usize = crate::strata_port::verify_capacity();
+const MAX_PROPOSALS: usize = PACKET_WORDS - 1;
 pub(super) const EXTRA_BYTES: u64 = if cfg!(feature = "strata-rust-port") {
     32768
 } else {
@@ -36,7 +38,7 @@ fn save_proposal(
     index: usize,
 ) {
     if UNIT_POS_X == 0 {
-        if index >= 3 || packet.len() < 4 || greedy.len() < 1 {
+        if index >= MAX_PROPOSALS || packet.len() < PACKET_WORDS || greedy.len() < 1 {
             fault[0].fetch_or(8);
         } else {
             let token = greedy[0];
@@ -51,7 +53,7 @@ fn save_proposal(
 #[cube(launch)]
 fn seal_window(packet: &mut Array<u32>, fault: &Array<Atomic<u32>>) {
     if UNIT_POS_X == 0 {
-        packet[3] = fault[0].load();
+        packet[MAX_PROPOSALS] = fault[0].load();
     }
 }
 impl ResidentMtp<'_, '_> {
@@ -65,7 +67,7 @@ impl ResidentMtp<'_, '_> {
         u::cancel(cancel)?;
         if !crate::strata_port::enabled()
             || !self.fused_sweeps
-            || !(1..=3).contains(&count)
+            || !(1..=MAX_PROPOSALS).contains(&count)
             || self.closed
             || self.poisoned
             || self.live_outputs.load(Ordering::Acquire) != 0
@@ -82,7 +84,7 @@ impl ResidentMtp<'_, '_> {
         let start = self.position;
         let lease = OutputLease::acquire(&self.live_outputs)?;
         self.last_forward.take();
-        // At most three bounded per-cell INFO sets may remain queued together.
+        // At most the compiled number of bounded per-cell INFO sets may remain queued together.
         // Credit is retired only at the final completed fence, never on enqueue.
         self.ledger
             .precharge(&[count as u64 * INFO_BYTES])
@@ -146,9 +148,9 @@ impl ResidentMtp<'_, '_> {
                 );
                 self.tick(1)?;
                 let packet = self.read_words_id(id)?;
-                if packet[3] != 0
+                if packet[MAX_PROPOSALS] != 0
                     || packet[..count].iter().any(|&id| id >= k::VOCAB as u32)
-                    || packet[count..3].iter().any(|&id| id != 0)
+                    || packet[count..MAX_PROPOSALS].iter().any(|&id| id != 0)
                 {
                     return Err(Error::InvalidFormat(
                         "MTP completed queued window fault or token",

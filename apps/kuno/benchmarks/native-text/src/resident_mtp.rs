@@ -1305,7 +1305,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             .try_into()
             .map_err(|_| Error::InvalidBufferLength)?;
         let draft_window = if crate::strata_port::enabled() {
-            Some(arena.allocate_zeroed(4).map_err(error)?)
+            Some(arena.allocate_zeroed(window::PACKET_WORDS).map_err(error)?)
         } else {
             None
         };
