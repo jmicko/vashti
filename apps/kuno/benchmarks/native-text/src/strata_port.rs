@@ -280,6 +280,69 @@ fn function_end(source: &str, first: usize) -> usize {
     }
     panic!("unclosed static shader function")
 }
+/// Native aligned vector source reads, preserving every original packed byte.
+/// All frozen expert role roots are complete and multiples of sixteen bytes.
+/// Scalar metadata uses one aligned vector; the IQ payload's load8 shares it.
+pub(crate) fn wide_weights(mut source: String, down_projection: bool) -> String {
+    if !enabled() {
+        return source;
+    }
+    let names: &[&str] = if down_projection {
+        &["down"]
+    } else {
+        &["gate", "up"]
+    };
+    if !source.contains(&format!("var<storage,read> {}:array<u32>", names[0])) {
+        return source;
+    }
+    for name in names {
+        source = source
+            .replace(
+                &format!("var<storage,read> {name}:array<u32>"),
+                &format!("var<storage,read> {name}:array<vec4<u32>>"),
+            )
+            .replace(
+                &format!("arrayLength(&{name})"),
+                &format!("(arrayLength(&{name})*4u)"),
+            );
+        let needle = format!("{name}[");
+        while let Some(first) = source.find(&needle) {
+            let end = first
+                + source[first..]
+                    .find(']')
+                    .expect("original scalar packed read");
+            let expression = &source[first + needle.len()..end];
+            let replacement = format!("{name}_scalar({expression})");
+            source.replace_range(first..end + 1, &replacement);
+        }
+        if let Some(first) = source.find(&format!("fn {name}_load8(")) {
+            let end = function_end(&source, first);
+            source.replace_range(
+                first..end,
+                &format!(
+                    r#"fn {name}_load8(at:u32)->vec2<u32> {{
+                let low={name}[at/16u];var high=low;
+                if at%16u>8u {{high={name}[at/16u+1u];}}
+                var a=low.x;var b=low.y;var c=low.z;
+                switch (at%16u)/4u {{
+                    case 1u: {{a=low.y;b=low.z;c=low.w;}}
+                    case 2u: {{a=low.z;b=low.w;c=high.x;}}
+                    case 3u: {{a=low.w;b=high.x;c=high.y;}}
+                    default: {{}}
+                }}
+                if at%4u==0u {{return vec2<u32>(a,b);}}
+                return vec2<u32>((a>>16u)|(b<<16u),(b>>16u)|(c<<16u));
+            }}"#
+                ),
+            );
+        }
+        source.push_str(&format!(
+            "\nfn {name}_scalar(index:u32)->u32 {{return {name}[index/4u][index%4u];}}\n"
+        ));
+    }
+    source
+}
+
 pub(crate) fn router_shader(mut source: String) -> String {
     if !enabled() {
         return source;

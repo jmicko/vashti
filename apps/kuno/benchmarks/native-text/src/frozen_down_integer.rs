@@ -174,7 +174,10 @@ impl CubeTask<AutoCompiler> for Kernel {
         Ok(CompiledKernel {
             entrypoint_name: "main".into(),
             debug_name: None,
-            source: crate::strata_port::shader(self.source(), true, 3),
+            source: crate::strata_port::wide_weights(
+                crate::strata_port::shader(self.source(), true, 3),
+                true,
+            ),
             repr: None,
             cube_dim: crate::strata_port::dimension(
                 CubeDim::new_1d(64),
