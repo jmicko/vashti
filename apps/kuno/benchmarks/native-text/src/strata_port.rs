@@ -583,6 +583,7 @@ pub(crate) fn validate_shader_set() -> Result<(), Box<dyn std::error::Error>> {
     }
     let mut shaders = crate::quant_matvec::frozen_gu_integer::strata_compiled_sources();
     shaders.extend(crate::quant_matvec::frozen_down_integer::strata_compiled_sources());
+    shaders.extend(crate::q6_integer_matvec::batch::strata_compiled_sources());
     for (index, compiled) in shaders.iter().enumerate() {
         let module = n::front::wgsl::parse_str(&compiled.source)
             .map_err(|e| e.emit_to_string(&compiled.source))?;

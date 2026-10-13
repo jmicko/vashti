@@ -143,6 +143,15 @@ impl Kernel {
             .split_once("// PROJECT_BATCH_STAGE")
             .unwrap();
         if let Self::Prepare(columns) = self {
+            if crate::strata_port::enabled() {
+                return format!(
+                    "requires packed_4x8_integer_dot_product;\nconst COLUMNS:u32={columns}u;const PACKED_WORDS:u32={}u;const BLOCKS:u32={}u;\nstruct Params {{a:u32,b:u32,c:u32,d:u32,e:u32,f:u32,g:u32,h:u32}}\n@group(0) @binding(0) var<storage,read> input:array<f32>;\n@group(0) @binding(1) var<storage,read_write> planes:array<u32>;\n@group(0) @binding(2) var<storage,read_write> fault:array<atomic<u32>>;\n@group(0) @binding(3) var<uniform> p:Params;\n{}",
+                    columns / 4,
+                    columns / 32,
+                    include_str!("strata-q6-prepare.wgsl")
+                        .replace("// STRATA_BATCH_PREPARE_GUARD", prepare_guard)
+                );
+            }
             // Use the exact original quantizer/body. Only the guarded base
             // address gains its independent real member offset.
             return super::Kernel::Prepare(columns)
@@ -194,6 +203,30 @@ impl Kernel {
             body = section(&body, begin, end, four);
         }
         body = body.replace("VECTOR", if four { "vec4" } else { "vec3" });
+        if crate::strata_port::enabled() {
+            let first = body.find("fn member_pair(").expect("Q6 member helper");
+            let end = body[first..].find("\n@compute").expect("Q6 helper end") + first;
+            body.replace_range(
+                first..end,
+                r#"fn member_pair(codes:vec4<u32>,group:u32,member:u32)->f32 {
+                let first=p.b+member*p.h;var a=0;
+                for(var word=0u;word<4u;word++) {
+                    a+=dot4I8Packed(codes[word],planes[first+group*4u+word]);
+                }
+                let d=bitcast<f32>(planes[first+2u*PACKED_WORDS+group/2u]);
+                return d*f32(a);
+            }"#,
+            );
+            body = body.replace("if !finite(factor0) || !finite(factor1) || !finite(x0) || !finite(x1) {atomicOr(&fault[p.d],1u);}", "")
+                .replace("if !finite(factor0) || !finite(factor1) || !finite(y0) || !finite(y1) {atomicOr(&fault[p.d],1u);}", "")
+                .replace("if !finite(factor0) || !finite(factor1) || !finite(z0) || !finite(z1) {atomicOr(&fault[p.d],1u);}", "")
+                .replace("if !finite(factor0) || !finite(factor1) || !finite(w0) || !finite(w1) {atomicOr(&fault[p.d],1u);}", "");
+            for axis in ["x", "y", "z", "w"] {
+                body = body.replace(&format!("sum.{axis}+=factor0*{axis}0;sum.{axis}+=factor1*{axis}1;"),
+                    &format!("sum.{axis}=fma(factor0,{axis}0,sum.{axis});sum.{axis}=fma(factor1,{axis}1,sum.{axis});"));
+            }
+        }
+
         let weight = if wide { "vec4<u32>" } else { "u32" };
         format!(
             "requires packed_4x8_integer_dot_product;\nconst COLUMNS:u32={}u;const PACKED_WORDS:u32={}u;const BLOCKS:u32={}u;const PLANE_WORDS:u32={}u;\nconst ROWS:u32={}u;const ROW_BYTES:u32={}u;const AUDIT_TAIL:bool={tail};const FOUR:bool={four};const MEMBERS:u32={}u;const WEIGHT_WORD_BYTES:u32={}u;\nstruct Params {{a:u32,b:u32,c:u32,d:u32,e:u32,f:u32,g:u32,h:u32,i:u32,j:u32,k:u32,l:u32}}\n@group(0) @binding(0) var<storage,read> weight:array<{weight}>;\n@group(0) @binding(1) var<storage,read> planes:array<u32>;\n@group(0) @binding(2) var<storage,read_write> output:array<f32>;\n@group(0) @binding(3) var<storage,read_write> fault:array<atomic<u32>>;\n@group(0) @binding(4) var<uniform> p:Params;\n{}\n{body}",
@@ -221,7 +254,7 @@ impl KernelMetadata for Kernel {
     }
     fn id(&self) -> KernelId {
         KernelId::new::<Self>()
-            .info(*self)
+            .info((*self, crate::strata_port::enabled()))
             .cube_dim(CubeDim::new_1d(128))
     }
     fn address_type(&self) -> StorageType {
@@ -358,6 +391,33 @@ pub(crate) fn project(
         );
     }
     Ok(())
+}
+
+/// Complete port head shader set, including guarded preparation and real tails.
+pub(crate) fn strata_compiled_sources() -> Vec<CompiledKernel<AutoCompiler>> {
+    let mut kernels = vec![Kernel::Prepare(2560)];
+    for rows in [16384, 2560] {
+        let spec = Spec::new(rows, 2560).unwrap();
+        for wide in [false, true] {
+            for tail in [false, true] {
+                kernels.push(Kernel::ProjectPairedThree(spec, tail, wide));
+                kernels.push(Kernel::ProjectPairedFour(spec, tail, wide));
+            }
+        }
+    }
+    kernels
+        .into_iter()
+        .map(|kernel| {
+            kernel
+                .compile(
+                    &mut AutoCompiler::Wgsl(Default::default()),
+                    &Default::default(),
+                    ExecutionMode::Unchecked,
+                    StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+                )
+                .unwrap()
+        })
+        .collect()
 }
 
 #[cfg(test)]
