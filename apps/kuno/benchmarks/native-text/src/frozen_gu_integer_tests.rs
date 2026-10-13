@@ -105,7 +105,7 @@ fn compile(kernel: Kernel) -> (n::Module, Vec<u32>) {
         dot_count > 0,
         matches!(
             kernel,
-            Kernel::Project { .. } | Kernel::ProjectStride4 { .. }
+            Kernel::Project { .. } | Kernel::ProjectStride4 { .. } | Kernel::ProjectCompact { .. }
         )
     );
     (module, words)
@@ -825,3 +825,71 @@ fn frozen_gu_integer_eight_rows_three_real_routes_match_independent_full_project
 
 #[path = "frozen_gu_integer_four_tests.rs"]
 mod four_tests;
+
+#[test]
+fn frozen_gu_integer_count1to3_compact_schedule_keeps_original_arithmetic_and_records() {
+    let prepare = Kernel::PrepareCompact.source();
+    let (module, _) = compile(Kernel::PrepareCompact);
+    assert_eq!(shared_bytes(&module), MAX_PREPARE_SHARED_BYTES);
+    assert!(!prepare.contains("_VALUE"));
+    // Count1..3 prepare keeps every original frame/header store and only adds
+    // the five disjoint record builders behind the immutable MAP gate.
+    assert!(prepare.contains("p.h<1u || p.h>3u || arrayLength(&planes)!=16384u"));
+    assert!(prepare.contains("token==0u && local<5u"));
+    assert!(prepare.contains("groups!=p.e"));
+    assert!(prepare.contains("p.e<1u || p.e>30u"));
+    assert!(prepare.contains("planes[6144u+48u*shard+8u+count]=g"));
+    assert!(prepare.contains("gu_y=count;if gu_y>4u {gu_y=4u;}"));
+    assert!(prepare.contains("for(var i=5824u+local;i<16384u;i+=128u)"));
+    let begin = "// FROZEN_GU_PROJECT_BODY_BEGIN\n";
+    let end = "// FROZEN_GU_PROJECT_BODY_END";
+    for dtype in [
+        crate::quant_matvec::IQ2_S,
+        crate::quant_matvec::IQ3_XXS,
+        crate::quant_matvec::IQ3_S,
+        crate::quant_matvec::IQ4_XS,
+    ] {
+        let row_bytes = TensorType::from_gguf_id(dtype)
+            .unwrap()
+            .row_bytes(2560)
+            .unwrap() as usize;
+        let project = Kernel::Project { dtype, row_bytes }.source();
+        let four_body = project
+            .split_once(begin)
+            .unwrap()
+            .1
+            .split_once(end)
+            .unwrap()
+            .0;
+        let kernel = Kernel::ProjectCompact { dtype, row_bytes };
+        let source = kernel.source();
+        let (module, _) = compile(kernel);
+        // One arithmetic body, only the bounded record replaces the union scan.
+        assert!(source.contains(&four_body.replace("group.y", "routed_group")));
+        assert!(source.contains("p.g>4u"));
+        assert!(source.contains("let base=6144u+48u*p.g;"));
+        assert!(source.contains("ordinal=group.y;ordinal<shard_count;ordinal+=4u"));
+        assert!(source.contains("let routed_group=planes[base+8u+ordinal];"));
+        assert!(source.contains("p.h<1u || p.h>3u || p.g>4u"));
+        assert_eq!(
+            shared_bytes(&module),
+            1536 + integer::original_grid_words(dtype).len() as u32 * 4
+        );
+        assert!(shared_bytes(&module) <= MAX_PROJECT_SHARED_BYTES);
+        assert_ne!(kernel.id(), Kernel::Project { dtype, row_bytes }.id());
+        assert_ne!(
+            kernel.id(),
+            Kernel::ProjectStride4 { dtype, row_bytes }.id()
+        );
+    }
+    let (module, _) = compile(Kernel::AuditCompact);
+    // Only the records_valid barrier latch needs workgroup storage.
+    assert_eq!(shared_bytes(&module), 4);
+    let audit = Kernel::AuditCompact.source();
+    assert!(audit.contains("p.count<1u || p.count>3u"));
+    assert!(audit.contains("p.r1<1u || p.r1>30u"));
+    assert!(audit.contains("map[p.r0]!=p.count"));
+    assert!(audit.contains("i=count;i<30u"));
+    assert!(audit.contains("atomicStore(&records_valid,0u);"));
+    assert!(audit.contains("planes[6144u+48u*shard+i]=0u;"));
+}

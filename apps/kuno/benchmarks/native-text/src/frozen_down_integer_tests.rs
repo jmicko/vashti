@@ -101,7 +101,13 @@ fn compile(kernel: Kernel) -> (n::Module, Vec<u32>) {
             .filter(|(_, storage)| *storage == 7)
             .all(|(ty, _)| !arrays.contains(pointers.get(ty).unwrap()))
     );
-    assert_eq!(dot_count > 0, matches!(kernel, Kernel::Project { .. }));
+    assert_eq!(
+        dot_count > 0,
+        matches!(
+            kernel,
+            Kernel::Project { .. } | Kernel::ProjectCompact { .. }
+        )
+    );
     (module, words)
 }
 
@@ -207,8 +213,8 @@ fn frozen_down_integer_exact_owners_counts_limits_and_independent_charges() {
         max_compute_invocations_per_workgroup: 64,
         max_compute_workgroup_size_x: 64,
         max_compute_workgroup_storage_size: MAX_SHARED_BYTES,
-        max_storage_buffers_per_shader_stage: 5,
-        max_bindings_per_bind_group: 6,
+        max_storage_buffers_per_shader_stage: 6,
+        max_bindings_per_bind_group: 7,
         max_uniform_buffer_binding_size: 32,
         max_compute_workgroups_per_dimension: 320,
         max_storage_buffer_binding_size: MAIN_BYTES,
@@ -737,3 +743,42 @@ fn frozen_down_integer_original_map_full_wave_routes_and_partitions_remain_exact
 
 #[path = "frozen_down_integer_four_tests.rs"]
 mod four_tests;
+
+#[test]
+fn frozen_down_integer_count1to3_compact_projection_keeps_original_arithmetic() {
+    for dtype in [crate::quant_matvec::IQ4_NL, crate::quant_matvec::Q2_0] {
+        let row_bytes = TensorType::from_gguf_id(dtype)
+            .unwrap()
+            .row_bytes(640)
+            .unwrap() as usize;
+        let kernel = Kernel::ProjectCompact { dtype, row_bytes };
+        let source = kernel.source();
+        let (module, _) = compile(kernel);
+        assert!(!source.contains("_VALUE"));
+        assert_eq!(module.entry_points[0].workgroup_size, [64, 1, 1]);
+        // The compact schedule reuses the original decoder body; only the
+        // bounded shard record replaces the per-shard group union.
+        let original = Kernel::Project { dtype, row_bytes }.source();
+        let start = "    let row=group.x*8u+local/8u;";
+        assert!(
+            source.contains(
+                &original
+                    .split_once(start)
+                    .unwrap()
+                    .1
+                    .replace("group.y", "routed_group")
+                    .replace("!valid_group(group.y)", "")
+            )
+        );
+        assert!(source.contains("p.g>4u"));
+        assert!(source.contains("let base=6144u+48u*p.g;"));
+        assert!(source.contains("let routed_group=gu_planes[base+8u+group.y];"));
+        assert!(source.contains("if !valid_group(routed_group) {return;}"));
+        assert!(source.contains("@group(0) @binding(5) var<storage,read> gu_planes"));
+        assert!(source.contains("groups<1u || groups>30u"));
+        // Same shared reduction storage as the original count1..3 schedule.
+        assert_eq!(shared_bytes(&module), 768);
+        assert!(shared_bytes(&module) <= MAX_PROJECT_SHARED_BYTES);
+        assert_ne!(kernel.id(), Kernel::Project { dtype, row_bytes }.id());
+    }
+}

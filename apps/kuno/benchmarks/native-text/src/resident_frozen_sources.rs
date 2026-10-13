@@ -1849,9 +1849,10 @@ impl GuIntegerDispatch {
         stride_four: bool,
         four: bool,
     ) -> Result<()> {
-        // Count4 stride-four runs the compacted schedule: ten indirect
-        // dispatches and one record audit. Everything else stays original.
-        let compact = stride_four && four;
+        // Every stride-four integer layer runs the compacted schedule: ten
+        // indirect dispatches and one record audit. Everything else stays
+        // original.
+        let compact = stride_four;
         if self.layer != layer
             || layer >= 48
             || self.count != count
@@ -3092,10 +3093,14 @@ impl Sources {
             let [a, b, c, d, e, f, h] = handles;
             let handles = [a?, b?, c?, d?, e?, f?, h?];
             let scratch = arena.handle(scratch).cloned().map_err(u::fault)?;
-            if count == 4 && self.gu_stride_four {
+            if self.gu_stride_four {
                 // Compaction builds each shard's dispatch and group records in
                 // the original full64KiB owner tail. Same prepare arithmetic.
-                crate::quant_matvec::frozen_gu_integer::four::prepare_compact(
+                (if count == 4 {
+                    crate::quant_matvec::frozen_gu_integer::four::prepare_compact
+                } else {
+                    crate::quant_matvec::frozen_gu_integer::prepare_compact
+                })(
                     client,
                     g,
                     s,
@@ -3280,10 +3285,14 @@ impl Sources {
                         if gate != GateKernel::Frozen || staged_shard {
                             return Err(reject());
                         }
-                        if count == 4 && self.gu_stride_four {
+                        if self.gu_stride_four {
                             // Compaction: one indirect dispatch per shard, driven
                             // by the records built in the original owner tail.
-                            crate::quant_matvec::frozen_gu_integer::four::launch_compact(
+                            (if count == 4 {
+                                crate::quant_matvec::frozen_gu_integer::four::launch_compact
+                            } else {
+                                crate::quant_matvec::frozen_gu_integer::launch_compact
+                            })(
                                 client,
                                 g,
                                 s,
@@ -3374,10 +3383,14 @@ impl Sources {
                         }
                         let (handles, scratch) =
                             down_integer_handles.as_ref().ok_or_else(reject)?;
-                        if count == 4 && self.gu_stride_four {
+                        if self.gu_stride_four {
                             // Same records the GU leaf consumed; DOWN only reads
                             // the authenticated full GU owner.
-                            crate::quant_matvec::frozen_down_integer::four::launch_compact(
+                            (if count == 4 {
+                                crate::quant_matvec::frozen_down_integer::four::launch_compact
+                            } else {
+                                crate::quant_matvec::frozen_down_integer::launch_compact
+                            })(
                                 client,
                                 g,
                                 s,
@@ -3481,10 +3494,14 @@ impl Sources {
             }
         }
         let gu_integer = if let Some((_, scratch)) = integer_handles {
-            if count == 4 && self.gu_stride_four {
+            if self.gu_stride_four {
                 // Replacement audit: validates every record against the
                 // unchanged MAP, stickies faults, then erases the records.
-                crate::quant_matvec::frozen_gu_integer::four::audit_compact(
+                (if count == 4 {
+                    crate::quant_matvec::frozen_gu_integer::four::audit_compact
+                } else {
+                    crate::quant_matvec::frozen_gu_integer::audit_compact
+                })(
                     client,
                     scratch,
                     arena.handle(fault).cloned().map_err(u::fault)?,
@@ -4058,27 +4075,35 @@ mod tests {
                 .is_err()
             );
         }
-        // Count1..3 stride-four keeps the original union scan: no credit.
-        let original = GuIntegerDispatch {
+        // Every stride-four layer, count1..3 or count4, is compacted.
+        GuIntegerDispatch {
             count: 3,
-            compact_gu_dispatches: 0,
-            compact_down_dispatches: 0,
-            compact_audits: 0,
             ..compacted
-        };
-        original.validate_selected(0, 3, true, false).unwrap();
+        }
+        .validate_selected(0, 3, true, false)
+        .unwrap();
         assert!(
             GuIntegerDispatch { ..compacted }
                 .validate_selected(0, 4, true, false)
                 .is_err()
         );
-        // Compaction credit without the stride-four schedule is impossible.
-        let mut plain = compacted;
-        plain.stride_four_dispatches = 0;
-        plain.compact_gu_dispatches = 0;
-        plain.compact_down_dispatches = 0;
-        plain.compact_audits = 0;
+        // Without the stride-four schedule there is never compaction credit.
+        let plain = GuIntegerDispatch {
+            stride_four_dispatches: 0,
+            compact_gu_dispatches: 0,
+            compact_down_dispatches: 0,
+            compact_audits: 0,
+            ..compacted
+        };
         plain.validate_selected(0, 4, false, true).unwrap();
+        GuIntegerDispatch { count: 3, ..plain }
+            .validate_selected(0, 3, false, false)
+            .unwrap();
+        assert!(
+            GuIntegerDispatch { count: 3, ..plain }
+                .validate_selected(0, 3, true, false)
+                .is_err()
+        );
     }
     #[test]
     fn frozen_gu_integer_stride_four_requires_integer_and_actual_joined_leaf_receipts() {
@@ -4111,9 +4136,9 @@ mod tests {
                     count,
                     dispatches: 5,
                     stride_four_dispatches: 5,
-                    compact_gu_dispatches: 0,
-                    compact_down_dispatches: 0,
-                    compact_audits: 0,
+                    compact_gu_dispatches: 5,
+                    compact_down_dispatches: 5,
+                    compact_audits: 1,
                 };
                 receipt.validate(layer, count, true).unwrap();
                 assert!(receipt.validate(layer, count, false).is_err());
