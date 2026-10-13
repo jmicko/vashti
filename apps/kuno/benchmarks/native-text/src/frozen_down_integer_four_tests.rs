@@ -30,6 +30,8 @@ fn compact_shuffle_down_lowers_without_shared_reduction_or_changed_dots() {
         assert!(!source.contains("workgroupBarrier") && !source.contains("sums["));
         assert!(!source.contains("subgroupAdd"));
         assert!(source.contains("(width!=16u && width!=32u)"));
+        assert!(source.contains("@builtin(num_subgroups) subgroups:u32"));
+        assert!(source.contains("subgroups!=64u/width"));
         assert!(source.contains("sg*(width/8u)+sub_lane/8u;let lane=sub_lane%8u"));
         assert!(!source.contains("local/8u"));
         assert!(source.contains("subgroupShuffleDown(values,stride)"));

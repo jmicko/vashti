@@ -2313,8 +2313,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err("shared Next router requires256 workgroup lanes".into());
         }
         if (fast_gpu
-            || (frozen_gu_stride_four
-                && quant_matvec::frozen_gu_integer::four::shuffle::PUBLIC_PROBE)
+            || (quant_matvec::frozen_gu_integer::four::shuffle::PUBLIC_PROBE
+                && (speculative_inputs
+                    .as_ref()
+                    .is_some_and(|i| i.frozen_gu_stride_four)
+                    || language_inputs
+                        .as_ref()
+                        .is_some_and(|i| i.frozen_gu_stride_four)))
             || mode == "iq-quant-probe"
             || segmented_iq_probe
             || iq_integer_probe

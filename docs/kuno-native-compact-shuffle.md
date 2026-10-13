@@ -13,7 +13,8 @@ plans, dispatch counts, output/status addresses and full audits.
 
 The caller must enable subgroup support and admit physical subgroup bounds
 16 through 32; each shader independently rejects an actual width other than
-16 or 32. No local invocation ordering is assumed. With 64 threads, logical
+16 or 32, or a whole-workgroup subgroup count different from `64 / width`.
+This also rejects partial subgroups. No local invocation ordering is assumed. With 64 threads, logical
 row-within-workgroup is `subgroup_id * (width / 8) + subgroup_lane / 8`, and
 logical dot lane is `subgroup_lane % 8`. This covers exactly eight rows and
 eight original dot lanes on either admitted width.

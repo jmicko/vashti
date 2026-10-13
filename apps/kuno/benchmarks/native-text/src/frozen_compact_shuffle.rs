@@ -17,12 +17,12 @@ fn subgroup_rows(source: String) -> String {
     let source = replace_once(
         source,
         "fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) local:u32) {",
-        "fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) local:u32,\n    @builtin(subgroup_id) sg:u32,@builtin(subgroup_invocation_id) sub_lane:u32,\n    @builtin(subgroup_size) width:u32) {",
+        "fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) local:u32,\n    @builtin(subgroup_id) sg:u32,@builtin(subgroup_invocation_id) sub_lane:u32,\n    @builtin(subgroup_size) width:u32,@builtin(num_subgroups) subgroups:u32) {",
     );
     let source = replace_once(
         source,
         "if group.x>=",
-        "if (width!=16u && width!=32u) || group.x>=",
+        "if (width!=16u && width!=32u) || subgroups!=64u/width || group.x>=",
     );
     replace_once(
         source,
