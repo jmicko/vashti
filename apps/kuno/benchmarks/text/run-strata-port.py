@@ -34,6 +34,7 @@ def run():
   if 'strata-intel-core' not in json.loads((build/'build-features.json').read_text())['features']:raise ValueError('coherent core artifact required')
   env['KUNO_STRATA_INTEL_CORE']='public';env['KUNO_STRATA_CACHE_SWAPS']='eight-public'
   env['KUNO_LAB_FROZEN_BANK_FILL']='profile-ranked-public'
+  env['KUNO_LAB_TARGET_HEAD']='integer-public';env['KUNO_LAB_TARGET_STATUS_FOLDS']='grouped-public'
  if target_profile:env['KUNO_STRATA_PROFILE_TARGET']='round-8'
  if '--integer-head' in options:env['KUNO_LAB_TARGET_HEAD']='integer-public'
  if '--fused-experts' in options:env['KUNO_STRATA_FUSED_EXPERTS']='five-tier-public'

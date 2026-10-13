@@ -5,6 +5,7 @@ mod public_external;
 mod storage;
 
 pub(crate) mod strata_graph;
+pub use strata_graph::native_strata_graph_stats;
 mod binding_cache;
 mod cleanup_boundary;
 pub(super) mod mem_manager;
@@ -24,8 +25,8 @@ pub use transient_io::transient_readback_reuses;
 pub use transient_io::transient_request_io_reuses;
 pub use transient_io::transient_request_reuse_metadata_charge;
 
-pub use transient_io::transient_scoped_read_ns;
 pub use stream::transient_gpu_submission_wait_stats;
+pub use transient_io::transient_scoped_read_ns;
 
 pub use transient_io::transient_info_cache_stats;
 pub use transient_io::transient_unscoped_upload_transfer_stats;

@@ -610,7 +610,8 @@ pub(crate) fn registration(
             && frozen_down_integer
             && public_grouped_ple_reads
             && !public_iq4_decoder
-            && bank_fill == crate::executor::PublicHostBankFillPolicy::Original,
+            && (bank_fill == crate::executor::PublicHostBankFillPolicy::Original
+                || crate::strata_intel_core::enabled()),
     )?;
     if cfg!(feature = "strata-eight-window")
         && (public_integer_verify_head

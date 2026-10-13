@@ -13,6 +13,26 @@ use std::{
 };
 use wgpu::naga;
 
+static SUBMISSIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static DISPATCHES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static REPLAYS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub fn native_strata_graph_stats() -> (u64, u64, u64) {
+    use std::sync::atomic::Ordering::Relaxed;
+    (
+        SUBMISSIONS.load(Relaxed),
+        DISPATCHES.load(Relaxed),
+        REPLAYS.load(Relaxed),
+    )
+}
+fn credit(nodes: usize, replay: bool) {
+    use std::sync::atomic::Ordering::Relaxed;
+    SUBMISSIONS.fetch_add(1, Relaxed);
+    DISPATCHES.fetch_add(nodes as u64, Relaxed);
+    if replay {
+        REPLAYS.fetch_add(1, Relaxed);
+    }
+}
+
 pub(crate) fn enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var("KUNO_STRATA_INTEL_CORE").as_deref() == Ok("public"))
@@ -427,6 +447,7 @@ impl Graph {
             self.submissions += 1;
             self.replays += 1;
             self.dispatches += self.nodes.len() as u64;
+            credit(self.nodes.len(), true);
             self.nodes.clear();
             return Ok(());
         }
@@ -621,6 +642,7 @@ impl Graph {
         self.submitted = false;
         self.submissions += 1;
         self.dispatches += self.nodes.len() as u64;
+        credit(self.nodes.len(), false);
         self.nodes.clear();
         Ok(())
     }

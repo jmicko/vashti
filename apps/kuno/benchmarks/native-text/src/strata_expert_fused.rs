@@ -66,20 +66,30 @@ impl Kernel {
         let mut binding = 0;
         for name in names {
             for shard in 0..5 {
+                let element = if crate::strata_intel_core::enabled() {
+                    "vec4<u32>"
+                } else {
+                    "u32"
+                };
                 bindings.push_str(&format!(
-                    "@group(0) @binding({binding}) var<storage,read> {name}{shard}:array<u32>;\n"
+                    "@group(0) @binding({binding}) var<storage,read> {name}{shard}:array<{element}>;\n"
                 ));
                 binding += 1;
             }
             helpers.push_str(&format!(
                 "fn strata_{name}(index:u32)->u32 {{switch strata_shard {{\n"
             ));
+            let index = if crate::strata_intel_core::enabled() {
+                "[index/4u][index%4u]"
+            } else {
+                "[index]"
+            };
             for shard in 0..4 {
                 helpers.push_str(&format!(
-                    "case {shard}u: {{return {name}{shard}[index];}}\n"
+                    "case {shard}u: {{return {name}{shard}{index};}}\n"
                 ));
             }
-            helpers.push_str(&format!("default: {{return {name}4[index];}} }} }}\n"));
+            helpers.push_str(&format!("default: {{return {name}4{index};}} }} }}\n"));
         }
         for (name, access, ty) in [
             ("map", "read", "u32"),
@@ -108,7 +118,12 @@ impl Kernel {
         let mut check = String::new();
         for (shard, n) in crate::daslab_profile::SOURCE_PARTS.into_iter().enumerate() {
             for name in names {
-                check.push_str(&format!("    if arrayLength(&{name}{shard})!={n}u*{words}*(ROW_BYTES/4u) {{return false;}}\n"));
+                let factor = if crate::strata_intel_core::enabled() {
+                    "*4u"
+                } else {
+                    ""
+                };
+                check.push_str(&format!("    if arrayLength(&{name}{shard}){factor}!={n}u*{words}*(ROW_BYTES/4u) {{return false;}}\n"));
             }
         }
         source = source.replace(&old, &check);
