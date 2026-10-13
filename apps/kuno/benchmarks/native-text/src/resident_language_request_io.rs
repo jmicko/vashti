@@ -99,7 +99,7 @@ impl Authority {
     fn run(&self, start: usize, count: usize, actual: bool) -> Result<()> {
         self.active(actual)?;
         if !(1..=if self.four_rows && self.phase == Phase::Active {
-            4
+            crate::strata_port::verify_capacity()
         } else {
             3
         })
