@@ -1560,6 +1560,7 @@ pub(crate) fn run(
                 }
             }
             let mut stats = Statistics::default();
+            let mut draft_policy = crate::strata_port::DraftPolicy::default();
             let mut fixture_peak = owned_fixture_bytes(&[&carry], &[&prompt, &emitted])?;
             while emitted.len() < MAX_OUTPUTS && confirmed != graph.eos_token() {
                 let position = target.completed_target_rows_cursor(&executor)?;
@@ -1600,27 +1601,35 @@ pub(crate) fn run(
                     continue;
                 }
                 let draft = draft.as_mut().ok_or("speculative actual draft absent")?;
-                let count =
+                let mut count =
                     (MAX_OUTPUTS - emitted.len()).min(if selected_four_lookahead { 4 } else { 3 });
                 let mut inputs = Zeroizing::new(Vec::with_capacity(count));
                 inputs.push(confirmed);
                 let drafting = Instant::now();
-                let lookup = crate::strata_port::lookup(&prompt, &emitted, count - 1);
-                if let Some(lookup) = &lookup {
-                    for &token in lookup.iter() {
-                        // Only the first cell uses a known target carry. Provisional
-                        // lookup cells are replaced by actual accepted carries below.
-                        draft.append_kv(*inputs.last().unwrap(), &carry, &cancel)?;
-                        inputs.push(token);
-                    }
-                } else if count > 1 {
+                let candidate = crate::strata_port::lookup(&prompt, &emitted, count - 1);
+                let mut lookup = None;
+                if count > 1 {
                     let output = draft.step_draft(confirmed, &carry, &cancel)?;
                     if output.start() != position - 1 {
                         return Err("language first actual draft stamp rejected".into());
                     }
                     inputs.push(output.greedy());
                     drop(output);
-                    if count > 2 {
+                    if let Some(candidate) = candidate.filter(|p| p.tokens.first() == inputs.get(1))
+                    {
+                        if let Some(selected) = draft_policy.choose(count, &candidate) {
+                            count = selected;
+                            crate::strata_port::credit_lookup(count - 1);
+                            for &token in candidate.tokens.iter().skip(1).take(count - 2) {
+                                // First cell is the real MTP forward; provisional
+                                // follow cells are repaired from real target carries.
+                                draft.append_kv(*inputs.last().unwrap(), &carry, &cancel)?;
+                                inputs.push(token);
+                            }
+                            lookup = Some(candidate);
+                        }
+                    }
+                    if count > 2 && lookup.is_none() {
                         let output = draft.follow_draft(&cancel)?;
                         if output.start() != position {
                             return Err("language second actual draft stamp rejected".into());
@@ -1808,6 +1817,15 @@ pub(crate) fn run(
                     lookahead_stats.add(selected_four_lookahead, count, accepted, phase)?;
                 }
                 stats.add_completed(selected_four_lookahead, count, accepted, phase, recomputed)?;
+                if crate::strata_port::enabled() {
+                    draft_policy.observe(
+                        lookup.is_some(),
+                        count,
+                        accepted,
+                        lookup.as_ref().map_or(0, |p| p.matched),
+                        draft_ns + verify_ns + repair_ns,
+                    );
+                }
             }
             let tail = Zeroizing::new(decoder.finish());
             nonempty_text |= !tail.is_empty();

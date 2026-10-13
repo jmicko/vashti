@@ -21,33 +21,166 @@ static LOOKUP_WINDOWS: AtomicU64 = AtomicU64::new(0);
 static LOOKUP_PROPOSED: AtomicU64 = AtomicU64::new(0);
 /// Port of Strata's in-request suffix drafter. Suggestions are always checked
 /// by the actual target; no token oracle or persisted history is consulted.
-pub(crate) fn lookup(
-    prompt: &[u32],
-    emitted: &[u32],
-    maximum: usize,
-) -> Option<zeroize::Zeroizing<Vec<u32>>> {
+pub(crate) fn lookup(prompt: &[u32], emitted: &[u32], maximum: usize) -> Option<Lookup> {
     if !enabled() || maximum == 0 {
         return None;
     }
     let mut history = zeroize::Zeroizing::new(Vec::with_capacity(prompt.len() + emitted.len()));
     history.extend_from_slice(prompt);
     history.extend_from_slice(emitted);
-    for n in (2..=5.min(history.len())).rev() {
-        let suffix = history.len() - n;
-        if suffix < maximum {
+    if history.len() < 4 {
+        return None;
+    }
+    let current = history.len() - 1;
+    let mut best = (0, 0);
+    let mut ways = 0;
+    // Strata keeps the four most recent trigram occurrences and extends each
+    // backwards up to64 tokens, preferring the longest and then most recent.
+    // The bounded public fixture is small enough to scan without a hash table.
+    for end in (2..current).rev() {
+        if history[end - 2..=end] != history[current - 2..=current] {
             continue;
         }
-        for at in (0..=suffix.saturating_sub(n + maximum)).rev() {
-            if history[at..at + n] == history[suffix..] && at + n + maximum <= suffix {
-                LOOKUP_WINDOWS.fetch_add(1, Ordering::Relaxed);
-                LOOKUP_PROPOSED.fetch_add(maximum as u64, Ordering::Relaxed);
-                return Some(zeroize::Zeroizing::new(
-                    history[at + n..at + n + maximum].to_vec(),
-                ));
-            }
+        ways += 1;
+        let mut matched = 3;
+        while matched < 64 && matched <= end && history[end - matched] == history[current - matched]
+        {
+            matched += 1;
+        }
+        if matched > best.1 {
+            best = (end, matched);
+        }
+        if ways == 4 {
+            break;
         }
     }
-    None
+    if best.1 < 3 {
+        return None;
+    }
+    let end = (best.0 + 1 + maximum).min(history.len());
+    Some(Lookup {
+        tokens: zeroize::Zeroizing::new(history[best.0 + 1..end].to_vec()),
+        matched: best.1,
+    })
+}
+pub(crate) struct Lookup {
+    pub(crate) tokens: zeroize::Zeroizing<Vec<u32>>,
+    pub(crate) matched: usize,
+}
+pub(crate) fn credit_lookup(proposed: usize) {
+    LOOKUP_WINDOWS.fetch_add(1, Ordering::Relaxed);
+    LOOKUP_PROPOSED.fetch_add(proposed as u64, Ordering::Relaxed);
+}
+
+/// MIT Strata DraftPolicy cost/acceptance controller, limited to the four-row
+/// verifier available here. All observations are request-local and erased.
+#[derive(Default)]
+pub(crate) struct DraftPolicy {
+    cost: [f64; 5],
+    cost_n: [f64; 5],
+    mtp_tok: [f64; 5],
+    mtp_n: [f64; 5],
+    ok: [f64; 4],
+    bad: [f64; 4],
+    last: [f64; 5],
+    rounds: f64,
+}
+impl DraftPolicy {
+    fn bucket(matched: usize) -> usize {
+        if matched < 6 {
+            0
+        } else if matched < 12 {
+            1
+        } else if matched < 24 {
+            2
+        } else {
+            3
+        }
+    }
+    fn cost_ms(&self, t: usize) -> f64 {
+        const SHAPE: [f64; 5] = [0., 1., 1.35, 1.7, 2.05];
+        if self.cost_n[t] > 0. {
+            return self.cost[t];
+        }
+        let (mut numerator, mut denominator) = (0., 0.);
+        for u in 1..=4 {
+            if self.cost_n[u] > 0. {
+                let w = self.cost_n[u].min(20.);
+                numerator += w * self.cost[u] * SHAPE[t] / SHAPE[u];
+                denominator += w;
+            }
+        }
+        if denominator > 0. {
+            numerator / denominator
+        } else {
+            SHAPE[t]
+        }
+    }
+    pub(crate) fn choose(&self, t: usize, proposal: &Lookup) -> Option<usize> {
+        let bucket = Self::bucket(proposal.matched);
+        let prior = [0.75, 0.88, 0.93, 0.96][bucket];
+        let q = (self.ok[bucket] + 4. * prior) / (self.ok[bucket] + self.bad[bucket] + 4.);
+        let mtp = if self.mtp_n[t] > 0. {
+            self.mtp_tok[t]
+        } else {
+            1. + 0.7 * (t - 1) as f64
+        };
+        let base = mtp / self.cost_ms(t);
+        let (mut expected, mut qi, mut best, mut size) = (1., 1., 0., 0);
+        for k in 1..=proposal.tokens.len().min(t - 1) {
+            qi *= q;
+            expected += qi;
+            let rate = expected / self.cost_ms(k + 1);
+            if rate > best {
+                best = rate;
+                size = k + 1;
+            }
+        }
+        (size > 0 && best > base * 1.03).then_some(size)
+    }
+    pub(crate) fn observe(
+        &mut self,
+        lookup: bool,
+        t: usize,
+        accepted: usize,
+        matched: usize,
+        ns: u64,
+    ) {
+        let ms = ns as f64 / 1e6;
+        self.cost[t] = if self.cost_n[t] > 0. {
+            0.9 * self.cost[t] + 0.1 * ms
+        } else {
+            ms
+        };
+        self.cost_n[t] += 1.;
+        self.last[t] = self.rounds;
+        self.rounds += 1.;
+        if lookup {
+            let b = Self::bucket(matched);
+            self.ok[b] = 0.97 * self.ok[b] + (accepted - 1) as f64;
+            self.bad[b] = 0.97 * self.bad[b] + if accepted < t { 1. } else { 0. };
+        } else {
+            self.mtp_tok[t] = if self.mtp_n[t] > 0. {
+                0.95 * self.mtp_tok[t] + 0.05 * accepted as f64
+            } else {
+                accepted as f64
+            };
+            self.mtp_n[t] += 1.;
+        }
+    }
+}
+impl Drop for DraftPolicy {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.cost.zeroize();
+        self.cost_n.zeroize();
+        self.mtp_tok.zeroize();
+        self.mtp_n.zeroize();
+        self.ok.zeroize();
+        self.bad.zeroize();
+        self.last.zeroize();
+        self.rounds.zeroize();
+    }
 }
 pub(crate) fn public_preview(text: &str) {
     // Only the fixed public fixtures reach this lab; custom runner displays
