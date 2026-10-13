@@ -791,3 +791,12 @@ pub(crate) fn strata_compiled_sources() -> Vec<CompiledKernel<AutoCompiler>> {
     emit(&four::Kernel::AuditCompact);
     result
 }
+
+pub(crate) fn strata_fused_source(dtype: u32, row_bytes: usize, count: usize) -> String {
+    let kernel = if count == 4 {
+        four::Kernel::Project { dtype, row_bytes }.source()
+    } else {
+        Kernel::Project { dtype, row_bytes }.source()
+    };
+    crate::strata_port::shader(kernel, false, if count == 4 { 4 } else { 3 })
+}

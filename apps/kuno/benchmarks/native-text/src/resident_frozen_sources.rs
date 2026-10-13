@@ -1972,10 +1972,25 @@ impl GuIntegerDispatch {
         if self.layer != layer
             || layer >= 48
             || self.count != count
-            || self.dispatches != 5
-            || self.stride_four_dispatches != if stride_four { 5 } else { 0 }
-            || self.compact_gu_dispatches != if compact { 5 } else { 0 }
-            || self.compact_down_dispatches != if compact && down_integer { 5 } else { 0 }
+            || self.dispatches != if crate::strata_port::enabled() { 1 } else { 5 }
+            || self.stride_four_dispatches
+                != if stride_four {
+                    if crate::strata_port::enabled() { 1 } else { 5 }
+                } else {
+                    0
+                }
+            || self.compact_gu_dispatches
+                != if compact {
+                    if crate::strata_port::enabled() { 1 } else { 5 }
+                } else {
+                    0
+                }
+            || self.compact_down_dispatches
+                != if compact && down_integer {
+                    if crate::strata_port::enabled() { 1 } else { 5 }
+                } else {
+                    0
+                }
             || self.compact_audits != u64::from(compact)
             || !(1..=if four { 4 } else { 3 }).contains(&count)
         {
@@ -2022,7 +2037,7 @@ impl DownIntegerDispatch {
             || self.count != count
             || !(1..=if four { 4 } else { 3 }).contains(&count)
             || self.preparations != 1
-            || self.dispatches != 5
+            || self.dispatches != if crate::strata_port::enabled() { 1 } else { 5 }
             || self.audits != 1
         {
             return Err(reject());
@@ -2290,7 +2305,8 @@ fn gu_integer_completed_flag(
     if if selected {
         preparations == 0
             || preparations != audits
-            || preparations.checked_mul(5) != Some(dispatches)
+            || preparations.checked_mul(if crate::strata_port::enabled() { 1 } else { 5 })
+                != Some(dispatches)
     } else {
         preparations != 0 || dispatches != 0 || audits != 0
     } {
@@ -2338,7 +2354,10 @@ fn down_integer_completed_flag(
     source_dispatches: u64,
 ) -> Result<bool> {
     gu_integer_completed_flag(selected, preparations, dispatches, audits)?;
-    if selected && preparations.checked_mul(10) != Some(source_dispatches) {
+    if selected
+        && preparations.checked_mul(if crate::strata_port::enabled() { 2 } else { 10 })
+            != Some(source_dispatches)
+    {
         return Err(reject());
     }
     Ok(selected)
@@ -2487,7 +2506,17 @@ impl Counters {
                 .ok_or(Error::ArithmeticOverflow)?,
             source_dispatches: self
                 .source_dispatches
-                .checked_add(10)
+                .checked_add(
+                    if crate::strata_port::enabled()
+                        && p.source.gu_integer
+                        && p.source.down_integer
+                        && p.source.gu_stride_four
+                    {
+                        2
+                    } else {
+                        10
+                    },
+                )
                 .ok_or(Error::ArithmeticOverflow)?,
             staging_dispatches: self
                 .staging_dispatches
@@ -3282,6 +3311,40 @@ impl Sources {
                 down_integer_preparations = down_integer_preparations
                     .checked_add(1)
                     .ok_or(Error::ArithmeticOverflow)?;
+            }
+            if crate::strata_port::enabled()
+                && self.gu_integer
+                && self.down_integer
+                && self.gu_stride_four
+                && !self.packed_host_staging
+            {
+                let pages: Vec<_> = l.pages.iter().map(|page| page.handle.clone()).collect();
+                let (handles, scratch) = if phase == SourcePhase::PrepareAndDown {
+                    down_integer_handles.as_ref().ok_or_else(reject)?
+                } else {
+                    integer_handles.as_ref().ok_or_else(reject)?
+                };
+                crate::strata_expert_fused::launch(
+                    client,
+                    g,
+                    s,
+                    &pages,
+                    handles,
+                    scratch,
+                    count,
+                    groups,
+                    phase == SourcePhase::PrepareAndDown,
+                )?;
+                crate::strata_port::credit(phase == SourcePhase::PrepareAndDown, count);
+                if phase == SourcePhase::PrepareAndDown {
+                    down_integer_dispatches += 1;
+                    compact_down_dispatches += 1;
+                } else {
+                    integer_dispatches += 1;
+                    stride_four_dispatches += 1;
+                    compact_gu_dispatches += 1;
+                }
+                continue;
             }
             for shard in 0..5 {
                 let ga = &l.pages[shard];

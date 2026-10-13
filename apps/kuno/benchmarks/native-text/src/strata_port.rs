@@ -548,7 +548,9 @@ pub(crate) fn validate_limits(limits: &wgpu::Limits) -> kuno_text::Result<()> {
     if enabled()
         && (limits.max_compute_invocations_per_workgroup < 256
             || limits.max_compute_workgroup_size_x < 256
-            || limits.max_compute_workgroup_storage_size < 19712)
+            || limits.max_compute_workgroup_storage_size < 19712
+            || limits.max_storage_buffers_per_shader_stage < 14
+            || limits.max_bindings_per_bind_group < 15)
     {
         return Err(kuno_text::Error::InvalidFormat(
             "Strata Rust workgroup limits",
@@ -584,6 +586,7 @@ pub(crate) fn validate_shader_set() -> Result<(), Box<dyn std::error::Error>> {
     let mut shaders = crate::quant_matvec::frozen_gu_integer::strata_compiled_sources();
     shaders.extend(crate::quant_matvec::frozen_down_integer::strata_compiled_sources());
     shaders.extend(crate::q6_integer_matvec::batch::strata_compiled_sources());
+    shaders.extend(crate::strata_expert_fused::compiled_sources());
     for (index, compiled) in shaders.iter().enumerate() {
         let module = n::front::wgsl::parse_str(&compiled.source)
             .map_err(|e| e.emit_to_string(&compiled.source))?;
