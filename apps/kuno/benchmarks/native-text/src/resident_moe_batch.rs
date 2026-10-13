@@ -74,7 +74,11 @@ fn next() -> Result<u64> {
 fn guarded<T>(poison: &AtomicBool, f: impl FnOnce() -> Result<T>) -> Result<T> {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
         Ok(Ok(v)) => Ok(v),
-        _ => {
+        Ok(Err(cause)) => {
+            poison.store(true, Ordering::Release);
+            Err(cause)
+        }
+        Err(_) => {
             poison.store(true, Ordering::Release);
             Err(err("native routed chunk failed"))
         }
