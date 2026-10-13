@@ -430,6 +430,12 @@ fn checked_sequence_guard<T>(
         return Err(Error::InvalidFormat("resident sequence poisoned"));
     }
     let value = operation(ledger);
+    // A failed operation may itself drop a pending owner and set the sticky
+    // flag. Preserve its original diagnostic; it still poisons this ledger.
+    if value.is_err() {
+        ledger.poison();
+        return value;
+    }
     if poison.load(Ordering::Acquire) {
         ledger.poison();
         return Err(Error::InvalidFormat("resident sequence poisoned"));
