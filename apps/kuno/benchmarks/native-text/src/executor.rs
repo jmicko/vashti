@@ -2720,7 +2720,14 @@ impl<'a> GpuExecutor<'a> {
             }
         };
         let handle = if let Some(admission) = &self.resident_admission {
-            admission.allocate(&[reserved as u64], upload)?
+            admission.allocate(
+                &[if exact {
+                    reserved as u64
+                } else {
+                    padded as u64
+                }],
+                upload,
+            )?
         } else {
             upload()?
         };
