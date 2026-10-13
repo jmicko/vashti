@@ -1,6 +1,6 @@
 # Strata Rust whole-model port experiment
 
-## Current checkpoint: paused, GPUs returned, October 13
+## Current work: Strata Intel schedule comparison, October 13
 
 The user requested a breaking point to use the GPUs. The goal is paused; no
 benchmark or sudo refresher remains. Kuno/Ollama/Vashti all return HTTP 200,
@@ -494,3 +494,16 @@ laboratory selectors only; `--eight` requires a fresh immutable build directory.
 Eight mode rejects unported head/fused/wide/16-lane combinations. Resume from
 this current source, not an old failed binary, but keep v236 selected unless a
 new complete normal measurement improves it. No further work is queued.
+
+### Resumed Strata Intel source comparison (October 13)
+
+User returned GPU access and refreshed sudo. Current priority supersedes the
+staging proposal above: match concrete differences in Strata's pinned SYCL
+expert kernels/device plan before inventing a new transfer design. Its
+`verify.cpp` device-only `ar_on()` path calls grouped execution with full group
+capacity; our compact GU dispatch caps its indirect Y count at four and loops
+remaining groups serially. DOWN already uses the complete group count. First
+optional comparison (`--independent-groups`) launches one compact GU workgroup
+row per actual distinct expert, preserving original weights, per-group dot and
+reduction, record audit/erasure and allocations. A/B control remains four lanes.
+No performance or full Strata parity claim before whole-model measurement.

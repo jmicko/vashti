@@ -28,6 +28,15 @@ pub(crate) fn wide_experts() -> bool {
             std::env::var("KUNO_STRATA_WIDE_EXPERTS").as_deref() == Ok("aligned-vector-public")
         })
 }
+/// Strata SYCL's device-only plan launches one block row per actual expert
+/// group. Keep the previous four-lane serial schedule as the public A/B control.
+pub(crate) fn independent_groups() -> bool {
+    static SELECTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    enabled()
+        && *SELECTED.get_or_init(|| {
+            std::env::var("KUNO_STRATA_EXPERT_GROUPS").as_deref() == Ok("independent-public")
+        })
+}
 pub(crate) fn expert_lanes() -> usize {
     static LANES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     if !enabled() {
@@ -281,7 +290,7 @@ pub(crate) fn public_preview(text: &str) {
 pub(crate) fn receipt() -> serde_json::Value {
     serde_json::json!({"enabled": enabled(), "upstream_revision": "fb58e0dbc8399662c0e47c76578c6e878b14f6cf",
         "backend": "Rust/WGSL/Vulkan", "verify_capacity":verify_capacity(), "activation_planes": 1, "activation_scale": "fp16-q8_1",
-        "projection_workgroup":256, "rows_per_workgroup":256/expert_lanes(), "expert_dot_lanes":expert_lanes(), "aligned_vector_expert_reads":wide_experts(), "group_stride":4,"suffix_lookup_windows":LOOKUP_WINDOWS.load(Ordering::Relaxed),"suffix_lookup_proposed":LOOKUP_PROPOSED.load(Ordering::Relaxed),
+        "projection_workgroup":256, "rows_per_workgroup":256/expert_lanes(), "expert_dot_lanes":expert_lanes(), "aligned_vector_expert_reads":wide_experts(), "group_stride":if independent_groups() {verify_capacity()*10} else {4},"independent_expert_groups":independent_groups(),"suffix_lookup_windows":LOOKUP_WINDOWS.load(Ordering::Relaxed),"suffix_lookup_proposed":LOOKUP_PROPOSED.load(Ordering::Relaxed),
         "gu_dispatches_by_member_count":GU.each_ref().map(|v|v.load(Ordering::Relaxed)),
         "down_dispatches_by_member_count":DOWN.each_ref().map(|v|v.load(Ordering::Relaxed)),
         "fused_five_tier_experts":fused_sources(), "original_cpu13_precision_contract": false, "intermediate_numeric_scans":false,"published_outputs_checked_finite":true,"full_private_erasure":true,"installed_or_production": false})
@@ -727,6 +736,18 @@ pub(crate) fn shader(mut source: String, down_projection: bool, members: usize) 
                 "atomicOr(&fault[0],1032u)"
             },
         );
+    }
+    if independent_groups() && !down_projection {
+        // Builder and independent record audit must agree on the exact actual
+        // group count. Empty shards retain zero indirect work. The consumer
+        // visits each compact group once without changing its dot/reduction.
+        source = source.replace("var gu_y=count;if gu_y>4u {gu_y=4u;}", "let gu_y=count;");
+        if source.contains("for(var ordinal=group.y;ordinal<shard_count;ordinal+=4u)") {
+            let capacity = verify_capacity() * 10;
+            source = source
+                .replace("group.y>=4u", &format!("group.y>={capacity}u"))
+                .replace("ordinal+=4u", &format!("ordinal+={capacity}u"));
+        }
     }
     if source.contains("fn prepare_q8(block:u32)") {
         source = quantizer(source);
