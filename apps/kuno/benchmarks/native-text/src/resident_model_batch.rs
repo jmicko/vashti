@@ -66,7 +66,12 @@ pub(crate) const TARGET_ROWS_PREPARED_VERIFY3_MAIN: u64 =
     TARGET_ROWS_PRIVATE_MAIN + batch_moe::prepared_verify3::MAIN_BYTES;
 
 const OLD_MAIN: u64 = 785_186_816 + gdn::strata_replay::MAIN_BYTES;
-const NEW_MAIN: u64 = 33_062_912;
+const NEW_MAIN: u64 = 33_062_912
+    + if cfg!(feature = "strata-eight-window") {
+        4 * 1024 * 1024
+    } else {
+        0
+    };
 const TOTAL_MAIN: u64 = OLD_MAIN + NEW_MAIN;
 const PUBLIC_MAIN: u64 = 25_165_824;
 const HOST_CAP: usize = 12 * 1024 * 1024;

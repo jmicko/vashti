@@ -188,7 +188,7 @@ impl CubeTask<AutoCompiler> for Kernel {
 }
 
 pub(crate) fn validate_count(count: usize) -> Result<()> {
-    if count != MAX_COUNT {
+    if !(5..=MAX_COUNT).contains(&count) {
         return Err(rejected());
     }
     Ok(())
