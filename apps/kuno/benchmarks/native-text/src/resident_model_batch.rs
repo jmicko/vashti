@@ -70,7 +70,11 @@ const NEW_MAIN: u64 = 33_062_912;
 const TOTAL_MAIN: u64 = OLD_MAIN + NEW_MAIN;
 const PUBLIC_MAIN: u64 = 25_165_824;
 const HOST_CAP: usize = 12 * 1024 * 1024;
-pub(crate) const ORIGINAL_BANK_HOST: usize = 640 * 1024;
+pub(crate) const ORIGINAL_BANK_HOST: usize = if cfg!(feature = "strata-resident-240") {
+    704 * 1024
+} else {
+    640 * 1024
+};
 const HOST_COMPONENTS: usize = 10_551_296 + ORIGINAL_BANK_HOST;
 const META_CAP: usize = 256 * 1024;
 const LAYERS: usize = 48;
