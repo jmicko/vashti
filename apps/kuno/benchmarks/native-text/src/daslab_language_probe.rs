@@ -33,7 +33,11 @@ use zeroize::Zeroizing;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const VOCAB: usize = 248320;
 const HIDDEN: usize = 10240;
-pub(crate) const MAX_OUTPUTS: usize = 200;
+pub(crate) const MAX_OUTPUTS: usize = if crate::strata_port::enabled() {
+    512
+} else {
+    200
+};
 pub(crate) const FIXTURE_HOST_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) const TOKENIZER_HOST_BYTES: usize = 192 * 1024 * 1024;
 const ABS: f32 = 0.006;
@@ -1821,6 +1825,15 @@ pub(crate) fn run(
                     lookahead_stats.add(selected_four_lookahead, count, accepted, phase)?;
                 }
                 stats.add_completed(selected_four_lookahead, count, accepted, phase, recomputed)?;
+                if crate::strata_port::enabled() && stats.rounds % 16 == 0 {
+                    println!(
+                        "strata_public_progress emitted={} continuations={} elapsed_ns={} repairs={}",
+                        emitted.len(),
+                        stats.continuations,
+                        elapsed(start)?,
+                        stats.repairs
+                    );
+                }
                 if crate::strata_port::enabled() {
                     draft_policy.observe(
                         lookup.is_some(),
