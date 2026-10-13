@@ -53,6 +53,16 @@ const fn matrices() -> [Spec; 19] {
     result
 }
 pub(super) const MATRICES_Q2: [Spec; 19] = matrices();
+const fn runtime_matrices() -> [Spec; 19] {
+    let mut result = matrices();
+    let mut i = 0;
+    while i < result.len() {
+        result[i].dtype = quant_matvec::Q8_0;
+        i += 1;
+    }
+    result
+}
+pub(super) const MATRICES_RUNTIME_Q8: [Spec; 19] = runtime_matrices();
 pub(super) const HEAD_UP_Q2: Spec = Spec {
     dtype: quant_matvec::BF16,
     ..HEAD_UP

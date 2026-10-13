@@ -34,6 +34,9 @@ impl Profile {
     pub(crate) fn public_bytes(self) -> u64 {
         match self {
             Self::SelfContainedQ8 => resident_mtp::PUBLIC_BYTES,
+            Self::StrataQ2 if crate::strata_port::enabled() => {
+                resident_mtp::strata_runtime_public_bytes()
+            }
             Self::StrataQ2 => resident_mtp::STRATA_PUBLIC_BYTES,
         }
     }

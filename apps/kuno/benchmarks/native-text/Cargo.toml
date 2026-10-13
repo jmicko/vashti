@@ -26,6 +26,7 @@ cubecl-common = "=0.10.0"
 cubecl-runtime = "=0.10.0"
 serde_json = "1"
 zeroize = "1.9"
+half = "=2.7.1"
 kuno-text = { path = "../../../../crates/kuno-text" }
 cubecl = { version = "=0.10.0", default-features = false, features = ["std", "wgpu"] }
 wgpu = { version = "29", default-features = false, features = ["std", "vulkan", "wgsl"] }

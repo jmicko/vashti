@@ -175,11 +175,12 @@ impl IntelMtpMemory {
             || down_integer
                 && draft_public != crate::resident_mtp::PUBLIC_BYTES
                 && !(crate::strata_port::enabled()
-                    && draft_public == crate::resident_mtp::STRATA_PUBLIC_BYTES)
-            || !matches!(
+                    && draft_public == crate::resident_mtp::strata_runtime_public_bytes())
+            || !(matches!(
                 draft_public,
                 crate::resident_mtp::PUBLIC_BYTES | crate::resident_mtp::STRATA_PUBLIC_BYTES
-            )
+            ) || crate::strata_port::enabled()
+                && draft_public == crate::resident_mtp::strata_runtime_public_bytes())
             || target_source_pages != 30 * 1024 * 1024
             || target_baseline != 0
         {

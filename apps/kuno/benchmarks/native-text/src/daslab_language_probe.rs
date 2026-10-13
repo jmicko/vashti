@@ -1557,6 +1557,9 @@ pub(crate) fn run(
                 }
             }
             let mut stats = Statistics::default();
+            if crate::strata_port::enabled() {
+                println!("strata_decode_start");
+            }
             let mut draft_policy = crate::strata_port::DraftPolicy::default();
             let mut fixture_peak = owned_fixture_bytes(&[&carry], &[&prompt, &emitted])?;
             while emitted.len() < MAX_OUTPUTS && confirmed != graph.eos_token() {
@@ -1831,6 +1834,9 @@ pub(crate) fn run(
                     && emitted.len() < MAX_OUTPUTS
                     && confirmed != graph.eos_token()
                 {
+                    if stats.rounds % 4 == 0 {
+                        println!("strata_adapt_start round={}", stats.rounds);
+                    }
                     target.adapt_strata_cache(
                         &mut executor,
                         host_attachment
@@ -1838,6 +1844,9 @@ pub(crate) fn run(
                             .ok_or("Strata adaptive attachment absent")?,
                         &cancel,
                     )?;
+                    if stats.rounds % 4 == 0 {
+                        println!("strata_adapt_complete round={}", stats.rounds);
+                    }
                 }
             }
             let tail = Zeroizing::new(decoder.finish());

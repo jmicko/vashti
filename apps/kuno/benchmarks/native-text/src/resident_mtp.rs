@@ -925,12 +925,14 @@ fn public_plan() -> Result<u64> {
 fn matrices_for(profile: MtpProfile) -> &'static [Spec] {
     match profile {
         MtpProfile::SelfContainedQ8 => &MATRICES,
+        MtpProfile::StrataQ2 if crate::strata_port::enabled() => &strata::MATRICES_RUNTIME_Q8,
         MtpProfile::StrataQ2 => &strata::MATRICES_Q2,
     }
 }
 fn head_up_for(profile: MtpProfile) -> Spec {
     match profile {
         MtpProfile::SelfContainedQ8 => HEAD_UP,
+        MtpProfile::StrataQ2 if crate::strata_port::enabled() => HEAD_UP,
         MtpProfile::StrataQ2 => strata::HEAD_UP_Q2,
     }
 }
@@ -949,8 +951,12 @@ fn vectors_for(profile: MtpProfile) -> &'static [(&'static str, usize)] {
 fn public_bytes_for(profile: MtpProfile) -> u64 {
     match profile {
         MtpProfile::SelfContainedQ8 => PUBLIC_BYTES,
+        MtpProfile::StrataQ2 if crate::strata_port::enabled() => strata_runtime_public_bytes(),
         MtpProfile::StrataQ2 => STRATA_PUBLIC_BYTES,
     }
+}
+pub(crate) fn strata_runtime_public_bytes() -> u64 {
+    public_plan_for(MtpProfile::StrataQ2).expect("static Strata runtime public plan")
 }
 fn public_bytes_with_english(profile: MtpProfile, english: bool) -> Result<u64> {
     if english && profile != MtpProfile::SelfContainedQ8 {
@@ -1451,6 +1457,47 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         }
         let tensor = self.graph.tensor(name)?;
         let expected = TensorType::from_gguf_id(dtype)?;
+        if crate::strata_port::enabled()
+            && self.graph.profile() == MtpProfile::StrataQ2
+            && dtype == quant_matvec::Q8_0
+            && tensor.info().dtype() != expected
+        {
+            // Strata runtime conversion. Borrow original GGUF rows, convert in
+            // RAM, and upload once. No converted weight artifact is persisted.
+            let columns = tensor.info().dimensions()[0] as usize;
+            if columns % 32 != 0 || logical != rows * (columns / 32) * 34 {
+                return Err(Error::InvalidBufferLength);
+            }
+            let mut packed = Zeroizing::new(vec![0u8; tensor.info().row_bytes() as usize]);
+            let mut decoded = Zeroizing::new(vec![0f32; columns]);
+            for row in 0..rows {
+                tensor.read_row((first + row) as u64, &mut packed)?;
+                tensor.info().dtype().decode(&packed, &mut decoded)?;
+                for (block, values) in decoded.chunks_exact(32).enumerate() {
+                    if values.iter().any(|x| !x.is_finite()) {
+                        return Err(Error::InvalidFormat(
+                            "Strata public runtime conversion nonfinite",
+                        ));
+                    }
+                    let scale = values.iter().map(|x| x.abs()).fold(0f32, f32::max) / 127.;
+                    let at = (row * (columns / 32) + block) * 34;
+                    let half = half::f16::from_f32(scale);
+                    if !half.is_finite() {
+                        return Err(Error::InvalidFormat("Strata Q8 weight scale"));
+                    }
+                    source.0[at..at + 2].copy_from_slice(&half.to_bits().to_le_bytes());
+                    for (i, &x) in values.iter().enumerate() {
+                        source.0[at + 2 + i] = if scale == 0. {
+                            0
+                        } else {
+                            (x / scale).round().clamp(-127., 127.) as i8 as u8
+                        };
+                    }
+                }
+            }
+            validate_source(&source.0[..logical], dtype)?;
+            return self.upload_page(source, logical, owned, first, rows, dtype);
+        }
         if tensor.info().dtype() != expected {
             return Err(Error::InvalidBufferLength);
         }
@@ -1569,8 +1616,11 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         {
             let tensor = self.graph.tensor(spec.name)?;
             if tensor.info().dimensions() != [spec.columns as u64, spec.rows as u64]
-                || tensor.info().byte_len() as usize
-                    != spec.rows * quant_matvec::packed_row_bytes(spec.columns, spec.dtype)
+                || (!crate::strata_port::enabled()
+                    || profile != MtpProfile::StrataQ2
+                    || spec.dtype != quant_matvec::Q8_0)
+                    && tensor.info().byte_len() as usize
+                        != spec.rows * quant_matvec::packed_row_bytes(spec.columns, spec.dtype)
             {
                 return Err(Error::InvalidBufferLength);
             }
@@ -2508,8 +2558,12 @@ impl ResidentMtp<'_, '_> {
         // owner for the embedding FC, distinct from the normalized input.
         self.project(strata::FC_EMBEDDING, B::EmbeddingNorm, B::Embedding)?;
         let page = self.public()?.one(strata::FC_HIDDEN)?;
-        let geometry =
-            matmul::MatrixGeometry::new(quant_matvec::BF16, k::D, k::D, 4).map_err(error)?;
+        let dtype = if crate::strata_port::enabled() {
+            quant_matvec::Q8_0
+        } else {
+            quant_matvec::BF16
+        };
+        let geometry = matmul::MatrixGeometry::new(dtype, k::D, k::D, 4).map_err(error)?;
         let spans = matmul::BatchSpans::new(k::HC, 0, 0, k::D, 0, k::D);
         geometry
             .validate_spans(&spans, page.logical_bytes / 4, k::WIDE, k::WIDE)
@@ -2530,7 +2584,7 @@ impl ResidentMtp<'_, '_> {
                 k::D,
                 k::D,
                 k::D,
-                quant_matvec::BF16,
+                dtype,
                 4,
             );
         }
