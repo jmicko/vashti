@@ -60,7 +60,8 @@ impl Kind {
 /// every active column. All roles retain the fixed MAX8 owning allocation.
 fn read_columns(kind: Kind, count: usize, width: usize, words: usize) -> Result<(usize, usize)> {
     if (kind == Kind::FinalAllRows && count > crate::resident_model::batch::TARGET_ROWS_MAX)
-        || (kind == Kind::FinalFourRows && count != 4)
+        || (kind == Kind::FinalFourRows
+            && !(4..=crate::strata_port::verify_capacity()).contains(&count))
     {
         return Err(Error::InvalidBufferLength);
     }
@@ -92,7 +93,7 @@ fn final_head_spans(
     if all_rows
         && count
             > if kind == Kind::FinalFourRows {
-                4
+                crate::strata_port::verify_capacity()
             } else {
                 crate::resident_model::batch::TARGET_ROWS_MAX
             }
@@ -133,12 +134,16 @@ fn final_head_owner_words(
             if (1..=crate::resident_model::batch::TARGET_ROWS_MAX).contains(&count) =>
         {
             if four_reserved {
-                4
+                crate::strata_port::verify_capacity()
             } else {
                 crate::resident_model::batch::TARGET_ROWS_MAX
             }
         }
-        Kind::FinalFourRows if count == 4 && four_reserved => 4,
+        Kind::FinalFourRows
+            if (4..=crate::strata_port::verify_capacity()).contains(&count) && four_reserved =>
+        {
+            crate::strata_port::verify_capacity()
+        }
         _ => return Err(Error::InvalidBufferLength),
     };
     rows.checked_mul(vocabulary)
@@ -668,7 +673,8 @@ fn batched_final_head_roles(
 ) -> Result<()> {
     let expected = final_head_spans(kind, count, 2560, 248320)?;
     if !matches!(kind, Kind::FinalAllRows | Kind::FinalFourRows)
-        || (kind == Kind::FinalFourRows && (!four_reserved || count != 4))
+        || (kind == Kind::FinalFourRows
+            && (!four_reserved || !(4..=crate::strata_port::verify_capacity()).contains(&count)))
         || spans.count() != expected.count()
         || spans.packed_first() != 0
         || spans.input_first() != expected.input_first()

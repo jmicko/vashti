@@ -808,3 +808,6 @@ pub(crate) fn strata_fused_source(dtype: u32, row_bytes: usize, count: usize) ->
     };
     crate::strata_port::shader(kernel, false, if count == 4 { 4 } else { 3 })
 }
+
+#[path = "frozen_gu_integer_eight.rs"]
+pub(crate) mod eight;

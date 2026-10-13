@@ -25,7 +25,7 @@ use zeroize::Zeroizing;
 pub(crate) const EXPERTS: usize = 512;
 pub(crate) const LAYERS: usize = 48;
 pub(crate) const SLOTS: usize = crate::daslab_profile::BANK_SLOTS;
-pub(crate) const MAX_COUNT: usize = 4;
+pub(crate) const MAX_COUNT: usize = crate::strata_port::verify_capacity();
 pub(crate) const RANKS: usize = 10;
 pub(crate) const MAX_ROUTES: usize = 80;
 pub(crate) const ROUTER_WORDS: usize = 8192;
@@ -33,7 +33,7 @@ pub(crate) const TABLE_WORDS: usize = 32768;
 pub(crate) const MAP_WORDS: usize = 804;
 pub(crate) const PROB_WORDS: usize = 80;
 pub(crate) const SELECTION_WORDS: usize = 244;
-pub(crate) const META_WORDS: usize = 18;
+pub(crate) const META_WORDS: usize = 10 + 2 * MAX_COUNT;
 pub(crate) const FRAME_WORDS: usize =
     ROUTER_WORDS + SELECTION_WORDS + MAP_WORDS + PROB_WORDS + META_WORDS;
 pub(crate) const AUDIT_WORDS: usize = LAYERS * FRAME_WORDS;
@@ -71,7 +71,9 @@ impl Addressing {
         }
     }
     fn shader(self) -> String {
-        let original = include_str!("resident_batch_router_gpu_four.wgsl");
+        let original = crate::strata_port::wide_router_template(include_str!(
+            "resident_batch_router_gpu_four.wgsl"
+        ));
         match self {
             Self::Resident144 => original.replace(
                 "const SOURCE_CAPACITY:u32=144u;",
@@ -103,7 +105,11 @@ impl KernelMetadata for Kernel {
             .cube_dim(CubeDim::new_1d(if self.preflight {
                 256
             } else if crate::strata_port::enabled() {
-                128
+                if crate::strata_port::verify_capacity() == 8 {
+                    256
+                } else {
+                    128
+                }
             } else {
                 64
             }))
@@ -128,7 +134,11 @@ impl CubeTask<AutoCompiler> for Kernel {
             cube_dim: CubeDim::new_1d(if self.preflight {
                 256
             } else if crate::strata_port::enabled() {
-                128
+                if crate::strata_port::verify_capacity() == 8 {
+                    256
+                } else {
+                    128
+                }
             } else {
                 64
             }),
@@ -363,7 +373,7 @@ fn audit_frame_with_addressing(
         groups: 0,
         experts: [0; MAX_ROUTES],
         probabilities: [0.; MAX_ROUTES],
-        pairs: [(0, 0); 40],
+        pairs: [(0, 0); crate::strata_port::verify_capacity() * 10],
         probability_bit_mismatches: 0,
         max_probability_abs_error: 0.,
         minimum_gap: f32::MAX,
@@ -381,7 +391,7 @@ fn audit_frame_with_addressing(
         0,
         0,
     ]);
-    metadata[17] = NEAR_TIE_MARGIN.to_bits();
+    metadata[META_WORDS - 1] = NEAR_TIE_MARGIN.to_bits();
     for row in 0..count {
         for id in 0..EXPERTS {
             scores[id] = f32::from_bits(word(bytes, base + row * EXPERTS + id));
@@ -459,7 +469,7 @@ fn audit_frame_with_addressing(
         }
     }
     metadata[6] = routes.groups() as u32;
-    metadata[16] = routes.minimum_gap().to_bits();
+    metadata[META_WORDS - 2] = routes.minimum_gap().to_bits();
     for (i, &expected) in metadata.iter().enumerate() {
         if word(bytes, base + META + i) != expected {
             return Err(Error::InvalidFormat("batch device router audit metadata"));

@@ -154,7 +154,7 @@ pub(crate) fn validate_owners(
     start: u64,
     count: usize,
 ) -> Result<()> {
-    if count == 4 {
+    if count >= 4 {
         return four::validate_owners(owners, layer, start, count);
     }
     coordinates(layer, start, count)?;
@@ -237,7 +237,7 @@ pub(crate) fn launch_frozen_sources(
     start: u64,
     count: usize,
 ) -> Result<()> {
-    if count == 4 {
+    if count >= 4 {
         return four::launch_frozen_sources(client, owners, layer, start, count);
     }
     launch_with_addressing(
@@ -299,7 +299,7 @@ struct Routes {
     groups: usize,
     experts: [u32; MAX_ROUTES],
     probabilities: [f32; MAX_ROUTES],
-    pairs: [(u32, u32); 40],
+    pairs: [(u32, u32); crate::strata_port::verify_capacity() * 10],
     probability_bit_mismatches: usize,
     max_probability_abs_error: f64,
     minimum_gap: f32,
@@ -381,7 +381,7 @@ pub(crate) fn audit_frame_frozen_sources(
     count: usize,
     geometry: crate::quant_matvec::grouped_moe::Geometry,
 ) -> Result<AuditedRoutes> {
-    if count == 4 {
+    if count >= 4 {
         return four::audit_frame_frozen_sources(bytes, table, layer, start, count, geometry);
     }
     if !geometry.frozen_host_sources() {
@@ -425,7 +425,7 @@ fn audit_frame_with_addressing(
         groups: 0,
         experts: [0; MAX_ROUTES],
         probabilities: [0.; MAX_ROUTES],
-        pairs: [(0, 0); 40],
+        pairs: [(0, 0); crate::strata_port::verify_capacity() * 10],
         probability_bit_mismatches: 0,
         max_probability_abs_error: 0.,
         minimum_gap: f32::MAX,

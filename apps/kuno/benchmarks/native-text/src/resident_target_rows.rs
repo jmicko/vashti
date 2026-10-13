@@ -7,7 +7,7 @@ use cubecl::server::Handle;
 use kuno_text::model::GraphBindingId;
 
 pub(crate) const MAX_ROWS: usize = 3;
-pub(crate) const FOUR_ROWS: usize = 4;
+pub(crate) const FOUR_ROWS: usize = crate::strata_port::verify_capacity();
 const FOUR_LOGITS_WORDS: usize = FOUR_ROWS * VOCABULARY;
 const FOUR_PACKET_WORDS: usize = HEADER_WORDS + FOUR_LOGITS_WORDS + FOUR_ROWS * HC_WIDTH;
 pub(crate) const VOCABULARY: usize = 248320;
@@ -16,10 +16,25 @@ pub(crate) const HEADER_WORDS: usize = 8;
 pub(crate) const LOGITS_WORDS: usize = MAX_ROWS * VOCABULARY;
 pub(crate) const CARRY_WORDS: usize = MAX_ROWS * HC_WIDTH;
 pub(crate) const PACKET_WORDS: usize = HEADER_WORDS + LOGITS_WORDS + CARRY_WORDS;
-pub(crate) const OWNER_BYTES: usize = 4 * 1024 * 1024;
+pub(crate) const OWNER_BYTES: usize = if cfg!(feature = "strata-eight-window") {
+    8
+} else {
+    4
+} * 1024
+    * 1024;
 pub(crate) const MAIN_BYTES: u64 = 2 * OWNER_BYTES as u64;
-pub(crate) const HOST_CAP: usize = 8 * 1024 * 1024;
-pub(crate) const HOST_INCREMENT: usize = 6 * 1024 * 1024;
+pub(crate) const HOST_CAP: usize = if cfg!(feature = "strata-eight-window") {
+    16
+} else {
+    8
+} * 1024
+    * 1024;
+pub(crate) const HOST_INCREMENT: usize = if cfg!(feature = "strata-eight-window") {
+    12
+} else {
+    6
+} * 1024
+    * 1024;
 pub(crate) const RUNTIME_INCREMENT: u64 = 2 * (OWNER_BYTES as u64 - 1024 * 1024) + 2 * 2048;
 pub(crate) const RUNTIME_LIMIT: u64 = 128 * 1024 * 1024;
 
@@ -462,7 +477,7 @@ impl Owners {
         start: usize,
         cancel: &AtomicBool,
     ) -> Result<NativeTargetRows> {
-        let four = count == FOUR_ROWS;
+        let four = count > MAX_ROWS;
         if four && !self.four_reserved {
             return Err(rejected());
         }

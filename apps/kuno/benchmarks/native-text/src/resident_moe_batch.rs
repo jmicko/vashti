@@ -42,9 +42,11 @@ pub(crate) const FROZEN_GU_INTEGER_INFO_BYTES: u64 = 2 * 48 * 2048;
 pub(crate) const FROZEN_GU_INTEGER_RUNTIME_BYTES: u64 =
     FROZEN_GU_INTEGER_INFO_BYTES + 2 * 2048 + 4 * FROZEN_GU_INTEGER_MAIN_BYTES;
 // Independent construction-only charge for route-indexed integer DOWN.
-pub(crate) const FROZEN_DOWN_INTEGER_SCRATCH_WORDS: usize = 16384;
-pub(crate) const FROZEN_DOWN_INTEGER_MAIN_BYTES: u64 = 65536;
-pub(crate) const FROZEN_DOWN_INTEGER_HOST_BYTES: usize = 65536;
+pub(crate) const FROZEN_DOWN_INTEGER_SCRATCH_WORDS: usize =
+    crate::quant_matvec::frozen_down_integer::SCRATCH_WORDS;
+pub(crate) const FROZEN_DOWN_INTEGER_MAIN_BYTES: u64 =
+    (FROZEN_DOWN_INTEGER_SCRATCH_WORDS * 4) as u64;
+pub(crate) const FROZEN_DOWN_INTEGER_HOST_BYTES: usize = FROZEN_DOWN_INTEGER_MAIN_BYTES as usize;
 pub(crate) const FROZEN_DOWN_INTEGER_INFO_BYTES: u64 = 2 * 48 * 2048;
 pub(crate) const FROZEN_DOWN_INTEGER_RUNTIME_BYTES: u64 =
     FROZEN_DOWN_INTEGER_INFO_BYTES + 2 * 2048 + 4 * FROZEN_DOWN_INTEGER_MAIN_BYTES;
@@ -499,7 +501,7 @@ struct FrozenFourChunkScope {
 }
 impl FrozenFourChunkScope {
     fn validate(self, count: usize, waves: usize) -> Result<()> {
-        if count != 4
+        if !(4..=crate::strata_port::verify_capacity()).contains(&count)
             || waves != 1
             || !self.source_four
             || !self.workspace_four
@@ -1692,7 +1694,12 @@ impl GpuExecutor<'_> {
             w.begin_resident_router_token(self, graph, arena, start, count, cancel)?;
             w.begin_batch_router_chunk(arena, start, count)?;
             if w.frozen_host_sources_enabled()
-                && (!(1..=if w.public_four_members_policy() { 4 } else { 3 }).contains(&count)
+                && (!(1..=if w.public_four_members_policy() {
+                    crate::strata_port::verify_capacity()
+                } else {
+                    3
+                })
+                    .contains(&count)
                     || !self.resident_banks_frozen
                     || self.target_frozen_host_source_identity
                         != w.frozen_sources.as_ref().map(|s| s.plan_identity())

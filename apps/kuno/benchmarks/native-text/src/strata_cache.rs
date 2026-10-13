@@ -59,7 +59,10 @@ impl Cache {
         Ok(out)
     }
     pub(crate) fn observe(&mut self, layer: usize, experts: &[u32]) -> Result<()> {
-        if layer >= LAYERS || experts.len() > 40 || experts.iter().any(|&id| id >= EXPERTS as u32) {
+        if layer >= LAYERS
+            || experts.len() > crate::strata_port::verify_capacity() * 10
+            || experts.iter().any(|&id| id >= EXPERTS as u32)
+        {
             return Err(Error::OutOfBounds);
         }
         for &id in experts {

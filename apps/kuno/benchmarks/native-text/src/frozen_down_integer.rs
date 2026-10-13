@@ -19,7 +19,11 @@ pub(crate) const MAX_ROUTES: usize = MAX_COUNT * 10;
 pub(crate) const HEADER_WORDS: usize = 64;
 pub(crate) const FRAME_WORDS: usize = 360;
 pub(crate) const LOGICAL_WORDS: usize = HEADER_WORDS + MAX_ROUTES * FRAME_WORDS;
-pub(crate) const SCRATCH_WORDS: usize = 16384;
+pub(crate) const SCRATCH_WORDS: usize = if cfg!(feature = "strata-eight-window") {
+    32768
+} else {
+    16384
+};
 pub(crate) const OWNED_WORDS: usize = SCRATCH_WORDS;
 pub(crate) const MAIN_BYTES: u64 = (SCRATCH_WORDS * 4) as u64;
 pub(crate) const HOST_INCREMENT: usize = MAIN_BYTES as usize;
@@ -574,3 +578,6 @@ pub(crate) fn strata_fused_source(dtype: u32, row_bytes: usize, count: usize) ->
     };
     crate::strata_port::shader(kernel, true, if count == 4 { 4 } else { 3 })
 }
+
+#[path = "frozen_down_integer_eight.rs"]
+pub(crate) mod eight;

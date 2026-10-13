@@ -42,6 +42,7 @@ cubecl-wgpu = { path = "vendor/cubecl-wgpu" }
 direct-device = ["cubecl-common/kuno-direct-device"]
 # Whole-model Strata precision/scheduling port; isolated from installed Kuno.
 strata-rust-port = ["direct-device"]
+strata-eight-window = ["strata-rust-port"]
 # Separate arithmetic candidate: original weights, explicit FMA/32-lane CPU.
 cpu-fma = []
 cpu-buffered-weights = []

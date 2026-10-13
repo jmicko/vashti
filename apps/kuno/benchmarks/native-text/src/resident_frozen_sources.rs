@@ -1384,7 +1384,11 @@ impl Sources {
         self.four_members
     }
     fn count_limit(&self) -> usize {
-        if self.four_members { 4 } else { 3 }
+        if self.four_members {
+            crate::strata_port::verify_capacity()
+        } else {
+            3
+        }
     }
     pub(crate) fn gu_integer(&self) -> bool {
         self.gu_integer
@@ -2009,7 +2013,12 @@ impl GuIntegerDispatch {
                     0
                 }
             || self.compact_audits != u64::from(compact)
-            || !(1..=if four { 4 } else { 3 }).contains(&count)
+            || !(1..=if four {
+                crate::strata_port::verify_capacity()
+            } else {
+                3
+            })
+                .contains(&count)
         {
             return Err(reject());
         }
@@ -2052,7 +2061,12 @@ impl DownIntegerDispatch {
         if self.layer != layer
             || layer >= 48
             || self.count != count
-            || !(1..=if four { 4 } else { 3 }).contains(&count)
+            || !(1..=if four {
+                crate::strata_port::verify_capacity()
+            } else {
+                3
+            })
+                .contains(&count)
             || self.preparations != 1
             || self.dispatches
                 != if crate::strata_port::fused_sources() {
@@ -2891,9 +2905,13 @@ impl GpuExecutor<'_> {
             u::cancel(cancel)?;
             w.check(self, s, arena)?;
             if !w.frozen_host_batch_router_active()
-                || !(1..=if w.public_four_members_policy() { 4 } else { 3 })
+                || !(1..=if w.public_four_members_policy() {
+                    crate::strata_port::verify_capacity()
+                } else {
+                    3
+                })
                     .contains(&views.count())
-                || views.count() == 4
+                || views.count() >= 4
                     && (!self.target_four_rows_active || !w.four_member_router_reserved())
                 || views.count() != s.stamp.count
                 || views.input_first() != 0
@@ -2967,7 +2985,13 @@ impl GpuExecutor<'_> {
                 g,
                 &spans,
                 &ids,
-                if views.count() == 4 { 40 } else { 30 },
+                if views.count() > 4 {
+                    80
+                } else if views.count() == 4 {
+                    40
+                } else {
+                    30
+                },
                 w.frozen_staging_owner_ids().as_ref(),
                 w.frozen_gu_integer_owner_id(),
                 w.frozen_down_integer_owner_id(),
@@ -3259,7 +3283,14 @@ impl Sources {
             || g != l.geometry
             || self.down_integer != down_integer.is_some()
             || self.down_integer
-                && (groups != if count == 4 { 40 } else { 30 }
+                && (groups
+                    != if count > 4 {
+                        80
+                    } else if count == 4 {
+                        40
+                    } else {
+                        30
+                    }
                     || staging.is_some()
                     || !(1..=self.count_limit()).contains(&count))
             || self.gu_integer != gu_integer.is_some()
@@ -3281,7 +3312,9 @@ impl Sources {
             if self.gu_stride_four {
                 // Compaction builds each shard's dispatch and group records in
                 // the original full64KiB owner tail. Same prepare arithmetic.
-                (if count == 4 {
+                (if count > 4 {
+                    crate::quant_matvec::frozen_gu_integer::eight::prepare_compact
+                } else if count == 4 {
                     crate::quant_matvec::frozen_gu_integer::four::prepare_compact
                 } else {
                     crate::quant_matvec::frozen_gu_integer::prepare_compact
@@ -3295,7 +3328,9 @@ impl Sources {
                     groups,
                 )?;
             } else {
-                (if count == 4 {
+                (if count > 4 {
+                    crate::quant_matvec::frozen_gu_integer::eight::prepare
+                } else if count == 4 {
                     crate::quant_matvec::frozen_gu_integer::four::prepare
                 } else {
                     crate::quant_matvec::frozen_gu_integer::prepare
@@ -3331,7 +3366,9 @@ impl Sources {
         for &phase in source_phases(self.down_integer) {
             if phase == SourcePhase::PrepareAndDown {
                 let (handles, scratch) = down_integer_handles.as_ref().ok_or_else(reject)?;
-                (if count == 4 {
+                (if count > 4 {
+                    crate::quant_matvec::frozen_down_integer::eight::prepare
+                } else if count == 4 {
                     crate::quant_matvec::frozen_down_integer::four::prepare
                 } else {
                     crate::quant_matvec::frozen_down_integer::prepare
@@ -3507,7 +3544,9 @@ impl Sources {
                         if self.gu_stride_four {
                             // Compaction: one indirect dispatch per shard, driven
                             // by the records built in the original owner tail.
-                            (if count == 4 {
+                            (if count > 4 {
+                                crate::quant_matvec::frozen_gu_integer::eight::launch_compact
+                            } else if count == 4 {
                                 if crate::quant_matvec::frozen_gu_integer::four::shuffle::PUBLIC_PROBE {
                                     crate::quant_matvec::frozen_gu_integer::four::launch_compact_shuffle
                                 } else if crate::quant_matvec::frozen_gu_integer::four::FIRST_PLANE_PUBLIC_PROBE {
@@ -3612,7 +3651,9 @@ impl Sources {
                         if self.gu_stride_four {
                             // Same records the GU leaf consumed; DOWN only reads
                             // the authenticated full GU owner.
-                            (if count == 4 {
+                            (if count > 4 {
+                                crate::quant_matvec::frozen_down_integer::eight::launch_compact
+                            } else if count == 4 {
                                 if crate::quant_matvec::frozen_gu_integer::four::shuffle::PUBLIC_PROBE {
                                     if crate::quant_matvec::frozen_down_integer::four::STAGED_PUBLIC_PROBE {
                                         crate::quant_matvec::frozen_down_integer::four::launch_compact_shuffle_staged
@@ -3642,7 +3683,9 @@ impl Sources {
                                 .checked_add(1)
                                 .ok_or(Error::ArithmeticOverflow)?;
                         } else {
-                            (if count == 4 {
+                            (if count > 4 {
+                                crate::quant_matvec::frozen_down_integer::eight::launch
+                            } else if count == 4 {
                                 crate::quant_matvec::frozen_down_integer::four::launch
                             } else {
                                 crate::quant_matvec::frozen_down_integer::launch
@@ -3732,7 +3775,9 @@ impl Sources {
             if self.gu_stride_four {
                 // Replacement audit: validates every record against the
                 // unchanged MAP, stickies faults, then erases the records.
-                (if count == 4 {
+                (if count > 4 {
+                    crate::quant_matvec::frozen_gu_integer::eight::audit_compact
+                } else if count == 4 {
                     crate::quant_matvec::frozen_gu_integer::four::audit_compact
                 } else {
                     crate::quant_matvec::frozen_gu_integer::audit_compact
@@ -3747,7 +3792,9 @@ impl Sources {
                 )?;
                 compact_audits += 1;
             } else {
-                (if count == 4 {
+                (if count > 4 {
+                    crate::quant_matvec::frozen_gu_integer::eight::audit
+                } else if count == 4 {
                     crate::quant_matvec::frozen_gu_integer::four::audit
                 } else {
                     crate::quant_matvec::frozen_gu_integer::audit
@@ -3790,7 +3837,9 @@ impl Sources {
             None
         };
         let down_integer = if let Some((_, scratch)) = down_integer_handles {
-            (if count == 4 {
+            (if count > 4 {
+                crate::quant_matvec::frozen_down_integer::eight::audit
+            } else if count == 4 {
                 crate::quant_matvec::frozen_down_integer::four::audit
             } else {
                 crate::quant_matvec::frozen_down_integer::audit

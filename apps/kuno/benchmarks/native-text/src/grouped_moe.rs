@@ -614,7 +614,11 @@ impl Geometry {
     /// Runtime frozen count bound only, never full owning/storage capacity.
     pub(crate) fn member_limit(self) -> usize {
         if self.frozen_host_sources {
-            if self.four_members { 4 } else { 3 }
+            if self.four_members {
+                crate::strata_port::verify_capacity()
+            } else {
+                3
+            }
         } else {
             self.member_capacity()
         }
@@ -771,7 +775,13 @@ pub struct GroupMap<'a> {
 }
 fn source_map_capacity(frozen: bool, four_members: bool, capacity: usize, count: usize) -> bool {
     if frozen {
-        capacity == 512 && (1..=if four_members { 4 } else { 3 }).contains(&count)
+        capacity == 512
+            && (1..=if four_members {
+                crate::strata_port::verify_capacity()
+            } else {
+                3
+            })
+                .contains(&count)
     } else {
         !four_members && crate::bank_slots::routed_capacity(capacity)
     }

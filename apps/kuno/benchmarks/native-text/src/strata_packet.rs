@@ -34,7 +34,7 @@ impl CubeTask<AutoCompiler> for Packet {
         Ok(CompiledKernel {
             entrypoint_name: "main".into(),
             debug_name: None,
-            source: include_str!("strata-packet.wgsl").into(),
+            source: shader(),
             repr: None,
             cube_dim: CubeDim::new_1d(128),
             debug_info: None,
@@ -58,6 +58,26 @@ pub(crate) fn launch(
     // Parent authenticates all complete disjoint private owners and coordinates;
     // no reduced span acquires free/erasure authority over a backing owner.
     unsafe {
-        client.launch_unchecked(Box::new(Packet), CubeCount::Static(4, 1, 1), args);
+        client.launch_unchecked(
+            Box::new(Packet),
+            CubeCount::Static(crate::strata_port::verify_capacity() as u32, 1, 1),
+            args,
+        );
     }
+}
+
+pub(crate) fn shader() -> String {
+    include_str!("strata-packet.wgsl")
+        .replace(
+            "VERIFY_ROWS",
+            &crate::strata_port::verify_capacity().to_string(),
+        )
+        .replace(
+            "PACKET_OWNER_WORDS",
+            &(crate::resident_model::batch::target_rows::OWNER_BYTES / 4).to_string(),
+        )
+        .replace(
+            "CARRY_FIRST",
+            &(8 + crate::strata_port::verify_capacity()).to_string(),
+        )
 }

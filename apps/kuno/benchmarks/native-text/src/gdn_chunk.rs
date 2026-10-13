@@ -32,7 +32,7 @@ impl RecurrencePolicy {
         if !(1..=MAX_BATCH).contains(&count)
             || self == Self::SingleStreaming && count != 1
             || self == Self::ThreeStreaming && count > 3
-            || self == Self::FourStreaming && count > 4
+            || self == Self::FourStreaming && count > crate::strata_port::verify_capacity()
         {
             return Err(fault());
         }
@@ -40,7 +40,7 @@ impl RecurrencePolicy {
     }
     pub(crate) fn execution_policy(self, count: usize) -> Result<Self> {
         self.validate_count(count)?;
-        Ok(if self == Self::FourStreaming && count < 4 {
+        Ok(if self == Self::FourStreaming && count != 4 {
             Self::Chunk
         } else {
             self

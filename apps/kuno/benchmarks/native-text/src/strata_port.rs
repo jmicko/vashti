@@ -7,6 +7,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub(crate) const fn enabled() -> bool {
     cfg!(feature = "strata-rust-port")
 }
+pub(crate) const fn verify_capacity() -> usize {
+    if cfg!(feature = "strata-eight-window") {
+        8
+    } else {
+        4
+    }
+}
 pub(crate) fn fused_sources() -> bool {
     static SELECTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     enabled()
@@ -104,17 +111,17 @@ pub(crate) fn credit_lookup(proposed: usize) {
 /// verifier available here. All observations are request-local and erased.
 #[derive(Default)]
 pub(crate) struct DraftPolicy {
-    cost: [f64; 5],
-    cost_n: [f64; 5],
-    mtp_tok: [f64; 5],
-    mtp_n: [f64; 5],
+    cost: [f64; 9],
+    cost_n: [f64; 9],
+    mtp_tok: [f64; 9],
+    mtp_n: [f64; 9],
     ok: [f64; 4],
     bad: [f64; 4],
-    last: [f64; 5],
+    last: [f64; 9],
     rounds: f64,
-    mtp_ok: [f64; 3],
-    mtp_bad: [f64; 3],
-    chosen: [u64; 5],
+    mtp_ok: [f64; 7],
+    mtp_bad: [f64; 7],
+    chosen: [u64; 9],
 }
 impl DraftPolicy {
     fn bucket(matched: usize) -> usize {
@@ -129,7 +136,7 @@ impl DraftPolicy {
         }
     }
     fn cost_ms(&self, t: usize) -> f64 {
-        const SHAPE: [f64; 5] = [0., 1., 1.35, 1.7, 2.05];
+        const SHAPE: [f64; 9] = [0., 1., 1.35, 1.7, 2.05, 2.4, 2.75, 3.1, 3.45];
         if self.cost_n[t] > 0. {
             return self.cost[t];
         }
@@ -148,7 +155,7 @@ impl DraftPolicy {
         }
     }
     pub(crate) fn choose_mtp(&mut self, maximum: usize) -> usize {
-        if !enabled() || !(1..=4).contains(&maximum) {
+        if !enabled() || !(1..=verify_capacity()).contains(&maximum) {
             return maximum;
         }
         let mut selected = maximum;
@@ -156,7 +163,7 @@ impl DraftPolicy {
         // tested prefix from position-specific conditional acceptance. Rejected
         // suffixes never count as additional failed positions.
         if self.rounds >= 12. && maximum >= 3 {
-            let mut expected = [0.; 5];
+            let mut expected = [0.; 9];
             expected[1] = 1.;
             let mut probability = 1.;
             for position in 0..maximum - 1 {
@@ -192,7 +199,7 @@ impl DraftPolicy {
         };
         let base = mtp / self.cost_ms(t);
         let (mut expected, mut qi, mut best, mut size) = (1., 1., 0., 0);
-        for k in 1..=proposal.tokens.len().min(t - 1) {
+        for k in 1..=proposal.tokens.len().min(verify_capacity() - 1) {
             qi *= q;
             expected += qi;
             let rate = expected / self.cost_ms(k + 1);
@@ -364,6 +371,24 @@ pub(crate) fn wide_weights(mut source: String, down_projection: bool) -> String 
     source
 }
 
+pub(crate) fn wide_router_template(source: &str) -> String {
+    if verify_capacity() != 8 {
+        return source.into();
+    }
+    source
+        .replace("p.count==4u", "p.count>=4u && p.count<=8u")
+        .replace("array<u32,44>", "array<u32,88>")
+        .replace("array<f32,44>", "array<f32,88>")
+        .replace("group_expert:array<u32,40>", "group_expert:array<u32,80>")
+        .replace("weights:array<f32,40>", "weights:array<f32,80>")
+        .replace("group>=40u", "group>=80u")
+        .replace("9338u", "9346u")
+        .replace("448224u", "448608u")
+        .replace("76064u", "75680u")
+        .replace("j==16u", "j==24u")
+        .replace("j==17u", "j==25u")
+}
+
 pub(crate) fn router_shader(mut source: String) -> String {
     if !enabled() {
         return source;
@@ -388,6 +413,17 @@ pub(crate) fn router_shader(mut source: String) -> String {
             "var<workgroup> minimum_gap:f32;\nvar<workgroup> row_gap:array<f32,4>;",
         )
         .replace("index+=64u", "index+=128u");
+    let source = if verify_capacity() == 8 {
+        source
+            .replace("@workgroup_size(128)", "@workgroup_size(256)")
+            .replace("array<f32,128>", "array<f32,256>")
+            .replace("array<u32,128>", "array<u32,256>")
+            .replace("row_gap:array<f32,4>", "row_gap:array<f32,8>")
+            .replace("index+=128u", "index+=256u")
+            .replace("if row<4u", "if row<8u")
+    } else {
+        source
+    };
     source.replace("fn main(@builtin(local_invocation_index) local:u32) {",
         "fn main(@builtin(local_invocation_index) local:u32,@builtin(subgroup_id) sg:u32,@builtin(subgroup_invocation_id) lane:u32,@builtin(subgroup_size) width:u32) {")
         .replace("if !shape() {reject(1u);}","if !shape() || (width!=16u && width!=32u) {reject(1u);}")
@@ -475,6 +511,17 @@ fn rows(source: String, down: bool) -> String {
     }
 }
 
+fn member_suffixes(members: usize) -> Vec<String> {
+    if members == 8 {
+        (0..8).map(|i| format!("[{i}]")).collect()
+    } else {
+        ["x", "y", "z", "w"]
+            .iter()
+            .take(members)
+            .map(|axis| format!(".{axis}"))
+            .collect()
+    }
+}
 fn reduction(mut source: String, down: bool, members: usize) -> String {
     let vec = format!("vec{members}<f32>");
     let (first, last) = if down {
@@ -502,11 +549,23 @@ fn reduction(mut source: String, down: bool, members: usize) -> String {
             "    for(var stride=4u;stride>0u;stride/=2u) {{let g:{vec}=subgroupShuffleDown(gates,stride);let u:{vec}=subgroupShuffleDown(ups,stride);if lane<stride {{gates+=g;ups+=u;}}}}\n    "
         )
     };
-    source.replace_range(
-        first..last,
-        &tree.replace("stride=4u", &format!("stride={}u", expert_lanes() / 2)),
-    );
-    for (i, axis) in ["x", "y", "z", "w"].iter().take(members).enumerate() {
+    let tree = if members == 8 {
+        if down {
+            format!(
+                "for(var stride={}u;stride>0u;stride/=2u) {{for(var j=0u;j<8u;j++) {{let other=subgroupShuffleDown(values[j],stride);if lane<stride {{values[j]+=other;}}}}}}\n",
+                expert_lanes() / 2
+            )
+        } else {
+            format!(
+                "for(var stride={}u;stride>0u;stride/=2u) {{for(var j=0u;j<8u;j++) {{let g=subgroupShuffleDown(gates[j],stride);let u=subgroupShuffleDown(ups[j],stride);if lane<stride {{gates[j]+=g;ups[j]+=u;}}}}}}\n",
+                expert_lanes() / 2
+            )
+        }
+    } else {
+        tree.replace("stride=4u", &format!("stride={}u", expert_lanes() / 2))
+    };
+    source.replace_range(first..last, &tree);
+    for (i, axis) in member_suffixes(members).iter().enumerate() {
         for (old, new) in if down {
             vec![("sums", "values")]
         } else {
@@ -556,8 +615,8 @@ fn gate_up(mut source: String, members: usize) -> String {
 "#
     );
     source.insert_str(first, &copy);
-    for axis in ["x", "y", "z", "w"].iter().take(members) {
-        let old = format!("frames.{axis}=64u+(");
+    for axis in member_suffixes(members) {
+        let old = format!("frames{axis}=64u+(");
         if let Some(first) = source.find(&old) {
             let end = first + source[first..].find(';').unwrap() + 1;
             let line = source[first..end].to_owned();
@@ -567,17 +626,17 @@ fn gate_up(mut source: String, members: usize) -> String {
             );
         }
         let dots = format!(
-            "{{let first=planes[frames.{axis}+at];let second=planes[frames.{axis}+640u+at];gf.{axis}+=dot4I8Packed(gq,first);gs.{axis}+=dot4I8Packed(gq,second);uf.{axis}+=dot4I8Packed(uq,first);us.{axis}+=dot4I8Packed(uq,second);}}"
+            "{{let first=planes[frames{axis}+at];let second=planes[frames{axis}+640u+at];gf{axis}+=dot4I8Packed(gq,first);gs{axis}+=dot4I8Packed(gq,second);uf{axis}+=dot4I8Packed(uq,first);us{axis}+=dot4I8Packed(uq,second);}}"
         );
         let primary = format!(
-            "{{let first=strata_input[frames.{axis}+at];gf.{axis}+=dot4I8Packed(gq,first);uf.{axis}+=dot4I8Packed(uq,first);}}"
+            "{{let first=strata_input[frames{axis}+at];gf{axis}+=dot4I8Packed(gq,first);uf{axis}+=dot4I8Packed(uq,first);}}"
         );
         source = replace(source, &dots, &primary);
         let scales = format!(
-            "{{let a=bitcast<f32>(planes[frames.{axis}+1280u+block]);let b=bitcast<f32>(planes[frames.{axis}+1360u+block]);let gp=a*f32(gf.{axis})+b*f32(gs.{axis});let up=a*f32(uf.{axis})+b*f32(us.{axis});gates.{axis}+=gd*gp;ups.{axis}+=ud*up;}}"
+            "{{let a=bitcast<f32>(planes[frames{axis}+1280u+block]);let b=bitcast<f32>(planes[frames{axis}+1360u+block]);let gp=a*f32(gf{axis})+b*f32(gs{axis});let up=a*f32(uf{axis})+b*f32(us{axis});gates{axis}+=gd*gp;ups{axis}+=ud*up;}}"
         );
         let primary = format!(
-            "{{let a=bitcast<f32>(strata_input[frames.{axis}+640u+block]);gates.{axis}=fma(gd,a*f32(gf.{axis}),gates.{axis});ups.{axis}=fma(ud,a*f32(uf.{axis}),ups.{axis});}}"
+            "{{let a=bitcast<f32>(strata_input[frames{axis}+640u+block]);gates{axis}=fma(gd,a*f32(gf{axis}),gates{axis});ups{axis}=fma(ud,a*f32(uf{axis}),ups{axis});}}"
         );
         source = replace(source, &scales, &primary);
     }
@@ -600,7 +659,7 @@ fn down(mut source: String, members: usize) -> String {
         strata_input[word]=value;
     }}
     workgroupBarrier();
-    frames=vec{members}<u32>({});
+    frames=FRAME_TYPE({});
 "#,
         (0..members)
             .map(|m| format!("{}u", m * 180))
@@ -609,18 +668,28 @@ fn down(mut source: String, members: usize) -> String {
     );
     let before = "    var values=";
     let at = source.find(before).unwrap();
-    source.insert_str(at, &copy);
-    for axis in ["x", "y", "z", "w"].iter().take(members) {
+    source.insert_str(
+        at,
+        &copy.replace(
+            "FRAME_TYPE",
+            &if members == 8 {
+                "array<u32,8>".into()
+            } else {
+                format!("vec{members}<u32>")
+            },
+        ),
+    );
+    for axis in member_suffixes(members) {
         let old = format!(
-            "{{first.{axis}+=dot4I8Packed(q,planes[frames.{axis}+at]);second.{axis}+=dot4I8Packed(q,planes[frames.{axis}+160u+at]);}}"
+            "{{first{axis}+=dot4I8Packed(q,planes[frames{axis}+at]);second{axis}+=dot4I8Packed(q,planes[frames{axis}+160u+at]);}}"
         );
-        let new = format!("{{first.{axis}+=dot4I8Packed(q,strata_input[frames.{axis}+at]);}}");
+        let new = format!("{{first{axis}+=dot4I8Packed(q,strata_input[frames{axis}+at]);}}");
         source = replace(source, &old, &new);
         let old = format!(
-            "{{let a=bitcast<f32>(planes[frames.{axis}+320u+block]);let b=bitcast<f32>(planes[frames.{axis}+340u+block]);let pair=a*f32(first.{axis})+b*f32(second.{axis});values.{axis}+=d*pair;}}"
+            "{{let a=bitcast<f32>(planes[frames{axis}+320u+block]);let b=bitcast<f32>(planes[frames{axis}+340u+block]);let pair=a*f32(first{axis})+b*f32(second{axis});values{axis}+=d*pair;}}"
         );
         let new = format!(
-            "{{let a=bitcast<f32>(strata_input[frames.{axis}+160u+block]);values.{axis}=fma(d,a*f32(first.{axis}),values.{axis});}}"
+            "{{let a=bitcast<f32>(strata_input[frames{axis}+160u+block]);values{axis}=fma(d,a*f32(first{axis}),values{axis});}}"
         );
         source = replace(source, &old, &new);
     }
@@ -630,6 +699,9 @@ fn down(mut source: String, members: usize) -> String {
 pub(crate) fn shader(mut source: String, down_projection: bool, members: usize) -> String {
     if !enabled() {
         return source;
+    }
+    if down_projection && verify_capacity() == 8 {
+        source = source.replace("16384u", "32768u");
     }
     if source.contains("fn prepare_q8(block:u32)") {
         source = quantizer(source);
@@ -675,7 +747,8 @@ pub(crate) fn validate_limits(limits: &wgpu::Limits) -> kuno_text::Result<()> {
     if enabled()
         && (limits.max_compute_invocations_per_workgroup < 256
             || limits.max_compute_workgroup_size_x < 256
-            || limits.max_compute_workgroup_storage_size < 19712
+            || limits.max_compute_workgroup_storage_size
+                < if verify_capacity() == 8 { 32768 } else { 19712 }
             || fused_sources()
                 && (limits.max_storage_buffers_per_shader_stage < 14
                     || limits.max_bindings_per_bind_group < 15))
@@ -695,9 +768,11 @@ pub(crate) fn validate_shader_set() -> Result<(), Box<dyn std::error::Error>> {
     use wgpu::naga as n;
     for source in [
         router_shader(include_str!("resident_batch_router_gpu.wgsl").into()),
-        router_shader(include_str!("resident_batch_router_gpu_four.wgsl").into()),
+        router_shader(wide_router_template(include_str!(
+            "resident_batch_router_gpu_four.wgsl"
+        ))),
         crate::public_host_expert_mirror::strata_gpu_exchange::SHADER.into(),
-        include_str!("strata-packet.wgsl").into(),
+        crate::strata_packet::shader(),
     ] {
         let module = n::front::wgsl::parse_str(&source).map_err(|e| e.emit_to_string(&source))?;
         let _ = n::valid::Validator::new(
@@ -713,6 +788,10 @@ pub(crate) fn validate_shader_set() -> Result<(), Box<dyn std::error::Error>> {
     }
     let mut shaders = crate::quant_matvec::frozen_gu_integer::strata_compiled_sources();
     shaders.extend(crate::quant_matvec::frozen_down_integer::strata_compiled_sources());
+    if verify_capacity() == 8 {
+        shaders.extend(crate::quant_matvec::frozen_gu_integer::eight::compiled_sources());
+        shaders.extend(crate::quant_matvec::frozen_down_integer::eight::compiled_sources());
+    }
     shaders.extend(crate::q6_integer_matvec::batch::strata_compiled_sources());
     shaders.extend(crate::strata_expert_fused::compiled_sources());
     for (index, compiled) in shaders.iter().enumerate() {

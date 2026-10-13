@@ -1336,7 +1336,13 @@ pub(crate) fn validate_frozen_integer_math_close(
     if (buffers, bytes)
         != (
             expected.0 + crate::resident_gdn::batch::strata_replay::EXTRA_BUFFERS,
-            expected.1 + crate::resident_gdn::batch::strata_replay::MAIN_BYTES,
+            expected.1
+                + crate::resident_gdn::batch::strata_replay::MAIN_BYTES
+                + if cfg!(feature = "strata-eight-window") {
+                    2 * 4 * 1024 * 1024 + 65536
+                } else {
+                    0
+                },
         )
     {
         return Err("integer DOWN complete extra MAIN owner closure rejected");

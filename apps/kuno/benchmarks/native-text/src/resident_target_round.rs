@@ -39,7 +39,7 @@ enum Phase {
 /// Arbitrary prompt inputs are not an API for this public lab. Binding identity
 /// is process-local, never persisted.
 struct Packet<B = GraphBindingId> {
-    tokens: Zeroizing<[u32; 4]>,
+    tokens: Zeroizing<[u32; crate::strata_port::verify_capacity()]>,
     geometry: Zeroizing<[usize; 2]>,
     binding: Option<B>,
     phase: Phase,
@@ -65,7 +65,7 @@ impl<B: Copy + PartialEq> Packet<B> {
         {
             return Err(rejected());
         }
-        let mut packet = Zeroizing::new([0; 4]);
+        let mut packet = Zeroizing::new([0; crate::strata_port::verify_capacity()]);
         packet[..tokens.len()].copy_from_slice(tokens);
         Ok(Self {
             tokens: packet,

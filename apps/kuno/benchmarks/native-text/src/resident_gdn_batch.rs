@@ -1273,7 +1273,12 @@ impl GdnBatchWorkspace {
         self.healthy(arena, cancel)?;
         checked_count(start, count, stage.layout.max_context)?;
         if count == 4 && self.recurrence_policy != RecurrencePolicy::FourStreaming
-            || !(1..=if four { 4 } else { 3 }).contains(&count)
+            || !(1..=if four {
+                crate::strata_port::verify_capacity()
+            } else {
+                3
+            })
+                .contains(&count)
             || self.policy.phase != ChunkPhase::Idle
             || *self.policy.issued != 0
             || *self.policy.committed != 0

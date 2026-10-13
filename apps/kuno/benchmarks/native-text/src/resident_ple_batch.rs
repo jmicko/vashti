@@ -260,7 +260,12 @@ impl PleBatchWorkspace {
     ) -> Result<LatestPleCheckpoint> {
         self.healthy(model, cancel)?;
         graph_preflight(model.graph)?;
-        if !(1..=if four { 4 } else { 3 }).contains(&tokens.len())
+        if !(1..=if four {
+            crate::strata_port::verify_capacity()
+        } else {
+            3
+        })
+            .contains(&tokens.len())
             || tokens.iter().any(|&t| t >= 248320)
             || self.pending
             || model.ple_batch_pending.is_some()

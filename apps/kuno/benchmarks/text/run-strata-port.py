@@ -10,10 +10,10 @@ def helper(name,*args):
  return json.loads(subprocess.check_output(['python3',str(BASE/'helpers-20261008'/name),*args],text=True))
 
 def run():
- if os.getuid()!=0 or not 5<=len(sys.argv)<=11:raise ValueError('root BUILD OUT code|prose q8|q2 [--profile] [--integer-head] [--fused-experts]')
+ if os.getuid()!=0 or not 5<=len(sys.argv)<=12:raise ValueError('root BUILD OUT code|prose q8|q2 [--profile] [--integer-head] [--fused-experts]')
  build=BASE/sys.argv[1];out=BASE/sys.argv[2];fixture,profile=sys.argv[3:5]
  options=set(sys.argv[5:])
- if options-{'--profile','--integer-head','--fused-experts','--wide-experts','--expert-lanes16','--cache-eight'}:raise ValueError('port selector')
+ if options-{'--profile','--integer-head','--fused-experts','--wide-experts','--expert-lanes16','--cache-eight','--mtp-eight'}:raise ValueError('port selector')
  target_profile='--profile' in options
  if out.exists():raise ValueError('fresh output required')
  out.mkdir()
@@ -35,11 +35,12 @@ def run():
  if '--wide-experts' in options:env['KUNO_STRATA_WIDE_EXPERTS']='aligned-vector-public'
  if '--expert-lanes16' in options:env['KUNO_STRATA_EXPERT_LANES']='sixteen-public'
  if '--cache-eight' in options:env['KUNO_STRATA_CACHE_SWAPS']='eight-public'
+ if '--mtp-eight' in options:env['KUNO_STRATA_MTP_WINDOW']='eight-public'
  # Capture source identity; whole files were hashed by preceding accepted trials.
  sources=[]
  for path in sorted(protected.MODEL.glob('*.gguf')):
   st=path.stat();sources.append({'path':str(path),'size':st.st_size,'mtime_ns':st.st_mtime_ns})
- (out/'source.json').write_text(json.dumps({'commit':(build/'source-commit.txt').read_text().strip(),'artifact_sha256':digest,'features':['strata-rust-port'],'fixture':fixture,'draft_profile':profile,'seed':424242,'temperature':0,'port_options':sorted(options),'sources':sources,'source_full_sha_recheck_this_run':False,'original_full_sha_evidence':str(BASE/'native-next-v197-staged-down-code-intel-20261013/public-original-source-verification.json')},indent=2)+'\n')
+ (out/'source.json').write_text(json.dumps({'commit':(build/'source-commit.txt').read_text().strip(),'artifact_sha256':digest,'features':json.loads((build/'build-features.json').read_text())['features'],'fixture':fixture,'draft_profile':profile,'seed':424242,'temperature':0,'port_options':sorted(options),'sources':sources,'source_full_sha_recheck_this_run':False,'original_full_sha_evidence':str(BASE/'native-next-v197-staged-down-code-intel-20261013/public-original-source-verification.json')},indent=2)+'\n')
  before=helper('final-secondary-state.py');(out/'host-before.json').write_text(json.dumps(before,indent=2)+'\n')
  if before['nvidia_compute_process_count'] or any(r['used_bytes']>160*1024**2 for r in before['intel']['xe_memory']):raise ValueError('GPU not free')
  if before['admission']['state']['admission']['active'] or before['admission']['state']['admission']['waiting']:raise ValueError('admission not idle')

@@ -3039,7 +3039,12 @@ impl<'a> GpuExecutor<'a> {
         // policy is fixed between completed chunks, never chosen from count.
         self.check_target_rows_policy()?;
         if self.target_verify3_dense
-            && (!(1..=if self.target_four_rows_active { 4 } else { 3 }).contains(&spans.count())
+            && (!(1..=if self.target_four_rows_active {
+                crate::strata_port::verify_capacity()
+            } else {
+                3
+            })
+                .contains(&spans.count())
                 || self.resident_admission.is_none())
         {
             return Err(Error::InvalidFormat("native Verify3 projection count"));
@@ -3143,7 +3148,7 @@ impl<'a> GpuExecutor<'a> {
             } else {
                 None
             };
-            let verify3 = if self.target_verify3_dense && verify4.is_none() {
+            let verify3 = if self.target_verify3_dense && verify4.is_none() && spans.count() <= 3 {
                 let spec = target_verify3_iq4_spec(
                     g.rows(),
                     g.columns(),

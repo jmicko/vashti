@@ -4,12 +4,13 @@ import hashlib,json,os,pathlib,shutil,subprocess,sys
 root=pathlib.Path(__file__).resolve().parents[4]
 out=pathlib.Path('/media/jmicko/faststore/kuno-development')/sys.argv[1]
 out.mkdir()
+features=['strata-rust-port']+(['strata-eight-window'] if len(sys.argv)>2 and sys.argv[2]=='--eight' else [])
 commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()
 (out/'source-commit.txt').write_text(commit+'\n')
-(out/'build-features.json').write_text(json.dumps({'features':['strata-rust-port']})+'\n')
+(out/'build-features.json').write_text(json.dumps({'features':features})+'\n')
 env=dict(os.environ,CARGO_TARGET_DIR='/media/jmicko/faststore/kuno-development/root-native-text-target-20261005',CARGO_BUILD_JOBS='2')
 with (out/'cargo-artifacts.jsonl').open('w') as stdout,(out/'cargo-build.log').open('w') as stderr:
- subprocess.run(['cargo','build','--locked','--release','--manifest-path','apps/kuno/benchmarks/native-text/Cargo.toml','--bin','kuno-strata-rust','--features','strata-rust-port','--message-format=json'],cwd=root,env=env,stdout=stdout,stderr=stderr,check=True)
+ subprocess.run(['cargo','build','--locked','--release','--manifest-path','apps/kuno/benchmarks/native-text/Cargo.toml','--bin','kuno-strata-rust','--features',','.join(features),'--message-format=json'],cwd=root,env=env,stdout=stdout,stderr=stderr,check=True)
 records=[json.loads(x) for x in (out/'cargo-artifacts.jsonl').read_text().splitlines()]
 paths=[x['executable'] for x in records if x.get('reason')=='compiler-artifact' and x['target']['name']=='kuno-strata-rust' and x.get('executable')]
 assert len(paths)==1

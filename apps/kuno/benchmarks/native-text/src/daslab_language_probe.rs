@@ -610,6 +610,14 @@ pub(crate) fn registration(
             && !public_iq4_decoder
             && bank_fill == crate::executor::PublicHostBankFillPolicy::Original,
     )?;
+    if cfg!(feature = "strata-eight-window")
+        && (public_integer_verify_head
+            || crate::strata_port::fused_sources()
+            || crate::strata_port::wide_experts()
+            || crate::strata_port::expert_lanes() != 8)
+    {
+        return Err("eight-window isolated integer expert/default dense scope");
+    }
     let mut path = |key: &str| {
         values
             .remove(OsStr::new(key))
@@ -707,7 +715,12 @@ fn accepted_prefix(
     predicted: &[u32],
     eos: u32,
 ) -> std::result::Result<usize, &'static str> {
-    if !(1..=3).contains(&inputs.len())
+    if !(1..=if crate::strata_port::enabled() {
+        crate::strata_port::verify_capacity()
+    } else {
+        3
+    })
+        .contains(&inputs.len())
         || predicted.len() != inputs.len()
         || eos >= VOCAB as u32
         || inputs.iter().chain(predicted).any(|&t| t >= VOCAB as u32)
@@ -787,6 +800,8 @@ struct Statistics {
     repair_ns: u64,
     repairs: u64,
     state_replay_repairs: u64,
+    completed_windows: [u64; 9],
+    accepted_by_window: [u64; 9],
     repair_logit_max: f32,
     repair_hidden_max: f32,
 }
@@ -852,7 +867,15 @@ impl Statistics {
         phase: crate::target_lab_build::LookaheadPhase,
         recomputed: bool,
     ) -> Result<()> {
-        if !(1..=if four { 4 } else { 3 }).contains(&count) || accepted == 0 || accepted > count {
+        if !(1..=if four {
+            crate::strata_port::verify_capacity()
+        } else {
+            3
+        })
+            .contains(&count)
+            || accepted == 0
+            || accepted > count
+        {
             return Err("language count geometry rejected".into());
         }
         let crate::target_lab_build::LookaheadPhase {
@@ -865,6 +888,8 @@ impl Statistics {
             *n = n.checked_add(v).ok_or("language counter overflow")?;
             Ok(())
         }
+        add(&mut self.completed_windows[count], 1)?;
+        add(&mut self.accepted_by_window[count], accepted as u64)?;
         add(&mut self.rounds, 1)?;
         add(&mut self.proposed, (count - 1) as u64)?;
         add(&mut self.accepted_drafts, (accepted - 1) as u64)?;
@@ -1607,23 +1632,36 @@ pub(crate) fn run(
                     continue;
                 }
                 let draft = draft.as_mut().ok_or("speculative actual draft absent")?;
-                let mut count = draft_policy.choose_mtp(
-                    (MAX_OUTPUTS - emitted.len()).min(if selected_four_lookahead { 4 } else { 3 }),
-                );
+                let mut count = draft_policy.choose_mtp((MAX_OUTPUTS - emitted.len()).min(
+                    if cfg!(feature = "strata-eight-window")
+                        && std::env::var("KUNO_STRATA_MTP_WINDOW").as_deref() == Ok("eight-public")
+                    {
+                        8
+                    } else if selected_four_lookahead {
+                        4
+                    } else {
+                        3
+                    },
+                ));
                 let mut inputs = Zeroizing::new(Vec::with_capacity(count));
                 inputs.push(confirmed);
                 let drafting = Instant::now();
-                let candidate = crate::strata_port::lookup(&prompt, &emitted, count - 1);
+                let candidate = crate::strata_port::lookup(
+                    &prompt,
+                    &emitted,
+                    (MAX_OUTPUTS - emitted.len()).min(crate::strata_port::verify_capacity()) - 1,
+                );
                 let mut lookup = None;
                 let mut third_follow_ns = 0;
                 let queued_window =
                     crate::strata_port::enabled() && candidate.is_none() && count > 1;
                 if queued_window {
-                    let output = draft.draft_window(confirmed, &carry, count - 1, &cancel)?;
+                    let output =
+                        draft.draft_window(confirmed, &carry, (count - 1).min(3), &cancel)?;
                     if output.start != position - 1
                         || output.binding != draft.binding()
-                        || output.tokens().len() != count - 1
-                        || draft.position() != position + count - 2
+                        || output.tokens().len() != (count - 1).min(3)
+                        || draft.position() != position + (count - 1).min(3) - 1
                     {
                         return Err("language completed queued draft identity rejected".into());
                     }
@@ -1673,6 +1711,17 @@ pub(crate) fn run(
                     inputs.push(output.greedy());
                     drop(output);
                     third_follow_ns = u64::try_from(third_follow.elapsed().as_nanos())?;
+                }
+                while inputs.len() < count {
+                    let follow = Instant::now();
+                    let output = draft.follow_draft(&cancel)?;
+                    if output.start() != position + inputs.len() - 2
+                        || output.binding() != draft.binding()
+                    {
+                        return Err("actual extended MTP stamp rejected".into());
+                    }
+                    inputs.push(output.greedy());
+                    third_follow_ns = u64::try_from(follow.elapsed().as_nanos())?;
                 }
                 let draft_ns = elapsed(drafting)?;
                 let verifying = Instant::now();
@@ -1928,7 +1977,7 @@ pub(crate) fn run(
             let (actual_four_rows, completed_count4_chunks) =
                 target.completed_public_four_rows(&executor)?;
             let four_lookahead_receipt = if crate::strata_port::enabled() {
-                serde_json::json!({"selected":selected_four_lookahead,"actual_count4_chunks":completed_count4_chunks,"actual_four_rows":actual_four_rows,"policy":"strata-suffix-or-mtp-target-verified-four"})
+                serde_json::json!({"selected":selected_four_lookahead,"actual_count4_chunks":completed_count4_chunks,"actual_four_rows":actual_four_rows,"policy":"strata-suffix-or-mtp-target-verified", "capacity":crate::strata_port::verify_capacity(), "completed_windows":stats.completed_windows, "accepted_by_window":stats.accepted_by_window})
             } else {
                 lookahead_stats.record_with_mtp_repair(
                     selected_four_lookahead,

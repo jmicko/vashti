@@ -45,7 +45,7 @@ use crate::{
 };
 use kuno_text::cpu::Matrix;
 #[path = "resident_target_rows.rs"]
-mod target_rows;
+pub(crate) mod target_rows;
 pub(crate) use target_rows::NativeTargetRows;
 #[path = "resident_target_checkpoint.rs"]
 mod latest_checkpoint;
@@ -301,7 +301,7 @@ impl NativeDecodeKernels {
         let accepted = match self {
             Self::Chunk => (1..=MAX_BATCH).contains(&count),
             Self::ThreeGdn => (1..=3).contains(&count),
-            Self::FourGdn => (1..=4).contains(&count),
+            Self::FourGdn => (1..=crate::strata_port::verify_capacity()).contains(&count),
             _ => count == 1,
         };
         if !accepted {
@@ -1710,7 +1710,9 @@ fn grouped_ple_run_allowed_selected(
     four: bool,
 ) -> bool {
     grouped_ple_run_allowed(selected, count, purpose)
-        || four && count == 4 && purpose == Purpose::AllRowsWithCarry
+        || four
+            && (4..=crate::strata_port::verify_capacity()).contains(&count)
+            && purpose == Purpose::AllRowsWithCarry
 }
 fn grouped_ple_completed_receipt(selected: bool, chunks: u64) -> Result<(bool, u64)> {
     if selected == (chunks == 0) {
@@ -4889,7 +4891,7 @@ impl Workspace {
                     &m.arena,
                     &mut m.public,
                     &mut projector,
-                    if *count == 4 {
+                    if *count >= 4 {
                         gr::Kind::FinalFourRows
                     } else {
                         gr::Kind::FinalAllRows
