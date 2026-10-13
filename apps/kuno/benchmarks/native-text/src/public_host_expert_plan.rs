@@ -769,7 +769,7 @@ mod tests {
     fn expanded_residency_preserves_all_original_addresses_and_role_bounds() {
         // Validate the new physical page layout across the actual mixed dtypes,
         // especially the final non-empty page and the RAM exchange addresses.
-        assert_eq!(VRAM_SLOTS, 224);
+        assert!(matches!(VRAM_SLOTS, 224 | 240));
         assert!(address(EXPERTS).is_err());
         let mut addressed = std::collections::BTreeSet::new();
         for slot in 0..EXPERTS {
@@ -778,7 +778,7 @@ mod tests {
             assert!(addressed.insert((a.tier as u8, a.page, a.local_slot)));
             if slot < VRAM_SLOTS {
                 assert_eq!(a.tier, Tier::Vram);
-                assert!(a.page < 2 && a.local_slot < 112);
+                assert!(a.page < 2 && a.local_slot < daslab_profile::SEGMENT_SLOTS);
             } else {
                 assert_eq!(a.tier, Tier::Host);
                 assert!(a.page < 3 && a.local_slot < PAGE_COUNTS[a.page]);

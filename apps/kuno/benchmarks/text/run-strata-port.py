@@ -28,7 +28,7 @@ def run():
  if profile=='q2':
   env['KUNO_TEST_MTP']=str(BASE/'kuno-strata-mtp-q2-20261009/mtp-q2_0.gguf')
   env['KUNO_LAB_MTP_PROFILE']='strata-q2';env.pop('KUNO_LAB_MTP_Q8_HEAD',None)
- if 'strata-resident-224' in json.loads((build/'build-features.json').read_text())['features']:env['KUNO_LAB_STATIC_CACHE_BYTES']=str(5*1024**3)
+ if set(json.loads((build/'build-features.json').read_text())['features']) & {'strata-resident-224','strata-resident-240'}:env['KUNO_LAB_STATIC_CACHE_BYTES']=str(5*1024**3)
  env.pop('KUNO_LAB_MTP_REPAIR',None)
  if target_profile:env['KUNO_STRATA_PROFILE_TARGET']='round-8'
  if '--integer-head' in options:env['KUNO_LAB_TARGET_HEAD']='integer-public'
@@ -87,7 +87,7 @@ def registration_probe():
  binary=next(build.glob('kuno-strata-rust-*'))
  label='language-code-intel-mtp-four-lookahead-down-integer-grouped-ple-gu-stride-shared-head-gpu-host'
  env,_,_=protected.select_trial(label,BASE/'unused-registration-probe.json')
- if 'strata-resident-224' in json.loads((build/'build-features.json').read_text())['features']:env['KUNO_LAB_STATIC_CACHE_BYTES']=str(5*1024**3)
+ if set(json.loads((build/'build-features.json').read_text())['features']) & {'strata-resident-224','strata-resident-240'}:env['KUNO_LAB_STATIC_CACHE_BYTES']=str(5*1024**3)
  env.pop('KUNO_LAB_MTP_REPAIR',None)
  if profile=='q2':
   env['KUNO_TEST_MTP']=str(BASE/'kuno-strata-mtp-q2-20261009/mtp-q2_0.gguf')

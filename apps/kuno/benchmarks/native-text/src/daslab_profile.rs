@@ -15,7 +15,9 @@ pub const HEADER_SHA256: [&str; 2] = [
 pub const TENSOR_COUNT: usize = 1224;
 pub const LAYER_COUNT: usize = 48;
 pub const EXPERT_COUNT: usize = 512;
-pub const BANK_SLOTS: usize = if cfg!(feature = "strata-resident-224") {
+pub const BANK_SLOTS: usize = if cfg!(feature = "strata-resident-240") {
+    240
+} else if cfg!(feature = "strata-resident-224") {
     224
 } else if cfg!(feature = "strata-rust-port") {
     192
