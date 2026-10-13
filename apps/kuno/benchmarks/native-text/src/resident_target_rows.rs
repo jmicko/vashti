@@ -13,8 +13,13 @@ const FOUR_PACKET_WORDS: usize = HEADER_WORDS + FOUR_LOGITS_WORDS + FOUR_ROWS * 
 pub(crate) const VOCABULARY: usize = 248320;
 pub(crate) const HC_WIDTH: usize = 10240;
 pub(crate) const HEADER_WORDS: usize = 8;
-pub(crate) const LOGITS_WORDS: usize = MAX_ROWS * VOCABULARY;
-pub(crate) const CARRY_WORDS: usize = MAX_ROWS * HC_WIDTH;
+const OWNED_ROWS: usize = if cfg!(feature = "strata-eight-window") {
+    FOUR_ROWS
+} else {
+    MAX_ROWS
+};
+pub(crate) const LOGITS_WORDS: usize = OWNED_ROWS * VOCABULARY;
+pub(crate) const CARRY_WORDS: usize = OWNED_ROWS * HC_WIDTH;
 pub(crate) const PACKET_WORDS: usize = HEADER_WORDS + LOGITS_WORDS + CARRY_WORDS;
 pub(crate) const OWNER_BYTES: usize = if cfg!(feature = "strata-eight-window") {
     8

@@ -260,7 +260,11 @@ impl MatrixSpec {
             self.rows,
             self.columns,
             self.row_bytes,
-            include_str!("next_verify4_dense.wgsl"),
+            if cfg!(feature = "strata-eight-window") {
+                include_str!("next_verify8_dense.wgsl")
+            } else {
+                include_str!("next_verify4_dense.wgsl")
+            },
         )
     }
     fn source_verify4_finite(self, tail: bool) -> String {
@@ -733,7 +737,7 @@ pub(crate) fn validate_verify4_spans(
             "Verify4 requires original IQ4 decoder",
         ));
     }
-    if spans.count() != 4
+    if !(4..=crate::strata_port::verify_capacity()).contains(&spans.count())
         || spans.packed_first() != 0
         || !input_words.is_multiple_of(4)
         || !spans.input_first().is_multiple_of(4)

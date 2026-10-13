@@ -3140,7 +3140,7 @@ impl<'a> GpuExecutor<'a> {
                 output_words,
             )
             .map_err(|_| Error::InvalidBufferLength)?;
-            let verify4 = if self.target_four_rows_active && spans.count() == 4 {
+            let verify4 = if self.target_four_rows_active && spans.count() >= 4 {
                 let spec = crate::next_shared::MatrixSpec::new(g.rows(), g.columns(), g.dtype())?;
                 crate::next_shared::validate_verify4_spans(
                     spec,
