@@ -21,12 +21,12 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
     // or private MAP-dependent owner indexing is needed to prepare original ACT.
     if (p.h<5u || p.h>8u) || arrayLength(&planes)!=32768u || group.x!=0u || group.y>=80u || group.z!=0u
         || p.d!=0u || p.e!=0u || p.f!=0u || p.g!=0u {return;}
-    let route=group.y;let frame=64u+route*360u;
+    let route=group.y;let frame=128u+route*360u;
     if local==0u {planes[route]=0u;}
     for(var i=local;i<360u;i+=64u) {planes[frame+i]=0u;}
     if route==0u {
-        if local>=80u {planes[local]=0u;}
-        for(var i=28864u+local;i<32768u;i+=64u) {planes[i]=0u;}
+        for(var i=80u+local;i<128u;i+=64u) {planes[i]=0u;}
+        for(var i=28928u+local;i<32768u;i+=64u) {planes[i]=0u;}
     }
     var valid=route<p.h*10u && p.b>=640u;
     if p.a>arrayLength(&input) {valid=false;}
@@ -126,9 +126,9 @@ fn main(@builtin(global_invocation_id) global:vec3<u32>) {
     if (p.count<5u || p.count>8u) || p.r0!=0u || p.r1!=0u || p.r2!=0u || p.r3!=0u || p.r4!=0u || p.r5!=0u || p.r6!=0u
         || arrayLength(&planes)!=32768u {if global.x==0u {atomicOr(&fault[0],8u);}return;}
     let at=global.x;if at>=32768u {return;}let word=planes[at];var valid=true;
-    if at<64u {valid=word==select(0u,1u,at<p.count*10u);}
-    else if at<28864u {
-        let route=(at-64u)/360u;let offset=(at-64u)%360u;
+    if at<128u {valid=word==select(0u,1u,at<p.count*10u);}
+    else if at<28928u {
+        let route=(at-128u)/360u;let offset=(at-128u)%360u;
         if route>=p.count*10u {valid=word==0u;}
         else if offset>=320u {let scale=bitcast<f32>(word);valid=scale>=0.0 && scale<=3.4028234663852886e38;}
     }else {valid=word==0u;}

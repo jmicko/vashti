@@ -124,7 +124,7 @@ impl Kernel {
                     .replace("ROW_BYTES_VALUE", &row_bytes.to_string())
                     .replace("DECODE_HELPERS_VALUE", &format!("fn iq4_byte{helpers}"))
                     .replace("PROJECTION_HELPERS_VALUE", &decode(dtype))
-                    .replace("FRAME_MEMBERS_VALUE", &members(&format!("frames[AXIS]=64u+map[p.a+164u+{group_index}*8u+MEMBER_INDEXu]*360u;\n")))
+                    .replace("FRAME_MEMBERS_VALUE", &members(&format!("frames[AXIS]=128u+map[p.a+164u+{group_index}*8u+MEMBER_INDEXu]*360u;\n")))
                     .replace("DOT_MEMBERS_VALUE", &members("{first[AXIS]+=dot4I8Packed(q,planes[frames[AXIS]+at]);second[AXIS]+=dot4I8Packed(q,planes[frames[AXIS]+160u+at]);}\n"))
                     .replace("SCALE_MEMBERS_VALUE", &members("{let a=bitcast<f32>(planes[frames[AXIS]+320u+block]);let b=bitcast<f32>(planes[frames[AXIS]+340u+block]);let pair=a*f32(first[AXIS])+b*f32(second[AXIS]);values[AXIS]+=d*pair;}\n"))
                     .replace("OUTPUT_MEMBERS_VALUE", &members(&format!("{{let route=map[p.a+164u+{group_index}*8u+MEMBER_INDEXu];output[p.d+route*p.e+row]=sums[local*8u+MEMBER_INDEXu];if row==0u {{status[p.f+80u+route]=1u;}}}}\n")))
