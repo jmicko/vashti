@@ -162,6 +162,7 @@ impl KernelMetadata for Kernel {
                 crate::strata_port::enabled(),
                 crate::strata_port::wide_experts(),
                 crate::strata_port::expert_lanes(),
+                crate::strata_port::unrolled_dots(),
             ))
             .cube_dim(crate::strata_port::dimension(
                 CubeDim::new_1d(64),
