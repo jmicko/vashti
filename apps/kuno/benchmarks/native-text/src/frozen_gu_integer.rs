@@ -274,8 +274,7 @@ impl KernelMetadata for Kernel {
     }
     fn id(&self) -> KernelId {
         KernelId::new::<Self>()
-            .info(*self)
-            .info(crate::strata_port::enabled())
+            .info((*self, crate::strata_port::enabled()))
             .cube_dim(self.dim())
     }
     fn address_type(&self) -> StorageType {
