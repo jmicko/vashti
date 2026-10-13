@@ -1,8 +1,9 @@
 # Count4 compact expert shuffle reduction
 
 This is an internal native-text candidate based on the accepted compact source
-schedule at `fb7b420`. There is no parent selection, API, environment switch,
-installed default or consumer change in this leaf implementation. It preserves
+schedule at `fb7b420`. Root now explicitly selects it for the fixed-public
+laboratory probes described below. There is no API, environment switch,
+installed default or consumer change. It preserves
 the two residual Q8 planes and all existing numerical tolerances.
 
 Distinct `ProjectCompactShuffle` kernel identities and `launch_compact_shuffle`
@@ -36,10 +37,10 @@ Source tests include independent mixed-sign/cancellation bit-tree comparisons
 for both subgroup widths, all eight rows and all four RHS members; all packed
 GU/DOWN shader variants lower through WGSL and SPIR-V; kernel dimensions,
 distinct IDs, guards, unchanged dot prefixes and shared-memory/barrier counts
-are checked. At initial handoff these tests have been written but not run:
-the root task exclusively owns the compiler cache and GPU. Required physical
-gates remain unchanged cold/warm CPU13, complete cleanup and independent
-unprofiled code200 timing. No numerical or speed acceptance is claimed yet.
+are checked. Root has now run the complete1343-test suite and strict Clippy,
+and the unchanged full cold/warm CPU13 plus cleanup have passed. This supersedes
+the initial source-only leaf handoff. Independent unprofiled code200 timing is
+required separately from numerical acceptance; see the results below.
 
 ## Root fixed-public selection
 
@@ -50,3 +51,20 @@ bounds before device creation when this compact path is enabled. The rejected
 first-plane approximation remains false. No runtime/API selector is added.
 The two focused shader-lowering tests passed before selection; full source and
 unchanged CPU13/device gates are required for this selected artifact.
+
+## Physical numerical acceptance (v196)
+
+Root artifact from `b9ee1bef78a9f4f7eab58dd940455b364dabf1c2`, SHA256
+`81cd9d54491da08623ac03454476d6cc2985b5161fa21a97d160f7b9f954cabc`,
+passes the original full cold/warm CPU13 vectors, carries, greedies, real repair
+and owner closure on the B70. Receipt flags confirm shuffletrue and
+primary-planefalse. Warm compaction dispatches are1440 GU,1440 DOWN and288
+audits. The full source suite passes1343 tests with one ignored, and strict
+direct-device Clippy/fmt pass. All services, admission, actualGPU baselines and
+classified kernel faults recover after the trial. Independent normal code200
+measured10.955189006 continuations/s:199 continuations in18.164907962s,
+52 rounds,147 accepted drafts and5 recomputations. Previous compaction was
+10.906246956; this single-run difference is neutral, not a meaningful speedup.
+No original numerical threshold or route changed. This candidate remains the
+explicit lab base for a separate staged-activation experiment, not a deployed
+performance recommendation.
