@@ -1,10 +1,20 @@
-//! Request-local Strata decayed-frequency/recency tier. Every144 resident slot
+//! Request-local Strata decayed-frequency/recency tier. Every admitted resident slot
 //! can change; no reserved tiny swap partition and no routing history on disk.
 use kuno_text::{Error, Result};
 use zeroize::{Zeroize, Zeroizing};
 pub(crate) const LAYERS: usize = 48;
 pub(crate) const EXPERTS: usize = 512;
 pub(crate) const RESIDENT: usize = crate::daslab_profile::BANK_SLOTS;
+pub(crate) fn max_swaps_per_layer() -> usize {
+    static LIMIT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *LIMIT.get_or_init(|| {
+        if std::env::var("KUNO_STRATA_CACHE_SWAPS").as_deref() == Ok("eight-public") {
+            8
+        } else {
+            2
+        }
+    })
+}
 pub(crate) const METADATA_BYTES: usize = LAYERS * EXPERTS * (2 + 4 + 8) + 4096;
 pub(crate) struct Cache {
     map: Zeroizing<Vec<u16>>,
@@ -61,14 +71,14 @@ impl Cache {
     }
     pub(crate) fn plan(&mut self) -> Result<Zeroizing<Vec<[usize; 5]>>> {
         self.clock += 1;
-        let mut swaps = Zeroizing::new(Vec::with_capacity(96));
+        let mut swaps = Zeroizing::new(Vec::with_capacity(LAYERS * max_swaps_per_layer()));
         if !self.clock.is_multiple_of(4) {
             return Ok(swaps);
         }
         for layer in 0..LAYERS {
             let first = layer * EXPERTS;
             let mut selected = [false; EXPERTS];
-            for _ in 0..2 {
+            for _ in 0..max_swaps_per_layer() {
                 let newcomer = (0..EXPERTS)
                     .filter(|&i| self.map[first + i] >= RESIDENT as u16 && !selected[i])
                     .max_by(|&a, &b| {

@@ -54,7 +54,10 @@ impl Mirror<'_, '_, '_> {
         queue: &wgpu::Queue,
         swaps: &[GpuExpertExchange],
     ) -> Result<()> {
-        if !crate::strata_port::enabled() || swaps.is_empty() || swaps.len() > 48 * 2 * 3 {
+        if !crate::strata_port::enabled()
+            || swaps.is_empty()
+            || swaps.len() > 48 * crate::strata_cache::max_swaps_per_layer() * 3
+        {
             return Err(rejected());
         }
         let alignment = self.device.limits().min_storage_buffer_offset_alignment as u64;

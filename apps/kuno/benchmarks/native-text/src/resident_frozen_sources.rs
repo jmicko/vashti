@@ -1556,7 +1556,7 @@ impl Sources {
         };
         let cache = cache.lock().map_err(|_| reject())?;
         Ok(
-            serde_json::json!({"all_resident_slots_adaptive":true,"slots_per_layer":crate::daslab_profile::BANK_SLOTS,"adapt_every_rounds":4,"decay":0.7,"max_swaps_per_boundary":96,"public_bytes_moved":cache.bytes,"swaps":cache.swaps,"adaptation_ns":cache.adaptation_ns,"history_persisted":false,"evicted_weights_preserved_in_ram":true,"gpu_direct_two_way_exchange":true,"cpu_weight_staging":false}),
+            serde_json::json!({"all_resident_slots_adaptive":true,"slots_per_layer":crate::daslab_profile::BANK_SLOTS,"adapt_every_rounds":4,"decay":0.7,"max_swaps_per_boundary":48*crate::strata_cache::max_swaps_per_layer(),"public_bytes_moved":cache.bytes,"swaps":cache.swaps,"adaptation_ns":cache.adaptation_ns,"history_persisted":false,"evicted_weights_preserved_in_ram":true,"gpu_direct_two_way_exchange":true,"cpu_weight_staging":false}),
         )
     }
     pub(super) fn slot_table(
