@@ -105,7 +105,7 @@ impl Checkpoint {
         cancel: &AtomicBool,
     ) -> Result<Restore<'a>> {
         self.preflight(conv, tokens, cancel)?;
-        if !(2..=4).contains(&proposed.len())
+        if !(2..=8).contains(&proposed.len())
             || accepted == 0
             || accepted >= proposed.len()
             || proposed.iter().any(|&t| t >= 248320)
@@ -290,7 +290,7 @@ mod accepted_prefix_tests {
     #[test]
     fn prefix_commit_matches_actual_sequential_owner_history_for_all_partial_windows() {
         let cancel = AtomicBool::new(false);
-        for count in 2..=4 {
+        for count in 2..=8 {
             for accepted in 1..count {
                 let (mut live, mut live_tokens, _) = super::tests::state();
                 let (mut expected, mut expected_tokens, _) = super::tests::state();
