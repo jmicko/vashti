@@ -64,6 +64,7 @@ pub struct WgpuStream {
     /// (e.g. model loading with hundreds of tensors).
     pending_write_count: usize,
     transient_io: Option<super::transient_io::TransientIo>,
+    strata_graph: Option<super::strata_graph::Graph>,
     cleanup_boundary: Arc<super::cleanup_boundary::CleanupBoundary>,
 }
 
@@ -106,6 +107,14 @@ impl WgpuStream {
                 device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("CubeCL Tasks Encoder"),
                 })
+            },
+            strata_graph: if super::strata_graph::enabled() {
+                Some(
+                    super::strata_graph::Graph::new(&device)
+                        .expect("native Strata graph initialization"),
+                )
+            } else {
+                None
             },
             device,
             queue,
@@ -189,6 +198,15 @@ impl WgpuStream {
                 private,
             } => {
                 if private {
+                    if self.strata_graph.as_ref().is_some_and(|g| g.pending()) {
+                        if let Err(error) = self.flush(StreamErrorMode {
+                            ignore: false,
+                            flush: true,
+                        }) {
+                            self.error(error);
+                            return;
+                        }
+                    }
                     self.compute_pass = None;
                     let result = self.private_io_active().and_then(|()| {
                         self.transient_io.as_mut().unwrap().upload(
@@ -726,6 +744,9 @@ impl WgpuStream {
             })
             .is_err()
             || self.cleanup_boundary.retired();
+        if let Some(graph) = &mut self.strata_graph {
+            graph.clear_completed_recordings()?;
+        }
         self.transient_io
             .as_mut()
             .unwrap()
@@ -1106,6 +1127,15 @@ impl WgpuStream {
                 .chain(std::iter::once(tasks_encoder.finish())),
         );
 
+        if self.strata_graph.as_ref().is_some_and(|g| g.pending()) {
+            self.device
+                .poll(wgpu::PollType::Wait {
+                    submission_index: Some(index.clone()),
+                    timeout: Some(std::time::Duration::from_secs(120)),
+                })
+                .map_err(|_| super::transient_io::fault("native graph upload completion"))?;
+            self.strata_graph.as_mut().unwrap().execute()?;
+        }
         self.cleanup_boundary.ordinary_regulation(|| {
             self.submission_load
                 .regulate(&self.device, self.tasks_count, index);
@@ -1153,6 +1183,26 @@ impl WgpuStream {
             return;
         }
 
+        if let Some(graph) = &mut self.strata_graph {
+            let actual = match dispatch.clone() {
+                CubeCount::Static(x, y, z) => super::strata_graph::Dispatch::Direct(x, y, z),
+                CubeCount::Dynamic(binding) => match self.mem_manage.get_resource(binding) {
+                    Ok(r) => super::strata_graph::Dispatch::Indirect(r),
+                    Err(e) => {
+                        self.error(ServerError::Io(e));
+                        return;
+                    }
+                },
+            };
+            let result = graph.push(&pipeline, resources.cloned().collect(), actual);
+            if let Err(error) = result {
+                self.error(error);
+                return;
+            }
+            self.tasks_count += 1;
+            self.flush_if_needed();
+            return;
+        }
         let cached = self
             .transient_io
             .as_ref()

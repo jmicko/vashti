@@ -7,6 +7,7 @@ pub mod cpu_gpu_expert_probe;
 mod cpu_gpu_expert_schedule;
 mod strata_cache;
 mod strata_expert_fused;
+mod strata_intel_core;
 mod strata_packet;
 mod strata_port;
 // Shared with the standalone CPU writer; writer-only methods are inert here.
@@ -2460,7 +2461,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 backend: wgpu::Backend::Vulkan,
             },
             RuntimeOptions {
-                tasks_max: if batch_tasks
+                tasks_max: if strata_intel_core::enabled() {
+                    32768
+                } else if batch_tasks
                     || target_rows_inputs.is_some()
                     || target_repair_inputs.is_some()
                     || speculative_inputs.is_some()

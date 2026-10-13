@@ -25,12 +25,18 @@ pub(crate) const fn static_cache_bytes() -> usize {
 /// Strata's supplied profile chooses residency, rather than retaining whatever
 /// the first prompt happened to touch. Only a completed public setup boundary.
 pub(crate) fn profile_first() -> bool {
+    if crate::strata_intel_core::enabled() {
+        return true;
+    }
     static SELECTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     enabled()
         && *SELECTED
             .get_or_init(|| std::env::var("KUNO_STRATA_PROFILE_FIRST").as_deref() == Ok("public"))
 }
 pub(crate) fn fused_sources() -> bool {
+    if crate::strata_intel_core::enabled() {
+        return true;
+    }
     static SELECTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     enabled()
         && *SELECTED.get_or_init(|| {
@@ -38,6 +44,9 @@ pub(crate) fn fused_sources() -> bool {
         })
 }
 pub(crate) fn wide_experts() -> bool {
+    if crate::strata_intel_core::enabled() {
+        return true;
+    }
     static WIDE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     enabled()
         && *WIDE.get_or_init(|| {
@@ -47,6 +56,9 @@ pub(crate) fn wide_experts() -> bool {
 /// Strata SYCL's device-only plan launches one block row per actual expert
 /// group. Keep the previous four-lane serial schedule as the public A/B control.
 pub(crate) fn independent_groups() -> bool {
+    if crate::strata_intel_core::enabled() {
+        return true;
+    }
     static SELECTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     enabled()
         && *SELECTED.get_or_init(|| {
@@ -56,6 +68,9 @@ pub(crate) fn independent_groups() -> bool {
 /// Strata explicitly unrolls fixed packed byte-dot loops. WGSL has no pragma,
 /// so the Rust emitter supplies equivalent constant-index statements.
 pub(crate) fn unrolled_dots() -> bool {
+    if crate::strata_intel_core::enabled() {
+        return true;
+    }
     static SELECTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     enabled()
         && *SELECTED.get_or_init(|| {
@@ -323,7 +338,7 @@ pub(crate) fn public_preview(text: &str) {
 }
 pub(crate) fn receipt() -> serde_json::Value {
     serde_json::json!({"enabled": enabled(), "upstream_revision": "fb58e0dbc8399662c0e47c76578c6e878b14f6cf",
-        "backend": "Rust/WGSL/Vulkan", "verify_capacity":verify_capacity(),"profile_first_residency":profile_first(), "activation_planes": 1, "activation_scale": "fp16-q8_1",
+        "backend": "Rust/WGSL/Vulkan", "coherent_intel_core":crate::strata_intel_core::enabled(), "shared_read_only_iq_table_bytes":if crate::strata_intel_core::enabled(){crate::strata_intel_core::PUBLIC_TABLE_BYTES}else{0}, "verify_capacity":verify_capacity(),"profile_first_residency":profile_first(), "activation_planes": 1, "activation_scale": "fp16-q8_1",
         "projection_workgroup":256, "rows_per_workgroup":256/expert_lanes(), "expert_dot_lanes":expert_lanes(), "aligned_vector_expert_reads":wide_experts(), "group_stride":if independent_groups() {verify_capacity()*10} else {4},"independent_expert_groups":independent_groups(),"unrolled_packed_dots":unrolled_dots(),"constant_iq_codebook":constant_codebook(),"suffix_lookup_windows":LOOKUP_WINDOWS.load(Ordering::Relaxed),"suffix_lookup_proposed":LOOKUP_PROPOSED.load(Ordering::Relaxed),
         "gu_dispatches_by_member_count":GU.each_ref().map(|v|v.load(Ordering::Relaxed)),
         "down_dispatches_by_member_count":DOWN.each_ref().map(|v|v.load(Ordering::Relaxed)),
@@ -334,7 +349,7 @@ fn replace(source: String, old: &str, new: &str) -> String {
     assert!(source.contains(old), "Strata port template drift: {old}");
     source.replace(old, new)
 }
-fn function_end(source: &str, first: usize) -> usize {
+pub(crate) fn function_end(source: &str, first: usize) -> usize {
     let brace = first + source[first..].find('{').expect("function body");
     let mut depth = 0;
     for (i, b) in source.as_bytes().iter().enumerate().skip(brace) {
@@ -904,8 +919,18 @@ pub(crate) fn validate_limits(limits: &wgpu::Limits) -> kuno_text::Result<()> {
             || limits.max_compute_workgroup_storage_size
                 < if verify_capacity() == 8 { 32768 } else { 19712 }
             || fused_sources()
-                && (limits.max_storage_buffers_per_shader_stage < 14
-                    || limits.max_bindings_per_bind_group < 15))
+                && (limits.max_storage_buffers_per_shader_stage
+                    < if crate::strata_intel_core::enabled() {
+                        15
+                    } else {
+                        14
+                    }
+                    || limits.max_bindings_per_bind_group
+                        < if crate::strata_intel_core::enabled() {
+                            16
+                        } else {
+                            15
+                        }))
     {
         return Err(kuno_text::Error::InvalidFormat(
             "Strata Rust workgroup limits",

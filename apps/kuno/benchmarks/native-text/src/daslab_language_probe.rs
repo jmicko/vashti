@@ -966,7 +966,11 @@ async fn draft_client(
             backend: wgpu::Backend::Vulkan,
         },
         RuntimeOptions {
-            tasks_max: 256,
+            tasks_max: if crate::strata_intel_core::enabled() {
+                32768
+            } else {
+                256
+            },
             memory_config: crate::private_arena::required_memory_configuration(),
         },
     );
@@ -1104,6 +1108,7 @@ pub(crate) fn run(
         }
         None
     };
+    let _shared_iq_tables = crate::strata_intel_core::Tables::new(client)?;
     let mut draft_target_backlog_query_rejected = None;
     let draft_gpu = if draft_graph.is_some() {
         let (draft_client, draft_limits, mtp_device_receipt) = cubecl::future::block_on(

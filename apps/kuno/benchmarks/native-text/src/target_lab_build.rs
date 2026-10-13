@@ -204,6 +204,11 @@ impl IntelMtpMemory {
         }
         let components = [
             banks,
+            if crate::strata_intel_core::enabled() {
+                crate::strata_intel_core::PUBLIC_TABLE_BYTES
+            } else {
+                0
+            },
             crate::strata_port::static_cache_bytes() as u64,
             target_main,
             25_165_824,

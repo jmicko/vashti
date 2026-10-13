@@ -150,6 +150,11 @@ impl WgpuServer {
                     });
                 }
 
+                crate::compute::strata_graph::register_module(&module, source, entrypoint_name)
+                    .map_err(|_| CompilationError::Generic {
+                        reason: "native graph shader registration failed".into(),
+                        backtrace: cubecl_common::backtrace::BackTrace::capture(),
+                    })?;
                 Ok(module)
             }
         }
@@ -230,6 +235,7 @@ impl WgpuServer {
                 },
                 cache: None,
             });
+        crate::compute::strata_graph::register_pipeline(&pipeline, &module);
         Arc::new(pipeline)
     }
 }

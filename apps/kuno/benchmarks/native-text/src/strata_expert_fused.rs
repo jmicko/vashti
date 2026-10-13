@@ -92,6 +92,10 @@ impl Kernel {
             ));
             binding += 1;
         }
+        let table_binding = binding;
+        if crate::strata_intel_core::enabled() && !self.down {
+            binding += 1;
+        }
         bindings.push_str(&format!("@group(0) @binding({binding}) var<uniform> p:Params;\nvar<private> strata_shard:u32;var<private> strata_first:u32;\n"));
         source.replace_range(first..end, &bindings);
         let words = if self.down { "2560u" } else { "640u" };
@@ -132,6 +136,9 @@ impl Kernel {
             source = replace_reads(source, name);
         }
         source.push_str(&helpers);
+        if crate::strata_intel_core::enabled() && !self.down {
+            source = crate::strata_intel_core::shared_table(source, table_binding, self.dtype);
+        }
         source
     }
 }
@@ -222,6 +229,9 @@ pub(crate) fn launch(
             || h.size() != h.size_in_used()
     }) {
         return Err(Error::InvalidBufferLength);
+    }
+    if crate::strata_intel_core::enabled() && !down {
+        args = crate::strata_intel_core::bind(args, owners[0].stream)?;
     }
     let values = [
         spans.map_first(),

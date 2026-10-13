@@ -4,6 +4,7 @@ pub(crate) mod controller;
 mod public_external;
 mod storage;
 
+pub(crate) mod strata_graph;
 mod binding_cache;
 mod cleanup_boundary;
 pub(super) mod mem_manager;

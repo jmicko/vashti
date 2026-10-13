@@ -32,6 +32,7 @@ cubecl = { version = "=0.10.0", default-features = false, features = ["std", "wg
 wgpu = { version = "29", default-features = false, features = ["std", "vulkan", "wgsl"] }
 
 [patch.crates-io]
+wgpu-hal = { path = "vendor/wgpu-hal" }
 cubecl-common = { path = "vendor/cubecl-common" }
 cubecl-runtime = { path = "vendor/cubecl-runtime" }
 cubecl-core = { path = "vendor/cubecl-core" }
@@ -45,6 +46,7 @@ strata-rust-port = ["direct-device"]
 strata-eight-window = ["strata-rust-port"]
 strata-resident-224 = ["strata-rust-port"]
 strata-resident-240 = ["strata-resident-224"]
+strata-intel-core = ["strata-resident-240"]
 # Separate arithmetic candidate: original weights, explicit FMA/32-lane CPU.
 cpu-fma = []
 cpu-buffered-weights = []

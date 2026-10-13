@@ -44,7 +44,6 @@ msl = ["cubecl-cpp/metal"]
 profile-tracy = ["tracy-client"]
 spirv = [
     "cubecl-spirv",
-    "ash",
     "tracel-ash",
     "cubecl-common/compilation-cache",
     "cubecl-common/hash",
@@ -70,7 +69,6 @@ path = "src/lib.rs"
 
 [dependencies.ash]
 version = "0.38"
-optional = true
 
 [dependencies.async-channel]
 version = "2.3"
@@ -203,3 +201,4 @@ warnings = "warn"
 [lints.rustdoc]
 broken_intra_doc_links = "warn"
 invalid_html_tags = "warn"
+
