@@ -50,7 +50,10 @@ DOWN is independently selected.
 The first inherited implementation failed before device dispatch because it
 rejected allocator-produced zero trims. Review also found incorrect count1..3
 reset coverage, a missing storage barrier, wrong count4 compact kernel metadata,
-incomplete record-tail auditing and unconditional compact DOWN credit. These
+incomplete record-tail auditing and unconditional compact DOWN credit. The
+first device retry then exposed a copied count4 guard in count1..3 DOWN, which
+incorrectly skipped all ordinary compact DOWN work; its main guard now matches
+the original count1..3 domain. These
 are corrected together rather than treating the earlier source-only test pass
 as proof of a working device path.
 

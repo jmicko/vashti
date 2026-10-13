@@ -753,6 +753,11 @@ fn frozen_down_integer_count1to3_compact_projection_keeps_original_arithmetic() 
             .unwrap() as usize;
         let kernel = Kernel::ProjectCompact { dtype, row_bytes };
         let source = kernel.source();
+        // Main and valid_group must accept the same count1..3 domain. A copied
+        // count4 main guard previously made every ordinary compact launch idle.
+        assert!(!source.contains("p.h!=4u"));
+        let main = source.split_once("fn main(").unwrap().1;
+        assert!(main.contains("p.h<1u || p.h>3u"));
         let (module, _) = compile(kernel);
         assert!(!source.contains("_VALUE"));
         assert_eq!(module.entry_points[0].workgroup_size, [64, 1, 1]);

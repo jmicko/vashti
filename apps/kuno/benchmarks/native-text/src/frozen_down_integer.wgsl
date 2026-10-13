@@ -178,7 +178,7 @@ PROJECTION_HELPERS_VALUE
 fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) local:u32) {
     // p.g is this launch's shard; the indirect dispatch already bounded the
     // workgroups to the record's count. Every lane exits together otherwise.
-    if group.x>=320u || group.z!=0u || p.h!=4u || p.g>4u {return;}
+    if group.x>=320u || group.z!=0u || p.h<1u || p.h>3u || p.g>4u {return;}
     let base=6144u+48u*p.g;
     if gu_planes[base]!=1u {return;}
     let shard_count=gu_planes[base+1u];
