@@ -2088,7 +2088,7 @@ struct SourceLaunch {
 }
 pub(super) struct Proof {
     pub(super) source: Arc<Sources>,
-    pairs: Zeroizing<[(u32, u32); 40]>,
+    pairs: Zeroizing<[(u32, u32); crate::strata_port::verify_capacity() * 10]>,
     len: Zeroizing<usize>,
     count: Zeroizing<usize>,
     vram: u64,
@@ -2128,7 +2128,7 @@ impl Proof {
         }
         let mut p = Self {
             source: source.clone(),
-            pairs: Zeroizing::new([(0, 0); 40]),
+            pairs: Zeroizing::new([(0, 0); crate::strata_port::verify_capacity() * 10]),
             len: Zeroizing::new(union.protected_experts().len()),
             count: Zeroizing::new(routes.count()),
             vram: 0,
@@ -2164,7 +2164,7 @@ impl Proof {
         }
         Ok(Self {
             source,
-            pairs: Zeroizing::new([(0, 0); 40]),
+            pairs: Zeroizing::new([(0, 0); crate::strata_port::verify_capacity() * 10]),
             len: Zeroizing::new(0),
             count: Zeroizing::new(count),
             vram: 0,
