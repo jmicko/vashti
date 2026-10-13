@@ -1,155 +1,134 @@
 # Native Kuno text engine: next-model handoff
 
-Updated2026-10-12 02:12UTC: user requested stopping this manual pass to conserve
-usage. Automated goal remains paused; no queued CPU/GPU work. Normal Kuno,
-Ollama and Vashti respond HTTP200; admission idle/unpaused/no recovery latch,
-B70 used50688000B, Nvidia compute0, all classified faults0, same boot/kernel38.
-Final fresh state: `native-next-manual-pause-20261012.json` under the development
-base. No installed/default/API/frontend/release changes. Required Vashti changes:none.
-Native30tokens/s remains unachieved; latest normal throughput is10.88tokens/s.
-Work checkout: `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
-`codex/kuno-native-text`. Do not resume automatically.
+Updated 2026-10-13 UTC (October 12 local), during a user-authorized manual
+optimization pass. Automated goal remains paused. **This opening checkpoint
+supersedes all historical queues and interrupted-debug directions below.**
+No installed/default/API/frontend/release changes; required Vashti changes: none.
+Native 30 tokens/s remains unachieved. Current accepted normal rate is **10.91
+real continuation tokens/s**, effectively unchanged from the 10.88 control.
 
-**Measured next target:** v185 onaa90a95 physically profiles exactly the first
-real warm count4 verification using Device timestamps. Full original CPU13,
-actual profile cold0/warm1, all owner closures and recovery pass. The4051 kernel
-spans total250.572596ms: integer GU105.174727ms, DOWN69.876932ms (combined69.86%),
-router MAP audit16.633231ms, other dense15.632980ms, Q6dense9.058119ms,
-GDN8.013746ms, BF16DOWN6.197714ms and BF16UP2.611979ms (1.04%). This is one
-scheduling-altered diagnostic chunk, never a normal-throughput result. Exact
-artifact SHA, scope and evidence: `v185_first_warm_actual_device_kernel_profile`.
-The prior v184 setup failure is separately recorded; CubeCl config is process-once.
-Fix pauses BOTH target and independent draft clients at creation and only arms
-the selected target round. Do not attempt a second global config set.
+## Checkout, accepted work, and current experiment
 
-The tested source-only BF16 two-row candidate a9cff9e is shelved on branch
-`codex/kuno-bf16-up-row-pair`, isolated `kuno-verify4-dense/vashti`. Its34 tests,
-strict direct Clippy/fmt pass, but it is not root-integrated or GPU-tested:
-profiling shows too little time there to prioritize it. Paired32 Q6 head
-remains root-integrated/default-off and CPU13-accepted; normal timing pending.
+Root checkout: `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
+`codex/kuno-native-text`. Canonical Vashti remains separate on
+`codex/image-flow-refinements`; do not apply backend lab edits there.
+The only inherited untracked artifact is `apps/kuno/benchmarks/text/__pycache__/`.
+Before resuming, read current git status and log; never broadly restore/stash
+source to remove diagnostics.
 
-**Next approved design, not implemented:** compact the original routed group
-indices on GPU for the five frozen Source partitions. Today every shard scans
-or launches the same union and rejects groups belonging elsewhere. Pinned
-Strata SYCL verify.cpp1355-1396 builds separate VRAM/PCIe group plans. First
-candidate is truecount4 only with existing frozenSources/four-members,
-integerGU+DOWN and GUstride4; all tails/other paths remain original. Reserve
-existing GU scratch words6144..6383 as five48-word records: ready,count,
-GU dispatch[80,min(4,count),1], DOWN[320,count,1],40 stable ORIGINAL group IDs.
-GUprepare gains the original MAP binding; after its existing clear/barriers,
-token0 lanes0..4 independently construct disjoint shard records using
-FIRST[0,72,144,288,432]/PARTS[72,72,144,144,80]. Separate DOWNprepare leaves GU
-plans intact. Derive checked12-byte indirect views only from authenticated
-full64KiB GU owner, byte24576+192*shard+8/+20; MAIN already has INDIRECT usage.
-GU keeps ordinal+=4 codebook reuse, maps ordinal to original group, then all
-original payload/member checks and arithmetic; DOWN adds fullGU readonly binding.
-After all DOWN consumers, replacement GUaudit reconstructs each stable list
-from unchanged MAP, validates all headers/counts/triplets/inactive entries,
-stickies the original fault on failure and erases each disjoint record. Preserve
-all other full-owner plane/padding audits. No extra kernel/INFO/model owner/cap
-or CPU route fence should be needed. New private kernel IDs; no API selector.
-Prove source/indirect bounds/barriers and unchanged fullCPU13 before normal
-code timings. Compaction may still be neutral; it has no measured win yet.
+Inherited `c42379b`, `f6a233a`, `0b72be5` compaction is now **physically working**:
 
-At stop, compaction branches in `kuno-cpu-batch-leaf/vashti` and
-`kuno-verify4-dense/vashti` are clean at7c0fbb8; no implementation or jobs remain.
-Parent owns `resident_frozen_sources.rs`; leaf owns frozenGU/DOWNfour kernels.
-Further read-only finding: our two residual Q8 activation planes double packed
-integer dot work versus Strata's one plane without doubling weight bytes.
-A single-plane alternative needs its own numerical gate, never silent tolerance
-relaxation. Packed weights already use u32 loads; byte decoding is not evidence
-of byte-sized PCIe reads. Compaction is the next prioritized experiment.
+- `62594d0`: accept actual allocator `Some(0)` full-owner trims, reject nonzero
+  trims before size subtraction, authenticate 12-byte indirect spans; fix
+  count4 kernel metadata, original count1..3 scratch reset extent, storage-write
+  ordering, complete record audit, and independent DOWN policy credit.
+- `fb7b420`: generic count1..3 compact DOWN had an erroneous count4-only main
+  guard; restored its original domain. This is the accepted compaction base.
+- `fd9c319`: integrated isolated `3bb2c20`, an unused primary-plane count4 GU
+  approximation, with independent arithmetic/lowering regression coverage.
+- `fdd2732`: selected that approximation for one immutable public experiment.
+- `6cc52f5`: **deselected the failed primary-plane experiment** and recorded
+  compaction acceptance, neutral speed, and complete v195 rejection/recovery.
 
-## Start here when the user authorizes resuming
+The inherited DIAG source patch was inspected, saved as
+`compaction-v192-inherited-diagnostics-20261012.patch` under the development
+base, and removed only from its three inspected files before implementation.
+The old claim that count4+integer DOWN is unreachable was wrong: the protected
+four-lookahead label genuinely exercises count4 plus count1..3 tails.
+Do not alter the harness to manufacture count4 acceptance.
 
-**Superseded by the 2026-10-12 compaction checkpoint below.** Read the newer
-section first; the older resume list that used to start here is preserved under
-**Historical evidence**.
+**Next experiment in progress:** exact-tree subgroup count4 compact GU/DOWN,
+implemented separately in `kuno-compact-shuffle/vashti` by the shader agent.
+It replaces shared reduction scratch/barriers with unconditional subgroup
+shuffles plus the original lane<stride additions at strides 4,2,1. It must
+retain both Q8 planes, all weight decoders/routes/audits, physical owner bounds,
+and real subgroup-ID mapping with width16/32 validation. Root owns integration,
+shared build cache, numerical/timing tests and services. This paragraph will be
+replaced by the resulting acceptance or rejection before final handoff.
 
-### Current state (2026-10-12, session interrupted mid-debug)
+## Exact physical evidence this pass
 
-Branch `codex/kuno-native-text`, HEAD `0b72be5` (count-generic compaction).
-Committed work, all with full native-text suite green (1336 passed/0 failed),
-clippy `-D warnings` clean and fmt clean:
+Base: `/media/jmicko/faststore/kuno-development`. Aggregate committed evidence:
+`apps/kuno/benchmarks/text/receipts/native-strata-optimization-20261009.json`.
+All trials use the fixed public fixtures, swap/core-disabled cgroups and real
+Intel B70 target plus full Q8 MTP on Intel; Nvidia is not a compute participant.
 
-- `c42379b` — per-Source expert group compaction for the count4 integer
-  GU/DOWN leaves, parent wiring, compaction receipts, probe evidence counters.
-- `ce6ffe5` — coordination checkpoint.
-- `f6a233a` — the same compaction for the count1..3 integer leaves. This was
-  needed because the protected harness keeps `KUNO_LAB_FROZEN_DOWN_ROWS`
-  (four members) mutually exclusive with integer DOWN
-  (`apps/kuno/benchmarks/text/protected-lab-exec.py`, `frozen_down_integer_scope`),
-  so no protected label could reach count4+integer; the count1..3 path is the
-  one the normal language-code label exercises.
-- `0b72be5` — records take the exact routed group count from the MAP header and
-  accept it within the caller's capacity bound, instead of demanding equality
-  with that bound (the parent passes the geometry capacity 30/40).
+| Trial | Source / frozen SHA256 | Result |
+| --- | --- | --- |
+| v193 compaction warm | `62594d0` / `25a8751d5ae97d337c1e5fb828ce3d5fac443971fc640372d07e4d7213a68984` | Cold CPU13 accepted; warm owning-IO rejection diagnosed as generic DOWN main guard, fixed in `fb7b420`. |
+| v194 compaction warm | `fb7b420` / `beeb3787b01d682c069e0740698ebb4bfa6aa8352452ff90b64ca8480bcd4c9f` | Original full cold/warm CPU13 vectors, carries, greedies, real repair, closures all pass. Warm compact GU/DOWN1440 each, audits288. |
+| v194 compaction code200 | same artifact | **10.9062469565** real continuation tokens/s; 199 continuations in18.246423430s, 200 emitted,52 rounds,147 accepted drafts,5 recomputations. Effectively neutral against prior v18210.882673. |
+| v195 primary-plane GU warm | `fdd2732` / `28e21d4107b56b200f8dc842fa24c634644a3c9c5e457f5c20245ade599e1ee7` | Cold CPU13 and warm initial prefill accepted; warm full carry fixture rejected. Original thresholds unchanged, no normal speed credit. Compile-time selector nowfalse. |
 
-Mechanism: GU prepare builds five disjoint shard records in the already-owned
-zeroed tail (words 6144..6383, 48 words each: ready, count, GU `[80,min(4,count),1]`,
-DOWN `[320,count,1]`, then stable ascending original group IDs). GU and DOWN then
-run one indirect dispatch per shard through checked 12-byte views of the
-authenticated full 64KiB owner (`CubeCount::Dynamic`). Arithmetic, decoder,
-member order, routes, IDs and owners are unchanged; both compact projections
-reuse the original body verbatim and the record audit reconstructs each list
-from the unchanged MAP, stickies faults, and erases records only after every
-shard validates. Host receipts require actual credit of five GU plus five DOWN
-indirect dispatches and one record audit per layer, and both daslab probes
-report `compact_gu_dispatches`, `compact_down_dispatches`, `compact_audits`.
+Directory names are `native-next-v193-compaction-warm-intel-20261012`,
+`native-next-v194-compaction-warm-intel-20261012`,
+`native-next-v194-compaction-code-intel-20261012`, and
+`native-next-v195-first-plane-warm-intel-20261012`. Corresponding build directories
+replace the final warm/code component with `build`; v194 warm/code share one
+artifact. Each source record identifies original public model files and hashes.
+No private prompts, model output text, keys or images are in these receipts.
 
-**Uncommitted debug instrumentation must be reverted before any real work:**
-`resident_moe_batch.rs` (`guarded` now prints `DIAG_chunk_error`/`DIAG_chunk_panic`),
-`frozen_gu_integer.rs` and `frozen_gu_integer_four.rs` (a `DIAG_reject line N` /
-`DIAG4_reject line N` marker before every `Err(rejected())`). Run
-`git checkout -- apps/kuno/benchmarks/native-text/src` on those three files
-(or `git stash`) — no other uncommitted work exists except the unrelated
-untracked `apps/kuno/benchmarks/text/__pycache__/`.
+The last complete source suite: **1,340 passed, one ignored**, strict release
+`direct-device` Clippy with `-D warnings` and fmt pass. Counts include the
+primary-plane leaf even though it is unselected. This is lab acceptance only;
+there is still no independent full CPU200 reference or deployed native engine.
 
-**Open failure, reproduced three times on the B70.** Trial
-`warm-intel-mtp-four-lookahead-batch-repair-down-integer-grouped-ple-gu-stride-shared-head-gpu-host`
-fails during the warm replay with `InvalidFormat("native routed chunk failed")`.
-`guarded` swallows the real cause; the instrumented build showed it is
-`Error::InvalidFormat("public frozen GU integer eight-lane candidate")` raised
-by the **four-member** leaf, at the first guard of `record_dispatch_view` in
-`frozen_gu_integer_four.rs` (pre-instrumentation line 518):
+After v195 at04:02:06UTC, Kuno/Ollama/Vashti all HTTP200, admission idle/unpaused,
+no recovery latch, B70 actual used50,688,000B, Nvidia compute0, all classified
+kernel faults0, unchanged boot `b32654b7-a49b-493d-8305-46da15b6eac6`,
+kernel7.0.0-38. A fresh final recovery check is required after remaining trials.
 
-```rust
-if scratch.size() != MAIN_BYTES
-    || scratch.size_in_used() != MAIN_BYTES
-    || scratch.offset_start.is_some()
-    || scratch.offset_end.is_some()
-{ return Err(rejected()); }
-```
+## Why this direction and what not to repeat
 
-This guard was added late as a hardening change. The original code paths never
-call it, and their equivalent `full_handles` checks pass in this same trial, so
-the next step is to print the four values (`size`, `size_in_used`,
-`offset_start`, `offset_end`) and the caller's handle provenance — note
-`record_dispatch_view` is reached from **both** GU and DOWN compact launches,
-and the DOWN path passes the GU owner obtained from `integer_handles` in
-`resident_frozen_sources.rs`. Verify which caller and which field fails before
-changing anything; the likely candidates are a non-None `offset_*` on the arena
-scratch handle or an owned size above `MAIN_BYTES`. Empirically the trial *does*
-reach the four-member leaf (`count == 4`), which contradicts the earlier
-conclusion that no protected label enables four members — re-verify that
-assumption.
+v185 on `aa90a95` is the first **actual warm target kernel profile**, not the
+10.88 normal-speed run (that was v182 on `dab13e2`). Its4,051 Device timestamp
+spans total250.572596ms: GU105.174727ms, DOWN69.876932ms, combined69.86%.
+Router MAP audit16.633ms, other dense15.633ms, Q6dense9.058ms, GDN8.014ms,
+BF16DOWN6.198ms and BF16UP2.612ms. Profiling alters scheduling; do not call these
+normal timings or interpret CPU enqueue waits as pure CPU overhead.
 
-Debug artifacts already on disk: frozen builds
-`frozen-native-text-diag4-v192-20261012` (instrumented),
-`frozen-native-text-compact-v188-20261012` (clean, from `0b72be5`); trial dirs
-`trial-diag4-v192-20261012`, `trial-compact-v188-warm-20261012`,
-`trial-compact-v187-warm-20261012` under `/media/jmicko/faststore/kuno-development`.
+Compaction is accepted scheduling work but did not materially improve speed.
+Strata uses one Q8 activation plane; ours uses two residual planes. Removing
+one failed the unchanged full-model numerical contract, despite source tests.
+Do not loosen tolerances, force reference tokens/routes, or claim a speed win
+from a failed candidate. The subgroup candidate instead keeps the exact F32
+reduction tree and both planes.
 
-Host state: `kuno.service` must be running for the harness control plane
-(`host-state.py` reads `/etc/kuno/control-token` and 127.0.0.1:11432, and needs
-root), while the B70 must be at baseline 50,688,000 B for the runner's idle
-check. The resident image worker holds 16 GB when it preloads; starting
-`kuno.service` on a fresh boot left the B70 at baseline with no resident worker,
-which is the working combination. Run trials as `sudo -n python3
-run-native-strata-public-protected-20261009.py <build-dir> <fresh-out-dir> <trial>`
-from the Demons "shell" pane, which holds the sudo credential (it expires;
-refresh with `sudo -v`). No speed claim exists yet: the v185 control is 10.882673
-tok/s on `language-code-intel-mtp-four-lookahead-batch-repair-down-integer-grouped-ple-gu-stride-shared-head-gpu-host`.
+Shelved candidates: BF16 two-row `a9cff9e` source-only (only1.04% profile time);
+paired32 Q6 head is CPU13-accepted/default-off, normal timing pending. Existing
+integer16 target head was neutral10.880799 vs original10.882673; do not spend
+another broad head pass without new evidence. No need repeated Ollama baselines.
+
+## Exact protected workflow
+
+Root alone owns `/media/jmicko/faststore/kuno-development/root-native-text-target-20261005`
+and GPU/service mutations. Source agents use separate worktrees and must not
+compile concurrently with normal timing. Refresh cached sudo via Demons shell
+only when its foreground command is finished. Never send text into an active
+runner. If cache expires, ask once and continue useful source work; do not
+invent sudo workarounds. No reboot, GPU reset, PCI unbind, or desktop disruption.
+
+Build from committed root source using `helpers-20261008/build-direct-target.py`
+with a fresh build basename (`CARGO_BUILD_JOBS=2`). Create a fresh output directory.
+Run `sudo -n python3 run-native-strata-public-protected-20261009.py BUILD OUT TRIAL`
+from the development base in the shared shell. Full immutable source hashing
+can take two minutes before the GPU log appears; that is not a hung kernel.
+
+CPU13 label:
+`warm-intel-mtp-four-lookahead-batch-repair-down-integer-grouped-ple-gu-stride-shared-head-gpu-host`.
+Normal code200 label:
+`language-code-intel-mtp-four-lookahead-batch-repair-down-integer-grouped-ple-gu-stride-shared-head-gpu-host`.
+Keep original CPU13 full-vector/carry/greedy thresholds
+`0.006 + 0.0003 * abs(reference)`. Normal fixture seed424242, temperature0,
+public Python sorted-list merge prompt, thinkingfalse, repetition1, penalties0;
+200 emitted/199timed continuations. Preserve original acceptance semantics.
+
+Runner restores admission in `finally`; verify actual baseline memory, owner
+closures, HTTP services and kernel-fault deltas rather than trusting an unload
+acknowledgement. `helpers-20261008/final-secondary-state.py` is the final helper;
+there is no top-level `host-state.py`. Do not capture protected control keys.
+On finishing, update this opening checkpoint and coordination guide, commit
+source/results/docs, leave goal paused and services usable with no queued work.
 
 ## Historical evidence — not the current work queue
 

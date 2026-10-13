@@ -60,7 +60,11 @@ as proof of a working device path.
 Regression coverage includes real pure allocator-produced handles, exact
 indirect spans, malformed trims and shard indices, compiled WGSL dimensions,
 original reset-body equivalence, shader lowering and independent DOWN policy
-credit. Device acceptance still requires unchanged cold/warm CPU13 checks and
-complete cleanup; performance requires a separate normal generation run.
-Results and immutable artifact identities belong in the native-text handoff
-and receipt file. No measured speedup is claimed by this specification.
+credit. Physical v194 on `fb7b420` passes unchanged full cold/warm CPU13,
+real repair, compact route counters and complete cleanup. The independent
+normal code200 run emits200 outputs/199timed continuations in18.246423430s:
+10.9062469565 tokens/s versus prior v18210.882673, a neutral result. Compaction
+is accepted, with no meaningful measured speedup. Both trials use artifact
+SHA256 `beeb3787b01d682c069e0740698ebb4bfa6aa8352452ff90b64ca8480bcd4c9f`.
+Exact artifacts, owner counters and recovery state are in the native-text
+handoff and aggregate receipts under the v194 keys.
