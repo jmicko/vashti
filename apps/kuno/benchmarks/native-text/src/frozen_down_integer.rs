@@ -528,7 +528,11 @@ pub(crate) fn audit(
         .with_info(info([count, 0, 0, 0, 0, 0, 0, 0]));
     // SAFETY: same full, authenticated owners; the sticky fault is never reset.
     unsafe {
-        client.launch_unchecked(Box::new(Kernel::Audit), CubeCount::Static(256, 1, 1), args);
+        client.launch_unchecked(
+            Box::new(Kernel::Audit),
+            CubeCount::Static(SCRATCH_WORDS.div_ceil(64) as u32, 1, 1),
+            args,
+        );
     }
     Ok(())
 }

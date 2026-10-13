@@ -2889,7 +2889,7 @@ impl Workspace {
                 || p.count1.is_some()
                 || *p.waves != 1
                 || !(1..=if self.public_four_members_policy() {
-                    4
+                    crate::strata_port::verify_capacity()
                 } else {
                     3
                 })
