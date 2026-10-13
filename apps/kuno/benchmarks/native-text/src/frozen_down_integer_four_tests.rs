@@ -2,6 +2,70 @@
 use super::*;
 use crate::quant_matvec::frozen_down_integer::four;
 
+#[test]
+fn compact_shuffle_down_lowers_without_shared_reduction_or_changed_dots() {
+    for dtype in [crate::quant_matvec::IQ4_NL, crate::quant_matvec::Q2_0] {
+        let row_bytes = TensorType::from_gguf_id(dtype)
+            .unwrap()
+            .row_bytes(640)
+            .unwrap() as usize;
+        let old = four::Kernel::ProjectCompact { dtype, row_bytes };
+        let candidate = four::Kernel::ProjectCompactShuffle { dtype, row_bytes };
+        let original = old.source();
+        let source = candidate.source();
+        let module = lower(candidate);
+        let compiled = candidate
+            .compile(
+                &mut AutoCompiler::Wgsl(Default::default()),
+                &Default::default(),
+                ExecutionMode::Unchecked,
+                candidate.address_type(),
+            )
+            .unwrap();
+        assert_eq!(module.entry_points[0].workgroup_size, [64, 1, 1]);
+        assert_eq!(compiled.cube_dim, CubeDim::new_1d(64));
+        assert_ne!(candidate.id(), old.id());
+        assert_eq!(shared_bytes(&module), 0);
+        assert_eq!(barriers(&module.entry_points[0].function.body), 0);
+        assert!(!source.contains("workgroupBarrier") && !source.contains("sums["));
+        assert!(!source.contains("subgroupAdd"));
+        assert!(source.contains("(width!=16u && width!=32u)"));
+        assert!(source.contains("sg*(width/8u)+sub_lane/8u;let lane=sub_lane%8u"));
+        assert!(!source.contains("local/8u"));
+        assert!(source.contains("subgroupShuffleDown(values,stride)"));
+        assert!(source.contains("if lane<stride {values+=other_values;}"));
+        assert!(
+            source.find("subgroupShuffleDown").unwrap() < source.find("if lane<stride").unwrap()
+        );
+        let begin = "    var values=vec4<f32>(0.0);";
+        let original_dot = original
+            .split_once(begin)
+            .unwrap()
+            .1
+            .split_once("    // Explicit initialization")
+            .unwrap()
+            .0;
+        let candidate_dot = source
+            .split_once(begin)
+            .unwrap()
+            .1
+            .split_once("    // Exact original eight-lane")
+            .unwrap()
+            .0;
+        assert_eq!(original_dot, candidate_dot);
+        for check in [
+            "p.h!=4u",
+            "gu_planes[base]!=1u",
+            "if group.y>=shard_count {return;}",
+            "if !valid_group(routed_group) {return;}",
+            "status[p.f+80u+route]=1u",
+            "output[p.d+route*p.e+row]=values.w",
+        ] {
+            assert!(source.contains(check), "missing {check}");
+        }
+    }
+}
+
 fn lower(kernel: four::Kernel) -> n::Module {
     for mode in [ExecutionMode::Checked, ExecutionMode::Unchecked] {
         let compiled = kernel

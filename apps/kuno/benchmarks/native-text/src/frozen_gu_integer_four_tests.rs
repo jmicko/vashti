@@ -627,3 +627,79 @@ fn first_plane_compact_gu_matches_independent_primary_f64_and_ignores_residual_v
         "the candidate must actually omit residual arithmetic"
     );
 }
+
+#[test]
+fn compact_shuffle_gu_lowers_with_original_accumulation_and_exact_tree() {
+    for dtype in [
+        crate::quant_matvec::IQ2_S,
+        crate::quant_matvec::IQ3_XXS,
+        crate::quant_matvec::IQ3_S,
+        crate::quant_matvec::IQ4_XS,
+    ] {
+        let row_bytes = TensorType::from_gguf_id(dtype)
+            .unwrap()
+            .row_bytes(2560)
+            .unwrap() as usize;
+        let old = four::Kernel::ProjectCompact { dtype, row_bytes };
+        let candidate = four::Kernel::ProjectCompactShuffle { dtype, row_bytes };
+        let source = candidate.source();
+        let original = old.source();
+        let module = lower(candidate);
+        let compiled = candidate
+            .compile(
+                &mut AutoCompiler::Wgsl(Default::default()),
+                &Default::default(),
+                ExecutionMode::Unchecked,
+                candidate.address_type(),
+            )
+            .unwrap();
+        assert_eq!(module.entry_points[0].workgroup_size, [64, 1, 1]);
+        assert_eq!(compiled.cube_dim, CubeDim::new_1d(64));
+        assert_ne!(candidate.id(), old.id());
+        assert_eq!(barriers(&module.entry_points[0].function.body), 1);
+        assert_eq!(
+            shared_bytes(&module),
+            integer::original_grid_words(dtype).len() as u32 * 4
+        );
+        assert!(!source.contains("gate_sums") && !source.contains("up_sums"));
+        assert!(!source.contains("subgroupAdd"));
+        assert!(source.contains("(width!=16u && width!=32u)"));
+        assert!(source.contains("sg*(width/8u)+sub_lane/8u;let lane=sub_lane%8u"));
+        assert!(!source.contains("local/8u"));
+        assert!(source.contains("subgroupShuffleDown(gates,stride)"));
+        assert!(source.contains("subgroupShuffleDown(ups,stride)"));
+        assert!(source.contains("if lane<stride {gates+=other_gates;ups+=other_ups;}"));
+        assert!(
+            source.find("subgroupShuffleDown").unwrap() < source.find("if lane<stride").unwrap()
+        );
+        // Preserve original per-lane decoder, packed dots, both activation
+        // planes and scaling before changing only the reduction transport.
+        let begin = "    var gates=vec4<f32>(0.0);var ups=vec4<f32>(0.0);";
+        let original_dot = original
+            .split_once(begin)
+            .unwrap()
+            .1
+            .split_once("    for(var j=0u;j<4u;j++)")
+            .unwrap()
+            .0;
+        let candidate_dot = source
+            .split_once(begin)
+            .unwrap()
+            .1
+            .split_once("    // Exact original eight-lane")
+            .unwrap()
+            .0;
+        assert_eq!(original_dot, candidate_dot);
+        for check in [
+            "p.h!=4u",
+            "planes[base]!=1u",
+            "if group.y>=shard_count {return;}",
+            "if valid_group(routed_group)",
+            "ordinal+=4u",
+            "status[p.f+route]=1u",
+            "silu(gates.w)*ups.w",
+        ] {
+            assert!(source.contains(check), "missing {check}");
+        }
+    }
+}

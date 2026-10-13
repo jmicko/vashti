@@ -48,6 +48,7 @@ pub(super) enum Kernel {
     Project { dtype: u32, row_bytes: usize },
     ProjectCompact { dtype: u32, row_bytes: usize },
     Audit,
+    ProjectCompactShuffle { dtype: u32, row_bytes: usize },
 }
 
 fn members(body: &str) -> String {
@@ -83,6 +84,11 @@ impl Kernel {
                     .replace("BLOCKS_VALUE", "20")
             }
             Self::Audit => template("AUDIT").to_owned(),
+            Self::ProjectCompactShuffle { dtype, row_bytes } => {
+                crate::quant_matvec::frozen_gu_integer::four::shuffle::down(
+                    Self::ProjectCompact { dtype, row_bytes }.source(),
+                )
+            }
             Self::Project { dtype, row_bytes } | Self::ProjectCompact { dtype, row_bytes } => {
                 let helpers = include_str!("iq_moe_integer.wgsl")
                     .split_once("fn iq4_byte")
@@ -120,6 +126,7 @@ impl KernelMetadata for Kernel {
             Self::Project { .. } => "FrozenDownIntegerFourEightLanes",
             Self::ProjectCompact { .. } => "FrozenDownIntegerFourEightLanesCompact",
             Self::Audit => "FrozenDownIntegerFourAudit",
+            Self::ProjectCompactShuffle { .. } => "FrozenDownIntegerFourCompactShuffle",
         }
     }
     fn id(&self) -> KernelId {
@@ -378,6 +385,48 @@ pub(crate) fn launch_compact(
     groups: usize,
     count: usize,
 ) -> Result<()> {
+    launch_compact_impl(
+        client, geometry, spans, down, owners, scratch, gu_scratch, first_slot, slot_count, groups,
+        count, false,
+    )
+}
+
+/// Count4 exact-tree shuffle candidate; requires enabled16/32 subgroups.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn launch_compact_shuffle(
+    client: &ComputeClient<WgpuRuntime>,
+    geometry: g::Geometry,
+    spans: &g::Spans,
+    down: Handle,
+    owners: [Handle; 7],
+    scratch: Handle,
+    gu_scratch: Handle,
+    first_slot: usize,
+    slot_count: usize,
+    groups: usize,
+    count: usize,
+) -> Result<()> {
+    launch_compact_impl(
+        client, geometry, spans, down, owners, scratch, gu_scratch, first_slot, slot_count, groups,
+        count, true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn launch_compact_impl(
+    client: &ComputeClient<WgpuRuntime>,
+    geometry: g::Geometry,
+    spans: &g::Spans,
+    down: Handle,
+    owners: [Handle; 7],
+    scratch: Handle,
+    gu_scratch: Handle,
+    first_slot: usize,
+    slot_count: usize,
+    groups: usize,
+    count: usize,
+    shuffle: bool,
+) -> Result<()> {
     let shard = crate::quant_matvec::frozen_gu_integer::four::shard_index(first_slot, slot_count)?;
     validate_layout(
         geometry,
@@ -450,9 +499,16 @@ pub(crate) fn launch_compact(
     // uniformly; the GU owner is bound read-only and never written here.
     unsafe {
         client.launch_unchecked(
-            Box::new(Kernel::ProjectCompact {
-                dtype: projection.dtype(),
-                row_bytes: projection.row_bytes(),
+            Box::new(if shuffle {
+                Kernel::ProjectCompactShuffle {
+                    dtype: projection.dtype(),
+                    row_bytes: projection.row_bytes(),
+                }
+            } else {
+                Kernel::ProjectCompact {
+                    dtype: projection.dtype(),
+                    row_bytes: projection.row_bytes(),
+                }
             }),
             CubeCount::Dynamic(dispatch),
             args,

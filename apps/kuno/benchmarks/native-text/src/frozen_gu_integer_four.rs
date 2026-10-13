@@ -6,6 +6,9 @@
 #![allow(dead_code)] // Parent wiring is a separate integration commit.
 
 use super::{decode, g, grid_source};
+
+#[path = "frozen_compact_shuffle.rs"]
+pub(crate) mod shuffle;
 use cubecl::ir::{ElemType, StorageType, UIntKind};
 use cubecl::prelude::{ComputeClient, CubeCount, CubeDim};
 use cubecl::wgpu::{AutoCompiler, WgpuRuntime};
@@ -66,6 +69,7 @@ pub(super) enum Kernel {
     ProjectCompact { dtype: u32, row_bytes: usize },
     AuditCompact,
     ProjectCompactFirstPlane { dtype: u32, row_bytes: usize },
+    ProjectCompactShuffle { dtype: u32, row_bytes: usize },
 }
 
 fn members(body: &str) -> String {
@@ -115,6 +119,9 @@ impl Kernel {
                     .replace("BLOCKS_VALUE", "80")
             }
             Self::AuditCompact => template("COMPACT_AUDIT").to_owned(),
+            Self::ProjectCompactShuffle { dtype, row_bytes } => {
+                shuffle::gate_up(Self::ProjectCompact { dtype, row_bytes }.source())
+            }
             Self::Project { dtype, row_bytes }
             | Self::ProjectStride4 { dtype, row_bytes }
             | Self::ProjectCompact { dtype, row_bytes }
@@ -206,6 +213,7 @@ impl Kernel {
                     | Self::ProjectStride4 { .. }
                     | Self::ProjectCompact { .. }
                     | Self::ProjectCompactFirstPlane { .. }
+                    | Self::ProjectCompactShuffle { .. }
             ) {
                 64
             } else {
@@ -227,6 +235,7 @@ impl KernelMetadata for Kernel {
                 "FrozenGuIntegerFourEightLanesCompactFirstPlane"
             }
             Self::AuditCompact => "FrozenGuIntegerFourAuditCompact",
+            Self::ProjectCompactShuffle { .. } => "FrozenGuIntegerFourCompactShuffle",
         }
     }
     fn id(&self) -> KernelId {
@@ -631,8 +640,17 @@ pub(crate) fn launch_compact(
     count: usize,
 ) -> Result<()> {
     launch_compact_inner(
-        client, geometry, spans, banks, owners, scratch, first_slot, slot_count, groups, count,
-        false,
+        client,
+        geometry,
+        spans,
+        banks,
+        owners,
+        scratch,
+        first_slot,
+        slot_count,
+        groups,
+        count,
+        CompactProjection::Original,
     )
 }
 
@@ -653,9 +671,55 @@ pub(crate) fn launch_compact_first_plane(
     count: usize,
 ) -> Result<()> {
     launch_compact_inner(
-        client, geometry, spans, banks, owners, scratch, first_slot, slot_count, groups, count,
-        true,
+        client,
+        geometry,
+        spans,
+        banks,
+        owners,
+        scratch,
+        first_slot,
+        slot_count,
+        groups,
+        count,
+        CompactProjection::FirstPlane,
     )
+}
+
+/// Count4 exact-tree shuffle candidate. Caller enables subgroup support with
+/// admitted16/32 widths; the shader independently guards its actual width.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn launch_compact_shuffle(
+    client: &ComputeClient<WgpuRuntime>,
+    geometry: g::Geometry,
+    spans: &g::Spans,
+    banks: [Handle; 2],
+    owners: [Handle; 7],
+    scratch: Handle,
+    first_slot: usize,
+    slot_count: usize,
+    groups: usize,
+    count: usize,
+) -> Result<()> {
+    launch_compact_inner(
+        client,
+        geometry,
+        spans,
+        banks,
+        owners,
+        scratch,
+        first_slot,
+        slot_count,
+        groups,
+        count,
+        CompactProjection::Shuffle,
+    )
+}
+
+#[derive(Clone, Copy)]
+enum CompactProjection {
+    Original,
+    FirstPlane,
+    Shuffle,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -670,7 +734,7 @@ fn launch_compact_inner(
     slot_count: usize,
     groups: usize,
     count: usize,
-    first_plane: bool,
+    projection: CompactProjection,
 ) -> Result<()> {
     let shard = shard_index(first_slot, slot_count)?;
     validate_layout(
@@ -730,16 +794,19 @@ fn launch_compact_inner(
     // the record bounds every list access and the shard dispatch uniformly.
     unsafe {
         client.launch_unchecked(
-            Box::new(if first_plane {
-                Kernel::ProjectCompactFirstPlane {
+            Box::new(match projection {
+                CompactProjection::FirstPlane => Kernel::ProjectCompactFirstPlane {
                     dtype: gate.dtype(),
                     row_bytes: gate.row_bytes(),
-                }
-            } else {
-                Kernel::ProjectCompact {
+                },
+                CompactProjection::Shuffle => Kernel::ProjectCompactShuffle {
                     dtype: gate.dtype(),
                     row_bytes: gate.row_bytes(),
-                }
+                },
+                CompactProjection::Original => Kernel::ProjectCompact {
+                    dtype: gate.dtype(),
+                    row_bytes: gate.row_bytes(),
+                },
             }),
             CubeCount::Dynamic(dispatch),
             args,
