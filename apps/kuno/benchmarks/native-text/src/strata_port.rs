@@ -46,6 +46,15 @@ pub(crate) fn unrolled_dots() -> bool {
             std::env::var("KUNO_STRATA_EXPERT_DOTS").as_deref() == Ok("unrolled-public")
         })
 }
+/// Strata's Intel default leaves STRATA_GRID_SLM off. Its native public IQ
+/// table is read directly rather than copied once per expert workgroup.
+pub(crate) fn constant_codebook() -> bool {
+    static SELECTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    enabled()
+        && *SELECTED.get_or_init(|| {
+            std::env::var("KUNO_STRATA_CODEBOOK").as_deref() == Ok("constant-public")
+        })
+}
 pub(crate) fn expert_lanes() -> usize {
     static LANES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     if !enabled() {
@@ -299,7 +308,7 @@ pub(crate) fn public_preview(text: &str) {
 pub(crate) fn receipt() -> serde_json::Value {
     serde_json::json!({"enabled": enabled(), "upstream_revision": "fb58e0dbc8399662c0e47c76578c6e878b14f6cf",
         "backend": "Rust/WGSL/Vulkan", "verify_capacity":verify_capacity(), "activation_planes": 1, "activation_scale": "fp16-q8_1",
-        "projection_workgroup":256, "rows_per_workgroup":256/expert_lanes(), "expert_dot_lanes":expert_lanes(), "aligned_vector_expert_reads":wide_experts(), "group_stride":if independent_groups() {verify_capacity()*10} else {4},"independent_expert_groups":independent_groups(),"unrolled_packed_dots":unrolled_dots(),"suffix_lookup_windows":LOOKUP_WINDOWS.load(Ordering::Relaxed),"suffix_lookup_proposed":LOOKUP_PROPOSED.load(Ordering::Relaxed),
+        "projection_workgroup":256, "rows_per_workgroup":256/expert_lanes(), "expert_dot_lanes":expert_lanes(), "aligned_vector_expert_reads":wide_experts(), "group_stride":if independent_groups() {verify_capacity()*10} else {4},"independent_expert_groups":independent_groups(),"unrolled_packed_dots":unrolled_dots(),"constant_iq_codebook":constant_codebook(),"suffix_lookup_windows":LOOKUP_WINDOWS.load(Ordering::Relaxed),"suffix_lookup_proposed":LOOKUP_PROPOSED.load(Ordering::Relaxed),
         "gu_dispatches_by_member_count":GU.each_ref().map(|v|v.load(Ordering::Relaxed)),
         "down_dispatches_by_member_count":DOWN.each_ref().map(|v|v.load(Ordering::Relaxed)),
         "fused_five_tier_experts":fused_sources(), "original_cpu13_precision_contract": false, "intermediate_numeric_scans":false,"published_outputs_checked_finite":true,"full_private_erasure":true,"installed_or_production": false})
@@ -722,6 +731,44 @@ fn down(mut source: String, members: usize) -> String {
     source
 }
 
+fn direct_codebook(mut source: String) -> String {
+    const START: &str = "var<workgroup> iq3_grid:array<u32,";
+    let Some(first) = source.find(START) else {
+        return source;
+    };
+    let end = first + source[first..].find(';').expect("public grid declaration") + 1;
+    let n = source[first + START.len()..end]
+        .split_once('>')
+        .unwrap()
+        .0
+        .parse::<usize>()
+        .expect("fixed public codebook count");
+    let init = source
+        .find("switch local {")
+        .expect("public grid initializer");
+    let init_end = function_end(&source, init);
+    let mut words = vec![None; n];
+    for line in source[init..init_end].lines() {
+        if let Some(rest) = line.trim().strip_prefix("iq3_grid[") {
+            let (index, value) = rest.split_once("u]=").expect("fixed public codebook word");
+            let index = index.parse::<usize>().unwrap();
+            assert!(index < n && words[index].is_none());
+            words[index] = Some(value.strip_suffix(';').unwrap().to_owned());
+        }
+    }
+    let words = words
+        .into_iter()
+        .map(|v| v.expect("complete original public grid"))
+        .collect::<Vec<_>>()
+        .join(",");
+    source.replace_range(init..init_end, "");
+    source.replace_range(
+        first..end,
+        &format!("const iq3_grid=array<u32,{n}>({words});"),
+    );
+    source
+}
+
 fn unroll_dot_loops(mut source: String) -> String {
     // Only compile-time packed-byte loops, never router/model/request bounds.
     // Keep ordered integer additions and existing scale/reduction points.
@@ -814,6 +861,9 @@ pub(crate) fn shader(mut source: String, down_projection: bool, members: usize) 
     {
         if unrolled_dots() {
             source = unroll_dot_loops(source);
+        }
+        if constant_codebook() && !down_projection {
+            source = direct_codebook(source);
         }
         if down_projection {
             down(source, members)

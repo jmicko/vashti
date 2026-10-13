@@ -254,6 +254,7 @@ impl KernelMetadata for Kernel {
                 crate::strata_port::independent_groups(),
                 crate::strata_port::expert_lanes(),
                 crate::strata_port::unrolled_dots(),
+                crate::strata_port::constant_codebook(),
             ))
             .cube_dim(self.dim())
     }

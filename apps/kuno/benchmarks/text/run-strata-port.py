@@ -13,7 +13,7 @@ def run():
  if os.getuid()!=0 or not 5<=len(sys.argv)<=12:raise ValueError('root BUILD OUT code|prose q8|q2 [--profile] [--integer-head] [--fused-experts]')
  build=BASE/sys.argv[1];out=BASE/sys.argv[2];fixture,profile=sys.argv[3:5]
  options=set(sys.argv[5:])
- if options-{'--profile','--integer-head','--fused-experts','--wide-experts','--expert-lanes16','--cache-eight','--mtp-eight','--independent-groups','--unroll-dots'}:raise ValueError('port selector')
+ if options-{'--profile','--integer-head','--fused-experts','--wide-experts','--expert-lanes16','--cache-eight','--mtp-eight','--independent-groups','--unroll-dots','--constant-codebook'}:raise ValueError('port selector')
  target_profile='--profile' in options
  if out.exists():raise ValueError('fresh output required')
  out.mkdir()
@@ -35,6 +35,7 @@ def run():
  if '--wide-experts' in options:env['KUNO_STRATA_WIDE_EXPERTS']='aligned-vector-public'
  if '--expert-lanes16' in options:env['KUNO_STRATA_EXPERT_LANES']='sixteen-public'
  if '--cache-eight' in options:env['KUNO_STRATA_CACHE_SWAPS']='eight-public'
+ if '--constant-codebook' in options:env['KUNO_STRATA_CODEBOOK']='constant-public'
  if '--unroll-dots' in options:env['KUNO_STRATA_EXPERT_DOTS']='unrolled-public'
  if '--independent-groups' in options:env['KUNO_STRATA_EXPERT_GROUPS']='independent-public'
  if '--mtp-eight' in options:env['KUNO_STRATA_MTP_WINDOW']='eight-public'
