@@ -65,6 +65,10 @@ def run():
      text=json.loads(line.split('=',1)[1]);print('Public fixture generation (not saved):\n'+text,flush=True)
     else:
      log.write(line);log.flush()
+     if line.rstrip()=='strata_decode_start':
+      # Root observer only: aggregate physical residency; no GPU submission or
+      # private request read. Do not confuse reserved caps with live VRAM.
+      (out/'intel-memory-at-decode.json').write_text(json.dumps(helper('host-state.py','memory'))+'\n')
      if len(line)<600:print(line.rstrip(),flush=True)
    status=p.wait()
   print(json.dumps({'exit':status,'receipt':(out/'intel.json').exists()}),flush=True)
