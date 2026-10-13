@@ -119,8 +119,9 @@ mod tests {
                 for stride in [4, 2, 1] {
                     for lanes in &mut original {
                         for lane in 0..stride {
-                            for member in 0..4 {
-                                lanes[lane][member] += lanes[lane + stride][member];
+                            let other = lanes[lane + stride];
+                            for (value, other) in lanes[lane].iter_mut().zip(other) {
+                                *value += other;
                             }
                         }
                     }
