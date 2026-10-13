@@ -9,12 +9,8 @@ use cubecl::wgpu::WgpuResource;
 use cubecl_runtime::public_external::is_public_external_binding;
 
 pub(crate) const EXTRA_INFO_BYTES_PER_CHUNK: u64 = 6 * 48 * 2048;
-pub(crate) const SOURCE_SET_HOST_BYTES: u64 = (2 + if crate::strata_port::fused_sources() {
-    22
-} else {
-    0
-}) * 1024
-    * 1024;
+pub(crate) const SOURCE_SET_HOST_BYTES: u64 =
+    (2 + if crate::strata_port::enabled() { 22 } else { 0 }) * 1024 * 1024;
 pub(crate) const PHYSICAL_HOST_BYTES: u64 = 8 * 1024;
 pub(crate) const EXTRA_HOST_BYTES: u64 = SOURCE_SET_HOST_BYTES + PHYSICAL_HOST_BYTES;
 pub(crate) const EXTRA_RUNTIME_BYTES_PER_CHUNK: u64 = EXTRA_INFO_BYTES_PER_CHUNK;
@@ -257,7 +253,7 @@ impl ResidentBankAllocation {
     // Caller has proved that this is one distinct, original VRAM buffer. The
     // source constructor rejects duplicate buffers across ALL roles/layers.
     fn add_authenticated_buffer(&mut self, logical: u64, physical: u64) -> Result<()> {
-        let bound = if crate::strata_port::fused_sources() {
+        let bound = if crate::strata_port::enabled() {
             logical
         } else {
             main_admission::page_bytes(logical).map_err(admission_error)?
@@ -1353,7 +1349,7 @@ impl Sources {
         if actual_pages.next().is_some() || metadata_bytes as u64 > SOURCE_SET_HOST_BYTES {
             return Err(reject());
         }
-        let adaptive = if crate::strata_port::fused_sources() {
+        let adaptive = if crate::strata_port::enabled() {
             metadata_bytes = metadata_bytes
                 .checked_add(crate::strata_cache::METADATA_BYTES)
                 .ok_or(Error::ArithmeticOverflow)?;
