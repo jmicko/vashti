@@ -6,8 +6,8 @@ use cubecl_runtime::server::{Handle, KernelArguments};
 use kuno_text::{Error, Result};
 use std::cell::RefCell;
 
-pub(crate) const PUBLIC_TABLE_BYTES: u64 = 16384;
-const TABLE_WORDS: usize = 4096;
+pub(crate) const PUBLIC_TABLE_BYTES: u64 = 32768;
+const TABLE_WORDS: usize = 8192;
 thread_local! {static TABLE:RefCell<Option<Handle>>=const {RefCell::new(None)};}
 pub(crate) const fn enabled() -> bool {
     cfg!(feature = "strata-intel-core")
@@ -108,7 +108,7 @@ pub(crate) fn shared_table(mut source: String, binding: usize, dtype: u32) -> St
     source.push_str(&format!(
         "\n@group(0) @binding({binding}) var<storage,read> strata_grid:array<u32>;\n"
     ));
-    let guard = "    if arrayLength(&strata_grid)!=4096u {return false;}\n";
+    let guard = "    if arrayLength(&strata_grid)!=8192u {return false;}\n";
     let start = source.find("fn valid").expect("original owning guards");
     let brace = start + source[start..].find('{').unwrap() + 1;
     source.insert_str(brace, guard);
