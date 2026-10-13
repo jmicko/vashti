@@ -115,6 +115,9 @@ impl Placement {
 
     fn validate(self, bank: &BankSlots, plan: &Plan, selected: &[usize]) -> Result<()> {
         match self {
+            Self::StrataRankedFiller if crate::strata_port::profile_first() => {
+                validate_profile_selected_plan(bank, plan, selected)
+            }
             Self::PreserveResidents | Self::StrataRankedFiller => {
                 validate_empty_plan(bank, plan, selected)
             }
@@ -180,6 +183,10 @@ fn ranked_completion_selection(bank: &BankSlots, prefix: &[u16]) -> Result<Zeroi
     if selected.capacity() != CAPACITY {
         return Err(reject());
     }
+    if crate::strata_port::profile_first() {
+        selected.extend(prefix.iter().map(|&id| usize::from(id)));
+        return Ok(selected);
+    }
     for slot in 0..CAPACITY {
         if let Some(expert) = bank.resident_expert(slot).map_err(|_| reject())? {
             if expert >= EXPERTS
@@ -204,6 +211,44 @@ fn ranked_completion_selection(bank: &BankSlots, prefix: &[u16]) -> Result<Zeroi
         return Err(reject());
     }
     Ok(selected)
+}
+
+/// A profile-owned selected set replaces only unwanted public experts at a
+/// completed setup boundary. Pending canonical plan protects every wanted hit.
+fn validate_profile_selected_plan(bank: &BankSlots, plan: &Plan, selected: &[usize]) -> Result<()> {
+    if !crate::strata_port::enabled()
+        || bank.capacity() != CAPACITY
+        || bank.experts() != EXPERTS
+        || selected.len() != CAPACITY
+        || selected.iter().any(|&id| id >= EXPERTS)
+    {
+        return Err(reject());
+    }
+    bank.validate_pending(plan, selected)
+        .map_err(|_| reject())?;
+    let mut missing = 0;
+    for (i, &id) in selected.iter().enumerate() {
+        match bank.resident_slot(id).map_err(|_| reject())? {
+            Some(old) if old == plan.slots[i] => {}
+            Some(_) => return Err(reject()),
+            None => missing += 1,
+        }
+    }
+    if plan.uploads.len() != missing {
+        return Err(reject());
+    }
+    for &(id, slot) in &plan.uploads {
+        if !selected.contains(&id)
+            || bank.resident_slot(id).map_err(|_| reject())?.is_some()
+            || bank
+                .resident_expert(slot)
+                .map_err(|_| reject())?
+                .is_some_and(|old| selected.contains(&old))
+        {
+            return Err(reject());
+        }
+    }
+    Ok(())
 }
 
 /// Authenticate the COMPLETE original pending plan, not only its upload list.

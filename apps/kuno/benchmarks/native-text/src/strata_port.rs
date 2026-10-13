@@ -22,6 +22,14 @@ pub(crate) const fn exact_static_cache() -> bool {
 pub(crate) const fn static_cache_bytes() -> usize {
     (if exact_static_cache() { 5 } else { 8 }) * 1024 * 1024 * 1024
 }
+/// Strata's supplied profile chooses residency, rather than retaining whatever
+/// the first prompt happened to touch. Only a completed public setup boundary.
+pub(crate) fn profile_first() -> bool {
+    static SELECTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    enabled()
+        && *SELECTED
+            .get_or_init(|| std::env::var("KUNO_STRATA_PROFILE_FIRST").as_deref() == Ok("public"))
+}
 pub(crate) fn fused_sources() -> bool {
     static SELECTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     enabled()
@@ -315,7 +323,7 @@ pub(crate) fn public_preview(text: &str) {
 }
 pub(crate) fn receipt() -> serde_json::Value {
     serde_json::json!({"enabled": enabled(), "upstream_revision": "fb58e0dbc8399662c0e47c76578c6e878b14f6cf",
-        "backend": "Rust/WGSL/Vulkan", "verify_capacity":verify_capacity(), "activation_planes": 1, "activation_scale": "fp16-q8_1",
+        "backend": "Rust/WGSL/Vulkan", "verify_capacity":verify_capacity(),"profile_first_residency":profile_first(), "activation_planes": 1, "activation_scale": "fp16-q8_1",
         "projection_workgroup":256, "rows_per_workgroup":256/expert_lanes(), "expert_dot_lanes":expert_lanes(), "aligned_vector_expert_reads":wide_experts(), "group_stride":if independent_groups() {verify_capacity()*10} else {4},"independent_expert_groups":independent_groups(),"unrolled_packed_dots":unrolled_dots(),"constant_iq_codebook":constant_codebook(),"suffix_lookup_windows":LOOKUP_WINDOWS.load(Ordering::Relaxed),"suffix_lookup_proposed":LOOKUP_PROPOSED.load(Ordering::Relaxed),
         "gu_dispatches_by_member_count":GU.each_ref().map(|v|v.load(Ordering::Relaxed)),
         "down_dispatches_by_member_count":DOWN.each_ref().map(|v|v.load(Ordering::Relaxed)),
