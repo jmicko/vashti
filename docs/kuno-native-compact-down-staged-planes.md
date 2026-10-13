@@ -1,8 +1,8 @@
 # Count4 compact shuffle DOWN activation staging
 
 This currently unselected candidate extends the explicit exact-tree shuffle leaf
-at `efb7930`. Root integration and source validation are complete; the GPU gate
-is pending. There is no environment, API, feature or installed selector change.
+at `efb7930`. Root integration, source validation and the GPU numerical gate
+are complete; normal timing was neutral, so the candidate remains disabled. There is no environment, API, feature or installed selector change.
 `launch_compact_shuffle_staged` shares every original compact launch check and
 uses the separate appended `ProjectCompactShuffleStaged` kernel identity.
 Original compact/shuffle entries and count1..3 tails are unchanged.
@@ -50,10 +50,23 @@ Root integrated `5a64362` as `41b9d3d`, selected the fixed-public trial in
 suite: **1346 passed, one ignored**. Strict release direct-device Clippy,
 formatting and diff checks pass. The frozen v197 build completed with SHA256
 `358f23af90229acbef58c00a90000169c86395120ce783985d186db47f67f802`.
-**No v197 GPU trial has run.** Sudo expired during the usage-limit interruption,
-and the user requested a clean stop. Both staged and shuffle compile-time
-selectors are now false. Do not mistake source acceptance for GPU or speed
-acceptance; use the retained selected artifact for the next public CPU13 gate.
+The usage interruption initially left the GPU trial pending; the user then
+refreshed sudo and the root completed both gates using that exact frozen build.
+Full original cold/warm CPU13 vectors, carries, greedies, real repair and all
+owner closures pass. Receipt flags confirm shuffletrue, stagedtrue and
+primary-planefalse. Normal code200 measured **10.8717765711 continuations/s**:
+199 continuations in18.304276095s,52 rounds,147 accepted drafts,5 recomputations.
+This is neutral/slightly slower than shuffle10.955189006 and compaction10.906246956.
+There is no normal speedup claim and both experimental selectors remainfalse.
+
+The short CPU13 warm duration improved from2.234336549s to1.778226038s,
+which did **not** predict normal code200 throughput. Preserve that distinction:
+the CPU13 warm fixture and real-code run differ in routes/placement/context.
+Do not prioritize further kernels solely from that diagnostic. Both trials
+restored admission, actual GPU baseline, HTTP services and unchanged classified
+fault counts. Exact evidence is in the v197 aggregate receipts and the
+`native-next-v197-staged-down-{warm,code}-intel-20261013` directories under the
+development base. No installed/API/Vashti change.
 
 ## Fixed-public root experiment
 

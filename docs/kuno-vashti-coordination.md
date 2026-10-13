@@ -4045,3 +4045,33 @@ artifact build is in progress from c42379b. No performance claim yet.
 
 Canonical Vashti, installed defaults, public API, frontend and release remain
 unchanged; required Vashti changes: none.
+
+### Latest native text checkpoint — stopped after completed kernel comparisons (2026-10-13)
+
+This supersedes the preceding compaction source-only/interrupted checkpoints.
+User requested finishing the current experiment and stopping until tomorrow;
+automated goal remains paused and no work is queued. Canonical Vashti is clean
+and unchanged; this work stays in the Kuno native-text laboratory worktree.
+
+Inherited compaction is fixed in `62594d0` and `fb7b420` and passes full original
+cold/warm CPU13 plus normal code200. Normal10.906tokens/s is neutral against
+prior10.883. Primary-plane GU (`fd9c319`/`fdd2732`) failed the unchanged warm
+carry fixture and is disabled. Exact-tree subgroup GU/DOWN
+(`7d01db5`/`70fd470`/`b9ee1be`) passes CPU13 but measures10.955tokens/s, neutral.
+Exact activation-staged DOWN (`41b9d3d`/`d8b58b6`) passes full CPU13 and measures
+10.872tokens/s, also neutral. Both experimental selectors are off in `9dc764d`.
+Original numerical thresholds, target routes and two-plane arithmetic stay intact.
+
+Full selected-v197 direct-device suite:1346pass/1ignored; strict release
+Clippy/fmt pass. Frozen source/artifact identities, real timings, failed/neutral
+evidence, specifications and exact resume directions are in the updated
+[native owner handoff](kuno-native-next-model-handoff.md) and aggregate receipts.
+The short warm CPU13 fixture improved20% with staging but normal generation did
+not; next work should profile the representative normal run and verify actual
+count4/tail execution before further kernel changes.30tokens/s is not achieved.
+
+Fresh06:54:29UTC protected cleanup: Kuno/Ollama/Vashti HTTP200, admission idle
+and unpaused/no latch, B70used50688000B, Nvidia compute0, all classified GPU
+faults0, unchanged boot/kernel. No benchmark or compiler processes remain.
+No installed binary/default, public API, frontend or release change. Required
+Vashti changes: **none**. Do not resume automatically.

@@ -1,134 +1,169 @@
 # Native Kuno text engine: next-model handoff
 
-Updated 2026-10-13 UTC (October 12 local), during a user-authorized manual
-optimization pass. Automated goal remains paused. **This opening checkpoint
-supersedes all historical queues and interrupted-debug directions below.**
-No installed/default/API/frontend/release changes; required Vashti changes: none.
-Native 30 tokens/s remains unachieved. Current accepted normal rate is **10.91
-real continuation tokens/s**, effectively unchanged from the 10.88 control.
+Updated **2026-10-13 06:54 UTC / 01:54 America/Chicago**. User requested finishing
+this experiment and stopping until tomorrow. **Stopped; automated goal paused;
+no benchmark/compiler jobs or queued GPU work.** This opening checkpoint
+supersedes every historical queue or interrupted-debug direction below.
 
-## Checkout, accepted work, and current experiment
+Kuno, Ollama and Vashti respond HTTP200. Admission is idle/unpaused with no
+recovery latch, B70 actual used50,688,000B, Nvidia compute0, classified faults0,
+unchanged boot/kernel. Final fresh protected receipt:
+`native-next-final-stop-20261013.json` under the development base. No installed
+binary/default, API, frontend, canonical checkout or release change. Required
+Vashti changes: **none**. Native30tokens/s remains unachieved; normal speed
+remains about **11 real continuation tokens/s**.
 
-Root checkout: `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
-`codex/kuno-native-text`. Canonical Vashti remains separate on
-`codex/image-flow-refinements`; do not apply backend lab edits there.
-The only inherited untracked artifact is `apps/kuno/benchmarks/text/__pycache__/`.
-Before resuming, read current git status and log; never broadly restore/stash
-source to remove diagnostics.
+## Start here on explicit user resume
 
-Inherited `c42379b`, `f6a233a`, `0b72be5` compaction is now **physically working**:
+Root checkout `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
+`codex/kuno-native-text`. Canonical `/media/jmicko/faststore/dev/vashti` remains
+clean on `codex/image-flow-refinements`, `ae3e70d`; do not move this lab work there.
+Read git status/log before editing. Preserve inherited untracked
+`apps/kuno/benchmarks/text/__pycache__/`. Never broadly restore/stash another
+model's changes to remove diagnostics.
 
-- `62594d0`: accept actual allocator `Some(0)` full-owner trims, reject nonzero
-  trims before size subtraction, authenticate 12-byte indirect spans; fix
-  count4 kernel metadata, original count1..3 scratch reset extent, storage-write
-  ordering, complete record audit, and independent DOWN policy credit.
-- `fb7b420`: generic count1..3 compact DOWN had an erroneous count4-only main
-  guard; restored its original domain. This is the accepted compaction base.
-- `fd9c319`: integrated isolated `3bb2c20`, an unused primary-plane count4 GU
-  approximation, with independent arithmetic/lowering regression coverage.
-- `fdd2732`: selected that approximation for one immutable public experiment.
-- `6cc52f5`: **deselected the failed primary-plane experiment** and recorded
-  compaction acceptance, neutral speed, and complete v195 rejection/recovery.
+**Current source selection is accepted original compaction.** All three
+compile-time experiment selectors are false:
+`frozen_gu_integer::four::FIRST_PLANE_PUBLIC_PROBE`,
+`frozen_gu_integer::four::shuffle::PUBLIC_PROBE`, and
+`frozen_down_integer::four::STAGED_PUBLIC_PROBE`. The alternate leaves and
+checked parent wiring remain available. Their immutable frozen artifacts retain
+the recorded true/false selections; do not confuse those with current source.
 
-The inherited DIAG source patch was inspected, saved as
+This pass repaired inherited compaction and tested three separate ideas. It
+found **no meaningful normal-generation speed gain**. Do not rerun the same
+neutral experiments or promote the short CPU13 timing as production speed.
+The strongest next investigation is a representative **normal code200** target
+profile and actual count4-vs-tail kernel execution credit. Current compact route
+counters aggregate counts1..4, and compile-time flags alone do not prove which
+leaf dominates normal work. v185 profiled a different CPU13 warm fixture; v197
+improved that fixture by20% while normal code200 was unchanged. Establish the
+real normal-run bottleneck before another large kernel rewrite. This profiling
+extension has not been implemented or authorized to run automatically.
+
+## Changed commits and acceptance
+
+- Inherited `c42379b`, `f6a233a`, `0b72be5`: source compaction, including tails.
+- `62594d0`: fixed actual allocator `Some(0)` full-owner trims, checked indirect
+  views, count4 metadata, original count1..3 reset coverage, storage ordering,
+  complete record auditing and independent DOWN policy credit.
+- `fb7b420`: fixed an erroneous count4-only main guard in generic count1..3
+  compact DOWN. **Accepted compaction base**, physically working on both gates.
+- `fd9c319` (leaf `3bb2c20`), `fdd2732`: primary-plane count4 GU approximation
+  and explicit immutable test selection. **Rejected** by unchanged warm full
+  CPU13; `6cc52f5` disables it and records evidence. Never loosen tolerances.
+- `7d01db5` (leaf `efb7930`), `56d8646`, `70fd470`, `b9ee1be`: exact4/2/1-tree
+  subgroup GU/DOWN candidate, full subgroup-count coverage, parent selection,
+  independent bit-tree tests. v196 numerical acceptance; normal speed neutral.
+- `41b9d3d` (leaf `5a64362`), `d8b58b6`: exact DOWN activation staging,5760B SLM,
+  bounded adapter admission and fixed-public selection. v197 source/full GPU
+  gates pass; normal speed neutral. `9dc764d` leaves both selectors off.
+- Final docs/receipts commit follows these source commits; inspect git log.
+
+The inherited DIAG patch was inspected and saved as
 `compaction-v192-inherited-diagnostics-20261012.patch` under the development
-base, and removed only from its three inspected files before implementation.
-The old claim that count4+integer DOWN is unreachable was wrong: the protected
-four-lookahead label genuinely exercises count4 plus count1..3 tails.
-Do not alter the harness to manufacture count4 acceptance.
+base, then removed only from its three inspected files. Do not resurrect it.
+The old claim that protected count4+integer DOWN is impossible was false: the
+warm four-lookahead label genuinely reaches it. The original stopped failure
+and all follow-up corrections are resolved; do not repeat that debug queue.
 
-**Next experiment in progress:** exact-tree subgroup count4 compact GU/DOWN,
-implemented separately in `kuno-compact-shuffle/vashti` by the shader agent.
-It replaces shared reduction scratch/barriers with unconditional subgroup
-shuffles plus the original lane<stride additions at strides 4,2,1. It must
-retain both Q8 planes, all weight decoders/routes/audits, physical owner bounds,
-and real subgroup-ID mapping with width16/32 validation. Root owns integration,
-shared build cache, numerical/timing tests and services. This paragraph will be
-replaced by the resulting acceptance or rejection before final handoff.
+## Exact results and immutable artifacts
 
-## Exact physical evidence this pass
+Development base: `/media/jmicko/faststore/kuno-development`.
+Aggregate evidence: `apps/kuno/benchmarks/text/receipts/native-strata-optimization-20261009.json`.
+All completed GPU trials used public fixtures, swap/core-disabled cgroups,
+B70 target and full Q8 MTP on B70; Nvidia was not a compute participant.
 
-Base: `/media/jmicko/faststore/kuno-development`. Aggregate committed evidence:
-`apps/kuno/benchmarks/text/receipts/native-strata-optimization-20261009.json`.
-All trials use the fixed public fixtures, swap/core-disabled cgroups and real
-Intel B70 target plus full Q8 MTP on Intel; Nvidia is not a compute participant.
+| Version | Frozen source | SHA256 | Result |
+| --- | --- | --- | --- |
+| v193 compaction | `62594d0` | `25a8751d5ae97d337c1e5fb828ce3d5fac443971fc640372d07e4d7213a68984` | Cold pass, warm owning-IO failure; generic DOWN guard fixed in `fb7b420`. |
+| v194 compaction | `fb7b420` | `beeb3787b01d682c069e0740698ebb4bfa6aa8352452ff90b64ca8480bcd4c9f` | Full cold/warm CPU13 and normal code200 pass; **10.9062469565** continuations/s. |
+| v195 primary-plane GU | `fdd2732` | `28e21d4107b56b200f8dc842fa24c634644a3c9c5e457f5c20245ade599e1ee7` | Cold/prefill pass, full warm carry fixture fails; no normal timing. |
+| v196 exact-tree shuffle | `b9ee1be` | `81cd9d54491da08623ac03454476d6cc2985b5161fa21a97d160f7b9f954cabc` | Full cold/warm CPU13 and normal pass; **10.9551890060** continuations/s, neutral. |
+| v197 staged DOWN | `d8b58b6` | `358f23af90229acbef58c00a90000169c86395120ce783985d186db47f67f802` | Full cold/warm CPU13 and normal pass; **10.8717765711** continuations/s, neutral. |
 
-| Trial | Source / frozen SHA256 | Result |
-| --- | --- | --- |
-| v193 compaction warm | `62594d0` / `25a8751d5ae97d337c1e5fb828ce3d5fac443971fc640372d07e4d7213a68984` | Cold CPU13 accepted; warm owning-IO rejection diagnosed as generic DOWN main guard, fixed in `fb7b420`. |
-| v194 compaction warm | `fb7b420` / `beeb3787b01d682c069e0740698ebb4bfa6aa8352452ff90b64ca8480bcd4c9f` | Original full cold/warm CPU13 vectors, carries, greedies, real repair, closures all pass. Warm compact GU/DOWN1440 each, audits288. |
-| v194 compaction code200 | same artifact | **10.9062469565** real continuation tokens/s; 199 continuations in18.246423430s, 200 emitted,52 rounds,147 accepted drafts,5 recomputations. Effectively neutral against prior v18210.882673. |
-| v195 primary-plane GU warm | `fdd2732` / `28e21d4107b56b200f8dc842fa24c634644a3c9c5e457f5c20245ade599e1ee7` | Cold CPU13 and warm initial prefill accepted; warm full carry fixture rejected. Original thresholds unchanged, no normal speed credit. Compile-time selector nowfalse. |
+All three normal runs emit200 outputs/199timed continuations,52 rounds,
+147accepted drafts and5recomputations. Elapsed: v19418.246423430s,
+v19618.164907962s, v19718.304276095s. These are single-run comparisons,
+not statistical claims. v182 original10.882673 was also effectively the same.
+Normal trials were unprofiled with compilers idle. No independent full CPU200
+reference exists; full CPU13 and real-repair gates are distinct from that.
 
-Directory names are `native-next-v193-compaction-warm-intel-20261012`,
-`native-next-v194-compaction-warm-intel-20261012`,
-`native-next-v194-compaction-code-intel-20261012`, and
-`native-next-v195-first-plane-warm-intel-20261012`. Corresponding build directories
-replace the final warm/code component with `build`; v194 warm/code share one
-artifact. Each source record identifies original public model files and hashes.
-No private prompts, model output text, keys or images are in these receipts.
+Directory patterns under the base:
+`native-next-v194-compaction-{build,warm-intel,code-intel}-20261012`,
+`native-next-v195-first-plane-{build,warm-intel}-20261012`,
+`native-next-v196-shuffle-{build,warm-intel,code-intel}-20261013`,
+`native-next-v197-staged-down-{build,warm-intel,code-intel}-20261013`.
+Each build has source-commit.txt, SHA256 and artifact manifest; each completed
+trial has source verification, intel.json/log and host-before/after.json.
+No private content or credentials are in the aggregate receipts.
 
-The last complete source suite: **1,340 passed, one ignored**, strict release
-`direct-device` Clippy with `-D warnings` and fmt pass. Counts include the
-primary-plane leaf even though it is unselected. This is lab acceptance only;
-there is still no independent full CPU200 reference or deployed native engine.
+Source validation at selected v197 `d8b58b6`: **1346 passed, one ignored**;
+strict release direct-device Clippy `-D warnings`, fmt and whitespace pass.
+Afterward only experiment selectors were restored to false, with formatting
+and whitespace rechecked. The frozen v197 binary is the tested selected build;
+no new installed binary was produced. All v197 device/owner cleanup and final
+protected host recovery pass. Sudo initially expired during the usage-limit
+interruption; user refreshed it, so the GPU trials are now completed, not pending.
 
-After v195 at04:02:06UTC, Kuno/Ollama/Vashti all HTTP200, admission idle/unpaused,
-no recovery latch, B70 actual used50,688,000B, Nvidia compute0, all classified
-kernel faults0, unchanged boot `b32654b7-a49b-493d-8305-46da15b6eac6`,
-kernel7.0.0-38. A fresh final recovery check is required after remaining trials.
+## Why not infer more from the diagnostic
 
-## Why this direction and what not to repeat
+v185 on `aa90a95` is the first actual **CPU13 warm target** Device profile,
+not the10.88 normal-speed run (that was v182 on `dab13e2`). Its4051 spans total
+250.572596ms: GU105.174727ms, DOWN69.876932ms, combined69.86%; BF16UP2.612ms.
+Profiling changes scheduling. Do not treat CPU enqueue waits as CPU-only work.
+v197's short CPU13 warm elapsed fell from v1962.234336549s to1.778226038s, but
+normal target verify time remained about13.1–13.25s and throughput about11.
+Different routes/placement/context matter. Investigate that mismatch rather
+than assuming another warm-fixture kernel gain will transfer.
 
-v185 on `aa90a95` is the first **actual warm target kernel profile**, not the
-10.88 normal-speed run (that was v182 on `dab13e2`). Its4,051 Device timestamp
-spans total250.572596ms: GU105.174727ms, DOWN69.876932ms, combined69.86%.
-Router MAP audit16.633ms, other dense15.633ms, Q6dense9.058ms, GDN8.014ms,
-BF16DOWN6.198ms and BF16UP2.612ms. Profiling alters scheduling; do not call these
-normal timings or interpret CPU enqueue waits as pure CPU overhead.
+Strata comparison is also not perfectly matched. Retained
+`strata-comparison-evidence-20261009/Strata-strata-iq3_s.json.txt` explicitly
+uses `--spec 4`, `--spec-min-p 0.5` and `draft_vocab=cjk`, with alternate Q2 MTP.
+Pinned MIT Strata `fb58e0d`, `sycl/src/program/generate.cpp`2215–2220, keeps
+MTP cap4 but can expand suffix-lookup verification to6 by default. The retained
+27.3code receipt has200outputs/7336.5ms,142/172accepted drafts, but no actual
+lookup/window-size counts. **Do not claim it actually used6-token windows or
+that deeper MTP alone explains the gap.** Native6/8 extension and alternate
+Q2/CJK draft feasibility were not completed this pass. Do not blindly widen
+capacity constants; owners, routes, attention/carry and numerical gates matter.
 
-Compaction is accepted scheduling work but did not materially improve speed.
-Strata uses one Q8 activation plane; ours uses two residual planes. Removing
-one failed the unchanged full-model numerical contract, despite source tests.
-Do not loosen tolerances, force reference tokens/routes, or claim a speed win
-from a failed candidate. The subgroup candidate instead keeps the exact F32
-reduction tree and both planes.
+Shelved: BF16 two-row `a9cff9e` source-only (small measured profile share),
+paired32 Q6 head CPU13-accepted/default-off/normal-pending, integer16 head
+normal-neutral. GU activation staging is a possible future analogue only:
+4*1440words require23040B plus up to8192B codebook, with occupancy/adapter-limit
+tradeoffs. It is not implemented and should follow representative profiling.
 
-Shelved candidates: BF16 two-row `a9cff9e` source-only (only1.04% profile time);
-paired32 Q6 head is CPU13-accepted/default-off, normal timing pending. Existing
-integer16 target head was neutral10.880799 vs original10.882673; do not spend
-another broad head pass without new evidence. No need repeated Ollama baselines.
+## Resume and stop procedure
 
-## Exact protected workflow
+Root exclusively owns `root-native-text-target-20261005`, GPUs and service
+mutations. Use separate worktrees for any authorized concurrent source work.
+No GPU resets, PCI unbinds, reboots or desktop disruption. Keep Kuno transient.
+Refresh cached sudo through the idle Demons shell; never type into an active
+foreground runner. If sudo expires, ask once or stop at a documented checkpoint;
+no privilege workarounds. The automated goal stays paused until user resumes it.
 
-Root alone owns `/media/jmicko/faststore/kuno-development/root-native-text-target-20261005`
-and GPU/service mutations. Source agents use separate worktrees and must not
-compile concurrently with normal timing. Refresh cached sudo via Demons shell
-only when its foreground command is finished. Never send text into an active
-runner. If cache expires, ask once and continue useful source work; do not
-invent sudo workarounds. No reboot, GPU reset, PCI unbind, or desktop disruption.
+Build committed root source with `helpers-20261008/build-direct-target.py`
+and a fresh basename (`CARGO_BUILD_JOBS=2`). Create a fresh output directory.
+In the shared shell, from the base:
+`sudo -n python3 run-native-strata-public-protected-20261009.py BUILD OUT TRIAL`.
+Source hashing can take two minutes before a GPU log appears.
 
-Build from committed root source using `helpers-20261008/build-direct-target.py`
-with a fresh build basename (`CARGO_BUILD_JOBS=2`). Create a fresh output directory.
-Run `sudo -n python3 run-native-strata-public-protected-20261009.py BUILD OUT TRIAL`
-from the development base in the shared shell. Full immutable source hashing
-can take two minutes before the GPU log appears; that is not a hung kernel.
-
-CPU13 label:
+CPU13 trial:
 `warm-intel-mtp-four-lookahead-batch-repair-down-integer-grouped-ple-gu-stride-shared-head-gpu-host`.
-Normal code200 label:
+Normal code200 trial:
 `language-code-intel-mtp-four-lookahead-batch-repair-down-integer-grouped-ple-gu-stride-shared-head-gpu-host`.
-Keep original CPU13 full-vector/carry/greedy thresholds
-`0.006 + 0.0003 * abs(reference)`. Normal fixture seed424242, temperature0,
-public Python sorted-list merge prompt, thinkingfalse, repetition1, penalties0;
-200 emitted/199timed continuations. Preserve original acceptance semantics.
+Original full CPU13 tolerance is `0.006 + 0.0003 * abs(reference)`; preserve
+vectors, carries, greedies, real repair and full-owner closure. Normal fixture:
+seed424242, temperature0, public Python sorted-list merge prompt, thinkingfalse,
+repetition1 and penalties0,200emitted/199timed continuations. No repeated Ollama
+baseline is needed. Preserve rejected and neutral results.
 
-Runner restores admission in `finally`; verify actual baseline memory, owner
-closures, HTTP services and kernel-fault deltas rather than trusting an unload
-acknowledgement. `helpers-20261008/final-secondary-state.py` is the final helper;
-there is no top-level `host-state.py`. Do not capture protected control keys.
-On finishing, update this opening checkpoint and coordination guide, commit
-source/results/docs, leave goal paused and services usable with no queued work.
+The runner restores admission in finally. Confirm actual memory recovery,
+HTTP listeners, no active benchmark processes and unchanged kernel-fault
+counts. Final helper: `helpers-20261008/final-secondary-state.py`; there is no
+top-level host-state.py. Update this opening checkpoint and coordination guide,
+commit source/results/docs and leave no queued work when stopping.
 
 ## Historical evidence — not the current work queue
 
