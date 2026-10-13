@@ -1534,8 +1534,8 @@ impl Sources {
                     resident: resource.resource().clone(),
                     layer,
                     role,
-                    page: ordinal / 144,
-                    host_first: (ordinal % 144) * bytes,
+                    page: ordinal / crate::daslab_profile::HOST_PART,
+                    host_first: (ordinal % crate::daslab_profile::HOST_PART) * bytes,
                     bytes,
                 });
                 totals[index] += bytes as u64;

@@ -34,7 +34,11 @@ pub(crate) const LAYERS: usize = 48;
 pub(crate) const EXPERTS: usize = 512;
 pub(crate) const VRAM_SLOTS: usize = crate::daslab_profile::BANK_SLOTS;
 pub(crate) const HOST_SLOTS: usize = EXPERTS - VRAM_SLOTS;
-pub(crate) const PAGE_COUNTS: [usize; 3] = [144, 144, HOST_SLOTS - 288];
+pub(crate) const PAGE_COUNTS: [usize; 3] = [
+    daslab_profile::HOST_PART,
+    daslab_profile::HOST_PART,
+    HOST_SLOTS - 2 * daslab_profile::HOST_PART,
+];
 pub(crate) const MAX_BINDING_BYTES: u64 = 128 * 1024 * 1024;
 pub(crate) const LOGICAL_PUBLIC_RAM_BYTES: u64 = 36_147_609_600 / 368 * HOST_SLOTS as u64;
 /// Includes fixed map owners, opaque generation snapshots and validation peak.
@@ -131,8 +135,8 @@ fn address(slot: usize) -> Result<Address> {
     Ok(Address {
         tier: Tier::Host,
         virtual_slot: slot,
-        page: ordinal / 144,
-        local_slot: ordinal % 144,
+        page: ordinal / daslab_profile::HOST_PART,
+        local_slot: ordinal % daslab_profile::HOST_PART,
     })
 }
 
