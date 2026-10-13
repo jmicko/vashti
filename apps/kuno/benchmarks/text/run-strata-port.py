@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Fixed PUBLIC fixtures only. Inference and request history remain in Rust/RAM."""
-import datetime,hashlib,importlib.util,json,os,pathlib,subprocess,sys,time
+import datetime,hashlib,importlib.util,json,os,pathlib,pwd,subprocess,sys,time
 BASE=pathlib.Path('/media/jmicko/faststore/kuno-development')
 ROOT=pathlib.Path(__file__).resolve().parents[4]
 spec=importlib.util.spec_from_file_location('protected',BASE/'run-native-strata-public-protected-20261009.py')
@@ -13,7 +13,9 @@ def run():
  if os.getuid()!=0 or len(sys.argv)!=5:raise ValueError('root BUILD OUT code|prose q8|q2')
  build=BASE/sys.argv[1];out=BASE/sys.argv[2];fixture,profile=sys.argv[3:]
  if out.exists():raise ValueError('fresh output required')
- out.mkdir();bins=list(build.glob('kuno-strata-rust-*'))
+ out.mkdir()
+ account=pwd.getpwnam('jmicko');os.chown(out,account.pw_uid,account.pw_gid)
+ bins=list(build.glob('kuno-strata-rust-*'))
  if len(bins)!=1:raise ValueError('one immutable Rust artifact required')
  binary=bins[0];digest=hashlib.sha256(binary.read_bytes()).hexdigest()
  if binary.name!='kuno-strata-rust-'+digest:raise ValueError('artifact hash')
