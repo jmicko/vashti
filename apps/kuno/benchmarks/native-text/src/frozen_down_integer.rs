@@ -339,8 +339,7 @@ pub(crate) fn launch(
     if !crate::daslab_profile::SOURCE_FIRST
         .into_iter()
         .zip(crate::daslab_profile::SOURCE_PARTS)
-        .collect::<Vec<_>>()
-        .contains(&(first_slot, slot_count))
+        .any(|part| part == (first_slot, slot_count))
     {
         return Err(rejected());
     }

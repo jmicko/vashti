@@ -316,7 +316,11 @@ pub(crate) fn launch(
         count,
         groups,
     )?;
-    if ![(0, 72), (72, 72), (144, 144), (288, 144), (432, 80)].contains(&(first_slot, slot_count)) {
+    if !crate::daslab_profile::SOURCE_FIRST
+        .into_iter()
+        .zip(crate::daslab_profile::SOURCE_PARTS)
+        .any(|part| part == (first_slot, slot_count))
+    {
         return Err(rejected());
     }
     let projections = geometry.projections();
@@ -488,7 +492,11 @@ fn launch_compact_impl(
         count,
         groups,
     )?;
-    if ![(0, 72), (72, 72), (144, 144), (288, 144), (432, 80)].contains(&(first_slot, slot_count)) {
+    if !crate::daslab_profile::SOURCE_FIRST
+        .into_iter()
+        .zip(crate::daslab_profile::SOURCE_PARTS)
+        .any(|part| part == (first_slot, slot_count))
+    {
         return Err(rejected());
     }
     let projections = geometry.projections();
