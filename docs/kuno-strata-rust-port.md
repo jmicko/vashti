@@ -1,31 +1,38 @@
 # Strata Rust whole-model port experiment
 
-## Current checkpoint: active optimization, October13
+## Current checkpoint: paused, GPUs returned, October 13
 
-The goal is active. User has authorized both GPUs and refreshed sudo; normal
-services are restored after every protected trial. Work stays on
-`codex/strata-rust-port` in
-`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`. Canonical Vashti, deployed
-binaries/defaults, API/UI and release remain unchanged. Required consumer changes:
-**none**. Original accepted engine remains `codex/kuno-native-text`/`6792453`.
+The user requested a breaking point to use the GPUs. The goal is paused; no
+benchmark or sudo refresher remains. Kuno/Ollama/Vashti all return HTTP 200,
+admission is idle/unpaused without a recovery latch, B70 memory is back to
+50,688,000 bytes, Nvidia has no compute process, and all classified GPU fault
+counts remain zero. No reset, rebind, reboot or installed service change occurred.
+Work remains on `codex/strata-rust-port` in
+`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`. Canonical Vashti is
+untouched. Required consumer changes: **none**.
 
-Latest runtime candidate is3e01731379291b93e85dd312e5b52777b6cc5a2c (v236),
-frozen SHAd21039dabbd8b2c8e25d16304f011c0e32284c05de9f82e9511774420cda664f.
-Default path atv234 passes prose at13.000929continuations/s and instrumented
-code/source/privacy/recovery; v232 normal code is12.796036. v236's optional
-cache-eight code is13.004114 and prose13.189027; both complete and recover. **30 not achieved.**
-Do not call the current code a complete Strata rewrite or production worker.
+**Selected performance artifact remains v236**, source
+`3e01731379291b93e85dd312e5b52777b6cc5a2c`, SHA256
+`d21039dabbd8b2c8e25d16304f011c0e32284c05de9f82e9511774420cda664f`:
+13.004114 code / 13.189027 prose accepted continuations/s with optional
+`--cache-eight` (eight cache promotions, not eight verification rows).
 
-Queued MTP, retained-input prefix replay, exact192-slot banks and direct two-way
-GPU/RAM exchanges work. Head, fused source, wide reads and16-lane schedule are
-implemented/tested candidates but stay optional after neutral/slower timings.
-Read the latest measurements/profile/next actions at the end of this document;
-old paused/v221 stop sections are historical, not the active handoff.
+The optional eight-row implementation now completes whole-model generation.
+Tested v252 source `2780e7a5b8eef7c5beb25c20a2bbfcf75e8620e2`, artifact SHA256
+`33a568e1b2fa6b492381e14c6488c8f80fac12c4611a2d73ac4c457bf556bff4`:
+12.372330 code with wider adaptive MTP and 12.894535 with normal four-row MTP.
+Both emit 362 tokens including EOS, pass real target verification and complete
+private owner erasure, then physically recover. **No throughput gain is claimed;
+30 tokens/s and complete upstream Strata parity remain unmet.** Wider mode is
+optional/unselected. Source-only helper deduplication `383248a` follows the tested
+artifact; it passes strict Clippy but has no new hardware run after the pause.
 
-The user's coherent-port-first strategy remains authoritative; original CPU13
-precision gates are superseded for the isolated port only. Real target routing,
-verification, physical/source bounds, transient privacy, swap/core-disabled
-execution and actual recovery remain required. No private input path is added.
+Read the latest wider-window receipt at the end before resuming. Earlier active
+and paused sections below are historical. Original accepted engine remains
+`codex/kuno-native-text`/`6792453`. The user's coherent-port-first strategy remains
+authoritative; real target routing, source/physical bounds, transient privacy,
+swap/core-disabled execution and actual recovery remain required. No private
+input path, API/UI integration, installed binary or release is added.
 
 ## Connected implementation
 
@@ -383,3 +390,107 @@ Fresh final-secondary-state receipt confirms Kuno/Ollama/Vashti200, admission
 idle/unpaused/no recovery latch, B70used50,688,000B, Nvidia compute0, and all
 classified GPU faults0. No benchmark/compiler job remains. Canonical checkout
 is still clean. Source changes stay in the Kuno laboratory worktree.
+
+## Wider verifier completed; latest paused handoff (2026-10-13)
+
+This supersedes preceding active-goal and queued six/eight-row notes. Resume only
+when the user returns the GPUs and resumes work. Both protected v252 trials
+completed before this pause; no additional GPU test was started afterward.
+
+### Implementation and identities
+
+Changes after `605c39b` through `2780e7a` add the isolated
+`strata-eight-window` feature. The original four-row feature remains selectable.
+`strata_port::verify_capacity()` governs controller, router, all-family permits,
+private packet extents, accepted-prefix snapshots and dense/MoE kernels. New GU
+and DOWN kernels share weight decode across up to eight real rows. Router frames
+carry 80 routes; DOWN separates 80 route flags from activations with a 128-word
+header. Its 128 KiB owner is fully audited. Wider dense projection handles eight
+accumulators; longer GDN prefix repair uses the existing chunk recurrence rather
+than invalid short streaming replay. PLE accepted-prefix history now admits
+2..8 rows with sequential-history tests. Queued MTP permits seven proposals.
+No replacement experts, forced tokens or weakened fault rejection are used.
+
+Key correctness fixes: `a2686f5` DOWN flag/header separation; `b988d3b` complete
+80-route source proof; `a67521f` full scratch audit/pending acceptance;
+`2780e7a` PLE prefix authority through eight rows. Earlier v237–v251 whole-model
+failures are not working artifacts. Static failure diagnostics were improved
+without recording request content. `383248a` removes duplicate unselected shader
+helper modules for strict Clippy; measured binary remains from `2780e7a`.
+
+### Measurements
+
+Fixed public code fixture, seed 424242, temperature 0, original DASLab IQ3_S target
+and Q2 MTP on B70, optional eight cache promotions per layer, output cap 512:
+
+| v252 mode | Timed continuations/s | Timed duration | Actual windows | Prefix repairs |
+| --- | --- | --- | --- | --- |
+| Wider adaptive MTP | 12.372330 | 29.178013 s | 78 five-row + 11 eight-row | 40 |
+| Normal four-row MTP | 12.894535 | 27.996356 s | 108 four-row | 36 |
+
+Both emit 362 including EOS / 361 timed continuations, zero full target
+recomputations. Wider accepts 303 continuations in five-row windows and 58 in
+eight-row windows; one suffix window proposes four tokens. Normal run uses no
+suffix window. These are actual target-verified paths, not forced-expert upper
+bounds or independent CPU reference acceptance. No same-output Ollama comparison
+or arbitrary/private input acceptance is claimed.
+
+Wider draft/verify/repair: 4.776867/19.549433/2.421568 seconds. Cache adaptation
+2.398553 s, 7,578 swaps, 15,451,033,600 bytes **one-leg payload** (approximately
+30.9 GB combined two-way traffic). Wider resident routes 184,660 / total 229,440;
+normal resident 169,331 / total 207,360. Staged packed bytes remain zero. Wider
+windows do not improve throughput here. One hypothesis is speculative rejected
+rows influencing frequency/recency cache history; accepted-only accounting is
+not implemented or measured.
+
+Wider physical reservation: 31,769,661,440 bytes. Every run erases all 1,562 target
+private buffers (871,661,568 bytes) and 43 MTP private buffers (11,730,944 bytes).
+Public MTP owner is 2,434,793,472 bytes; exact expert banks 18,859,622,400 bytes.
+Known receipt limitation: `target_packet.packet_bytes` still prints the legacy
+163,888; the eight-row allocation/layout actually requires 327,744 bytes. Correct
+this descriptive field before using it to quote a future packet. Physical and
+private owner checks use the larger actual extents. No private data is persisted.
+
+Frozen build directory:
+`/media/jmicko/faststore/kuno-development/native-next-v252-strata-eight-build-20261013`.
+Completed trial directories:
+`native-next-v252-strata-eight-forced-code-intel-20261013` and
+`native-next-v252-strata-eight-normal-code-intel-20261013` under the same development
+base. Despite the first directory's historical name, its MTP cost policy is
+adaptive, not constant eight rows. Saved receipts contain aggregate public
+fixture metrics; generated text was displayed transiently, not saved.
+
+### Checks, recovery and next direction
+
+Strict release Clippy `-D warnings` passes on `383248a`; fmt/whitespace pass.
+Frozen v252 shader validation passes 59 GU/DOWN/projection variants plus 14
+controller/dense shader sources. The expanded PLE accepted-prefix suite passes
+both tests, including every partial prefix for proposed counts 2..8. Original
+`direct-device` regression on `383248a` passes 1,346 tests / 1 ignored; that
+feature's tests do not establish full unit coverage for eight-row mode.
+The whole-model wider/normal GPU runs establish the measured laboratory path.
+No prose eight-row trial, independent complete state-vector oracle, long soak,
+private worker or deployment acceptance has been performed.
+
+Fresh physical/service receipt:
+`/media/jmicko/faststore/kuno-development/native-strata-port-paused-checkpoint-20261013.json`
+(20:46:29 UTC): admission idle/unpaused/no recovery, services HTTP 200, B70
+50,688,000 bytes, Nvidia compute zero, all classified faults zero. Bounded sudo
+helper 3498864 expired normally at 20:45 UTC and is absent. Goal paused.
+
+Next highest-potential direction remains mapped-HOST expert cost: stage selected
+packed HOST experts into GPU scratch once and reuse across GU/DOWN rows, or
+improve admission/promotion scheduling based on accepted use. Existing
+`frozen_host_staging.rs` is the old 30-group/three-row/32 MiB-per-role operator;
+do not enable it unchanged for integer four/eight-row kernels. Coordinate its
+actual source-index remapping, private owners, capacity and allocation quotes.
+No such new staging implementation is present and no speed gain is promised.
+Avoid more tiny unprofiled variants or API/UI work at this checkpoint.
+
+Future build: `build-strata-port.py FRESH_BUILD --eight`; runner:
+`run-strata-port.py BUILD FRESH_RESULT code q2 --cache-eight --mtp-eight` for the
+wider MTP candidate, omit `--mtp-eight` for normal four-row MTP. These are public
+laboratory selectors only; `--eight` requires a fresh immutable build directory.
+Eight mode rejects unported head/fused/wide/16-lane combinations. Resume from
+this current source, not an old failed binary, but keep v236 selected unless a
+new complete normal measurement improves it. No further work is queued.

@@ -1,7 +1,7 @@
 {
-  "source_commit": "3e01731379291b93e85dd312e5b52777b6cc5a2c",
+  "source_commit": "383248ae9bdcb4035334b80497d8e226c49d090b",
   "source_branch": "codex/strata-rust-port",
-  "status": "active_clean_checkpoint_after_cache_trials",
+  "status": "paused_after_completed_wider_verifier_trials",
   "original_working_engine_commit": "6792453",
   "upstream_revision": "fb58e0dbc8399662c0e47c76578c6e878b14f6cf",
   "license": "MIT with Strata/ggml notices retained",
@@ -12,16 +12,19 @@
     "original_direct_device_compilation": true,
     "full_original_regression_current_source": true,
     "last_full_regression": {
-      "commit": "3e01731379291b93e85dd312e5b52777b6cc5a2c",
+      "commit": "383248ae9bdcb4035334b80497d8e226c49d090b",
       "pass": 1346,
       "ignored": 1
     },
-    "port_shader_variants": 49,
+    "port_shader_variants": 59,
     "default_eight_lane_shader_set": true,
-    "optional_sixteen_lane_shader_set": true,
-    "optional_wide_shader_set": true,
-    "strict_port_clippy_log": "/media/jmicko/faststore/kuno-development/native-strata-port-v236-clippy-20261013.log",
-    "full_original_regression_log": "/media/jmicko/faststore/kuno-development/native-strata-port-v236-original-regression-20261013.log"
+    "optional_sixteen_lane_shader_set": "historically_checked_at_v234_only",
+    "optional_wide_shader_set": "historically_checked_at_v234_only",
+    "strict_port_clippy_log": "/media/jmicko/faststore/kuno-development/native-strata-port-v252-clippy-20261013.log",
+    "full_original_regression_log": "/media/jmicko/faststore/kuno-development/native-strata-port-v252-original-regression-20261013.log",
+    "eight_row_shader_set": true,
+    "shader_checked_artifact_source": "2780e7a",
+    "strict_clippy_source_commit": "383248ae9bdcb4035334b80497d8e226c49d090b"
   },
   "last_gpu_trial": {
     "artifact_source_commit": "3e09fb6789f1bd92d5c543671b72b2136c32375f",
@@ -76,25 +79,27 @@
   "target_30_tokens_per_second_achieved": false,
   "complete_upstream_rewrite_claimed": false,
   "unfinished": [
-    "6/8-row verifier and long suffix verification",
     "XMX prefill",
     "Remaining dense MMVQ operators",
     "Flexible resident sizing",
     "Private-input worker integration",
-    "Independent full-model state vector parity for prefix replay"
+    "Independent full-model state vector parity for prefix replay",
+    "Representative wider-window throughput improvement",
+    "Integer four/eight-row selected HOST staging",
+    "Eight-row full unit suite and independent state-vector parity"
   ],
   "sudo_refresher_stopped": true,
   "queued_work": false,
   "installed_services_changed": false,
   "required_vashti_changes": [],
-  "host_stop_receipt": "/media/jmicko/faststore/kuno-development/native-strata-port-final-pause-20261013.json",
+  "host_stop_receipt": "/media/jmicko/faststore/kuno-development/native-strata-port-paused-checkpoint-20261013.json",
   "host": {
     "admission": {
       "action": "status",
       "state": {
         "admission": {
           "active": false,
-          "completed": 0,
+          "completed": 4,
           "paused": false,
           "recovery_required": false,
           "rejected": 0,
@@ -126,8 +131,8 @@
       "xe_wedged": 0
     },
     "nvidia_compute_process_count": 0,
-    "nvidia_memory_mib": 679,
-    "time": "2026-10-13T16:29:23.937443+00:00"
+    "nvidia_memory_mib": 637,
+    "time": "2026-10-13T20:46:29.596231+00:00"
   },
   "previous_paused_checkpoint": {
     "source_commit": "1caf271922abd1dd7aaf3f3d48789e4467362571",
@@ -916,7 +921,7 @@
       "receipt_directory": "/media/jmicko/faststore/kuno-development/native-strata-port-v236-prose-cache-eight-q2-intel-20261013"
     }
   ],
-  "next_work": "Implement a coherent six/eight-row target verifier for longer high-acceptance suffix proposals; do not just raise count constants. Alternatively investigate staging selected HOST expert cells into GPU scratch if current target profile confirms HOST kernels dominate.",
+  "next_work": "Investigate selected mapped-HOST expert staging into GPU scratch reused across GU/DOWN, or accepted-use cache promotion. Wider verifier works but is slower; keep v236 selected. No further work until user resumes.",
   "current_frozen_artifact_sha256": "d21039dabbd8b2c8e25d16304f011c0e32284c05de9f82e9511774420cda664f",
   "target_profile_costs": {
     "FrozenGuIntegerFourEightLanesCompact": {
@@ -946,22 +951,364 @@
       "order_inferred_from_fixed_source_phase_not_request_ids": true
     }
   },
-  "fresh_clean_host_receipt": "/media/jmicko/faststore/kuno-development/native-strata-port-active-checkpoint-20261013.json",
+  "fresh_clean_host_receipt": "/media/jmicko/faststore/kuno-development/native-strata-port-paused-checkpoint-20261013.json",
   "fresh_clean_host": {
     "http": {
       "kuno": 200,
       "ollama": 200,
       "vashti": 200
     },
-    "admission_paused": false,
-    "admission_active": false,
-    "admission_waiting": 0,
-    "recovery_required": false,
+    "admission": {
+      "active": false,
+      "completed": 4,
+      "paused": false,
+      "recovery_required": false,
+      "rejected": 0,
+      "waiting": 0
+    },
     "intel_used_bytes": 50688000,
     "nvidia_compute_process_count": 0,
-    "classified_kernel_faults": 0,
-    "benchmark_or_compiler_jobs": 0,
-    "bounded_sudo_refresher_pid": 3498864,
-    "goal_status": "active"
+    "kernel_fault_counts": {
+      "nvidia_xid": 0,
+      "xe_memory_faults": 0,
+      "xe_reset_failures": 0,
+      "xe_timeouts": 0,
+      "xe_wedged": 0
+    },
+    "benchmark_jobs": 0,
+    "bounded_sudo_refresher_pid": null,
+    "goal_status": "paused"
+  },
+  "wider_verifier_20261013": {
+    "feature": "strata-eight-window",
+    "artifact_source_commit": "2780e7a5b8eef7c5beb25c20a2bbfcf75e8620e2",
+    "artifact_sha256": "33a568e1b2fa6b492381e14c6488c8f80fac12c4611a2d73ac4c457bf556bff4",
+    "post_artifact_helper_cleanup": "383248ae9bdcb4035334b80497d8e226c49d090b",
+    "selected": false,
+    "throughput_improvement_claimed": false,
+    "original_engine_preserved": true,
+    "packet_receipt_caveat": {
+      "reported_legacy_bytes": 163888,
+      "actual_eight_row_compact_bytes": 327744,
+      "owner_quotes_and_erasure_use_actual_extents": true
+    },
+    "source_changes": [
+      "Real up-to-eight target rows in GU/DOWN/dense/router/packet/permits",
+      "80-route DOWN flags separated by128-word header; full128KiB audit",
+      "Queued seven-proposal MTP and capacity-aware cost/acceptance",
+      "All-family accepted prefix snapshots and PLE authority through eight",
+      "Static content-free failure diagnostics; no fault rejection bypass"
+    ],
+    "checks": {
+      "strict_clippy": true,
+      "strict_clippy_source": "383248a",
+      "strict_clippy_log": "/media/jmicko/faststore/kuno-development/native-strata-port-v252-clippy-20261013.log",
+      "shader_artifact_source": "2780e7a",
+      "shader_projection_variants": 59,
+      "shader_controller_dense_sources": 14,
+      "shader_log": "/media/jmicko/faststore/kuno-development/native-strata-port-v252-shaders-20261013.log",
+      "accepted_prefix_tests": 2,
+      "prefix_proposed_counts": [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "eight_row_full_unit_suite": false,
+      "original_direct_device_regression": {
+        "source_commit": "383248ae9bdcb4035334b80497d8e226c49d090b",
+        "passed": 1346,
+        "ignored": 1,
+        "failed": 0,
+        "feature": "direct-device",
+        "log": "/media/jmicko/faststore/kuno-development/native-strata-port-v252-original-regression-20261013.log"
+      }
+    },
+    "limitations": [
+      "No wider prose or soak test",
+      "No independent complete CPU state vector oracle",
+      "No private-input/production/API acceptance",
+      "Mapped HOST staged bytes remain zero",
+      "Cache observes rejected speculative rows; accepted-only policy untested"
+    ],
+    "runs": [
+      {
+        "directory": "/media/jmicko/faststore/kuno-development/native-next-v252-strata-eight-forced-code-intel-20261013",
+        "mode": "adaptive_mtp_up_to_eight",
+        "fixture": "public_code",
+        "seed": 424242,
+        "temperature": 0,
+        "draft_profile": "strata-q2",
+        "target_card": "B70",
+        "draft_card": "B70",
+        "max_outputs": 512,
+        "continuations_per_second": 12.372330011860166,
+        "timed_continuations": 361,
+        "emitted_including_eos": 362,
+        "elapsed_ns": 29178012521,
+        "draft_ns": 4776866508,
+        "verify_ns": 19549432532,
+        "repair_ns": 2421568178,
+        "state_only_prefix_repairs": 40,
+        "actual_target_recomputations": 0,
+        "target_windows": {
+          "accepted_by_window": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            303,
+            0,
+            0,
+            58
+          ],
+          "actual_count4_chunks": 0,
+          "actual_four_rows": false,
+          "capacity": 8,
+          "completed_windows": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            78,
+            0,
+            0,
+            11
+          ],
+          "policy": "strata-suffix-or-mtp-target-verified",
+          "selected": true
+        },
+        "cache": {
+          "adapt_every_rounds": 4,
+          "adaptation_ns": 2398552924,
+          "all_resident_slots_adaptive": true,
+          "cpu_weight_staging": false,
+          "decay": 0.7,
+          "evicted_weights_preserved_in_ram": true,
+          "gpu_direct_two_way_exchange": true,
+          "history_persisted": false,
+          "max_swaps_per_boundary": 384,
+          "public_bytes_moved": 15451033600,
+          "slots_per_layer": 192,
+          "swaps": 7578
+        },
+        "source_routes": {
+          "compact_audits": 4272,
+          "compact_down_dispatches": 21360,
+          "compact_gu_dispatches": 21360,
+          "down_stride_four_dispatches": 0,
+          "down_stride_four_layers": 0,
+          "gu_integer_audits": 4272,
+          "gu_integer_dispatches": 21360,
+          "gu_integer_preparations": 4272,
+          "gu_stride_four_dispatches": 21360,
+          "host_routes": 44780,
+          "source_dispatches": 42720,
+          "staged_packed_bytes": 0,
+          "staged_unique_host_groups": 0,
+          "staging_dispatches": 0,
+          "vram_routes": 184660
+        },
+        "target_close": {
+          "main_buffers": 1562,
+          "main_bytes": 871661568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        "mtp_close": {
+          "main_reserved": 0,
+          "private_buffers": 43,
+          "private_bytes": 11730944,
+          "public_bytes": 2434793472
+        },
+        "combined_reserved_bytes": 31769661440,
+        "host_after": {
+          "admission": {
+            "action": "status",
+            "state": {
+              "admission": {
+                "active": false,
+                "completed": 4,
+                "paused": false,
+                "recovery_required": false,
+                "rejected": 0,
+                "waiting": 0
+              }
+            },
+            "status": 200
+          },
+          "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+          "http_statuses": {
+            "kuno": 200,
+            "ollama": 200,
+            "vashti": 200
+          },
+          "intel": {
+            "xe_memory": [
+              {
+                "total_bytes": 34242297856,
+                "used_bytes": 50688000
+              }
+            ]
+          },
+          "kernel": "7.0.0-38-generic",
+          "kernel_fault_counts": {
+            "nvidia_xid": 0,
+            "xe_memory_faults": 0,
+            "xe_reset_failures": 0,
+            "xe_timeouts": 0,
+            "xe_wedged": 0
+          },
+          "nvidia_compute_process_count": 0,
+          "nvidia_memory_mib": 761,
+          "time": "2026-10-13T20:42:30.189029+00:00"
+        },
+        "greedy_target_verification": true,
+        "independent_cpu_reference": false,
+        "private_content_saved": false
+      },
+      {
+        "directory": "/media/jmicko/faststore/kuno-development/native-next-v252-strata-eight-normal-code-intel-20261013",
+        "mode": "normal_mtp_up_to_four",
+        "fixture": "public_code",
+        "seed": 424242,
+        "temperature": 0,
+        "draft_profile": "strata-q2",
+        "target_card": "B70",
+        "draft_card": "B70",
+        "max_outputs": 512,
+        "continuations_per_second": 12.894535168125536,
+        "timed_continuations": 361,
+        "emitted_including_eos": 362,
+        "elapsed_ns": 27996356231,
+        "draft_ns": 3833960755,
+        "verify_ns": 19247954292,
+        "repair_ns": 2163117205,
+        "state_only_prefix_repairs": 36,
+        "actual_target_recomputations": 0,
+        "target_windows": {
+          "accepted_by_window": [
+            0,
+            0,
+            0,
+            0,
+            361,
+            0,
+            0,
+            0,
+            0
+          ],
+          "actual_count4_chunks": 108,
+          "actual_four_rows": true,
+          "capacity": 8,
+          "completed_windows": [
+            0,
+            0,
+            0,
+            0,
+            108,
+            0,
+            0,
+            0,
+            0
+          ],
+          "policy": "strata-suffix-or-mtp-target-verified",
+          "selected": true
+        },
+        "cache": {
+          "adapt_every_rounds": 4,
+          "adaptation_ns": 2722015210,
+          "all_resident_slots_adaptive": true,
+          "cpu_weight_staging": false,
+          "decay": 0.7,
+          "evicted_weights_preserved_in_ram": true,
+          "gpu_direct_two_way_exchange": true,
+          "history_persisted": false,
+          "max_swaps_per_boundary": 384,
+          "public_bytes_moved": 16965324800,
+          "slots_per_layer": 192,
+          "swaps": 8337
+        },
+        "source_routes": {
+          "compact_audits": 5184,
+          "compact_down_dispatches": 25920,
+          "compact_gu_dispatches": 25920,
+          "down_stride_four_dispatches": 0,
+          "down_stride_four_layers": 0,
+          "gu_integer_audits": 5184,
+          "gu_integer_dispatches": 25920,
+          "gu_integer_preparations": 5184,
+          "gu_stride_four_dispatches": 25920,
+          "host_routes": 38029,
+          "source_dispatches": 51840,
+          "staged_packed_bytes": 0,
+          "staged_unique_host_groups": 0,
+          "staging_dispatches": 0,
+          "vram_routes": 169331
+        },
+        "target_close": {
+          "main_buffers": 1562,
+          "main_bytes": 871661568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        "mtp_close": {
+          "main_reserved": 0,
+          "private_buffers": 43,
+          "private_bytes": 11730944,
+          "public_bytes": 2434793472
+        },
+        "combined_reserved_bytes": 31769661440,
+        "host_after": {
+          "admission": {
+            "action": "status",
+            "state": {
+              "admission": {
+                "active": false,
+                "completed": 4,
+                "paused": false,
+                "recovery_required": false,
+                "rejected": 0,
+                "waiting": 0
+              }
+            },
+            "status": 200
+          },
+          "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+          "http_statuses": {
+            "kuno": 200,
+            "ollama": 200,
+            "vashti": 200
+          },
+          "intel": {
+            "xe_memory": [
+              {
+                "total_bytes": 34242297856,
+                "used_bytes": 50688000
+              }
+            ]
+          },
+          "kernel": "7.0.0-38-generic",
+          "kernel_fault_counts": {
+            "nvidia_xid": 0,
+            "xe_memory_faults": 0,
+            "xe_reset_failures": 0,
+            "xe_timeouts": 0,
+            "xe_wedged": 0
+          },
+          "nvidia_compute_process_count": 0,
+          "nvidia_memory_mib": 652,
+          "time": "2026-10-13T20:45:38.745750+00:00"
+        },
+        "greedy_target_verification": true,
+        "independent_cpu_reference": false,
+        "private_content_saved": false
+      }
+    ]
   }
 }

@@ -4179,3 +4179,28 @@ pass/1ignored pass. Benchmark/compiler jobs ended; bounded refresher stays for
 ongoing authorized goal. Default cache2,optional8; no deployed setting/API/UI
 change.30still unmet. Port guide now records concrete6/8-row source/ownership
 work needed for the next coherent port step and profile-based transfer options.
+
+
+### Latest native text port checkpoint — paused, GPUs returned (2026-10-13)
+
+Supersedes the preceding active-goal notes. User requested a breaking point;
+goal is paused, no GPU benchmark or sudo refresher remains. Kuno/Ollama/Vashti
+HTTP 200, admission idle/unpaused/no recovery latch, B70 50,688,000 bytes,
+Nvidia compute zero, all classified GPU faults zero. No installed/API/UI/release
+change; required Vashti changes **none**. Canonical checkout remains untouched.
+
+On `codex/strata-rust-port`, the optional eight-row Rust verifier now completes
+real whole-model target verification and state-only partial-prefix repair.
+Runtime source `2780e7a`, frozen SHA256
+`33a568e1b2fa6b492381e14c6488c8f80fac12c4611a2d73ac4c457bf556bff4`:
+12.372330 code with adaptive five/eight-row windows; normal four-row MTP on the
+same binary 12.894535. Both emit 362 including EOS and fully erase private owners.
+Source-only helper cleanup follows at `383248a`; strict Clippy and original
+regression 1,346 passed / 1 ignored. Frozen eight-row shaders and prefix tests
+also pass. v236/`3e01731` remains the
+selected faster candidate: 13.004114 code / 13.189027 prose; **30 is unmet**.
+Read the [current paused port handoff](kuno-strata-rust-port.md) and
+[aggregate receipt](../apps/kuno/benchmarks/text/receipts/strata-rust-port-20261013.json)
+for exact identities, checks, packet-receipt caveat and remaining coverage.
+Next candidate is selected HOST expert staging/promotion, not API integration.
+Do not infer sudo authorization or free GPUs from these historical notes.
