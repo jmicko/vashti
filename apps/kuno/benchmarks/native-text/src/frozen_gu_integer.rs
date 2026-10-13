@@ -620,12 +620,12 @@ pub(crate) fn prepare_compact(
             0,
             count,
         ]));
-    // SAFETY: complete input/owner spans are checked above; fixed four frames
+    // SAFETY: complete input/owner spans are checked above; fixed three frames
     // are disjoint, and token0's five record lanes write disjoint tail words.
     unsafe {
         client.launch_unchecked(
             Box::new(Kernel::PrepareCompact),
-            CubeCount::Static(1, 4, 1),
+            CubeCount::Static(1, 3, 1),
             args,
         );
     }

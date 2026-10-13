@@ -1840,7 +1840,7 @@ struct GuIntegerDispatch {
 impl GuIntegerDispatch {
     #[allow(dead_code)] // Original count1..3 private receipt fixture.
     fn validate(self, layer: usize, count: usize, stride_four: bool) -> Result<()> {
-        self.validate_selected(layer, count, stride_four, false)
+        self.validate_selected(layer, count, stride_four, false, true)
     }
     fn validate_selected(
         self,
@@ -1848,10 +1848,10 @@ impl GuIntegerDispatch {
         count: usize,
         stride_four: bool,
         four: bool,
+        down_integer: bool,
     ) -> Result<()> {
-        // Every stride-four integer layer runs the compacted schedule: ten
-        // indirect dispatches and one record audit. Everything else stays
-        // original.
+        // GU stride-four compacts five launches and audits the records. DOWN
+        // consumes them only when its independent integer policy is selected.
         let compact = stride_four;
         if self.layer != layer
             || layer >= 48
@@ -1859,7 +1859,7 @@ impl GuIntegerDispatch {
             || self.dispatches != 5
             || self.stride_four_dispatches != if stride_four { 5 } else { 0 }
             || self.compact_gu_dispatches != if compact { 5 } else { 0 }
-            || self.compact_down_dispatches != if compact { 5 } else { 0 }
+            || self.compact_down_dispatches != if compact && down_integer { 5 } else { 0 }
             || self.compact_audits != u64::from(compact)
             || !(1..=if four { 4 } else { 3 }).contains(&count)
         {
@@ -2021,6 +2021,7 @@ impl Proof {
                 *self.count,
                 self.source.gu_stride_four,
                 self.source.four_members,
+                self.source.down_integer,
             )?;
             self.gu_integer_launch = Some(receipt);
         }
@@ -2121,6 +2122,7 @@ impl Proof {
                 *self.count,
                 self.source.gu_stride_four,
                 self.source.four_members,
+                self.source.down_integer,
             )?;
         }
         if self.source.down_stride_four != self.down_stride_four_launch.is_some() {
@@ -2246,6 +2248,7 @@ impl Counters {
                     *p.count,
                     p.source.gu_stride_four,
                     p.source.four_members,
+                    p.source.down_integer,
                 )?;
                 receipt.dispatches
             }
@@ -3532,7 +3535,13 @@ impl Sources {
                 compact_down_dispatches,
                 compact_audits,
             };
-            receipt.validate_selected(layer, count, self.gu_stride_four, self.four_members)?;
+            receipt.validate_selected(
+                layer,
+                count,
+                self.gu_stride_four,
+                self.four_members,
+                self.down_integer,
+            )?;
             Some(receipt)
         } else {
             None
@@ -4052,7 +4061,7 @@ mod tests {
             compact_down_dispatches: 5,
             compact_audits: 1,
         };
-        compacted.validate_selected(0, 4, true, true).unwrap();
+        compacted.validate_selected(0, 4, true, true, true).unwrap();
         for (gu, down, audits) in [
             (0, 5, 1),
             (5, 0, 1),
@@ -4071,7 +4080,7 @@ mod tests {
                     compact_audits: audits,
                     ..compacted
                 }
-                .validate_selected(0, 4, true, true)
+                .validate_selected(0, 4, true, true, true)
                 .is_err()
             );
         }
@@ -4080,11 +4089,11 @@ mod tests {
             count: 3,
             ..compacted
         }
-        .validate_selected(0, 3, true, false)
+        .validate_selected(0, 3, true, false, true)
         .unwrap();
         assert!(
             GuIntegerDispatch { ..compacted }
-                .validate_selected(0, 4, true, false)
+                .validate_selected(0, 4, true, false, true)
                 .is_err()
         );
         // Without the stride-four schedule there is never compaction credit.
@@ -4095,15 +4104,45 @@ mod tests {
             compact_audits: 0,
             ..compacted
         };
-        plain.validate_selected(0, 4, false, true).unwrap();
+        plain.validate_selected(0, 4, false, true, true).unwrap();
         GuIntegerDispatch { count: 3, ..plain }
-            .validate_selected(0, 3, false, false)
+            .validate_selected(0, 3, false, false, true)
             .unwrap();
         assert!(
             GuIntegerDispatch { count: 3, ..plain }
-                .validate_selected(0, 3, true, false)
+                .validate_selected(0, 3, true, false, true)
                 .is_err()
         );
+    }
+    #[test]
+    fn compact_gu_with_original_down_credits_only_dispatched_work() {
+        for count in 1..=4 {
+            let receipt = GuIntegerDispatch {
+                layer: 0,
+                count,
+                dispatches: 5,
+                stride_four_dispatches: 5,
+                compact_gu_dispatches: 5,
+                compact_down_dispatches: 0,
+                compact_audits: 1,
+            };
+            receipt
+                .validate_selected(0, count, true, count == 4, false)
+                .unwrap();
+            assert!(
+                receipt
+                    .validate_selected(0, count, true, count == 4, true)
+                    .is_err()
+            );
+            assert!(
+                GuIntegerDispatch {
+                    compact_down_dispatches: 5,
+                    ..receipt
+                }
+                .validate_selected(0, count, true, count == 4, false)
+                .is_err()
+            );
+        }
     }
     #[test]
     fn frozen_gu_integer_stride_four_requires_integer_and_actual_joined_leaf_receipts() {

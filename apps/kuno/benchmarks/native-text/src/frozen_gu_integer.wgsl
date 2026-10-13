@@ -215,14 +215,14 @@ fn shard_parts(shard:u32)->u32 {
 @compute @workgroup_size(128)
 fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) local:u32) {
     // Every count/owner/grid predicate is uniform and precedes any access.
-    if p.h<1u || p.h>3u || arrayLength(&planes)!=16384u || group.x!=0u || group.y>=p.h || group.z!=0u {return;}
+    if p.h<1u || p.h>3u || arrayLength(&planes)!=16384u || group.x!=0u || group.y>=3u || group.z!=0u {return;}
     let token=group.y;let frame=64u+token*1440u;
     // Disjoint frame stores and a single header/tail writer: no cross-WG race.
     if local==0u {planes[token]=0u;}
     for(var i=local;i<1440u;i+=128u) {planes[frame+i]=0u;}
     if token==0u {
-        if local>=4u && local<64u {planes[local]=0u;}
-        for(var i=5824u+local;i<16384u;i+=128u) {planes[i]=0u;}
+        if local>=3u && local<64u {planes[local]=0u;}
+        for(var i=4384u+local;i<16384u;i+=128u) {planes[i]=0u;}
     }
     var valid=token<p.h && p.c>=2560u;
     if p.b>arrayLength(&input) {valid=false;}
@@ -241,6 +241,8 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
         }
         if local==0u {planes[token]=1u;}
     }
+    // Finish every lane's storage-tail clear before record lanes overwrite it.
+    storageBarrier();
     // Records build only from a valid immutable MAP header; a failed build
     // leaves the cleared tail zeros, and every consumer exits on ready!=1.
     if token==0u && local<5u {
@@ -345,7 +347,7 @@ fn main(@builtin(global_invocation_id) global:vec3<u32>,@builtin(workgroup_id) w
         // and erased only by the dedicated workgroup below.
         let at=global.x;if at>=16384u {return;}var valid=true;
         if at<64u {valid=planes[at]==select(0u,1u,at<p.count);}
-        else if at<5824u {
+        else if at<4384u {
             let frame=(at-64u)/1440u;let offset=(at-64u)%1440u;
             if frame>=p.count {valid=planes[at]==0u;}
             else if offset>=1280u {
@@ -391,7 +393,7 @@ fn main(@builtin(global_invocation_id) global:vec3<u32>,@builtin(workgroup_id) w
                 || planes[base+2u]!=80u || planes[base+3u]!=gu_y || planes[base+4u]!=1u
                 || planes[base+5u]!=320u || planes[base+6u]!=count || planes[base+7u]!=1u
             {atomicStore(&records_valid,0u);atomicOr(&fault[0],8u);}
-            for(var i=count;i<30u;i+=1u) {
+            for(var i=count;i<40u;i+=1u) {
                 if planes[base+8u+i]!=0u {atomicStore(&records_valid,0u);atomicOr(&fault[0],8u);}
             }
         }

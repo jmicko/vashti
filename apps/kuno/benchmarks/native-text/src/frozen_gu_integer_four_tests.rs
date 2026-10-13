@@ -13,6 +13,11 @@ fn lower(kernel: four::Kernel) -> n::Module {
             )
             .unwrap();
         assert_eq!(compiled.source, kernel.source());
+        let module = n::front::wgsl::parse_str(&compiled.source).unwrap();
+        assert_eq!(
+            compiled.cube_dim,
+            CubeDim::new_1d(module.entry_points[0].workgroup_size[0])
+        );
     }
     let module = n::front::wgsl::parse_str(&kernel.source()).unwrap();
     let info = n::valid::Validator::new(
@@ -295,11 +300,75 @@ fn compact_records_lay_out_the_five_original_partitions_inside_the_owner_tail() 
 }
 
 #[test]
+fn compact_indirect_views_accept_full_allocator_handles_and_reject_trimmed_roots() {
+    use cubecl::server::Handle;
+    let stream = cubecl::stream_id::StreamId::current();
+    use cubecl_runtime::allocator::ContiguousMemoryLayoutPolicy;
+    use cubecl_runtime::server::{
+        MemoryLayoutDescriptor, MemoryLayoutPolicy, MemoryLayoutStrategy,
+    };
+    let (_, layouts) = ContiguousMemoryLayoutPolicy::new(32768).apply(
+        stream,
+        &[MemoryLayoutDescriptor::new(
+            MemoryLayoutStrategy::Contiguous,
+            [four::MAIN_BYTES as usize].into(),
+            1,
+        )],
+    );
+    let allocated = layouts[0].memory.clone();
+    assert_eq!(allocated.offset_start, Some(0));
+    assert_eq!(allocated.offset_end, Some(0));
+    let root = Handle::new(stream, four::MAIN_BYTES);
+    // Matches ContiguousMemoryLayoutPolicy::offset_handles for one full owner,
+    // including mixed representations equivalent to the same physical span.
+    for owner in [
+        allocated,
+        root.clone(),
+        root.clone().offset_start(0),
+        root.clone().offset_end(0),
+        root.clone().offset_start(0).offset_end(0),
+    ] {
+        for shard in 0..four::FIRST.len() {
+            for down in [false, true] {
+                let binding = four::record_dispatch_view(&owner, shard, down).unwrap();
+                assert_eq!(binding.size_in_used(), 12);
+                assert_eq!(binding.size(), four::MAIN_BYTES);
+                assert_eq!(binding.stream, stream);
+                assert_eq!(
+                    binding.offset_start,
+                    Some(24576 + 192 * shard as u64 + if down { 20 } else { 8 })
+                );
+            }
+        }
+        for shard in [5, 6, usize::MAX] {
+            assert!(four::record_dispatch_view(&owner, shard, false).is_err());
+            assert!(four::record_dispatch_view(&owner, shard, true).is_err());
+        }
+    }
+    // Oversized backing memory with a logical 64KiB slice is not a full owner.
+    for owner in [
+        root.clone().offset_start(4),
+        root.clone().offset_end(4),
+        root.clone().offset_start(u64::MAX),
+        root.offset_end(u64::MAX),
+        Handle::new(stream, four::MAIN_BYTES + 4).offset_start(4),
+        Handle::new(stream, four::MAIN_BYTES + 4).offset_end(4),
+    ] {
+        assert!(four::record_dispatch_view(&owner, 0, false).is_err());
+        assert!(four::record_dispatch_view(&owner, 4, true).is_err());
+    }
+}
+
+#[test]
 fn compact_prepare_lowers_with_builder_rules_and_zero_group_shards() {
     let module = lower(four::Kernel::PrepareCompact);
     assert_eq!(shared_bytes(&module), MAX_PREPARE_SHARED_BYTES);
-    assert_eq!(barriers(&module.entry_points[0].function.body), 2);
+    assert_eq!(barriers(&module.entry_points[0].function.body), 3);
     let source = four::Kernel::PrepareCompact.source();
+    assert!(
+        source.find("storageBarrier();").unwrap()
+            < source.find("if token==0u && local<5u").unwrap()
+    );
     // Only token0 lanes0..4 build records; every predicate precedes access.
     assert!(source.contains("token==0u && local<5u"));
     assert!(source.find("p.h!=4u").unwrap() < source.find("planes[token]=0u").unwrap());

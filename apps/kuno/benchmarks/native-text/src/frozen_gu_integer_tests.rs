@@ -840,7 +840,30 @@ fn frozen_gu_integer_count1to3_compact_schedule_keeps_original_arithmetic_and_re
     assert!(prepare.contains("p.e<1u || p.e>30u"));
     assert!(prepare.contains("planes[6144u+48u*shard+8u+count]=g"));
     assert!(prepare.contains("gu_y=count;if gu_y>4u {gu_y=4u;}"));
-    assert!(prepare.contains("for(var i=5824u+local;i<16384u;i+=128u)"));
+    assert!(prepare.contains("for(var i=4384u+local;i<16384u;i+=128u)"));
+    // The added MAP plan must not change inactive-frame/header reset coverage.
+    let original = Kernel::Prepare.source();
+    let original_main = original
+        .split_once("@compute")
+        .unwrap()
+        .1
+        .trim()
+        .strip_suffix('}')
+        .unwrap()
+        .trim();
+    let compact_main = prepare
+        .split_once("@compute")
+        .unwrap()
+        .1
+        .split_once("    // Finish every lane's storage-tail clear")
+        .unwrap()
+        .0
+        .trim();
+    assert_eq!(compact_main, original_main);
+    assert!(
+        prepare.find("storageBarrier();").unwrap()
+            < prepare.find("if token==0u && local<5u").unwrap()
+    );
     let begin = "// FROZEN_GU_PROJECT_BODY_BEGIN\n";
     let end = "// FROZEN_GU_PROJECT_BODY_END";
     for dtype in [
@@ -889,7 +912,7 @@ fn frozen_gu_integer_count1to3_compact_schedule_keeps_original_arithmetic_and_re
     assert!(audit.contains("p.count<1u || p.count>3u"));
     assert!(audit.contains("p.r1<1u || p.r1>30u"));
     assert!(audit.contains("map[p.r0]!=p.count"));
-    assert!(audit.contains("i=count;i<30u"));
+    assert!(audit.contains("i=count;i<40u"));
     assert!(audit.contains("atomicStore(&records_valid,0u);"));
     assert!(audit.contains("planes[6144u+48u*shard+i]=0u;"));
 }

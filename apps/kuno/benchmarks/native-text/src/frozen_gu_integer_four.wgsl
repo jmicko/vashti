@@ -241,6 +241,8 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
         }
         if local==0u {planes[token]=1u;}
     }
+    // Finish every lane's storage-tail clear before record lanes overwrite it.
+    storageBarrier();
     // Records build only from a valid immutable MAP header; a failed build
     // leaves the cleared tail zeros, and every consumer exits on ready!=1.
     if token==0u && local<5u {

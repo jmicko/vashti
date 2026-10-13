@@ -181,7 +181,10 @@ impl Kernel {
     }
     fn dim(self) -> CubeDim {
         CubeDim::new_1d(
-            if matches!(self, Self::Project { .. } | Self::ProjectStride4 { .. }) {
+            if matches!(
+                self,
+                Self::Project { .. } | Self::ProjectStride4 { .. } | Self::ProjectCompact { .. }
+            ) {
                 64
             } else {
                 128
@@ -510,10 +513,14 @@ pub(crate) fn record_dispatch_view(
     shard: usize,
     down: bool,
 ) -> Result<cubecl_runtime::server::Binding> {
-    if scratch.size() != MAIN_BYTES
+    // CubeCL's contiguous allocator represents a complete owner with Some(0)
+    // trims. Require zero numeric trims, not absent Option values. Check trims
+    // before size_in_used(), whose subtraction assumes a valid handle.
+    if shard >= FIRST.len()
+        || scratch.size() != MAIN_BYTES
+        || scratch.offset_start.unwrap_or(0) != 0
+        || scratch.offset_end.unwrap_or(0) != 0
         || scratch.size_in_used() != MAIN_BYTES
-        || scratch.offset_start.is_some()
-        || scratch.offset_end.is_some()
     {
         return Err(rejected());
     }
