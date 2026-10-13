@@ -609,7 +609,7 @@ pub(crate) fn registration(
             && public_grouped_ple_reads
             && !public_iq4_decoder
             && bank_fill == crate::executor::PublicHostBankFillPolicy::Original,
-    )? || crate::strata_port::enabled();
+    )?;
     let mut path = |key: &str| {
         values
             .remove(OsStr::new(key))

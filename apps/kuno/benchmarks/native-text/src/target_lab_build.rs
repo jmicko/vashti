@@ -1258,11 +1258,17 @@ pub(crate) fn frozen_down_integer_record(
         || if selected {
             preparations == 0
                 || !preparations.is_multiple_of(48)
-                || preparations.checked_mul(if crate::strata_port::enabled() { 1 } else { 5 })
-                    != Some(dispatches)
+                || preparations.checked_mul(if crate::strata_port::fused_sources() {
+                    1
+                } else {
+                    5
+                }) != Some(dispatches)
                 || preparations != audits
-                || preparations.checked_mul(if crate::strata_port::enabled() { 2 } else { 10 })
-                    != Some(source_dispatches)
+                || preparations.checked_mul(if crate::strata_port::fused_sources() {
+                    2
+                } else {
+                    10
+                }) != Some(source_dispatches)
         } else {
             preparations != 0 || dispatches != 0 || audits != 0
         }
@@ -1294,14 +1300,14 @@ pub(crate) fn frozen_down_integer_initial_record(
     if selected
         && (preparations != 48
             || dispatches
-                != if crate::strata_port::enabled() {
+                != if crate::strata_port::fused_sources() {
                     48
                 } else {
                     240
                 }
             || audits != 48
             || source_dispatches
-                != if crate::strata_port::enabled() {
+                != if crate::strata_port::fused_sources() {
                     96
                 } else {
                     480
@@ -1431,7 +1437,7 @@ pub(crate) fn frozen_gu_stride_four_record(
         || if selected {
             !integer_actual
                 || integer_dispatches == 0
-                || !integer_dispatches.is_multiple_of(if crate::strata_port::enabled() {
+                || !integer_dispatches.is_multiple_of(if crate::strata_port::fused_sources() {
                     48
                 } else {
                     240
@@ -1459,8 +1465,11 @@ pub(crate) fn frozen_gu_integer_record(
         || if selected {
             preparations == 0
                 || !preparations.is_multiple_of(48)
-                || preparations.checked_mul(if crate::strata_port::enabled() { 1 } else { 5 })
-                    != Some(dispatches)
+                || preparations.checked_mul(if crate::strata_port::fused_sources() {
+                    1
+                } else {
+                    5
+                }) != Some(dispatches)
                 || preparations != audits
         } else {
             preparations != 0 || dispatches != 0 || audits != 0
@@ -1485,7 +1494,7 @@ pub(crate) fn frozen_gu_integer_initial_record(
     if selected
         && (preparations != 48
             || dispatches
-                != if crate::strata_port::enabled() {
+                != if crate::strata_port::fused_sources() {
                     48
                 } else {
                     240

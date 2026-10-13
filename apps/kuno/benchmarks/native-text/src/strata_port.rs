@@ -7,6 +7,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub(crate) const fn enabled() -> bool {
     cfg!(feature = "strata-rust-port")
 }
+pub(crate) fn fused_sources() -> bool {
+    static SELECTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    enabled()
+        && *SELECTED.get_or_init(|| {
+            std::env::var("KUNO_STRATA_FUSED_EXPERTS").as_deref() == Ok("five-tier-public")
+        })
+}
 pub(crate) fn profile_target() -> bool {
     enabled() && std::env::var("KUNO_STRATA_PROFILE_TARGET").as_deref() == Ok("round-8")
 }
@@ -249,7 +256,7 @@ pub(crate) fn receipt() -> serde_json::Value {
         "projection_workgroup":256, "rows_per_workgroup":32, "group_stride":4,"suffix_lookup_windows":LOOKUP_WINDOWS.load(Ordering::Relaxed),"suffix_lookup_proposed":LOOKUP_PROPOSED.load(Ordering::Relaxed),
         "gu_dispatches_by_member_count":GU.each_ref().map(|v|v.load(Ordering::Relaxed)),
         "down_dispatches_by_member_count":DOWN.each_ref().map(|v|v.load(Ordering::Relaxed)),
-        "original_cpu13_precision_contract": false, "intermediate_numeric_scans":false,"published_outputs_checked_finite":true,"full_private_erasure":true,"installed_or_production": false})
+        "fused_five_tier_experts":fused_sources(), "original_cpu13_precision_contract": false, "intermediate_numeric_scans":false,"published_outputs_checked_finite":true,"full_private_erasure":true,"installed_or_production": false})
 }
 
 fn replace(source: String, old: &str, new: &str) -> String {
@@ -549,8 +556,9 @@ pub(crate) fn validate_limits(limits: &wgpu::Limits) -> kuno_text::Result<()> {
         && (limits.max_compute_invocations_per_workgroup < 256
             || limits.max_compute_workgroup_size_x < 256
             || limits.max_compute_workgroup_storage_size < 19712
-            || limits.max_storage_buffers_per_shader_stage < 14
-            || limits.max_bindings_per_bind_group < 15)
+            || fused_sources()
+                && (limits.max_storage_buffers_per_shader_stage < 14
+                    || limits.max_bindings_per_bind_group < 15))
     {
         return Err(kuno_text::Error::InvalidFormat(
             "Strata Rust workgroup limits",

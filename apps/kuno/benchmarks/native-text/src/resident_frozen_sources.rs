@@ -9,8 +9,12 @@ use cubecl::wgpu::WgpuResource;
 use cubecl_runtime::public_external::is_public_external_binding;
 
 pub(crate) const EXTRA_INFO_BYTES_PER_CHUNK: u64 = 6 * 48 * 2048;
-pub(crate) const SOURCE_SET_HOST_BYTES: u64 =
-    (2 + if crate::strata_port::enabled() { 22 } else { 0 }) * 1024 * 1024;
+pub(crate) const SOURCE_SET_HOST_BYTES: u64 = (2 + if crate::strata_port::fused_sources() {
+    22
+} else {
+    0
+}) * 1024
+    * 1024;
 pub(crate) const PHYSICAL_HOST_BYTES: u64 = 8 * 1024;
 pub(crate) const EXTRA_HOST_BYTES: u64 = SOURCE_SET_HOST_BYTES + PHYSICAL_HOST_BYTES;
 pub(crate) const EXTRA_RUNTIME_BYTES_PER_CHUNK: u64 = EXTRA_INFO_BYTES_PER_CHUNK;
@@ -253,7 +257,7 @@ impl ResidentBankAllocation {
     // Caller has proved that this is one distinct, original VRAM buffer. The
     // source constructor rejects duplicate buffers across ALL roles/layers.
     fn add_authenticated_buffer(&mut self, logical: u64, physical: u64) -> Result<()> {
-        let bound = if crate::strata_port::enabled() {
+        let bound = if crate::strata_port::fused_sources() {
             logical
         } else {
             main_admission::page_bytes(logical).map_err(admission_error)?
@@ -1349,7 +1353,7 @@ impl Sources {
         if actual_pages.next().is_some() || metadata_bytes as u64 > SOURCE_SET_HOST_BYTES {
             return Err(reject());
         }
-        let adaptive = if crate::strata_port::enabled() {
+        let adaptive = if crate::strata_port::fused_sources() {
             metadata_bytes = metadata_bytes
                 .checked_add(crate::strata_cache::METADATA_BYTES)
                 .ok_or(Error::ArithmeticOverflow)?;
@@ -1972,22 +1976,39 @@ impl GuIntegerDispatch {
         if self.layer != layer
             || layer >= 48
             || self.count != count
-            || self.dispatches != if crate::strata_port::enabled() { 1 } else { 5 }
+            || self.dispatches
+                != if crate::strata_port::fused_sources() {
+                    1
+                } else {
+                    5
+                }
             || self.stride_four_dispatches
                 != if stride_four {
-                    if crate::strata_port::enabled() { 1 } else { 5 }
+                    if crate::strata_port::fused_sources() {
+                        1
+                    } else {
+                        5
+                    }
                 } else {
                     0
                 }
             || self.compact_gu_dispatches
                 != if compact {
-                    if crate::strata_port::enabled() { 1 } else { 5 }
+                    if crate::strata_port::fused_sources() {
+                        1
+                    } else {
+                        5
+                    }
                 } else {
                     0
                 }
             || self.compact_down_dispatches
                 != if compact && down_integer {
-                    if crate::strata_port::enabled() { 1 } else { 5 }
+                    if crate::strata_port::fused_sources() {
+                        1
+                    } else {
+                        5
+                    }
                 } else {
                     0
                 }
@@ -2037,7 +2058,12 @@ impl DownIntegerDispatch {
             || self.count != count
             || !(1..=if four { 4 } else { 3 }).contains(&count)
             || self.preparations != 1
-            || self.dispatches != if crate::strata_port::enabled() { 1 } else { 5 }
+            || self.dispatches
+                != if crate::strata_port::fused_sources() {
+                    1
+                } else {
+                    5
+                }
             || self.audits != 1
         {
             return Err(reject());
@@ -2305,8 +2331,11 @@ fn gu_integer_completed_flag(
     if if selected {
         preparations == 0
             || preparations != audits
-            || preparations.checked_mul(if crate::strata_port::enabled() { 1 } else { 5 })
-                != Some(dispatches)
+            || preparations.checked_mul(if crate::strata_port::fused_sources() {
+                1
+            } else {
+                5
+            }) != Some(dispatches)
     } else {
         preparations != 0 || dispatches != 0 || audits != 0
     } {
@@ -2355,8 +2384,11 @@ fn down_integer_completed_flag(
 ) -> Result<bool> {
     gu_integer_completed_flag(selected, preparations, dispatches, audits)?;
     if selected
-        && preparations.checked_mul(if crate::strata_port::enabled() { 2 } else { 10 })
-            != Some(source_dispatches)
+        && preparations.checked_mul(if crate::strata_port::fused_sources() {
+            2
+        } else {
+            10
+        }) != Some(source_dispatches)
     {
         return Err(reject());
     }
@@ -2507,7 +2539,7 @@ impl Counters {
             source_dispatches: self
                 .source_dispatches
                 .checked_add(
-                    if crate::strata_port::enabled()
+                    if crate::strata_port::fused_sources()
                         && p.source.gu_integer
                         && p.source.down_integer
                         && p.source.gu_stride_four
@@ -3312,7 +3344,7 @@ impl Sources {
                     .checked_add(1)
                     .ok_or(Error::ArithmeticOverflow)?;
             }
-            if crate::strata_port::enabled()
+            if crate::strata_port::fused_sources()
                 && self.gu_integer
                 && self.down_integer
                 && self.gu_stride_four
