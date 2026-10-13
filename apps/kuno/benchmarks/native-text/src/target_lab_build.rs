@@ -315,7 +315,12 @@ pub(crate) fn intel_mtp_preflight_with_down_math(
                     main: 828_866_560
                         + crate::resident_gdn::batch::strata_replay::MAIN_BYTES
                         + if integer { 65_536 } else { 0 }
-                        + 65_536,
+                        + crate::executor::batch_moe::FROZEN_DOWN_INTEGER_MAIN_BYTES
+                        + if cfg!(feature = "strata-eight-window") {
+                            8 * 1024 * 1024
+                        } else {
+                            0
+                        },
                     banks,
                     source_pages,
                     baseline: usage.bytes_reserved,

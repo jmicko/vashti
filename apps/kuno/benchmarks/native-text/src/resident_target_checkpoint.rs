@@ -16,7 +16,7 @@ use zeroize::{Zeroize, Zeroizing};
 pub(crate) const HOST_INCREMENT: usize = 1024 * 1024;
 pub(crate) const RUNTIME_INCREMENT: u64 = crate::resident_qsa::batch::LATEST_QSA_RUNTIME_INFO;
 const LAYERS: usize = 48;
-const MAX_ROWS: usize = 4;
+const MAX_ROWS: usize = crate::strata_port::verify_capacity();
 fn error() -> Error {
     Error::InvalidFormat("native latest target chunk checkpoint")
 }

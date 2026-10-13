@@ -227,7 +227,7 @@ struct LatestPleMetadata {
     start: usize,
     count: usize,
     ids: [BufferId; N],
-    tokens: [u32; 4],
+    tokens: [u32; crate::strata_port::verify_capacity()],
     old_tokens: [i32; 2],
 }
 impl Zeroize for LatestPleMetadata {
@@ -286,7 +286,7 @@ impl PleBatchWorkspace {
             ops::ple_checkpoint::MAX_OWNED_BYTES,
         )
         .map_err(u::fault)?;
-        let mut packet = Zeroizing::new([0; 4]);
+        let mut packet = Zeroizing::new([0; crate::strata_port::verify_capacity()]);
         packet[..tokens.len()].copy_from_slice(tokens);
         Ok(LatestPleCheckpoint {
             snapshot: Some(snapshot),
