@@ -165,8 +165,17 @@ impl IntelMtpMemory {
         } = owners;
         let expected_main = 828_866_560
             + crate::resident_gdn::batch::strata_replay::MAIN_BYTES
+            + if cfg!(feature = "strata-eight-window") {
+                8 * 1024 * 1024
+            } else {
+                0
+            }
             + if gu_integer { 65_536 } else { 0 }
-            + if down_integer { 65_536 } else { 0 };
+            + if down_integer {
+                crate::executor::batch_moe::FROZEN_DOWN_INTEGER_MAIN_BYTES
+            } else {
+                0
+            };
         if self.used == 0
             || self.used >= self.total
             || self.device == 0
@@ -207,7 +216,11 @@ impl IntelMtpMemory {
             crate::resident_mtp::PUBLIC_SOURCE_BYTES as u64,
             512 * 1024 * 1024,
             target_baseline,
-            if down_integer { 462_848 } else { 0 },
+            if down_integer {
+                crate::executor::batch_moe::FROZEN_DOWN_INTEGER_RUNTIME_BYTES
+            } else {
+                0
+            },
         ];
         let total = components.into_iter().try_fold(0u64, |sum, bytes| {
             sum.checked_add(bytes)
@@ -222,10 +235,10 @@ impl IntelMtpMemory {
             "target_slots":crate::daslab_profile::BANK_SLOTS,"target_bank_bytes":banks,"target_static_cache_bytes":8u64*1024*1024*1024,
             "target_main_bytes":target_main,"target_vector_bytes":25_165_824,
             "target_gu_integer":gu_integer,"target_down_integer":down_integer,
-            "target_down_integer_extra_main_bytes":if down_integer {65_536}else{0},
-            "target_down_integer_extra_host_bytes":if down_integer {65_536}else{0},
+            "target_down_integer_extra_main_bytes":if down_integer {crate::executor::batch_moe::FROZEN_DOWN_INTEGER_MAIN_BYTES}else{0},
+            "target_down_integer_extra_host_bytes":if down_integer {crate::executor::batch_moe::FROZEN_DOWN_INTEGER_MAIN_BYTES}else{0},
             "target_down_integer_extra_info_bytes":if down_integer {196_608}else{0},
-            "target_down_integer_extra_runtime_bytes":if down_integer {462_848}else{0},
+            "target_down_integer_extra_runtime_bytes":if down_integer {crate::executor::batch_moe::FROZEN_DOWN_INTEGER_RUNTIME_BYTES}else{0},
             "target_io_bytes":crate::executor::RESIDENT_IO_MAX,
             "target_runtime_io_bytes":crate::resident_model::batch::TARGET_ROWS_RUNTIME_LIMIT,
             "target_source_page_bytes":target_source_pages,"target_baseline_bytes":target_baseline,

@@ -1516,6 +1516,14 @@ pub(crate) fn probe_gdn(
     Ok(())
 }
 
+/// Compile every original dense format for the wider fixed-public verifier.
+pub(crate) fn port_verify_sources() -> Result<Vec<String>> {
+    [0, 1, 6, 8, 12, 13, 14, 20, 23, 30]
+        .into_iter()
+        .map(|dtype| Ok(MatrixSpec::new(64, 2560, dtype)?.source_verify4_finite(true)))
+        .collect()
+}
+
 #[cfg(test)]
 #[path = "next_verify4_dense_tests.rs"]
 mod verify4_dense_tests;

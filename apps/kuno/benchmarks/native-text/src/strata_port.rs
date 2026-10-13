@@ -280,7 +280,7 @@ pub(crate) fn public_preview(text: &str) {
 }
 pub(crate) fn receipt() -> serde_json::Value {
     serde_json::json!({"enabled": enabled(), "upstream_revision": "fb58e0dbc8399662c0e47c76578c6e878b14f6cf",
-        "backend": "Rust/WGSL/Vulkan", "activation_planes": 1, "activation_scale": "fp16-q8_1",
+        "backend": "Rust/WGSL/Vulkan", "verify_capacity":verify_capacity(), "activation_planes": 1, "activation_scale": "fp16-q8_1",
         "projection_workgroup":256, "rows_per_workgroup":256/expert_lanes(), "expert_dot_lanes":expert_lanes(), "aligned_vector_expert_reads":wide_experts(), "group_stride":4,"suffix_lookup_windows":LOOKUP_WINDOWS.load(Ordering::Relaxed),"suffix_lookup_proposed":LOOKUP_PROPOSED.load(Ordering::Relaxed),
         "gu_dispatches_by_member_count":GU.each_ref().map(|v|v.load(Ordering::Relaxed)),
         "down_dispatches_by_member_count":DOWN.each_ref().map(|v|v.load(Ordering::Relaxed)),
@@ -772,14 +772,16 @@ pub(crate) fn validate_shader_set() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Strata port feature required".into());
     }
     use wgpu::naga as n;
-    for source in [
+    let mut controllers = vec![
         router_shader(include_str!("resident_batch_router_gpu.wgsl").into()),
         router_shader(wide_router_template(include_str!(
             "resident_batch_router_gpu_four.wgsl"
         ))),
         crate::public_host_expert_mirror::strata_gpu_exchange::SHADER.into(),
         crate::strata_packet::shader(),
-    ] {
+    ];
+    controllers.extend(crate::next_shared::port_verify_sources()?);
+    for source in controllers {
         let module = n::front::wgsl::parse_str(&source).map_err(|e| e.emit_to_string(&source))?;
         let _ = n::valid::Validator::new(
             n::valid::ValidationFlags::all(),
