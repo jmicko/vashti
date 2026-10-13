@@ -608,7 +608,7 @@ impl Workspace {
         count: usize,
         waves: usize,
     ) -> Result<()> {
-        if !self.public_existing_fill || count != 4 {
+        if !self.public_existing_fill || count < 4 {
             return public_existing_count(self.public_existing_fill, count, waves);
         }
         let source = self

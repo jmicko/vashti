@@ -1068,7 +1068,12 @@ fn validate_q6_verify_head(
         || member_capacity != 8
         || tile != 8
         || four_active && !four_reserved
-        || !(1..=if four_active { 4 } else { 3 }).contains(&spans.count())
+        || !(1..=if four_active {
+            crate::strata_port::verify_capacity()
+        } else {
+            3
+        })
+            .contains(&spans.count())
         || name != "output.weight"
         || dtype != 14
         || columns != 2560

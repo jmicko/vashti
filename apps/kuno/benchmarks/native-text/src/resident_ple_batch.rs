@@ -1063,7 +1063,12 @@ impl PleBatchWorkspace {
             let m = &*receipt.metadata;
             let public_grouped_read = self.public_grouped_reads;
             if public_grouped_read
-                && !(1..=if self.public_four_rows { 4 } else { 3 }).contains(&m.count)
+                && !(1..=if self.public_four_rows {
+                    crate::strata_port::verify_capacity()
+                } else {
+                    3
+                })
+                    .contains(&m.count)
             {
                 return Err(error());
             }
