@@ -1339,7 +1339,7 @@ pub(crate) fn validate_frozen_integer_math_close(
             expected.1
                 + crate::resident_gdn::batch::strata_replay::MAIN_BYTES
                 + if cfg!(feature = "strata-eight-window") {
-                    3 * 4 * 1024 * 1024 + 65536
+                    2 * 4 * 1024 * 1024 + 65536
                 } else {
                     0
                 },

@@ -66,12 +66,7 @@ pub(crate) const TARGET_ROWS_PREPARED_VERIFY3_MAIN: u64 =
     TARGET_ROWS_PRIVATE_MAIN + batch_moe::prepared_verify3::MAIN_BYTES;
 
 const OLD_MAIN: u64 = 785_186_816 + gdn::strata_replay::MAIN_BYTES;
-const NEW_MAIN: u64 = 33_062_912
-    + if cfg!(feature = "strata-eight-window") {
-        4 * 1024 * 1024
-    } else {
-        0
-    };
+const NEW_MAIN: u64 = 33_062_912;
 const TOTAL_MAIN: u64 = OLD_MAIN + NEW_MAIN;
 const PUBLIC_MAIN: u64 = 25_165_824;
 const HOST_CAP: usize = 12 * 1024 * 1024;
@@ -161,7 +156,10 @@ fn host_reservation_with_verify3(
         || checkpoint && !target_rows
         || prepared_verify3 && (!target_rows || hybrid || router)
     {
-        return Err(error());
+        return Err(Error::InvalidFormat(concat!(
+            "native model chunk rejected at source line ",
+            line!()
+        )));
     }
     let reserved = HOST_COMPONENTS
         .checked_add(if hybrid { HYBRID_HOST } else { 0 })
@@ -233,7 +231,10 @@ const _: () = {
 
 fn checked_cpu_miss_total(current: u64, completed_chunk: u64) -> Result<Zeroizing<u64>> {
     if completed_chunk > (LAYERS * 10) as u64 {
-        return Err(error());
+        return Err(Error::InvalidFormat(concat!(
+            "native model chunk rejected at source line ",
+            line!()
+        )));
     }
     current
         .checked_add(completed_chunk)
@@ -310,7 +311,10 @@ impl NativeDecodeKernels {
             _ => count == 1,
         };
         if !accepted {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         Ok(())
     }
@@ -359,7 +363,10 @@ fn prepared_verify3_configuration(
     tile: usize,
 ) -> Result<()> {
     if !target_rows || already_reserved || hybrid || router || tile != 8 {
-        return Err(error());
+        return Err(Error::InvalidFormat(concat!(
+            "native model chunk rejected at source line ",
+            line!()
+        )));
     }
     Ok(())
 }
@@ -372,7 +379,10 @@ fn live_member_reduction_configuration(
     tile: usize,
 ) -> Result<()> {
     if selected && (!target_rows || hybrid || router || prepared_verify3 || tile != 8) {
-        return Err(error());
+        return Err(Error::InvalidFormat(concat!(
+            "native model chunk rejected at source line ",
+            line!()
+        )));
     }
     Ok(())
 }
@@ -384,7 +394,10 @@ fn gpu_qsa_selector_configuration(
     tile: usize,
 ) -> Result<()> {
     if selected && (!target_rows || hybrid || router || tile != 8) {
-        return Err(error());
+        return Err(Error::InvalidFormat(concat!(
+            "native model chunk rejected at source line ",
+            line!()
+        )));
     }
     Ok(())
 }
@@ -408,13 +421,19 @@ fn frozen_host_source_configuration(
             || live_members
             || tile != 8)
     {
-        return Err(error());
+        return Err(Error::InvalidFormat(concat!(
+            "native model chunk rejected at source line ",
+            line!()
+        )));
     }
     Ok(())
 }
 fn frozen_staging_configuration(selected: bool, sources: bool, router: bool) -> Result<()> {
     if selected && (!sources || !router) {
-        return Err(error());
+        return Err(Error::InvalidFormat(concat!(
+            "native model chunk rejected at source line ",
+            line!()
+        )));
     }
     Ok(())
 }
@@ -425,7 +444,10 @@ fn frozen_gu_integer_configuration(
     stage: bool,
 ) -> Result<()> {
     if selected && (!sources || !router || stage) {
-        return Err(error());
+        return Err(Error::InvalidFormat(concat!(
+            "native model chunk rejected at source line ",
+            line!()
+        )));
     }
     Ok(())
 }
@@ -444,7 +466,10 @@ impl Config {
                 || self.live_member_reduction
                 || self.tile != 8)
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         Ok(())
     }
@@ -461,7 +486,10 @@ impl Config {
                 || self.live_member_reduction
                 || self.tile != 8)
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         Ok(())
     }
@@ -479,7 +507,10 @@ impl Config {
                 || self.tile != 8
                 || crate::status_fold_batch::selected())
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         Ok(())
     }
@@ -498,7 +529,10 @@ impl Config {
                 || self.live_member_reduction
                 || self.tile != 8)
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         frozen_staging_configuration(
             self.public_frozen_host_staging,
@@ -627,7 +661,10 @@ impl Config {
     /// retain the original guarded CPU selector. No new private MAIN owners.
     pub(crate) fn reserve_public_gpu_qsa_selector(mut self) -> Result<Self> {
         if self.public_gpu_qsa_selector {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         gpu_qsa_selector_configuration(
             true,
@@ -643,7 +680,10 @@ impl Config {
     /// constructor. This grants no completion or physical import authority.
     pub(crate) fn reserve_public_frozen_host_sources(mut self) -> Result<Self> {
         if self.public_frozen_host_sources {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         frozen_host_source_configuration(
             true,
@@ -672,7 +712,10 @@ impl Config {
             || self.live_member_reduction
             || self.tile != 8
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         self.public_frozen_host_router = true;
         Ok(self)
@@ -680,7 +723,10 @@ impl Config {
     /// Bounded original packed host-weight copies; charge before device owners.
     pub(crate) fn reserve_public_frozen_host_staging(mut self) -> Result<Self> {
         if self.public_frozen_host_staging {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         frozen_staging_configuration(
             true,
@@ -689,7 +735,10 @@ impl Config {
         )?;
         self.qsa_host_reservation()?;
         if self.public_frozen_gu_integer || self.public_frozen_down_integer {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         self.public_frozen_host_staging = true;
         Ok(self)
@@ -699,7 +748,10 @@ impl Config {
     #[allow(dead_code)] // Root owns fixed-public controller registration.
     pub(crate) fn reserve_public_frozen_gu_integer(mut self) -> Result<Self> {
         if self.public_frozen_gu_integer {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         frozen_gu_integer_configuration(
             true,
@@ -715,7 +767,10 @@ impl Config {
     #[allow(dead_code)] // Fixed-public controller registration is separate.
     pub(crate) fn reserve_public_frozen_down_integer(mut self) -> Result<Self> {
         if self.public_frozen_down_integer {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         self.public_frozen_down_integer = true;
         self.qsa_host_reservation()?;
@@ -728,7 +783,10 @@ impl Config {
     #[allow(dead_code)]
     pub(crate) fn with_live_member_reduction(mut self) -> Result<Self> {
         if self.live_member_reduction {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         live_member_reduction_configuration(
             true,
@@ -753,7 +811,10 @@ impl Config {
             || self.public_frozen_host_router
             || self.tile != 8
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         self.public_warm_batch_router = true;
         Ok(self)
@@ -765,7 +826,10 @@ impl Config {
             || self.resident_router_reserved
             || self.target_rows_reserved
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         host_reservation_with_router(true, self.request_reuse_metadata, true)?;
         self.resident_router_reserved = true;
@@ -781,7 +845,10 @@ impl Config {
             || self.resident_router_reserved
             || self.tile != 8
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         host_reservation_with_outputs(false, self.request_reuse_metadata, false, true)?;
         self.target_rows_reserved = true;
@@ -795,7 +862,10 @@ impl Config {
             || self.cpu_operator.is_some()
             || self.resident_router_reserved
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         self.public_four_rows_reserved = true;
         Ok(self)
@@ -853,7 +923,10 @@ impl Config {
     #[allow(dead_code)] // Root owns public parser/controller registration.
     pub(crate) fn reserve_public_grouped_ple_reads(mut self) -> Result<Self> {
         if self.public_grouped_ple_reads_reserved {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         self.public_grouped_ple_reads_reserved = true;
         self.qsa_host_reservation()?;
@@ -864,7 +937,10 @@ impl Config {
     #[allow(dead_code)] // Root owns fixed-public controller registration.
     pub(crate) fn reserve_public_grouped_status_folds(mut self) -> Result<Self> {
         if self.public_grouped_status_folds_reserved {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         self.public_grouped_status_folds_reserved = true;
         self.qsa_host_reservation()?;
@@ -897,7 +973,10 @@ impl Config {
     #[allow(dead_code)] // Protected flag/physical acceptance are parent-owned.
     pub(crate) fn reserve_prepared_verify3_experts(mut self) -> Result<Self> {
         if self.live_member_reduction {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         prepared_verify3_configuration(
             self.target_rows_reserved,
@@ -945,7 +1024,10 @@ impl Config {
             || ((overlap || q8) && !pooled)
             || (residual && !q8)
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         let plan = WorkerPlan::physical(threads)?;
         let backend = if cfg!(feature = "cpu-fma") {
@@ -1020,7 +1102,10 @@ impl Plan {
             || sum(old)? != OLD_MAIN
             || old.len() != 1286 + gdn::strata_replay::EXTRA_BUFFERS as usize
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         validate_limits(&config.limits, config.tile)?;
         if config.public_frozen_host_staging
@@ -1088,7 +1173,10 @@ impl Plan {
                 .checked_add(batch_moe::batch_router::HOST_BYTES)
                 .ok_or(Error::ArithmeticOverflow)?;
             if host > limit {
-                return Err(error());
+                return Err(Error::InvalidFormat(concat!(
+                    "native model chunk rejected at source line ",
+                    line!()
+                )));
             }
         }
         if config.public_four_rows_reserved != executor.target_four_rows_reserved
@@ -1103,7 +1191,10 @@ impl Plan {
                     || config.prepared_verify3_experts_reserved
                     || config.live_member_reduction)
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         if config.public_frozen_host_sources
             && (executor.packed_profile != crate::expert_banks::OriginalPackedProfile::DaslabIq3
@@ -1111,7 +1202,10 @@ impl Plan {
                 || executor.target_frozen_host_source_identity.is_some()
                 || executor.resident_banks_frozen)
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         executor.check_original_bank_metadata(LAYERS, ORIGINAL_BANK_HOST)?;
         let g = graph.geometry();
@@ -1122,7 +1216,10 @@ impl Plan {
             || g.experts_used != 10
             || g.max_context != 4096
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         let mut requests = Vec::new();
         for (pages, expected) in [
@@ -1158,7 +1255,10 @@ impl Plan {
             ),
         ] {
             if sum(&pages)? != expected {
-                return Err(error());
+                return Err(Error::InvalidFormat(concat!(
+                    "native model chunk rejected at source line ",
+                    line!()
+                )));
             }
             requests.extend(pages);
         }
@@ -1192,7 +1292,10 @@ impl Plan {
                 || executor.resident_bank_capacity() != crate::daslab_profile::BANK_SLOTS
                 || executor.resident_runtime_io_limit() != public_language_request_io::RUNTIME_BYTES
             {
-                return Err(error());
+                return Err(Error::InvalidFormat(concat!(
+                    "native model chunk rejected at source line ",
+                    line!()
+                )));
             }
         }
 
@@ -1220,7 +1323,10 @@ impl Plan {
                 .checked_add(batch_moe::batch_router::HOST_BYTES)
                 .ok_or(Error::ArithmeticOverflow)?;
             if host > limit {
-                return Err(error());
+                return Err(Error::InvalidFormat(concat!(
+                    "native model chunk rejected at source line ",
+                    line!()
+                )));
             }
         }
         if hybrid {
@@ -1246,7 +1352,10 @@ impl Plan {
                     || executor.native_projection_member_capacity() != 8
                     || executor.native_projection_tile() != 8)
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         if router != executor.resident_router_reserved
             || router
@@ -1254,7 +1363,10 @@ impl Plan {
                     || !executor.packed_profile.is_low_bit()
                     || executor.resident_bank_capacity() != crate::daslab_profile::BANK_SLOTS)
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         if router {
             requests.extend(batch_moe::Workspace::resident_router_allocation_requests());
@@ -1275,7 +1387,10 @@ impl Plan {
                 || executor.adaptive.is_some()
                 || executor.secondary.is_some()
             {
-                return Err(error());
+                return Err(Error::InvalidFormat(concat!(
+                    "native model chunk rejected at source line ",
+                    line!()
+                )));
             }
             batch_moe::prepared_verify3::validate_limits(&config.limits)?;
             requests.push(batch_moe::prepared_verify3::MAIN_BYTES);
@@ -1292,7 +1407,10 @@ impl Plan {
                 || executor.secondary.is_some()
                 || executor.secondary_frequency.is_some())
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         if config.public_warm_batch_router {
             if !config.public_warm_replay
@@ -1304,13 +1422,19 @@ impl Plan {
                 || executor.packed_profile != crate::expert_banks::OriginalPackedProfile::DaslabIq3
                 || executor.resident_bank_capacity() != crate::daslab_profile::BANK_SLOTS
             {
-                return Err(error());
+                return Err(Error::InvalidFormat(concat!(
+                    "native model chunk rejected at source line ",
+                    line!()
+                )));
             }
             requests.extend(batch_moe::Workspace::batch_router_allocation_requests());
         }
         if config.public_frozen_host_router {
             if !config.public_frozen_host_sources || config.public_warm_batch_router {
-                return Err(error());
+                return Err(Error::InvalidFormat(concat!(
+                    "native model chunk rejected at source line ",
+                    line!()
+                )));
             }
             requests.extend(batch_moe::Workspace::batch_router_allocation_requests());
         }
@@ -1321,7 +1445,10 @@ impl Plan {
             || config.public_frozen_gu_integer != executor.target_frozen_gu_integer_reserved
             || config.public_frozen_down_integer != executor.target_frozen_down_integer_reserved
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         if config.public_frozen_host_staging {
             requests.extend([batch_moe::FROZEN_STAGING_OWNER_BYTES; 3]);
@@ -1380,16 +1507,25 @@ impl Plan {
             || sum(&requests)? != NEW_MAIN + extra
             || OLD_MAIN.checked_add(sum(&requests)?) != Some(TOTAL_MAIN + extra)
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         let head = graph.tensor("output.weight")?;
         let row = head.info().row_bytes();
         if row == 0 {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         let tile_rows = (64_u64 * 1024 * 1024 / row).min(16384);
         if tile_rows == 0 {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         let head_tiles = (g.vocabulary as u64).div_ceil(tile_rows);
         let runtime = runtime_bytes(head_tiles)?
@@ -1479,7 +1615,10 @@ impl Plan {
             || batch_moe::Workspace::runtime_io_increment() != 524288
             || ops::GUARDED_ROUTER_CAPACITY_BYTES > 8192
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         Ok(Self {
             requests,
@@ -1500,13 +1639,19 @@ impl Plan {
         // prewarm() independently proves exact planned cache names/counts and
         // seals them; here the actual graph count/full-page SUM must match too.
         if graph.static_vectors().count() != 341 || pages != PUBLIC_MAIN {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         let derived = (0..LAYERS).try_fold(0usize, |n, l| {
             Ok::<_, Error>(n + usize::from(graph.layer_kind(l)? == AttentionKind::Gdn))
         })?;
         if 341 + derived + 2 != 379 {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         Ok(())
     }
@@ -1602,7 +1747,10 @@ impl PublicThreeGdnScope {
             || !self.original_dispatch
             || !self.original_families
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         Ok(())
     }
@@ -1663,7 +1811,10 @@ fn next_four_rows_chunks(
 ) -> Result<u64> {
     if policy == NativeDecodeKernels::FourGdn && count == 4 {
         if !actual.0 || actual.1 == 0 || actual.1 != actual.2 {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         current.checked_add(1).ok_or(Error::ArithmeticOverflow)
     } else {
@@ -1672,7 +1823,10 @@ fn next_four_rows_chunks(
 }
 fn grouped_status_states(states: [(bool, u64); 3]) -> Result<(bool, [u64; 3])> {
     if states.iter().any(|state| state.0 != states[0].0) {
-        return Err(error());
+        return Err(Error::InvalidFormat(concat!(
+            "native model chunk rejected at source line ",
+            line!()
+        )));
     }
     Ok((states[0].0, states.map(|state| state.1)))
 }
@@ -1697,7 +1851,10 @@ fn grouped_ple_selection_allowed(
 }
 fn next_grouped_ple_chunks(selected: bool, actual: bool, current: u64) -> Result<u64> {
     if selected != actual {
-        return Err(error());
+        return Err(Error::InvalidFormat(concat!(
+            "native model chunk rejected at source line ",
+            line!()
+        )));
     }
     if actual {
         current.checked_add(1).ok_or(Error::ArithmeticOverflow)
@@ -1721,7 +1878,10 @@ fn grouped_ple_run_allowed_selected(
 }
 fn grouped_ple_completed_receipt(selected: bool, chunks: u64) -> Result<(bool, u64)> {
     if selected == (chunks == 0) {
-        return Err(error());
+        return Err(Error::InvalidFormat(concat!(
+            "native model chunk rejected at source line ",
+            line!()
+        )));
     }
     Ok((selected, chunks))
 }
@@ -1779,25 +1939,37 @@ impl Workspace {
             || executor.target_four_rows_active
                 != (self.decode_kernels()? == NativeDecodeKernels::FourGdn)
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         if self.moe.frozen_host_source_down_integer_selected() {
             if !executor.target_frozen_down_integer_reserved
                 || self.moe.frozen_down_integer_owner_id().is_none()
             {
-                return Err(error());
+                return Err(Error::InvalidFormat(concat!(
+                    "native model chunk rejected at source line ",
+                    line!()
+                )));
             }
             self.three_gdn_scope(executor, admission)?.validate()?;
         }
         if self.ple.public_grouped_reads() {
             if !self.public_grouped_ple_reads_reserved {
-                return Err(error());
+                return Err(Error::InvalidFormat(concat!(
+                    "native model chunk rejected at source line ",
+                    line!()
+                )));
             }
             self.three_gdn_scope(executor, admission)?.validate()?;
         }
         if self.grouped_status_state()?.0 {
             if !self.public_grouped_status_folds_reserved || crate::status_fold_batch::selected() {
-                return Err(error());
+                return Err(Error::InvalidFormat(concat!(
+                    "native model chunk rejected at source line ",
+                    line!()
+                )));
             }
             self.three_gdn_scope(executor, admission)?.validate()?;
         }
@@ -1810,7 +1982,10 @@ impl Workspace {
                     || !executor.target_four_rows_reserved
                     || !self.moe.public_four_members_policy()
                 {
-                    return Err(error());
+                    return Err(Error::InvalidFormat(concat!(
+                        "native model chunk rejected at source line ",
+                        line!()
+                    )));
                 }
                 self.three_gdn_scope(executor, admission)?.validate()
             }
@@ -1915,7 +2090,10 @@ impl Workspace {
                 .checked_add(batch_moe::batch_router::HOST_BYTES)
                 .ok_or(Error::ArithmeticOverflow)?;
             if host > limit {
-                return Err(error());
+                return Err(Error::InvalidFormat(concat!(
+                    "native model chunk rejected at source line ",
+                    line!()
+                )));
             }
         }
         if config.live_member_reduction {
@@ -1986,7 +2164,10 @@ impl Workspace {
             )
             || model.public.full_page_bytes() != PUBLIC_MAIN
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         let gr = gr::Workspace::allocate(graph, &mut model.arena)?;
         let gdn = gdn::GdnBatchWorkspace::allocate(
@@ -2177,7 +2358,10 @@ impl Workspace {
         if !Arc::ptr_eq(&self.poison, &model.admission.sequence_poison())
             || self.poison.load(Ordering::Acquire)
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         Ok(())
     }
@@ -2284,7 +2468,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 .public_grouped_reads()
                 && tile != 8
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         let tile = NativeProjectionTile::new(tile)?;
         let boundary = self.completed_native_projection_boundary(executor)?;
@@ -2304,7 +2491,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             || !self.arena.public_owned_zero_audit_enabled()
             || !self.io.public_owned_zero_audit_enabled()
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         self.graph.verify_unchanged()?;
         executor.check_client(self.arena.client().map_err(u::fault)?)?;
@@ -2326,7 +2516,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
     pub(crate) fn completed_target_rows_cursor(&self, executor: &GpuExecutor<'f>) -> Result<usize> {
         let native = self.native_batch.as_ref().ok_or(error())?;
         if !executor.target_rows_reserved || native.target_rows.is_none() {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         executor.check_target_rows_policy()?;
         self.completed_native_projection_boundary(executor)?;
@@ -2348,7 +2541,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             || (fixture != crate::oracle_trace::Fixture::Q4Rainwater
                 && self.native_decode_kernels()? != NativeDecodeKernels::SingleAll)
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         executor.check_lab_oracle_fixture(fixture)?;
         Ok(boundary)
@@ -2466,7 +2662,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         self.lab_oracle_attempt(executor, |model, executor| {
             let trace = executor.oracle_trace.as_ref().ok_or(error())?;
             if !trace.is_replay() {
-                return Err(error());
+                return Err(Error::InvalidFormat(concat!(
+                    "native model chunk rejected at source line ",
+                    line!()
+                )));
             }
             let boundary = model.lab_oracle_boundary(executor, trace.start(), trace.fixture())?;
             let native = model.native_batch.as_mut().ok_or(error())?;
@@ -2484,7 +2683,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             let trace = executor.oracle_trace.as_ref().ok_or(error())?;
             model.lab_oracle_boundary(executor, trace.start() + trace.decode(), trace.fixture())?;
             if !trace.is_replay() {
-                return Err(error());
+                return Err(Error::InvalidFormat(concat!(
+                    "native model chunk rejected at source line ",
+                    line!()
+                )));
             }
             trace.complete()
         })
@@ -2503,7 +2705,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
     ) -> Result<u64> {
         let proof = self.completed_native_projection_boundary(executor)?;
         if self.native_cpu_miss_cap()? != Some(10) {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         executor.advise_resident_gpu_sources_not_needed(&proof, pageout)
     }
@@ -2579,7 +2784,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         self.completed_native_projection_boundary(executor)?;
         let native = self.native_batch.as_ref().ok_or(error())?;
         if native.target_rows.is_none() || !executor.target_rows_reserved {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         executor.check_target_rows_policy()?;
         native
@@ -2643,7 +2851,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
     ) -> Result<(bool, u64)> {
         self.completed_native_projection_boundary(executor)?;
         if self.native_cpu_miss_cap()?.is_none() {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         Ok((
             self.admission.deferred_token_io(),
@@ -3075,7 +3286,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             || !self.pending_moe.is_empty()
             || self.ple_batch_pending.is_some()
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         let native = self.native_batch.as_ref().ok_or(error())?;
         if !native.public_frozen_host_sources
@@ -3096,7 +3310,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                     || executor.native_projection_tile() != 8
                     || executor.native_projection_member_capacity() != 8)
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         if down_integer {
             let accepted_prefill = match (
@@ -3120,7 +3337,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 _ => false,
             };
             if !accepted_prefill || native.decode_kernels()? != NativeDecodeKernels::Chunk {
-                return Err(error());
+                return Err(Error::InvalidFormat(concat!(
+                    "native model chunk rejected at source line ",
+                    line!()
+                )));
             }
         }
         if self.position == 0 {
@@ -3130,7 +3350,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                     .as_ref()
                     .is_none_or(|permit| !permit.reset_consumed())
             {
-                return Err(error());
+                return Err(Error::InvalidFormat(concat!(
+                    "native model chunk rejected at source line ",
+                    line!()
+                )));
             }
         } else {
             self.completed_native_projection_boundary(executor)?;
@@ -3197,7 +3420,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         self.completed_native_projection_boundary(executor)?;
         let native = self.native_batch.as_ref().ok_or(error())?;
         if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         Ok(native.moe.frozen_source_counters())
     }
@@ -3209,7 +3435,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         self.completed_native_projection_boundary(executor)?;
         let native = self.native_batch.as_ref().ok_or(error())?;
         if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         native.moe.frozen_host_source_partition_exit()
     }
@@ -3221,7 +3450,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         self.completed_native_projection_boundary(executor)?;
         let native = self.native_batch.as_ref().ok_or(error())?;
         if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         native.moe.frozen_host_source_private_tables()
     }
@@ -3233,7 +3465,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         self.completed_native_projection_boundary(executor)?;
         let native = self.native_batch.as_ref().ok_or(error())?;
         if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         native.moe.frozen_host_source_workgroup_tables()
     }
@@ -3245,7 +3480,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         self.completed_native_projection_boundary(executor)?;
         let native = self.native_batch.as_ref().ok_or(error())?;
         if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         native.moe.frozen_host_source_shared_down_scales()
     }
@@ -3256,7 +3494,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         self.completed_native_projection_boundary(executor)?;
         let native = self.native_batch.as_ref().ok_or(error())?;
         if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         native.moe.frozen_host_source_shared_gate_up_factors()
     }
@@ -3267,7 +3508,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         self.completed_native_projection_boundary(executor)?;
         let native = self.native_batch.as_ref().ok_or(error())?;
         if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         native.moe.frozen_host_source_four_row_down()
     }
@@ -3280,7 +3524,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         self.completed_native_projection_boundary(executor)?;
         let native = self.native_batch.as_ref().ok_or(error())?;
         if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         native.moe.frozen_host_source_two_row_gate_up()
     }
@@ -3292,7 +3539,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         self.completed_native_projection_boundary(executor)?;
         let native = self.native_batch.as_ref().ok_or(error())?;
         if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         native.moe.frozen_host_source_three_members()
     }
@@ -3304,7 +3554,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         self.completed_native_projection_boundary(executor)?;
         let native = self.native_batch.as_ref().ok_or(error())?;
         if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         native.moe.frozen_host_source_gu_integer()
     }
@@ -3316,7 +3569,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         self.completed_native_projection_boundary(executor)?;
         let native = self.native_batch.as_ref().ok_or(error())?;
         if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         if native.moe.frozen_host_source_down_integer_selected() {
             native.validate_target_decode_policy(executor, &self.admission)?;
@@ -3331,7 +3587,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         self.completed_native_projection_boundary(executor)?;
         let native = self.native_batch.as_ref().ok_or(error())?;
         if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         native.moe.frozen_host_source_gu_stride_four()
     }
@@ -3343,7 +3602,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         self.completed_native_projection_boundary(executor)?;
         let native = self.native_batch.as_ref().ok_or(error())?;
         if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         native.moe.frozen_host_source_down_stride_four()
     }
@@ -3354,11 +3616,17 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         self.completed_native_projection_boundary(executor)?;
         let native = self.native_batch.as_ref().ok_or(error())?;
         if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         let selected = native.moe.frozen_host_source_packed_staging()?;
         if selected && native.moe.frozen_source_counters().staging_dispatches == 0 {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         Ok(selected)
     }
@@ -3376,7 +3644,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             || executor.target_frozen_host_source_identity.is_none()
             || !executor.resident_banks_frozen
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         if self.position == 0 {
             if self.context != 13
@@ -3386,7 +3657,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                     .and_then(|n| n.public_warm_replay.as_ref())
                     .is_none_or(|p| !p.reset_consumed())
             {
-                return Err(error());
+                return Err(Error::InvalidFormat(concat!(
+                    "native model chunk rejected at source line ",
+                    line!()
+                )));
             }
         } else {
             self.completed_native_projection_boundary(executor)?;
@@ -3396,7 +3670,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             || !native.public_frozen_host_router
             || !native.moe.frozen_host_sources_enabled()
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         native
             .moe
@@ -3419,7 +3696,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 .and_then(|n| n.public_warm_replay.as_ref())
                 .is_none_or(|p| !p.reset_consumed())
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         self.native_batch
             .as_mut()
@@ -3432,7 +3712,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
     pub(crate) fn begin_lab_request_io_reuse(&self, executor: &GpuExecutor<'f>) -> Result<()> {
         self.completed_native_projection_boundary(executor)?;
         if self.native_cpu_miss_cap()? != Some(10) {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         self.admission.begin_request_io_reuse()
     }
@@ -3485,7 +3768,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             || !native.moe.frozen_host_source_down_integer_selected()
             || !native.ple.public_grouped_reads()
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             executor.activate_public_q6_integer_verify_head()?;
@@ -3539,7 +3825,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 .ple
                 .public_grouped_reads()
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         let boundary = self.completed_native_projection_boundary(executor)?;
         let attempt =
@@ -3609,7 +3898,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             accepted_prefill,
             self.admission.request_io_reuse_active(),
         ) {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let native = self.native_batch.as_mut().ok_or(error())?;
@@ -3621,7 +3913,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 cancel,
             )?;
             if native.decode_kernels()? != NativeDecodeKernels::ThreeGdn {
-                return Err(error());
+                return Err(Error::InvalidFormat(concat!(
+                    "native model chunk rejected at source line ",
+                    line!()
+                )));
             }
             native.validate_target_decode_policy(executor, &self.admission)?;
             u::cancel(cancel)
@@ -3651,7 +3946,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         queue: &wgpu::Queue,
     ) -> Result<()> {
         if !crate::strata_port::enabled() {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         u::cancel(cancel)?;
         let _boundary = self.completed_native_projection_boundary(executor)?;
@@ -3683,14 +3981,20 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         let boundary = self.completed_native_projection_boundary(executor)?;
         executor.check_target_rows_policy()?;
         if !executor.target_four_rows_reserved || executor.target_four_rows_active {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         let native = self.native_batch.as_ref().ok_or(error())?;
         if !native.public_four_rows_reserved
             || !native.moe.public_four_members_policy()
             || !native.moe.frozen_host_sources_enabled()
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         native
             .three_gdn_scope(executor, &self.admission)?
@@ -3720,7 +4024,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             accepted_prefill,
             self.admission.request_io_reuse_active(),
         ) {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let native = self.native_batch.as_mut().ok_or(error())?;
@@ -3740,7 +4047,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             native.ple.select_public_four_rows(&boundary)?;
             executor.target_four_rows_active = true;
             if native.decode_kernels()? != NativeDecodeKernels::FourGdn {
-                return Err(error());
+                return Err(Error::InvalidFormat(concat!(
+                    "native model chunk rejected at source line ",
+                    line!()
+                )));
             }
             native.validate_target_decode_policy(executor, &self.admission)?;
             u::cancel(cancel)
@@ -3775,7 +4085,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 || executor.target_verify4_dense_calls != 0
                 || executor.target_verify4_fused_calls != 0
             {
-                return Err(error());
+                return Err(Error::InvalidFormat(concat!(
+                    "native model chunk rejected at source line ",
+                    line!()
+                )));
             }
             return Ok((false, 0));
         }
@@ -3786,7 +4099,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         if executor.target_verify4_dense_calls == 0
             || executor.target_verify4_dense_calls != executor.target_verify4_fused_calls
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         Ok((true, native.four_rows_completed_chunks))
     }
@@ -3800,10 +4116,16 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         if selected {
             native.validate_target_decode_policy(executor, &self.admission)?;
             if native.three_gdn_completed_chunks == 0 {
-                return Err(error());
+                return Err(Error::InvalidFormat(concat!(
+                    "native model chunk rejected at source line ",
+                    line!()
+                )));
             }
         } else if native.three_gdn_completed_chunks != 0 {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         Ok((selected, native.three_gdn_completed_chunks))
     }
@@ -3852,7 +4174,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             native.decode_kernels()?,
         ) || native.grouped_ple_completed_chunks != 0
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         if selected {
             self.native_batch
@@ -3926,7 +4251,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             || native.grouped_status_completed != crate::status_fold_batch::Completed::default()
             || crate::status_fold_batch::selected()
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         // Preflight all three actual workspaces BEFORE any immutable selection.
         native.gr.validate_public_grouped_status_selection()?;
@@ -3974,7 +4302,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 .frozen_host_source_down_integer_selected()
                 && policy != NativeDecodeKernels::Chunk
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         if self
             .native_batch
@@ -3984,7 +4315,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .0
             && policy != NativeDecodeKernels::Chunk
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         if self
             .native_batch
@@ -3994,7 +4328,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .public_grouped_reads()
             && policy != NativeDecodeKernels::Chunk
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         let boundary = self.completed_native_projection_boundary(executor)?;
         let observed = self.native_decode_kernels()?;
@@ -4006,14 +4343,20 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .live_member_reduction_enabled()
             && policy != NativeDecodeKernels::Chunk
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         // Each fixture has one public continuation policy. Repeated same-policy
         // selection is allowed; a fresh owner is required for another sample.
         if observed != NativeDecodeKernels::Chunk && observed != policy
             || policy != NativeDecodeKernels::Chunk && executor.native_projection_tile() != 1
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let native = self.native_batch.as_mut().ok_or(error())?;
@@ -4041,11 +4384,17 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                     executor.set_lab_native_single_dense_dispatch(&boundary)?;
             }
             if native.dense_member_capacity != executor.native_projection_member_capacity() {
-                return Err(error());
+                return Err(Error::InvalidFormat(concat!(
+                    "native model chunk rejected at source line ",
+                    line!()
+                )));
             }
             let actual = self.native_decode_kernels()?;
             if actual != policy {
-                return Err(error());
+                return Err(Error::InvalidFormat(concat!(
+                    "native model chunk rejected at source line ",
+                    line!()
+                )));
             }
             u::cancel(cancel)?;
             Ok(actual)
@@ -4120,7 +4469,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         cancel: &AtomicBool,
     ) -> Result<Zeroizing<Vec<f32>>> {
         if purpose == Purpose::AllRowsWithCarry {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         self.execute_native_chunk(executor, tokens, purpose, cancel, |output| match output {
             ChunkOutput::Legacy(logits) => Ok(logits),
@@ -4203,13 +4555,19 @@ type TokenPacket = (
 );
 fn packet(start: usize, context: usize, tokens: &[u32]) -> Result<TokenPacket> {
     if !(1..=MAX_BATCH).contains(&tokens.len()) || context == 0 || context > 4096 {
-        return Err(error());
+        return Err(Error::InvalidFormat(concat!(
+            "native model chunk rejected at source line ",
+            line!()
+        )));
     }
     let end = start
         .checked_add(tokens.len())
         .ok_or(Error::ArithmeticOverflow)?;
     if end > context || tokens.iter().any(|&t| t as usize >= 248320) {
-        return Err(error());
+        return Err(Error::InvalidFormat(concat!(
+            "native model chunk rejected at source line ",
+            line!()
+        )));
     }
     let mut ids = Zeroizing::new([0; MAX_BATCH]);
     let mut positions = Zeroizing::new([0; MAX_BATCH]);
@@ -4283,17 +4641,26 @@ impl Workspace {
             purpose,
             decode_policy == NativeDecodeKernels::FourGdn && e.target_four_rows_active,
         ) {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         e.check_client(m.arena.client().map_err(u::fault)?)?;
         e.check_resident_admission(&m.admission)?;
         if self.dense_member_capacity != e.native_projection_member_capacity() {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         if e.target_rows_reserved != self.target_rows.is_some()
             || purpose == Purpose::AllRowsWithCarry && self.target_rows.is_none()
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         if self.target_rows.is_some() {
             e.check_target_rows_policy()?;
@@ -4303,7 +4670,10 @@ impl Workspace {
                 || self.moe.cpu_gpu_overlap().is_some()
                 || self.moe.resident_router_active()
             {
-                return Err(error());
+                return Err(Error::InvalidFormat(concat!(
+                    "native model chunk rejected at source line ",
+                    line!()
+                )));
             }
         }
         if let Some(permit) = &self.public_target_request_io {
@@ -4351,7 +4721,10 @@ impl Workspace {
                 || e.q3_integer_moe
                 || e.packed_profile != crate::expert_banks::OriginalPackedProfile::DaslabIq3
             {
-                return Err(error());
+                return Err(Error::InvalidFormat(concat!(
+                    "native model chunk rejected at source line ",
+                    line!()
+                )));
             }
             batch_moe::prepared_verify3::validate_count(
                 tokens.len(),
@@ -4368,7 +4741,10 @@ impl Workspace {
         // any other layer can enqueue work for this transaction.
         decode_policy.validate_count(tokens.len())?;
         if self.moe.cpu_miss_cap().is_some() && tokens.len() != 1 {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         if m.poisoned
             || m.retired.load(Ordering::Acquire)
@@ -4377,7 +4753,10 @@ impl Workspace {
             || m.ple_batch_pending.is_some()
             || m.layers.len() != LAYERS
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         let start = Zeroizing::new(m.position);
         let count = Zeroizing::new(tokens.len());
@@ -4552,7 +4931,10 @@ impl Workspace {
                 .tensor(&format!("blk.{layer}.ffn_gate_inp.weight"))?;
             let matrix = Matrix::new(tensor)?;
             if matrix.inputs() != D || matrix.outputs() != ROUTER || matrix.experts() != 1 {
-                return Err(error());
+                return Err(Error::InvalidFormat(concat!(
+                    "native model chunk rejected at source line ",
+                    line!()
+                )));
             }
             projector.enqueue_batch(
                 BoundProjection { tensor, matrix },
@@ -4569,7 +4951,10 @@ impl Workspace {
                 let expert_start = Instant::now();
                 pending.moe[layer] = Some(if self.moe.frozen_host_batch_router_active() {
                     if !self.public_frozen_host_router || !self.public_frozen_host_sources {
-                        return Err(error());
+                        return Err(Error::InvalidFormat(concat!(
+                            "native model chunk rejected at source line ",
+                            line!()
+                        )));
                     }
                     e.enqueue_frozen_host_batch_router_moe(
                         m.graph,
@@ -4585,7 +4970,10 @@ impl Workspace {
                     )?
                 } else {
                     if self.public_frozen_host_router {
-                        return Err(error());
+                        return Err(Error::InvalidFormat(concat!(
+                            "native model chunk rejected at source line ",
+                            line!()
+                        )));
                     }
                     e.enqueue_batch_router_moe(
                         m.graph,
@@ -4709,7 +5097,10 @@ impl Workspace {
                         .and_then(|packet| packet.gpu_selection())
                         .is_none()
                     {
-                        return Err(error());
+                        return Err(Error::InvalidFormat(concat!(
+                            "native model chunk rejected at source line ",
+                            line!()
+                        )));
                     }
                     e.gpu_router_calls = e
                         .gpu_router_calls
@@ -4777,7 +5168,10 @@ impl Workspace {
                     )?
                 } else if self.moe.frozen_host_sources_enabled() {
                     if !self.public_frozen_host_sources {
-                        return Err(error());
+                        return Err(Error::InvalidFormat(concat!(
+                            "native model chunk rejected at source line ",
+                            line!()
+                        )));
                     }
                     e.enqueue_routed_moe_frozen_host_batch(
                         m.graph,
@@ -4793,7 +5187,10 @@ impl Workspace {
                     )?
                 } else {
                     if e.target_frozen_host_source_identity.is_some() {
-                        return Err(error());
+                        return Err(Error::InvalidFormat(concat!(
+                            "native model chunk rejected at source line ",
+                            line!()
+                        )));
                     }
                     e.enqueue_routed_moe_batch(
                         m.graph,
@@ -4929,7 +5326,10 @@ impl Workspace {
         }
         let (still_selected, grouped_status_after) = self.grouped_status_state()?;
         if grouped_status_folds != still_selected {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         let final_proof_start = Instant::now();
         let (output, ple) = completed_proof(
@@ -5033,7 +5433,10 @@ impl Workspace {
                 }
             }
             if at != refs.len() {
-                return Err(error());
+                return Err(Error::InvalidFormat(concat!(
+                    "native model chunk rejected at source line ",
+                    line!()
+                )));
             }
             self.gdn
                 .accept_after_whole_model_chunk_acceptance(&m.arena, &refs, cancel)?
@@ -5052,7 +5455,10 @@ impl Workspace {
                 }
             }
             if at != refs.len() {
-                return Err(error());
+                return Err(Error::InvalidFormat(concat!(
+                    "native model chunk rejected at source line ",
+                    line!()
+                )));
             }
             self.qsa
                 .accept_after_whole_model_chunk_acceptance(&m.arena, &refs, cancel)?
@@ -5085,7 +5491,10 @@ impl Workspace {
             || m.retired.load(Ordering::Acquire)
             || m.position != *start
         {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         // Prepare the checked counter before ANY family publication. The
         // guarded proposal is discarded on all late failure/cancellation paths.
@@ -5153,7 +5562,10 @@ impl Workspace {
         e.check_original_bank_metadata(LAYERS, ORIGINAL_BANK_HOST)?;
         u::cancel(cancel)?;
         if self.poison.load(Ordering::Acquire) || m.retired.load(Ordering::Acquire) || m.poisoned {
-            return Err(error());
+            return Err(Error::InvalidFormat(concat!(
+                "native model chunk rejected at source line ",
+                line!()
+            )));
         }
         *m.completed_cpu_misses = *completed_cpu_misses;
         self.three_gdn_completed_chunks = three_gdn_completed_chunks;
