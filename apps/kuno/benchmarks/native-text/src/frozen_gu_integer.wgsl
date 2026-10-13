@@ -252,7 +252,9 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
             if map[p.d]!=p.h || map[p.d+1u]!=0u || map[p.d+2u]!=p.h {map_valid=false;}
             else {groups=map[p.d+3u];}
         }
-        if map_valid && (p.e<1u || p.e>30u || groups!=p.e) {map_valid=false;}
+        // p.e is the caller's capacity bound; the MAP header carries the
+        // exact routed group count for this source.
+        if map_valid && (p.e<1u || p.e>30u || groups<1u || groups>p.e) {map_valid=false;}
         if map_valid {
             var count=0u;
             for(var g=0u;g<groups;g+=1u) {
@@ -370,7 +372,7 @@ fn main(@builtin(global_invocation_id) global:vec3<u32>,@builtin(workgroup_id) w
             if map[p.r0]!=p.count || map[p.r0+1u]!=0u || map[p.r0+2u]!=p.count {map_valid=false;}
             else {groups=map[p.r0+3u];}
         }
-        if map_valid && groups!=p.r1 {map_valid=false;}
+        if map_valid && (groups<1u || groups>p.r1) {map_valid=false;}
         if !map_valid {
             for(var i=0u;i<48u;i+=1u) {
                 if planes[base+i]!=0u {atomicStore(&records_valid,0u);atomicOr(&fault[0],8u);}

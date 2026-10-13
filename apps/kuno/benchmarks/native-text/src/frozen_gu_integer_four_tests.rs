@@ -306,7 +306,8 @@ fn compact_prepare_lowers_with_builder_rules_and_zero_group_shards() {
     // The builder derives each disjoint shard from the immutable MAP using the
     // original partition ranges and the caller's exact group bound.
     assert!(source.contains("shard_first(shard)") && source.contains("shard_parts(shard)"));
-    assert!(source.contains("groups!=p.e"));
+    // p.e is the capacity bound; the MAP header holds the exact count.
+    assert!(source.contains("groups<1u || groups>p.e"));
     for shard in 0..5 {
         assert!(
             source.contains(&format!("6144u+48u*{}u", shard)) || source.contains("6144u+48u*shard")
@@ -392,7 +393,7 @@ fn compact_audit_reconstructs_validates_and_erases_each_disjoint_record() {
     assert!(source.contains("at<6144u") && source.contains("at<6384u"));
     // Reconstruction follows the builder's exact rule from the unchanged MAP.
     assert!(source.contains("map[p.r0]!=p.count || map[p.r0+1u]!=0u || map[p.r0+2u]!=p.count"));
-    assert!(source.contains("groups!=p.r1"));
+    assert!(source.contains("groups<1u || groups>p.r1"));
     assert!(
         source.contains("audit_shard_first(shard)") && source.contains("audit_shard_parts(shard)")
     );

@@ -836,7 +836,7 @@ fn frozen_gu_integer_count1to3_compact_schedule_keeps_original_arithmetic_and_re
     // the five disjoint record builders behind the immutable MAP gate.
     assert!(prepare.contains("p.h<1u || p.h>3u || arrayLength(&planes)!=16384u"));
     assert!(prepare.contains("token==0u && local<5u"));
-    assert!(prepare.contains("groups!=p.e"));
+    assert!(prepare.contains("groups<1u || groups>p.e"));
     assert!(prepare.contains("p.e<1u || p.e>30u"));
     assert!(prepare.contains("planes[6144u+48u*shard+8u+count]=g"));
     assert!(prepare.contains("gu_y=count;if gu_y>4u {gu_y=4u;}"));
