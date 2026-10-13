@@ -3292,7 +3292,9 @@ impl Sources {
                             // Compaction: one indirect dispatch per shard, driven
                             // by the records built in the original owner tail.
                             (if count == 4 {
-                                if crate::quant_matvec::frozen_gu_integer::four::FIRST_PLANE_PUBLIC_PROBE {
+                                if crate::quant_matvec::frozen_gu_integer::four::shuffle::PUBLIC_PROBE {
+                                    crate::quant_matvec::frozen_gu_integer::four::launch_compact_shuffle
+                                } else if crate::quant_matvec::frozen_gu_integer::four::FIRST_PLANE_PUBLIC_PROBE {
                                     crate::quant_matvec::frozen_gu_integer::four::launch_compact_first_plane
                                 } else {
                                     crate::quant_matvec::frozen_gu_integer::four::launch_compact
@@ -3394,7 +3396,11 @@ impl Sources {
                             // Same records the GU leaf consumed; DOWN only reads
                             // the authenticated full GU owner.
                             (if count == 4 {
-                                crate::quant_matvec::frozen_down_integer::four::launch_compact
+                                if crate::quant_matvec::frozen_gu_integer::four::shuffle::PUBLIC_PROBE {
+                                    crate::quant_matvec::frozen_down_integer::four::launch_compact_shuffle
+                                } else {
+                                    crate::quant_matvec::frozen_down_integer::four::launch_compact
+                                }
                             } else {
                                 crate::quant_matvec::frozen_down_integer::launch_compact
                             })(

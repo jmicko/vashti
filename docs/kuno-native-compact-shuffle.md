@@ -39,3 +39,13 @@ are checked. At initial handoff these tests have been written but not run:
 the root task exclusively owns the compiler cache and GPU. Required physical
 gates remain unchanged cold/warm CPU13, complete cleanup and independent
 unprofiled code200 timing. No numerical or speed acceptance is claimed yet.
+
+## Root fixed-public selection
+
+The root experiment selects both count4 compact leaves with compile-time
+`shuffle::PUBLIC_PROBE`, reported as `compiled_count4_compact_shuffle` by both
+public probes. Host admission explicitly requires subgroup support and16..32
+bounds before device creation when this compact path is enabled. The rejected
+first-plane approximation remains false. No runtime/API selector is added.
+The two focused shader-lowering tests passed before selection; full source and
+unchanged CPU13/device gates are required for this selected artifact.
