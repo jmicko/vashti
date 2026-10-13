@@ -899,6 +899,35 @@ mod tests {
         assert!(origin.validate(&a).is_err());
     }
 
+    #[cfg(feature = "strata-rust-port")]
+    #[test]
+    fn profile_owned_plan_protects_wanted_hits_and_rejects_redirected_writes() {
+        let mut bank = BankSlots::new(CAPACITY, EXPERTS).unwrap();
+        seed(&mut bank, &(0..CAPACITY).collect::<Vec<_>>());
+        let wanted = public_strata_bank_profile::prefix(0)
+            .unwrap()
+            .into_iter()
+            .map(usize::from)
+            .collect::<Vec<_>>();
+        let mut plan = bank.plan(&wanted).unwrap();
+        validate_profile_selected_plan(&bank, &plan, &wanted).unwrap();
+        assert!(!plan.uploads.is_empty());
+        let original = plan.uploads[0];
+        let wanted_hit = wanted
+            .iter()
+            .find_map(|&id| bank.resident_slot(id).unwrap())
+            .unwrap();
+        plan.uploads[0].1 = wanted_hit;
+        assert!(validate_profile_selected_plan(&bank, &plan, &wanted).is_err());
+        plan.uploads[0] = original;
+        validate_profile_selected_plan(&bank, &plan, &wanted).unwrap();
+        bank.commit(plan).unwrap();
+        let actual = (0..CAPACITY)
+            .map(|slot| bank.resident_expert(slot).unwrap().unwrap())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(actual, wanted.into_iter().collect());
+    }
+
     fn seed(bank: &mut BankSlots, ids: &[usize]) {
         let plan = bank.plan(ids).unwrap();
         bank.validate_pending(&plan, ids).unwrap();
