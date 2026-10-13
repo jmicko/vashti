@@ -584,6 +584,7 @@ pub struct Traffic {
     pub private_upload_bytes: u64,
     pub minimal_packet_reads: u64,
     pub followup_copy_calls: u64,
+    pub draft_window_reads: u64,
     pub full_output_reads: u64,
     pub explicit_dispatches: u64,
     pub batched_repair_calls: u64,
@@ -616,10 +617,14 @@ impl DraftOutput {
     }
 }
 
+#[path = "resident_mtp_window.rs"]
+mod window;
+
 pub struct ResidentMtp<'g, 'f> {
     graph: &'g MtpGraph<'f>,
     arena: PrivateArena,
     ids: [BufferId; N],
+    draft_window: Option<BufferId>,
     client: ComputeClient<WgpuRuntime>,
     public: Option<Public>,
     ledger: MainAdmission,
@@ -900,7 +905,7 @@ fn grid(words: usize) -> Result<CubeCount> {
     Ok(CubeCount::Static(l.workgroups_x, l.workgroups_y, 1))
 }
 fn private_plan() -> Result<u64> {
-    WORDS.into_iter().try_fold(0_u64, |sum, w| {
+    WORDS.into_iter().try_fold(window::EXTRA_BYTES, |sum, w| {
         sum.checked_add(BufferLayout::new(w).map_err(error)?.owned_bytes as u64)
             .ok_or(Error::ArithmeticOverflow)
     })
@@ -1287,9 +1292,11 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
                 .map_err(error)?;
         arena.enable_public_owned_zero_audit().map_err(error)?;
         let mut ledger = MainAdmission::new(MAIN_BYTES, 0).map_err(error)?;
-        ledger
-            .precharge(&WORDS.map(|n| (n * 4) as u64))
-            .map_err(error)?;
+        let mut plan: Vec<u64> = WORDS.map(|n| (n * 4) as u64).to_vec();
+        if crate::strata_port::enabled() {
+            plan.push(16);
+        }
+        ledger.precharge(&plan).map_err(error)?;
         let mut allocated = Vec::with_capacity(N);
         for n in WORDS {
             allocated.push(arena.allocate_zeroed(n).map_err(error)?);
@@ -1297,6 +1304,11 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         let ids: [BufferId; N] = allocated
             .try_into()
             .map_err(|_| Error::InvalidBufferLength)?;
+        let draft_window = if crate::strata_port::enabled() {
+            Some(arena.allocate_zeroed(4).map_err(error)?)
+        } else {
+            None
+        };
         if arena.charged_bytes() as u64 != private {
             return Err(Error::InvalidBufferLength);
         }
@@ -1310,6 +1322,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             graph,
             arena,
             ids,
+            draft_window,
             client: owned_client,
             public: None,
             ledger,
@@ -1413,6 +1426,9 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             .iter()
             .map(|&id| self.arena.handle(id).cloned().map_err(error))
             .collect::<Result<_>>()?;
+        if let Some(id) = self.draft_window {
+            owners.push(self.arena.handle(id).cloned().map_err(error)?);
+        }
         if let Some(public) = &self.public {
             validate_english_owner(
                 self.graph.profile(),
@@ -1914,7 +1930,10 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             .map_err(error)
     }
     fn read_words(&self, b: B) -> Result<Zeroizing<Vec<u32>>> {
-        let layout = self.arena.layout(self.id(b)).map_err(error)?;
+        self.read_words_id(self.id(b))
+    }
+    fn read_words_id(&self, id: BufferId) -> Result<Zeroizing<Vec<u32>>> {
+        let layout = self.arena.layout(id).map_err(error)?;
         // Simultaneous full Bytes + guarded conversion + largest retained
         // output guards remain inside the explicit16MiB host plan.
         if 2 * layout.owned_bytes + MAX_LIVE_OUTPUTS * OUTPUT_HOST_BYTES + 2 * 1024 * 1024
@@ -1924,7 +1943,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         }
         let result = self
             .client()?
-            .read_one(self.arena.handle(self.id(b)).map_err(error)?.clone())
+            .read_one(self.arena.handle(id).map_err(error)?.clone())
             .map_err(error)?;
         let bytes = Bytes(result);
         self.count_traffic(|traffic| {
@@ -2121,6 +2140,9 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         // the tracked arena retains owners for its full close/quarantine path.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<()> {
             for &id in &self.ids {
+                u::zero(&self.arena, id)?;
+            }
+            if let Some(id) = self.draft_window {
                 u::zero(&self.arena, id)?;
             }
             cubecl::future::block_on(self.client()?.sync()).map_err(error)?;
@@ -3600,7 +3622,9 @@ impl ResidentMtp<'_, '_> {
             .arena
             .owned_zero_audit_receipt()
             .ok_or(Error::InvalidFormat("MTP complete erasure receipt"))?;
-        if private.bytes != private_plan()? || private.buffers != N as u64 {
+        if private.bytes != private_plan()?
+            || private.buffers != N as u64 + u64::from(self.draft_window.is_some())
+        {
             return Err(Error::InvalidBufferLength);
         }
         let public_bytes = self.public.take().map(|p| p.bytes).unwrap_or(0);

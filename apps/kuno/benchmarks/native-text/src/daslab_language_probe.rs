@@ -1615,7 +1615,23 @@ pub(crate) fn run(
                 let drafting = Instant::now();
                 let candidate = crate::strata_port::lookup(&prompt, &emitted, count - 1);
                 let mut lookup = None;
-                if count > 1 {
+                let mut third_follow_ns = 0;
+                let queued_window =
+                    crate::strata_port::enabled() && candidate.is_none() && count > 1;
+                if queued_window {
+                    let output = draft.draft_window(confirmed, &carry, count - 1, &cancel)?;
+                    if output.start != position - 1
+                        || output.binding != draft.binding()
+                        || output.tokens().len() != count - 1
+                        || draft.position() != position + count - 2
+                    {
+                        return Err("language completed queued draft identity rejected".into());
+                    }
+                    inputs.extend_from_slice(output.tokens());
+                    if count == 4 {
+                        third_follow_ns = output.last_enqueue_ns;
+                    }
+                } else if count > 1 {
                     let output = draft.step_draft(confirmed, &carry, &cancel)?;
                     if output.start() != position - 1 {
                         return Err("language first actual draft stamp rejected".into());
@@ -1644,8 +1660,7 @@ pub(crate) fn run(
                         drop(output);
                     }
                 }
-                let mut third_follow_ns = 0;
-                if count == 4 && lookup.is_none() {
+                if count == 4 && lookup.is_none() && !queued_window {
                     let third_follow = Instant::now();
                     let output = draft.follow_draft(&cancel)?;
                     crate::target_lab_build::public_third_draft_stamp(
@@ -1978,6 +1993,7 @@ pub(crate) fn run(
                     "private_upload_bytes":after.private_upload_bytes-before.private_upload_bytes,
                     "minimal_packet_reads":after.minimal_packet_reads-before.minimal_packet_reads,
                     "followup_copy_calls":after.followup_copy_calls-before.followup_copy_calls,
+                    "draft_window_reads":after.draft_window_reads-before.draft_window_reads,
                     "batched_repair_calls":if selected_four_batch_repair {
                         &mtp_fused_four_repair_receipt["aggregate_completed_calls"]
                     } else {&mtp_batch_repair_receipt["completed_calls"]},
