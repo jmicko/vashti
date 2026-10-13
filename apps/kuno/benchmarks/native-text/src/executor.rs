@@ -2732,7 +2732,8 @@ impl<'a> GpuExecutor<'a> {
             let root = resource.resource();
             if root.offset != 0
                 || root.size != padded as u64
-                || root.buffer.size() != reserved as u64
+                || root.buffer.size() < padded as u64
+                || root.buffer.size() > reserved as u64
             {
                 return Err(Error::InvalidFormat("exact public static physical extent"));
             }

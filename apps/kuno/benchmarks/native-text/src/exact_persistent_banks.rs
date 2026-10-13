@@ -387,7 +387,7 @@ fn validate_handle(
 /// MAIN-only original mode API; catch task panic before restoring Auto.
 /// Failed restoration retires too. It is an ordered mode restoration, never
 /// a device completion, free, erasure, or healthy-recovery proof.
-pub(super) fn persistent_scope<T>(
+pub(crate) fn persistent_scope<T>(
     mut mode: impl FnMut(MemoryAllocationMode) -> Result<()>,
     retired: &AtomicBool,
     task: impl FnOnce() -> Result<T>,
