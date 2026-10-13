@@ -68,6 +68,10 @@ fn guarded<T>(admission: &ResidentAdmission, f: impl FnOnce() -> Result<T>) -> R
 fn guarded_poison<T>(poison: &AtomicBool, f: impl FnOnce() -> Result<T>) -> Result<T> {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
         Ok(Ok(value)) => Ok(value),
+        Ok(Err(e)) if crate::strata_port::enabled() => {
+            poison.store(true, Ordering::Release);
+            Err(e)
+        }
         _ => {
             poison.store(true, Ordering::Release);
             Err(error())

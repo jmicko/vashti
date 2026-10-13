@@ -249,6 +249,9 @@ fn decode_selected(bytes: &[u8], count: usize, start: usize, four: bool) -> Resu
 
 const COMPACT_WORDS: usize = HEADER_WORDS + FOUR_ROWS + FOUR_ROWS * HC_WIDTH;
 fn decode_compact(bytes: &[u8], count: usize, start: usize) -> Result<Payload> {
+    if crate::strata_port::enabled() && bytes.len() >= HEADER_WORDS * 4 && word(bytes, 6)? != 0 {
+        eprintln!("strata_public_target_fault bits={}", word(bytes, 6)?);
+    }
     coordinates_selected(count, start, true)?;
     if bytes.len() != COMPACT_WORDS * 4 {
         return Err(rejected());

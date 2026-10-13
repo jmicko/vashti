@@ -96,7 +96,10 @@ fn four_member_workspace_selection_uses_real_permission_and_original_completed_b
     assert!(body.contains("for &original in &self.layout.geometries"));
     assert!(body.contains("and_then(k::Geometry::with_four_members)"));
     assert!(!body.contains("allocate_zeroed"));
-    assert!(source.contains("if w.public_four_members_policy() { 4 } else { 3 }"));
+    let normalized = source.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(normalized.contains(
+        "if w.public_four_members_policy() { crate::strata_port::verify_capacity() } else { 3 }"
+    ));
 }
 
 #[test]
@@ -133,7 +136,9 @@ fn four_member_pending_acceptance_uses_selected_bound_and_actual_source_geometry
         .unwrap()
         .0;
     let normalized = body.split_whitespace().collect::<Vec<_>>().join(" ");
-    assert!(normalized.contains("if self.public_four_members_policy() { 4 } else { 3 }"));
+    assert!(normalized.contains(
+        "if self.public_four_members_policy() { crate::strata_port::verify_capacity() } else { 3 }"
+    ));
     assert!(!normalized.contains("(1..=3).contains(&s.stamp.count)"));
     assert!(body.contains("g.validate_count(s.stamp.count).map_err(err)?"));
     assert!(
