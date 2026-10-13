@@ -333,10 +333,10 @@ impl Workspace {
             );
         if !(valid_window(context, start, count)
             || four
-                && count == 4
+                && (4..=crate::strata_port::verify_capacity()).contains(&count)
                 && (1..=4096).contains(&context)
                 && start
-                    .checked_add(4)
+                    .checked_add(count as u64)
                     .is_some_and(|end| end <= context as u64))
         {
             return Err(reject());
