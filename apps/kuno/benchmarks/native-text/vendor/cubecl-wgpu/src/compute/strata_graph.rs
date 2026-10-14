@@ -3,7 +3,7 @@
 //! This backend owns native compute pipelines/descriptor sets/command buffers;
 //! Wgpu retains all buffer allocation, upload, readback and privacy ledgers.
 //! Only serialized fixed-public laboratory streams may select this backend.
-use super::{WgpuResource, transient_io::fault};
+use super::{WgpuResource, strata_schedule, transient_io::fault};
 use ash::{vk, vk::Handle as _};
 use cubecl_core::server::ServerError;
 use std::{
@@ -399,6 +399,9 @@ pub(crate) struct Graph {
     device: ash::Device,
     family: u32,
     queue: vk::Queue,
+    copy_family: u32,
+    copy_queue: vk::Queue,
+    copy_timestamp_bits: u32,
     pool: vk::CommandPool,
     descriptors: vk::DescriptorPool,
     command: vk::CommandBuffer,
@@ -413,6 +416,8 @@ pub(crate) struct Graph {
     initialized: HashSet<wgpu::Buffer>,
 }
 struct Recording {
+    ready: bool,
+    work: strata_schedule::Commands,
     profile: Option<OperatorProfile>,
     device: ash::Device,
     pool: vk::CommandPool,
@@ -433,6 +438,35 @@ fn raw_buffer(r: &WgpuResource) -> Result<vk::Buffer, ServerError> {
     let h = unsafe { r.buffer.as_hal::<wgpu::hal::api::Vulkan>() }
         .ok_or_else(|| fault("native graph non-Vulkan buffer"))?;
     Ok(unsafe { h.raw_buffer_handle() })
+}
+fn begin_native_command(
+    device: &ash::Device,
+    command: vk::CommandBuffer,
+) -> Result<(), ServerError> {
+    unsafe { device.begin_command_buffer(command, &vk::CommandBufferBeginInfo::default()) }
+        .map_err(|_| fault("native queue begin command"))?;
+    native_memory_boundary(device, command);
+    Ok(())
+}
+fn native_memory_boundary(device: &ash::Device, command: vk::CommandBuffer) {
+    let barrier = vk::MemoryBarrier::default()
+        .src_access_mask(vk::AccessFlags::MEMORY_WRITE)
+        .dst_access_mask(vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE);
+    unsafe {
+        device.cmd_pipeline_barrier(
+            command,
+            vk::PipelineStageFlags::ALL_COMMANDS,
+            vk::PipelineStageFlags::ALL_COMMANDS,
+            vk::DependencyFlags::empty(),
+            &[barrier],
+            &[],
+            &[],
+        );
+    }
+}
+fn end_native_command(device: &ash::Device, command: vk::CommandBuffer) -> Result<(), ServerError> {
+    native_memory_boundary(device, command);
+    unsafe { device.end_command_buffer(command) }.map_err(|_| fault("native queue end command"))
 }
 impl Graph {
     pub(crate) fn new(device: &wgpu::Device) -> Result<Self, ServerError> {
@@ -467,8 +501,20 @@ impl Graph {
                 .required_subgroup_size_stages
                 .contains(vk::ShaderStageFlags::COMPUTE)
         {
-            return Err(fault("native Strata requires Intel expert subgroup32"));
+            return Err(fault(
+                "native Strata requires Intel matrix16 and expert32 subgroups",
+            ));
         }
+        let (copy_family, copy_queue) = h
+            .kuno_transfer_queue()
+            .ok_or_else(|| fault("native graph needs the actually adopted copy queue"))?;
+        let copy_timestamp_bits = unsafe {
+            h.shared_instance()
+                .raw_instance()
+                .get_physical_device_queue_family_properties(h.raw_physical_device())
+        }
+        .get(copy_family as usize)
+        .map_or(0, |q| q.timestamp_valid_bits);
         let d = h.raw_device().clone();
         let queue = h.raw_queue();
         let pool = unsafe {
@@ -537,6 +583,9 @@ impl Graph {
             device: d,
             family: h.queue_family_index(),
             queue,
+            copy_family,
+            copy_queue,
+            copy_timestamp_bits,
             pool,
             descriptors,
             command,
@@ -785,6 +834,11 @@ impl Graph {
         !self.nodes.is_empty()
     }
     pub(crate) fn execute(&mut self) -> Result<(), ServerError> {
+        if self.submitted {
+            return Err(fault(
+                "native graph cannot reuse unknown in-flight commands",
+            ));
+        }
         if self.nodes.is_empty() {
             return Ok(());
         }
@@ -822,22 +876,20 @@ impl Graph {
         if let Some(hit) = self
             .recordings
             .iter()
-            .position(|r| r.signature == signature)
+            .position(|r| r.ready && r.signature == signature)
             .filter(|_| !profiling)
         {
             let recording = self.recordings.remove(hit);
-            let command = recording.command;
             self.recordings.push(recording);
-            let commands = [command];
-            unsafe {
-                self.device.queue_submit(
-                    self.queue,
-                    &[vk::SubmitInfo::default().command_buffers(&commands)],
-                    self.fence,
-                )
-            }
-            .map_err(|_| fault("native graph replay submit"))?;
+            // Set before the first queue submission: partial failure can leave
+            // either queue in flight even if the final join was never issued.
             self.submitted = true;
+            self.recordings
+                .last_mut()
+                .unwrap()
+                .work
+                .submit([self.queue, self.copy_queue], self.fence)
+                .map_err(fault)?;
             let wait_start = std::time::Instant::now();
             unsafe {
                 self.device
@@ -905,10 +957,19 @@ impl Graph {
             }
             .map_err(|_| fault("native graph replay command"))?[0];
         }
+        let timestamp_bits = if self
+            .nodes
+            .iter()
+            .any(|n| matches!(n.dispatch, Dispatch::Copy | Dispatch::Fill))
+        {
+            self.timestamp_bits.min(self.copy_timestamp_bits)
+        } else {
+            self.timestamp_bits
+        };
         let profile = if profiling {
             if self.nodes.len() > 16384
-                || self.timestamp_bits == 0
-                || self.timestamp_bits > 64
+                || timestamp_bits == 0
+                || timestamp_bits > 64
                 || !self.timestamp_period.is_finite()
                 || self.timestamp_period <= 0.0
             {
@@ -937,16 +998,57 @@ impl Graph {
                 pool,
                 names,
                 period: self.timestamp_period,
-                mask: if self.timestamp_bits == 64 {
+                mask: if timestamp_bits == 64 {
                     u64::MAX
                 } else {
-                    (1u64 << self.timestamp_bits) - 1
+                    (1u64 << timestamp_bits) - 1
                 },
             })
         } else {
             None
         };
+        let mut planner =
+            strata_schedule::Planner::new(self.nodes.len(), profiling).map_err(fault)?;
+        for node in &self.nodes {
+            let accesses = self
+                .node_accesses(node)?
+                .into_iter()
+                .map(|(buffer, access)| strata_schedule::Access {
+                    buffer: buffer.as_raw(),
+                    write: access.intersects(
+                        vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::TRANSFER_WRITE,
+                    ),
+                })
+                .collect();
+            planner
+                .push(&strata_schedule::NodeAccess {
+                    copy: matches!(node.dispatch, Dispatch::Copy | Dispatch::Fill),
+                    accesses,
+                })
+                .map_err(fault)?;
+        }
+        let plan = planner.finish().map_err(fault)?;
+        let work = strata_schedule::Commands::new(
+            &self.device,
+            self.pool,
+            self.command,
+            self.copy_family,
+            plan,
+        )
+        .map_err(fault)?;
+        let metadata = self
+            .recordings
+            .iter()
+            .try_fold(work.metadata_bytes(), |total, r| {
+                total.checked_add(r.work.metadata_bytes())
+            })
+            .ok_or_else(|| fault("native queue metadata overflow"))?;
+        if metadata > 64 * 1024 * 1024 {
+            return Err(fault("native queue retained metadata capacity"));
+        }
         let recording = Recording {
+            ready: false,
+            work,
             profile,
             device: self.device.clone(),
             pool: self.pool,
@@ -973,11 +1075,7 @@ impl Graph {
         self.descriptors = vk::DescriptorPool::null();
         self.command = recording.command;
         self.recordings.push(recording);
-        unsafe {
-            self.device
-                .begin_command_buffer(self.command, &vk::CommandBufferBeginInfo::default())
-        }
-        .map_err(|_| fault("native graph record"))?;
+        begin_native_command(&self.device, self.command)?;
         if let Some(profile) = &self.recordings.last().unwrap().profile {
             unsafe {
                 self.device.cmd_reset_query_pool(
@@ -988,26 +1086,26 @@ impl Graph {
                 );
             }
         }
-        let barrier = vk::MemoryBarrier::default()
-            .src_access_mask(vk::AccessFlags::MEMORY_WRITE)
-            .dst_access_mask(vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE);
-        // One boundary covers Wgpu upload/initialization writes. Within the
-        // graph, only real entrypoint accesses to the same buffer create edges.
-        unsafe {
-            self.device.cmd_pipeline_barrier(
-                self.command,
-                vk::PipelineStageFlags::ALL_COMMANDS,
+        let mut previous: [HashMap<vk::Buffer, vk::AccessFlags>; 2] = Default::default();
+        let mut segment = 0usize;
+        for (index, n) in self.nodes.iter().enumerate() {
+            let work = &self.recordings.last().unwrap().work;
+            let next = work.plan.node_segments[index];
+            if next != segment {
+                end_native_command(&self.device, self.command)?;
+                segment = next;
+                self.command = work.commands[segment];
+                begin_native_command(&self.device, self.command)?;
+            }
+            let copy = work.plan.segments[segment].copy;
+            let previous = &mut previous[usize::from(copy)];
+            let supported_stages = if copy {
+                vk::PipelineStageFlags::TRANSFER
+            } else {
                 vk::PipelineStageFlags::COMPUTE_SHADER
                     | vk::PipelineStageFlags::DRAW_INDIRECT
-                    | vk::PipelineStageFlags::TRANSFER,
-                vk::DependencyFlags::empty(),
-                &[barrier],
-                &[],
-                &[],
-            );
-        }
-        let mut previous = HashMap::<vk::Buffer, vk::AccessFlags>::new();
-        for (index, n) in self.nodes.iter().enumerate() {
+                    | vk::PipelineStageFlags::TRANSFER
+            };
             let accesses = self.node_accesses(n)?;
             let mut dependencies = Vec::new();
             for (buffer, access) in accesses {
@@ -1040,12 +1138,8 @@ impl Graph {
                 unsafe {
                     self.device.cmd_pipeline_barrier(
                         self.command,
-                        vk::PipelineStageFlags::COMPUTE_SHADER
-                            | vk::PipelineStageFlags::DRAW_INDIRECT
-                            | vk::PipelineStageFlags::TRANSFER,
-                        vk::PipelineStageFlags::COMPUTE_SHADER
-                            | vk::PipelineStageFlags::DRAW_INDIRECT
-                            | vk::PipelineStageFlags::TRANSFER,
+                        supported_stages,
+                        supported_stages,
                         vk::DependencyFlags::empty(),
                         &[],
                         &dependencies,
@@ -1174,33 +1268,19 @@ impl Graph {
                 profile.stamp(self.command, index, true);
             }
         }
-        unsafe {
-            self.device.cmd_pipeline_barrier(
-                self.command,
-                vk::PipelineStageFlags::ALL_COMMANDS,
-                vk::PipelineStageFlags::ALL_COMMANDS,
-                vk::DependencyFlags::empty(),
-                &[barrier],
-                &[],
-                &[],
-            );
-            self.device.end_command_buffer(self.command)
-        }
-        .map_err(|_| fault("native graph end record"))?;
+        end_native_command(&self.device, self.command)?;
+        self.recordings.last_mut().unwrap().ready = true;
         CAPTURE_NS.fetch_add(
             capture_start.elapsed().as_nanos().min(u64::MAX as u128) as u64,
             std::sync::atomic::Ordering::Relaxed,
         );
-        let commands = [self.command];
-        unsafe {
-            self.device.queue_submit(
-                self.queue,
-                &[vk::SubmitInfo::default().command_buffers(&commands)],
-                self.fence,
-            )
-        }
-        .map_err(|_| fault("native graph submit"))?;
         self.submitted = true;
+        self.recordings
+            .last_mut()
+            .unwrap()
+            .work
+            .submit([self.queue, self.copy_queue], self.fence)
+            .map_err(fault)?;
         // Protected public lab only. Bound to prevent a wedged device leaving
         // native descriptor/buffer lifetimes unowned. Never reset the GPU.
         let wait_start = std::time::Instant::now();

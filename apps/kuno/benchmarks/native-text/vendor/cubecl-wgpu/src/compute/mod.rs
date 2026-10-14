@@ -6,9 +6,13 @@ mod storage;
 
 pub(crate) mod strata_graph;
 mod strata_physical;
-pub use strata_graph::{native_strata_graph_execution_stats, native_strata_graph_stats,
-    native_strata_operator_profile, set_native_strata_profile_active};
+mod strata_schedule;
+pub use strata_graph::{
+    native_strata_graph_execution_stats, native_strata_graph_stats, native_strata_operator_profile,
+    set_native_strata_profile_active,
+};
 pub use strata_physical::native_expert_shader_words;
+pub use strata_schedule::NATIVE_QUEUE_HOST_BYTES;
 mod binding_cache;
 mod cleanup_boundary;
 pub(super) mod mem_manager;

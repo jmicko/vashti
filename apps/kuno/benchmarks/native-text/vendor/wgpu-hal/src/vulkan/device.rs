@@ -912,6 +912,48 @@ impl super::Device {
         self.shared.raw_queue
     }
 
+    /// Adopt the additional queue created by Kuno's native device builder.
+    /// Call before exposing the device or allocating any buffers.
+    ///
+    /// # Safety
+    /// Queue0 of the given family must have been requested in VkDeviceCreateInfo,
+    /// support transfer commands, and differ from this device's owning family.
+    pub unsafe fn kuno_adopt_transfer_family(&self, family: u32) -> bool {
+        if family == self.shared.family_index
+            || !self.shared.private_caps.timeline_semaphores
+            || family == u32::MAX
+        {
+            return false;
+        }
+        self.shared
+            .kuno_transfer_family
+            .compare_exchange(
+                u32::MAX,
+                family,
+                core::sync::atomic::Ordering::AcqRel,
+                core::sync::atomic::Ordering::Acquire,
+            )
+            .is_ok()
+    }
+
+    /// Actual adopted compute/copy families for concurrent buffer creation.
+    pub fn kuno_buffer_queue_families(&self) -> Option<[u32; 2]> {
+        let family = self
+            .shared
+            .kuno_transfer_family
+            .load(core::sync::atomic::Ordering::Acquire);
+        (family != u32::MAX).then_some([self.shared.family_index, family])
+    }
+
+    /// Borrow the additional queue, which the builder actually created.
+    /// Its submissions are serialized by the same native graph stream.
+    pub fn kuno_transfer_queue(&self) -> Option<(u32, vk::Queue)> {
+        let families = self.kuno_buffer_queue_families()?;
+        Some((families[1], unsafe {
+            self.shared.raw.get_device_queue(families[1], 0)
+        }))
+    }
+
     pub fn enabled_device_extensions(&self) -> &[&'static CStr] {
         &self.shared.enabled_extensions
     }
@@ -1019,7 +1061,7 @@ impl crate::Device for super::Device {
         &self,
         desc: &crate::BufferDescriptor,
     ) -> Result<super::Buffer, crate::DeviceError> {
-        let vk_info = vk::BufferCreateInfo::default()
+        let mut vk_info = vk::BufferCreateInfo::default()
             .size(desc.size)
             .usage(
                 conv::map_buffer_usage(desc.usage)
@@ -1030,6 +1072,13 @@ impl crate::Device for super::Device {
                     },
             )
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
+
+        let families = self.kuno_buffer_queue_families();
+        if let Some(families) = &families {
+            vk_info = vk_info
+                .sharing_mode(vk::SharingMode::CONCURRENT)
+                .queue_family_indices(families);
+        }
 
         let raw = unsafe {
             self.shared

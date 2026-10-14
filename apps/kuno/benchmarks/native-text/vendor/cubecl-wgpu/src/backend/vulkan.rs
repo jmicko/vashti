@@ -121,11 +121,42 @@ fn request_device(
             .get_physical_device_features(adapter.raw_physical_device())
     };
 
-    let family_index = 0; //TODO
+    let family_index = 0;
+    let queue_properties = unsafe {
+        ash.raw_instance()
+            .get_physical_device_queue_family_properties(adapter.raw_physical_device())
+    };
+    let transfer_family = if preserve_limits {
+        // A different queue family is real independent engine capacity; the
+        // B70 exposes only one queue in family0, so queue1 would be invalid.
+        let family = queue_properties
+            .iter()
+            .enumerate()
+            .filter(|(index, q)| {
+                *index != family_index as usize
+                    && q.queue_count > 0
+                    && q.queue_flags.contains(ash::vk::QueueFlags::TRANSFER)
+            })
+            .min_by_key(|(_, q)| {
+                q.queue_flags
+                    .intersects(ash::vk::QueueFlags::COMPUTE | ash::vk::QueueFlags::GRAPHICS)
+            })
+            .map(|(index, _)| index as u32)?;
+        Some(family)
+    } else {
+        None
+    };
     let family_info = DeviceQueueCreateInfo::default()
         .queue_family_index(family_index)
         .queue_priorities(&[1.0]);
-    let family_infos = [family_info];
+    let mut family_infos = vec![family_info];
+    if let Some(family) = transfer_family {
+        family_infos.push(
+            DeviceQueueCreateInfo::default()
+                .queue_family_index(family)
+                .queue_priorities(&[1.0]),
+        );
+    }
 
     // Retain the exact enabled list before the pNext chain borrows the feature
     // owner; the adopted HAL device must know the same extensions as Vulkan.
@@ -169,6 +200,13 @@ fn request_device(
             )
             .expect("Failed to create HAL device")
     };
+    if let Some(family) = transfer_family {
+        // SAFETY: queue0 in this family is in the exact VkDeviceCreateInfo
+        // above; the device has not been exposed and owns no buffers yet.
+        if !unsafe { device.device.kuno_adopt_transfer_family(family) } {
+            return None;
+        }
+    }
 
     let descriptor = DeviceDescriptor {
         label: None,

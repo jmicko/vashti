@@ -195,6 +195,7 @@ impl Host {
             .map_err(|_| fail())?;
         let hal = unsafe { device.as_hal::<wgpu::hal::api::Vulkan>() }.ok_or_else(fail)?;
         let raw = Arc::new(hal.raw_device().clone());
+        let queue_families = hal.kuno_buffer_queue_families().ok_or_else(fail)?;
         let properties = unsafe {
             hal.shared_instance()
                 .raw_instance()
@@ -231,7 +232,8 @@ impl Host {
                                 | vk::BufferUsageFlags::TRANSFER_SRC
                                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
                         )
-                        .sharing_mode(vk::SharingMode::EXCLUSIVE);
+                        .sharing_mode(vk::SharingMode::CONCURRENT)
+                        .queue_family_indices(&queue_families);
                     let buffer =
                         unsafe { raw.create_buffer(&descriptor, None) }.map_err(|_| fail())?;
                     let mut backing = Backing {

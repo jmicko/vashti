@@ -2755,6 +2755,7 @@ impl super::Adapter {
         let shared = Arc::new(super::DeviceShared {
             raw: raw_device,
             family_index,
+            kuno_transfer_family: core::sync::atomic::AtomicU32::new(u32::MAX),
             queue_index,
             raw_queue,
             drop_guard,
