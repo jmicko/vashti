@@ -4392,3 +4392,30 @@ required Vashti changes: none. No GPU testing, reset, rebind, installation or
 release in this block. Canonical checkout and inherited untracked bytecode are
 preserved. The goal is active and incomplete. Existing bounded sudo refresh remains
 an authentication-only helper; it is not authority to bypass unavailable credentials.
+
+
+### Active Kuno engine handoff extension — connected global core (2026-10-14)
+
+Source `d24c348`, same isolated `codex/strata-rust-port` checkout. Read the completion
+guide's **Connected global core dispatch block**, which supersedes the preceding
+uncalled-constructor handoff without claiming runtime acceptance.
+
+The core now initializes the global cache/HOST source owner before first prefill
+and selects a new48-layer driver with GPU routing, private remap/group planning,
+HOST fetch/rebase/stamps, native gate/up/activation/DOWN, weighted reduction and
+real completion stamps. Each role uses one dispatch with pinned row_entries4/2/1;
+IQ4_XS takes the scalar path, and native integer finish/XOR/IQ4_NL scheduling are
+ported. Exact family/stage/table quotes are updated. Core release, strict Clippy
+and179 shader validations pass. Final ordinary regression passes:1,349 tests,
+one ignored. The earlier200 full-core failures are not resolved by this.
+
+No GPU inference, physical closure/recovery, speed trial, installation or service
+change. The old language/speculative controller still has frozen-bank receipt and
+activation assumptions that can reject after prefill. Next port adaptive exchange
+and private remap publication, then replace those controller assumptions with
+actual global contracts. Complete1..8 target/MTP/prefill/state support and the full
+checklist remain required. Audit original-GGUF versus upstream native conversions
+and actual Intel CPU/transfer/overlap mode; do not claim complete parity yet.
+
+No API or Vashti consumer changes. Goal active; full rewrite incomplete; speed
+remains blocked. Preserve canonical work and inherited untracked bytecode.

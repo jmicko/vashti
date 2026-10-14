@@ -33,10 +33,10 @@ all need a final audit of actual connected dispatches, not just file names.
 | Component | Pinned upstream | Current Rust connection and required completion |
 | --- | --- | --- |
 | Artifact geometry, packing and tokenizer | `sycl/src/core/weights.cpp`, `src/io`, native expert layout, program model setup | Rust GGUF/tokenizer/binding exist. Audit format-specific load/conversion, chat-template and sampling behavior; original files remain shared/read-only. |
-| Exact dense placement and expert budget | `sycl/src/program/generate.cpp` model/cache setup; `sycl/src/core/expert_cache.cpp::open_sized` | Exact dense roots exist. Native global byte-prefix planning and an owning bounded GPU loader now compile; graph validation consumes the real artifact plan. Current inference still uses uniform 240-slot banks: global allocation, HOST imports, pointer tables, routing and exchange consumers must replace that path together. No global residency execution is claimed. |
+| Exact dense placement and expert budget | `sycl/src/program/generate.cpp` model/cache setup; `sycl/src/core/expert_cache.cpp::open_sized` | Exact dense roots exist. Native global byte-prefix planning and an owning bounded GPU loader now compile; graph validation consumes the real artifact plan. Experimental core construction now invokes the sole global owner before prefill, and the core48-layer coordinator selects global routing/HOST fetch/role execution. Adaptive exchange/private remap updates, native format conversion audit and physical/numerical acceptance are unfinished. The ordinary feature-off engine retains uniform banks. |
 | Low-RAM host complement and promotion | `generate.cpp` source/adaptive tier; `sycl/src/core/verify.cpp` fetch/rebase | Original host complement, direct exchange and GPU selected fetch exist. Audit full byte ownership and asynchronous safe publication against upstream; do not duplicate the whole model in RAM. |
 | GPU route/group planning and CPU contribution | `verify.cpp` router, `resident_plan`, doorbell/pool/host plans; `src/kernels/cpu` | Real GPU router exists. Audit the selected working Intel all-GPU-fetch versus host-pool mode and reproduce its actual mode, including overlap/merge where active. |
-| Native expert math and grouped rows | `sycl/src/kernels/cuda/iq_kernels.dp.cpp::row_entries`, `native_gu_kernel`, `native_down_kernel` | Packed integer math/BDA roots exist. Separate GU roles, 4/2/1 chunks, activation, intermediate storage and downstream consumers are now selected together in the Intel core; all 158 WGSL/SPIR-V variants validate, including 105 physical-pointer checks; numerical/model execution acceptance remains pending. The Vulkan port uses separate fixed chunk launches with GPU guards, not upstream row_entries within one launch; audit that substitution explicitly. |
+| Native expert math and grouped rows | `sycl/src/kernels/cuda/iq_kernels.dp.cpp::row_entries`, `native_gu_kernel`, `native_down_kernel` | Packed integer math/BDA roots exist. Separate GU roles, 4/2/1 chunks, activation, intermediate storage and downstream consumers are now selected together in the Intel core; all 158 WGSL/SPIR-V variants validate, including 105 physical-pointer checks; numerical/model execution acceptance remains pending. The global core now uses one per-role launch containing pinned row_entries4/2/1 loops, scalar IQ4_XS, native signed integer finish and XOR reduction; numerical/model execution acceptance remains pending. Historical fixed-chunk kernels are retained separately. |
 | GR write/read/norm/down/up/injection | `sycl/src/kernels/cuda/fused_gr.dp.cpp::fused_gr_read_multi`; `verify.cpp::gr_read_group` | Native pending-write norm, sliced BF16 down/injection, fixed slice reduction and up/mix/commit are now connected and unconditionally selected in the core, including explicit PLE/final boundary writes. Resident original weights and the enlarged private scratch owner are charged together. Structural acceptance passes; numerical/model execution acceptance and final substitution audit remain pending. |
 | GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp` | GDN retained-state replay exists. Audit actual convolution/L2/alpha-beta/recurrence/output-norm fusion, grouped projections and retained commit inputs against pinned Intel source. |
 | QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Causal Rust QSA exists. Audit fused norm/RoPE, KV format/append and block selection/gather, grouped consumers and tail repair; explicit F32 versus quantized KV difference needs resolution. |
@@ -326,3 +326,102 @@ Canonical checkout was untouched; work remains in `codex/strata-rust-port` in
 bytecode is preserved. No installation, service/reset/rebind, gateway/API or Vashti
 change. Goal remains active; sudo unavailability remains a stop/checkpoint rule,
 never a completed-rewrite claim.
+
+
+## Connected global core dispatch block (2026-10-14)
+
+Source commit `d24c348`. This replaces the preceding block's uncalled-constructor
+state: the protected language probe now calls
+`ResidentModel::prepare_global_sources_before_prefill` after model/workspace
+construction and **before** the first prompt chunk. The sole global cache/HOST
+owner and real family stages are initialized together. `Workspace::run` selects
+`run_global` unconditionally in `strata-intel-core`; it does not fall back to old
+banks if global construction/dispatch fails. Old post-prefill HOST attachment is
+skipped in this mode to prevent allocating a second cache.
+
+`strata_global_moe::Workspace` connects real GPU top10 routing and selected-softmax,
+private logical-expert remapping/group union, native Q8_1 preparation, selected
+HOST fetch, gate/up, activation, DOWN and weighted reduction. Full48-layer private
+completion stamps are read/accepted after the existing whole-model fault proof.
+Real GDN/QSA/PLE pending acceptance and state commit remain connected in the copied
+core coordinator. It does **not** synthesize old bank/session/frozen-source permits
+or credit their counters. Existing ordinary feature-off driver remains separate.
+
+`strata_global_expert_kernels` ports pinned `iq_kernels.dp.cpp:1784` row_entries:
+one native dispatch per role runs4-entry chunks, a2-entry remainder, then a1-entry
+remainder. IQ4_XS follows the scalar-only path (`Multi<23>::has` is false). The
+integer finish expressions in IQ2_S/IQ3_XXS, integer scale weighting for IQ3_S/
+IQ4_XS,32-lane XOR reduction and IQ4_NL's two16-value dot calls follow the pinned
+source. Quantization retains the native single Q8_1 plane with FP16 scale. These
+are source/structural findings; mathematical/model parity is not established by
+shader acceptance alone. Older three/four-row arithmetic stays separate.
+
+Selected original HOST roles are copied once per actual group, with per-role
+GPU stamps checked before reading their rebased stage address. Actual immutable
+cell pointers remain public setup metadata; the logical remap lives in PrivateArena
+and starts as a complete per-layer identity permutation. Both actual source roots
+and stage roots participate in native recording retention/read hazards. Static
+stage-pointer metadata owns one additional exact32-KiB allocation. No route,
+recency, prompt, output or private remap is uploaded into a public address table.
+
+The new family owns nine small private roots plus three128-MiB stages. Constructor
+allocation requests and model/private quotes account for the actual family;
+stages cover the worst80 selected role cells. Source requests include48 cell
+tables plus the one stage table. The old IQ-table constructor no longer allocates
+48 unused legacy address tables in core mode. Historical MoE workspace/fixture
+reservations still exist in model construction and need cleanup/reconciliation;
+they are not credited as global execution.
+
+### Validation and remaining limits
+
+Logs in `/media/jmicko/faststore/kuno-development`:
+
+- `strata-global-coordinator-build-20261014.log`: core release build passes.
+- `strata-global-coordinator-final-clippy-20261014.log`: strict core Clippy passes.
+- `strata-global-coordinator-shaders-20261014.log`:179 WGSL/SPIR-V shader variants
+  pass, including physical lowering for all new original expert formats, routing,
+  fetch, native row-entry helpers, quantizers, activation and reduction. No GPU.
+- `strata-global-coordinator-original-tests-20261014.log`: final current-source
+  ordinary direct-device regression passes:1,349 passed, one ignored. This is
+  CPU/unit coverage of the ordinary path, not model/GPU acceptance of the core.
+- Formatting and whitespace validation pass. Previous200 experimental core-suite
+  failures are unresolved; no claim that the full core suite is green.
+
+**No model/GPU execution, speed/profile trial, installation, service change or
+reset/rebind occurred.** No physical global allocation/recovery or numerical/full
+inference completion claim is justified yet. The complete rewrite remains open.
+
+### Required connected continuation
+
+1. Implement adaptive exchange/recency on these same global cells, and publish
+   only arena-owned private remap changes after actual joined reader/exchange
+   boundaries. Preserve complete per-layer bijections and original role extents;
+   never overwrite public pointer tables with request-derived history.
+2. Replace the language/speculative controller's historical frozen-bank receipt,
+   activation and dispatch-policy assumptions with real global-family contracts.
+   The current old controller can reject **after prefill** because these old
+   counters/scopes are deliberately not fabricated. Do not loosen those old
+   validators or claim this is a working end-to-end generator yet.
+3. The family/router/quantizer/operator geometry handles T=1..8. Verify the
+   coordinated GDN/QSA/PLE/final-head/target-row and checkpoint paths support
+   those same windows; copying an eight-row expert kernel alone does not prove
+   whole-target eight-row support. General bounded prompts/sampling/MTP request
+   entry points still require connection/acceptance.
+4. Audit the actually working Intel reference mode's CPU share, shared-stream
+   overlap and transfer mode. This new core currently selects a single-queue,
+   all-GPU HOST-fetch route; it is not proof of every upstream CPU/GPU plan.
+5. Audit native format conversion/packing and byte budgeting against
+   `weights.cpp`/native layout. Current global roots use original GGUF packing and
+   original role-byte counts. This preserves source files and decoding capability
+   but must not silently be called byte-for-byte parity with a converted native
+   blob layout. Original buffers, pointer selection, role math and physical
+   ownership now connect; all declared backend substitutions still need review.
+6. Continue the full checklist's remaining GR/GDN/QSA/PLE, prompt prefill, MTP,
+   graph/queue and state-commit rows. Full completion/state/numerical/recovery
+   acceptance precedes all speed comparisons. Do not disable this connected core
+   based on incidental timing or return to uniform-bank behavior.
+
+Canonical checkout is untouched. Changes are backend internals only; required
+Vashti/API changes: none. Inherited Python bytecode remains untracked/preserved.
+Goal stays active and incomplete. The bounded sudo refresher was still verified
+live during source work; revalidate process/cache before any protected execution.
