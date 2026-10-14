@@ -494,3 +494,81 @@ CPU-share/stream/queue and remaining checklist audits before speed tests. Keep
 this entire cache+remap+execution path selected while fixing correctness; do not
 fall back to uniform banks or choose an intermediate timing winner. Canonical
 checkout and inherited untracked bytecode remain untouched.
+
+
+## Connected global request and verification controller (2026-10-14)
+
+Source `9abc0fd`, isolated `codex/strata-rust-port` worktree. This supersedes the
+old language-controller handoff: the core now calls `strata_global_controller`
+after constructing the real global sources and before any historical frozen-bank
+receipt path. Feature-off public experiments remain separate and unchanged.
+The whole rewrite is still incomplete; no live model or speed run occurred.
+
+The connected controller uses actual target rows and teacher prompt tokens,
+retains the final prompt carry, builds genuine MTP windows or suffix proposals,
+checks their positions/bindings, and verifies every proposed token with the
+actual target. A target rejection or EOS selects the accepted input prefix.
+`LatestTargetRound` checkpoints and commits/repairs actual GDN/QSA/PLE state;
+MTP repair then uses the accepted target carries. The controller checks target
+and draft cursors before the next window and at final output. Accepted tokens
+can be delivered through a transient callback. The protected public harness
+currently discards that callback output and writes numeric metadata only.
+It no longer needs old bank-fill, legacy source counters, or a legacy HOST
+attachment to claim completion. It does not fabricate their receipts.
+
+Global authority now checks the real sole source owner, attached stage/table
+roots, active admission and absence of legacy banks/caches. Completed native
+boundaries bind that owner to the actual graph and reject pending source
+publication. Shared GDN/PLE/status/head selection uses an explicit global
+execution scope rather than pretending frozen banks were attached. Core
+construction reserves its coupled four-row/PLE/status capabilities. Historical
+integer/frozen close-count constants are excluded for this path; actual full
+PrivateArena/source erasure, retirement checks and joined executor/HOST close
+remain mandatory. No private close check is bypassed.
+
+Usage collection now happens only during genuine verification, including its
+provisional rows, as in native window routing. Prompt chunks and rejected-prefix
+state replays do not add usage. Every four *finished verification windows*,
+after actual target acceptance/repair, triggers the existing paired exchange
+and private remap transaction exactly once. A failed verify/repair/publication
+retires the round instead of resuming a partially published cache. This resolves
+the prior prompt-chunk adaptation scheduling gap. Native background ranking /
+refill overlap is still an explicit unresolved backend difference.
+
+Core request geometry can charge arbitrary nonempty prompt lengths with1..512
+outputs and prompt+output extent<=4096. Its real permit must match the requested
+prompt/output geometry before prefill. Historical feature-off fixtures keep their
+exact lengths/caps. This is an internal bounded controller capability: the
+current public CLI/tokenizer registration still chooses compiled fixtures,
+not arbitrary production text. Greedy decoding only is connected here. General
+sampling and production entry/lifecycle remain open.
+
+Validation logs under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-global-controller-final-build-20261014.log`: core release build passes.
+- `strata-global-controller-final-clippy-20261014.log`: strict core Clippy passes.
+- `strata-global-controller-shaders-20261014.log`:179 shader variants pass offline,
+  including the updated verification-only private usage router.
+- `strata-global-controller-core-controller-tests-20261014.log`:14 selected
+  core host-only tests pass, including the new prefix acceptance test over every
+  compiled width/rejection position/EOS and retained global cache tests.
+- `strata-global-controller-geometry-tests-20261014.log`: bounded core request
+  geometry/lifecycle test passes, including extent overflow and cap rejection.
+- `strata-global-controller-ordinary-regression-20261014.log`:1,354 pass,
+  one ignored, no failures. Formatting and diff whitespace checks pass.
+
+These are build/shader/host-only proofs, not whole-model numerical/state or
+actual GPU exchange/recovery acceptance. Prior full-core suite failures remain
+open. Default core still compiles four-row capacity; `strata-eight-window` and
+its coupled GDN/QSA/PLE/MTP/head/registration policies require reconciliation,
+not just a flag change. Old unused MoE construction owners/reservations remain.
+Prompt prefill is still bounded3-row scheduling rather than native MMQ parity.
+Audit native packing, CPU-share/transfer queues, GDN/QSA math and KV format,
+PLE async reads, MTP graph/state, full graph recordings, sampling and general
+input before declaring completeness. Keep the assembled global path selected;
+no intermediate throughput trial or timing-driven fallback.
+
+No GPU/service/install/API/Vashti/release/reset/rebind change. Canonical checkout
+and inherited bytecode remain untouched. Next continue the coupled1..8 model /
+MTP / commit and native placement-fidelity blocks. Goal active and incomplete;
+speed gate remains closed.

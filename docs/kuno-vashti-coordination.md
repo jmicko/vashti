@@ -4442,3 +4442,31 @@ blocking Vulkan exchange is a documented backend substitution, not async-stream
 parity. Earlier full-core failures remain open. No API/Vashti/install/service
 change; required Vashti changes: none. Goal active, full rewrite incomplete,
 speed gate still blocked. Preserve canonical work and inherited bytecode.
+
+
+### Active Kuno engine handoff extension — global generation controller (2026-10-14)
+
+Source `9abc0fd`, same isolated `codex/strata-rust-port` checkout. Read the
+completion guide's **Connected global request and verification controller**
+section; it supersedes the stale statement that core language execution still
+requires old frozen-bank receipts.
+
+Core now enters its own connected global-source controller: teacher prefill,
+real MTP/suffix proposals, target verification, actual accepted-prefix state
+repair/commit, MTP carry repair, cursor checks and transient accepted-token
+callback. Real source/admission/graph authority replaces frozen-bank identities;
+shared GDN/PLE/status/head selection uses that authority. Private usage excludes
+prompt/replay routes and adaptation ticks once per completed verification window.
+Internal bounded request geometry is charged and authenticated; the current
+CLI still selects public fixtures, and general sampling/input remain open.
+
+Release build, strict Clippy and179 offline shaders pass.14 selected core tests
+and a bounded-geometry lifecycle test pass. Ordinary regression:1,354 pass,
+one ignored. No live model/GPU exchange/recovery/speed run. Old full-core
+failures, native CPU-share/queue/packing audits, coupled1..8 target/MTP/state
+support and the remaining completion checklist remain required. Default core
+capacity is still four; do not claim full rewrite or runtime acceptance.
+
+API specification/installed services/Vashti are unchanged; required Vashti
+changes: none. No install, release, reset or rebind. Canonical checkout and
+inherited bytecode preserved. Goal active and incomplete; speed gate closed.
