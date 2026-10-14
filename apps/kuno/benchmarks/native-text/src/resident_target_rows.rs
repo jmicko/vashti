@@ -43,25 +43,27 @@ pub(crate) const HOST_INCREMENT: usize = if cfg!(feature = "strata-eight-window"
 pub(crate) const RUNTIME_INCREMENT: u64 = 2 * (OWNER_BYTES as u64 - 1024 * 1024) + 2 * 2048;
 pub(crate) const RUNTIME_LIMIT: u64 = 128 * 1024 * 1024;
 
-fn rejected() -> Error {
-    Error::InvalidFormat("native target rows owning output")
+macro_rules! rejected {
+    () => { Error::InvalidFormat(if crate::strata_intel_core::enabled() {
+        concat!("native target rows owning output at source line ",line!())
+    }else{"native target rows owning output"}) };
 }
 pub(super) fn check_public_audit(reserved: bool, public_zero_audit: bool) -> Result<()> {
     if reserved && !public_zero_audit {
-        return Err(rejected());
+        return Err(rejected!());
     }
     Ok(())
 }
 pub(super) fn coordinates_selected(count: usize, start: usize, four: bool) -> Result<()> {
     let maximum = if four { FOUR_ROWS } else { MAX_ROWS };
     if !(1..=maximum).contains(&count) || start.checked_add(count).is_none_or(|end| end > 4096) {
-        return Err(rejected());
+        return Err(rejected!());
     }
     Ok(())
 }
 pub(crate) fn coordinates(count: usize, start: usize) -> Result<()> {
     if !(1..=MAX_ROWS).contains(&count) || start.checked_add(count).is_none_or(|end| end > 4096) {
-        return Err(rejected());
+        return Err(rejected!());
     }
     Ok(())
 }
@@ -108,7 +110,7 @@ impl NativeTargetRows {
             return Err(Error::OutOfBounds);
         }
         if let Some(tokens) = &self.payload.greedy {
-            return tokens.get(row).copied().ok_or_else(rejected);
+            return tokens.get(row).copied().ok_or_else(|| rejected!());
         }
         let logits = self.logits(row)?;
         let mut best = 0;
@@ -138,7 +140,7 @@ struct OutputLease(Arc<AtomicBool>);
 impl OutputLease {
     fn acquire(live: &Arc<AtomicBool>) -> Result<Self> {
         live.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .map_err(|_| rejected())?;
+            .map_err(|_| rejected!())?;
         Ok(Self(live.clone()))
     }
 }
@@ -157,16 +159,16 @@ impl Payload {
         } else {
             (&self.logits, VOCABULARY)
         };
-        values.get(row * width..(row + 1) * width).ok_or(rejected())
+        values.get(row * width..(row + 1) * width).ok_or(rejected!())
     }
 }
 
 fn word(bytes: &[u8], index: usize) -> Result<u32> {
     let first = index.checked_mul(4).ok_or(Error::ArithmeticOverflow)?;
     let end = first.checked_add(4).ok_or(Error::ArithmeticOverflow)?;
-    let value = bytes.get(first..end).ok_or(rejected())?;
+    let value = bytes.get(first..end).ok_or(rejected!())?;
     Ok(u32::from_le_bytes(
-        value.try_into().map_err(|_| rejected())?,
+        value.try_into().map_err(|_| rejected!())?,
     ))
 }
 fn decode(bytes: &[u8], count: usize, start: usize) -> Result<Payload> {
@@ -178,7 +180,7 @@ fn decode_selected(bytes: &[u8], count: usize, start: usize, four: bool) -> Resu
     let packet_words = HEADER_WORDS + logits_words + rows * HC_WIDTH;
     coordinates_selected(count, start, four)?;
     if bytes.len() != OWNER_BYTES {
-        return Err(rejected());
+        return Err(rejected!());
     }
     let expected = [
         1,
@@ -192,7 +194,7 @@ fn decode_selected(bytes: &[u8], count: usize, start: usize, four: bool) -> Resu
     ];
     for (index, value) in expected.into_iter().enumerate() {
         if word(bytes, index)? != value {
-            return Err(rejected());
+            return Err(rejected!());
         }
     }
     // Check the complete owning span before allocating either returned payload.
@@ -206,17 +208,17 @@ fn decode_selected(bytes: &[u8], count: usize, start: usize, four: bool) -> Resu
             false
         };
         if (active && !f32::from_bits(bits).is_finite()) || (!active && bits != 0) {
-            return Err(rejected());
+            return Err(rejected!());
         }
     }
     let mut logits = Zeroizing::new(Vec::new());
     let mut hidden = Zeroizing::new(Vec::new());
     logits
         .try_reserve_exact(count * VOCABULARY)
-        .map_err(|_| rejected())?;
+        .map_err(|_| rejected!())?;
     hidden
         .try_reserve_exact(count * HC_WIDTH)
-        .map_err(|_| rejected())?;
+        .map_err(|_| rejected!())?;
     let owned = logits
         .capacity()
         .checked_add(hidden.capacity())
@@ -228,7 +230,7 @@ fn decode_selected(bytes: &[u8], count: usize, start: usize, four: bool) -> Resu
         || hidden.capacity() != count * HC_WIDTH
         || owned > HOST_CAP
     {
-        return Err(rejected());
+        return Err(rejected!());
     }
     for index in 0..count * VOCABULARY {
         logits.push(f32::from_bits(word(bytes, HEADER_WORDS + index)?));
@@ -254,7 +256,7 @@ fn decode_compact(bytes: &[u8], count: usize, start: usize) -> Result<Payload> {
     }
     coordinates_selected(count, start, true)?;
     if bytes.len() != COMPACT_WORDS * 4 {
-        return Err(rejected());
+        return Err(rejected!());
     }
     for (i, v) in [
         2,
@@ -270,7 +272,7 @@ fn decode_compact(bytes: &[u8], count: usize, start: usize) -> Result<Payload> {
     .enumerate()
     {
         if word(bytes, i)? != v {
-            return Err(rejected());
+            return Err(rejected!());
         }
     }
     let mut tokens = Zeroizing::new(Vec::with_capacity(count));
@@ -278,11 +280,11 @@ fn decode_compact(bytes: &[u8], count: usize, start: usize) -> Result<Payload> {
         let token = word(bytes, HEADER_WORDS + row)?;
         if row < count {
             if token >= VOCABULARY as u32 {
-                return Err(rejected());
+                return Err(rejected!());
             }
             tokens.push(token);
         } else if token != 0 {
-            return Err(rejected());
+            return Err(rejected!());
         }
     }
     let mut hidden = Zeroizing::new(Vec::with_capacity(count * HC_WIDTH));
@@ -291,11 +293,11 @@ fn decode_compact(bytes: &[u8], count: usize, start: usize) -> Result<Payload> {
         if i < count * HC_WIDTH {
             let x = f32::from_bits(bits);
             if !x.is_finite() {
-                return Err(rejected());
+                return Err(rejected!());
             }
             hidden.push(x);
         } else if bits != 0 {
-            return Err(rejected());
+            return Err(rejected!());
         }
     }
     Ok(Payload {
@@ -436,7 +438,7 @@ impl Owners {
     }
     pub(super) fn check_no_live_output(&self) -> Result<()> {
         if self.output_live.load(Ordering::Acquire) {
-            return Err(rejected());
+            return Err(rejected!());
         }
         Ok(())
     }
@@ -487,7 +489,7 @@ impl Owners {
     ) -> Result<NativeTargetRows> {
         let four = count > MAX_ROWS;
         if four && !self.four_reserved {
-            return Err(rejected());
+            return Err(rejected!());
         }
         coordinates_selected(count, start, four)?;
         graph.verify_unchanged()?;
@@ -495,7 +497,7 @@ impl Owners {
         if geometry.vocabulary != VOCABULARY
             || geometry.residual.width * geometry.residual.streams != HC_WIDTH
         {
-            return Err(rejected());
+            return Err(rejected!());
         }
         let [logits, packet] = self.prove(arena)?;
         let carry = gr::full_private(arena, carry, MAX_BATCH * HC_WIDTH)?;
@@ -748,7 +750,7 @@ mod tests {
         }
     }
     #[test]
-    fn wrong_header_fault_nonfinite_inactive_and_full_padding_are_rejected() {
+    fn wrong_header_fault_nonfinite_inactive_and_full_padding_are_rejected!() {
         let original = packet(1, 0);
         for (index, bits) in [
             (0, 2),
