@@ -41,7 +41,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp` | Core now connects native BF16 alpha/beta window projection, conv/L2, controls, double-buffered four-row-group FMA recurrence/output norm and state-only accepted-prefix replay. See the GDN receipts below. Optional Q8 producer fusion, prompt-path fidelity, physical execution and final numerical/queue audit remain open. |
 | QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects FP16 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. See the QSA receipt below for precise storage/scheduling substitutions and remaining numerical/state acceptance; do not claim full QSA fidelity yet. |
 | PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Core now connects native BF16 MAX8 projections, native normalization/gate/conv/history, transient deduplicated positional reads and the actual accepted-prefix owner. Whole-prompt double-buffered prefetch, mapped history/snapshot scheduling and numerical/device acceptance remain open. Never persist request n-grams. |
-| Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM and prompt GR/AB/head consumers now connect to actual initial prompt calls. Full chunk owner/budget, streamed FP16 expert GEMM/ring/cache loan, causal prompt kernels and device-resident target/MTP handoff remain unported; current three-row loop is not prompt-path parity. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
+| Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. Full chunk owner/budget, native staging ring/cache loan and expert-major scheduling, causal prompt kernels and device-resident target/MTP handoff remain unported; current three-row loop is not prompt-path parity. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
 | MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native FP16 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Queue/branch/capture fidelity, numerical/state acceptance, arbitrary input and supported sampling remain required. See the front/rest/MoE receipts. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Request-local Rust suffix/cost controller exists; audit supported window lengths and coupled sampling rather than fixing to four public-fixture rows. |
 | Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Real greedy verification/state-only repair exists. Audit all active windows and acceptance cases against GDN/QSA/PLE/positions; independent correctness oracle remains missing. |
@@ -49,6 +49,11 @@ all need a final audit of actual connected dispatches, not just file names.
 | Request lifecycle and arbitrary input | upstream CLI/session/inference entry points | Current Rust public-fixture gate is not a general engine. Connect bounded arbitrary prompts and request-local sampling/history, with no persistent content, protected memory and orderly erase/close. No gateway/UI work required. |
 
 ## Validation and the speed gate
+
+This is a whole-engine port, not a search for individually faster changes. Keep
+coupled upstream placement, arithmetic, consumers and scheduling together. A
+component stays incomplete until its dependencies are implemented; incidental
+timing cannot justify reverting it.
 
 1. Keep the connected port selected as one engine configuration. Fix compile,
    shader, numerical and ownership bugs as they arise. Do not retain a partial
@@ -1271,3 +1276,60 @@ installation or release. Earlier full-core failures and whole-engine acceptance
 remain open. Full rewrite incomplete; goal active; speed gate closed. Required
 Vashti changes: none. Continue native chunk/staging and expert GEMM ownership;
 do not label the current small-window controller as completed prefill.
+
+## Connected original-source prompt expert arithmetic (2026-10-14)
+
+Runtime source commit `1cf7e50` on isolated `codex/strata-rust-port`.
+
+`strata_prompt_experts.rs` / `.wgsl` now connect the actual initial-prompt scope
+to native FP16 expert arithmetic. Reference: pinned Intel `prefill.cpp:3319-3370`
+for logical-ID grouping and `3963-3984` for original dequantization, gate/up GEMM,
+FP16-saturated SwiGLU and down GEMM. The prompt route flag sorts groups by logical
+expert ID, retaining token/rank order within a group and the real physical remap.
+Decode's routing, integer expert execution and CPU contribution stay separate.
+
+Prompt execution queues every routed group on the GPU; it bypasses the decode
+CPU/GPU split and its input/routing readback. `Plan` returns no remaining decode
+GPU work or CPU jobs because prompt GPU work has already been queued; zero is
+not a claim that the router selected zero experts. All original resident/HOST
+roots are supplied by the actual `Sources`, including its publication and BDA
+read dependencies. `fetch_role` moves the selected original HOST role cells to
+stage2; resident cells are consumed directly. Stage0 holds gathered FP16 rows,
+stage1 a single FP16 expert matrix. All three roots are reused in queue order.
+No new private weight owner, whole-model duplicate or persistent conversion is
+created. Original-format helpers/codebooks cover IQ2_S, IQ3_S, IQ3_XXS, IQ4_XS
+gate/up and IQ4_NL/Q2_0 down. Native `hf_sat` infinity clamping and NaN rejection
+are explicit in the SwiGLU consumer. Parent real rank weights, status/fault join,
+reduction, accepted-prefix and cleanup owners remain authoritative.
+
+The actual global stage owner allocates **three128 MiB roots**, not64 MiB. The
+previous prompt receipt's64 MiB description and scope check were incorrect;
+both prompt and enclosing stage scopes now accept the actual128 MiB owners.
+Previous builds/offline checks did not prove this runtime ownership connection.
+The historical64 MiB bank-fetch helper is separate from the selected global
+path; do not confuse its constant with the global source staging allocation.
+
+**Still incomplete:** the controller remains a three-row loop. This connected
+arithmetic uses role-major serial staging across logical-ID groups, a separate
+gate/up layout in the existing PART rows, FP16 values temporarily represented
+in the existing F32 hidden owner, and portable8x8x32 FMA tile GEMM. Native uses
+expert-major paired GU, staged copy/compute events and two dequant slots. Those
+schedule/storage differences remain required work with the full chunk owner,
+ring/cache loan, PLE prefetch, prompt causal families and target/MTP teaching.
+Dispatch/INFO admission and stage lifetime/graph overlap must be audited together
+with that owner. Offline validation is not device numerical/state acceptance,
+XMX proof or throughput acceptance. Do not benchmark or discard this component
+because its supporting schedule is unfinished.
+
+Validation logs under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-prompt-experts-shaders-20261014.log`:256 offline WGSL/SPIR-V variants
+  pass, including nine prompt expert variants and physical BDA checks for all
+  six original expert formats.
+- `strata-prompt-experts-clippy-20261014.log`: strict release core Clippy passes.
+- `strata-prompt-experts-final-build-20261014.log`: final release core build passes.
+
+No live GPU/model execution, numerical/state acceptance, speed test, root action,
+service change, API/UI change, installation or release. Existing full-core unit
+failures and whole-engine acceptance remain open. Full rewrite incomplete; goal
+active; speed gate closed. Required Vashti changes: none.

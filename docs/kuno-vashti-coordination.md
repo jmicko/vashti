@@ -4724,3 +4724,30 @@ and whole-prompt scheduling remain required. oneMKL is replaced with ordinary
 FMA tile GEMM; numerical/XMX/performance acceptance is unproven. Final stage/
 cache/queue lifetime audit and earlier full-core failures remain open. Full
 rewrite incomplete; goal active; speed gate closed. Required Vashti changes: none.
+
+### Active Kuno engine handoff — original-source FP16 prompt experts (2026-10-14)
+
+Source `1cf7e50`, isolated `codex/strata-rust-port`. Read completion guide
+**Connected original-source prompt expert arithmetic**. Initial prompt calls
+now connect logical-ID grouping, real source fetch, original six-format FP16
+weight images, FP16 gathered activations, tile GEMM, saturated SwiGLU and parent
+rank reduction. Prompt bypasses decode's CPU split; decode stays separate.
+
+The actual global stage owners are three128 MiB buffers. Earlier prompt notes
+and scope guards incorrectly expected64 MiB; both scope guards now match the
+real owner. No new private weight root, model duplicate or persistent artifact.
+Serial role-major staging, separate GU layout, portable FMA tile GEMM and INFO
+admission remain explicit schedule/storage audit work for the full chunk owner.
+
+Final release build, strict Clippy and256 offline shaders (including original
+six-format physical BDA checks) pass. No live model/GPU/numerical/state/recovery
+or speed execution; no root/service/API/UI change, installation or release.
+
+Next connect the native **large chunk owner and expert-major staging ring/cache
+loan**, prompt causal kernels, PLE prefetch and device target/MTP teacher handoff
+together. Do not grow/rename the current three-row verification loop and call it
+native prefill. Complete graph/queues, dense-format audit, arbitrary input/
+sampling, earlier full-core failures and whole-engine acceptance remain open.
+Full rewrite incomplete; goal active; speed gate closed. No intermediate timing
+may steer or roll back the incomplete assembled port. Required Vashti changes:
+none. Canonical checkout/services and inherited bytecode preserved.
