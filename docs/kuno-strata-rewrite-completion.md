@@ -41,7 +41,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp` | Core now connects native BF16 alpha/beta window projection, conv/L2, controls, double-buffered four-row-group FMA recurrence/output norm and state-only accepted-prefix replay. See the GDN receipts below. Optional Q8 producer fusion, prompt-path fidelity, physical execution and final numerical/queue audit remain open. |
 | QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects FP16 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. See the QSA receipt below for precise storage/scheduling substitutions and remaining numerical/state acceptance; do not claim full QSA fidelity yet. |
 | PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Core now connects native BF16 MAX8 projections, native normalization/gate/conv/history, transient deduplicated positional reads and the actual accepted-prefix owner. Whole-prompt double-buffered prefetch, mapped history/snapshot scheduling and numerical/device acceptance remain open. Never persist request n-grams. |
-| Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. Full chunk owner/budget, native staging ring/cache loan and expert-major scheduling, causal prompt kernels and device-resident target/MTP handoff remain unported; current three-row loop is not prompt-path parity. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
+| Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. The bounded prompt path now uses logical-ID expert order, checked native transfer nodes, an eight-slot raw ring and two paired dequantization slots. Full chunk owner/budget/cache loan, independent transfer/compute queues, causal prompt kernels and device-resident target/MTP handoff remain unported; current three-row loop is not prompt-path parity. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
 | MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native FP16 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Queue/branch/capture fidelity, numerical/state acceptance, arbitrary input and supported sampling remain required. See the front/rest/MoE receipts. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Request-local Rust suffix/cost controller exists; audit supported window lengths and coupled sampling rather than fixing to four public-fixture rows. |
 | Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Real greedy verification/state-only repair exists. Audit all active windows and acceptance cases against GDN/QSA/PLE/positions; independent correctness oracle remains missing. |
@@ -1332,4 +1332,78 @@ Validation logs under `/media/jmicko/faststore/kuno-development`:
 No live GPU/model execution, numerical/state acceptance, speed test, root action,
 service change, API/UI change, installation or release. Existing full-core unit
 failures and whole-engine acceptance remain open. Full rewrite incomplete; goal
+active; speed gate closed. Required Vashti changes: none.
+
+## Connected prompt staging ring and paired expert order (2026-10-14)
+
+Runtime source `9339904`, same isolated `codex/strata-rust-port`. This supersedes
+the preceding role-major prompt expert schedule, without a timing experiment.
+Pinned Intel `prefill.cpp:100` defines STAGE8, `:226` defines DQ2, and
+`:3963-4012` connects native paired GU/dequantization to expert-major products.
+The default non-stream-all branch is the reference for the current partial
+resident cache; optional large stream-all rings and cache loans remain separate
+work, rather than being falsely credited by an eight-slot declaration.
+
+The real router map is read once through the owning admission (804 words). It
+is validated for complete/distinct actual rank coverage using the existing
+split validator with no CPU expert contribution. Its logical-ID order remains
+unchanged; token activations are not read to the CPU. The caller queues up to
+eight actual groups ahead, chooses raw slots modulo8 and dequant slots modulo2.
+Every missing original role is a real HOST-to-private-stage buffer copy; resident
+roles are read from their original BDA owners. Raw stage2 contains gate/up/down
+bytes for each ring cell, including role offsets verified against actual graph
+geometry. Two GU+D FP16 images borrow19,660,800 bytes of stage1. No new private
+owner or second whole-model copy is allocated.
+
+Gate/up dequantization now produces native interleaved1280-row FP16 matrices;
+paired GEMM writes only the current group's interleaved F32 GU rows into the
+existing256 KiB GU owner. Saturated SwiGLU writes packed FP16 hidden rows directly
+into stage0, then DOWN consumes those rows and publishes the real route-indexed
+PART/status/fault outputs. Earlier completed DOWN outputs cannot be overwritten
+by later GU rows because those owners are distinct. The previous temporary
+F32 representation of packed FP16 hidden rows is removed. Parent weighted rank
+reduction, prefix acceptance and complete-owner cleanup remain connected.
+
+**Checked transfer integration:** `PublicHostCopy` and
+`ComputeClient::stage_public_host_copies` are additive internal Rust APIs in the
+vendored CubeCL runtime. Only registered immutable HOST source bindings, complete
+same-stream destination owners and checked aligned cell ranges are accepted.
+The Wgpu backend resolves actual registry resources and validates physical
+usage/extents and nonoverlapping destinations before queue mutation. Native
+graph mode inserts real `vkCmdCopyBuffer` nodes in the same owned graph, with
+retained source/destination resources and transfer/shader barriers. Other Wgpu
+mode uses its owning encoder. There is no separate raw queue or untracked
+submission; detach/close still joins the sole consuming stream. Original HOST
+imports add only TRANSFER_SRC/COPY_SRC; external registration permits STORAGE
+with optional COPY_SRC and retains readonly kernel lowering. COPY_DST, mapping
+usage and mutable external destinations are not admitted by this copy API.
+
+**Remaining fidelity gaps:** copies and compute still share the same owned
+queue; this is not independent native copy/compute overlap. Dequant slots are
+correctly ordered but not yet overlapped with later experts. The controller
+still has three-row initial calls. Full chunk allocation/carving and byte
+budget/cache loans, real larger grouped-row owners, prompt causal families,
+PLE prefetch and device target/MTP teacher handoff remain required. Portable
+FMA GEMM is still an unproven oneMKL/XMX substitute. Full graph/capture/admission
+and whole-engine numerical/state/resource acceptance remain open. Do not run
+speed trials or revert the component while its dependencies remain unfinished.
+
+Validation logs under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-prompt-ring-final-build-20261014.log`: final release core build passes.
+- `strata-prompt-ring-final-clippy-20261014.log`: strict release core Clippy passes
+  for the operational implementation; later test-only fixture/comment changes
+  pass final release build and the actual host test below.
+- `strata-prompt-ring-shaders-20261014.log`:256 offline WGSL/SPIR-V variants pass,
+  including paired physical-source GU and original DOWN formats.
+- `strata-prompt-ring-copy-contract-20261014.log`: one host-only metadata contract
+  test passes, rejecting private sources, readonly external destinations,
+  foreign streams, sliced source views and out-of-owner/overflowing ranges. It
+  uses an abstract registered metadata resource, not a GPU allocation or proof
+  of physical copy execution. Run through the native package because vendored
+  dependencies are not testable workspace members in this checkout.
+
+Fmt/whitespace pass. No live GPU/model/copy execution, numerical/state/recovery
+or speed test, root action, service/HTTP API/UI change, installation or release.
+The earlier full-core failures remain open. Full rewrite incomplete; goal
 active; speed gate closed. Required Vashti changes: none.

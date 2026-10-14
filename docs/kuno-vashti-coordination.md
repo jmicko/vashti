@@ -4751,3 +4751,37 @@ sampling, earlier full-core failures and whole-engine acceptance remain open.
 Full rewrite incomplete; goal active; speed gate closed. No intermediate timing
 may steer or roll back the incomplete assembled port. Required Vashti changes:
 none. Canonical checkout/services and inherited bytecode preserved.
+
+### Active Kuno engine handoff — native prompt ring and paired products (2026-10-14)
+
+Source `9339904`, isolated `codex/strata-rust-port`. Read completion guide
+**Connected prompt staging ring and paired expert order** for source mapping,
+real owners, copy-contract boundaries and remaining substitutions.
+
+Prompt experts now run in logical-ID expert order through actual eight-slot raw
+and two-slot dequantization rings. Paired interleaved GU, FP16 SwiGLU and original
+DOWN consumers are connected together; earlier completed rank outputs cannot
+be overwritten by later GU rows. No new private roots or model duplicate.
+One bounded routing-only readback matches native host grouping; no CPU activation
+readback or CPU expert contribution. Decode's integer/CPU path stays separate.
+
+Original HOST buffer imports allow COPY_SRC. New internal CubeCL copy APIs
+validate registered readonly sources, full same-stream destination owners and
+physical cell extents, then insert actual transfer nodes into the same owned
+native graph. Do not bypass that API with an external raw queue: registry
+detach must join every consumer. Independent copy/compute queues remain open.
+
+Final release build, strict operational core Clippy,256 offline shaders and one
+host-only copy metadata contract test pass. Test metadata is not physical GPU
+or copy execution proof. No live GPU/model/numerical/state/recovery/speed test,
+root action, service/HTTP API/UI change, installation or release. Earlier full
+core failures remain open; canonical checkout/services and bytecode preserved.
+
+Next: connect the full **large prompt chunk owner/carving/budget/cache loan** to
+layer-major GR, causal prompt GDN/QSA, larger real routed-row owners, PLE prefetch
+and device target/MTP teaching. The current caller still uses three-row windows;
+do not label that as native prefill. Queue overlap, complete capture/admission,
+oneMKL/XMX substitution, dense formats, arbitrary input/sampling and whole-engine
+acceptance remain required. Full rewrite incomplete; goal active; speed gate
+closed. Keep the assembled port selected; no timing-driven partial rollback.
+Required Vashti changes: none.
