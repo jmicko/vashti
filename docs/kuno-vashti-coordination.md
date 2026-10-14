@@ -4604,3 +4604,29 @@ completion receipt's pinned call sequence and teacher alignment. Current scalar
 teacher/repair loops are not native grouped graphs. Keep the whole assembled
 core selected, goal active and speed gate closed. API/Vashti changes: none.
 Canonical checkout/services and inherited bytecode preserved; no installation.
+
+
+### Active Kuno engine handoff extension — grouped MTP front (2026-10-14)
+
+Source `147cd9a`, same isolated `codex/strata-rust-port`. Read completion guide
+**Connected native MAX8 MTP front** for real owners, loading formats, caller/state
+alignment and explicit remaining substitutions.
+
+Core now connects grouped embedding/wide-carry norm, native Q8 input branches,
+BF16 fused GR, shared K/V input planes and key norm/RoPE/append. Prompt teaching
+and accepted-prefix repair use real grouped windows. Draft/followup count1 uses
+the same front from actual GPU Token/Carry owners, with no duplicate KV append.
+Original BF16 GR and Q6 draft head are preserved. New20-owner/4,685,824-byte
+front,4096 core context,25,296,896-byte private plan and erasure/close accounting
+are coupled; ordinary2048 path remains separate.
+
+Release build, strict Clippy,216 offline shaders, two geometry/canonical-embedding
+and nine repair tests pass. Ordinary regression:1,365 pass/one ignored. No live
+GPU/model/state/recovery or speed run; earlier full-core failures remain open.
+F32 cache backing, legacy MTP rest, prompt MMQ/group fences, recorded graphs,
+carry handoff and numerical/device acceptance are still required. Next port MTP
+rest and packed cache together, then the remaining whole completion checklist.
+
+Goal active; full rewrite incomplete and speed gate closed. API/Vashti changes
+required: none. Canonical/services and inherited bytecode preserved; no release,
+install, reset or rebind.

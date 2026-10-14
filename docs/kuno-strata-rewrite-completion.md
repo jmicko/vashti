@@ -42,7 +42,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects FP16 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. See the QSA receipt below for precise storage/scheduling substitutions and remaining numerical/state acceptance; do not claim full QSA fidelity yet. |
 | PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Original grouped reads/hash/history exist. Audit asynchronous deduplicated source reads, grouped BF16 projections and ordered history snapshots/commit. Never persist request n-grams. |
 | Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, MoE MMQ/Intel implementations | Rust bounded graph prefill is not full prompt-path parity. Port connected chunk budget, streamed layer staging and dense/expert batches, including prompt history consumed by MTP. |
-| MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Original Q2 sidecar and public draft vocab exist. Audit native layout/conversion, draft graph/attention and prompt-state initialization; arbitrary text and full supported draft head must work. |
+| MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Original Q2 sidecar and full draft vocab exist. Core now connects a MAX8 native front to prompt teaching, accepted-prefix repair and device-conditioned count1 drafting. BF16 GR and original Q6 head stay original; see the front receipt. Packed KV/rest graph, native queue/capture, numerical/state acceptance, arbitrary input and supported sampling remain required. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Request-local Rust suffix/cost controller exists; audit supported window lengths and coupled sampling rather than fixing to four public-fixture rows. |
 | Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Real greedy verification/state-only repair exists. Audit all active windows and acceptance cases against GDN/QSA/PLE/positions; independent correctness oracle remains missing. |
 | Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay exists. Audit stable complete recordings, transfer dependencies, scratch lifetimes and actual overlap; a sequence of independent Wgpu launches is not equivalent. |
@@ -936,3 +936,75 @@ parity. Implement real grouped owners/producers/consumers and state publication
 before changing the controller. Native default hidden norm is wide
 (`mtp_hnorm_stream=false`); Rust's one10240-wide norm already matches that
 choice. Preserve teacher token/carry alignment and the prompt_len-1 MTP cursor.
+
+## Connected native MAX8 MTP front (2026-10-14)
+
+Source `147cd9a`, isolated `codex/strata-rust-port`. `strata_mtp_front.rs`/WGSL
+add a real model-owned MAX8 front workspace rather than a scalar loop named as
+batching. It follows pinned `MtpDrafter::record_front/capture_prefill`: original
+IQ4_XS embedding rows, native1024-thread weighted embedding/wide-carry norm,
+Q8_1/native dense FC embedding and hidden streams in groups≤8, broadcast into HC
+residuals, native sliced BF16 GR, shared mixed-input Q8 planes for K/V, fused key
+norm/RoPE and grouped cache append. Every real row has its own explicit position.
+
+Core public loading now preserves original BF16 GR down/up/inject and head-up
+matrices instead of requantizing all of them to Q8. Other native dense projections
+keep the existing startup Q8 conversion. The full original Q6_K draft head is
+also preserved and uses the existing native head consumer. Quotes derive from
+these actual matrix formats and original page spans; there is no extra public
+weight duplicate or converted model file.
+
+The new front has20 private owners /4,685,824 admitted bytes. Core MTP context
+is4096; the ordinary profile remains2048. Total core private plan is25,296,896
+bytes inside a64 MiB reserve. Private pages, precharge, physical/full-region checks,
+finite/padding guards, failure erasure and close receipt all include the new
+owners. Cache/candidate data never leaves the owning request. BF16 GR uses the
+same charged grouped buffer geometry as the target's native helper. Integer/Q8
+planes receive exact padding checks rather than invalid F32 finiteness checks.
+
+Connected callers:
+
+- Prompt teaching submits all actual rows from each target carry chunk together,
+  with real next tokens and per-row carries. One completed fault gate precedes
+  the group's cursor publication; final prompt boundary stays prompt_len-1.
+- Core accepted-prefix repair queues the original retained prefix as one front
+  window after actual rewind. First confirmed-cell preservation and final cursor
+  authority remain governed by AcceptedCacheRepair and target acceptance.
+- Count1 full drafting/followup uses the same front with GPU-to-GPU copies of
+  the real Token/Carry owners. It publishes actual residual/mixed/injection to
+  the existing rest graph. Attention skips its old duplicate K/V append. No
+  synthetic host token/carry is substituted for device followup authority.
+
+Actual front dispatch accounting comes from its queued clears/projections/
+operators/guards, not invented receipts. Failure clears all new front owners and
+packed scratch before reuse. Ordinary feature-off math/call paths are retained.
+
+Remaining fidelity gaps: cache owners still store FP16-rounded values in F32,
+not native packed/paged half pools. The rest of MTP attention/expert/GR/commit
+execution still contains legacy scalar families and must be ported together with
+those packed consumers. Target prompt chunks remain three rows rather than native
+MMQ prefill. Prompt groups still fence individually; stable front graph capture,
+whole-prompt enqueue/final-fence scheduling and device-resident target carry
+handoff remain open. Native1024-thread pipeline/hardware acceptance, numerical
+KV/draft/repair comparisons and physical recovery have not been exercised. This
+receipt is a connected front implementation, not complete MTP/engine parity.
+
+Validation logs under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-mtp-front-build-20261014.log`: release core build passes.
+- `strata-mtp-front-clippy-20261014.log`: strict release core Clippy passes.
+- `strata-mtp-front-shaders-20261014.log`:216 offline WGSL/SPIR-V shaders pass,
+  including the five new front kernels and reused GR/Q8/key norm consumers.
+- `strata-mtp-front-geometry-tests-20261014.log`: two host tests pass: every
+  MAX8 hidden-stream group/cache-tail interval and exact IQ4_XS lane layout
+  versus the original independent canonical decoder. Not device parity.
+- `strata-mtp-front-core-tests-20261014.log`: all nine accepted-prefix/source
+  tests pass, including eight-row bounds. Old count3/private-byte assumptions
+  in these affected tests now distinguish core versus ordinary contracts.
+- `strata-mtp-front-ordinary-regression-20261014.log`:1,365 pass, one ignored.
+
+Fmt/whitespace pass. Prior full-core failures remain open. No live GPU/model,
+correctness/recovery or speed run, service/API/UI change or installation. Goal
+active; full rewrite incomplete and speed gate closed. Next port the MTP rest
+and packed cache as one consumer family, then continue prompt/PLE, graph/queues,
+full sampling/input and final completeness/physical acceptance gates.
