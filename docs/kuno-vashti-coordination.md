@@ -4365,3 +4365,30 @@ do not allocate both caches or force the new layout into fixed old extents.
 No GPU speed/profile, API/UI, installed binary or service change. Required Vashti
 changes: none. Goal active, full rewrite incomplete, earlier core-suite failures
 still open. The refreshed bounded helper's path/process audit is in that handoff.
+
+
+### Active Kuno engine handoff extension — global source owner (2026-10-14)
+
+Source commit `47d330f` on `codex/strata-rust-port` in the existing isolated
+`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti` checkout. Read the completion
+guide's **Global HOST, source owner and native read dependencies** block before
+continuing. It records exact construction/ownership/closure, validation and the
+next connected consumer replacement.
+
+The new global Sources owner combines one ranked GPU cache, only its variable
+original HOST complement, actual per-expert physical addresses and native read
+hazard/recording dependencies. Exclusive executor admission and legacy-cache
+exclusion are implemented. Core build, strict Clippy, all 163 shader validations,
+three layout tests and ordinary regression (1,349 passed, one ignored) pass.
+**The inference coordinator does not call the new constructor yet, and no GPU
+load/execute/recovery has been run for this source owner.** Full rewrite, numerical
+state acceptance and the earlier experimental core suite failures remain open.
+Next connect construction before prefill, routing/HOST fetch/rebase, separate-role
+expert execution and private adaptive remap/publication as one coupled block.
+No intermediate speed selection or disabling port components.
+
+API specification/installed binary/services/Vashti behavior are unchanged;
+required Vashti changes: none. No GPU testing, reset, rebind, installation or
+release in this block. Canonical checkout and inherited untracked bytecode are
+preserved. The goal is active and incomplete. Existing bounded sudo refresh remains
+an authentication-only helper; it is not authority to bypass unavailable credentials.

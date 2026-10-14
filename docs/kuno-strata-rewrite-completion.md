@@ -215,3 +215,114 @@ The authorized sudo refresher was renewed to one bounded 240-minute helper at
 the preceding helper was stopped only after verifying the new process. Recheck
 the process/cache before protected work, and stop cleanly if required root access
 is unavailable. Do not infer cache validity from this note alone.
+
+
+## Global HOST, source owner and native read dependencies (2026-10-14)
+
+Source commit `47d330f`. Full rewrite remains **incomplete**; no GPU inference or
+speed/profile execution took place in this block.
+
+`strata_global_host.rs`, a child of the existing Vulkan HOST owner, imports only
+`Tier::Host` pieces from the new global plan. Resident pieces are explicitly
+excluded from both the RAM envelope and construction, so the complement is not a
+second full model mirror. Pieces keep their original plan indices; missing tiers
+allocate no dummy buffers. A one-MiB reader copies each original expert role into
+fully initialized nonlocal HOST-visible Vulkan allocations. Actual requirements,
+heap placement and byte charges are checked before allocation. The full RAM quote
+adds conservative global metadata/owner capacity (32 MiB), the immutable registry
+(1 MiB) and bounded setup windows (two 16-MiB GPU upload windows plus the separate
+1-MiB HOST reader). The CPU reservation is distinct from GPU admission; caller
+proof of available/protected process memory remains required, not inferred from a
+64-GiB numerical ceiling.
+
+The original HAL backing, immutable registry authority and exact detach receipt
+are used together. Ownership is recorded before the HAL import and before
+registration; unknown exposure/import/detach/completion never grants backing-free
+permission. Successful detach joins real readers and destroys registered buffers
+before CPU zero/audit/free. Global page counts use their actual registry limit,
+not the old fixed 432-page inventory. `strata_global_gpu::Cache::load` drains each
+moved original chunk/upload before reading another, so queued Vec payloads cannot
+silently accumulate the whole GPU cache in RAM.
+
+`strata_global_sources::Sources` owns one plan, GPU cache, HOST complement and
+48 exact 32-KiB pointer tables. Each initial (layer, original expert, role) entry
+contains its actual buffer address plus offset, original role word extent and
+resident/HOST flag; unused tail entries are zero. Same-stream full-resource
+metadata, disjoint physical roots, bounds, alignment and plan identity precede
+publication. Per-layer root dependencies cover every source used by that layer.
+The executor's new unsafe `prepare_strata_global_sources` precharges all cache
+and table allocations through the existing exclusive persistent admission and
+owns the completed Sources object. It rejects previously constructed banks,
+expert copies, other caches and duplicate construction. Ordinary bank paths reject
+a simultaneously installed global owner. Closing drains the same client, drops
+table/read aliases and detaches HOST before cache release; a failed close cannot
+retry its way into a false safe-release claim.
+
+**The inference coordinator does not call this constructor yet.** No global cache
+was physically allocated, imported, executed or recovered. Dead-code annotations
+make that gap explicit. The live experimental core still dispatches its old uniform
+banks and old 15-source table; the installed service was not changed.
+
+Native BDA consumers now have `KernelArguments::read_dependencies`. These are
+actual retained buffers, not added shader descriptors: scheduler ordering includes
+these streams, queued tasks own the resources, native nodes include SHADER_READ
+hazards, recording identities include every dependency extent/address, and captured
+recordings retain them through the actual fence. Dependencies require the owning
+native stream and a registered physical expert program, with bounded capacity;
+ordinary/non-native execution rejects them. Immutable external stream validation
+also covers hidden dependencies. Physical lowering rejects writable gate/up/down
+roots. An opaque allocation ID supports owner lookup without exposing mutable
+memory locations or providing allocation/detach authority. Empty dependency lists
+preserve ordinary launches. No API/protocol changes.
+
+Validation logs under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-global-sources-build-20261014.log`: core release binary builds.
+- `strata-global-sources-final-clippy-20261014.log`: strict core Clippy passes.
+- `strata-global-sources-shaders-20261014.log`: 163 CPU WGSL/SPIR-V validations,
+  including the existing physical-pointer variants, pass; no GPU dispatch.
+- `strata-global-sources-plan-tests-20261014.log`: three pure layout tests pass,
+  including empty/partial/full HOST reservation coverage. This caught and fixed
+  accidental resident-piece admission into the HOST complement before execution.
+- `strata-global-sources-original-tests-20261014.log`: ordinary direct-device
+  regression passes, 1,349 passed and one ignored. This is CPU/unit coverage,
+  **not** acceptance of the experimental core's whole-model state/math/closure.
+- Rust formatting and `git diff --check` pass. The earlier full core suite's
+  200 failures were not rerun or declared resolved by these results.
+
+### Next connected implementation block
+
+1. Replace native coordinator bank construction **before initial prompt prefill**
+   with the sole global Sources owner and actual combined CPU/GPU admission. The
+   old probe attaches HOST after prefill, which is too late. Audit native quant-grid
+   versus old address-table construction: do not retain an unused legacy address
+   allocation and quietly claim the same table quote.
+2. Replace fixed 120/120/128/128/16 root bindings and old virtual-slot assumptions
+   together in routing/group planning, selected HOST blob fetch/rebase, native
+   separate-role GU/activation/DOWN and their session/consumer accounting. Use real
+   Sources bindings/read dependencies; no fake weight buffers or invented permits
+   to satisfy historical audits. Audit the native T=1..8 policy and GROUP staging
+   capacity, not only the old four-row public-fixture path.
+3. Pinned `sycl/src/core/verify.cpp:1259` shows resident/device planning;
+   `:1387` couples selected HOST `fetch_blobs` with `rebase_ptrs` when PCIe mode 2
+   is active. The grouped expert consumers need both, plus the real shared/CPU
+   merge behavior for the selected Intel mode. Don't switch to direct remote reads
+   as an unrecorded substitution simply because constructing pointers is easier.
+4. Connect joined adaptive exchange to the same unequal layer counts/physical
+   cells. Current global tables encode **initial physical cells**. Do not write
+   request-derived recency/expert maps into publicly initialized MAIN roots and
+   omit their erasure. Retain immutable physical-cell pointers plus a separately
+   arena-owned private logical remap, or supply an equivalently proven private
+   owner/publication/erase contract. Keep original model data separate from request
+   history; swaps of different-size cells must not overrun allocations.
+5. Reconcile coordinator permits/closure and exact family/root budgets with those
+   actual dispatches. Then continue every remaining row of this checklist,
+   including GDN/QSA/PLE, arbitrary prompts, complete prompt prefill, MTP graph and
+   target/state commit. Correctness/completion may be checked; speed/profile stays
+   blocked until the full connected completeness audit and acceptance pass.
+
+Canonical checkout was untouched; work remains in `codex/strata-rust-port` in
+`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`. Inherited untracked Python
+bytecode is preserved. No installation, service/reset/rebind, gateway/API or Vashti
+change. Goal remains active; sudo unavailability remains a stop/checkpoint rule,
+never a completed-rewrite claim.
