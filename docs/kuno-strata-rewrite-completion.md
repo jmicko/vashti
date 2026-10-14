@@ -40,7 +40,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | GR write/read/norm/down/up/injection | `sycl/src/kernels/cuda/fused_gr.dp.cpp::fused_gr_read_multi`; `verify.cpp::gr_read_group` | Native pending-write norm, sliced BF16 down/injection, fixed slice reduction and up/mix/commit are now connected and unconditionally selected in the core, including explicit PLE/final boundary writes. Resident original weights and the enlarged private scratch owner are charged together. Structural acceptance passes; numerical/model execution acceptance and final substitution audit remain pending. |
 | GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp`, `prefill/kernels.dp.cpp` | Core connects native BF16 alpha/beta, controls, recurrence/norm and accepted-prefix replay. Prompt scope now selects contiguous H, causal convolution/history/L2, pipelined CB32 recurrence and directly consumed FP16 norm output together. The large chunk caller/owners, retained head-major state and split replay layout, optional producer fusion, physical execution and final numerical/queue audit remain open. |
 | QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects FP16 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. See the QSA receipt below for precise storage/scheduling substitutions and remaining numerical/state acceptance; do not claim full QSA fidelity yet. |
-| PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Core now connects native BF16 MAX8 projections, native normalization/gate/conv/history, transient deduplicated positional reads and the actual accepted-prefix owner. Whole-prompt double-buffered prefetch, mapped history/snapshot scheduling and numerical/device acceptance remain open. Never persist request n-grams. |
+| PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Core connects native BF16 MAX8 projections, normalization/gate/conv/history, deduplicated positional reads and accepted-prefix ownership. Prompt calls now consume a bounded, joined double-buffered source prefetch. Native large chunk geometry, upload scheduling, mapped snapshots and numerical/device acceptance remain open. Never persist request n-grams. |
 | Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. The bounded prompt path now uses logical-ID expert order, checked native transfer nodes, an eight-slot raw ring and two paired dequantization slots. Full chunk owner/budget/cache loan, independent transfer/compute queues, causal prompt kernels and device-resident target/MTP handoff remain unported; current three-row loop is not prompt-path parity. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
 | MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native FP16 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Queue/branch/capture fidelity, numerical/state acceptance, arbitrary input and supported sampling remain required. See the front/rest/MoE receipts. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Request-local Rust suffix/cost controller exists; audit supported window lengths and coupled sampling rather than fixing to four public-fixture rows. |
@@ -1466,3 +1466,64 @@ Earlier full-core failures and whole-engine acceptance remain open. Full
 rewrite incomplete; goal active; speed gate closed. Required Vashti changes:
 none. Keep all coupled prompt operators selected; finish remaining dependencies
 before evaluating throughput.
+
+## Connected prompt QSA consumers and PLE source prefetch (2026-10-14)
+
+Source `242ce1c`, isolated `codex/strata-rust-port`. This continues the complete
+port without opening the speed gate or changing the installed engine.
+
+Prompt QSA now selects its real split, separate256-thread RMS and64-thread
+RoPE operators for Q/K/index-Q/new pooled index blocks. Previously retained
+blocks remain untouched. Rotation preserves the preceding normalization fault.
+The final gate reads original interleaved Qfull and writes ordinary packed FP16
+directly to the authenticated stage0 consumed by attn_output; it does not round
+through the old F32 output owner. Actual closing flags/parent fault folds remain
+connected. No new private GPU root or HTTP API is added. Kernels admit1..4096
+rows, but the existing caller/owners still restrict the selected path to MAX8.
+
+Pinned Intel selector correction: `qsa_prompt_attn.dp.cpp:2009-2010` calls the
+XMX wrapper, then returns false to select older attention unless it succeeds.
+`qsa_prompt_attn_xmx.dp.cpp:364-391` defaults STRATA_PROMPT_ATTN_XMX to zero;
+XMX is built but opt-in. The current Rust prompt path retains its existing
+FP16-KV/chunk attention/merge. This is not proof of native32-query scheduling
+or of XMX arithmetic. Reference prompt producers/consumer are
+`prefill/kernels.dp.cpp:1872-1950`, connected by `prefill.cpp:2880-3165`.
+
+PLE source prefetch follows `prefill.cpp:2152-2184,2276-2351`: a scoped CPU
+producer gathers upcoming original table rows while the current GPU chunk runs.
+The rendezvous channel permits only current upload and one next embedding;
+there is no detached worker or unbounded ready queue. Consumer checks binding,
+start/count and every expected n-gram row before using the prepared image.
+Rows/history/data wipe on drop; no prompt, row ID, embedding or result persists.
+Receiver disconnect precedes worker join on normal/error exits; scope ownership
+also joins on unwinding. Original positional-reader workers still all join.
+An extra327,680 host bytes covers the additional131,072-byte embedding, bounded
+coordinator stack and row/descriptor metadata; component and enclosing model
+reservations both include it. No additional GPU embedding buffer is allocated.
+The global teacher now indexes its already-validated next prompt token directly,
+without the old helper's30/35-token fixture restriction. This alone does not
+make the laboratory CLI an arbitrary-input engine.
+
+Final source validation under `/media/jmicko/faststore/kuno-development`:
+`strata-prompt-source-final-build-20261014.log` release build passes;
+`strata-prompt-source-final-clippy-20261014.log` strict core Clippy passes;
+`strata-prompt-source-final-shaders-20261014.log`266 offline shaders pass.
+Fmt/whitespace pass. The final build log includes an earlier build's tail and
+Cargo's artifact-lock wait; both commands exited0, and the subsequent Clippy
+and offline shader invocations ran after the final build completed. No live GPU,
+source-worker/model, numerical/state/recovery or speed execution occurred.
+Earlier full-core failures remain unresolved. No service/API/UI/install/release
+change; required Vashti changes: none.
+
+**Next is the actual large prompt owner and schedule, not another MAX8 wrapper.**
+Use native `carve`/`bytes_needed_impl` (`prefill.cpp:1127+,1832-1886`) for the
+shared attention/MoE region and GR/carry lifetimes. Keep verification MAX8
+separate. Connect larger route/member/status owners, layer-major full-chunk
+consumers, actual budget/cache loans, device MTP teaching and final-only head.
+Current prompt source prefetch is still bounded by the existing three-row loop;
+native host upload events/double-buffer reuse remain part of that owner port.
+For this artifact's large HOST complement, native `ring_slots:209-225` returns
+STAGE8 by default; do not falsely require CUDA stream-all/fused branches.
+Independent queues/capture, full storage/state audit, arbitrary-input/sampling
+and whole-engine correctness/recovery acceptance still block speed testing.
+Full rewrite incomplete; goal active.

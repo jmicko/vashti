@@ -4811,3 +4811,28 @@ Complete queues/capture/admission, state/dense-layout audit, arbitrary input/
 sampling and whole-engine acceptance remain required. Full rewrite incomplete;
 goal active; speed gate closed. No timing-driven partial rollback. Required
 Vashti changes: none. Canonical/services and inherited bytecode preserved.
+
+### Active Kuno engine handoff — prompt QSA and joined PLE prefetch (2026-10-14)
+
+Source `242ce1c`, isolated `codex/strata-rust-port`. Read completion guide
+**Connected prompt QSA consumers and PLE source prefetch**. Prompt QSA selects
+separate RMS/RoPE and directly consumed FP16 gated output. PLE's bounded scoped
+producer supplies upcoming source rows, authenticated against real expected
+rows; receiver disconnect/join and wiping remain request-local. Extra327,680
+host bytes is charged at both component and model boundaries. No new GPU root.
+
+Final release build, strict core Clippy and266 offline shaders pass. No live
+GPU/model/source-worker, numerical/state/recovery or speed run; earlier full-core
+failures remain open. Goal active, full rewrite incomplete, speed gate closed.
+Installed services, canonical checkout, GPU residency and inherited bytecode
+were untouched. Required Vashti changes: none.
+
+Next implement the **large prompt owner/carving/budget and full layer-major
+chunk schedule**, including larger expert route/member owners, device MTP
+teaching and final-only head. Current controller/source prefetch still uses
+three-row/MAX8 ownership. Pinned Intel XMX prompt attention is opt-in, not its
+default. With this model's large HOST complement, native staging defaults to
+eight slots; do not port inactive CUDA branches to satisfy a mistaken checklist.
+Queue/capture, storage/state, arbitrary input/sampling and whole-engine
+acceptance remain required before speed trials. Sudo refresh in shared shell
+succeeded during source work; no protected inference was started.
