@@ -38,7 +38,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | GPU route/group planning and CPU contribution | `verify.cpp` router, `resident_plan`, doorbell/pool/host plans; `src/kernels/cpu` | Real GPU router exists. Audit the selected working Intel all-GPU-fetch versus host-pool mode and reproduce its actual mode, including overlap/merge where active. |
 | Native expert math and grouped rows | `sycl/src/kernels/cuda/iq_kernels.dp.cpp::row_entries`, `native_gu_kernel`, `native_down_kernel` | Packed integer math/BDA roots exist. Separate GU roles, 4/2/1 chunks, activation, intermediate storage and downstream consumers are now selected together in the Intel core; all 158 WGSL/SPIR-V variants validate, including 105 physical-pointer checks; numerical/model execution acceptance remains pending. The global core now uses one per-role launch containing pinned row_entries4/2/1 loops, scalar IQ4_XS, native signed integer finish and XOR reduction; numerical/model execution acceptance remains pending. Historical fixed-chunk kernels are retained separately. |
 | GR write/read/norm/down/up/injection | `sycl/src/kernels/cuda/fused_gr.dp.cpp::fused_gr_read_multi`; `verify.cpp::gr_read_group` | Native pending-write norm, sliced BF16 down/injection, fixed slice reduction and up/mix/commit are now connected and unconditionally selected in the core, including explicit PLE/final boundary writes. Resident original weights and the enlarged private scratch owner are charged together. Structural acceptance passes; numerical/model execution acceptance and final substitution audit remain pending. |
-| GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp` | GDN retained-state replay exists. Audit actual convolution/L2/alpha-beta/recurrence/output-norm fusion, grouped projections and retained commit inputs against pinned Intel source. |
+| GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp` | Core now connects native conv/L2, controls, four-row-group FMA recurrence/output norm and the same state-only accepted-prefix replay. See the GDN receipt below. Dedicated alpha/beta projection arithmetic, optional Q8 producer fusion, prompt-path fidelity, physical execution and final numerical/queue audit remain open. |
 | QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects FP16 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. See the QSA receipt below for precise storage/scheduling substitutions and remaining numerical/state acceptance; do not claim full QSA fidelity yet. |
 | PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Original grouped reads/hash/history exist. Audit asynchronous deduplicated source reads, grouped BF16 projections and ordered history snapshots/commit. Never persist request n-grams. |
 | Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, MoE MMQ/Intel implementations | Rust bounded graph prefill is not full prompt-path parity. Port connected chunk budget, streamed layer staging and dense/expert batches, including prompt history consumed by MTP. |
@@ -814,3 +814,70 @@ read `verify_kernels.dp.cpp`'s actual multirow convolution/L2 and four-row-group
 FMA recurrence/output-norm, including its accepted-prefix state replay. The old
 Rust streamer currently decays before its dot and places query scaling before
 recurrence, unlike native; port their dependent producers and repair together.
+
+## Connected native GDN producers, recurrence and repair (2026-10-14)
+
+Source `351e29b`, same isolated checkout. `strata_gdn.rs`/WGSL translate pinned
+Intel `verify_kernels.dp.cpp::gdn_conv_l2_multi_kernel` and
+`gdn_step_norm_multi_kernel` as a coupled core family for widths1..8. This
+supersedes the preceding receipt's old GDN arithmetic description.
+
+The128-lane convolution reads each row's four causal RAW inputs from the original
+three-value ring plus projected QKV. Native SiLU division and XOR/four-warp L2
+produce unit-normalized Q/K and unnormalized V. Final RAW ring storage is kept
+separate. Query scaling is applied after recurrent readout, as in Strata; the
+old producer's pre-recurrence scale is absent. Both producer status planes join
+the existing fault proof. Original alpha/beta projected rows feed the native
+20-threshold softplus/negative-A and sigmoid control equations.
+
+Recurrence uses the native512-lane block: four groups,128 columns and32 register
+state rows per thread. Each group accumulates32 un-decayed state/key FMAs; the
+four partials add in the prescribed order. Decay then enters delta, and the
+updated state/readout use native FMA order. Query readout scaling, four-warp
+head RMS, original gamma and sigmoid gate are fused before the actual output
+projector. Existing separate candidate-state roots retain the untouched original
+state. Retained inputs now contain the new unit Q/K and exact native controls.
+
+Accepted-prefix repair uses the same native recurrence arithmetic in a separate
+state-only shader. It reads the real retained prefix and pre-window state/ring;
+convolution restores RAW history. No attention, FFN/router, head or output graph
+runs. The existing finite-state/status fold, completed fence and cursor commit
+remain required. Legacy recurrence/pointwise consumers are selected only outside
+core; native core does not silently fall back on an intermediate speed report.
+
+No new MAIN weight/state owner is added and all existing quote/retained-input
+roots stay admitted. Native dispatches replace multiple old operators within the
+existing INFO cap. Kernel launch checks actual hardware capacity for the512-lane
+block; unsupported device capacity rejects rather than issuing an invalid block.
+Physical pipeline/device-limit acceptance is still untested.
+
+Explicit remaining substitutions/gates: candidate state stays head-major in the
+existing Rust private pages rather than native row/head-major storage; speculative
+and count1 state both use separate next-state roots rather than native register-
+only/self-commit distinctions. K/Q are loaded into one shared plane per token,
+not native double-buffered next-token preload. Conv and step scratch layouts differ;
+old ACT/RECURRENT pages remain reserved but are not falsely credited as producers.
+WGSL exp/inverseSqrt and compensated positive log1p replace SYCL math. The generic
+original BF16 alpha/beta projector needs a dedicated native AB arithmetic audit;
+optional Q8 output fusion and prompt/capture/queue fidelity also remain open.
+Do not claim complete GDN/whole-engine parity from these source connections.
+
+Validation logs under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-gdn-build-20261014.log`: release core build passes.
+- `strata-gdn-clippy-20261014.log`: strict release core Clippy passes.
+- `strata-gdn-shaders-20261014.log`:210 offline WGSL/SPIR-V shaders pass,
+  including conv, controls,512-lane step/norm and state-only replay.
+- `strata-gdn-core-family-tests-20261014.log`:17 family tests pass.
+- `strata-gdn-math-tests-20261014.log`: host four-group FMA recurrence/readout
+  agrees with an independent F64 outer-product oracle through widths1..8; every
+  accepted prefix reproduces the corresponding sequence prefix. This is not
+  device or whole-model numerical/state acceptance.
+- `strata-gdn-ordinary-regression-20261014.log`:1,362 pass, one ignored.
+
+Fmt/whitespace checks pass. Previous broader/full-core failures remain open.
+No GPU inference, model execution, speed test, reset/rebind, service change or
+installation. Full rewrite is still incomplete and the speed gate stays closed.
+Continue the coupled checklist: native AB/dense/packing audits, original prompt
+prefill/PLE/MTP initialization and full graph/capture/sampling/arbitrary-input
+paths; reconcile those consumers before final completeness and physical tests.

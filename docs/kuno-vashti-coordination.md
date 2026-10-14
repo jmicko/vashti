@@ -4553,3 +4553,29 @@ Next port GDN's actual multirow conv/L2, four-group FMA recurrence/norm and
 accepted-prefix replay together (reference `verify_kernels.dp.cpp`), then continue
 the whole checklist. API/installed services/Vashti changes required: none.
 Canonical checkout and inherited bytecode preserved; no install/release/reset.
+
+
+### Active Kuno engine handoff extension — coupled native GDN (2026-10-14)
+
+Source `351e29b`, same isolated `codex/strata-rust-port` checkout. Read completion
+guide **Connected native GDN producers, recurrence and repair**; it supersedes
+the previous extension's description of the old GDN streamer arithmetic.
+
+Core width1..8 couples RAW conv/native L2, controls,512-lane four-group FMA state
+recurrence, query scaling after readout, fused output norm/gate and actual output
+projection. Accepted-prefix state-only replay now uses the same arithmetic and
+retained native inputs. Existing state/MAIN/INFO reservations stay connected;
+actual device workgroup capacity is checked before launch. Global-source and
+native QSA families remain selected together.
+
+Release build, strict Clippy,210 offline shaders,17 family and one independent
+host math/prefix test pass. Ordinary regression:1,362 pass/one ignored. No GPU,
+model/state/recovery or speed test. Head-major/separate candidate state, shared
+plane scheduling, BF16 AB projection, optional producer fusion, prompt/capture
+and numerical acceptance remain open. Prior full-core failures remain required.
+
+Full rewrite remains incomplete; goal active, speed gate closed. Continue the
+whole completion checklist (AB/packing, prompt/PLE/MTP initialization, complete
+recording/sampling/arbitrary input), then reconcile and perform final acceptance.
+API/installed services/Vashti changes required: none. Canonical checkout and
+inherited bytecode preserved; no install/release/reset/rebind.
