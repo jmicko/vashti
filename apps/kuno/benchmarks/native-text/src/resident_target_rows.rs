@@ -44,9 +44,13 @@ pub(crate) const RUNTIME_INCREMENT: u64 = 2 * (OWNER_BYTES as u64 - 1024 * 1024)
 pub(crate) const RUNTIME_LIMIT: u64 = 128 * 1024 * 1024;
 
 macro_rules! rejected {
-    () => { Error::InvalidFormat(if crate::strata_intel_core::enabled() {
-        concat!("native target rows owning output at source line ",line!())
-    }else{"native target rows owning output"}) };
+    () => {
+        Error::InvalidFormat(if crate::strata_intel_core::enabled() {
+            concat!("native target rows owning output at source line ", line!())
+        } else {
+            "native target rows owning output"
+        })
+    };
 }
 pub(super) fn check_public_audit(reserved: bool, public_zero_audit: bool) -> Result<()> {
     if reserved && !public_zero_audit {
@@ -159,7 +163,9 @@ impl Payload {
         } else {
             (&self.logits, VOCABULARY)
         };
-        values.get(row * width..(row + 1) * width).ok_or(rejected!())
+        values
+            .get(row * width..(row + 1) * width)
+            .ok_or(rejected!())
     }
 }
 
@@ -750,7 +756,7 @@ mod tests {
         }
     }
     #[test]
-    fn wrong_header_fault_nonfinite_inactive_and_full_padding_are_rejected!() {
+    fn wrong_header_fault_nonfinite_inactive_and_full_padding_are_rejected() {
         let original = packet(1, 0);
         for (index, bits) in [
             (0, 2),
