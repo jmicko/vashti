@@ -299,7 +299,7 @@ pub(crate) fn launch(
     groups: usize,
     down: bool,
 ) -> Result<()> {
-    if crate::strata_intel_core::enabled() {
+    if crate::strata_port::specialized_members() {
         for member_width in 1..=if count == 4 { 4 } else { 3 } {
             launch_width(
                 client,
@@ -468,7 +468,7 @@ pub(crate) fn compiled_sources() -> Vec<CompiledKernel<AutoCompiler>> {
         for dtype in dtypes {
             for four in [false, true] {
                 let widths = if crate::strata_intel_core::enabled() {
-                    (1..=if four { 4 } else { 3 }).collect::<Vec<_>>()
+                    (0..=if four { 4 } else { 3 }).collect::<Vec<_>>()
                 } else {
                     vec![0]
                 };

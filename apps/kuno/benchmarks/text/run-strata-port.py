@@ -13,7 +13,7 @@ def run():
  if os.getuid()!=0 or not 5<=len(sys.argv)<=12:raise ValueError('root BUILD OUT code|prose q8|q2 [--profile] [--integer-head] [--fused-experts]')
  build=BASE/sys.argv[1];out=BASE/sys.argv[2];fixture,profile=sys.argv[3:5]
  options=set(sys.argv[5:])
- if options-{'--profile','--integer-head','--fused-experts','--wide-experts','--expert-lanes16','--cache-eight','--mtp-eight','--independent-groups','--unroll-dots','--constant-codebook','--ranked-fill','--profile-first','--intel-core'}:raise ValueError('port selector')
+ if options-{'--profile','--integer-head','--fused-experts','--wide-experts','--expert-lanes16','--cache-eight','--mtp-eight','--independent-groups','--unroll-dots','--constant-codebook','--ranked-fill','--profile-first','--intel-core','--member-widths','--native-profile'}:raise ValueError('port selector')
  target_profile='--profile' in options
  if out.exists():raise ValueError('fresh output required')
  out.mkdir()
@@ -35,6 +35,12 @@ def run():
   env['KUNO_STRATA_INTEL_CORE']='public';env['KUNO_STRATA_CACHE_SWAPS']='eight-public'
   env['KUNO_LAB_FROZEN_BANK_FILL']='profile-ranked-public'
   env['KUNO_LAB_TARGET_HEAD']='integer-public';env['KUNO_LAB_TARGET_STATUS_FOLDS']='grouped-public'
+ if '--member-widths' in options:
+  if '--intel-core' not in options:raise ValueError('member widths require core')
+  env['KUNO_STRATA_MEMBER_WIDTHS']='classified-public'
+ if '--native-profile' in options:
+  if '--intel-core' not in options or target_profile:raise ValueError('native profile requires core and excludes ordinary profile')
+  env['KUNO_STRATA_NATIVE_PROFILE']='round-8'
  if target_profile:env['KUNO_STRATA_PROFILE_TARGET']='round-8'
  if '--integer-head' in options:env['KUNO_LAB_TARGET_HEAD']='integer-public'
  if '--fused-experts' in options:env['KUNO_STRATA_FUSED_EXPERTS']='five-tier-public'

@@ -103,6 +103,14 @@ pub(crate) fn expert_lanes() -> usize {
 pub(crate) fn profile_target() -> bool {
     enabled() && std::env::var("KUNO_STRATA_PROFILE_TARGET").as_deref() == Ok("round-8")
 }
+pub(crate) fn profile_native_target() -> bool {
+    crate::strata_intel_core::enabled()
+        && std::env::var("KUNO_STRATA_NATIVE_PROFILE").as_deref() == Ok("round-8")
+}
+pub(crate) fn specialized_members() -> bool {
+    crate::strata_intel_core::enabled()
+        && std::env::var("KUNO_STRATA_MEMBER_WIDTHS").as_deref() == Ok("classified-public")
+}
 static GU: [AtomicU64; 8] = [const { AtomicU64::new(0) }; 8];
 static DOWN: [AtomicU64; 8] = [const { AtomicU64::new(0) }; 8];
 pub(crate) fn credit(down: bool, count: usize) {
@@ -339,7 +347,7 @@ pub(crate) fn public_preview(text: &str) {
 pub(crate) fn receipt() -> serde_json::Value {
     serde_json::json!({"enabled": enabled(), "upstream_revision": "fb58e0dbc8399662c0e47c76578c6e878b14f6cf",
         "backend": "Rust/WGSL/Vulkan", "coherent_intel_core":crate::strata_intel_core::enabled(), "native_vulkan_graph_process_totals":cubecl::wgpu::native_strata_graph_stats(), "native_vulkan_graph_execution_totals":cubecl::wgpu::native_strata_graph_execution_stats(), "native_host_stage_dispatches":crate::strata_stage::calls(), "native_host_stage_private_bytes":if crate::strata_intel_core::enabled(){crate::strata_stage::MAIN_BYTES}else{0}, "packed_dense_dispatches":crate::strata_dense::calls(), "packed_dense_input_prepares":crate::strata_dense::prepares(), "shared_read_only_iq_table_bytes":if crate::strata_intel_core::enabled(){crate::strata_intel_core::PUBLIC_TABLE_BYTES}else{0}, "verify_capacity":verify_capacity(),"profile_first_residency":profile_first(), "activation_planes": 1, "activation_scale": "fp16-q8_1",
-        "projection_workgroup":256, "rows_per_workgroup":256/expert_lanes(), "expert_dot_lanes":expert_lanes(),"expert_member_width_specialized":crate::strata_intel_core::enabled(), "aligned_vector_expert_reads":wide_experts(), "group_stride":if independent_groups() {verify_capacity()*10} else {4},"independent_expert_groups":independent_groups(),"unrolled_packed_dots":unrolled_dots(),"constant_iq_codebook":constant_codebook(),"suffix_lookup_windows":LOOKUP_WINDOWS.load(Ordering::Relaxed),"suffix_lookup_proposed":LOOKUP_PROPOSED.load(Ordering::Relaxed),
+        "projection_workgroup":256, "rows_per_workgroup":256/expert_lanes(), "expert_dot_lanes":expert_lanes(),"expert_member_width_specialized":specialized_members(),"native_operator_profile":cubecl::wgpu::native_strata_operator_profile(),"native_operator_profile_requested":profile_native_target(), "aligned_vector_expert_reads":wide_experts(), "group_stride":if independent_groups() {verify_capacity()*10} else {4},"independent_expert_groups":independent_groups(),"unrolled_packed_dots":unrolled_dots(),"constant_iq_codebook":constant_codebook(),"suffix_lookup_windows":LOOKUP_WINDOWS.load(Ordering::Relaxed),"suffix_lookup_proposed":LOOKUP_PROPOSED.load(Ordering::Relaxed),
         "gu_dispatches_by_member_count":GU.each_ref().map(|v|v.load(Ordering::Relaxed)),
         "down_dispatches_by_member_count":DOWN.each_ref().map(|v|v.load(Ordering::Relaxed)),
         "fused_five_tier_experts":fused_sources(), "original_cpu13_precision_contract": false, "intermediate_numeric_scans":false,"published_outputs_checked_finite":true,"full_private_erasure":true,"installed_or_production": false})

@@ -13,6 +13,86 @@ use std::{
 };
 use wgpu::naga;
 
+static PROFILE_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub fn set_native_strata_profile_active(active: bool) {
+    PROFILE_ACTIVE.store(active, std::sync::atomic::Ordering::Release);
+}
+fn profile_active() -> bool {
+    enabled()
+        && PROFILE_ACTIVE.load(std::sync::atomic::Ordering::Acquire)
+        && std::env::var("KUNO_STRATA_NATIVE_PROFILE").as_deref() == Ok("round-8")
+        && std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1")
+}
+type OperatorTotals = std::collections::BTreeMap<&'static str, (u64, u64)>;
+fn profile_totals() -> &'static Mutex<OperatorTotals> {
+    static TOTALS: OnceLock<Mutex<OperatorTotals>> = OnceLock::new();
+    TOTALS.get_or_init(Mutex::default)
+}
+pub fn native_strata_operator_profile() -> Vec<(String, u64, u64)> {
+    profile_totals()
+        .lock()
+        .expect("public operator totals")
+        .iter()
+        .map(|(name, (calls, ns))| ((*name).to_owned(), *calls, *ns))
+        .collect()
+}
+
+/// Query values contain only performance counters for one fixed public round.
+/// Recording owns this pool through the same completion fence as all buffers.
+struct OperatorProfile {
+    device: ash::Device,
+    pool: vk::QueryPool,
+    names: Vec<&'static str>,
+    period: f64,
+    mask: u64,
+}
+impl OperatorProfile {
+    fn collect(&self) -> Result<(), ServerError> {
+        let mut ticks = vec![0u64; self.names.len() * 2];
+        unsafe {
+            self.device.get_query_pool_results(
+                self.pool,
+                0,
+                &mut ticks,
+                vk::QueryResultFlags::TYPE_64 | vk::QueryResultFlags::WAIT,
+            )
+        }
+        .map_err(|_| fault("native public operator timestamps"))?;
+        let mut totals = profile_totals()
+            .lock()
+            .map_err(|_| fault("public operator totals"))?;
+        for (name, pair) in self.names.iter().zip(ticks.chunks_exact(2)) {
+            let ns = (pair[1].wrapping_sub(pair[0]) & self.mask) as f64 * self.period;
+            if !ns.is_finite() || ns > 120_000_000_000.0 {
+                return Err(fault("native public timestamp interval"));
+            }
+            let entry = totals.entry(name).or_default();
+            entry.0 += 1;
+            entry.1 = entry.1.saturating_add(ns.round() as u64);
+        }
+        Ok(())
+    }
+    fn stamp(&self, command: vk::CommandBuffer, index: usize, end: bool) {
+        // These timestamp boundaries serialize the sampled nodes. Diagnostic
+        // operator costs only; this run is not uninstrumented throughput proof.
+        unsafe {
+            self.device.cmd_write_timestamp(
+                command,
+                vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+                self.pool,
+                (2 * index + usize::from(end)) as u32,
+            );
+        }
+    }
+}
+impl Drop for OperatorProfile {
+    fn drop(&mut self) {
+        unsafe {
+            self.device.destroy_query_pool(self.pool, None);
+        }
+    }
+}
+
 static SHAPES: [std::sync::atomic::AtomicU64; 5] =
     [const { std::sync::atomic::AtomicU64::new(0) }; 5];
 static REPLAY_SHAPES: [std::sync::atomic::AtomicU64; 5] =
@@ -65,6 +145,7 @@ pub(crate) fn enabled() -> bool {
 }
 #[derive(Debug)]
 pub(crate) struct Program {
+    name: &'static str,
     words: Vec<u32>,
     bindings: Vec<vk::DescriptorType>,
     accesses: Vec<vk::AccessFlags>,
@@ -165,6 +246,7 @@ pub(crate) fn register_module(
         words = super::strata_physical::native_expert_shader_words(source)?;
     }
     let p = Arc::new(Program {
+        name: "UnlabelledNativeOperator",
         words,
         expert_subgroup_32: source.contains("STRATA_PHYSICAL_EXPERTS")
             || source.contains("STRATA_DENSE_PACKED"),
@@ -177,6 +259,24 @@ pub(crate) fn register_module(
         .map_err(|_| fault("native graph program registry"))?
         .modules
         .insert(module.clone(), p);
+    Ok(())
+}
+pub(crate) fn label_module(
+    module: &wgpu::ShaderModule,
+    name: &'static str,
+) -> Result<(), ServerError> {
+    if !enabled() {
+        return Ok(());
+    }
+    let mut r = registry()
+        .lock()
+        .map_err(|_| fault("native operator module label"))?;
+    let p = r
+        .modules
+        .get_mut(module)
+        .and_then(Arc::get_mut)
+        .ok_or_else(|| fault("native operator module identity"))?;
+    p.name = name;
     Ok(())
 }
 pub(crate) fn register_pipeline(pipeline: &wgpu::ComputePipeline, module: &wgpu::ShaderModule) {
@@ -210,6 +310,8 @@ pub(crate) enum Dispatch {
     Fill,
 }
 pub(crate) struct Graph {
+    timestamp_period: f64,
+    timestamp_bits: u32,
     device: ash::Device,
     family: u32,
     queue: vk::Queue,
@@ -227,6 +329,7 @@ pub(crate) struct Graph {
     initialized: HashSet<wgpu::Buffer>,
 }
 struct Recording {
+    profile: Option<OperatorProfile>,
     device: ash::Device,
     pool: vk::CommandPool,
     descriptors: vk::DescriptorPool,
@@ -266,6 +369,14 @@ impl Graph {
                 .raw_instance()
                 .get_physical_device_properties2(h.raw_physical_device(), &mut props);
         }
+        let timestamp_period = props.properties.limits.timestamp_period as f64;
+        let timestamp_bits = unsafe {
+            h.shared_instance()
+                .raw_instance()
+                .get_physical_device_queue_family_properties(h.raw_physical_device())
+        }
+        .get(h.queue_family_index() as usize)
+        .map_or(0, |q| q.timestamp_valid_bits);
         if subgroup.min_subgroup_size > 32
             || subgroup.max_subgroup_size < 32
             || !subgroup
@@ -337,6 +448,8 @@ impl Graph {
             }
         };
         Ok(Self {
+            timestamp_period,
+            timestamp_bits,
             device: d,
             family: h.queue_family_index(),
             queue,
@@ -605,10 +718,12 @@ impl Graph {
             }
         }
         let compute_count = self.nodes.iter().filter(|n| n.pipeline.is_some()).count();
+        let profiling = profile_active() && compute_count >= 2048;
         if let Some(hit) = self
             .recordings
             .iter()
             .position(|r| r.signature == signature)
+            .filter(|_| !profiling)
         {
             let recording = self.recordings.remove(hit);
             let command = recording.command;
@@ -690,7 +805,49 @@ impl Graph {
             }
             .map_err(|_| fault("native graph replay command"))?[0];
         }
+        let profile = if profiling {
+            if self.nodes.len() > 16384
+                || self.timestamp_bits == 0
+                || self.timestamp_bits > 64
+                || !self.timestamp_period.is_finite()
+                || self.timestamp_period <= 0.0
+            {
+                return Err(fault("native public operator timing capacity"));
+            }
+            let names = self
+                .nodes
+                .iter()
+                .map(|n| match n.dispatch {
+                    Dispatch::Copy => "OrderedCopy",
+                    Dispatch::Fill => "OrderedFill",
+                    _ => self.pipelines[n.pipeline.as_ref().unwrap()].program.name,
+                })
+                .collect::<Vec<_>>();
+            let pool = unsafe {
+                self.device.create_query_pool(
+                    &vk::QueryPoolCreateInfo::default()
+                        .query_type(vk::QueryType::TIMESTAMP)
+                        .query_count((names.len() * 2) as u32),
+                    None,
+                )
+            }
+            .map_err(|_| fault("native public timestamp pool"))?;
+            Some(OperatorProfile {
+                device: self.device.clone(),
+                pool,
+                names,
+                period: self.timestamp_period,
+                mask: if self.timestamp_bits == 64 {
+                    u64::MAX
+                } else {
+                    (1u64 << self.timestamp_bits) - 1
+                },
+            })
+        } else {
+            None
+        };
         let recording = Recording {
+            profile,
             device: self.device.clone(),
             pool: self.pool,
             descriptors: self.descriptors,
@@ -717,6 +874,16 @@ impl Graph {
                 .begin_command_buffer(self.command, &vk::CommandBufferBeginInfo::default())
         }
         .map_err(|_| fault("native graph record"))?;
+        if let Some(profile) = &self.recordings.last().unwrap().profile {
+            unsafe {
+                self.device.cmd_reset_query_pool(
+                    self.command,
+                    profile.pool,
+                    0,
+                    (self.nodes.len() * 2) as u32,
+                );
+            }
+        }
         let barrier = vk::MemoryBarrier::default()
             .src_access_mask(vk::AccessFlags::MEMORY_WRITE)
             .dst_access_mask(vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE);
@@ -736,7 +903,7 @@ impl Graph {
             );
         }
         let mut previous = HashMap::<vk::Buffer, vk::AccessFlags>::new();
-        for n in &self.nodes {
+        for (index, n) in self.nodes.iter().enumerate() {
             let accesses = self.node_accesses(n)?;
             let mut dependencies = Vec::new();
             for (buffer, access) in accesses {
@@ -782,6 +949,10 @@ impl Graph {
                     );
                 }
             }
+            let profile = self.recordings.last().unwrap().profile.as_ref();
+            if let Some(profile) = profile {
+                profile.stamp(self.command, index, false);
+            }
             match n.dispatch {
                 Dispatch::Copy => {
                     let source = &n.resources[0];
@@ -798,6 +969,9 @@ impl Graph {
                             }],
                         );
                     }
+                    if let Some(profile) = profile {
+                        profile.stamp(self.command, index, true);
+                    }
                     continue;
                 }
                 Dispatch::Fill => {
@@ -810,6 +984,9 @@ impl Graph {
                             target.size,
                             0,
                         );
+                    }
+                    if let Some(profile) = profile {
+                        profile.stamp(self.command, index, true);
                     }
                     continue;
                 }
@@ -889,6 +1066,9 @@ impl Graph {
                     }
                 }
             }
+            if let Some(profile) = profile {
+                profile.stamp(self.command, index, true);
+            }
         }
         unsafe {
             self.device.cmd_pipeline_barrier(
@@ -930,6 +1110,13 @@ impl Graph {
             std::sync::atomic::Ordering::Relaxed,
         );
         self.submitted = false;
+        if profiling {
+            // Completed sampled command is never cached or replayed during an
+            // unprofiled round. Failed in-flight pools stay with Recording and
+            // are leaked with its other owners at terminal device teardown.
+            let recording = self.recordings.pop().unwrap();
+            recording.profile.as_ref().unwrap().collect()?;
+        }
         self.submissions += 1;
         self.dispatches += compute_count as u64;
         credit(compute_count, false);

@@ -1756,11 +1756,20 @@ pub(crate) fn run(
                 let mut round =
                     LatestTargetRound::begin(&mut target, &mut executor, &inputs, &cancel)?;
                 let profile_this_round = crate::strata_port::profile_target() && stats.rounds == 8;
+                let native_profile_this_round =
+                    crate::strata_port::profile_native_target() && stats.rounds == 8;
+                if native_profile_this_round {
+                    cubecl::future::block_on(client.sync())?;
+                    cubecl::wgpu::set_native_strata_profile_active(true);
+                }
                 if profile_this_round {
                     cubecl::future::block_on(client.sync())?;
                     client.set_profiling_paused(false);
                 }
                 let verified = round.verify(&cancel);
+                if native_profile_this_round {
+                    cubecl::wgpu::set_native_strata_profile_active(false);
+                }
                 if profile_this_round {
                     client.set_profiling_paused(true);
                     cubecl::future::block_on(client.sync())?;

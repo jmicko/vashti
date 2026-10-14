@@ -225,6 +225,7 @@ impl WgpuServer {
         validate_units(&self.utilities.properties, &kernel_id)?;
 
         let mut compiler = compiler(self.backend, &self.compilation_options);
+        let native_operator_name = kernel.name();
         let mut compiled = compiler.compile(self, kernel, mode)?;
         super::public_external::lower(&mut compiled, external_mask).map_err(|reason| {
             LaunchError::Unknown {
@@ -268,6 +269,12 @@ impl WgpuServer {
         // }
         let repr = compiled.repr.as_ref().map(|it| it.as_ref());
         let module = self.create_module(&compiled.entrypoint_name, repr, &compiled.source, mode)?;
+        super::strata_graph::label_module(&module, native_operator_name).map_err(|_| {
+            LaunchError::Unknown {
+                reason: "native public operator registration".into(),
+                backtrace: BackTrace::capture(),
+            }
+        })?;
         // Original generated layouts conservatively allow writes for aliased
         // slices. This explicit immutable-source variant uses the actually
         // reflected WGSL layout; ordinary kernels keep the exact old path.
