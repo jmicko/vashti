@@ -84,6 +84,7 @@ const CORE_CACHE_HOST: usize = if cfg!(feature = "strata-intel-core") {
     crate::strata_global_adapt::HOST_BYTES
         + kuno_text::cpu_expert::native::HOST_BYTES
         + crate::strata_prompt::groups::HOST_BYTES
+        + crate::strata_prompt::storage::HOST_BYTES
 } else {
     0
 };

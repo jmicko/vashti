@@ -22,7 +22,9 @@ use std::cell::RefCell;
 pub(crate) mod experts;
 #[path = "strata_prompt_groups.rs"]
 pub(crate) mod groups;
-thread_local! {static STAGES:RefCell<Option<[Handle;3]>>=const{RefCell::new(None)};}
+#[path = "strata_prompt_storage.rs"]
+pub(crate) mod storage;
+thread_local! {static STAGES:RefCell<Option<storage::Storage>>=const{RefCell::new(None)};}
 pub(crate) struct Scope;
 impl Scope {
     pub(crate) fn new(arena: &PrivateArena, ids: [BufferId; 3]) -> Result<Self> {
@@ -49,7 +51,7 @@ impl Scope {
             if s.is_some() {
                 return Err(Error::InvalidBufferLength);
             }
-            *s = Some(handles);
+            *s = Some(storage::Storage::new(handles)?);
             Ok(Self)
         })
     }
@@ -63,7 +65,20 @@ pub(crate) fn active() -> bool {
     STAGES.with(|s| s.borrow().is_some())
 }
 fn stages() -> Result<[Handle; 3]> {
-    STAGES.with(|s| s.borrow().clone().ok_or(Error::InvalidBufferLength))
+    STAGES.with(|s| {
+        s.borrow()
+            .as_ref()
+            .map(storage::Storage::working)
+            .ok_or(Error::InvalidBufferLength)
+    })
+}
+fn gr_workspace() -> Result<[Handle; 4]> {
+    STAGES.with(|s| {
+        s.borrow()
+            .as_ref()
+            .map(storage::Storage::gr)
+            .ok_or(Error::InvalidBufferLength)
+    })
 }
 pub(crate) fn control_stage() -> Result<Handle> {
     Ok(stages()?[2].clone())
@@ -219,11 +234,10 @@ pub(crate) fn project(
     prepacked: bool,
 ) -> Result<()> {
     let stage = stages()?;
-    let output_id = output.clone().binding().memory.allocation_id();
     if !supports(dtype, columns)
         || stage[..2]
             .iter()
-            .any(|h| h.clone().binding().memory.allocation_id() == output_id)
+            .any(|h| storage::overlaps(h, &output).unwrap_or(true))
         || rows == 0
         || rows > 16384
         || count == 0
@@ -239,6 +253,9 @@ pub(crate) fn project(
                 || input.clone().binding().memory.allocation_id()
                     != stage[0].clone().binding().memory.allocation_id()
                 || input.size_in_used() != stage[0].size_in_used())
+        || prepacked
+            && (input.offset_start.unwrap_or(0) != stage[0].offset_start.unwrap_or(0)
+                || input.offset_end.unwrap_or(0) != stage[0].offset_end.unwrap_or(0))
         || count
             .checked_mul(columns * 2)
             .is_none_or(|n| n as u64 > stage[0].size_in_used())
@@ -371,6 +388,84 @@ pub(crate) fn gr(request: crate::strata_gr::Read<'_>, weights: [Handle; 3]) -> R
             return Err(Error::InvalidBufferLength);
         }
     }
+    let previous = q
+        .previous
+        .map(|(source, block)| -> Result<(Handle, Handle)> { Ok((h(source)?, h(block)?)) })
+        .transpose()?;
+    gr_handles(
+        GrHandles {
+            client: a.client().map_err(u::fault)?,
+            residual: h(q.residual)?,
+            previous,
+            gamma: q.gamma,
+            injection: h(b.injection)?,
+            mixed: h(b.mixed)?,
+            fault: h(q.fault)?,
+            count: q.count,
+            first: q.first,
+            epsilon: q.epsilon,
+            inject: q.inject,
+        },
+        weights,
+    )
+}
+
+pub(crate) struct GrHandles<'a> {
+    pub client: &'a ComputeClient<WgpuRuntime>,
+    pub residual: Handle,
+    pub previous: Option<(Handle, Handle)>,
+    pub gamma: Handle,
+    pub injection: Handle,
+    pub mixed: Handle,
+    pub fault: Handle,
+    pub count: usize,
+    pub first: usize,
+    pub epsilon: f32,
+    pub inject: bool,
+}
+/// Full prompt GR entry point: owns no allocation and does not use MAX8 buffer
+/// geometry. Its four mutable intermediates are authenticated carved views.
+pub(crate) fn gr_handles(q: GrHandles<'_>, weights: [Handle; 3]) -> Result<()> {
+    let [normalized, down, low, up] = gr_workspace()?;
+    let extent = |h: &Handle, n: usize| {
+        n.checked_mul(4)
+            .is_some_and(|bytes| h.size_in_used() >= bytes as u64)
+    };
+    if !(1..=groups::CAPACITY).contains(&q.count)
+        || q.first
+            .checked_add(q.count * 10240)
+            .is_none_or(|n| n > groups::CAPACITY * 10240 || !extent(&q.residual, n))
+        || !extent(&q.mixed, q.count * 2560)
+        || !extent(&q.injection, q.count * 4)
+        || q.fault.size_in_used() != 4
+        || q.gamma.size_in_used() != 40960
+        || weights[0].size_in_used() != 6553600
+        || weights[1].size_in_used() != 6553600
+        || q.inject && weights[2].size_in_used() != 81920
+        || !q.epsilon.is_finite()
+        || q.epsilon <= 0.
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    let external = [&q.residual, &q.injection, &q.mixed, &q.fault, &q.gamma];
+    for h in [&normalized, &down, &low, &up] {
+        if external
+            .iter()
+            .any(|v| storage::overlaps(h, v).unwrap_or(true))
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+    }
+    if let Some((source, block)) = &q.previous
+        && (!extent(source, q.first + q.count * 10240)
+            || !extent(block, q.count * 2560)
+            || [&normalized, &down, &low, &up].iter().any(|h| {
+                storage::overlaps(h, source).unwrap_or(true)
+                    || storage::overlaps(h, block).unwrap_or(true)
+            }))
+    {
+        return Err(Error::InvalidBufferLength);
+    }
     let info = [
         q.count as u32,
         0,
@@ -391,23 +486,23 @@ pub(crate) fn gr(request: crate::strata_gr::Read<'_>, weights: [Handle; 3]) -> R
     ];
     // The no-apply branch reads neither dummy. Both still cover full possible
     // source intervals and remain disjoint from the writable norm/residual.
-    let (previous, block) = q.previous.unwrap_or((b.partial, b.mixed));
+    let (previous, block) = q.previous.unwrap_or((up.clone(), q.mixed.clone()));
     launch(
-        a.client().map_err(u::fault)?,
+        q.client,
         Kernel::GrNorm,
         [4, q.count, 1],
         vec![
-            h(previous)?,
-            h(block)?,
-            h(b.injection)?,
+            previous,
+            block,
+            q.injection.clone(),
             q.gamma,
-            h(q.residual)?,
-            h(b.normalized)?,
-            h(q.fault)?,
+            q.residual.clone(),
+            normalized.clone(),
+            q.fault.clone(),
         ],
         info,
     )?;
-    let client = a.client().map_err(u::fault)?;
+    let client = q.client;
     project(
         client,
         30,
@@ -415,9 +510,9 @@ pub(crate) fn gr(request: crate::strata_gr::Read<'_>, weights: [Handle; 3]) -> R
         320,
         20480,
         weights[0].clone(),
-        h(b.normalized)?,
-        h(b.down)?,
-        h(q.fault)?,
+        normalized.clone(),
+        down.clone(),
+        q.fault.clone(),
         q.count,
         0,
         10240,
@@ -434,9 +529,9 @@ pub(crate) fn gr(request: crate::strata_gr::Read<'_>, weights: [Handle; 3]) -> R
             4,
             20480,
             weights[2].clone(),
-            h(b.normalized)?,
-            h(b.injection)?,
-            h(q.fault)?,
+            normalized.clone(),
+            q.injection.clone(),
+            q.fault.clone(),
             q.count,
             0,
             10240,
@@ -450,7 +545,12 @@ pub(crate) fn gr(request: crate::strata_gr::Read<'_>, weights: [Handle; 3]) -> R
         client,
         Kernel::GrLow,
         [(q.count * 320).div_ceil(256), 1, 1],
-        vec![h(b.down)?, h(b.low)?, h(b.injection)?, h(q.fault)?],
+        vec![
+            down.clone(),
+            low.clone(),
+            q.injection.clone(),
+            q.fault.clone(),
+        ],
         info,
     )?;
     project(
@@ -460,9 +560,9 @@ pub(crate) fn gr(request: crate::strata_gr::Read<'_>, weights: [Handle; 3]) -> R
         10240,
         640,
         weights[1].clone(),
-        h(b.low)?,
-        h(b.partial)?,
-        h(q.fault)?,
+        low.clone(),
+        up.clone(),
+        q.fault.clone(),
         q.count,
         0,
         320,
@@ -475,7 +575,12 @@ pub(crate) fn gr(request: crate::strata_gr::Read<'_>, weights: [Handle; 3]) -> R
         client,
         Kernel::GrMix,
         [(q.count * 2560).div_ceil(256), 1, 1],
-        vec![h(b.normalized)?, h(b.partial)?, h(b.mixed)?, h(q.fault)?],
+        vec![
+            normalized.clone(),
+            up.clone(),
+            q.mixed.clone(),
+            q.fault.clone(),
+        ],
         info,
     )
 }

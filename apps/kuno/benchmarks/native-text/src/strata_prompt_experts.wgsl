@@ -38,7 +38,7 @@ fn strata_gate(index:u32)->u32 {
 fn main(@builtin(global_invocation_id) id:vec3<u32>) {
     if !valid() {return;}
     if arrayLength(&addresses)!=2048u||arrayLength(&stage_addresses)!=2048u||arrayLength(&strata_grid)!=8192u
-        || arrayLength(&raw)!=16777216u||arrayLength(&packed)!=33554432u {atomicOr(&fault[0],128u);return;}
+        || arrayLength(&raw)!=16777216u||arrayLength(&packed)!=16777216u {atomicOr(&fault[0],128u);return;}
     let src=addresses[p.role*512u+map[4u+p.group]];
     let original_rows=select(p.rows/2u,p.rows,p.role==2u);let bytes=original_rows*p.row_bytes;
     if src.z!=bytes/4u||src.w>1u||p.r0+p.r2+bytes/4u>arrayLength(&raw) {atomicOr(&fault[0],128u);return;}
