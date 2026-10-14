@@ -228,6 +228,7 @@ impl Host {
                         .size(p.logical_bytes)
                         .usage(
                             vk::BufferUsageFlags::STORAGE_BUFFER
+                                | vk::BufferUsageFlags::TRANSFER_SRC
                                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
                         )
                         .sharing_mode(vk::SharingMode::EXCLUSIVE);
@@ -323,7 +324,7 @@ impl Host {
                             &wgpu::BufferDescriptor {
                                 label: Some("original-global-host-expert-piece"),
                                 size: p.logical_bytes,
-                                usage: wgpu::BufferUsages::STORAGE,
+                                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
                                 mapped_at_creation: false,
                             },
                         )

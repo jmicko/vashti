@@ -769,6 +769,77 @@ impl WgpuStream {
         Ok(())
     }
 
+    #[allow(clippy::type_complexity)] // Retained source/target owners plus their model-cell extents.
+    pub(crate) fn stage_public_host_copies(
+        &mut self,
+        copies: &[(
+            cubecl_runtime::storage::ManagedResource<crate::WgpuResource>,
+            u64,
+            cubecl_runtime::storage::ManagedResource<crate::WgpuResource>,
+            u64,
+            u64,
+        )],
+    ) -> Result<(), ServerError> {
+        self.private_io_active()?;
+        // Validate every physical range before changing the encoder or graph.
+        for (i, (source, sfirst, target, tfirst, bytes)) in copies.iter().enumerate() {
+            let s = source.resource();
+            let t = target.resource();
+            if s.offset != 0
+                || t.offset != 0
+                || s.size != s.buffer.size()
+                || t.size != t.buffer.size()
+                || s.buffer == t.buffer
+                || !s.buffer.usage().contains(wgpu::BufferUsages::COPY_SRC)
+                || !t.buffer.usage().contains(wgpu::BufferUsages::COPY_DST)
+                || sfirst.checked_add(*bytes).is_none_or(|end| end > s.size)
+                || tfirst.checked_add(*bytes).is_none_or(|end| end > t.size)
+            {
+                return Err(super::transient_io::fault(
+                    "public host copy physical owner extent",
+                ));
+            }
+            for (_, _, earlier, efirst, eb) in &copies[..i] {
+                if earlier.resource().buffer == t.buffer
+                    && *tfirst < *efirst + *eb
+                    && *efirst < *tfirst + *bytes
+                {
+                    return Err(super::transient_io::fault(
+                        "public host copy overlapping destinations",
+                    ));
+                }
+            }
+        }
+        let scopes = super::transient_io::IoScopes::new(&self.device);
+        self.compute_pass = None;
+        for (source, sfirst, target, tfirst, bytes) in copies {
+            let s = source.resource();
+            let t = target.resource();
+            if let Some(graph) = self.strata_graph.as_mut() {
+                // Actual vkCmdCopyBuffer nodes retain public/private roots and
+                // get the graph's transfer<->shader dependency barriers.
+                let source = crate::WgpuResource {
+                    buffer: s.buffer.clone(),
+                    offset: *sfirst,
+                    size: *bytes,
+                };
+                let target = crate::WgpuResource {
+                    buffer: t.buffer.clone(),
+                    offset: *tfirst,
+                    size: *bytes,
+                };
+                graph.push_transfer(Some(source), target)?;
+            } else {
+                self.encoder
+                    .copy_buffer_to_buffer(&s.buffer, *sfirst, &t.buffer, *tfirst, *bytes);
+            }
+            self.tasks_count += 1;
+        }
+        scopes.finish(self.transient_io.as_mut().unwrap());
+        self.flush_if_needed();
+        Ok(())
+    }
+
     pub(crate) fn begin_transient_io_reuse(&mut self) -> Result<u64, ServerError> {
         self.validate_transient_io_reuse_mode(false)?;
         self.private_io_active()?;

@@ -878,6 +878,43 @@ impl ComputeServer for WgpuServer {
         Ok(())
     }
 
+    fn stage_public_host_copies(
+        &mut self,
+        copies: Vec<cubecl_runtime::public_external::PublicHostCopy>,
+        stream_id: StreamId,
+    ) -> Result<(), ServerError> {
+        cubecl_runtime::public_external::validate_host_copies(&copies, stream_id)
+            .map_err(super::public_external::fault)?;
+        if self.public_external_stream != Some(stream_id) {
+            return Err(super::public_external::fault(
+                "public host copy unowned stream",
+            ));
+        }
+        let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
+        self.scheduler.stream(&stream_id).private_io_active()?;
+        self.scheduler.execute_streams(vec![stream_id]);
+        let stream = self.scheduler.stream(&stream_id);
+        let mut resources = Vec::with_capacity(copies.len());
+        for c in copies {
+            let source_memory = c.source.memory.clone();
+            let destination_memory = c.destination.memory.clone();
+            let src = stream.mem_manage.get_resource(c.source)?;
+            let dst = stream.mem_manage.get_resource(c.destination)?;
+            resources.push((
+                ManagedResource::new(source_memory, src),
+                c.source_first,
+                ManagedResource::new(destination_memory, dst),
+                c.destination_first,
+                c.bytes,
+            ));
+        }
+        stream.stage_public_host_copies(&resources)?;
+        if let Some(mutation) = mutation {
+            mutation.accept();
+        }
+        Ok(())
+    }
+
     unsafe fn launch(
         &mut self,
         kernel: Self::Kernel,

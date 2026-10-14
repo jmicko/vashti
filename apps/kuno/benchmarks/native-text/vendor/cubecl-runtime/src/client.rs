@@ -307,6 +307,27 @@ impl<R: Runtime> ComputeClient<R> {
             })?
     }
 
+    /// Queue registered immutable model weights onto retained same-stream
+    /// staging owners through the checked backend. This is not completion.
+    pub fn stage_public_host_copies(
+        &self,
+        copies: Vec<crate::public_external::PublicHostCopy>,
+    ) -> Result<(), ServerError> {
+        let stream = self.stream_id();
+        crate::public_external::validate_host_copies(&copies, stream).map_err(|reason| {
+            ServerError::Generic {
+                reason: reason.into(),
+                backtrace: BackTrace::capture(),
+            }
+        })?;
+        self.device
+            .submit_blocking(move |server| server.stage_public_host_copies(copies, stream))
+            .map_err(|_| ServerError::Generic {
+                reason: "public host copy channel unavailable".into(),
+                backtrace: BackTrace::capture(),
+            })?
+    }
+
     /// Ordered full-owner scratch clearing, without shader/INFO allocations.
     /// Requires configured private I/O; the owning caller must retain these
     /// allocations through its normal completion and whole-owner audit.

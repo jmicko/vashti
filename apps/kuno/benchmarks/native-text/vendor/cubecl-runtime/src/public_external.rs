@@ -13,6 +13,53 @@ use core::mem::size_of;
 use cubecl_common::stream_id::StreamId;
 
 const EXTERNAL_TAG: u8 = u8::MAX;
+/// Checked original public-host weight copy onto the same owning stream.
+/// Both bindings retain full owners; offsets select bounded model-weight cells.
+pub struct PublicHostCopy {
+    /// Full registered immutable HOST owner.
+    pub source: Binding,
+    /// Original model-cell byte offset in that owner.
+    pub source_first: u64,
+    /// Full retained same-stream staging owner.
+    pub destination: Binding,
+    /// Ring-cell byte offset in that owner.
+    pub destination_first: u64,
+    /// Exact original model-cell bytes to copy.
+    pub bytes: u64,
+}
+/// Check full owning bindings and bounded aligned copy views before dispatch.
+pub fn validate_host_copies(
+    copies: &[PublicHostCopy],
+    stream: StreamId,
+) -> Result<(), &'static str> {
+    if !(1..=24).contains(&copies.len()) {
+        return Err("public host copy inventory");
+    }
+    for c in copies {
+        if !is_public_external_binding(&c.source)
+            || is_public_external_binding(&c.destination)
+            || c.source.stream != stream
+            || c.destination.stream != stream
+            || c.source.offset_start.unwrap_or(0) != 0
+            || c.source.offset_end.unwrap_or(0) != 0
+            || c.destination.offset_start.unwrap_or(0) != 0
+            || c.destination.offset_end.unwrap_or(0) != 0
+            || c.bytes == 0
+            || !c.bytes.is_multiple_of(4)
+            || !c.source_first.is_multiple_of(4)
+            || !c.destination_first.is_multiple_of(4)
+            || c.source_first
+                .checked_add(c.bytes)
+                .is_none_or(|e| e > c.source.size)
+            || c.destination_first
+                .checked_add(c.bytes)
+                .is_none_or(|e| e > c.destination.size)
+        {
+            return Err("public host copy exact same-stream extents");
+        }
+    }
+    Ok(())
+}
 /// Maximum full descriptor span in the initial public-host laboratory.
 pub const MAX_BUFFER_BYTES: u64 = 128 * 1024 * 1024;
 /// Maximum separately accounted public host backing across one stream.

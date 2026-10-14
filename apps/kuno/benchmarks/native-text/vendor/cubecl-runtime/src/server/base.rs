@@ -641,6 +641,18 @@ where
         })
     }
 
+    /// Queue immutable registered HOST weights through this sole owning stream.
+    fn stage_public_host_copies(
+        &mut self,
+        _copies: Vec<crate::public_external::PublicHostCopy>,
+        _stream_id: StreamId,
+    ) -> Result<(), ServerError> {
+        Err(ServerError::Generic {
+            reason: "public host staging copies unsupported".into(),
+            backtrace: BackTrace::capture(),
+        })
+    }
+
     /// Enqueue full retained private-owner clears on the configured stream.
     /// This is ordered work, not completed-erasure credit. The caller retains
     /// original full owners until its normal checked completion fence.

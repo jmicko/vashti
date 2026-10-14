@@ -277,6 +277,10 @@ impl Workspace {
             client.launch_unchecked(Box::new(Kernel::Route), CubeCount::Static(1, 1, 1), args);
         }
         if crate::strata_prompt::active() {
+            // Intel prompt grouping is a single bounded router readback. No
+            // activation readback or CPU expert contribution is scheduled.
+            let map = admission
+                .readback_audited(cancel, || u::read_prefix_u32(arena, self.ids[0], 804))?;
             crate::strata_prompt::experts::enqueue(
                 client,
                 graph,
@@ -286,6 +290,7 @@ impl Workspace {
                 &owners,
                 &full(fault)?,
                 count,
+                &map,
             )?;
             self.layer_pending = true;
             // All prompt expert work is already queued. There are no CPU jobs

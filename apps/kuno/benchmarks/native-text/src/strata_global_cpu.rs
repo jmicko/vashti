@@ -77,7 +77,7 @@ pub(crate) fn prepare(
         gpu_groups,
     })
 }
-fn split(
+pub(crate) fn split(
     map: &[u32],
     count: usize,
     mut host: impl FnMut(usize) -> Result<bool>,

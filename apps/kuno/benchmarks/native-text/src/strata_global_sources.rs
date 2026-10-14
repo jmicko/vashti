@@ -275,6 +275,80 @@ impl Sources {
     pub(crate) fn plan(&self) -> &Plan {
         &self.plan
     }
+    /// Intel prefill's original HOST -> staging transfer. Resident cells remain
+    /// in place. The caller exclusively owns this private ring until all queued
+    /// consumers finish; copies and kernels use the same checked owning stream.
+    /// No request-derived offset, cell ID or source content is logged.
+    pub(crate) fn stage_prompt_group(
+        &self,
+        graph: BoundGraph<'_, '_>,
+        layer: usize,
+        cell: usize,
+        role_bytes: [usize; 3],
+        destination: &Handle,
+        first: usize,
+    ) -> Result<()> {
+        self.validate_graph_ready(graph)?;
+        let original_stage = self.stages.as_ref().ok_or_else(reject)?;
+        if destination.clone().binding().memory.allocation_id()
+            != original_stage[2].clone().binding().memory.allocation_id()
+            || destination.stream != original_stage[2].stream
+            || cell >= EXPERTS
+            || destination.size_in_used() != crate::strata_global_experts::STAGE_BYTES
+            || !first.is_multiple_of(16)
+            || role_bytes.iter().any(|&b| b == 0 || !b.is_multiple_of(16))
+        {
+            return Err(reject());
+        }
+        let total = role_bytes.iter().try_fold(0usize, |a, &b| {
+            a.checked_add(b).ok_or(Error::ArithmeticOverflow)
+        })?;
+        if first
+            .checked_add(total)
+            .is_none_or(|end| end as u64 > destination.size_in_used())
+        {
+            return Err(reject());
+        }
+        if (0..3).all(|role| {
+            matches!(
+                self.plan.source(layer, cell, role),
+                Ok(Source::Resident { .. })
+            )
+        }) {
+            return Ok(());
+        }
+        let mut copies = Vec::with_capacity(3);
+        let mut offset = first as u64;
+        for (role, &expected) in role_bytes.iter().enumerate() {
+            if matches!(self.plan.source(layer, cell, role)?, Source::Host { .. }) {
+                let (handle, source_first, bytes) = self
+                    .host
+                    .as_ref()
+                    .ok_or_else(reject)?
+                    .role(graph, &self.plan, layer, cell, role)?
+                    .ok_or_else(reject)?;
+                if bytes != expected as u64 || handle.stream != destination.stream {
+                    return Err(reject());
+                }
+                copies.push(cubecl_runtime::public_external::PublicHostCopy {
+                    source: handle.binding(),
+                    source_first,
+                    destination: destination.clone().binding(),
+                    destination_first: offset,
+                    bytes,
+                });
+            }
+            offset = offset
+                .checked_add(expected as u64)
+                .ok_or(Error::ArithmeticOverflow)?;
+        }
+        if !copies.is_empty() {
+            self.client
+                .stage_public_host_copies(copies)
+                .map_err(crate::resident_util::fault)?;
+        }
+        Ok(())
+    }
     /// Actual attachment authority, independent of the retired frozen-bank
     /// receipts. A half-published exchange cannot authorize another window.
     pub(crate) fn validate_attached(&self) -> Result<()> {

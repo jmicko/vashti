@@ -62,10 +62,12 @@ pub(super) fn check_source(
     source: &PublicExternalHostSource<WgpuResource>,
 ) -> Result<(), &'static str> {
     let resource = source.resource();
+    let usage = resource.buffer.usage();
     if resource.offset != 0
         || resource.size != source.bytes()
         || resource.buffer.size() != source.bytes()
-        || resource.buffer.usage() != wgpu::BufferUsages::STORAGE
+        || (usage != wgpu::BufferUsages::STORAGE
+            && usage != (wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC))
         || source.bytes() > device.limits().max_storage_buffer_binding_size
     {
         return Err("public external exact immutable descriptor");
