@@ -425,3 +425,72 @@ Canonical checkout is untouched. Changes are backend internals only; required
 Vashti/API changes: none. Inherited Python bytecode remains untracked/preserved.
 Goal stays active and incomplete. The bounded sudo refresher was still verified
 live during source work; revalidate process/cache before any protected execution.
+
+
+## Connected global adaptive exchange (2026-10-14)
+
+Source `e1dc698`. The global core now invokes adaptation after real48-layer
+GDN/QSA/MoE/PLE acceptance and commit. This supersedes the prior unconnected
+adaptive row; physical execution and full rewrite acceptance remain unproven.
+
+`strata_global_adapt.rs` ports pinned `generate.cpp:12040` selection: every four
+completed windows, missing experts with usage >=2 pair with their own layer's
+least-used resident experts; gain must be >=1.5. Candidates sort globally by gain
+and at most96 swaps survive. Usage decays by0.7. Unlike the historical cache,
+there is no uniform240-resident assumption, per-layer two-slot cap or extra
+recency grace. Equal-score ties use deterministic expert/layer IDs rather than
+upstream's unspecified equal-score std::sort order. All resident physical cells
+are eligible. The proposal keeps full per-layer logical↔physical bijections and
+checks staleness before CPU commit. Discarded private candidates are wiped; the
+best96 are retained after each layer to keep the proposal heap bounded.
+
+GPU routing records logical expert usage in an arena-owned F32 root, preserving
+native increment/decay semantics. The family/root quote adds128 KiB for that
+root; the separate CPU cache/proposal/publication reservation adds2 MiB to both
+native host quote and limit. Usage, remap, scores, proposals and offsets are
+transient. No prompt/output/route/recency data is persisted or printed.
+
+`Sources::exchange` authenticates every role's exact original GPU/HOST capability,
+range and graph before mutation. `strata_global_exchange.rs` verifies owning HOST
+registrations, actual buffer identity, nonoverlap, equal role extents and device
+alignment, then exchanges original weights in place on the owning queue. Evicted
+weights occupy the incoming experts' former HOST cells; no file read or full model
+RAM duplicate is added. All readers join before exchange, and actual exchange
+completion precedes private metadata publication. A pending mutation rejects new
+source consumers. GPU remap/usage writes join and the CPU proposal commits before
+that guard is lifted. Failed/unknown exchange/publication does not resume the
+context; ordinary joined cleanup remains available.
+
+Explicit backend difference: the blocking Vulkan kernel exchanges corresponding
+original role words in place, rather than Strata's D2H exchange staging followed
+by H2D and RAM-buffer commit. It preserves complete two-way contents and joined
+publication; it does not implement opt-in asynchronous adaptation/refill-stream
+or pipelined-window overlap. These remain documented substitutions for review.
+Current ticks are completed core chunks, including prompt chunks; the next driver
+port must reconcile adaptation/usage boundaries with actual prompt versus verify
+phases. No implicit claim of exact upstream prefill scheduling is made.
+
+Validation under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-global-adapt-build-20261014.log`: core release build passes.
+- `strata-global-adapt-final-clippy-20261014.log`: strict core Clippy passes.
+- `strata-global-adapt-shaders-20261014.log`:179 WGSL/SPIR-V variants pass,
+  including updated private usage routing and retained physical expert kernels.
+- `strata-global-adapt-policy-tests-20261014.log`: three host-only tests pass:
+  global96 gain selection across unequal/nonprefix/empty/full tiers, exact
+  eligibility/gain/staleness checks, and12 repeated paired-exchange simulations
+  verifying every logical expert still resolves to its original weights.
+- `strata-global-adapt-original-tests-20261014.log`: ordinary regression passes,
+  1,352 passed, one ignored. No GPU dispatch or actual Vulkan exchange acceptance.
+- Formatting/whitespace checks pass. Prior full-core failures remain unresolved.
+
+No GPU inference, speed/profile, physical residency/recovery, installed binary,
+service, reset/rebind or API/Vashti change. Goal active and incomplete.
+
+Next: replace historical frozen-bank controller/receipt/activation assumptions
+with actual global contracts, reconcile prompt/verification adaptation ticks,
+and connect complete1..8 target/MTP/prefill/state paths. Complete packing/Intel
+CPU-share/stream/queue and remaining checklist audits before speed tests. Keep
+this entire cache+remap+execution path selected while fixing correctness; do not
+fall back to uniform banks or choose an intermediate timing winner. Canonical
+checkout and inherited untracked bytecode remain untouched.

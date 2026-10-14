@@ -4419,3 +4419,26 @@ and actual Intel CPU/transfer/overlap mode; do not claim complete parity yet.
 
 No API or Vashti consumer changes. Goal active; full rewrite incomplete; speed
 remains blocked. Preserve canonical work and inherited untracked bytecode.
+
+
+### Active Kuno engine handoff extension — adaptive global cells (2026-10-14)
+
+Source `e1dc698` on the same isolated `codex/strata-rust-port` checkout. Read the
+completion guide's **Connected global adaptive exchange** block for exact policy,
+publication/ownership, reservations, validation and remaining substitutions.
+
+The global core now connects native every4/global96/gain1.5/decay0.7 adaptation,
+unequal physical GPU/HOST cells, paired original-role exchange and private
+logical remap/usage publication after actual joined boundaries. Static address
+tables remain unchanged; evictions are retained in HOST without file reads.
+Core build/Clippy and179 shaders pass. Three pure policy/exchange simulations and
+ordinary regression (1,352 passed, one ignored) pass. No GPU/Vulkan exchange,
+whole-model numerical/state/recovery or speed acceptance was run.
+
+Next port global language/speculative controllers and real receipt/activation
+contracts; reconcile prompt versus verify adaptation windows, complete1..8
+prefill/target/MTP/state paths and the remaining fidelity audit. Current in-place
+blocking Vulkan exchange is a documented backend substitution, not async-stream
+parity. Earlier full-core failures remain open. No API/Vashti/install/service
+change; required Vashti changes: none. Goal active, full rewrite incomplete,
+speed gate still blocked. Preserve canonical work and inherited bytecode.
