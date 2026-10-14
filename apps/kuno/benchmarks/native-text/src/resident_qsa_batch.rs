@@ -1,5 +1,6 @@
-//! Unconnected native MAX8 adapter into actual ResidentQsa cache owners.
-//! Uses original cache-backed projections/public shared gammas/Rust RoPE.
+//! Connected MAX8 adapter into actual ResidentQsa state owners.
+//! Core couples native FP16 KV, fused norm/RoPE, indexer and chunked attention.
+//! The ordinary feature-off path retains its original F32 kernels.
 //! Original CPU selection uses a guarded chunk dependency fence. An explicit
 //! public-target alternative keeps exact all-retained selection on the GPU;
 //! no diagnostic/acceptance readback or state commit occurs in enqueue.
@@ -58,7 +59,7 @@ impl Layout {
         }
         let blocks = stage.max_context / qsa::BLOCK;
         let selected = qsa::BUDGET + 3;
-        let widths = [
+        let mut widths = [
             qsa::QUERY * 2,
             qsa::KV,
             qsa::KV,
@@ -89,6 +90,11 @@ impl Layout {
             qsa::QUERY,
             qsa::TOKEN + 1,
         ];
+        if crate::strata_intel_core::enabled() {
+            widths[CAND] = crate::strata_qsa::CACHE_WORDS;
+            widths[LOGIT] = crate::strata_qsa::PARTIAL_WORDS;
+            widths[PROB] = crate::strata_qsa::STATS_WORDS;
+        }
         let mut words = [0; S];
         for (i, width) in widths.into_iter().enumerate() {
             words[i] = width
@@ -212,7 +218,7 @@ impl Zeroize for Stamp {
 struct Metadata {
     stamp: Stamp,
     scratch: [BufferId; S],
-    owners: [BufferId; 2],
+    owners: [BufferId; 3],
     input: BufferId,
     output: BufferId,
     fault: BufferId,
@@ -386,7 +392,7 @@ fn checked_count(start: u64, count: usize, context: usize) -> Result<u64> {
 }
 
 /// ONE model-owned scratch bank. Constructor requests join aggregate MAIN
-/// admission before allocation; existing cache/POS owners are never duplicated.
+/// admission before allocation; cache/POS/pooled owners are never duplicated.
 pub(crate) struct QsaBatchWorkspace {
     binding: GraphBindingId,
     sequence: SequenceKey,
@@ -513,7 +519,7 @@ impl QsaBatchWorkspace {
             || stage.layout != self.layout.stage
             || m.scratch != *self.ids
             || Some(m.fault) != self.fault
-            || m.owners != [stage.ids[CACHE], stage.ids[POSITIONS]]
+            || m.owners != [stage.ids[CACHE], stage.ids[POSITIONS], stage.ids[POOLED]]
             || stage
                 .batch_pending
                 .as_ref()
@@ -647,7 +653,8 @@ impl Drop for ResidentQsa<'_> {
     }
 }
 pub(super) fn ensure_scalar(stage: &ResidentQsa<'_>) -> Result<()> {
-    if stage.batch_pending.is_some()
+    if crate::strata_intel_core::enabled()
+        || stage.batch_pending.is_some()
         || stage
             .batch_poison
             .as_ref()
@@ -1155,6 +1162,187 @@ fn validate_full_regions(
     Ok(())
 }
 impl ResidentQsa<'_> {
+    /// Core storage/math selection is indivisible: both current speculative
+    /// candidates and the committed prefix use packed FP16 K/V. The ordinary
+    /// scalar/F32 consumers must never see these pages.
+    #[allow(clippy::too_many_arguments)]
+    fn enqueue_native_qsa_operation(
+        &self,
+        op: Operation,
+        arena: &PrivateArena,
+        public: &PublicQsaParameters,
+        ids: &[BufferId; S],
+        l: Layout,
+        start: usize,
+        count: usize,
+    ) -> Result<bool> {
+        use crate::strata_qsa::{self as native, Kernel};
+        let h = |id| u::handle(arena, id);
+        let hs = |indices: &[usize]| {
+            native::handles(arena, &indices.iter().map(|&i| ids[i]).collect::<Vec<_>>())
+        };
+        let mut info = [
+            count as u32,
+            start as u32,
+            self.layout.max_context as u32,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            qsa::EPSILON.to_bits(),
+            qsa::THETA.powf(-2.0 / 64.0).to_bits(),
+            0,
+        ];
+        match op {
+            Operation::Norm(_) | Operation::PoolNorm => {
+                let (input, output, status, heads, width, gamma, blocks) = match op {
+                    Operation::PoolNorm => {
+                        (MEAN, POOL, FLAGS + 6, l.widths[SCORE], qsa::ID, 3, true)
+                    }
+                    Operation::Norm(0) => (PACK, Q, FLAGS + 1, qsa::QH, qsa::HD, 0, false),
+                    Operation::Norm(1) => (RK, K, FLAGS + 2, qsa::KVH, qsa::HD, 1, false),
+                    Operation::Norm(2) => (RIQ, IQ, FLAGS + 3, qsa::IH, qsa::ID, 2, false),
+                    _ => return Err(Error::InvalidBufferLength),
+                };
+                info[3] = l.widths[input] as u32;
+                info[4] = l.widths[output] as u32;
+                info[5] = l.widths[status] as u32;
+                info[6] = heads as u32;
+                info[7] = width as u32;
+                info[8] = blocks as u32;
+                native::launch(
+                    arena,
+                    Kernel::Norm,
+                    [heads, count, 1],
+                    vec![
+                        h(ids[input])?,
+                        public.vectors[gamma].clone(),
+                        h(self.ids[POSITIONS])?,
+                        h(ids[output])?,
+                        h(ids[status])?,
+                    ],
+                    info,
+                )?;
+                if blocks {
+                    info[3] = l.widths[POOL] as u32;
+                    native::launch(
+                        arena,
+                        Kernel::PublishPool,
+                        [l.widths[POOL].div_ceil(64), 1, 1],
+                        vec![h(ids[POOL])?, h(self.ids[POOLED])?],
+                        info,
+                    )?;
+                }
+            }
+            Operation::Pack => {
+                info[5] = l.widths[FLAGS + 4] as u32;
+                native::launch(
+                    arena,
+                    Kernel::Pack,
+                    [native::CACHE_WORDS.div_ceil(64), count, 1],
+                    hs(&[K, RV, RIK, CAND, FLAGS + 4])?,
+                    info,
+                )?;
+            }
+            Operation::Pool => {
+                info[4] = l.widths[MEAN] as u32;
+                info[5] = l.widths[FLAGS + 5] as u32;
+                native::launch(
+                    arena,
+                    Kernel::RetainedPool,
+                    [l.widths[POOL].div_ceil(64), count, 1],
+                    vec![
+                        h(self.ids[POOLED])?,
+                        h(ids[POOL])?,
+                        h(ids[FLAGS + 5])?,
+                        h(ids[FLAGS + 6])?,
+                    ],
+                    info,
+                )?;
+                native::launch(
+                    arena,
+                    Kernel::Pool,
+                    [l.widths[SCORE], count, 1],
+                    vec![
+                        h(self.ids[CACHE])?,
+                        h(ids[CAND])?,
+                        h(ids[MEAN])?,
+                        h(ids[FLAGS + 5])?,
+                    ],
+                    info,
+                )?;
+            }
+            Operation::Logits => {
+                info[5] = l.widths[FLAGS + 8] as u32;
+                native::launch(
+                    arena,
+                    Kernel::Attention,
+                    [native::CHUNKS, qsa::KVH, count],
+                    vec![
+                        h(ids[Q])?,
+                        h(self.ids[CACHE])?,
+                        h(ids[CAND])?,
+                        h(ids[SELECT])?,
+                        h(ids[LOGIT])?,
+                        h(ids[PROB])?,
+                        h(ids[FLAGS + 8])?,
+                    ],
+                    info,
+                )?;
+            }
+            Operation::Score => {
+                info[3] = l.widths[POOL] as u32;
+                info[4] = l.widths[SCORE] as u32;
+                info[5] = l.widths[FLAGS + 7] as u32;
+                native::launch(
+                    arena,
+                    Kernel::Score,
+                    [l.widths[SCORE].div_ceil(4), count, 1],
+                    hs(&[POOL, IQ, SCORE, FLAGS + 7])?,
+                    info,
+                )?;
+            }
+            Operation::Softmax => {
+                info[5] = l.widths[FLAGS + 9] as u32;
+                native::launch(
+                    arena,
+                    Kernel::Merge,
+                    [qsa::QH, count, 1],
+                    hs(&[LOGIT, PROB, OUT, FLAGS + 9])?,
+                    info,
+                )?;
+            }
+            Operation::Values => {
+                info[5] = l.widths[FLAGS + 10] as u32;
+                native::launch(
+                    arena,
+                    Kernel::Gate,
+                    [qsa::QUERY.div_ceil(64), count, 1],
+                    hs(&[PACK, OUT, FLAGS + 10])?,
+                    info,
+                )?;
+            }
+            Operation::Append => {
+                info[5] = l.widths[APPEND] as u32;
+                native::launch(
+                    arena,
+                    Kernel::Append,
+                    [native::CACHE_WORDS.div_ceil(64), count, 1],
+                    vec![
+                        h(ids[CAND])?,
+                        h(self.ids[CACHE])?,
+                        h(self.ids[POSITIONS])?,
+                        h(ids[APPEND])?,
+                    ],
+                    info,
+                )?;
+            }
+            _ => return Ok(false),
+        }
+        Ok(true)
+    }
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn enqueue_batch(
         &mut self,
@@ -1265,7 +1453,7 @@ impl ResidentQsa<'_> {
                 output_stride: spans.output_stride(),
             },
             scratch: *workspace.ids,
-            owners: [self.ids[CACHE], self.ids[POSITIONS]],
+            owners: [self.ids[CACHE], self.ids[POSITIONS], self.ids[POOLED]],
             input,
             output,
             fault: fault_id,
@@ -1287,6 +1475,19 @@ impl ResidentQsa<'_> {
         let sin = || u::raw_arg(public.vectors[4].clone(), qsa::ROPE_TABLE_WORDS);
         let cos = || u::raw_arg(public.vectors[5].clone(), qsa::ROPE_TABLE_WORDS);
         queue_stage(count, start as usize, cancel, |op| {
+            if crate::strata_intel_core::enabled()
+                && self.enqueue_native_qsa_operation(
+                    op,
+                    arena,
+                    public,
+                    ids,
+                    l,
+                    start as usize,
+                    count,
+                )?
+            {
+                return Ok(());
+            }
             match op {
                 Operation::Clear(i) => {
                     if u::grouped_scratch_clear_enabled() {
@@ -1696,7 +1897,7 @@ struct LatestQsaMetadata {
     count: usize,
     chunk: u64,
     generation: u64,
-    owners: [BufferId; 2],
+    owners: [BufferId; 3],
     fault: BufferId,
 }
 impl Zeroize for LatestQsaMetadata {
@@ -1731,13 +1932,19 @@ fn latest_qsa_roots(
     arena: &PrivateArena,
     fault_id: BufferId,
 ) -> Result<()> {
-    let ids = [stage.ids[CACHE], stage.ids[POSITIONS], fault_id];
+    let ids = [
+        stage.ids[CACHE],
+        stage.ids[POSITIONS],
+        stage.ids[POOLED],
+        fault_id,
+    ];
     let words = [
-        stage.layout.max_context * qsa::TOKEN,
+        stage.layout.max_context * crate::strata_qsa::cache_words(),
         stage.layout.max_context,
+        stage.layout.allocation_words()[POOLED],
         1,
     ];
-    let mut handles = Vec::with_capacity(3);
+    let mut handles = Vec::with_capacity(4);
     for (i, (id, words)) in ids.into_iter().zip(words).enumerate() {
         if ids[..i].contains(&id) {
             return Err(fault("native latest QSA root alias"));
@@ -1758,7 +1965,7 @@ fn latest_qsa_roots(
         handles.push(handle.clone());
     }
     let resources = u::resources(arena.client().map_err(arena_fault)?, handles)?;
-    if resources.len() != 3 {
+    if resources.len() != 4 {
         return Err(Error::InvalidBufferLength);
     }
     for (i, r) in resources.iter().enumerate() {
@@ -1842,7 +2049,7 @@ impl QsaBatchWorkspace {
                 count,
                 chunk: *self.policy.chunk,
                 generation: *self.policy.generation,
-                owners: [stage.ids[CACHE], stage.ids[POSITIONS]],
+                owners: [stage.ids[CACHE], stage.ids[POSITIONS], stage.ids[POOLED]],
                 fault: fault_id,
             }),
             binding: Some(self.binding),
@@ -1910,7 +2117,7 @@ impl LatestQsaCheckpoint {
                 count: self.metadata.count,
                 chunk: *workspace.policy.chunk,
                 generation: *workspace.policy.generation,
-                owners: [stage.ids[CACHE], stage.ids[POSITIONS]],
+                owners: [stage.ids[CACHE], stage.ids[POSITIONS], stage.ids[POOLED]],
                 fault: completed_fault,
             },
             workspace.policy.expected.count_ones(),
@@ -2003,15 +2210,19 @@ impl<'a, 'f> LatestQsaRestore<'a, 'f> {
         {
             return Err(fault("native latest QSA clear fault owner"));
         }
-        let words = (self.checkpoint.metadata.count - self.accepted) * qsa::TOKEN;
+        let words =
+            (self.checkpoint.metadata.count - self.accepted) * crate::strata_qsa::cache_words();
         clear_latest_suffix::launch::<WgpuRuntime>(
             arena.client().map_err(arena_fault)?,
             u::grid(words)?,
             CubeDim::new_1d(64),
             u::arg(arena, ids[0])?,
             u::arg(arena, ids[1])?,
+            u::arg(arena, ids[2])?,
             self.checkpoint.metadata.start as usize + self.accepted,
             self.checkpoint.metadata.count - self.accepted,
+            crate::strata_qsa::cache_words(),
+            crate::strata_intel_core::enabled(),
         );
         verify_latest_cleared::launch::<WgpuRuntime>(
             arena.client().map_err(arena_fault)?,
@@ -2019,9 +2230,12 @@ impl<'a, 'f> LatestQsaRestore<'a, 'f> {
             CubeDim::new_1d(64),
             u::arg(arena, ids[0])?,
             u::arg(arena, ids[1])?,
+            u::arg(arena, ids[2])?,
             u::arg(arena, fault_id)?,
             self.checkpoint.metadata.start as usize + self.accepted,
             self.checkpoint.metadata.count - self.accepted,
+            crate::strata_qsa::cache_words(),
+            crate::strata_intel_core::enabled(),
         );
         cancelled(cancel)?;
         Ok(LatestQsaCleared {
@@ -2114,12 +2328,18 @@ impl Drop for PublicWarmQsaReset<'_, '_> {
 fn clear_latest_suffix(
     cache: &mut Array<f32>,
     positions: &mut Array<u32>,
+    pooled: &mut Array<f32>,
     start: usize,
     count: usize,
+    #[comptime] cache_stride: usize,
+    #[comptime] native: bool,
 ) {
     let i = ABSOLUTE_POS;
-    if i < count * qsa::TOKEN {
-        cache[start * qsa::TOKEN + i] = 0.;
+    if i < count * cache_stride {
+        cache[start * cache_stride + i] = 0.;
+    }
+    if native && i < ((start + count) / 4 - start / 4) * qsa::ID {
+        pooled[(start / 4) * qsa::ID + i] = 0.;
     }
     if i < count {
         positions[start + i] = 0;
@@ -2129,12 +2349,21 @@ fn clear_latest_suffix(
 fn verify_latest_cleared(
     cache: &Array<f32>,
     positions: &Array<u32>,
+    pooled: &Array<f32>,
     fault: &mut Array<Atomic<u32>>,
     start: usize,
     count: usize,
+    #[comptime] cache_stride: usize,
+    #[comptime] native: bool,
 ) {
     let i = ABSOLUTE_POS;
-    if i < count * qsa::TOKEN && u32::reinterpret(cache[start * qsa::TOKEN + i]) != 0 {
+    if i < count * cache_stride && u32::reinterpret(cache[start * cache_stride + i]) != 0 {
+        fault[0].fetch_or(4);
+    }
+    if native
+        && i < ((start + count) / 4 - start / 4) * qsa::ID
+        && u32::reinterpret(pooled[(start / 4) * qsa::ID + i]) != 0
+    {
         fault[0].fetch_or(4);
     }
     if i < count && positions[start + i] != 0 {
@@ -2170,7 +2399,7 @@ mod tests {
             chunk: 29,
             generation: 100,
             owners: std::array::from_fn(|i| BufferId::metadata_fixture(31, 37, i)),
-            fault: BufferId::metadata_fixture(31, 37, 2),
+            fault: BufferId::metadata_fixture(31, 37, 3),
         }
     }
     #[test]
@@ -2221,6 +2450,7 @@ mod tests {
                 if verify {
                     let cache = b.input_array(Type::new(f)).into();
                     let positions = b.input_array(Type::new(u)).into();
+                    let pooled = b.input_array(Type::new(f)).into();
                     let fault = b
                         .output_array(Type::new(StorageType::Atomic(ElemType::UInt(
                             UIntKind::U32,
@@ -2230,14 +2460,27 @@ mod tests {
                         &mut b.scope,
                         cache,
                         positions,
+                        pooled,
                         fault,
                         start,
                         count,
+                        crate::strata_qsa::cache_words(),
+                        crate::strata_intel_core::enabled(),
                     );
                 } else {
                     let cache = b.output_array(Type::new(f)).into();
                     let positions = b.output_array(Type::new(u)).into();
-                    clear_latest_suffix::expand(&mut b.scope, cache, positions, start, count);
+                    let pooled = b.output_array(Type::new(f)).into();
+                    clear_latest_suffix::expand(
+                        &mut b.scope,
+                        cache,
+                        positions,
+                        pooled,
+                        start,
+                        count,
+                        crate::strata_qsa::cache_words(),
+                        crate::strata_intel_core::enabled(),
+                    );
                 }
                 let source = WgslCompiler::default()
                     .compile(
@@ -2318,25 +2561,37 @@ mod tests {
             stamp,
             scratch: std::array::from_fn(|i| BufferId::metadata_fixture(7, 13, i)),
             owners: std::array::from_fn(|i| BufferId::metadata_fixture(7, 13, S + i)),
-            input: BufferId::metadata_fixture(7, 13, S + 2),
-            output: BufferId::metadata_fixture(7, 13, S + 3),
-            fault: BufferId::metadata_fixture(7, 13, S + 4),
+            input: BufferId::metadata_fixture(7, 13, S + 3),
+            output: BufferId::metadata_fixture(7, 13, S + 4),
+            fault: BufferId::metadata_fixture(7, 13, S + 5),
         }
     }
     #[test]
     fn exact_full_pages_one_shared_bank_and_no_cache_duplicates() {
         let l = layout();
-        assert_eq!(l.bytes().unwrap(), 17_825_792);
+        let core = crate::strata_intel_core::enabled();
+        let mut expected = [
+            524288, 32768, 32768, 32768, 32768, 524288, 262144, 32768, 32768, 65536, 4194304,
+            4194304, 32768, 131072, 2097152, 2097152, 262144, 524288, 32768, 32768, 32768, 65536,
+            32768, 32768, 32768, 2097152, 32768, 262144, 65536,
+        ];
+        if core {
+            expected[CAND] = 32768;
+            expected[LOGIT] = 8388608;
+            expected[PROB] = 65536;
+        }
         assert_eq!(
-            l.requests().unwrap(),
-            [
-                524288, 32768, 32768, 32768, 32768, 524288, 262144, 32768, 32768, 65536, 4194304,
-                4194304, 32768, 131072, 2097152, 2097152, 262144, 524288, 32768, 32768, 32768,
-                65536, 32768, 32768, 32768, 2097152, 32768, 262144, 65536
-            ]
+            l.bytes().unwrap(),
+            if core { 22_052_864 } else { 17_825_792 }
         );
-        assert_eq!(l.stage.owned_bytes().unwrap(), 36_306_944);
-        assert_eq!(785_186_816 + l.bytes().unwrap(), 803_012_608);
+        assert_eq!(l.requests().unwrap(), expected);
+        assert_eq!(
+            l.stage.owned_bytes().unwrap(),
+            if core { 19_529_728 } else { 36_306_944 }
+        );
+        if !core {
+            assert_eq!(785_186_816 + l.bytes().unwrap(), 803_012_608);
+        }
         assert_eq!(l.io_bytes(false).unwrap(), 327680);
         assert_eq!(l.io_bytes(true).unwrap(), 655360);
         assert_eq!(l.io_bytes(true).unwrap() * 12, 7_864_320);

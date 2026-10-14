@@ -23,6 +23,7 @@ mod strata_gr;
 mod strata_intel_core;
 mod strata_packet;
 mod strata_port;
+mod strata_qsa;
 mod strata_stage;
 // Shared with the standalone CPU writer; writer-only methods are inert here.
 #[allow(dead_code)]

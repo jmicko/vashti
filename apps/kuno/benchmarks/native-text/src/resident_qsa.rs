@@ -261,7 +261,7 @@ impl StageLayout {
         let selected = self.max_context.min(qsa::BUDGET + qsa::BLOCK - 1);
         let logits = qsa::QH * selected;
         [
-            self.max_context * qsa::TOKEN,
+            self.max_context * crate::strata_qsa::cache_words(),
             self.max_context,
             qsa::QUERY * 2,
             qsa::QUERY * 2,
@@ -1669,7 +1669,7 @@ mod tests {
     fn full_plan_is_bounded_and_public_gamma_exact() {
         let l = StageLayout::from_geometry(geometry()).unwrap();
         let w = l.allocation_words();
-        assert_eq!(w[CACHE], 4096 * qsa::TOKEN);
+        assert_eq!(w[CACHE], 4096 * crate::strata_qsa::cache_words());
         assert_eq!(w[POSITIONS], 4096);
         assert_eq!(w[SELECTED], 2051); // earlier incomplete tails need2051
         assert!(l.owned_bytes().unwrap() < 40 * 1024 * 1024);
