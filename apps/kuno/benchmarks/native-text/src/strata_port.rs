@@ -921,7 +921,7 @@ pub(crate) fn validate_limits(limits: &wgpu::Limits) -> kuno_text::Result<()> {
             || fused_sources()
                 && (limits.max_storage_buffers_per_shader_stage
                     < if crate::strata_intel_core::enabled() {
-                        15
+                        16
                     } else {
                         14
                     }
@@ -1001,6 +1001,27 @@ pub(crate) fn validate_shader_set() -> Result<(), Box<dyn std::error::Error>> {
                 entry_point: "main".into(),
             }),
         )?;
+        if compiled.source.contains("STRATA_PHYSICAL_EXPERTS") {
+            use std::io::Write;
+            let words = cubecl::wgpu::native_expert_shader_words(&compiled.source)?;
+            let mut validate = std::process::Command::new("spirv-val")
+                .args(["--target-env", "vulkan1.3", "-"])
+                .stdin(std::process::Stdio::piped())
+                .spawn()?;
+            let bytes = words
+                .iter()
+                .flat_map(|w| w.to_le_bytes())
+                .collect::<Vec<_>>();
+            validate
+                .stdin
+                .take()
+                .ok_or("physical SPIRV validator stdin")?
+                .write_all(&bytes)?;
+            if !validate.wait()?.success() {
+                return Err("physical expert SPIRV validation failed".into());
+            }
+            println!("strata_physical_shader_accepted index={index}");
+        }
         println!(
             "strata_shader_accepted index={index} workgroup={}",
             module.entry_points[0].workgroup_size[0]

@@ -700,7 +700,14 @@ impl<'plan, 'model, 'file> Mirror<'plan, 'model, 'file> {
                     let page = plan.page(layer, role, p).map_err(|_| rejected())?;
                     let descriptor = vk::BufferCreateInfo::default()
                         .size(page.logical_bytes())
-                        .usage(vk::BufferUsageFlags::STORAGE_BUFFER)
+                        .usage(
+                            vk::BufferUsageFlags::STORAGE_BUFFER
+                                | if crate::strata_intel_core::enabled() {
+                                    vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                                } else {
+                                    vk::BufferUsageFlags::empty()
+                                },
+                        )
                         .sharing_mode(vk::SharingMode::EXCLUSIVE);
                     let buffer = unsafe { raw.create_buffer(&descriptor, None) }
                         .map_err(|_| "public host expert native buffer creation failed")?;
@@ -728,10 +735,15 @@ impl<'plan, 'model, 'file> Mirror<'plan, 'model, 'file> {
                     // Dedicated allocation also satisfies drivers that require
                     // it for this buffer; no aliasing/suballocation is introduced.
                     let mut dedicated = vk::MemoryDedicatedAllocateInfo::default().buffer(buffer);
-                    let allocation = vk::MemoryAllocateInfo::default()
+                    let mut flags = vk::MemoryAllocateFlagsInfo::default()
+                        .flags(vk::MemoryAllocateFlags::DEVICE_ADDRESS);
+                    let mut allocation = vk::MemoryAllocateInfo::default()
                         .allocation_size(requirements.bytes)
                         .memory_type_index(placement.memory_type)
                         .push_next(&mut dedicated);
+                    if crate::strata_intel_core::enabled() {
+                        allocation = allocation.push_next(&mut flags);
+                    }
                     backing.memory = Some(
                         unsafe { raw.allocate_memory(&allocation, None) }
                             .map_err(|_| "public host expert nonlocal allocation failed")?,

@@ -947,7 +947,12 @@ async fn draft_client(
     let (device, queue) = adapter
         .request_device(&wgpu::DeviceDescriptor {
             label: Some("Kuno fixed public native MTP"),
-            required_features: wgpu::Features::SUBGROUP,
+            required_features: wgpu::Features::SUBGROUP
+                | if crate::strata_intel_core::enabled() {
+                    wgpu::Features::SHADER_INT64
+                } else {
+                    wgpu::Features::empty()
+                },
             required_limits: limits.clone(),
             memory_hints: wgpu::MemoryHints::MemoryUsage,
             trace: wgpu::Trace::Off,
@@ -1109,7 +1114,7 @@ pub(crate) fn run(
         }
         None
     };
-    let _shared_iq_tables = crate::strata_intel_core::Tables::new(client)?;
+    let _shared_iq_tables = crate::strata_intel_core::Tables::new(client, host_device)?;
     let mut draft_target_backlog_query_rejected = None;
     let draft_gpu = if draft_graph.is_some() {
         let (draft_client, draft_limits, mtp_device_receipt) = cubecl::future::block_on(

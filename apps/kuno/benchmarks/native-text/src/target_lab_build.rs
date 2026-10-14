@@ -206,6 +206,7 @@ impl IntelMtpMemory {
             banks,
             if crate::strata_intel_core::enabled() {
                 crate::strata_intel_core::PUBLIC_TABLE_BYTES
+                    + crate::strata_intel_core::ADDRESS_TABLE_BYTES
             } else {
                 0
             },

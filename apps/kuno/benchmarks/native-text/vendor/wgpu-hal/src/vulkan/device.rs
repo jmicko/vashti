@@ -877,7 +877,7 @@ impl crate::Device for super::Device {
     ) -> Result<super::Buffer, crate::DeviceError> {
         let vk_info = vk::BufferCreateInfo::default()
             .size(desc.size)
-            .usage(conv::map_buffer_usage(desc.usage))
+            .usage(conv::map_buffer_usage(desc.usage) | if std::env::var("KUNO_STRATA_INTEL_CORE").as_deref()==Ok("public") {vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS}else{vk::BufferUsageFlags::empty()})
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
         let raw = unsafe {

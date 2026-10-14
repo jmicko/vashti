@@ -2400,6 +2400,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 wgpu::Features::empty()
                             }
                             | wgpu::Features::SUBGROUP
+                            | if strata_intel_core::enabled() {
+                                wgpu::Features::SHADER_INT64
+                            } else {
+                                wgpu::Features::empty()
+                            }
                             | if kernel_profile || public_target_profile {
                                 wgpu::Features::TIMESTAMP_QUERY
                                     | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES

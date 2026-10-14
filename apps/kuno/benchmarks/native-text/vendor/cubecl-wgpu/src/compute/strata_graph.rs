@@ -115,7 +115,7 @@ pub(crate) fn register_module(
         },
         ..Default::default()
     };
-    let words = naga::back::spv::write_vec(
+    let mut words = naga::back::spv::write_vec(
         &m,
         &info,
         &options,
@@ -125,6 +125,9 @@ pub(crate) fn register_module(
         }),
     )
     .map_err(|_| fault("native graph SPIRV lowering"))?;
+    if source.contains("STRATA_PHYSICAL_EXPERTS") {
+        words = super::strata_physical::native_expert_shader_words(source)?;
+    }
     let p = Arc::new(Program {
         words,
         accesses: bindings.iter().map(|b| b.2).collect(),

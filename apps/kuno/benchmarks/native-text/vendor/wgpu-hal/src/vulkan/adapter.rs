@@ -1317,6 +1317,14 @@ impl PhysicalDeviceProperties {
             extensions.push(khr::draw_indirect_count::NAME);
         }
 
+        // Kuno's serialized native inference path uses physical storage pointers
+        // without enabling ray tracing. Require the actual supported extension.
+        if std::env::var("KUNO_STRATA_INTEL_CORE").as_deref()==Ok("public") {
+            if self.supports_extension(khr::buffer_device_address::NAME) {
+                extensions.push(khr::buffer_device_address::NAME);
+            }
+        }
+
         // Require `VK_KHR_deferred_host_operations`, `VK_KHR_acceleration_structure` `VK_KHR_buffer_device_address` (for acceleration structures) and`VK_KHR_ray_query` if `EXPERIMENTAL_RAY_QUERY` was requested
         if requested_features.contains(wgt::Features::EXPERIMENTAL_RAY_QUERY) {
             extensions.push(khr::deferred_host_operations::NAME);

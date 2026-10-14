@@ -202,3 +202,6 @@ warnings = "warn"
 broken_intra_doc_links = "warn"
 invalid_html_tags = "warn"
 
+
+[dependencies.rspirv]
+version = "0.12"

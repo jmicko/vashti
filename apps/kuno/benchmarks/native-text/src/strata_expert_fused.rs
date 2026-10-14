@@ -106,6 +106,14 @@ impl Kernel {
         if crate::strata_intel_core::enabled() && !self.down {
             binding += 1;
         }
+        let address_binding = binding;
+        if crate::strata_intel_core::enabled() {
+            bindings.push_str(&format!("// STRATA_PHYSICAL_EXPERTS\n@group(0) @binding({address_binding}) var<storage,read> strata_addresses:array<vec4<u32>>;\n"));
+            for name in names {
+                bindings.push_str(&format!("var<private> strata_{name}_address:vec2<u32>;\n"));
+            }
+            binding += 1;
+        }
         bindings.push_str(&format!("@group(0) @binding({binding}) var<uniform> p:Params;\nvar<private> strata_shard:u32;var<private> strata_first:u32;\n"));
         source.replace_range(first..end, &bindings);
         let words = if self.down { "2560u" } else { "640u" };
@@ -143,6 +151,20 @@ impl Kernel {
                 "if slot<{end}u {{strata_shard={shard}u;strata_first={first}u;}}\n"
             ));
         }
+        if crate::strata_intel_core::enabled() {
+            select.push_str("if arrayLength(&strata_addresses)!=2048u {return false;}\n");
+            for name in names {
+                let role = match *name {
+                    "gate" => 0,
+                    "up" => 1,
+                    "down" => 2,
+                    _ => unreachable!(),
+                };
+                select.push_str(&format!(
+                    "strata_{name}_address=strata_addresses[{role}u*5u+strata_shard].xy;\n"
+                ));
+            }
+        }
         source = source.replace(old, &select).replace(
             "let slot=map[p.a+4u+group.y]-p.b;",
             "let slot=map[p.a+4u+group.y]-strata_first;",
@@ -150,11 +172,19 @@ impl Kernel {
         for name in names {
             source = replace_reads(source, name);
         }
+        if crate::strata_intel_core::enabled() {
+            helpers.clear();
+            for name in names {
+                helpers.push_str(&format!(
+                    "fn strata_{name}(index:u32)->u32 {{return {name}0[index/4u][index%4u];}}\n"
+                ));
+            }
+        }
         source.push_str(&helpers);
         if crate::strata_intel_core::enabled() && !self.down {
             source = crate::strata_intel_core::shared_table(source, table_binding, self.dtype);
         }
-        crate::strata_intel_core::specialize_projection(source, self.down)
+        source
     }
 }
 impl KernelMetadata for Kernel {
@@ -247,6 +277,9 @@ pub(crate) fn launch(
     }
     if crate::strata_intel_core::enabled() && !down {
         args = crate::strata_intel_core::bind(args, owners[0].stream)?;
+    }
+    if crate::strata_intel_core::enabled() {
+        args = crate::strata_intel_core::bind_addresses(client, pages, args)?;
     }
     let values = [
         spans.map_first(),
