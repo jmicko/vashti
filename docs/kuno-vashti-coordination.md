@@ -4972,3 +4972,41 @@ still uses three-row/MAX8 packets. Keep verifier receipts separate and actual
 binding/root checks intact. Complete native budgets/loans, queues/capture,
 remaining layout/substitution audits, general input/sampling and whole-engine
 acceptance before throughput comparisons. Required Vashti changes: none.
+
+### Active Kuno engine handoff — large prompt controller and full device MTP (2026-10-14)
+
+Source `f3196fc`, isolated `codex/strata-rust-port`. Read completion guide
+**Connected large prompt controller and device MTP teaching**, including its
+validation and exact next-source pointers. The core parent now runs real256-row
+prompt chunks across embedding/GR/GDN/QSA/routed/shared/PLE, with persistent
+carved R/mixed/blocks, all-family state preflight/commit, a last-chunk-only head
+and full-chunk MTP teaching directly from target VRAM. The interim eight-row
+teacher and per-row host carries are gone. Verifier MAX_BATCH stays8.
+
+Persistent GR/outer views use57,918,720 bytes of the existing stage0 upper64MiB;
+PLE phase views use57,695,232 bytes of stage1 upper64MiB. No new GPU root/MAIN
+allocation. PLE source host charge is12MiB, controller host/runtime add8MiB each.
+Exact PLE history acceptance maps only its last nine normalized rows and NEXT;
+legacy decode-policy/checkpoint workspaces receive a sealed real prompt boundary.
+Prompt GR writes consume activated injection once, correcting its former double
+activation at explicit PLE/final boundaries.
+
+Release build, strict Clippy,308 offline shader variants and six core PLE history
+tests pass. The complete core unit suite **does not pass**:1,149 passed,228 failed,
+1 ignored. The receipt distinguishes the historical200-failure baseline from
+this newer suite; do not assume all failures are obsolete or from this commit.
+No live GPU/model/numerical/state/recovery/speed run or API/Vashti/service/install/
+release change. Canonical checkout and bytecode preserved; goal active, full
+rewrite incomplete, speed gate closed. Last Demons shell `sudo -n -v` required
+a password; no protected operation or privilege workaround followed.
+
+Next complete native queue/recording/copy dependencies and the real GEMM/data-flow
+substitution, then remaining placement/default sizing, arbitrary input/sampling,
+verifier repair and unit-failure audits. Exact useful pointers are in the receipt:
+Rust Vulkan backend already recognizes FP16/BF16 cooperative matrices, while the
+currently used WGSL compiler rejects CoopMma; its optional SPIR-V path is worth
+investigating. Pinned Intel source defaults BF16X2 off and uses owned prompt
+buffers at context<=32768 (default2048 rows), so audit those actual branches
+before declaring remainder GEMMs or cache lending unconditional missing work.
+Finish the full source review and protected whole-engine acceptance before any
+speed comparisons. Required Vashti changes: none.

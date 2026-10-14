@@ -38,10 +38,10 @@ all need a final audit of actual connected dispatches, not just file names.
 | GPU route/group planning and CPU contribution | `verify.cpp` router, `resident_plan`, doorbell/pool/host plans; `src/kernels/cpu` | Native BF16 router/shared-gate projections and full512-expert softmax/winning-lane normalization are selected in the core. Physical/numerical acceptance and working Intel all-GPU-fetch versus host-pool mode/overlap still require audit. |
 | Native expert math and grouped rows | `sycl/src/kernels/cuda/iq_kernels.dp.cpp::row_entries`, `native_gu_kernel`, `native_down_kernel` | Packed integer math/BDA roots exist. Separate GU roles, 4/2/1 chunks, activation, intermediate storage and downstream consumers are now selected together in the Intel core; all 158 WGSL/SPIR-V variants validate, including 105 physical-pointer checks; numerical/model execution acceptance remains pending. The global core now uses one per-role launch containing pinned row_entries4/2/1 loops, scalar IQ4_XS, native signed integer finish and XOR reduction; numerical/model execution acceptance remains pending. Historical fixed-chunk kernels are retained separately. |
 | GR write/read/norm/down/up/injection | `sycl/src/kernels/cuda/fused_gr.dp.cpp::fused_gr_read_multi`; `verify.cpp::gr_read_group` | Native pending-write norm, sliced BF16 down/injection, fixed slice reduction and up/mix/commit are now connected and unconditionally selected in the core, including explicit PLE/final boundary writes. Resident original weights and the enlarged private scratch owner are charged together. Structural acceptance passes; numerical/model execution acceptance and final substitution audit remain pending. |
-| GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp`, `prefill/kernels.dp.cpp` | Core connects native BF16 alpha/beta, controls, recurrence/norm and accepted-prefix replay. Prompt scope selects contiguous H, causal convolution/history/L2, CB32 recurrence and directly consumed FP16 output. Source 9a7a23b connects prompt-capacity whole-chunk math without per-element status/replay owners, carved AB staging, and native row/value-head recurrent state shared by prompt/decode/repair. The large chunk caller/acceptance, remaining split verifier replay, physical execution and final numerical/queue audit remain open. |
+| GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp`, `prefill/kernels.dp.cpp` | Core connects native BF16 alpha/beta, controls, recurrence/norm and accepted-prefix replay. Prompt scope selects contiguous H, causal convolution/history/L2, CB32 recurrence and directly consumed FP16 output. Source 9a7a23b connects prompt-capacity whole-chunk math without per-element status/replay owners, carved AB staging, and native row/value-head recurrent state shared by prompt/decode/repair. The large chunk caller/acceptance is connected in the latest controller receipt; remaining split verifier replay, physical execution and final numerical/queue audit remain open. |
 | QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects FP16 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. See the QSA receipt below for precise storage/scheduling substitutions and remaining numerical/state acceptance; do not claim full QSA fidelity yet. |
-| PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Core connects native BF16 MAX8 projections, normalization/gate/conv/history, deduplicated positional reads and accepted-prefix ownership. Prompt calls now consume a bounded, joined double-buffered source prefetch. Native large chunk geometry, upload scheduling, mapped snapshots and numerical/device acceptance remain open. Never persist request n-grams. |
-| Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. The bounded prompt path now uses logical-ID expert order, checked native transfer nodes, an eight-slot raw ring and two paired dequantization slots. Full chunk owner/budget/cache loan, independent transfer/compute queues, causal prompt kernels and device-resident target/MTP handoff remain unported; current three-row loop is not prompt-path parity. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
+| PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Core connects native BF16 MAX8 projections, normalization/gate/conv/history, deduplicated positional reads and accepted-prefix ownership. Prompt calls now consume a bounded, joined double-buffered source prefetch. The latest controller receipt connects native large chunk geometry, joined uploads, retained tail and exact history acceptance. Native loans/queue scheduling and numerical/device acceptance remain open. Never persist request n-grams. |
+| Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. The bounded prompt path now uses logical-ID expert order, checked native transfer nodes, an eight-slot raw ring and two paired dequantization slots. The latest controller receipt connects full256-row owners/causal math/state acceptance, final-only head and full device MTP teaching. Dynamic byte-based cache loans, independent transfer/compute queues and final GEMM/layout substitution audit remain open. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
 | MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native FP16 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Queue/branch/capture fidelity, numerical/state acceptance, arbitrary input and supported sampling remain required. See the front/rest/MoE receipts. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Request-local Rust suffix/cost controller exists; audit supported window lengths and coupled sampling rather than fixing to four public-fixture rows. |
 | Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Real greedy verification/state-only repair exists. Audit all active windows and acceptance cases against GDN/QSA/PLE/positions; independent correctness oracle remains missing. |
@@ -1847,3 +1847,137 @@ Executor prompt and prepacked original-weight projection accept handles/counts;
 do not reintroduce legacy validate_view/MAX_BATCH in those full paths. Native
 byte-based loans, independent queues/capture, remaining substitutions, arbitrary
 input/sampling and whole-engine correctness/recovery still precede speed trials.
+
+## Connected large prompt controller and device MTP teaching (2026-10-14)
+
+Source `f3196fc`, isolated `codex/strata-rust-port`.
+
+The enclosing core prompt loop now uses real1..256-row chunks, rather than
+calling the three-row verifier repeatedly. `resident_model_prompt.rs` connects
+embedding, pending GR writes/reads, all48 GDN/QSA stages, routed/shared experts,
+layer1 PLE, final residual materialization and a last-chunk/last-row-only head.
+`strata_global_controller.rs` calls this path with a joined PLE source worker.
+The ordinary MAX8 verifier and its speculative receipts remain separate.
+
+The persistent region contains both R streams, mixed/attention/FFN blocks,
+injection/router/shared intermediates, embedding and the retained PLE tail.
+Together with GR it takes57,918,720 bytes of stage0's upper64MiB. PLE's phase
+region takes57,695,232 bytes of stage1's upper64MiB and overlays the already
+carved GDN/QSA regions; the working weight/activation images stay in the lower
+halves. This adds no GPU root or MAIN allocation to the existing three128MiB
+stages. The source envelope grows to12MiB, including its256KiB coordinator
+stack and joined reader work. Another8MiB host and8MiB runtime reservation
+covers controller uploads/maps/tickets/INFO; scope tables retain their32KiB
+charge. All offsets are relative to the actual retained owning roots.
+
+GDN/QSA have dedicated full-prompt enqueue/preflight/infallible-commit tickets,
+with real binding, sequence, public-parameter identity, original state/cache
+roots, start/count and shared poison checks. Whole-model fault completion,
+PLE diagnostics, final output/carry if needed, a second fault proof, all-stage
+preflight and global routed-stage stamp acceptance precede state publication.
+A sealed completed-prompt certificate records the genuine boundary in the idle
+MAX8 workspaces; it fabricates no queued MAX8 rows. Without that bridge the
+existing post-prefill decode-policy/checkpoint checks would reject the model.
+The request capability also has an explicit prefill-only256-row authorization;
+it does not widen ordinary active/closed request or verification permissions.
+
+PLE projects the full chunk, computes exact causal history into NEXT and retains
+only the last `min(count,9)` normalized rows outside the phase overlay. The new
+core `ple_transition::prepare_prompt` independently reconstructs NEXT from the
+authoritative CPU history and that tail, verifies exact bits, and returns the
+existing borrowing history ticket. This avoids a full10MiB activation map.
+GPU/CPU histories publish together after all-family preflight. The original
+scalar-history continuation oracle passes for1,8,9,32 and256 rows, including
+signed zeros and abandoned proposals. The old MAX8 limit remains8.
+
+The explicit GR boundary writer now consumes already activated prompt injection
+once. Previously the decode writer applied its sigmoid a second time at a prompt
+PLE/final boundary. Pending-write norm already consumed activated injection; the
+new writer preserves that same convention through materialized boundaries.
+The full shared path connects original gate/up/scalar/down projections, packed
+saturating FP16 SiLU products, native ordered routed reduction and shared merge.
+
+`resident_mtp_prompt.rs` implements the pinned Intel `Prefill::draft_kv` default
+for the full chunk on the same admitted device. It borrows immutable target R1
+and the now-idle phase region, normalizes embedding/hidden inputs, runs original
+Q8 pages through FP16 prompt GEMMs, forms the conditioned residual, performs
+BF16 GR followed by Q8 K/V projections and norm/RoPE, and appends native packed FP16 K/V. One
+completed MTP fault/guard proof precedes its cursor update. No carry row maps or
+per-eight-row teacher fences remain. FC-hidden treats each token's four streams
+as contiguous rows, up to1024 rows. Only teacher token IDs are uploaded. Failure
+retires the target and/or draft owners through their original terminal paths.
+The model's last carry is mapped once for the existing decode controller.
+
+Pinned-source audit clarifications:
+
+- `prefill.cpp:225-253`: BF16X2 remainder GEMMs are opt-in; default is0.
+  `gemm.dp.cpp::prompt_f16` returns false outside HIP. No missing default
+  BF16X2 dependency is being silently replaced with a single plane.
+- `sycl/CMakeLists.txt` does not select `STRATA_PREFILL_MMQ`; the fallback
+  `mmq::built()` in `prefill.cpp:54-69` is false. Consequently the selected
+  Intel teacher path uses FP16/Q8 GEMMs; decode's Q8 integer front alone was
+  not the full prompt teacher implementation.
+- `generate.cpp:2143-2172` defaults to owned prompt buffers at contexts<=32768
+  and to borrowed cache space above that threshold unless flags override it.
+  Do not assume cache lending is always the default of this4096-context path.
+  The fixed256-row carve/reservation still needs the final native policy audit;
+  it does not implement automatic2048-row sizing or arbitrary loans/refill.
+
+This is a connected source implementation, not whole-engine numerical, state,
+recovery or speed acceptance. Native queue/recording/transfer dependencies,
+GEMM/layout substitutions, placement/loan selection, arbitrary input/sampling,
+verifier repair and the unresolved full-core tests still require completion.
+No physical GPU/model run, service/API/UI/install/release change occurred.
+The canonical checkout and inherited bytecode were preserved. Goal active,
+full rewrite incomplete, speed gate closed. Last shared-shell sudo refresh
+reported a password required; source/offline work did not need root.
+
+Validation for `f3196fc` (logs in `/media/jmicko/faststore/kuno-development`):
+
+- `strata-large-controller-final-build-20261014.log`: release core build passes.
+- `strata-large-controller-clippy-20261014.log`: strict release core Clippy passes.
+- `strata-large-controller-shaders-20261014.log`:308 generated WGSL/SPIR-V
+  variants pass, including physical-pointer validation. Host-only factory
+  validation also checked all11 PLE variants and the large MTP norm variant.
+- `strata-large-controller-host-tests-20261014.log`: all six core PLE history
+  tests pass, including the independent long-chunk/scalar continuation test.
+- `strata-large-controller-core-tests-20261014.log`: full core unit run is
+  **not green**:1,149 passed,228 failed,1 ignored. An initial run exposed an
+  outdated eight-row deduplicated-source limit assertion; it now tests the
+  genuine256-row prompt contract while asserting verifier MAX_BATCH remains8.
+  The final full run includes that correction and the new prefill-authority
+  bounds/lifecycle assertions. No test is skipped to conceal these failures.
+
+The200-failure historical log `strata-connected-gr-core-regression-20261014.log`
+is from much earlier source, not the immediate parent.198 failures persist from
+it;30 other tests fail now, and2 historical failures no longer fail. This does
+not prove which intermediate change introduced each failure. Existing examples
+include old four-row/host-profile fixtures, exact padding/INFO budgets and native
+state geometry; independently audit each against its actual contract. Do not
+call them all obsolete, claim no regression, or edit expectations wholesale.
+The ordinary feature-off full suite was not rerun in this block.
+
+Next connected source work before model/speed trials:
+
+1. Complete the native queue/recording/transfer schedule and actual GEMM
+   substitution audit. The current prompt transfer ring is still on one owning
+   Wgpu stream. Native `prefill.cpp` uses a copy issuer and compute dependencies;
+   merely having eight raw slots is not asynchronous queue parity. Actual Rust
+   copy nodes enter `vendor/cubecl-wgpu/src/compute/stream.rs::stage_public_host_copies`
+   and `strata_graph`; inspect their real barriers/lifetimes, not a fake event API.
+2. The current8x8x32 prompt GEMM is scalar F32 arithmetic over the native rounded
+   images, not a proved oneMKL matrix-instruction substitute. Useful existing
+   Rust support: vendored `backend/vulkan.rs::register_cmma` recognizes FP16 and
+   BF16 KHR cooperative matrices; `compiler/wgsl/compiler.rs` explicitly rejects
+   `CoopMma`. The optional `cubecl-wgpu` `spirv` feature and existing
+   `cubecl-core/src/runtime_tests/cmma.rs` show a Rust/SPIR-V route. Audit actual
+   device capabilities and BF16/FP16 placement/data flow together; do not replace
+   only one half or switch the path off because of an incidental timing.
+3. Finish native owned/borrowed buffer policy and the configured chunk-size
+   audit using the exact default branch above; native short-context default is
+   owned buffers and2048 rows, whereas this bounded port currently uses256.
+4. Connect arbitrary input/supported sampling, finish verification/repair and
+   all228 test-failure audits, then perform the final whole-engine source
+   completeness review. Only afterward run protected numerical/completion/state/
+   recovery cases and then comparative throughput. Sudo is needed for protected
+   content-bearing GPU tests, not ordinary source/build work.
