@@ -7,7 +7,8 @@ pub(crate) const HOST_BYTES: usize = 4096;
 const HALF: u64 = 64 * 1024 * 1024;
 pub(crate) struct Storage {
     working: [Handle; 3],
-    gr: [Handle; 4], // normalized, down, low, up
+    gr: [Handle; 4],  // normalized, down, low, up
+    gdn: [Handle; 4], // QKV, Z, H, raw recurrence output
 }
 impl Storage {
     pub(crate) fn new(roots: [Handle; 3]) -> Result<Self> {
@@ -20,25 +21,24 @@ impl Storage {
             return Err(Error::InvalidBufferLength);
         }
         let capacity = groups::CAPACITY;
-        let mut cursor = HALF;
-        let mut views = Vec::with_capacity(4);
-        for width in [10240, 320, 320, 10240] {
-            // Native Alloc::take leaves256 bytes and aligns each cell to256.
-            let bytes = (capacity * width * 4) as u64;
-            let end = cursor.checked_add(bytes).ok_or(Error::ArithmeticOverflow)?;
-            let next = end.checked_add(511).ok_or(Error::ArithmeticOverflow)? & !255;
-            if next > 2 * HALF {
-                return Err(Error::InvalidBufferLength);
+        let carve = |root: &Handle, widths: [usize; 4]| -> Result<[Handle; 4]> {
+            let mut cursor = HALF;
+            let mut views = Vec::with_capacity(4);
+            for width in widths {
+                // Native Alloc::take leaves256 bytes and aligns each cell to256.
+                let bytes = (capacity * width * 4) as u64;
+                let end = cursor.checked_add(bytes).ok_or(Error::ArithmeticOverflow)?;
+                let next = end.checked_add(511).ok_or(Error::ArithmeticOverflow)? & !255;
+                if next > 2 * HALF {
+                    return Err(Error::InvalidBufferLength);
+                }
+                views.push(root.clone().offset_start(cursor).offset_end(2 * HALF - end));
+                cursor = next;
             }
-            views.push(
-                roots[0]
-                    .clone()
-                    .offset_start(cursor)
-                    .offset_end(2 * HALF - end),
-            );
-            cursor = next;
-        }
-        let gr: [Handle; 4] = views.try_into().map_err(|_| Error::InvalidBufferLength)?;
+            views.try_into().map_err(|_| Error::InvalidBufferLength)
+        };
+        let gr = carve(&roots[0], [10240, 320, 320, 10240])?;
+        let gdn = carve(&roots[1], [10240, 6144, 10240, 6144])?;
         let working = [
             roots[0].clone().offset_end(HALF),
             roots[1].clone().offset_end(HALF),
@@ -49,7 +49,13 @@ impl Storage {
                 return Err(Error::InvalidBufferLength);
             }
         }
-        Ok(Self { working, gr })
+        for (i, a) in gdn.iter().enumerate() {
+            if overlaps(a, &working[1])? || gdn[..i].iter().any(|b| overlaps(a, b).unwrap_or(true))
+            {
+                return Err(Error::InvalidBufferLength);
+            }
+        }
+        Ok(Self { working, gr, gdn })
     }
     pub(crate) fn working(&self) -> [Handle; 3] {
         self.working.clone()
@@ -57,6 +63,22 @@ impl Storage {
     pub(crate) fn gr(&self) -> [Handle; 4] {
         self.gr.clone()
     }
+    pub(crate) fn gdn(&self) -> [Handle; 4] {
+        self.gdn.clone()
+    }
+    pub(crate) fn output(&self, h: &Handle) -> bool {
+        self.gr
+            .iter()
+            .chain(self.gdn.iter())
+            .any(|v| same_view(h, v))
+    }
+}
+fn same_view(a: &Handle, b: &Handle) -> bool {
+    a.stream == b.stream
+        && a.clone().binding().memory.allocation_id() == b.clone().binding().memory.allocation_id()
+        && a.offset_start.unwrap_or(0) == b.offset_start.unwrap_or(0)
+        && a.offset_end.unwrap_or(0) == b.offset_end.unwrap_or(0)
+        && a.size_in_used() == b.size_in_used()
 }
 /// Full allocation identity alone is insufficient once native phase regions
 /// are carved. Admit only genuinely disjoint ranges of the same retained root.

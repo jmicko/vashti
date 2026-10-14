@@ -80,6 +80,23 @@ fn gr_workspace() -> Result<[Handle; 4]> {
             .ok_or(Error::InvalidBufferLength)
     })
 }
+pub(crate) fn gdn_workspace() -> Result<[Handle; 4]> {
+    STAGES.with(|s| {
+        s.borrow()
+            .as_ref()
+            .map(storage::Storage::gdn)
+            .ok_or(Error::InvalidBufferLength)
+    })
+}
+pub(crate) fn validate_output(handle: &Handle) -> Result<()> {
+    STAGES.with(|s| {
+        if s.borrow().as_ref().is_some_and(|v| v.output(handle)) {
+            Ok(())
+        } else {
+            Err(Error::InvalidBufferLength)
+        }
+    })
+}
 pub(crate) fn control_stage() -> Result<Handle> {
     Ok(stages()?[2].clone())
 }

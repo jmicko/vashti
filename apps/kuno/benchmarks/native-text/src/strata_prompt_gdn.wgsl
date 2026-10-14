@@ -3,6 +3,16 @@
 struct Params {count:u32,start:u32,channels:u32,key_heads:u32,value_heads:u32,gamma_shared:u32,epsilon:f32,reserved:u32}
 fn finite(x:f32)->bool {return abs(x)<=3.4028234663852886e38;}
 // COMMON_END
+// RETAIN_BEGIN
+@group(0) @binding(0) var<storage,read> source:array<u32>;
+@group(0) @binding(1) var<storage,read_write> retained:array<u32>;
+@group(0) @binding(2) var<uniform> p:Params;
+@compute @workgroup_size(128)
+fn main(@builtin(global_invocation_id) id:vec3<u32>) {
+    let i=id.x;if i>=arrayLength(&retained){return;}
+    var bits=0u;if i<p.count*p.channels {bits=source[i];}retained[i]=bits;
+}
+// RETAIN_END
 // CONV_BEGIN
 @group(0) @binding(0) var<storage,read> raw:array<f32>;
 @group(0) @binding(1) var<storage,read> weights:array<f32>;

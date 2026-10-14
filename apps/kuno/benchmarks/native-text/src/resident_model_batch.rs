@@ -1720,7 +1720,7 @@ fn runtime_bytes(head_tiles: u64) -> Result<u64> {
     const WITHOUT_HEAD: u64 = 61_751_296
         + OUTER_CLEAR_INFO
         + if cfg!(feature = "strata-intel-core") {
-            crate::strata_prompt::groups::RUNTIME_BYTES
+            crate::strata_prompt::groups::RUNTIME_BYTES + gdn::strata_replay::PROMPT_INFO_BYTES
         } else {
             0
         };

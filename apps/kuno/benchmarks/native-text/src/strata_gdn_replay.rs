@@ -3,6 +3,7 @@
 use super::*;
 use cubecl::prelude::*;
 use zeroize::Zeroize;
+pub(crate) const PROMPT_INFO_BYTES: u64 = 36 * 2048;
 
 pub(crate) const MAIN_BYTES: u64 = if cfg!(feature = "strata-rust-port") {
     36 * (524288 + 65536 + 65536 + 262144 + 32768)
@@ -64,16 +65,33 @@ impl InputCache {
         &mut self,
         arena: &PrivateArena,
         source: [BufferId; 5],
+        prompt_raw: Option<cubecl_runtime::server::Handle>,
         start: u64,
         count: usize,
         chunk: u64,
     ) -> Result<()> {
-        for (&from, &to) in source.iter().zip(&self.ids) {
+        for (role, (&from, &to)) in source.iter().zip(&self.ids).enumerate() {
             if from == to
                 || arena.layout(from).map_err(arena_fault)?
                     != arena.layout(to).map_err(arena_fault)?
             {
                 return Err(fault("Strata GDN cache role extent"));
+            }
+            if role == 0
+                && let Some(raw) = &prompt_raw
+            {
+                let words = u::words(arena, to)?;
+                if !(1..=MAX_BATCH).contains(&count) || !words.is_multiple_of(MAX_BATCH) {
+                    return Err(fault("Strata GDN prompt cache extent"));
+                }
+                crate::strata_gdn::prompt::retain(
+                    arena,
+                    count,
+                    words / MAX_BATCH,
+                    raw.clone(),
+                    u::handle(arena, to)?,
+                )?;
+                continue;
             }
             u::copy_words::launch::<WgpuRuntime>(
                 arena.client().map_err(arena_fault)?,

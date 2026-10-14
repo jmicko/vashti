@@ -41,6 +41,20 @@ pub fn validate_view(
 pub trait BatchedResidentProjector {
     /// Sealed stage owners must fold projections into their SAME model fault.
     fn global_fault(&self) -> BufferId;
+    /// Prompt output is an exact carved view authenticated by the active owner,
+    /// never an arbitrary writable handle or an immutable model-cache buffer.
+    #[allow(clippy::too_many_arguments)]
+    fn enqueue_prompt_view(
+        &mut self,
+        _projection: BoundProjection<'_>,
+        _arena: &PrivateArena,
+        _input: cubecl_runtime::server::Handle,
+        _output: cubecl_runtime::server::Handle,
+        _spans: &BatchSpans,
+        _cancel: &AtomicBool,
+    ) -> Result<()> {
+        Err(Error::InvalidFormat("carved prompt projection unavailable"))
+    }
     #[allow(clippy::too_many_arguments)]
     fn enqueue_batch(
         &mut self,
@@ -152,6 +166,31 @@ pub struct ResidentBatchProjection<'e, 'f> {
     pub dense_q8: Option<BufferId>,
 }
 impl BatchedResidentProjector for ResidentBatchProjection<'_, '_> {
+    fn enqueue_prompt_view(
+        &mut self,
+        projection: BoundProjection<'_>,
+        arena: &PrivateArena,
+        input: cubecl_runtime::server::Handle,
+        output: cubecl_runtime::server::Handle,
+        spans: &BatchSpans,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        u::cancel(cancel)?;
+        crate::strata_prompt::validate_output(&output)?;
+        if crate::strata_prompt::storage::overlaps(&input, &output)? {
+            return Err(Error::InvalidBufferLength);
+        }
+        self.executor
+            .check_client(arena.client().map_err(u::fault)?)?;
+        self.executor.enqueue_strata_prompt_projection(
+            projection.tensor,
+            &input,
+            &output,
+            &u::handle(arena, self.fault)?,
+            spans,
+            cancel,
+        )
+    }
     fn enqueue_prompt_prepacked(
         &mut self,
         projection: BoundProjection<'_>,

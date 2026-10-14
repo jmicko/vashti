@@ -12,6 +12,7 @@ enum Op {
     Split,
     Recurrence,
     Norm,
+    Retain,
 }
 impl Op {
     fn source(self) -> String {
@@ -34,6 +35,7 @@ impl Op {
                 Self::Split => "SPLIT",
                 Self::Recurrence => "RECURRENCE",
                 Self::Norm => "NORM",
+                Self::Retain => "RETAIN",
             })
         )
     }
@@ -47,6 +49,7 @@ impl KernelMetadata for Op {
             Self::Split => "StrataPromptGdnReplayViews",
             Self::Recurrence => "StrataPromptGdnPipelinedColumns",
             Self::Norm => "StrataPromptGdnF16Norm",
+            Self::Retain => "StrataPromptGdnRetainRawPrefix",
         }
     }
     fn id(&self) -> KernelId {
@@ -85,13 +88,14 @@ fn launch(
 ) -> Result<()> {
     if !crate::strata_prompt::active()
         || !(1..=4096).contains(&p[0])
-        || p[3] == 0
-        || p[3] > 16
-        || p[4] == 0
-        || p[4] > 48
-        || !p[4].is_multiple_of(p[3])
-        || p[2] != 128 * (2 * p[3] + p[4])
-        || p[5] > 1
+        || (op != Op::Retain
+            && (p[3] == 0
+                || p[3] > 16
+                || p[4] == 0
+                || p[4] > 48
+                || !p[4].is_multiple_of(p[3])
+                || p[2] != 128 * (2 * p[3] + p[4])
+                || p[5] > 1))
         || p[7] != 0
         || !f32::from_bits(p[6]).is_finite()
         || f32::from_bits(p[6]) <= 0.
@@ -128,6 +132,43 @@ fn span(h: &Handle, bytes: usize) -> Result<()> {
     } else {
         Ok(())
     }
+}
+/// Retain the actual carved raw projection for the existing MAX8 replay owner.
+/// Inactive rows are zeroed; full prompt state acceptance will not need this
+/// compatibility copy. Both resources remain in the sole owning native graph.
+pub(crate) fn retain(
+    arena: &PrivateArena,
+    count: usize,
+    channels: usize,
+    source: Handle,
+    target: Handle,
+) -> Result<()> {
+    if !(1..=8).contains(&count)
+        || channels == 0
+        || channels > 10240
+        || target.size_in_used() != (8 * channels * 4) as u64
+        || crate::strata_prompt::storage::overlaps(&source, &target)?
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    crate::strata_prompt::validate_output(&source)?;
+    span(&source, count * channels * 4)?;
+    launch(
+        arena,
+        Op::Retain,
+        [(8 * channels).div_ceil(128), 1, 1],
+        vec![source, target],
+        [
+            count as u32,
+            0,
+            channels as u32,
+            0,
+            0,
+            0,
+            1e-6f32.to_bits(),
+            0,
+        ],
+    )
 }
 /// Raw,w,old,next,H,Q,K,V,conv status,prepared status: original real owners.
 pub(crate) fn convolution(arena: &PrivateArena, p: [u32; 8], h: [Handle; 10]) -> Result<()> {
@@ -245,6 +286,7 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
         Op::Split,
         Op::Recurrence,
         Op::Norm,
+        Op::Retain,
     ]
     .into_iter()
     .map(|op| {

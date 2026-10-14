@@ -782,16 +782,17 @@ impl ResidentGdn<'_> {
             0,
         ];
         if crate::strata_prompt::active() {
+            let [raw, z, prepared, recurrent] = crate::strata_prompt::gdn_workspace()?;
             match op {
                 Operation::Convolution => native::prompt::convolution(
                     arena,
                     info,
                     [
-                        h(ids[QKV])?,
+                        raw,
                         public.convolution.clone(),
                         h(self.buffers.raw_conv[0])?,
                         h(self.buffers.raw_conv[1])?,
-                        h(ids[ACT])?,
+                        prepared,
                         h(ids[Q])?,
                         h(ids[K])?,
                         h(ids[V])?,
@@ -803,12 +804,12 @@ impl ResidentGdn<'_> {
                     arena,
                     info,
                     [
-                        h(ids[ACT])?,
+                        prepared,
                         h(ids[CONTROL])?,
                         h(self.buffers.recurrent[0])?,
                         h(self.buffers.recurrent[1])?,
-                        h(ids[RECURRENT])?,
-                        h(ids[Z])?,
+                        recurrent,
+                        z,
                         public.gamma.clone(),
                         h(ids[STATUS + 3])?,
                         h(ids[STATUS + 4])?,
@@ -1028,6 +1029,11 @@ impl ResidentGdn<'_> {
                     cache.retain(
                         arena,
                         [ids[QKV], ids[Q], ids[K], ids[V], ids[CONTROL]],
+                        if crate::strata_prompt::active() {
+                            Some(crate::strata_prompt::gdn_workspace()?[0].clone())
+                        } else {
+                            None
+                        },
                         start,
                         count,
                         chunk,
@@ -1056,6 +1062,28 @@ impl ResidentGdn<'_> {
                     }
                 }
                 Operation::Projection(i) => {
+                    if crate::strata_prompt::active() {
+                        if i < 2 {
+                            let target = crate::strata_prompt::gdn_workspace()?[i].clone();
+                            let projection = [self.projections.qkv, self.projections.z][i];
+                            projector.enqueue_prompt_view(
+                                projection,
+                                arena,
+                                u::handle(arena, input)?,
+                                target,
+                                &BatchSpans::new(
+                                    count,
+                                    0,
+                                    spans.input_first(),
+                                    spans.input_stride(),
+                                    0,
+                                    [p.channels, p.value_elements][i],
+                                ),
+                                cancel,
+                            )?;
+                        }
+                        return Ok(());
+                    }
                     if crate::strata_intel_core::enabled() && (1..=8).contains(&count) {
                         if i == 0 {
                             let jobs = [(self.projections.qkv, QKV), (self.projections.z, Z)].map(
@@ -1177,6 +1205,7 @@ impl ResidentGdn<'_> {
                         cache.retain(
                             arena,
                             [ids[QKV], ids[Q], ids[K], ids[V], ids[CONTROL]],
+                            None,
                             start,
                             count,
                             chunk,
