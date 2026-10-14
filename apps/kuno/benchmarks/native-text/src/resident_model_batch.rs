@@ -60,7 +60,13 @@ pub(crate) mod public_target_request_io;
 pub(crate) mod public_warm_replay;
 pub(crate) const TARGET_ROWS_MAX: usize = target_rows::MAX_ROWS;
 pub(crate) const TARGET_ROWS_RUNTIME_LIMIT: u64 = target_rows::RUNTIME_LIMIT;
-pub(crate) const TARGET_ROWS_PRIVATE_MAIN: u64 = TOTAL_MAIN + target_rows::MAIN_BYTES;
+pub(crate) const TARGET_ROWS_PRIVATE_MAIN: u64 = TOTAL_MAIN
+    + target_rows::MAIN_BYTES
+    + if crate::strata_intel_core::enabled() {
+        crate::strata_stage::MAIN_BYTES
+    } else {
+        0
+    };
 #[allow(dead_code)] // Parent owns the exact executor construction-extent gate.
 pub(crate) const TARGET_ROWS_PREPARED_VERIFY3_MAIN: u64 =
     TARGET_ROWS_PRIVATE_MAIN + batch_moe::prepared_verify3::MAIN_BYTES;
