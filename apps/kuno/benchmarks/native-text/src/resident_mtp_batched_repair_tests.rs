@@ -90,11 +90,29 @@ fn full_input_preflight_rejects_bad_envelopes_and_every_unconsumed_carry() {
     let full = carries(3);
     for (old, start, stamp, count) in [
         (18, 17, true, 0),
-        (18, 17, true, 4),
+        (
+            18,
+            17,
+            true,
+            if crate::strata_intel_core::enabled() {
+                9
+            } else {
+                4
+            },
+        ),
         (0, 0, true, 1),
         (15, 17, false, 1),
         (16, 17, true, 1),
-        (19, 17, true, 3),
+        (
+            17 + if crate::strata_intel_core::enabled() {
+                7
+            } else {
+                2
+            },
+            17,
+            true,
+            3,
+        ),
         (17, 17, false, 1),
         (17, 17, true, 3),
         (k::CONTEXT + 1, 17, true, 1),
@@ -273,7 +291,14 @@ fn combined_info_and_all_temporary_capacities_fit_the_existing_plan() {
     assert!(40 + 1 + 42 + 2 * (39 + 84 + condition + hc + kv) <= MAX_TOKEN_DISPATCHES);
     assert!(6 + 1 + 8 + 2 * (7 + 16 + condition + hc + kv) <= MAX_TOKEN_DISPATCHES);
     assert_eq!(N, 42);
-    assert_eq!(private_plan().unwrap(), 11_698_176);
+    assert_eq!(
+        private_plan().unwrap(),
+        if crate::strata_intel_core::enabled() {
+            25_296_896
+        } else {
+            11_698_176
+        }
+    );
     assert_eq!(INFO_BYTES, 1_048_576);
     const { assert!(INFO_BYTES + 3 * 4 * 1024 * 1024 <= RUNTIME_BYTES) }
     let input = BufferLayout::new(k::WIDE).unwrap();

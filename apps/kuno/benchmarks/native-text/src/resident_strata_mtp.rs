@@ -57,8 +57,13 @@ const fn runtime_matrices() -> [Spec; 19] {
     let mut result = matrices();
     let mut i = 0;
     while i < result.len() {
-        result[i].dtype = quant_matvec::Q8_0;
+        if !crate::strata_intel_core::enabled() || i < 9 || i > 15 {
+            result[i].dtype = quant_matvec::Q8_0;
+        }
         i += 1;
+    }
+    if crate::strata_intel_core::enabled() {
+        result[0].dtype = quant_matvec::Q6_K;
     }
     result
 }

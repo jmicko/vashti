@@ -89,14 +89,28 @@ pub(super) fn run<'m, 'f>(
             if rows.position(row)? != position {
                 return Err("global prefill cursor rejected".into());
             }
-            if let Some(draft) = draft.as_deref_mut()
-                && let Some(token) = teacher_input(request.prompt, position, draft.position())?
-            {
-                draft.append_kv(token, rows.hidden(row)?, cancel)?;
-            }
             if position + 1 == request.prompt.len() {
                 confirmed = rows.greedy(row)?;
                 carry.copy_from_slice(rows.hidden(row)?);
+            }
+        }
+        if let Some(draft) = draft.as_deref_mut() {
+            if draft.position() != start {
+                return Err("global teacher group cursor rejected".into());
+            }
+            let teacher_count = count.min(request.prompt.len() - 1 - start);
+            if teacher_count > 0 {
+                let mut teacher_tokens = Zeroizing::new(Vec::with_capacity(teacher_count));
+                let mut teacher_carries =
+                    Zeroizing::new(Vec::with_capacity(teacher_count * HIDDEN));
+                for row in 0..teacher_count {
+                    teacher_tokens.push(
+                        teacher_input(request.prompt, start + row, start + row)?
+                            .ok_or("global teacher group rejected")?,
+                    );
+                    teacher_carries.extend_from_slice(rows.hidden(row)?);
+                }
+                draft.append_kv_group(&teacher_tokens, &teacher_carries, cancel)?;
             }
         }
         drop(rows);

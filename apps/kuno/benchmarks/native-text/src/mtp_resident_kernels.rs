@@ -32,7 +32,11 @@ pub const KVH: usize = 2;
 pub const HD: usize = 256;
 pub const QUERY: usize = QH * HD;
 pub const KV: usize = KVH * HD;
-pub const CONTEXT: usize = 2048;
+pub const CONTEXT: usize = if crate::strata_intel_core::enabled() {
+    4096
+} else {
+    2048
+};
 pub const CACHE_WORDS: usize = CONTEXT * KV;
 pub const ATTENTION_WORDS: usize = QH * CONTEXT;
 pub const CONDITION_WORDS: usize = HC * D * 2;

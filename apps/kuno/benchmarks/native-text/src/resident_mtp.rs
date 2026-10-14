@@ -45,7 +45,12 @@ pub const ENGLISH_PUBLIC_BYTES: u64 = PUBLIC_BYTES + ENGLISH_VOCAB_OWNED_BYTES;
 // independent startup page geometry is checked before any device allocation.
 pub const STRATA_PUBLIC_BYTES: u64 = 2_539_257_856;
 pub const MAIN_BYTES: u64 = 6 * 1024 * 1024 * 1024;
-pub const PRIVATE_BYTES: usize = 16 * 1024 * 1024;
+pub const PRIVATE_BYTES: usize = if crate::strata_intel_core::enabled() {
+    64
+} else {
+    16
+} * 1024
+    * 1024;
 pub const RUNTIME_BYTES: u64 = 64 * 1024 * 1024;
 pub const HOST_BYTES: usize = 16 * 1024 * 1024;
 pub const PUBLIC_SOURCE_BYTES: usize = 128 * 1024 * 1024;
@@ -631,6 +636,7 @@ pub struct ResidentMtp<'g, 'f> {
     ids: [BufferId; N],
     draft_window: Option<BufferId>,
     dense_planes: Option<BufferId>,
+    native_front: Option<crate::strata_mtp_front::Workspace>,
     client: ComputeClient<WgpuRuntime>,
     public: Option<Public>,
     ledger: MainAdmission,
@@ -913,6 +919,7 @@ fn grid(words: usize) -> Result<CubeCount> {
 fn private_plan() -> Result<u64> {
     WORDS.into_iter().try_fold(
         window::EXTRA_BYTES
+            + crate::strata_mtp_front::Workspace::bytes()?
             + if crate::strata_intel_core::enabled() {
                 32768
             } else {
@@ -951,6 +958,7 @@ fn matrices_for(profile: MtpProfile) -> &'static [Spec] {
 fn head_up_for(profile: MtpProfile) -> Spec {
     match profile {
         MtpProfile::SelfContainedQ8 => HEAD_UP,
+        MtpProfile::StrataQ2 if crate::strata_intel_core::enabled() => strata::HEAD_UP_Q2,
         MtpProfile::StrataQ2 if crate::strata_port::enabled() => HEAD_UP,
         MtpProfile::StrataQ2 => strata::HEAD_UP_Q2,
     }
@@ -1313,6 +1321,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         if crate::strata_intel_core::enabled() {
             plan.push(32768);
         }
+        plan.extend(crate::strata_mtp_front::Workspace::requests());
         ledger.precharge(&plan).map_err(error)?;
         let mut allocated = Vec::with_capacity(N);
         for n in WORDS {
@@ -1331,6 +1340,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         } else {
             None
         };
+        let native_front = crate::strata_mtp_front::Workspace::allocate(&mut arena)?;
         if arena.charged_bytes() as u64 != private {
             return Err(Error::InvalidBufferLength);
         }
@@ -1346,6 +1356,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             ids,
             draft_window,
             dense_planes,
+            native_front,
             client: owned_client,
             public: None,
             ledger,
@@ -1454,6 +1465,9 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         }
         if let Some(id) = self.dense_planes {
             owners.push(self.arena.handle(id).cloned().map_err(error)?);
+        }
+        if let Some(front) = &self.native_front {
+            owners.extend(front.handles(&self.arena)?);
         }
         if let Some(public) = &self.public {
             validate_english_owner(
@@ -2170,6 +2184,14 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             }
             if let Some(id) = self.draft_window {
                 u::zero(&self.arena, id)?;
+            }
+            if let Some(id) = self.dense_planes {
+                u::zero(&self.arena, id)?;
+            }
+            if let Some(front) = &self.native_front {
+                for &id in &*front.ids {
+                    u::zero(&self.arena, id)?;
+                }
             }
             cubecl::future::block_on(self.client()?.sync()).map_err(error)?;
             io_audit(self.client()?, &self.retired)
@@ -2925,7 +2947,9 @@ impl ResidentMtp<'_, '_> {
         );
         self.tick(1)?;
         self.status(k::QH)?;
-        self.key_value()?;
+        if !crate::strata_intel_core::enabled() || self.graph.profile() != MtpProfile::StrataQ2 {
+            self.key_value()?;
+        }
         let visible = k::validate_position(self.position)?;
         k::dense_logits::launch::<WgpuRuntime>(
             self.client()?,
@@ -3272,8 +3296,31 @@ impl ResidentMtp<'_, '_> {
         })
     }
     fn forward(&mut self) -> Result<()> {
-        self.condition()?;
-        self.hc(B::Residual0, 0, true)?;
+        if crate::strata_intel_core::enabled() && self.graph.profile() == MtpProfile::StrataQ2 {
+            self.queue_native_front(1, None, self.position, &AtomicBool::new(false))?;
+            let ids = *self
+                .native_front
+                .as_ref()
+                .ok_or(Error::InvalidBufferLength)?
+                .ids;
+            for (source, dest, words) in [
+                (crate::strata_mtp_front::RES, B::Residual0, k::WIDE),
+                (crate::strata_mtp_front::MIXED, B::Mixed, k::D),
+                (crate::strata_mtp_front::INJ, B::Injection, k::HC),
+            ] {
+                u::copy_words::launch::<WgpuRuntime>(
+                    self.client()?,
+                    u::grid(words)?,
+                    CubeDim::new_1d(64),
+                    u::arg(&self.arena, ids[source])?,
+                    self.a(dest)?,
+                );
+            }
+            self.tick(3)?;
+        } else {
+            self.condition()?;
+            self.hc(B::Residual0, 0, true)?;
+        }
         self.attention()?;
         self.combine(B::Residual0, B::Residual1)?;
         self.hc(B::Residual1, 1, true)?;
@@ -3467,6 +3514,9 @@ impl ResidentMtp<'_, '_> {
     /// Repair cache conditioning with the actual preceding target residual.
     /// No FFN, draft logits or controller acceptance occurs in this path.
     pub fn append_kv(&mut self, token: u32, carry: &[f32], cancel: &AtomicBool) -> Result<()> {
+        if crate::strata_intel_core::enabled() && self.graph.profile() == MtpProfile::StrataQ2 {
+            return self.append_kv_group(&[token], carry, cancel);
+        }
         self.last_forward.take();
         u::cancel(cancel)?;
         if self.poisoned || self.closed {
@@ -3503,6 +3553,390 @@ impl ResidentMtp<'_, '_> {
                 Err(Error::InvalidFormat("MTP resident append failure"))
             }
         }
+    }
+    /// Native front-only prompt/catch-up graph. All rows queue before one fault
+    /// fence; cursor publication follows the same owned state and erasure proof.
+    pub(crate) fn append_kv_group(
+        &mut self,
+        tokens: &[u32],
+        carries: &[f32],
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        if !crate::strata_intel_core::enabled()
+            || self.graph.profile() != MtpProfile::StrataQ2
+            || self.poisoned
+            || self.closed
+            || self.live_outputs.load(Ordering::Acquire) != 0
+            || !(1..=8).contains(&tokens.len())
+            || carries.len() != tokens.len() * k::WIDE
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        for (t, &token) in tokens.iter().enumerate() {
+            validate_input(
+                token,
+                &carries[t * k::WIDE..(t + 1) * k::WIDE],
+                self.position + t,
+            )?;
+        }
+        u::cancel(cancel)?;
+        self.verify_source()?;
+        self.physical()?;
+        self.last_forward.take();
+        self.poisoned = true;
+        self.dispatches = 0;
+        let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<()> {
+            self.clear_scratch()?;
+            self.enqueue_native_front(tokens, carries, self.position, cancel)?;
+            self.guard_private(self.position + tokens.len())?;
+            self.complete_fault()?;
+            self.verify_source()?;
+            u::cancel(cancel)
+        }));
+        match attempted {
+            Ok(Ok(())) => {
+                self.position += tokens.len();
+                self.poisoned = false;
+                Ok(())
+            }
+            Ok(Err(e)) => {
+                self.fail();
+                Err(e)
+            }
+            Err(_) => {
+                self.fail();
+                Err(Error::InvalidFormat("native MTP front failure"))
+            }
+        }
+    }
+    fn front_public(&self, name: &'static str) -> Result<Handle> {
+        let p = self.public()?.one(name)?;
+        Ok(p.handle
+            .clone()
+            .offset_end((p.owned_bytes - p.logical_bytes) as u64))
+    }
+    fn guard_native_front(&mut self) -> Result<()> {
+        let ids = *self
+            .native_front
+            .as_ref()
+            .ok_or(Error::InvalidBufferLength)?
+            .ids;
+        for (i, &id) in ids.iter().enumerate() {
+            let l = self.arena.layout(id).map_err(error)?;
+            private_guard::launch::<WgpuRuntime>(
+                self.client()?,
+                grid(l.owned_words)?,
+                CubeDim::new_1d(64),
+                u::raw_arg(
+                    self.arena.handle(id).cloned().map_err(error)?,
+                    l.owned_words,
+                )?,
+                self.a(B::Fault)?,
+                l.logical_words,
+                l.logical_words,
+                !matches!(i, 0 | 17 | 18 | 19),
+            );
+        }
+        self.tick(ids.len())
+    }
+    fn enqueue_native_front(
+        &mut self,
+        tokens: &[u32],
+        carries: &[f32],
+        start: usize,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        self.queue_native_front(tokens.len(), Some((tokens, carries)), start, cancel)
+    }
+    fn queue_native_front(
+        &mut self,
+        count: usize,
+        inputs: Option<(&[u32], &[f32])>,
+        start: usize,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        use crate::strata_mtp_front as f;
+        let ids = *self
+            .native_front
+            .as_ref()
+            .ok_or(Error::InvalidBufferLength)?
+            .ids;
+        let h = |i| u::handle(&self.arena, ids[i]);
+        let fault_id = self.id(B::Fault);
+        for &id in &ids {
+            u::zero(&self.arena, id)?;
+        }
+        if let Some((tokens, carries)) = inputs {
+            for (slot, words) in [
+                (f::TOKEN, Zeroizing::new(tokens.to_vec())),
+                (
+                    f::CARRY,
+                    Zeroizing::new(carries.iter().map(|v| v.to_bits()).collect::<Vec<_>>()),
+                ),
+            ] {
+                let l = self.arena.layout(ids[slot]).map_err(error)?;
+                let mut upload = Upload(vec![0; l.owned_bytes]);
+                for (dest, word) in upload.0.chunks_exact_mut(4).zip(words.iter()) {
+                    dest.copy_from_slice(&word.to_le_bytes());
+                }
+                self.client()?
+                    .write_private(
+                        self.arena.handle(ids[slot]).cloned().map_err(error)?,
+                        upload.take(),
+                    )
+                    .map_err(error)?;
+            }
+        } else {
+            for (source, dest, words) in [(B::Token, f::TOKEN, 1), (B::Carry, f::CARRY, k::WIDE)] {
+                u::copy_words::launch::<WgpuRuntime>(
+                    self.client()?,
+                    u::grid(words)?,
+                    CubeDim::new_1d(64),
+                    self.a(source)?,
+                    u::raw_arg(
+                        self.arena
+                            .handle(ids[dest])
+                            .cloned()
+                            .map_err(error)?
+                            .offset_end(
+                                (self.arena.layout(ids[dest]).map_err(error)?.owned_bytes
+                                    - words * 4) as u64,
+                            ),
+                        words,
+                    )?,
+                );
+            }
+        }
+        let info = [count as u32, start as u32, 0, 0, 0, 0, EPS.to_bits(), 0];
+        let embedding_pages = self.public()?.pages(EMBEDDING.name)?.len();
+        for page in self.public()?.pages(EMBEDDING.name)? {
+            let mut p = info;
+            p[2] = k::VOCAB as u32;
+            p[3] = page.rows as u32;
+            p[4] = page.first as u32;
+            f::launch(
+                &self.arena,
+                f::Kernel::Embed,
+                [40, count, 1],
+                vec![
+                    page.handle.clone(),
+                    h(f::TOKEN)?,
+                    h(f::EMBED)?,
+                    u::handle(&self.arena, fault_id)?,
+                ],
+                p,
+            )?;
+        }
+        for (input, out, gamma, columns) in [
+            (f::EMBED, f::EN, "blk.48.nextn.enorm.weight", k::D),
+            (f::CARRY, f::HN, "blk.48.nextn.hnorm.weight", k::WIDE),
+        ] {
+            let mut p = info;
+            p[2] = columns as u32;
+            f::launch(
+                &self.arena,
+                f::Kernel::Norm,
+                [count, 1, 1],
+                vec![
+                    h(input)?,
+                    self.front_public(gamma)?,
+                    h(out)?,
+                    u::handle(&self.arena, fault_id)?,
+                ],
+                p,
+            )?;
+        }
+        self.native_front_project(
+            strata::FC_EMBEDDING,
+            ids[f::EN],
+            ids[f::E2],
+            count,
+            0,
+            0,
+            ids[f::PLANES],
+            cancel,
+            true,
+        )?;
+        for first in (0..count * k::HC).step_by(8) {
+            self.native_front_project(
+                strata::FC_HIDDEN,
+                ids[f::HN],
+                ids[f::RES],
+                (count * k::HC - first).min(8),
+                first * k::D,
+                first * k::D,
+                ids[f::PLANES],
+                cancel,
+                true,
+            )?;
+        }
+        let h = |i| u::handle(&self.arena, ids[i]);
+        f::launch(
+            &self.arena,
+            f::Kernel::Broadcast,
+            [160, count, 1],
+            vec![h(f::E2)?, h(f::RES)?, u::handle(&self.arena, fault_id)?],
+            info,
+        )?;
+        crate::strata_gr::read(
+            crate::strata_gr::Read {
+                arena: &self.arena,
+                residual: ids[f::RES],
+                previous: None,
+                gamma: self.front_public("blk.48.hc_attn_norm.weight")?,
+                buffers: crate::strata_gr::Buffers {
+                    normalized: ids[f::NORM],
+                    scales: ids[f::SCALES],
+                    partial: ids[f::PART],
+                    down: ids[f::DOWN],
+                    low: ids[f::LOW],
+                    injection: ids[f::INJ],
+                    mixed: ids[f::MIXED],
+                },
+                fault: fault_id,
+                count,
+                first: 0,
+                epsilon: EPS,
+                inject: true,
+            },
+            [
+                self.front_public("blk.48.hc_attn_down.weight")?,
+                self.front_public("blk.48.hc_attn_up.weight")?,
+                self.front_public("blk.48.hc_attn_inject.weight")?,
+            ],
+        )?;
+        self.native_front_project(
+            "blk.48.attn_k.weight",
+            ids[f::MIXED],
+            ids[f::KEY],
+            count,
+            0,
+            0,
+            ids[f::PLANES],
+            cancel,
+            true,
+        )?;
+        self.native_front_project(
+            "blk.48.attn_v.weight",
+            ids[f::MIXED],
+            ids[f::VALUE],
+            count,
+            0,
+            0,
+            ids[f::PLANES],
+            cancel,
+            false,
+        )?;
+        let h = |i| u::handle(&self.arena, ids[i]);
+        f::launch(
+            &self.arena,
+            f::Kernel::Positions,
+            [1, 1, 1],
+            vec![h(f::POS)?],
+            info,
+        )?;
+        crate::strata_qsa::launch(
+            &self.arena,
+            crate::strata_qsa::Kernel::Norm,
+            [k::KVH, count, 1],
+            vec![
+                h(f::KEY)?,
+                self.front_public("blk.48.attn_k_norm.weight")?,
+                h(f::POS)?,
+                h(f::ROTATED)?,
+                h(f::STATUS)?,
+            ],
+            [
+                count as u32,
+                start as u32,
+                k::CONTEXT as u32,
+                k::KV as u32,
+                k::KV as u32,
+                k::KVH as u32,
+                k::KVH as u32,
+                k::HD as u32,
+                0,
+                EPS.to_bits(),
+                crate::qsa_gpu::THETA.powf(-2. / 64.).to_bits(),
+                0,
+            ],
+        )?;
+        u::status_batch(
+            &self.arena,
+            ids[f::STATUS],
+            fault_id,
+            count,
+            0,
+            k::KVH,
+            k::KVH,
+        )?;
+        f::launch(
+            &self.arena,
+            f::Kernel::Append,
+            [8, count, 1],
+            vec![
+                h(f::ROTATED)?,
+                h(f::VALUE)?,
+                u::handle(&self.arena, self.id(B::Keys))?,
+                u::handle(&self.arena, self.id(B::Values))?,
+                u::handle(&self.arena, fault_id)?,
+            ],
+            info,
+        )?;
+        self.tick(31 + embedding_pages + if inputs.is_none() { 2 } else { 0 })?;
+        self.guard_native_front()?;
+        u::cancel(cancel)
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn native_front_project(
+        &mut self,
+        name: &'static str,
+        input: BufferId,
+        out: BufferId,
+        count: usize,
+        input_first: usize,
+        output_first: usize,
+        planes: BufferId,
+        cancel: &AtomicBool,
+        prepare: bool,
+    ) -> Result<()> {
+        u::cancel(cancel)?;
+        let spec = *matrices_for(self.graph.profile())
+            .iter()
+            .find(|s| s.name == name)
+            .ok_or(Error::InvalidFormat("native MTP front projection"))?;
+        if spec.dtype != quant_matvec::Q8_0 {
+            return Err(Error::InvalidBufferLength);
+        }
+        let spans =
+            matmul::BatchSpans::new(count, 0, input_first, spec.columns, output_first, spec.rows);
+        if prepare {
+            crate::strata_dense::prepare(
+                self.client()?,
+                spec.columns,
+                u::handle(&self.arena, input)?,
+                u::handle(&self.arena, planes)?,
+                u::handle(&self.arena, self.id(B::Fault))?,
+                &spans,
+            )?;
+        }
+        for page in self.public()?.pages(name)? {
+            crate::strata_dense::project(
+                self.client()?,
+                spec.dtype,
+                page.rows,
+                spec.columns,
+                page.handle.clone(),
+                u::handle(&self.arena, planes)?,
+                u::handle(&self.arena, out)?,
+                u::handle(&self.arena, self.id(B::Fault))?,
+                output_first + page.first,
+                spec.rows,
+                count,
+            )?;
+        }
+        self.tick(self.public()?.pages(name)?.len() + usize::from(prepare))?;
+        Ok(())
     }
     /// Unused fused-only join after three actual completed drafts. Caller
     /// supplies the already accepted target prefix; this does not accept it.
@@ -3627,37 +4061,61 @@ impl ResidentMtp<'_, '_> {
                 self.tick(1)?;
                 self.guard_private(target_start)?;
             }
-            for row in plan.first_row..accepted_tokens.len() {
-                u::cancel(cancel)?;
-                self.verify_source()?;
-                self.physical()?;
-                self.ledger
-                    .observe_before(sample(self.client()?)?)
-                    .map_err(error)?;
-                if plan.rewind || row != 0 {
-                    self.clear_repair_scratch()?;
-                } else {
-                    self.clear_scratch()?;
+            if crate::strata_intel_core::enabled() && self.graph.profile() == MtpProfile::StrataQ2 {
+                if plan.first_row < accepted_tokens.len() {
+                    let mut carries = Zeroizing::new(Vec::with_capacity(
+                        (accepted_tokens.len() - plan.first_row) * k::WIDE,
+                    ));
+                    for row in plan.first_row..accepted_tokens.len() {
+                        carries.extend_from_slice(if row == 0 {
+                            preceding_carry
+                        } else {
+                            &accepted_carries[(row - 1) * k::WIDE..row * k::WIDE]
+                        });
+                    }
+                    let position = target_start + plan.first_row - 1;
+                    self.enqueue_native_front(
+                        &accepted_tokens[plan.first_row..],
+                        &carries,
+                        position,
+                        cancel,
+                    )?;
+                    self.guard_private(target_start + accepted_tokens.len() - 1)?;
                 }
-                let position = target_start + row - 1;
-                let carry = if row == 0 {
-                    preceding_carry
-                } else {
-                    &accepted_carries[(row - 1) * k::WIDE..row * k::WIDE]
-                };
-                self.write(B::Token, &[accepted_tokens[row]])?;
-                let input = Zeroizing::new(carry.iter().map(|v| v.to_bits()).collect::<Vec<_>>());
-                if input.capacity() * 4 > HOST_BYTES {
-                    return Err(Error::LimitExceeded("MTP host carry"));
+            } else {
+                for row in plan.first_row..accepted_tokens.len() {
+                    u::cancel(cancel)?;
+                    self.verify_source()?;
+                    self.physical()?;
+                    self.ledger
+                        .observe_before(sample(self.client()?)?)
+                        .map_err(error)?;
+                    if plan.rewind || row != 0 {
+                        self.clear_repair_scratch()?;
+                    } else {
+                        self.clear_scratch()?;
+                    }
+                    let position = target_start + row - 1;
+                    let carry = if row == 0 {
+                        preceding_carry
+                    } else {
+                        &accepted_carries[(row - 1) * k::WIDE..row * k::WIDE]
+                    };
+                    self.write(B::Token, &[accepted_tokens[row]])?;
+                    let input =
+                        Zeroizing::new(carry.iter().map(|v| v.to_bits()).collect::<Vec<_>>());
+                    if input.capacity() * 4 > HOST_BYTES {
+                        return Err(Error::LimitExceeded("MTP host carry"));
+                    }
+                    self.write(B::Carry, &input)?;
+                    drop(input);
+                    self.guard_private(position)?;
+                    self.condition()?;
+                    self.hc(B::Residual0, 0, false)?;
+                    self.key_value_at(position)?;
+                    self.guard_private(position + 1)?;
+                    self.verify_source()?;
                 }
-                self.write(B::Carry, &input)?;
-                drop(input);
-                self.guard_private(position)?;
-                self.condition()?;
-                self.hc(B::Residual0, 0, false)?;
-                self.key_value_at(position)?;
-                self.guard_private(position + 1)?;
-                self.verify_source()?;
             }
             if self.dispatches > dispatch_limit {
                 return Err(Error::LimitExceeded("MTP accepted repair INFO records"));
@@ -3755,6 +4213,7 @@ impl ResidentMtp<'_, '_> {
                 != N as u64
                     + u64::from(self.draft_window.is_some())
                     + u64::from(self.dense_planes.is_some())
+                    + if self.native_front.is_some() { 20 } else { 0 }
         {
             return Err(Error::InvalidBufferLength);
         }

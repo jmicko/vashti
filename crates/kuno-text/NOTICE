@@ -89,3 +89,11 @@ verify_kernels.dp.cpp multirow convolution/L2 and four-row-group FMA state
 recurrence/output normalization into WGSL, including accepted-prefix replay.
 Rust owns the graph and private state. Existing MIT attribution applies;
 no upstream SYCL/C++ graph or inference library is linked.
+
+The experimental grouped MTP front translates the same revision's
+MtpDrafter::record_front/capture_prefill into a Rust-owned MAX8 workspace and
+WGSL producers: original IQ4_XS embedding, native weighted normalization,
+Q8 dense input branches, native BF16 GR and grouped KV preparation/append.
+Teacher forcing, draft fronts and accepted-prefix repair share the connected
+producer. Remaining KV storage, rest-graph and queue/capture substitutions
+are explicit in the completion guide; no foreign inference library is linked.

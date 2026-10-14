@@ -22,6 +22,7 @@ mod strata_global_plan;
 mod strata_global_sources;
 mod strata_gr;
 mod strata_intel_core;
+mod strata_mtp_front;
 mod strata_packet;
 mod strata_port;
 mod strata_qsa;
