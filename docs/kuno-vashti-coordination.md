@@ -4470,3 +4470,30 @@ capacity is still four; do not claim full rewrite or runtime acceptance.
 API specification/installed services/Vashti are unchanged; required Vashti
 changes: none. No install, release, reset or rebind. Canonical checkout and
 inherited bytecode preserved. Goal active and incomplete; speed gate closed.
+
+
+### Active Kuno engine handoff extension — eight-row native consumers (2026-10-14)
+
+Source `ac6169a`, isolated `codex/strata-rust-port` checkout. Read the completion
+guide's **Connected eight-row consumers and native Q6 head** section. It
+supersedes the default-four structural limitation, not the missing GPU or full
+rewrite acceptance.
+
+Core now couples capacity8 to packets/logits/quotes/checkpoints/MTP, real1..8
+dense Q8 consumers and GDN streaming. Original Q6 native iqs integer-chain/XOR
+head is connected and selected before prompt input. Core Q2 MTP repair handles
+all accepted prefixes of eight-row windows and uses full draft vocabulary.
+Global expert/cache/controller path stays selected. No decoded weight duplicate,
+legacy fabricated receipts or intermediate speed selection.
+
+Release build and strict Clippy pass;195 offline shaders pass. Host tests cover
+independent canonical Q6 lane mapping, all RHS scratch bounds,1..8 repair prefixes,
+compact packet/inactive rows and target rejection/EOS. Ordinary regression:
+1,358 pass, one ignored. No live GPU/model/physical recovery/speed test. Prior
+full-core failures and full eight-row model/state acceptance remain open.
+
+Next port/audit CPU expert share, transfer/shared execution and queues, native
+packing, GDN/QSA/KV/PLE/prefill and MTP graph/state/sampling/general-input paths.
+Do not claim full rewrite or open the speed gate yet. API/Vashti consumer changes:
+none. Installed services/canonical checkout unchanged; inherited bytecode
+preserved. Goal active and incomplete.

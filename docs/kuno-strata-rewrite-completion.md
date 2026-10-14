@@ -572,3 +572,78 @@ No GPU/service/install/API/Vashti/release/reset/rebind change. Canonical checkou
 and inherited bytecode remain untouched. Next continue the coupled1..8 model /
 MTP / commit and native placement-fidelity blocks. Goal active and incomplete;
 speed gate remains closed.
+
+
+## Connected eight-row consumers and native Q6 head (2026-10-14)
+
+Source `ac6169a`, same isolated `codex/strata-rust-port` checkout. This supersedes
+the preceding four-row-capacity limitation **structurally**, not as a claim of
+GPU/model numerical acceptance or complete rewrite. The core now selects capacity8
+unconditionally. Historical feature-off four/eight experiments remain separate.
+
+The common capacity drives target logits/packet owners, host/runtime quotes,
+checkpoint token arrays, compact packet layout and MTP proposal width. Core logits
+and packet owners are8 MiB each. Allocation and acceptance guards use the same
+capacity. Native dense projections now prepare and consume1..8 actual Q8_1 RHS
+planes; GDN/QSA grouped projections and private stage borrowing follow that width.
+Non-Q6 dense consumers reuse code loads across two vec4 groups for5..8 rows.
+The selected core GDN streaming recurrence runs every supported width rather than
+falling back to its different chunk arithmetic for non-four verification windows.
+GDN checkpoint admission now checks streaming policy for every count>=4.
+
+`strata_native_q6.wgsl` ports pinned `iq_kernels.dp.cpp` Fmt<14> /
+`vec_dot_q6_K_q8_1`: native32-lane iqs mapping, original signed per16 scales,
+integer dot*scale before float conversion, native Q8_1 scale addresses and XOR
+warp reduction. It reads the original packed Q6_K roots and shares each code load
+across actual RHS rows. No decoded weight copy is created. The core head uses one
+prepared input plane set and the same complete16 original weight tiles. Real
+prepare/tile/member counters credit only completed enqueue sequences. Selection
+occurs after authentic global source/stage attachment, before the first prompt
+input, so prompt prediction and target verification use the same head arithmetic.
+Legacy Q6 project vectors stay explicitly max4 and cannot silently consume an
+unsupported wider span. Explicit WGSL FMA is a backend arithmetic choice pending
+GPU/native numerical acceptance. Other dense formats' arithmetic audit stays open.
+
+Original Q2 MTP accepted-cache repair is now supported in the core, with1..8
+accepted rows and bounded genuine queued-forward cursor spans. It preserves the
+confirmed predecessor cell and replaces provisional tails using actual target
+carries. Full Q2 conditioning/KV source verification, fault join, ledger and
+cursor publication remain in the existing joined repair implementation. Core
+construction uses the full draft vocabulary, removing the historical English-only
+subset; its close validator uses that actual full-vocabulary owner plan. The old
+Q8/fused-four experimental wrappers keep their separate contracts. Actual8-row
+Q2 repair dispatch-budget/state execution remains a GPU acceptance gate.
+
+Validation under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-global-eight-final-build-20261014.log`: core release build passes.
+- `strata-global-eight-final-clippy-20261014.log`: strict core Clippy passes.
+- `strata-global-eight-shaders-20261014.log`:195 offline shader variants pass,
+  including native Q6 widths1/4/8, eight-row dense consumers and packet/physical
+  expert paths. No GPU device is created by this validator.
+- `strata-global-eight-q6-tests-20261014.log`: two core host tests pass. Nine
+  synthetic Q6 blocks cover each column exactly once through native iqs mapping
+  and match the independent canonical GGUF decoder; RHS scratch bounds reject
+  short owners and unsupported widths. This does not execute the GPU dot kernel.
+- `strata-global-eight-state-tests-20261014.log`: two host tests pass, covering
+  every queued window/accepted prefix for1..8 MTP repair and all compact packet
+  widths, including nonzero inactive-row rejection and complete owner quotes.
+- `strata-global-eight-prefix-tests-20261014.log`: two selected tests pass,
+  including target rejection/EOS at every compiled width and the retained global
+  profile-prefix/complement test.
+- `strata-global-eight-final-regression-20261014.log`: ordinary regression passes,
+  1,358 passed, one ignored, no failures. Formatting/whitespace checks pass.
+
+No live inference, benchmark/profile, GPU exchange/recovery, service/install/API,
+Vashti, release, reset or rebind change. Canonical checkout and inherited bytecode
+preserved. Earlier full-core suite failures are not resolved by narrow passing
+coverage and require reconciliation. Eight-row **whole-model** acceptance remains
+unproven despite connected source/owner/consumer coverage.
+
+Next continue native CPU expert share and transfer/shared-work/queue overlap,
+original-versus-native packing and remaining GDN/QSA/KV/PLE/prefill/MTP graph,
+sampling and arbitrary input audits. Prompt scheduling remains bounded3-row
+rather than native MMQ parity; QSA quantized KV and complete graph recording still
+need work. Keep the complete assembled core selected while resolving correctness;
+no partial timing winner/fallback. Goal active, full rewrite incomplete, speed
+gate closed.
