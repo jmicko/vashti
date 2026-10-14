@@ -18,6 +18,57 @@ struct Kernel {
     dtype: u32,
     row_bytes: usize,
     four: bool,
+    member_width: u8,
+}
+/// All public widths launch; immutable GPU MAP admits exactly one per group.
+/// Strata fb58e0 row_entries / row_dot_multi use cardinalities4/2/1 rather than
+/// reserving four accumulators for every group. Per-member dot/FMA and reduction
+/// orders remain unchanged here, including the existing combined GU activation.
+fn specialize_members(mut source: String, down: bool, capacity: usize, width: usize) -> String {
+    assert!((1..=capacity).contains(&width));
+    let header = "let length=map[p.a+84u+group.y];";
+    assert_eq!(
+        source.matches(header).count(),
+        1,
+        "owning expert group header"
+    );
+    source = source.replace(header, &format!("{header}if length!={width}u {{return;}}"));
+    for index in (1..capacity).rev() {
+        let needle = format!("if length>{index}u {{");
+        while let Some(first) = source.find(&needle) {
+            let end = crate::strata_port::function_end(&source, first);
+            let replacement = if index < width {
+                source[first + needle.len() - 1..end].to_owned()
+            } else {
+                String::new()
+            };
+            source.replace_range(first..end, &replacement);
+        }
+    }
+    let float_ty = if width == 1 {
+        "f32".to_owned()
+    } else {
+        format!("vec{width}<f32>")
+    };
+    let int_ty = if width == 1 {
+        "i32".to_owned()
+    } else {
+        format!("vec{width}<i32>")
+    };
+    source = source
+        .replace(&format!("vec{capacity}<f32>"), &float_ty)
+        .replace(&format!("vec{capacity}<i32>"), &int_ty);
+    if width == 1 {
+        for name in if down {
+            vec!["values", "first", "second"]
+        } else {
+            vec!["gates", "ups", "gf", "gs", "uf", "us"]
+        } {
+            source = source.replace(&format!("{name}.x"), name);
+        }
+    }
+    source.push_str(&format!("\n// STRATA_CARDINALITY_MEMBERS={width}\n"));
+    source
 }
 fn replace_reads(mut source: String, name: &str) -> String {
     let needle = format!("{name}[");
@@ -193,6 +244,9 @@ impl Kernel {
         if crate::strata_intel_core::enabled() && !self.down {
             source = crate::strata_intel_core::shared_table(source, table_binding, self.dtype);
         }
+        if self.member_width != 0 {
+            source = specialize_members(source, self.down, count, self.member_width as usize);
+        }
         source
     }
 }
@@ -244,6 +298,42 @@ pub(crate) fn launch(
     count: usize,
     groups: usize,
     down: bool,
+) -> Result<()> {
+    if crate::strata_intel_core::enabled() {
+        for member_width in 1..=if count == 4 { 4 } else { 3 } {
+            launch_width(
+                client,
+                geometry,
+                spans,
+                pages,
+                owners,
+                scratch,
+                count,
+                groups,
+                down,
+                member_width,
+            )?;
+        }
+        Ok(())
+    } else {
+        launch_width(
+            client, geometry, spans, pages, owners, scratch, count, groups, down, 0,
+        )
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn launch_width(
+    client: &ComputeClient<WgpuRuntime>,
+    geometry: g::Geometry,
+    spans: &g::Spans,
+    pages: &[Handle],
+    owners: &[Handle; 7],
+    scratch: &Handle,
+    count: usize,
+    groups: usize,
+    down: bool,
+    member_width: u8,
 ) -> Result<()> {
     if !crate::strata_port::enabled()
         || pages.len() != 15
@@ -340,6 +430,7 @@ pub(crate) fn launch(
                 dtype: projection.dtype(),
                 row_bytes: projection.row_bytes(),
                 four: count == 4,
+                member_width,
             }),
             CubeCount::Static(
                 if down {
@@ -376,25 +467,33 @@ pub(crate) fn compiled_sources() -> Vec<CompiledKernel<AutoCompiler>> {
     ] {
         for dtype in dtypes {
             for four in [false, true] {
-                let row_bytes = kuno_text::TensorType::from_gguf_id(dtype)
-                    .unwrap()
-                    .row_bytes(columns)
-                    .unwrap() as usize;
-                result.push(
-                    Kernel {
-                        down,
-                        dtype,
-                        row_bytes,
-                        four,
-                    }
-                    .compile(
-                        &mut AutoCompiler::Wgsl(Default::default()),
-                        &Default::default(),
-                        ExecutionMode::Unchecked,
-                        StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
-                    )
-                    .unwrap(),
-                );
+                let widths = if crate::strata_intel_core::enabled() {
+                    (1..=if four { 4 } else { 3 }).collect::<Vec<_>>()
+                } else {
+                    vec![0]
+                };
+                for member_width in widths {
+                    let row_bytes = kuno_text::TensorType::from_gguf_id(dtype)
+                        .unwrap()
+                        .row_bytes(columns)
+                        .unwrap() as usize;
+                    result.push(
+                        Kernel {
+                            down,
+                            dtype,
+                            row_bytes,
+                            four,
+                            member_width,
+                        }
+                        .compile(
+                            &mut AutoCompiler::Wgsl(Default::default()),
+                            &Default::default(),
+                            ExecutionMode::Unchecked,
+                            StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+                        )
+                        .unwrap(),
+                    );
+                }
             }
         }
     }
