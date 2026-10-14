@@ -43,7 +43,25 @@ pub async fn request_vulkan_device(adapter: &wgpu::Adapter) -> Option<(wgpu::Dev
         .difference(Features::MAPPABLE_PRIMARY_BUFFERS);
     unsafe {
         let hal_adapter = adapter.as_hal::<hal::api::Vulkan>().unwrap();
-        request_device(adapter, &hal_adapter, features, limits)
+        request_device(adapter, &hal_adapter, features, limits, false)
+    }
+}
+
+/// Exact admitted device for the native Strata Rust graph. Unlike the generic
+/// constructor this never raises a caller's storage-binding/owner limits.
+pub fn request_strata_device(
+    adapter: &wgpu::Adapter,
+    features: Features,
+    limits: Limits,
+) -> Option<(wgpu::Device, wgpu::Queue)> {
+    let features =
+        features | Features::PASSTHROUGH_SHADERS | Features::SHADER_F16 | Features::SUBGROUP;
+    if adapter.get_info().vendor != 0x8086 || !adapter.features().contains(features) {
+        return None;
+    }
+    unsafe {
+        let hal = adapter.as_hal::<hal::api::Vulkan>()?;
+        request_device(adapter, &hal, features, limits, true)
     }
 }
 
@@ -69,6 +87,7 @@ fn request_device(
     adapter: &vulkan::Adapter,
     features: Features,
     mut limits: Limits,
+    preserve_limits: bool,
 ) -> Option<(wgpu::Device, wgpu::Queue)> {
     let ash = adapter.shared_instance();
 
@@ -90,7 +109,8 @@ fn request_device(
     let extensions = adapter.required_device_extensions(features);
     let mut phys_features = adapter.physical_device_features(&extensions, features);
 
-    if let Some(index_64) = &extended_feat.index_64
+    if !preserve_limits
+        && let Some(index_64) = &extended_feat.index_64
         && index_64.shader64_bit_indexing == TRUE
     {
         limits.max_storage_buffer_binding_size = u64::MAX;
@@ -107,8 +127,10 @@ fn request_device(
         .queue_priorities(&[1.0]);
     let family_infos = [family_info];
 
-    let str_pointers = extended_feat
-        .extensions
+    // Retain the exact enabled list before the pNext chain borrows the feature
+    // owner; the adopted HAL device must know the same extensions as Vulkan.
+    let enabled_extensions = extended_feat.extensions.clone();
+    let str_pointers = enabled_extensions
         .iter()
         .map(|&s| {
             // Safe because `device_extensions` entries have static lifetime.
@@ -138,7 +160,7 @@ fn request_device(
             .device_from_raw(
                 vk_device,
                 None,
-                &extensions,
+                &enabled_extensions,
                 features,
                 &limits,
                 &memory_hints,

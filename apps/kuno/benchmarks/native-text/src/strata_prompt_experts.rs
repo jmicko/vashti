@@ -315,20 +315,22 @@ pub(crate) fn enqueue(
                 words,
             )?;
         }
-        let args = KernelArguments::new().with_buffers(vec![
-            owners[0].clone().binding(),
-            stage[0].clone().binding(),
-            stage[1].clone().binding(),
-            owners[2].clone().binding(),
-            owners[6].clone().binding(),
-            fault.clone().binding(),
-        ]);
-        dispatch(
+        crate::strata_matrix::expert(
             client,
-            Op::Gemm,
-            [1280 / 8, (map[516 + group] as usize).div_ceil(8), 1],
-            args,
-            base,
+            [
+                stage[0].clone(),
+                stage[1].clone(),
+                owners[2].clone(),
+                owners[0].clone(),
+                owners[6].clone(),
+                fault.clone(),
+            ],
+            map[516 + group] as usize,
+            2560,
+            1280,
+            dq * 2,
+            group,
+            false,
         )?;
         let args = KernelArguments::new().with_buffers(vec![
             owners[0].clone().binding(),
@@ -344,25 +346,22 @@ pub(crate) fn enqueue(
             args,
             base,
         )?;
-        let mut down = base;
-        down[1] = 640;
-        down[2] = 2560;
-        down[3] = projections[2].row_bytes() as u32;
-        down[5] = 2;
-        let args = KernelArguments::new().with_buffers(vec![
-            owners[0].clone().binding(),
-            stage[0].clone().binding(),
-            stage[1].clone().binding(),
-            owners[3].clone().binding(),
-            owners[6].clone().binding(),
-            fault.clone().binding(),
-        ]);
-        dispatch(
+        crate::strata_matrix::expert(
             client,
-            Op::Gemm,
-            [2560 / 8, (map[516 + group] as usize).div_ceil(8), 1],
-            args,
-            down,
+            [
+                stage[0].clone(),
+                stage[1].clone(),
+                owners[3].clone(),
+                owners[0].clone(),
+                owners[6].clone(),
+                fault.clone(),
+            ],
+            map[516 + group] as usize,
+            640,
+            2560,
+            (dq + GU_WORDS) * 2,
+            group,
+            true,
         )?;
     }
     Ok(())

@@ -47,6 +47,11 @@ fn ptr_type(
     types.insert(inner, v);
     v
 }
+/// Same checked transformation used by the actual HAL shader constructor.
+pub(crate) fn canonical_workgroup_layout(words: &[u32]) -> Result<Vec<u32>, ServerError> {
+    wgpu::hal::vulkan::kuno_native_workgroup_layout(words).map_err(fault)
+}
+
 pub(crate) fn lower(words: &[u32]) -> Result<Vec<u32>, ServerError> {
     let mut m = load_words(words).map_err(|_| fault("physical expert SPIRV parse"))?;
     let mut bound = m
@@ -326,5 +331,5 @@ pub fn native_expert_shader_words(source: &str) -> Result<Vec<u32>, ServerError>
         }),
     )
     .map_err(|_| fault("physical expert SPIRV emission"))?;
-    lower(&words)
+    lower(&canonical_workgroup_layout(&words)?)
 }

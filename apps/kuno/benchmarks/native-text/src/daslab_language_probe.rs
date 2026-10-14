@@ -947,8 +947,9 @@ async fn draft_client(
     {
         return Err("speculative draft subgroups rejected".into());
     }
-    let (device, queue) = adapter
-        .request_device(&wgpu::DeviceDescriptor {
+    let (device, queue) = crate::strata_matrix::request_device(
+        &adapter,
+        &wgpu::DeviceDescriptor {
             label: Some("Kuno fixed public native MTP"),
             required_features: wgpu::Features::SUBGROUP
                 | if crate::strata_intel_core::enabled() {
@@ -960,9 +961,10 @@ async fn draft_client(
             memory_hints: wgpu::MemoryHints::MemoryUsage,
             trace: wgpu::Trace::Off,
             ..Default::default()
-        })
-        .await
-        .map_err(|_| "speculative draft device setup failed")?;
+        },
+    )
+    .await
+    .map_err(|_| "speculative draft device setup failed")?;
     let distinct_device = target_device
         .map(|target| crate::target_lab_build::mtp_distinct_vulkan_devices(target, &device))
         .transpose()?;

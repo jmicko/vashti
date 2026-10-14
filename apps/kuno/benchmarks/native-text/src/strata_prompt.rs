@@ -489,12 +489,16 @@ pub(crate) fn project(
         )?;
         stage[1].clone()
     };
-    launch(
+    crate::strata_matrix::dense(
         client,
-        Kernel::Gemm,
-        [rows.div_ceil(8), count.div_ceil(8), 1],
-        vec![stage[0].clone(), weights, output, fault],
-        info,
+        [stage[0].clone(), weights, output, fault],
+        count,
+        columns,
+        rows,
+        0,
+        out_first,
+        out_stride,
+        dtype == 30,
     )
 }
 pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {

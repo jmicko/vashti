@@ -22,6 +22,7 @@ mod strata_global_plan;
 mod strata_global_sources;
 mod strata_gr;
 mod strata_intel_core;
+mod strata_matrix;
 mod strata_mtp_front;
 mod strata_mtp_moe;
 mod strata_packet;
@@ -2411,8 +2412,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             return Err("native expert pointers require shader int64".into());
         }
-        let device_result = adapter
-            .request_device(&wgpu::DeviceDescriptor {
+        let device_result = strata_matrix::request_device(
+            &adapter,
+            &wgpu::DeviceDescriptor {
                 label: Some("Kuno public synthetic Rust kernel"),
                 required_features: if mtp_gpu_inputs.is_some() {
                     wgpu::Features::empty()
@@ -2441,8 +2443,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 memory_hints: wgpu::MemoryHints::MemoryUsage,
                 trace: wgpu::Trace::Off,
                 ..Default::default()
-            })
-            .await;
+            },
+        )
+        .await;
         let (device, queue) = if mtp_gpu_inputs.is_some() {
             device_result.map_err(|_| "fixed public MTP GPU device setup failed")?
         } else {

@@ -192,6 +192,7 @@ impl WgpuServer {
         bindings: &KernelArguments,
         mode: ExecutionMode,
     ) -> Result<Arc<ComputePipeline>, LaunchError> {
+        let native_operator_name = kernel.name();
         let mut kernel_id = kernel.id();
         kernel_id.mode(mode);
         let external_mask = super::public_external::external_mask(bindings).map_err(|reason| {
@@ -217,7 +218,7 @@ impl WgpuServer {
         // External imports require actual WGSL reflection, so do not accept a
         // disk/SPIRV cache entry without the original readonly declaration.
         let cached = if external_mask == 0 {
-            self.load_cached_pipeline(&kernel_id, bindings, mode)?
+            self.load_cached_pipeline(&kernel_id, bindings, mode, native_operator_name)?
         } else {
             None
         };
@@ -230,8 +231,11 @@ impl WgpuServer {
         validate_cube_dim(&self.utilities.properties, &kernel_id)?;
         validate_units(&self.utilities.properties, &kernel_id)?;
 
-        let mut compiler = compiler(self.backend, &self.compilation_options);
-        let native_operator_name = kernel.name();
+        let mut compiler = if external_mask != 0 {
+            AutoCompiler::Wgsl(Default::default())
+        } else {
+            compiler(self.backend, &self.compilation_options)
+        };
         let mut compiled = compiler.compile(self, kernel, mode)?;
         super::public_external::lower(&mut compiled, external_mask).map_err(|reason| {
             LaunchError::Unknown {
@@ -274,7 +278,13 @@ impl WgpuServer {
         //     // std::process::exit(status.code().unwrap());
         // }
         let repr = compiled.repr.as_ref().map(|it| it.as_ref());
-        let module = self.create_module(&compiled.entrypoint_name, repr, &compiled.source, mode)?;
+        let module = self.create_module(
+            &compiled.entrypoint_name,
+            repr,
+            &compiled.source,
+            mode,
+            !bindings.info.data.is_empty(),
+        )?;
         super::strata_graph::label_module(&module, native_operator_name).map_err(|_| {
             LaunchError::Unknown {
                 reason: "native public operator registration".into(),

@@ -46,7 +46,7 @@ strata-rust-port = ["direct-device"]
 strata-eight-window = ["strata-rust-port"]
 strata-resident-224 = ["strata-rust-port"]
 strata-resident-240 = ["strata-resident-224"]
-strata-intel-core = ["strata-resident-240"]
+strata-intel-core = ["strata-resident-240", "cubecl/wgpu-spirv"]
 # Separate arithmetic candidate: original weights, explicit FMA/32-lane CPU.
 cpu-fma = []
 cpu-buffered-weights = []

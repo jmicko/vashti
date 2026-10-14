@@ -36,6 +36,7 @@ impl WgpuServer {
         kernel_id: &KernelId,
         bindings: &KernelArguments,
         mode: ExecutionMode,
+        _native_name: &'static str,
     ) -> Result<Option<Result<Arc<ComputePipeline>, (u64, StableHash)>>, CompilationError> {
         #[cfg(not(feature = "spirv"))]
         let res = Ok(None);
@@ -46,7 +47,19 @@ impl WgpuServer {
                 log::trace!("Using SPIR-V cache");
 
                 let repr = AutoRepresentationRef::SpirV(&entry.kernel);
-                let module = self.create_module(&entry.entrypoint_name, Some(repr), "", mode)?;
+                let module = self.create_module(
+                    &entry.entrypoint_name,
+                    Some(repr),
+                    "",
+                    mode,
+                    !bindings.info.data.is_empty(),
+                )?;
+                crate::compute::strata_graph::label_module(&module, _native_name).map_err(
+                    |_| CompilationError::Generic {
+                        reason: "native cached operator registration".into(),
+                        backtrace: cubecl_common::backtrace::BackTrace::capture(),
+                    },
+                )?;
                 let pipeline =
                     self.create_pipeline(&entry.entrypoint_name, Some(repr), module, bindings);
                 Ok(Some(Ok(pipeline)))
@@ -66,17 +79,29 @@ impl WgpuServer {
         repr: Option<AutoRepresentationRef<'_>>,
         source: &str,
         mode: ExecutionMode,
+        _metadata: bool,
     ) -> Result<ShaderModule, CompilationError> {
         match repr {
             #[cfg(feature = "spirv")]
             Some(AutoRepresentationRef::SpirV(repr)) => unsafe {
-                Ok(self.device.create_shader_module_passthrough(
+                let module = self.device.create_shader_module_passthrough(
                     wgpu::ShaderModuleDescriptorPassthrough {
                         label: Some(entrypoint_name),
                         spirv: Some(Cow::Borrowed(&repr.assembled_module)),
                         ..Default::default()
                     },
-                ))
+                );
+                crate::compute::strata_graph::register_spirv_module(
+                    &module,
+                    repr,
+                    entrypoint_name,
+                    _metadata,
+                )
+                .map_err(|_| CompilationError::Generic {
+                    reason: "native graph SPIRV registration failed".into(),
+                    backtrace: cubecl_common::backtrace::BackTrace::capture(),
+                })?;
+                Ok(module)
             },
             #[cfg(all(feature = "msl", target_os = "macos"))]
             Some(AutoRepresentationRef::Msl(repr)) => unsafe {

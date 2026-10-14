@@ -150,7 +150,7 @@ pub(crate) struct Program {
     bindings: Vec<vk::DescriptorType>,
     accesses: Vec<vk::AccessFlags>,
     entry: CString,
-    expert_subgroup_32: bool,
+    required_subgroup: Option<u32>,
     physical_reads: bool,
 }
 #[derive(Default)]
@@ -243,14 +243,16 @@ pub(crate) fn register_module(
         }),
     )
     .map_err(|_| fault("native graph SPIRV lowering"))?;
+    words = super::strata_physical::canonical_workgroup_layout(&words)?;
     if source.contains("STRATA_PHYSICAL_EXPERTS") {
         words = super::strata_physical::native_expert_shader_words(source)?;
     }
     let p = Arc::new(Program {
         name: "UnlabelledNativeOperator",
         words,
-        expert_subgroup_32: source.contains("STRATA_PHYSICAL_EXPERTS")
-            || source.contains("STRATA_DENSE_PACKED"),
+        required_subgroup: (source.contains("STRATA_PHYSICAL_EXPERTS")
+            || source.contains("STRATA_DENSE_PACKED"))
+        .then_some(32),
         physical_reads: source.contains("STRATA_PHYSICAL_EXPERTS"),
         accesses: bindings.iter().map(|b| b.2).collect(),
         bindings: bindings.into_iter().map(|b| b.1).collect(),
@@ -261,6 +263,85 @@ pub(crate) fn register_module(
         .map_err(|_| fault("native graph program registry"))?
         .modules
         .insert(module.clone(), p);
+    Ok(())
+}
+/// Register the actual already-compiled Rust/SPIR-V graph, without pretending
+/// it is WGSL or recompiling it through Naga. The compiler owns the complete
+/// ordered descriptor inventory; its runtime INFO binding is supplied by the
+/// same KernelArguments that create the Wgpu pipeline.
+#[cfg(feature = "spirv")]
+pub(crate) fn register_spirv_module(
+    module: &wgpu::ShaderModule,
+    kernel: &cubecl_spirv::SpirvKernel,
+    entry: &str,
+    metadata: bool,
+) -> Result<(), ServerError> {
+    if !enabled() {
+        return Ok(());
+    }
+    if kernel.assembled_module.len() < 5
+        || kernel.assembled_module[0] != 0x07230203
+        || kernel.bindings.is_empty()
+        || kernel.bindings.len() + usize::from(metadata) > 32
+    {
+        return Err(fault("native SPIRV descriptor inventory"));
+    }
+    let mut bindings = Vec::with_capacity(kernel.bindings.len() + usize::from(metadata));
+    let mut accesses = Vec::with_capacity(bindings.capacity());
+    for visibility in &kernel.bindings {
+        bindings.push(vk::DescriptorType::STORAGE_BUFFER);
+        let mut access = vk::AccessFlags::SHADER_READ;
+        if matches!(visibility, cubecl_runtime::kernel::Visibility::ReadWrite) {
+            access |= vk::AccessFlags::SHADER_WRITE;
+        }
+        accesses.push(access);
+    }
+    if metadata {
+        bindings.push(if kernel.uniform_info {
+            vk::DescriptorType::UNIFORM_BUFFER
+        } else {
+            vk::DescriptorType::STORAGE_BUFFER
+        });
+        accesses.push(if kernel.uniform_info {
+            vk::AccessFlags::UNIFORM_READ
+        } else {
+            vk::AccessFlags::SHADER_READ
+        });
+    }
+    // The Intel DPAS tile registered by this port uses one16-lane subgroup.
+    // Raw instruction validation also rejects malformed/truncated modules.
+    let words = super::strata_physical::canonical_workgroup_layout(&kernel.assembled_module)?;
+    let required_subgroup = wgpu::hal::vulkan::kuno_cooperative_subgroup(&words);
+    let mut at = 5;
+    let mut cooperative = false;
+    while at < words.len() {
+        let first = words[at];
+        let count = (first >> 16) as usize;
+        if count == 0 || at.checked_add(count).is_none_or(|end| end > words.len()) {
+            return Err(fault("native SPIRV instruction extent"));
+        }
+        if first & 65535 == 4456 {
+            cooperative = true;
+        }
+        at += count;
+    }
+    if cooperative && required_subgroup != Some(16) {
+        return Err(fault("native SPIRV cooperative subgroup geometry"));
+    }
+    let program = Arc::new(Program {
+        name: "UnlabelledNativeOperator",
+        words,
+        bindings,
+        accesses,
+        entry: CString::new(entry).map_err(|_| fault("native SPIRV entrypoint"))?,
+        required_subgroup,
+        physical_reads: false,
+    });
+    registry()
+        .lock()
+        .map_err(|_| fault("native SPIRV program registry"))?
+        .modules
+        .insert(module.clone(), program);
     Ok(())
 }
 pub(crate) fn label_module(
@@ -380,7 +461,7 @@ impl Graph {
         }
         .get(h.queue_family_index() as usize)
         .map_or(0, |q| q.timestamp_valid_bits);
-        if subgroup.min_subgroup_size > 32
+        if subgroup.min_subgroup_size > 16
             || subgroup.max_subgroup_size < 32
             || !subgroup
                 .required_subgroup_size_stages
@@ -543,14 +624,14 @@ impl Graph {
                 }
             };
             let mut required = vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo::default()
-                .required_subgroup_size(32);
+                .required_subgroup_size(p.required_subgroup.unwrap_or(32));
             let mut stage = vk::PipelineShaderStageCreateInfo::default()
                 .stage(vk::ShaderStageFlags::COMPUTE)
                 .module(shader)
                 .name(&p.entry);
             // The pinned SYCL expert dispatch uses reqd_sub_group_size(32),
             // with four independent eight-lane rows inside that subgroup.
-            if p.expert_subgroup_32 {
+            if p.required_subgroup.is_some() {
                 stage = stage.push_next(&mut required);
             } else {
                 stage =

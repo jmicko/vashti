@@ -28,6 +28,7 @@ mod adapter;
 mod command;
 pub mod conv;
 mod device;
+pub use device::{kuno_cooperative_subgroup, kuno_native_workgroup_layout};
 mod drm;
 mod instance;
 mod sampler;
@@ -670,7 +671,9 @@ impl Buffer {
     /// # Safety
     /// The caller must retain the owning Wgpu buffer and synchronize access
     /// with its queue. This does not transfer ownership or permit destruction.
-    pub unsafe fn raw_buffer_handle(&self) -> vk::Buffer { self.raw }
+    pub unsafe fn raw_buffer_handle(&self) -> vk::Buffer {
+        self.raw
+    }
     /// # Safety
     ///
     /// - `vk_buffer`'s memory must be managed by the caller
@@ -1057,6 +1060,8 @@ impl crate::DynCommandBuffer for CommandBuffer {}
 #[derive(Debug)]
 pub enum ShaderModule {
     Raw(vk::ShaderModule),
+    /// A cooperative shader whose whole workgroup is one16-lane subgroup.
+    RawSubgroup16(vk::ShaderModule),
     Intermediate {
         naga_shader: crate::NagaShader,
         runtime_checks: wgt::ShaderRuntimeChecks,

@@ -1,4 +1,6 @@
-use alloc::{borrow::ToOwned as _, collections::BTreeMap, ffi::CString, sync::Arc, vec::Vec};
+use alloc::{
+    borrow::ToOwned as _, boxed::Box, collections::BTreeMap, ffi::CString, sync::Arc, vec::Vec,
+};
 use core::{
     ffi::CStr,
     mem::{self, MaybeUninit},
@@ -12,7 +14,7 @@ use ash::{ext, vk};
 use hashbrown::hash_map::Entry;
 use parking_lot::Mutex;
 
-use super::{conv, RawTlasInstance};
+use super::{RawTlasInstance, conv};
 use crate::TlasInstance;
 
 impl super::DeviceShared {
@@ -387,10 +389,127 @@ impl
     }
 }
 
+/// Kuno's native shaders use typed workgroup arrays, never host-visible
+/// workgroup byte layouts. Strip Naga's redundant ArrayStride decorations only
+/// on workgroup-only types. Shared interface types are rejected unchanged.
+pub fn kuno_native_workgroup_layout(words: &[u32]) -> Result<Vec<u32>, &'static str> {
+    use hashbrown::{HashMap, HashSet};
+    if words.len() < 5 || words[0] != 0x07230203 {
+        return Err("native SPIRV header");
+    }
+    let mut types = HashMap::<u32, Vec<u32>>::new();
+    let mut blocks = HashSet::new();
+    let mut workgroup = Vec::new();
+    let mut interface = Vec::new();
+    let mut at = 5;
+    while at < words.len() {
+        let count = (words[at] >> 16) as usize;
+        let op = words[at] & 65535;
+        if count == 0 || at.checked_add(count).is_none_or(|end| end > words.len()) {
+            return Err("native SPIRV instruction extent");
+        }
+        let i = &words[at..at + count];
+        if op == 71 && count == 3 && i[2] == 2 {
+            blocks.insert(i[1]);
+        }
+        match op {
+            28 | 29 if count >= 3 => {
+                types.insert(i[1], alloc::vec![i[2]]);
+            }
+            30 if count >= 2 => {
+                types.insert(i[1], i[2..].to_vec());
+            }
+            32 if count == 4 => {
+                types.insert(i[1], alloc::vec![i[3]]);
+            }
+            59 if count >= 4 => {
+                if i[3] == 4 {
+                    workgroup.push(i[1]);
+                } else if matches!(i[3], 0 | 1 | 2 | 3 | 9 | 12) {
+                    interface.push(i[1]);
+                }
+            }
+            _ => {}
+        }
+        at += count;
+    }
+    let close = |mut roots: Vec<u32>| {
+        let mut seen = HashSet::new();
+        while let Some(ty) = roots.pop() {
+            if seen.insert(ty) {
+                if let Some(children) = types.get(&ty) {
+                    roots.extend(children);
+                }
+            }
+        }
+        seen
+    };
+    // Explicit Workgroup Block layouts are real byte ABIs. Keep their
+    // decorations just like host interfaces; only implicit typed arrays change.
+    let mut implicit = Vec::new();
+    for pointer in workgroup {
+        if types
+            .get(&pointer)
+            .and_then(|children| children.first())
+            .is_some_and(|inner| blocks.contains(inner))
+        {
+            interface.push(pointer);
+        } else {
+            implicit.push(pointer);
+        }
+    }
+    let workgroup = close(implicit);
+    let interface = close(interface);
+    let mut out = Vec::with_capacity(words.len());
+    out.extend_from_slice(&words[..5]);
+    at = 5;
+    while at < words.len() {
+        let count = (words[at] >> 16) as usize;
+        let i = &words[at..at + count];
+        let stride = i[0] & 65535 == 71 && count == 4 && i[2] == 6;
+        if stride && workgroup.contains(&i[1]) {
+            if interface.contains(&i[1]) {
+                return Err("workgroup/interface layout alias requires separate types");
+            }
+        } else {
+            out.extend_from_slice(i);
+        }
+        at += count;
+    }
+    Ok(out)
+}
+
+/// Required subgroup for this port's cooperative SPIR-V. Only modules with
+/// OpTypeCooperativeMatrixKHR and exactly LocalSize16x1x1 select this override.
+pub fn kuno_cooperative_subgroup(words: &[u32]) -> Option<u32> {
+    if words.len() < 5 || words[0] != 0x07230203 {
+        return None;
+    }
+    let mut at = 5;
+    let mut cooperative = false;
+    let mut local = false;
+    while at < words.len() {
+        let count = (words[at] >> 16) as usize;
+        let opcode = words[at] & 65535;
+        if count == 0 || at.checked_add(count).is_none_or(|end| end > words.len()) {
+            return None;
+        }
+        cooperative |= opcode == 4456;
+        if opcode == 16 && count == 6 && words[at + 2] == 17 && words[at + 3..at + 6] == [16, 1, 1]
+        {
+            local = true;
+        }
+        at += count;
+    }
+    (cooperative && local).then_some(16)
+}
+
 struct CompiledStage {
     create_info: vk::PipelineShaderStageCreateInfo<'static>,
     _entry_point: CString,
     temp_raw_module: Option<vk::ShaderModule>,
+    // Own the stable pNext allocation until vkCreate*Pipelines completes.
+    _required_subgroup: Option<Box<vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo<'static>>>,
 }
 
 impl super::Device {
@@ -607,6 +726,16 @@ impl super::Device {
         spv: &[u32],
         label: &crate::Label<'_>,
     ) -> Result<vk::ShaderModule, crate::DeviceError> {
+        let native_words;
+        let spv = if std::env::var("KUNO_STRATA_INTEL_CORE").as_deref() == Ok("public") {
+            native_words = kuno_native_workgroup_layout(spv).map_err(|reason| {
+                log::error!("{reason}");
+                crate::DeviceError::Unexpected
+            })?;
+            &native_words
+        } else {
+            spv
+        };
         let vk_info = vk::ShaderModuleCreateInfo::default()
             .flags(vk::ShaderModuleCreateFlags::empty())
             .code(spv);
@@ -639,7 +768,7 @@ impl super::Device {
     ) -> Result<CompiledStage, crate::PipelineError> {
         let stage_flags = crate::auxil::map_naga_stage(naga_stage);
         let vk_module = match *stage.module {
-            super::ShaderModule::Raw(raw) => raw,
+            super::ShaderModule::Raw(raw) | super::ShaderModule::RawSubgroup16(raw) => raw,
             super::ShaderModule::Intermediate {
                 ref naga_shader,
                 runtime_checks,
@@ -730,14 +859,29 @@ impl super::Device {
             .stage(conv::map_shader_stage(stage_flags))
             .module(vk_module);
 
-        // Circumvent struct lifetime check because of a self-reference inside CompiledStage
+        let required_subgroup = if matches!(stage.module, super::ShaderModule::RawSubgroup16(_)) {
+            Some(Box::new(
+                vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo::default()
+                    .required_subgroup_size(16),
+            ))
+        } else {
+            None
+        };
+        if let Some(required) = &required_subgroup {
+            create_info.flags &= !vk::PipelineShaderStageCreateFlags::ALLOW_VARYING_SUBGROUP_SIZE;
+            let address: *const vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo<'_> =
+                &**required;
+            create_info.p_next = address.cast();
+        }
+        // Circumvent struct lifetime check because of self-owned stable fields.
         create_info.p_name = entry_point.as_ptr();
 
         Ok(CompiledStage {
             create_info,
             _entry_point: entry_point,
+            _required_subgroup: required_subgroup,
             temp_raw_module: match *stage.module {
-                super::ShaderModule::Raw(_) => None,
+                super::ShaderModule::Raw(_) | super::ShaderModule::RawSubgroup16(_) => None,
                 super::ShaderModule::Intermediate { .. } => Some(vk_module),
             },
         })
@@ -877,7 +1021,14 @@ impl crate::Device for super::Device {
     ) -> Result<super::Buffer, crate::DeviceError> {
         let vk_info = vk::BufferCreateInfo::default()
             .size(desc.size)
-            .usage(conv::map_buffer_usage(desc.usage) | if std::env::var("KUNO_STRATA_INTEL_CORE").as_deref()==Ok("public") {vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS}else{vk::BufferUsageFlags::empty()})
+            .usage(
+                conv::map_buffer_usage(desc.usage)
+                    | if std::env::var("KUNO_STRATA_INTEL_CORE").as_deref() == Ok("public") {
+                        vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                    } else {
+                        vk::BufferUsageFlags::empty()
+                    },
+            )
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
         let raw = unsafe {
@@ -1769,7 +1920,12 @@ impl crate::Device for super::Device {
                 super::ShaderModule::Raw(self.create_shader_module_impl(&spv, &desc.label)?)
             }
             crate::ShaderInput::SpirV(data) => {
-                super::ShaderModule::Raw(self.create_shader_module_impl(data, &desc.label)?)
+                let raw = self.create_shader_module_impl(data, &desc.label)?;
+                if kuno_cooperative_subgroup(data) == Some(16) {
+                    super::ShaderModule::RawSubgroup16(raw)
+                } else {
+                    super::ShaderModule::Raw(raw)
+                }
             }
             crate::ShaderInput::MetalLib { .. }
             | crate::ShaderInput::Msl { .. }
@@ -1785,7 +1941,7 @@ impl crate::Device for super::Device {
 
     unsafe fn destroy_shader_module(&self, module: super::ShaderModule) {
         match module {
-            super::ShaderModule::Raw(raw) => {
+            super::ShaderModule::Raw(raw) | super::ShaderModule::RawSubgroup16(raw) => {
                 unsafe { self.shared.raw.destroy_shader_module(raw, None) };
             }
             super::ShaderModule::Intermediate { .. } => {}

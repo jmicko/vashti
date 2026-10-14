@@ -1067,6 +1067,7 @@ pub(crate) fn validate_shader_set() -> Result<(), Box<dyn std::error::Error>> {
             module.entry_points[0].workgroup_size[0]
         );
     }
+    crate::strata_matrix::validate_sources()?;
     println!("strata_shader_set_complete shaders={}", shaders.len());
     Ok(())
 }
