@@ -13,6 +13,21 @@ use std::{
 };
 use wgpu::naga;
 
+static SHAPES: [std::sync::atomic::AtomicU64; 5] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 5];
+static REPLAY_SHAPES: [std::sync::atomic::AtomicU64; 5] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 5];
+static CAPTURE_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static WAIT_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub fn native_strata_graph_execution_stats() -> ([u64; 5], [u64; 5], u64, u64) {
+    use std::sync::atomic::Ordering::Relaxed;
+    (
+        std::array::from_fn(|i| SHAPES[i].load(Relaxed)),
+        std::array::from_fn(|i| REPLAY_SHAPES[i].load(Relaxed)),
+        CAPTURE_NS.load(Relaxed),
+        WAIT_NS.load(Relaxed),
+    )
+}
 static SUBMISSIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static DISPATCHES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static REPLAYS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -26,6 +41,17 @@ pub fn native_strata_graph_stats() -> (u64, u64, u64) {
 }
 fn credit(nodes: usize, replay: bool) {
     use std::sync::atomic::Ordering::Relaxed;
+    let bucket = match nodes {
+        0..32 => 0,
+        32..128 => 1,
+        128..512 => 2,
+        512..2048 => 3,
+        _ => 4,
+    };
+    SHAPES[bucket].fetch_add(1, Relaxed);
+    if replay {
+        REPLAY_SHAPES[bucket].fetch_add(1, Relaxed);
+    }
     SUBMISSIONS.fetch_add(1, Relaxed);
     DISPATCHES.fetch_add(nodes as u64, Relaxed);
     if replay {
@@ -223,8 +249,19 @@ impl Graph {
         {
             return Err(fault("native expert pointer extension missing"));
         }
-        let limits = device.limits();
-        if limits.min_subgroup_size > 32 || limits.max_subgroup_size < 32 {
+        let mut subgroup = vk::PhysicalDeviceSubgroupSizeControlProperties::default();
+        let mut props = vk::PhysicalDeviceProperties2::default().push_next(&mut subgroup);
+        unsafe {
+            h.shared_instance()
+                .raw_instance()
+                .get_physical_device_properties2(h.raw_physical_device(), &mut props);
+        }
+        if subgroup.min_subgroup_size > 32
+            || subgroup.max_subgroup_size < 32
+            || !subgroup
+                .required_subgroup_size_stages
+                .contains(vk::ShaderStageFlags::COMPUTE)
+        {
             return Err(fault("native Strata requires Intel expert subgroup32"));
         }
         let d = h.raw_device().clone();
@@ -532,6 +569,7 @@ impl Graph {
         if self.nodes.is_empty() {
             return Ok(());
         }
+        let capture_start = std::time::Instant::now();
         // The caller drains Wgpu parameter/upload commands BEFORE entering.
         // Every owning buffer remains retained until our actual completion fence.
         unsafe { self.device.reset_fences(&[self.fence]) }
@@ -575,11 +613,16 @@ impl Graph {
             }
             .map_err(|_| fault("native graph replay submit"))?;
             self.submitted = true;
+            let wait_start = std::time::Instant::now();
             unsafe {
                 self.device
                     .wait_for_fences(&[self.fence], true, 120_000_000_000)
             }
             .map_err(|_| fault("native graph replay completion"))?;
+            WAIT_NS.fetch_add(
+                wait_start.elapsed().as_nanos().min(u64::MAX as u128) as u64,
+                std::sync::atomic::Ordering::Relaxed,
+            );
             self.submitted = false;
             self.submissions += 1;
             self.replays += 1;
@@ -850,6 +893,10 @@ impl Graph {
             self.device.end_command_buffer(self.command)
         }
         .map_err(|_| fault("native graph end record"))?;
+        CAPTURE_NS.fetch_add(
+            capture_start.elapsed().as_nanos().min(u64::MAX as u128) as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         let commands = [self.command];
         unsafe {
             self.device.queue_submit(
@@ -862,11 +909,16 @@ impl Graph {
         self.submitted = true;
         // Protected public lab only. Bound to prevent a wedged device leaving
         // native descriptor/buffer lifetimes unowned. Never reset the GPU.
+        let wait_start = std::time::Instant::now();
         unsafe {
             self.device
                 .wait_for_fences(&[self.fence], true, 120_000_000_000)
         }
         .map_err(|_| fault("native graph completion"))?;
+        WAIT_NS.fetch_add(
+            wait_start.elapsed().as_nanos().min(u64::MAX as u128) as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         self.submitted = false;
         self.submissions += 1;
         self.dispatches += compute_count as u64;

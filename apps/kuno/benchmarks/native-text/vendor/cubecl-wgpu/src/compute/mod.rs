@@ -6,7 +6,7 @@ mod storage;
 
 pub(crate) mod strata_graph;
 mod strata_physical;
-pub use strata_graph::native_strata_graph_stats;
+pub use strata_graph::{native_strata_graph_execution_stats, native_strata_graph_stats};
 pub use strata_physical::native_expert_shader_words;
 mod binding_cache;
 mod cleanup_boundary;

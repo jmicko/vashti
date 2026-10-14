@@ -742,7 +742,17 @@ impl WgpuStream {
         self.compute_pass = None;
         for managed in resources {
             let r = managed.resource();
-            self.encoder.clear_buffer(&r.buffer, r.offset, Some(r.size));
+            if self.strata_graph.is_some() && r.buffer.usage().contains(wgpu::BufferUsages::STORAGE)
+            {
+                self.initialize_native_upload(r)?;
+                self.strata_graph
+                    .as_mut()
+                    .unwrap()
+                    .push_transfer(None, r.clone())?;
+            } else {
+                self.complete_native_before_readback()?;
+                self.encoder.clear_buffer(&r.buffer, r.offset, Some(r.size));
+            }
             self.tasks_count += 1;
         }
         scopes.finish(self.transient_io.as_mut().unwrap());
