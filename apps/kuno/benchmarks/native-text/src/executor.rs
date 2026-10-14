@@ -3299,6 +3299,35 @@ impl<'a> GpuExecutor<'a> {
         spans: &quant_matvec::matmul::BatchSpans,
         cancel: &AtomicBool,
     ) -> Result<()> {
+        self.enqueue_strata_prompt_projection_impl(
+            tensor, input, output, fault, spans, cancel, false,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn enqueue_strata_prompt_prepacked_projection(
+        &mut self,
+        tensor: TensorView<'_>,
+        input: &Handle,
+        output: &Handle,
+        fault: &Handle,
+        spans: &quant_matvec::matmul::BatchSpans,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        self.enqueue_strata_prompt_projection_impl(
+            tensor, input, output, fault, spans, cancel, true,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn enqueue_strata_prompt_projection_impl(
+        &mut self,
+        tensor: TensorView<'_>,
+        input: &Handle,
+        output: &Handle,
+        fault: &Handle,
+        spans: &quant_matvec::matmul::BatchSpans,
+        cancel: &AtomicBool,
+        prepacked: bool,
+    ) -> Result<()> {
         let m = Matrix::new(tensor)?;
         let dtype = tensor.info().dtype().gguf_id();
         if !crate::strata_prompt::active()
@@ -3340,6 +3369,7 @@ impl<'a> GpuExecutor<'a> {
                 spans.output_first() + first,
                 spans.output_stride(),
                 tensor.info().name().ends_with(".ffn_down_shexp.weight"),
+                prepacked,
             )?;
         }
         Ok(())

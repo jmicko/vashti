@@ -97,6 +97,20 @@ pub trait BatchedResidentProjector {
     ) -> Result<bool> {
         Ok(false)
     }
+    /// Prompt-only native FP16 producer on the actual admitted activation stage.
+    fn enqueue_prompt_prepacked(
+        &mut self,
+        _projection: BoundProjection<'_>,
+        _arena: &PrivateArena,
+        _input: cubecl_runtime::server::Handle,
+        _output: BufferId,
+        _spans: &BatchSpans,
+        _cancel: &AtomicBool,
+    ) -> Result<()> {
+        Err(Error::InvalidFormat(
+            "prompt prepacked projection unavailable",
+        ))
+    }
     /// The ordinary path ignores this non-reusable Final-only capability.
     /// true means the caller must queue a full scratch clear after all reads.
     #[allow(clippy::too_many_arguments)]
@@ -138,6 +152,27 @@ pub struct ResidentBatchProjection<'e, 'f> {
     pub dense_q8: Option<BufferId>,
 }
 impl BatchedResidentProjector for ResidentBatchProjection<'_, '_> {
+    fn enqueue_prompt_prepacked(
+        &mut self,
+        projection: BoundProjection<'_>,
+        arena: &PrivateArena,
+        input: cubecl_runtime::server::Handle,
+        output: BufferId,
+        spans: &BatchSpans,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        u::cancel(cancel)?;
+        self.executor
+            .check_client(arena.client().map_err(u::fault)?)?;
+        self.executor.enqueue_strata_prompt_prepacked_projection(
+            projection.tensor,
+            &input,
+            &u::handle(arena, output)?,
+            &u::handle(arena, self.fault)?,
+            spans,
+            cancel,
+        )
+    }
     fn global_fault(&self) -> BufferId {
         self.fault
     }

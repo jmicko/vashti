@@ -781,6 +781,45 @@ impl ResidentGdn<'_> {
             layout.stage.epsilon.to_bits(),
             0,
         ];
+        if crate::strata_prompt::active() {
+            match op {
+                Operation::Convolution => native::prompt::convolution(
+                    arena,
+                    info,
+                    [
+                        h(ids[QKV])?,
+                        public.convolution.clone(),
+                        h(self.buffers.raw_conv[0])?,
+                        h(self.buffers.raw_conv[1])?,
+                        h(ids[ACT])?,
+                        h(ids[Q])?,
+                        h(ids[K])?,
+                        h(ids[V])?,
+                        h(ids[STATUS])?,
+                        h(ids[STATUS + 1])?,
+                    ],
+                )?,
+                Operation::Recurrence => native::prompt::recurrence(
+                    arena,
+                    info,
+                    [
+                        h(ids[ACT])?,
+                        h(ids[CONTROL])?,
+                        h(self.buffers.recurrent[0])?,
+                        h(self.buffers.recurrent[1])?,
+                        h(ids[RECURRENT])?,
+                        h(ids[Z])?,
+                        public.gamma.clone(),
+                        h(ids[STATUS + 3])?,
+                        h(ids[STATUS + 4])?,
+                    ],
+                )?,
+                Operation::Preparation | Operation::Closing => {}
+                Operation::Controls => return Err(fault("native prompt AB producer bypassed")),
+                _ => return Ok(false),
+            }
+            return Ok(true);
+        }
         match op {
             Operation::Convolution => native::launch(
                 arena,
@@ -1207,21 +1246,35 @@ impl ResidentGdn<'_> {
                     p.shape.value_heads,
                     gamma_shared,
                 ),
-                Operation::Output => projector.enqueue_batch(
-                    self.projections.output,
-                    arena,
-                    ids[GATED],
-                    output,
-                    &BatchSpans::new(
+                Operation::Output => {
+                    let out_spans = BatchSpans::new(
                         count,
                         0,
                         0,
                         p.value_elements,
                         spans.output_first(),
                         spans.output_stride(),
-                    ),
-                    cancel,
-                )?,
+                    );
+                    if crate::strata_prompt::active() {
+                        projector.enqueue_prompt_prepacked(
+                            self.projections.output,
+                            arena,
+                            crate::strata_prompt::activation_stage()?,
+                            output,
+                            &out_spans,
+                            cancel,
+                        )?;
+                    } else {
+                        projector.enqueue_batch(
+                            self.projections.output,
+                            arena,
+                            ids[GATED],
+                            output,
+                            &out_spans,
+                            cancel,
+                        )?;
+                    }
+                }
                 Operation::Status(i) => {
                     if workspace.public_grouped_status.state().0
                         || crate::status_fold_batch::selected()

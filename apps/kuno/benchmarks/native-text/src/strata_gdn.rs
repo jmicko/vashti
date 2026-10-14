@@ -17,6 +17,8 @@ use cubecl_runtime::{
     server::{ExecutionMode, Handle, KernelArguments, MetadataBindingInfo},
 };
 use kuno_text::{Error, Result};
+#[path = "strata_prompt_gdn.rs"]
+pub(crate) mod prompt;
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub(crate) enum Kernel {

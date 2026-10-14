@@ -66,6 +66,9 @@ fn stages() -> Result<[Handle; 3]> {
 pub(crate) fn control_stage() -> Result<Handle> {
     Ok(stages()?[2].clone())
 }
+pub(crate) fn activation_stage() -> Result<Handle> {
+    Ok(stages()?[0].clone())
+}
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub(crate) enum Kernel {
     Pack,
@@ -211,9 +214,14 @@ pub(crate) fn project(
     out_first: usize,
     out_stride: usize,
     saturate: bool,
+    prepacked: bool,
 ) -> Result<()> {
     let stage = stages()?;
+    let output_id = output.clone().binding().memory.allocation_id();
     if !supports(dtype, columns)
+        || stage[..2]
+            .iter()
+            .any(|h| h.clone().binding().memory.allocation_id() == output_id)
         || rows == 0
         || rows > 16384
         || count == 0
@@ -221,15 +229,24 @@ pub(crate) fn project(
         || stride < columns
         || out_stride < rows
         || fault.size_in_used() != 4
+        || prepacked
+            && (dtype == 30
+                || first != 0
+                || stride != columns
+                || input.stream != stage[0].stream
+                || input.clone().binding().memory.allocation_id()
+                    != stage[0].clone().binding().memory.allocation_id()
+                || input.size_in_used() != stage[0].size_in_used())
         || count
             .checked_mul(columns * 2)
             .is_none_or(|n| n as u64 > stage[0].size_in_used())
         || (dtype != 30 && (rows * columns * 2) as u64 > stage[1].size_in_used())
         || weight.size_in_used() < (rows * row_bytes) as u64
-        || first
-            .checked_add((count - 1) * stride)
-            .and_then(|n| n.checked_add(columns))
-            .is_none_or(|n| n as u64 * 4 > input.size_in_used())
+        || !prepacked
+            && first
+                .checked_add((count - 1) * stride)
+                .and_then(|n| n.checked_add(columns))
+                .is_none_or(|n| n as u64 * 4 > input.size_in_used())
         || out_first
             .checked_add((count - 1) * out_stride)
             .and_then(|n| n.checked_add(rows))
@@ -255,13 +272,15 @@ pub(crate) fn project(
         0,
         0,
     ];
-    launch(
-        client,
-        Kernel::Pack,
-        [(count * columns / 2).div_ceil(256), 1, 1],
-        vec![input, stage[0].clone(), fault.clone()],
-        info,
-    )?;
+    if !prepacked {
+        launch(
+            client,
+            Kernel::Pack,
+            [(count * columns / 2).div_ceil(256), 1, 1],
+            vec![input, stage[0].clone(), fault.clone()],
+            info,
+        )?;
+    }
     let weights = if dtype == 30 {
         weight
     } else {
@@ -403,6 +422,7 @@ pub(crate) fn gr(request: crate::strata_gr::Read<'_>, weights: [Handle; 3]) -> R
         0,
         320,
         false,
+        false,
     )?;
     if q.inject {
         project(
@@ -420,6 +440,7 @@ pub(crate) fn gr(request: crate::strata_gr::Read<'_>, weights: [Handle; 3]) -> R
             10240,
             0,
             4,
+            false,
             false,
         )?;
     }
@@ -445,6 +466,7 @@ pub(crate) fn gr(request: crate::strata_gr::Read<'_>, weights: [Handle; 3]) -> R
         320,
         0,
         10240,
+        false,
         false,
     )?;
     launch(
@@ -492,6 +514,7 @@ pub(crate) fn ab(q: crate::strata_gdn::Ab<'_>, weights: [Handle; 2]) -> Result<(
             q.stride,
             i * q.heads,
             q.heads * 2,
+            false,
             false,
         )?;
     }
