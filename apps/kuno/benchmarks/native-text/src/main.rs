@@ -11,6 +11,7 @@ mod strata_expert_fused;
 mod strata_intel_core;
 mod strata_packet;
 mod strata_port;
+mod strata_stage;
 // Shared with the standalone CPU writer; writer-only methods are inert here.
 #[allow(dead_code)]
 mod daslab_carry_reference;

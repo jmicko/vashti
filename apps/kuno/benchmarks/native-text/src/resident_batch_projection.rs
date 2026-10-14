@@ -141,7 +141,6 @@ impl BatchedResidentProjector for ResidentBatchProjection<'_, '_> {
                     arena.handle(planes).map_err(u::fault)?.size_in_used(),
                 )
             {
-                u::zero(arena, planes)?;
                 self.executor.enqueue_strata_dense(
                     projection.tensor,
                     &u::handle(arena, input)?,
@@ -153,7 +152,6 @@ impl BatchedResidentProjector for ResidentBatchProjection<'_, '_> {
                 )?;
                 // The parent lends this existing GU scratch only during its
                 // attention stage, before the layer's authentic GU prepare.
-                u::zero(arena, planes)?;
                 u::cancel(cancel)?;
                 return Ok(());
             }

@@ -1460,6 +1460,9 @@ impl Plan {
         if config.public_frozen_gu_integer {
             requests.push(batch_moe::FROZEN_GU_INTEGER_MAIN_BYTES);
         }
+        if crate::strata_intel_core::enabled() {
+            requests.extend([crate::strata_stage::OWNER_BYTES; 3]);
+        }
         if config.public_frozen_down_integer {
             requests.push(batch_moe::FROZEN_DOWN_INTEGER_MAIN_BYTES);
         }
@@ -1497,8 +1500,19 @@ impl Plan {
             } else {
                 0
             };
+        let extra = extra
+            + if crate::strata_intel_core::enabled() {
+                crate::strata_stage::MAIN_BYTES
+            } else {
+                0
+            };
         if requests.len()
             != 90
+                + if crate::strata_intel_core::enabled() {
+                    3
+                } else {
+                    0
+                }
                 + usize::from(config.public_frozen_host_staging) * 3
                 + usize::from(config.public_frozen_gu_integer)
                 + usize::from(config.public_frozen_down_integer)
@@ -1897,6 +1911,7 @@ pub(super) struct Workspace {
     ple: ple_batch::PleBatchWorkspace,
     shared: shared_batch::Workspace,
     outer: Zeroizing<Outer>,
+    core_stages: Option<[BufferId; 3]>,
     poison: Arc<AtomicBool>,
     dense_member_capacity: usize,
     target_rows: Option<target_rows::Owners>,
@@ -2231,6 +2246,24 @@ impl Workspace {
             moe.reserve_prepared_verify3(&mut model.arena, allocation)?;
         }
         let shared = shared_batch::Workspace::allocate(graph, &mut model.arena)?;
+        let core_stages = if crate::strata_intel_core::enabled() {
+            Some([
+                model
+                    .arena
+                    .allocate_zeroed(crate::strata_stage::OWNER_WORDS)
+                    .map_err(u::fault)?,
+                model
+                    .arena
+                    .allocate_zeroed(crate::strata_stage::OWNER_WORDS)
+                    .map_err(u::fault)?,
+                model
+                    .arena
+                    .allocate_zeroed(crate::strata_stage::OWNER_WORDS)
+                    .map_err(u::fault)?,
+            ])
+        } else {
+            None
+        };
         let mut alloc = |n| model.arena.allocate_zeroed(n).map_err(u::fault);
         let outer = Zeroizing::new(Outer {
             residual: [alloc(RESIDUAL_WORDS)?, alloc(RESIDUAL_WORDS)?],
@@ -2261,6 +2294,7 @@ impl Workspace {
             ple,
             shared,
             outer,
+            core_stages,
             poison,
             dense_member_capacity: 8,
             target_rows,
@@ -4624,6 +4658,7 @@ impl Workspace {
         cancel: &AtomicBool,
     ) -> Result<ChunkOutput> {
         self.prove_outer(m)?;
+        let _core_stage_scope = crate::strata_stage::Scope::new(&m.arena, self.core_stages)?;
         // Immutable for this exclusive transaction; capture before real PLE
         // acceptance retains its disjoint mutable workspace borrow.
         let decode_policy = self.decode_kernels()?;

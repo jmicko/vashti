@@ -106,6 +106,12 @@ impl Kernel {
         if crate::strata_intel_core::enabled() && !self.down {
             binding += 1;
         }
+        if crate::strata_intel_core::enabled() {
+            for name in names {
+                bindings.push_str(&format!("@group(0) @binding({binding}) var<storage,read> strata_staged_{name}:array<u32>;\n"));
+                binding += 1;
+            }
+        }
         let address_binding = binding;
         if crate::strata_intel_core::enabled() {
             bindings.push_str(&format!("// STRATA_PHYSICAL_EXPERTS\n@group(0) @binding({address_binding}) var<storage,read> strata_addresses:array<vec4<u32>>;\n"));
@@ -161,9 +167,12 @@ impl Kernel {
                     _ => unreachable!(),
                 };
                 select.push_str(&format!(
-                    "strata_{name}_address=strata_addresses[{role}u*5u+strata_shard].xy;\n"
+                    "strata_{name}_address=strata_addresses[{role}u*5u+strata_shard].xy;\nif arrayLength(&strata_staged_{name})!=16777216u {{return false;}}\nif strata_shard>=2u {{strata_{name}_address=strata_addresses[15u+{role}u].xy;}}\n"
                 ));
             }
+        }
+        if crate::strata_intel_core::enabled() {
+            select.push_str("if strata_shard>=2u {strata_first=slot-group;}\n");
         }
         source = source.replace(old, &select).replace(
             "let slot=map[p.a+4u+group.y]-p.b;",
@@ -279,6 +288,21 @@ pub(crate) fn launch(
         args = crate::strata_intel_core::bind(args, owners[0].stream)?;
     }
     if crate::strata_intel_core::enabled() {
+        let stages = crate::strata_stage::handles()?;
+        for role in if down { 2..3 } else { 0..2 } {
+            args = args.with_buffer(stages[role].clone().binding());
+        }
+        // Copies all original selected HOST words exactly once per layer.
+        if !down {
+            crate::strata_stage::launch(
+                client,
+                geometry,
+                pages,
+                &owners[0],
+                spans.map_first(),
+                count,
+            )?;
+        }
         args = crate::strata_intel_core::bind_addresses(client, pages, args)?;
     }
     let values = [

@@ -124,6 +124,15 @@ pub(crate) fn register_module(
             if used.contains(naga::valid::GlobalUse::WRITE) {
                 access |= vk::AccessFlags::SHADER_WRITE;
             }
+            if source.contains("STRATA_PHYSICAL_EXPERTS")
+                && g.name
+                    .as_ref()
+                    .is_some_and(|name| name.starts_with("strata_staged_"))
+            {
+                // Physical expert reads alias these genuine private staging
+                // roots. The logical shader only queries their owning extents.
+                access |= vk::AccessFlags::SHADER_READ;
+            }
             bindings.push((b.binding, t, access));
         }
     }
@@ -157,7 +166,8 @@ pub(crate) fn register_module(
     }
     let p = Arc::new(Program {
         words,
-        expert_subgroup_32: source.contains("STRATA_PHYSICAL_EXPERTS") || source.contains("STRATA_DENSE_PACKED"),
+        expert_subgroup_32: source.contains("STRATA_PHYSICAL_EXPERTS")
+            || source.contains("STRATA_DENSE_PACKED"),
         accesses: bindings.iter().map(|b| b.2).collect(),
         bindings: bindings.into_iter().map(|b| b.1).collect(),
         entry: CString::new(entry).map_err(|_| fault("native graph entrypoint"))?,

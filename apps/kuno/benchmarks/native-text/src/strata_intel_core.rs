@@ -153,15 +153,17 @@ pub(crate) fn bind_addresses(
     if pages.len() != 15 {
         return Err(reject());
     }
+    let mut handles = pages.to_vec();
+    handles.extend(crate::strata_stage::handles()?);
     let resources = client
-        .retained_resource_metadata(pages.to_vec())
+        .retained_resource_metadata(handles)
         .map_err(crate::resident_util::fault)?;
     ADDRESSES.with(|state| {
         let mut state = state.borrow_mut();
         let state = state.as_mut().ok_or_else(reject)?;
         let dev = unsafe { state.device.as_hal::<wgpu::hal::api::Vulkan>() }.ok_or_else(reject)?;
         let mut words = Vec::with_capacity(8192);
-        let mut roots = Vec::with_capacity(15);
+        let mut roots = Vec::with_capacity(18);
         for r in &resources {
             let r = r.resource();
             if r.offset != 0 || r.size != r.buffer.size() {
