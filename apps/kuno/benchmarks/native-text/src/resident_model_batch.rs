@@ -80,14 +80,19 @@ const NATIVE_GR_MAIN: u64 = if cfg!(feature = "strata-intel-core") {
     0
 };
 const PUBLIC_MAIN: u64 = 25_165_824;
-const HOST_CAP: usize = 12 * 1024 * 1024;
+const CORE_CACHE_HOST: usize = if cfg!(feature = "strata-intel-core") {
+    crate::strata_global_adapt::HOST_BYTES
+} else {
+    0
+};
+const HOST_CAP: usize = 12 * 1024 * 1024 + CORE_CACHE_HOST;
 pub(crate) const ORIGINAL_BANK_HOST: usize = if cfg!(feature = "strata-resident-240") {
     704 * 1024
 } else {
     640 * 1024
 };
-const HOST_COMPONENTS: usize = 10_551_296 + ORIGINAL_BANK_HOST;
-const META_CAP: usize = 256 * 1024;
+const HOST_COMPONENTS: usize = 10_551_296 + ORIGINAL_BANK_HOST + CORE_CACHE_HOST;
+const META_CAP: usize = 256 * 1024 + CORE_CACHE_HOST;
 const LAYERS: usize = 48;
 const D: usize = 2560;
 const HC: usize = 4;
@@ -2444,6 +2449,11 @@ fn metadata_bytes() -> usize {
     // plus the controller/session and bounded stack/capability headroom. MoE's
     // retained dynamic candidates and plans have their separate 2 MiB budget.
     pending_bytes()
+        + if crate::strata_intel_core::enabled() {
+            crate::strata_global_adapt::HOST_BYTES
+        } else {
+            0
+        }
         + 36 * std::mem::size_of::<gdn::PendingGdnBatch>()
         + 12 * std::mem::size_of::<qsa::PendingQsaBatch>()
         + std::mem::size_of::<ple_batch::PendingPleBatch>()
@@ -2539,6 +2549,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         &mut self,
         executor: &mut GpuExecutor<'f>,
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
     ) -> Result<()> {
         self.completed_native_projection_boundary(executor)?;
         if self.position != 0 || !crate::strata_intel_core::enabled() {
@@ -2570,7 +2581,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .strata_global_sources
             .as_mut()
             .ok_or(error())?
-            .attach_stages(device, stages)
+            .attach_stages(device, queue, stages)
     }
 
     fn completed_native_projection_boundary(
@@ -5252,8 +5263,16 @@ impl Workspace {
         qa.finish(&m.arena, cancel)?;
         self.global_moe.as_mut().ok_or(error())?.finish()?;
         ple.commit(cancel)?;
-        // Global adaptive exchange/remap publication is connected separately;
-        // the ordinary fixed-bank promotion path cannot mutate global cells.
+        self.global_moe
+            .as_mut()
+            .ok_or(error())?
+            .adapt_after_finished(
+                m.graph,
+                &m.arena,
+                &m.admission,
+                e.strata_global_sources.as_mut().ok_or(error())?,
+                cancel,
+            )?;
         *m.phase_ns.entry("native_all_family_commit").or_default() +=
             commit_start.elapsed().as_nanos();
         u::cancel(cancel)?;

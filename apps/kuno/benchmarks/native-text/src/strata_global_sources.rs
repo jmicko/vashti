@@ -26,6 +26,8 @@ pub(crate) struct Sources {
     reads: Vec<Vec<Handle>>,
     closed: bool,
     closing_failed: bool,
+    mutation_pending: bool,
+    queue: Option<wgpu::Queue>,
 }
 impl Sources {
     pub(crate) fn gpu_requests(plan: &Plan) -> Vec<u64> {
@@ -63,6 +65,8 @@ impl Sources {
             reads: Vec::with_capacity(LAYERS),
             closed: false,
             closing_failed: false,
+            mutation_pending: false,
+            queue: None,
         };
         // Incremental ownership makes every construction failure take the same
         // completed-reader closure path as a fully constructed source set.
@@ -189,7 +193,7 @@ impl Sources {
         layer: usize,
         role: usize,
     ) -> Result<Handle> {
-        if self.closed || self.closing_failed {
+        if self.closed || self.closing_failed || self.mutation_pending {
             return Err(reject());
         }
         if let Some((h, _, _)) = self
@@ -212,6 +216,7 @@ impl Sources {
     pub(crate) fn attach_stages(
         &mut self,
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         stages: [Handle; 3],
     ) -> Result<()> {
         if self.closed || self.closing_failed || self.stages.is_some() {
@@ -264,6 +269,7 @@ impl Sources {
             )])
             .map_err(crate::resident_util::fault)?;
         self.stages = Some(stages);
+        self.queue = Some(queue.clone());
         Ok(())
     }
     pub(crate) fn plan(&self) -> &Plan {
@@ -273,7 +279,7 @@ impl Sources {
     /// Adds only static physical-cell/stage address descriptors. Private
     /// logical remaps stay in the family arena and never enter these tables.
     pub(crate) fn bind(&self, layer: usize, args: KernelArguments) -> Result<KernelArguments> {
-        if self.closed || self.closing_failed {
+        if self.closed || self.closing_failed || self.mutation_pending {
             return Err(reject());
         }
         let table = self.tables.get(layer).ok_or_else(reject)?;
@@ -296,6 +302,100 @@ impl Sources {
                     .map(Handle::binding)
                     .collect(),
             ))
+    }
+    /// Consumer boundaries have completed. Verify exact initial physical cells,
+    /// then execute all role exchanges as one joined owning transaction. The
+    /// static tables never change; subsequent consumers await PRIVATE remap.
+    pub(crate) fn exchange(
+        &mut self,
+        graph: BoundGraph<'_, '_>,
+        swaps: &[crate::strata_global_adapt::Swap],
+    ) -> Result<()> {
+        if self.closed
+            || self.closing_failed
+            || self.mutation_pending
+            || swaps.len() > crate::strata_global_adapt::MAX_SWAPS
+        {
+            return Err(reject());
+        }
+        self.plan.check_binding(graph)?;
+        if swaps.is_empty() {
+            self.mutation_pending = true;
+            return Ok(());
+        }
+        cubecl_common::future::block_on(self.client.sync()).map_err(crate::resident_util::fault)?;
+        let mut pairs = Vec::with_capacity(swaps.len() * 3);
+        for swap in swaps {
+            for role in 0..3 {
+                let (gpu, go, gb) = self
+                    .gpu
+                    .as_ref()
+                    .ok_or_else(reject)?
+                    .resident_role(graph, &self.plan, swap.layer, swap.gpu_cell, role)?
+                    .ok_or_else(reject)?;
+                let (host, ho, hb) = self
+                    .host
+                    .as_ref()
+                    .ok_or_else(reject)?
+                    .role(graph, &self.plan, swap.layer, swap.host_cell, role)?
+                    .ok_or_else(reject)?;
+                if gb != hb {
+                    return Err(reject());
+                }
+                let mut resources = self
+                    .client
+                    .retained_resource_metadata(vec![gpu, host])
+                    .map_err(crate::resident_util::fault)?;
+                if resources.len() != 2 {
+                    return Err(reject());
+                }
+                let h = resources.pop().ok_or_else(reject)?;
+                let g = resources.pop().ok_or_else(reject)?;
+                let range = |r: &cubecl::wgpu::WgpuResource,
+                             offset: u64|
+                 -> Result<cubecl::wgpu::WgpuResource> {
+                    if r.offset != 0
+                        || r.size != r.buffer.size()
+                        || offset.checked_add(gb).is_none_or(|n| n > r.size)
+                    {
+                        return Err(reject());
+                    }
+                    Ok(cubecl::wgpu::WgpuResource {
+                        buffer: r.buffer.clone(),
+                        offset,
+                        size: gb,
+                    })
+                };
+                pairs.push(
+                    crate::public_host_expert_mirror::strata_global::exchange::Pair {
+                        gpu: range(g.resource(), go)?,
+                        host: range(h.resource(), ho)?,
+                    },
+                );
+            }
+        }
+        // From here until full private publication, unknown/failed completion
+        // cannot resume inference. close can still attempt ordinary joined erase.
+        self.mutation_pending = true;
+        // SAFETY: immutable capabilities above authenticate all owning cells,
+        // this exclusive source owner joined every prior CubeCL/BDA reader.
+        unsafe {
+            self.host
+                .as_mut()
+                .ok_or_else(reject)?
+                .exchange(self.queue.as_ref().ok_or_else(reject)?, &pairs)?;
+        }
+        Ok(())
+    }
+    /// Join PRIVATE remap/usage writes before admitting another source reader.
+    pub(crate) fn finish_publication(&mut self, commit: impl FnOnce() -> Result<()>) -> Result<()> {
+        if self.closed || self.closing_failed {
+            return Err(reject());
+        }
+        cubecl_common::future::block_on(self.client.sync()).map_err(crate::resident_util::fault)?;
+        commit()?;
+        self.mutation_pending = false;
+        Ok(())
     }
     pub(crate) fn close(&mut self) -> Result<()> {
         if self.closed {

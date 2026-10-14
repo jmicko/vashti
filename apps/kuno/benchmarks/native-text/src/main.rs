@@ -9,6 +9,7 @@ mod strata_cache;
 mod strata_dense;
 mod strata_expert_fused;
 pub(crate) use strata_expert_fused::global as strata_global_experts;
+mod strata_global_adapt;
 #[allow(dead_code)] // Root consumers are the next connected port block.
 mod strata_global_gpu;
 #[allow(dead_code)] // Native coordinator connection follows this family.

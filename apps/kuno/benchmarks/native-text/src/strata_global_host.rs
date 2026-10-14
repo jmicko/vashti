@@ -1,5 +1,7 @@
 //! Variable global HOST complement, using the original nonlocal Vulkan heap and
 //! sole CubeCL immutable registry. No fixed 432-page or uniform-bank assumption.
+#[path = "strata_global_exchange.rs"]
+pub(crate) mod exchange;
 use super::*;
 use crate::strata_global_plan::{Plan as GlobalPlan, Source as GlobalSource, Tier};
 use cubecl::{prelude::ComputeClient, wgpu::WgpuRuntime};
@@ -39,6 +41,7 @@ pub(crate) struct Host {
     closed: bool,
     logical: u64,
     physical: u64,
+    exchange_runtime: Option<exchange::Runtime>,
 }
 impl Host {
     pub(crate) fn reservation(plan: &GlobalPlan) -> KResult<u64> {
@@ -89,6 +92,7 @@ impl Host {
             closed: false,
             logical: 0,
             physical: 0,
+            exchange_runtime: None,
         };
         if count == 0 {
             return Ok(host);

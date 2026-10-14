@@ -6,8 +6,10 @@ struct Params { count:u32,layer:u32,epoch:u32,r0:u32 }
 @group(0) @binding(2) var<storage,read_write> map:array<u32>;
 @group(0) @binding(3) var<storage,read_write> probability:array<f32>;
 @group(0) @binding(4) var<storage,read_write> fault:array<atomic<u32>>;
-@group(0) @binding(5) var<uniform> p:Params;
+@group(0) @binding(5) var<storage,read_write> usage:array<f32>;
+@group(0) @binding(6) var<uniform> p:Params;
 var<workgroup> chosen:array<u32,80>;
+var<workgroup> logical:array<u32,80>;
 var<workgroup> bad:atomic<u32>;
 fn finite(x:f32)->bool { return abs(x)<=bitcast<f32>(0x7f7fffffu); }
 @compute @workgroup_size(256)
@@ -17,7 +19,7 @@ fn main(@builtin(local_invocation_index) local:u32,@builtin(subgroup_id) sg:u32,
     if p.count<1u || p.count>8u || p.layer>=48u || p.epoch==0u || p.r0!=0u
         || width!=32u || nsg!=8u || arrayLength(&logits)<p.count*512u
         || arrayLength(&remap)!=32768u || arrayLength(&map)!=8192u
-        || arrayLength(&probability)!=8192u || arrayLength(&fault)<1u {return;}
+        || arrayLength(&probability)!=8192u || arrayLength(&usage)!=32768u || arrayLength(&fault)<1u {return;}
     if local==0u {atomicStore(&bad,0u);}
     workgroupBarrier();
     let live=sg<p.count;
@@ -44,7 +46,7 @@ fn main(@builtin(local_invocation_index) local:u32,@builtin(subgroup_id) sg:u32,
             if selected>=512u {atomicOr(&bad,2u);chosen[sg*10u+rank]=512u;}
             let cell=remap[p.layer*512u+min(selected,511u)];
             if cell>=512u {atomicOr(&bad,2u);}
-            chosen[sg*10u+rank]=cell;row_scores[rank]=maximum;
+            chosen[sg*10u+rank]=cell;logical[sg*10u+rank]=selected;row_scores[rank]=maximum;
         }
     }
     if live && lane==0u {
@@ -66,6 +68,9 @@ fn main(@builtin(local_invocation_index) local:u32,@builtin(subgroup_id) sg:u32,
             for(var i=0u;i<length;i++) {if map[164u+group*8u+i]/10u==route/10u {atomicOr(&fault[0],128u);return;}}
             map[164u+group*8u+length]=route;map[84u+group]=length+1u;
         }
+        // Count actual logical routes, not physical-cell IDs. Only one lane
+        // writes this layer; ordered windows share no concurrent usage writer.
+        for(var route=0u;route<p.count*10u;route++) {usage[p.layer*512u+logical[route]]+=1.0;}
         map[0]=p.count;map[1]=0u;map[2]=p.count;map[3]=groups;
     }
 }

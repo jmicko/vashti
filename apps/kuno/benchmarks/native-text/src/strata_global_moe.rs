@@ -24,8 +24,8 @@ use kuno_text::{
 use std::sync::atomic::AtomicBool;
 use zeroize::Zeroizing;
 
-const ROOT_BYTES: [u64; 9] = [
-    32768, 262144, 1048576, 32768, 32768, 65536, 131072, 131072, 32768,
+const ROOT_BYTES: [u64; 10] = [
+    32768, 262144, 1048576, 32768, 32768, 65536, 131072, 131072, 32768, 131072,
 ];
 pub(crate) const MAIN_BYTES: u64 = 32768
     + 262144
@@ -36,6 +36,7 @@ pub(crate) const MAIN_BYTES: u64 = 32768
     + 131072
     + 131072
     + 32768
+    + 131072
     + 3 * crate::strata_global_experts::STAGE_BYTES;
 fn reject() -> Error {
     Error::InvalidFormat("Strata global routed family")
@@ -98,7 +99,8 @@ fn info(words: &[u32]) -> MetadataBindingInfo {
 pub(crate) struct Workspace {
     binding: GraphBindingId,
     geometries: [g::Geometry; 48],
-    ids: [BufferId; 9],
+    ids: [BufferId; 10],
+    adaptive: Option<crate::strata_global_adapt::Cache>,
     stages: [BufferId; 3],
     epoch: u32,
     active: Option<Zeroizing<[usize; 3]>>, // active count, next layer, accepted flag
@@ -142,7 +144,7 @@ impl Workspace {
                     .map_err(Error::InvalidFormat)?,
             );
         }
-        let mut ids = Vec::with_capacity(9);
+        let mut ids = Vec::with_capacity(10);
         for (index, bytes) in ROOT_BYTES.iter().enumerate() {
             let id = if index == 7 {
                 let mut remap = Zeroizing::new(vec![0u32; 32768]);
@@ -173,6 +175,7 @@ impl Workspace {
             stages,
             epoch: 0,
             active: None,
+            adaptive: None,
         })
     }
     pub(crate) fn stage_ids(&self) -> [BufferId; 3] {
@@ -246,6 +249,7 @@ impl Workspace {
             .with_buffer(owners[0].clone().binding())
             .with_buffer(owners[4].clone().binding())
             .with_buffer(full(fault)?.binding())
+            .with_buffer(full(self.ids[9])?.binding())
             .with_info(info(&[count as u32, layer as u32, self.epoch, 0]));
         // SAFETY: exact private routing/remap roots; no host readback or cache
         // transfer can bypass the owning graph's dependencies.
@@ -328,6 +332,60 @@ impl Workspace {
             return Err(reject());
         }
         self.active = None;
+        Ok(())
+    }
+    /// Whole model/family acceptance and commit precede all cache mutations.
+    /// The private routing map is published only after paired original weights
+    /// and both metadata uploads have joined. Failure retires the source owner.
+    pub(crate) fn adapt_after_finished(
+        &mut self,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+        admission: &crate::executor::ResidentAdmission,
+        sources: &mut Sources,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        self.validate_idle()?;
+        u::cancel(cancel)?;
+        if self.adaptive.is_none() {
+            self.adaptive = Some(crate::strata_global_adapt::Cache::new(sources.plan())?);
+        }
+        let cache = self.adaptive.as_mut().ok_or_else(reject)?;
+        if !cache.tick()? {
+            return Ok(());
+        }
+        let usage =
+            admission.readback_audited(cancel, || u::read_prefix_f32(arena, self.ids[9], 24576))?;
+        let proposal = cache.propose(&usage)?;
+        u::cancel(cancel)?;
+        sources.exchange(graph, &proposal.swaps)?;
+        // Full private owners are retained through their write/fence. Padding
+        // is zero and moved upload allocations receive the runtime wipe guard.
+        let mut mapping = Zeroizing::new(vec![0u8; 131072]);
+        let mut counts = Zeroizing::new(vec![0u8; 131072]);
+        for (i, (&cell, &score)) in proposal
+            .mapping
+            .iter()
+            .zip(proposal.usage.iter())
+            .enumerate()
+        {
+            mapping[i * 4..i * 4 + 4].copy_from_slice(&u32::from(cell).to_le_bytes());
+            counts[i * 4..i * 4 + 4].copy_from_slice(&score.to_le_bytes());
+        }
+        let client = arena.client().map_err(u::fault)?;
+        client
+            .write_private(
+                arena.handle(self.ids[7]).map_err(u::fault)?.clone(),
+                std::mem::take(&mut *mapping),
+            )
+            .map_err(u::fault)?;
+        client
+            .write_private(
+                arena.handle(self.ids[9]).map_err(u::fault)?.clone(),
+                std::mem::take(&mut *counts),
+            )
+            .map_err(u::fault)?;
+        sources.finish_publication(|| cache.commit(proposal))?;
         Ok(())
     }
     pub(crate) fn validate_idle(&self) -> Result<()> {

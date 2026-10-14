@@ -1266,6 +1266,7 @@ pub(crate) fn run(
                 target.prepare_global_sources_before_prefill(
                     &mut executor,
                     host_device.ok_or("global target device missing")?,
+                    host_queue.ok_or("global target queue missing")?,
                 )?;
             }
         }
