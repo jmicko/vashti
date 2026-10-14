@@ -41,7 +41,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp` | Core now connects native BF16 alpha/beta window projection, conv/L2, controls, double-buffered four-row-group FMA recurrence/output norm and state-only accepted-prefix replay. See the GDN receipts below. Optional Q8 producer fusion, prompt-path fidelity, physical execution and final numerical/queue audit remain open. |
 | QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects FP16 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. See the QSA receipt below for precise storage/scheduling substitutions and remaining numerical/state acceptance; do not claim full QSA fidelity yet. |
 | PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Core now connects native BF16 MAX8 projections, native normalization/gate/conv/history, transient deduplicated positional reads and the actual accepted-prefix owner. Whole-prompt double-buffered prefetch, mapped history/snapshot scheduling and numerical/device acceptance remain open. Never persist request n-grams. |
-| Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rust bounded graph prefill is not full prompt-path parity. Port connected chunk budget, streamed layer staging and Intel GEMM/expert batches, including prompt history consumed by MTP. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation; its stub does not remove the real Intel prompt path requirement. |
+| Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM and prompt GR/AB/head consumers now connect to actual initial prompt calls. Full chunk owner/budget, streamed FP16 expert GEMM/ring/cache loan, causal prompt kernels and device-resident target/MTP handoff remain unported; current three-row loop is not prompt-path parity. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
 | MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native FP16 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Queue/branch/capture fidelity, numerical/state acceptance, arbitrary input and supported sampling remain required. See the front/rest/MoE receipts. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Request-local Rust suffix/cost controller exists; audit supported window lengths and coupled sampling rather than fixing to four public-fixture rows. |
 | Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Real greedy verification/state-only repair exists. Audit all active windows and acceptance cases against GDN/QSA/PLE/positions; independent correctness oracle remains missing. |
@@ -1207,3 +1207,67 @@ count or wrapping it in a prefill name is not the native path. Read pinned
 `sycl/src/prefill/{prefill.cpp,gemm.dp.cpp,kernels.dp.cpp}` and the real stage
 allocation/ring/cache-loan contracts together. Preserve original public weights,
 bounded private staging, final cursor/teacher alignment and failure erasure.
+
+## Connected prompt operand/GEMM producers and consumers (2026-10-14)
+
+Source `e64d770`, isolated `codex/strata-rust-port`. This is a genuine connected
+prompt arithmetic block, **not complete prompt prefill**. The global controller
+now enters a request-local prompt projection scope for initial prompt calls;
+target verification/drafting still use their separate decode producers. Scope
+ends after the actual completed chunk/fault/state boundary and before MTP teaching.
+The initial controller remains a three-row loop: its larger native schedule is
+still required, not inferred from this method's name.
+
+`strata_prompt.rs`/WGSL use the already-admitted three64 MiB global stage roots,
+with serialized reuse and no new GPU owners. Prompt matrix products pack BF16
+activations for original BF16 matrices and FP16 activations/original decoded
+weight images for packed dense matrices. Supported original dense formats are
+Q8_0/Q4_K/Q5_K/Q6_K/IQ4_NL/IQ4_XS/BF16. Weight images are produced on GPU from
+authenticated original cached rows; no converted file or whole F32 mirror.
+The shared SwiGLU input follows native finite FP16 saturation. Tile counts and
+all input/output intervals are checked against the real borrowed stages.
+
+The Rust/Vulkan8x8x32 tile GEMM is the explicit oneMKL substitute: shared operand
+tiles, F32 accumulation, original rounded operands and real output spans. It is
+currently ordinary FMA computation, not a demonstrated Intel XMX/cooperative
+matrix implementation. Backend reduction order/library tile schedule and
+numerical/performance acceptance remain open; offline validity is not parity.
+
+Connected consumers include normal, paired/bundled dense projections and final
+head, prompt GR and GDN alpha/beta. GR now follows prompt256-thread residual
+normalization, BF16 down/injection GEMMs, low-rank divide-by-four/SiLU/BF16 up,
+ordered mixing and actual pending residual/injection writes. Original owners
+remain charged, including the partial page now used for up output. GDN AB uses
+BF16 operand products then real dt/A/sigmoid controls and the existing fault/
+state consumers, without falling back to decode's F32-input native AB producer.
+Panic/failure still uses the owning model's existing close/poison path; no prompt
+or result is logged/persisted by the scope.
+
+Explicit remaining substitutions: F32 normalized GR rows are retained rather
+than native `gr_mix_r` recomputation. The three shared stage roots require serial
+reuse; side-queue/shared overlap cannot be added without resolving their real
+lifetimes/barriers. Original cache tile alignment/admission needs final audit,
+especially the large decoded head tiles. Prompt attention/recurrence and routed
+experts still use the current bounded verification families; streamed FP16 expert
+GEMMs, ring ownership and budget/cache loans are not connected. Large prompt
+chunks, PLE double-buffer prefetch, final prompt-only head selection, device
+target/MTP carry teaching and whole-prompt fence scheduling remain required.
+
+Validation logs under `/media/jmicko/faststore/kuno-development`:
+
+- Final `strata-prompt-gemm-build-20261014.log` and strict release
+  `strata-prompt-gemm-clippy-20261014.log` pass.
+- `strata-prompt-gemm-shaders-20261014.log`:247 offline WGSL/SPIR-V variants
+  pass, including twelve prompt producer/consumer variants and full head routing.
+- `strata-prompt-gemm-math-tests-20261014.log`: two host checks pass. Original
+  six-format weight images agree with independent canonical GGUF decoders;
+  BF16/FP16 operand rounding and edge/partial tiles agree with independent F64
+  products, covering1/3/8/17 RHS and1/7/8/19 output rows. These are not GPU or
+  whole-model numerical checks. Later saturation/span/dummy-owner changes pass
+  final build/Clippy/shader checks; no rerun of the unaffected host algorithms.
+
+Fmt/whitespace pass. No GPU/model/speed run, root action, service/API/UI change,
+installation or release. Earlier full-core failures and whole-engine acceptance
+remain open. Full rewrite incomplete; goal active; speed gate closed. Required
+Vashti changes: none. Continue native chunk/staging and expert GEMM ownership;
+do not label the current small-window controller as completed prefill.

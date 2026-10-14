@@ -4702,3 +4702,25 @@ not larger repeated verification windows. Native history mapped snapshots,
 stable full graph/queues, dense-format audit, arbitrary input/sampling, earlier
 full-core failures and whole-engine physical acceptance remain open. Goal active;
 speed gate closed. Required Vashti changes: none.
+
+### Active Kuno engine handoff — connected prompt GEMM arithmetic (2026-10-14)
+
+Source `e64d770`, isolated `codex/strata-rust-port`. Read completion guide
+**Connected prompt operand/GEMM producers and consumers**. Initial prompt
+calls now select rounded BF16/FP16 operands, original GPU weight images and
+Rust/Vulkan tile GEMM; normal/pair/bundle/head, GR and AB consumers use it.
+Decode remains separate. Existing three64 MiB stage owners are borrowed and
+serialized; no new GPU content root or persistent converted artifact.
+
+Final release build, strict core Clippy and247 offline shaders pass. Two host
+canonical weight-image/rounded-product tests pass; later span/saturation/dummy
+owner changes pass final build/shader checks. No live GPU/model/speed test,
+root/service/API/UI change, installation or release.
+
+**Still not complete prompt prefill:** the controller remains a three-row loop.
+Large native chunk allocation/budget, streamed FP16 expert GEMM/ring/cache loan,
+prompt causal kernels, double-buffered PLE prefetch, device carry/teacher handoff
+and whole-prompt scheduling remain required. oneMKL is replaced with ordinary
+FMA tile GEMM; numerical/XMX/performance acceptance is unproven. Final stage/
+cache/queue lifetime audit and earlier full-core failures remain open. Full
+rewrite incomplete; goal active; speed gate closed. Required Vashti changes: none.
