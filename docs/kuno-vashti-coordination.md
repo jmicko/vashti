@@ -4875,3 +4875,23 @@ recovery/speed acceptance or service/API/UI/install change. Earlier full-core
 failures remain open. Canonical checkout and inherited bytecode preserved.
 Full rewrite incomplete; goal active; sudo expired. Continue full residual/
 attention/PLE/carry/state composition before speed trials. Vashti changes: none.
+
+### Active Kuno engine handoff — carved prompt GDN and real replay source (2026-10-14)
+
+Source `81f1d76`, isolated `codex/strata-rust-port`. Read completion guide
+**Connected carved GDN prompt data and replay source**. Actual prompt QKV/Z/H/
+readout use stage1 upper-half carved views. Original replay snapshots the real
+raw producer, including zero inactive rows. New internal projection writes are
+restricted to exact registered views. No extra GPU root;73,728 runtime metadata
+bytes charged. Status/control/replay/acceptance and parent packets remain MAX8.
+
+Final release build, strict Clippy and269 offline shaders pass. No live GPU,
+copy/model/numerical/state/recovery/speed validation. Full-core failures remain
+open; full rewrite incomplete, goal active. Canonical/services/bytecode untouched.
+No API, install or Vashti change. Last known sudo expired; source work can continue.
+
+Next QSA: shared pooled index state and bounded32-query attention scratch, with
+causal selection and exact cache append/state ownership. Read the receipt's
+native pointers; do not enlarge old per-query pool/attention arrays. Full
+residual/PLE/carry, prompt acceptance, head/MTP teaching, budgets/queues/layouts
+and whole-engine acceptance still precede speed testing.

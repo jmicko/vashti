@@ -1621,3 +1621,46 @@ controller. Do not just enlarge the current three-row packets. Native GR still
 retains F32 normalized rows instead of recomputing mix from residual/scales;
 layout/queue/cache-loan/general-input audits and whole-engine acceptance remain
 required before performance testing.
+
+## Connected carved GDN prompt data and replay source (2026-10-14)
+
+Source `81f1d76`. Actual prompt QKV/Z projections now write authenticated carved
+views in stage1's upper half. Conv/history/L2 consume that raw QKV, recurrence
+consumes the carved H and writes carved readout, and FP16 output norm reads the
+actual carved readout/Z. Four256-row-capacity views occupy about32 MiB plus
+native alignment/padding; lower64 MiB GEMM/paired expert images stay disjoint.
+No GPU root is added. Existing state, Q/K/V replay splits, controls, status and
+acceptance owners remain legacy MAX8: full GDN chunk ownership is not complete.
+
+The new internal projector method accepts only exact registered carved outputs,
+checks input/output overlap and retains actual cached tensor/client/fault
+contracts. It is not an arbitrary writable handle API. Replay now snapshots the
+real carved raw projection; its one native copy zeros inactive old-cache rows.
+The new copy shader is included in offline validation. Extra73,728 runtime
+metadata bytes is charged. Ordinary decode retains its original source/copy path.
+
+Final release build, strict Clippy and269 offline shaders pass in
+`strata-prompt-gdn-owner-final-build-20261014.log`,
+`strata-prompt-gdn-owner-clippy-20261014.log`, and
+`strata-prompt-gdn-owner-shaders-20261014.log`. A WGSL reserved identifier caught
+by validation was renamed before the final successful build/shader checks.
+Fmt/whitespace pass. No live GPU/copy/model/numerical/state/recovery/speed run,
+root action, service/API/UI/install change. Earlier full-core failures remain
+open. Full rewrite incomplete; goal active; last known sudo cache expired.
+
+Next implement QSA's real shared prompt region and its coupled schedule. Native
+`prefill.cpp:2950-3005` appends the chunk before scoring, uses shared completed
+indexer blocks/dead-tail state, and selects queries in batches256; default
+attention falls back to32-query batches (`:3124-3165`). Do NOT scale the old
+per-query MEAN/POOL and LOGIT/PROB owners to256 rows: that duplicates shared
+prefix state and hundreds of MiB of attention scratch. Native `qsa_set_bytes`
+uses one bounded32-query attention workspace. Split only Q from interleaved
+Qfull; gating already consumes Qfull directly, so a second full gate copy is
+unnecessary. Preserve query-specific causal completed-block/tail visibility and
+exact actual cache/position state when moving append earlier. Native KV paging,
+indexer tail/dead layout and numerical fidelity still require the final audit.
+
+Then finish full residual/PLE/carry ownership, prompt-only acceptance, final-only
+head and device MTP teaching, plus native budget/cache loans and queue/capture.
+The parent still runs three-row/MAX8 packets; do not label this as whole prefill
+or alter global verification capacity to bypass remaining ownership work.
