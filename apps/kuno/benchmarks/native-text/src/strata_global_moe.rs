@@ -269,12 +269,33 @@ impl Workspace {
                 count as u32,
                 layer as u32,
                 self.epoch,
-                u32::from(self.verify_usage),
+                u32::from(self.verify_usage) | (u32::from(crate::strata_prompt::active()) << 1),
             ]));
         // SAFETY: exact private routing/remap roots; no host readback or cache
         // transfer can bypass the owning graph's dependencies.
         unsafe {
             client.launch_unchecked(Box::new(Kernel::Route), CubeCount::Static(1, 1, 1), args);
+        }
+        if crate::strata_prompt::active() {
+            crate::strata_prompt::experts::enqueue(
+                client,
+                graph,
+                sources,
+                layer,
+                geometry,
+                &owners,
+                &full(fault)?,
+                count,
+            )?;
+            self.layer_pending = true;
+            // All prompt expert work is already queued. There are no CPU jobs
+            // or remaining decode GPU groups for the caller to schedule; this
+            // does not claim that the router selected zero experts.
+            return Ok(crate::strata_global_cpu::Plan {
+                jobs: Vec::new(),
+                input: Zeroizing::new(Vec::new()),
+                gpu_groups: 0,
+            });
         }
         let cpu_plan = crate::strata_global_cpu::prepare(
             graph,

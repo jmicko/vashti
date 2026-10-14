@@ -77,7 +77,7 @@ fn specialize_members(mut source: String, down: bool, capacity: usize, width: us
     source.push_str(&format!("\n// STRATA_CARDINALITY_MEMBERS={width}\n"));
     source
 }
-fn replace_reads(mut source: String, name: &str) -> String {
+pub(crate) fn replace_reads(mut source: String, name: &str) -> String {
     let needle = format!("{name}[");
     while let Some(first) = source.find(&needle) {
         let end = first

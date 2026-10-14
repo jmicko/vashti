@@ -55,7 +55,7 @@ enum Kernel {
 
 // Load original encoded words once per32 activation block. Natural weight order
 // and original half factors are retained, including both halves of Q2_0's64.
-fn decode(dtype: u32) -> String {
+pub(crate) fn decode(dtype: u32) -> String {
     let (prepare, packed) = match dtype {
         super::IQ4_NL => (
             "let base=row+block*18u;let payload=base+2u;let low=down_load8(payload);let high=down_load8(payload+8u);return DownEncoded(vec4<u32>(low,high),down_half(base));",

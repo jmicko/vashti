@@ -10,13 +10,14 @@ struct Params { count:u32,layer:u32,epoch:u32,r0:u32 }
 @group(0) @binding(6) var<uniform> p:Params;
 var<workgroup> chosen:array<u32,80>;
 var<workgroup> logical:array<u32,80>;
+var<workgroup> group_logical:array<u32,80>;
 var<workgroup> bad:atomic<u32>;
 fn finite(x:f32)->bool { return abs(x)<=bitcast<f32>(0x7f7fffffu); }
 @compute @workgroup_size(256)
 fn main(@builtin(local_invocation_index) local:u32,@builtin(subgroup_id) sg:u32,
         @builtin(subgroup_invocation_id) lane:u32,@builtin(subgroup_size) width:u32,
         @builtin(num_subgroups) nsg:u32) {
-    if p.count<1u || p.count>8u || p.layer>=48u || p.epoch==0u || p.r0>1u
+    if p.count<1u || p.count>8u || p.layer>=48u || p.epoch==0u || p.r0>3u
         || width!=32u || nsg!=8u || arrayLength(&logits)<p.count*512u
         || arrayLength(&remap)!=32768u || arrayLength(&map)!=8192u
         || arrayLength(&probability)!=8192u || arrayLength(&usage)!=32768u || arrayLength(&fault)<1u {return;}
@@ -70,7 +71,7 @@ fn main(@builtin(local_invocation_index) local:u32,@builtin(subgroup_id) sg:u32,
         for(var route=0u;route<p.count*10u;route++) {
             let cell=chosen[route];var group=groups;
             for(var g=0u;g<groups;g++) {if map[4u+g]==cell {group=g;break;}}
-            if group==groups {map[4u+group]=cell;groups++;}
+            if group==groups {map[4u+group]=cell;group_logical[group]=logical[route];groups++;}
             let length=map[84u+group];
             if length>=p.count {atomicOr(&fault[0],128u);return;}
             for(var i=0u;i<length;i++) {if map[164u+group*8u+i]/10u==route/10u {atomicOr(&fault[0],128u);return;}}
@@ -78,7 +79,22 @@ fn main(@builtin(local_invocation_index) local:u32,@builtin(subgroup_id) sg:u32,
         }
         // Count actual logical routes, not physical-cell IDs. Only one lane
         // writes this layer; ordered windows share no concurrent usage writer.
-        if p.r0==1u {for(var route=0u;route<p.count*10u;route++) {usage[p.layer*512u+logical[route]]+=1.0;}}
+        if (p.r0&1u)!=0u {for(var route=0u;route<p.count*10u;route++) {usage[p.layer*512u+logical[route]]+=1.0;}}
+        // Intel FP16 prefill traverses experts in logical ID order; group
+        // members remain in token/rank order and output ranks remain unchanged.
+        // Physical cells can change after adaptation, so never sort by cell.
+        if (p.r0&2u)!=0u {
+            for(var g=1u;g<groups;g++) {
+                var at=g;
+                while at>0u && group_logical[at]<group_logical[at-1u] {
+                    let key=group_logical[at];group_logical[at]=group_logical[at-1u];group_logical[at-1u]=key;
+                    let cell=map[4u+at];map[4u+at]=map[4u+at-1u];map[4u+at-1u]=cell;
+                    let length=map[84u+at];map[84u+at]=map[84u+at-1u];map[84u+at-1u]=length;
+                    for(var i=0u;i<8u;i++) {let route=map[164u+at*8u+i];map[164u+at*8u+i]=map[164u+(at-1u)*8u+i];map[164u+(at-1u)*8u+i]=route;}
+                    at--;
+                }
+            }
+        }
         map[0]=p.count;map[1]=0u;map[2]=p.count;map[3]=groups;
     }
 }

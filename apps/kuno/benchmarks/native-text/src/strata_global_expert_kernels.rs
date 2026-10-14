@@ -244,32 +244,59 @@ pub(crate) fn fetch(
         return Err(Error::InvalidBufferLength);
     }
     full(stages.iter().cloned().chain([map.clone(), status.clone()]))?;
-    for (role, projection) in geometry.projections().iter().enumerate() {
-        let bytes = projection.expert_bytes();
-        if !bytes.is_multiple_of(16)
-            || bytes as u64 * 80 > STAGE_BYTES
-            || stages[role].size_in_used() != STAGE_BYTES
-        {
-            return Err(Error::InvalidBufferLength);
-        }
-        let args = KernelArguments::new()
-            .with_buffer(sources.prototype(graph, layer, role)?.binding())
-            .with_buffer(map.clone().binding())
-            .with_buffer(stages[role].clone().binding())
-            .with_buffer(status.clone().binding());
-        let args =
-            sources
-                .bind(layer, args)?
-                .with_info(params([0, count, bytes / 16, role, 0, 0, 0, 0]));
-        // SAFETY: Source owner supplies actual retained pointer extents; each
-        // selected HOST copy is disjoint and ordered before original role reads.
-        unsafe {
-            client.launch_unchecked(
-                Box::new(Op::Fetch),
-                CubeCount::Static((bytes / 16).div_ceil(256) as u32, 80, 1),
-                args,
-            );
-        }
+    for (role, stage) in stages.iter().enumerate() {
+        fetch_role(
+            client, graph, sources, layer, geometry, map, status, stage, count, role,
+        )?;
+    }
+    Ok(())
+}
+/// Prompt GEMM reuses one raw stage after each role's dequantization. Decode
+/// retains its three simultaneous role stages and calls this through `fetch`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn fetch_role(
+    client: &ComputeClient<WgpuRuntime>,
+    graph: kuno_text::model::BoundGraph<'_, '_>,
+    sources: &Sources,
+    layer: usize,
+    geometry: g::Geometry,
+    map: &Handle,
+    status: &Handle,
+    stage: &Handle,
+    count: usize,
+    role: usize,
+) -> Result<()> {
+    let projection = geometry
+        .projections()
+        .get(role)
+        .copied()
+        .ok_or(Error::InvalidBufferLength)?;
+    let bytes = projection.expert_bytes();
+    if !(1..=8).contains(&count)
+        || !bytes.is_multiple_of(16)
+        || bytes as u64 * 80 > STAGE_BYTES
+        || stage.size_in_used() != STAGE_BYTES
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    full([stage.clone(), map.clone(), status.clone()].into_iter())?;
+    let args = KernelArguments::new()
+        .with_buffer(sources.prototype(graph, layer, role)?.binding())
+        .with_buffer(map.clone().binding())
+        .with_buffer(stage.clone().binding())
+        .with_buffer(status.clone().binding());
+    let args =
+        sources
+            .bind(layer, args)?
+            .with_info(params([0, count, bytes / 16, role, 0, 0, 0, 0]));
+    // SAFETY: authentic original source extents, grouped disjoint raw slices;
+    // the graph orders this fetch before the consuming dequantization.
+    unsafe {
+        client.launch_unchecked(
+            Box::new(Op::Fetch),
+            CubeCount::Static((bytes / 16).div_ceil(256) as u32, 80, 1),
+            args,
+        );
     }
     Ok(())
 }

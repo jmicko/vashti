@@ -81,7 +81,7 @@ fn grid_source(dtype: u32) -> (String, String) {
 // the encoded32-value payload/metadata, then expand each quartet immediately;
 // holding all eight decoded words for both projections raises register demand.
 // Every header/payload address below is2-byte aligned in the frozen profiles.
-fn decode(name: &str, dtype: u32) -> String {
+pub(crate) fn decode(name: &str, dtype: u32) -> String {
     let (prepare, factor, packed) = match dtype {
         super::IQ3_XXS => (
             "let base=row+(block/8u)*98u;let group=block%8u;let codes=NAME_load8(base+2u+group*8u);return NAME_Encoded(vec4<u32>(codes,0u,0u),NAME_word(base+66u+group*4u),0u,0u,NAME_half(base));",

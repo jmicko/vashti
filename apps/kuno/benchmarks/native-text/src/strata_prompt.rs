@@ -18,6 +18,8 @@ use cubecl_runtime::{
 };
 use kuno_text::{Error, Result};
 use std::cell::RefCell;
+#[path = "strata_prompt_experts.rs"]
+pub(crate) mod experts;
 thread_local! {static STAGES:RefCell<Option<[Handle;3]>>=const{RefCell::new(None)};}
 pub(crate) struct Scope;
 impl Scope {
@@ -34,10 +36,10 @@ impl Scope {
             u::handle(arena, ids[1])?,
             u::handle(arena, ids[2])?,
         ];
-        if handles
-            .iter()
-            .any(|h| h.size_in_used() != 64 * 1024 * 1024 || h.stream != handles[0].stream)
-        {
+        if handles.iter().any(|h| {
+            h.size_in_used() != crate::strata_global_experts::STAGE_BYTES
+                || h.stream != handles[0].stream
+        }) {
             return Err(Error::InvalidBufferLength);
         }
         STAGES.with(|s| {

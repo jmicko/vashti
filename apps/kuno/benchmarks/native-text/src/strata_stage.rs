@@ -46,8 +46,8 @@ impl Scope {
                 .clone(),
         ];
         if handles.iter().any(|h| {
-            h.size_in_used() != OWNER_BYTES
-                || h.size() != OWNER_BYTES
+            h.size_in_used() != crate::strata_global_experts::STAGE_BYTES
+                || h.size() != crate::strata_global_experts::STAGE_BYTES
                 || h.offset_start.unwrap_or(0) != 0
                 || h.offset_end.unwrap_or(0) != 0
                 || h.stream != handles[0].stream
