@@ -1961,6 +1961,7 @@ pub(super) struct Workspace {
     shared: shared_batch::Workspace,
     outer: Zeroizing<Outer>,
     core_stages: Option<[BufferId; 3]>,
+    core_prompt_stages: Option<[BufferId; 3]>,
     global_moe: Option<crate::strata_global_moe::Workspace>,
     poison: Arc<AtomicBool>,
     dense_member_capacity: usize,
@@ -2361,11 +2362,13 @@ impl Workspace {
             Some(crate::strata_global_moe::Workspace::allocate(
                 graph,
                 &mut model.arena,
+                model.context,
             )?)
         } else {
             None
         };
         let core_stages = global_moe.as_ref().map(|m| m.stage_ids());
+        let core_prompt_stages = global_moe.as_ref().map(|m| m.prompt_stage_ids());
         let mut alloc = |n| model.arena.allocate_zeroed(n).map_err(u::fault);
         let outer = Zeroizing::new(Outer {
             residual: [alloc(RESIDUAL_WORDS)?, alloc(RESIDUAL_WORDS)?],
@@ -2397,6 +2400,7 @@ impl Workspace {
             shared,
             outer,
             core_stages,
+            core_prompt_stages,
             global_moe,
             poison,
             dense_member_capacity: 8,
@@ -2656,6 +2660,14 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .as_ref()
             .ok_or(error())?
             .stage_handles(&self.arena)?;
+        let prompt_stages = self
+            .native_batch
+            .as_ref()
+            .ok_or(error())?
+            .global_moe
+            .as_ref()
+            .ok_or(error())?
+            .prompt_stage_handles(&self.arena)?;
         unsafe {
             executor.prepare_strata_global_sources(self.graph, plan, device, reserved)?;
         }
@@ -2665,6 +2677,12 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .and_then(std::sync::Arc::get_mut)
             .ok_or(error())?
             .attach_stages(device, queue, stages)?;
+        executor
+            .strata_global_sources
+            .as_mut()
+            .and_then(std::sync::Arc::get_mut)
+            .ok_or(error())?
+            .attach_prompt_stage(prompt_stages[2].clone())?;
         self.completed_native_projection_boundary(executor)?;
         executor.activate_native_core_q6_head()
     }

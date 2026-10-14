@@ -38,7 +38,8 @@ pub(crate) const MAIN_BYTES: u64 = 32768
     + 32768
     + 131072
     + 1048576
-    + 3 * crate::strata_global_experts::STAGE_BYTES;
+    + 3 * crate::strata_global_experts::STAGE_BYTES
+    + crate::strata_prompt::allocation::MAIN_BYTES;
 fn reject() -> Error {
     Error::InvalidFormat("Strata global routed family")
 }
@@ -120,6 +121,7 @@ pub(crate) struct Workspace {
     layer_pending: bool,
     adaptive: Option<crate::strata_global_adapt::Cache>,
     stages: [BufferId; 3],
+    prompt_stages: [BufferId; 3],
     epoch: u32,
     verify_usage: bool,
     active: Option<Zeroizing<[usize; 3]>>, // active count, next layer, accepted flag
@@ -129,9 +131,14 @@ impl Workspace {
         ROOT_BYTES
             .into_iter()
             .chain([crate::strata_global_experts::STAGE_BYTES; 3])
+            .chain([crate::strata_prompt::allocation::ROOT_BYTES; 3])
             .collect()
     }
-    pub(crate) fn allocate(graph: BoundGraph<'_, '_>, arena: &mut PrivateArena) -> Result<Self> {
+    pub(crate) fn allocate(
+        graph: BoundGraph<'_, '_>,
+        arena: &mut PrivateArena,
+        context: usize,
+    ) -> Result<Self> {
         if !crate::strata_intel_core::enabled() {
             return Err(reject());
         }
@@ -186,6 +193,8 @@ impl Workspace {
             arena.allocate_zeroed(stage_words).map_err(u::fault)?,
             arena.allocate_zeroed(stage_words).map_err(u::fault)?,
         ];
+        let prompt_stages =
+            crate::strata_prompt::allocation::Plan::new(context)?.allocate(arena)?;
         graph.verify_unchanged()?;
         Ok(Self {
             binding: graph.binding_id(),
@@ -194,11 +203,22 @@ impl Workspace {
             geometries: geometries.try_into().map_err(|_| reject())?,
             ids: ids.try_into().map_err(|_| reject())?,
             stages,
+            prompt_stages,
             epoch: 0,
             verify_usage: false,
             active: None,
             adaptive: None,
         })
+    }
+    pub(crate) fn prompt_stage_ids(&self) -> [BufferId; 3] {
+        self.prompt_stages
+    }
+    pub(crate) fn prompt_stage_handles(&self, arena: &PrivateArena) -> Result<[Handle; 3]> {
+        Ok([
+            u::handle(arena, self.prompt_stages[0])?,
+            u::handle(arena, self.prompt_stages[1])?,
+            u::handle(arena, self.prompt_stages[2])?,
+        ])
     }
     pub(crate) fn stage_ids(&self) -> [BufferId; 3] {
         self.stages

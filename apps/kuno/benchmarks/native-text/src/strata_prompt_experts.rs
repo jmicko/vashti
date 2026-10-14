@@ -190,7 +190,7 @@ fn raw_slot(root: &Handle, slot: usize, roles: [usize; 3]) -> Result<Handle> {
         || bytes
             .checked_mul(RAW_SLOTS)
             .is_none_or(|n| n > 64 * 1024 * 1024)
-        || root.size_in_used() != 128 * 1024 * 1024
+        || root.size_in_used() != allocation::ROOT_BYTES
         || root.offset_start.unwrap_or(0) != 0
         || root.offset_end.unwrap_or(0) != 0
     {
@@ -201,7 +201,7 @@ fn raw_slot(root: &Handle, slot: usize, roles: [usize; 3]) -> Result<Handle> {
     Ok(root
         .clone()
         .offset_start(first as u64)
-        .offset_end(128 * 1024 * 1024 - end as u64))
+        .offset_end(allocation::ROOT_BYTES - end as u64))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -505,7 +505,7 @@ mod raw_slot_tests {
 
     #[test]
     fn exact_views_cover_original_gu_up_down_for_every_supported_quant_pair() {
-        let root = Handle::new(StreamId { value: 91 }, 128 * 1024 * 1024);
+        let root = Handle::new(StreamId { value: 91 }, allocation::ROOT_BYTES);
         let mut old_guard_would_exceed_exact_slot = false;
         for gu in [q::IQ2_S, q::IQ3_S, q::IQ3_XXS, q::IQ4_XS] {
             for down in [q::IQ4_NL, q::Q2_0] {
@@ -519,7 +519,7 @@ mod raw_slot_tests {
                 for slot in 0..RAW_SLOTS {
                     let view = raw_slot(&root, slot, [gu_bytes, gu_bytes, down_bytes]).unwrap();
                     let first = view.offset_start.unwrap();
-                    let end = 128 * 1024 * 1024 - view.offset_end.unwrap();
+                    let end = allocation::ROOT_BYTES - view.offset_end.unwrap();
                     assert_eq!(first, prior_end);
                     assert_eq!(view.size_in_used(), total as u64);
                     assert!(end <= 64 * 1024 * 1024);
@@ -570,7 +570,7 @@ mod raw_slot_tests {
     }
     #[test]
     fn slot_descriptors_reject_partial_roots_bad_geometry_and_upper_half_use() {
-        let root = Handle::new(StreamId { value: 91 }, 128 * 1024 * 1024);
+        let root = Handle::new(StreamId { value: 91 }, allocation::ROOT_BYTES);
         let roles = [1024, 1024, 2048];
         assert!(raw_slot(&root, RAW_SLOTS, roles).is_err());
         assert!(raw_slot(&root.clone().offset_end(256), 0, roles).is_err());

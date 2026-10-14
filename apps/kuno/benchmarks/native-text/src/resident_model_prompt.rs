@@ -54,7 +54,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             accepted: false,
         };
         let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _scope = p::Scope::new(&self.arena, native.core_stages.ok_or_else(error)?)?;
+            let _scope = p::Scope::new(&self.arena, native.core_prompt_stages.ok_or_else(error)?)?;
             let start = self.position;
             let result = native.run_prompt_full(self, executor, tokens, final_chunk, cancel)?;
             if let Some(draft) = draft.as_deref_mut() {

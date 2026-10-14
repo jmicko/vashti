@@ -112,7 +112,7 @@ pub(crate) fn validate(map: &[u32], count: usize) -> Result<usize> {
 /// all actual rank outputs. No larger permanent MAX8 allocation is introduced.
 pub(crate) fn scratch() -> Result<[Handle; 2]> {
     let root = stages()?[2].clone();
-    if root.size_in_used() != 128 * 1024 * 1024
+    if root.size_in_used() != allocation::ROOT_BYTES
         || root.offset_start.unwrap_or(0) != 0
         || root.offset_end.unwrap_or(0) != 0
     {
@@ -121,7 +121,7 @@ pub(crate) fn scratch() -> Result<[Handle; 2]> {
     let view = |start: u64, bytes: u64| {
         root.clone()
             .offset_start(start)
-            .offset_end(128 * 1024 * 1024 - start - bytes)
+            .offset_end(allocation::ROOT_BYTES - start - bytes)
     };
     Ok([
         view(64 * 1024 * 1024, 2 * 1024 * 1024),

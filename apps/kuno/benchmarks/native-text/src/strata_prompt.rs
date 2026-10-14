@@ -18,6 +18,8 @@ use cubecl_runtime::{
 };
 use kuno_text::{Error, Result};
 use std::cell::RefCell;
+#[path = "strata_prompt_allocation.rs"]
+pub(crate) mod allocation;
 #[path = "strata_prompt_experts.rs"]
 pub(crate) mod experts;
 #[path = "strata_prompt_groups.rs"]
@@ -40,10 +42,10 @@ impl Scope {
             u::handle(arena, ids[1])?,
             u::handle(arena, ids[2])?,
         ];
-        if handles.iter().any(|h| {
-            h.size_in_used() != crate::strata_global_experts::STAGE_BYTES
-                || h.stream != handles[0].stream
-        }) {
+        if handles
+            .iter()
+            .any(|h| h.size_in_used() != allocation::ROOT_BYTES || h.stream != handles[0].stream)
+        {
             return Err(Error::InvalidBufferLength);
         }
         STAGES.with(|s| {

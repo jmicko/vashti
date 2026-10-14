@@ -9,6 +9,13 @@ pub(crate) async fn request_device(
 ) -> std::result::Result<(wgpu::Device, wgpu::Queue), Box<dyn std::error::Error>> {
     #[cfg(feature = "strata-intel-core")]
     {
+        if descriptor.required_limits.max_storage_buffer_binding_size
+            < crate::strata_prompt::allocation::ROOT_BYTES
+            || descriptor.required_limits.max_buffer_size
+                < crate::strata_prompt::allocation::ROOT_BYTES
+        {
+            return Err("native prompt owner device limits rejected".into());
+        }
         cubecl::wgpu::vulkan::request_strata_device(
             adapter,
             descriptor.required_features,

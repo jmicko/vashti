@@ -44,7 +44,12 @@ use cubecl_runtime::memory_management::{MemoryPoolOptions, PoolType};
 use zeroize::Zeroize;
 
 pub const MIN_SPAN_BYTES: usize = 32 * 1024;
-pub const MAX_SPAN_BYTES: usize = 128 * 1024 * 1024;
+pub const MAX_SPAN_BYTES: usize = if cfg!(feature = "strata-intel-core") {
+    512 * 1024 * 1024
+} else {
+    128 * 1024 * 1024
+};
+const ZERO_AUDIT_WINDOW: usize = 32 * 1024 * 1024;
 const LANES: usize = 64;
 static NEXT_ARENA_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -55,7 +60,7 @@ static NEXT_ARENA_ID: AtomicU64 = AtomicU64::new(1);
 /// This constructor cannot inspect an existing client's allocator config.
 pub fn required_memory_configuration() -> cubecl::MemoryConfiguration {
     cubecl::MemoryConfiguration::Custom {
-        pool_options: (15..=27)
+        pool_options: (15..=MAX_SPAN_BYTES.ilog2())
             .map(|power| MemoryPoolOptions {
                 pool_type: PoolType::ExclusivePages {
                     max_alloc_size: 1u64 << power,
@@ -150,8 +155,9 @@ impl BufferLayout {
             return Err(ArenaError::InvalidLayout);
         }
         let owned_words = owned_bytes / 4;
-        // MAX_SPAN_BYTES guarantees each buffer and the flattened dispatch
-        // position fit 32-bit indexing and portable storage binding limits.
+        // Both selected caps fit32-bit flattened indexing. The ordinary path
+        // keeps portable128MiB bindings; native prompt owners additionally
+        // require the explicit larger hardware admission before allocation.
         let groups = owned_words.div_ceil(LANES);
         let x = groups.min(65_535);
         let y = groups.div_ceil(x);
@@ -423,7 +429,7 @@ impl Drop for AuditBytes {
 
 trait OwnedZeroInspection {
     type Lease: AsRef<[u8]>;
-    fn read_full(&mut self, slot: usize) -> Result<Self::Lease>;
+    fn read_range(&mut self, slot: usize, first: usize, bytes: usize) -> Result<Self::Lease>;
     fn cleanup_after_read(&mut self) -> Result<()>;
 }
 
@@ -444,18 +450,34 @@ fn inspect_owned_zero(
     backend: &mut impl OwnedZeroInspection,
     spans: &[BufferLayout],
 ) -> Result<OwnedZeroAudit> {
+    inspect_owned_zero_window(backend, spans, ZERO_AUDIT_WINDOW)
+}
+fn inspect_owned_zero_window(
+    backend: &mut impl OwnedZeroInspection,
+    spans: &[BufferLayout],
+    window: usize,
+) -> Result<OwnedZeroAudit> {
+    if window == 0 || !window.is_multiple_of(4) {
+        return Err(ArenaError::Cleanup);
+    }
     let mut counts = OwnedZeroAudit::default();
     for (slot, span) in spans.iter().enumerate() {
-        let zero = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            inspect_zero_span(backend.read_full(slot)?, span.owned_bytes)
-        }));
-        // The consumed lease (including an Err/panic path) is gone BEFORE this
-        // audited sanitizer. One readback page at a time fits the I/O budget.
-        let cleanup = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            backend.cleanup_after_read()
-        }));
-        if !matches!(zero, Ok(Ok(()))) || !matches!(cleanup, Ok(Ok(()))) {
+        if span.owned_bytes == 0 {
             return Err(ArenaError::Cleanup);
+        }
+        for first in (0..span.owned_bytes).step_by(window) {
+            let bytes = window.min(span.owned_bytes - first);
+            let zero = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                inspect_zero_span(backend.read_range(slot, first, bytes)?, bytes)
+            }));
+            // Every lease is wiped/dropped before sanitizer and the next
+            // bounded window. No prefix can credit an uninspected root tail.
+            let cleanup = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                backend.cleanup_after_read()
+            }));
+            if !matches!(zero, Ok(Ok(()))) || !matches!(cleanup, Ok(Ok(()))) {
+                return Err(ArenaError::Cleanup);
+            }
         }
         counts = counts.checked_add(OwnedZeroAudit {
             bytes: span.owned_bytes as u64,
@@ -816,17 +838,31 @@ impl PrivateArena {
         struct Native<'a>(&'a PrivateArena);
         impl OwnedZeroInspection for Native<'_> {
             type Lease = AuditBytes;
-            fn read_full(&mut self, slot: usize) -> Result<Self::Lease> {
+            fn read_range(
+                &mut self,
+                slot: usize,
+                first: usize,
+                bytes: usize,
+            ) -> Result<Self::Lease> {
                 let handle = self.0.handles.get(slot).ok_or(ArenaError::Cleanup)?;
                 let span = self.0.ledger.spans.get(slot).ok_or(ArenaError::Cleanup)?;
                 if handle.size() != span.owned_bytes as u64
                     || handle.size_in_used() != span.owned_bytes as u64
+                    || bytes == 0
+                    || first
+                        .checked_add(bytes)
+                        .is_none_or(|end| end > span.owned_bytes)
                 {
                     return Err(ArenaError::Cleanup);
                 }
                 self.0
                     .client
-                    .read_private_cleanup(handle.clone())
+                    .read_private_cleanup(
+                        handle
+                            .clone()
+                            .offset_start(first as u64)
+                            .offset_end((span.owned_bytes - first - bytes) as u64),
+                    )
                     .map(AuditBytes)
                     .map_err(|_| ArenaError::Cleanup)
             }
@@ -1071,22 +1107,32 @@ mod tests {
     }
     impl OwnedZeroInspection for FakeZeroAudit {
         type Lease = FakeAuditLease;
-        fn read_full(&mut self, slot: usize) -> Result<Self::Lease> {
+        fn read_range(&mut self, slot: usize, first: usize, length: usize) -> Result<Self::Lease> {
             // These fake owned pages are retained throughout every read.
             assert_eq!(self.spans.len(), 3);
             assert_eq!(self.live.get(), 0); // no lease accumulation
             self.reads.push(slot);
             let span = self.spans[slot];
-            if span.owned_bytes > self.budget || (slot == self.fail_at && self.failure == "map") {
+            let tail = first + length == span.owned_bytes;
+            if slot == self.fail_at && tail && self.failure == "tail map" {
+                return Err(ArenaError::Cleanup);
+            }
+            if length > self.budget
+                || first
+                    .checked_add(length)
+                    .is_none_or(|end| end > span.owned_bytes)
+                || (slot == self.fail_at && self.failure == "map")
+            {
                 return Err(ArenaError::Cleanup);
             }
             if slot == self.fail_at && self.failure == "read panic" {
                 panic!("public synthetic map setup panic");
             }
-            let mut bytes = vec![0; span.owned_bytes];
+            let mut bytes = vec![0; length];
             if slot == self.fail_at {
                 match self.failure {
-                    "padding" => bytes[span.owned_bytes - 1] = 1,
+                    "padding" => bytes[length - 1] = 1,
+                    "tail" if tail => bytes[length - 1] = 1,
                     "logical" => bytes[0] = 1,
                     "short" => {
                         bytes.pop();
@@ -1127,6 +1173,28 @@ mod tests {
             fail_at,
             failure,
             budget: 2 * MIN_SPAN_BYTES,
+        }
+    }
+    #[test]
+    fn bounded_audit_windows_cover_complete_roots_and_refuse_late_tail_failure() {
+        let mut good = fake_zero_audit("none", usize::MAX);
+        good.budget = 4096;
+        let spans = good.spans.clone();
+        let counts = inspect_owned_zero_window(&mut good, &spans, 4096).unwrap();
+        assert_eq!(counts.bytes, 4 * MIN_SPAN_BYTES as u64);
+        assert_eq!(counts.buffers, 3);
+        assert_eq!(good.reads.len(), 32);
+        assert_eq!(good.cleanups, 32);
+        assert_eq!(good.live.get(), 0);
+        for failure in ["tail", "tail map"] {
+            let mut bad = fake_zero_audit(failure, 1);
+            bad.budget = 4096;
+            let spans = bad.spans.clone();
+            assert!(inspect_owned_zero_window(&mut bad, &spans, 4096).is_err());
+            assert_eq!(bad.reads.len(), 24);
+            assert_eq!(bad.cleanups, 24);
+            assert_eq!(bad.live.get(), 0);
+            assert_eq!(bad.reads.last(), Some(&1));
         }
     }
     #[test]
@@ -1372,7 +1440,14 @@ mod tests {
         else {
             panic!("expected explicit private allocator contract");
         };
-        assert_eq!(pool_options.len(), 13);
+        assert_eq!(
+            pool_options.len(),
+            if cfg!(feature = "strata-intel-core") {
+                15
+            } else {
+                13
+            }
+        );
         for (i, pool) in pool_options.iter().enumerate() {
             assert_eq!(pool.dealloc_period, Some(1));
             let PoolType::ExclusivePages { max_alloc_size } = pool.pool_type else {

@@ -7,6 +7,7 @@ use super::*;
 // argument bundle are charged together; all GPU bytes remain in old roots.
 pub(crate) const HOST_BYTES: usize = 32 * 1024;
 const HALF: u64 = 64 * 1024 * 1024;
+const ROOT: u64 = allocation::ROOT_BYTES;
 pub(crate) struct Storage {
     working: [Handle; 3],
     gr: [Handle; 4],     // normalized, down, low, up
@@ -17,15 +18,20 @@ pub(crate) struct Storage {
 }
 impl Storage {
     pub(crate) fn new(roots: [Handle; 3]) -> Result<Self> {
+        Self::at_capacity(roots, groups::CAPACITY)
+    }
+    fn at_capacity(roots: [Handle; 3], capacity: usize) -> Result<Self> {
+        if capacity == 0 || capacity > allocation::DEFAULT_ROWS {
+            return Err(Error::InvalidBufferLength);
+        }
         if roots.iter().any(|h| {
-            h.size_in_used() != 2 * HALF
+            h.size_in_used() != ROOT
                 || h.offset_start.unwrap_or(0) != 0
                 || h.offset_end.unwrap_or(0) != 0
                 || h.stream != roots[0].stream
         }) {
             return Err(Error::InvalidBufferLength);
         }
-        let capacity = groups::CAPACITY;
         let carve = |root: &Handle, words: &[usize]| -> Result<Vec<Handle>> {
             let mut cursor = HALF;
             let mut views = Vec::with_capacity(words.len());
@@ -34,10 +40,10 @@ impl Storage {
                 let bytes = (n * 4) as u64;
                 let end = cursor.checked_add(bytes).ok_or(Error::ArithmeticOverflow)?;
                 let next = end.checked_add(511).ok_or(Error::ArithmeticOverflow)? & !255;
-                if next > 2 * HALF {
+                if next > ROOT {
                     return Err(Error::InvalidBufferLength);
                 }
-                views.push(root.clone().offset_start(cursor).offset_end(2 * HALF - end));
+                views.push(root.clone().offset_start(cursor).offset_end(ROOT - end));
                 cursor = next;
             }
             Ok(views)
@@ -91,8 +97,8 @@ impl Storage {
         .try_into()
         .map_err(|_| Error::InvalidBufferLength)?;
         let working = [
-            roots[0].clone().offset_end(HALF),
-            roots[1].clone().offset_end(HALF),
+            roots[0].clone().offset_end(ROOT - HALF),
+            roots[1].clone().offset_end(ROOT - HALF),
             roots[2].clone(),
         ];
         for (i, a) in persistent.iter().enumerate() {
@@ -187,4 +193,39 @@ pub(crate) fn overlaps(a: &Handle, b: &Handle) -> Result<bool> {
         .checked_add(b.size_in_used())
         .ok_or(Error::ArithmeticOverflow)?;
     Ok(af < be && bf < ae)
+}
+
+#[cfg(test)]
+mod owned_layout_tests {
+    use super::*;
+    use cubecl_common::stream_id::StreamId;
+    #[test]
+    fn native_default_persistent_and_overlaid_views_fit_actual_registered_roots() {
+        let stream = StreamId { value: 98 };
+        let roots = std::array::from_fn(|_| Handle::new(stream, allocation::ROOT_BYTES));
+        for count in [groups::CAPACITY, allocation::DEFAULT_ROWS] {
+            let layout = Storage::at_capacity(roots.clone(), count).unwrap();
+            let mut seen = Vec::new();
+            for h in layout.gr.iter().chain(&layout.outer) {
+                assert!(
+                    h.size_in_used() <= crate::private_arena::MAX_SPAN_BYTES as u64
+                        || !cfg!(feature = "strata-intel-core")
+                );
+                for prior in &seen {
+                    assert!(!overlaps(h, prior).unwrap());
+                }
+                seen.push(h.clone());
+            }
+            for phase in [&layout.ple[..], &layout.gdn[..], &layout.qsa[..]] {
+                for (i, h) in phase.iter().enumerate() {
+                    assert!(!overlaps(h, &layout.working[1]).unwrap());
+                    for other in &phase[..i] {
+                        assert!(!overlaps(h, other).unwrap());
+                    }
+                }
+            }
+            assert_eq!(layout.working[0].size_in_used(), 64 * 1024 * 1024);
+            assert_eq!(layout.working[1].size_in_used(), 64 * 1024 * 1024);
+        }
+    }
 }

@@ -23,6 +23,7 @@ pub(crate) struct Sources {
     tables: Vec<Handle>,
     stage_table: Option<Handle>,
     stages: Option<[Handle; 3]>,
+    prompt_stage: Option<Handle>,
     reads: Vec<Vec<Handle>>,
     closed: bool,
     closing_failed: bool,
@@ -62,6 +63,7 @@ impl Sources {
             tables: Vec::with_capacity(LAYERS),
             stage_table: Some(client.create_public_owned(vec![0; TABLE_BYTES as usize])),
             stages: None,
+            prompt_stage: None,
             reads: Vec::with_capacity(LAYERS),
             closed: false,
             closing_failed: false,
@@ -275,6 +277,32 @@ impl Sources {
     pub(crate) fn plan(&self) -> &Plan {
         &self.plan
     }
+    /// Attach the real separately priced native-owned prompt raw root. This
+    /// does not replace decode's fetch-stage address table or its dependencies.
+    pub(crate) fn attach_prompt_stage(&mut self, root: Handle) -> Result<()> {
+        self.validate_attached()?;
+        if self.prompt_stage.is_some()
+            || root.stream != self.stages.as_ref().ok_or_else(reject)?[2].stream
+            || root.size_in_used() != crate::strata_prompt::allocation::ROOT_BYTES
+            || root.offset_start.unwrap_or(0) != 0
+            || root.offset_end.unwrap_or(0) != 0
+        {
+            return Err(reject());
+        }
+        let resources = self
+            .client
+            .retained_resource_metadata(vec![root.clone()])
+            .map_err(crate::resident_util::fault)?;
+        if resources.len() != 1
+            || resources[0].resource().offset != 0
+            || resources[0].resource().size != root.size_in_used()
+            || resources[0].resource().buffer.size() != root.size_in_used()
+        {
+            return Err(reject());
+        }
+        self.prompt_stage = Some(root);
+        Ok(())
+    }
     /// Intel prefill's original HOST -> staging transfer. Resident cells remain
     /// in place. The caller exclusively owns this private ring until all queued
     /// consumers finish; copies and kernels use the same checked owning stream.
@@ -289,12 +317,14 @@ impl Sources {
         first: usize,
     ) -> Result<()> {
         self.validate_graph_ready(graph)?;
-        let original_stage = self.stages.as_ref().ok_or_else(reject)?;
+        let original_stage = self.prompt_stage.as_ref().ok_or_else(reject)?;
         if destination.clone().binding().memory.allocation_id()
-            != original_stage[2].clone().binding().memory.allocation_id()
-            || destination.stream != original_stage[2].stream
+            != original_stage.clone().binding().memory.allocation_id()
+            || destination.stream != original_stage.stream
             || cell >= EXPERTS
-            || destination.size_in_used() != crate::strata_global_experts::STAGE_BYTES
+            || destination.size_in_used() != crate::strata_prompt::allocation::ROOT_BYTES
+            || destination.offset_start.unwrap_or(0) != 0
+            || destination.offset_end.unwrap_or(0) != 0
             || !first.is_multiple_of(16)
             || role_bytes.iter().any(|&b| b == 0 || !b.is_multiple_of(16))
         {
@@ -305,7 +335,7 @@ impl Sources {
         })?;
         if first
             .checked_add(total)
-            .is_none_or(|end| end as u64 > destination.size_in_used())
+            .is_none_or(|end| end > 64 * 1024 * 1024)
         {
             return Err(reject());
         }
@@ -422,7 +452,11 @@ impl Sources {
         layer: usize,
         args: KernelArguments,
     ) -> Result<KernelArguments> {
-        if self.closed || self.closing_failed || self.mutation_pending || self.stages.is_none() {
+        if self.closed
+            || self.closing_failed
+            || self.mutation_pending
+            || self.prompt_stage.is_none()
+        {
             return Err(reject());
         }
         let table = self.tables.get(layer).ok_or_else(reject)?;
@@ -540,6 +574,7 @@ impl Sources {
         self.tables.clear();
         self.reads.clear();
         self.stages = None;
+        self.prompt_stage = None;
         self.stage_table = None;
         if let Some(host) = self.host.take() {
             host.close()?;
@@ -556,6 +591,9 @@ impl Drop for Sources {
             // Failed queue completion grants no permission to release BDA roots.
             std::mem::forget(std::mem::take(&mut self.tables));
             std::mem::forget(std::mem::take(&mut self.reads));
+            if let Some(root) = self.prompt_stage.take() {
+                std::mem::forget(root);
+            }
             if let Some(stages) = self.stages.take() {
                 std::mem::forget(stages);
             }
