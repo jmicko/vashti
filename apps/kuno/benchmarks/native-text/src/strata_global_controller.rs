@@ -76,7 +76,7 @@ pub(super) fn run<'m, 'f>(
     // MTP has consumed only prompt_len-1 cells at this boundary.
     for start in (0..request.prompt.len()).step_by(3) {
         let count = (request.prompt.len() - start).min(3);
-        let rows = target.prefill_chunk_with_carry(
+        let rows = target.prompt_projection_chunk_with_carry(
             executor,
             &request.prompt[start..start + count],
             cancel,

@@ -27,6 +27,7 @@ mod strata_mtp_moe;
 mod strata_packet;
 mod strata_ple;
 mod strata_port;
+mod strata_prompt;
 mod strata_qsa;
 mod strata_stage;
 // Shared with the standalone CPU writer; writer-only methods are inert here.

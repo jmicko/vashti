@@ -3289,6 +3289,61 @@ impl<'a> GpuExecutor<'a> {
     /// Original BF16 PLE/router/shared-gate weights feed all real RHS from the same
     /// authenticated cache page. This only enqueues; the owning model retains
     /// every source/private span and commits after its whole-model fault fence.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn enqueue_strata_prompt_projection(
+        &mut self,
+        tensor: TensorView<'_>,
+        input: &Handle,
+        output: &Handle,
+        fault: &Handle,
+        spans: &quant_matvec::matmul::BatchSpans,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        let m = Matrix::new(tensor)?;
+        let dtype = tensor.info().dtype().gguf_id();
+        if !crate::strata_prompt::active()
+            || !tensor.belongs_to(self.model)
+            || m.experts() != 1
+            || spans.packed_first() != 0
+            || !crate::strata_prompt::supports(dtype, m.inputs())
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        self.model.verify_file_unchanged()?;
+        self.check_target_rows_policy()?;
+        let rb = tensor.info().row_bytes() as usize;
+        let per_tile = (TILE_BYTES / rb)
+            .min(16384)
+            .min(TILE_BYTES / (m.inputs() * 2));
+        if per_tile == 0 {
+            return Err(Error::InvalidBufferLength);
+        }
+        for first in (0..m.outputs()).step_by(per_tile) {
+            if cancel.load(Ordering::Acquire) {
+                return Err(Error::InvalidFormat("prompt projection cancelled"));
+            }
+            let rows = (m.outputs() - first).min(per_tile);
+            let weights = self.weight(tensor, 0, first, rows)?.0;
+            crate::strata_prompt::project(
+                &self.client,
+                dtype,
+                m.inputs(),
+                rows,
+                rb,
+                weights,
+                input.clone(),
+                output.clone(),
+                fault.clone(),
+                spans.count(),
+                spans.input_first(),
+                spans.input_stride(),
+                spans.output_first() + first,
+                spans.output_stride(),
+                tensor.info().name().ends_with(".ffn_down_shexp.weight"),
+            )?;
+        }
+        Ok(())
+    }
     pub(crate) fn enqueue_strata_bf16_projection(
         &mut self,
         tensor: TensorView<'_>,

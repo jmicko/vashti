@@ -1,0 +1,680 @@
+//! MIT Strata Intel prompt GEMM activation/weight ownership and consumers.
+//! Rust/Vulkan tile GEMM substitutes for oneMKL, with original BF16 or decoded
+//! FP16 operands and F32 accumulation. Existing admitted stages are borrowed.
+use crate::{
+    private_arena::{BufferId, PrivateArena},
+    resident_util as u,
+};
+use cubecl::{
+    ir::{ElemType, StorageType, UIntKind},
+    prelude::{ComputeClient, CubeCount, CubeDim},
+    wgpu::{AutoCompiler, WgpuRuntime},
+};
+use cubecl_runtime::{
+    compiler::{CompilationError, CubeTask},
+    id::KernelId,
+    kernel::{CompiledKernel, KernelMetadata},
+    server::{ExecutionMode, Handle, KernelArguments, MetadataBindingInfo},
+};
+use kuno_text::{Error, Result};
+use std::cell::RefCell;
+thread_local! {static STAGES:RefCell<Option<[Handle;3]>>=const{RefCell::new(None)};}
+pub(crate) struct Scope;
+impl Scope {
+    pub(crate) fn new(arena: &PrivateArena, ids: [BufferId; 3]) -> Result<Self> {
+        if !crate::strata_intel_core::enabled()
+            || ids[0] == ids[1]
+            || ids[0] == ids[2]
+            || ids[1] == ids[2]
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        let handles = [
+            u::handle(arena, ids[0])?,
+            u::handle(arena, ids[1])?,
+            u::handle(arena, ids[2])?,
+        ];
+        if handles
+            .iter()
+            .any(|h| h.size_in_used() != 64 * 1024 * 1024 || h.stream != handles[0].stream)
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        STAGES.with(|s| {
+            let mut s = s.borrow_mut();
+            if s.is_some() {
+                return Err(Error::InvalidBufferLength);
+            }
+            *s = Some(handles);
+            Ok(Self)
+        })
+    }
+}
+impl Drop for Scope {
+    fn drop(&mut self) {
+        STAGES.with(|s| *s.borrow_mut() = None);
+    }
+}
+pub(crate) fn active() -> bool {
+    STAGES.with(|s| s.borrow().is_some())
+}
+fn stages() -> Result<[Handle; 3]> {
+    STAGES.with(|s| s.borrow().clone().ok_or(Error::InvalidBufferLength))
+}
+pub(crate) fn control_stage() -> Result<Handle> {
+    Ok(stages()?[2].clone())
+}
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub(crate) enum Kernel {
+    Pack,
+    Dequant(u32),
+    Gemm,
+    GrNorm,
+    GrLow,
+    GrMix,
+    AbControls,
+}
+impl Kernel {
+    fn lanes(self) -> u32 {
+        if self == Self::Gemm { 64 } else { 256 }
+    }
+    fn source(self) -> String {
+        let all = include_str!("strata_prompt.wgsl");
+        let section = |name: &str| {
+            all.split_once(&format!("// {name}_BEGIN\n"))
+                .unwrap()
+                .1
+                .split_once(&format!("// {name}_END"))
+                .unwrap()
+                .0
+        };
+        let mut source = section("COMMON").to_owned();
+        if let Self::Dequant(dtype) = self {
+            let bytes = crate::quant_matvec::block_layout(dtype).unwrap().1;
+            source.push_str(&format!("const DTYPE:u32={dtype}u;const GROUP_VALUES:u32={}u;const BLOCK_BYTES:u32={bytes}u;\n",if dtype==14 {16}else{32}));
+            source.push_str(
+                include_str!("strata_dense.wgsl")
+                    .split_once("@compute")
+                    .unwrap()
+                    .0,
+            );
+        }
+        source.push_str(section(match self {
+            Self::Pack => "PACK",
+            Self::Dequant(_) => "DEQUANT",
+            Self::Gemm => "GEMM",
+            Self::GrNorm => "GR_NORM",
+            Self::GrLow => "GR_LOW",
+            Self::GrMix => "GR_MIX",
+            Self::AbControls => "AB_CONTROLS",
+        }));
+        source
+    }
+}
+impl KernelMetadata for Kernel {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Pack => "StrataPromptActivationImage",
+            Self::Dequant(_) => "StrataPromptOriginalWeightImage",
+            Self::Gemm => "StrataPromptTileGemm",
+            Self::GrNorm => "StrataPromptGrNormalize",
+            Self::GrLow => "StrataPromptGrLowActivation",
+            Self::GrMix => "StrataPromptGrMix",
+            Self::AbControls => "StrataPromptAbControls",
+        }
+    }
+    fn id(&self) -> KernelId {
+        KernelId::new::<Self>()
+            .info(*self)
+            .cube_dim(CubeDim::new_1d(self.lanes()))
+    }
+    fn address_type(&self) -> StorageType {
+        StorageType::Scalar(ElemType::UInt(UIntKind::U32))
+    }
+}
+impl CubeTask<AutoCompiler> for Kernel {
+    fn compile(
+        &self,
+        _: &mut AutoCompiler,
+        _: &cubecl::WgpuCompilationOptions,
+        _: ExecutionMode,
+        _: StorageType,
+    ) -> std::result::Result<CompiledKernel<AutoCompiler>, CompilationError> {
+        Ok(CompiledKernel {
+            entrypoint_name: "main".into(),
+            debug_name: None,
+            source: self.source(),
+            repr: None,
+            cube_dim: CubeDim::new_1d(self.lanes()),
+            debug_info: None,
+        })
+    }
+}
+pub(crate) fn launch(
+    client: &ComputeClient<WgpuRuntime>,
+    kernel: Kernel,
+    grid: [usize; 3],
+    handles: Vec<Handle>,
+    info: [u32; 16],
+) -> Result<()> {
+    if !active()
+        || grid.contains(&0)
+        || grid.iter().any(|&g| g > 65535)
+        || handles.is_empty()
+        || handles.iter().any(|h| h.stream != handles[0].stream)
+        || client.properties().hardware.max_units_per_cube < kernel.lanes()
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    let mut args = KernelArguments::new();
+    for h in handles {
+        args = args.with_buffer(h.binding());
+    }
+    args = args.with_info(MetadataBindingInfo::custom(
+        info.chunks_exact(2)
+            .map(|v| v[0] as u64 | ((v[1] as u64) << 32))
+            .collect(),
+    ));
+    // SAFETY: connected original-source caller validates live disjoint spans,
+    // authentic stage roots and serial reuse until its completed model fence.
+    unsafe {
+        client.launch_unchecked(
+            Box::new(kernel),
+            CubeCount::Static(grid[0] as u32, grid[1] as u32, grid[2] as u32),
+            args,
+        );
+    }
+    Ok(())
+}
+pub(crate) fn supports(dtype: u32, columns: usize) -> bool {
+    matches!(dtype, 8 | 12 | 13 | 14 | 20 | 23 | 30)
+        && columns > 0
+        && columns <= 16384
+        && columns.is_multiple_of(32)
+}
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn project(
+    client: &ComputeClient<WgpuRuntime>,
+    dtype: u32,
+    columns: usize,
+    rows: usize,
+    row_bytes: usize,
+    weight: Handle,
+    input: Handle,
+    output: Handle,
+    fault: Handle,
+    count: usize,
+    first: usize,
+    stride: usize,
+    out_first: usize,
+    out_stride: usize,
+    saturate: bool,
+) -> Result<()> {
+    let stage = stages()?;
+    if !supports(dtype, columns)
+        || rows == 0
+        || rows > 16384
+        || count == 0
+        || count > 4096
+        || stride < columns
+        || out_stride < rows
+        || fault.size_in_used() != 4
+        || count
+            .checked_mul(columns * 2)
+            .is_none_or(|n| n as u64 > stage[0].size_in_used())
+        || (dtype != 30 && (rows * columns * 2) as u64 > stage[1].size_in_used())
+        || weight.size_in_used() < (rows * row_bytes) as u64
+        || first
+            .checked_add((count - 1) * stride)
+            .and_then(|n| n.checked_add(columns))
+            .is_none_or(|n| n as u64 * 4 > input.size_in_used())
+        || out_first
+            .checked_add((count - 1) * out_stride)
+            .and_then(|n| n.checked_add(rows))
+            .is_none_or(|n| n as u64 * 4 > output.size_in_used())
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    let info = [
+        count as u32,
+        columns as u32,
+        rows as u32,
+        row_bytes as u32,
+        first as u32,
+        stride as u32,
+        out_first as u32,
+        out_stride as u32,
+        (dtype == 30) as u32,
+        0,
+        0,
+        0,
+        saturate as u32,
+        0,
+        0,
+        0,
+    ];
+    launch(
+        client,
+        Kernel::Pack,
+        [(count * columns / 2).div_ceil(256), 1, 1],
+        vec![input, stage[0].clone(), fault.clone()],
+        info,
+    )?;
+    let weights = if dtype == 30 {
+        weight
+    } else {
+        launch(
+            client,
+            Kernel::Dequant(dtype),
+            [(rows * columns / 2).div_ceil(256), 1, 1],
+            vec![weight, stage[1].clone(), fault.clone()],
+            info,
+        )?;
+        stage[1].clone()
+    };
+    launch(
+        client,
+        Kernel::Gemm,
+        [rows.div_ceil(8), count.div_ceil(8), 1],
+        vec![stage[0].clone(), weights, output, fault],
+        info,
+    )
+}
+pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
+    [
+        Kernel::Pack,
+        Kernel::Dequant(8),
+        Kernel::Dequant(12),
+        Kernel::Dequant(13),
+        Kernel::Dequant(14),
+        Kernel::Dequant(20),
+        Kernel::Dequant(23),
+        Kernel::Gemm,
+        Kernel::GrNorm,
+        Kernel::GrLow,
+        Kernel::GrMix,
+        Kernel::AbControls,
+    ]
+    .into_iter()
+    .map(|k| {
+        k.compile(
+            &mut AutoCompiler::Wgsl(Default::default()),
+            &Default::default(),
+            ExecutionMode::Unchecked,
+            StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+        )
+        .unwrap()
+    })
+    .collect()
+}
+
+pub(crate) fn gr(request: crate::strata_gr::Read<'_>, weights: [Handle; 3]) -> Result<()> {
+    let q = request;
+    let a = q.arena;
+    let b = q.buffers;
+    let h = |id| u::handle(a, id);
+    let ids = [
+        q.residual,
+        b.normalized,
+        b.down,
+        b.low,
+        b.partial,
+        b.injection,
+        b.mixed,
+        q.fault,
+    ];
+    if !(1..=8).contains(&q.count)
+        || q.first
+            .checked_add(q.count * 10240)
+            .is_none_or(|n| n > u::words(a, q.residual).unwrap_or(0))
+        || u::words(a, q.fault)? != 1
+        || ids.iter().enumerate().any(|(i, id)| ids[..i].contains(id))
+        || q.gamma.size_in_used() != 40960
+        || weights[0].size_in_used() != 6553600
+        || weights[1].size_in_used() != 6553600
+        || q.inject && weights[2].size_in_used() != 81920
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    for (id, words) in [
+        (b.normalized, 81920),
+        (b.down, 2560),
+        (b.low, 2560),
+        (b.partial, 207360),
+        (b.injection, 32),
+        (b.mixed, 20480),
+    ] {
+        if u::words(a, id)? != words {
+            return Err(Error::InvalidBufferLength);
+        }
+    }
+    let info = [
+        q.count as u32,
+        0,
+        0,
+        0,
+        q.first as u32,
+        0,
+        0,
+        0,
+        0,
+        q.previous.is_some() as u32,
+        q.inject as u32,
+        q.epsilon.to_bits(),
+        0,
+        0,
+        0,
+        0,
+    ];
+    // The no-apply branch reads neither dummy. Both still cover full possible
+    // source intervals and remain disjoint from the writable norm/residual.
+    let (previous, block) = q.previous.unwrap_or((b.partial, b.mixed));
+    launch(
+        a.client().map_err(u::fault)?,
+        Kernel::GrNorm,
+        [4, q.count, 1],
+        vec![
+            h(previous)?,
+            h(block)?,
+            h(b.injection)?,
+            q.gamma,
+            h(q.residual)?,
+            h(b.normalized)?,
+            h(q.fault)?,
+        ],
+        info,
+    )?;
+    let client = a.client().map_err(u::fault)?;
+    project(
+        client,
+        30,
+        10240,
+        320,
+        20480,
+        weights[0].clone(),
+        h(b.normalized)?,
+        h(b.down)?,
+        h(q.fault)?,
+        q.count,
+        0,
+        10240,
+        0,
+        320,
+        false,
+    )?;
+    if q.inject {
+        project(
+            client,
+            30,
+            10240,
+            4,
+            20480,
+            weights[2].clone(),
+            h(b.normalized)?,
+            h(b.injection)?,
+            h(q.fault)?,
+            q.count,
+            0,
+            10240,
+            0,
+            4,
+            false,
+        )?;
+    }
+    launch(
+        client,
+        Kernel::GrLow,
+        [(q.count * 320).div_ceil(256), 1, 1],
+        vec![h(b.down)?, h(b.low)?, h(b.injection)?, h(q.fault)?],
+        info,
+    )?;
+    project(
+        client,
+        30,
+        320,
+        10240,
+        640,
+        weights[1].clone(),
+        h(b.low)?,
+        h(b.partial)?,
+        h(q.fault)?,
+        q.count,
+        0,
+        320,
+        0,
+        10240,
+        false,
+    )?;
+    launch(
+        client,
+        Kernel::GrMix,
+        [(q.count * 2560).div_ceil(256), 1, 1],
+        vec![h(b.normalized)?, h(b.partial)?, h(b.mixed)?, h(q.fault)?],
+        info,
+    )
+}
+pub(crate) fn ab(q: crate::strata_gdn::Ab<'_>, weights: [Handle; 2]) -> Result<()> {
+    if q.columns != 2560
+        || !(1..=8).contains(&q.count)
+        || !(1..=48).contains(&q.heads)
+        || u::words(q.arena, q.controls)? != 8 * q.heads * 2
+        || u::words(q.arena, q.status)? != 8 * q.heads
+        || q.params.size_in_used() < (q.heads * 8) as u64
+        || u::words(q.arena, q.fault)? != 1
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    crate::resident_batch_projection::validate_view(
+        q.count,
+        q.first,
+        q.stride,
+        2560,
+        u::words(q.arena, q.input)?,
+    )?;
+    let client = q.arena.client().map_err(u::fault)?;
+    let raw = control_stage()?;
+    let fault = u::handle(q.arena, q.fault)?;
+    for (i, w) in weights.into_iter().enumerate() {
+        project(
+            client,
+            30,
+            2560,
+            q.heads,
+            5120,
+            w,
+            u::handle(q.arena, q.input)?,
+            raw.clone(),
+            fault.clone(),
+            q.count,
+            q.first,
+            q.stride,
+            i * q.heads,
+            q.heads * 2,
+            false,
+        )?;
+    }
+    let info = [
+        q.count as u32,
+        0,
+        q.heads as u32,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+    ];
+    launch(
+        client,
+        Kernel::AbControls,
+        [(q.count * q.heads).div_ceil(256), 1, 1],
+        vec![
+            raw,
+            q.params,
+            u::handle(q.arena, q.controls)?,
+            u::handle(q.arena, q.status)?,
+            fault,
+        ],
+        info,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    fn h(b: &[u8], at: usize) -> f32 {
+        half::f16::from_bits(u16::from_le_bytes([b[at], b[at + 1]])).to_f32()
+    }
+    fn value(dtype: u32, b: &[u8], col: usize) -> f32 {
+        let table = [
+            -127., -104., -83., -65., -49., -35., -22., -10., 1., 13., 25., 38., 53., 69., 89.,
+            113.,
+        ];
+        if dtype == 8 {
+            return h(b, 0) * (b[2 + col] as i8 as f32);
+        }
+        if dtype == 20 {
+            let q = (b[2 + col % 16] >> if col >= 16 { 4 } else { 0 }) & 15;
+            return h(b, 0) * table[q as usize];
+        }
+        if dtype == 23 {
+            let sub = col / 32;
+            let lo = (b[4 + sub / 2] >> ((sub % 2) * 4)) & 15;
+            let hi = (u16::from_le_bytes([b[2], b[3]]) >> (sub * 2)) & 3;
+            let q = (b[8 + sub * 16 + col % 16] >> if col % 32 >= 16 { 4 } else { 0 }) & 15;
+            return (h(b, 0) * ((lo as i32 | ((hi as i32) << 4)) - 32) as f32) * table[q as usize];
+        }
+        if dtype == 14 {
+            let sub = col / 16;
+            let half = sub / 8;
+            let quarter = sub % 8 / 2;
+            let off = sub % 2 * 16 + col % 16;
+            let lo = b[half * 64 + (quarter % 2) * 32 + off];
+            let hi = b[128 + half * 32 + off];
+            let code = ((lo >> if quarter >= 2 { 4 } else { 0 }) & 15)
+                | (((hi >> (quarter * 2)) & 3) << 4);
+            return (h(b, 208) * (b[192 + sub] as i8 as f32)) * (code as i32 - 32) as f32;
+        }
+        let group = col / 32;
+        let i = group % 4;
+        let scale = |minimum: bool| {
+            let at = if minimum { 8 } else { 4 };
+            let mut v = b[at + i] & 63;
+            if group >= 4 {
+                let c = b[12 + i];
+                let hi = b[at + i] >> 6;
+                v = (if minimum { c >> 4 } else { c & 15 }) | (hi << 4);
+            }
+            v as f32
+        };
+        let byte = b[if dtype == 13 { 48 } else { 16 } + (group / 2) * 32 + col % 32];
+        let mut q = (byte >> if group % 2 == 1 { 4 } else { 0 }) & 15;
+        if dtype == 13 {
+            q |= ((b[16 + col % 32] >> group) & 1) << 4;
+        }
+        (h(b, 0) * scale(false)) * q as f32 - h(b, 2) * scale(true)
+    }
+    #[test]
+    fn prompt_original_weight_images_match_independent_canonical_decoders() {
+        for (kind, dtype) in [
+            (kuno_text::TensorType::Q8_0, 8),
+            (kuno_text::TensorType::Q4K, 12),
+            (kuno_text::TensorType::Q5K, 13),
+            (kuno_text::TensorType::Q6K, 14),
+            (kuno_text::TensorType::Iq4Nl, 20),
+            (kuno_text::TensorType::Iq4Xs, 23),
+        ] {
+            for salt in 0..11 {
+                let mut b = (0..kind.block_bytes() as usize)
+                    .map(|i| (i * 37 + salt * 19) as u8)
+                    .collect::<Vec<_>>();
+                if dtype == 14 {
+                    for x in &mut b[192..208] {
+                        *x = (*x % 17) as i8 as u8;
+                    }
+                    b[208..210]
+                        .copy_from_slice(&half::f16::from_f32(0.03125).to_bits().to_le_bytes());
+                } else {
+                    b[..2].copy_from_slice(&half::f16::from_f32(0.03125).to_bits().to_le_bytes());
+                    if matches!(dtype, 12 | 13) {
+                        b[2..4].copy_from_slice(
+                            &half::f16::from_f32(0.015625).to_bits().to_le_bytes(),
+                        );
+                    }
+                }
+                let mut out = vec![0.; if matches!(dtype, 8 | 20) { 32 } else { 256 }];
+                kind.decode(&b, &mut out).unwrap();
+                for (col, &expected) in out.iter().enumerate() {
+                    assert_eq!(
+                        half::f16::from_f32(value(dtype, &b, col)).to_bits(),
+                        half::f16::from_f32(expected).to_bits(),
+                        "dtype={dtype} col={col}"
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn prompt_operand_rounding_and_edge_tiles_match_independent_matrix_products() {
+        for bfloat in [false, true] {
+            for count in [1usize, 3, 8, 17] {
+                for rows in [1usize, 7, 8, 19] {
+                    let columns = 64;
+                    let round = |x| {
+                        if bfloat {
+                            half::bf16::from_f32(x).to_f32()
+                        } else {
+                            half::f16::from_f32(x).to_f32()
+                        }
+                    };
+                    let x = (0..count * columns)
+                        .map(|i| round(((i * 17 % 101) as f32 - 50.) / 31.))
+                        .collect::<Vec<_>>();
+                    let w = (0..rows * columns)
+                        .map(|i| round(((i * 19 % 97) as f32 - 48.) / 37.))
+                        .collect::<Vec<_>>();
+                    let mut hits = vec![0u8; rows * count];
+                    for gt in 0..count.div_ceil(8) {
+                        for gr in 0..rows.div_ceil(8) {
+                            for tid in 0..64 {
+                                let t = gt * 8 + tid / 8;
+                                let row = gr * 8 + tid % 8;
+                                if t >= count || row >= rows {
+                                    continue;
+                                }
+                                let mut sum = 0f32;
+                                for k in (0..columns).step_by(32) {
+                                    for j in 0..32 {
+                                        sum = x[t * columns + k + j]
+                                            .mul_add(w[row * columns + k + j], sum);
+                                    }
+                                }
+                                let expected = x[t * columns..(t + 1) * columns]
+                                    .iter()
+                                    .zip(&w[row * columns..(row + 1) * columns])
+                                    .map(|(&a, &b)| a as f64 * b as f64)
+                                    .sum::<f64>();
+                                assert!(
+                                    (sum as f64 - expected).abs() < 1e-5 * (1. + expected.abs())
+                                );
+                                hits[t * rows + row] += 1;
+                            }
+                        }
+                    }
+                    assert!(hits.iter().all(|&n| n == 1));
+                }
+            }
+        }
+        for x in [0., 1., -1., 1.00390625, -1.00390625, 0.000000001, 127.5] {
+            let bits = f32::to_bits(x);
+            let actual = ((bits.wrapping_add(32767).wrapping_add((bits >> 16) & 1)) >> 16) as u16;
+            assert_eq!(actual, half::bf16::from_f32(x).to_bits());
+        }
+    }
+}

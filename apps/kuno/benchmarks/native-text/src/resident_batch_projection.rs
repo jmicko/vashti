@@ -164,7 +164,11 @@ impl BatchedResidentProjector for ResidentBatchProjection<'_, '_> {
         let weights = self
             .executor
             .strata_gdn_ab_weights(projections.map(|p| p.tensor))?;
-        crate::strata_gdn::ab(request, weights)?;
+        if crate::strata_prompt::active() {
+            crate::strata_prompt::ab(request, weights)?;
+        } else {
+            crate::strata_gdn::ab(request, weights)?;
+        }
         u::cancel(cancel)?;
         Ok(true)
     }
@@ -187,7 +191,11 @@ impl BatchedResidentProjector for ResidentBatchProjection<'_, '_> {
         let weights = self
             .executor
             .strata_gr_weights(projections.map(|p| p.tensor), injection.map(|p| p.tensor))?;
-        crate::strata_gr::read(request, weights)?;
+        if crate::strata_prompt::active() {
+            crate::strata_prompt::gr(request, weights)?;
+        } else {
+            crate::strata_gr::read(request, weights)?;
+        }
         u::cancel(cancel)?;
         Ok(true)
     }
@@ -226,6 +234,17 @@ impl BatchedResidentProjector for ResidentBatchProjection<'_, '_> {
             projection.matrix.outputs(),
             output_words,
         )?;
+        if crate::strata_prompt::active() {
+            self.executor.enqueue_strata_prompt_projection(
+                projection.tensor,
+                &u::handle(arena, input)?,
+                &u::handle(arena, output)?,
+                &u::handle(arena, self.fault)?,
+                spans,
+                cancel,
+            )?;
+            return u::cancel(cancel);
+        }
         if crate::strata_intel_core::enabled()
             && (matches!(
                 projection.tensor.info().name(),
@@ -305,7 +324,10 @@ impl BatchedResidentProjector for ResidentBatchProjection<'_, '_> {
         input: BufferId,
         cancel: &AtomicBool,
     ) -> Result<()> {
-        if !crate::strata_intel_core::enabled() || self.dense_q8.is_none() {
+        if !crate::strata_intel_core::enabled()
+            || self.dense_q8.is_none()
+            || crate::strata_prompt::active()
+        {
             for (p, output, spans) in jobs {
                 self.enqueue_batch(*p, arena, input, *output, spans, cancel)?;
             }
@@ -392,6 +414,12 @@ impl BatchedResidentProjector for ResidentBatchProjection<'_, '_> {
         spans: &BatchSpans,
         cancel: &AtomicBool,
     ) -> Result<()> {
+        if crate::strata_prompt::active() {
+            for (p, out) in projections.into_iter().zip(outputs) {
+                self.enqueue_batch(p, arena, input, out, spans, cancel)?;
+            }
+            return Ok(());
+        }
         let supported = self.dense_q8.is_some_and(|id| {
             projections.iter().all(|p| {
                 arena.handle(id).is_ok_and(|h| {
@@ -461,6 +489,10 @@ impl BatchedResidentProjector for ResidentBatchProjection<'_, '_> {
         scratch: crate::resident_gr::batch::FinalHeadScratch<'_>,
         cancel: &AtomicBool,
     ) -> Result<bool> {
+        if crate::strata_prompt::active() {
+            self.enqueue_batch(projection, arena, input, output, spans, cancel)?;
+            return Ok(false);
+        }
         // Prefill keeps its original public tile8 policy. Only the completed
         // owner's explicitly selected member1/tile1 decode policy activates
         // integer arithmetic; never select from a private active token count.
@@ -515,6 +547,10 @@ impl BatchedResidentProjector for ResidentBatchProjection<'_, '_> {
         scratch: crate::resident_gr::batch::BatchedFinalHeadScratch<'_>,
         cancel: &AtomicBool,
     ) -> Result<bool> {
+        if crate::strata_prompt::active() {
+            self.enqueue_batch(projection, arena, input, output, spans, cancel)?;
+            return Ok(false);
+        }
         if !self.executor.q6_integer_verify_head {
             self.enqueue_batch(projection, arena, input, output, spans, cancel)?;
             return Ok(false);

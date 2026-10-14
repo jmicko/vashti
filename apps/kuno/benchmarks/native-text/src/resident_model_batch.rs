@@ -4712,6 +4712,23 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             },
         )
     }
+    /// Prompt-only rounded GEMM producers. The existing bounded chunk owner
+    /// still supplies causal acceptance; full prompt chunk/staging scheduling
+    /// is a separate remaining port, not implied by this projection selection.
+    pub(crate) fn prompt_projection_chunk_with_carry(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+        tokens: &[u32],
+        cancel: &AtomicBool,
+    ) -> Result<NativeTargetRows> {
+        let ids = self
+            .native_batch
+            .as_ref()
+            .and_then(|n| n.core_stages)
+            .ok_or(error())?;
+        let _scope = crate::strata_prompt::Scope::new(&self.arena, ids)?;
+        self.prefill_chunk_with_carry(executor, tokens, cancel)
+    }
     fn execute_native_chunk<T>(
         &mut self,
         executor: &mut GpuExecutor<'f>,
