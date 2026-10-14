@@ -5202,3 +5202,57 @@ conditional ring/stream-all sizing with actual cache placement; then input/
 sampling, branch/recording, verifier repair, source and unit-failure audits before
 protected whole-engine acceptance and speed comparisons. No privileged work was
 needed; the last earlier sudo check had expired. Required Vashti changes: none.
+
+
+### Active Kuno engine handoff — connected native2048 owned consumers (2026-10-14)
+
+Source `d75549f`, isolated `codex/strata-rust-port`, following `788e793`.
+Read completion guide **Connected native2048 owned prompt consumers** for exact
+views, matrix/dispatch geometries, accounting, receipts and remaining gates.
+This supersedes the previous256-row consumer limit. **This is source/offline
+acceptance; the complete rewrite remains unfinished and speed benchmarks are
+still prohibited until its completeness gate passes.**
+
+The actual full-chunk controller, request authority, GR/GDN/QSA/PLE/MTP scopes
+now use2048 rows. MoE has real, distinct raw packet/grouped map/probability/
+role-status/GU/PART descriptors carved above the existing64MiB raw ring in the
+third tracked512MiB prompt owner. The router writes the raw view, readback
+preserves its original offsets, CPU grouping writes the separate map, and
+expert gather/dequant/cooperative matrices/activation/reducer bind those same
+views. The reducer no longer reuses old decode map/status/probability roots.
+Logical IDs begin at32768, outside all20480 physical/member routes; role status
+planes are separated by20480. Per-layer proof views are cleared, while actual
+48-layer count/epoch stamps still join the completed whole-model sticky fault.
+Prompt image ABI is `prompt-owned-routes-v3`; original format/release identity
+is preserved. Ordinary decode/MAX8 roots and verifier capacity stay unchanged.
+
+Both projection and dense matrix admission cover MTP's8192 FC-hidden rows at
+2048 target rows. Full residual/teacher normalization use actual80MiB carved
+views; packed working images remain bounded64MiB. True linear copy/embedding/
+residual-write/pack/dequant kernels flatten oversized grids using actual
+`num_workgroups`; GR/head/attention axes remain independent. QSA attention stays
+32-row tiled, its row offsets and whole-prompt guards now cover2048, and INFO
+includes64 tile pairs. PLE's exact last-nine-row history transition accepts2048;
+prefetch metadata is heap-backed/wiping, unique original reads remain deduplicated,
+and reconstruction scatters directly by destination. Group host quote1MiB,
+PLE source64MiB and separate outer64MiB host/runtime copies are conservative
+actual-lifetime bounds; no extra arena owner beyond the priced prompt roots.
+
+Final core release build, strict core/feature-off Clippy,308 shader variants
+(122 physical validations plus32 cooperative variants), all12 prompt tests,
+source-plan coverage1..=2048 and the scalar-vs-tail PLE history test through2048
+pass. Exact log names are in the completion receipt. No live GPU/model/
+numerical/state/recovery/speed acceptance; full core suite not rerun and prior
+228-failure baseline remains unaudited. No installed service/residency, public
+API/Vashti, installation or release changes. Canonical and inherited bytecode
+preserved; no privileged action was needed. Goal stays active.
+
+**Next: native cache loans/restoration/exclusion and conditional ring sizing
+against real cache placement/owner bytes.** Owned envelopes remain conservative
+fixed512MiB; context>32768 lending is still explicitly unimplemented, and current
+request/QSA/MTP context is bounded4096. Configurable prompt/long-context fidelity
+is not established. Then finish arbitrary input/sampling, complete branch/
+recording and verifier repair, source/unit-failure audits and protected whole-
+engine completion/numerical/state/recovery acceptance before throughput.
+Do not revert coupled port work because of incidental timing. Required Vashti
+changes: none.

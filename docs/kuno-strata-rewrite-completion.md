@@ -41,7 +41,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp`, `prefill/kernels.dp.cpp` | Core connects native BF16 alpha/beta, controls, recurrence/norm and accepted-prefix replay. Prompt scope selects contiguous H, causal convolution/history/L2, CB32 recurrence and directly consumed FP16 output. Source 9a7a23b connects prompt-capacity whole-chunk math without per-element status/replay owners, carved AB staging, and native row/value-head recurrent state shared by prompt/decode/repair. The large chunk caller/acceptance is connected in the latest controller receipt; remaining split verifier replay, physical execution and final numerical/queue audit remain open. |
 | QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects FP16 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. See the QSA receipt below for precise storage/scheduling substitutions and remaining numerical/state acceptance; do not claim full QSA fidelity yet. |
 | PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Core connects native BF16 MAX8 projections, normalization/gate/conv/history, deduplicated positional reads and accepted-prefix ownership. Prompt calls now consume a bounded, joined double-buffered source prefetch. The latest controller receipt connects native large chunk geometry, joined uploads, retained tail and exact history acceptance. Native loans/queue scheduling and numerical/device acceptance remain open. Never persist request n-grams. |
-| Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. The bounded prompt path now uses logical-ID expert order, checked native transfer nodes, an eight-slot raw ring and two paired dequantization slots. The latest controller receipt connects full256-row owners/causal math/state acceptance, final-only head and full device MTP teaching. Dynamic byte-based cache loans, independent transfer/compute queues and final GEMM/layout substitution audit remain open. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
+| Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. The bounded prompt path now uses logical-ID expert order, checked native transfer nodes, an eight-slot raw ring and two paired dequantization slots. The latest owned-consumer receipt connects full2048-row owners, non-overlapping raw/grouped route packets, causal math/state scopes, final-only head and full device MTP teaching (up to8192 matrix rows). Independent transfer/compute queues and real release boundaries are connected. Dynamic cache loans, conditional ring sizing and physical whole-model acceptance remain open. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
 | Prompt dense/expert matrix backend | Intel oneMKL rounded BF16/FP16 GEMMs | Connected Rust cooperative8x16x16/F32 kernels now consume the actual rounded dense and grouped GU/DOWN images, with enabled device features, SPIR-V native registration and required16 subgroup in both pipeline paths. See the cooperative-matrix receipt; physical numerical/model acceptance remains open. |
 | MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native FP16 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Queue/branch/capture fidelity, numerical/state acceptance, arbitrary input and supported sampling remain required. See the front/rest/MoE receipts. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Request-local Rust suffix/cost controller exists; audit supported window lengths and coupled sampling rather than fixing to four public-fixture rows. |
@@ -2522,3 +2522,118 @@ Do this next, before loan support or any speed run:
 Then complete arbitrary input/sampling, branch/recording and verifier repair,
 source/unit-failure audits and protected whole-engine completion/numerical/state/
 recovery gates. Only afterward compare throughput. Keep the full goal active.
+
+
+## Connected native2048 owned prompt consumers (2026-10-14)
+
+Source `d75549f`, following owned-root foundation `788e793`.
+This supersedes the earlier256-row consumer limit for the native owned path.
+**This is source/offline acceptance, not whole-model numerical or speed proof;
+the complete rewrite and its benchmark gate remain unfinished.**
+
+The actual controller, request authority and GR/GDN/QSA/PLE/MTP scopes now take
+`groups::CAPACITY=2048`. The controller groups/routes the full chunk once per
+layer; it does not split2048 into eight256-row controller runs. Speculative
+verification, replay and ordinary decode still use their original MAX8 geometry.
+
+### Actual MoE descriptors and closing proof
+
+The third tracked512MiB prompt root now contains these real disjoint views
+above its unchanged lower64MiB raw transfer ring:
+
+| Role | Bytes | Purpose |
+| --- | ---: | --- |
+| GU | 16MiB | up to2048 group members by1280 F32 outputs |
+| PART | 256MiB | up to2048 tokens by10 routed experts by2560 F32 outputs |
+| raw route packet | 256KiB | physical routes at1540; logical routes at32768 |
+| grouped map | 128KiB | ordered cell/length/offset/member packet |
+| probabilities | 128KiB | all20480 active route weights |
+| role status | 256KiB | GU and DOWN planes separated by20480 words |
+
+`Storage` registers these actual views. The router writes the raw packet;
+readback narrows that same view while preserving both existing byte offsets.
+Host grouping creates the separate grouped map, and gather/dequant/matrix/
+activation/reduction all bind these same prompt descriptors. The reducer no
+longer accidentally rebinds decode-sized map/probability/status roots. Its
+48-layer epoch/count acceptance remains joined to the real whole-model sticky
+fault fence. Raw packet/probability/status views are reset per layer so a failed
+producer cannot inherit proof flags from the previous layer. The prompt image
+operator ABI key is now `prompt-owned-routes-v3`, preserving original quantized
+identity and the existing native-release metadata wrapper.
+
+At2048, MEMBERS1540+20480 ends before LOGICAL32768; the previous4100 split would
+overlap. Grouped membership covers22020 words inside32768, probabilities cover
+20480 inside32768, and both status planes cover40960 inside65536. Host route
+readback/group/upload/validation lifetimes are charged at1MiB. Arena MAIN bytes
+remain in the three already-priced512MiB roots, with no new hidden owner.
+
+### Connected matrix, dispatch, state and source consumers
+
+- Target GR/GDN/QSA and PLE consume full2048-row carved views. QSA whole-prompt
+  norm/append/selection guards and the attention row-offset limit are raised
+  together. Its attention scratch/tile remains32 rows and its per-layer INFO
+  quote now includes all64 tile pairs; these are distinct geometries.
+- MTP teaching uses up to8192 FC-hidden matrix rows for2048 target rows. Both
+  actual projection and cooperative dense admission allow this, retaining real
+  input/weight/output extent checks. Packed input remains in the lower64MiB
+  working view; full residual and teacher normalization fit their actual80MiB
+  carved views. No MAX8 teacher loop or per-row host activation carry is added.
+- Copy, embedding broadcast, residual write and linear packing/dequant support
+  flattened2D grids when their word spans exceed Vulkan's65535 X-workgroup
+  limit. Their shader indexing uses the actual `num_workgroups`; non-linear
+  GR/head/attention geometry is never flattened implicitly.
+- PLE's completed-history transition accepts up to2048 while retaining only
+  the independently verified last nine normalized rows and exact token history.
+  MAX_BATCH8 acceptance is unchanged. The host test compares the tail with the
+  scalar convolution/history owner across257/1024/2048 as well as smaller rows.
+- PLE prefetch metadata is a wiping heap vector, avoiding a128KiB stack array.
+  Its64MiB host quote covers current/prefetched20MiB embeddings, upload copy,
+  original packed rows, plans and bounded threads. The outer model separately
+  reserves64MiB host/runtime copies. These are conservative lifetime envelopes,
+  not measured allocator/driver peak claims. The existing positional reader
+  still reads each unique packed row once. Reconstruction now scatters by the
+  stable destination map instead of scanning all destinations per unique row;
+  repeated rows may be decoded again into the same wiping160-float scratch.
+
+Validation logs in `/media/jmicko/faststore/kuno-development`:
+
+- `strata-native-2048-final-build-20261014.log`: final core release binary builds.
+- `strata-native-2048-clippy-20261014.log` and
+  `strata-native-2048-feature-off-clippy-20261014.log`: strict core and ordinary
+  feature-off release Clippy pass.
+- `strata-native-2048-shaders-20261014.log`:308 shader variants pass, including
+  122 physical validations and32 actual cooperative-matrix variants across all
+  eight independent layout masks. This uses the modern validator recorded in
+  the preceding matrix receipt; no GPU/device/model is constructed.
+- `strata-native-2048-prompt-tests-20261014.log`: all12 focused prompt tests
+  pass. These cover actual2048 carving/role spans, complete route roundtrip,
+  tail corruption/duplicate rejection, non-overlap with the raw ring, flattened
+  grid coverage, raw slot/cache identity and independent host arithmetic checks.
+- `strata-native-2048-source-tests-20261014.log`: stable deduplicated source
+  destination planning passes for every count1..=2048, retaining MAX_BATCH8.
+- `strata-native-2048-ple-history-20261014.log`: the actual kuno-text history
+  transition test passes against scalar convolution/history through2048 rows.
+- `git diff --check` passes. Intermediate route-only logs are not a substitute
+  for these final-source receipts; the first intermediate build's numeric type
+  error was fixed before all final checks.
+
+These focused host checks establish no actual GPU arithmetic, allocation,
+recovery or whole-model state acceptance. The historical full-suite failures
+are not waived by these green filters.
+
+No live GPU/model/numerical/state/recovery/speed run, installed service/model
+residency change, install, release, public API or Vashti change. Canonical
+checkout and inherited bytecode are preserved. Full core unit suite is not
+rerun; its earlier228-failure baseline still requires audit.
+
+### Required continuation
+
+Finish real cache loans/restoration/exclusion and the native conditional ring/
+stream-all policy against actual cache placement/owner bytes. Current owned
+roots remain conservative fixed512MiB envelopes; context>32768 lending is still
+explicitly unimplemented, while current request/QSA/MTP context remains capped
+at4096. Do not claim configurable native chunk/long-context parity from this
+2048-row source change. Then finish arbitrary input/sampling, complete branch/
+recording and verifier-repair audits, classify the historical unit failures and
+run protected whole-engine completion/numerical/state/recovery acceptance.
+Only after the documented completeness gate may throughput steer fixes.
