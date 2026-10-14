@@ -435,7 +435,43 @@ pub(crate) struct GdnBatchWorkspace {
     pub(crate) shared_vector_calls: u64,
     public_grouped_status: crate::status_fold_batch::PublicPolicy,
 }
+/// Records a genuine large prompt boundary separately from MAX8 receipts.
+pub(crate) struct PromptBoundary<'a> {
+    workspace: &'a mut GdnBatchWorkspace,
+    next: u64,
+}
+impl PromptBoundary<'_> {
+    pub(crate) fn commit(self) {
+        *self.workspace.policy.chunk = self.next;
+    }
+}
 impl GdnBatchWorkspace {
+    pub(crate) fn prepare_prompt_boundary<'a>(
+        &'a mut self,
+        arena: &PrivateArena,
+        completed: &crate::resident_model::batch::prompt_full::Completed,
+        cancel: &AtomicBool,
+    ) -> Result<PromptBoundary<'a>> {
+        self.healthy(arena, cancel)?;
+        completed.check(self.binding, &self.poison)?;
+        if self.policy.phase != ChunkPhase::Idle
+            || *self.policy.issued != 0
+            || *self.policy.committed != 0
+            || self.fault.is_some()
+        {
+            return Err(Error::InvalidFormat("large prompt idle workspace boundary"));
+        }
+        let next = self
+            .policy
+            .chunk
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow)?;
+        Ok(PromptBoundary {
+            workspace: self,
+            next,
+        })
+    }
+
     pub(crate) fn public_grouped_status_folds(&self) -> (bool, u64) {
         self.public_grouped_status.state()
     }

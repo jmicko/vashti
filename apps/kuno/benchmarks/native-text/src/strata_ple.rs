@@ -22,12 +22,17 @@ pub(crate) enum Kernel {
     Conv,
     History,
     Projection,
+    PromptNorm,
+    PromptGate,
+    PromptBroadcast,
+    PromptConv,
+    PromptHistory,
 }
 impl Kernel {
     fn lanes(self) -> u32 {
         match self {
-            Self::Norm => 1024,
-            Self::Gate => 512,
+            Self::Norm | Self::PromptNorm => 1024,
+            Self::Gate | Self::PromptGate => 512,
             _ => 256,
         }
     }
@@ -43,13 +48,75 @@ impl Kernel {
         };
         let mut s = section("COMMON").to_owned();
         s.push_str(section(match self {
-            Self::Norm => "NORM",
-            Self::Gate => "GATE",
-            Self::Broadcast => "BROADCAST",
-            Self::Conv => "CONV",
-            Self::History => "HISTORY",
+            Self::Norm | Self::PromptNorm => "NORM",
+            Self::Gate | Self::PromptGate => "GATE",
+            Self::Broadcast | Self::PromptBroadcast => "BROADCAST",
+            Self::Conv | Self::PromptConv => "CONV",
+            Self::History | Self::PromptHistory => "HISTORY",
             Self::Projection => "PROJECTION",
         }));
+        let edits: &[(&str, &str)] = match self {
+            Self::PromptNorm => &[(
+                "if sw!=32u || t>=p.count || h>=4u {return;}",
+                "if sw!=32u{if tid==0u&&t<p.count&&h<4u{status[t*p.ss+h]=0u;}return;}if t>=p.count||h>=4u{return;}",
+            )],
+            Self::PromptGate => &[(
+                "if sw!=32u || h>=4u || t>=p.count {return;}",
+                "if sw!=32u{if tid==0u&&t<p.count&&h<4u{status[t*p.ss+h]=0u;}return;}if h>=4u||t>=p.count{return;}",
+            )],
+            Self::PromptBroadcast => &[
+                (
+                    "@binding(3) var<storage,read_write> status:array<u32>;",
+                    "@binding(3) var<storage,read_write> fault:array<atomic<u32>>;",
+                ),
+                (
+                    "status[t*10240u+c]=select(0u,1u,finite(y));",
+                    "if !finite(y){atomicOr(&fault[0],1u);}",
+                ),
+            ],
+            Self::PromptHistory => &[
+                (
+                    "@binding(3) var<storage,read_write> status:array<u32>;",
+                    "@binding(3) var<storage,read_write> fault:array<atomic<u32>>;",
+                ),
+                (
+                    "status[c]=select(0u,1u,ok);",
+                    "if !ok{atomicOr(&fault[0],1u);}",
+                ),
+            ],
+            Self::PromptConv => &[
+                (
+                    "@group(0) @binding(5) var<storage,read_write> conv:array<f32>;\n",
+                    "",
+                ),
+                (
+                    "@binding(6) var<storage,read_write> result:array<f32>;",
+                    "@binding(5) var<storage,read_write> result:array<f32>;",
+                ),
+                (
+                    "@binding(7) var<storage,read_write> conv_status:array<u32>;",
+                    "@binding(6) var<storage,read_write> fault:array<atomic<u32>>;",
+                ),
+                (
+                    "@group(0) @binding(8) var<storage,read_write> result_status:array<u32>;\n",
+                    "",
+                ),
+                ("@binding(9) var<uniform>", "@binding(7) var<uniform>"),
+                (
+                    "conv[t*10240u+c]=select(0.0,activation,ok&&finite(activation));",
+                    "",
+                ),
+                (
+                    "conv_status[t*10240u+c]=select(0u,1u,ok&&finite(activation));result_status[t*10240u+c]=select(0u,1u,ok&&finite(y));",
+                    "if !ok||!finite(activation)||!finite(y){atomicOr(&fault[0],1u);}",
+                ),
+            ],
+            _ => &[],
+        };
+        for &(old, new) in edits {
+            assert!(s.contains(old), "prompt PLE source drift");
+            s = s.replace(old, new);
+        }
         s
     }
 }
@@ -62,6 +129,11 @@ impl KernelMetadata for Kernel {
             Self::Conv => "StrataPleNativeConv",
             Self::History => "StrataPleNativeHistory",
             Self::Projection => "StrataNativeBf16Multi",
+            Self::PromptNorm => "StrataPromptPleNorm",
+            Self::PromptGate => "StrataPromptPleGate",
+            Self::PromptBroadcast => "StrataPromptPleBroadcast",
+            Self::PromptConv => "StrataPromptPleConv",
+            Self::PromptHistory => "StrataPromptPleHistory",
         }
     }
     fn id(&self) -> KernelId {
@@ -114,7 +186,20 @@ pub(crate) fn launch_client(
     info: [u32; 12],
 ) -> Result<()> {
     if !crate::strata_intel_core::enabled()
-        || !(1..=8).contains(&info[0])
+        || !(1..=if matches!(
+            kernel,
+            Kernel::PromptNorm
+                | Kernel::PromptGate
+                | Kernel::PromptBroadcast
+                | Kernel::PromptConv
+                | Kernel::PromptHistory
+        ) && crate::strata_prompt::active()
+        {
+            crate::strata_prompt::groups::CAPACITY
+        } else {
+            8
+        })
+            .contains(&(info[0] as usize))
         || grid.contains(&0)
         || grid.iter().any(|&g| g > 65535)
         || handles.is_empty()
@@ -151,6 +236,11 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
         Kernel::Conv,
         Kernel::History,
         Kernel::Projection,
+        Kernel::PromptNorm,
+        Kernel::PromptGate,
+        Kernel::PromptBroadcast,
+        Kernel::PromptConv,
+        Kernel::PromptHistory,
     ]
     .into_iter()
     .map(|k| {

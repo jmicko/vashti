@@ -33,7 +33,7 @@ fn main(@builtin(global_invocation_id) id:vec3<u32>) {
 var<workgroup> partial:array<f32,32>;
 @compute @workgroup_size(1024)
 fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) tid:u32,@builtin(subgroup_invocation_id) lane:u32,@builtin(subgroup_id) warp:u32,@builtin(subgroup_size) sw:u32) {
-    let t=group.x;if sw!=32u || t>=p.count {return;}
+    let t=group.x;if sw!=32u {if tid==0u {atomicOr(&fault[0],1u);}return;}if t>=p.count {return;}
     var sum=0.0;for(var d=tid;d<p.columns;d+=1024u) {let x=input[t*p.columns+d];sum+=x*x;}
     for(var off=16u;off>0u;off/=2u) {sum+=subgroupShuffleXor(sum,off);}
     if lane==0u {partial[warp]=sum;}workgroupBarrier();

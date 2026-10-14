@@ -73,65 +73,39 @@ pub(super) fn run<'m, 'f>(
     let (mut confirmed, mut carry) = target.with_prompt_ple_source(
         executor,
         request.prompt,
-        3,
+        crate::strata_prompt::groups::CAPACITY,
         cancel,
         |target, executor| {
-            let mut carry = Zeroizing::new(vec![0.0f32; HIDDEN]);
-            let mut confirmed = 0;
-            // Exact teacher forcing: the last prompt carry predicts the first output;
-            // MTP has consumed only prompt_len-1 cells at this boundary.
-            for start in (0..request.prompt.len()).step_by(3) {
-                let count = (request.prompt.len() - start).min(3);
-                let rows = target.prompt_projection_chunk_with_carry(
+            let mut final_output = None;
+            for start in (0..request.prompt.len()).step_by(crate::strata_prompt::groups::CAPACITY) {
+                let end =
+                    (start + crate::strata_prompt::groups::CAPACITY).min(request.prompt.len());
+                let teacher_end = end.min(request.prompt.len() - 1);
+                let teacher = if start < teacher_end {
+                    &request.prompt[start + 1..teacher_end + 1]
+                } else {
+                    &[]
+                };
+                let output = target.prefill_prompt_full(
                     executor,
-                    &request.prompt[start..start + count],
+                    &request.prompt[start..end],
+                    teacher,
+                    draft.as_deref_mut(),
+                    end == request.prompt.len(),
                     cancel,
                 )?;
-                if rows.start() != start || rows.count() != count {
+                if target.completed_target_rows_cursor(executor)? != end {
                     return Err(kuno_text::Error::InvalidFormat(
-                        "global prefill rows rejected",
+                        "global committed full prompt cursor rejected",
                     ));
                 }
-                for row in 0..count {
-                    let position = start + row;
-                    if rows.position(row)? != position {
-                        return Err(kuno_text::Error::InvalidFormat(
-                            "global prefill cursor rejected",
-                        ));
-                    }
-                    if position + 1 == request.prompt.len() {
-                        confirmed = rows.greedy(row)?;
-                        carry.copy_from_slice(rows.hidden(row)?);
-                    }
-                }
-                if let Some(draft) = draft.as_deref_mut() {
-                    if draft.position() != start {
-                        return Err(kuno_text::Error::InvalidFormat(
-                            "global teacher group cursor rejected",
-                        ));
-                    }
-                    let teacher_count = count.min(request.prompt.len() - 1 - start);
-                    if teacher_count > 0 {
-                        let mut teacher_tokens = Zeroizing::new(Vec::with_capacity(teacher_count));
-                        let mut teacher_carries =
-                            Zeroizing::new(Vec::with_capacity(teacher_count * HIDDEN));
-                        for row in 0..teacher_count {
-                            teacher_tokens.push(*request.prompt.get(start + row + 1).ok_or(
-                                kuno_text::Error::InvalidFormat("global teacher group rejected"),
-                            )?);
-                            teacher_carries.extend_from_slice(rows.hidden(row)?);
-                        }
-                        draft.append_kv_group(&teacher_tokens, &teacher_carries, cancel)?;
-                    }
-                }
-                drop(rows);
-                if target.completed_target_rows_cursor(executor)? != start + count {
-                    return Err(kuno_text::Error::InvalidFormat(
-                        "global committed prefill cursor rejected",
-                    ));
+                if output.is_some() {
+                    final_output = output;
                 }
             }
-            Ok((confirmed, carry))
+            final_output.ok_or(kuno_text::Error::InvalidFormat(
+                "global final prompt output absent",
+            ))
         },
     )?;
     if draft

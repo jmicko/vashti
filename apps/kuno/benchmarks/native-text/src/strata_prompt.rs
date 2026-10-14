@@ -80,6 +80,22 @@ fn gr_workspace() -> Result<[Handle; 4]> {
             .ok_or(Error::InvalidBufferLength)
     })
 }
+pub(crate) fn outer_workspace() -> Result<[Handle; 13]> {
+    STAGES.with(|s| {
+        s.borrow()
+            .as_ref()
+            .map(storage::Storage::outer)
+            .ok_or(Error::InvalidBufferLength)
+    })
+}
+pub(crate) fn ple_workspace() -> Result<[Handle; 12]> {
+    STAGES.with(|s| {
+        s.borrow()
+            .as_ref()
+            .map(storage::Storage::ple)
+            .ok_or(Error::InvalidBufferLength)
+    })
+}
 pub(crate) fn gdn_workspace() -> Result<[Handle; 4]> {
     STAGES.with(|s| {
         s.borrow()
@@ -116,6 +132,119 @@ pub(crate) fn validate_output(handle: &Handle) -> Result<()> {
 pub(crate) fn activation_stage() -> Result<Handle> {
     Ok(stages()?[0].clone())
 }
+/// Exact request-private device copy, including copies into another admitted
+/// arena on the same native client. No host activation map is created.
+pub(crate) fn copy_handles(
+    client: &ComputeClient<WgpuRuntime>,
+    input: Handle,
+    output: Handle,
+    first: usize,
+    words: usize,
+) -> Result<()> {
+    if words == 0
+        || words > groups::CAPACITY * 10240
+        || first
+            .checked_add(words)
+            .is_none_or(|n| n as u64 * 4 > input.size_in_used())
+        || words as u64 * 4 > output.size_in_used()
+        || storage::overlaps(&input, &output)?
+        || first > u32::MAX as usize
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    let mut p = [0; 16];
+    p[0] = 1;
+    p[1] = words as u32;
+    p[4] = first as u32;
+    launch(
+        client,
+        Kernel::Copy,
+        [words.div_ceil(256), 1, 1],
+        vec![input, output],
+        p,
+    )
+}
+pub(crate) fn head_flags(
+    client: &ComputeClient<WgpuRuntime>,
+    flags: Handle,
+    fault: Handle,
+    count: usize,
+    heads: usize,
+) -> Result<()> {
+    if !(1..=groups::CAPACITY).contains(&count)
+        || heads == 0
+        || heads > 1024
+        || flags.size_in_used() < (count * heads * 4) as u64
+        || fault.size_in_used() != 4
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    let mut p = [0; 16];
+    p[0] = count as u32;
+    p[1] = heads as u32;
+    launch(
+        client,
+        Kernel::Flags,
+        [(count * heads).div_ceil(256), 1, 1],
+        vec![flags, fault],
+        p,
+    )
+}
+pub(crate) fn embedding(
+    graph: kuno_text::model::BoundGraph<'_, '_>,
+    client: &ComputeClient<WgpuRuntime>,
+    tokens: &[u32],
+    target: Handle,
+    residual: Handle,
+    fault: Handle,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<()> {
+    if !(1..=groups::CAPACITY).contains(&tokens.len())
+        || tokens.iter().any(|&t| t >= 248320)
+        || target.size_in_used() < (tokens.len() * 2560 * 4) as u64
+        || residual.size_in_used() < (tokens.len() * 10240 * 4) as u64
+        || fault.size_in_used() != 4
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    validate_output(&target)?;
+    validate_output(&residual)?;
+    graph.verify_unchanged()?;
+    let tensor = graph.tensor("token_embd.weight")?;
+    if tensor.info().row_len() != 2560 || tensor.info().row_count() != 248320 {
+        return Err(Error::InvalidBufferLength);
+    }
+    let rb = tensor.info().row_bytes() as usize;
+    if rb == 0 || rb > 10240 {
+        return Err(Error::InvalidBufferLength);
+    }
+    let mut packed = zeroize::Zeroizing::new(vec![0u8; rb]);
+    let mut decoded = zeroize::Zeroizing::new([0f32; 2560]);
+    let mut upload = zeroize::Zeroizing::new(vec![0u8; tokens.len() * 10240]);
+    for (t, &token) in tokens.iter().enumerate() {
+        u::cancel(cancel)?;
+        tensor.read_row(token as u64, &mut packed)?;
+        tensor.info().dtype().decode(&packed, &mut decoded[..])?;
+        for (i, &v) in decoded.iter().enumerate() {
+            upload[(t * 2560 + i) * 4..(t * 2560 + i + 1) * 4].copy_from_slice(&v.to_le_bytes());
+        }
+    }
+    graph.verify_unchanged()?;
+    let bytes = upload.len() as u64;
+    let view = target.clone().offset_end(target.size_in_used() - bytes);
+    client
+        .write_private(view, std::mem::take(&mut *upload))
+        .map_err(u::fault)?;
+    let mut p = [0; 16];
+    p[0] = tokens.len() as u32;
+    launch(
+        client,
+        Kernel::Embedding,
+        [(tokens.len() * 10240).div_ceil(256), 1, 1],
+        vec![target, residual, fault],
+        p,
+    )
+}
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub(crate) enum Kernel {
     Pack,
@@ -125,6 +254,12 @@ pub(crate) enum Kernel {
     GrLow,
     GrMix,
     AbControls,
+    GrWrite,
+    Copy,
+    Embedding,
+    Flags,
+    SharedPair,
+    SharedMerge,
 }
 impl Kernel {
     fn lanes(self) -> u32 {
@@ -159,6 +294,12 @@ impl Kernel {
             Self::GrLow => "GR_LOW",
             Self::GrMix => "GR_MIX",
             Self::AbControls => "AB_CONTROLS",
+            Self::GrWrite => "GR_WRITE",
+            Self::Copy => "COPY",
+            Self::Embedding => "EMBEDDING",
+            Self::Flags => "FLAGS",
+            Self::SharedPair => "SHARED_PAIR",
+            Self::SharedMerge => "SHARED_MERGE",
         }));
         source
     }
@@ -173,6 +314,12 @@ impl KernelMetadata for Kernel {
             Self::GrLow => "StrataPromptGrLowActivation",
             Self::GrMix => "StrataPromptGrMix",
             Self::AbControls => "StrataPromptAbControls",
+            Self::GrWrite => "StrataPromptResidualBoundaryWrite",
+            Self::Copy => "StrataPromptDeviceCopy",
+            Self::Embedding => "StrataPromptEmbeddingBroadcast",
+            Self::Flags => "StrataPromptCompactClosingFault",
+            Self::SharedPair => "StrataPromptSharedSwiGluFp16",
+            Self::SharedMerge => "StrataPromptSharedRoutedCombine",
         }
     }
     fn id(&self) -> KernelId {
@@ -364,6 +511,12 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
         Kernel::GrLow,
         Kernel::GrMix,
         Kernel::AbControls,
+        Kernel::GrWrite,
+        Kernel::Copy,
+        Kernel::Embedding,
+        Kernel::Flags,
+        Kernel::SharedPair,
+        Kernel::SharedMerge,
     ]
     .into_iter()
     .map(|k| {
@@ -452,6 +605,41 @@ pub(crate) struct GrHandles<'a> {
     pub first: usize,
     pub epsilon: f32,
     pub inject: bool,
+}
+/// Prompt injection is already activated by GR_LOW. Boundary materialization
+/// must apply it once, unlike decode's fused writer which receives raw logits.
+pub(crate) fn write_handles(
+    client: &ComputeClient<WgpuRuntime>,
+    h: [Handle; 5],
+    count: usize,
+) -> Result<()> {
+    if !(1..=groups::CAPACITY).contains(&count) {
+        return Err(Error::InvalidBufferLength);
+    }
+    for (v, n) in h
+        .iter()
+        .zip([count * 10240, count * 2560, count * 4, count * 10240, 1])
+    {
+        if v.size_in_used() < (n * 4) as u64 {
+            return Err(Error::InvalidBufferLength);
+        }
+    }
+    if h[..3]
+        .iter()
+        .chain(h[4..].iter())
+        .any(|v| storage::overlaps(v, &h[3]).unwrap_or(true))
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    let mut p = [0; 16];
+    p[0] = count as u32;
+    launch(
+        client,
+        Kernel::GrWrite,
+        [(count * 10240).div_ceil(256), 1, 1],
+        h.into(),
+        p,
+    )
 }
 /// Full prompt GR entry point: owns no allocation and does not use MAX8 buffer
 /// geometry. Its four mutable intermediates are authenticated carved views.

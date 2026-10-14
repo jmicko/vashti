@@ -244,6 +244,55 @@ impl Workspace {
         fault: BufferId,
         cancel: &AtomicBool,
     ) -> Result<crate::strata_global_cpu::Plan> {
+        let h = |id| arena.handle(id).cloned().map_err(u::fault);
+        self.enqueue_data(
+            graph,
+            arena,
+            sources,
+            admission,
+            layer,
+            [h(input)?, h(output)?, h(logits)?],
+            Some(input),
+            fault,
+            cancel,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn enqueue_prompt(
+        &mut self,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+        sources: &Sources,
+        admission: &crate::executor::ResidentAdmission,
+        layer: usize,
+        data: [Handle; 3],
+        fault: BufferId,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        if !crate::strata_prompt::active() {
+            return Err(reject());
+        }
+        for h in &data {
+            crate::strata_prompt::validate_output(h)?;
+        }
+        self.enqueue_data(
+            graph, arena, sources, admission, layer, data, None, fault, cancel,
+        )?;
+        Ok(())
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn enqueue_data(
+        &mut self,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+        sources: &Sources,
+        admission: &crate::executor::ResidentAdmission,
+        layer: usize,
+        data: [Handle; 3],
+        input_id: Option<BufferId>,
+        fault: BufferId,
+        cancel: &AtomicBool,
+    ) -> Result<crate::strata_global_cpu::Plan> {
         u::cancel(cancel)?;
         let active = self.active.as_ref().ok_or_else(reject)?;
         let count = active[0];
@@ -260,11 +309,11 @@ impl Workspace {
         let full = |id| arena.handle(id).cloned().map_err(u::fault);
         let mut owners = [
             full(self.ids[0])?,
-            full(input)?,
+            data[0].clone(),
             full(self.ids[1])?,
             full(self.ids[2])?,
             full(self.ids[3])?,
-            full(output)?,
+            data[1].clone(),
             full(self.ids[4])?,
         ];
         let prompt = crate::strata_prompt::active();
@@ -274,6 +323,12 @@ impl Workspace {
             owners[3] = partial;
             if owners[1].size_in_used() < (count * 2560 * 4) as u64
                 || owners[5].size_in_used() < (count * 2560 * 4) as u64
+                || data[2].size_in_used() < (count * 512 * 4) as u64
+                || data.iter().enumerate().any(|(i, a)| {
+                    data[..i]
+                        .iter()
+                        .any(|b| crate::strata_prompt::storage::overlaps(a, b).unwrap_or(true))
+                })
             {
                 return Err(reject());
             }
@@ -289,7 +344,7 @@ impl Workspace {
                 .map_err(Error::InvalidFormat)?;
         }
         let args = KernelArguments::new()
-            .with_buffer(full(logits)?.binding())
+            .with_buffer(data[2].clone().binding())
             .with_buffer(full(self.ids[7])?.binding())
             .with_buffer(owners[0].clone().binding())
             .with_buffer(owners[4].clone().binding())
@@ -361,7 +416,7 @@ impl Workspace {
             layer,
             count,
             self.ids[0],
-            input,
+            input_id.ok_or_else(reject)?,
             cancel,
         )?;
         if cpu_plan.gpu_groups > 0 {
@@ -392,6 +447,35 @@ impl Workspace {
         arena: &PrivateArena,
         layer: usize,
         output: BufferId,
+        fault: BufferId,
+        cpu: Option<&kuno_text::cpu_expert::native::Partials>,
+    ) -> Result<()> {
+        self.finish_data(
+            arena,
+            layer,
+            arena.handle(output).cloned().map_err(u::fault)?,
+            fault,
+            cpu,
+        )
+    }
+    pub(crate) fn finish_prompt(
+        &mut self,
+        arena: &PrivateArena,
+        layer: usize,
+        output: Handle,
+        fault: BufferId,
+    ) -> Result<()> {
+        if !crate::strata_prompt::active() {
+            return Err(reject());
+        }
+        crate::strata_prompt::validate_output(&output)?;
+        self.finish_data(arena, layer, output, fault, None)
+    }
+    fn finish_data(
+        &mut self,
+        arena: &PrivateArena,
+        layer: usize,
+        output: Handle,
         fault: BufferId,
         cpu: Option<&kuno_text::cpu_expert::native::Partials>,
     ) -> Result<()> {
@@ -450,7 +534,7 @@ impl Workspace {
                 full(self.ids[3])?.binding(),
                 full(self.ids[4])?.binding(),
                 full(self.ids[0])?.binding(),
-                full(output)?.binding(),
+                output.binding(),
                 full(self.ids[8])?.binding(),
                 full(fault)?.binding(),
             ])

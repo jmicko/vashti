@@ -6,6 +6,72 @@ use super::{
     clear_i32_capacity,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
+/// Whole-prompt counterpart. The native model has already closed its full
+/// computation; retain only the last nine normalized rows for an independent
+/// exact history check, rather than mapping all prompt activations to the CPU.
+#[allow(clippy::too_many_arguments)]
+pub fn prepare_prompt<'a>(
+    conv: &'a mut CausalConvState,
+    history: &'a mut PleTokenHistory,
+    config: &PleHashConfig,
+    old_tokens: &[i32; 2],
+    tokens: &[u32],
+    old: &[f32],
+    tail: &[f32],
+    next: &[f32],
+    byte_budget: usize,
+    cancel: &AtomicBool,
+) -> Result<PleChunkCommit<'a>> {
+    cancelled(cancel)?;
+    let owned = owner_capacity_bytes(conv, history)?;
+    let rows = tokens.len().min(HISTORY);
+    if !(1..=256).contains(&tokens.len())
+        || config.history_len() != 2
+        || config.heads_per_ngram != 8
+        || config.boundary_token != 248044
+        || config.token_vocab_size != 248320
+        || history.tokens != old_tokens
+        || old.len() != HISTORY_WORDS
+        || next.len() != HISTORY_WORDS
+        || tail.len() != rows * CHANNELS
+        || tokens.iter().any(|&t| t >= config.token_vocab_size)
+        || !bits_equal(old, &conv.history)
+        || old.iter().chain(next).chain(tail).any(|x| !x.is_finite())
+    {
+        return Err(OpsError::DimensionMismatch(CONTEXT));
+    }
+    let available = byte_budget
+        .checked_sub(owned)
+        .ok_or(OpsError::CapacityExceeded(CONTEXT))?;
+    let mut candidate = candidate(old, available)?;
+    for c in 0..CHANNELS {
+        cancelled(cancel)?;
+        let base = c * HISTORY;
+        if rows < HISTORY {
+            candidate.0[base..base + HISTORY - rows]
+                .copy_from_slice(&old[base + rows..base + HISTORY]);
+        }
+        for r in 0..rows {
+            candidate.0[base + HISTORY - rows + r] = tail[r * CHANNELS + c];
+        }
+    }
+    let mut next_tokens = Zeroizing::new(*old_tokens);
+    for &t in tokens {
+        next_tokens[0] = next_tokens[1];
+        next_tokens[1] = t as i32;
+    }
+    if !bits_equal(&candidate.0, next) {
+        return Err(OpsError::InvalidParameter(CONTEXT));
+    }
+    cancelled(cancel)?;
+    Ok(PleChunkCommit {
+        conv,
+        tokens: history,
+        history: candidate,
+        next_tokens,
+    })
+}
+
 #[cfg(test)]
 use zeroize::Zeroize;
 use zeroize::Zeroizing;
@@ -221,6 +287,78 @@ mod tests {
         }
         next
     }
+    #[test]
+    fn large_prompt_tail_matches_scalar_history_across_the_max8_boundary() {
+        for count in [1usize, 8, 9, 32, 256] {
+            let (mut conv, mut history, hash) = state();
+            let mut reference = CausalConvState::new(CHANNELS, 4, 3).unwrap();
+            reference.history.copy_from_slice(conv.history());
+            let old = Zeroizing::new(conv.history().to_vec());
+            let before = Zeroizing::new([history.tokens[0], history.tokens[1]]);
+            let ids = Zeroizing::new((0..count as u32).collect::<Vec<_>>());
+            let values = Zeroizing::new(
+                (0..count * CHANNELS)
+                    .map(|i| {
+                        if i % 19 == 0 {
+                            -0.0
+                        } else {
+                            (i % 79) as f32 / -83.0
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+            );
+            let weights = Zeroizing::new(vec![0.25; CHANNELS * 4]);
+            for row in values.chunks_exact(CHANNELS) {
+                reference.step(row, &weights).unwrap().zeroize();
+            }
+            let tail = &values[(count - count.min(HISTORY)) * CHANNELS..];
+            // Dropping a complete proposal cannot publish either history.
+            drop(
+                prepare_prompt(
+                    &mut conv,
+                    &mut history,
+                    &hash,
+                    &before,
+                    &ids,
+                    &old,
+                    tail,
+                    reference.history(),
+                    1024 * 1024,
+                    &AtomicBool::new(false),
+                )
+                .unwrap(),
+            );
+            assert!(bits_equal(conv.history(), &old));
+            assert_eq!(history.tokens(), &*before);
+            let ticket = prepare_prompt(
+                &mut conv,
+                &mut history,
+                &hash,
+                &before,
+                &ids,
+                &old,
+                tail,
+                reference.history(),
+                1024 * 1024,
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+            ticket.commit();
+            assert!(bits_equal(conv.history(), reference.history()));
+            let expected = if count == 1 {
+                [before[1], 0]
+            } else {
+                [count as i32 - 2, count as i32 - 1]
+            };
+            assert_eq!(history.tokens(), &expected);
+            let row = Zeroizing::new(vec![0.17; CHANNELS]);
+            assert_eq!(
+                conv.step(&row, &weights).unwrap(),
+                reference.step(&row, &weights).unwrap()
+            );
+        }
+    }
+
     #[test]
     fn every_count_preserves_bits_and_original_scalar_consumes_accepted_history() {
         for count in [1, 3, 5, 8] {

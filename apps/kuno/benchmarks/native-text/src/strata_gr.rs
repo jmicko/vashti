@@ -294,6 +294,19 @@ pub(crate) fn write(
             return Err(Error::InvalidBufferLength);
         }
     }
+    if crate::strata_prompt::active() {
+        return crate::strata_prompt::write_handles(
+            arena.client().map_err(u::fault)?,
+            [
+                u::handle(arena, source)?,
+                u::handle(arena, block)?,
+                u::handle(arena, injection)?,
+                u::handle(arena, output)?,
+                u::handle(arena, fault)?,
+            ],
+            count,
+        );
+    }
     enqueue(
         arena.client().map_err(u::fault)?,
         Kernel::Write,

@@ -126,6 +126,20 @@ impl Authority {
             _ => Err(rejected()),
         }
     }
+    fn prompt_chunk(&self, start: usize, count: usize, actual: bool) -> Result<()> {
+        self.active(actual)?;
+        if !crate::strata_intel_core::enabled()
+            || self.phase != Phase::Prefill
+            || actual
+            || !(1..=crate::strata_prompt::groups::CAPACITY).contains(&count)
+            || start
+                .checked_add(count)
+                .is_none_or(|end| end > self.geometry.prompt)
+        {
+            return Err(rejected());
+        }
+        Ok(())
+    }
     fn validate_begin(&self, position: usize, actual: bool) -> Result<()> {
         self.active(actual)?;
         if self.phase != Phase::Prefill || position != self.geometry.prompt || actual {
@@ -213,6 +227,17 @@ impl Permit {
             return Err(rejected());
         }
         Ok(())
+    }
+    pub(super) fn validate_prompt_chunk(
+        &self,
+        binding: GraphBindingId,
+        context: usize,
+        start: usize,
+        count: usize,
+        actual: bool,
+    ) -> Result<()> {
+        self.identity(binding, context)?;
+        self.authority.prompt_chunk(start, count, actual)
     }
     pub(super) fn validate_run(
         &self,
@@ -369,8 +394,15 @@ mod tests {
             assert_eq!(geometry.context(), prompt + outputs);
             let mut authority = Authority::new(geometry, geometry.context(), false).unwrap();
             authority.run(0, prompt.min(3), false).unwrap();
+            authority
+                .prompt_chunk(0, prompt.min(crate::strata_prompt::groups::CAPACITY), false)
+                .unwrap();
+            assert!(authority.prompt_chunk(prompt, 1, false).is_err());
+            assert!(authority.prompt_chunk(0, 257, false).is_err());
+            assert!(authority.prompt_chunk(0, 1, true).is_err());
             assert!(authority.validate_begin(prompt - 1, false).is_err());
             authority.begin(prompt, true).unwrap();
+            assert!(authority.prompt_chunk(0, 1, true).is_err());
             if outputs > 1 {
                 authority.run(prompt, 1, true).unwrap();
             }

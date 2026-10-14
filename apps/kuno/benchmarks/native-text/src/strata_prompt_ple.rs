@@ -7,12 +7,12 @@ use std::{cell::RefCell, sync::mpsc};
 // One additional full embedding owner, one bounded coordinator stack, and
 // independent row/descriptor metadata. The four
 // finite source-reader stacks are already in the native embedding reservation.
-pub(crate) const HOST_BYTES: usize = 131072 + 128 * 1024 + 65536;
+pub(crate) const HOST_BYTES: usize = 12 * 1024 * 1024;
 struct Prepared {
     binding: GraphBindingId,
     start: usize,
     count: usize,
-    rows: Zeroizing<[[u32; 16]; MAX_BATCH]>,
+    rows: Zeroizing<[[u32; 16]; crate::strata_prompt::groups::CAPACITY]>,
     data: Zeroizing<Vec<u8>>,
 }
 impl Drop for Prepared {
@@ -47,7 +47,7 @@ pub(super) fn take(
     rows: &[[u32; 16]],
     start: usize,
 ) -> Result<Option<Zeroizing<Vec<u8>>>> {
-    if rows.is_empty() || rows.len() > MAX_BATCH {
+    if rows.is_empty() || rows.len() > crate::strata_prompt::groups::CAPACITY {
         return Err(error());
     }
     INPUT.with(|s| {
@@ -83,7 +83,7 @@ pub(crate) fn run<T>(
     if !crate::strata_intel_core::enabled()
         || prompt.is_empty()
         || prompt.len() > 4096
-        || !(1..=MAX_BATCH).contains(&chunk)
+        || !(1..=crate::strata_prompt::groups::CAPACITY).contains(&chunk)
         || prompt.iter().any(|&t| t >= 248320)
     {
         return Err(error());
@@ -97,7 +97,7 @@ pub(crate) fn run<T>(
     std::thread::scope(|scope| -> Result<T> {
         let stopped = &stopped;
         let job = std::thread::Builder::new()
-            .stack_size(96 * 1024)
+            .stack_size(256 * 1024)
             .spawn_scoped(scope, move || {
                 let mut previous = old;
                 for start in (0..prompt.len()).step_by(chunk) {
@@ -106,7 +106,8 @@ pub(crate) fn run<T>(
                     }
                     let count = (prompt.len() - start).min(chunk);
                     let result = (|| -> Result<Prepared> {
-                        let mut rows = Zeroizing::new([[0; 16]; MAX_BATCH]);
+                        let mut rows =
+                            Zeroizing::new([[0; 16]; crate::strata_prompt::groups::CAPACITY]);
                         for t in 0..count {
                             crate::ple_chunk::rows_into(
                                 graph.ple_hash().metadata(),

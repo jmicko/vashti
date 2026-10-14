@@ -9,7 +9,9 @@ pub(crate) const HOST_BYTES: usize = 32 * 1024;
 const HALF: u64 = 64 * 1024 * 1024;
 pub(crate) struct Storage {
     working: [Handle; 3],
-    gr: [Handle; 4],   // normalized, down, low, up
+    gr: [Handle; 4],     // normalized, down, low, up
+    outer: [Handle; 13], // R/mixed/blocks/injection/router/shared/embedding, retained PLE tail
+    ple: [Handle; 12],
     gdn: [Handle; 7],  // QKV, Z, H, readout, AB raw/controls/closing
     qsa: [Handle; 20], // projections/data, partials, pooled, compact norm/score flags and selections
 }
@@ -40,9 +42,21 @@ impl Storage {
             }
             Ok(views)
         };
-        let gr: [Handle; 4] = carve(&roots[0], &[10240, 320, 320, 10240].map(|w| w * capacity))?
-            .try_into()
-            .map_err(|_| Error::InvalidBufferLength)?;
+        let mut persistent_words = [
+            10240, 320, 320, 10240, 10240, 10240, 2560, 2560, 2560, 4, 512, 640, 640, 2560, 1, 2560,
+        ]
+        .map(|w| w * capacity)
+        .to_vec();
+        persistent_words.push(9 * 10240);
+        let persistent = carve(&roots[0], &persistent_words)?;
+        let gr: [Handle; 4] = std::array::from_fn(|i| persistent[i].clone());
+        let outer: [Handle; 13] = std::array::from_fn(|i| persistent[i + 4].clone());
+        let ple: [Handle; 12] = carve(
+            &roots[1],
+            &[2560, 10240, 2560, 10240, 10240, 4, 10240, 10240, 4, 4, 4, 4].map(|w| w * capacity),
+        )?
+        .try_into()
+        .map_err(|_| Error::InvalidBufferLength)?;
         let gdn: [Handle; 7] = carve(
             &roots[1],
             &[10240, 6144, 10240, 6144, 96, 96, 48].map(|w| w * capacity),
@@ -81,8 +95,18 @@ impl Storage {
             roots[1].clone().offset_end(HALF),
             roots[2].clone(),
         ];
-        for (i, a) in gr.iter().enumerate() {
-            if overlaps(a, &working[0])? || gr[..i].iter().any(|b| overlaps(a, b).unwrap_or(true)) {
+        for (i, a) in persistent.iter().enumerate() {
+            if overlaps(a, &working[0])?
+                || persistent[..i]
+                    .iter()
+                    .any(|b| overlaps(a, b).unwrap_or(true))
+            {
+                return Err(Error::InvalidBufferLength);
+            }
+        }
+        for (i, a) in ple.iter().enumerate() {
+            if overlaps(a, &working[1])? || ple[..i].iter().any(|b| overlaps(a, b).unwrap_or(true))
+            {
                 return Err(Error::InvalidBufferLength);
             }
         }
@@ -101,6 +125,8 @@ impl Storage {
         Ok(Self {
             working,
             gr,
+            outer,
+            ple,
             gdn,
             qsa,
         })
@@ -110,6 +136,12 @@ impl Storage {
     }
     pub(crate) fn gr(&self) -> [Handle; 4] {
         self.gr.clone()
+    }
+    pub(crate) fn outer(&self) -> [Handle; 13] {
+        self.outer.clone()
+    }
+    pub(crate) fn ple(&self) -> [Handle; 12] {
+        self.ple.clone()
     }
     pub(crate) fn gdn(&self) -> [Handle; 4] {
         std::array::from_fn(|i| self.gdn[i].clone())
@@ -123,6 +155,8 @@ impl Storage {
     pub(crate) fn output(&self, h: &Handle) -> bool {
         self.gr
             .iter()
+            .chain(self.outer.iter())
+            .chain(self.ple.iter())
             .chain(self.gdn.iter())
             .chain(self.qsa.iter())
             .any(|v| same_view(h, v))

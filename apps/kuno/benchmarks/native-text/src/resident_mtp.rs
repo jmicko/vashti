@@ -8,6 +8,8 @@
 //! A failed queued step destroys the entire cache and poisons this sequence.
 #![allow(dead_code)] // Parent fixed-public registration/physical gate is separate.
 
+#[path = "resident_mtp_prompt.rs"]
+mod prompt;
 #[path = "resident_strata_mtp.rs"]
 mod strata;
 #[path = "strata_mtp_kernels.rs"]

@@ -105,9 +105,43 @@ pub(crate) fn launch(
     handles: Vec<Handle>,
     info: [u32; 8],
 ) -> Result<()> {
+    launch_impl(arena, kernel, grid, handles, info, 8)
+}
+pub(crate) fn launch_prompt(
+    arena: &PrivateArena,
+    kernel: Kernel,
+    grid: [usize; 3],
+    handles: Vec<Handle>,
+    info: [u32; 8],
+) -> Result<()> {
+    if !crate::strata_prompt::active()
+        || !matches!(
+            kernel,
+            Kernel::Embed | Kernel::Norm | Kernel::Broadcast | Kernel::Positions | Kernel::Append
+        )
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    launch_impl(
+        arena,
+        kernel,
+        grid,
+        handles,
+        info,
+        crate::strata_prompt::groups::CAPACITY as u32,
+    )
+}
+fn launch_impl(
+    arena: &PrivateArena,
+    kernel: Kernel,
+    grid: [usize; 3],
+    handles: Vec<Handle>,
+    info: [u32; 8],
+    capacity: u32,
+) -> Result<()> {
     let client = arena.client().map_err(u::fault)?;
     if !crate::strata_intel_core::enabled()
-        || !(1..=8).contains(&info[0])
+        || !(1..=capacity).contains(&info[0])
         || grid.contains(&0)
         || handles.is_empty()
         || handles.iter().any(|h| h.stream != handles[0].stream)

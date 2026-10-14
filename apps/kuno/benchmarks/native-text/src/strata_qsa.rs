@@ -36,6 +36,7 @@ pub(crate) const fn cache_words() -> usize {
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub(crate) enum Kernel {
     Norm,
+    PromptNorm,
     Pack,
     PromptPack,
     Pool,
@@ -62,6 +63,7 @@ impl Kernel {
     fn lanes(self) -> u32 {
         match self {
             Self::Norm
+            | Self::PromptNorm
             | Self::Attention
             | Self::Merge
             | Self::MtpAttention
@@ -88,7 +90,7 @@ impl Kernel {
         };
         let mut s = section("COMMON").to_owned();
         s.push_str(section(match self {
-            Self::Norm => "NORM",
+            Self::Norm | Self::PromptNorm => "NORM",
             Self::Pack | Self::PromptPack | Self::PromptPackFault => "PACK",
             Self::Pool => "POOL",
             Self::RetainedPool => "RETAINED_POOL",
@@ -141,6 +143,10 @@ impl Kernel {
             }
         }
         let edits: &[(&str, &str)] = match self {
+            Self::PromptNorm => &[(
+                "if sw!=32u || token>=p.count || head>=nh || group.z!=0u || (p.width!=128u && p.width!=256u) || (p.block_positions!=0u && head<p.start/4u) {return;}",
+                "if sw!=32u || token>=p.count || head>=nh || group.z!=0u || (p.width!=128u && p.width!=256u) || (p.block_positions!=0u && head<p.start/4u) {if tid==0u&&token<p.count&&head<p.heads {status[token*p.status_stride+head]=0u;}return;}",
+            )],
             Self::PromptScoreFault => &[
                 (
                     "@group(0) @binding(5) var<uniform> p:Params;",
@@ -240,6 +246,7 @@ impl KernelMetadata for Kernel {
     fn name(&self) -> &'static str {
         match self {
             Self::Norm => "StrataQsaNormRope",
+            Self::PromptNorm => "StrataQsaPromptMtpNormRope",
             Self::Pack => "StrataQsaPackFp16",
             Self::PromptPack => "StrataPromptQsaPackFp16",
             Self::Pool => "StrataQsaRawIndexerPool",
@@ -315,7 +322,8 @@ pub(crate) fn launch(
             32
         } else if matches!(
             kernel,
-            Kernel::PromptScore
+            Kernel::PromptNorm
+                | Kernel::PromptScore
                 | Kernel::PromptPack
                 | Kernel::PromptAppend
                 | Kernel::PromptPackFault
@@ -374,6 +382,7 @@ pub(crate) fn handles(arena: &PrivateArena, ids: &[BufferId]) -> Result<Vec<Hand
 pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
     [
         Kernel::Norm,
+        Kernel::PromptNorm,
         Kernel::Pack,
         Kernel::PromptPack,
         Kernel::Pool,

@@ -6,6 +6,64 @@ fn bf16(x:f32)->u32 {let bits=bitcast<u32>(x);return (bits+32767u+((bits>>16u)&1
 fn image(a:f32,b:f32,kind:u32)->u32 {if kind==1u {return bf16(a)|(bf16(b)<<16u);}return pack2x16float(vec2<f32>(a,b));}
 fn restored(bits:u32,odd:bool,kind:u32)->f32 {if kind==1u {return bitcast<f32>(select(bits<<16u,bits&0xffff0000u,odd));}let v=unpack2x16float(bits);return select(v.x,v.y,odd);}
 // COMMON_END
+// COPY_BEGIN
+@group(0) @binding(0) var<storage,read> input:array<u32>;
+@group(0) @binding(1) var<storage,read_write> output:array<u32>;
+@group(0) @binding(2) var<uniform> p:Params;
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) id:vec3<u32>){if id.x<p.columns{output[p.ob+id.x]=input[p.ib+id.x];}}
+// COPY_END
+// EMBEDDING_BEGIN
+@group(0) @binding(0) var<storage,read> embedding:array<f32>;
+@group(0) @binding(1) var<storage,read_write> residual:array<f32>;
+@group(0) @binding(2) var<storage,read_write> fault:array<atomic<u32>>;
+@group(0) @binding(3) var<uniform> p:Params;
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) id:vec3<u32>){let i=id.x;if i>=p.count*10240u{return;}let t=i/10240u;let v=embedding[t*2560u+i%2560u];residual[i]=select(0.0,v,finite_value(v));if !finite_value(v){atomicOr(&fault[0],1u);}}
+// EMBEDDING_END
+// FLAGS_BEGIN
+@group(0) @binding(0) var<storage,read> flags:array<u32>;
+@group(0) @binding(1) var<storage,read_write> fault:array<atomic<u32>>;
+@group(0) @binding(2) var<uniform> p:Params;
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) id:vec3<u32>){if id.x<p.count*p.columns&&flags[id.x]!=1u{atomicOr(&fault[0],1u);}}
+// FLAGS_END
+// SHARED_PAIR_BEGIN
+@group(0) @binding(0) var<storage,read> gate:array<f32>;
+@group(0) @binding(1) var<storage,read> up:array<f32>;
+@group(0) @binding(2) var<storage,read_write> output:array<u32>;
+@group(0) @binding(3) var<storage,read_write> fault:array<atomic<u32>>;
+@group(0) @binding(4) var<uniform> p:Params;
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) id:vec3<u32>){let i=id.x;if i>=p.count*320u{return;}let at=i*2u;
+    let ga=gate[at];let gb=gate[at+1u];let a=ga/(1.0+exp(-ga))*up[at];let b=gb/(1.0+exp(-gb))*up[at+1u];
+    let good=finite_value(ga)&&finite_value(gb)&&finite_value(up[at])&&finite_value(up[at+1u])&&finite_value(a)&&finite_value(b);
+    output[i]=pack2x16float(vec2<f32>(clamp(a,-65504.0,65504.0),clamp(b,-65504.0,65504.0)));if !good{atomicOr(&fault[0],1u);}}
+// SHARED_PAIR_END
+// SHARED_MERGE_BEGIN
+@group(0) @binding(0) var<storage,read> routed:array<f32>;
+@group(0) @binding(1) var<storage,read> shared_out:array<f32>;
+@group(0) @binding(2) var<storage,read> scalar:array<f32>;
+@group(0) @binding(3) var<storage,read_write> output:array<f32>;
+@group(0) @binding(4) var<storage,read_write> fault:array<atomic<u32>>;
+@group(0) @binding(5) var<uniform> p:Params;
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) id:vec3<u32>){let i=id.x;if i>=p.count*2560u{return;}let s=scalar[i/2560u];let v=routed[i]+shared_out[i]*(1.0/(1.0+exp(-s)));output[i]=select(0.0,v,finite_value(v)&&finite_value(s));if !finite_value(v)||!finite_value(s){atomicOr(&fault[0],1u);}}
+// SHARED_MERGE_END
+// GR_WRITE_BEGIN
+@group(0) @binding(0) var<storage,read> residual:array<f32>;
+@group(0) @binding(1) var<storage,read> block:array<f32>;
+@group(0) @binding(2) var<storage,read> injection:array<f32>;
+@group(0) @binding(3) var<storage,read_write> output:array<f32>;
+@group(0) @binding(4) var<storage,read_write> fault:array<atomic<u32>>;
+@group(0) @binding(5) var<uniform> p:Params;
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) id:vec3<u32>){
+    let i=id.x;if i>=p.count*10240u{return;}let t=i/10240u;let c=i%10240u;
+    let v=fma(block[t*2560u+c%2560u],injection[t*4u+c/2560u],residual[i]);
+    output[i]=select(0.0,v,finite_value(v));if !finite_value(v){atomicOr(&fault[0],1u);}
+}
+// GR_WRITE_END
 // PACK_BEGIN
 @group(0) @binding(0) var<storage,read> input:array<f32>;
 @group(0) @binding(1) var<storage,read_write> packed:array<u32>;

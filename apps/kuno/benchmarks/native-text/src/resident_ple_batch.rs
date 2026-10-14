@@ -15,6 +15,8 @@ use crate::{
 use cubecl::server::Handle;
 use kuno_text::{cpu::Matrix, model::GraphBindingId, ops::ple_transition as core};
 use std::sync::atomic::AtomicU64;
+#[path = "resident_ple_prompt.rs"]
+pub(crate) mod prompt;
 #[path = "strata_prompt_ple.rs"]
 pub(crate) mod prompt_source;
 
@@ -1343,7 +1345,14 @@ struct RowReadPlan {
     slots: Zeroizing<Vec<usize>>,
 }
 fn unique_row_plan(rows: &[[u32; 16]]) -> Result<RowReadPlan> {
-    if rows.is_empty() || rows.len() > MAX_BATCH {
+    if rows.is_empty()
+        || rows.len()
+            > if crate::strata_intel_core::enabled() {
+                crate::strata_prompt::groups::CAPACITY
+            } else {
+                MAX_BATCH
+            }
+    {
         return Err(error());
     }
     let mut ordered = Zeroizing::new(Vec::with_capacity(rows.len() * 16));
@@ -1432,7 +1441,12 @@ fn native_embedding(
     })?;
     graph.verify_unchanged()?;
     u::cancel(cancel)?;
-    let mut upload = source(BufferLayout::new(words(EMB)).map_err(u::fault)?.owned_bytes)?;
+    let output_bytes = if rows.len() > MAX_BATCH {
+        rows.len() * WIDTH * 4
+    } else {
+        BufferLayout::new(words(EMB)).map_err(u::fault)?.owned_bytes
+    };
+    let mut upload = source(output_bytes)?;
     let mut decoded = Zeroizing::new([0f32; 160]);
     for slot in 0..unique.len() {
         u::cancel(cancel)?;
@@ -2003,7 +2017,13 @@ fn audit(arena: &PrivateArena, retired: &AtomicBool) -> Result<()> {
 mod tests {
     #[test]
     fn native_deduplicated_reads_preserve_every_token_head_destination() {
-        for count in 1..=MAX_BATCH {
+        let capacity = if crate::strata_intel_core::enabled() {
+            crate::strata_prompt::groups::CAPACITY
+        } else {
+            MAX_BATCH
+        };
+        assert_eq!(MAX_BATCH, 8); // The speculative verifier has not widened.
+        for count in 1..=capacity {
             let rows = (0..count)
                 .map(|t| std::array::from_fn(|h| ((t * 7 + h * 3) % 19) as u32))
                 .collect::<Vec<_>>();
@@ -2022,7 +2042,7 @@ mod tests {
         assert_eq!(&*unique, &[320001535]);
         assert!(slots.iter().all(|&v| v == 0));
         assert!(unique_row_plan(&[]).is_err());
-        assert!(unique_row_plan(&[[0; 16]; MAX_BATCH + 1]).is_err());
+        assert!(unique_row_plan(&vec![[0; 16]; capacity + 1]).is_err());
         assert!(unique_row_plan(&[[320001536; 16]]).is_err());
     }
     #[test]

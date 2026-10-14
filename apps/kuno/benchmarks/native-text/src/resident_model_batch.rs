@@ -44,6 +44,8 @@ use crate::{
     token_waves,
 };
 use kuno_text::cpu::Matrix;
+#[path = "resident_model_prompt.rs"]
+pub(crate) mod prompt_full;
 #[path = "resident_target_rows.rs"]
 pub(crate) mod target_rows;
 pub(crate) use target_rows::NativeTargetRows;
@@ -89,7 +91,7 @@ const CORE_CACHE_HOST: usize = if cfg!(feature = "strata-intel-core") {
     0
 };
 const PROMPT_SOURCE_HOST: usize = if cfg!(feature = "strata-intel-core") {
-    ple_batch::prompt_source::HOST_BYTES
+    ple_batch::prompt_source::HOST_BYTES + prompt_full::HOST_BYTES
 } else {
     0
 };
@@ -1721,6 +1723,7 @@ fn runtime_bytes(head_tiles: u64) -> Result<u64> {
         + OUTER_CLEAR_INFO
         + if cfg!(feature = "strata-intel-core") {
             crate::strata_prompt::groups::RUNTIME_BYTES
+                + prompt_full::RUNTIME_BYTES
                 + gdn::strata_replay::PROMPT_INFO_BYTES
                 + crate::strata_qsa::prompt::INFO_BYTES
                 + crate::strata_gdn::prompt::INFO_BYTES
@@ -4729,23 +4732,6 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 ChunkOutput::Legacy(_) => Err(error()),
             },
         )
-    }
-    /// Prompt-only rounded GEMM producers. The existing bounded chunk owner
-    /// still supplies causal acceptance; full prompt chunk/staging scheduling
-    /// is a separate remaining port, not implied by this projection selection.
-    pub(crate) fn prompt_projection_chunk_with_carry(
-        &mut self,
-        executor: &mut GpuExecutor<'f>,
-        tokens: &[u32],
-        cancel: &AtomicBool,
-    ) -> Result<NativeTargetRows> {
-        let ids = self
-            .native_batch
-            .as_ref()
-            .and_then(|n| n.core_stages)
-            .ok_or(error())?;
-        let _scope = crate::strata_prompt::Scope::new(&self.arena, ids)?;
-        self.prefill_chunk_with_carry(executor, tokens, cancel)
     }
     /// Join every source worker before returning to decode or releasing the
     /// original model. The worker carries public source capabilities only;

@@ -43,6 +43,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 #[path = "resident_gdn_batch.rs"]
 pub(crate) mod batch;
+#[path = "resident_gdn_prompt.rs"]
+pub(crate) mod prompt;
 
 use cubecl::prelude::*;
 use cubecl::server::Handle;

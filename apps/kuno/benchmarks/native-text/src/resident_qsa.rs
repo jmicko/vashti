@@ -21,6 +21,8 @@
 
 #[path = "resident_qsa_batch.rs"]
 pub(crate) mod batch;
+#[path = "resident_qsa_prompt.rs"]
+pub(crate) mod prompt;
 
 use crate::private_arena::{self, BufferId, BufferLayout, PrivateArena};
 use crate::qsa_gpu::{self as qsa, QsaLayout};
