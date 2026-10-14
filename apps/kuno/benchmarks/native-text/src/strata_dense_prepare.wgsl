@@ -1,5 +1,7 @@
 // MIT Strata fb58e0 native_mmvq Q8_1 subgroup quantization, Rust/WGSL port.
-// Keep Kuno's existing ties-to-even codes and F16 effective scale. The second
+// Native q8_1_quant rounds half away from zero and clamps its half scale/sum.
+// Preserve that contract; this producer is selected only in the Strata core.
+// The second
 // plane remains explicitly zero in the original fully owned scratch envelope.
 struct Params {input_first:u32,input_stride:u32,planes_stride:u32,count:u32}
 @group(0) @binding(0) var<storage,read> input:array<f32>;
@@ -8,8 +10,8 @@ struct Params {input_first:u32,input_stride:u32,planes_stride:u32,count:u32}
 @group(0) @binding(3) var<uniform> p:Params;
 fn q8_code(x:f32,d:f32)->i32 {
     if d==0.0 {return 0;}
-    let value=clamp(x/d,-127.0,127.0);let low=floor(value);let fraction=value-low;
-    return i32(low)+select(0,1,fraction>0.5 || (fraction==0.5 && (i32(low)&1)!=0));
+    let value=clamp(x/d,-127.0,127.0);
+    return i32(abs(value)+0.5)*select(-1,1,value>=0.0);
 }
 @compute @workgroup_size(128)
 fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(subgroup_id) sg:u32,
@@ -31,7 +33,8 @@ fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(subgroup_id) sg:u32,
     let finite=abs(x)<3.4028234663852886e38;
     let all_finite=subgroupAll(finite);
     let maximum=subgroupMax(select(0.0,abs(x),finite));
-    let d=maximum/127.0;
+    let d=min(maximum/127.0,65504.0);
+    var sum=select(0.0,x,finite);for(var distance=16u;distance>0u;distance/=2u) {sum+=subgroupShuffleXor(sum,distance);}
     var q=0u;
     if all_finite {q=bitcast<u32>(q8_code(x,d))&255u;}
     let first=lane&~3u;
@@ -46,6 +49,7 @@ fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(subgroup_id) sg:u32,
         if all_finite {scale=unpack2x16float(pack2x16float(vec2<f32>(d,0.0))).x;}
         else {atomicOr(&fault[0],1u);}
         planes[base+2u*PACKED_WORDS+block]=bitcast<u32>(scale);
-        planes[base+2u*PACKED_WORDS+BLOCKS+block]=0u;
+        let half_sum=unpack2x16float(pack2x16float(vec2<f32>(clamp(sum,-65504.0,65504.0),0.0))).x;
+        planes[base+2u*PACKED_WORDS+BLOCKS+block]=bitcast<u32>(half_sum);
     }
 }

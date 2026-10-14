@@ -3186,6 +3186,9 @@ impl ResidentMtp<'_, '_> {
         self.project("blk.48.attn_output.weight", B::Attended, B::Block)
     }
     fn moe(&mut self) -> Result<()> {
+        if crate::strata_intel_core::enabled() && self.graph.profile() == MtpProfile::StrataQ2 {
+            return self.native_moe();
+        }
         self.project("blk.48.ffn_gate_inp.weight", B::Mixed, B::Router)?;
         crate::next_shared::router(
             self.client()?,
@@ -3303,6 +3306,208 @@ impl ResidentMtp<'_, '_> {
         );
         self.tick(1)?;
         self.finite(B::Block)
+    }
+    fn native_bf16_moe_dot(&mut self, name: &'static str, output: B, rows: usize) -> Result<()> {
+        let spec = matrices_for(self.graph.profile())
+            .iter()
+            .find(|s| s.name == name)
+            .ok_or(Error::InvalidFormat("native MTP BF16 MoE role"))?;
+        let page = self.public()?.one(name)?;
+        if spec.dtype != quant_matvec::BF16
+            || spec.columns != k::D
+            || spec.rows != rows
+            || ![1, k::EXPERTS].contains(&rows)
+            || page.first != 0
+            || page.rows != rows
+            || page.logical_bytes != rows * k::D * 2
+            || WORDS[output as usize] < rows
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        crate::strata_mtp_moe::launch(
+            &self.arena,
+            crate::strata_mtp_moe::Kernel::RouterDot,
+            rows,
+            vec![
+                self.front_public(name)?,
+                u::handle(&self.arena, self.id(B::Mixed))?,
+                u::handle(&self.arena, self.id(output))?,
+                u::handle(&self.arena, self.id(B::Fault))?,
+            ],
+            [1, 0, rows as u32, 0, 0, 0, 0, 0],
+        )?;
+        self.tick(1)
+    }
+    fn native_moe(&mut self) -> Result<()> {
+        use crate::{strata_mtp_front as f, strata_mtp_moe as m};
+        let ids = *self
+            .native_front
+            .as_ref()
+            .ok_or(Error::InvalidBufferLength)?
+            .ids;
+        self.native_bf16_moe_dot("blk.48.ffn_gate_inp.weight", B::Router, k::EXPERTS)?;
+        m::launch(
+            &self.arena,
+            m::Kernel::Route,
+            1,
+            vec![
+                u::handle(&self.arena, self.id(B::Router))?,
+                u::handle(&self.arena, self.id(B::Packet))?,
+                u::handle(&self.arena, self.id(B::Fault))?,
+            ],
+            [1, 0, 0, 0, 0, 0, 0, 0],
+        )?;
+        k::routes_preflight::launch::<WgpuRuntime>(
+            self.client()?,
+            CubeCount::Static(1, 1, 1),
+            CubeDim::new_1d(64),
+            self.a(B::Packet)?,
+            self.a(B::Fault)?,
+        );
+        m::launch(
+            &self.arena,
+            m::Kernel::Prepare,
+            10,
+            vec![
+                u::handle(&self.arena, self.id(B::Mixed))?,
+                u::handle(&self.arena, ids[f::EXPERT_INPUT])?,
+                u::handle(&self.arena, self.id(B::Fault))?,
+            ],
+            [1, 0, 0, 0, 0, 0, 0, 0],
+        )?;
+        self.tick(3)?;
+        // Count1 routes are unique, all512 MTP experts resident. The actual rank
+        // is the native destination identity, not a substituted expert choice.
+        for down in [false, true] {
+            if down {
+                m::launch(
+                    &self.arena,
+                    m::Kernel::ActivateQuant,
+                    25,
+                    vec![
+                        u::handle(&self.arena, ids[f::EXPERT_GU])?,
+                        u::handle(&self.arena, ids[f::EXPERT_HIDDEN])?,
+                        u::handle(&self.arena, self.id(B::Fault))?,
+                    ],
+                    [1, 0, 0, 0, 0, 0, 0, 0],
+                )?;
+                self.tick(1)?;
+            }
+            for index in 0..strata::SHARDS {
+                let shard = strata::Shard::new(index)?;
+                let page = &self.public()?.pages(if down {
+                    strata::DOWN_NAME
+                } else {
+                    strata::GU_NAME
+                })?[index];
+                if page.first != shard.first
+                    || page.rows != strata::EXPERTS_PER_SHARD
+                    || page.logical_bytes != shard.bytes(!down)?
+                    || page.owned_bytes != shard.owned(!down)?
+                {
+                    return Err(Error::InvalidBufferLength);
+                }
+                m::launch(
+                    &self.arena,
+                    if down { m::Kernel::Down } else { m::Kernel::Gu },
+                    if down { 1600 } else { 800 },
+                    vec![
+                        page.handle
+                            .clone()
+                            .offset_end((page.owned_bytes - page.logical_bytes) as u64),
+                        u::handle(
+                            &self.arena,
+                            ids[if down {
+                                f::EXPERT_HIDDEN
+                            } else {
+                                f::EXPERT_INPUT
+                            }],
+                        )?,
+                        u::handle(&self.arena, self.id(B::Packet))?,
+                        u::handle(
+                            &self.arena,
+                            if down {
+                                self.id(B::Partials)
+                            } else {
+                                ids[f::EXPERT_GU]
+                            },
+                        )?,
+                        u::handle(&self.arena, self.id(B::Readiness))?,
+                        u::handle(&self.arena, self.id(B::Fault))?,
+                    ],
+                    [1, shard.first as u32, 0, 0, 0, 0, 0, 0],
+                )?;
+            }
+            self.tick(strata::SHARDS)?;
+        }
+        let cancel = AtomicBool::new(false);
+        // Gate/up consume one prepared native dense input; routed S2 planes have
+        // separate ownership and scales. Fused SwiGLU writes the actual down
+        // Q8_1 planes, matching Strata's default fused shared producer.
+        self.native_front_project(
+            "blk.48.ffn_gate_shexp.weight",
+            self.id(B::Mixed),
+            self.id(B::SharedGate),
+            1,
+            0,
+            0,
+            ids[f::PLANES],
+            &cancel,
+            true,
+        )?;
+        self.native_front_project(
+            "blk.48.ffn_up_shexp.weight",
+            self.id(B::Mixed),
+            self.id(B::SharedUp),
+            1,
+            0,
+            0,
+            ids[f::PLANES],
+            &cancel,
+            false,
+        )?;
+        m::launch(
+            &self.arena,
+            m::Kernel::SharedActivate,
+            3,
+            vec![
+                u::handle(&self.arena, self.id(B::SharedGate))?,
+                u::handle(&self.arena, self.id(B::SharedUp))?,
+                u::handle(&self.arena, self.id(B::SharedAct))?,
+                u::handle(&self.arena, ids[f::PLANES])?,
+                u::handle(&self.arena, self.id(B::Fault))?,
+            ],
+            [1, 0, 0, 0, 0, 0, 0, 0],
+        )?;
+        self.tick(1)?;
+        self.native_front_project(
+            "blk.48.ffn_down_shexp.weight",
+            self.id(B::SharedAct),
+            self.id(B::SharedDown),
+            1,
+            0,
+            0,
+            ids[f::PLANES],
+            &cancel,
+            false,
+        )?;
+        self.native_bf16_moe_dot("blk.48.ffn_gate_inp_shexp.weight", B::SharedScalar, 1)?;
+        m::launch(
+            &self.arena,
+            m::Kernel::Combine,
+            10,
+            vec![
+                u::handle(&self.arena, self.id(B::Partials))?,
+                u::handle(&self.arena, self.id(B::SharedDown))?,
+                u::handle(&self.arena, self.id(B::SharedScalar))?,
+                u::handle(&self.arena, self.id(B::Packet))?,
+                u::handle(&self.arena, self.id(B::Readiness))?,
+                u::handle(&self.arena, self.id(B::Block))?,
+                u::handle(&self.arena, self.id(B::Fault))?,
+            ],
+            [1, 0, 0, 0, 0, 0, 0, 0],
+        )?;
+        self.tick(1)
     }
     fn strata_experts(&mut self) -> Result<()> {
         // Original top10 ranks/probabilities are unchanged. Every actual expert
@@ -3934,7 +4139,7 @@ impl ResidentMtp<'_, '_> {
                 self.a(B::Fault)?,
                 l.logical_words,
                 l.logical_words,
-                !matches!(i, 0 | 17 | 18 | 19),
+                !matches!(i, 0 | 17 | 18 | 19 | 22 | 24),
             );
         }
         self.tick(ids.len())

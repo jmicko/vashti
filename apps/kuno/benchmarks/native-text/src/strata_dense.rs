@@ -159,7 +159,7 @@ pub(crate) fn supports_count(dtype: u32, columns: usize, scratch_bytes: u64, cou
         && matches!(dtype, 8 | 12 | 13 | 14 | 20 | 23)
         && columns > 0
         && columns <= 16384
-        && columns.is_multiple_of(256)
+        && columns.is_multiple_of(if matches!(dtype, 8 | 20) { 128 } else { 256 })
         && (1..=8).contains(&count)
         && (count * (columns / 2 + columns / 16) * 4) as u64 <= scratch_bytes
 }
@@ -172,7 +172,6 @@ pub(crate) fn prepare(
     fault: Handle,
     spans: &BatchSpans,
 ) -> Result<()> {
-    let spec = crate::q6_integer_matvec::Spec::new(1, columns)?;
     if !supports_count(8, columns, planes.size_in_used(), spans.count())
         || fault.size_in_used() != 4
         || !input.size_in_used().is_multiple_of(4)
@@ -180,28 +179,12 @@ pub(crate) fn prepare(
     {
         return Err(Error::InvalidBufferLength);
     }
-    let checked = crate::q6_integer_matvec::batch::PrepareSpans {
-        count: spans.count(),
-        input_first: spans.input_first(),
-        input_stride: spans.input_stride(),
-        planes_first: 0,
-        planes_stride: spec.plane_words(),
-        fault_first: 0,
-    };
-    checked.validate(
-        spec,
-        [
-            input.size_in_used() as usize / 4,
-            planes.size_in_used() as usize / 4,
-            fault.size_in_used() as usize / 4,
-        ],
+    let info = prepare_info(
+        columns,
+        spans,
+        input.size_in_used() as usize / 4,
+        planes.size_in_used() as usize / 4,
     )?;
-    let info = [
-        checked.input_first as u32,
-        checked.input_stride as u32,
-        checked.planes_stride as u32,
-        checked.count as u32,
-    ];
     let args = KernelArguments::new()
         .with_buffer(input.binding())
         .with_buffer(planes.binding())
@@ -216,12 +199,47 @@ pub(crate) fn prepare(
     unsafe {
         client.launch_unchecked(
             Box::new(PrepareKernel(columns)),
-            CubeCount::Static((columns / 128) as u32, checked.count as u32, 1),
+            CubeCount::Static((columns / 128) as u32, spans.count() as u32, 1),
             args,
         );
     }
     PREPARES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     Ok(())
+}
+// This Q8_1 producer is not a Q6 weight operator. Native shared experts have
+// 640 inputs, a legal20-block Q8 shape that cannot form Q6's256-value blocks.
+fn prepare_info(
+    columns: usize,
+    spans: &BatchSpans,
+    input_words: usize,
+    planes_words: usize,
+) -> Result<[u32; 4]> {
+    if !supports_count(8, columns, planes_words as u64 * 4, spans.count())
+        || spans.input_stride() < columns
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    let stride = columns / 2 + columns / 16;
+    let end = spans
+        .count()
+        .checked_sub(1)
+        .and_then(|n| n.checked_mul(spans.input_stride()))
+        .and_then(|n| n.checked_add(spans.input_first()))
+        .and_then(|n| n.checked_add(columns))
+        .ok_or(Error::ArithmeticOverflow)?;
+    if end > input_words
+        || spans.count() * stride > planes_words
+        || end > u32::MAX as usize
+        || spans.input_stride() > u32::MAX as usize
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    Ok([
+        spans.input_first() as u32,
+        spans.input_stride() as u32,
+        stride as u32,
+        spans.count() as u32,
+    ])
 }
 static PREPARES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub(crate) fn prepares() -> u64 {
@@ -230,6 +248,24 @@ pub(crate) fn prepares() -> u64 {
 
 #[cfg(test)]
 mod native_q6_tests {
+    #[cfg(feature = "strata-intel-core")]
+    #[test]
+    fn shared_q8_640_column_producer_checks_real_batched_input_and_plane_bounds() {
+        use super::*;
+        for count in 1..=8 {
+            let spans = BatchSpans::new(count, 0, 7, 640, 0, 2560);
+            let words = 7 + count * 640;
+            let planes = count * 360;
+            assert_eq!(
+                prepare_info(640, &spans, words, planes).unwrap(),
+                [7, 640, 360, count as u32]
+            );
+            assert!(prepare_info(640, &spans, words - 1, planes).is_err());
+            assert!(prepare_info(640, &spans, words, planes - 1).is_err());
+        }
+        assert!(!supports_count(14, 640, 65536, 1));
+        assert!(prepare_info(640, &BatchSpans::new(1, 0, 0, 639, 0, 1), 640, 360).is_err());
+    }
     #[test]
     fn native_q6_iqs_covers_each_column_once_and_matches_canonical_gguf_decode() {
         // Independent canonical decoder validates every original weight index,

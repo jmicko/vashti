@@ -5,6 +5,9 @@ sycl/src/kernels/cuda/iq_kernels.dp.cpp and quantize_act.dp.cpp.
 The connected MTP front/rest and packed KV adaptations also follow
 sycl/src/core/mtp.cpp, fused_gr.dp.cpp, native_rope.dp.cpp,
 qsa_decode_attn.dp.cpp and include/strata/kernels/qsa.hpp.
+MTP MoE uses s2_expert_grouped.dp.cpp, native_bf16.dp.cpp,
+native_router.dp.cpp, native_mmvq.dp.cpp, shared_expert.dp.cpp,
+native_moe.dp.cpp and the SYCL q8_1_finite.hpp contract.
 Existing iq_moe_integer-NOTICE.txt retains additional llama.cpp/ggml attribution.
 
 MIT License

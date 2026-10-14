@@ -294,7 +294,7 @@ fn combined_info_and_all_temporary_capacities_fit_the_existing_plan() {
     assert_eq!(
         private_plan().unwrap(),
         if crate::strata_intel_core::enabled() {
-            18_644_992
+            18_776_064
         } else {
             11_698_176
         }

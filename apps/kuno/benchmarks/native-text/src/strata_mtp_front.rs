@@ -181,12 +181,15 @@ pub(crate) const POS: usize = 18;
 pub(crate) const STATUS: usize = 19;
 pub(crate) const RES1: usize = 20;
 pub(crate) const BLOCK: usize = 21;
-pub(crate) const WORDS: [usize; 22] = [
+pub(crate) const EXPERT_INPUT: usize = 22;
+pub(crate) const EXPERT_GU: usize = 23;
+pub(crate) const EXPERT_HIDDEN: usize = 24;
+pub(crate) const WORDS: [usize; 25] = [
     8, 81920, 20480, 20480, 81920, 20480, 81920, 81920, 64, 207360, 2560, 2560, 32, 20480, 4096,
-    4096, 4096, 32768, 4096, 98304, 81920, 20480,
+    4096, 4096, 32768, 4096, 98304, 81920, 20480, 800, 12800, 2000,
 ];
 pub(crate) struct Workspace {
-    pub ids: zeroize::Zeroizing<[BufferId; 22]>,
+    pub ids: zeroize::Zeroizing<[BufferId; 25]>,
 }
 impl Workspace {
     pub fn requests() -> Vec<u64> {
