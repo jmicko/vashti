@@ -647,3 +647,92 @@ rather than native MMQ parity; QSA quantized KV and complete graph recording sti
 need work. Keep the complete assembled core selected while resolving correctness;
 no partial timing winner/fallback. Goal active, full rewrite incomplete, speed
 gate closed.
+
+
+## Connected native CPU expert share and shared-work overlap (2026-10-14)
+
+Source `e43e271`, same isolated `codex/strata-rust-port` checkout. The previous
+all-GPU-HOST-fetch limitation is now superseded structurally. Whole-model GPU
+correctness/recovery and the full rewrite remain unproven; no speed gate change.
+
+Pinned `expert_source.cpp::expert_pool_dispatch_multi` chooses distinct experts
+in real routing order, keeps resident experts on GPU, and sends the last
+floor(missing*pcie_num/256) missing groups to GPU staging. The new core uses the
+native base0.55 share, rounded to141/256, bounded to64 staged groups. GPU groups
+are resident-first then transferred groups, while CPU jobs retain original rank
+and token indices. The actual GPU router's private plan is read and authenticated;
+no expert IDs or predictions are forced. Every original route occurs exactly
+once. Private remaps still identify initial physical cells after two-way exchange.
+
+`cpu_expert::native` is Rust-only: Q8_K signed-maximum/RNE activation quantization,
+IQ2_S/IQ3_XXS/IQ3_S/IQ4_XS integer grid/scale chains, Q8_0 and the distinct native
+Q2_0 CPU activation rules, IQ4_NL/Q2_0 DOWN, grouped gate/up/SILU and DOWN phases.
+It follows Strata's pinned GGML3cf03257f219afbe7334045ff7c6a06ac68c627d generic
+quantizer/dot equations and original public codebooks. AVX2 widens signed i8 values
+to i16 and performs exact i32 sums; unsupported hardware uses scalar integer
+arithmetic, not failure-driven backend selection. Up to eight RHS share decoded
+public codes per row. Persistent Rayon workers split all group rows, and all
+request inputs/quants/activations/partials/masks have wiping owners. No model
+file read, decoded weight cache or full model RAM duplicate is added.
+
+The owning global HOST complement now supplies sole scoped readonly CPU maps
+of actual selected original physical role cells. Binding/plan/layer/phase/range
+and actual registrations are checked. Noncoherent allocations invalidate after
+joined publication. Sources are Arc-owned while scoped CPU readers run; mutation
+and close require unique ownership, and every CPU/GPU-parent success/error joins
+before maps leave scope. GPU expert/shared commands are actually flushed for
+submission while the CPU pool works. Shared preparation does not consume routed
+output early; the CPU merge and real GPU reduction precede shared finish and GR
+combine. A layer-pending state prevents duplicate enqueue/finish publication.
+
+CPU results occupy one extra1 MiB PrivateArena root; the complete request model
+quote adds that root and16 MiB bounded CPU host reservation. The merge copies
+only authenticated CPU-mask rows, retaining genuine GPU stamps for other ranks,
+then original GPU probability-weighted reduction joins every actual partial.
+GPU/source/CPU routes and returned CPU masks must agree. Private CPU outputs are
+never written into public model backing or persisted.
+
+The original paired exchange now records COMPUTE_SHADER/SHADER_WRITE ->
+HOST/HOST_READ visibility before its joined fence. The vendored Vulkan encoder
+helper changes no ownership/layout/allocation. Fence completion alone does not
+satisfy this memory-domain operation; see the primary Vulkan
+[synchronization guide](https://docs.vulkan.org/guide/latest/synchronization_examples.html)
+and [specification](https://docs.vulkan.org/spec/latest/chapters/synchronization.html).
+CPU mappings can overlap later GPU *reads*, never source exchange writes.
+
+Validation under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-global-cpu-build-20261014.log`: release core build passes.
+- `strata-global-cpu-final-clippy-20261014.log` and
+  `strata-global-cpu-library-clippy-20261014.log`: strict engine/library Clippy pass.
+- `strata-global-native-cpu-tests-20261014.log`: three host tests pass: native
+  signed max/tie/Q2 rounding, all six formats versus independent canonical GGUF
+  weights with quantized inputs, exact SIMD integer sums and scoped eight-row
+  sparse-rank outputs/parent-error join. No GPU or source mapping execution.
+- `strata-global-cpu-core-split-tests-20261014.log`: host-only native split test
+  covers every1..8 width and resident/missing split, proving each rank appears
+  once. No live router or transfer execution is inferred.
+- `strata-global-cpu-shaders-20261014.log`:196 offline shaders pass, including
+  the private CPU merge and retained native physical-pointer paths.
+- `strata-global-cpu-ordinary-regression-20261014.log`:1,359 pass, one ignored.
+- `strata-global-cpu-library-regression-20261014.log`:141 pass, two ignored.
+- Formatting/whitespace checks pass. Previous full-core failures remain open.
+
+Explicit differences/gates: Vulkan uses audited per-layer route/input readback
+and one queued private CPU result upload, rather than Strata's mapped plan sink /
+CPU-written mapped result rows and synchronization flags. Rayon row tasks and a
+scoped CPU controller differ from the native parked/spinning physical-core pool;
+current workers use available logical topology and are not pinned. Native default
+share is fixed here; bandwidth-probed fraction, asynchronous refill/layer pipeline
+and complete stable native recordings still need audit/port. Integer equations
+are implemented, but optimized native multi-token floating reduction order and
+whole-model CPU/GPU numerical/state acceptance are not proven by the canonical
+host comparisons. Do not claim full Strata performance parity or correctness.
+
+Next complete native packing/placement/stream/recording audits and remaining
+GDN/QSA/quantized KV/PLE/native prefill/MTP graph/sampling/general-input paths,
+then whole-engine correctness/recovery acceptance before any live speed trial.
+All new CPU/GPU/cache/driver parts stay selected; no intermediate timing winner
+or fallback. No GPU inference/profile/reset/rebind, service/install/API/Vashti or
+release change. Canonical checkout and inherited bytecode preserved. Goal active
+and incomplete; speed gate closed.

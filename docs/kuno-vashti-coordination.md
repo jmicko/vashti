@@ -4497,3 +4497,31 @@ packing, GDN/QSA/KV/PLE/prefill and MTP graph/state/sampling/general-input paths
 Do not claim full rewrite or open the speed gate yet. API/Vashti consumer changes:
 none. Installed services/canonical checkout unchanged; inherited bytecode
 preserved. Goal active and incomplete.
+
+
+### Active Kuno engine handoff extension — native CPU/GPU split (2026-10-14)
+
+Source `e43e271`, isolated `codex/strata-rust-port` checkout. Read completion
+guide **Connected native CPU expert share and shared-work overlap** for actual
+source/math/ownership/join contracts and explicitly unresolved substitutions.
+
+Real router groups now split resident-first GPU, last141/256 missing GPU staging,
+and remaining HOST-backed CPU jobs. Rust native Q8/integer arithmetic covers all
+six routed formats; eight RHS share code loads and persistent row workers.
+Authentic HOST readonly maps stay alive through CPU joins. GPU expert/shared work
+is submitted while CPU runs; CPU merge/reduction precedes shared finish/GR combine.
+Actual source mutation/close requires unique Arc ownership. Paired exchange now
+includes explicit Vulkan GPU-to-HOST visibility. Added1 MiB private MAIN and16 MiB
+CPU host reservation; no disk source reads, weight duplicates or persisted content.
+
+Release build, strict engine/library Clippy,196 offline shaders, native CPU math /
+SIMD / sparse-row tests and exhaustive width/split rank accounting pass. Ordinary
+regression:1,359 pass/one ignored. Library:141 pass/two ignored. No GPU model,
+actual HOST mapping/exchange/overlap/recovery or performance acceptance. Existing
+full-core failures remain open. Per-layer readback/upload, fixed share and Rayon
+unPinned topology differ from native mapped sink/physical-core/stream scheduling;
+remaining fidelity/math/prefill/KV/MTP/sampling/input/recording checklist required.
+
+Keep assembled core selected; speed gate closed. API/Vashti changes required:
+none. Installed services/canonical checkout unchanged; inherited bytecode
+preserved. Goal active and incomplete.
