@@ -688,7 +688,6 @@ impl PrivateArena {
         }
         let mut arena = Self::new_transient_on_configured(client, budget, retired)?;
         arena.borrowed_roots = true;
-        arena.public_zero_audit = true;
         arena
             .handles
             .try_reserve_exact(3)
@@ -737,6 +736,11 @@ impl PrivateArena {
         self.public_zero_audit = true;
         Ok(())
     }
+    /// Private borrowing mandates complete audit without granting PUBLIC fixture
+    /// replay authority. Strict cleanup and public-test permission are separate.
+    fn strict_zero_audit(&self) -> bool {
+        self.public_zero_audit || self.borrowed_roots
+    }
     /// Configuration only; successful erasure credit still requires close.
     pub(crate) fn public_owned_zero_audit_enabled(&self) -> bool {
         self.io_policy == IoPolicy::OwnedTransient && self.public_zero_audit
@@ -744,7 +748,7 @@ impl PrivateArena {
     /// Accepted counts are available only AFTER checked explicit close. A
     /// failed/retired context cannot emit prior successful partial audit credit.
     pub(crate) fn owned_zero_audit_receipt(&self) -> Option<OwnedZeroAudit> {
-        (self.public_zero_audit && self.closed_clean && !self.retired.load(Ordering::Acquire))
+        (self.strict_zero_audit() && self.closed_clean && !self.retired.load(Ordering::Acquire))
             .then_some(self.zero_audit_counts)
     }
     fn active(&self) -> Result<()> {
@@ -919,7 +923,7 @@ impl PrivateArena {
             impl TransientCleanup for Native<'_> {
                 fn checkpoint(&mut self) -> Result<()> {
                     self.0
-                        .checkpoint_transient_with_audit(self.0.public_zero_audit)
+                        .checkpoint_transient_with_audit(self.0.strict_zero_audit())
                 }
                 fn erase(&mut self, slot: usize) -> Result<()> {
                     self.0.queue_erase(slot)
@@ -948,7 +952,7 @@ impl PrivateArena {
         // Explicit cleanup or a reset AFTER an accepted completed token fence.
         // The ordinary inference read path never calls this cleanup-only read.
         self.erase_and_drain()?;
-        if !self.public_zero_audit {
+        if !self.strict_zero_audit() {
             return Ok(OwnedZeroAudit::default());
         }
         if self.io_policy != IoPolicy::OwnedTransient
@@ -1104,7 +1108,8 @@ impl Drop for PrivateArena {
         // Failure is not permission to recycle unaudited pages. Retain the
         // bounded owning handles until process recovery; never issue clean
         // counts from Drop. This diagnostic deliberately quarantines them.
-        quarantine_failed_audit_handles(&mut self.handles, self.public_zero_audit, failed);
+        let audited = self.strict_zero_audit();
+        quarantine_failed_audit_handles(&mut self.handles, audited, failed);
     }
 }
 
