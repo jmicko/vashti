@@ -24,6 +24,9 @@ pub(crate) enum Kernel {
     Broadcast,
     Positions,
     Append,
+    Guard,
+    Rewind,
+    Identity,
 }
 impl Kernel {
     fn lanes(self) -> u32 {
@@ -46,6 +49,9 @@ impl Kernel {
             Self::Broadcast => "BROADCAST",
             Self::Positions => "POSITIONS",
             Self::Append => "APPEND",
+            Self::Guard => "GUARD",
+            Self::Rewind => "REWIND",
+            Self::Identity => "IDENTITY",
         }));
         source
     }
@@ -58,6 +64,9 @@ impl KernelMetadata for Kernel {
             Self::Broadcast => "StrataMtpFrontBroadcast",
             Self::Positions => "StrataMtpFrontPositions",
             Self::Append => "StrataMtpFrontAppend",
+            Self::Guard => "StrataMtpPackedCacheGuard",
+            Self::Rewind => "StrataMtpPackedCacheRewind",
+            Self::Identity => "StrataMtpDenseIdentity",
         }
     }
     fn id(&self) -> KernelId {
@@ -133,6 +142,9 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
         Kernel::Broadcast,
         Kernel::Positions,
         Kernel::Append,
+        Kernel::Guard,
+        Kernel::Rewind,
+        Kernel::Identity,
     ]
     .into_iter()
     .map(|k| {
@@ -167,12 +179,14 @@ pub(crate) const ROTATED: usize = 16;
 pub(crate) const PLANES: usize = 17;
 pub(crate) const POS: usize = 18;
 pub(crate) const STATUS: usize = 19;
-pub(crate) const WORDS: [usize; 20] = [
+pub(crate) const RES1: usize = 20;
+pub(crate) const BLOCK: usize = 21;
+pub(crate) const WORDS: [usize; 22] = [
     8, 81920, 20480, 20480, 81920, 20480, 81920, 81920, 64, 207360, 2560, 2560, 32, 20480, 4096,
-    4096, 4096, 32768, 4096, 81920,
+    4096, 4096, 32768, 4096, 98304, 81920, 20480,
 ];
 pub(crate) struct Workspace {
-    pub ids: zeroize::Zeroizing<[BufferId; 20]>,
+    pub ids: zeroize::Zeroizing<[BufferId; 22]>,
 }
 impl Workspace {
     pub fn requests() -> Vec<u64> {
@@ -221,6 +235,28 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_four_cell_page_mapping_covers_packed_words_and_preserves_rejected_prefix() {
+        let mut seen = vec![false; 4096 * 256];
+        for token in 0usize..4096 {
+            for head in 0..2 {
+                for dim in 0..128 {
+                    let row = ((token / 4) * 2 + head) * 4 + token % 4;
+                    let at = row * 128 + dim;
+                    assert!(!seen[at]);
+                    seen[at] = true;
+                    assert_eq!((at / 1024) * 4 + (at / 128) % 4, token);
+                }
+            }
+        }
+        assert!(seen.iter().all(|&v| v));
+        for accepted in [0, 1, 3, 4, 5, 63, 64, 4095, 4096] {
+            let cleared = (0..4096 * 256)
+                .filter(|&word| (word / 1024) * 4 + (word / 128) % 4 >= accepted)
+                .count();
+            assert_eq!(cleared, (4096 - accepted) * 256);
+        }
+    }
     #[test]
     fn grouped_embedding_lane_layout_matches_original_iq4xs_decoder() {
         for salt in 0..8 {

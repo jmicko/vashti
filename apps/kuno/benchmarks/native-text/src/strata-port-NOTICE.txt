@@ -2,6 +2,9 @@ Rust/WGSL adaptation of Strata native IQ/GU/DOWN/group planning and speculative 
 Pinned revision fb58e0dbc8399662c0e47c76578c6e878b14f6cf.
 Source modules: sycl/src/core/verify.cpp, sycl/src/core/speculation.cpp,
 sycl/src/kernels/cuda/iq_kernels.dp.cpp and quantize_act.dp.cpp.
+The connected MTP front/rest and packed KV adaptations also follow
+sycl/src/core/mtp.cpp, fused_gr.dp.cpp, native_rope.dp.cpp,
+qsa_decode_attn.dp.cpp and include/strata/kernels/qsa.hpp.
 Existing iq_moe_integer-NOTICE.txt retains additional llama.cpp/ggml attribution.
 
 MIT License

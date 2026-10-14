@@ -59,15 +59,47 @@ fn main(@builtin(global_invocation_id) id:vec3<u32>) {let t=id.x;if t<p.count {p
 // APPEND_BEGIN
 @group(0) @binding(0) var<storage,read> key:array<f32>;
 @group(0) @binding(1) var<storage,read> value:array<f32>;
-@group(0) @binding(2) var<storage,read_write> keys:array<f32>;
-@group(0) @binding(3) var<storage,read_write> values:array<f32>;
+@group(0) @binding(2) var<storage,read_write> keys:array<u32>;
+@group(0) @binding(3) var<storage,read_write> values:array<u32>;
 @group(0) @binding(4) var<storage,read_write> fault:array<atomic<u32>>;
 @group(0) @binding(5) var<uniform> p:Params;
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) id:vec3<u32>) {
-    let i=id.x;let t=id.y;if t>=p.count || i>=512u {return;}
-    let k=unpack2x16float(pack2x16float(vec2<f32>(key[t*512u+i],0.0))).x;
-    let v=unpack2x16float(pack2x16float(vec2<f32>(value[t*512u+i],0.0))).x;
-    let ok=finite(k)&&finite(v);keys[(p.start+t)*512u+i]=select(0.0,k,ok);values[(p.start+t)*512u+i]=select(0.0,v,ok);if !ok {atomicOr(&fault[0],1u);}
+    let i=id.x;let t=id.y;if t>=p.count || i>=256u {return;}
+    let d=t*512u+i*2u;let k=pack2x16float(vec2<f32>(key[d],key[d+1u]));let v=pack2x16float(vec2<f32>(value[d],value[d+1u]));
+    let a=unpack2x16float(k);let b=unpack2x16float(v);let ok=finite(a.x)&&finite(a.y)&&finite(b.x)&&finite(b.y);
+    let token=p.start+t;let row=((token/4u)*2u+i/128u)*4u+token%4u;let at=row*128u+i%128u;
+    keys[at]=select(0u,k,ok);values[at]=select(0u,v,ok);if !ok {atomicOr(&fault[0],1u);}
 }
 // APPEND_END
+// GUARD_BEGIN
+@group(0) @binding(0) var<storage,read> keys:array<u32>;
+@group(0) @binding(1) var<storage,read> values:array<u32>;
+@group(0) @binding(2) var<storage,read_write> fault:array<atomic<u32>>;
+@group(0) @binding(3) var<uniform> p:Params;
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) id:vec3<u32>) {
+    let i=id.x;if i>=1048576u {return;}
+    let k=keys[i];let v=values[i];
+    let token=(i/1024u)*4u+(i/128u)%4u;
+    if token>=p.start {if k!=0u || v!=0u {atomicOr(&fault[0],4u);}}
+    else {let a=unpack2x16float(k);let b=unpack2x16float(v);if !finite(a.x)||!finite(a.y)||!finite(b.x)||!finite(b.y){atomicOr(&fault[0],1u);}}
+}
+// GUARD_END
+// REWIND_BEGIN
+@group(0) @binding(0) var<storage,read_write> keys:array<u32>;
+@group(0) @binding(1) var<storage,read_write> values:array<u32>;
+@group(0) @binding(2) var<storage,read_write> fault:array<atomic<u32>>;
+@group(0) @binding(3) var<uniform> p:Params;
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) id:vec3<u32>) {
+    let i=id.x;if p.rows>4096u || p.start>p.rows {if i==0u {atomicOr(&fault[0],1u);}return;}
+    if i<1048576u {let token=(i/1024u)*4u+(i/128u)%4u;if token>=p.start {keys[i]=0u;values[i]=0u;}}
+}
+// REWIND_END
+// IDENTITY_BEGIN
+@group(0) @binding(0) var<storage,read_write> ids:array<u32>;
+@group(0) @binding(1) var<uniform> p:Params;
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) id:vec3<u32>) {let i=id.x;if i<=p.start && i<4096u {ids[i]=i;}}
+// IDENTITY_END

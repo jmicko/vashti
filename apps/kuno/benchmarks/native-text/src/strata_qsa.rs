@@ -38,6 +38,8 @@ pub(crate) enum Kernel {
     PublishPool,
     Score,
     Attention,
+    MtpAttention,
+    MtpMerge,
     Merge,
     Gate,
     Append,
@@ -45,7 +47,7 @@ pub(crate) enum Kernel {
 impl Kernel {
     fn lanes(self) -> u32 {
         match self {
-            Self::Norm | Self::Attention | Self::Merge => 256,
+            Self::Norm | Self::Attention | Self::Merge | Self::MtpAttention | Self::MtpMerge => 256,
             Self::Score => 128,
             _ => 64,
         }
@@ -68,11 +70,27 @@ impl Kernel {
             Self::RetainedPool => "RETAINED_POOL",
             Self::PublishPool => "PUBLISH_POOL",
             Self::Score => "SCORE",
-            Self::Attention => "ATTENTION",
-            Self::Merge => "MERGE",
+            Self::Attention | Self::MtpAttention => "ATTENTION",
+            Self::Merge | Self::MtpMerge => "MERGE",
             Self::Gate => "GATE",
             Self::Append => "APPEND",
         }));
+        if matches!(self, Self::MtpAttention | Self::MtpMerge) {
+            s = s.replace(
+                "let n=start+token+1u;return min(n/4u,512u)*4u+n%4u;",
+                "return start+token+1u;",
+            );
+            s = s
+                .replace("33u", "64u")
+                .replace("202752u", "393216u")
+                .replace("1584u", "3072u")
+                .replace("2051u", "4096u");
+            if matches!(self, Self::MtpAttention) {
+                let a = s.find("fn kv(").unwrap();
+                let z = a + s[a..].find("@compute").unwrap();
+                s.replace_range(a..z,"fn kv(token:u32,offset:u32)->f32 {let component=offset%512u;let row=((token/4u)*2u+component/256u)*4u+token%4u;let at=row*128u+(component%256u)/2u;var bits=0u;if offset<512u {bits=cache[at];}else{bits=candidate[at];}let v=unpack2x16float(bits);return select(v.x,v.y,(offset&1u)!=0u); }\n");
+            }
+        }
         s
     }
 }
@@ -86,6 +104,8 @@ impl KernelMetadata for Kernel {
             Self::PublishPool => "StrataQsaPublishIndexerBlocks",
             Self::Score => "StrataQsaIndexerScore",
             Self::Attention => "StrataQsaChunkAttention",
+            Self::MtpAttention => "StrataMtpChunkAttention",
+            Self::MtpMerge => "StrataMtpChunkMerge",
             Self::Merge => "StrataQsaChunkMerge",
             Self::Gate => "StrataQsaGate",
             Self::Append => "StrataQsaAppendFp16",
@@ -170,6 +190,8 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
         Kernel::PublishPool,
         Kernel::Score,
         Kernel::Attention,
+        Kernel::MtpAttention,
+        Kernel::MtpMerge,
         Kernel::Merge,
         Kernel::Gate,
         Kernel::Append,

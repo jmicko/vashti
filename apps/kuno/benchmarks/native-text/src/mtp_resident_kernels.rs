@@ -38,6 +38,12 @@ pub const CONTEXT: usize = if crate::strata_intel_core::enabled() {
     2048
 };
 pub const CACHE_WORDS: usize = CONTEXT * KV;
+pub const CACHE_STRIDE: usize = if crate::strata_intel_core::enabled() {
+    KV / 2
+} else {
+    KV
+};
+pub const CACHE_STORAGE_WORDS: usize = CONTEXT * CACHE_STRIDE;
 pub const ATTENTION_WORDS: usize = QH * CONTEXT;
 pub const CONDITION_WORDS: usize = HC * D * 2;
 pub const ACTIVATION_WORDS: usize = RANKS * FF;
