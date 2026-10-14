@@ -2381,7 +2381,7 @@ remain preserved.
 ### Next source work before whole-engine acceptance
 
 Finish native prompt allocation/placement and size selection with **all dependent
-owners and consumers**. Current capacity256 and three fixed128MiB stage roots are
+owners and consumers**. The former capacity256/three128MiB layout was
 not proof of native owned/default2048-row prefill or cache lending. Do not emulate
 native2048-row grouping by eight separately routed256-row prompts and call it
 parity. Native Intel defaults owned buffers at context<=32768, loans above that
@@ -2401,3 +2401,124 @@ Then finish whole graph/branch recording, arbitrary input/supported sampling,
 verifier/repair and the full source/unit-failure audits. Protected whole-engine
 completion, numerical/state/recovery acceptance still precede any live speed
 comparison. Driver allocation and physical queue overlap remain acceptance gaps.
+
+
+## Connected native-owned prompt allocation foundation (2026-10-14)
+
+Source `788e793`. **This is not completion of2048-row inference.** The
+actual controller/grouping/math consumers still use `groups::CAPACITY=256`, and
+cache lending is not implemented. Do not benchmark this intermediate assembly
+or describe its buffer capacity as proof of native2048 grouping.
+
+The allocator/ownership barrier for that port is now connected:
+
+- `strata_prompt_allocation::Plan` records the native2048 default and selects
+  Owned for context<=32768, CacheLoan above. Loan allocation deliberately returns
+  an explicit incomplete-path error; it does not invent a lease or silently
+  allocate unpriced permanent memory. Current engine context admission remains
+  bounded below that threshold; general context/loan support is still required.
+- The actual global model constructor allocates three separately tracked512MiB
+  prompt roots in `PrivateArena`. `Workspace::requests` and `MAIN_BYTES` include
+  all three before model/cache payload construction; their added MAIN charge is
+  exactly1,610,612,736 bytes. Decode retains its distinct three128MiB fetch stages.
+  These are conservative power-of-two Rust arena envelopes, not a claim of
+  byte-identical SYCL allocation or physically measured VRAM use.
+- `core_prompt_stages` supplies the real prompt Scope, while `core_stages` remains
+  decode-specific. `Sources::attach_prompt_stage` attests the actual complete,
+  same-stream raw owner through backend metadata. Original HOST copies must name
+  that exact owner and remain below64MiB; scratch fetch address tables/decode
+  dependencies still point to their original stages. Owned prompt refs participate
+  in normal close and unknown-in-flight retention.
+- Prompt working images remain exact64MiB views; persistent/phase views now carve
+  from the larger owned roots. The same carving code is checked at both current256
+  and planned2048 rows for GR/outer/PLE/GDN/QSA ranges and phase separation. Raw
+  slot views, grouping scratch and protected erasure refer to the actual new
+  owner, not a fictitious larger descriptor on an old allocation.
+- Only the Intel-core build raises PrivateArena's maximum span/pool bins to512MiB;
+  ordinary feature-off keeps128MiB. Native device admission requires both actual
+  maximum buffer size and binding range to support the larger root before payload
+  construction. Exact power-of-two exclusive pools still forbid a larger hidden
+  owning tail.
+
+### Bounded complete-root erasure inspection
+
+The previous inspection read each complete owning buffer in one host lease,
+which cannot scale to512MiB under the existing bounded I/O budget.
+`OwnedZeroInspection` now reads exact ranges in32MiB windows. Every lease is
+wiped/dropped and its staging sanitizer completed before the next range. A root
+gets its single whole-buffer byte/count credit only after *every* window,
+including padding/tail, passes. Errors/panics cannot publish a clean prefix or
+release an uninspected root. GPU erasure itself still covers the full owned
+word span using the real buffer length and2D flattened dispatch. Ordinary small
+roots remain one inspection window.
+
+This is connected to the real native cleanup readback backend, not a host-only
+mock or an increased host allocation budget. The focused host tests additionally
+exercise small inspection windows against retained synthetic pages, late tail
+corruption and a last-window map failure. They do not prove live Vulkan erasure,
+allocation, model completion or GPU recovery.
+
+Validation logs in `/media/jmicko/faststore/kuno-development`:
+
+- `strata-owned-prompt-build-20261014.log`: release core build passes.
+- `strata-owned-prompt-clippy-20261014.log` and
+  `strata-owned-prompt-feature-off-clippy-20261014.log`: strict core and ordinary
+  feature-off release Clippy pass.
+- `strata-owned-prompt-erasure-tests-20261014.log`:18 private-arena tests pass in
+  the core build, including exact exclusive-page bins/large-span grid bounds,
+  full-root window coverage and late-tail/map failure with bounded leases.
+- `strata-owned-prompt-feature-off-tests-20261014.log`: the same18 tests pass
+  with the original128MiB ordinary limit/pool bins. The deliberate synthetic
+  panic messages are caught fault-injection cases; both results are green.
+- `strata-owned-prompt-layout-tests-20261014.log` and
+  `strata-owned-prompt-policy-tests-20261014.log`: actual carving code's256/2048
+  persistent/phase bounds and policy/request/MAIN inventory checks pass.
+- `strata-owned-prompt-slot-tests-20261014.log`: all three raw-view/cache tests
+  pass against the new actual owner envelope.
+- `strata-owned-prompt-shaders-20261014.log`: all308 existing shader variants
+  (122 physical validations) and32 cooperative variants pass modern validation.
+- `git diff --check` passes; canonical and inherited bytecode are preserved.
+
+No live GPU/model,
+numerical/state/recovery/speed execution, API/Vashti change, service change,
+installation or release occurred. Full core unit suite is not rerun; the earlier
+228-failure result remains an unaudited baseline, and changed root/byte fixtures
+may require separate review. Do not rewrite those expectations wholesale.
+
+### Required connected continuation: propagate true2048 consumers
+
+Do this next, before loan support or any speed run:
+
+1. Promote the actual prompt count/data path together: grouping, map/route/status
+   layouts, expert GU/PART outputs, metadata/closing proofs, GR/GDN/QSA/PLE/MTP
+   handle contracts, full controller chunks and source actor limits/charges.
+   MAX_BATCH8 remains the speculative verifier limit; do not raise it to2048 or
+   route eight separate256 chunks and call that native grouping. Shader
+   `workgroup_size(256)` and CB32/attention32 tiling are different quantities from
+   prompt row capacity and must not be blindly replaced.
+2. The current MoE map's LOGICAL4100 intersects MEMBERS1540+2048*10, so changing
+   count guards alone is wrong. Separate/price the raw logical-route packet and
+   grouped map spans. Old map/status roots are decode-sized. The new prompt roots
+   have room to carve actual prompt-specific map/status/GU/PART views without
+   enlarging/reinterpreting decode's MAX8 owner. GU output needs16MiB and PART
+   needs256MiB padded ownership at2048; both must feed their real matrix/reducer
+   consumers with updated route stamps and closing acceptance.
+3. `Storage::at_capacity(2048)` establishes only the listed persistent/phase view
+   bounds, not every working-image or MTP consumer. Audit actual full R/teacher
+   inputs and packed activation/weight images. MTP FC-hidden can expose four
+   residual rows per token: native2048 teaching may need count8192 even though
+   target prompt count is2048. Preserve separate logical geometries and real
+   bounds; the current matrix limit4096 is not a universal prompt limit.
+4. Derive PLE double-buffered source, map/readback, INFO and host/runtime charges
+   from real row spans and joined actor lifetimes. Retain current last-nine-row
+   history acceptance and completed-boundary publication, and verify new512MiB
+   owners through bounded erasure rather than a single huge readback.
+5. After full2048 connection, finish real cache loan/restoration/exclusion,
+   conditional native ring/stream-all sizing and expert-cache placement against
+   actual owned/borrowed bytes. The conservative512MiB envelopes are currently
+   charged, but physical allocation/cache fit and exact native policy still need
+   audit and acceptance. No fallback from an unimplemented loan is allowed.
+
+Then complete arbitrary input/sampling, branch/recording and verifier repair,
+source/unit-failure audits and protected whole-engine completion/numerical/state/
+recovery gates. Only afterward compare throughput. Keep the full goal active.

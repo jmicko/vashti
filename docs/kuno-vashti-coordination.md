@@ -5152,3 +5152,53 @@ repair, source and unit-failure audits, followed by protected whole-engine
 completion/numerical/state/recovery acceptance and only then throughput. The
 passing host schedule oracle does not prove actual GPU overlap or performance.
 Required Vashti changes: none.
+
+
+### Active Kuno engine handoff — owned prompt allocation foundation (2026-10-14)
+
+Source `788e793`, isolated `codex/strata-rust-port`, following range `3ca345c`.
+Read completion guide **Connected native-owned prompt allocation foundation**.
+**Actual prompt math/controller/grouping is still capped256. This is not
+2048-row completion, cache lending or permission to benchmark.**
+
+The actual constructor now prices/registers three separate512MiB private prompt
+owners (MAIN delta1,610,612,736 bytes); decode keeps its three128MiB fetch stages.
+`core_prompt_stages` supplies the real prompt Scope, and the source binder attests
+the actual same-stream whole raw owner. Copies/slot descriptors stay in its
+lower64MiB; ordinary decode tables/dependencies are unchanged. All new owners are
+in real request/MAIN inventory, normal close and unknown-in-flight retention.
+These power-of-two Rust envelopes are conservative, not measured SYCL/VRAM parity.
+
+Native allocator/admission supports512MiB owners with explicit device buffer/
+binding limits; ordinary feature-off retains128MiB/pools. Cleanup now inspects
+complete roots through32MiB readbacks, wiping/dropping/sanitizing each lease
+before the next and publishing root credit only after its entire tail/padding
+passes. No enlarged host readback allowance, untracked owner or ordinary-I/O
+fallback. Policy recognizes native default2048 and owned-at-context<=32768;
+CacheLoan is explicitly unimplemented and cannot silently become an owned
+allocation. No configurable chunk/loan implementation is claimed.
+
+Release build, strict core/feature-off Clippy,18 arena tests in each mode,
+policy/inventory test, actual256/2048 persistent/phase carving test, three slot/
+cache tests,308 shader variants (122 physical) and32 matrix variants pass.
+No live GPU/model/allocation/erasure/numerical/state/recovery/speed acceptance;
+full core suite not rerun, prior228-failure baseline still unaudited. No API/Vashti,
+installed service/residency, install or release change. Canonical and bytecode
+preserved. Goal active, rewrite incomplete, speed gate closed.
+
+**Next propagate true2048 rows through all actual consumers as one block.** The
+receipt lists exact map/status collisions and suggested owned-view separation:
+LOGICAL4100 overlaps MEMBERS1540+2048*10; old MoE roots remain decode-sized.
+Carve real prompt-specific raw/grouped maps/status/GU/PART views from the priced
+owners and connect them to router/grouping/dequant/matrix/reducer/closing proof.
+GU needs16MiB and PART256MiB padded at2048. Keep verifier MAX_BATCH8 separate and
+leave workgroup256/CB32/attention32 tiling alone. Audit full working images,
+PLE actor rows/charges/history and MTP four-residual rows (potential matrix count
+8192) as well as GR/GDN/QSA scope/count/state acceptance and controller chunks.
+`Storage::at_capacity(2048)` proves only its listed view bounds, not all consumers.
+
+After full2048 flow, implement real cache loans/restoration/exclusion and
+conditional ring/stream-all sizing with actual cache placement; then input/
+sampling, branch/recording, verifier repair, source and unit-failure audits before
+protected whole-engine acceptance and speed comparisons. No privileged work was
+needed; the last earlier sudo check had expired. Required Vashti changes: none.
