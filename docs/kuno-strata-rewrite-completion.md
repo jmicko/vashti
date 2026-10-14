@@ -35,12 +35,12 @@ all need a final audit of actual connected dispatches, not just file names.
 | Artifact geometry, packing and tokenizer | `sycl/src/core/weights.cpp`, `src/io`, native expert layout, program model setup | Rust GGUF/tokenizer/binding exist. Audit format-specific load/conversion, chat-template and sampling behavior; original files remain shared/read-only. |
 | Exact dense placement and expert budget | `sycl/src/program/generate.cpp` model/cache setup; `sycl/src/core/expert_cache.cpp::open_sized` | Exact dense roots exist. Native global byte-prefix planning and an owning bounded GPU loader now compile; graph validation consumes the real artifact plan. Experimental core construction now invokes the sole global owner before prefill, and the core48-layer coordinator selects global routing/HOST fetch/role execution. Adaptive exchange/private remap updates, native format conversion audit and physical/numerical acceptance are unfinished. The ordinary feature-off engine retains uniform banks. |
 | Low-RAM host complement and promotion | `generate.cpp` source/adaptive tier; `sycl/src/core/verify.cpp` fetch/rebase | Original host complement, direct exchange and GPU selected fetch exist. Audit full byte ownership and asynchronous safe publication against upstream; do not duplicate the whole model in RAM. |
-| GPU route/group planning and CPU contribution | `verify.cpp` router, `resident_plan`, doorbell/pool/host plans; `src/kernels/cpu` | Real GPU router exists. Audit the selected working Intel all-GPU-fetch versus host-pool mode and reproduce its actual mode, including overlap/merge where active. |
+| GPU route/group planning and CPU contribution | `verify.cpp` router, `resident_plan`, doorbell/pool/host plans; `src/kernels/cpu` | Native BF16 router/shared-gate projections and full512-expert softmax/winning-lane normalization are selected in the core. Physical/numerical acceptance and working Intel all-GPU-fetch versus host-pool mode/overlap still require audit. |
 | Native expert math and grouped rows | `sycl/src/kernels/cuda/iq_kernels.dp.cpp::row_entries`, `native_gu_kernel`, `native_down_kernel` | Packed integer math/BDA roots exist. Separate GU roles, 4/2/1 chunks, activation, intermediate storage and downstream consumers are now selected together in the Intel core; all 158 WGSL/SPIR-V variants validate, including 105 physical-pointer checks; numerical/model execution acceptance remains pending. The global core now uses one per-role launch containing pinned row_entries4/2/1 loops, scalar IQ4_XS, native signed integer finish and XOR reduction; numerical/model execution acceptance remains pending. Historical fixed-chunk kernels are retained separately. |
 | GR write/read/norm/down/up/injection | `sycl/src/kernels/cuda/fused_gr.dp.cpp::fused_gr_read_multi`; `verify.cpp::gr_read_group` | Native pending-write norm, sliced BF16 down/injection, fixed slice reduction and up/mix/commit are now connected and unconditionally selected in the core, including explicit PLE/final boundary writes. Resident original weights and the enlarged private scratch owner are charged together. Structural acceptance passes; numerical/model execution acceptance and final substitution audit remain pending. |
 | GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp` | Core now connects native BF16 alpha/beta window projection, conv/L2, controls, double-buffered four-row-group FMA recurrence/output norm and state-only accepted-prefix replay. See the GDN receipts below. Optional Q8 producer fusion, prompt-path fidelity, physical execution and final numerical/queue audit remain open. |
 | QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects FP16 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. See the QSA receipt below for precise storage/scheduling substitutions and remaining numerical/state acceptance; do not claim full QSA fidelity yet. |
-| PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Original grouped reads/hash/history exist. Audit asynchronous deduplicated source reads, grouped BF16 projections and ordered history snapshots/commit. Never persist request n-grams. |
+| PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Core now connects native BF16 MAX8 projections, native normalization/gate/conv/history, transient deduplicated positional reads and the actual accepted-prefix owner. Whole-prompt double-buffered prefetch, mapped history/snapshot scheduling and numerical/device acceptance remain open. Never persist request n-grams. |
 | Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rust bounded graph prefill is not full prompt-path parity. Port connected chunk budget, streamed layer staging and Intel GEMM/expert batches, including prompt history consumed by MTP. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation; its stub does not remove the real Intel prompt path requirement. |
 | MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native FP16 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Queue/branch/capture fidelity, numerical/state acceptance, arbitrary input and supported sampling remain required. See the front/rest/MoE receipts. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Request-local Rust suffix/cost controller exists; audit supported window lengths and coupled sampling rather than fixing to four public-fixture rows. |
@@ -1133,3 +1133,77 @@ Port real Intel GEMM/chunk budget/streamed staging and its history consumers;
 do not port the inactive MMQ stub or treat existing three-row verification
 looping as prompt-path parity. Preserve the full graph/queue/input/sampling and
 final completeness/state/recovery gates before any speed trial.
+
+## Connected native PLE and target BF16/router math (2026-10-14)
+
+Source `1018a09`, isolated `codex/strata-rust-port`. `strata_ple.rs`/WGSL
+port actual `native_ple_postops.dp.cpp` and native BF16 multi-row arithmetic.
+Core selection is unconditional for existing layer1 PLE consumers. Existing
+19 private owners,6,258,688-byte MAIN plan, OLD/NEXT identity and whole-model
+accepted-prefix commit remain authoritative; no new GPU content/weight root.
+
+BF16 key/value projections read authentic original cache rows once across
+real1..8 RHS, with native256-thread ordered pair FMAs and XOR/block reduction.
+The same producer is connected to target router/shared-scalar BF16 roles.
+Native global routing now computes full512-expert softmax before stable top10
+selection, then normalizes by native winning-expert-lane accumulation rather
+than the old top10-only exponential sum. Real remapping/grouping/usage consumers
+remain unchanged; no substituted expert selection or per-request weight copy.
+
+Native PLE tail connects1024-thread weighted RMS,512-thread materialized-product
+signed-root gate,256-thread broadcast, native weighted normalization, ordered
+dilated convolution/residual output and channel-major nine-cell history. Every
+active status joins the original fault proof. The existing pending GR write is
+flushed before PLE observation. Original accepted-prefix code consumes actual
+normalized rows; enqueue does not commit host history or accept a candidate.
+
+Layout/scheduling substitutions remain explicit: key/norm/query/result pages
+stay distinct instead of native safe in-place aliases. Cached F32 convolution
+weights are rounded to native FP16 at consumption instead of allocating another
+public half copy. Causal history still uploads OLD and later reads actual
+OLD/NORMALIZED/NEXT for the existing host-owned commit, unlike native mapped
+device snapshots. Those history/queue changes still need the full connected
+schedule audit and physical/numerical acceptance.
+
+Core embedding reads use a wiping stable sorted/deduplicated plan. Original
+token/head destinations are restored after worker completion. Four scoped
+workers perform positional reads from cloned, already-inspected descriptors;
+all join on success/cancellation/error before decoded scatter. Each worker's
+96 KiB requested stack plus32 KiB runtime allowance and64 KiB raw/plan envelope
+are included in the existing4 MiB host check. No row cache, row IDs, n-grams,
+embeddings or prompts persist outside the request. `TensorView::positional_reader`
+is a backend-only additive Rust API; it retains source ownership/stat checks and
+does not reopen paths. This is bounded parallel I/O, not native io_uring or
+whole-prompt next-chunk double-buffering; those remain required schedule work.
+
+Validation logs in `/media/jmicko/faststore/kuno-development`:
+
+- Final release build and strict core Clippy:
+  `strata-ple-{build,clippy}-20261014.log` pass.
+- `strata-ple-shaders-20261014.log`:235 offline WGSL/SPIR-V variants pass,
+  including all six PLE/BF16 kernels and the updated global route.
+- `strata-ple-math-tests-20261014.log`: three host tests pass. Native postops
+  match the independent scalar F64 oracle through widths1..8; every history
+  prefix has the exact original rolling-window values. BF16 pair order covers
+  all2560 columns/all RHS. Full router normalization/stable ties match an
+  independent full-softmax oracle. These do not establish GPU numerics.
+- `strata-ple-owner-tests-20261014.log`: all12 source/host-bound/ownership
+  tests pass, including deduplicated scatter, padding and history acceptance.
+- `strata-ple-positional-tests-20261014.log`: actual parallel descriptor reads
+  through the new tensor API preserve data and original seek cursor.
+- `strata-ple-ordinary-regression-20261014.log`:1,370 pass/one ignored at the
+  pre-router-extension checkpoint. Later changes select core-only BF16/router
+  math and add its host oracle; final core build/shaders and focused tests pass.
+
+Fmt/whitespace pass. No live GPU/model/speed test, root/service/reset/rebind,
+API/protocol/UI change, installation or release. Required Vashti changes: none.
+Earlier full-core failures and whole-engine acceptance remain open. Full rewrite
+incomplete; goal active; speed gate closed.
+
+Next: port **the actual Intel prompt GEMM/chunk/staging path**, including its
+PLE next-chunk prefetch and target/MTP history consumers. Current global prompt
+controller still calls three-row verification repeatedly. Increasing that loop's
+count or wrapping it in a prefill name is not the native path. Read pinned
+`sycl/src/prefill/{prefill.cpp,gemm.dp.cpp,kernels.dp.cpp}` and the real stage
+allocation/ring/cache-loan contracts together. Preserve original public weights,
+bounded private staging, final cursor/teacher alignment and failure erasure.

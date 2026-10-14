@@ -4676,3 +4676,29 @@ GEMM/prefill with fused stubs and no CUDA/HIP MMQ; port its real Intel consumers
 not the inactive MMQ stub. MTP side-queue/capture scheduling, dense-format audit,
 earlier full-core failures and whole-model acceptance remain open. Full rewrite
 incomplete; goal active; speed gate closed. Required Vashti changes: none.
+
+### Active Kuno engine handoff — native PLE/source history (2026-10-14)
+
+Source `1018a09`, isolated `codex/strata-rust-port`. Read completion guide
+**Connected native PLE and target BF16/router math** for exact call paths,
+allocation/ownership, I/O/history substitutions and remaining schedule gaps.
+
+Core PLE now connects original BF16 MAX8 projections and native1024/512/256-lane
+normalization/gate/conv/history to actual accepted-prefix owners. Target router/
+shared-scalar BF16 uses the same native projection. Global router now matches
+full512-expert softmax/winning-lane normalization. Original private owners,
+remap/group/usage and whole-model commit/fault proofs remain authoritative.
+Selected-row I/O is deduplicated, parallel and transient, using cloned pinned
+descriptors; the additive tensor-reader Rust API has no Vashti consumer change.
+
+Final core release build, strict Clippy and235 offline shaders pass. Three
+independent host math/prefix tests,12 ownership/source tests and actual parallel
+descriptor test pass. Ordinary pre-router-extension regression:1,370 pass/one
+ignored; later core-only changes pass final core/focused checks. No GPU/model,
+speed, root/service/API/UI change, deployment or release. Full rewrite incomplete.
+
+Next implement real Intel prompt GEMM/chunk/staging and PLE next-chunk prefetch,
+not larger repeated verification windows. Native history mapped snapshots,
+stable full graph/queues, dense-format audit, arbitrary input/sampling, earlier
+full-core failures and whole-engine physical acceptance remain open. Goal active;
+speed gate closed. Required Vashti changes: none.
