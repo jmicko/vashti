@@ -1,4 +1,5 @@
-//! One owning GU and one DOWN launch across the complete five-tier source map.
+//! Native Intel separate gate/up, activation and DOWN over the five-tier map.
+//! Non-core historical mode retains one combined GU and one DOWN launch.
 //! All original packed public pages remain pinned; no model repack or private
 //! allocation occurs. The parent authenticates the source generation and every
 //! physical root before lending these handles. MIT decoder notices unchanged.
@@ -11,6 +12,8 @@ use cubecl_runtime::id::KernelId;
 use cubecl_runtime::kernel::{CompiledKernel, KernelMetadata};
 use cubecl_runtime::server::{ExecutionMode, Handle, KernelArguments, MetadataBindingInfo};
 use kuno_text::{Error, Result};
+#[path = "strata_expert_roles.rs"]
+mod roles;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct Kernel {
@@ -19,6 +22,7 @@ struct Kernel {
     row_bytes: usize,
     four: bool,
     member_width: u8,
+    native_role: u8,
 }
 /// All public widths launch; immutable GPU MAP admits exactly one per group.
 /// Strata fb58e0 row_entries / row_dot_multi use cardinalities4/2/1 rather than
@@ -244,6 +248,16 @@ impl Kernel {
         if crate::strata_intel_core::enabled() && !self.down {
             source = crate::strata_intel_core::shared_table(source, table_binding, self.dtype);
         }
+        if self.native_role != 0 {
+            return roles::source(
+                source,
+                self.down,
+                self.dtype,
+                self.member_width as usize,
+                count,
+                self.native_role,
+            );
+        }
         if self.member_width != 0 {
             source = specialize_members(source, self.down, count, self.member_width as usize);
         }
@@ -252,7 +266,13 @@ impl Kernel {
 }
 impl KernelMetadata for Kernel {
     fn name(&self) -> &'static str {
-        if self.down {
+        if self.native_role == 1 {
+            "StrataNativeGateChunks"
+        } else if self.native_role == 2 {
+            "StrataNativeUpChunks"
+        } else if self.native_role == 3 {
+            "StrataNativeDownChunks"
+        } else if self.down {
             "StrataFusedFiveTierDown"
         } else {
             "StrataFusedFiveTierGu"
@@ -299,7 +319,45 @@ pub(crate) fn launch(
     groups: usize,
     down: bool,
 ) -> Result<()> {
-    if crate::strata_port::specialized_members() {
+    if crate::strata_intel_core::enabled() {
+        // One complete native expert sequence: fetch, separate roles, activation,
+        // then route-indexed preparation/DOWN. Never speed-gate its ingredients.
+        if !down {
+            crate::strata_stage::launch(
+                client,
+                geometry,
+                pages,
+                &owners[0],
+                spans.map_first(),
+                count,
+            )?;
+        }
+        for native_role in if down { 3..=3 } else { 1..=2 } {
+            for member_width in if count == 4 {
+                &[4, 2, 1][..]
+            } else {
+                &[2, 1][..]
+            } {
+                launch_width(
+                    client,
+                    geometry,
+                    spans,
+                    pages,
+                    owners,
+                    scratch,
+                    count,
+                    groups,
+                    down,
+                    *member_width,
+                    native_role,
+                )?;
+            }
+        }
+        if !down {
+            activate(client, spans, owners, count)?;
+        }
+        Ok(())
+    } else if crate::strata_port::specialized_members() {
         for member_width in 1..=if count == 4 { 4 } else { 3 } {
             launch_width(
                 client,
@@ -312,12 +370,13 @@ pub(crate) fn launch(
                 groups,
                 down,
                 member_width,
+                0,
             )?;
         }
         Ok(())
     } else {
         launch_width(
-            client, geometry, spans, pages, owners, scratch, count, groups, down, 0,
+            client, geometry, spans, pages, owners, scratch, count, groups, down, 0, 0,
         )
     }
 }
@@ -334,6 +393,7 @@ fn launch_width(
     groups: usize,
     down: bool,
     member_width: u8,
+    native_role: u8,
 ) -> Result<()> {
     if !crate::strata_port::enabled()
         || pages.len() != 15
@@ -360,7 +420,7 @@ fn launch_width(
     }
     for handle in [
         &owners[0],
-        &owners[if down { 3 } else { 2 }],
+        &owners[if down || native_role != 0 { 3 } else { 2 }],
         &owners[6],
         scratch,
     ] {
@@ -383,7 +443,7 @@ fn launch_width(
             args = args.with_buffer(stages[role].clone().binding());
         }
         // Copies all original selected HOST words exactly once per layer.
-        if !down && member_width <= 1 {
+        if !down && native_role == 0 && member_width <= 1 {
             crate::strata_stage::launch(
                 client,
                 geometry,
@@ -399,12 +459,12 @@ fn launch_width(
         spans.map_first(),
         0,
         512,
-        if down {
+        if down || native_role != 0 {
             spans.partial_first()
         } else {
             spans.act_first()
         },
-        if down {
+        if down || native_role != 0 {
             spans.partial_stride()
         } else {
             spans.act_stride()
@@ -431,6 +491,7 @@ fn launch_width(
                 row_bytes: projection.row_bytes(),
                 four: count == 4,
                 member_width,
+                native_role,
             }),
             CubeCount::Static(
                 if down {
@@ -484,6 +545,7 @@ pub(crate) fn compiled_sources() -> Vec<CompiledKernel<AutoCompiler>> {
                             row_bytes,
                             four,
                             member_width,
+                            native_role: 0,
                         }
                         .compile(
                             &mut AutoCompiler::Wgsl(Default::default()),
@@ -497,5 +559,130 @@ pub(crate) fn compiled_sources() -> Vec<CompiledKernel<AutoCompiler>> {
             }
         }
     }
+    if crate::strata_intel_core::enabled() {
+        for native_role in 1..=3 {
+            let down = native_role == 3;
+            let dtypes: &[u32] = if down {
+                &[crate::quant_matvec::Q2_0, crate::quant_matvec::IQ4_NL]
+            } else {
+                &[
+                    crate::quant_matvec::IQ2_S,
+                    crate::quant_matvec::IQ3_XXS,
+                    crate::quant_matvec::IQ3_S,
+                    crate::quant_matvec::IQ4_XS,
+                ]
+            };
+            for &dtype in dtypes {
+                for four in [false, true] {
+                    for &member_width in if four { &[4, 2, 1][..] } else { &[2, 1][..] } {
+                        result.push(
+                            Kernel {
+                                down,
+                                dtype,
+                                row_bytes: kuno_text::TensorType::from_gguf_id(dtype)
+                                    .unwrap()
+                                    .row_bytes(if down { 640 } else { 2560 })
+                                    .unwrap() as usize,
+                                four,
+                                member_width,
+                                native_role,
+                            }
+                            .compile(
+                                &mut AutoCompiler::Wgsl(Default::default()),
+                                &Default::default(),
+                                ExecutionMode::Unchecked,
+                                StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+                            )
+                            .unwrap(),
+                        );
+                    }
+                }
+            }
+        }
+        result.push(
+            Activate
+                .compile(
+                    &mut AutoCompiler::Wgsl(Default::default()),
+                    &Default::default(),
+                    ExecutionMode::Unchecked,
+                    StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+                )
+                .unwrap(),
+        );
+    }
     result
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct Activate;
+impl KernelMetadata for Activate {
+    fn name(&self) -> &'static str {
+        "StrataNativeGuActivate"
+    }
+    fn id(&self) -> KernelId {
+        KernelId::new::<Self>().cube_dim(CubeDim::new_1d(64))
+    }
+    fn address_type(&self) -> StorageType {
+        StorageType::Scalar(ElemType::UInt(UIntKind::U32))
+    }
+}
+impl CubeTask<AutoCompiler> for Activate {
+    fn compile(
+        &self,
+        _: &mut AutoCompiler,
+        _: &cubecl::WgpuCompilationOptions,
+        _: ExecutionMode,
+        _: StorageType,
+    ) -> std::result::Result<CompiledKernel<AutoCompiler>, CompilationError> {
+        Ok(CompiledKernel {
+            entrypoint_name: "main".into(),
+            debug_name: None,
+            source: roles::ACTIVATE.into(),
+            repr: None,
+            cube_dim: CubeDim::new_1d(64),
+            debug_info: None,
+        })
+    }
+}
+fn activate(
+    client: &ComputeClient<WgpuRuntime>,
+    spans: &g::Spans,
+    owners: &[Handle; 7],
+    count: usize,
+) -> Result<()> {
+    // The caller's Spans/arena proof covers all MAX80 rows. PART is dead until
+    // DOWN: activation clears exactly its borrowed two role planes after use.
+    let values = [
+        count,
+        spans.partial_first(),
+        spans.partial_stride(),
+        spans.act_first(),
+        spans.act_stride(),
+        spans.status_first(),
+        0,
+        0,
+    ];
+    if values.iter().any(|&v| v > u32::MAX as usize) {
+        return Err(Error::InvalidBufferLength);
+    }
+    let mut args = KernelArguments::new();
+    for i in [3, 2, 6] {
+        args = args.with_buffer(owners[i].clone().binding());
+    }
+    args = args.with_info(MetadataBindingInfo::custom(
+        values
+            .chunks_exact(2)
+            .map(|v| v[0] as u64 | ((v[1] as u64) << 32))
+            .collect(),
+    ));
+    // SAFETY: authentic full private roots, nonoverlapping rows, same queue;
+    // native role writes precede activation and DOWN cannot run before it.
+    unsafe {
+        client.launch_unchecked(
+            Box::new(Activate),
+            CubeCount::Static((count * 10) as u32, 1, 1),
+            args,
+        );
+    }
+    Ok(())
 }

@@ -94,14 +94,15 @@ const HYBRID_HOST: usize = 1024 * 1024;
 // Gate and down planes each prepare once per count1 layer. Retain their full
 // INFO source/target/inspection charge through the token's owning I/O audit.
 const HYBRID_PREPARE_INFO: u64 = 2 * LAYERS as u64 * 2048;
-// Six additional fixed structural GU/DOWN width launches per layer. Retain
-// their full INFO source/target/inspection charge; no old allowance is spent.
-const NATIVE_CARDINALITY_INFO: u64 = if cfg!(feature = "strata-intel-core") {
-    6 * LAYERS as u64 * 2048
+// Separate native gate/up/down chunks and activation replace two broad
+// projections. Reserve all eight additional full INFO owners per layer;
+// no old source/target/inspection allowance is spent.
+const NATIVE_EXPERT_ROLE_INFO: u64 = if cfg!(feature = "strata-intel-core") {
+    8 * LAYERS as u64 * 2048
 } else {
     0
 };
-const HYBRID_RUNTIME: u64 = 1024 * 1024 + HYBRID_PREPARE_INFO + NATIVE_CARDINALITY_INFO;
+const HYBRID_RUNTIME: u64 = 1024 * 1024 + HYBRID_PREPARE_INFO + NATIVE_EXPERT_ROLE_INFO;
 const DEFAULT_REUSE_METADATA: usize = 256 * 1024;
 
 /// Complete separate runtime metadata reservation, added to the existing
@@ -245,7 +246,7 @@ const HYBRID_IO_DERIVED: u64 = 128 * 2048
     + 2 * 32768
     + 4 * 8192
     + HYBRID_PREPARE_INFO
-    + NATIVE_CARDINALITY_INFO;
+    + NATIVE_EXPERT_ROLE_INFO;
 const _: () = {
     assert!(HYBRID_IO_DERIVED <= HYBRID_RUNTIME);
 };

@@ -1,5 +1,57 @@
 # Strata Rust whole-model port experiment
 
+## Active direction — finish the complete Rust port before speed testing (2026-10-14)
+
+The user replaced the old performance goal with an explicit **complete connected
+Rust rewrite first** goal. This section supersedes every historical next-step,
+artifact selection and benchmark instruction below. Do not run throughput trials
+or operator timing until the completeness audit in
+[kuno-strata-rewrite-completion.md](kuno-strata-rewrite-completion.md) passes.
+Interim checks may compile, validate shaders, check numerical/state behavior and
+prove whole-model inference completes and releases its resources. Incidental
+execution durations must not select, disable or abandon a partial implementation.
+Keep coupled upstream changes together even if an intermediate build is slower.
+
+Working branch is `codex/strata-rust-port` in
+`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`. Starting runtime source is
+`7455b6f851ea4868d4d4af8f869fc5c281700cbb`. Canonical Vashti and installed binaries
+are unchanged; this work has no API/UI contract change. Pinned MIT upstream remains
+`fb58e0dbc8399662c0e47c76578c6e878b14f6cf`. No linked foreign inference engine is an
+acceptable substitute for the Rust rewrite.
+
+The previous pass added cardinality variants (`903dc9d`, `bd86885`), retained
+them as an optional experiment (`cb857a8`), and added one-round Vulkan operator
+timestamps (`7455b6f`). Frozen v287 uses `bd86885`, SHA256
+`2066c090ea7a6a6145d97bcf98695e51cb468e4633345f844f3054030999200c`.
+Frozen v288 uses `7455b6f`, SHA256
+`731acece3c8ecfd71405a26f63d314d6229df6eb8d9d890fbf9388ad6959885c`.
+Their historical public code/prose executions completed and restored GPU/admission
+state; they are **not a completion audit or a reason to reject upstream behavior**.
+The timestamped round serializes its nodes and is diagnostic only. Full original
+regression after the v288 vendor changes remains outstanding.
+
+Correction to older notes: upstream `row_entries` uses **4/2/1 chunks** for formats
+with `Multi<TY>::has`; it is not scalar-only by default. `native_gu_kernel` separates
+gate/up output roles before activation. Our prior width-per-launch experiment and
+combined GU activation do not yet establish that scheduling parity. SYCL QFUSE and
+HC_Q8 are explicitly unsupported in this pinned Intel source; they are not required
+Intel port components merely because CUDA has them.
+
+The first connected implementation block ports native separate gate/up/DOWN
+4/2/1 chunks and activation into the selected Intel core. Gate/up borrow existing
+private PART rows; activation consumes and clears them before DOWN. HOST staging
+runs once, and eight additional INFO owners/layer are charged. Runtime source is
+in `strata_expert_roles.rs`/`strata_expert_fused.rs`. All 158 WGSL/SPIR-V sources
+validate (105 physical-pointer checks), strict core Clippy/build pass, and original
+direct-device regression passes 1,346/1 ignored. **No GPU inference or speed trial
+was run; full rewrite and numerical execution acceptance remain unfinished.**
+The protected runner requires `--execution-check` and rejects operator profiling.
+
+A bounded sudo refresher was started for the new implementation block at
+`/media/jmicko/faststore/kuno-development/strata-coherent-rewrite-sudo-20261014.pid`.
+Inspect the actual process and cache before protected work. If sudo is unavailable,
+leave a documented checkpoint and stop; do not declare the rewrite complete.
+
 ## Current checkpoint — packed shared/MTP and projection reuse (2026-10-14)
 
 The goal remains **active and unfinished**: implement the connected native Rust
@@ -77,8 +129,8 @@ paths remain absent; the original comparison evidence and pinned MIT source
 are preserved. Alternate Q2 sidecar `kuno-strata-mtp-q2-20261009/mtp-q2_0.gguf`
 remains889,017,216 bytes.
 
-Next high-impact source comparison: pinned Intel Strata defaults to separate
-GU roles and one-entry `row_entries` accumulation (`iq_kernels.dp.cpp:1784`,
+Historical next-step proposal (superseded above): pinned Intel Strata uses separate
+GU roles and 4/2/1 `row_entries` accumulation (`iq_kernels.dp.cpp:1784`,
 `1815`, `4182`; `g_split_multi` is opt-in). Kuno's current GU fuses both roles
 and four member accumulators. Lower register pressure/occupancy is a plausible
 advantage, not yet a measured bottleneck. Add public-only operator GPU timing

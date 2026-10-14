@@ -1,0 +1,207 @@
+//! MIT Strata fb58e0 Intel native_gu/native_down row_entries port.
+//! Gate/up are distinct projections; GPU groups execute 4/2/1 entry chunks.
+//! The existing PART owner is borrowed before DOWN, then erased by activation.
+//! No route readback, new private root, or model copy is introduced.
+use std::fmt::Write;
+
+pub(super) fn source(
+    mut source: String,
+    down: bool,
+    dtype: u32,
+    width: usize,
+    capacity: usize,
+    role: u8,
+) -> String {
+    assert!(matches!(width, 1 | 2 | 4) && width <= capacity);
+    assert!(if down {
+        role == 3
+    } else {
+        matches!(role, 1 | 2)
+    });
+    if !down {
+        // Two 640-value role planes share each dead 2560-value PART row.
+        source = source
+            .replace("p.e<640u", "p.e<1280u")
+            .replace(
+                "640u>arrayLength(&output)-p.d",
+                "1280u>arrayLength(&output)-p.d",
+            )
+            .replace(
+                "arrayLength(&output)-p.d-640u",
+                "arrayLength(&output)-p.d-1280u",
+            )
+            .replace(
+                "80u>arrayLength(&status)-p.f",
+                "160u>arrayLength(&status)-p.f",
+            );
+    }
+    let name = if down {
+        "down"
+    } else if role == 1 {
+        "gate"
+    } else {
+        "up"
+    };
+    let rows = if down { 2560 } else { 640 };
+    let blocks = if down { 20 } else { 80 };
+    let lanes = crate::strata_port::expert_lanes();
+    let tile = 256 / lanes;
+    let float_ty = if width == 1 {
+        "f32".into()
+    } else {
+        format!("vec{width}<f32>")
+    };
+    let int_ty = if width == 1 {
+        "i32".into()
+    } else {
+        format!("vec{width}<i32>")
+    };
+    let axis = |i: usize| {
+        if width == 1 {
+            String::new()
+        } else {
+            format!(".{}", ["x", "y", "z", "w"][i])
+        }
+    };
+    let mut body = format!(
+        r#"@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) group:vec3<u32>, @builtin(local_invocation_index) local:u32,
+        @builtin(subgroup_id) sg:u32, @builtin(subgroup_invocation_id) sub_lane:u32,
+        @builtin(subgroup_size) subgroup_width:u32, @builtin(num_subgroups) subgroups:u32) {{
+    if subgroup_width!=32u || subgroups!=8u || group.x>={grid}u || group.z!=0u || !valid_group(group.y) {{return;}}
+    let length=map[p.a+84u+group.y];
+"#,
+        grid = rows / tile
+    );
+    body.push_str(match width {
+        4 => "    if length!=4u {return;}let member_base=0u;\n",
+        2 => "    if length!=2u && length!=3u {return;}let member_base=0u;\n",
+        1 => "    if length!=1u && length!=3u {return;}let member_base=select(0u,2u,length==3u);\n",
+        _ => unreachable!(),
+    });
+    writeln!(body, "    let row=group.x*{tile}u+sg*(32u/{lanes}u)+sub_lane/{lanes}u;let lane=sub_lane%{lanes}u;").unwrap();
+    writeln!(
+        body,
+        "    let slot=map[p.a+4u+group.y]-strata_first;let offset=(slot*{rows}u+row)*ROW_BYTES;"
+    )
+    .unwrap();
+    for i in 0..width {
+        writeln!(
+            body,
+            "    let route{i}=map[p.a+164u+group.y*8u+member_base+{i}u];"
+        )
+        .unwrap();
+    }
+    if down {
+        // Copy just this chunk's route-indexed activation into shared memory.
+        // All lanes in the workgroup agree on admission before the barrier.
+        for i in 0..width {
+            writeln!(body, "    for(var at=local;at<180u;at+=256u) {{let frame=64u+route{i}*360u;var value=0u;if at<160u {{value=planes[frame+at];}}else {{value=planes[frame+320u+at-160u];}}strata_input[{}u+at]=value;}}", i*180).unwrap();
+        }
+    } else {
+        writeln!(body, "    for(var word=local;word<{}u;word+=256u) {{let token=word/720u;let at=word%720u;var value=0u;if token<p.h {{let frame=64u+token*1440u;if at<640u {{value=planes[frame+at];}}else {{value=planes[frame+1280u+at-640u];}}}}strata_input[word]=value;}}", capacity*720).unwrap();
+    }
+    body.push_str("    workgroupBarrier();\n");
+    for i in 0..width {
+        writeln!(
+            body,
+            "    let frame{i}={};",
+            if down {
+                format!("{}u", i * 180)
+            } else {
+                format!("(route{i}/10u)*720u")
+            }
+        )
+        .unwrap();
+    }
+    writeln!(body, "    var values={float_ty}(0.0);\n    for(var block=lane;block<{blocks}u;block+={lanes}u) {{let prepared={name}_prepare(offset,block);").unwrap();
+    let halves = if !down && dtype == crate::quant_matvec::IQ2_S {
+        2
+    } else {
+        1
+    };
+    let quartets = 8 / halves;
+    for half in 0..halves {
+        writeln!(body, "        {{var dots={int_ty}(0);").unwrap();
+        for q in half * quartets..(half + 1) * quartets {
+            writeln!(
+                body,
+                "            {{let packed={name}_packed(prepared,{q}u);let at=block*8u+{q}u;"
+            )
+            .unwrap();
+            for i in 0..width {
+                writeln!(
+                    body,
+                    "                dots{}+=dot4I8Packed(packed,strata_input[frame{i}+at]);",
+                    axis(i)
+                )
+                .unwrap();
+            }
+            body.push_str("            }\n");
+        }
+        writeln!(
+            body,
+            "            let scale={name}_factor(prepared{});",
+            if down {
+                String::new()
+            } else {
+                format!(",{half}u")
+            }
+        )
+        .unwrap();
+        for i in 0..width {
+            let a = axis(i);
+            writeln!(body, "            values{a}=fma(scale,bitcast<f32>(strata_input[frame{i}+{}u+block])*f32(dots{a}),values{a});", if down { 160 } else { 640 }).unwrap();
+        }
+        body.push_str("        }\n");
+    }
+    body.push_str("    }\n");
+    writeln!(body, "    for(var stride={}u;stride>0u;stride/=2u) {{let other:{float_ty}=subgroupShuffleDown(values,stride);if lane<stride {{values+=other;}}}}", lanes/2).unwrap();
+    body.push_str("    if lane==0u {\n");
+    for i in 0..width {
+        let offset = if role == 2 { 640 } else { 0 };
+        let status_offset = if down || role == 2 { 80 } else { 0 };
+        writeln!(body, "        output[p.d+route{i}*p.e+{offset}u+row]=values{};if row==0u {{status[p.f+{status_offset}u+route{i}]=1u;}}", axis(i)).unwrap();
+    }
+    body.push_str("    }\n}\n");
+    let first = source
+        .find("@compute @workgroup_size(256)")
+        .expect("native expert entry");
+    let end =
+        crate::strata_port::function_end(&source, source[first..].find("fn main").unwrap() + first);
+    source.replace_range(first..end, &body);
+    source
+}
+
+pub(super) const ACTIVATE: &str = r#"
+struct Params { count:u32, first:u32, stride:u32, act_first:u32, act_stride:u32, status_first:u32, r0:u32, r1:u32 }
+@group(0) @binding(0) var<storage,read_write> partial:array<f32>;
+@group(0) @binding(1) var<storage,read_write> activated:array<f32>;
+@group(0) @binding(2) var<storage,read_write> status:array<u32>;
+@group(0) @binding(3) var<uniform> p:Params;
+fn silu(x:f32)->f32 {
+    if x>=0.0 {return x/(1.0+exp(-x));}
+    let e=exp(x);return x*e/(1.0+e);
+}
+@compute @workgroup_size(64)
+fn main(@builtin(workgroup_id) group:vec3<u32>, @builtin(local_invocation_index) lane:u32) {
+    let route=group.x;
+    if p.count<1u || p.count>4u || route>=p.count*10u || group.y!=0u || group.z!=0u || p.r0!=0u || p.r1!=0u {return;}
+    if p.first>arrayLength(&partial) || p.stride<2560u || 1280u>arrayLength(&partial)-p.first {return;}
+    if 79u>(arrayLength(&partial)-p.first-1280u)/p.stride {return;}
+    if p.act_first>arrayLength(&activated) || p.act_stride<640u || 640u>arrayLength(&activated)-p.act_first {return;}
+    if 79u>(arrayLength(&activated)-p.act_first-640u)/p.act_stride {return;}
+    if p.status_first>arrayLength(&status) || 160u>arrayLength(&status)-p.status_first {return;}
+    // Every lane checks both completed roles before any can clear the UP stamp.
+    let completed=status[p.status_first+route]==1u && status[p.status_first+80u+route]==1u;
+    workgroupBarrier();
+    let first=p.first+route*p.stride;
+    for(var row=lane;row<640u;row+=64u) {
+        let g=partial[first+row];let u=partial[first+640u+row];
+        if completed {activated[p.act_first+route*p.act_stride+row]=silu(g)*u;}
+        partial[first+row]=0.0;partial[first+640u+row]=0.0;
+    }
+    workgroupBarrier();
+    if lane==0u {status[p.status_first+route]=select(0u,1u,completed);status[p.status_first+80u+route]=0u;}
+}
+"#;

@@ -4309,3 +4309,21 @@ oracle and soak are not established. No benchmark/compiler remains; the bounded
 sudo helper may still be live and must be inspected, not assumed. Next scope:
 public operator timing, lower-register expert scheduling and connected GR fusions,
 with packed-epoch/vector verification for the changed prose path.
+
+
+## Active native-text direction — complete Rust rewrite before speed testing (2026-10-14)
+
+This supersedes all preceding native-text next-step/performance experiment notes.
+The user deleted the previous goal and explicitly requires the complete connected
+Strata Intel inference path in Rust **before any live testing for speed**. Read
+[the completion gate](kuno-strata-rewrite-completion.md) and the top of
+[the port checkpoint](kuno-strata-rust-port.md). Intermediate checks may establish
+build/shader validity, numerical/state correctness and successful execution; speed
+reports must not change direction or justify dropping coupled components.
+
+New goal is active. Working branch `codex/strata-rust-port`, starting runtime
+`7455b6f`, isolated `kuno-image-speed` worktree. No canonical/deployed source,
+API/protocol/UI or release changes; required Vashti changes **none**. Completion
+is not claimed: global expert allocation, full GR/native schedules, prompt prefill
+and general request connection remain among the explicit audit gaps. Preserve
+existing source, public comparison evidence, Q2 sidecar and attribution.
