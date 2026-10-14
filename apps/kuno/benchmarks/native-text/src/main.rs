@@ -8,6 +8,7 @@ mod cpu_gpu_expert_schedule;
 mod strata_cache;
 mod strata_dense;
 mod strata_expert_fused;
+mod strata_gr;
 mod strata_intel_core;
 mod strata_packet;
 mod strata_port;

@@ -47,6 +47,18 @@ direct-device regression passes 1,346/1 ignored. **No GPU inference or speed tri
 was run; full rewrite and numerical execution acceptance remain unfinished.**
 The protected runner requires `--execution-check` and rejects operator profiling.
 
+A second connected source block now selects native GR pending-write norm,
+sliced BF16 down/injection, fixed reduction and up/mix/commit together. PLE and
+compact final/no-head prompt boundaries flush pending writes; the enlarged UP
+scratch owner adds exactly 524,288 private bytes to both family and model quotes.
+All 163 shader sources validate (105 physical checks), release/core Clippy pass,
+and 12 core GR owner/layout tests pass. The full core unit run is **not green**:
+1,148 pass, 200 fail, one ignored, including old 144-slot and pre-port-budget
+assumptions that still need triage. No GPU inference/speed trial was run. Read the
+completion guide's **Connected GR implementation block** for exact substitutions,
+logs and unfinished numerical acceptance; do not interpret these checks as a
+complete rewrite or model correctness proof.
+
 A bounded sudo refresher was started for the new implementation block at
 `/media/jmicko/faststore/kuno-development/strata-coherent-rewrite-sudo-20261014.pid`.
 Inspect the actual process and cache before protected work. If sudo is unavailable,

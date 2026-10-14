@@ -73,7 +73,12 @@ pub(crate) const TARGET_ROWS_PREPARED_VERIFY3_MAIN: u64 =
 
 const OLD_MAIN: u64 = 785_186_816 + gdn::strata_replay::MAIN_BYTES;
 const NEW_MAIN: u64 = 33_062_912;
-const TOTAL_MAIN: u64 = OLD_MAIN + NEW_MAIN;
+const TOTAL_MAIN: u64 = OLD_MAIN + NEW_MAIN + NATIVE_GR_MAIN;
+const NATIVE_GR_MAIN: u64 = if cfg!(feature = "strata-intel-core") {
+    crate::strata_gr::PRIVATE_INCREMENT
+} else {
+    0
+};
 const PUBLIC_MAIN: u64 = 25_165_824;
 const HOST_CAP: usize = 12 * 1024 * 1024;
 pub(crate) const ORIGINAL_BANK_HOST: usize = if cfg!(feature = "strata-resident-240") {
@@ -1247,7 +1252,7 @@ impl Plan {
         for (pages, expected) in [
             (
                 gr::Workspace::allocation_requests(graph)?.to_vec(),
-                1_998_848,
+                1_998_848 + NATIVE_GR_MAIN,
             ),
             (
                 gdn::GdnBatchWorkspace::allocation_requests(graph)?.to_vec(),
@@ -4874,6 +4879,9 @@ impl Workspace {
                 None
             };
             if layer == 1 {
+                // PLE consumes the residual directly, so complete the pending
+                // FFN write before its observation/projection/history work.
+                self.gr.flush_pending(&m.arena, m.b.fault, cancel)?;
                 m.numeric_boundary.observe(
                     numeric_boundaries::Boundary::Input,
                     &m.arena,
@@ -5384,6 +5392,7 @@ impl Workspace {
         }
         *m.phase_ns.entry("native_final_head_enqueue").or_default() +=
             final_head_start.elapsed().as_nanos();
+        self.gr.flush_pending(&m.arena, m.b.fault, cancel)?;
         self.gr.validate_all_consumers_queued()?;
         self.shared.validate_all_consumers_queued()?;
         // Capture real queued counters before PLE/family permits borrow their
@@ -5395,6 +5404,11 @@ impl Workspace {
                 Layer::Gdn(_, _) => grouped_status_expected[1] += 1,
                 Layer::Qsa(_, _) => grouped_status_expected[2] += 1,
             }
+        }
+        if crate::strata_intel_core::enabled() {
+            // Native GR writers join finite faults directly; no status-fold
+            // dispatch is claimed for the retired pointwise stages.
+            grouped_status_expected[0] = 0;
         }
         let (still_selected, grouped_status_after) = self.grouped_status_state()?;
         if grouped_status_folds != still_selected {

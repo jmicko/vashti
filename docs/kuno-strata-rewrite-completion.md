@@ -37,7 +37,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | Low-RAM host complement and promotion | `generate.cpp` source/adaptive tier; `sycl/src/core/verify.cpp` fetch/rebase | Original host complement, direct exchange and GPU selected fetch exist. Audit full byte ownership and asynchronous safe publication against upstream; do not duplicate the whole model in RAM. |
 | GPU route/group planning and CPU contribution | `verify.cpp` router, `resident_plan`, doorbell/pool/host plans; `src/kernels/cpu` | Real GPU router exists. Audit the selected working Intel all-GPU-fetch versus host-pool mode and reproduce its actual mode, including overlap/merge where active. |
 | Native expert math and grouped rows | `sycl/src/kernels/cuda/iq_kernels.dp.cpp::row_entries`, `native_gu_kernel`, `native_down_kernel` | Packed integer math/BDA roots exist. Separate GU roles, 4/2/1 chunks, activation, intermediate storage and downstream consumers are now selected together in the Intel core; all 158 WGSL/SPIR-V variants validate, including 105 physical-pointer checks; numerical/model execution acceptance remains pending. The Vulkan port uses separate fixed chunk launches with GPU guards, not upstream row_entries within one launch; audit that substitution explicitly. |
-| GR write/read/norm/down/up/injection | `sycl/src/kernels/cuda/fused_gr.dp.cpp::fused_gr_read_multi`; `verify.cpp::gr_read_group` | Existing Rust GR still uses separate projections/pointwise stages. Port pending-write norm, sliced down/reduce and up/mix/injection with genuine resident BF16 weights and charged partial scratch together. |
+| GR write/read/norm/down/up/injection | `sycl/src/kernels/cuda/fused_gr.dp.cpp::fused_gr_read_multi`; `verify.cpp::gr_read_group` | Native pending-write norm, sliced BF16 down/injection, fixed slice reduction and up/mix/commit are now connected and unconditionally selected in the core, including explicit PLE/final boundary writes. Resident original weights and the enlarged private scratch owner are charged together. Structural acceptance passes; numerical/model execution acceptance and final substitution audit remain pending. |
 | GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp` | GDN retained-state replay exists. Audit actual convolution/L2/alpha-beta/recurrence/output-norm fusion, grouped projections and retained commit inputs against pinned Intel source. |
 | QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Causal Rust QSA exists. Audit fused norm/RoPE, KV format/append and block selection/gather, grouped consumers and tail repair; explicit F32 versus quantized KV difference needs resolution. |
 | PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Original grouped reads/hash/history exist. Audit asynchronous deduplicated source reads, grouped BF16 projections and ordered history snapshots/commit. Never persist request n-grams. |
@@ -91,3 +91,58 @@ execution/correctness only, never throughput acceptance. Release compilation, st
 1 ignored) pass. Runner refusal of speed/profile invocations was exercised
 without root, service calls, output creation or GPU access. No GPU inference run was performed in this
 implementation block. Full model numerical execution remains pending.
+
+## Connected GR implementation block (2026-10-14)
+
+`strata_gr.rs` / `strata_gr.wgsl` port the pinned Intel `gr_norm_split_port_kernel`,
+`gr_down_sliced_kernel`, `gr_down_reduce_kernel` and `gr_up_multi_kernel` as one
+sequence. Normalization uses one workgroup per token/stream, native XOR reduction
+order, weighted values retained per lane and pending residual FMA. Sliced projection
+shares 128 activation columns, computes 320 down and four injection rows using the
+original resident BF16 matrices, and reduces the 80 slices in fixed order. Up/mix
+shares the reduced low-rank values and commits the pending residual output.
+
+`Prepared::combine` defers the write into the next GR read. Pending source/output
+identities and active count must match; unfinished pending writes cannot pass the
+whole-model consumer audit. PLE at layer 1 explicitly flushes the preceding write.
+A compact final-head read flushes all prompt rows first, preserving prompt/MTP
+history; no-head prompt chunks also flush before their completed proof. Previous
+injection gates are retained in the existing private normalization-status owner
+before the next injection projection overwrites them. The active core uses that
+owner as 64 F32 words; its physical allocation stays unchanged.
+
+The existing UP owner becomes the 80x8x324 partial workspace, growing from 524,288
+to 1,048,576 bytes. The complete model quote and GR family construction quote
+both add 524,288 bytes. No extra private root, decoded weight copy or per-decode
+weight upload is added. Actual downloaded model headers confirm GR down/up/inject
+are original dtype 30 (BF16) with dimensions [10240,320], [320,10240], [10240,4].
+Native GR writers join nonfinite faults directly; retired pointwise status-fold
+dispatches are not falsely credited. Ordinary feature-off code retains its original
+allocation, arithmetic and immediate-combine path.
+
+Explicit Vulkan substitutions: pending writes target the existing ping-pong
+residual owners; core scratch uses the existing private UP owner rather than
+Strata's queue-global partial allocation; LOW global stores have one actual writer
+instead of identical racing writes from every up workgroup. WGSL exp/inverseSqrt
+replace SYCL native math. These are documented implementation differences, not
+proof of numerical parity. Read-only dummy bindings for absent injection/pending
+inputs do not alias a same-node writable owner.
+
+Validation logs in `/media/jmicko/faststore/kuno-development`:
+
+- `strata-connected-gr-build-20261014.log`: release build passes.
+- `strata-connected-gr-final-clippy-20261014.log`: strict core Clippy passes.
+- `strata-connected-gr-shaders-20261014.log`: 163 WGSL/SPIR-V sources pass,
+  including 105 physical expert-pointer checks and all five GR kernels.
+- `strata-connected-gr-core-layout-tests-20261014.log`: 12 GR ownership/layout
+  tests pass in core mode. No GPU or model execution is involved.
+- `strata-connected-gr-core-regression-20261014.log`: full core unit run is
+  **not green**: 1,148 pass, 200 fail, one ignored. Representative failures still
+  require the old 144-expert geometry, original MTP allocations, old host cap and
+  pre-port target budgets; test-scope/contract reconciliation and triage remain
+  required. Do not claim all failures are harmless without further evidence.
+
+No live GPU inference, operator profile, speed trial, installation or API/UI change
+was performed. Full rewrite and numerical/state acceptance remain unfinished.
+Continue the complete source-to-source checklist; do not benchmark or disable the
+GR sequence to select an intermediate throughput winner.

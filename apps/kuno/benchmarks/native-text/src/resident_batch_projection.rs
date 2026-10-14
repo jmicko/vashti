@@ -80,6 +80,15 @@ pub trait BatchedResidentProjector {
         }
         Ok(())
     }
+    fn enqueue_native_gr(
+        &mut self,
+        _projections: [BoundProjection<'_>; 2],
+        _injection: Option<BoundProjection<'_>>,
+        _request: crate::strata_gr::Read<'_>,
+        _cancel: &AtomicBool,
+    ) -> Result<bool> {
+        Ok(false)
+    }
     /// The ordinary path ignores this non-reusable Final-only capability.
     /// true means the caller must queue a full scratch clear after all reads.
     #[allow(clippy::too_many_arguments)]
@@ -123,6 +132,29 @@ pub struct ResidentBatchProjection<'e, 'f> {
 impl BatchedResidentProjector for ResidentBatchProjection<'_, '_> {
     fn global_fault(&self) -> BufferId {
         self.fault
+    }
+    fn enqueue_native_gr(
+        &mut self,
+        projections: [BoundProjection<'_>; 2],
+        injection: Option<BoundProjection<'_>>,
+        request: crate::strata_gr::Read<'_>,
+        cancel: &AtomicBool,
+    ) -> Result<bool> {
+        if !crate::strata_intel_core::enabled() {
+            return Ok(false);
+        }
+        u::cancel(cancel)?;
+        if self.fault != request.fault {
+            return Err(Error::InvalidBufferLength);
+        }
+        self.executor
+            .check_client(request.arena.client().map_err(u::fault)?)?;
+        let weights = self
+            .executor
+            .strata_gr_weights(projections.map(|p| p.tensor), injection.map(|p| p.tensor))?;
+        crate::strata_gr::read(request, weights)?;
+        u::cancel(cancel)?;
+        Ok(true)
     }
     fn enqueue_batch(
         &mut self,

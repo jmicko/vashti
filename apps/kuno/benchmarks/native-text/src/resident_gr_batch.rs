@@ -167,8 +167,16 @@ impl Layout {
             scalar.residual_elements,
             low,
             low,
-            scalar.residual_elements,
-            streams,
+            if crate::strata_intel_core::enabled() {
+                crate::strata_gr::PARTIAL_WIDTH
+            } else {
+                scalar.residual_elements
+            },
+            if crate::strata_intel_core::enabled() {
+                2 * streams
+            } else {
+                streams
+            },
             low,
             width,
             scalar.residual_elements,
@@ -268,11 +276,19 @@ enum Phase {
     ReadQueued,
     Poisoned,
 }
+#[derive(Clone, Copy)]
+struct PendingWrite {
+    source: BufferId,
+    block: BufferId,
+    output: BufferId,
+    count: usize,
+}
 pub struct Workspace {
     binding: GraphBindingId,
     layout: Layout,
     ids: [BufferId; N],
     phase: Phase,
+    pending_write: Option<PendingWrite>,
     public_grouped_status: crate::status_fold_batch::PublicPolicy,
 }
 impl Workspace {
@@ -328,15 +344,56 @@ impl Workspace {
             layout,
             ids,
             phase: Phase::Available,
+            pending_write: None,
             public_grouped_status: crate::status_fold_batch::PublicPolicy::default(),
         })
     }
     /// Full-model coordinator must also reject abandoned read capabilities.
     /// Available means all consumers/folds QUEUED, not GPU success or credit.
     pub fn validate_all_consumers_queued(&self) -> Result<()> {
-        if self.phase != Phase::Available {
+        if self.phase != Phase::Available || self.pending_write.is_some() {
             return Err(Error::InvalidFormat("GR batch transaction unfinished"));
         }
+        Ok(())
+    }
+    pub(crate) fn flush_pending(
+        &mut self,
+        arena: &PrivateArena,
+        fault: BufferId,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        let Some(pending) = self.pending_write.take() else {
+            return Ok(());
+        };
+        if self.phase != Phase::Available {
+            return Err(Error::InvalidFormat("GR pending write unavailable"));
+        }
+        self.phase = Phase::Poisoned;
+        u::cancel(cancel)?;
+        self.prove(
+            arena,
+            pending.source,
+            fault,
+            &[
+                (pending.block, MAX_BATCH * self.layout.width),
+                (
+                    pending.output,
+                    MAX_BATCH * self.layout.streams * self.layout.width,
+                ),
+            ],
+            None,
+        )?;
+        crate::strata_gr::write(
+            arena,
+            pending.source,
+            pending.block,
+            self.ids[INJECTION],
+            pending.output,
+            fault,
+            pending.count,
+        )?;
+        u::cancel(cancel)?;
+        self.phase = Phase::Available;
         Ok(())
     }
     fn prove(
@@ -403,6 +460,11 @@ impl Workspace {
         fault: BufferId,
         cancel: &'a AtomicBool,
     ) -> Result<Prepared<'w, 'a>> {
+        // A compact final row must leave every earlier residual materialized
+        // for prompt/MTP history. Other GR reads consume the complete write.
+        if crate::strata_intel_core::enabled() && kind == Kind::Final {
+            self.flush_pending(arena, fault, cancel)?;
+        }
         if self.phase != Phase::Available {
             self.phase = Phase::Poisoned;
             return Err(Error::InvalidFormat("GR batch unavailable"));
@@ -420,6 +482,83 @@ impl Workspace {
             read_columns(kind, count, l.streams * l.width, u::words(arena, residual)?)?;
         let gamma = public.vector(graph, &format!("{base}_norm.weight"))?;
         self.prove(arena, residual, fault, &[], Some(&gamma))?;
+        if crate::strata_intel_core::enabled() {
+            if (l.streams, l.width, l.low) != (4, 2560, 320) {
+                return Err(Error::InvalidBufferLength);
+            }
+            let pending = self.pending_write.take();
+            if let Some(p) = pending {
+                if p.output != residual || p.count != count || input_first != 0 {
+                    return Err(Error::InvalidBufferLength);
+                }
+                self.prove(
+                    arena,
+                    residual,
+                    fault,
+                    &[
+                        (p.source, MAX_BATCH * l.streams * l.width),
+                        (p.block, MAX_BATCH * l.width),
+                    ],
+                    Some(&gamma),
+                )?;
+            }
+            let bind = |name: String| -> Result<BoundProjection<'_>> {
+                let tensor = graph.tensor(&name)?;
+                let matrix = Matrix::new(tensor)?;
+                Ok(BoundProjection { tensor, matrix })
+            };
+            let projections = [
+                bind(format!("{base}_down.weight"))?,
+                bind(format!("{base}_up.weight"))?,
+            ];
+            let injection = if kind.inject() {
+                Some(bind(format!("{base}_inject.weight"))?)
+            } else {
+                None
+            };
+            let queued = projector.enqueue_native_gr(
+                projections,
+                injection,
+                crate::strata_gr::Read {
+                    arena,
+                    residual,
+                    previous: pending.map(|p| (p.source, p.block)),
+                    gamma,
+                    buffers: crate::strata_gr::Buffers {
+                        normalized: self.ids[NORM],
+                        scales: self.ids[SN],
+                        partial: self.ids[UP],
+                        down: self.ids[DOWN],
+                        low: self.ids[LOW],
+                        injection: self.ids[INJECTION],
+                        mixed: self.ids[MIXED],
+                    },
+                    fault,
+                    count,
+                    first: input_first,
+                    epsilon: graph.geometry().epsilon,
+                    inject: kind.inject(),
+                },
+                cancel,
+            )?;
+            if !queued {
+                return Err(Error::InvalidFormat(
+                    "connected native GR projector required",
+                ));
+            }
+            u::cancel(cancel)?;
+            self.phase = Phase::ReadQueued;
+            return Ok(Prepared {
+                workspace: self,
+                arena,
+                residual,
+                fault,
+                count: Zeroizing::new([count]),
+                kind,
+                cancel,
+                consumed: false,
+            });
+        }
         let client = arena.client().map_err(u::fault)?;
         // Missing active status stores must not inherit success from a prior
         // layer. Floating scratch is fully overwritten for every active row.
@@ -734,6 +873,20 @@ impl Prepared<'_, '_> {
             ],
             None,
         )?;
+        if crate::strata_intel_core::enabled() {
+            if self.workspace.pending_write.is_some() {
+                return Err(Error::InvalidFormat("GR write already pending"));
+            }
+            self.workspace.pending_write = Some(PendingWrite {
+                source: self.residual,
+                block,
+                output,
+                count: self.count[0],
+            });
+            self.consumed = true;
+            self.workspace.phase = Phase::Available;
+            return Ok(());
+        }
         u::zero(self.arena, self.workspace.ids[SC])?;
         r::combine::launch::<WgpuRuntime>(
             self.arena.client().map_err(u::fault)?,
@@ -1037,7 +1190,15 @@ mod tests {
         assert_eq!(original[NORM], 524_288);
         assert!(spec.plane_words() < 4 * 2560);
         assert!(4 * 2560 <= norm_words);
-        assert_eq!(original.iter().sum::<u64>(), 1_998_848);
+        assert_eq!(
+            original.iter().sum::<u64>(),
+            1_998_848
+                + if crate::strata_intel_core::enabled() {
+                    crate::strata_gr::PRIVATE_INCREMENT
+                } else {
+                    0
+                }
+        );
         assert_eq!(layout.requests().unwrap(), original);
         let tiles = 248320usize.div_ceil(16384);
         assert_eq!(tiles, 16);
@@ -1120,10 +1281,31 @@ mod tests {
         assert_eq!(
             l.requests().unwrap(),
             [
-                131072, 32768, 524288, 32768, 32768, 524288, 32768, 32768, 131072, 524288
+                131072,
+                32768,
+                524288,
+                32768,
+                32768,
+                if crate::strata_intel_core::enabled() {
+                    1048576
+                } else {
+                    524288
+                },
+                32768,
+                32768,
+                131072,
+                524288
             ]
         );
-        assert_eq!(l.requests().unwrap().into_iter().sum::<u64>(), 1_998_848);
+        assert_eq!(
+            l.requests().unwrap().into_iter().sum::<u64>(),
+            1_998_848
+                + if crate::strata_intel_core::enabled() {
+                    crate::strata_gr::PRIVATE_INCREMENT
+                } else {
+                    0
+                }
+        );
         for count in [1, 3, 5, 8] {
             for (width, words) in l.widths.into_iter().zip(l.words().unwrap()) {
                 assert_eq!(

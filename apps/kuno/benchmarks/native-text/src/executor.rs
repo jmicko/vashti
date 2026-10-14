@@ -2602,6 +2602,47 @@ impl<'a> GpuExecutor<'a> {
         Ok(())
     }
 
+    pub(crate) fn strata_gr_weights(
+        &mut self,
+        tensors: [TensorView<'_>; 2],
+        injection: Option<TensorView<'_>>,
+    ) -> Result<[Handle; 3]> {
+        if !crate::strata_intel_core::enabled() {
+            return Err(Error::InvalidFormat("native GR selection"));
+        }
+        self.model.verify_file_unchanged()?;
+        self.check_target_rows_policy()?;
+        for (t, (inputs, outputs)) in tensors.iter().zip([(10240, 320), (320, 10240)]) {
+            let m = Matrix::new(*t)?;
+            if !t.belongs_to(self.model)
+                || t.info().dtype().gguf_id() != 30
+                || m.experts() != 1
+                || (m.inputs(), m.outputs()) != (inputs, outputs)
+            {
+                return Err(Error::InvalidBufferLength);
+            }
+        }
+        if let Some(t) = injection {
+            let m = Matrix::new(t)?;
+            if !t.belongs_to(self.model)
+                || t.info().dtype().gguf_id() != 30
+                || m.experts() != 1
+                || (m.inputs(), m.outputs()) != (10240, 4)
+            {
+                return Err(Error::InvalidBufferLength);
+            }
+        }
+        // Same complete original BF16 cache rows as the former projections;
+        // no duplicate public roots, conversion or per-decode weight copies.
+        let down = self.weight(tensors[0], 0, 0, 320)?.0;
+        let up = self.weight(tensors[1], 0, 0, 10240)?.0;
+        let inject = if let Some(t) = injection {
+            self.weight(t, 0, 0, 4)?.0
+        } else {
+            down.clone()
+        };
+        Ok([down, up, inject])
+    }
     fn weight(
         &mut self,
         tensor: TensorView<'_>,
