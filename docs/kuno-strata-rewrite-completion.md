@@ -94,7 +94,7 @@ implementation block. Full model numerical execution remains pending.
 
 ## Connected GR implementation block (2026-10-14)
 
-`strata_gr.rs` / `strata_gr.wgsl` port the pinned Intel `gr_norm_split_port_kernel`,
+Runtime source commit `56663a3`. `strata_gr.rs` / `strata_gr.wgsl` port the pinned Intel `gr_norm_split_port_kernel`,
 `gr_down_sliced_kernel`, `gr_down_reduce_kernel` and `gr_up_multi_kernel` as one
 sequence. Normalization uses one workgroup per token/stream, native XOR reduction
 order, weighted values retained per lane and pending residual FMA. Sliced projection
@@ -134,6 +134,8 @@ Validation logs in `/media/jmicko/faststore/kuno-development`:
 - `strata-connected-gr-final-clippy-20261014.log`: strict core Clippy passes.
 - `strata-connected-gr-shaders-20261014.log`: 163 WGSL/SPIR-V sources pass,
   including 105 physical expert-pointer checks and all five GR kernels.
+- `strata-connected-gr-original-regression-20261014.log`: original direct-device
+  regression passes (1,346 passed, one ignored).
 - `strata-connected-gr-core-layout-tests-20261014.log`: 12 GR ownership/layout
   tests pass in core mode. No GPU or model execution is involved.
 - `strata-connected-gr-core-regression-20261014.log`: full core unit run is

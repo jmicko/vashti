@@ -4337,3 +4337,18 @@ speed test, complete rewrite, numerical model acceptance or production claim.**
 The next implementation continues the connected upstream dependency checklist;
 no per-component speed selection. Logs live under `kuno-development` with names
 `strata-connected-expert-{build,final-clippy,shaders,original-regression}-20261014.log`.
+
+Connected GR block: `56663a3` ports pending-write normalization, resident BF16
+sliced down/injection, fixed reduction and up/mix/commit together. Explicit writes
+protect PLE, compact final rows and no-head prompt chunks. The reused private UP
+owner grows by 524,288 bytes, charged in both family and complete-model quotes.
+See the completion guide's **Connected GR implementation block** for backend
+substitutions, source paths and exact logs. Strict core Clippy/release build,
+163 shader variants (105 physical checks), 12 core GR owner/layout tests and
+original direct-device regression 1,346/1 ignored pass. Full core unit suite is
+**not green**: 1,148 pass, 200 fail, one ignored; old layout/budget assumptions and
+other failures still need scope/contract triage. No live GPU inference, speed
+trial, model numerical acceptance, installation or consumer change is claimed.
+Goal remains active and the full rewrite incomplete; continue the dependency
+checklist, preserving the connected port instead of selecting an intermediate
+speed winner. Required Vashti changes: none.
