@@ -177,7 +177,7 @@ impl IntelMtpMemory {
                 0
             }
             + if crate::strata_intel_core::enabled() {
-                crate::strata_stage::MAIN_BYTES
+                crate::strata_global_moe::MAIN_BYTES
             } else {
                 0
             };
@@ -328,7 +328,7 @@ pub(crate) fn intel_mtp_preflight_with_down_math(
                         + if integer { 65_536 } else { 0 }
                         + crate::executor::batch_moe::FROZEN_DOWN_INTEGER_MAIN_BYTES
                         + if crate::strata_intel_core::enabled() {
-                            crate::strata_stage::MAIN_BYTES
+                            crate::strata_global_moe::MAIN_BYTES
                         } else {
                             0
                         }
@@ -1379,7 +1379,7 @@ pub(crate) fn validate_frozen_integer_math_close(
             expected.1
                 + crate::resident_gdn::batch::strata_replay::MAIN_BYTES
                 + if crate::strata_intel_core::enabled() {
-                    crate::strata_stage::MAIN_BYTES
+                    crate::strata_global_moe::MAIN_BYTES
                 } else {
                     0
                 }

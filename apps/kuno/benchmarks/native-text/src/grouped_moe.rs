@@ -261,6 +261,20 @@ impl Geometry {
             four_members: false,
         })
     }
+    /// Original full512 physical-cell addressing, without BankSlots or fixed
+    /// source partitions. Only the connected native global family consumes it.
+    pub(crate) fn global_sources(projections: [Projection; 3]) -> Result<Self, &'static str> {
+        let mut geometry = Self::new(projections, 8, crate::daslab_profile::BANK_SLOTS)?;
+        if !crate::strata_intel_core::enabled()
+            || projections.iter().any(|p| p.experts() != 512)
+            || geometry.hidden() != 2560
+            || geometry.ff() != 640
+        {
+            return Err("global native expert geometry");
+        }
+        geometry.capacity = 512;
+        Ok(geometry)
+    }
     /// Explicit source-only public profile. These virtual slots are NOT
     /// BankSlots capacity; the ordinary constructor continues to reject512.
     pub(crate) fn with_frozen_host_sources(mut self) -> Result<Self, &'static str> {

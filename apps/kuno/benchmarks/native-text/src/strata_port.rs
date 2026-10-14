@@ -987,6 +987,8 @@ pub(crate) fn validate_shader_set() -> Result<(), Box<dyn std::error::Error>> {
         shaders.extend(crate::strata_dense::sources());
         shaders.extend(crate::strata_stage::sources());
         shaders.extend(crate::strata_gr::sources());
+        shaders.extend(crate::strata_global_experts::compiled_sources());
+        shaders.extend(crate::strata_global_moe::compiled_sources());
     }
     for (index, compiled) in shaders.iter().enumerate() {
         let module = n::front::wgsl::parse_str(&compiled.source)

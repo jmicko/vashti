@@ -66,7 +66,7 @@ impl Tables {
         }
         let device = device.ok_or_else(reject)?;
         let mut tables = Vec::with_capacity(48);
-        for _ in 0..48 {
+        for _ in 0..if enabled() { 0 } else { 48 } {
             tables.push(AddressTable {
                 roots: Vec::new(),
                 handle: client.create_public_owned(vec![0; 32768]),

@@ -1259,6 +1259,16 @@ pub(crate) fn run(
             config,
             true,
         )?;
+        if crate::strata_intel_core::enabled() {
+            // SAFETY: this protected original-artifact probe retains the full
+            // parent hash evidence/RAM envelope and exact target device.
+            unsafe {
+                target.prepare_global_sources_before_prefill(
+                    &mut executor,
+                    host_device.ok_or("global target device missing")?,
+                )?;
+            }
+        }
         let runs = (|| -> Result<serde_json::Value> {
             let load_ns = elapsed(whole)?;
             let prefill = Instant::now();
@@ -1363,7 +1373,7 @@ pub(crate) fn run(
                     None,
                 )?;
             let prefill_ns = elapsed(prefill)?;
-            if input.frozen_host_sources {
+            if input.frozen_host_sources && !crate::strata_intel_core::enabled() {
                 println!("public_frozen_host_prepare_start");
                 let preparation = Instant::now();
                 let (plan, fills) = if input.bank_fill

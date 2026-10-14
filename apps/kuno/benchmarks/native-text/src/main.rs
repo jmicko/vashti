@@ -8,8 +8,11 @@ mod cpu_gpu_expert_schedule;
 mod strata_cache;
 mod strata_dense;
 mod strata_expert_fused;
+pub(crate) use strata_expert_fused::global as strata_global_experts;
 #[allow(dead_code)] // Root consumers are the next connected port block.
 mod strata_global_gpu;
+#[allow(dead_code)] // Native coordinator connection follows this family.
+mod strata_global_moe;
 #[allow(dead_code)] // Global root/consumer connection continues as one port.
 mod strata_global_plan;
 #[allow(dead_code)] // Owning source set; coordinator connection follows.

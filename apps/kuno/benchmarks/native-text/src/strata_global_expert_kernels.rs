@@ -1,0 +1,451 @@
+//! MIT Strata fb58e0 native expert row_entries over the owning global cache.
+//! Original packed role cells, one selected HOST fetch, and a single 4/2/1
+//! row-entry loop per role. Request state is supplied solely by PrivateArena.
+use super::*;
+use crate::strata_global_sources::Sources;
+
+pub(crate) const STAGE_BYTES: u64 = 128 * 1024 * 1024;
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Op {
+    Fetch,
+    Role {
+        role: u8,
+        dtype: u32,
+        row_bytes: usize,
+    },
+    PrepareGu,
+    PrepareDown,
+    Activate,
+}
+impl Op {
+    fn source(self) -> String {
+        match self {
+            Self::Fetch => include_str!("strata_global_fetch.wgsl").into(),
+            Self::Role {
+                role,
+                dtype,
+                row_bytes,
+            } => role_source(role, dtype, row_bytes),
+            Self::PrepareGu => {
+                crate::quant_matvec::frozen_gu_integer::strata_global_prepare_source()
+            }
+            Self::PrepareDown => {
+                crate::quant_matvec::frozen_down_integer::strata_global_prepare_source()
+            }
+            Self::Activate => roles::ACTIVATE.replace("p.count>4u", "p.count>8u"),
+        }
+    }
+    fn dim(self) -> CubeDim {
+        CubeDim::new_1d(match self {
+            Self::PrepareGu => 128,
+            Self::PrepareDown | Self::Activate => 64,
+            _ => 256,
+        })
+    }
+}
+impl KernelMetadata for Op {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Fetch => "StrataGlobalFetchAndRebase",
+            Self::Role { role: 1, .. } => "StrataGlobalNativeGate",
+            Self::Role { role: 2, .. } => "StrataGlobalNativeUp",
+            Self::Role { .. } => "StrataGlobalNativeDown",
+            Self::PrepareGu => "StrataGlobalPrepareGu",
+            Self::PrepareDown => "StrataGlobalPrepareDown",
+            Self::Activate => "StrataGlobalActivation",
+        }
+    }
+    fn id(&self) -> KernelId {
+        KernelId::new::<Self>().info(*self).cube_dim(self.dim())
+    }
+    fn address_type(&self) -> StorageType {
+        StorageType::Scalar(ElemType::UInt(UIntKind::U32))
+    }
+}
+impl CubeTask<AutoCompiler> for Op {
+    fn compile(
+        &self,
+        _: &mut AutoCompiler,
+        _: &cubecl::WgpuCompilationOptions,
+        _: ExecutionMode,
+        _: StorageType,
+    ) -> std::result::Result<CompiledKernel<AutoCompiler>, CompilationError> {
+        Ok(CompiledKernel {
+            entrypoint_name: "main".into(),
+            debug_info: None,
+            debug_name: None,
+            source: self.source(),
+            repr: None,
+            cube_dim: self.dim(),
+        })
+    }
+}
+fn params(values: [usize; 8]) -> MetadataBindingInfo {
+    MetadataBindingInfo::custom(
+        values
+            .chunks_exact(2)
+            .map(|p| p[0] as u64 | ((p[1] as u64) << 32))
+            .collect(),
+    )
+}
+fn full(handles: impl Iterator<Item = Handle>) -> Result<()> {
+    let mut stream = None;
+    for h in handles {
+        if h.offset_start.unwrap_or(0) != 0
+            || h.offset_end.unwrap_or(0) != 0
+            || h.size() != h.size_in_used()
+            || stream.is_some_and(|s| s != h.stream)
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        stream = Some(h.stream);
+    }
+    Ok(())
+}
+fn role_source(role: u8, dtype: u32, row_bytes: usize) -> String {
+    let down = role == 3;
+    let mut base = if down {
+        crate::quant_matvec::frozen_down_integer::strata_fused_source(dtype, row_bytes, 8)
+    } else {
+        crate::quant_matvec::frozen_gu_integer::strata_fused_source(dtype, row_bytes, 8)
+    };
+    base = base.replace("p.h<5u", "p.h<1u");
+    let names: &[&str] = if down { &["down"] } else { &["gate", "up"] };
+    let first = base
+        .find("@group(0) @binding(0)")
+        .expect("native source descriptors");
+    let end = first
+        + base[first..].find("var<uniform> p:Params;").unwrap()
+        + "var<uniform> p:Params;".len();
+    let mut descriptors = String::from("// STRATA_PHYSICAL_EXPERTS\n");
+    let mut index = 0;
+    for name in names {
+        descriptors.push_str(&format!(
+            "@group(0) @binding({index}) var<storage,read> {name}0:array<vec4<u32>>;\n"
+        ));
+        index += 1;
+    }
+    for (name, access, ty) in [
+        ("map", "read", "u32"),
+        ("output", "read_write", "f32"),
+        ("status", "read_write", "u32"),
+        ("planes", "read", "u32"),
+    ] {
+        descriptors.push_str(&format!(
+            "@group(0) @binding({index}) var<storage,{access}> {name}:array<{ty}>;\n"
+        ));
+        index += 1;
+    }
+    let grid_binding = index;
+    if !down {
+        index += 1;
+    }
+    for name in names {
+        descriptors.push_str(&format!(
+            "@group(0) @binding({index}) var<storage,read> staged_{name}:array<u32>;\n"
+        ));
+        index += 1;
+    }
+    descriptors.push_str(&format!(
+        "@group(0) @binding({index}) var<storage,read> addresses:array<vec4<u32>>;\n"
+    ));
+    index += 1;
+    descriptors.push_str(&format!(
+        "@group(0) @binding({index}) var<storage,read> stage_addresses:array<vec4<u32>>;\n"
+    ));
+    index += 1;
+    descriptors.push_str(&format!(
+        "@group(0) @binding({index}) var<uniform> p:Params;\nvar<private> strata_first:u32;\n"
+    ));
+    for name in names {
+        descriptors.push_str(&format!("var<private> strata_{name}_address:vec2<u32>;\n"));
+    }
+    base.replace_range(first..end, &descriptors);
+    let old = if down {
+        "    if arrayLength(&down)!=p.c*2560u*(ROW_BYTES/4u) {return false;}"
+    } else {
+        "    if arrayLength(&gate)!=p.c*640u*(ROW_BYTES/4u) || arrayLength(&up)!=arrayLength(&gate) {return false;}"
+    };
+    assert!(base.contains(old));
+    base=base.replace(old,"    if arrayLength(&addresses)!=2048u || arrayLength(&stage_addresses)!=2048u {return false;}");
+    let old = "let slot=map[p.a+4u+group];if slot<p.b || slot-p.b>=p.c {return false;}";
+    assert!(base.contains(old));
+    let mut choose = String::from(
+        "let slot=map[p.a+4u+group];if slot>=512u || p.b!=0u || p.c!=512u {return false;}strata_first=slot;\n",
+    );
+    for name in names {
+        let role = match *name {
+            "gate" => 0,
+            "up" => 1,
+            _ => 2,
+        };
+        let rows = if down { 2560 } else { 640 };
+        choose.push_str(&format!("{{let src=addresses[{role}u*512u+slot];let words={rows}u*(ROW_BYTES/4u);if src.z!=words || src.w>1u || p.f>arrayLength(&status) || 400u>arrayLength(&status)-p.f || status[p.f+160u+group*3u+{role}u]!=1u || arrayLength(&staged_{name})!=33554432u {{return false;}}strata_{name}_address=src.xy;if src.w==1u {{let dst=stage_addresses[{role}u];if dst.z!=33554432u || words*80u>dst.z {{return false;}}strata_{name}_address=add_address(dst.xy,group*words*4u);}}}}\n"));
+    }
+    base = base.replace(old, &choose);
+    for name in names {
+        base = replace_reads(base, name);
+        base.push_str(&format!(
+            "\nfn strata_{name}(index:u32)->u32 {{return {name}0[index/4u][index%4u];}}\n"
+        ));
+    }
+    base.push_str("\nfn add_address(base:vec2<u32>,offset:u32)->vec2<u32> {let low=base.x+offset;return vec2<u32>(low,base.y+select(0u,1u,low<base.x));}\n");
+    if !down {
+        base = crate::strata_intel_core::shared_table(base, grid_binding, dtype);
+    }
+    let mut bodies = String::new();
+    let mut prefix = None;
+    let signature = "fn main(@builtin(workgroup_id) group:vec3<u32>, @builtin(local_invocation_index) local:u32,\n        @builtin(subgroup_id) sg:u32, @builtin(subgroup_invocation_id) sub_lane:u32,\n        @builtin(subgroup_size) subgroup_width:u32, @builtin(num_subgroups) subgroups:u32)";
+    for width in [4, 2, 1] {
+        let mut variant = roles::source(base.clone(), down, dtype, width, 8, role);
+        if dtype == crate::quant_matvec::IQ4_XS && width == 1 {
+            variant = variant.replace(
+                "let member_base=(length/2u)*2u;if group.z!=0u || length%2u==0u {return;}",
+                "let member_base=group.z;if member_base>=length {return;}",
+            );
+        }
+        let first = variant.find("@compute @workgroup_size(256)").unwrap();
+        let fn_start = variant[first..].find("fn main").unwrap() + first;
+        let end = crate::strata_port::function_end(&variant, fn_start);
+        if prefix.is_none() {
+            prefix = Some(format!("{}{}", &variant[..first], &variant[end..]));
+        }
+        let body = &variant[fn_start..end];
+        assert!(body.contains(signature));
+        bodies.push_str(&body.replace(signature,&format!("fn strata_chunk{width}(group:vec3<u32>,local:u32,sg:u32,sub_lane:u32,subgroup_width:u32,subgroups:u32)")));
+        bodies.push('\n');
+    }
+    let loop_body = if dtype == crate::quant_matvec::IQ4_XS {
+        "for(var entry=0u;entry<length;entry++) {strata_chunk1(vec3<u32>(group.xy,entry),local,sg,sub_lane,subgroup_width,subgroups);workgroupBarrier();}"
+    } else {
+        "for(var at=0u;at<length/4u;at++) {strata_chunk4(vec3<u32>(group.xy,at),local,sg,sub_lane,subgroup_width,subgroups);workgroupBarrier();}if length%4u>=2u {strata_chunk2(group,local,sg,sub_lane,subgroup_width,subgroups);workgroupBarrier();}if length%2u!=0u {strata_chunk1(group,local,sg,sub_lane,subgroup_width,subgroups);workgroupBarrier();}"
+    };
+    // Pinned row_entries: all dependent cardinalities are in the SAME dispatch.
+    // The barrier between chunks also protects the shared DOWN input tile.
+    format!(
+        "{}\n{bodies}\n@compute @workgroup_size(256)\n{signature} {{\nif group.z!=0u || subgroup_width!=32u || subgroups!=8u || !valid_group(group.y) {{return;}}\nlet length=map[p.a+84u+group.y];\n{loop_body}\n}}",
+        prefix.unwrap()
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn fetch(
+    client: &ComputeClient<WgpuRuntime>,
+    graph: kuno_text::model::BoundGraph<'_, '_>,
+    sources: &Sources,
+    layer: usize,
+    geometry: g::Geometry,
+    map: &Handle,
+    status: &Handle,
+    stages: &[Handle; 3],
+    count: usize,
+) -> Result<()> {
+    if !(1..=8).contains(&count) {
+        return Err(Error::InvalidBufferLength);
+    }
+    full(stages.iter().cloned().chain([map.clone(), status.clone()]))?;
+    for (role, projection) in geometry.projections().iter().enumerate() {
+        let bytes = projection.expert_bytes();
+        if !bytes.is_multiple_of(16)
+            || bytes as u64 * 80 > STAGE_BYTES
+            || stages[role].size_in_used() != STAGE_BYTES
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        let args = KernelArguments::new()
+            .with_buffer(sources.prototype(graph, layer, role)?.binding())
+            .with_buffer(map.clone().binding())
+            .with_buffer(stages[role].clone().binding())
+            .with_buffer(status.clone().binding());
+        let args =
+            sources
+                .bind(layer, args)?
+                .with_info(params([0, count, bytes / 16, role, 0, 0, 0, 0]));
+        // SAFETY: Source owner supplies actual retained pointer extents; each
+        // selected HOST copy is disjoint and ordered before original role reads.
+        unsafe {
+            client.launch_unchecked(
+                Box::new(Op::Fetch),
+                CubeCount::Static((bytes / 16).div_ceil(256) as u32, 80, 1),
+                args,
+            );
+        }
+    }
+    Ok(())
+}
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn role(
+    client: &ComputeClient<WgpuRuntime>,
+    graph: kuno_text::model::BoundGraph<'_, '_>,
+    sources: &Sources,
+    layer: usize,
+    geometry: g::Geometry,
+    spans: &g::Spans,
+    owners: &[Handle; 7],
+    planes: &Handle,
+    stages: &[Handle; 3],
+    count: usize,
+    role: u8,
+) -> Result<()> {
+    if !(1..=8).contains(&count) || !(1..=3).contains(&role) {
+        return Err(Error::InvalidBufferLength);
+    }
+    let down = role == 3;
+    let mut args = KernelArguments::new();
+    for r in if down { 2..3 } else { 0..2 } {
+        args = args.with_buffer(sources.prototype(graph, layer, r)?.binding());
+    }
+    for h in [&owners[0], &owners[3], &owners[6], planes] {
+        args = args.with_buffer(h.clone().binding());
+    }
+    if !down {
+        args = crate::strata_intel_core::bind(args, owners[0].stream)?;
+    }
+    for r in if down { 2..3 } else { 0..2 } {
+        args = args.with_buffer(stages[r].clone().binding());
+    }
+    full(owners.iter().chain([planes]).chain(stages).cloned())?;
+    let args = sources.bind(layer, args)?.with_info(params([
+        spans.map_first(),
+        0,
+        512,
+        spans.partial_first(),
+        spans.partial_stride(),
+        spans.status_first(),
+        if down { 80 } else { 0 },
+        count,
+    ]));
+    let projection = geometry.projections()[if down { 2 } else { 0 }];
+    // SAFETY: one actual group source is chosen uniformly before shared loads;
+    // all original role, map and private row extents are checked in WGSL.
+    unsafe {
+        client.launch_unchecked(
+            Box::new(Op::Role {
+                role,
+                dtype: projection.dtype(),
+                row_bytes: projection.row_bytes(),
+            }),
+            CubeCount::Static(
+                (projection.rows() / (256 / crate::strata_port::expert_lanes())) as u32,
+                80,
+                1,
+            ),
+            args,
+        );
+    }
+    Ok(())
+}
+pub(crate) fn prepare(
+    client: &ComputeClient<WgpuRuntime>,
+    spans: &g::Spans,
+    owners: &[Handle; 7],
+    scratch: &Handle,
+    count: usize,
+    down: bool,
+) -> Result<()> {
+    if !(1..=8).contains(&count) {
+        return Err(Error::InvalidBufferLength);
+    }
+    full(owners.iter().chain([scratch]).cloned())?;
+    let (op, input, first, stride) = if down {
+        (
+            Op::PrepareDown,
+            &owners[2],
+            spans.act_first(),
+            spans.act_stride(),
+        )
+    } else {
+        (
+            Op::PrepareGu,
+            &owners[1],
+            spans.input_first(),
+            spans.input_stride(),
+        )
+    };
+    let mut args = KernelArguments::new().with_buffer(input.clone().binding());
+    if down {
+        args = args.with_buffer(owners[6].clone().binding());
+    }
+    let values = if down {
+        [first, stride, spans.status_first(), 0, 0, 0, 0, count]
+    } else {
+        [0, first, stride, 0, 0, 0, 0, count]
+    };
+    let args = args
+        .with_buffer(scratch.clone().binding())
+        .with_info(params(values));
+    // SAFETY: owning eight-row/rank quantizer checks active/inactive extents;
+    // complete quant planes stay in caller-owned private scratch.
+    unsafe {
+        client.launch_unchecked(
+            Box::new(op),
+            CubeCount::Static(1, if down { 80 } else { 8 }, 1),
+            args,
+        );
+    }
+    Ok(())
+}
+pub(crate) fn activate(
+    client: &ComputeClient<WgpuRuntime>,
+    spans: &g::Spans,
+    owners: &[Handle; 7],
+    count: usize,
+) -> Result<()> {
+    let args = KernelArguments::new()
+        .with_buffer(owners[3].clone().binding())
+        .with_buffer(owners[2].clone().binding())
+        .with_buffer(owners[6].clone().binding())
+        .with_info(params([
+            count,
+            spans.partial_first(),
+            spans.partial_stride(),
+            spans.act_first(),
+            spans.act_stride(),
+            spans.status_first(),
+            0,
+            0,
+        ]));
+    // SAFETY: activation consumes both completed native role stamps and clears
+    // their dead partial storage before DOWN reuses it.
+    unsafe {
+        client.launch_unchecked(Box::new(Op::Activate), CubeCount::Static(80, 1, 1), args);
+    }
+    Ok(())
+}
+pub(crate) fn compiled_sources() -> Vec<CompiledKernel<AutoCompiler>> {
+    let mut ops = vec![Op::Fetch, Op::PrepareGu, Op::PrepareDown, Op::Activate];
+    for role in [1, 2, 3] {
+        for dtype in if role == 3 {
+            vec![crate::quant_matvec::IQ4_NL, crate::quant_matvec::Q2_0]
+        } else {
+            vec![
+                crate::quant_matvec::IQ2_S,
+                crate::quant_matvec::IQ3_S,
+                crate::quant_matvec::IQ3_XXS,
+                crate::quant_matvec::IQ4_XS,
+            ]
+        } {
+            let columns = if role == 3 { 640 } else { 2560 };
+            let row_bytes = kuno_text::TensorType::from_gguf_id(dtype)
+                .unwrap()
+                .row_bytes(columns)
+                .unwrap() as usize;
+            ops.push(Op::Role {
+                role,
+                dtype,
+                row_bytes,
+            });
+        }
+    }
+    ops.into_iter()
+        .map(|op| {
+            op.compile(
+                &mut AutoCompiler::Wgsl(Default::default()),
+                &Default::default(),
+                ExecutionMode::Unchecked,
+                StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+            )
+            .unwrap()
+        })
+        .collect()
+}

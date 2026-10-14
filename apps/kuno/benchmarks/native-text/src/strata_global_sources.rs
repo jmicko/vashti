@@ -21,6 +21,8 @@ pub(crate) struct Sources {
     gpu: Option<Cache>,
     host: Option<Host>,
     tables: Vec<Handle>,
+    stage_table: Option<Handle>,
+    stages: Option<[Handle; 3]>,
     reads: Vec<Vec<Handle>>,
     closed: bool,
     closing_failed: bool,
@@ -28,7 +30,7 @@ pub(crate) struct Sources {
 impl Sources {
     pub(crate) fn gpu_requests(plan: &Plan) -> Vec<u64> {
         let mut requests = Cache::requests(plan);
-        requests.extend([TABLE_BYTES; LAYERS]);
+        requests.extend([TABLE_BYTES; LAYERS + 1]);
         requests
     }
     /// # Safety
@@ -56,6 +58,8 @@ impl Sources {
             gpu: None,
             host: None,
             tables: Vec::with_capacity(LAYERS),
+            stage_table: Some(client.create_public_owned(vec![0; TABLE_BYTES as usize])),
+            stages: None,
             reads: Vec::with_capacity(LAYERS),
             closed: false,
             closing_failed: false,
@@ -179,20 +183,119 @@ impl Sources {
         }
         Ok(())
     }
+    pub(crate) fn prototype(
+        &self,
+        graph: BoundGraph<'_, '_>,
+        layer: usize,
+        role: usize,
+    ) -> Result<Handle> {
+        if self.closed || self.closing_failed {
+            return Err(reject());
+        }
+        if let Some((h, _, _)) = self
+            .gpu
+            .as_ref()
+            .ok_or_else(reject)?
+            .resident_role(graph, &self.plan, layer, 0, role)?
+        {
+            Ok(h)
+        } else {
+            Ok(self
+                .host
+                .as_ref()
+                .ok_or_else(reject)?
+                .role(graph, &self.plan, layer, 0, role)?
+                .ok_or_else(reject)?
+                .0)
+        }
+    }
+    pub(crate) fn attach_stages(
+        &mut self,
+        device: &wgpu::Device,
+        stages: [Handle; 3],
+    ) -> Result<()> {
+        if self.closed || self.closing_failed || self.stages.is_some() {
+            return Err(reject());
+        }
+        let resources = self
+            .client
+            .retained_resource_metadata(stages.to_vec())
+            .map_err(crate::resident_util::fault)?;
+        let dev = unsafe { device.as_hal::<wgpu::hal::api::Vulkan>() }.ok_or_else(reject)?;
+        let mut words = vec![0u32; TABLE_BYTES as usize / 4];
+        if resources.len() != 3 {
+            return Err(reject());
+        }
+        for (role, r) in resources.iter().enumerate() {
+            let r = r.resource();
+            if resources[..role]
+                .iter()
+                .any(|other| other.resource().buffer == r.buffer)
+            {
+                return Err(reject());
+            }
+            if r.offset != 0
+                || r.size != r.buffer.size()
+                || r.size != crate::strata_global_experts::STAGE_BYTES
+            {
+                return Err(reject());
+            }
+            let raw = unsafe { r.buffer.as_hal::<wgpu::hal::api::Vulkan>() }.ok_or_else(reject)?;
+            let address = unsafe {
+                dev.raw_device().get_buffer_device_address(
+                    &ash::vk::BufferDeviceAddressInfo::default().buffer(raw.raw_buffer_handle()),
+                )
+            };
+            if address == 0 || !address.is_multiple_of(16) {
+                return Err(reject());
+            }
+            words[role * 4..role * 4 + 4].copy_from_slice(&[
+                address as u32,
+                (address >> 32) as u32,
+                (r.size / 4) as u32,
+                0,
+            ]);
+        }
+        let bytes = words.into_iter().flat_map(u32::to_le_bytes).collect();
+        self.client
+            .write_public_owned_batch(vec![(
+                self.stage_table.as_ref().ok_or_else(reject)?.clone(),
+                bytes,
+            )])
+            .map_err(crate::resident_util::fault)?;
+        self.stages = Some(stages);
+        Ok(())
+    }
     pub(crate) fn plan(&self) -> &Plan {
         &self.plan
     }
     /// Retains the actual immutable roots in native recording/fence tracking.
-    /// The only descriptor added is the fixed per-expert address table.
+    /// Adds only static physical-cell/stage address descriptors. Private
+    /// logical remaps stay in the family arena and never enter these tables.
     pub(crate) fn bind(&self, layer: usize, args: KernelArguments) -> Result<KernelArguments> {
         if self.closed || self.closing_failed {
             return Err(reject());
         }
         let table = self.tables.get(layer).ok_or_else(reject)?;
         let reads = self.reads.get(layer).ok_or_else(reject)?;
+        let stages = self.stages.as_ref().ok_or_else(reject)?;
         Ok(args
             .with_buffer(table.clone().binding())
-            .with_read_dependencies(reads.iter().cloned().map(Handle::binding).collect()))
+            .with_buffer(
+                self.stage_table
+                    .as_ref()
+                    .ok_or_else(reject)?
+                    .clone()
+                    .binding(),
+            )
+            .with_read_dependencies(
+                reads
+                    .iter()
+                    .chain(stages)
+                    .cloned()
+                    .map(Handle::binding)
+                    .collect(),
+            ))
     }
     pub(crate) fn close(&mut self) -> Result<()> {
         if self.closed {
@@ -208,6 +311,8 @@ impl Sources {
         // registered buffers before granting the HOST owner zero/free authority.
         self.tables.clear();
         self.reads.clear();
+        self.stages = None;
+        self.stage_table = None;
         if let Some(host) = self.host.take() {
             host.close()?;
         }
@@ -223,6 +328,12 @@ impl Drop for Sources {
             // Failed queue completion grants no permission to release BDA roots.
             std::mem::forget(std::mem::take(&mut self.tables));
             std::mem::forget(std::mem::take(&mut self.reads));
+            if let Some(stages) = self.stages.take() {
+                std::mem::forget(stages);
+            }
+            if let Some(table) = self.stage_table.take() {
+                std::mem::forget(table);
+            }
             if let Some(gpu) = self.gpu.take() {
                 std::mem::forget(gpu);
             }

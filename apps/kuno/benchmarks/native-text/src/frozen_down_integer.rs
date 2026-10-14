@@ -576,13 +576,32 @@ pub(crate) fn strata_compiled_sources() -> Vec<CompiledKernel<AutoCompiler>> {
 }
 
 pub(crate) fn strata_fused_source(dtype: u32, row_bytes: usize, count: usize) -> String {
-    let kernel = if count == 4 {
+    let kernel = if count == 8 {
+        eight::Kernel::Project { dtype, row_bytes }.source()
+    } else if count == 4 {
         four::Kernel::Project { dtype, row_bytes }.source()
     } else {
         Kernel::Project { dtype, row_bytes }.source()
     };
-    crate::strata_port::shader(kernel, true, if count == 4 { 4 } else { 3 })
+    crate::strata_port::shader(
+        kernel,
+        true,
+        if count == 8 {
+            8
+        } else if count == 4 {
+            4
+        } else {
+            3
+        },
+    )
 }
 
 #[path = "frozen_down_integer_eight.rs"]
 pub(crate) mod eight;
+
+/// Native global family uses the complete eight-row owning quantizer for all
+/// active counts. No change to historical count-specific public fixtures.
+pub(crate) fn strata_global_prepare_source() -> String {
+    crate::strata_port::shader(eight::Kernel::Prepare.source(), false, 8)
+        .replace("p.h<5u", "p.h<1u")
+}

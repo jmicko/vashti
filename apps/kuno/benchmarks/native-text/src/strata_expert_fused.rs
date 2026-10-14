@@ -12,6 +12,9 @@ use cubecl_runtime::id::KernelId;
 use cubecl_runtime::kernel::{CompiledKernel, KernelMetadata};
 use cubecl_runtime::server::{ExecutionMode, Handle, KernelArguments, MetadataBindingInfo};
 use kuno_text::{Error, Result};
+#[path = "strata_global_expert_kernels.rs"]
+#[allow(dead_code)] // Global coordinator consumes this complete operator family.
+pub(crate) mod global;
 #[path = "strata_expert_roles.rs"]
 mod roles;
 

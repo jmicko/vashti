@@ -16,7 +16,6 @@ use cubecl_runtime::{
 use kuno_text::{Error, Result};
 use std::cell::RefCell;
 pub(crate) const OWNER_BYTES: u64 = 64 * 1024 * 1024;
-pub(crate) const OWNER_WORDS: usize = OWNER_BYTES as usize / 4;
 pub(crate) const MAIN_BYTES: u64 = 3 * OWNER_BYTES;
 thread_local! {static STAGES:RefCell<Option<[Handle;3]>>=const {RefCell::new(None)};}
 fn reject() -> Error {
