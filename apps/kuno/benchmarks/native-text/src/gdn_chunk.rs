@@ -40,11 +40,13 @@ impl RecurrencePolicy {
     }
     pub(crate) fn execution_policy(self, count: usize) -> Result<Self> {
         self.validate_count(count)?;
-        Ok(if self == Self::FourStreaming && count != 4 {
-            Self::Chunk
-        } else {
-            self
-        })
+        Ok(
+            if self == Self::FourStreaming && count != 4 && !crate::strata_intel_core::enabled() {
+                Self::Chunk
+            } else {
+                self
+            },
+        )
     }
     pub(crate) fn label(self) -> &'static str {
         match self {
@@ -872,7 +874,7 @@ pub fn gdn_four_streaming(
 ) {
     let lane = ABSOLUTE_POS;
     // Public policy admission repeats the bound before any unchecked access.
-    if count == 4 && lane < value_heads * head_dim {
+    if count >= 1 && count <= 8 && lane < value_heads * head_dim {
         let h = lane / head_dim;
         let j = lane % head_dim;
         let kh = h % key_heads;

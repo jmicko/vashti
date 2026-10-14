@@ -2642,7 +2642,9 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .strata_global_sources
             .as_mut()
             .ok_or(error())?
-            .attach_stages(device, queue, stages)
+            .attach_stages(device, queue, stages)?;
+        self.completed_native_projection_boundary(executor)?;
+        executor.activate_native_core_q6_head()
     }
 
     fn completed_native_projection_boundary(
@@ -4892,10 +4894,7 @@ impl Workspace {
         let mut current = Zeroizing::new(0usize);
         drive_layers(cancel, |layer| {
             let attention_start = Instant::now();
-            let dense_q8 = if crate::strata_intel_core::enabled()
-                && e.target_four_rows_active
-                && *count == 4
-            {
+            let dense_q8 = if crate::strata_intel_core::enabled() && (1..=8).contains(&*count) {
                 self.core_stages.map(|ids| ids[0])
             } else {
                 None

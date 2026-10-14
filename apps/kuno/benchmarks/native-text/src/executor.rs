@@ -2153,10 +2153,11 @@ impl<'a> GpuExecutor<'a> {
             && self.target_verify3_dense
             && self.target_verify3_fused
             && self.token_io_checkpoint
-            && ((self.resident_banks_frozen && self.target_frozen_host_source_identity.is_some())
+            && ((self.resident_banks_frozen
+                && self.target_frozen_host_source_identity.is_some()
+                && self.target_frozen_gu_integer_reserved
+                && self.target_frozen_down_integer_reserved)
                 || self.global_target_scope().unwrap_or(false))
-            && self.target_frozen_gu_integer_reserved
-            && self.target_frozen_down_integer_reserved
             && self.packed_profile == expert_banks::OriginalPackedProfile::DaslabIq3
             && self.bank_slots == crate::daslab_profile::BANK_SLOTS
             && self.native_projection_member_capacity() == 8
@@ -2186,6 +2187,28 @@ impl<'a> GpuExecutor<'a> {
                     .public_target_request_io_configured()
                     .map_err(|_| Error::InvalidFormat("Q6 verifier target runtime selection"))?,
         )?;
+        Ok(())
+    }
+    /// Native core arithmetic is fixed before the first prompt input. Source
+    /// attachment and the model's real completed boundary precede this call.
+    pub(crate) fn activate_native_core_q6_head(&mut self) -> Result<()> {
+        self.check_target_rows_policy()?;
+        if !self.global_target_scope()?
+            || !self.q6_verify_head_scope()
+            || !self
+                .client
+                .public_target_request_io_configured()
+                .map_err(|_| Error::InvalidFormat("native core head runtime"))?
+        {
+            return Err(Error::InvalidFormat("native core head source authority"));
+        }
+        validate_q6_verify_counters(
+            self.q6_integer_verify_head,
+            self.q6_integer_verify_head_prepares,
+            self.q6_integer_verify_head_tiles,
+            self.q6_integer_verify_head_members,
+        )?;
+        self.q6_integer_verify_head = activate_q6_verify_head(self.q6_integer_verify_head, true)?;
         Ok(())
     }
     pub(crate) fn public_q6_integer_verify_head(&self) -> Result<(bool, u64, u64, u64)> {
@@ -3251,9 +3274,13 @@ impl<'a> GpuExecutor<'a> {
         let dtype = tensor.info().dtype().gguf_id();
         if !tensor.belongs_to(self.model)
             || matrix.experts() != 1
-            || spans.count() != 4
             || spans.packed_first() != 0
-            || !crate::strata_dense::supports(dtype, matrix.inputs(), planes.size_in_used())
+            || !crate::strata_dense::supports_count(
+                dtype,
+                matrix.inputs(),
+                planes.size_in_used(),
+                spans.count(),
+            )
         {
             return Err(Error::InvalidBufferLength);
         }
@@ -3838,6 +3865,28 @@ impl<'a> GpuExecutor<'a> {
                 return Err(Error::InvalidBufferLength);
             }
             *extent = h.size() as usize / 4;
+        }
+        if crate::strata_intel_core::enabled() {
+            if !self.global_target_scope()? {
+                return Err(Error::InvalidBufferLength);
+            }
+            let prepares = self
+                .q6_integer_verify_head_prepares
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow)?;
+            let tiles = self
+                .q6_integer_verify_head_tiles
+                .checked_add(248320_usize.div_ceil(16384) as u64)
+                .ok_or(Error::ArithmeticOverflow)?;
+            let members = self
+                .q6_integer_verify_head_members
+                .checked_add(spans.count() as u64)
+                .ok_or(Error::ArithmeticOverflow)?;
+            self.enqueue_strata_dense(tensor, x, planes, y, fault, spans, cancel, true)?;
+            self.q6_integer_verify_head_prepares = prepares;
+            self.q6_integer_verify_head_tiles = tiles;
+            self.q6_integer_verify_head_members = members;
+            return Ok(());
         }
         let prepare_spec = Spec::new(16384, 2560)?;
         let prepare_spans = PrepareSpans {

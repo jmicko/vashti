@@ -16,7 +16,7 @@ fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(subgroup_id) sg:u32,
         @builtin(subgroup_invocation_id) lane:u32,@builtin(subgroup_size) width:u32,
         @builtin(local_invocation_index) local:u32) {
     if arrayLength(&fault)!=1u {return;}
-    var valid=width==32u && p.count>=1u && p.count<=4u && p.input_stride>=COLUMNS
+    var valid=width==32u && p.count>=1u && p.count<=8u && p.input_stride>=COLUMNS
         && p.planes_stride>=PLANE_WORDS && p.input_first<=arrayLength(&input);
     if valid {
         let available=arrayLength(&input)-p.input_first;

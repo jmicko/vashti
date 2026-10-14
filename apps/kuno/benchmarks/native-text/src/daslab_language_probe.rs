@@ -616,6 +616,7 @@ pub(crate) fn registration(
                 || crate::strata_intel_core::enabled()),
     )?;
     if cfg!(feature = "strata-eight-window")
+        && !crate::strata_intel_core::enabled()
         && (public_integer_verify_head
             || crate::strata_port::fused_sources()
             || crate::strata_port::wide_experts()
@@ -1152,7 +1153,7 @@ pub(crate) fn run(
         let draft_graph = draft_graph
             .as_ref()
             .ok_or("speculative bound draft graph absent")?;
-        let mut draft = if input.mtp_english_vocab {
+        let mut draft = if input.mtp_english_vocab && !crate::strata_intel_core::enabled() {
             crate::resident_mtp::ResidentMtp::new_public_english_with_fused_sweeps(
                 draft_graph,
                 draft_client,
@@ -2528,9 +2529,10 @@ pub(crate) fn run(
     drop(draft);
     let draft_close = draft_close.and_then(|closed| {
         if let Some(closed) = &closed {
-            input
-                .draft_profile
-                .validate_close_with_english(closed, input.mtp_english_vocab)?;
+            input.draft_profile.validate_close_with_english(
+                closed,
+                input.mtp_english_vocab && !crate::strata_intel_core::enabled(),
+            )?;
         }
         Ok(closed)
     });

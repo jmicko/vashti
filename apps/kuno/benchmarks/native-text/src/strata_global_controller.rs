@@ -114,8 +114,8 @@ pub(super) fn run<'m, 'f>(
     target.set_public_four_rows(executor, cancel)?;
     target.set_public_grouped_ple_reads(executor, true, cancel)?;
     target.set_public_grouped_status_folds(executor, true, cancel)?;
-    if draft.is_some() {
-        target.activate_public_q6_integer_verify_head(executor, cancel)?;
+    if !executor.public_q6_integer_verify_head()?.0 {
+        return Err("global native head changed after prefill".into());
     }
     target.begin_public_language_request_io(executor, cancel)?;
     let mut history = Zeroizing::new(Vec::with_capacity(request.max_outputs));

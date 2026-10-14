@@ -260,7 +260,7 @@ impl MatrixSpec {
             self.rows,
             self.columns,
             self.row_bytes,
-            if cfg!(feature = "strata-eight-window") {
+            if crate::strata_port::eight_rows() {
                 include_str!("next_verify8_dense.wgsl")
             } else {
                 include_str!("next_verify4_dense.wgsl")

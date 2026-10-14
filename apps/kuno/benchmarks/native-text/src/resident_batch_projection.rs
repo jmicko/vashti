@@ -195,13 +195,12 @@ impl BatchedResidentProjector for ResidentBatchProjection<'_, '_> {
             if planes == input || planes == output || planes == self.fault {
                 return Err(Error::InvalidBufferLength);
             }
-            if spans.count() == 4
-                && crate::strata_dense::supports(
-                    projection.tensor.info().dtype().gguf_id(),
-                    projection.matrix.inputs(),
-                    arena.handle(planes).map_err(u::fault)?.size_in_used(),
-                )
-            {
+            if crate::strata_dense::supports_count(
+                projection.tensor.info().dtype().gguf_id(),
+                projection.matrix.inputs(),
+                arena.handle(planes).map_err(u::fault)?.size_in_used(),
+                spans.count(),
+            ) {
                 self.executor.enqueue_strata_dense(
                     projection.tensor,
                     &u::handle(arena, input)?,
@@ -298,13 +297,12 @@ impl BatchedResidentProjector for ResidentBatchProjection<'_, '_> {
         let scratch_bytes = arena.handle(planes).map_err(u::fault)?.size_in_used();
         let mut prepared = false;
         for (p, output, spans) in jobs {
-            if spans.count() == 4
-                && crate::strata_dense::supports(
-                    p.tensor.info().dtype().gguf_id(),
-                    inputs,
-                    scratch_bytes,
-                )
-            {
+            if crate::strata_dense::supports_count(
+                p.tensor.info().dtype().gguf_id(),
+                inputs,
+                scratch_bytes,
+                spans.count(),
+            ) {
                 self.executor.enqueue_strata_dense(
                     p.tensor,
                     &u::handle(arena, input)?,
@@ -335,16 +333,16 @@ impl BatchedResidentProjector for ResidentBatchProjection<'_, '_> {
         cancel: &AtomicBool,
     ) -> Result<()> {
         let supported = self.dense_q8.is_some_and(|id| {
-            spans.count() == 4
-                && projections.iter().all(|p| {
-                    arena.handle(id).is_ok_and(|h| {
-                        crate::strata_dense::supports(
-                            p.tensor.info().dtype().gguf_id(),
-                            p.matrix.inputs(),
-                            h.size_in_used(),
-                        )
-                    })
+            projections.iter().all(|p| {
+                arena.handle(id).is_ok_and(|h| {
+                    crate::strata_dense::supports_count(
+                        p.tensor.info().dtype().gguf_id(),
+                        p.matrix.inputs(),
+                        h.size_in_used(),
+                        spans.count(),
+                    )
                 })
+            })
         });
         if !supported {
             for (p, out) in projections.into_iter().zip(outputs) {

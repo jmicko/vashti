@@ -7,12 +7,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub(crate) const fn enabled() -> bool {
     cfg!(feature = "strata-rust-port")
 }
+pub(crate) const fn eight_rows() -> bool {
+    crate::strata_intel_core::enabled() || cfg!(feature = "strata-eight-window")
+}
 pub(crate) const fn verify_capacity() -> usize {
-    if cfg!(feature = "strata-eight-window") {
-        8
-    } else {
-        4
-    }
+    if eight_rows() { 8 } else { 4 }
 }
 /// Strata-style exact public dense roots free space for additional experts.
 /// The 224-slot fixture is a separately compiled, explicitly protected trial.

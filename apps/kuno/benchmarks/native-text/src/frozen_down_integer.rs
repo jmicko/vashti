@@ -19,7 +19,7 @@ pub(crate) const MAX_ROUTES: usize = MAX_COUNT * 10;
 pub(crate) const HEADER_WORDS: usize = 64;
 pub(crate) const FRAME_WORDS: usize = 360;
 pub(crate) const LOGICAL_WORDS: usize = HEADER_WORDS + MAX_ROUTES * FRAME_WORDS;
-pub(crate) const SCRATCH_WORDS: usize = if cfg!(feature = "strata-eight-window") {
+pub(crate) const SCRATCH_WORDS: usize = if crate::strata_port::eight_rows() {
     32768
 } else {
     16384

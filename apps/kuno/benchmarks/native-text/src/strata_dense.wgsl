@@ -79,10 +79,11 @@ fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(subgroup_id) sg:u32,
         || (p.count-1u)*p.output_stride>arrayLength(&output)-p.output_first-ROWS {
         if local==0u {atomicOr(&fault[0],8u);}return;
     }
-    let row=g.x*4u+sg;var sum=vec4<f32>(0.0);
+    let row=g.x*4u+sg;var sum=vec4<f32>(0.0);var sum2=vec4<f32>(0.0);
     if row<ROWS {
         for(var group=lane;group<COLUMNS/GROUP_VALUES;group+=32u) {
             let f=factors(row*ROW_BYTES,group);var dots=vec4<i32>(0);var sums=vec4<i32>(0);
+            var dots2=vec4<i32>(0);var sums2=vec4<i32>(0);
             for(var word=0u;word<GROUP_VALUES/4u;word++) {
                 let q=codes(row*ROW_BYTES,group,word);let at=group*(GROUP_VALUES/4u)+word;
                 var x=vec4<u32>(planes[at],0u,0u,0u);
@@ -91,6 +92,15 @@ fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(subgroup_id) sg:u32,
                 if MEMBERS>1u && p.count>=4u {x.w=planes[3u*p.stride+at];}
                 dots+=vec4<i32>(dot4I8Packed(q,x.x),dot4I8Packed(q,x.y),dot4I8Packed(q,x.z),dot4I8Packed(q,x.w));
                 if DTYPE==12u || DTYPE==13u {sums+=vec4<i32>(dot4I8Packed(0x01010101u,x.x),dot4I8Packed(0x01010101u,x.y),dot4I8Packed(0x01010101u,x.z),dot4I8Packed(0x01010101u,x.w));}
+                if MEMBERS>4u {
+                    var x2=vec4<u32>(0u);
+                    if p.count>=5u {x2.x=planes[4u*p.stride+at];}
+                    if p.count>=6u {x2.y=planes[5u*p.stride+at];}
+                    if p.count>=7u {x2.z=planes[6u*p.stride+at];}
+                    if p.count>=8u {x2.w=planes[7u*p.stride+at];}
+                    dots2+=vec4<i32>(dot4I8Packed(q,x2.x),dot4I8Packed(q,x2.y),dot4I8Packed(q,x2.z),dot4I8Packed(q,x2.w));
+                    if DTYPE==12u || DTYPE==13u {sums2+=vec4<i32>(dot4I8Packed(0x01010101u,x2.x),dot4I8Packed(0x01010101u,x2.y),dot4I8Packed(0x01010101u,x2.z),dot4I8Packed(0x01010101u,x2.w));}
+                }
             }
             let at=2u*PACKED_WORDS+(group*GROUP_VALUES)/32u;
             var d=vec4<f32>(bitcast<f32>(planes[at]),0.0,0.0,0.0);
@@ -99,14 +109,31 @@ fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(subgroup_id) sg:u32,
             if MEMBERS>1u && p.count>=4u {d.w=bitcast<f32>(planes[3u*p.stride+at]);}
             sum=fma(vec4<f32>(f.x)*d,vec4<f32>(dots),sum);
             if DTYPE==12u || DTYPE==13u {sum-=vec4<f32>(f.y)*d*vec4<f32>(sums);}
+            if MEMBERS>4u {
+                var d2=vec4<f32>(0.0);
+                if p.count>=5u {d2.x=bitcast<f32>(planes[4u*p.stride+at]);}
+                if p.count>=6u {d2.y=bitcast<f32>(planes[5u*p.stride+at]);}
+                if p.count>=7u {d2.z=bitcast<f32>(planes[6u*p.stride+at]);}
+                if p.count>=8u {d2.w=bitcast<f32>(planes[7u*p.stride+at]);}
+                sum2=fma(vec4<f32>(f.x)*d2,vec4<f32>(dots2),sum2);
+                if DTYPE==12u || DTYPE==13u {sum2-=vec4<f32>(f.y)*d2*vec4<f32>(sums2);}
+            }
         }
     }
     let total=subgroupAdd(sum);
+    let total2=subgroupAdd(sum2);
     if row<ROWS && lane==0u {
         if !finite(total.x) || !finite(total.y) || !finite(total.z) || !finite(total.w) {atomicOr(&fault[0],1u);}
         output[p.output_first+row]=total.x;
         if MEMBERS>1u && p.count>=2u {output[p.output_first+p.output_stride+row]=total.y;}
         if MEMBERS>1u && p.count>=3u {output[p.output_first+2u*p.output_stride+row]=total.z;}
         if MEMBERS>1u && p.count>=4u {output[p.output_first+3u*p.output_stride+row]=total.w;}
+        if MEMBERS>4u {
+            if !finite(total2.x) || !finite(total2.y) || !finite(total2.z) || !finite(total2.w) {atomicOr(&fault[0],1u);}
+            if p.count>=5u {output[p.output_first+4u*p.output_stride+row]=total2.x;}
+            if p.count>=6u {output[p.output_first+5u*p.output_stride+row]=total2.y;}
+            if p.count>=7u {output[p.output_first+6u*p.output_stride+row]=total2.z;}
+            if p.count>=8u {output[p.output_first+7u*p.output_stride+row]=total2.w;}
+        }
     }
 }

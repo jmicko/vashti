@@ -13,7 +13,7 @@ const FOUR_PACKET_WORDS: usize = HEADER_WORDS + FOUR_LOGITS_WORDS + FOUR_ROWS * 
 pub(crate) const VOCABULARY: usize = 248320;
 pub(crate) const HC_WIDTH: usize = 10240;
 pub(crate) const HEADER_WORDS: usize = 8;
-const OWNED_ROWS: usize = if cfg!(feature = "strata-eight-window") {
+const OWNED_ROWS: usize = if crate::strata_port::eight_rows() {
     FOUR_ROWS
 } else {
     MAX_ROWS
@@ -21,20 +21,20 @@ const OWNED_ROWS: usize = if cfg!(feature = "strata-eight-window") {
 pub(crate) const LOGITS_WORDS: usize = OWNED_ROWS * VOCABULARY;
 pub(crate) const CARRY_WORDS: usize = OWNED_ROWS * HC_WIDTH;
 pub(crate) const PACKET_WORDS: usize = HEADER_WORDS + LOGITS_WORDS + CARRY_WORDS;
-pub(crate) const OWNER_BYTES: usize = if cfg!(feature = "strata-eight-window") {
+pub(crate) const OWNER_BYTES: usize = if crate::strata_port::eight_rows() {
     8
 } else {
     4
 } * 1024
     * 1024;
 pub(crate) const MAIN_BYTES: u64 = 2 * OWNER_BYTES as u64;
-pub(crate) const HOST_CAP: usize = if cfg!(feature = "strata-eight-window") {
+pub(crate) const HOST_CAP: usize = if crate::strata_port::eight_rows() {
     16
 } else {
     8
 } * 1024
     * 1024;
-pub(crate) const HOST_INCREMENT: usize = if cfg!(feature = "strata-eight-window") {
+pub(crate) const HOST_INCREMENT: usize = if crate::strata_port::eight_rows() {
     12
 } else {
     6
@@ -586,6 +586,56 @@ impl Owners {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn core_eight_compact_packet_authenticates_full_capacity_and_inactive_rows() {
+        if !crate::strata_intel_core::enabled() {
+            return;
+        }
+        assert_eq!(FOUR_ROWS, 8);
+        assert_eq!(Owners::allocation_requests().unwrap(), [8 * 1024 * 1024; 2]);
+        for count in 1..=8 {
+            let mut bytes = Zeroizing::new(vec![0u8; COMPACT_WORDS * 4]);
+            for (i, x) in [
+                2,
+                count as u32,
+                77,
+                VOCABULARY as u32,
+                HC_WIDTH as u32,
+                8,
+                0,
+                0,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                set(&mut bytes, i, x);
+            }
+            for row in 0..count {
+                set(&mut bytes, HEADER_WORDS + row, 123 + row as u32);
+                for col in 0..HC_WIDTH {
+                    set(
+                        &mut bytes,
+                        HEADER_WORDS + 8 + row * HC_WIDTH + col,
+                        (row as f32 + 0.25).to_bits(),
+                    );
+                }
+            }
+            let decoded = decode_compact(&bytes, count, 77).unwrap();
+            assert_eq!(decoded.hidden.len(), count * HC_WIDTH);
+            assert_eq!(decoded.greedy.as_ref().unwrap().len(), count);
+            if count < 8 {
+                set(&mut bytes, HEADER_WORDS + count, 1);
+                assert!(decode_compact(&bytes, count, 77).is_err());
+                set(&mut bytes, HEADER_WORDS + count, 0);
+                set(
+                    &mut bytes,
+                    HEADER_WORDS + 8 + count * HC_WIDTH,
+                    1.0f32.to_bits(),
+                );
+                assert!(decode_compact(&bytes, count, 77).is_err());
+            }
+        }
+    }
     fn packet(count: usize, start: usize) -> Zeroizing<Vec<u8>> {
         packet_selected(count, start, false)
     }

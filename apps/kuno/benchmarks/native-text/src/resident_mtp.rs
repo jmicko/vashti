@@ -110,7 +110,12 @@ impl AcceptedCacheRepair {
         carries: &[f32],
     ) -> Result<Self> {
         let count = tokens.len();
-        if !(1..=3).contains(&count)
+        let capacity = if crate::strata_intel_core::enabled() {
+            8
+        } else {
+            3
+        };
+        if !(1..=capacity).contains(&count)
             || start == 0
             || old > k::CONTEXT
             || carries.len() != count * k::WIDE
@@ -124,7 +129,7 @@ impl AcceptedCacheRepair {
             .ok_or(Error::OutOfBounds)?;
         let rewind = old >= start;
         if rewind {
-            if !completed_forward || old - start > 1 || count > old - start + 2 {
+            if !completed_forward || old - start > capacity - 2 || count > old - start + 2 {
                 return Err(Error::InvalidFormat("MTP accepted repair draft boundary"));
             }
         } else if completed_forward || old != start - 1 || count != 1 {
@@ -3557,7 +3562,9 @@ impl ResidentMtp<'_, '_> {
             || self.closed
             || self.retired.load(Ordering::Acquire)
             || self.live_outputs.load(Ordering::Acquire) != 0
-            || self.graph.profile() != MtpProfile::SelfContainedQ8
+            || !(self.graph.profile() == MtpProfile::SelfContainedQ8
+                || crate::strata_intel_core::enabled()
+                    && self.graph.profile() == MtpProfile::StrataQ2)
             || self.public_english_vocab.is_some()
         {
             return Err(Error::InvalidFormat("MTP accepted repair workspace"));

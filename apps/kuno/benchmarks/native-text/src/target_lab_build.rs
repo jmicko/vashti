@@ -165,7 +165,7 @@ impl IntelMtpMemory {
         } = owners;
         let expected_main = 828_866_560
             + crate::resident_gdn::batch::strata_replay::MAIN_BYTES
-            + if cfg!(feature = "strata-eight-window") {
+            + if crate::strata_port::eight_rows() {
                 8 * 1024 * 1024
             } else {
                 0
@@ -332,7 +332,7 @@ pub(crate) fn intel_mtp_preflight_with_down_math(
                         } else {
                             0
                         }
-                        + if cfg!(feature = "strata-eight-window") {
+                        + if crate::strata_port::eight_rows() {
                             8 * 1024 * 1024
                         } else {
                             0
@@ -1383,7 +1383,7 @@ pub(crate) fn validate_frozen_integer_math_close(
                 } else {
                     0
                 }
-                + if cfg!(feature = "strata-eight-window") {
+                + if crate::strata_port::eight_rows() {
                     2 * 4 * 1024 * 1024 + 65536
                 } else {
                     0

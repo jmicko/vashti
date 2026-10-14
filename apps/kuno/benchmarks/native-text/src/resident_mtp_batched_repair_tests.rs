@@ -2,6 +2,41 @@
 //! is constructed; real CPU13/cache/failure/closure gates remain separate.
 use super::*;
 
+#[test]
+fn core_eight_repair_keeps_confirmed_cell_and_replaces_only_provisional_tail() {
+    if !crate::strata_intel_core::enabled() {
+        return;
+    }
+    let start = 101;
+    let preceding = carries(1);
+    for window in 1..=8 {
+        let old = start + window - 2;
+        for accepted in 1..=window {
+            let tokens: Vec<_> = (0..accepted as u32).map(|i| 31 + i).collect();
+            let actual = carries(accepted);
+            let plan =
+                AcceptedCacheRepair::new(old, start, window > 1, &tokens, &preceding, &actual)
+                    .unwrap();
+            assert_eq!(plan.end, start + accepted - 1);
+            assert_eq!(plan.rewind, window > 1);
+            assert_eq!(plan.first_row, usize::from(window > 1));
+            if window > 1 {
+                assert!(
+                    AcceptedCacheRepair::new(old, start, false, &tokens, &preceding, &actual)
+                        .is_err()
+                );
+            }
+        }
+    }
+    let tokens = vec![31; 9];
+    assert!(
+        AcceptedCacheRepair::new(start + 7, start, true, &tokens, &preceding, &carries(9)).is_err()
+    );
+    assert!(
+        AcceptedCacheRepair::new(start + 7, start, true, &[31], &preceding, &carries(1)).is_err()
+    );
+}
+
 fn carries(count: usize) -> Vec<f32> {
     (0..count * k::WIDE)
         .map(|i| {

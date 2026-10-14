@@ -1309,7 +1309,7 @@ impl ResidentQsa<'_> {
                     l.widths[APPEND],
                 ),
                 Operation::Project(i) => {
-                    if crate::strata_intel_core::enabled() && count == 4 {
+                    if crate::strata_intel_core::enabled() && (1..=8).contains(&count) {
                         if i == 0 {
                             let projections = [
                                 self.projections.query,

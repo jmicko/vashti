@@ -717,7 +717,7 @@ mod tests {
         assert!(packet.accepted(2).unwrap());
         assert!(!packet.accepted(3).unwrap());
         packet.wipe();
-        assert_eq!(*packet.tokens, [0; 4]);
+        assert_eq!(*packet.tokens, [0; crate::strata_port::verify_capacity()]);
         assert_eq!(*packet.geometry, [0; 2]);
         assert!(packet.binding.is_none());
         assert!(packet.accepted(1).is_err());

@@ -900,7 +900,7 @@ impl ResidentGdn<'_> {
                     }
                 }
                 Operation::Projection(i) => {
-                    if crate::strata_intel_core::enabled() && count == 4 {
+                    if crate::strata_intel_core::enabled() && (1..=8).contains(&count) {
                         if i == 0 {
                             let jobs = [
                                 (self.projections.qkv, QKV),
@@ -1298,7 +1298,7 @@ impl GdnBatchWorkspace {
     ) -> Result<LatestGdnCheckpoint> {
         self.healthy(arena, cancel)?;
         checked_count(start, count, stage.layout.max_context)?;
-        if count == 4 && self.recurrence_policy != RecurrencePolicy::FourStreaming
+        if count >= 4 && self.recurrence_policy != RecurrencePolicy::FourStreaming
             || !(1..=if four {
                 crate::strata_port::verify_capacity()
             } else {

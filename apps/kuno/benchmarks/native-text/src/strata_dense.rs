@@ -38,6 +38,10 @@ impl Kernel {
             self.columns / 2 + self.columns / 16,
             include_str!("strata_dense.wgsl")
         );
+        if self.dtype == 14 && !self.indexed {
+            let prefix = source.split_once("@compute").unwrap().0;
+            return format!("{prefix}{}", include_str!("strata_native_q6.wgsl"));
+        }
         // Match upstream native_mmvq's compile-time packed dot expansion. Keep
         // integer accumulation order, original weight addresses and Q8 scales.
         let start = source
@@ -150,16 +154,13 @@ impl CubeTask<AutoCompiler> for Kernel {
         })
     }
 }
-pub(crate) fn supports(dtype: u32, columns: usize, scratch_bytes: u64) -> bool {
-    supports_count(dtype, columns, scratch_bytes, 4)
-}
 pub(crate) fn supports_count(dtype: u32, columns: usize, scratch_bytes: u64, count: usize) -> bool {
     crate::strata_intel_core::enabled()
         && matches!(dtype, 8 | 12 | 13 | 14 | 20 | 23)
         && columns > 0
         && columns <= 16384
         && columns.is_multiple_of(256)
-        && (1..=4).contains(&count)
+        && (1..=8).contains(&count)
         && (count * (columns / 2 + columns / 16) * 4) as u64 <= scratch_bytes
 }
 #[allow(clippy::too_many_arguments)]
@@ -226,6 +227,73 @@ static PREPARES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::ne
 pub(crate) fn prepares() -> u64 {
     PREPARES.load(std::sync::atomic::Ordering::Relaxed)
 }
+
+#[cfg(test)]
+mod native_q6_tests {
+    #[test]
+    fn native_q6_iqs_covers_each_column_once_and_matches_canonical_gguf_decode() {
+        // Independent canonical decoder validates every original weight index,
+        // signed scale and offset in the native lane mapping. Public synthetic
+        // data only; this is not a GPU dispatch/numerical acceptance claim.
+        for salt in 0..9u32 {
+            let mut packed = [0u8; 210];
+            for (i, byte) in packed[..192].iter_mut().enumerate() {
+                *byte = (i as u32 * 73 + salt * 29 + 11) as u8;
+            }
+            for (i, byte) in packed[192..208].iter_mut().enumerate() {
+                *byte = ((i as i32 * 3 + salt as i32) % 16 - 8) as i8 as u8;
+            }
+            packed[208..].copy_from_slice(&half::f16::from_f32(0.25).to_bits().to_le_bytes());
+            let mut canonical = [0.0; 256];
+            kuno_text::TensorType::Q6K
+                .decode(&packed, &mut canonical)
+                .unwrap();
+            let mut visits = [0u8; 256];
+            for lane in 0..32 {
+                let low = u32::from_le_bytes(packed[lane * 4..lane * 4 + 4].try_into().unwrap());
+                let hi_at = 128 + (8 * (lane / 16) + lane % 8) * 4;
+                let high = u32::from_le_bytes(packed[hi_at..hi_at + 4].try_into().unwrap())
+                    >> (2 * ((lane % 16) / 8));
+                let q8_offset = 4 * (lane / 16) + (lane % 16) / 8;
+                let sc_offset = 8 * (lane / 16) + (lane % 16) / 4;
+                for part in 0..2 {
+                    let codes = ((low >> (4 * part)) & 0x0f0f0f0f)
+                        | (((high >> (4 * part)) << 4) & 0x30303030);
+                    let scale = packed[192 + sc_offset + 4 * part] as i8 as f32;
+                    for byte in 0..4 {
+                        let column = (q8_offset + 2 * part) * 32 + (lane % 8) * 4 + byte;
+                        let code = ((codes >> (8 * byte)) & 255) as i32 - 32;
+                        assert_eq!(
+                            0.25 * scale * code as f32,
+                            canonical[column],
+                            "lane={lane} part={part} byte={byte}"
+                        );
+                        visits[column] += 1;
+                    }
+                }
+            }
+            assert_eq!(visits, [1; 256]);
+        }
+    }
+    #[test]
+    fn native_eight_dense_scratch_covers_all_real_rhs_without_overcommit() {
+        if !crate::strata_intel_core::enabled() {
+            return;
+        }
+        assert_eq!(crate::strata_port::verify_capacity(), 8);
+        for columns in [2560, 10240, 16384] {
+            for count in 1..=8 {
+                let bytes = (count * (columns / 2 + columns / 16) * 4) as u64;
+                for dtype in [8, 12, 13, 14, 20, 23] {
+                    assert!(super::supports_count(dtype, columns, bytes, count));
+                    assert!(!super::supports_count(dtype, columns, bytes - 1, count));
+                }
+            }
+        }
+        assert!(!super::supports_count(14, 2560, 1 << 20, 0));
+        assert!(!super::supports_count(14, 2560, 1 << 20, 9));
+    }
+}
 static CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub(crate) fn calls() -> u64 {
     CALLS.load(std::sync::atomic::Ordering::Relaxed)
@@ -291,7 +359,13 @@ pub(crate) fn project(
                 rows,
                 columns,
                 row_bytes: layout.row_bytes,
-                members: if count == 1 { 1 } else { 4 },
+                members: if count == 1 {
+                    1
+                } else if count <= 4 {
+                    4
+                } else {
+                    8
+                },
                 indexed: false,
             }),
             CubeCount::Static(rows.div_ceil(4) as u32, 1, 1),
@@ -302,7 +376,7 @@ pub(crate) fn project(
     Ok(())
 }
 pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
-    let mut result = [1, 4]
+    let mut result = [1, 4, 8]
         .into_iter()
         .flat_map(|members| {
             [8, 12, 13, 14, 20, 23]

@@ -34,7 +34,12 @@ pub(crate) struct ProjectSpans {
     pub matrix_rows: usize,
 }
 fn rows_span(count: usize, first: usize, stride: usize, width: usize, extent: usize) -> bool {
-    (1..=4).contains(&count)
+    (1..=if crate::strata_intel_core::enabled() {
+        8
+    } else {
+        4
+    })
+        .contains(&count)
         && stride >= width
         && stride <= u32::MAX as usize
         && (count - 1)
@@ -70,6 +75,9 @@ impl ProjectSpans {
         weight_bytes: usize,
         extents: [usize; 3],
     ) -> Result<()> {
+        if !(1..=4).contains(&self.count) {
+            return Err(Error::InvalidBufferLength);
+        }
         if !span(self.packed_first, spec.weight_bytes(), weight_bytes)
             || !rows_span(
                 self.count,
@@ -142,6 +150,11 @@ impl Kernel {
         let (prepare_guard, stages) = include_str!("q6_integer_batch.wgsl")
             .split_once("// PROJECT_BATCH_STAGE")
             .unwrap();
+        let prepare_guard = if crate::strata_intel_core::enabled() {
+            prepare_guard.replace("p.g<=4u", "p.g<=8u")
+        } else {
+            prepare_guard.to_owned()
+        };
         if let Self::Prepare(columns) = self {
             if crate::strata_port::enabled() {
                 return format!(
@@ -149,7 +162,7 @@ impl Kernel {
                     columns / 4,
                     columns / 32,
                     include_str!("strata-q6-prepare.wgsl")
-                        .replace("// STRATA_BATCH_PREPARE_GUARD", prepare_guard)
+                        .replace("// STRATA_BATCH_PREPARE_GUARD", &prepare_guard)
                 );
             }
             // Use the exact original quantizer/body. Only the guarded base
@@ -158,7 +171,7 @@ impl Kernel {
                 .source()
                 .replace(
                     "let block=id.x;if block>=COLUMNS/32u {return;}",
-                    prepare_guard,
+                    &prepare_guard,
                 )
                 .replace("input[p.a+", "input[input_first+")
                 .replace("planes[p.b+", "planes[planes_first+")
