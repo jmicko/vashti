@@ -1789,3 +1789,61 @@ without the legacy MAX8 validator. Keep old verifier receipts separate: they are
 not large-prompt state acceptance. Complete final-only head/device MTP teaching,
 cache loans, queue/capture/layout audit, general input/sampling and whole-engine
 acceptance before any throughput comparison.
+
+## Connected full prompt QSA ownership (2026-10-14)
+
+Source `101f4e7`, isolated `codex/strata-rust-port`. The actual prompt caller
+now enters `strata_qsa::prompt::run` after its five carved projections. That
+connected1..256-row entry queues positions, Q-only split, compact Q/K/IQ RMS/
+RoPE closing, FP16 candidate pack, dead initialization, authoritative append,
+shared mean/norm/RoPE, native GPU weighted selection,32-query attention/merge
+and the directly consumed packed gate output. All old per-operation prompt
+math/selection branches are bypassed by this entry. It uses the stage's actual
+cache/positions/pooled/fault owners; it does not authorize state acceptance.
+
+Split, pack, append, attention, merge and gate join failures directly into the
+existing sticky model fault. Norm uses only24/2/4 flags per query, and shared
+pooled norms close only newly completed blocks; no per-query pooled copies or
+24*2051 attention flags are needed. Score uses compact per-block flags plus a
+direct fault for unsupported subgroup geometry. Norm explicitly writes failure
+on that geometry too, preventing stale scoped flags from inheriting success.
+Guarded source substitutions retain the original arithmetic and assert their
+expected binding/store templates exist. Ordinary decode/MTP math is unchanged.
+
+Six additional carved QSA views contain Q/K/IQ flags, scores, score flags and
+selected cells. The whole20-view upper-stage1 region consumes59,490,304 bytes
+including native alignment/padding, within the67,108,864-byte half. It remains
+phase-overlaid with GDN. No GPU root or MAIN allocation is added. Scope metadata
+reservation grows16KiB to32KiB, charged through the existing component/model
+host quote. The conservative QSA INFO envelope now totals835,584 bytes, including
+the existing tile records and17 full/compatibility records per12 layers.
+
+The old MAX8 parent still receives12 explicit status adapters after the real
+family, deriving its expected active masks from the actual model fault. The
+old selector callback and later norm/pool/attention/etc events do not rerun the
+family. Full prompt users need neither these adapters nor legacy scratch/replay
+IDs. The enclosing controller/receipts are still three-row/MAX8; this is not a
+claim of completed large-chunk scheduling or physical acceptance.
+
+Release build, strict Clippy, fmt/whitespace and296 offline WGSL/SPIR-V variants
+pass in `strata-full-qsa-path-{final-build,clippy,shaders}-20261014.log` under
+`/media/jmicko/faststore/kuno-development`. A fast host-only parse/validation of
+all generated QSA source factories also passed, and the region extent was
+checked without a device. No live GPU/model/copy/numerical/state/recovery/speed
+run, root action, API/UI/service/install/release change. Earlier full-core unit
+failures remain open. Canonical checkout and inherited bytecode preserved.
+Full rewrite incomplete; goal active and speed gate closed; last sudo expired.
+
+Next compose the actual large controller and all its dependent consumers as one
+source block, rather than another isolated kernel experiment. GR handles, AB,
+GDN full math, QSA full math and expert grouping already accept256 rows. Native
+outer R/mixed/block/carry ownership must persist outside attention/MoE overlays.
+Refactor routed/shared/PLE callers to real handle/count entries, retain public
+model binding and physical state-owner checks, and add prompt-only completed
+state acceptance distinct from speculative MAX8 receipts. Extend the joined PLE
+source's MAX8 row/data capacity with real charged host bounds. Finish final-only
+head and direct device MTP teacher/carry input together with that controller.
+Executor prompt and prepacked original-weight projection accept handles/counts;
+do not reintroduce legacy validate_view/MAX_BATCH in those full paths. Native
+byte-based loans, independent queues/capture, remaining substitutions, arbitrary
+input/sampling and whole-engine correctness/recovery still precede speed trials.

@@ -4946,3 +4946,29 @@ than scaling its old50MiB-per256-query attention status. Read the receipt's exac
 existing handle entry points. Parent still uses three-row/MAX8 windows; final-only
 head, device MTP teaching, native budgets/cache loans, queues/capture, remaining
 layout audits, general input/sampling and whole-engine acceptance remain required.
+
+### Active Kuno engine handoff — full prompt QSA ownership (2026-10-14)
+
+Source `101f4e7`, isolated `codex/strata-rust-port`. Read completion guide
+**Connected full prompt QSA ownership**. Actual prompt QSA now calls one connected
+256-capable family using carved compact flags/scores/selections and direct model
+faults. It includes positions through packed gated output and32-query attention
+scratch; no per-value attention flags or per-query pooled copies. Legacy MAX8
+status adapters remain outside it for the existing parent; later old math and
+selector events are skipped. Scope metadata32KiB and conservative QSA INFO835,584
+bytes are charged. Twenty QSA views fit59,490,304 bytes of the existing upper64MiB.
+
+Release build, strict Clippy and296 offline shader variants pass. No live GPU,
+model/numerical/state/recovery/speed acceptance; full-core failures remain open.
+Full rewrite incomplete, goal active, speed gate closed. No API/Vashti, service,
+install or release change. Canonical/GPU residency/bytecode preserved; last sudo
+check expired, no protected run or workaround.
+
+Next implement the real large controller with persistent R/mixed/block/carry,
+handle-based routed/shared/PLE calls, charged larger joined PLE source, prompt
+state acceptance, final-only head and device MTP teaching as a coupled block.
+GR/AB/GDN/QSA/expert math already has256-row handle entry points; the parent
+still uses three-row/MAX8 packets. Keep verifier receipts separate and actual
+binding/root checks intact. Complete native budgets/loans, queues/capture,
+remaining layout/substitution audits, general input/sampling and whole-engine
+acceptance before throughput comparisons. Required Vashti changes: none.
