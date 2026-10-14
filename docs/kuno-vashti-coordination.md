@@ -4525,3 +4525,31 @@ remaining fidelity/math/prefill/KV/MTP/sampling/input/recording checklist requir
 Keep assembled core selected; speed gate closed. API/Vashti changes required:
 none. Installed services/canonical checkout unchanged; inherited bytecode
 preserved. Goal active and incomplete.
+
+
+### Active Kuno engine handoff extension — connected FP16 QSA (2026-10-14)
+
+Source `d5d4e49`, isolated `codex/strata-rust-port` checkout. Read completion
+guide **Connected FP16 QSA family** for ownership, actual math/state dispatches,
+allocation changes and outstanding substitutions. This supersedes the core F32
+KV limitation; it does not establish complete engine or device acceptance.
+
+Core width1..8 now couples actual packed FP16 committed/current KV, native fused
+norm/RoPE, FP16-rounded raw index keys, retained completed pooled blocks, native
+Intel index scores,64-cell attention/merge/gate and rejected-tail clearing.
+Retained POOLED identity joins checkpoint/physical-root proofs. Actual private
+stage/scratch allocations and quotes change together. Existing assembled global
+sources, CPU/GPU share and controllers remain selected; no partial speed winner.
+
+Release build, strict Clippy,206 offline shaders,26 family and two host geometry/
+chunk-oracle tests pass. Ordinary regression:1,361 pass/one ignored. Wider core
+QSA filter:58 pass/two fail (language/cache gate and whole-model quote); older
+full-core failures remain open. Token-major/raw-history/dead-tail/multi-query/
+queue substitutions and numerical/state/recovery acceptance are still required.
+No GPU/model or speed execution. Goal active and full rewrite incomplete; no live
+speed tests until the connected completeness and correctness gates pass.
+
+Next port GDN's actual multirow conv/L2, four-group FMA recurrence/norm and
+accepted-prefix replay together (reference `verify_kernels.dp.cpp`), then continue
+the whole checklist. API/installed services/Vashti changes required: none.
+Canonical checkout and inherited bytecode preserved; no install/release/reset.

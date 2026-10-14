@@ -39,7 +39,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | Native expert math and grouped rows | `sycl/src/kernels/cuda/iq_kernels.dp.cpp::row_entries`, `native_gu_kernel`, `native_down_kernel` | Packed integer math/BDA roots exist. Separate GU roles, 4/2/1 chunks, activation, intermediate storage and downstream consumers are now selected together in the Intel core; all 158 WGSL/SPIR-V variants validate, including 105 physical-pointer checks; numerical/model execution acceptance remains pending. The global core now uses one per-role launch containing pinned row_entries4/2/1 loops, scalar IQ4_XS, native signed integer finish and XOR reduction; numerical/model execution acceptance remains pending. Historical fixed-chunk kernels are retained separately. |
 | GR write/read/norm/down/up/injection | `sycl/src/kernels/cuda/fused_gr.dp.cpp::fused_gr_read_multi`; `verify.cpp::gr_read_group` | Native pending-write norm, sliced BF16 down/injection, fixed slice reduction and up/mix/commit are now connected and unconditionally selected in the core, including explicit PLE/final boundary writes. Resident original weights and the enlarged private scratch owner are charged together. Structural acceptance passes; numerical/model execution acceptance and final substitution audit remain pending. |
 | GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp` | GDN retained-state replay exists. Audit actual convolution/L2/alpha-beta/recurrence/output-norm fusion, grouped projections and retained commit inputs against pinned Intel source. |
-| QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Causal Rust QSA exists. Audit fused norm/RoPE, KV format/append and block selection/gather, grouped consumers and tail repair; explicit F32 versus quantized KV difference needs resolution. |
+| QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects FP16 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. See the QSA receipt below for precise storage/scheduling substitutions and remaining numerical/state acceptance; do not claim full QSA fidelity yet. |
 | PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Original grouped reads/hash/history exist. Audit asynchronous deduplicated source reads, grouped BF16 projections and ordered history snapshots/commit. Never persist request n-grams. |
 | Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, MoE MMQ/Intel implementations | Rust bounded graph prefill is not full prompt-path parity. Port connected chunk budget, streamed layer staging and dense/expert batches, including prompt history consumed by MTP. |
 | MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Original Q2 sidecar and public draft vocab exist. Audit native layout/conversion, draft graph/attention and prompt-state initialization; arbitrary text and full supported draft head must work. |
@@ -736,3 +736,81 @@ All new CPU/GPU/cache/driver parts stay selected; no intermediate timing winner
 or fallback. No GPU inference/profile/reset/rebind, service/install/API/Vashti or
 release change. Canonical checkout and inherited bytecode preserved. Goal active
 and incomplete; speed gate closed.
+
+## Connected FP16 QSA family (2026-10-14)
+
+Source `d5d4e49`, same isolated `codex/strata-rust-port` checkout. Pinned Intel
+`generate.cpp:435` defaults to **FP16** KV; optional INT8/Q4/hybrid modes are
+not an inferred requirement for this default path. `strata_qsa.rs` and WGSL
+translate the connected native norm/RoPE, indexer and attention family. The core
+selects them unconditionally for every real width1..8; the ordinary feature-off
+engine keeps its original F32 path. Scalar F32 consumers reject the packed core
+owners rather than misinterpreting half pairs.
+
+- Current candidates and committed tokens store both K and V as actual packed
+  half pairs. Attention consumes those exact rounded values before append, so a
+  speculative prefix does not see a different precision from committed context.
+  Logical tokens contain256 K words,256 V words and128 raw-index F32 words.
+- Raw index keys first round through FP16, as native SET_ROWS/GET_ROWS does.
+  Pooling reads only newly completed blocks; old source reads are bounded to the
+  previous three raw rows. Completed normalized/RoPE pooled blocks persist in
+  the actual stage POOLED owner. They are copied to the window's causal views;
+  new blocks publish only after native norm/RoPE. No old block is renormalized.
+- Fused norm uses the native256-thread,32-lane XOR reduction and grouped warp
+  sums, weighted values and two FMA RoPE outputs. Simple RoPE uses the native
+  host F32 theta scale and device F32 angles. Existing graph binding rejects
+  unsupported scaling overrides. Intel index scores use four contiguous values
+  per lane, XOR sums and head-wise nonnegative accumulation, without the old
+  extra square-root divisor. Original chronological selection remains connected.
+- Attention executes64 selected cells per chunk, two KV groups and twelve query
+  heads/group. It shares query/KV loads, uses the native eight-value partial/XOR
+  score reduction, per-chunk maxima/exp-sums and sequential FMA value accumulation.
+  Native max-rescaled chunk merge and the original sigmoid gate feed the actual
+  output projector. There is no F32 softmax/value consumer fallback in the core.
+- Checkpoint/receipt identity and physical-root checks include the retained
+  POOLED owner. Rejected-prefix repair clears only discarded packed cache rows,
+  positions and pooled blocks from the accepted incomplete-block boundary onward.
+  A strict bit-zero fold precedes cursor publication; accepted prefix pages stay
+  intact. All owners remain in the private arena and erase at request close.
+
+The complete quote follows the actual new owners: each stage's admitted pages
+change36,306,944→19,529,728 bytes; the single shared MAX8 scratch bank changes
+17,825,792→22,052,864 bytes. CAND shrinks to32 KiB, native attention partials use
+8 MiB, and max/sum stats use64 KiB. This is source/host allocation accounting,
+not a device memory or speed measurement. INFO still fits the existing bounded
+per-stage reservation, including the two retained-pool dispatches.
+
+Remaining substitutions/gates: packed cache is token-major rather than native
+paged/head-major; bounded raw-index history remains in the private cache instead
+of native three-row tail plus dead/spare owners. Final partial-block selection is
+explicit rather than the native dead-key score/bias route. Pool candidates are
+window-owned copies; native multi-query block-score load sharing, tail snapshots
+and full queue/capture equivalence still require audit/porting. WGSL math replaces
+SYCL native math; subgroup/FMA/norm/attention numerical parity and physical state
+repair/recovery have **not** been run. These are visible remaining gaps, not a
+claim that merely rounding an F32 cache completes FP16 storage parity.
+
+Validation logs under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-qsa-build-20261014.log`: release core build passes.
+- `strata-qsa-clippy-20261014.log`: strict release core Clippy passes.
+- `strata-qsa-shaders-20261014.log`:206 offline WGSL/SPIR-V shaders pass,
+  including all ten new QSA kernels. No GPU execution occurs.
+- `strata-qsa-core-family-tests-20261014.log`:26 QSA family tests pass.
+- `strata-qsa-math-tests-20261014.log`: two host tests pass: every causal width,
+  packed/scratch/tail interval and accepted-prefix extent, plus an independent
+  global F64 softmax oracle for the prescribed chunk merge, including2051 cells.
+  The host oracle does not establish device arithmetic parity.
+- `strata-qsa-ordinary-regression-20261014.log`:1,361 pass, one ignored.
+- `strata-qsa-core-broad-audit-20261014.log`:58 pass, **two fail** in the wider
+  `qsa` filter: old language/cache selection gates and a whole-model quote fixed
+  at826,638,336 instead of the assembled1,275,363,328. They remain untriaged core
+  compatibility/coverage work; the previous full-core failures remain open too.
+
+Fmt/whitespace checks pass. No live model, device correctness/recovery or speed
+run, service change, installation or Vashti/API change. Full rewrite remains
+incomplete and the speed gate remains closed. Next coupled source block is GDN:
+read `verify_kernels.dp.cpp`'s actual multirow convolution/L2 and four-row-group
+FMA recurrence/output-norm, including its accepted-prefix state replay. The old
+Rust streamer currently decays before its dot and places query scaling before
+recurrence, unlike native; port their dependent producers and repair together.
