@@ -800,19 +800,7 @@ impl ResidentGdn<'_> {
                 info,
             )?,
             Operation::Preparation | Operation::Closing => {}
-            Operation::Controls => native::launch(
-                arena,
-                Kernel::Controls,
-                [p.shape.value_heads.div_ceil(64), count, 1],
-                vec![
-                    h(ids[ALPHA])?,
-                    h(ids[BETA])?,
-                    public.controls.clone(),
-                    h(ids[CONTROL])?,
-                    h(ids[STATUS + 2])?,
-                ],
-                info,
-            )?,
+            Operation::Controls => return Err(fault("native AB producer bypassed")),
             Operation::Recurrence => native::launch(
                 arena,
                 Kernel::Step,
@@ -972,6 +960,29 @@ impl ResidentGdn<'_> {
         let arg = |i: usize| u::arg(arena, ids[i]);
         queue_stage(cancel, |operation| {
             if crate::strata_intel_core::enabled() {
+                if operation == Operation::Controls {
+                    let request = crate::strata_gdn::Ab {
+                        arena,
+                        input,
+                        controls: ids[CONTROL],
+                        status: ids[STATUS + 2],
+                        fault: fault_id,
+                        params: public.controls.clone(),
+                        count,
+                        columns: self.layout.input_words,
+                        heads: p.shape.value_heads,
+                        first: spans.input_first(),
+                        stride: spans.input_stride(),
+                    };
+                    if !projector.enqueue_native_gdn_ab(
+                        [self.projections.alpha, self.projections.beta],
+                        request,
+                        cancel,
+                    )? {
+                        return Err(fault("native GDN AB owner required"));
+                    }
+                    return Ok(());
+                }
                 if operation == Operation::Recurrence
                     && let Some(cache) = &mut self.strata_inputs
                 {
@@ -1008,26 +1019,22 @@ impl ResidentGdn<'_> {
                 Operation::Projection(i) => {
                     if crate::strata_intel_core::enabled() && (1..=8).contains(&count) {
                         if i == 0 {
-                            let jobs = [
-                                (self.projections.qkv, QKV),
-                                (self.projections.z, Z),
-                                (self.projections.alpha, ALPHA),
-                                (self.projections.beta, BETA),
-                            ]
-                            .map(|(p, target)| {
-                                (
-                                    p,
-                                    ids[target],
-                                    BatchSpans::new(
-                                        count,
-                                        0,
-                                        spans.input_first(),
-                                        spans.input_stride(),
-                                        0,
-                                        layout.widths[target],
-                                    ),
-                                )
-                            });
+                            let jobs = [(self.projections.qkv, QKV), (self.projections.z, Z)].map(
+                                |(p, target)| {
+                                    (
+                                        p,
+                                        ids[target],
+                                        BatchSpans::new(
+                                            count,
+                                            0,
+                                            spans.input_first(),
+                                            spans.input_stride(),
+                                            0,
+                                            layout.widths[target],
+                                        ),
+                                    )
+                                },
+                            );
                             projector.enqueue_bundle(&jobs, arena, input, cancel)?;
                         }
                         return Ok(());

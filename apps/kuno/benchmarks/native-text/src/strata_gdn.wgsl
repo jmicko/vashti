@@ -3,6 +3,54 @@
 struct Params {count:u32,start:u32,channels:u32,key_heads:u32,value_heads:u32,gamma_shared:u32,epsilon:f32,reserved:u32}
 fn finite(x:f32)->bool {return abs(x)<=3.4028234663852886e38;}
 // COMMON_END
+// AB_BEGIN
+struct AbParams {count:u32,first:u32,stride:u32,columns:u32,heads:u32,r0:u32,r1:u32,r2:u32}
+@group(0) @binding(0) var<storage,read> wa:array<u32>;
+@group(0) @binding(1) var<storage,read> wb:array<u32>;
+@group(0) @binding(2) var<storage,read> input:array<f32>;
+@group(0) @binding(3) var<storage,read> params:array<f32>;
+@group(0) @binding(4) var<storage,read_write> controls:array<f32>;
+@group(0) @binding(5) var<storage,read_write> status:array<atomic<u32>>;
+@group(0) @binding(6) var<storage,read_write> fault:array<atomic<u32>>;
+@group(0) @binding(7) var<uniform> p:AbParams;
+fn positive_log1p(x:f32)->f32 {let y=1.0+x;if y==1.0 {return x;}return log(y)*(x/(y-1.0));}
+@compute @workgroup_size(64)
+fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(subgroup_invocation_id) lane:u32,@builtin(subgroup_id) warp:u32,@builtin(subgroup_size) sw:u32) {
+    let row=group.x*2u+warp;let is_beta=row>=p.heads;let head=row%p.heads;
+    if sw!=32u || row>=p.heads*2u || group.y!=0u || group.z!=0u {return;}
+    var accum:array<f32,8>;for(var t=0u;t<8u;t++) {accum[t]=0.0;}
+    // Eight consecutive packed BF16 values per lane, then stride32 packs.
+    // Each weight pack is shared by every real row in the verification window.
+    for(var j=lane;j<p.columns/8u;j+=32u) {
+        var w:array<f32,8>;
+        for(var pair=0u;pair<4u;pair++) {
+            let at=head*(p.columns/2u)+j*4u+pair;var bits=0u;if is_beta {bits=wb[at];}else {bits=wa[at];}
+            w[pair*2u]=bitcast<f32>(bits<<16u);w[pair*2u+1u]=bitcast<f32>(bits&0xffff0000u);
+        }
+        for(var t=0u;t<p.count;t++) {for(var i=0u;i<8u;i++) {accum[t]=fma(w[i],input[p.first+t*p.stride+j*8u+i],accum[t]);}}
+    }
+    for(var t=0u;t<p.count;t++) {
+        var a=accum[t];for(var distance=16u;distance>0u;distance/=2u) {a+=subgroupShuffleXor(a,distance);}
+        if lane==0u {
+            var result=0.0;var ok=finite(a);
+            if is_beta {result=1.0/(1.0+exp(-a));ok=ok && finite(result) && result>=0.0 && result<=1.0;}
+            else {let dt=params[head];let sa=params[p.heads+head];let v=a+dt;var sp=v;if v<=20.0 {sp=positive_log1p(exp(v));}result=sp*sa;ok=ok && finite(dt) && finite(sa) && finite(result) && result<=0.0;}
+            controls[t*p.heads*2u+head+select(0u,p.heads,is_beta)]=select(0.0,result,ok);
+            if ok {atomicOr(&status[t*p.heads+head],select(1u,2u,is_beta));}else {atomicOr(&fault[0],1u);}
+        }
+    }
+}
+// AB_END
+// AB_JOIN_BEGIN
+@group(0) @binding(0) var<storage,read_write> status:array<u32>;
+@group(0) @binding(1) var<storage,read_write> fault:array<atomic<u32>>;
+@group(0) @binding(2) var<uniform> p:Params;
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) id:vec3<u32>) {
+    let i=id.x;if i>=p.count*p.value_heads {return;}
+    let ok=status[i]==3u;status[i]=select(0u,1u,ok);if !ok {atomicOr(&fault[0],1u);}
+}
+// AB_JOIN_END
 // CONV_BEGIN
 @group(0) @binding(0) var<storage,read> raw:array<f32>;
 @group(0) @binding(1) var<storage,read> weights:array<f32>;
@@ -39,24 +87,6 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
     }
 }
 // CONV_END
-// CONTROLS_BEGIN
-@group(0) @binding(0) var<storage,read> alpha:array<f32>;
-@group(0) @binding(1) var<storage,read> beta:array<f32>;
-@group(0) @binding(2) var<storage,read> params:array<f32>;
-@group(0) @binding(3) var<storage,read_write> controls:array<f32>;
-@group(0) @binding(4) var<storage,read_write> status:array<u32>;
-@group(0) @binding(5) var<uniform> p:Params;
-fn positive_log1p(x:f32)->f32 {let y=1.0+x;if y==1.0 {return x;}return log(y)*(x/(y-1.0));}
-@compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) id:vec3<u32>) {
-    let h=id.x;let t=id.y;if h>=p.value_heads || t>=p.count {return;}
-    let a=alpha[t*p.value_heads+h];let b=beta[t*p.value_heads+h];let dt=params[h];let sa=params[p.value_heads+h];let biased=a+dt;
-    var sp=biased;if biased<=20.0 {sp=positive_log1p(exp(biased));}
-    let gate=sp*sa;let probability=1.0/(1.0+exp(-b));
-    let ok=finite(a)&&finite(b)&&finite(dt)&&finite(sa)&&finite(gate)&&finite(probability)&&gate<=0.0&&probability>=0.0&&probability<=1.0;
-    controls[t*p.value_heads*2u+h]=select(0.0,gate,ok);controls[t*p.value_heads*2u+p.value_heads+h]=select(0.0,probability,ok);status[t*p.value_heads+h]=select(0u,1u,ok);
-}
-// CONTROLS_END
 // STEP_BEGIN
 const STATE_ONLY:bool=false;
 @group(0) @binding(0) var<storage,read> query:array<f32>;
@@ -71,8 +101,8 @@ const STATE_ONLY:bool=false;
 @group(0) @binding(9) var<storage,read_write> status:array<u32>;
 @group(0) @binding(10) var<storage,read_write> closing_status:array<u32>;
 @group(0) @binding(11) var<uniform> p:Params;
-var<workgroup> sk:array<f32,128>;
-var<workgroup> sq:array<f32,128>;
+var<workgroup> sk:array<f32,256>;
+var<workgroup> sq:array<f32,256>;
 var<workgroup> kv_partial:array<f32,512>;
 var<workgroup> out_partial:array<f32,512>;
 var<workgroup> sums:array<f32,4>;
@@ -84,18 +114,23 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
     if tid==0u {atomicStore(&broken,0u);}workgroupBarrier();
     var state:array<f32,32>;
     for(var r=0u;r<32u;r++) {let at=head*16384u+(rg*32u+r)*128u+col;state[r]=old[at];if !finite(state[r]) {atomicOr(&broken,1u);}}
+    if rg==0u {sk[col]=key[qh*128u+col];}else if rg==1u && !STATE_ONLY {sq[col]=query[qh*128u+col];}
     for(var t=0u;t<p.count;t++) {
-        if rg==0u {sk[col]=key[t*p.key_heads*128u+qh*128u+col];if !STATE_ONLY {sq[col]=query[t*p.key_heads*128u+qh*128u+col];}}
+        let cur=(t&1u)*128u;let nxt=((t+1u)&1u)*128u;
         workgroupBarrier();
+        if t+1u<p.count {
+            if rg==0u {sk[nxt+col]=key[(t+1u)*p.key_heads*128u+qh*128u+col];}
+            else if rg==1u && !STATE_ONLY {sq[nxt+col]=query[(t+1u)*p.key_heads*128u+qh*128u+col];}
+        }
         let decay=exp(controls[t*p.value_heads*2u+head]);let beta=controls[t*p.value_heads*2u+p.value_heads+head];
         var predicted=0.0;
-        for(var r=0u;r<32u;r++) {predicted=fma(state[r],sk[rg*32u+r],predicted);}
+        for(var r=0u;r<32u;r++) {predicted=fma(state[r],sk[cur+rg*32u+r],predicted);}
         kv_partial[tid]=predicted;workgroupBarrier();
         let combined=kv_partial[col]+kv_partial[128u+col]+kv_partial[256u+col]+kv_partial[384u+col];
         let delta=(value[t*p.value_heads*128u+head*128u+col]-decay*combined)*beta;
         if !finite(decay)||!finite(beta)||!finite(delta) {atomicOr(&broken,1u);}
         var readout=0.0;
-        for(var r=0u;r<32u;r++) {state[r]=fma(decay,state[r],sk[rg*32u+r]*delta);if !finite(state[r]) {atomicOr(&broken,1u);}if !STATE_ONLY {readout=fma(state[r],sq[rg*32u+r],readout);}}
+        for(var r=0u;r<32u;r++) {state[r]=fma(decay,state[r],sk[cur+rg*32u+r]*delta);if !finite(state[r]) {atomicOr(&broken,1u);}if !STATE_ONLY {readout=fma(state[r],sq[cur+rg*32u+r],readout);}}
         out_partial[tid]=readout;workgroupBarrier();
         var oc=0.0;var ss=0.0;
         if rg==0u && !STATE_ONLY {oc=(out_partial[col]+out_partial[128u+col]+out_partial[256u+col]+out_partial[384u+col])*inverseSqrt(128.0);ss=oc*oc;}

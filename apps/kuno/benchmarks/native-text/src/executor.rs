@@ -2774,6 +2774,40 @@ impl<'a> GpuExecutor<'a> {
         };
         Ok([down, up, inject])
     }
+    pub(crate) fn strata_gdn_ab_weights(
+        &mut self,
+        tensors: [TensorView<'_>; 2],
+    ) -> Result<[Handle; 2]> {
+        if !crate::strata_intel_core::enabled() {
+            return Err(Error::InvalidFormat("native GDN AB selection"));
+        }
+        self.model.verify_file_unchanged()?;
+        self.check_target_rows_policy()?;
+        let mut rows = 0;
+        for (i, t) in tensors.iter().enumerate() {
+            let m = Matrix::new(*t)?;
+            let suffix = if i == 0 {
+                "ssm_alpha.weight"
+            } else {
+                "ssm_beta.weight"
+            };
+            if !t.belongs_to(self.model)
+                || t.info().dtype().gguf_id() != 30
+                || !t.info().name().ends_with(suffix)
+                || m.experts() != 1
+                || m.inputs() != 2560
+                || !(1..=48).contains(&m.outputs())
+                || i == 1 && m.outputs() != rows
+            {
+                return Err(Error::InvalidBufferLength);
+            }
+            rows = m.outputs();
+        }
+        Ok([
+            self.weight(tensors[0], 0, 0, rows)?.0,
+            self.weight(tensors[1], 0, 0, rows)?.0,
+        ])
+    }
     fn weight(
         &mut self,
         tensor: TensorView<'_>,
