@@ -2766,3 +2766,123 @@ then is it meaningful to connect configured loan selection and conditional
 ring/stream-all policy. Complete the broader source/unit/whole-model acceptance
 before allowing throughput to steer changes. Do not replace missing ownership
 with a host bitmap, fake Handle or unpriced fallback allocation.
+
+
+## Registered private cache roots and erasure-before-restoration transaction (2026-10-14)
+
+Source `09351ea` plus audit-purpose separation `03ea215`, following actual-parent consumers `c0e9efc`.
+**The source-owned borrowing component exists; the prompt controller does not
+select it yet. Leased-pair prompt staging/table dependencies and allocation/
+configuration integration remain incomplete. This is not complete loan-mode
+inference or a live GPU/erasure/restoration acceptance receipt.**
+
+### Real private registration without a new allocation
+
+`PrivateArena::register_cache_roots_on_configured` registers three complete
+cache buffers under an exclusive source-owner transaction. It allocates no GPU
+root, performs no public/private upload substitution and does not reconfigure
+I/O. Each actual full backing must match retained backend offset/size/buffer
+size, be distinct and same-stream, and have bounded256-byte-aligned physical
+size. All handles are retained before the first zero initialization. The local
+ledger measures exact private exposure of already-precharged persistent banks;
+it is not fresh MAIN allocation credit or a bank-release receipt.
+
+A private `borrowed_complete` layout admits those exact physical sizes without
+rounding a model root up to the next power of two. Ordinary `Ledger::reserve`
+still requires the original power-of-two allocator layout; the separate private
+registration route uses the exact borrowed layout. A registered arena cannot
+allocate more roots or reset/reuse its IDs. Its final cleanup always runs the
+real complete-root erasers and32MiB bounded readback inspection, including the
+short last window, and verifies all owned bytes/root counts. Failed cleanup
+retires the shared context and retains unaudited handles. The old public-fixture
+retained-erasure shortcut is rejected for borrowed roots. Mandatory private
+cleanup uses `strict_zero_audit`; borrowing never sets the public-fixture audit
+flag or grants its replay permission. The audited receipt and failed-handle
+quarantine recognize strict private coverage independently of public purpose.
+
+### Source exclusion, current placement and restoration
+
+`Sources::with_private_cache_roots` takes the actual cache's three root indices,
+validates full prompt carving against them, joins previous readers, and sets
+loan/mutation exclusion before registration can erase weights. The callback
+receives only the private arena and its IDs. All ordinary prototype/bind/HOST
+borrow/ready paths remain revoked; the exchange publication path cannot clear a
+loan. The source now owns the actual executor-adopted retirement Arc, rather
+than trusting a new per-call flag. Its unsafe closure contract requires one
+serialized protected worker and no escaping ID, handle, Scope or scheduled replay.
+
+On body success, error or panic, private close/inspection runs first. The actual
+`finish_borrowed_roots` gate accepts only the exact complete three-root audit;
+errors, panics, byte-prefix or root-count mismatches cannot enter restoration.
+Restoration writes every byte/padding from original model artifacts through
+16MiB windows into the same persistent roots, draining each upload. Its errors
+or panics cannot reopen sources. Unknown registration/cleanup/restore completion
+retires the real context, leaves source exclusion in place and quarantines the
+owning roots. Only completed erasure AND restoration clear both exclusions;
+a body error/panic is still returned after safe restoration. Closed arena Drop
+is idempotent and cannot erase newly restored model weights.
+
+Restoring the initial profile would be wrong after adaptive exchanges. A wiping
+physical-to-logical `Placement` now accompanies the actual source transaction.
+Exchange proposals authenticate incoming/outgoing identities in current cells
+and prepare its next inverse map before hardware writes; `finish_publication`
+publishes it only after real role exchange, private remap/usage completion and
+adaptive-owner commit. Failed/partial publication remains blocked. The restorer
+uses current logical IDs with the original per-layer role byte layout. Both
+current and pending49152-byte maps plus metadata are explicitly charged through
+an additional128KiB HOST reservation; neither is logged or persisted.
+
+Validation logs in `/media/jmicko/faststore/kuno-development`:
+
+- `strata-private-cache-loan-purpose-build-20261014.log`: final core release builds.
+- `strata-private-cache-loan-purpose-clippy-20261014.log` and
+  `strata-private-cache-loan-purpose-off-clippy-20261014.log`: final strict core
+  and ordinary feature-off release Clippy pass.
+- `strata-private-cache-loan-purpose-core-tests-20261014.log`: all20 arena tests
+  pass. New cases require exact non-power-of-two coverage while ordinary owned
+  bins still reject it, and prove all three short final windows are inspected
+  before credit; corrupt or failed last-window maps cannot publish a prefix.
+- `strata-private-cache-loan-purpose-off-tests-20261014.log`: the same20 arena
+  tests pass with the ordinary128MiB allocator cap and original private-allocation
+  policy. Borrowed registration remains disabled in that feature-off build.
+- `strata-private-cache-loan-completion-tests-20261014.log`: both source tests
+  pass. The actual completion gate is fault-injected at erasure/restore errors
+  and panics, missing-root and byte-prefix receipts; restoration never starts
+  without complete erasure. The inverse placement retains all logical IDs and
+  correct cells after repeated swaps and rejects stale identities.
+- `strata-private-cache-loan-plan-tests-20261014.log`: all five original source-
+  plan/HOST reservation/window reconstruction checks pass with the extra128KiB
+  metadata charge. No arithmetic shader source changes, so prior shader variants
+  were not repeated for these owner/control changes.
+
+Synthetic panic messages are caught fault injections and the test results are
+green. These host checks do not prove actual Vulkan registration, model-byte
+restoration, erasure, state, recovery or whole-engine correctness. Full unit
+suite is not rerun; historical228 failures remain unaudited.
+
+### Required connected continuation
+
+1. Connect a prompt-only leased-source capability that can stage lent resident
+   pairs from actual original weights, patch physical source flags/tables and
+   omit scratch roots from BDA read dependencies. The HOST complement has only
+   initially nonresident pairs. Do not simply relax mutation guards: current
+   borrowing deliberately blocks every model source consumer and cannot run MoE.
+2. Thread the registered arena's real parent IDs through Scope and the full
+   prompt controller; support lending as a configuration/allocation choice.
+   Existing `Plan::CacheLoan` allocation is still explicitly unimplemented,
+   default model construction still allocates three512MiB owned prompt roots,
+   and request/QSA/MTP context is still capped4096. Do not pretend that keeping
+   unused owned buffers constitutes faithful loan pricing/cache placement.
+3. Retain persistent charge exactly once while transferring private coverage;
+   finish native conditional ring/stream-all and auto chunk sizing together.
+4. Validate actual mapped GGUF restoration after adaptive swaps by comparing
+   the physical roots before/after protected private exposure, including body
+   failure, cancellation, tail/map failure and unknown GPU completion. The host
+   gate tests prove ordering/policy, not actual Vulkan cleanup or recovery.
+5. Finish branch/recording, arbitrary input/sampling, verifier repair and source/
+   historical-unit-failure audits, then whole-engine numerical/state/recovery
+   acceptance. Only after the full completeness gate may throughput steer work.
+
+No installed services/residency, public API/Vashti, installation or release
+changes. Canonical and inherited bytecode are preserved; no privileged/GPU work
+occurred in this source block. The goal remains active and incomplete.

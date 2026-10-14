@@ -5349,3 +5349,66 @@ restore current placement/remaps only after joined private close. Continue the
 remaining conditional ring/configuration, branch/recording, input/sampling,
 verifier repair, source/unit-failure and protected whole-engine gates before
 speed testing. Required Vashti changes: none.
+
+
+### Active Kuno engine handoff — registered cache-root borrowing component (2026-10-14)
+
+Source `09351ea` + private audit-purpose correction `03ea215`, isolated
+`codex/strata-rust-port`, after `c0e9efc`. Read completion guide **Registered
+private cache roots and erasure-before-restoration transaction**. The previous
+goal turn made source/bounds-test progress; this turn adds the actual source-
+owned private borrowing component. **Prompt MoE/controller/configuration still
+do not select it; complete loan-mode inference is not implemented or validated.**
+
+The private arena now has a separate unsafe registration of actual complete
+cache buffers. It checks real backend buffer offsets/sizes/identity and exact
+aligned physical spans, retaining all roots before zero initialization. It
+allocates no new GPU root and its local ledger is private coverage of already-
+precharged persistent banks, not new MAIN credit. Ordinary power-of-two reserve
+stays unchanged; registered arenas cannot allocate or reset. Close mandates
+complete erasure/32MiB-window inspection and exact root/byte counts, retaining
+unknown/unaudited roots on failure. Borrowing mandates strict private audit
+without enabling public-fixture permission/replay.
+
+`Sources::with_private_cache_roots` validates actual candidates, joins readers,
+blocks all model source consumers, registers the arena, runs the protected
+same-worker body and closes/inspects before restoring current original model
+weights in16MiB windows. Only both complete phases can reopen sources; failed
+registration/erasure/restore retires the executor's actual shared context and
+keeps exclusion/quarantine. Body errors/panics still clean/restore before being
+returned. The unsafe body must not leak IDs/handles/Scopes/replays. It receives
+only arena/IDs, deliberately no permitted model Sources yet.
+
+A wiping inverse physical placement now follows actual adaptive role exchanges.
+It validates current incoming/outgoing identities, then commits only after
+joined private remap/usage and adaptive-owner publication. Restoration uses
+current logical experts, not initial profile bytes. Current/pending maps and
+metadata get an explicit extra128KiB HOST quote; nothing is logged/persisted.
+
+Core release, strict core/feature-off Clippy,20 core arena tests, two source gate/
+placement tests and five plan/HOST quote/window tests pass. Final ordinary arena
+receipt is in the completion guide. Exact logs and failure cases are recorded
+there. No shader math changed. No live GPU/model/allocation/erasure/restoration/
+state/recovery/speed acceptance or full suite; prior228 failures remain unaudited.
+No installed services/residency, API/Vashti, install or release changes. Canonical
+and inherited bytecode preserved; no root needed. Goal active, speed gate closed.
+
+**Next connect prompt-only leased sources and the controller as a real block.**
+Current borrowing intentionally revokes every prototype/bind/HOST reader, so
+it cannot run MoE. Leased resident pairs are absent from the existing HOST
+complement: give them a real bounded/quoted original-weight staging source,
+using the current placement, and preserve native-copy queue/header/acquisition
+semantics. Do not substitute untracked ordinary uploads for native transfer
+nodes. Patch the actual source table/flags and BDA dependencies, including
+prototype bindings; exclude scratch roots. Redirect leased pointers to real
+original-weight backing as well as setting a flag, so hidden/speculated BDA
+loads cannot alias private scratch. Restore original source tables/read sets/
+prompt-stage attachment only after joined private close and model restoration.
+
+Thread the registered arena's IDs through Scope/full prompt/MTP flow and revise
+actual constructor/cache pricing and configured loan selection. `Plan::CacheLoan`
+still errors, default construction still has three512MiB owned prompt roots and
+context remains4096. Keeping unused owned buffers is not loan/cache price parity.
+Then finish conditional ring/stream-all/auto chunk policy, branch/recording,
+input/sampling, verifier repair, source/unit-failure audits and protected complete
+engine acceptance before throughput. Required Vashti changes: none.
