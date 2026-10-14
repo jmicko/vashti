@@ -201,6 +201,11 @@ impl ManagedMemoryHandle {
 }
 
 impl ManagedMemoryBinding {
+    /// Stable opaque identity for retained allocation owners. This reveals no
+    /// memory location/address and grants no read, write, or detach authority.
+    pub fn allocation_id(&self) -> ManagedMemoryId {
+        self.descriptor.id
+    }
     /// Reserved non-reused immutable PUBLIC external source class. Ordinary
     /// allocators, private uploads and private clears must reject this class.
     pub fn is_public_external(&self) -> bool {

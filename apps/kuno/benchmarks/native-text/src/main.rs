@@ -12,6 +12,8 @@ mod strata_expert_fused;
 mod strata_global_gpu;
 #[allow(dead_code)] // Global root/consumer connection continues as one port.
 mod strata_global_plan;
+#[allow(dead_code)] // Owning source set; coordinator connection follows.
+mod strata_global_sources;
 mod strata_gr;
 mod strata_intel_core;
 mod strata_packet;

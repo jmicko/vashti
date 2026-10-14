@@ -53,6 +53,8 @@ impl core::fmt::Debug for ScheduleTask {
 pub struct BindingsResource {
     /// List of WGPU resources used in the task.
     pub resources: Vec<WgpuResource>,
+    /// Actual physical-pointer sources; never descriptor entries.
+    pub read_dependencies: Vec<WgpuResource>,
     /// Metadata for uniform bindings.
     pub info: MetadataBindingInfo,
 }
@@ -126,7 +128,7 @@ impl BindingsResource {
     pub fn into_resources(
         mut self,
         stream: &mut WgpuStream,
-    ) -> Result<Vec<WgpuResource>, cubecl_runtime::server::ServerError> {
+    ) -> Result<(Vec<WgpuResource>, Vec<WgpuResource>), cubecl_runtime::server::ServerError> {
         // Move request-derived metadata into a guard before any operation can
         // fail/panic. Wipe its FULL capacity, including old unused words.
         struct MetadataGuard(Vec<u64>);
@@ -145,7 +147,7 @@ impl BindingsResource {
             let info = stream.create_uniform(bytemuck::cast_slice(&data.0))?;
             self.resources.push(info);
         }
-        Ok(self.resources)
+        Ok((self.resources, self.read_dependencies))
     }
 }
 

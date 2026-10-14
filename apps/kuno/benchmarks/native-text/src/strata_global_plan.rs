@@ -553,6 +553,41 @@ fn pinned_roles() -> [[u64; 3]; LAYERS] {
 mod tests {
     use super::*;
     #[test]
+    fn global_host_reservation_charges_only_the_complement_for_empty_partial_and_full_tiers() {
+        let roles = pinned_roles();
+        let full = roles.iter().flatten().sum::<u64>() * EXPERTS as u64;
+        let mut metadata = None;
+        for budget in [
+            0,
+            roles.iter().flatten().sum::<u64>() * 240,
+            full + RANKED_PAIRS as u64 * ALIGNMENT,
+        ] {
+            let plan = Plan::from_roles(roles, budget, ALIGNMENT).unwrap();
+            let backing = plan
+                .layers
+                .iter()
+                .flat_map(|l| l.roles.iter().flatten())
+                .filter(|p| p.tier == Tier::Host)
+                .map(|p| (p.logical_bytes + 1048575) / 1048576 * 1048576)
+                .sum::<u64>();
+            let reservation =
+                crate::public_host_expert_mirror::strata_global::Host::reservation(&plan).unwrap();
+            let overhead = reservation - backing;
+            assert_eq!(*metadata.get_or_insert(overhead), overhead);
+            assert!(backing >= plan.host_logical_bytes);
+            assert!(backing - plan.host_logical_bytes < 1024 * 1048576);
+            assert!(reservation < 64 * 1024 * 1024 * 1024);
+            if budget == 0 {
+                assert!(reservation > full);
+            } else if budget > full {
+                assert_eq!(backing, 0);
+            } else {
+                assert!(reservation < full);
+            }
+        }
+    }
+
+    #[test]
     fn same_byte_budget_preserves_real_global_prefix_and_complete_complement() {
         let roles = pinned_roles();
         let budget = roles.iter().flatten().sum::<u64>() * 240;

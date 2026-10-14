@@ -278,7 +278,9 @@ impl WgpuStream {
                 count,
                 resources,
             } => match resources.into_resources(self) {
-                Ok(resources) => self.register_pipeline(pipeline, resources.iter(), &count),
+                Ok((resources, reads)) => {
+                    self.register_pipeline(pipeline, resources.iter(), reads, &count)
+                }
                 Err(error) => {
                     if let Some(io) = &self.transient_io {
                         io.retire();
@@ -692,6 +694,10 @@ impl WgpuStream {
         &self,
     ) -> Option<super::transient_io::PrivateMutationGuard> {
         self.transient_io.as_ref().map(|io| io.mutation_guard())
+    }
+
+    pub(crate) fn supports_physical_reads(&self) -> bool {
+        self.strata_graph.is_some()
     }
 
     pub(crate) fn private_io_active(&self) -> Result<(), ServerError> {
@@ -1286,8 +1292,15 @@ impl WgpuStream {
         &mut self,
         pipeline: Arc<ComputePipeline>,
         resources: impl Iterator<Item = &'a WgpuResource> + Clone,
+        read_dependencies: Vec<WgpuResource>,
         dispatch: &CubeCount,
     ) {
+        if !read_dependencies.is_empty() && self.strata_graph.is_none() {
+            self.error(super::public_external::fault(
+                "physical reads require native graph",
+            ));
+            return;
+        }
         if dispatch.is_empty() {
             return;
         }
@@ -1339,11 +1352,12 @@ impl WgpuStream {
                     }
                 },
             };
-            let result = self
-                .strata_graph
-                .as_mut()
-                .unwrap()
-                .push(&pipeline, retained, actual);
+            let result = self.strata_graph.as_mut().unwrap().push(
+                &pipeline,
+                retained,
+                read_dependencies,
+                actual,
+            );
             if let Err(error) = result {
                 self.error(error);
                 return;

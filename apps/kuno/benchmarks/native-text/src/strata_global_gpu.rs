@@ -51,6 +51,10 @@ impl Cache {
                 return Err(reject());
             }
             roots.push(handle);
+            // Drain this moved public window and its upload before creating
+            // another. A nominal 16-MiB reader must not queue the whole cache's
+            // Vec payloads in system RAM. This is startup, never decode staging.
+            cubecl_common::future::block_on(client.sync()).map_err(crate::resident_util::fault)?;
             bytes = bytes
                 .checked_add(chunk.physical_bytes)
                 .ok_or(Error::ArithmeticOverflow)?;
@@ -86,6 +90,9 @@ impl Cache {
     }
     pub(crate) fn requests(plan: &Plan) -> Vec<u64> {
         plan.chunks.iter().map(|c| c.physical_bytes).collect()
+    }
+    pub(crate) fn roots(&self) -> &[Handle] {
+        &self.roots
     }
     pub(crate) fn bytes(&self) -> u64 {
         self.bytes

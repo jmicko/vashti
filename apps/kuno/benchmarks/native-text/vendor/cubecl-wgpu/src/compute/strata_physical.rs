@@ -295,6 +295,16 @@ pub fn native_expert_shader_words(source: &str) -> Result<Vec<u32>, ServerError>
     )
     .validate(&m)
     .map_err(|_| fault("physical expert WGSL validation"))?;
+    for (_, root) in m.global_variables.iter() {
+        if matches!(root.name.as_deref(), Some("gate0" | "up0" | "down0"))
+            && root.space
+                != (n::AddressSpace::Storage {
+                    access: n::StorageAccess::LOAD,
+                })
+        {
+            return Err(fault("physical expert roots must be readonly"));
+        }
+    }
     let words = n::back::spv::write_vec(
         &m,
         &info,

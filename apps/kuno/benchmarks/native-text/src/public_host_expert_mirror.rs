@@ -18,6 +18,9 @@
 //! Drop leaks exposed backing/device rather than free potentially live memory.
 //! No private erasure, pinning, whole-model performance or production claim.
 
+#[path = "strata_global_host.rs"]
+#[allow(dead_code)] // Connected global source construction; routing follows.
+pub(crate) mod strata_global;
 #[path = "strata_gpu_exchange.rs"]
 pub(crate) mod strata_gpu_exchange;
 
@@ -239,11 +242,14 @@ struct HeapCharges {
 }
 impl HeapCharges {
     fn admit(&mut self, p: Placement, bytes: u64, cap: u64) -> Result<()> {
+        self.admit_with_limit(p, bytes, cap, PAGES)
+    }
+    fn admit_with_limit(&mut self, p: Placement, bytes: u64, cap: u64, limit: usize) -> Result<()> {
         let heap = self.bytes.get_mut(p.heap as usize).ok_or(rejected())?;
         let next = heap.checked_add(bytes).ok_or(rejected())?;
         let total = self.total.checked_add(bytes).ok_or(rejected())?;
         let count = self.count.checked_add(1).ok_or(rejected())?;
-        if next > p.heap_bytes || total > cap || count > PAGES {
+        if next > p.heap_bytes || total > cap || count > limit {
             return Err(rejected());
         }
         *heap = next;

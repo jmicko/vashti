@@ -1047,6 +1047,9 @@ impl core::fmt::Debug for IoError {
 pub struct KernelArguments {
     /// Buffer bindings
     pub buffers: Vec<Binding>,
+    /// Native physical-pointer READ dependencies, retained and ordered without
+    /// adding descriptors. Unsupported backends must reject nonempty lists.
+    pub read_dependencies: Vec<Binding>,
     /// Packed scalars and metadata. First scalars sorted by type, then static metadata,
     /// then dynamic metadata.
     pub info: MetadataBindingInfo,
@@ -1080,6 +1083,12 @@ impl KernelArguments {
     /// Extend the buffers with `bindings`
     pub fn with_buffers(mut self, bindings: Vec<Binding>) -> Self {
         self.buffers.extend(bindings);
+        self
+    }
+
+    /// Retain real BDA source handles without granting shader write authority.
+    pub fn with_read_dependencies(mut self, bindings: Vec<Binding>) -> Self {
+        self.read_dependencies.extend(bindings);
         self
     }
 

@@ -32,6 +32,7 @@ pub(super) fn validate_stream(
     if args
         .buffers
         .iter()
+        .chain(&args.read_dependencies)
         .any(|b| is_public_external_binding(b) && b.stream != stream)
     {
         return Err("public external cross-stream consumer");

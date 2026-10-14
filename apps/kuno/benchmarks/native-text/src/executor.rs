@@ -989,6 +989,7 @@ pub struct GpuExecutor<'a> {
     budget: usize,
     tick: u64,
     banks: BTreeMap<String, ExpertBanks>,
+    pub(crate) strata_global_sources: Option<crate::strata_global_sources::Sources>,
     batch_moe: Option<batch_moe::Registry>,
     native_projection_tile: NativeProjectionTile,
     native_projection_members: usize,
@@ -1308,6 +1309,7 @@ impl<'a> GpuExecutor<'a> {
             budget,
             tick: 0,
             banks: BTreeMap::new(),
+            strata_global_sources: None,
             batch_moe: None,
             shared_overlap_calls: 0,
             gpu_router: false,
@@ -1407,6 +1409,10 @@ impl<'a> GpuExecutor<'a> {
                 sanitize_resident_io(&self.client)
             }
         })?;
+        if let Some(sources) = &mut self.strata_global_sources {
+            sources.close()?;
+        }
+        self.strata_global_sources = None;
         self.cache.clear();
         self.cache_bytes = 0;
         self.banks.clear();
@@ -2026,6 +2032,11 @@ impl<'a> GpuExecutor<'a> {
             .map_err(|_| Error::InvalidFormat("GPU memory telemetry"))
     }
     fn check_segmented_resident(&self, resident: bool) -> Result<()> {
+        if self.strata_global_sources.is_some() {
+            return Err(Error::InvalidFormat(
+                "legacy banks conflict with global sources",
+            ));
+        }
         // The constructor pins explicit budget configuration; no environment
         // re-read is needed after creation. Public mutable experiment flags
         // still need revalidation before every allocation/dispatch seam.
@@ -2602,14 +2613,27 @@ impl<'a> GpuExecutor<'a> {
         Ok(())
     }
 
-    #[allow(dead_code)] // New source-table/controller connection continues.
-    pub(crate) fn load_strata_global_experts(
-        &self,
+    /// # Safety
+    /// The original shard hashes and sole device identity are authenticated;
+    /// the caller reserves the complete separate HOST budget before allocation.
+    /// No request execution or alternate reader stream overlaps construction.
+    #[allow(dead_code)] // Coordinator starts from this owner in the next connection.
+    pub(crate) unsafe fn prepare_strata_global_sources(
+        &mut self,
         graph: kuno_text::model::BoundGraph<'_, '_>,
-        plan: &crate::strata_global_plan::Plan,
-    ) -> Result<crate::strata_global_gpu::Cache> {
+        plan: crate::strata_global_plan::Plan,
+        device: &wgpu::Device,
+        host_reserved: u64,
+    ) -> Result<()> {
         if !crate::strata_intel_core::enabled()
             || self.packed_profile != expert_banks::OriginalPackedProfile::DaslabIq3
+            || !self.banks.is_empty()
+            || self.bank_reserved != 0
+            || self.strata_global_sources.is_some()
+            || self.batch_moe.is_some()
+            || self.adaptive.is_some()
+            || self.secondary.is_some()
+            || self.cache.keys().any(|k| k.tensor.contains("_exps.weight"))
         {
             return Err(Error::InvalidFormat("global expert loader selection"));
         }
@@ -2623,14 +2647,38 @@ impl<'a> GpuExecutor<'a> {
             .resident_admission
             .as_ref()
             .ok_or(Error::InvalidFormat("global expert admission required"))?;
-        let requests = crate::strata_global_gpu::Cache::requests(plan);
+        let requests = crate::strata_global_sources::Sources::gpu_requests(&plan);
+        let retired = AtomicBool::new(false);
         let result = admission.allocate_banks(&requests, || {
-            crate::strata_global_gpu::Cache::persistent_load(&self.client, graph, plan)
+            crate::expert_banks::exact_persistent::persistent_scope(
+                |mode| {
+                    unsafe {
+                        self.client.allocation_mode(mode);
+                    }
+                    Ok(())
+                },
+                &retired,
+                || unsafe {
+                    crate::strata_global_sources::Sources::load(
+                        graph,
+                        plan,
+                        &self.client,
+                        device,
+                        host_reserved,
+                    )
+                },
+            )
         });
-        if result.is_err() {
-            self.poison_resident();
+        match result {
+            Ok(sources) => {
+                self.strata_global_sources = Some(sources);
+                Ok(())
+            }
+            Err(error) => {
+                self.poison_resident();
+                Err(error)
+            }
         }
-        result
     }
     pub(crate) fn strata_gr_weights(
         &mut self,
@@ -2693,6 +2741,11 @@ impl<'a> GpuExecutor<'a> {
         first: usize,
         rows: usize,
     ) -> Result<(Handle, usize)> {
+        if self.strata_global_sources.is_some() && tensor.info().name().contains("_exps.weight") {
+            return Err(Error::InvalidFormat(
+                "legacy expert copy conflicts with global source",
+            ));
+        }
         if let Some(admission) = &self.resident_admission {
             admission.active()?;
         }

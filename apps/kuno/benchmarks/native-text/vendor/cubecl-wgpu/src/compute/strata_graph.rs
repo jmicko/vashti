@@ -151,6 +151,7 @@ pub(crate) struct Program {
     accesses: Vec<vk::AccessFlags>,
     entry: CString,
     expert_subgroup_32: bool,
+    physical_reads: bool,
 }
 #[derive(Default)]
 struct Registry {
@@ -250,6 +251,7 @@ pub(crate) fn register_module(
         words,
         expert_subgroup_32: source.contains("STRATA_PHYSICAL_EXPERTS")
             || source.contains("STRATA_DENSE_PACKED"),
+        physical_reads: source.contains("STRATA_PHYSICAL_EXPERTS"),
         accesses: bindings.iter().map(|b| b.2).collect(),
         bindings: bindings.into_iter().map(|b| b.1).collect(),
         entry: CString::new(entry).map_err(|_| fault("native graph entrypoint"))?,
@@ -300,6 +302,7 @@ struct Pipeline {
 struct Node {
     pipeline: Option<wgpu::ComputePipeline>,
     resources: Vec<WgpuResource>,
+    read_dependencies: Vec<WgpuResource>,
     dispatch: Dispatch,
 }
 #[derive(Debug)]
@@ -478,6 +481,7 @@ impl Graph {
         &mut self,
         pipeline: &wgpu::ComputePipeline,
         resources: Vec<WgpuResource>,
+        read_dependencies: Vec<WgpuResource>,
         dispatch: Dispatch,
     ) -> Result<(), ServerError> {
         if self.nodes.len() >= 32768 {
@@ -589,7 +593,13 @@ impl Graph {
         if resources.len() != p.program.bindings.len() {
             return Err(fault("native graph actual descriptor extent"));
         }
-        for r in &resources {
+        if !read_dependencies.is_empty() && !p.program.physical_reads {
+            return Err(fault("unregistered physical source consumer"));
+        }
+        if read_dependencies.len() > 4096 {
+            return Err(fault("native physical dependency capacity"));
+        }
+        for r in resources.iter().chain(&read_dependencies) {
             if r.size == 0
                 || r.offset
                     .checked_add(r.size)
@@ -601,6 +611,7 @@ impl Graph {
         self.nodes.push(Node {
             pipeline: Some(pipeline.clone()),
             resources,
+            read_dependencies,
             dispatch,
         });
         Ok(())
@@ -640,6 +651,7 @@ impl Graph {
         self.nodes.push(Node {
             pipeline: None,
             resources,
+            read_dependencies: Vec::new(),
             dispatch,
         });
         Ok(())
@@ -668,6 +680,9 @@ impl Graph {
                     if !access.is_empty() {
                         *accesses.entry(raw_buffer(r)?).or_default() |= *access;
                     }
+                }
+                for r in &n.read_dependencies {
+                    *accesses.entry(raw_buffer(r)?).or_default() |= vk::AccessFlags::SHADER_READ;
                 }
                 if let Dispatch::Indirect(r) = &n.dispatch {
                     *accesses.entry(raw_buffer(r)?).or_default() |=
@@ -706,6 +721,10 @@ impl Graph {
             );
             signature.push(n.resources.len() as u64);
             for r in &n.resources {
+                signature.extend([raw_buffer(r)?.as_raw(), r.offset, r.size]);
+            }
+            signature.push(n.read_dependencies.len() as u64);
+            for r in &n.read_dependencies {
                 signature.extend([raw_buffer(r)?.as_raw(), r.offset, r.size]);
             }
             match &n.dispatch {
@@ -857,10 +876,14 @@ impl Graph {
                 .nodes
                 .iter()
                 .flat_map(|n| {
-                    n.resources.iter().cloned().chain(match &n.dispatch {
-                        Dispatch::Indirect(r) => Some(r.clone()),
-                        _ => None,
-                    })
+                    n.resources
+                        .iter()
+                        .chain(&n.read_dependencies)
+                        .cloned()
+                        .chain(match &n.dispatch {
+                            Dispatch::Indirect(r) => Some(r.clone()),
+                            _ => None,
+                        })
                 })
                 .collect(),
         };

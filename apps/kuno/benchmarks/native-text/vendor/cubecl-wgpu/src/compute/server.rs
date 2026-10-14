@@ -174,8 +174,14 @@ impl WgpuServer {
             resources.push(resource);
         }
 
+        let mut read_dependencies = Vec::with_capacity(bindings.read_dependencies.len());
+        for b in bindings.read_dependencies {
+            let stream = self.scheduler.stream(&b.stream);
+            read_dependencies.push(stream.mem_manage.get_resource(b)?);
+        }
         Ok(BindingsResource {
             resources,
+            read_dependencies,
             info: bindings.info,
         })
     }
@@ -887,6 +893,19 @@ impl ComputeServer for WgpuServer {
                 .push(super::public_external::fault(reason));
             return;
         }
+        if !args.read_dependencies.is_empty()
+            && (args.read_dependencies.len() > 4096
+                || args.read_dependencies.iter().any(|b| b.stream != stream_id)
+                || !self.scheduler.stream(&stream_id).supports_physical_reads())
+        {
+            self.scheduler
+                .stream(&stream_id)
+                .errors
+                .push(super::public_external::fault(
+                    "native physical read owner stream required",
+                ));
+            return;
+        }
         let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
         let pipeline = match self.pipeline(kernel, &args, mode) {
             Ok(val) => val,
@@ -901,6 +920,7 @@ impl ComputeServer for WgpuServer {
         self.streams_pool.clear();
         args.buffers
             .iter()
+            .chain(&args.read_dependencies)
             .for_each(|b| self.streams_pool.push(b.stream));
 
         let resources = match self.prepare_bindings(args) {
