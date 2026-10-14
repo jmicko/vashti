@@ -3337,6 +3337,56 @@ impl TransientIo {
         }
         Ok(buffer)
     }
+    /// Native core uploads stay in the original tracked ledger, but the copy
+    /// and zero tail are recorded between native kernels instead of draining.
+    pub(crate) fn native_upload(
+        &mut self,
+        resource: &WgpuResource,
+        data: &[u8],
+    ) -> Result<Vec<(Option<WgpuResource>, WgpuResource)>, ServerError> {
+        self.active()?;
+        let transfer =
+            UploadTransfer::plan(data, resource.size, resource.offset, resource.buffer.size())?;
+        let mut copies = Vec::with_capacity(2);
+        if transfer.prefix != 0 {
+            let (stage, index) = self.allocate_indexed(Kind::Upload, transfer.prefix)?;
+            {
+                let mut view = stage.get_mapped_range_mut(..);
+                view.slice(..).fill(0);
+                let len = data.len().min(transfer.prefix as usize);
+                view.slice(..len).copy_from_slice(&data[..len]);
+            }
+            self.unmap_upload(index, &stage)?;
+            copies.push((
+                Some(WgpuResource {
+                    buffer: stage,
+                    offset: 0,
+                    size: transfer.prefix,
+                }),
+                WgpuResource {
+                    buffer: resource.buffer.clone(),
+                    offset: resource.offset,
+                    size: transfer.prefix,
+                },
+            ));
+        }
+        if transfer.prefix < transfer.original {
+            copies.push((
+                None,
+                WgpuResource {
+                    buffer: resource.buffer.clone(),
+                    offset: transfer.tail_offset,
+                    size: transfer.original - transfer.prefix,
+                },
+            ));
+        }
+        record_upload_transfer(
+            upload_transfer_counters(self.reuse_active()),
+            transfer.original,
+            transfer.prefix,
+        );
+        Ok(copies)
+    }
     pub fn upload(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,

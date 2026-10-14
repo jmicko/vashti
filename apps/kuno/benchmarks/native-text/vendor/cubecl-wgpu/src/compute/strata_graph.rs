@@ -160,7 +160,7 @@ struct Pipeline {
 }
 #[derive(Debug)]
 struct Node {
-    pipeline: wgpu::ComputePipeline,
+    pipeline: Option<wgpu::ComputePipeline>,
     resources: Vec<WgpuResource>,
     dispatch: Dispatch,
 }
@@ -168,6 +168,8 @@ struct Node {
 pub(crate) enum Dispatch {
     Direct(u32, u32, u32),
     Indirect(WgpuResource),
+    Copy,
+    Fill,
 }
 pub(crate) struct Graph {
     device: ash::Device,
@@ -422,11 +424,83 @@ impl Graph {
             }
         }
         self.nodes.push(Node {
-            pipeline: pipeline.clone(),
+            pipeline: Some(pipeline.clone()),
             resources,
             dispatch,
         });
         Ok(())
+    }
+    /// Upload staging remains tracked by TransientIo. Transfers execute at
+    /// their actual position between kernels, not ahead of earlier readers.
+    pub(crate) fn push_transfer(
+        &mut self,
+        source: Option<WgpuResource>,
+        target: WgpuResource,
+    ) -> Result<(), ServerError> {
+        if self.nodes.len() >= 32768
+            || target.size == 0
+            || target.offset % 4 != 0
+            || target.size % 4 != 0
+            || target
+                .offset
+                .checked_add(target.size)
+                .is_none_or(|end| end > target.buffer.size())
+        {
+            return Err(fault("native graph transfer extent"));
+        }
+        let (resources, dispatch) = if let Some(source) = source {
+            if source.size != target.size
+                || source.offset % 4 != 0
+                || source
+                    .offset
+                    .checked_add(source.size)
+                    .is_none_or(|end| end > source.buffer.size())
+            {
+                return Err(fault("native graph transfer source extent"));
+            }
+            (vec![source, target], Dispatch::Copy)
+        } else {
+            (vec![target], Dispatch::Fill)
+        };
+        self.nodes.push(Node {
+            pipeline: None,
+            resources,
+            dispatch,
+        });
+        Ok(())
+    }
+    fn node_accesses(&self, n: &Node) -> Result<HashMap<vk::Buffer, vk::AccessFlags>, ServerError> {
+        let mut accesses = HashMap::new();
+        match n.dispatch {
+            Dispatch::Copy => {
+                *accesses.entry(raw_buffer(&n.resources[0])?).or_default() |=
+                    vk::AccessFlags::TRANSFER_READ;
+                *accesses.entry(raw_buffer(&n.resources[1])?).or_default() |=
+                    vk::AccessFlags::TRANSFER_WRITE;
+            }
+            Dispatch::Fill => {
+                accesses.insert(
+                    raw_buffer(&n.resources[0])?,
+                    vk::AccessFlags::TRANSFER_WRITE,
+                );
+            }
+            _ => {
+                let p = &self.pipelines[n
+                    .pipeline
+                    .as_ref()
+                    .ok_or_else(|| fault("native graph compute identity"))?];
+                for (r, access) in n.resources.iter().zip(&p.program.accesses) {
+                    if !access.is_empty() {
+                        *accesses.entry(raw_buffer(r)?).or_default() |= *access;
+                    }
+                }
+                if let Dispatch::Indirect(r) = &n.dispatch {
+                    *accesses.entry(raw_buffer(r)?).or_default() |=
+                        vk::AccessFlags::INDIRECT_COMMAND_READ;
+                }
+            }
+        }
+        Ok(accesses)
     }
     pub(crate) fn clear_completed_recordings(&mut self) -> Result<(), ServerError> {
         if self.submitted || self.pending() {
@@ -449,7 +523,11 @@ impl Graph {
             .map_err(|_| fault("native graph reset fence"))?;
         let mut signature = Vec::new();
         for n in &self.nodes {
-            signature.push(self.pipelines[&n.pipeline].pipeline.as_raw());
+            signature.push(
+                n.pipeline
+                    .as_ref()
+                    .map_or(0, |p| self.pipelines[p].pipeline.as_raw()),
+            );
             signature.push(n.resources.len() as u64);
             for r in &n.resources {
                 signature.extend([raw_buffer(r)?.as_raw(), r.offset, r.size]);
@@ -459,8 +537,11 @@ impl Graph {
                 Dispatch::Indirect(r) => {
                     signature.extend([1, raw_buffer(r)?.as_raw(), r.offset, r.size])
                 }
+                Dispatch::Copy => signature.extend([2, 0, 0, 0]),
+                Dispatch::Fill => signature.extend([3, 0, 0, 0]),
             }
         }
+        let compute_count = self.nodes.iter().filter(|n| n.pipeline.is_some()).count();
         if let Some(hit) = self
             .recordings
             .iter()
@@ -485,8 +566,8 @@ impl Graph {
             self.submitted = false;
             self.submissions += 1;
             self.replays += 1;
-            self.dispatches += self.nodes.len() as u64;
-            credit(self.nodes.len(), true);
+            self.dispatches += compute_count as u64;
+            credit(compute_count, true);
             self.nodes.clear();
             return Ok(());
         }
@@ -575,7 +656,9 @@ impl Graph {
             self.device.cmd_pipeline_barrier(
                 self.command,
                 vk::PipelineStageFlags::ALL_COMMANDS,
-                vk::PipelineStageFlags::COMPUTE_SHADER | vk::PipelineStageFlags::DRAW_INDIRECT,
+                vk::PipelineStageFlags::COMPUTE_SHADER
+                    | vk::PipelineStageFlags::DRAW_INDIRECT
+                    | vk::PipelineStageFlags::TRANSFER,
                 vk::DependencyFlags::empty(),
                 &[barrier],
                 &[],
@@ -584,22 +667,15 @@ impl Graph {
         }
         let mut previous = HashMap::<vk::Buffer, vk::AccessFlags>::new();
         for n in &self.nodes {
-            let p = &self.pipelines[&n.pipeline];
-            let mut accesses = HashMap::<vk::Buffer, vk::AccessFlags>::new();
-            for (r, access) in n.resources.iter().zip(&p.program.accesses) {
-                if !access.is_empty() {
-                    *accesses.entry(raw_buffer(r)?).or_default() |= *access;
-                }
-            }
-            if let Dispatch::Indirect(r) = &n.dispatch {
-                *accesses.entry(raw_buffer(r)?).or_default() |=
-                    vk::AccessFlags::INDIRECT_COMMAND_READ;
-            }
+            let accesses = self.node_accesses(n)?;
             let mut dependencies = Vec::new();
             for (buffer, access) in accesses {
                 if let Some(before) = previous.get(&buffer).copied() {
-                    if before.contains(vk::AccessFlags::SHADER_WRITE)
-                        || access.contains(vk::AccessFlags::SHADER_WRITE)
+                    if before
+                        .intersects(vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::TRANSFER_WRITE)
+                        || access.intersects(
+                            vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::TRANSFER_WRITE,
+                        )
                     {
                         dependencies.push(
                             vk::BufferMemoryBarrier::default()
@@ -624,9 +700,11 @@ impl Graph {
                     self.device.cmd_pipeline_barrier(
                         self.command,
                         vk::PipelineStageFlags::COMPUTE_SHADER
-                            | vk::PipelineStageFlags::DRAW_INDIRECT,
+                            | vk::PipelineStageFlags::DRAW_INDIRECT
+                            | vk::PipelineStageFlags::TRANSFER,
                         vk::PipelineStageFlags::COMPUTE_SHADER
-                            | vk::PipelineStageFlags::DRAW_INDIRECT,
+                            | vk::PipelineStageFlags::DRAW_INDIRECT
+                            | vk::PipelineStageFlags::TRANSFER,
                         vk::DependencyFlags::empty(),
                         &[],
                         &dependencies,
@@ -634,6 +712,43 @@ impl Graph {
                     );
                 }
             }
+            match n.dispatch {
+                Dispatch::Copy => {
+                    let source = &n.resources[0];
+                    let target = &n.resources[1];
+                    unsafe {
+                        self.device.cmd_copy_buffer(
+                            self.command,
+                            raw_buffer(source)?,
+                            raw_buffer(target)?,
+                            &[vk::BufferCopy {
+                                src_offset: source.offset,
+                                dst_offset: target.offset,
+                                size: target.size,
+                            }],
+                        );
+                    }
+                    continue;
+                }
+                Dispatch::Fill => {
+                    let target = &n.resources[0];
+                    unsafe {
+                        self.device.cmd_fill_buffer(
+                            self.command,
+                            raw_buffer(target)?,
+                            target.offset,
+                            target.size,
+                            0,
+                        );
+                    }
+                    continue;
+                }
+                _ => {}
+            }
+            let p = &self.pipelines[n
+                .pipeline
+                .as_ref()
+                .ok_or_else(|| fault("native graph compute identity"))?];
             let layouts = [p.set_layout];
             let set = unsafe {
                 self.device.allocate_descriptor_sets(
@@ -699,6 +814,9 @@ impl Graph {
                             r.offset,
                         );
                     }
+                    Dispatch::Copy | Dispatch::Fill => {
+                        unreachable!("transfers recorded before compute")
+                    }
                 }
             }
         }
@@ -734,8 +852,8 @@ impl Graph {
         .map_err(|_| fault("native graph completion"))?;
         self.submitted = false;
         self.submissions += 1;
-        self.dispatches += self.nodes.len() as u64;
-        credit(self.nodes.len(), false);
+        self.dispatches += compute_count as u64;
+        credit(compute_count, false);
         self.nodes.clear();
         Ok(())
     }

@@ -65,6 +65,7 @@ pub struct WgpuStream {
     pending_write_count: usize,
     transient_io: Option<super::transient_io::TransientIo>,
     strata_graph: Option<super::strata_graph::Graph>,
+    native_init_pipeline: Option<wgpu::ComputePipeline>,
     cleanup_boundary: Arc<super::cleanup_boundary::CleanupBoundary>,
 }
 
@@ -116,6 +117,7 @@ impl WgpuStream {
             } else {
                 None
             },
+            native_init_pipeline: None,
             device,
             queue,
             tasks_count: 0,
@@ -198,6 +200,37 @@ impl WgpuStream {
                 private,
             } => {
                 if private {
+                    if self.strata_graph.is_some()
+                        && buffer.buffer.usage().contains(wgpu::BufferUsages::STORAGE)
+                    {
+                        self.compute_pass = None;
+                        let result = self.private_io_active().and_then(|()| {
+                            self.initialize_native_upload(&buffer)?;
+                            let copies = self
+                                .transient_io
+                                .as_mut()
+                                .unwrap()
+                                .native_upload(&buffer, &data)?;
+                            for (source, target) in copies {
+                                self.strata_graph
+                                    .as_mut()
+                                    .unwrap()
+                                    .push_transfer(source, target)?;
+                            }
+                            Ok(())
+                        });
+                        match result {
+                            Ok(()) => {
+                                self.tasks_count += 1;
+                                self.flush_if_needed();
+                            }
+                            Err(error) => {
+                                self.transient_io.as_ref().unwrap().retire();
+                                self.error(error);
+                            }
+                        }
+                        return;
+                    }
                     if self.strata_graph.as_ref().is_some_and(|g| g.pending()) {
                         if let Err(error) = self.flush(StreamErrorMode {
                             ignore: false,
@@ -256,6 +289,57 @@ impl WgpuStream {
         }
     }
 
+    fn initialize_native_upload(&mut self, resource: &WgpuResource) -> Result<(), ServerError> {
+        if !self
+            .strata_graph
+            .as_mut()
+            .unwrap()
+            .initialize_resources(std::slice::from_ref(resource))
+        {
+            return Ok(());
+        }
+        if self.native_init_pipeline.is_none() {
+            let module=self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label:Some("Native Strata upload ownership"),
+                source:wgpu::ShaderSource::Wgsl("@group(0) @binding(0) var<storage,read_write> data:array<u32>; @compute @workgroup_size(1) fn main() {if arrayLength(&data)==0u {return;} data[0]=data[0];}".into()),
+            });
+            self.native_init_pipeline = Some(self.device.create_compute_pipeline(
+                &wgpu::ComputePipelineDescriptor {
+                    label: Some("Native Strata upload initialization"),
+                    layout: None,
+                    module: &module,
+                    entry_point: Some("main"),
+                    compilation_options: Default::default(),
+                    cache: None,
+                },
+            ));
+        }
+        let pipeline = self.native_init_pipeline.as_ref().unwrap();
+        // Bind the full owning root. Wgpu initializes only untouched ranges,
+        // preserving data already produced/uploaded before this submission.
+        let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Native Strata upload root"),
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &resource.buffer,
+                    offset: 0,
+                    size: None,
+                }),
+            }],
+        });
+        let mut pass = self
+            .encoder
+            .begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Native Strata zero-work upload ownership"),
+                timestamp_writes: None,
+            });
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        pass.dispatch_workgroups(0, 1, 1);
+        Ok(())
+    }
     fn complete_native_before_readback(&mut self) -> Result<(), ServerError> {
         if self.strata_graph.as_ref().is_some_and(|g| g.pending()) {
             self.flush(StreamErrorMode {
