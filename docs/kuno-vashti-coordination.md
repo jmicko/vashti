@@ -4785,3 +4785,29 @@ oneMKL/XMX substitution, dense formats, arbitrary input/sampling and whole-engin
 acceptance remain required. Full rewrite incomplete; goal active; speed gate
 closed. Keep the assembled port selected; no timing-driven partial rollback.
 Required Vashti changes: none.
+
+### Active Kuno engine handoff — prompt GDN and direct FP16 output (2026-10-14)
+
+Source `810f89e`, isolated `codex/strata-rust-port`. Read completion guide
+**Connected prompt GDN causal pipeline and FP16 consumer** for pinned Intel
+selectors, real operators/owners and remaining layout differences.
+
+Actual prompt calls now connect contiguous H, causal conv/history/L2, pipelined
+CB32 recurrence and separate FP16 output norm to the real output GEMM. Native
+FP16 is consumed directly; no normalized F32 GATED copy or repacking. Existing
+private owners/status/commit/repair/erasure remain authoritative. Decode stays
+separate. Internal prepacked projection is checked against the actual admitted
+stage identity/stream and geometry; no HTTP or Vashti API change.
+
+Final release build, strict Clippy and262 offline shaders pass. No GPU/model,
+numerical/state/recovery or speed execution, root action, installation or release.
+Existing full-core failures remain open. State is still head-major and split
+replay inputs are retained; do not credit native placement parity. The enclosing
+caller still uses three-row/MAX8 windows, despite dynamic prompt kernel counts.
+
+Next: connect prompt QSA and the full large chunk owner/carving/budget/cache loan,
+larger routed-row ownership, PLE prefetch and device target/MTP teaching together.
+Complete queues/capture/admission, state/dense-layout audit, arbitrary input/
+sampling and whole-engine acceptance remain required. Full rewrite incomplete;
+goal active; speed gate closed. No timing-driven partial rollback. Required
+Vashti changes: none. Canonical/services and inherited bytecode preserved.

@@ -38,7 +38,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | GPU route/group planning and CPU contribution | `verify.cpp` router, `resident_plan`, doorbell/pool/host plans; `src/kernels/cpu` | Native BF16 router/shared-gate projections and full512-expert softmax/winning-lane normalization are selected in the core. Physical/numerical acceptance and working Intel all-GPU-fetch versus host-pool mode/overlap still require audit. |
 | Native expert math and grouped rows | `sycl/src/kernels/cuda/iq_kernels.dp.cpp::row_entries`, `native_gu_kernel`, `native_down_kernel` | Packed integer math/BDA roots exist. Separate GU roles, 4/2/1 chunks, activation, intermediate storage and downstream consumers are now selected together in the Intel core; all 158 WGSL/SPIR-V variants validate, including 105 physical-pointer checks; numerical/model execution acceptance remains pending. The global core now uses one per-role launch containing pinned row_entries4/2/1 loops, scalar IQ4_XS, native signed integer finish and XOR reduction; numerical/model execution acceptance remains pending. Historical fixed-chunk kernels are retained separately. |
 | GR write/read/norm/down/up/injection | `sycl/src/kernels/cuda/fused_gr.dp.cpp::fused_gr_read_multi`; `verify.cpp::gr_read_group` | Native pending-write norm, sliced BF16 down/injection, fixed slice reduction and up/mix/commit are now connected and unconditionally selected in the core, including explicit PLE/final boundary writes. Resident original weights and the enlarged private scratch owner are charged together. Structural acceptance passes; numerical/model execution acceptance and final substitution audit remain pending. |
-| GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp` | Core now connects native BF16 alpha/beta window projection, conv/L2, controls, double-buffered four-row-group FMA recurrence/output norm and state-only accepted-prefix replay. See the GDN receipts below. Optional Q8 producer fusion, prompt-path fidelity, physical execution and final numerical/queue audit remain open. |
+| GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp`, `prefill/kernels.dp.cpp` | Core connects native BF16 alpha/beta, controls, recurrence/norm and accepted-prefix replay. Prompt scope now selects contiguous H, causal convolution/history/L2, pipelined CB32 recurrence and directly consumed FP16 norm output together. The large chunk caller/owners, retained head-major state and split replay layout, optional producer fusion, physical execution and final numerical/queue audit remain open. |
 | QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects FP16 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. See the QSA receipt below for precise storage/scheduling substitutions and remaining numerical/state acceptance; do not claim full QSA fidelity yet. |
 | PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Core now connects native BF16 MAX8 projections, native normalization/gate/conv/history, transient deduplicated positional reads and the actual accepted-prefix owner. Whole-prompt double-buffered prefetch, mapped history/snapshot scheduling and numerical/device acceptance remain open. Never persist request n-grams. |
 | Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. The bounded prompt path now uses logical-ID expert order, checked native transfer nodes, an eight-slot raw ring and two paired dequantization slots. Full chunk owner/budget/cache loan, independent transfer/compute queues, causal prompt kernels and device-resident target/MTP handoff remain unported; current three-row loop is not prompt-path parity. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
@@ -1407,3 +1407,62 @@ Fmt/whitespace pass. No live GPU/model/copy execution, numerical/state/recovery
 or speed test, root action, service/HTTP API/UI change, installation or release.
 The earlier full-core failures remain open. Full rewrite incomplete; goal
 active; speed gate closed. Required Vashti changes: none.
+
+## Connected prompt GDN causal pipeline and FP16 consumer (2026-10-14)
+
+Runtime source `810f89e`, isolated `codex/strata-rust-port`. Pinned reference:
+`prefill.cpp:2855-2877` selects prompt projections, gates, conv, recurrence and
+native output GEMM together; `prefill/kernels.dp.cpp:449-628` implements causal
+conv/history/L2, `:876-991` implements the pipelined column recurrence, and
+`:1643-1665` produces FP16 normalized/gated output. The Intel selector
+`:1228-1234` disables the NVIDIA-specific key-head default; `:2634-2696` selects
+CB32 pipelined columns and separate output norm. CUDA/HIP-only alternatives
+were not substituted for that working Intel path.
+
+`strata_prompt_gdn.rs` / `.wgsl` connect six operators to actual prompt calls:
+64-token causal conv tiles, next raw history, token/head L2, split replay views,
+128-thread CB32/four-row-group recurrence with next-token register prefetch,
+and separate128-thread output norm. Existing ACT is the real contiguous
+token-major H owner, RECURRENT holds raw readout, and the admitted activation
+stage0 receives packed FP16 normalized/gated rows directly. Prompt projection
+consumes that same image without a second F32 store/read/packing pass. There is
+no saturating substitution: native output norm uses ordinary HF conversion;
+nonfinite half outputs set the actual closing statuses and cannot publish.
+
+The prepacked projection seam is internal Rust only. It authenticates the
+actual scoped stage allocation/stream, exact contiguous input geometry and
+output extents, rejects BF16-weight/F16-input mismatches, and retains original
+weight tiles/consumers. Outputs cannot alias either activation or dequant stage.
+Ordinary prompt products still pack their real F32 inputs; decode remains on
+its separate fused recurrence/norm path. The reserved F32 GATED owner is unused
+in prompt mode, rather than falsely credited as a normalized output producer.
+No private root or whole-model duplicate is added. Existing status folds,
+pending receipts, accepted-prefix state swaps and complete erasure remain owned
+by the parent. New prompt kernel dispatches support bounded dynamic counts, but
+the enclosing caller/receipts still have their existing MAX8 owners.
+
+Explicit unresolved substitutions: state remains the existing **head-major**
+layout, with equivalent logical accesses; native prompt state is row/value-head
+major. Conv/recurrent next state is double buffered until whole-model acceptance
+rather than written in place. Split Q/K/V replay inputs receive additional
+writes from H for the existing repair owner. These are remaining placement and
+state-contract audit work, not evidence of full prompt parity. Independent
+queues, full chunk/carving/cache loans, causal prompt QSA, PLE prefetch, device
+target/MTP teaching and final-only prompt head scheduling remain required. The
+three-row controller is unchanged and is not completed native prefill.
+
+Validation logs under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-prompt-gdn-final-build-20261014.log`: final release core build passes.
+- `strata-prompt-gdn-clippy-20261014.log`: strict release core Clippy passes.
+- `strata-prompt-gdn-shaders-20261014.log`:262 offline WGSL/SPIR-V variants pass,
+  including all six connected prompt GDN operators and prepacked GEMM routing.
+  Later host span/alias/parameter guards pass final build/Clippy; shader source
+  and algorithms did not change after offline validation.
+
+Fmt/whitespace pass. No live GPU/model execution, numerical/state/recovery or
+speed test, root action, service/HTTP API/UI change, installation or release.
+Earlier full-core failures and whole-engine acceptance remain open. Full
+rewrite incomplete; goal active; speed gate closed. Required Vashti changes:
+none. Keep all coupled prompt operators selected; finish remaining dependencies
+before evaluating throughput.
