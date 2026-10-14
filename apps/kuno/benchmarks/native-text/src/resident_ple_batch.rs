@@ -15,6 +15,8 @@ use crate::{
 use cubecl::server::Handle;
 use kuno_text::{cpu::Matrix, model::GraphBindingId, ops::ple_transition as core};
 use std::sync::atomic::AtomicU64;
+#[path = "strata_prompt_ple.rs"]
+pub(crate) mod prompt_source;
 
 const N: usize = 19;
 const EMB: usize = 0;
@@ -33,7 +35,12 @@ const CHANNELS: usize = 10240;
 const WIDTH: usize = 2560;
 const STREAMS: usize = 4;
 const HISTORY: usize = 9;
-const HOST_CAP: usize = 4 * 1024 * 1024;
+const HOST_CAP: usize = 4 * 1024 * 1024
+    + if cfg!(feature = "strata-intel-core") {
+        prompt_source::HOST_BYTES
+    } else {
+        0
+    };
 pub(crate) const MAIN_BYTES: u64 = 6_258_688;
 pub(crate) const RUNTIME_AUDITED_RESERVATION: u64 = 4_587_520;
 const INFO_BYTES: u64 = 64 * 2 * 512;
@@ -870,6 +877,7 @@ impl PleBatchWorkspace {
         let mut embedding = embedding(
             model.graph,
             count,
+            start,
             tokens,
             &old_tokens,
             cancel,
@@ -1254,7 +1262,7 @@ fn host_bound(existing: usize) -> Result<()> {
         + 4096
         + 65536
         + if crate::strata_intel_core::enabled() {
-            4 * 128 * 1024 + 65536
+            4 * 128 * 1024 + 65536 + prompt_source::HOST_BYTES
         } else {
             0
         };
@@ -1275,6 +1283,7 @@ fn source(bytes: usize) -> Result<Zeroizing<Vec<u8>>> {
 fn embedding(
     graph: BoundGraph<'_, '_>,
     count: usize,
+    start: usize,
     tokens: &[u32; MAX_BATCH],
     old: &[i32; 2],
     cancel: &AtomicBool,
@@ -1301,6 +1310,10 @@ fn embedding(
         table.info().row_bytes(),
     )?;
     if crate::strata_intel_core::enabled() {
+        if let Some(ready) = prompt_source::take(graph, &rows[..count], start)? {
+            u::cancel(cancel)?;
+            return Ok(ready);
+        }
         return native_embedding(graph, table, profile, &rows[..count], cancel);
     }
     let mut upload = source(BufferLayout::new(words(EMB)).map_err(u::fault)?.owned_bytes)?;

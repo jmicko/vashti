@@ -17,6 +17,8 @@ use cubecl_runtime::{
     server::{ExecutionMode, Handle, KernelArguments, MetadataBindingInfo},
 };
 use kuno_text::{Error, Result};
+#[path = "strata_prompt_qsa.rs"]
+pub(crate) mod prompt;
 
 pub(crate) const CACHE_WORDS: usize = 640; // 512 half K + 512 half V + 128 F32 index key
 pub(crate) const CHUNKS: usize = 33; // ceil((2048 + incomplete tail <=3)/64)

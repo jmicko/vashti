@@ -85,13 +85,19 @@ const CORE_CACHE_HOST: usize = if cfg!(feature = "strata-intel-core") {
 } else {
     0
 };
-const HOST_CAP: usize = 12 * 1024 * 1024 + CORE_CACHE_HOST;
+const PROMPT_SOURCE_HOST: usize = if cfg!(feature = "strata-intel-core") {
+    ple_batch::prompt_source::HOST_BYTES
+} else {
+    0
+};
+const HOST_CAP: usize = 12 * 1024 * 1024 + CORE_CACHE_HOST + PROMPT_SOURCE_HOST;
 pub(crate) const ORIGINAL_BANK_HOST: usize = if cfg!(feature = "strata-resident-240") {
     704 * 1024
 } else {
     640 * 1024
 };
-const HOST_COMPONENTS: usize = 10_551_296 + ORIGINAL_BANK_HOST + CORE_CACHE_HOST;
+const HOST_COMPONENTS: usize =
+    10_551_296 + ORIGINAL_BANK_HOST + CORE_CACHE_HOST + PROMPT_SOURCE_HOST;
 const META_CAP: usize = 256 * 1024 + CORE_CACHE_HOST;
 const LAYERS: usize = 48;
 const D: usize = 2560;
@@ -4728,6 +4734,27 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .ok_or(error())?;
         let _scope = crate::strata_prompt::Scope::new(&self.arena, ids)?;
         self.prefill_chunk_with_carry(executor, tokens, cancel)
+    }
+    /// Join every source worker before returning to decode or releasing the
+    /// original model. The worker carries public source capabilities only;
+    /// actual embedding rows live in bounded wiping request buffers.
+    pub(crate) fn with_prompt_ple_source<T>(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+        prompt: &[u32],
+        chunk: usize,
+        cancel: &AtomicBool,
+        body: impl FnOnce(&mut Self, &mut GpuExecutor<'f>) -> Result<T>,
+    ) -> Result<T> {
+        if self.position != 0 || self.poisoned || self.ple_batch_pending.is_some() {
+            return Err(error());
+        }
+        let graph = self.graph;
+        let old = Zeroizing::new([self.ple_history.tokens()[0], self.ple_history.tokens()[1]]);
+        let profile = executor.packed_profile;
+        ple_batch::prompt_source::run(graph, prompt, chunk, old, profile, cancel, || {
+            body(self, executor)
+        })
     }
     fn execute_native_chunk<T>(
         &mut self,

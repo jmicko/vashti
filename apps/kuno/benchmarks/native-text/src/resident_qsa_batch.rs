@@ -1196,6 +1196,9 @@ impl ResidentQsa<'_> {
             0,
         ];
         match op {
+            Operation::Split if crate::strata_prompt::active() => {
+                native::prompt::split(arena, info, [h(ids[RQ])?, h(ids[PACK])?, h(ids[FLAGS])?])?;
+            }
             Operation::Norm(_) | Operation::PoolNorm => {
                 let (input, output, status, heads, width, gamma, blocks) = match op {
                     Operation::PoolNorm => {
@@ -1212,19 +1215,18 @@ impl ResidentQsa<'_> {
                 info[6] = heads as u32;
                 info[7] = width as u32;
                 info[8] = blocks as u32;
-                native::launch(
-                    arena,
-                    Kernel::Norm,
-                    [heads, count, 1],
-                    vec![
-                        h(ids[input])?,
-                        public.vectors[gamma].clone(),
-                        h(self.ids[POSITIONS])?,
-                        h(ids[output])?,
-                        h(ids[status])?,
-                    ],
-                    info,
-                )?;
+                let handles = [
+                    h(ids[input])?,
+                    public.vectors[gamma].clone(),
+                    h(self.ids[POSITIONS])?,
+                    h(ids[output])?,
+                    h(ids[status])?,
+                ];
+                if crate::strata_prompt::active() {
+                    native::prompt::norm_rope(arena, info, handles)?;
+                } else {
+                    native::launch(arena, Kernel::Norm, [heads, count, 1], handles.into(), info)?;
+                }
                 if blocks {
                     info[3] = l.widths[POOL] as u32;
                     native::launch(
@@ -1316,13 +1318,21 @@ impl ResidentQsa<'_> {
             }
             Operation::Values => {
                 info[5] = l.widths[FLAGS + 10] as u32;
-                native::launch(
-                    arena,
-                    Kernel::Gate,
-                    [qsa::QUERY.div_ceil(64), count, 1],
-                    hs(&[PACK, OUT, FLAGS + 10])?,
-                    info,
-                )?;
+                if crate::strata_prompt::active() {
+                    native::prompt::gate(
+                        arena,
+                        info,
+                        [h(ids[RQ])?, h(ids[OUT])?, h(ids[FLAGS + 10])?],
+                    )?;
+                } else {
+                    native::launch(
+                        arena,
+                        Kernel::Gate,
+                        [qsa::QUERY.div_ceil(64), count, 1],
+                        hs(&[PACK, OUT, FLAGS + 10])?,
+                        info,
+                    )?;
+                }
             }
             Operation::Append => {
                 info[5] = l.widths[APPEND] as u32;
@@ -1767,21 +1777,35 @@ impl ResidentQsa<'_> {
                     0,
                     l.widths[FLAGS + 10],
                 ),
-                Operation::Output => projector.enqueue_batch(
-                    self.projections.output,
-                    arena,
-                    ids[OUT],
-                    output,
-                    &BatchSpans::new(
+                Operation::Output => {
+                    let out_spans = BatchSpans::new(
                         count,
                         0,
                         0,
                         l.widths[OUT],
                         spans.output_first(),
                         spans.output_stride(),
-                    ),
-                    cancel,
-                )?,
+                    );
+                    if crate::strata_prompt::active() {
+                        projector.enqueue_prompt_prepacked(
+                            self.projections.output,
+                            arena,
+                            crate::strata_prompt::activation_stage()?,
+                            output,
+                            &out_spans,
+                            cancel,
+                        )?;
+                    } else {
+                        projector.enqueue_batch(
+                            self.projections.output,
+                            arena,
+                            ids[OUT],
+                            output,
+                            &out_spans,
+                            cancel,
+                        )?;
+                    }
+                }
                 Operation::Append => append_batch::launch::<WgpuRuntime>(
                     client,
                     gr(qsa::TOKEN.div_ceil(64)),
