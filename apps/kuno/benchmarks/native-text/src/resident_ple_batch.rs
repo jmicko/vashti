@@ -1246,7 +1246,18 @@ impl Drop for PleBatchAcceptance<'_> {
 
 fn host_bound(existing: usize) -> Result<()> {
     // Exact simultaneous API-visible plan; charge ACTUAL authoritative capacity.
-    let fixed = 368640 + 524288 + 131072 + 3 * 524288 + 524288 + 4096 + 65536;
+    let fixed = 368640
+        + 524288
+        + 131072
+        + 3 * 524288
+        + 524288
+        + 4096
+        + 65536
+        + if crate::strata_intel_core::enabled() {
+            4 * 128 * 1024 + 65536
+        } else {
+            0
+        };
     if existing.checked_add(fixed).is_none_or(|n| n > HOST_CAP) {
         return Err(error());
     }
@@ -1289,6 +1300,9 @@ fn embedding(
         table.info().dimensions(),
         table.info().row_bytes(),
     )?;
+    if crate::strata_intel_core::enabled() {
+        return native_embedding(graph, table, profile, &rows[..count], cancel);
+    }
     let mut upload = source(BufferLayout::new(words(EMB)).map_err(u::fault)?.owned_bytes)?;
     let mut packed = Zeroizing::new([0u8; 110]);
     let mut decoded = Zeroizing::new([0f32; 160]);
@@ -1301,6 +1315,129 @@ fn embedding(
             for (d, &v) in decoded.iter().enumerate() {
                 let at = (t * WIDTH + head * 160 + d) * 4;
                 upload[at..at + 4].copy_from_slice(&v.to_bits().to_le_bytes());
+            }
+        }
+    }
+    graph.verify_unchanged()?;
+    Ok(upload)
+}
+
+// Stable read plan contains request-derived row IDs only inside wiping memory.
+// One positional read per unique row; destinations retain original token/head
+// order regardless of sorted read order or worker completion order.
+struct RowReadPlan {
+    unique: Zeroizing<Vec<u32>>,
+    slots: Zeroizing<Vec<usize>>,
+}
+fn unique_row_plan(rows: &[[u32; 16]]) -> Result<RowReadPlan> {
+    if rows.is_empty() || rows.len() > MAX_BATCH {
+        return Err(error());
+    }
+    let mut ordered = Zeroizing::new(Vec::with_capacity(rows.len() * 16));
+    for (t, heads) in rows.iter().enumerate() {
+        for (h, &row) in heads.iter().enumerate() {
+            if row >= 320001536 {
+                return Err(error());
+            }
+            ordered.push((row, t * 16 + h));
+        }
+    }
+    ordered.sort_unstable();
+    let mut unique = Zeroizing::new(Vec::with_capacity(ordered.len()));
+    let mut slots = Zeroizing::new(vec![0usize; ordered.len()]);
+    for &(row, at) in ordered.iter() {
+        if unique.last() != Some(&row) {
+            unique.push(row);
+        }
+        slots[at] = unique.len() - 1;
+    }
+    Ok(RowReadPlan { unique, slots })
+}
+fn native_embedding(
+    graph: BoundGraph<'_, '_>,
+    table: kuno_text::TensorView<'_>,
+    profile: OriginalPackedProfile,
+    rows: &[[u32; 16]],
+    cancel: &AtomicBool,
+) -> Result<Zeroizing<Vec<u8>>> {
+    let RowReadPlan { unique, slots } = unique_row_plan(rows)?;
+    let rb = profile.ple_row_bytes();
+    if rb != table.info().row_bytes() as usize {
+        return Err(error());
+    }
+    let mut raw = source(unique.len() * rb)?;
+    let reader = table.positional_reader()?;
+    graph.verify_unchanged()?;
+    // Four finite scoped workers, not per-row jobs. Each has a96 KiB requested
+    // stack plus32 KiB runtime allowance, charged with raw/plan storage above.
+    // All join before this borrow returns, including cancellation/error paths.
+    let per_worker = unique.len().div_ceil(4);
+    std::thread::scope(|scope| -> Result<()> {
+        let mut jobs = Vec::with_capacity(4);
+        let mut failure = None;
+        for (worker, bytes) in raw.chunks_mut(per_worker * rb).enumerate() {
+            let ids = &unique
+                [worker * per_worker..(worker * per_worker + bytes.len() / rb).min(unique.len())];
+            let reader = &reader;
+            let job = std::thread::Builder::new()
+                .stack_size(96 * 1024)
+                .spawn_scoped(scope, move || -> Result<()> {
+                    for (&row, output) in ids.iter().zip(bytes.chunks_exact_mut(rb)) {
+                        u::cancel(cancel)?;
+                        reader.read_row(table, u64::from(row), output)?;
+                    }
+                    u::cancel(cancel)
+                });
+            match job {
+                Ok(job) => jobs.push(job),
+                Err(_) => {
+                    failure = Some(error());
+                    break;
+                }
+            }
+        }
+        for job in jobs {
+            match job.join() {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    if failure.is_none() {
+                        failure = Some(e);
+                    }
+                }
+                Err(_) => {
+                    if failure.is_none() {
+                        failure = Some(error());
+                    }
+                }
+            }
+        }
+        if let Some(e) = failure {
+            Err(e)
+        } else {
+            Ok(())
+        }
+    })?;
+    graph.verify_unchanged()?;
+    u::cancel(cancel)?;
+    let mut upload = source(BufferLayout::new(words(EMB)).map_err(u::fault)?.owned_bytes)?;
+    let mut decoded = Zeroizing::new([0f32; 160]);
+    for slot in 0..unique.len() {
+        u::cancel(cancel)?;
+        decode_ple_row(
+            profile,
+            table.info().dtype(),
+            &raw[slot * rb..(slot + 1) * rb],
+            &mut decoded[..],
+        )?;
+        for (destination, &source_slot) in slots.iter().enumerate() {
+            if source_slot == slot {
+                let at = destination * 160 * 4;
+                for (bytes, &v) in upload[at..at + 160 * 4]
+                    .chunks_exact_mut(4)
+                    .zip(decoded.iter())
+                {
+                    bytes.copy_from_slice(&v.to_bits().to_le_bytes());
+                }
             }
         }
     }
@@ -1362,6 +1499,9 @@ fn tail(
     spans: &BatchSpans,
     cancel: &AtomicBool,
 ) -> Result<()> {
+    if crate::strata_intel_core::enabled() {
+        return native_tail(arena, ids, public, input, output, spans, cancel);
+    }
     let count = spans.count();
     let client = arena.client().map_err(u::fault)?;
     let dim = CubeDim::new_1d(64);
@@ -1502,6 +1642,117 @@ fn tail(
         0,
         CHANNELS,
     );
+    u::cancel(cancel)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn native_tail(
+    arena: &PrivateArena,
+    ids: &[BufferId; N],
+    public: &Public,
+    input: BufferId,
+    output: BufferId,
+    spans: &BatchSpans,
+    cancel: &AtomicBool,
+) -> Result<()> {
+    use crate::strata_ple as n;
+    let h = |i| u::handle(arena, ids[i]);
+    let count = spans.count();
+    let info = |ib: usize, is: usize, ob: usize, os: usize, ss: usize, epsilon: f32| {
+        [
+            count as u32,
+            ib as u32,
+            is as u32,
+            ob as u32,
+            os as u32,
+            ss as u32,
+            0,
+            epsilon.to_bits(),
+            0,
+            0,
+            0,
+            0,
+        ]
+    };
+    for (source, ib, is, target, status, gamma) in [
+        (ids[KEY], 0, CHANNELS, KEY_NORM, 11, 0),
+        (
+            input,
+            spans.input_first(),
+            spans.input_stride(),
+            QUERY_NORM,
+            12,
+            1,
+        ),
+    ] {
+        u::cancel(cancel)?;
+        n::launch(
+            arena,
+            n::Kernel::Norm,
+            [4, count, 1],
+            vec![
+                u::handle(arena, source)?,
+                public.gamma[gamma].clone(),
+                h(target)?,
+                h(status)?,
+            ],
+            info(ib, is, 0, CHANNELS, 4, 1e-6),
+        )?;
+    }
+    u::cancel(cancel)?;
+    n::launch(
+        arena,
+        n::Kernel::Gate,
+        [4, count, 1],
+        vec![h(KEY_NORM)?, h(QUERY_NORM)?, h(GATES)?, h(13)?],
+        info(0, CHANNELS, 0, 4, 4, (WIDTH as f32).sqrt().recip()),
+    )?;
+    n::launch(
+        arena,
+        n::Kernel::Broadcast,
+        [40, count, 1],
+        vec![h(VALUE)?, h(GATES)?, h(GATED)?, h(14)?],
+        info(0, 0, 0, 0, 0, 0.),
+    )?;
+    n::launch(
+        arena,
+        n::Kernel::Norm,
+        [4, count, 1],
+        vec![h(GATED)?, public.gamma[2].clone(), h(NORMALIZED)?, h(15)?],
+        info(0, CHANNELS, 0, CHANNELS, 4, 1e-6),
+    )?;
+    u::cancel(cancel)?;
+    n::launch(
+        arena,
+        n::Kernel::Conv,
+        [40, count, 1],
+        vec![
+            h(OLD)?,
+            h(NORMALIZED)?,
+            public.conv.clone(),
+            u::handle(arena, input)?,
+            h(GATED)?,
+            h(CONV)?,
+            u::handle(arena, output)?,
+            h(16)?,
+            h(17)?,
+        ],
+        info(
+            spans.input_first(),
+            spans.input_stride(),
+            spans.output_first(),
+            spans.output_stride(),
+            0,
+            0.,
+        ),
+    )?;
+    n::launch(
+        arena,
+        n::Kernel::History,
+        [40, 1, 1],
+        vec![h(OLD)?, h(NORMALIZED)?, h(NEXT)?, h(18)?],
+        info(0, 0, 0, 0, 0, 0.),
+    )?;
     u::cancel(cancel)
 }
 
@@ -1737,6 +1988,30 @@ fn audit(arena: &PrivateArena, retired: &AtomicBool) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn native_deduplicated_reads_preserve_every_token_head_destination() {
+        for count in 1..=MAX_BATCH {
+            let rows = (0..count)
+                .map(|t| std::array::from_fn(|h| ((t * 7 + h * 3) % 19) as u32))
+                .collect::<Vec<_>>();
+            let RowReadPlan { unique, slots } = unique_row_plan(&rows).unwrap();
+            assert!(unique.windows(2).all(|p| p[0] < p[1]));
+            assert_eq!(slots.len(), count * 16);
+            for t in 0..count {
+                for h in 0..16 {
+                    assert_eq!(unique[slots[t * 16 + h]], rows[t][h]);
+                }
+            }
+            assert!(unique.len() <= count * 16);
+        }
+        let RowReadPlan { unique, slots } =
+            unique_row_plan(&[[320001535u32; 16]; MAX_BATCH]).unwrap();
+        assert_eq!(&*unique, &[320001535]);
+        assert!(slots.iter().all(|&v| v == 0));
+        assert!(unique_row_plan(&[]).is_err());
+        assert!(unique_row_plan(&[[0; 16]; MAX_BATCH + 1]).is_err());
+        assert!(unique_row_plan(&[[320001536; 16]]).is_err());
+    }
     #[test]
     fn grouped_ple_raw_plus_decoded_caps_keep_original_four_mib_and_overflow_rejection() {
         let raw: usize = [OLD, NORMALIZED, NEXT]

@@ -29,8 +29,15 @@ fn main(@builtin(local_invocation_index) local:u32,@builtin(subgroup_id) sg:u32,
         if live {value=logits[sg*512u+lane+i*32u];if !finite(value) {atomicOr(&bad,1u);}}
         candidates[i]=value;
     }
-    var remaining=65535u;
-    var row_scores:array<f32,10>;
+    var maximum=-3.4028234663852886e38;
+    for(var i=0u;i<16u;i++) {maximum=max(maximum,candidates[i]);}
+    for(var d=16u;d>0u;d/=2u) {maximum=max(maximum,subgroupShuffleXor(maximum,d));}
+    var denominator=0.0;
+    for(var i=0u;i<16u;i++) {candidates[i]=exp(candidates[i]-maximum);denominator+=candidates[i];}
+    for(var d=16u;d>0u;d/=2u) {denominator+=subgroupShuffleXor(denominator,d);}
+    let reciprocal=1.0/denominator;
+    for(var i=0u;i<16u;i++) {candidates[i]*=reciprocal;}
+    var remaining=65535u;var selected_weight=0.0;var winning_lane_sum=0.0;
     for(var rank=0u;rank<10u;rank++) {
         var value=bitcast<f32>(0xff7fffffu);var id=512u;
         for(var i=0u;i<16u;i++) {
@@ -41,19 +48,20 @@ fn main(@builtin(local_invocation_index) local:u32,@builtin(subgroup_id) sg:u32,
         }
         let maximum=subgroupMax(value);
         let selected=subgroupMin(select(512u,id,value==maximum));
-        if selected<512u && selected%32u==lane {remaining&=~(1u<<(selected/32u));}
+        if selected<512u && selected%32u==lane {remaining&=~(1u<<(selected/32u));winning_lane_sum+=maximum;}
+        if lane==rank {selected_weight=maximum;}
         if live && lane==0u {
             if selected>=512u {atomicOr(&bad,2u);chosen[sg*10u+rank]=512u;}
             let cell=remap[p.layer*512u+min(selected,511u)];
             if cell>=512u {atomicOr(&bad,2u);}
-            chosen[sg*10u+rank]=cell;logical[sg*10u+rank]=selected;row_scores[rank]=maximum;
+            chosen[sg*10u+rank]=cell;logical[sg*10u+rank]=selected;
         }
     }
-    if live && lane==0u {
-        var sum=0.0;
-        for(var rank=0u;rank<10u;rank++) {let value=exp(row_scores[rank]-row_scores[0]);row_scores[rank]=value;sum+=value;}
-        if !finite(sum) || sum<=0.0 {atomicOr(&bad,4u);}
-        else {for(var rank=0u;rank<10u;rank++) {probability[sg*10u+rank]=row_scores[rank]/sum;}}
+    for(var d=16u;d>0u;d/=2u) {winning_lane_sum+=subgroupShuffleXor(winning_lane_sum,d);}
+    if live && lane<10u {
+        let value=selected_weight*(1.0/max(winning_lane_sum,0.00006103515625));
+        if !finite(value)||value<0.0||value>1.0 {atomicOr(&bad,4u);}
+        probability[sg*10u+lane]=value;
     }
     workgroupBarrier();
     if local==0u {

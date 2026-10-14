@@ -3286,14 +3286,87 @@ impl<'a> GpuExecutor<'a> {
         Ok(fused)
     }
 
-    /// Core-only attention stage borrows authentic private GU scratch before
-    /// that layer's prepare; the ordinary projection path remains separate.
-    /// This queues work only; the caller still accepts every finite/device
-    /// fence and commits all causal candidates together, or poisons/erases.
-    /// # Safety
-    /// x/y are distinct live same-client/arena owners covering their logical
-    /// words through completed execution and full-span erasure. Spans are a
-    /// guarded runtime packet, never a shader or persistent cache key.
+    /// Original BF16 PLE/router/shared-gate weights feed all real RHS from the same
+    /// authenticated cache page. This only enqueues; the owning model retains
+    /// every source/private span and commits after its whole-model fault fence.
+    pub(crate) fn enqueue_strata_bf16_projection(
+        &mut self,
+        tensor: TensorView<'_>,
+        input: &Handle,
+        output: &Handle,
+        fault: &Handle,
+        spans: &quant_matvec::matmul::BatchSpans,
+        cancel: &AtomicBool,
+    ) -> Result<bool> {
+        if !crate::strata_intel_core::enabled() || tensor.info().dtype().gguf_id() != 30 {
+            return Ok(false);
+        }
+        let m = Matrix::new(tensor)?;
+        let rows = match tensor.info().name() {
+            "blk.1.ple_key.weight" => 10240,
+            "blk.1.ple_value.weight" => 2560,
+            name if name.ends_with(".ffn_gate_inp.weight") => 512,
+            name if name.ends_with(".ffn_gate_inp_shexp.weight") => 1,
+            _ => return Err(Error::InvalidBufferLength),
+        };
+        if !tensor.belongs_to(self.model)
+            || m.experts() != 1
+            || m.inputs() != 2560
+            || m.outputs() != rows
+            || spans.packed_first() != 0
+            || fault.size_in_used() != 4
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        crate::resident_batch_projection::validate_view(
+            spans.count(),
+            spans.input_first(),
+            spans.input_stride(),
+            2560,
+            input.size_in_used() as usize / 4,
+        )?;
+        crate::resident_batch_projection::validate_view(
+            spans.count(),
+            spans.output_first(),
+            spans.output_stride(),
+            rows,
+            output.size_in_used() as usize / 4,
+        )?;
+        self.model.verify_file_unchanged()?;
+        self.check_target_rows_policy()?;
+        let per_tile = (TILE_BYTES / (2560 * 2)).min(16384);
+        for first in (0..rows).step_by(per_tile) {
+            if cancel.load(Ordering::Acquire) {
+                return Err(Error::InvalidFormat("resident batch cancelled"));
+            }
+            let n = (rows - first).min(per_tile);
+            let weights = self.weight(tensor, 0, first, n)?.0;
+            crate::strata_ple::launch_client(
+                &self.client,
+                crate::strata_ple::Kernel::Projection,
+                [n, 1, 1],
+                vec![weights, input.clone(), output.clone(), fault.clone()],
+                [
+                    spans.count() as u32,
+                    spans.input_first() as u32,
+                    spans.input_stride() as u32,
+                    (spans.output_first() + first) as u32,
+                    spans.output_stride() as u32,
+                    0,
+                    n as u32,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                ],
+            )?;
+        }
+        Ok(true)
+    }
+    /// Core-only dense stage borrows authentic private Q8 scratch before its
+    /// next ordered reuse. The ordinary projection path remains separate.
+    /// x/y are distinct admitted owners; runtime spans never become cache keys.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn enqueue_strata_dense(
         &mut self,

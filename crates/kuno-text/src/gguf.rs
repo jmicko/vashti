@@ -523,6 +523,13 @@ impl<'a> TensorView<'a> {
         self.info
     }
 
+    /// Clone the already-validated source descriptors for bounded parallel
+    /// positional reads. The reader borrows this tensor's original model;
+    /// paths are never reopened and no content cache is created.
+    pub fn positional_reader(self) -> Result<PositionalReader<'a>> {
+        self.model.positional_reader()
+    }
+
     pub fn read_range(self, byte_offset: u64, output: &mut [u8]) -> Result<()> {
         let len = u64::try_from(output.len()).map_err(|_| Error::ArithmeticOverflow)?;
         if len > self.model.limits.max_tensor_read_bytes {

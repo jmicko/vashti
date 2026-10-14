@@ -509,8 +509,8 @@ mod tests {
     #[test]
     fn actual_descriptor_parallel_reads_keep_original_seek_cursor() {
         let f = fixture(96);
-        let reader = f.model.positional_reader().unwrap();
         let tensor = f.model.tensor("w").unwrap();
+        let reader = tensor.positional_reader().unwrap();
         let cursor = f.model.sources[0]
             .file
             .lock()

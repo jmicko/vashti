@@ -226,6 +226,31 @@ impl BatchedResidentProjector for ResidentBatchProjection<'_, '_> {
             projection.matrix.outputs(),
             output_words,
         )?;
+        if crate::strata_intel_core::enabled()
+            && (matches!(
+                projection.tensor.info().name(),
+                "blk.1.ple_key.weight" | "blk.1.ple_value.weight"
+            ) || projection
+                .tensor
+                .info()
+                .name()
+                .ends_with(".ffn_gate_inp.weight")
+                || projection
+                    .tensor
+                    .info()
+                    .name()
+                    .ends_with(".ffn_gate_inp_shexp.weight"))
+            && self.executor.enqueue_strata_bf16_projection(
+                projection.tensor,
+                &u::handle(arena, input)?,
+                &u::handle(arena, output)?,
+                &u::handle(arena, self.fault)?,
+                spans,
+                cancel,
+            )?
+        {
+            return u::cancel(cancel);
+        }
         if let Some(planes) = self.dense_q8 {
             if planes == input || planes == output || planes == self.fault {
                 return Err(Error::InvalidBufferLength);
