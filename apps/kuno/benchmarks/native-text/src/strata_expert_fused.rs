@@ -154,7 +154,7 @@ impl Kernel {
         if crate::strata_intel_core::enabled() && !self.down {
             source = crate::strata_intel_core::shared_table(source, table_binding, self.dtype);
         }
-        source
+        crate::strata_intel_core::specialize_projection(source, self.down)
     }
 }
 impl KernelMetadata for Kernel {
