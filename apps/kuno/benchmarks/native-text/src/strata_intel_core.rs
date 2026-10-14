@@ -169,6 +169,7 @@ pub(crate) fn bind_addresses(
             if address == 0 || address % 16 != 0 {
                 return Err(reject());
             }
+            roots.push((address, r.size));
             words.extend([
                 address as u32,
                 (address >> 32) as u32,

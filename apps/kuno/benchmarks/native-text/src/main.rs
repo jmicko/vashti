@@ -2386,6 +2386,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err("public target profiling requires device timestamp queries".into());
         }
         strata_port::validate_limits(&adapter.limits())?;
+        if strata_intel_core::enabled()
+            && !adapter.features().contains(wgpu::Features::SHADER_INT64)
+        {
+            return Err("native expert pointers require shader int64".into());
+        }
         let device_result = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("Kuno public synthetic Rust kernel"),

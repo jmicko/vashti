@@ -213,6 +213,12 @@ impl Graph {
         // serializes all native/Wgpu submissions. No device or queue is destroyed.
         let h = unsafe { device.as_hal::<wgpu::hal::api::Vulkan>() }
             .ok_or_else(|| fault("native graph requires Vulkan"))?;
+        if !h
+            .enabled_device_extensions()
+            .contains(&ash::khr::buffer_device_address::NAME)
+        {
+            return Err(fault("native expert pointer extension missing"));
+        }
         let d = h.raw_device().clone();
         let queue = h.raw_queue();
         let pool = unsafe {
