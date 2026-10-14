@@ -1587,3 +1587,37 @@ correctness/recovery remain required before speed testing.
 Shared-shell sudo refresh now reports `a password is required`. Source work
 remains possible without root. Do not start protected GPU acceptance or use a
 privilege workaround; request a fresh credential when that work is ready.
+
+## Connected carved GR workspace (2026-10-14)
+
+Source `649e923`. Prompt storage now separates lower64 MiB GEMM/activation
+images in stage0/1 from real carved upper-stage0 GR intermediates. Normalized
+rows, down/low and up outputs use four disjoint256-aligned views with native
+Alloc padding; their256-row capacities borrow the original charged root. The
+existing prompt GR caller actually consumes these views. Its new handle entry
+point supports1..256 rows without the legacy MAX8 intermediate geometry; parent
+residual/injection/mixed owners and receipts are still the legacy small ones.
+No new GPU root;4 KiB host metadata is charged. This is not full prompt ownership.
+
+GEMM output admission now tests actual interval overlap rather than rejecting
+all views of the same allocation. Prepacked activation admission checks exact
+start/end as well as root/stream/extent, so an upper view cannot impersonate the
+lower working image. Original scope construction still authenticates the full
+128 MiB arena roots. Expert paired-weight shader guards now agree with the
+actual lower64 MiB descriptor. Stage2 raw/GU/PART intervals remain unchanged.
+Native Vulkan graph descriptors already preserve real offset/range; physical
+view/copy and whole-model correctness are still untested.
+
+Release build and268 offline shaders pass in `strata-prompt-gr-owner-{build,
+shaders}-20261014.log`; final strict Clippy passes in the corresponding clippy
+log. The only post-build change collapses an equivalent host guard for Clippy;
+shader source/algorithms did not change. Fmt/whitespace pass. No GPU/model/state/
+recovery/speed execution, root action, installation or API/UI change. Full-core
+failures remain open. Goal active; sudo expired; no privilege workaround.
+
+Next connect full prompt residual/attention/PLE/carry owners, prompt-only state
+acceptance and final-only head/device MTP teaching to a true layer-major chunk
+controller. Do not just enlarge the current three-row packets. Native GR still
+retains F32 normalized rows instead of recomputing mix from residual/scales;
+layout/queue/cache-loan/general-input audits and whole-engine acceptance remain
+required before performance testing.

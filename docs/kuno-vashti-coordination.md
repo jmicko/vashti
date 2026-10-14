@@ -4859,3 +4859,19 @@ silently overlaid. Cache-loan budget, mapped grouping, queues/capture, layouts,
 sampling/general input and whole-engine acceptance remain required. No speed
 trials or timing-driven partial rollback. Shared shell now reports sudo expired;
 continue source work, request authentication before protected GPU tests.
+
+### Active Kuno engine handoff — carved prompt GR ownership (2026-10-14)
+
+Source `649e923`, isolated `codex/strata-rust-port`. Read completion guide
+**Connected carved GR workspace**. Actual prompt GR uses distinct carved
+upper-stage0 intermediates with256-row capacity; stage0/1 working images occupy
+lower64 MiB. Exact interval/prepacked-view checks preserve ownership. No new
+GPU root;4 KiB metadata charged. Parent residual/injection/mixed/state receipts
+still use small windows. Full large-chunk ownership/controller remains next.
+
+Release build, final strict Clippy and268 offline shaders pass; see the receipt
+for the equivalent post-build Clippy guard cleanup. No GPU/model/physical/state/
+recovery/speed acceptance or service/API/UI/install change. Earlier full-core
+failures remain open. Canonical checkout and inherited bytecode preserved.
+Full rewrite incomplete; goal active; sudo expired. Continue full residual/
+attention/PLE/carry/state composition before speed trials. Vashti changes: none.
