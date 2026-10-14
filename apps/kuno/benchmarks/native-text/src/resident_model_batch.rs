@@ -74,8 +74,11 @@ pub(crate) const TARGET_ROWS_PREPARED_VERIFY3_MAIN: u64 =
     TARGET_ROWS_PRIVATE_MAIN + batch_moe::prepared_verify3::MAIN_BYTES;
 
 const OLD_MAIN: u64 = 785_186_816 + gdn::strata_replay::MAIN_BYTES;
-const NEW_MAIN: u64 = 33_062_912;
-const TOTAL_MAIN: u64 = OLD_MAIN + NEW_MAIN + NATIVE_GR_MAIN;
+// Family requests already include the native GR increment. Both aggregate
+// equalities below must describe that SAME full request vector; charging it
+// only in TOTAL_MAIN made the two constructor checks mutually impossible.
+const NEW_MAIN: u64 = 33_062_912 + NATIVE_GR_MAIN;
+const TOTAL_MAIN: u64 = OLD_MAIN + NEW_MAIN;
 const NATIVE_GR_MAIN: u64 = if cfg!(feature = "strata-intel-core") {
     crate::strata_gr::PRIVATE_INCREMENT
 } else {
