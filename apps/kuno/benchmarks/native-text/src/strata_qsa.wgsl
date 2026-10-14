@@ -2,7 +2,7 @@
 // COMMON_BEGIN
 struct Params {count:u32,start:u32,capacity:u32,input_stride:u32,output_stride:u32,status_stride:u32,heads:u32,width:u32,block_positions:u32,epsilon:f32,theta_scale:f32,reserved:u32}
 fn finite(x:f32)->bool {return abs(x)<=3.4028234663852886e38;}
-fn cells(token:u32,start:u32)->u32 {let n=start+token+1u;return min(n/4u,512u)*4u+n%4u;}
+fn cells(token:u32,start:u32)->u32 {let n=start+token+1u;return min(n,2051u);}
 // COMMON_END
 // NORM_BEGIN
 @group(0) @binding(0) var<storage,read> input:array<f32>;
@@ -128,13 +128,17 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
 @group(0) @binding(1) var<storage,read> query:array<f32>;
 @group(0) @binding(2) var<storage,read_write> scores:array<f32>;
 @group(0) @binding(3) var<storage,read_write> status:array<u32>;
-@group(0) @binding(4) var<uniform> p:Params;
-@compute @workgroup_size(128)
+@group(0) @binding(4) var<storage,read> retained:array<f32>;
+@group(0) @binding(5) var<uniform> p:Params;
+@compute @workgroup_size(256)
 fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(subgroup_invocation_id) lane:u32,@builtin(subgroup_id) warp:u32,@builtin(subgroup_size) sw:u32) {
-    let token=group.y;let block=group.x*4u+warp;
-    if sw!=32u || token>=p.count || block>=(p.start+token+1u)/4u {return;}
+    let token=group.y;let block=group.x*8u+warp;
+    let visible=p.start+token+1u;let complete=visible/4u;
+    if sw!=32u || token>=p.count || block>complete || (block==complete&&visible%4u==0u) {return;}
     let off=token*p.input_stride+block*128u+lane*4u;
-    let k=vec4<f32>(pooled[off],pooled[off+1u],pooled[off+2u],pooled[off+3u]);
+    var k=vec4<f32>(0.0);
+    if block<complete{k=vec4<f32>(pooled[off],pooled[off+1u],pooled[off+2u],pooled[off+3u]);}
+    else{let at=(p.capacity/4u)*128u+lane*4u;k=vec4<f32>(retained[at],retained[at+1u],retained[at+2u],retained[at+3u]);}
     var total=0.0;var good=1u;
     for(var h=0u;h<4u;h++) {
         let qoff=token*512u+h*128u+lane*4u;
@@ -144,6 +148,7 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(subgroup_invocation_id) 
         if !finite(sum) {good=0u;}
         total+=max(sum,0.0);
     }
+    if block==complete{total+=1000000000.0;}
     if lane==0u {scores[token*p.output_stride+block]=select(0.0,total,good==1u && finite(total));status[token*p.status_stride+block]=select(0u,1u,good==1u && finite(total));}
 }
 // SCORE_END

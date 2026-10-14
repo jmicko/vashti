@@ -19,6 +19,8 @@ use cubecl_runtime::{
 use kuno_text::{Error, Result};
 #[path = "strata_prompt_qsa.rs"]
 pub(crate) mod prompt;
+#[path = "strata_qsa_select.rs"]
+pub(crate) mod selection;
 
 pub(crate) const CACHE_WORDS: usize = 640; // 512 half K + 512 half V + 128 F32 index key
 pub(crate) const CHUNKS: usize = 33; // ceil((2048 + incomplete tail <=3)/64)
@@ -35,22 +37,34 @@ pub(crate) const fn cache_words() -> usize {
 pub(crate) enum Kernel {
     Norm,
     Pack,
+    PromptPack,
     Pool,
     RetainedPool,
     PublishPool,
     Score,
+    PromptScore,
     Attention,
+    PromptAttention,
+    PromptMerge,
     MtpAttention,
     MtpMerge,
     Merge,
     Gate,
     Append,
+    PromptAppend,
 }
 impl Kernel {
     fn lanes(self) -> u32 {
         match self {
-            Self::Norm | Self::Attention | Self::Merge | Self::MtpAttention | Self::MtpMerge => 256,
-            Self::Score => 128,
+            Self::Norm
+            | Self::Attention
+            | Self::Merge
+            | Self::MtpAttention
+            | Self::MtpMerge
+            | Self::PromptAttention
+            | Self::PromptMerge
+            | Self::Score
+            | Self::PromptScore => 256,
             _ => 64,
         }
     }
@@ -67,19 +81,51 @@ impl Kernel {
         let mut s = section("COMMON").to_owned();
         s.push_str(section(match self {
             Self::Norm => "NORM",
-            Self::Pack => "PACK",
+            Self::Pack | Self::PromptPack => "PACK",
             Self::Pool => "POOL",
             Self::RetainedPool => "RETAINED_POOL",
             Self::PublishPool => "PUBLISH_POOL",
-            Self::Score => "SCORE",
-            Self::Attention | Self::MtpAttention => "ATTENTION",
-            Self::Merge | Self::MtpMerge => "MERGE",
+            Self::Score | Self::PromptScore => "SCORE",
+            Self::Attention | Self::MtpAttention | Self::PromptAttention => "ATTENTION",
+            Self::Merge | Self::MtpMerge | Self::PromptMerge => "MERGE",
             Self::Gate => "GATE",
-            Self::Append => "APPEND",
+            Self::Append | Self::PromptAppend => "APPEND",
         }));
+        if self == Self::PromptScore {
+            s = s.replace(
+                "token*p.input_stride+block*128u+lane*4u",
+                "block*128u+lane*4u",
+            );
+        }
+        if matches!(self, Self::PromptAttention | Self::PromptMerge) {
+            // Keep partial/stats indexed by the local <=32-query tile. Q,
+            // selection, output and closing flags retain full chunk indices.
+            // In particular selection's 2051-word stride is not256-aligned:
+            // rebasing its descriptor would produce illegal Vulkan offsets.
+            s = s.replace(
+                "let t=group.z;let n=cells(t,p.start);",
+                "let t=group.z;let query_row=t+p.reserved;let n=cells(query_row,p.start);",
+            );
+            s = s.replace(
+                "let t=group.y;if sw",
+                "let t=group.y;let query_row=t+p.reserved;if sw",
+            );
+            s = s.replace("cells(t,p.start)+63u", "cells(query_row,p.start)+63u");
+            s = s.replace("p.start+t+1u", "p.start+query_row+1u");
+            for binding in ["query", "selected", "output", "status"] {
+                s = s.replace(&format!("{binding}[t*"), &format!("{binding}[query_row*"));
+            }
+            if self == Self::PromptAttention {
+                // Prompt append is ordered before index scoring/attention.
+                // Every causal cell now comes from the authoritative cache.
+                let a = s.find("fn kv(").unwrap();
+                let z = a + s[a..].find("@compute").unwrap();
+                s.replace_range(a..z,"fn kv(token:u32,offset:u32)->f32 {let v=unpack2x16float(cache[token*640u+offset/2u]);return select(v.x,v.y,(offset&1u)!=0u);}\n");
+            }
+        }
         if matches!(self, Self::MtpAttention | Self::MtpMerge) {
             s = s.replace(
-                "let n=start+token+1u;return min(n/4u,512u)*4u+n%4u;",
+                "let n=start+token+1u;return min(n,2051u);",
                 "return start+token+1u;",
             );
             s = s
@@ -101,16 +147,21 @@ impl KernelMetadata for Kernel {
         match self {
             Self::Norm => "StrataQsaNormRope",
             Self::Pack => "StrataQsaPackFp16",
+            Self::PromptPack => "StrataPromptQsaPackFp16",
             Self::Pool => "StrataQsaRawIndexerPool",
             Self::RetainedPool => "StrataQsaRetainedIndexerPrefix",
             Self::PublishPool => "StrataQsaPublishIndexerBlocks",
             Self::Score => "StrataQsaIndexerScore",
+            Self::PromptScore => "StrataPromptSharedIndexerScore",
             Self::Attention => "StrataQsaChunkAttention",
+            Self::PromptAttention => "StrataPromptAttentionBatch32",
+            Self::PromptMerge => "StrataPromptMergeBatch32",
             Self::MtpAttention => "StrataMtpChunkAttention",
             Self::MtpMerge => "StrataMtpChunkMerge",
             Self::Merge => "StrataQsaChunkMerge",
             Self::Gate => "StrataQsaGate",
             Self::Append => "StrataQsaAppendFp16",
+            Self::PromptAppend => "StrataPromptQsaAppendFp16",
         }
     }
     fn id(&self) -> KernelId {
@@ -154,9 +205,31 @@ pub(crate) fn launch(
         || grid.iter().any(|&x| x > 65535)
         || handles.is_empty()
         || handles.iter().any(|h| h.stream != handles[0].stream)
-        || !(1..=8).contains(&info[0])
+        || !(1..=if matches!(kernel, Kernel::PromptAttention | Kernel::PromptMerge)
+            && crate::strata_prompt::active()
+        {
+            32
+        } else if matches!(
+            kernel,
+            Kernel::PromptScore | Kernel::PromptPack | Kernel::PromptAppend
+        ) && crate::strata_prompt::active()
+        {
+            256
+        } else {
+            8
+        })
+            .contains(&info[0])
         || info[1].checked_add(info[0]).is_none_or(|end| end > info[2])
         || info[2] > 4096
+        || if matches!(kernel, Kernel::PromptAttention | Kernel::PromptMerge) {
+            info[11].checked_add(info[0]).is_none_or(|end| end > 256)
+                || info[1]
+                    .checked_add(info[11])
+                    .and_then(|first| first.checked_add(info[0]))
+                    .is_none_or(|end| end > info[2])
+        } else {
+            info[11] != 0
+        }
     {
         return Err(Error::InvalidBufferLength);
     }
@@ -187,16 +260,21 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
     [
         Kernel::Norm,
         Kernel::Pack,
+        Kernel::PromptPack,
         Kernel::Pool,
         Kernel::RetainedPool,
         Kernel::PublishPool,
         Kernel::Score,
+        Kernel::PromptScore,
         Kernel::Attention,
+        Kernel::PromptAttention,
+        Kernel::PromptMerge,
         Kernel::MtpAttention,
         Kernel::MtpMerge,
         Kernel::Merge,
         Kernel::Gate,
         Kernel::Append,
+        Kernel::PromptAppend,
     ]
     .into_iter()
     .map(|k| {

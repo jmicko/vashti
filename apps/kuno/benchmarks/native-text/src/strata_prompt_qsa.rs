@@ -3,6 +3,9 @@
 //! decode's fused norm. The existing default Intel attention remains selected;
 //! the opt-in XMX kernel and native chunk/queue owners are separate audit rows.
 use super::*;
+// Fourteen extra attention/merge records at the largest256-row chunk, plus
+// native dead initialization and the two GPU selection passes for12 layers.
+pub(crate) const INFO_BYTES: u64 = 12 * (14 + 3) * 2048;
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 enum Op {
@@ -10,10 +13,20 @@ enum Op {
     Norm,
     Rope,
     Gate,
+    PoolMean,
+    PoolNorm,
+    PoolRope,
+    PoolFlags,
 }
 impl Op {
     fn lanes(self) -> u32 {
-        if self == Self::Norm { 256 } else { 64 }
+        if matches!(self, Self::Norm | Self::PoolNorm) {
+            256
+        } else if self == Self::PoolMean {
+            128
+        } else {
+            64
+        }
     }
     fn source(self) -> String {
         let all = include_str!("strata_prompt_qsa.wgsl");
@@ -25,7 +38,7 @@ impl Op {
                 .unwrap()
                 .0
         };
-        format!(
+        let mut result = format!(
             "{}\n{}",
             section("COMMON"),
             section(match self {
@@ -33,8 +46,19 @@ impl Op {
                 Self::Norm => "NORM",
                 Self::Rope => "ROPE",
                 Self::Gate => "GATE",
+                Self::PoolMean => "POOL_MEAN",
+                Self::PoolNorm => "NORM",
+                Self::PoolRope => "ROPE",
+                Self::PoolFlags => "POOL_FLAGS",
             })
-        )
+        );
+        if matches!(self, Self::PoolNorm | Self::PoolRope) {
+            result = result.replace("(p.start+t+1u)/4u", "(p.start+p.count)/4u");
+        }
+        if self == Self::PoolNorm {
+            result = result.replace("var ok=1u;", "var ok=status[head];");
+        }
+        result
     }
 }
 impl KernelMetadata for Op {
@@ -44,6 +68,10 @@ impl KernelMetadata for Op {
             Self::Norm => "StrataPromptQsaRmsRows",
             Self::Rope => "StrataPromptQsaRope",
             Self::Gate => "StrataPromptQsaF16Gate",
+            Self::PoolMean => "StrataPromptSharedIndexMean",
+            Self::PoolNorm => "StrataPromptSharedIndexNorm",
+            Self::PoolRope => "StrataPromptSharedIndexRope",
+            Self::PoolFlags => "StrataPromptSharedIndexClosingFlags",
         }
     }
     fn id(&self) -> KernelId {
@@ -117,9 +145,9 @@ fn launch(
     Ok(())
 }
 pub(crate) fn split(arena: &PrivateArena, p: [u32; 12], h: [Handle; 3]) -> Result<()> {
-    for handle in &h {
-        span(handle, p[0] as usize * 12288)?;
-    }
+    span(&h[0], p[0] as usize * 12288)?;
+    span(&h[1], p[0] as usize * 6144)?;
+    span(&h[2], p[0] as usize * 12288)?;
     launch(
         arena,
         Op::Split,
@@ -127,6 +155,126 @@ pub(crate) fn split(arena: &PrivateArena, p: [u32; 12], h: [Handle; 3]) -> Resul
         h.into(),
         p,
     )
+}
+/// Completed blocks are shared by every query which can see them. Mean,
+/// normalization and RoPE run once per newly completed block, not once per row.
+/// Legacy closing views remain explicit until the new prompt receipt replaces
+/// them. Pooled state is private and cannot publish before the model fence.
+pub(crate) fn pool(arena: &PrivateArena, mut p: [u32; 12], h: [Handle; 2]) -> Result<()> {
+    let q = crate::strata_prompt::qsa_workspace()?;
+    span(&h[0], p[2] as usize * 640)?;
+    span(&h[1], p[0] as usize * 640)?;
+    span(&q[12], (p[2] as usize / 4) * 128)?;
+    span(&q[13], p[2] as usize / 4)?;
+    p[3] = (p[2] / 4) * 128;
+    launch(
+        arena,
+        Op::PoolMean,
+        [p[2] as usize / 4, 1, 1],
+        vec![h[0].clone(), h[1].clone(), q[12].clone(), q[13].clone()],
+        p,
+    )
+}
+/// Gamma,positions,authoritative pooled,legacy mean flags,legacy norm flags.
+pub(crate) fn pool_norm(arena: &PrivateArena, mut p: [u32; 12], h: [Handle; 5]) -> Result<()> {
+    let q = crate::strata_prompt::qsa_workspace()?;
+    let blocks = p[2] as usize / 4;
+    span(&h[0], 128)?;
+    span(&h[1], p[2] as usize)?;
+    span(&h[2], blocks * 128)?;
+    span(&h[3], p[0] as usize * blocks)?;
+    span(&h[4], p[0] as usize * blocks)?;
+    p[3] = (blocks * 128) as u32;
+    p[4] = p[3];
+    p[5] = blocks as u32;
+    p[6] = blocks as u32;
+    p[7] = 128;
+    p[8] = 1;
+    launch(
+        arena,
+        Op::PoolNorm,
+        [blocks, 1, 1],
+        vec![q[12].clone(), h[0].clone(), h[2].clone(), q[13].clone()],
+        p,
+    )?;
+    launch(
+        arena,
+        Op::PoolRope,
+        [blocks, 1, 1],
+        vec![h[1].clone(), h[2].clone(), q[13].clone()],
+        p,
+    )?;
+    launch(
+        arena,
+        Op::PoolFlags,
+        [blocks.div_ceil(64), p[0] as usize, 1],
+        vec![q[13].clone(), h[3].clone(), h[4].clone()],
+        p,
+    )
+}
+/// Native default attention schedule: a whole chunk's Q/selection/output, with
+/// only32 queries' partials/statistics live at once. Merge each tile before
+/// overwriting its scratch. `start` and candidate row zero keep their original
+/// meaning across tiles, so causal prefix and in-chunk KV reads remain exact.
+/// The selection and flags are parent-owned until full prompt receipts land.
+pub(crate) fn attention(
+    arena: &PrivateArena,
+    mut p: [u32; 12],
+    h: [Handle; 5], // cache, selected, attention flags, merge flags, candidate
+    merge_stride: usize,
+) -> Result<()> {
+    let count = p[0] as usize;
+    let q = crate::strata_prompt::qsa_workspace()?;
+    if !(1..=crate::strata_prompt::groups::CAPACITY).contains(&count)
+        || p[11] != 0
+        || (p[5] as usize) < 24 * cells_for_capacity(p[2] as usize)
+        || merge_stride < 24
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    span(&q[5], count * 6144)?;
+    span(&q[9], count * 6144)?;
+    span(&q[10], 32 * PARTIAL_WORDS)?;
+    span(&q[11], 32 * STATS_WORDS)?;
+    span(&h[0], p[2] as usize * CACHE_WORDS)?;
+    span(&h[1], count * 2051)?;
+    span(&h[2], count * p[5] as usize)?;
+    span(&h[3], count * merge_stride)?;
+    span(&h[4], count * CACHE_WORDS)?;
+    let attention_stride = p[5];
+    for first in (0..count).step_by(32) {
+        let rows = (count - first).min(32);
+        p[0] = rows as u32;
+        p[11] = first as u32;
+        p[5] = attention_stride;
+        super::launch(
+            arena,
+            Kernel::PromptAttention,
+            [CHUNKS, 2, rows],
+            vec![
+                q[5].clone(),
+                h[0].clone(),
+                h[4].clone(),
+                h[1].clone(),
+                q[10].clone(),
+                q[11].clone(),
+                h[2].clone(),
+            ],
+            p,
+        )?;
+        p[5] = merge_stride as u32;
+        super::launch(
+            arena,
+            Kernel::PromptMerge,
+            [24, rows, 1],
+            vec![q[10].clone(), q[11].clone(), q[9].clone(), h[3].clone()],
+            p,
+        )?;
+    }
+    Ok(())
+}
+fn cells_for_capacity(capacity: usize) -> usize {
+    capacity.min(2051)
 }
 /// Input,gamma,positions,output,status. Prior block rows are retained, not read
 /// from the current chunk's uninitialized mean owner. Norm and RoPE share the
@@ -197,16 +345,25 @@ pub(crate) fn gate(arena: &PrivateArena, p: [u32; 12], h: [Handle; 3]) -> Result
     )
 }
 pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
-    [Op::Split, Op::Norm, Op::Rope, Op::Gate]
-        .into_iter()
-        .map(|k| {
-            k.compile(
-                &mut AutoCompiler::Wgsl(Default::default()),
-                &Default::default(),
-                ExecutionMode::Unchecked,
-                StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
-            )
-        })
-        .collect::<std::result::Result<_, _>>()
-        .unwrap()
+    [
+        Op::Split,
+        Op::Norm,
+        Op::Rope,
+        Op::Gate,
+        Op::PoolMean,
+        Op::PoolNorm,
+        Op::PoolRope,
+        Op::PoolFlags,
+    ]
+    .into_iter()
+    .map(|k| {
+        k.compile(
+            &mut AutoCompiler::Wgsl(Default::default()),
+            &Default::default(),
+            ExecutionMode::Unchecked,
+            StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+        )
+    })
+    .collect::<std::result::Result<_, _>>()
+    .unwrap()
 }

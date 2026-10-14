@@ -3,6 +3,40 @@
 struct Params {count:u32,start:u32,capacity:u32,input_stride:u32,output_stride:u32,status_stride:u32,heads:u32,width:u32,block_positions:u32,epsilon:f32,theta_scale:f32,reserved:u32}
 fn finite(x:f32)->bool {return abs(x)<=3.4028234663852886e38;}
 // COMMON_END
+// POOL_MEAN_BEGIN
+@group(0) @binding(0) var<storage,read> cache:array<u32>;
+@group(0) @binding(1) var<storage,read> candidate:array<u32>;
+@group(0) @binding(2) var<storage,read_write> means:array<f32>;
+@group(0) @binding(3) var<storage,read_write> status:array<u32>;
+@group(0) @binding(4) var<uniform> p:Params;
+var<workgroup> good:array<u32,128>;
+@compute @workgroup_size(128)
+fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(local_invocation_index) d:u32) {
+    let block=g.x;if block<p.start/4u||block>=(p.start+p.count)/4u{return;}
+    var sum=0.0;var valid=1u;
+    for(var j=0u;j<4u;j++) {
+        let token=block*4u+j;var bits=0u;
+        if token<p.start {bits=cache[token*640u+512u+d];}else{bits=candidate[(token-p.start)*640u+512u+d];}
+        let x=bitcast<f32>(bits);if j==0u {sum=x;}else{sum+=x;}if !finite(x){valid=0u;}
+    }
+    let mean=fma(0.25,sum,0.0);if !finite(mean){valid=0u;}
+    means[block*128u+d]=select(0.0,mean,valid==1u);good[d]=valid;workgroupBarrier();
+    for(var n=64u;n>0u;n/=2u){if d<n{good[d]&=good[d+n];}workgroupBarrier();}
+    if d==0u{status[block]=good[0];}
+}
+// POOL_MEAN_END
+// POOL_FLAGS_BEGIN
+@group(0) @binding(0) var<storage,read> valid:array<u32>;
+@group(0) @binding(1) var<storage,read_write> means:array<u32>;
+@group(0) @binding(2) var<storage,read_write> norms:array<u32>;
+@group(0) @binding(3) var<uniform> p:Params;
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) id:vec3<u32>){
+    let b=id.x;let t=id.y;if t>=p.count||b>=(p.start+t+1u)/4u{return;}
+    var ok=1u;if b>=p.start/4u{ok=valid[b];}
+    means[t*p.status_stride+b]=ok;norms[t*p.status_stride+b]=ok;
+}
+// POOL_FLAGS_END
 // SPLIT_BEGIN
 @group(0) @binding(0) var<storage,read> raw:array<f32>;
 @group(0) @binding(1) var<storage,read_write> packed:array<f32>;
@@ -13,7 +47,7 @@ fn main(@builtin(global_invocation_id) id:vec3<u32>) {
     let i=id.x;let t=id.y;if t>=p.count||i>=12288u{return;}
     let d=i%6144u;let extra=select(0u,256u,i>=6144u);
     let x=raw[t*12288u+(d/256u)*512u+d%256u+extra];let good=finite(x);
-    packed[t*12288u+i]=select(0.0,x,good);status[t*12288u+i]=select(0u,1u,good);
+    if i<6144u {packed[t*6144u+i]=select(0.0,x,good);}status[t*12288u+i]=select(0u,1u,good);
 }
 // SPLIT_END
 // NORM_BEGIN

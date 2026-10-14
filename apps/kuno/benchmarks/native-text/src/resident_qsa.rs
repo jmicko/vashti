@@ -274,7 +274,7 @@ impl StageLayout {
             qsa::ID,
             qsa::TOKEN,
             complete * qsa::ID,
-            complete * qsa::ID,
+            (complete + usize::from(crate::strata_intel_core::enabled())) * qsa::ID,
             complete,
             selected,
             logits,

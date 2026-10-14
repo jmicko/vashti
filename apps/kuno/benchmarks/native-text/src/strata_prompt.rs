@@ -88,6 +88,14 @@ pub(crate) fn gdn_workspace() -> Result<[Handle; 4]> {
             .ok_or(Error::InvalidBufferLength)
     })
 }
+pub(crate) fn qsa_workspace() -> Result<[Handle; 14]> {
+    STAGES.with(|s| {
+        s.borrow()
+            .as_ref()
+            .map(storage::Storage::qsa)
+            .ok_or(Error::InvalidBufferLength)
+    })
+}
 pub(crate) fn validate_output(handle: &Handle) -> Result<()> {
     STAGES.with(|s| {
         if s.borrow().as_ref().is_some_and(|v| v.output(handle)) {

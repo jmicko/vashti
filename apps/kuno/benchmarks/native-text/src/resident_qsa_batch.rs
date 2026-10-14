@@ -54,7 +54,10 @@ struct Layout {
 }
 impl Layout {
     fn new(stage: StageLayout) -> Result<Self> {
-        if !(4..=qsa::MAX_CONTEXT).contains(&stage.max_context) || stage.epsilon != qsa::EPSILON {
+        if !(4..=qsa::MAX_CONTEXT).contains(&stage.max_context)
+            || stage.epsilon != qsa::EPSILON
+            || (crate::strata_intel_core::enabled() && !stage.max_context.is_multiple_of(4))
+        {
             return Err(fault("native QSA batch geometry"));
         }
         let blocks = stage.max_context / qsa::BLOCK;
@@ -690,14 +693,16 @@ fn queue_stage(
     mut queue: impl FnMut(Operation) -> Result<()>,
 ) -> Result<()> {
     checked_count(start as u64, count, qsa::MAX_CONTEXT)?;
+    let prompt = crate::strata_prompt::active();
     for op in (0..S)
         .map(Operation::Clear)
         .chain([Operation::Positions])
         .chain((0..5).map(Operation::Project))
         .chain([Operation::Split])
         .chain((0..3).map(Operation::Norm))
+        .chain([Operation::Pack])
+        .chain(prompt.then_some(Operation::Append))
         .chain([
-            Operation::Pack,
             Operation::Pool,
             Operation::PoolNorm,
             Operation::Score,
@@ -706,8 +711,8 @@ fn queue_stage(
             Operation::Softmax,
             Operation::Values,
             Operation::Output,
-            Operation::Append,
         ])
+        .chain((!prompt).then_some(Operation::Append))
     {
         cancelled(cancel)?;
         queue(op)?;
@@ -1000,7 +1005,8 @@ impl QsaBatchSelector for BatchSelector<'_> {
             count: layout.count,
             blocks: layout.blocks,
         };
-        if !self.gpu_chronological || !geometry.supported()? {
+        let native = crate::strata_intel_core::enabled();
+        if !native && (!self.gpu_chronological || !geometry.supported()?) {
             return self
                 .original
                 .select_upload(arena, layout, scores, status, target, fault_id, cancel);
@@ -1034,11 +1040,19 @@ impl QsaBatchSelector for BatchSelector<'_> {
             .map(|id| arena.handle(id).map_err(arena_fault).cloned())
             .into_iter()
             .collect::<Result<Vec<_>>>()?;
-        chronological_select::launch(
-            arena.client().map_err(arena_fault)?,
-            owners.try_into().map_err(|_| Error::InvalidBufferLength)?,
-            geometry,
-        )?;
+        let owners = owners.try_into().map_err(|_| Error::InvalidBufferLength)?;
+        if native {
+            crate::strata_qsa::selection::select(
+                arena,
+                owners,
+                layout.start,
+                layout.count,
+                layout.blocks,
+                layout.stride,
+            )?;
+        } else {
+            chronological_select::launch(arena.client().map_err(arena_fault)?, owners, geometry)?;
+        }
         cancelled(cancel)
     }
 }
@@ -1175,9 +1189,22 @@ impl ResidentQsa<'_> {
         l: Layout,
         start: usize,
         count: usize,
+        fault_id: BufferId,
     ) -> Result<bool> {
         use crate::strata_qsa::{self as native, Kernel};
         let h = |id| u::handle(arena, id);
+        let prompt = crate::strata_prompt::active();
+        let carved = if prompt {
+            Some(crate::strata_prompt::qsa_workspace()?)
+        } else {
+            None
+        };
+        let view = |i: usize| {
+            carved
+                .as_ref()
+                .map(|q| q[i].clone())
+                .ok_or(Error::InvalidBufferLength)
+        };
         let hs = |indices: &[usize]| {
             native::handles(arena, &indices.iter().map(|&i| ids[i]).collect::<Vec<_>>())
         };
@@ -1197,9 +1224,35 @@ impl ResidentQsa<'_> {
         ];
         match op {
             Operation::Split if crate::strata_prompt::active() => {
-                native::prompt::split(arena, info, [h(ids[RQ])?, h(ids[PACK])?, h(ids[FLAGS])?])?;
+                native::prompt::split(arena, info, [view(0)?, view(5)?, h(ids[FLAGS])?])?;
             }
             Operation::Norm(_) | Operation::PoolNorm => {
+                if op == Operation::PoolNorm && start == 0 {
+                    native::selection::initialize(
+                        arena,
+                        [
+                            if prompt { view(8)? } else { h(ids[CAND])? },
+                            public.vectors[3].clone(),
+                            h(self.ids[POOLED])?,
+                            h(fault_id)?,
+                        ],
+                        self.layout.max_context,
+                    )?;
+                }
+                if prompt && op == Operation::PoolNorm {
+                    native::prompt::pool_norm(
+                        arena,
+                        info,
+                        [
+                            public.vectors[3].clone(),
+                            h(self.ids[POSITIONS])?,
+                            h(self.ids[POOLED])?,
+                            h(ids[FLAGS + 5])?,
+                            h(ids[FLAGS + 6])?,
+                        ],
+                    )?;
+                    return Ok(true);
+                }
                 let (input, output, status, heads, width, gamma, blocks) = match op {
                     Operation::PoolNorm => {
                         (MEAN, POOL, FLAGS + 6, l.widths[SCORE], qsa::ID, 3, true)
@@ -1215,11 +1268,24 @@ impl ResidentQsa<'_> {
                 info[6] = heads as u32;
                 info[7] = width as u32;
                 info[8] = blocks as u32;
+                let (source, destination) = if prompt {
+                    match op {
+                        Operation::Norm(0) => {
+                            info[3] = 6144;
+                            (view(5)?, view(5)?)
+                        }
+                        Operation::Norm(1) => (view(1)?, view(6)?),
+                        Operation::Norm(2) => (view(3)?, view(7)?),
+                        _ => return Err(Error::InvalidBufferLength),
+                    }
+                } else {
+                    (h(ids[input])?, h(ids[output])?)
+                };
                 let handles = [
-                    h(ids[input])?,
+                    source,
                     public.vectors[gamma].clone(),
                     h(self.ids[POSITIONS])?,
-                    h(ids[output])?,
+                    destination,
                     h(ids[status])?,
                 ];
                 if crate::strata_prompt::active() {
@@ -1242,13 +1308,25 @@ impl ResidentQsa<'_> {
                 info[5] = l.widths[FLAGS + 4] as u32;
                 native::launch(
                     arena,
-                    Kernel::Pack,
+                    if prompt {
+                        Kernel::PromptPack
+                    } else {
+                        Kernel::Pack
+                    },
                     [native::CACHE_WORDS.div_ceil(64), count, 1],
-                    hs(&[K, RV, RIK, CAND, FLAGS + 4])?,
+                    if prompt {
+                        vec![view(6)?, view(2)?, view(4)?, view(8)?, h(ids[FLAGS + 4])?]
+                    } else {
+                        hs(&[K, RV, RIK, CAND, FLAGS + 4])?
+                    },
                     info,
                 )?;
             }
             Operation::Pool => {
+                if prompt {
+                    native::prompt::pool(arena, info, [h(self.ids[CACHE])?, view(8)?])?;
+                    return Ok(true);
+                }
                 info[4] = l.widths[MEAN] as u32;
                 info[5] = l.widths[FLAGS + 5] as u32;
                 native::launch(
@@ -1269,7 +1347,7 @@ impl ResidentQsa<'_> {
                     [l.widths[SCORE], count, 1],
                     vec![
                         h(self.ids[CACHE])?,
-                        h(ids[CAND])?,
+                        if prompt { view(8)? } else { h(ids[CAND])? },
                         h(ids[MEAN])?,
                         h(ids[FLAGS + 5])?,
                     ],
@@ -1278,17 +1356,36 @@ impl ResidentQsa<'_> {
             }
             Operation::Logits => {
                 info[5] = l.widths[FLAGS + 8] as u32;
+                if prompt {
+                    native::prompt::attention(
+                        arena,
+                        info,
+                        [
+                            h(self.ids[CACHE])?,
+                            h(ids[SELECT])?,
+                            h(ids[FLAGS + 8])?,
+                            h(ids[FLAGS + 9])?,
+                            view(8)?,
+                        ],
+                        l.widths[FLAGS + 9],
+                    )?;
+                    return Ok(true);
+                }
                 native::launch(
                     arena,
-                    Kernel::Attention,
+                    if prompt {
+                        Kernel::PromptAttention
+                    } else {
+                        Kernel::Attention
+                    },
                     [native::CHUNKS, qsa::KVH, count],
                     vec![
-                        h(ids[Q])?,
+                        if prompt { view(5)? } else { h(ids[Q])? },
                         h(self.ids[CACHE])?,
-                        h(ids[CAND])?,
+                        if prompt { view(8)? } else { h(ids[CAND])? },
                         h(ids[SELECT])?,
-                        h(ids[LOGIT])?,
-                        h(ids[PROB])?,
+                        if prompt { view(10)? } else { h(ids[LOGIT])? },
+                        if prompt { view(11)? } else { h(ids[PROB])? },
                         h(ids[FLAGS + 8])?,
                     ],
                     info,
@@ -1300,30 +1397,59 @@ impl ResidentQsa<'_> {
                 info[5] = l.widths[FLAGS + 7] as u32;
                 native::launch(
                     arena,
-                    Kernel::Score,
-                    [l.widths[SCORE].div_ceil(4), count, 1],
-                    hs(&[POOL, IQ, SCORE, FLAGS + 7])?,
+                    if prompt {
+                        Kernel::PromptScore
+                    } else {
+                        Kernel::Score
+                    },
+                    [l.widths[SCORE].div_ceil(8), count, 1],
+                    if prompt {
+                        vec![
+                            h(self.ids[POOLED])?,
+                            view(7)?,
+                            h(ids[SCORE])?,
+                            h(ids[FLAGS + 7])?,
+                            h(self.ids[POOLED])?,
+                        ]
+                    } else {
+                        vec![
+                            h(ids[POOL])?,
+                            h(ids[IQ])?,
+                            h(ids[SCORE])?,
+                            h(ids[FLAGS + 7])?,
+                            h(self.ids[POOLED])?,
+                        ]
+                    },
                     info,
                 )?;
             }
             Operation::Softmax => {
+                if prompt {
+                    // The prompt path merges each32-query tile immediately,
+                    // before the following tile reuses partial/stats storage.
+                    return Ok(true);
+                }
                 info[5] = l.widths[FLAGS + 9] as u32;
                 native::launch(
                     arena,
-                    Kernel::Merge,
+                    if prompt {
+                        Kernel::PromptMerge
+                    } else {
+                        Kernel::Merge
+                    },
                     [qsa::QH, count, 1],
-                    hs(&[LOGIT, PROB, OUT, FLAGS + 9])?,
+                    if prompt {
+                        vec![view(10)?, view(11)?, view(9)?, h(ids[FLAGS + 9])?]
+                    } else {
+                        hs(&[LOGIT, PROB, OUT, FLAGS + 9])?
+                    },
                     info,
                 )?;
             }
             Operation::Values => {
                 info[5] = l.widths[FLAGS + 10] as u32;
                 if crate::strata_prompt::active() {
-                    native::prompt::gate(
-                        arena,
-                        info,
-                        [h(ids[RQ])?, h(ids[OUT])?, h(ids[FLAGS + 10])?],
-                    )?;
+                    native::prompt::gate(arena, info, [view(0)?, view(9)?, h(ids[FLAGS + 10])?])?;
                 } else {
                     native::launch(
                         arena,
@@ -1338,10 +1464,14 @@ impl ResidentQsa<'_> {
                 info[5] = l.widths[APPEND] as u32;
                 native::launch(
                     arena,
-                    Kernel::Append,
+                    if prompt {
+                        Kernel::PromptAppend
+                    } else {
+                        Kernel::Append
+                    },
                     [native::CACHE_WORDS.div_ceil(64), count, 1],
                     vec![
-                        h(ids[CAND])?,
+                        if prompt { view(8)? } else { h(ids[CAND])? },
                         h(self.ids[CACHE])?,
                         h(self.ids[POSITIONS])?,
                         h(ids[APPEND])?,
@@ -1494,6 +1624,7 @@ impl ResidentQsa<'_> {
                     l,
                     start as usize,
                     count,
+                    fault_id,
                 )?
             {
                 return Ok(());
@@ -1520,6 +1651,24 @@ impl ResidentQsa<'_> {
                     l.widths[APPEND],
                 ),
                 Operation::Project(i) => {
+                    if crate::strata_prompt::active() {
+                        let projection = [
+                            self.projections.query,
+                            self.projections.key,
+                            self.projections.value,
+                            self.projections.iq,
+                            self.projections.ik,
+                        ][i];
+                        projector.enqueue_prompt_view(
+                            projection,
+                            arena,
+                            u::handle(arena, input)?,
+                            crate::strata_prompt::qsa_workspace()?[i].clone(),
+                            &project_input_spans(spans, l.widths[i]),
+                            cancel,
+                        )?;
+                        return Ok(());
+                    }
                     if crate::strata_intel_core::enabled() && (1..=8).contains(&count) {
                         if i == 0 {
                             let projections = [
@@ -1849,7 +1998,13 @@ impl ResidentQsa<'_> {
                         } else {
                             let token = l.token(t, start as usize)?;
                             let width = if i == 8 {
-                                token.logits_elements
+                                if crate::strata_intel_core::enabled() {
+                                    qsa::QH * token.visible.min(2051)
+                                } else {
+                                    token.logits_elements
+                                }
+                            } else if i == 7 && crate::strata_intel_core::enabled() {
+                                token.complete + usize::from(token.visible % 4 != 0)
                             } else {
                                 token.complete
                             };

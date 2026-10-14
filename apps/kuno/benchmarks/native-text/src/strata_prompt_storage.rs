@@ -3,12 +3,15 @@
 //! overlaid attention/MoE region. Here the working images are bounded to the
 //! lower64 MiB and the connected GR intermediates occupy distinct upper views.
 use super::*;
-pub(crate) const HOST_BYTES: usize = 4096;
+// Persistent view tables, construction vectors and the largest live QSA
+// argument bundle are charged together; all GPU bytes remain in old roots.
+pub(crate) const HOST_BYTES: usize = 16 * 1024;
 const HALF: u64 = 64 * 1024 * 1024;
 pub(crate) struct Storage {
     working: [Handle; 3],
-    gr: [Handle; 4],  // normalized, down, low, up
-    gdn: [Handle; 4], // QKV, Z, H, raw recurrence output
+    gr: [Handle; 4],   // normalized, down, low, up
+    gdn: [Handle; 4],  // QKV, Z, H, raw recurrence output
+    qsa: [Handle; 14], // five projections, Q/K/IQ, candidate, out, partial/stats, shared mean/valid
 }
 impl Storage {
     pub(crate) fn new(roots: [Handle; 3]) -> Result<Self> {
@@ -21,12 +24,12 @@ impl Storage {
             return Err(Error::InvalidBufferLength);
         }
         let capacity = groups::CAPACITY;
-        let carve = |root: &Handle, widths: [usize; 4]| -> Result<[Handle; 4]> {
+        let carve = |root: &Handle, words: &[usize]| -> Result<Vec<Handle>> {
             let mut cursor = HALF;
-            let mut views = Vec::with_capacity(4);
-            for width in widths {
+            let mut views = Vec::with_capacity(words.len());
+            for &n in words {
                 // Native Alloc::take leaves256 bytes and aligns each cell to256.
-                let bytes = (capacity * width * 4) as u64;
+                let bytes = (n * 4) as u64;
                 let end = cursor.checked_add(bytes).ok_or(Error::ArithmeticOverflow)?;
                 let next = end.checked_add(511).ok_or(Error::ArithmeticOverflow)? & !255;
                 if next > 2 * HALF {
@@ -35,10 +38,35 @@ impl Storage {
                 views.push(root.clone().offset_start(cursor).offset_end(2 * HALF - end));
                 cursor = next;
             }
-            views.try_into().map_err(|_| Error::InvalidBufferLength)
+            Ok(views)
         };
-        let gr = carve(&roots[0], [10240, 320, 320, 10240])?;
-        let gdn = carve(&roots[1], [10240, 6144, 10240, 6144])?;
+        let gr: [Handle; 4] = carve(&roots[0], &[10240, 320, 320, 10240].map(|w| w * capacity))?
+            .try_into()
+            .map_err(|_| Error::InvalidBufferLength)?;
+        let gdn: [Handle; 4] = carve(&roots[1], &[10240, 6144, 10240, 6144].map(|w| w * capacity))?
+            .try_into()
+            .map_err(|_| Error::InvalidBufferLength)?;
+        let qsa: [Handle; 14] = carve(
+            &roots[1],
+            &[
+                12288 * capacity,
+                512 * capacity,
+                512 * capacity,
+                512 * capacity,
+                128 * capacity,
+                6144 * capacity,
+                512 * capacity,
+                512 * capacity,
+                640 * capacity,
+                6144 * capacity,
+                crate::strata_qsa::PARTIAL_WORDS * 32,
+                crate::strata_qsa::STATS_WORDS * 32,
+                1024 * 128,
+                1024,
+            ],
+        )?
+        .try_into()
+        .map_err(|_| Error::InvalidBufferLength)?;
         let working = [
             roots[0].clone().offset_end(HALF),
             roots[1].clone().offset_end(HALF),
@@ -55,7 +83,18 @@ impl Storage {
                 return Err(Error::InvalidBufferLength);
             }
         }
-        Ok(Self { working, gr, gdn })
+        for (i, a) in qsa.iter().enumerate() {
+            if overlaps(a, &working[1])? || qsa[..i].iter().any(|b| overlaps(a, b).unwrap_or(true))
+            {
+                return Err(Error::InvalidBufferLength);
+            }
+        }
+        Ok(Self {
+            working,
+            gr,
+            gdn,
+            qsa,
+        })
     }
     pub(crate) fn working(&self) -> [Handle; 3] {
         self.working.clone()
@@ -66,10 +105,14 @@ impl Storage {
     pub(crate) fn gdn(&self) -> [Handle; 4] {
         self.gdn.clone()
     }
+    pub(crate) fn qsa(&self) -> [Handle; 14] {
+        self.qsa.clone()
+    }
     pub(crate) fn output(&self, h: &Handle) -> bool {
         self.gr
             .iter()
             .chain(self.gdn.iter())
+            .chain(self.qsa.iter())
             .any(|v| same_view(h, v))
     }
 }

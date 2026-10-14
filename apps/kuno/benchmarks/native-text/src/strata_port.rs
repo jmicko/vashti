@@ -921,10 +921,26 @@ pub(crate) fn dimension(original: CubeDim, project: bool) -> CubeDim {
 }
 pub(crate) fn validate_limits(limits: &wgpu::Limits) -> kuno_text::Result<()> {
     if enabled()
-        && (limits.max_compute_invocations_per_workgroup < 256
-            || limits.max_compute_workgroup_size_x < 256
+        && (limits.max_compute_invocations_per_workgroup
+            < if crate::strata_intel_core::enabled() {
+                1024
+            } else {
+                256
+            }
+            || limits.max_compute_workgroup_size_x
+                < if crate::strata_intel_core::enabled() {
+                    1024
+                } else {
+                    256
+                }
             || limits.max_compute_workgroup_storage_size
-                < if verify_capacity() == 8 { 32768 } else { 19712 }
+                < if crate::strata_intel_core::enabled() {
+                    32912
+                } else if verify_capacity() == 8 {
+                    32768
+                } else {
+                    19712
+                }
             || fused_sources()
                 && (limits.max_storage_buffers_per_shader_stage
                     < if crate::strata_intel_core::enabled() {
@@ -995,6 +1011,7 @@ pub(crate) fn validate_shader_set() -> Result<(), Box<dyn std::error::Error>> {
         shaders.extend(crate::strata_gdn::prompt::sources());
         shaders.extend(crate::strata_qsa::sources());
         shaders.extend(crate::strata_qsa::prompt::sources());
+        shaders.extend(crate::strata_qsa::selection::sources());
         shaders.extend(crate::strata_global_experts::compiled_sources());
         shaders.extend(crate::strata_global_moe::compiled_sources());
     }
