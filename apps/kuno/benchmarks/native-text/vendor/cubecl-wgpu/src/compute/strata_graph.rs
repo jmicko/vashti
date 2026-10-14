@@ -41,6 +41,7 @@ pub(crate) fn enabled() -> bool {
 pub(crate) struct Program {
     words: Vec<u32>,
     bindings: Vec<vk::DescriptorType>,
+    accesses: Vec<vk::AccessFlags>,
     entry: CString,
 }
 #[derive(Default)]
@@ -68,7 +69,13 @@ pub(crate) fn register_module(
     .validate(&m)
     .map_err(|_| fault("native graph WGSL validation"))?;
     let mut bindings = Vec::new();
-    for (_, g) in m.global_variables.iter() {
+    let entry_index = m
+        .entry_points
+        .iter()
+        .position(|e| e.name == entry && e.stage == naga::ShaderStage::Compute)
+        .ok_or_else(|| fault("native graph compute entrypoint"))?;
+    let usage = info.get_entry_point(entry_index);
+    for (handle, g) in m.global_variables.iter() {
         if let Some(b) = &g.binding {
             if b.group != 0 {
                 return Err(fault("native graph descriptor group"));
@@ -78,7 +85,19 @@ pub(crate) fn register_module(
                 naga::AddressSpace::Storage { .. } => vk::DescriptorType::STORAGE_BUFFER,
                 _ => return Err(fault("native graph descriptor kind")),
             };
-            bindings.push((b.binding, t));
+            let used = usage[handle];
+            let mut access = vk::AccessFlags::empty();
+            if used.contains(naga::valid::GlobalUse::READ) {
+                access |= if t == vk::DescriptorType::UNIFORM_BUFFER {
+                    vk::AccessFlags::UNIFORM_READ
+                } else {
+                    vk::AccessFlags::SHADER_READ
+                };
+            }
+            if used.contains(naga::valid::GlobalUse::WRITE) {
+                access |= vk::AccessFlags::SHADER_WRITE;
+            }
+            bindings.push((b.binding, t, access));
         }
     }
     bindings.sort_by_key(|x| x.0);
@@ -108,6 +127,7 @@ pub(crate) fn register_module(
     .map_err(|_| fault("native graph SPIRV lowering"))?;
     let p = Arc::new(Program {
         words,
+        accesses: bindings.iter().map(|b| b.2).collect(),
         bindings: bindings.into_iter().map(|b| b.1).collect(),
         entry: CString::new(entry).map_err(|_| fault("native graph entrypoint"))?,
     });
@@ -540,8 +560,71 @@ impl Graph {
         let barrier = vk::MemoryBarrier::default()
             .src_access_mask(vk::AccessFlags::MEMORY_WRITE)
             .dst_access_mask(vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE);
+        // One boundary covers Wgpu upload/initialization writes. Within the
+        // graph, only real entrypoint accesses to the same buffer create edges.
+        unsafe {
+            self.device.cmd_pipeline_barrier(
+                self.command,
+                vk::PipelineStageFlags::ALL_COMMANDS,
+                vk::PipelineStageFlags::COMPUTE_SHADER | vk::PipelineStageFlags::DRAW_INDIRECT,
+                vk::DependencyFlags::empty(),
+                &[barrier],
+                &[],
+                &[],
+            );
+        }
+        let mut previous = HashMap::<vk::Buffer, vk::AccessFlags>::new();
         for n in &self.nodes {
             let p = &self.pipelines[&n.pipeline];
+            let mut accesses = HashMap::<vk::Buffer, vk::AccessFlags>::new();
+            for (r, access) in n.resources.iter().zip(&p.program.accesses) {
+                if !access.is_empty() {
+                    *accesses.entry(raw_buffer(r)?).or_default() |= *access;
+                }
+            }
+            if let Dispatch::Indirect(r) = &n.dispatch {
+                *accesses.entry(raw_buffer(r)?).or_default() |=
+                    vk::AccessFlags::INDIRECT_COMMAND_READ;
+            }
+            let mut dependencies = Vec::new();
+            for (buffer, access) in accesses {
+                if let Some(before) = previous.get(&buffer).copied() {
+                    if before.contains(vk::AccessFlags::SHADER_WRITE)
+                        || access.contains(vk::AccessFlags::SHADER_WRITE)
+                    {
+                        dependencies.push(
+                            vk::BufferMemoryBarrier::default()
+                                .src_access_mask(before)
+                                .dst_access_mask(access)
+                                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                                .buffer(buffer)
+                                .offset(0)
+                                .size(vk::WHOLE_SIZE),
+                        );
+                        previous.insert(buffer, access);
+                    } else {
+                        previous.insert(buffer, before | access);
+                    }
+                } else {
+                    previous.insert(buffer, access);
+                }
+            }
+            if !dependencies.is_empty() {
+                unsafe {
+                    self.device.cmd_pipeline_barrier(
+                        self.command,
+                        vk::PipelineStageFlags::COMPUTE_SHADER
+                            | vk::PipelineStageFlags::DRAW_INDIRECT,
+                        vk::PipelineStageFlags::COMPUTE_SHADER
+                            | vk::PipelineStageFlags::DRAW_INDIRECT,
+                        vk::DependencyFlags::empty(),
+                        &[],
+                        &dependencies,
+                        &[],
+                    );
+                }
+            }
             let layouts = [p.set_layout];
             let set = unsafe {
                 self.device.allocate_descriptor_sets(
@@ -575,15 +658,6 @@ impl Graph {
                 .collect::<Vec<_>>();
             unsafe {
                 self.device.update_descriptor_sets(&writes, &[]);
-                self.device.cmd_pipeline_barrier(
-                    self.command,
-                    vk::PipelineStageFlags::ALL_COMMANDS,
-                    vk::PipelineStageFlags::ALL_COMMANDS,
-                    vk::DependencyFlags::empty(),
-                    &[barrier],
-                    &[],
-                    &[],
-                );
                 self.device.cmd_bind_pipeline(
                     self.command,
                     vk::PipelineBindPoint::COMPUTE,
