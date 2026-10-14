@@ -4579,3 +4579,28 @@ whole completion checklist (AB/packing, prompt/PLE/MTP initialization, complete
 recording/sampling/arbitrary input), then reconcile and perform final acceptance.
 API/installed services/Vashti changes required: none. Canonical checkout and
 inherited bytecode preserved; no install/release/reset/rebind.
+
+
+### Active Kuno engine handoff extension — native GDN AB/window preload (2026-10-14)
+
+Source `3ae92cf`, same isolated `codex/strata-rust-port` checkout. Completion
+guide **Native GDN AB and next-token preload** supersedes the generic AB and
+single-plane limitations in the previous GDN receipt.
+
+Core now borrows real original resident BF16 AB matrices and runs pinned
+32-lane/eight-value FMA window projection plus gating. Real half-result stamps
+join before control status acceptance. No generic alpha/beta fallback. QKV/Z,
+controls, native recurrence/norm and prefix replay stay connected. Recurrence
+and replay now preload next-token Q/K in alternate shared planes. No new MAIN
+owner or model duplicate; unused old scalar scratch stays visibly reserved.
+
+Release build, strict Clippy,211 offline shaders and two independent host dot/
+state-prefix tests pass. Ordinary regression:1,363 pass/one ignored. No GPU/model
+or speed execution. Earlier full-core failures and complete numerical/state/
+queue/prompt/packing/MTP/sampling/input acceptance remain required.
+
+Next actual dependency is grouped MTP front/prompt initialization; read the
+completion receipt's pinned call sequence and teacher alignment. Current scalar
+teacher/repair loops are not native grouped graphs. Keep the whole assembled
+core selected, goal active and speed gate closed. API/Vashti changes: none.
+Canonical checkout/services and inherited bytecode preserved; no installation.

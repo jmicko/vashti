@@ -38,7 +38,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | GPU route/group planning and CPU contribution | `verify.cpp` router, `resident_plan`, doorbell/pool/host plans; `src/kernels/cpu` | Real GPU router exists. Audit the selected working Intel all-GPU-fetch versus host-pool mode and reproduce its actual mode, including overlap/merge where active. |
 | Native expert math and grouped rows | `sycl/src/kernels/cuda/iq_kernels.dp.cpp::row_entries`, `native_gu_kernel`, `native_down_kernel` | Packed integer math/BDA roots exist. Separate GU roles, 4/2/1 chunks, activation, intermediate storage and downstream consumers are now selected together in the Intel core; all 158 WGSL/SPIR-V variants validate, including 105 physical-pointer checks; numerical/model execution acceptance remains pending. The global core now uses one per-role launch containing pinned row_entries4/2/1 loops, scalar IQ4_XS, native signed integer finish and XOR reduction; numerical/model execution acceptance remains pending. Historical fixed-chunk kernels are retained separately. |
 | GR write/read/norm/down/up/injection | `sycl/src/kernels/cuda/fused_gr.dp.cpp::fused_gr_read_multi`; `verify.cpp::gr_read_group` | Native pending-write norm, sliced BF16 down/injection, fixed slice reduction and up/mix/commit are now connected and unconditionally selected in the core, including explicit PLE/final boundary writes. Resident original weights and the enlarged private scratch owner are charged together. Structural acceptance passes; numerical/model execution acceptance and final substitution audit remain pending. |
-| GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp` | Core now connects native conv/L2, controls, four-row-group FMA recurrence/output norm and the same state-only accepted-prefix replay. See the GDN receipt below. Dedicated alpha/beta projection arithmetic, optional Q8 producer fusion, prompt-path fidelity, physical execution and final numerical/queue audit remain open. |
+| GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp` | Core now connects native BF16 alpha/beta window projection, conv/L2, controls, double-buffered four-row-group FMA recurrence/output norm and state-only accepted-prefix replay. See the GDN receipts below. Optional Q8 producer fusion, prompt-path fidelity, physical execution and final numerical/queue audit remain open. |
 | QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects FP16 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. See the QSA receipt below for precise storage/scheduling substitutions and remaining numerical/state acceptance; do not claim full QSA fidelity yet. |
 | PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Original grouped reads/hash/history exist. Audit asynchronous deduplicated source reads, grouped BF16 projections and ordered history snapshots/commit. Never persist request n-grams. |
 | Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, MoE MMQ/Intel implementations | Rust bounded graph prefill is not full prompt-path parity. Port connected chunk budget, streamed layer staging and dense/expert batches, including prompt history consumed by MTP. |
@@ -881,3 +881,58 @@ installation. Full rewrite is still incomplete and the speed gate stays closed.
 Continue the coupled checklist: native AB/dense/packing audits, original prompt
 prefill/PLE/MTP initialization and full graph/capture/sampling/arbitrary-input
 paths; reconcile those consumers before final completeness and physical tests.
+
+## Native GDN AB and next-token preload (2026-10-14)
+
+Source `3ae92cf`. Core controls now use actual original resident BF16
+`ssm_alpha.weight`/`ssm_beta.weight`, not the generic projector's F32 arithmetic.
+The executor authenticates model provenance, dtype30, actual2560-column geometry,
+matching original output rows and tensor roles before borrowing existing cache
+handles. No decoded duplicate, per-request weight upload or new MAIN owner.
+
+The kernel follows `verify_kernels.dp.cpp::gdn_ab_multi_kernel`: two consecutive
+rows per64-thread group,32 lanes, eight contiguous BF16 weights per pack, stride32
+packs, per-element FMA and XOR reduction. Each weight pack feeds all real1..8
+rows. Alpha adds original dt and native softplus/negative-A; beta uses sigmoid.
+An additional Vulkan status join combines actual alpha/beta stamps before the
+existing control-status fold. This status-proof dispatch is the documented
+backend addition; neither a fabricated geometry nor a missing half can pass.
+QKV/Z keep the original quantized bundle. The retired standalone core control
+producer is removed, and bypassing the native AB owner rejects instead of
+falling back. Old ALPHA/BETA scratch pages remain reserved, not falsely consumed.
+
+Recurrence and state-only replay now use the pinned two-plane Q/K schedule.
+Current inputs initialize before the loop; row group0 preloads next K and group1
+preloads next Q into the alternate plane while current state math executes. The
+next iteration's barrier publishes those writes. The state-only shader omits Q
+loads. Shared memory grows by1 KiB/block, with no global owner/quote change.
+This supersedes the previous receipt's generic AB and single-plane gaps; other
+GDN/whole-port substitutions and physical acceptance remain required.
+
+Validation logs under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-gdn-ab-build-20261014.log`: release core build passes.
+- `strata-gdn-ab-clippy-20261014.log`: strict release core Clippy passes.
+- `strata-gdn-ab-shaders-20261014.log`:211 offline shaders pass, including
+  actual AB, its stamp join and both double-buffered recurrence variants.
+- `strata-gdn-ab-math-tests-20261014.log`: two host tests pass. New BF16 test
+  checks exact pack decoding/column coverage, every real RHS and inactive-row
+  preservation against an independent F64 dot oracle. Existing native state/
+  prefix oracle passes. Neither proves device arithmetic or synchronization.
+- `strata-gdn-ab-ordinary-regression-20261014.log`:1,363 pass, one ignored.
+
+No live GPU/model/correctness/recovery or speed run; no service/API/UI change.
+Earlier full-core failures and the full completion gate remain open. Goal active.
+
+Next coupled port: MTP front/prompt initialization. Actual pinned
+`MtpDrafter::record_front(T,-1)` gathers and normalizes embeddings, projects
+embedding Q8 and wide hidden-norm streams in groups≤8, broadcasts into HC
+residuals, runs native fused GR, projects Q8 K/V, normalizes/RoPEs K and appends
+in the actual KV format. `prefill` queues grouped front-only graphs and completes
+one final fence. Rust global controller currently loops target prompt chunks of
+three and calls scalar `ResidentMtp::append_kv` once per teacher row; accepted
+repair also loops its front calls. Wrapping that loop with a batch name is not
+parity. Implement real grouped owners/producers/consumers and state publication
+before changing the controller. Native default hidden norm is wide
+(`mtp_hnorm_stream=false`); Rust's one10240-wide norm already matches that
+choice. Preserve teacher token/carry alignment and the prompt_len-1 MTP cursor.
