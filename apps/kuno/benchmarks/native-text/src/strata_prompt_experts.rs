@@ -180,6 +180,7 @@ const DQ_WORDS: usize = GU_WORDS + DOWN_WORDS;
 /// Actual descriptor view of one raw transfer slot. All source role spans are
 /// original-format bytes; no scheduler-only narrowed declaration is accepted.
 fn raw_slot(root: &Handle, slot: usize, roles: [usize; 3]) -> Result<Handle> {
+    let root_bytes = allocation::whole_root_bytes(root)?;
     let bytes = roles
         .iter()
         .try_fold(0usize, |sum, &n| sum.checked_add(n))
@@ -190,7 +191,6 @@ fn raw_slot(root: &Handle, slot: usize, roles: [usize; 3]) -> Result<Handle> {
         || bytes
             .checked_mul(RAW_SLOTS)
             .is_none_or(|n| n > 64 * 1024 * 1024)
-        || root.size_in_used() != allocation::ROOT_BYTES
         || root.offset_start.unwrap_or(0) != 0
         || root.offset_end.unwrap_or(0) != 0
     {
@@ -201,7 +201,7 @@ fn raw_slot(root: &Handle, slot: usize, roles: [usize; 3]) -> Result<Handle> {
     Ok(root
         .clone()
         .offset_start(first as u64)
-        .offset_end(allocation::ROOT_BYTES - end as u64))
+        .offset_end(root_bytes - end as u64))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -503,6 +503,20 @@ mod raw_slot_tests {
     use super::*;
     use cubecl_common::stream_id::StreamId;
 
+    #[test]
+    fn raw_slot_uses_actual_whole_parent_end_for_non_power_of_two_backing() {
+        let size = allocation::ROOT_BYTES - 256;
+        let root = Handle::new(StreamId { value: 92 }, size);
+        let roles = [1024, 1024, 2048];
+        for slot in 0..RAW_SLOTS {
+            let view = raw_slot(&root, slot, roles).unwrap();
+            assert_eq!(view.size(), size);
+            assert_eq!(view.offset_start.unwrap(), (slot * 4096) as u64);
+            assert_eq!(view.offset_end.unwrap(), size - ((slot + 1) * 4096) as u64);
+            assert_eq!(view.size_in_used(), 4096);
+        }
+        assert!(raw_slot(&root.offset_end(256), 0, roles).is_err());
+    }
     #[test]
     fn exact_views_cover_original_gu_up_down_for_every_supported_quant_pair() {
         let root = Handle::new(StreamId { value: 91 }, allocation::ROOT_BYTES);

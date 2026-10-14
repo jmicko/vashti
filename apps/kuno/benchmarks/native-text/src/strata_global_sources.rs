@@ -283,12 +283,14 @@ impl Sources {
         self.validate_attached()?;
         if self.prompt_stage.is_some()
             || root.stream != self.stages.as_ref().ok_or_else(reject)?[2].stream
-            || root.size_in_used() != crate::strata_prompt::allocation::ROOT_BYTES
             || root.offset_start.unwrap_or(0) != 0
             || root.offset_end.unwrap_or(0) != 0
         {
             return Err(reject());
         }
+        // The exact parent must fit the actual MoE views, not a fictitious
+        // fixed512MiB descriptor on a shorter cache-backed owner.
+        crate::strata_prompt::groups::Views::new(root.clone())?;
         let resources = self
             .client
             .retained_resource_metadata(vec![root.clone()])
@@ -322,7 +324,7 @@ impl Sources {
             != original_stage.clone().binding().memory.allocation_id()
             || destination.stream != original_stage.stream
             || cell >= EXPERTS
-            || destination.size_in_used() != crate::strata_prompt::allocation::ROOT_BYTES
+            || destination.size_in_used() != original_stage.size_in_used()
             || destination.offset_start.unwrap_or(0) != 0
             || destination.offset_end.unwrap_or(0) != 0
             || !first.is_multiple_of(16)

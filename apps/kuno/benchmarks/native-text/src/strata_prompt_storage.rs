@@ -7,7 +7,6 @@ use super::*;
 // argument bundle are charged together; all GPU bytes remain in old roots.
 pub(crate) const HOST_BYTES: usize = 32 * 1024;
 const HALF: u64 = 64 * 1024 * 1024;
-const ROOT: u64 = allocation::ROOT_BYTES;
 pub(crate) struct Storage {
     working: [Handle; 3],
     moe: groups::Views,
@@ -25,15 +24,23 @@ impl Storage {
         if capacity == 0 || capacity > allocation::DEFAULT_ROWS {
             return Err(Error::InvalidBufferLength);
         }
-        if roots.iter().any(|h| {
-            h.size_in_used() != ROOT
-                || h.offset_start.unwrap_or(0) != 0
-                || h.offset_end.unwrap_or(0) != 0
-                || h.stream != roots[0].stream
-        }) {
+        let sizes = [
+            allocation::whole_root_bytes(&roots[0])?,
+            allocation::whole_root_bytes(&roots[1])?,
+            allocation::whole_root_bytes(&roots[2])?,
+        ];
+        if roots.iter().any(|h| h.stream != roots[0].stream)
+            || roots.iter().enumerate().any(|(i, h)| {
+                roots[..i].iter().any(|other| {
+                    h.clone().binding().memory.allocation_id()
+                        == other.clone().binding().memory.allocation_id()
+                })
+            })
+        {
             return Err(Error::InvalidBufferLength);
         }
         let carve = |root: &Handle, words: &[usize]| -> Result<Vec<Handle>> {
+            let root_bytes = allocation::whole_root_bytes(root)?;
             let mut cursor = HALF;
             let mut views = Vec::with_capacity(words.len());
             for &n in words {
@@ -41,10 +48,14 @@ impl Storage {
                 let bytes = (n * 4) as u64;
                 let end = cursor.checked_add(bytes).ok_or(Error::ArithmeticOverflow)?;
                 let next = end.checked_add(511).ok_or(Error::ArithmeticOverflow)? & !255;
-                if next > ROOT {
+                if next > root_bytes {
                     return Err(Error::InvalidBufferLength);
                 }
-                views.push(root.clone().offset_start(cursor).offset_end(ROOT - end));
+                views.push(
+                    root.clone()
+                        .offset_start(cursor)
+                        .offset_end(root_bytes - end),
+                );
                 cursor = next;
             }
             Ok(views)
@@ -98,8 +109,8 @@ impl Storage {
         .try_into()
         .map_err(|_| Error::InvalidBufferLength)?;
         let working = [
-            roots[0].clone().offset_end(ROOT - HALF),
-            roots[1].clone().offset_end(ROOT - HALF),
+            roots[0].clone().offset_end(sizes[0] - HALF),
+            roots[1].clone().offset_end(sizes[1] - HALF),
             roots[2].clone(),
         ];
         for (i, a) in persistent.iter().enumerate() {
@@ -206,6 +217,65 @@ pub(crate) fn overlaps(a: &Handle, b: &Handle) -> Result<bool> {
 mod owned_layout_tests {
     use super::*;
     use cubecl_common::stream_id::StreamId;
+    #[test]
+    fn actual_non_power_of_two_parent_sizes_carve_without_virtual_tail_bytes() {
+        let stream = StreamId { value: 97 };
+        let roots: [Handle; 3] = std::array::from_fn(|i| {
+            Handle::new(stream, allocation::ROOT_BYTES - 256 * (i as u64 + 1))
+        });
+        let full = Storage::at_capacity(roots.clone(), allocation::DEFAULT_ROWS).unwrap();
+        let end = |h: &Handle| h.offset_start.unwrap_or(0) + h.size_in_used();
+        let required = [
+            (full.gr.iter().chain(&full.outer).map(end).max().unwrap() + 511) & !255,
+            (full
+                .ple
+                .iter()
+                .chain(&full.gdn)
+                .chain(&full.qsa)
+                .map(end)
+                .max()
+                .unwrap()
+                + 511)
+                & !255,
+            full.moe.handles().into_iter().map(end).max().unwrap(),
+        ];
+        let exact: [Handle; 3] = std::array::from_fn(|i| Handle::new(stream, required[i]));
+        let layout = Storage::at_capacity(exact, allocation::DEFAULT_ROWS).unwrap();
+        for h in layout.gr.iter().chain(&layout.outer) {
+            assert!(end(h) <= required[0]);
+            assert_eq!(h.size(), required[0]);
+        }
+        for h in layout.ple.iter().chain(&layout.gdn).chain(&layout.qsa) {
+            assert!(end(h) <= required[1]);
+            assert_eq!(h.size(), required[1]);
+        }
+        for h in layout.moe.handles() {
+            assert!(end(h) <= required[2]);
+            assert_eq!(h.size(), required[2]);
+        }
+        for root in 0..3 {
+            let mut short: [Handle; 3] = std::array::from_fn(|i| Handle::new(stream, required[i]));
+            short[root] = Handle::new(stream, required[root] - 256);
+            assert!(Storage::at_capacity(short, allocation::DEFAULT_ROWS).is_err());
+        }
+    }
+    #[test]
+    fn private_prompt_layout_rejects_aliases_slices_and_foreign_streams() {
+        let stream = StreamId { value: 96 };
+        let make = || std::array::from_fn(|_| Handle::new(stream, allocation::ROOT_BYTES));
+        let mut roots: [Handle; 3] = make();
+        roots[1] = roots[0].clone();
+        assert!(Storage::new(roots).is_err());
+        let mut roots: [Handle; 3] = make();
+        roots[2] = roots[2].clone().offset_end(256);
+        assert!(Storage::new(roots).is_err());
+        let mut roots: [Handle; 3] = make();
+        roots[2] = Handle::new(StreamId { value: 95 }, allocation::ROOT_BYTES);
+        assert!(Storage::new(roots).is_err());
+        let mut roots: [Handle; 3] = make();
+        roots[0] = Handle::new(stream, allocation::ROOT_BYTES + 256);
+        assert!(Storage::new(roots).is_err());
+    }
     #[test]
     fn native_default_persistent_and_overlaid_views_fit_actual_registered_roots() {
         let stream = StreamId { value: 98 };

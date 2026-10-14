@@ -132,24 +132,19 @@ pub(crate) struct Views {
 }
 impl Views {
     pub(crate) fn new(root: Handle) -> Result<Self> {
-        if root.size_in_used() != allocation::ROOT_BYTES
-            || root.offset_start.unwrap_or(0) != 0
-            || root.offset_end.unwrap_or(0) != 0
-        {
-            return Err(Error::InvalidBufferLength);
-        }
+        let root_bytes = allocation::whole_root_bytes(&root)?;
         let mut cursor: u64 = 64 * 1024 * 1024;
         let mut take = |bytes: u64| -> Result<Handle> {
             let first = cursor;
             let end = first.checked_add(bytes).ok_or(Error::ArithmeticOverflow)?;
-            if bytes == 0 || !bytes.is_multiple_of(256) || end > allocation::ROOT_BYTES {
+            if bytes == 0 || !bytes.is_multiple_of(256) || end > root_bytes {
                 return Err(Error::InvalidBufferLength);
             }
             cursor = end;
             Ok(root
                 .clone()
                 .offset_start(first)
-                .offset_end(allocation::ROOT_BYTES - end))
+                .offset_end(root_bytes - end))
         };
         Ok(Self {
             gu: take(GU_BYTES)?,

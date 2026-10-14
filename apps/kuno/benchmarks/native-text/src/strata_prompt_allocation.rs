@@ -8,6 +8,21 @@ use kuno_text::{Error, Result};
 pub(crate) const DEFAULT_ROWS: usize = 2048;
 pub(crate) const ROOT_BYTES: u64 = 512 * 1024 * 1024;
 pub(crate) const MAIN_BYTES: u64 = 3 * ROOT_BYTES;
+/// Structural whole-root envelope, shared by private Scope, raw ring and source
+/// attachment. Physical ownership still needs the arena/cache owner's backend
+/// attestation; a Handle size alone is not a lending or erasure capability.
+pub(crate) fn whole_root_bytes(root: &cubecl_runtime::server::Handle) -> Result<u64> {
+    let bytes = root.size_in_used();
+    if !(64 * 1024 * 1024..=ROOT_BYTES).contains(&bytes)
+        || !bytes.is_multiple_of(256)
+        || root.size() != bytes
+        || root.offset_start.unwrap_or(0) != 0
+        || root.offset_end.unwrap_or(0) != 0
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    Ok(bytes)
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Mode {
     Owned,

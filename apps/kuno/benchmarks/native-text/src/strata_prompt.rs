@@ -42,11 +42,11 @@ impl Scope {
             u::handle(arena, ids[1])?,
             u::handle(arena, ids[2])?,
         ];
-        if handles
-            .iter()
-            .any(|h| h.size_in_used() != allocation::ROOT_BYTES || h.stream != handles[0].stream)
-        {
-            return Err(Error::InvalidBufferLength);
+        for h in &handles {
+            allocation::whole_root_bytes(h)?;
+            if h.stream != handles[0].stream {
+                return Err(Error::InvalidBufferLength);
+            }
         }
         STAGES.with(|s| {
             let mut s = s.borrow_mut();
