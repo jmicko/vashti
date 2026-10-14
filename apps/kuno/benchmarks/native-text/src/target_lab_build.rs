@@ -175,6 +175,11 @@ impl IntelMtpMemory {
                 crate::executor::batch_moe::FROZEN_DOWN_INTEGER_MAIN_BYTES
             } else {
                 0
+            }
+            + if crate::strata_intel_core::enabled() {
+                crate::strata_stage::MAIN_BYTES
+            } else {
+                0
             };
         if self.used == 0
             || self.used >= self.total
@@ -322,6 +327,11 @@ pub(crate) fn intel_mtp_preflight_with_down_math(
                         + crate::resident_gdn::batch::strata_replay::MAIN_BYTES
                         + if integer { 65_536 } else { 0 }
                         + crate::executor::batch_moe::FROZEN_DOWN_INTEGER_MAIN_BYTES
+                        + if crate::strata_intel_core::enabled() {
+                            crate::strata_stage::MAIN_BYTES
+                        } else {
+                            0
+                        }
                         + if cfg!(feature = "strata-eight-window") {
                             8 * 1024 * 1024
                         } else {
@@ -1359,9 +1369,20 @@ pub(crate) fn validate_frozen_integer_math_close(
     };
     if (buffers, bytes)
         != (
-            expected.0 + crate::resident_gdn::batch::strata_replay::EXTRA_BUFFERS,
+            expected.0
+                + crate::resident_gdn::batch::strata_replay::EXTRA_BUFFERS
+                + if crate::strata_intel_core::enabled() {
+                    3
+                } else {
+                    0
+                },
             expected.1
                 + crate::resident_gdn::batch::strata_replay::MAIN_BYTES
+                + if crate::strata_intel_core::enabled() {
+                    crate::strata_stage::MAIN_BYTES
+                } else {
+                    0
+                }
                 + if cfg!(feature = "strata-eight-window") {
                     2 * 4 * 1024 * 1024 + 65536
                 } else {
