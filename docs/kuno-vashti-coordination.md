@@ -5016,3 +5016,45 @@ B70 driver exposes cooperative-matrix and BF16 extensions and FP16/F32 matrix
 shapes; no matrix computation was run. The existing device adopts one family0
 queue; families1/2 exist but were not requested. These are concrete starting
 points for the connected compiler/device/queue block, not performance evidence.
+
+
+### Active Kuno engine handoff — connected cooperative matrix backend (2026-10-14)
+
+Source `d326f23`, isolated `codex/strata-rust-port`. Read completion guide
+**Connected Rust cooperative prompt matrices**, including the required queue
+continuation and validation details. Actual dense prompt/MTP and grouped expert
+GU/DOWN products now use Rust FP16/BF16 cooperative8x16x16/F32 kernels, coupled to
+the existing rounded images, maps, faults, activation and downstream consumers.
+Target/MTP device creation enables the actual matrix features and accurately
+adopts the full extension list without enlarging admitted limits. Both Wgpu and
+recorded native pipelines use the same explicit16-lane geometry; existing
+physical integer shaders retain32. Native SPIR-V registration includes real
+INFO/descriptors and cached operator identities. External model sources retain
+their audited read-only WGSL lowering.
+
+One shared HAL canonicalizer fixes redundant implicit Workgroup strides while
+preserving explicit Block and host byte ABIs, rejecting aliases it cannot safely
+rewrite. Release build, strict core/feature-off Clippy, five host ABI tests,
+308 existing shader variants (122 physical-pointer checks) and32 cooperative
+variants (all eight independent optional-layout masks) pass. Use the modern
+validation-only Khronos tool revision/path in the receipt; the distro2025 tool
+cannot validate BF16. No live model/GPU/numerical/state/recovery/throughput run;
+the earlier full-core228 failures remain unaudited and the complete suite is not
+green. No new global tensor root, API/Vashti change, install, service restart or
+release. Canonical checkout and inherited bytecode preserved.
+
+**Next connect the native copy/compute schedule as one block.** The device still
+requests only family0 queue0, and both Wgpu roots and imported host copy sources
+are EXCLUSIVE. Merely requesting a transfer queue would race or violate ownership.
+The receipt names exact allocation/insertion/recording/flush sites and dependency,
+replay and partial-submission lifetime requirements. Keep actual created queue
+metadata, buffer sharing/ownership, semaphore edges and final dual-queue completion
+joined. Do not claim real ring-slot overlap from conservative full-root hazards.
+Then complete native default2048/owned-versus-loaned sizing and placement,
+arbitrary input/supported sampling, verifier repair and the full source/failure
+audits before protected whole-engine acceptance and only then speed comparisons.
+
+Full rewrite incomplete, goal active, speed gate closed. Last shared-shell
+`sudo -n -v` still required a password; no protected operation or workaround was
+attempted. There is useful source work before root is needed. Required Vashti
+changes: none.

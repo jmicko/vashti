@@ -42,6 +42,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects FP16 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. See the QSA receipt below for precise storage/scheduling substitutions and remaining numerical/state acceptance; do not claim full QSA fidelity yet. |
 | PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Core connects native BF16 MAX8 projections, normalization/gate/conv/history, deduplicated positional reads and accepted-prefix ownership. Prompt calls now consume a bounded, joined double-buffered source prefetch. The latest controller receipt connects native large chunk geometry, joined uploads, retained tail and exact history acceptance. Native loans/queue scheduling and numerical/device acceptance remain open. Never persist request n-grams. |
 | Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. The bounded prompt path now uses logical-ID expert order, checked native transfer nodes, an eight-slot raw ring and two paired dequantization slots. The latest controller receipt connects full256-row owners/causal math/state acceptance, final-only head and full device MTP teaching. Dynamic byte-based cache loans, independent transfer/compute queues and final GEMM/layout substitution audit remain open. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
+| Prompt dense/expert matrix backend | Intel oneMKL rounded BF16/FP16 GEMMs | Connected Rust cooperative8x16x16/F32 kernels now consume the actual rounded dense and grouped GU/DOWN images, with enabled device features, SPIR-V native registration and required16 subgroup in both pipeline paths. See the cooperative-matrix receipt; physical numerical/model acceptance remains open. |
 | MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native FP16 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Queue/branch/capture fidelity, numerical/state acceptance, arbitrary input and supported sampling remain required. See the front/rest/MoE receipts. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Request-local Rust suffix/cost controller exists; audit supported window lengths and coupled sampling rather than fixing to four public-fixture rows. |
 | Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Real greedy verification/state-only repair exists. Audit all active windows and acceptance cases against GDN/QSA/PLE/positions; independent correctness oracle remains missing. |
@@ -2014,3 +2015,142 @@ Audit and connect device creation, kernel compiler selection, native rounded
 operand owners and their consumers together. WGSL custom factories must keep
 working alongside SPIR-V/Cube kernels. No runtime/default selection was changed
 by this read-only inventory.
+
+
+## Connected Rust cooperative prompt matrices (2026-10-14)
+
+Source commit: `d326f23` on isolated `codex/strata-rust-port`.
+The actual prompt/MTP dense projection and routed expert GU/DOWN consumers now
+use Rust CubeCL cooperative SPIR-V kernels. This replaces the previously used
+scalar8x8x32 WGSL GEMM; the old scalar sources remain offline historical coverage,
+not a fallback selected when the matrix path is slow. The full rewrite remains
+**incomplete**, and the speed gate stays closed.
+
+### Connected compiler, device, owners and products
+
+- `strata_matrix.rs` owns one8x16x16 tile per16-lane subgroup, native FP16 or BF16
+  operands and F32 accumulation. Each masked shared load handles partial token
+  rows without reading outside the original packed images. No host activation
+  readback, C++ inference library, replacement weights or new global tensor root
+  is introduced. Dense products retain arbitrary checked output strides; expert
+  products retain the genuine grouping/member-to-route map, GU/activation/DOWN
+  sequence, status acceptance and original fault word. Half-buffer arguments use
+  two-byte element counts; treating these handles as u32 arrays would be wrong.
+- `strata_prompt::project` calls the new dense kernel after its original pack and
+  dequantization, including GR/GDN/QSA/PLE/shared projections and full device MTP
+  teaching. `strata_prompt_experts::enqueue` calls the coupled FP16 GU and DOWN
+  products against its existing dequantized ring images. Integer decode expert
+  kernels remain the separately connected native math selected by the core.
+- `strata-intel-core` now enables `cubecl/wgpu-spirv`. Both actual target and MTP
+  device constructors call the native Intel device builder, enabling the matrix,
+  BF16,16-bit storage and Vulkan memory-model features before adopting the device.
+  The HAL receives the **actual full enabled extension list**, not the shorter
+  original Wgpu-required list. Caller-admitted limits are preserved; the generic
+  optional64-bit-indexing helper cannot silently increase storage-owner limits.
+  A missing capability is an error, not a scalar fallback.
+- Compiled SPIR-V is registered in the actual native graph with compiler-provided
+  descriptor access/INFO layout and the cached kernel's real operator name.
+  Read-only external imports still force their audited WGSL reflection/lowering;
+  enabling SPIR-V does not bypass immutable host-model descriptor validation.
+- Both Wgpu's ownership pipeline and the native recorded pipeline use the same
+  geometry parser and explicit required16 subgroup. The unchanged physical
+  integer shaders retain their32-lane requirement. Native graph construction
+  checks support for both16 and32. Raw shader type alone is not sufficient to
+  establish compatible subgroup geometry.
+
+### SPIR-V legality and offline-only validation
+
+Modern validation exposed Naga29's redundant ArrayStride on implicit Workgroup
+arrays (VUID10684). One shared HAL helper now canonicalizes the words actually
+passed to both Vulkan pipeline paths. It removes only implicit-workgroup-only
+array strides, preserves explicit Workgroup Block layouts and host interfaces,
+and rejects shared interface/implicit-workgroup type aliases instead of silently
+rewriting a byte ABI. This changes decorations, not instructions, IDs or math.
+The new host tests cover preservation, alias rejection, malformed streams and
+subgroup geometry.
+
+The distro2025 validator does not understand BF16 capability5118. The local
+validation-only tool is built from official SPIRV-Tools
+`fbe4f3ad913c44fe8700545f8ffe35d1382b7093` (vulkan-sdk-1.4.341.0, reports2026.1)
+and its pinned SPIRV-Headers `04f10f650d514df88b76d25e83db360142c7b174`, under
+`/media/jmicko/faststore/kuno-development/spirv-tools-matrix-20261014`.
+This is not an installed inference dependency. Matrix validation compiles the
+same four Cube expansions that are launched across all eight combinations of
+standard uniform layout, uniform unsized arrays and explicit workgroup layout.
+A configuration enables the validator's
+`--uniform-buffer-standard-layout` exactly when that compiler/device feature is
+selected; unsupported BF16 instructions are not skipped or downgraded.
+
+Validation logs in `/media/jmicko/faststore/kuno-development`:
+
+- `strata-matrix-connected-release-confirm-20261014.log`: release core build passes.
+- `strata-matrix-connected-all-layouts-20261014.log`: all308 existing WGSL/SPIR-V
+  variants pass, including122 physical-pointer validations. All32 cooperative
+  variants pass modern Vulkan1.3 validation across the eight layout masks. The
+  offline checker also verifies the actual cooperative multiply/fault opcodes
+  and the same subgroup geometry used by both pipeline constructors.
+- `strata-matrix-connected-clippy-20261014.log` and
+  `strata-matrix-feature-off-clippy-20261014.log`: strict release Clippy receipts
+  for the core and ordinary feature-off port, respectively.
+- `strata-matrix-layout-tests-20261014.log`: all five focused host ABI/subgroup
+  tests pass. No runtime/device/model is constructed by these tests.
+- `git diff --check` passes. The inherited Python bytecode and canonical checkout
+  were preserved. Initial validator-layout and Rust feature-owner borrow errors
+  were corrected in the connected source; the final receipts supersede those
+  earlier failed attempts.
+
+No model content, GPU inference, numerical/state/recovery proof, timing trial,
+service change, installation, release or Vashti/API change belongs to this block.
+The earlier complete-core suite still has228 unaudited failures; focused shader
+and ABI tests do not make that suite green.
+
+### Required continuation: native copy/compute queues as one block
+
+The constructor still requests only family0's one queue. An independent transfer
+queue remains **unimplemented**. Inspection shows why adding a queue alone would
+be incorrect: both `wgpu-hal::vulkan::Device::create_buffer` and the imported
+`strata_global_host.rs` buffers use EXCLUSIVE sharing, while the same original
+host experts can be read by shaders and copied into the raw staging ring.
+
+Connect real queue creation/adoption, buffer sharing or paired ownership
+transfers, copy/compute semaphore edges and retained recording lifetimes
+**together**. The B70 exposes one queue each in families0/1/2, so family0 queue1
+is invalid. Per-device queue metadata must describe queues actually created; do
+not infer creation from the physical family list or a global environment flag.
+If using concurrent sharing, apply it to both ordinary Wgpu roots and the actual
+imported host copy sources before allocation. Compute-only imported buffers do
+not need invented transfer usage. If using exclusive sharing, record both
+release/acquire halves and real cross-queue dependencies.
+
+Actual insertion/recording points:
+
+- `stream.rs::stage_public_host_copies` validates/retains exact original sources
+  and targets and currently inserts graph Copy nodes in stream order.
+- `strata_graph.rs::{push_transfer,node_accesses,execute}` records genuine copies,
+  fills, shaders and BDA read dependencies. Recording currently owns one compute
+  pool/command/descriptor pool and roots until its completion fence; capture
+  replay uses the exact resource/dispatch signature.
+- `stream.rs::flush_inner` currently drains Wgpu parameter/upload writes before
+  native execution. A new queue must not race that upload/erase boundary.
+- Dependencies must cover RAW/WAR/WAW (including reused raw ring slots), indirect
+  reads and hidden BDA source reads. Read/read need not serialize. Full-root
+  access tracking is conservative; do not claim ring-slot overlap from it.
+- Cached recordings must own both queues' command pools, synchronization objects
+  and resources. Timeline values must advance on replay; an old signal value
+  cannot be reused. The final fence must join both queues before info/source
+  retirement, state acceptance, erase or recovery. A partial submission failure
+  must retain all potentially in-flight owners; never free a copy pool merely
+  because the compute fence was not submitted.
+
+After that block, finish default2048/owned-versus-loaned prompt sizing and
+placement audit, arbitrary request input/supported sampling, verifier repair and
+all historical unit failures. Complete the source audit and protected
+whole-engine numerical/completion/state/recovery acceptance before speed trials.
+
+
+The B70 inventory's previously unresolved component value1000141000 is
+`BFLOAT16_NV` in current Vulkan bindings (`tracel-ash0.39.5`). Its enumerated
+8x16x16/F32 shape and advertised KHR BF16 features are the selected operand
+capability. This resolves the public enumeration label, not device execution.
+The final shared-shell `sudo -n -v` check still required a password; no protected
+operation followed. Source/offline work was not blocked by that credential.
