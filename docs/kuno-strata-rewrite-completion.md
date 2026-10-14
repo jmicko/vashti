@@ -2710,3 +2710,59 @@ On successful closure, restore original current physical placement/remaps (not
 blindly initial profile bytes after adaptive swaps) and publish only after a
 joined completion. Then finish conditional ring sizing/stream-all and remaining
 source/completeness/numerical/state/recovery gates. No speed benchmark yet.
+
+
+## Exact physical-parent prompt view geometry (2026-10-14)
+
+Source `c0e9efc`, following contiguous-cache loading `16e99d8`.
+**This removes an actual consumer-side lending blocker; it does not create or
+register borrowed private roots. Cache loans/restoration remain incomplete.**
+
+The real private Scope, Storage carving, MoE control/GU/PART views, raw transfer
+slot slicer and source-stage attachment now use each complete parent's actual
+byte size. A model-cache root may be alignment-sized and slightly below512MiB;
+using the old constant in `offset_end` would either reject it or claim bytes it
+does not own. Structural parent checks reject slices, mismatched whole/used
+sizes, non256-byte alignment and sizes outside64..512MiB. Storage additionally
+rejects duplicate allocation identities and foreign streams. The actual family
+carve determines whether each full parent is large enough; there is no promise
+that every64MiB root can contain the2048-row phases.
+
+The lower working slices remain exactly64MiB, all existing matrix/route/status
+view lengths stay unchanged, and raw transfers remain in the lower64MiB. Source
+attachment proves the real full buffer offset/size through retained backend
+metadata and requires that its actual MoE views fit. Copy destinations must
+match the attached root's exact size and allocation identity. No fictitious
+512MiB view is made from a smaller root; no math shader, copy/ring policy,
+allocation quote or default three512MiB owned allocation changes.
+
+`whole_root_bytes` is a structural envelope check, **not a public-to-private
+conversion capability, physical ownership proof, MAIN credit or erasure proof**.
+The running Scope still obtains BufferIds from the ordinary private arena;
+its exclusive power-of-two allocator and full owned-root cleanup are unchanged.
+A future loan must register actual cache backing and its full erasure under
+an exclusive source-lending transaction before private Scope publication.
+
+Validation logs in `/media/jmicko/faststore/kuno-development`:
+
+- `strata-exact-prompt-parent-build-20261014.log`: core release build passes.
+- `strata-exact-prompt-parent-clippy-20261014.log` and
+  `strata-exact-prompt-parent-feature-off-clippy-20261014.log`: strict core and
+  ordinary feature-off release Clippy pass.
+- `strata-exact-prompt-parent-tests-20261014.log`: all15 focused prompt tests
+  pass. No GPU math source changes, so prior shader validation was not repeated.
+- `git diff --check` passes; canonical and inherited bytecode are preserved.
+
+The three new tests check independent non-power-of-two parents, derive their
+exact family minimum sizes from actual view ends (including native alignment
+slack), accept those minima and reject a256-byte shortage in each parent.
+They also reject aliases/slices/foreign streams/oversized roots and prove raw
+slot offsets use the true owning end. These are host layout tests, not live
+Vulkan allocation or borrowed ownership/erasure acceptance.
+
+Next implement the real private borrowed-root registration and source-exclusion/
+staging/restore transaction described in the preceding cache receipt. Only
+then is it meaningful to connect configured loan selection and conditional
+ring/stream-all policy. Complete the broader source/unit/whole-model acceptance
+before allowing throughput to steer changes. Do not replace missing ownership
+with a host bitmap, fake Handle or unpriced fallback allocation.

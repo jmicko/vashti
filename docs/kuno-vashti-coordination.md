@@ -5304,3 +5304,48 @@ adaptive exchanges before publishing residency. Then finish conditional ring/
 stream-all policy and remaining arbitrary input/sampling, branch/recording,
 verifier-repair, source/unit-failure and protected whole-engine acceptance gates.
 Required Vashti changes: none.
+
+
+### Active Kuno engine handoff — exact prompt parent spans (2026-10-14)
+
+Source `c0e9efc`, following `16e99d8`, isolated `codex/strata-rust-port`.
+Read completion guide **Exact physical-parent prompt view geometry**.
+Previous goal turn made model-loader/verification progress; this turn removes
+another actual consumer blocker for lending. **No borrowed private registration,
+loan exclusion/staging/restore transaction or complete rewrite is claimed.**
+
+Scope, Storage, MoE views, raw-slot slicing and source attachment now derive
+slices from each whole parent's actual size, up to512MiB. This supports real
+alignment-sized cache backing rather than subtracting fictitious512MiB tails.
+The actual family carve enforces its own minimum. Whole-root structure rejects
+slices/misalignment/oversize; Storage rejects duplicate identities and foreign
+streams. Source attachment still proves complete backend buffer offset/size,
+checks real MoE fit, and requires copy destinations to match that attached root.
+Working images stay64MiB, raw ring stays below64MiB, descriptors/math/default
+owned allocation/pricing are unchanged. Structural validation is not a borrowed
+ownership capability; Scope still receives private-arena BufferIds, whose
+exclusive power-of-two allocation and cleanup policy are unchanged.
+
+All15 focused prompt tests and core release build pass. The new cases accept
+independent non-power-of-two parents, derive/accept exact family minima from
+actual views, reject a256-byte deficit in each parent and reject aliases,
+slices, foreign streams and oversize; raw-slot tails match real owning ends.
+Final strict-check receipts are recorded in the completion guide. No live GPU/
+model/allocation/erasure/state/recovery/speed, full unit suite, services/residency,
+public API/Vashti, install or release change. Historical228 unit failures remain
+unaudited. Canonical and bytecode preserved; no root needed. Goal stays active.
+
+**Next implement genuine private borrowed-root ownership and the connected
+source transaction, not more pretend loan geometry.** The actual `PrivateArena`
+ledger/cleanup still only registers newly allocated exclusive power-of-two
+private roots. Cache roots require attested complete physical backing and a
+source-owner exclusion capability before private registration, full erasure/
+inspection, retention/retirement on unknown completion and exact shared physical
+accounting without invented MAIN credit or hidden allocation. Candidate carving
+can now validate actual cache handles without forging a larger root; this alone
+must never publish a Scope. Leased resident pairs require real original-weight
+staging, patched source tables and BDA dependencies excluding scratch cells;
+restore current placement/remaps only after joined private close. Continue the
+remaining conditional ring/configuration, branch/recording, input/sampling,
+verifier repair, source/unit-failure and protected whole-engine gates before
+speed testing. Required Vashti changes: none.
