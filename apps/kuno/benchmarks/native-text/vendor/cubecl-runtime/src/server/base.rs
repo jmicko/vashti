@@ -403,6 +403,19 @@ where
         .into())
     }
 
+    /// Extend an existing same-stream PUBLIC registry grant without resetting
+    /// identities, counters, retirement or immutable resource ownership.
+    fn extend_public_external_host(
+        &mut self,
+        _budget: crate::public_external::PublicExternalBudget,
+        _stream_id: StreamId,
+    ) -> Result<(), ServerError> {
+        Err(IoError::UnsupportedIoOperation {
+            backtrace: BackTrace::capture(),
+        }
+        .into())
+    }
+
     /// Register caller-owned, immutable authenticated PUBLIC host backing.
     fn register_public_external_host(
         &mut self,

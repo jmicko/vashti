@@ -1272,6 +1272,7 @@ pub(crate) fn run(
                     &mut executor,
                     host_device.ok_or("global target device missing")?,
                     host_queue.ok_or("global target queue missing")?,
+                    0, // compiled4096-row fixture: owned prompt, no loan HOST grant
                 )?;
             }
         }

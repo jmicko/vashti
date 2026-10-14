@@ -115,18 +115,28 @@ pub(crate) struct Workspace {
     layer_pending: bool,
     adaptive: Option<crate::strata_global_adapt::Cache>,
     stages: [BufferId; 3],
-    prompt_stages: [BufferId; 3],
+    prompt_stages: Option<[BufferId; 3]>,
     epoch: u32,
     verify_usage: bool,
     active: Option<Zeroizing<[usize; 3]>>, // active count, next layer, accepted flag
 }
 impl Workspace {
     pub(crate) fn requests() -> Vec<u64> {
-        ROOT_BYTES
+        Self::requests_for_context(4096).expect("fixed prompt context")
+    }
+    pub(crate) fn requests_for_context(context: usize) -> Result<Vec<u64>> {
+        Ok(ROOT_BYTES
             .into_iter()
             .chain([crate::strata_global_experts::STAGE_BYTES; 3])
-            .chain([crate::strata_prompt::allocation::ROOT_BYTES; 3])
-            .collect()
+            .chain(crate::strata_prompt::allocation::Plan::new(context)?.requests())
+            .collect())
+    }
+    pub(crate) fn main_bytes_for_context(context: usize) -> Result<u64> {
+        Self::requests_for_context(context)?
+            .into_iter()
+            .try_fold(0u64, |a, b| {
+                a.checked_add(b).ok_or(Error::ArithmeticOverflow)
+            })
     }
     pub(crate) fn allocate(
         graph: BoundGraph<'_, '_>,
@@ -204,15 +214,18 @@ impl Workspace {
             adaptive: None,
         })
     }
-    pub(crate) fn prompt_stage_ids(&self) -> [BufferId; 3] {
+    pub(crate) fn prompt_stage_ids(&self) -> Option<[BufferId; 3]> {
         self.prompt_stages
     }
-    pub(crate) fn prompt_stage_handles(&self, arena: &PrivateArena) -> Result<[Handle; 3]> {
-        Ok([
-            u::handle(arena, self.prompt_stages[0])?,
-            u::handle(arena, self.prompt_stages[1])?,
-            u::handle(arena, self.prompt_stages[2])?,
-        ])
+    pub(crate) fn prompt_stage_handles(&self, arena: &PrivateArena) -> Result<Option<[Handle; 3]>> {
+        let Some(ids) = self.prompt_stages else {
+            return Ok(None);
+        };
+        Ok(Some([
+            u::handle(arena, ids[0])?,
+            u::handle(arena, ids[1])?,
+            u::handle(arena, ids[2])?,
+        ]))
     }
     pub(crate) fn stage_ids(&self) -> [BufferId; 3] {
         self.stages

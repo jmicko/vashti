@@ -47,23 +47,26 @@ impl Plan {
             rows: DEFAULT_ROWS,
         })
     }
-    pub(crate) fn allocate(self, arena: &mut PrivateArena) -> Result<[BufferId; 3]> {
-        if self.mode != Mode::Owned {
-            // An unported loan is an explicit incomplete path, never an
-            // unpriced owned fallback or an invented cache lease.
-            return Err(Error::InvalidFormat(
-                "native prompt cache lending not connected",
-            ));
+    pub(crate) fn requests(self) -> Vec<u64> {
+        if self.mode == Mode::Owned {
+            vec![ROOT_BYTES; 3]
+        } else {
+            Vec::new()
+        }
+    }
+    pub(crate) fn allocate(self, arena: &mut PrivateArena) -> Result<Option<[BufferId; 3]>> {
+        if self.mode == Mode::CacheLoan {
+            return Ok(None);
         }
         if self.rows != DEFAULT_ROWS {
             return Err(Error::InvalidBufferLength);
         }
         let words = ROOT_BYTES as usize / 4;
-        Ok([
+        Ok(Some([
             arena.allocate_zeroed(words).map_err(u::fault)?,
             arena.allocate_zeroed(words).map_err(u::fault)?,
             arena.allocate_zeroed(words).map_err(u::fault)?,
-        ])
+        ]))
     }
 }
 #[cfg(test)]
@@ -76,7 +79,21 @@ mod tests {
             assert_eq!(p.mode, Mode::Owned);
             assert_eq!(p.rows, 2048);
         }
-        assert_eq!(Plan::new(32769).unwrap().mode, Mode::CacheLoan);
+        let loan = Plan::new(32769).unwrap();
+        assert_eq!(loan.mode, Mode::CacheLoan);
+        assert!(loan.requests().is_empty());
+        assert_eq!(
+            crate::strata_global_moe::Workspace::main_bytes_for_context(32769).unwrap()
+                + MAIN_BYTES,
+            crate::strata_global_moe::MAIN_BYTES
+        );
+        assert_eq!(
+            crate::strata_global_moe::Workspace::requests_for_context(32769)
+                .unwrap()
+                .len()
+                + 3,
+            crate::strata_global_moe::Workspace::requests().len()
+        );
         assert!(Plan::new(0).is_err());
         assert_eq!(
             crate::strata_global_moe::Workspace::requests()

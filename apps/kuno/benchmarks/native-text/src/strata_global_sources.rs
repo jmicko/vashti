@@ -12,7 +12,10 @@ use std::collections::HashMap;
 
 #[path = "strata_cache_placement.rs"]
 mod placement;
+#[path = "strata_prompt_loan.rs"]
+mod prompt_loan;
 pub(crate) use placement::Placement;
+pub(crate) use prompt_loan::BorrowedPrompt;
 pub(crate) const PLACEMENT_HOST_BYTES: u64 = placement::HOST_BYTES;
 pub(crate) const TABLE_BYTES: u64 = 32768;
 fn reject() -> Error {
@@ -41,6 +44,7 @@ fn finish_borrowed_roots(
 }
 pub(crate) struct Sources {
     client: ComputeClient<WgpuRuntime>,
+    device: wgpu::Device,
     plan: Plan,
     gpu: Option<Cache>,
     host: Option<Host>,
@@ -53,6 +57,7 @@ pub(crate) struct Sources {
     closing_failed: bool,
     mutation_pending: bool,
     loan_pending: bool,
+    loan_ready: bool,
     placement: Placement,
     pending_placement: Option<Placement>,
     retired: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -93,6 +98,7 @@ impl Sources {
         plan.check_binding(graph)?;
         let mut sources = Self {
             client: client.clone(),
+            device: device.clone(),
             plan,
             gpu: None,
             host: None,
@@ -105,6 +111,7 @@ impl Sources {
             closing_failed: false,
             mutation_pending: false,
             loan_pending: false,
+            loan_ready: false,
             placement: Placement::identity(),
             pending_placement: None,
             retired,
@@ -122,7 +129,18 @@ impl Sources {
     fn build_tables(&mut self, graph: BoundGraph<'_, '_>, device: &wgpu::Device) -> Result<()> {
         let gpu = self.gpu.as_ref().ok_or_else(reject)?;
         let host = self.host.as_ref().ok_or_else(reject)?;
-        let mut handles = gpu.roots().to_vec();
+        let excluded = if self.loan_pending {
+            Some(host.loan_shadow_indices().ok_or_else(reject)?)
+        } else {
+            None
+        };
+        let mut handles = gpu
+            .roots()
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| excluded.is_none_or(|indices| !indices.contains(i)))
+            .map(|(_, h)| h.clone())
+            .collect::<Vec<_>>();
         handles.extend(host.handles()?);
         let resources = self
             .client
@@ -172,21 +190,8 @@ impl Sources {
             let mut seen = std::collections::HashSet::new();
             for role in 0..3 {
                 for expert in 0..EXPERTS {
-                    let source = self.plan.source(layer, expert, role)?;
-                    let (handle, offset, bytes, tier) = match source {
-                        Source::Resident { .. } => {
-                            let (h, o, b) = gpu
-                                .resident_role(graph, &self.plan, layer, expert, role)?
-                                .ok_or_else(reject)?;
-                            (h, o, b, 0)
-                        }
-                        Source::Host { .. } => {
-                            let (h, o, b) = host
-                                .role(graph, &self.plan, layer, expert, role)?
-                                .ok_or_else(reject)?;
-                            (h, o, b, 1)
-                        }
-                    };
+                    let (handle, offset, bytes, tier) =
+                        self.effective_role(graph, layer, expert, role)?;
                     let id = handle.binding().memory.allocation_id();
                     let (base, size, root) = roots.get(&id).ok_or_else(reject)?;
                     if bytes == 0
@@ -212,7 +217,14 @@ impl Sources {
                 }
             }
             let bytes = words.into_iter().flat_map(u32::to_le_bytes).collect();
-            let table = self.client.create_public_owned(bytes);
+            let table = if let Some(table) = self.tables.get(layer) {
+                self.client
+                    .write_public_owned_batch(vec![(table.clone(), bytes)])
+                    .map_err(crate::resident_util::fault)?;
+                table.clone()
+            } else {
+                self.client.create_public_owned(bytes)
+            };
             let resource = self
                 .client
                 .retained_resource_metadata(vec![table.clone()])
@@ -224,10 +236,46 @@ impl Sources {
             {
                 return Err(reject());
             }
-            self.tables.push(table);
-            self.reads.push(reads);
+            if self.tables.len() == layer {
+                self.tables.push(table);
+            }
+            if self.reads.len() == layer {
+                self.reads.push(reads);
+            } else {
+                self.reads[layer] = reads;
+            }
         }
         Ok(())
+    }
+    fn effective_role(
+        &self,
+        graph: BoundGraph<'_, '_>,
+        layer: usize,
+        cell: usize,
+        role: usize,
+    ) -> Result<(Handle, u64, u64, u32)> {
+        let host = self.host.as_ref().ok_or_else(reject)?;
+        if self.loan_pending
+            && let Some((h, o, b)) = host.loan_shadow_role(graph, &self.plan, layer, cell, role)?
+        {
+            return Ok((h, o, b, 1));
+        }
+        let (source, tier) = match self.plan.source(layer, cell, role)? {
+            Source::Resident { .. } => (
+                self.gpu
+                    .as_ref()
+                    .ok_or_else(reject)?
+                    .resident_role(graph, &self.plan, layer, cell, role)?,
+                0,
+            ),
+            Source::Host { .. } => (host.role(graph, &self.plan, layer, cell, role)?, 1),
+        };
+        let (h, o, b) = source.ok_or_else(reject)?;
+        Ok((h, o, b, tier))
+    }
+    pub(crate) fn validate_prompt_ready(&self, graph: BoundGraph<'_, '_>) -> Result<()> {
+        self.validate_execution_attached()?;
+        self.plan.check_binding(graph)
     }
     pub(crate) fn prototype(
         &self,
@@ -235,25 +283,8 @@ impl Sources {
         layer: usize,
         role: usize,
     ) -> Result<Handle> {
-        if self.unavailable() || self.mutation_pending {
-            return Err(reject());
-        }
-        if let Some((h, _, _)) = self
-            .gpu
-            .as_ref()
-            .ok_or_else(reject)?
-            .resident_role(graph, &self.plan, layer, 0, role)?
-        {
-            Ok(h)
-        } else {
-            Ok(self
-                .host
-                .as_ref()
-                .ok_or_else(reject)?
-                .role(graph, &self.plan, layer, 0, role)?
-                .ok_or_else(reject)?
-                .0)
-        }
+        self.validate_prompt_ready(graph)?;
+        Ok(self.effective_role(graph, layer, 0, role)?.0)
     }
     pub(crate) fn attach_stages(
         &mut self,
@@ -358,7 +389,7 @@ impl Sources {
         destination: &Handle,
         first: usize,
     ) -> Result<()> {
-        self.validate_graph_ready(graph)?;
+        self.validate_prompt_ready(graph)?;
         let original_stage = self.prompt_stage.as_ref().ok_or_else(reject)?;
         if destination.clone().binding().memory.allocation_id()
             != original_stage.clone().binding().memory.allocation_id()
@@ -381,24 +412,12 @@ impl Sources {
         {
             return Err(reject());
         }
-        if (0..3).all(|role| {
-            matches!(
-                self.plan.source(layer, cell, role),
-                Ok(Source::Resident { .. })
-            )
-        }) {
-            return Ok(());
-        }
         let mut copies = Vec::with_capacity(3);
         let mut offset = first as u64;
         for (role, &expected) in role_bytes.iter().enumerate() {
-            if matches!(self.plan.source(layer, cell, role)?, Source::Host { .. }) {
-                let (handle, source_first, bytes) = self
-                    .host
-                    .as_ref()
-                    .ok_or_else(reject)?
-                    .role(graph, &self.plan, layer, cell, role)?
-                    .ok_or_else(reject)?;
+            let (handle, source_first, bytes, tier) =
+                self.effective_role(graph, layer, cell, role)?;
+            if tier == 1 {
                 if bytes != expected as u64 || handle.stream != destination.stream {
                     return Err(reject());
                 }
@@ -440,6 +459,36 @@ impl Sources {
         }
         Ok(())
     }
+    /// Readonly scheduler admission for the active prompt Scope. Decode binds
+    /// remain separately forbidden while cache roots hold private scratch.
+    pub(crate) fn validate_execution_attached(&self) -> Result<()> {
+        if !self.loan_pending {
+            return self.validate_attached();
+        }
+        if self.unavailable()
+            || !self.loan_ready
+            || !self.mutation_pending
+            || !crate::strata_prompt::active()
+            || self.prompt_stage.is_none()
+            || self.tables.len() != LAYERS
+            || self.reads.len() != LAYERS
+            || self.gpu.is_none()
+            || self.host.is_none()
+            || self.queue.is_none()
+            || self.stages.is_none()
+            || self.stage_table.is_none()
+        {
+            return Err(reject());
+        }
+        Ok(())
+    }
+    pub(crate) fn validate_execution_boundary(&self, graph: BoundGraph<'_, '_>) -> Result<()> {
+        if self.loan_pending {
+            self.validate_prompt_ready(graph)
+        } else {
+            self.validate_graph_ready(graph)
+        }
+    }
     pub(crate) fn validate_graph_ready(&self, graph: BoundGraph<'_, '_>) -> Result<()> {
         self.validate_attached()?;
         self.plan.check_binding(graph)
@@ -462,7 +511,7 @@ impl Sources {
     /// Adds only static physical-cell/stage address descriptors. Private
     /// logical remaps stay in the family arena and never enter these tables.
     pub(crate) fn bind(&self, layer: usize, args: KernelArguments) -> Result<KernelArguments> {
-        if self.unavailable() || self.mutation_pending {
+        if self.unavailable() || self.mutation_pending || self.loan_pending {
             return Err(reject());
         }
         let table = self.tables.get(layer).ok_or_else(reject)?;
@@ -494,7 +543,18 @@ impl Sources {
         layer: usize,
         args: KernelArguments,
     ) -> Result<KernelArguments> {
-        if self.unavailable() || self.mutation_pending || self.prompt_stage.is_none() {
+        if self.loan_pending {
+            if self.unavailable()
+                || !self.loan_ready
+                || !self.mutation_pending
+                || !crate::strata_prompt::active()
+            {
+                return Err(reject());
+            }
+        } else if self.unavailable() || self.mutation_pending {
+            return Err(reject());
+        }
+        if self.prompt_stage.is_none() {
             return Err(reject());
         }
         let table = self.tables.get(layer).ok_or_else(reject)?;
@@ -604,18 +664,9 @@ impl Sources {
         self.mutation_pending = false;
         Ok(())
     }
-    /// Actual private scratch lease of three complete cache roots. All model
-    /// source readers stay excluded for this entire transaction. Prompt MoE's
-    /// leased-cell fallback/table patching is a separate connected continuation;
-    /// this method deliberately does NOT expose Sources inside the body.
-    /// Caller holds the persistent precharge and same configured protected
-    /// worker/shared retirement flag.
-    ///
     /// # Safety
-    /// Caller holds exclusive same-worker execution through this whole closure.
-    /// No ID, raw handle, Scope or scheduled replay may escape the body. Private
-    /// writes/readbacks must retain configured transient I/O and the protected
-    /// worker policy. Source exclusion cannot police an escaped raw GPU client.
+    /// Protected sole worker, all model reservations held; no Scope/ID/replay
+    /// may escape. Model consumers are limited to the prompt-only source path.
     pub(crate) unsafe fn with_private_cache_roots<T>(
         &mut self,
         graph: BoundGraph<'_, '_>,
@@ -625,79 +676,16 @@ impl Sources {
             [crate::private_arena::BufferId; 3],
         ) -> Result<T>,
     ) -> Result<T> {
-        use crate::private_arena::{OwnedZeroAudit, PrivateArena};
-        use std::sync::atomic::Ordering;
-        self.validate_graph_ready(graph)?;
-        let retired = self.retired.clone();
-        if retired.load(Ordering::Acquire)
-            || indices
-                .iter()
-                .enumerate()
-                .any(|(i, n)| indices[..i].contains(n))
-        {
+        if self.host.as_ref().and_then(Host::loan_shadow_indices) != Some(indices) {
             return Err(reject());
         }
-        let gpu = self.gpu.as_ref().ok_or_else(reject)?;
-        let roots: [Handle; 3] = indices
-            .iter()
-            .map(|&i| gpu.roots().get(i).cloned().ok_or_else(reject))
-            .collect::<Result<Vec<_>>>()?
-            .try_into()
-            .map_err(|_| reject())?;
-        crate::strata_prompt::storage::Storage::new(roots.clone())?;
-        let expected = OwnedZeroAudit {
-            bytes: roots.iter().map(Handle::size_in_used).sum(),
-            buffers: 3,
-        };
-        cubecl_common::future::block_on(self.client.sync()).map_err(crate::resident_util::fault)?;
-        self.loan_pending = true;
-        self.mutation_pending = true;
-        // SAFETY: real owning cache roots/precharge remain held by self. The
-        // exclusive source owner has joined all readers and revoked every bind.
-        let registered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
-            PrivateArena::register_cache_roots_on_configured(
-                self.client.clone(),
-                roots,
-                retired.clone(),
-            )
+        let loan = unsafe { self.begin_prompt_loan(graph)? };
+        let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            body(loan.arena.as_ref().ok_or_else(reject)?, loan.ids)
         }));
-        let (mut arena, ids) = match registered {
-            Ok(Ok(v)) => v,
-            _ => {
-                self.closing_failed = true;
-                retired.store(true, Ordering::Release);
-                return Err(reject());
-            }
-        };
-        let attempted =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| body(&arena, ids)));
-        let completed = finish_borrowed_roots(
-            expected,
-            || {
-                arena.close().map_err(crate::resident_util::fault)?;
-                arena.owned_zero_audit_receipt().ok_or_else(reject)
-            },
-            || {
-                self.gpu.as_ref().ok_or_else(reject)?.restore_chunks(
-                    graph,
-                    &self.plan,
-                    indices,
-                    &self.placement,
-                )
-            },
-        );
-        // Successful close is idempotent; Drop cannot erase restored weights.
-        // A failed close retries best-effort cleanup while sources stay blocked.
-        drop(arena);
-        if completed.is_err() {
-            self.closing_failed = true;
-            retired.store(true, Ordering::Release);
-            return Err(reject());
-        }
-        self.loan_pending = false;
-        self.mutation_pending = false;
+        self.finish_prompt_loan(graph, loan)?;
         match attempted {
-            Ok(result) => result,
+            Ok(v) => v,
             Err(_) => Err(reject()),
         }
     }
@@ -705,7 +693,7 @@ impl Sources {
         if self.closed {
             return Ok(());
         }
-        if self.closing_failed {
+        if self.closing_failed || self.loan_pending {
             return Err(reject());
         }
         self.closing_failed = true;

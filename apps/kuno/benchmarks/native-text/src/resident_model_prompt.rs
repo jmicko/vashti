@@ -37,6 +37,58 @@ enum Stage {
 }
 
 impl<'m, 'f> ResidentModel<'m, 'f> {
+    pub(crate) fn begin_prompt_cache_loan(
+        &self,
+        executor: &mut GpuExecutor<'f>,
+    ) -> Result<Option<crate::strata_global_sources::BorrowedPrompt>> {
+        let native = self.native_batch.as_ref().ok_or_else(error)?;
+        if native.core_prompt_stages.is_some() {
+            return Ok(None);
+        }
+        if self.poisoned || self.retired.load(Ordering::Acquire) || !self.admission.transient_io() {
+            return Err(error());
+        }
+        let sources = executor
+            .strata_global_sources
+            .as_mut()
+            .and_then(Arc::get_mut)
+            .ok_or_else(error)?;
+        // Protected model construction owns the complete cache/RAM grants;
+        // request execution is serialized on this worker through finish.
+        Ok(Some(unsafe { sources.begin_prompt_loan(self.graph)? }))
+    }
+    pub(crate) fn prompt_scope(
+        &self,
+        loan: Option<&crate::strata_global_sources::BorrowedPrompt>,
+    ) -> Result<p::Scope> {
+        match (
+            self.native_batch
+                .as_ref()
+                .ok_or_else(error)?
+                .core_prompt_stages,
+            loan,
+        ) {
+            (Some(ids), None) => p::Scope::new(&self.arena, ids),
+            (None, Some(loan)) => loan.scope(),
+            _ => Err(error()),
+        }
+    }
+    pub(crate) fn finish_prompt_cache_loan(
+        &self,
+        executor: &mut GpuExecutor<'f>,
+        loan: Option<crate::strata_global_sources::BorrowedPrompt>,
+    ) -> Result<()> {
+        if let Some(loan) = loan {
+            executor
+                .strata_global_sources
+                .as_mut()
+                .and_then(Arc::get_mut)
+                .ok_or_else(error)?
+                .finish_prompt_loan(self.graph, loan)?;
+        }
+        Ok(())
+    }
+
     /// Full target chunk plus device-only MTP teacher forcing. The last chunk
     /// alone produces a head and one host carry for the subsequent decode loop.
     pub(crate) fn prefill_prompt_full(
@@ -54,7 +106,9 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             accepted: false,
         };
         let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _scope = p::Scope::new(&self.arena, native.core_prompt_stages.ok_or_else(error)?)?;
+            if !p::active() {
+                return Err(error());
+            }
             let start = self.position;
             let result = native.run_prompt_full(self, executor, tokens, final_chunk, cancel)?;
             if let Some(draft) = draft.as_deref_mut() {

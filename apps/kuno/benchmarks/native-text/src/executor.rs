@@ -2147,7 +2147,7 @@ impl<'a> GpuExecutor<'a> {
             .as_ref()
             .ok_or(Error::InvalidFormat("global target admission absent"))?
             .active()?;
-        sources.validate_attached()?;
+        sources.validate_execution_attached()?;
         Ok(true)
     }
     fn q6_verify_head_scope(&self) -> bool {
@@ -2394,7 +2394,25 @@ impl<'a> GpuExecutor<'a> {
         graph: kuno_text::model::BoundGraph<'_, '_>,
         private_owned: u64,
         public_pages: u64,
+        context: usize,
     ) -> Result<ResidentAdmission> {
+        if context == 0 || context > graph.geometry().max_context {
+            return Err(Error::LimitExceeded("resident admission context"));
+        }
+        // Existing exact constructor shapes are expressed in default owned
+        // prompt bytes. Compare the equivalent shape in loan mode while the
+        // admission below still charges ONLY the actual unaugmented request.
+        let policy_private = if crate::strata_intel_core::enabled()
+            && crate::strata_prompt::allocation::Plan::new(context)?
+                .requests()
+                .is_empty()
+        {
+            private_owned
+                .checked_add(crate::strata_prompt::allocation::MAIN_BYTES)
+                .ok_or(Error::ArithmeticOverflow)?
+        } else {
+            private_owned
+        };
         self.check_segmented_resident(true)?;
         self.check_target_rows_policy()?;
         let target_private = if self.target_batch_router_reserved {
@@ -2408,7 +2426,7 @@ impl<'a> GpuExecutor<'a> {
                 ));
             }
             target_rows_private_extent_with_down_math(
-                private_owned,
+                policy_private,
                 true,
                 self.target_frozen_host_router_reserved,
                 self.target_frozen_host_staging_reserved,
@@ -2417,7 +2435,7 @@ impl<'a> GpuExecutor<'a> {
             )
         } else {
             target_rows_private_extent_with_down_math(
-                private_owned,
+                policy_private,
                 false,
                 false,
                 self.target_frozen_host_staging_reserved,

@@ -385,6 +385,35 @@ impl ComputeServer for WgpuServer {
         Ok(())
     }
 
+    fn extend_public_external_host(
+        &mut self,
+        budget: cubecl_runtime::public_external::PublicExternalBudget,
+        stream_id: StreamId,
+    ) -> Result<(), ServerError> {
+        if self.backend != wgpu::Backend::Vulkan || self.public_external_stream != Some(stream_id) {
+            return Err(super::public_external::fault(
+                "public external extension owning Vulkan stream",
+            ));
+        }
+        let stream = self.scheduler.stream(&stream_id);
+        if !stream.errors.is_empty() {
+            return Err(super::public_external::fault(
+                "public external extension unhealthy stream",
+            ));
+        }
+        // Budget/entry storage changes happen only after all existing users join.
+        cubecl_common::future::block_on(stream.sync())?;
+        stream
+            .mem_manage
+            .public_external
+            .as_mut()
+            .ok_or_else(|| {
+                super::public_external::fault("public external extension unconfigured stream")
+            })?
+            .extend_budget(budget)
+            .map_err(super::public_external::fault)
+    }
+
     fn register_public_external_host(
         &mut self,
         source: cubecl_runtime::public_external::PublicExternalHostSource<WgpuResource>,

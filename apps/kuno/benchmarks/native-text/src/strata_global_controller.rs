@@ -76,36 +76,51 @@ pub(super) fn run<'m, 'f>(
         crate::strata_prompt::groups::CAPACITY,
         cancel,
         |target, executor| {
-            let mut final_output = None;
-            for start in (0..request.prompt.len()).step_by(crate::strata_prompt::groups::CAPACITY) {
-                let end =
-                    (start + crate::strata_prompt::groups::CAPACITY).min(request.prompt.len());
-                let teacher_end = end.min(request.prompt.len() - 1);
-                let teacher = if start < teacher_end {
-                    &request.prompt[start + 1..teacher_end + 1]
-                } else {
-                    &[]
-                };
-                let output = target.prefill_prompt_full(
-                    executor,
-                    &request.prompt[start..end],
-                    teacher,
-                    draft.as_deref_mut(),
-                    end == request.prompt.len(),
-                    cancel,
-                )?;
-                if target.completed_target_rows_cursor(executor)? != end {
-                    return Err(kuno_text::Error::InvalidFormat(
-                        "global committed full prompt cursor rejected",
-                    ));
+            let loan = target.begin_prompt_cache_loan(executor)?;
+            let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                // One lease/scope spans the complete prompt and all MTP teaching
+                // chunks; never restore/reborrow the cache for each chunk.
+                let _scope = target.prompt_scope(loan.as_ref())?;
+                let mut final_output = None;
+                for start in
+                    (0..request.prompt.len()).step_by(crate::strata_prompt::groups::CAPACITY)
+                {
+                    let end =
+                        (start + crate::strata_prompt::groups::CAPACITY).min(request.prompt.len());
+                    let teacher_end = end.min(request.prompt.len() - 1);
+                    let teacher = if start < teacher_end {
+                        &request.prompt[start + 1..teacher_end + 1]
+                    } else {
+                        &[]
+                    };
+                    let output = target.prefill_prompt_full(
+                        executor,
+                        &request.prompt[start..end],
+                        teacher,
+                        draft.as_deref_mut(),
+                        end == request.prompt.len(),
+                        cancel,
+                    )?;
+                    if target.completed_target_rows_cursor(executor)? != end {
+                        return Err(kuno_text::Error::InvalidFormat(
+                            "global committed full prompt cursor rejected",
+                        ));
+                    }
+                    if output.is_some() {
+                        final_output = output;
+                    }
                 }
-                if output.is_some() {
-                    final_output = output;
-                }
+                final_output.ok_or(kuno_text::Error::InvalidFormat(
+                    "global final prompt output absent",
+                ))
+            }));
+            target.finish_prompt_cache_loan(executor, loan)?;
+            match attempted {
+                Ok(result) => result,
+                Err(_) => Err(kuno_text::Error::InvalidFormat(
+                    "global prompt execution unwound",
+                )),
             }
-            final_output.ok_or(kuno_text::Error::InvalidFormat(
-                "global final prompt output absent",
-            ))
         },
     )?;
     if draft

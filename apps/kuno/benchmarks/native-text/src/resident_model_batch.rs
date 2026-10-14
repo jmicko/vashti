@@ -1139,6 +1139,7 @@ impl Plan {
         executor: &GpuExecutor<'_>,
         config: Config,
         old: &[u64],
+        context: usize,
     ) -> Result<Self> {
         graph.verify_unchanged()?;
         if !std::ptr::eq(client.info(), config.client.info())
@@ -1500,7 +1501,9 @@ impl Plan {
             requests.push(batch_moe::FROZEN_GU_INTEGER_MAIN_BYTES);
         }
         if crate::strata_intel_core::enabled() {
-            requests.extend(crate::strata_global_moe::Workspace::requests());
+            requests.extend(crate::strata_global_moe::Workspace::requests_for_context(
+                context,
+            )?);
         }
         if config.public_frozen_down_integer {
             requests.push(batch_moe::FROZEN_DOWN_INTEGER_MAIN_BYTES);
@@ -1541,14 +1544,14 @@ impl Plan {
             };
         let extra = extra
             + if crate::strata_intel_core::enabled() {
-                crate::strata_global_moe::MAIN_BYTES
+                crate::strata_global_moe::Workspace::main_bytes_for_context(context)?
             } else {
                 0
             };
         if requests.len()
             != 90
                 + if crate::strata_intel_core::enabled() {
-                    crate::strata_global_moe::Workspace::requests().len()
+                    crate::strata_global_moe::Workspace::requests_for_context(context)?.len()
                 } else {
                     0
                 }
@@ -2368,7 +2371,7 @@ impl Workspace {
             None
         };
         let core_stages = global_moe.as_ref().map(|m| m.stage_ids());
-        let core_prompt_stages = global_moe.as_ref().map(|m| m.prompt_stage_ids());
+        let core_prompt_stages = global_moe.as_ref().and_then(|m| m.prompt_stage_ids());
         let mut alloc = |n| model.arena.allocate_zeroed(n).map_err(u::fault);
         let outer = Zeroizing::new(Outer {
             residual: [alloc(RESIDUAL_WORDS)?, alloc(RESIDUAL_WORDS)?],
@@ -2636,6 +2639,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &mut GpuExecutor<'f>,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        prompt_host_grant: u64,
     ) -> Result<()> {
         self.completed_native_projection_boundary(executor)?;
         if self.position != 0 || !crate::strata_intel_core::enabled() {
@@ -2677,12 +2681,26 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .and_then(std::sync::Arc::get_mut)
             .ok_or(error())?
             .attach_stages(device, queue, stages)?;
-        executor
+        let sources = executor
             .strata_global_sources
             .as_mut()
             .and_then(std::sync::Arc::get_mut)
-            .ok_or(error())?
-            .attach_prompt_stage(prompt_stages[2].clone())?;
+            .ok_or(error())?;
+        if let Some(prompt_stages) = prompt_stages {
+            if prompt_host_grant != 0 {
+                return Err(error());
+            }
+            sources.attach_prompt_stage(prompt_stages[2].clone())?;
+        } else {
+            let (indices, extra_host) = sources.prompt_loan_quote(self.graph)?;
+            if extra_host != prompt_host_grant {
+                return Err(error());
+            }
+            // Separate exact caller-held RAM grant, never GPU pricing credit.
+            unsafe {
+                sources.prepare_prompt_loan(self.graph, indices, prompt_host_grant)?;
+            }
+        }
         self.completed_native_projection_boundary(executor)?;
         executor.activate_native_core_q6_head()
     }
@@ -2717,7 +2735,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         if let Some(global) = &native.global_moe {
             global.validate_idle()?;
             match &executor.strata_global_sources {
-                Some(sources) => sources.validate_graph_ready(self.graph)?,
+                Some(sources) => sources.validate_execution_boundary(self.graph)?,
                 None if self.position == 0 && !executor.target_four_rows_active => (),
                 None => return Err(error()),
             }

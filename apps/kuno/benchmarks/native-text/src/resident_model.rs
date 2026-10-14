@@ -353,7 +353,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor.check_client(&client)?;
         let mut requests = private_requests(graph)?;
         let native = native
-            .map(|config| batch::Plan::new(graph, &client, executor, config, &requests))
+            .map(|config| batch::Plan::new(graph, &client, executor, config, &requests, context))
             .transpose()?;
         if let Some(plan) = &native {
             requests.extend_from_slice(&plan.requests);
@@ -365,7 +365,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         if let Some(plan) = &native {
             plan.check_public_with_audit(graph, public_pages, public_zero_audit)?;
         }
-        let admission = executor.begin_resident(graph, private_owned, public_pages)?;
+        let admission = executor.begin_resident(graph, private_owned, public_pages, context)?;
         if (public_zero_audit || native.is_some()) && !admission.transient_io() {
             admission.poison();
             return Err(Error::InvalidFormat(
@@ -393,7 +393,13 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                     PrivateArena::new(client.clone(), budget, retired.clone())
                 }
             };
-            let mut arena = make_arena(2 * 1024 * 1024 * 1024).map_err(u::fault)?;
+            // The complete model plan already holds this exact MAIN grant.
+            // A historical2GiB local ceiling cannot contain the native owned
+            // prompt roots plus recurrent/MoE/state owners. Loan mode subtracts
+            // its absent roots in the same plan; never invent extra credit.
+            let mut arena =
+                make_arena(usize::try_from(private_owned).map_err(|_| Error::ArithmeticOverflow)?)
+                    .map_err(u::fault)?;
             if public_zero_audit {
                 arena.enable_public_owned_zero_audit().map_err(u::fault)?;
             }

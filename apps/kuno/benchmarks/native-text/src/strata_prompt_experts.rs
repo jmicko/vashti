@@ -216,7 +216,7 @@ pub(crate) fn enqueue(
     count: usize,
     map: &[u32],
 ) -> Result<()> {
-    sources.validate_graph_ready(graph)?;
+    sources.validate_prompt_ready(graph)?;
     let stage = stages()?;
     if !(1..=super::groups::ROUTE_CAPACITY).contains(&count)
         || fault.size_in_used() != 4

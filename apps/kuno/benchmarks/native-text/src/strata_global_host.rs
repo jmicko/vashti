@@ -2,6 +2,10 @@
 //! sole CubeCL immutable registry. No fixed 432-page or uniform-bank assumption.
 #[path = "strata_global_exchange.rs"]
 pub(crate) mod exchange;
+#[path = "strata_prompt_shadow.rs"]
+mod shadow;
+#[path = "strata_prompt_shadow_plan.rs"]
+pub(crate) mod shadow_plan;
 use super::*;
 use crate::strata_global_plan::{Plan as GlobalPlan, Source as GlobalSource, Tier};
 use cubecl::{prelude::ComputeClient, wgpu::WgpuRuntime};
@@ -38,6 +42,8 @@ pub(crate) struct Host {
     client: ComputeClient<WgpuRuntime>,
     device: wgpu::Device,
     instance: u64,
+    registry_budget: Option<PublicExternalBudget>,
+    shadow: Option<shadow::Shadow>,
     pages: Vec<GlobalPage>,
     closed: bool,
     logical: u64,
@@ -174,6 +180,8 @@ impl Host {
             client: client.clone(),
             device: device.clone(),
             instance: plan.instance(),
+            registry_budget: None,
+            shadow: None,
             pages: Vec::with_capacity(count),
             closed: false,
             logical: 0,
@@ -187,22 +195,15 @@ impl Host {
         let pool_bytes = reserved
             .checked_sub(METADATA_BYTES as u64 + GLOBAL_METADATA_CAP + SETUP_WINDOWS)
             .ok_or(Error::ArithmeticOverflow)?;
-        client
-            .configure_public_external_host(PublicExternalBudget {
-                backing_bytes: pool_bytes,
-                buffers: count,
-                metadata_bytes: METADATA_BYTES,
-            })
-            .map_err(|_| fail())?;
-        let hal = unsafe { device.as_hal::<wgpu::hal::api::Vulkan>() }.ok_or_else(fail)?;
-        let raw = Arc::new(hal.raw_device().clone());
-        let queue_families = hal.kuno_buffer_queue_families().ok_or_else(fail)?;
-        let properties = unsafe {
-            hal.shared_instance()
-                .raw_instance()
-                .get_physical_device_memory_properties(hal.raw_physical_device())
+        let registry_budget = PublicExternalBudget {
+            backing_bytes: pool_bytes,
+            buffers: count,
+            metadata_bytes: METADATA_BYTES,
         };
-        drop(hal);
+        client
+            .configure_public_external_host(registry_budget)
+            .map_err(|_| fail())?;
+        host.registry_budget = Some(registry_budget);
         let mut charges = HeapCharges::default();
         let mut window = Zeroizing::new(Vec::new());
         window
@@ -225,147 +226,41 @@ impl Host {
                     if p.tier != Tier::Host {
                         continue;
                     }
-                    let envelope = envelope(p.logical_bytes)?;
-                    let descriptor = vk::BufferCreateInfo::default()
-                        .size(p.logical_bytes)
-                        .usage(
-                            vk::BufferUsageFlags::STORAGE_BUFFER
-                                | vk::BufferUsageFlags::TRANSFER_SRC
-                                | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
-                        )
-                        .sharing_mode(vk::SharingMode::CONCURRENT)
-                        .queue_family_indices(&queue_families);
-                    let buffer =
-                        unsafe { raw.create_buffer(&descriptor, None) }.map_err(|_| fail())?;
-                    let mut backing = Backing {
-                        device: device.clone(),
-                        raw: raw.clone(),
-                        raw_buffer: Some(buffer),
-                        memory: None,
-                        bytes: 0,
-                    };
-                    let requirements =
-                        Requirements::from(unsafe { raw.get_buffer_memory_requirements(buffer) });
-                    check_requirements(p.logical_bytes, envelope, requirements)
-                        .map_err(Error::InvalidFormat)?;
-                    let placement =
-                        select_host_type(&properties, requirements.types, requirements.bytes)
-                            .map_err(Error::InvalidFormat)?;
-                    charges
-                        .admit_with_limit(placement, requirements.bytes, pool_bytes, count)
-                        .map_err(Error::InvalidFormat)?;
-                    let mut dedicated = vk::MemoryDedicatedAllocateInfo::default().buffer(buffer);
-                    let mut flags = vk::MemoryAllocateFlagsInfo::default()
-                        .flags(vk::MemoryAllocateFlags::DEVICE_ADDRESS);
-                    let allocation = vk::MemoryAllocateInfo::default()
-                        .allocation_size(requirements.bytes)
-                        .memory_type_index(placement.memory_type)
-                        .push_next(&mut dedicated)
-                        .push_next(&mut flags);
-                    backing.memory = Some(
-                        unsafe { raw.allocate_memory(&allocation, None) }.map_err(|_| fail())?,
-                    );
-                    backing.bytes = requirements.bytes;
-                    unsafe { raw.bind_buffer_memory(buffer, backing.memory.unwrap(), 0) }
-                        .map_err(|_| fail())?;
-                    if Requirements::from(unsafe { raw.get_buffer_memory_requirements(buffer) })
-                        != requirements
-                    {
-                        return Err(fail());
-                    }
-                    let mut map = backing.map().map_err(Error::InvalidFormat)?;
-                    map.bytes_mut().zeroize();
-                    for ordinal in 0..p.count {
-                        let expert = l.expert_at(p.first + ordinal)?;
-                        let bytes = usize::try_from(p.expert_bytes)
-                            .map_err(|_| Error::ArithmeticOverflow)?;
-                        let target = window.get_mut(..bytes).ok_or(Error::InvalidBufferLength)?;
-                        tensor.read_range(
-                            (expert as u64)
-                                .checked_mul(p.expert_bytes)
-                                .ok_or(Error::ArithmeticOverflow)?,
-                            target,
-                        )?;
-                        copy_range(
-                            map.bytes_mut(),
-                            p.logical_bytes as usize,
-                            ordinal as u64 * p.expert_bytes,
-                            target,
-                        )
-                        .map_err(Error::InvalidFormat)?;
-                        target.zeroize();
-                    }
-                    map.cache(placement.coherent(), true)
-                        .map_err(Error::InvalidFormat)?;
-                    drop(map);
-                    // Own the backing before HAL import transfers raw-buffer
-                    // destruction authority. An import unwind has unknown exposure
-                    // and therefore retains the memory instead of freeing it.
-                    let owner = PageOwner {
-                        backing: Some(backing),
-                        buffer: None,
-                        placement,
-                        allocation_alignment: requirements.alignment,
-                        logical: p.logical_bytes,
-                        phase: Phase::Sealed,
-                        binding: None,
-                        shard,
-                    };
-                    host.pages.push(GlobalPage {
-                        layer,
-                        role,
-                        piece,
-                        owner,
-                        authority: None,
-                    });
-                    let page = host.pages.last_mut().unwrap();
-                    page.owner.backing.as_mut().unwrap().raw_buffer = None;
-                    page.owner.phase = Phase::Exposed;
-                    let imported = unsafe {
-                        device.create_buffer_from_hal::<wgpu::hal::api::Vulkan>(
-                            wgpu::hal::vulkan::Buffer::from_raw(buffer),
-                            &wgpu::BufferDescriptor {
-                                label: Some("original-global-host-expert-piece"),
-                                size: p.logical_bytes,
-                                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-                                mapped_at_creation: false,
-                            },
-                        )
-                    };
-                    page.owner.buffer = Some(imported);
-                    page.owner.phase = Phase::Sealed;
-                    let resource = WgpuResource {
-                        buffer: page.owner.buffer.as_ref().unwrap().clone(),
-                        offset: 0,
-                        size: p.logical_bytes,
-                    };
-                    // Retain exposed backing BEFORE any fallible registration.
-                    page.owner.phase = Phase::Exposed;
-                    let source = unsafe {
-                        PublicExternalHostSource::from_initialized_public_host(
-                            resource,
-                            p.logical_bytes,
-                            requirements.bytes,
-                            placement.property_flags,
-                            placement.heap_flags,
-                            SOURCE_SHA256[shard],
-                        )
-                    }
-                    .map_err(Error::InvalidFormat)?;
-                    let authority = client
-                        .register_public_external_host(source)
-                        .map_err(|_| fail())?;
-                    page.owner.binding = Some(authority.handle().binding());
-                    page.authority = Some(authority);
-                    page.owner.phase = Phase::Registered;
-                    host.logical = host
-                        .logical
-                        .checked_add(p.logical_bytes)
-                        .ok_or(Error::ArithmeticOverflow)?;
-                    host.physical = host
-                        .physical
-                        .checked_add(requirements.bytes)
-                        .ok_or(Error::ArithmeticOverflow)?;
+                    host.allocate_original_page(
+                        shadow::PageSpec {
+                            layer,
+                            role,
+                            piece,
+                            shard,
+                            logical: p.logical_bytes,
+                            backing_bound: envelope(p.logical_bytes)?,
+                        },
+                        &mut charges,
+                        |mapped| {
+                            for ordinal in 0..p.count {
+                                let expert = l.expert_at(p.first + ordinal)?;
+                                let bytes = usize::try_from(p.expert_bytes)
+                                    .map_err(|_| Error::ArithmeticOverflow)?;
+                                let target =
+                                    window.get_mut(..bytes).ok_or(Error::InvalidBufferLength)?;
+                                tensor.read_range(
+                                    (expert as u64)
+                                        .checked_mul(p.expert_bytes)
+                                        .ok_or(Error::ArithmeticOverflow)?,
+                                    target,
+                                )?;
+                                copy_range(
+                                    mapped,
+                                    p.logical_bytes as usize,
+                                    ordinal as u64 * p.expert_bytes,
+                                    target,
+                                )
+                                .map_err(Error::InvalidFormat)?;
+                                target.zeroize();
+                            }
+                            Ok(())
+                        },
+                    )?;
                 }
             }
         }
@@ -377,6 +272,50 @@ impl Host {
         }
         graph.verify_unchanged()?;
         Ok(host)
+    }
+    /// Extend a separately PRECHARGED loan-shadow reservation. This changes
+    /// registry metadata only; backing allocation/initialization/registration
+    /// follows under exclusive Sources ownership, never an inferred free credit.
+    /// # Safety
+    /// Caller holds `reserved` extra backing AND layout metadata through all readers
+    /// and final detach, excludes every source/CPU consumer, and uses the owning
+    /// protected same-worker stream. This is not a general inference API.
+    pub(crate) unsafe fn reserve_loan_shadow(
+        &mut self,
+        global: &GlobalPlan,
+        layout: &shadow_plan::Plan,
+        reserved: u64,
+    ) -> KResult<()> {
+        layout.check(global)?;
+        if self.closed
+            || self.instance != global.instance()
+            || self.cpu_borrow.load(std::sync::atomic::Ordering::Acquire)
+            || layout.reservation()? != reserved
+        {
+            return Err(fail());
+        }
+        let old = self.registry_budget;
+        let next = PublicExternalBudget {
+            backing_bytes: old
+                .map_or(0, |b| b.backing_bytes)
+                .checked_add(layout.backing_bytes())
+                .ok_or(Error::ArithmeticOverflow)?,
+            buffers: old
+                .map_or(0, |b| b.buffers)
+                .checked_add(layout.pages().len())
+                .ok_or(Error::ArithmeticOverflow)?,
+            metadata_bytes: METADATA_BYTES,
+        }
+        .validate()
+        .map_err(Error::InvalidFormat)?;
+        if old.is_some() {
+            self.client.extend_public_external_host(next)
+        } else {
+            self.client.configure_public_external_host(next)
+        }
+        .map_err(|_| fail())?;
+        self.registry_budget = Some(next);
+        Ok(())
     }
     pub(crate) fn role(
         &self,
@@ -544,5 +483,89 @@ impl Drop for Host {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod loan_registry_tests {
+    use cubecl_common::stream_id::StreamId;
+    use cubecl_runtime::public_external::*;
+    fn budget(buffers: usize) -> PublicExternalBudget {
+        PublicExternalBudget {
+            backing_bytes: (buffers * 4096) as u64,
+            buffers,
+            metadata_bytes: MAX_METADATA_BYTES,
+        }
+    }
+    fn source(id: u32) -> PublicExternalHostSource<u32> {
+        // Synthetic immutable public integers; no device/memory is constructed.
+        unsafe {
+            PublicExternalHostSource::from_initialized_public_host(id, 64, 4096, 2, 0, [1; 32])
+        }
+        .unwrap()
+    }
+    #[test]
+    fn shadow_budget_extension_keeps_live_and_retired_identity_and_all_counters() {
+        let mut pool = PublicExternalPool::new(budget(2), StreamId { value: 84 }).unwrap();
+        let retired = pool.register(source(1)).unwrap();
+        let retired_binding = retired.handle().binding();
+        pool.begin_detach(&retired).unwrap();
+        // No real backing or users in this synthetic fixture.
+        unsafe { pool.finish_detach(retired) }.unwrap();
+        let live = pool.register(source(2)).unwrap();
+        let binding = live.handle().binding();
+        let before = pool.usage();
+        pool.extend_budget(budget(4)).unwrap();
+        let after = pool.usage();
+        assert_eq!(
+            after.registered_backing_bytes,
+            before.registered_backing_bytes
+        );
+        assert_eq!(after.total_registered_bytes, before.total_registered_bytes);
+        assert_eq!(after.total_detached_bytes, before.total_detached_bytes);
+        assert_eq!(after.registration_count, before.registration_count);
+        assert_eq!(pool.resolve(&binding).unwrap(), 2);
+        assert!(pool.resolve(&retired_binding).is_err());
+        let new = pool.register(source(3)).unwrap();
+        assert_eq!(pool.usage().registration_count, 3);
+        assert_eq!(pool.resolve(&new.handle().binding()).unwrap(), 3);
+        assert_ne!(
+            new.handle().binding().memory.allocation_id(),
+            retired_binding.memory.allocation_id()
+        );
+        assert!(pool.resolve(&retired_binding).is_err());
+    }
+    #[test]
+    fn shadow_extension_rejects_shrinking_closing_and_unquoted_metadata_peaks() {
+        let mut pool = PublicExternalPool::new(budget(2), StreamId { value: 83 }).unwrap();
+        let live = pool.register(source(4)).unwrap();
+        let binding = live.handle().binding();
+        let before = pool.usage();
+        assert!(pool.extend_budget(budget(1)).is_err());
+        assert_eq!(pool.usage(), before);
+        assert_eq!(pool.resolve(&binding).unwrap(), 4);
+        pool.begin_detach(&live).unwrap();
+        let closing = pool.usage();
+        assert!(pool.extend_budget(budget(4)).is_err());
+        assert_eq!(pool.usage(), closing);
+        unsafe { pool.finish_detach(live) }.unwrap();
+        pool.extend_budget(budget(4)).unwrap();
+        let small = PublicExternalBudget {
+            metadata_bytes: before.metadata_owned_bytes + 256,
+            ..budget(2)
+        };
+        let mut pool = PublicExternalPool::new(small, StreamId { value: 82 }).unwrap();
+        let live = pool.register(source(5)).unwrap();
+        let binding = live.handle().binding();
+        let before = pool.usage();
+        assert!(
+            pool.extend_budget(PublicExternalBudget {
+                metadata_bytes: small.metadata_bytes,
+                ..budget(MAX_BUFFERS)
+            })
+            .is_err()
+        );
+        assert_eq!(pool.usage(), before);
+        assert_eq!(pool.resolve(&binding).unwrap(), 5);
     }
 }

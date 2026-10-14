@@ -229,6 +229,25 @@ impl<R: Runtime> ComputeClient<R> {
             })?
     }
 
+    /// Extend a precharged public registry without resetting prior identities.
+    /// This adds no model backing itself and never applies to private payloads.
+    pub fn extend_public_external_host(
+        &self,
+        budget: crate::public_external::PublicExternalBudget,
+    ) -> Result<(), ServerError> {
+        budget.validate().map_err(|reason| ServerError::Generic {
+            reason: reason.into(),
+            backtrace: BackTrace::capture(),
+        })?;
+        let stream = self.stream_id();
+        self.device
+            .submit_blocking(move |server| server.extend_public_external_host(budget, stream))
+            .map_err(|_| ServerError::Generic {
+                reason: "public external extension channel unavailable".into(),
+                backtrace: BackTrace::capture(),
+            })?
+    }
+
     /// Register a source whose unsafe constructor already establishes the
     /// caller's immutable PUBLIC provenance and retained-backing obligations.
     pub fn register_public_external_host(

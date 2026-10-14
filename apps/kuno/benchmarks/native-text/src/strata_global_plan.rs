@@ -242,6 +242,10 @@ fn arena_chunks(slots: &[Slot], alignment: u64) -> Result<(Vec<Chunk>, Vec<Cell>
     Ok((chunks, cells, total))
 }
 impl Plan {
+    #[cfg(test)]
+    pub(crate) fn shadow_test_fixture(budget: u64) -> Result<Self> {
+        Self::from_roles(pinned_roles(), budget, ALIGNMENT)
+    }
     pub(crate) fn instance(&self) -> u64 {
         self.instance
     }

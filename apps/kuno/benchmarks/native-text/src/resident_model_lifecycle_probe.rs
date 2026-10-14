@@ -82,6 +82,7 @@ impl<'a> Fixture<'a> {
             &e,
             self.native.clone(),
             &requests,
+            graph.geometry().max_context,
         )?;
         plan.check_public(graph, PublicVectors::prewarm_page_bytes(graph)?)?;
         if requests.len() + plan.requests.len() != NATIVE_PAGES as usize

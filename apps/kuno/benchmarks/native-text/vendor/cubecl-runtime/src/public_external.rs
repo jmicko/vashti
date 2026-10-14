@@ -260,17 +260,10 @@ impl<R> core::fmt::Debug for PublicExternalPool<R> {
     }
 }
 impl<R: Clone> PublicExternalPool<R> {
-    /// Reserve complete typed metadata once; no ordinary allocation is made.
-    pub fn new(budget: PublicExternalBudget, stream: StreamId) -> Result<Self, &'static str> {
-        let budget = budget.validate()?;
-        let mut entries = Vec::new();
-        entries
-            .try_reserve_exact(budget.buffers)
-            .map_err(|_| "public external metadata allocation")?;
-        let metadata_owned_bytes = size_of::<Self>()
+    fn metadata_reservation(capacity: usize, buffers: usize) -> Result<usize, &'static str> {
+        size_of::<Self>()
             .checked_add(
-                entries
-                    .capacity()
+                capacity
                     .checked_mul(size_of::<Option<Entry<R>>>())
                     .ok_or("public external metadata overflow")?,
             )
@@ -279,7 +272,7 @@ impl<R: Clone> PublicExternalPool<R> {
             // Conservatively charge the full lifetime registration capacity.
             .and_then(|n| {
                 n.checked_add(
-                    budget.buffers
+                    buffers
                         * (size_of::<
                             crate::memory_management::memory_pool::handle::ManagedMemoryDescriptor,
                         >() + 4 * size_of::<usize>()),
@@ -289,7 +282,16 @@ impl<R: Clone> PublicExternalPool<R> {
             // caches themselves remain outside this typed registry claim.
             .and_then(|n| n.checked_add(MAX_BUFFERS * 64))
             .and_then(|n| n.checked_add(2 * size_of::<Entry<R>>()))
-            .ok_or("public external metadata overflow")?;
+            .ok_or("public external metadata overflow")
+    }
+    /// Reserve complete typed metadata once; no ordinary allocation is made.
+    pub fn new(budget: PublicExternalBudget, stream: StreamId) -> Result<Self, &'static str> {
+        let budget = budget.validate()?;
+        let mut entries = Vec::new();
+        entries
+            .try_reserve_exact(budget.buffers)
+            .map_err(|_| "public external metadata allocation")?;
+        let metadata_owned_bytes = Self::metadata_reservation(entries.capacity(), budget.buffers)?;
         if metadata_owned_bytes > budget.metadata_bytes {
             return Err("public external metadata capacity");
         }
@@ -302,6 +304,54 @@ impl<R: Clone> PublicExternalPool<R> {
                 ..Default::default()
             },
         })
+    }
+    /// Monotonic extension of an already held PUBLIC backing/metadata grant.
+    /// No allocation/free/re-registration of model resources and no recycled
+    /// lifetime slots. Build replacement metadata before changing any identity.
+    /// Caller holds the larger reservation; the stream owner joins readers.
+    pub fn extend_budget(&mut self, budget: PublicExternalBudget) -> Result<(), &'static str> {
+        let budget = budget.validate()?;
+        if budget.backing_bytes < self.budget.backing_bytes
+            || budget.buffers < self.budget.buffers
+            || budget.metadata_bytes < self.budget.metadata_bytes
+            || self
+                .entries
+                .iter()
+                .flatten()
+                .any(|e| e.state != State::Active)
+        {
+            return Err("public external extension must preserve healthy grants");
+        }
+        if budget == self.budget {
+            return Ok(());
+        }
+        let old_vector = self
+            .entries
+            .capacity()
+            .checked_mul(size_of::<Option<Entry<R>>>())
+            .ok_or("public external extension metadata overflow")?;
+        let predicted = Self::metadata_reservation(budget.buffers, budget.buffers)?;
+        if predicted
+            .checked_add(old_vector)
+            .is_none_or(|n| n > budget.metadata_bytes)
+        {
+            return Err("public external extension peak metadata capacity");
+        }
+        let mut next = Vec::new();
+        next.try_reserve_exact(budget.buffers)
+            .map_err(|_| "public external extension metadata allocation")?;
+        let actual = Self::metadata_reservation(next.capacity(), budget.buffers)?;
+        if actual
+            .checked_add(old_vector)
+            .is_none_or(|n| n > budget.metadata_bytes)
+        {
+            return Err("public external extension peak metadata capacity");
+        }
+        next.append(&mut self.entries);
+        self.entries = next;
+        self.budget = budget;
+        self.usage.metadata_owned_bytes = actual;
+        Ok(())
     }
     /// Snapshot only numeric registry ownership, separate from managed memory.
     pub fn usage(&self) -> PublicExternalUsage {
