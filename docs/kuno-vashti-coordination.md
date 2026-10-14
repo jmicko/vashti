@@ -4836,3 +4836,26 @@ eight slots; do not port inactive CUDA branches to satisfy a mistaken checklist.
 Queue/capture, storage/state, arbitrary input/sampling and whole-engine
 acceptance remain required before speed trials. Sudo refresh in shared shell
 succeeded during source work; no protected inference was started.
+
+### Active Kuno engine handoff — chunk-capable routed prompt owners (2026-10-14)
+
+Source `0f89b45`, isolated `codex/strata-rust-port`. Read completion guide
+**Connected chunk-capable prompt expert owners**. Prompt calls now use their
+own1..256-row router, compressed logical-order host groups, tiled FP16 expert
+products and carved rank output reduction. GU `[64,66)` MiB and PART `[66,98)`
+MiB borrow the real third128 MiB stage; original transfers stay below64 MiB.
+Decode remains MAX8. No additional GPU root;256 KiB host/8 MiB I/O is charged.
+
+Final release build, strict Clippy and268 offline shaders pass. No live GPU,
+physical view/copy, numerical/state/recovery or speed acceptance. Earlier full-core
+failures remain open. Canonical/services/GPU residency untouched; no API or Vashti
+change. Inherited bytecode preserved. Full rewrite incomplete; goal active.
+
+Next connect the full prompt residual/GR/attention/PLE/carry owners and actual
+layer-major chunk controller, including final-only head and device MTP teaching.
+The current parent still uses three-row/MAX8 packets and receipts. Projection
+stage working intervals/alias checks must be changed with the new owner, not
+silently overlaid. Cache-loan budget, mapped grouping, queues/capture, layouts,
+sampling/general input and whole-engine acceptance remain required. No speed
+trials or timing-driven partial rollback. Shared shell now reports sudo expired;
+continue source work, request authentication before protected GPU tests.

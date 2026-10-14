@@ -1527,3 +1527,63 @@ STAGE8 by default; do not falsely require CUDA stream-all/fused branches.
 Independent queues/capture, full storage/state audit, arbitrary-input/sampling
 and whole-engine correctness/recovery acceptance still block speed testing.
 Full rewrite incomplete; goal active.
+
+## Connected chunk-capable prompt expert owners (2026-10-14)
+
+Source `0f89b45`, same isolated branch. Prompt routing/grouping/products/reduction
+now have their own1..256-row contract; verification remains MAX8. This is a
+connected replacement used by current prompt calls, not a declaration that the
+remaining prompt families or controller can already accept256 tokens.
+
+The prompt router applies the existing full512 softmax/top10 algorithm to all
+rows in subgroup batches, publishing actual logical/physical route pairs and
+GPU probabilities. A bounded CPU grouping matches native Intel logical expert
+order and stable token/rank membership. Its compressed8192-word map holds512
+cells/lengths/offsets plus up to2560 rank indices. Checks cover route completeness,
+per-token distinct experts, consistent logical/physical bijection and unique
+members. No activations are read back. Decode keeps its original map and CPU/GPU
+split. Prompt grouping still uses a checked readback/private upload rather than
+native mapped pinned grouping storage: that queue/storage substitution is open.
+
+Actual GU and rank outputs are carved from the existing third128 MiB stage:
+GU `[64,66)` MiB, rank outputs `[66,98)` MiB. No additional GPU root is allocated.
+Original raw expert copies are bounded below64 MiB, and raw compute sees only
+that lower64 MiB view. Checked copies retain the full authoritative destination
+root, as required by the existing copy contract. Stage1 retains paired FP16
+weight images; stage0 retains gathered FP16 activations/hidden rows. GU/down
+GEMMs launch all eight-row member tiles, including partial last tiles, with
+local tile indices distinct from global member indices. Actual closing flags
+and rank-weight reduction consume the carved outputs; the model acceptance
+stamp and complete original-root cleanup remain connected. No stale MAX8 PART
+page is consumed in prompt mode. Extra256 KiB host and8 MiB per-chunk I/O envelope
+are included in the enclosing model plan.
+
+Final release build, strict Clippy and268 offline shaders pass:
+`strata-prompt-chunk-experts-final-build-20261014.log`,
+`strata-prompt-chunk-experts-clippy-20261014.log`,
+`strata-prompt-chunk-experts-shaders-20261014.log` under the development directory.
+Fmt/whitespace pass. No live GPU/model execution, expert numerical or physical
+view/copy acceptance, speed trial, service/API/UI change or deployment. Earlier
+full-core failures remain open. Full rewrite incomplete; goal active.
+
+Next: implement the real full prompt residual/GR/GDN/QSA/PLE/carry owner and
+layer-major controller. Native `carve:1127+` overlays attention and MoE scratch
+and preserves residual/GR/carry outside that region; `bytes_needed_impl:1832+`
+counts the same layout. The existing three128 MiB roots provide real charged
+storage to carve, but the current projection scope treats all of stage0/1 as
+working images and rejects output aliases by allocation ID. Resolve their exact
+working intervals and checked nonoverlapping views together before putting
+persistent residuals or another phase into their upper halves. Preserve the new
+stage2 raw/GU/PART intervals. Larger scratch/root cache loans still need the
+actual budget policy; a256-row helper cap is not native budget parity.
+
+Do not raise global MAX_BATCH or merely change step_by(3). Parent token packets,
+NativeTargetRows, GR/GDN/QSA/PLE/shared owners, receipts and state commits still
+use their small-window contracts. Prompt-only owners/acceptance, final-only head
+and device MTP teaching must replace those dependencies together. Independent
+queues/capture, dense/state-layout audit, general input/sampling and whole-engine
+correctness/recovery remain required before speed testing.
+
+Shared-shell sudo refresh now reports `a password is required`. Source work
+remains possible without root. Do not start protected GPU acceptance or use a
+privilege workaround; request a fresh credential when that work is ready.
