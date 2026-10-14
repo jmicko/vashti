@@ -42,7 +42,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects FP16 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. See the QSA receipt below for precise storage/scheduling substitutions and remaining numerical/state acceptance; do not claim full QSA fidelity yet. |
 | PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Original grouped reads/hash/history exist. Audit asynchronous deduplicated source reads, grouped BF16 projections and ordered history snapshots/commit. Never persist request n-grams. |
 | Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, MoE MMQ/Intel implementations | Rust bounded graph prefill is not full prompt-path parity. Port connected chunk budget, streamed layer staging and dense/expert batches, including prompt history consumed by MTP. |
-| MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Original Q2 sidecar and full draft vocab exist. Core now connects a MAX8 native front to prompt teaching, accepted-prefix repair and device-conditioned count1 drafting. BF16 GR and original Q6 head stay original; see the front receipt. Packed KV/rest graph, native queue/capture, numerical/state acceptance, arbitrary input and supported sampling remain required. |
+| MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native FP16 cache, dense attention and BF16 FF/head GR to real draft/repair consumers. Original Q2 experts still need the native scaled activation/integer path; router/shared and queue/capture fidelity, numerical/state acceptance, arbitrary input and supported sampling remain required. See the front and rest receipts. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Request-local Rust suffix/cost controller exists; audit supported window lengths and coupled sampling rather than fixing to four public-fixture rows. |
 | Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Real greedy verification/state-only repair exists. Audit all active windows and acceptance cases against GDN/QSA/PLE/positions; independent correctness oracle remains missing. |
 | Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay exists. Audit stable complete recordings, transfer dependencies, scratch lifetimes and actual overlap; a sequence of independent Wgpu launches is not equivalent. |
@@ -1008,3 +1008,50 @@ correctness/recovery or speed run, service/API/UI change or installation. Goal
 active; full rewrite incomplete and speed gate closed. Next port the MTP rest
 and packed cache as one consumer family, then continue prompt/PLE, graph/queues,
 full sampling/input and final completeness/physical acceptance gates.
+
+## Connected MTP packed cache and attention/GR rest (2026-10-14)
+
+Source `294cb93`, isolated `codex/strata-rust-port`. Core cache append, dense
+attention, rejected-tail rewind and full cache guards now share actual packed
+FP16 K/V owners. Layout follows native `qsa_real_shapes` page size4:
+`[page][two KV heads][four cells][256 half components]`. Each owner is4 MiB;
+the page/cell inverse is used by rewind and guards, so an accepted prefix need
+not occupy a contiguous byte prefix. The bounded single-sequence physical page
+mapping is identity; a native allocated page-table owner is not yet ported.
+
+Count1 draft attention consumes the front's prepared Q8 planes, original query
+weights, native fused norm/RoPE, identity visible-cell selection,64-cell chunk
+attention, max-rescaled merge, sigmoid gating and original output projection.
+Partial/statistic owners cover all4096 visible cells. Fault flags are folded
+before reuse. FF and final head reads use the same original BF16 native GR
+family, actual preceding attention/MoE block and injection. Final residual carry
+is published into the real existing followup owner. No synthetic carry or
+host-generated replacement draft input is introduced.
+
+The enlarged front/rest workspace has22 owners. Total MTP private plan is now
+18,644,992 bytes, inside the existing64 MiB core reserve; ordinary plan remains
+11,698,176 bytes. Packed buffers receive half-finiteness and real rejected-tail
+checks rather than F32 scans. Allocation, erasure and close receipt use actual
+owner counts. Original legacy scratch remains reserved and explicitly accounted.
+
+Build, strict release core Clippy and221 offline WGSL/SPIR-V variants pass.
+Three front/layout host tests and nine accepted-prefix/ownership tests pass;
+feature-off direct-device regression passes1,366 tests with one ignored.
+Logs: `strata-mtp-rest-{build,clippy,shaders,layout-tests,core-tests,ordinary-regression}-20261014.log`
+under `/media/jmicko/faststore/kuno-development`. Formatting/whitespace pass.
+These establish source/build consistency, not device numerics or model execution.
+No GPU inference, speed comparison, service change or installation was performed.
+
+Next coupled block: native MTP MoE. Read actual `record_rest`,
+`s2_expert_grouped.dp.cpp`, `quantize_act.dp.cpp`, `native_bf16.dp.cpp`,
+`native_router.dp.cpp`, `shared_expert.dp.cpp` and `native_moe.dp.cpp` together.
+Existing Q2 kernels use floating-point activations; native S2 requires quantized
+input and SwiGLU intermediate with separate F32 scales, matching integer
+expansion/accumulation/reduction and real downstream consumption. Audit native
+router and shared BF16 roles rather than keeping their startup Q8 conversion.
+The native BF16 projection shown in `native_bf16.dp.cpp` uses ordered F32 FMAs;
+do not infer F64 from the fallback router implementation or old chat summaries.
+
+Full rewrite remains incomplete. Whole prompt MMQ/PLE, recorded graphs/queues,
+arbitrary input/sampling, source/conversion audit, earlier full-core failures and
+final numerical/state/recovery acceptance remain open. Speed gate stays closed.

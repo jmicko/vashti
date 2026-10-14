@@ -4630,3 +4630,22 @@ rest and packed cache together, then the remaining whole completion checklist.
 Goal active; full rewrite incomplete and speed gate closed. API/Vashti changes
 required: none. Canonical/services and inherited bytecode preserved; no release,
 install, reset or rebind.
+
+### Active Kuno engine handoff — connected packed MTP rest (2026-10-14)
+
+Source `294cb93`, isolated `codex/strata-rust-port`. Read completion guide
+**Connected MTP packed cache and attention/GR rest**. Core append/attention/
+rewind/guards now agree on native page4/head-major FP16 K/V; count1 attention
+and original BF16 FF/head GR consume the real front and publish actual carry.
+Private plan18,644,992 bytes includes all22 front/rest owners and cleanup.
+
+Release build, strict core Clippy,221 offline shaders, three layout/front and
+nine repair/ownership tests pass. Ordinary regression:1,366 pass/one ignored.
+No GPU/model execution, speed testing, deployment, API or Vashti changes.
+Whole-port completion and physical/numerical acceptance are not claimed.
+
+Next port MTP scaled-activation/native integer Q2 experts with router/shared
+consumers as one coherent block; then complete remaining prompt/PLE, graph/
+queues and arbitrary-input/sampling checklist. Earlier full-core failures remain
+open. Do not select partial speed winners or reopen live speed benchmarking.
+Goal active; full rewrite incomplete. Required Vashti changes: none.
