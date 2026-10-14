@@ -2,7 +2,7 @@
 // Only original HOST weight words are copied, once for each actual union group.
 @compute @workgroup_size(256)
 fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(local_invocation_index) lane:u32) {
-    if p.count<1u || p.count>4u || p.role>2u || p.vectors==0u || p.vectors>419430u
+    if p.count<1u || p.count>4u || p.role>2u || p.vectors==0u || p.vectors>104857u
         || arrayLength(&stage)!=4194304u || arrayLength(&addresses)!=2048u
         || p.first>arrayLength(&map) || 804u>arrayLength(&map)-p.first {return;}
     if map[p.first]!=p.count || map[p.first+1u]!=0u || map[p.first+2u]!=p.count {return;}
