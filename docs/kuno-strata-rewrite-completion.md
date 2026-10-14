@@ -1664,3 +1664,69 @@ Then finish full residual/PLE/carry ownership, prompt-only acceptance, final-onl
 head and device MTP teaching, plus native budget/cache loans and queue/capture.
 The parent still runs three-row/MAX8 packets; do not label this as whole prefill
 or alter global verification capacity to bypass remaining ownership work.
+
+## Connected shared prompt QSA and native GPU selection (2026-10-14)
+
+Source `6314ea4`, isolated `codex/strata-rust-port`. Prompt projections now
+write the actual carved Qfull/K/V/index-Q/raw-index-K views. Split retains only
+Q; gate consumes original interleaved Qfull. Q/K/index-Q normalization and RoPE,
+packed candidates, shared means, attention output and bounded32-query partials/
+statistics occupy14 disjoint upper-stage1 views, phase-overlaid with GDN. No new
+scratch root. One newly completed index block is averaged, normalized and rotated
+once for the whole chunk; query-specific score guards preserve causality. The
+old per-query pooled copies are no longer prompt inputs. Exact scoped-output
+admission and stream/interval ownership remain enforced. Metadata grows from
+4KiB to16KiB, charged through the existing model quote.
+
+Prompt append now precedes index scoring and attention. The attention loop
+merges every tile before reusing its32-query scratch. Explicit query-row offsets
+address full-chunk Q, selected IDs, output and closing flags; local tile indices
+address partials/statistics. This avoids rebasing a2051-word selection stride to
+an illegal descriptor offset. Attention reads actual appended authoritative KV.
+The existing parent still provides only small windows;256-row geometry in these
+helpers does not complete the parent controller or its receipts.
+
+The source audit also corrected a pre-existing core selection mismatch. Pinned
+`qsa.hpp::qsa_selection_width` is `min(visible,2051)`, including partial selection
+of a block. The old whole-block selector could return only2048 cells at some
+positions. Core attention, merge and closing-flag spans now use the native width.
+The ordinary feature-off selector/geometry is unchanged and must not be treated
+as the independent native oracle beyond that boundary.
+
+Core QSA now unconditionally uses `block_topk_reg_kernel`'s connected GPU path:
+1024 threads, register keys, per-warp radix histograms, four weighted8-bit passes,
+subgroup/workgroup prefix scans, stable low-index ties and chronological cells.
+The score producer uses native eight-warps-per-workgroup geometry, actual
+normalized cell-zero dead key and tail bias. A separate ordered validation pass
+joins finite/score-status failures into the existing sticky model fault before
+selection. No native score readback, CPU sorting or selected-ID upload remains
+in the model's `BatchSelector` path. Original non-core selection remains separate.
+
+The dead key occupies an additional128 logical words after the completed-block
+slots in each existing authoritative POOLED owner. Its initial mean preserves
+the four explicit F32 additions, normalization and original rounded IK. This is
+a storage substitution for native separate `idx_dead`; it is immutable after
+cell zero. Stage-derived allocation quotes charge the real larger owners (at
+4096 context, existing arena rounding adds6MiB over12 QSA layers). Shared prompt
+mean storage does not duplicate this persistent state. The model I/O envelope
+adds417,792 bytes for maximum-tile INFO and the selection/dead dispatches.
+Core device admission now requires1024 invocations and32,912 shared bytes;
+core batch contexts must be divisible by4 and remain bounded at4096.
+
+Final release build, strict Clippy and all281 WGSL/SPIR-V variants pass:
+`strata-qsa-coupled-validated-{build,clippy,shaders}-20261014.log` under
+`/media/jmicko/faststore/kuno-development`. Reserved WGSL names found during
+validation were corrected before these final runs. Fmt/whitespace pass. These
+are offline checks: no GPU/model, physical view/copy, numerical selection/state,
+repair/recovery or speed acceptance was performed. Earlier full-core failures
+remain unresolved. No service, API, UI, installation or release change; canonical
+checkout and inherited bytecode were preserved. Full rewrite incomplete; goal
+active and speed gate closed. Last shared-shell sudo check required a password.
+
+Next connect full prompt residual/mixed/block/carry owners and PLE producers to
+the actual layer-major chunk controller. Keep GDN final-state acceptance separate
+from MAX8 speculative replay; finish final-only head and device MTP teaching.
+Do not raise global MAX_BATCH, enlarge per-query attention maps, or rename the
+three-row loop as completion. Native cache-loan sizing, transfer/compute queues,
+KV/indexer physical layout, remaining state/dense substitutions, arbitrary input,
+sampling, and whole-engine numerical/state/recovery acceptance remain required.

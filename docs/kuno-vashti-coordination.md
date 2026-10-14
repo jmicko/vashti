@@ -4895,3 +4895,29 @@ causal selection and exact cache append/state ownership. Read the receipt's
 native pointers; do not enlarge old per-query pool/attention arrays. Full
 residual/PLE/carry, prompt acceptance, head/MTP teaching, budgets/queues/layouts
 and whole-engine acceptance still precede speed testing.
+
+### Active Kuno engine handoff — shared QSA and native GPU selection (2026-10-14)
+
+Source `6314ea4`, isolated `codex/strata-rust-port`. Read completion guide
+**Connected shared prompt QSA and native GPU selection**. Actual prompt QSA now
+uses carved projections/Q/K/IQ/candidates, shared completed-block index state
+and32-query attention scratch with explicit full-chunk row offsets. Append
+precedes scoring/attention. Core selection now uses the pinned GPU weighted radix
+path, normalized cell-zero dead key, tail bias and exact `min(visible,2051)` width,
+including partial blocks. The model no longer CPU-sorts/uploads QSA selections.
+The old ordinary selector is preserved, not an oracle for the native width.
+
+Release build, strict Clippy and281 offline shader variants pass; no physical
+GPU/model/numerical/state/recovery/speed run. Real larger POOLED owners,16KiB
+scope metadata and417,792 extra INFO bytes are charged;1024 lanes/32,912 shared
+bytes are required. Existing full-core failures remain open. Full rewrite is
+incomplete; goal active; speed gate closed. No API/Vashti changes are required.
+Canonical/services/GPU residency/inherited bytecode are untouched. Last sudo
+check reported a password required; no root workaround or protected run.
+
+Next: full residual/mixed/block/carry/PLE owners and the real large layer-major
+prompt controller, final-only head, device MTP teaching and prompt state acceptance.
+The current enclosing parent/receipts still use three-row/MAX8 windows. Complete
+native budgets/cache loans, queue/capture and layout/substitution audits, general
+input/sampling and whole-engine acceptance before speed trials. Do not revert
+coupled components because of incidental timing or claim the rewrite complete.
