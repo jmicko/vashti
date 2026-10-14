@@ -88,6 +88,14 @@ pub(crate) fn gdn_workspace() -> Result<[Handle; 4]> {
             .ok_or(Error::InvalidBufferLength)
     })
 }
+pub(crate) fn gdn_controls() -> Result<[Handle; 3]> {
+    STAGES.with(|s| {
+        s.borrow()
+            .as_ref()
+            .map(storage::Storage::gdn_controls)
+            .ok_or(Error::InvalidBufferLength)
+    })
+}
 pub(crate) fn qsa_workspace() -> Result<[Handle; 14]> {
     STAGES.with(|s| {
         s.borrow()
@@ -104,9 +112,6 @@ pub(crate) fn validate_output(handle: &Handle) -> Result<()> {
             Err(Error::InvalidBufferLength)
         }
     })
-}
-pub(crate) fn control_stage() -> Result<Handle> {
-    Ok(stages()?[2].clone())
 }
 pub(crate) fn activation_stage() -> Result<Handle> {
     Ok(stages()?[0].clone())
@@ -627,9 +632,74 @@ pub(crate) fn ab(q: crate::strata_gdn::Ab<'_>, weights: [Handle; 2]) -> Result<(
         2560,
         u::words(q.arena, q.input)?,
     )?;
-    let client = q.arena.client().map_err(u::fault)?;
-    let raw = control_stage()?;
-    let fault = u::handle(q.arena, q.fault)?;
+    ab_handles(
+        AbHandles {
+            client: q.arena.client().map_err(u::fault)?,
+            input: u::handle(q.arena, q.input)?,
+            params: q.params,
+            controls: u::handle(q.arena, q.controls)?,
+            status: u::handle(q.arena, q.status)?,
+            fault: u::handle(q.arena, q.fault)?,
+            count: q.count,
+            heads: q.heads,
+            first: q.first,
+            stride: q.stride,
+        },
+        weights,
+    )
+}
+pub(crate) struct AbHandles<'a> {
+    pub client: &'a ComputeClient<WgpuRuntime>,
+    pub input: Handle,
+    pub params: Handle,
+    pub controls: Handle,
+    pub status: Handle,
+    pub fault: Handle,
+    pub count: usize,
+    pub heads: usize,
+    pub first: usize,
+    pub stride: usize,
+}
+/// Full prompt AB producer: its raw projections use the authenticated carved
+/// region. The supplied controls/status can be full prompt owners or the
+/// existing small verifier owners, without changing the arithmetic or MAX8.
+pub(crate) fn ab_handles(q: AbHandles<'_>, weights: [Handle; 2]) -> Result<()> {
+    let raw = gdn_controls()?[0].clone();
+    let extent = |h: &Handle, n: usize| {
+        n.checked_mul(4)
+            .is_some_and(|bytes| h.size_in_used() >= bytes as u64)
+    };
+    if !(1..=groups::CAPACITY).contains(&q.count)
+        || !(1..=48).contains(&q.heads)
+        || q.stride < 2560
+        || q.stride
+            .checked_mul(q.count - 1)
+            .and_then(|n| q.first.checked_add(n))
+            .and_then(|n| n.checked_add(2560))
+            .is_none_or(|n| !extent(&q.input, n))
+        || !extent(&q.params, q.heads * 2)
+        || !extent(&q.controls, q.count * q.heads * 2)
+        || !extent(&q.status, q.count * q.heads)
+        || !extent(&raw, q.count * q.heads * 2)
+        || q.fault.size_in_used() != 4
+        || [&q.input, &q.params, &q.controls, &q.status, &q.fault]
+            .iter()
+            .any(|h| storage::overlaps(&raw, h).unwrap_or(true))
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    let outputs = [&q.controls, &q.status, &q.fault];
+    for (i, h) in outputs.iter().enumerate() {
+        if [&q.input, &q.params]
+            .iter()
+            .chain(outputs[..i].iter())
+            .any(|other| storage::overlaps(h, other).unwrap_or(true))
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+    }
+    let client = q.client;
+    let fault = q.fault;
     for (i, w) in weights.into_iter().enumerate() {
         project(
             client,
@@ -638,7 +708,7 @@ pub(crate) fn ab(q: crate::strata_gdn::Ab<'_>, weights: [Handle; 2]) -> Result<(
             q.heads,
             5120,
             w,
-            u::handle(q.arena, q.input)?,
+            q.input.clone(),
             raw.clone(),
             fault.clone(),
             q.count,
@@ -672,13 +742,7 @@ pub(crate) fn ab(q: crate::strata_gdn::Ab<'_>, weights: [Handle; 2]) -> Result<(
         client,
         Kernel::AbControls,
         [(q.count * q.heads).div_ceil(256), 1, 1],
-        vec![
-            raw,
-            q.params,
-            u::handle(q.arena, q.controls)?,
-            u::handle(q.arena, q.status)?,
-            fault,
-        ],
+        vec![raw, q.params, q.controls, q.status, fault],
         info,
     )
 }

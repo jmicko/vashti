@@ -1723,6 +1723,7 @@ fn runtime_bytes(head_tiles: u64) -> Result<u64> {
             crate::strata_prompt::groups::RUNTIME_BYTES
                 + gdn::strata_replay::PROMPT_INFO_BYTES
                 + crate::strata_qsa::prompt::INFO_BYTES
+                + crate::strata_gdn::prompt::INFO_BYTES
         } else {
             0
         };

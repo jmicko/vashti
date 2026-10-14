@@ -10,7 +10,7 @@ const HALF: u64 = 64 * 1024 * 1024;
 pub(crate) struct Storage {
     working: [Handle; 3],
     gr: [Handle; 4],   // normalized, down, low, up
-    gdn: [Handle; 4],  // QKV, Z, H, raw recurrence output
+    gdn: [Handle; 7],  // QKV, Z, H, readout, AB raw/controls/closing
     qsa: [Handle; 14], // five projections, Q/K/IQ, candidate, out, partial/stats, shared mean/valid
 }
 impl Storage {
@@ -43,9 +43,12 @@ impl Storage {
         let gr: [Handle; 4] = carve(&roots[0], &[10240, 320, 320, 10240].map(|w| w * capacity))?
             .try_into()
             .map_err(|_| Error::InvalidBufferLength)?;
-        let gdn: [Handle; 4] = carve(&roots[1], &[10240, 6144, 10240, 6144].map(|w| w * capacity))?
-            .try_into()
-            .map_err(|_| Error::InvalidBufferLength)?;
+        let gdn: [Handle; 7] = carve(
+            &roots[1],
+            &[10240, 6144, 10240, 6144, 96, 96, 48].map(|w| w * capacity),
+        )?
+        .try_into()
+        .map_err(|_| Error::InvalidBufferLength)?;
         let qsa: [Handle; 14] = carve(
             &roots[1],
             &[
@@ -103,7 +106,10 @@ impl Storage {
         self.gr.clone()
     }
     pub(crate) fn gdn(&self) -> [Handle; 4] {
-        self.gdn.clone()
+        std::array::from_fn(|i| self.gdn[i].clone())
+    }
+    pub(crate) fn gdn_controls(&self) -> [Handle; 3] {
+        std::array::from_fn(|i| self.gdn[i + 4].clone())
     }
     pub(crate) fn qsa(&self) -> [Handle; 14] {
         self.qsa.clone()

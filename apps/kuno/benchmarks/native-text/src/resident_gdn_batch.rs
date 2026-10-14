@@ -33,7 +33,12 @@ const CONTROL: usize = 8;
 const RECURRENT: usize = 9;
 const GATED: usize = 10;
 const STATUS: usize = 11;
-pub(crate) const INFO_BYTES_PER_STAGE: u64 = 64 * 2 * 512;
+pub(crate) const INFO_BYTES_PER_STAGE: u64 = 64 * 2 * 512
+    + if cfg!(feature = "strata-intel-core") {
+        crate::strata_gdn::prompt::COMPATIBILITY_INFO_PER_STAGE
+    } else {
+        0
+    };
 
 #[derive(Clone, Copy, PartialEq)]
 struct Layout {
@@ -764,6 +769,7 @@ impl ResidentGdn<'_> {
         layout: Layout,
         start: usize,
         count: usize,
+        fault_id: BufferId,
     ) -> Result<bool> {
         use crate::strata_gdn::{self as native, Kernel};
         let p = layout.stage.pointwise;
@@ -799,6 +805,7 @@ impl ResidentGdn<'_> {
                         h(ids[STATUS])?,
                         h(ids[STATUS + 1])?,
                     ],
+                    h(fault_id)?,
                 )?,
                 Operation::Recurrence => native::prompt::recurrence(
                     arena,
@@ -814,6 +821,7 @@ impl ResidentGdn<'_> {
                         h(ids[STATUS + 3])?,
                         h(ids[STATUS + 4])?,
                     ],
+                    h(fault_id)?,
                 )?,
                 Operation::Preparation | Operation::Closing => {}
                 Operation::Controls => return Err(fault("native prompt AB producer bypassed")),
@@ -1047,6 +1055,7 @@ impl ResidentGdn<'_> {
                     layout,
                     start as usize,
                     count,
+                    fault_id,
                 )? {
                     return Ok(());
                 }

@@ -113,7 +113,7 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
     let col=tid%128u;let rg=tid/128u;let qh=head%p.key_heads;
     if tid==0u {atomicStore(&broken,0u);}workgroupBarrier();
     var state:array<f32,32>;
-    for(var r=0u;r<32u;r++) {let at=head*16384u+(rg*32u+r)*128u+col;state[r]=old[at];if !finite(state[r]) {atomicOr(&broken,1u);}}
+    for(var r=0u;r<32u;r++) {let at=((rg*32u+r)*p.value_heads+head)*128u+col;state[r]=old[at];if !finite(state[r]) {atomicOr(&broken,1u);}}
     if rg==0u {sk[col]=key[qh*128u+col];}else if rg==1u && !STATE_ONLY {sq[col]=query[qh*128u+col];}
     for(var t=0u;t<p.count;t++) {
         let cur=(t&1u)*128u;let nxt=((t+1u)&1u)*128u;
@@ -150,7 +150,7 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
         workgroupBarrier();
     }
     let good=atomicLoad(&broken)==0u;
-    for(var r=0u;r<32u;r++) {next[head*16384u+(rg*32u+r)*128u+col]=select(0.0,state[r],good);}
+    for(var r=0u;r<32u;r++) {next[((rg*32u+r)*p.value_heads+head)*128u+col]=select(0.0,state[r],good);}
     if rg==0u && !good {for(var t=0u;t<p.count;t++) {status[t*p.value_heads*128u+head*128u+col]=0u;closing_status[t*p.value_heads*128u+head*128u+col]=0u;if !STATE_ONLY {output[t*p.value_heads*128u+head*128u+col]=0.0;}}}
 }
 // STEP_END

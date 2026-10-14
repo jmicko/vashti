@@ -3,6 +3,17 @@
 struct Params {count:u32,start:u32,channels:u32,key_heads:u32,value_heads:u32,gamma_shared:u32,epsilon:f32,reserved:u32}
 fn finite(x:f32)->bool {return abs(x)<=3.4028234663852886e38;}
 // COMMON_END
+// COMPATIBILITY_BEGIN
+@group(0) @binding(0) var<storage,read_write> fault:array<atomic<u32>>;
+@group(0) @binding(1) var<storage,read_write> first:array<u32>;
+@group(0) @binding(2) var<storage,read_write> second:array<u32>;
+@group(0) @binding(3) var<uniform> p:Params;
+@compute @workgroup_size(128)
+fn main(@builtin(global_invocation_id) id:vec3<u32>){
+    let i=id.x;if i>=p.count*p.reserved{return;}
+    let ok=select(0u,1u,atomicLoad(&fault[0])==0u);first[i]=ok;second[i]=ok;
+}
+// COMPATIBILITY_END
 // RETAIN_BEGIN
 @group(0) @binding(0) var<storage,read> source:array<u32>;
 @group(0) @binding(1) var<storage,read_write> retained:array<u32>;
@@ -89,8 +100,8 @@ fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(local_invocation_index) tid:
     let head=g.x/4u;let cb=g.x%4u;let rg=tid/32u;let c=tid%32u;let col=cb*32u+c;let qh=head%p.key_heads;
     if head>=p.value_heads {return;}if tid==0u {atomicStore(&broken,0u);}workgroupBarrier();
     var state:array<f32,32>;
-    // Existing head-major state is retained as an explicit owner-layout bridge.
-    for(var r=0u;r<32u;r++) {state[r]=old[head*16384u+(rg*32u+r)*128u+col];if !finite(state[r]) {atomicOr(&broken,1u);}}
+    // Native state[row][value_head][column], shared with decode and repair.
+    for(var r=0u;r<32u;r++) {state[r]=old[((rg*32u+r)*p.value_heads+head)*128u+col];if !finite(state[r]) {atomicOr(&broken,1u);}}
     var nq=h[qh*128u+tid];var nk=h[p.key_heads*128u+qh*128u+tid];
     var nv=h[p.key_heads*256u+head*128u+col];var ng=controls[head];var nb=controls[p.value_heads+head];
     for(var t=0u;t<p.count;t++) {
@@ -105,7 +116,7 @@ fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(local_invocation_index) tid:
             let good=atomicLoad(&broken)==0u&&finite(oc)&&finite(cv)&&finite(cg)&&finite(cbt);output[at]=select(0.0,oc,good);status[at]=select(0u,1u,good);}
     }
     let good=atomicLoad(&broken)==0u;
-    for(var r=0u;r<32u;r++) {next[head*16384u+(rg*32u+r)*128u+col]=select(0.0,state[r],good);}
+    for(var r=0u;r<32u;r++) {next[((rg*32u+r)*p.value_heads+head)*128u+col]=select(0.0,state[r],good);}
 }
 // RECURRENCE_END
 // NORM_BEGIN
