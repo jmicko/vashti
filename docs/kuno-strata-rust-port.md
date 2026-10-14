@@ -1,60 +1,98 @@
 # Strata Rust whole-model port experiment
 
-## Current checkpoint: native Intel graph, physical experts and packed operators
+## Current checkpoint — packed shared/MTP and projection reuse (2026-10-14)
 
-The latest user instruction supersedes all incremental next-step proposals below:
-**port the connected Strata Intel core first, then benchmark the whole model and
-fix integration bugs.** A negative speed measurement of an isolated ingredient
-must not veto it while its upstream dependencies are still missing. Keep loading/placement/public weight access, device routing/group planning,
-quantized operators, draft/target verification and accepted-state commit in one
-implementation scope. Follow the pinned MIT source, retain attribution, and
-record any necessary Vulkan/WGSL substitutions rather than claiming exact parity.
-Do not expand this request into API, UI or release work.
+The goal remains **active and unfinished**: implement the connected native Rust
+Intel core and reach at least30 accepted continuations/s. Keep the original scope;
+no API, UI, release or deployed worker change belongs to this pass. Worktree:
+`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
+`codex/strata-rust-port`. Canonical source and installed services are unchanged.
+The detailed older checkpoints below are historical, including old source hashes,
+geometry and statements about stopped jobs. Use this section and the aggregate
+receipt's `native_intel_packed_extension` for the current state.
 
-Work stays on `codex/strata-rust-port` in
-`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`. Canonical Vashti and
-installed services/binaries remain unchanged. Goal controller is active (checked2026-10-14); it continues toward30t/s after
-this tested checkpoint. See the native-core receipt
-below for the latest artifact and host state, rather than the historical
-"no jobs queued" statements further down.
+Latest frozen v285 source `e5bd05d429c0f37dceb6a54735ad0b9ea39c424e`, SHA256
+`1319a190a246ab7adcff7055629021db4672a128ddd5e944de3350189f5a69d2`:
+**14.512497 code /12.781750 prose timed continuations/s**, Intel B70 only.
+Code emits460 including EOS; prose512 at cap. This is not a consistent speed gain
+across both prompts, and30 remains unmet. Keep v282 (14.625229code) and v260
+(14.300613prose) artifacts as fallbacks. These are single runs with differing
+sequences/lengths, not exact-output speed ratios or private-worker acceptance.
 
-The connected native backend now owns Vulkan compute pipelines and recorded
-command buffers in Rust, shared read-only IQ tables, physical expert pointers,
-stable parameter pages, ordered private copies/fills, and the upstream expert
-subgroup32 launch. It replays large verification graphs, not only short helper
-submissions. Packed Q8 dense attention covers six original GGUF formats. New
-host-expert fetch/rebase stages are implemented in the same core and undergoing
-whole-model validation. This is still **not the complete Strata rewrite**:
-unequal global expert allocation, all shared/dense/MTP fusions, native prefill
-parity and independent full-model numerical acceptance remain incomplete.
+The connected changes retain native Vulkan graph replay, physical source pointers,
+selected original HOST expert staging, real GPU routing, authentic private owners
+and target-greedy verification:
 
-**Working fallback is v260**, runtime source
-`86a98a4def023ce4bd5834a0cdf40087dd938f1e`, artifact SHA256
-`b34e3b83dc3fa5297199ef22ef1e15f1ee4860a65b1d40f0768f014b96667392`:
-**14.063997 code / 14.300613 prose timed continuations/s**. It combines exact
-public static allocations, a 5 GiB static cap, 240 resident experts per layer,
-public-ranked empty-slot fillers and eight cache promotions per boundary.
-This is four-row MTP, not eight-row verification. These are single public runs,
-not medians, exact-output Ollama comparisons or private-input acceptance.
-**30 tokens/s and the complete Strata rewrite remain unmet.**
+- `0dad3af`: shared gate/up reuse one Q8 input; shared down, scalar MTP dense and
+  its authenticated indexed English head use the six original packed formats.
+  MTP gets a real charged32768-byte scratch owner. Final target vocabulary stays
+  complete; only draft proposals use the original public English subset.
+- `50a112e`: dense Q8 preparation uses subgroup32 contiguous loads/reduction and
+  packing, preserving ties-to-even codes/F16 scale/zero second plane; fixed packed
+  dot loops are expanded. No new public model conversion or target allocation.
+- `e5bd05d`: GDN/QSA consecutive projection bundles reuse one immutable input
+  epoch, validating common input spans/widths and distinct output/fault/scratch
+  owners. Unsupported BF16/F32 projections keep their ordinary arithmetic.
+  Receipt adds `packed_dense_input_prepares`; the older attention-only counter
+  was renamed `packed_dense_dispatches` when shared/MTP coverage was added.
 
-Latest checked source is `a0bd7153f3385e1fd994ae7a88e2178c8d110515`.
-Later commits add optional profile-owned initialization, its tests, and keep
-feature-off static admission unchanged. Do not substitute the latest source hash
-for the frozen v260 artifact's tested runtime identity. Original accepted engine
-remains `codex/kuno-native-text`/`6792453`.
+| Frozen build | Code t/s | Prose t/s | Meaning |
+| --- | ---: | ---: | --- |
+| v283 (`0dad3af`) |13.629725|13.002690|Packed shared/MTP integrated, below v282 code|
+| v284 (`50a112e`) |13.602412|Not run|Parallel quantizer alone yields no established gain|
+| v285 (`e5bd05d`) |14.512497|12.781750|Reuse helps code in this trial; not prose|
 
-Fresh protected host receipt at 23:11:21 UTC: Kuno/Ollama/Vashti HTTP 200,
-admission idle/unpaused/no latch, B70 50,688,000 bytes, Nvidia compute zero;
-classified GPU faults all zero. No reset/rebind/reboot was used. Kuno had one
-graceful restart to evict an idle image worker before these trials. No further
-benchmark is queued; recheck live ownership and sudo before the next pass.
+v285 code verifies in18.732054s and drafts in7.217603s. Prose verifies in27.251253s
+and drafts in7.246658s; its verification windows increase relative to v283.
+Generated vectors/tokens have not been independently proved identical across
+these builds. Confirm packed input epochs and numerical leaf vectors while
+profiling; do not mistake changed output/acceptance for a pure throughput gain.
 
-Read the completed October 13 receipt at the end and the aggregate JSON. All
-intermediate active/paused next-work sections below are historical and superseded
-by this section. Preserve transient privacy, swap/core-disabled GPU runs and
-physical recovery. Bounds and shader validity remain necessary for safe execution;
-standalone throughput gains are not prerequisites for implementing dependencies.
+Checks on v285 source: strict `strata-intel-core` Clippy, fmt/whitespace,
+65 WGSL/SPIRV shader variants including13 physical `spirv-val` modules;
+original `direct-device` regression1346passed /1ignored. Full Strata-feature
+unit suite, independent whole-model state oracle, arbitrary/private text worker,
+answer-quality acceptance and long soak are **not established**. Successful
+real greedy verification/finite public text does not replace those gates.
+
+Each completed run proves target full-owner closure1565 buffers /1,064,534,016
+bytes, MTP44 /11,763,712 bytes, original432 host-page detachment/live backing0,
+B70 idle50,688,000 bytes, NVIDIA compute0 and classified GPU faults0. Normal
+Kuno/Ollama/Vashti HTTP200 and admission idle/unpaused/no recovery latch return.
+No device reset/rebind/reboot or installed binary/service/configuration change.
+No content is saved; fixtures use these recorded **public** prompts, seed424242,
+temperature0, no penalties, thinkingfalse and512max outputs:
+
+- Code: “Write a Python function that merges two sorted lists of integers into
+  one sorted list. Explain its time and space complexity.”
+- Prose: “Explain how a hash table works, including collisions, resizing, and
+  average lookup complexity.”
+
+Reproduce using the protected runner/builder instructions in the native-core
+receipt below, with build `native-next-v285-strata-projection-bundle-build-20261014`
+and fresh output directories. Do not compile during GPU timing. Root/swap0/core0
+protection is required. Never reset/rebind the Intel card to obtain a result.
+The source clone's known `build`, `sycl/build`, `build-sycl` and `build-intel`
+paths remain absent; the original comparison evidence and pinned MIT source
+are preserved. Alternate Q2 sidecar `kuno-strata-mtp-q2-20261009/mtp-q2_0.gguf`
+remains889,017,216 bytes.
+
+Next high-impact source comparison: pinned Intel Strata defaults to separate
+GU roles and one-entry `row_entries` accumulation (`iq_kernels.dp.cpp:1784`,
+`1815`, `4182`; `g_split_multi` is opt-in). Kuno's current GU fuses both roles
+and four member accumulators. Lower register pressure/occupancy is a plausible
+advantage, not yet a measured bottleneck. Add public-only operator GPU timing
+and port that scheduling coherently with actual owner/budget/graph dependencies;
+compare fused hyper-connection read stages too. SYCL's `fused_gr.dp.cpp` explicitly
+says QFUSE and HC_Q8 are not built, so do not present those as existing Intel
+upstream behavior. Unequal global expert allocation, native prefill parity,
+eight-row core staging and full numerical acceptance also remain unfinished.
+
+No benchmark/compiler remains after these trials. A bounded90-minute sudo
+refresher may still be live; inspect its PID file and actual process before reuse:
+`/media/jmicko/faststore/kuno-development/strata-intel-core-continuation-sudo-20261014.pid`.
+Goal continuation retains the full30t/s objective; if cached sudo is lost, leave
+a tested documented checkpoint without privilege workarounds or a completion claim.
 
 ## Connected implementation
 

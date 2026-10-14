@@ -4280,3 +4280,32 @@ are not established.30t/s and complete upstream parity remain unmet. v260 is
 retained as a faster prose fallback; generated token sequences/lengths differ,
 so these are not same-output speed ratios. The existing goal is active and
 continues; repository notes must preserve that unfinished scope.
+
+
+## Native Intel packed shared/MTP and reuse checkpoint (2026-10-14)
+
+This supersedes the preceding native-engine source/checkpoint details. Backend-only
+work remains in the isolated `kuno-image-speed` worktree on `codex/strata-rust-port`.
+Canonical/deployed source, API, protocol, UI and services are unchanged;
+**required Vashti changes: none**. Read the top of
+[the current port handoff](kuno-strata-rust-port.md) and aggregate receipt's
+`native_intel_packed_extension` before resuming.
+
+Changes `0dad3af`, `50a112e`, `e5bd05d` connect packed shared gate/up/down, scalar
+MTP projections/indexed head, subgroup32 input preparation, and GDN/QSA input
+reuse. Frozen v285 source `e5bd05d429c0f37dceb6a54735ad0b9ea39c424e`, SHA256
+`1319a190a246ab7adcff7055629021db4672a128ddd5e944de3350189f5a69d2`:
+14.512497code /12.781750prose timed continuations/s. Code improves over v283/v284
+in this single trial, prose does not. Sequences/windows differ; independent
+numerical/quality acceptance is absent. Keep v282/v260 fallbacks.30 and complete
+Strata parity remain unmet; goal remains active.
+
+Strict core Clippy,65 shader variants including13 physical SPIRV checks, and
+original regression1346passed /1ignored. All trials restore actual B70 idle
+50,688,000B, NVIDIA compute0, classified faults0, HTTP200 and normal idle admission;
+full private target/MTP owners erase and original host pages detach. No reset,
+reboot or install. Full core unit suite, private worker/API acceptance, whole-state
+oracle and soak are not established. No benchmark/compiler remains; the bounded
+sudo helper may still be live and must be inspected, not assumed. Next scope:
+public operator timing, lower-register expert scheduling and connected GR fusions,
+with packed-epoch/vector verification for the changed prose path.

@@ -1,5 +1,5 @@
 {
-  "source_commit": "a0c6c3c9c21745faed6ee7362983bcd00f5a72e6",
+  "source_commit": "e5bd05d429c0f37dceb6a54735ad0b9ea39c424e",
   "source_branch": "codex/strata-rust-port",
   "status": "coherent_native_intel_core_tested_checkpoint_goal_continues",
   "original_working_engine_commit": "6792453",
@@ -7,7 +7,7 @@
   "license": "MIT with Strata/ggml notices retained",
   "latest_source_checks": {
     "strict_port_clippy": true,
-    "strict_clippy_source_commit": "a0c6c3c9c21745faed6ee7362983bcd00f5a72e6",
+    "strict_clippy_source_commit": "e5bd05d429c0f37dceb6a54735ad0b9ea39c424e",
     "strict_port_clippy_features": [
       "strata-intel-core"
     ],
@@ -15,7 +15,7 @@
     "whitespace": true,
     "full_original_regression_current_source": true,
     "last_full_regression": {
-      "commit": "a0c6c3c9c21745faed6ee7362983bcd00f5a72e6",
+      "commit": "e5bd05d429c0f37dceb6a54735ad0b9ea39c424e",
       "pass": 1346,
       "failed": 0,
       "ignored": 1,
@@ -33,12 +33,12 @@
         "strata-resident-240"
       ]
     },
-    "port_shader_variants": 56,
-    "shader_checked_artifact_source": "a0c6c3c9c21745faed6ee7362983bcd00f5a72e6",
+    "port_shader_variants": 65,
+    "shader_checked_artifact_source": "e5bd05d429c0f37dceb6a54735ad0b9ea39c424e",
     "later_v261_shader_check": true,
     "full_strata_feature_unit_suite_run": false,
-    "strict_port_clippy_log": "/media/jmicko/faststore/kuno-development/strata-native-core-final-clippy-20261014.log",
-    "full_original_regression_log": "/media/jmicko/faststore/kuno-development/strata-native-core-original-regression-20261014.log",
+    "strict_port_clippy_log": "/media/jmicko/faststore/kuno-development/strata-projection-bundle-clippy-20261014.log",
+    "full_original_regression_log": "/media/jmicko/faststore/kuno-development/strata-shared-dense-original-regression-20261014.log",
     "targeted_test_logs": [
       "/media/jmicko/faststore/kuno-development/native-strata-v261-profile-plan-tests-20261013.log",
       "/media/jmicko/faststore/kuno-development/native-strata-v261-expanded-address-tests-20261013.log"
@@ -46,61 +46,150 @@
     "physical_spirv_validated_variants": 13
   },
   "last_gpu_trial": {
-    "build": 282,
-    "directory": "/media/jmicko/faststore/kuno-development/native-next-v282-strata-intel-core-prose-20261014",
-    "source_commit": "a0c6c3c9c21745faed6ee7362983bcd00f5a72e6",
-    "artifact_sha256": "9b41ea8fb312ad1fd1ddb3f5986eb479832c5ab9d173c0ffdf51188c102f38c6",
-    "continuation_tokens_per_second": 13.546277346145345,
+    "version": 285,
+    "directory": "/media/jmicko/faststore/kuno-development/native-next-v285-strata-projection-bundle-prose-20261014",
+    "source_commit": "e5bd05d429c0f37dceb6a54735ad0b9ea39c424e",
+    "artifact_sha256": "1319a190a246ab7adcff7055629021db4672a128ddd5e944de3350189f5a69d2",
+    "fixture": "prose",
+    "seed": 424242,
+    "temperature": 0,
     "timed_continuations": 511,
     "emitted_with_eos": 512,
-    "native_graph_totals": [
-      4443,
-      717543,
-      251
-    ],
-    "native_graph_execution_totals": [
-      [
-        3124,
-        900,
-        249,
-        1,
-        169
-      ],
-      [
-        0,
-        0,
-        86,
-        0,
-        165
-      ],
-      675440694,
-      19881325069
-    ],
-    "native_stage_dispatches": 24480,
-    "dense_attention_dispatches": 26364,
+    "continuation_tokens_per_second": 12.781750240419093,
+    "draft_ns": 7246657522,
+    "verify_ns": 27251252876,
     "target_closure": {
       "main_buffers": 1565,
       "main_bytes": 1064534016,
       "source_buffers": 0,
       "source_bytes": 0
     },
-    "request_scope": {
-      "closing_audit_ns": 10932987,
-      "full_io_audit": true,
-      "scope_closed": true,
-      "scope_sequence": 1
+    "draft_closure": {
+      "main_reserved": 0,
+      "private_buffers": 44,
+      "private_bytes": 11763712,
+      "public_bytes": 2434793472
     },
-    "physical_intel_used_bytes": [
-      50688000
+    "draft_acceptance": [
+      264,
+      438
     ],
-    "nvidia_compute_process_count": 0,
-    "gpu_faults_after": {
-      "nvidia_xid": 0,
-      "xe_memory_faults": 0,
-      "xe_reset_failures": 0,
-      "xe_timeouts": 0,
-      "xe_wedged": 0
-    }
+    "native_counters": {
+      "activation_planes": 1,
+      "activation_scale": "fp16-q8_1",
+      "aligned_vector_expert_reads": true,
+      "backend": "Rust/WGSL/Vulkan",
+      "coherent_intel_core": true,
+      "constant_iq_codebook": false,
+      "down_dispatches_by_member_count": [
+        0,
+        7248,
+        48,
+        4560,
+        0,
+        0,
+        0,
+        0
+      ],
+      "enabled": true,
+      "expert_dot_lanes": 8,
+      "full_private_erasure": true,
+      "fused_five_tier_experts": true,
+      "group_stride": 40,
+      "gu_dispatches_by_member_count": [
+        0,
+        7248,
+        48,
+        4560,
+        0,
+        0,
+        0,
+        0
+      ],
+      "independent_expert_groups": true,
+      "installed_or_production": false,
+      "intermediate_numeric_scans": false,
+      "native_host_stage_dispatches": 35568,
+      "native_host_stage_private_bytes": 201326592,
+      "native_vulkan_graph_execution_totals": [
+        [
+          3202,
+          947,
+          195,
+          1,
+          246
+        ],
+        [
+          0,
+          0,
+          97,
+          0,
+          239
+        ],
+        702161606,
+        21938733593
+      ],
+      "native_vulkan_graph_process_totals": [
+        4591,
+        961090,
+        336
+      ],
+      "original_cpu13_precision_contract": false,
+      "packed_dense_dispatches": 38096,
+      "packed_dense_input_prepares": 21356,
+      "profile_first_residency": true,
+      "projection_workgroup": 256,
+      "published_outputs_checked_finite": true,
+      "rows_per_workgroup": 32,
+      "shared_read_only_iq_table_bytes": 32768,
+      "suffix_lookup_proposed": 9,
+      "suffix_lookup_windows": 3,
+      "unrolled_packed_dots": true,
+      "upstream_revision": "fb58e0dbc8399662c0e47c76578c6e878b14f6cf",
+      "verify_capacity": 4
+    },
+    "host_after": {
+      "admission": {
+        "action": "status",
+        "state": {
+          "admission": {
+            "active": false,
+            "completed": 0,
+            "paused": false,
+            "recovery_required": false,
+            "rejected": 0,
+            "waiting": 0
+          }
+        },
+        "status": 200
+      },
+      "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+      "http_statuses": {
+        "kuno": 200,
+        "ollama": 200,
+        "vashti": 200
+      },
+      "intel": {
+        "xe_memory": [
+          {
+            "total_bytes": 34242297856,
+            "used_bytes": 50688000
+          }
+        ]
+      },
+      "kernel": "7.0.0-38-generic",
+      "kernel_fault_counts": {
+        "nvidia_xid": 0,
+        "xe_memory_faults": 0,
+        "xe_reset_failures": 0,
+        "xe_timeouts": 0,
+        "xe_wedged": 0
+      },
+      "nvidia_compute_process_count": 0,
+      "nvidia_memory_mib": 579,
+      "time": "2026-10-14T03:20:37.822554+00:00"
+    },
+    "private_or_production_accepted": false
   },
   "last_completed_broad_port": [
     {
@@ -425,11 +514,11 @@
     "Independent full-model state-vector parity for prefix replay",
     "30 accepted continuations/s"
   ],
-  "sudo_refresher_stopped": true,
-  "queued_work": false,
+  "sudo_refresher_stopped": false,
+  "queued_work": [],
   "installed_services_changed": false,
   "required_vashti_changes": [],
-  "host_stop_receipt": "/media/jmicko/faststore/kuno-development/native-strata-source-match-final-state-20261013.json",
+  "host_stop_receipt": "/media/jmicko/faststore/kuno-development/strata-packed-bundle-final-state-20261014.json",
   "host": {
     "admission": {
       "action": "status",
@@ -1292,8 +1381,8 @@
       "receipt_directory": "/media/jmicko/faststore/kuno-development/native-strata-port-v236-prose-cache-eight-q2-intel-20261013"
     }
   ],
-  "next_work": "User-directed coherent port of the pinned Strata Intel core: placement/public weight access, router and grouped execution, quantized kernels, draft/target verification and accepted-state commit together. Measure/debug whole model after integrated implementation, not performance-gate each ingredient. Preserve tested v260 fallback; no API/UI scope.",
-  "current_frozen_artifact_sha256": "b34e3b83dc3fa5297199ef22ef1e15f1ee4860a65b1d40f0768f014b96667392",
+  "next_work": "Measure native operator GPU times and confirm dense packed input epochs/vectors for changed prose windows; then port lower-register default Intel GU entry scheduling and connected GR stages. Do not drop the coherent core or weaken verification.",
+  "current_frozen_artifact_sha256": "1319a190a246ab7adcff7055629021db4672a128ddd5e944de3350189f5a69d2",
   "target_profile_costs": {
     "FrozenGuIntegerFourEightLanesCompact": {
       "calls": 240,
@@ -1322,7 +1411,7 @@
       "order_inferred_from_fixed_source_phase_not_request_ids": true
     }
   },
-  "fresh_clean_host_receipt": "/media/jmicko/faststore/kuno-development/native-strata-source-match-final-state-20261013.json",
+  "fresh_clean_host_receipt": "/media/jmicko/faststore/kuno-development/strata-packed-bundle-final-state-20261014.json",
   "fresh_clean_host": {
     "admission": {
       "action": "status",
@@ -1361,8 +1450,8 @@
       "xe_wedged": 0
     },
     "nvidia_compute_process_count": 0,
-    "nvidia_memory_mib": 641,
-    "time": "2026-10-13T23:11:21.008399+00:00"
+    "nvidia_memory_mib": 579,
+    "time": "2026-10-14T03:23:01.836839+00:00"
   },
   "wider_verifier_20261013": {
     "feature": "strata-eight-window",
@@ -3389,7 +3478,7 @@
       "strict_clippy_source_commit": "383248ae9bdcb4035334b80497d8e226c49d090b"
     }
   },
-  "goal_controller_status": "paused",
+  "goal_controller_status": "active",
   "historical_v221_last_gpu_trial": {
     "artifact_source_commit": "3e09fb6789f1bd92d5c543671b72b2136c32375f",
     "artifact_sha256": "b6fc683d5065626c8842ea894fb613a4bc3161254b07402507e224f454ffe9a1",
@@ -3855,5 +3944,764 @@
         }
       }
     ]
-  }
+  },
+  "native_intel_packed_extension": {
+    "runs": [
+      {
+        "version": 283,
+        "directory": "/media/jmicko/faststore/kuno-development/native-next-v283-strata-shared-mtp-code-20261014",
+        "source_commit": "0dad3afc58e772c28a5c7f33d4554bb17efa463c",
+        "artifact_sha256": "3253c01227024a7c62863e30ad3922a2e52598dc223ccb2623f867f756e98334",
+        "fixture": "code",
+        "seed": 424242,
+        "temperature": 0,
+        "timed_continuations": 459,
+        "emitted_with_eos": 460,
+        "continuation_tokens_per_second": 13.62972508561218,
+        "draft_ns": 7742933768,
+        "verify_ns": 20306690694,
+        "target_closure": {
+          "main_buffers": 1565,
+          "main_bytes": 1064534016,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        "draft_closure": {
+          "main_reserved": 0,
+          "private_buffers": 44,
+          "private_bytes": 11763712,
+          "public_bytes": 2434793472
+        },
+        "draft_acceptance": [
+          316,
+          429
+        ],
+        "native_counters": {
+          "activation_planes": 1,
+          "activation_scale": "fp16-q8_1",
+          "aligned_vector_expert_reads": true,
+          "backend": "Rust/WGSL/Vulkan",
+          "coherent_intel_core": true,
+          "constant_iq_codebook": false,
+          "down_dispatches_by_member_count": [
+            0,
+            0,
+            0,
+            6864,
+            0,
+            0,
+            0,
+            0
+          ],
+          "enabled": true,
+          "expert_dot_lanes": 8,
+          "full_private_erasure": true,
+          "fused_five_tier_experts": true,
+          "group_stride": 40,
+          "gu_dispatches_by_member_count": [
+            0,
+            0,
+            0,
+            6864,
+            0,
+            0,
+            0,
+            0
+          ],
+          "independent_expert_groups": true,
+          "installed_or_production": false,
+          "intermediate_numeric_scans": false,
+          "native_host_stage_dispatches": 20592,
+          "native_host_stage_private_bytes": 201326592,
+          "native_vulkan_graph_execution_totals": [
+            [
+              3185,
+              999,
+              178,
+              1,
+              142
+            ],
+            [
+              0,
+              0,
+              49,
+              0,
+              139
+            ],
+            678799121,
+            17285769172
+          ],
+          "native_vulkan_graph_process_totals": [
+            4505,
+            628873,
+            188
+          ],
+          "original_cpu13_precision_contract": false,
+          "packed_dense_dispatches": 50306,
+          "profile_first_residency": true,
+          "projection_workgroup": 256,
+          "published_outputs_checked_finite": true,
+          "rows_per_workgroup": 32,
+          "shared_read_only_iq_table_bytes": 32768,
+          "suffix_lookup_proposed": 0,
+          "suffix_lookup_windows": 0,
+          "unrolled_packed_dots": true,
+          "upstream_revision": "fb58e0dbc8399662c0e47c76578c6e878b14f6cf",
+          "verify_capacity": 4
+        },
+        "host_after": {
+          "admission": {
+            "action": "status",
+            "state": {
+              "admission": {
+                "active": false,
+                "completed": 0,
+                "paused": false,
+                "recovery_required": false,
+                "rejected": 0,
+                "waiting": 0
+              }
+            },
+            "status": 200
+          },
+          "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+          "http_statuses": {
+            "kuno": 200,
+            "ollama": 200,
+            "vashti": 200
+          },
+          "intel": {
+            "xe_memory": [
+              {
+                "total_bytes": 34242297856,
+                "used_bytes": 50688000
+              }
+            ]
+          },
+          "kernel": "7.0.0-38-generic",
+          "kernel_fault_counts": {
+            "nvidia_xid": 0,
+            "xe_memory_faults": 0,
+            "xe_reset_failures": 0,
+            "xe_timeouts": 0,
+            "xe_wedged": 0
+          },
+          "nvidia_compute_process_count": 0,
+          "nvidia_memory_mib": 575,
+          "time": "2026-10-14T02:57:25.027190+00:00"
+        },
+        "private_or_production_accepted": false
+      },
+      {
+        "version": 283,
+        "directory": "/media/jmicko/faststore/kuno-development/native-next-v283-strata-shared-mtp-prose-20261014",
+        "source_commit": "0dad3afc58e772c28a5c7f33d4554bb17efa463c",
+        "artifact_sha256": "3253c01227024a7c62863e30ad3922a2e52598dc223ccb2623f867f756e98334",
+        "fixture": "prose",
+        "seed": 424242,
+        "temperature": 0,
+        "timed_continuations": 511,
+        "emitted_with_eos": 512,
+        "continuation_tokens_per_second": 13.00268973820588,
+        "draft_ns": 9046392784,
+        "verify_ns": 24229042746,
+        "target_closure": {
+          "main_buffers": 1565,
+          "main_bytes": 1064534016,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        "draft_closure": {
+          "main_reserved": 0,
+          "private_buffers": 44,
+          "private_bytes": 11763712,
+          "public_bytes": 2434793472
+        },
+        "draft_acceptance": [
+          324,
+          555
+        ],
+        "native_counters": {
+          "activation_planes": 1,
+          "activation_scale": "fp16-q8_1",
+          "aligned_vector_expert_reads": true,
+          "backend": "Rust/WGSL/Vulkan",
+          "coherent_intel_core": true,
+          "constant_iq_codebook": false,
+          "down_dispatches_by_member_count": [
+            48,
+            48,
+            48,
+            8832,
+            0,
+            0,
+            0,
+            0
+          ],
+          "enabled": true,
+          "expert_dot_lanes": 8,
+          "full_private_erasure": true,
+          "fused_five_tier_experts": true,
+          "group_stride": 40,
+          "gu_dispatches_by_member_count": [
+            48,
+            48,
+            48,
+            8832,
+            0,
+            0,
+            0,
+            0
+          ],
+          "independent_expert_groups": true,
+          "installed_or_production": false,
+          "intermediate_numeric_scans": false,
+          "native_host_stage_dispatches": 26928,
+          "native_host_stage_private_bytes": 201326592,
+          "native_vulkan_graph_execution_totals": [
+            [
+              3141,
+              882,
+              285,
+              1,
+              186
+            ],
+            [
+              0,
+              0,
+              106,
+              0,
+              180
+            ],
+            765913399,
+            21020953616
+          ],
+          "native_vulkan_graph_process_totals": [
+            4495,
+            802411,
+            286
+          ],
+          "original_cpu13_precision_contract": false,
+          "packed_dense_dispatches": 64278,
+          "profile_first_residency": true,
+          "projection_workgroup": 256,
+          "published_outputs_checked_finite": true,
+          "rows_per_workgroup": 32,
+          "shared_read_only_iq_table_bytes": 32768,
+          "suffix_lookup_proposed": 9,
+          "suffix_lookup_windows": 3,
+          "unrolled_packed_dots": true,
+          "upstream_revision": "fb58e0dbc8399662c0e47c76578c6e878b14f6cf",
+          "verify_capacity": 4
+        },
+        "host_after": {
+          "admission": {
+            "action": "status",
+            "state": {
+              "admission": {
+                "active": false,
+                "completed": 0,
+                "paused": false,
+                "recovery_required": false,
+                "rejected": 0,
+                "waiting": 0
+              }
+            },
+            "status": 200
+          },
+          "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+          "http_statuses": {
+            "kuno": 200,
+            "ollama": 200,
+            "vashti": 200
+          },
+          "intel": {
+            "xe_memory": [
+              {
+                "total_bytes": 34242297856,
+                "used_bytes": 50688000
+              }
+            ]
+          },
+          "kernel": "7.0.0-38-generic",
+          "kernel_fault_counts": {
+            "nvidia_xid": 0,
+            "xe_memory_faults": 0,
+            "xe_reset_failures": 0,
+            "xe_timeouts": 0,
+            "xe_wedged": 0
+          },
+          "nvidia_compute_process_count": 0,
+          "nvidia_memory_mib": 573,
+          "time": "2026-10-14T03:01:52.723136+00:00"
+        },
+        "private_or_production_accepted": false
+      },
+      {
+        "version": 284,
+        "directory": "/media/jmicko/faststore/kuno-development/native-next-v284-strata-subgroup-dense-code-20261014",
+        "source_commit": "50a112edde37eb4128722417f9d345ab26d1ffae",
+        "artifact_sha256": "711d5d5739915809333f3227d110b773342a3e93308facbe0936f452beb604cb",
+        "fixture": "code",
+        "seed": 424242,
+        "temperature": 0,
+        "timed_continuations": 459,
+        "emitted_with_eos": 460,
+        "continuation_tokens_per_second": 13.60241203773949,
+        "draft_ns": 7892163833,
+        "verify_ns": 20207356958,
+        "target_closure": {
+          "main_buffers": 1565,
+          "main_bytes": 1064534016,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        "draft_closure": {
+          "main_reserved": 0,
+          "private_buffers": 44,
+          "private_bytes": 11763712,
+          "public_bytes": 2434793472
+        },
+        "draft_acceptance": [
+          316,
+          429
+        ],
+        "native_counters": {
+          "activation_planes": 1,
+          "activation_scale": "fp16-q8_1",
+          "aligned_vector_expert_reads": true,
+          "backend": "Rust/WGSL/Vulkan",
+          "coherent_intel_core": true,
+          "constant_iq_codebook": false,
+          "down_dispatches_by_member_count": [
+            0,
+            0,
+            0,
+            6864,
+            0,
+            0,
+            0,
+            0
+          ],
+          "enabled": true,
+          "expert_dot_lanes": 8,
+          "full_private_erasure": true,
+          "fused_five_tier_experts": true,
+          "group_stride": 40,
+          "gu_dispatches_by_member_count": [
+            0,
+            0,
+            0,
+            6864,
+            0,
+            0,
+            0,
+            0
+          ],
+          "independent_expert_groups": true,
+          "installed_or_production": false,
+          "intermediate_numeric_scans": false,
+          "native_host_stage_dispatches": 20592,
+          "native_host_stage_private_bytes": 201326592,
+          "native_vulkan_graph_execution_totals": [
+            [
+              3185,
+              999,
+              178,
+              1,
+              142
+            ],
+            [
+              0,
+              0,
+              49,
+              0,
+              139
+            ],
+            686891500,
+            17170703181
+          ],
+          "native_vulkan_graph_process_totals": [
+            4505,
+            628873,
+            188
+          ],
+          "original_cpu13_precision_contract": false,
+          "packed_dense_dispatches": 50306,
+          "profile_first_residency": true,
+          "projection_workgroup": 256,
+          "published_outputs_checked_finite": true,
+          "rows_per_workgroup": 32,
+          "shared_read_only_iq_table_bytes": 32768,
+          "suffix_lookup_proposed": 0,
+          "suffix_lookup_windows": 0,
+          "unrolled_packed_dots": true,
+          "upstream_revision": "fb58e0dbc8399662c0e47c76578c6e878b14f6cf",
+          "verify_capacity": 4
+        },
+        "host_after": {
+          "admission": {
+            "action": "status",
+            "state": {
+              "admission": {
+                "active": false,
+                "completed": 0,
+                "paused": false,
+                "recovery_required": false,
+                "rejected": 0,
+                "waiting": 0
+              }
+            },
+            "status": 200
+          },
+          "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+          "http_statuses": {
+            "kuno": 200,
+            "ollama": 200,
+            "vashti": 200
+          },
+          "intel": {
+            "xe_memory": [
+              {
+                "total_bytes": 34242297856,
+                "used_bytes": 50688000
+              }
+            ]
+          },
+          "kernel": "7.0.0-38-generic",
+          "kernel_fault_counts": {
+            "nvidia_xid": 0,
+            "xe_memory_faults": 0,
+            "xe_reset_failures": 0,
+            "xe_timeouts": 0,
+            "xe_wedged": 0
+          },
+          "nvidia_compute_process_count": 0,
+          "nvidia_memory_mib": 576,
+          "time": "2026-10-14T03:09:47.166954+00:00"
+        },
+        "private_or_production_accepted": false
+      },
+      {
+        "version": 285,
+        "directory": "/media/jmicko/faststore/kuno-development/native-next-v285-strata-projection-bundle-code-20261014",
+        "source_commit": "e5bd05d429c0f37dceb6a54735ad0b9ea39c424e",
+        "artifact_sha256": "1319a190a246ab7adcff7055629021db4672a128ddd5e944de3350189f5a69d2",
+        "fixture": "code",
+        "seed": 424242,
+        "temperature": 0,
+        "timed_continuations": 459,
+        "emitted_with_eos": 460,
+        "continuation_tokens_per_second": 14.512496852164736,
+        "draft_ns": 7217602892,
+        "verify_ns": 18732053808,
+        "target_closure": {
+          "main_buffers": 1565,
+          "main_bytes": 1064534016,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        "draft_closure": {
+          "main_reserved": 0,
+          "private_buffers": 44,
+          "private_bytes": 11763712,
+          "public_bytes": 2434793472
+        },
+        "draft_acceptance": [
+          316,
+          429
+        ],
+        "native_counters": {
+          "activation_planes": 1,
+          "activation_scale": "fp16-q8_1",
+          "aligned_vector_expert_reads": true,
+          "backend": "Rust/WGSL/Vulkan",
+          "coherent_intel_core": true,
+          "constant_iq_codebook": false,
+          "down_dispatches_by_member_count": [
+            0,
+            0,
+            0,
+            6864,
+            0,
+            0,
+            0,
+            0
+          ],
+          "enabled": true,
+          "expert_dot_lanes": 8,
+          "full_private_erasure": true,
+          "fused_five_tier_experts": true,
+          "group_stride": 40,
+          "gu_dispatches_by_member_count": [
+            0,
+            0,
+            0,
+            6864,
+            0,
+            0,
+            0,
+            0
+          ],
+          "independent_expert_groups": true,
+          "installed_or_production": false,
+          "intermediate_numeric_scans": false,
+          "native_host_stage_dispatches": 20592,
+          "native_host_stage_private_bytes": 201326592,
+          "native_vulkan_graph_execution_totals": [
+            [
+              3185,
+              999,
+              178,
+              1,
+              142
+            ],
+            [
+              0,
+              0,
+              49,
+              0,
+              139
+            ],
+            695481172,
+            17148208584
+          ],
+          "native_vulkan_graph_process_totals": [
+            4505,
+            620293,
+            188
+          ],
+          "original_cpu13_precision_contract": false,
+          "packed_dense_dispatches": 50306,
+          "packed_dense_input_prepares": 28427,
+          "profile_first_residency": true,
+          "projection_workgroup": 256,
+          "published_outputs_checked_finite": true,
+          "rows_per_workgroup": 32,
+          "shared_read_only_iq_table_bytes": 32768,
+          "suffix_lookup_proposed": 0,
+          "suffix_lookup_windows": 0,
+          "unrolled_packed_dots": true,
+          "upstream_revision": "fb58e0dbc8399662c0e47c76578c6e878b14f6cf",
+          "verify_capacity": 4
+        },
+        "host_after": {
+          "admission": {
+            "action": "status",
+            "state": {
+              "admission": {
+                "active": false,
+                "completed": 0,
+                "paused": false,
+                "recovery_required": false,
+                "rejected": 0,
+                "waiting": 0
+              }
+            },
+            "status": 200
+          },
+          "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+          "http_statuses": {
+            "kuno": 200,
+            "ollama": 200,
+            "vashti": 200
+          },
+          "intel": {
+            "xe_memory": [
+              {
+                "total_bytes": 34242297856,
+                "used_bytes": 50688000
+              }
+            ]
+          },
+          "kernel": "7.0.0-38-generic",
+          "kernel_fault_counts": {
+            "nvidia_xid": 0,
+            "xe_memory_faults": 0,
+            "xe_reset_failures": 0,
+            "xe_timeouts": 0,
+            "xe_wedged": 0
+          },
+          "nvidia_compute_process_count": 0,
+          "nvidia_memory_mib": 583,
+          "time": "2026-10-14T03:17:29.207741+00:00"
+        },
+        "private_or_production_accepted": false
+      },
+      {
+        "version": 285,
+        "directory": "/media/jmicko/faststore/kuno-development/native-next-v285-strata-projection-bundle-prose-20261014",
+        "source_commit": "e5bd05d429c0f37dceb6a54735ad0b9ea39c424e",
+        "artifact_sha256": "1319a190a246ab7adcff7055629021db4672a128ddd5e944de3350189f5a69d2",
+        "fixture": "prose",
+        "seed": 424242,
+        "temperature": 0,
+        "timed_continuations": 511,
+        "emitted_with_eos": 512,
+        "continuation_tokens_per_second": 12.781750240419093,
+        "draft_ns": 7246657522,
+        "verify_ns": 27251252876,
+        "target_closure": {
+          "main_buffers": 1565,
+          "main_bytes": 1064534016,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        "draft_closure": {
+          "main_reserved": 0,
+          "private_buffers": 44,
+          "private_bytes": 11763712,
+          "public_bytes": 2434793472
+        },
+        "draft_acceptance": [
+          264,
+          438
+        ],
+        "native_counters": {
+          "activation_planes": 1,
+          "activation_scale": "fp16-q8_1",
+          "aligned_vector_expert_reads": true,
+          "backend": "Rust/WGSL/Vulkan",
+          "coherent_intel_core": true,
+          "constant_iq_codebook": false,
+          "down_dispatches_by_member_count": [
+            0,
+            7248,
+            48,
+            4560,
+            0,
+            0,
+            0,
+            0
+          ],
+          "enabled": true,
+          "expert_dot_lanes": 8,
+          "full_private_erasure": true,
+          "fused_five_tier_experts": true,
+          "group_stride": 40,
+          "gu_dispatches_by_member_count": [
+            0,
+            7248,
+            48,
+            4560,
+            0,
+            0,
+            0,
+            0
+          ],
+          "independent_expert_groups": true,
+          "installed_or_production": false,
+          "intermediate_numeric_scans": false,
+          "native_host_stage_dispatches": 35568,
+          "native_host_stage_private_bytes": 201326592,
+          "native_vulkan_graph_execution_totals": [
+            [
+              3202,
+              947,
+              195,
+              1,
+              246
+            ],
+            [
+              0,
+              0,
+              97,
+              0,
+              239
+            ],
+            702161606,
+            21938733593
+          ],
+          "native_vulkan_graph_process_totals": [
+            4591,
+            961090,
+            336
+          ],
+          "original_cpu13_precision_contract": false,
+          "packed_dense_dispatches": 38096,
+          "packed_dense_input_prepares": 21356,
+          "profile_first_residency": true,
+          "projection_workgroup": 256,
+          "published_outputs_checked_finite": true,
+          "rows_per_workgroup": 32,
+          "shared_read_only_iq_table_bytes": 32768,
+          "suffix_lookup_proposed": 9,
+          "suffix_lookup_windows": 3,
+          "unrolled_packed_dots": true,
+          "upstream_revision": "fb58e0dbc8399662c0e47c76578c6e878b14f6cf",
+          "verify_capacity": 4
+        },
+        "host_after": {
+          "admission": {
+            "action": "status",
+            "state": {
+              "admission": {
+                "active": false,
+                "completed": 0,
+                "paused": false,
+                "recovery_required": false,
+                "rejected": 0,
+                "waiting": 0
+              }
+            },
+            "status": 200
+          },
+          "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+          "http_statuses": {
+            "kuno": 200,
+            "ollama": 200,
+            "vashti": 200
+          },
+          "intel": {
+            "xe_memory": [
+              {
+                "total_bytes": 34242297856,
+                "used_bytes": 50688000
+              }
+            ]
+          },
+          "kernel": "7.0.0-38-generic",
+          "kernel_fault_counts": {
+            "nvidia_xid": 0,
+            "xe_memory_faults": 0,
+            "xe_reset_failures": 0,
+            "xe_timeouts": 0,
+            "xe_wedged": 0
+          },
+          "nvidia_compute_process_count": 0,
+          "nvidia_memory_mib": 579,
+          "time": "2026-10-14T03:20:37.822554+00:00"
+        },
+        "private_or_production_accepted": false
+      }
+    ],
+    "source_commits": [
+      "0dad3afc58e772c28a5c7f33d4554bb17efa463c",
+      "50a112edde37eb4128722417f9d345ab26d1ffae",
+      "e5bd05d429c0f37dceb6a54735ad0b9ea39c424e"
+    ],
+    "implementation": [
+      "one packed input for shared gate/up",
+      "scalar packed MTP dense and authenticated indexed English head",
+      "subgroup32 Q8 dense prepare and fixed dot expansion",
+      "one immutable packed input across GDN/QSA projection bundles"
+    ],
+    "public_prompts": {
+      "code": "Write a Python function that merges two sorted lists of integers into one sorted list. Explain its time and space complexity.",
+      "prose": "Explain how a hash table works, including collisions, resizing, and average lookup complexity."
+    },
+    "new_private_mtp_scratch_bytes": 32768,
+    "native_target_private_bytes_unchanged": true,
+    "observed_old_source_build_paths_absent": [
+      "build",
+      "sycl/build",
+      "build-sycl",
+      "build-intel"
+    ],
+    "alternate_q2_mtp_size_bytes": 889017216,
+    "independent_whole_state_oracle": false,
+    "full_strata_feature_unit_suite_run": false,
+    "interpretation": "Single code/prose runs; v285 code improves against v283/v284, prose does not. Output sequences are not independently proved identical. Prose verification window count changes; confirm packed-input epochs and dense vectors before attributing it to speed alone."
+  },
+  "bounded_sudo_helper_pid_file": "/media/jmicko/faststore/kuno-development/strata-intel-core-continuation-sudo-20261014.pid"
 }
