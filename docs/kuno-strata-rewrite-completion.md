@@ -38,7 +38,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | GPU route/group planning and CPU contribution | `verify.cpp` router, `resident_plan`, doorbell/pool/host plans; `src/kernels/cpu` | Native BF16 router/shared-gate projections and full512-expert softmax/winning-lane normalization are selected in the core. Physical/numerical acceptance and working Intel all-GPU-fetch versus host-pool mode/overlap still require audit. |
 | Native expert math and grouped rows | `sycl/src/kernels/cuda/iq_kernels.dp.cpp::row_entries`, `native_gu_kernel`, `native_down_kernel` | Packed integer math/BDA roots exist. Separate GU roles, 4/2/1 chunks, activation, intermediate storage and downstream consumers are now selected together in the Intel core; all 158 WGSL/SPIR-V variants validate, including 105 physical-pointer checks; numerical/model execution acceptance remains pending. The global core now uses one per-role launch containing pinned row_entries4/2/1 loops, scalar IQ4_XS, native signed integer finish and XOR reduction; numerical/model execution acceptance remains pending. Historical fixed-chunk kernels are retained separately. |
 | GR write/read/norm/down/up/injection | `sycl/src/kernels/cuda/fused_gr.dp.cpp::fused_gr_read_multi`; `verify.cpp::gr_read_group` | Native pending-write norm, sliced BF16 down/injection, fixed slice reduction and up/mix/commit are now connected and unconditionally selected in the core, including explicit PLE/final boundary writes. Resident original weights and the enlarged private scratch owner are charged together. Structural acceptance passes; numerical/model execution acceptance and final substitution audit remain pending. |
-| GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp`, `prefill/kernels.dp.cpp` | Core connects native BF16 alpha/beta, controls, recurrence/norm and accepted-prefix replay. Prompt scope now selects contiguous H, causal convolution/history/L2, pipelined CB32 recurrence and directly consumed FP16 norm output together. The large chunk caller/owners, retained head-major state and split replay layout, optional producer fusion, physical execution and final numerical/queue audit remain open. |
+| GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp`, `prefill/kernels.dp.cpp` | Core connects native BF16 alpha/beta, controls, recurrence/norm and accepted-prefix replay. Prompt scope selects contiguous H, causal convolution/history/L2, CB32 recurrence and directly consumed FP16 output. Source 9a7a23b connects prompt-capacity whole-chunk math without per-element status/replay owners, carved AB staging, and native row/value-head recurrent state shared by prompt/decode/repair. The large chunk caller/acceptance, remaining split verifier replay, physical execution and final numerical/queue audit remain open. |
 | QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects FP16 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. See the QSA receipt below for precise storage/scheduling substitutions and remaining numerical/state acceptance; do not claim full QSA fidelity yet. |
 | PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Core connects native BF16 MAX8 projections, normalization/gate/conv/history, deduplicated positional reads and accepted-prefix ownership. Prompt calls now consume a bounded, joined double-buffered source prefetch. Native large chunk geometry, upload scheduling, mapped snapshots and numerical/device acceptance remain open. Never persist request n-grams. |
 | Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. The bounded prompt path now uses logical-ID expert order, checked native transfer nodes, an eight-slot raw ring and two paired dequantization slots. Full chunk owner/budget/cache loan, independent transfer/compute queues, causal prompt kernels and device-resident target/MTP handoff remain unported; current three-row loop is not prompt-path parity. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
@@ -1730,3 +1730,62 @@ Do not raise global MAX_BATCH, enlarge per-query attention maps, or rename the
 three-row loop as completion. Native cache-loan sizing, transfer/compute queues,
 KV/indexer physical layout, remaining state/dense substitutions, arbitrary input,
 sampling, and whole-engine numerical/state/recovery acceptance remain required.
+
+## Connected full-chunk GDN math and native recurrent layout (2026-10-14)
+
+Source `9a7a23b`, isolated `codex/strata-rust-port`. Actual prompt convolution,
+L2, CB32 recurrence and FP16 output norm now call whole-chunk entries accepting
+1..256 rows and join failures directly into the existing model fault. Their
+arithmetic/state schedule is the same guarded source, not a different fallback.
+Source substitutions assert every replaced closing binding/store exists so source
+drift cannot silently retain an old status consumer. No per-element status or
+split replay buffers are required by these full entries. The enclosing legacy
+caller still supplies MAX8 splits for speculative replay, and two explicit
+compatibility closing dispatches produce its old status views from the real
+sticky fault. Those views cannot clear or overrule the original fault; enqueue
+still grants no state acceptance. Full prompt acceptance/caller remains open.
+
+AB's real raw BF16 projections moved out of the shared third128MiB root into
+three carved stage1 views: raw AB, controls, and compact head-status capacity.
+The existing caller now uses the raw AB view through `ab_handles`, which also
+supports256 rows with caller-supplied full controls/status views. Existing
+small control outputs/replay consumers are preserved. The three new views add
+240KiB plus alignment inside the already admitted upper64MiB GDN region; they
+add no GPU root or MAIN allocation. Actual output/input intervals and overflow
+are checked. The retired full-root `control_stage` helper was removed. Two
+compatibility INFO records per36 GDN stages add147,456 bytes to the global
+runtime envelope and4,096 bytes to each component quote.
+
+The native recurrent layout is now selected together for prompt, decode and
+state-only accepted-prefix replay: `state[row][value_head][column]`. This matches
+pinned `prefill/kernels.dp.cpp::gdn_rec_cols_kernel` and its pipelined variant,
+`cuda/native_gdn.dp.cpp::step` and `cuda/fused_gdn.dp.cpp`. All connected native
+input/output addresses use `((row * value_heads + head) *128 + column)`; no
+head-major/native transpose bridge or additional state owner is introduced.
+Snapshots, double-buffer swaps and finite-state inspections are opaque whole
+owners and retain their existing bounds/lifetimes. Ordinary feature-off Cube
+kernels and their layout are unchanged. This resolves the earlier source-layout
+gap; physical/numerical/state transition acceptance is still unproven.
+
+Final release build, strict Clippy, fmt/whitespace and286 offline WGSL/SPIR-V
+variants pass in `strata-full-gdn-layout-final-{build,clippy,shaders}-20261014.log`
+under `/media/jmicko/faststore/kuno-development`. A fast host-only check also
+parsed/validated the12 generated GDN variants from the actual source factory;
+it did not execute a device. No GPU/model/copy/numerical/state/recovery or speed
+run, root action, service/API/UI/install/release change. Earlier full-core unit
+failures remain unresolved; their old state-format assumptions need independent
+review rather than being dismissed. Canonical checkout and bytecode preserved.
+Full rewrite incomplete; goal active; speed gate closed; last sudo check expired.
+
+Next finish full prompt QSA status/selection ownership and the residual/mixed/
+block/carry/PLE controller as a connected path. QSA's32-query attention status
+must also become a direct fault consumer: scaling the old24*2051-per-row status
+would consume roughly50MiB at256 rows unnecessarily. Shared score/selection and
+compact RMS-head flags can fit the remaining carved QSA region; mean flags for
+all queries must not duplicate shared pooled state. GR and the new AB/GDN entry
+points already accept real handles/counts256. Executor's original-weight prompt
+projection and prepacked projection also accept handles/count through BatchSpans
+without the legacy MAX8 validator. Keep old verifier receipts separate: they are
+not large-prompt state acceptance. Complete final-only head/device MTP teaching,
+cache loans, queue/capture/layout audit, general input/sampling and whole-engine
+acceptance before any throughput comparison.

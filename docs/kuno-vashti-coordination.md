@@ -4921,3 +4921,28 @@ The current enclosing parent/receipts still use three-row/MAX8 windows. Complete
 native budgets/cache loans, queue/capture and layout/substitution audits, general
 input/sampling and whole-engine acceptance before speed trials. Do not revert
 coupled components because of incidental timing or claim the rewrite complete.
+
+### Active Kuno engine handoff — full-chunk GDN and native state layout (2026-10-14)
+
+Source `9a7a23b`, isolated `codex/strata-rust-port`. Read completion guide
+**Connected full-chunk GDN math and native recurrent layout**. Actual prompt
+math now uses256-capable convolution/L2/recurrence/norm entries with direct model
+faults, independent of per-element status/replay buffers. The enclosing MAX8
+caller retains explicit split/replay/closing compatibility. AB raw projections
+use a real carved region and a handle/count entry. New controls/status capacity
+fits the same GDN root. Native recurrent row/value-head layout is selected
+coherently in prompt, decode and state-only repair; no transpose or new owner.
+
+Release build, strict Clippy and286 offline shader variants pass. No live
+GPU/model/numerical/state/recovery/speed acceptance; earlier full-core failures
+remain open. Runtime quotes include147,456 extra INFO bytes. No API or Vashti
+change, installation or release. Canonical/services/GPU residency/bytecode were
+preserved. Goal active, full rewrite incomplete, speed gate closed; last sudo
+check required a password, and no protected operation was attempted.
+
+Next connect the full residual/mixed/block/carry/PLE prompt controller and its
+actual state acceptance. Finish compact/direct-fault QSA status ownership rather
+than scaling its old50MiB-per256-query attention status. Read the receipt's exact
+existing handle entry points. Parent still uses three-row/MAX8 windows; final-only
+head, device MTP teaching, native budgets/cache loans, queues/capture, remaining
+layout audits, general input/sampling and whole-engine acceptance remain required.
