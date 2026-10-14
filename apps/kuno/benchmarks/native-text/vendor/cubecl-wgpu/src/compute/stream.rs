@@ -1198,7 +1198,43 @@ impl WgpuStream {
             return;
         }
 
-        if let Some(graph) = &mut self.strata_graph {
+        if self.strata_graph.is_some() {
+            let retained = resources.cloned().collect::<Vec<_>>();
+            let initialize = self
+                .strata_graph
+                .as_mut()
+                .unwrap()
+                .initialize_resources(&retained);
+            if initialize {
+                // Native writes cannot update Wgpu's initialization tracker.
+                // A zero-work dispatch registers the original binding usages
+                // and lets Wgpu initialize only previously untouched ranges.
+                // It runs before the native graph, never after its outputs.
+                self.compute_pass = None;
+                let entries = retained
+                    .iter()
+                    .enumerate()
+                    .map(|(i, r)| wgpu::BindGroupEntry {
+                        binding: i as u32,
+                        resource: r.as_wgpu_bind_resource(),
+                    })
+                    .collect::<Vec<_>>();
+                let layout = pipeline.get_bind_group_layout(0);
+                let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Native Strata buffer initialization ownership"),
+                    layout: &layout,
+                    entries: &entries,
+                });
+                let mut pass = self
+                    .encoder
+                    .begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("Native Strata zero-work initialization"),
+                        timestamp_writes: None,
+                    });
+                pass.set_pipeline(&pipeline);
+                pass.set_bind_group(0, &group, &[]);
+                pass.dispatch_workgroups(0, 1, 1);
+            }
             let actual = match dispatch.clone() {
                 CubeCount::Static(x, y, z) => super::strata_graph::Dispatch::Direct(x, y, z),
                 CubeCount::Dynamic(binding) => match self.mem_manage.get_resource(binding) {
@@ -1209,7 +1245,11 @@ impl WgpuStream {
                     }
                 },
             };
-            let result = graph.push(&pipeline, resources.cloned().collect(), actual);
+            let result = self
+                .strata_graph
+                .as_mut()
+                .unwrap()
+                .push(&pipeline, retained, actual);
             if let Err(error) = result {
                 self.error(error);
                 return;

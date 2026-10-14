@@ -7,7 +7,7 @@ use super::{WgpuResource, transient_io::fault};
 use ash::{vk, vk::Handle as _};
 use cubecl_core::server::ServerError;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ffi::CString,
     sync::{Arc, Mutex, OnceLock},
 };
@@ -161,6 +161,7 @@ pub(crate) struct Graph {
     pub dispatches: u64,
     recordings: Vec<Recording>,
     pub replays: u64,
+    initialized: HashSet<wgpu::Buffer>,
 }
 struct Recording {
     device: ash::Device,
@@ -266,7 +267,15 @@ impl Graph {
             dispatches: 0,
             recordings: Vec::new(),
             replays: 0,
+            initialized: HashSet::new(),
         })
+    }
+    pub(crate) fn initialize_resources(&mut self, resources: &[WgpuResource]) -> bool {
+        let mut fresh = false;
+        for r in resources {
+            fresh |= self.initialized.insert(r.buffer.clone());
+        }
+        fresh
     }
     pub(crate) fn push(
         &mut self,
@@ -395,6 +404,7 @@ impl Graph {
             return Err(fault("native graph cleanup while pending"));
         }
         self.recordings.clear();
+        self.initialized.clear();
         Ok(())
     }
     pub(crate) fn pending(&self) -> bool {
