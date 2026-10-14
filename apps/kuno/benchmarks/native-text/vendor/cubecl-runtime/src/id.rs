@@ -169,6 +169,22 @@ impl KernelId {
         self
     }
 
+    /// A native release boundary preserves all original arithmetic/format
+    /// information in the key; replacing `info` would alias quant variants.
+    /// False leaves the ordinary backend and disk-cache identity unchanged.
+    pub fn native_release_boundary(mut self, release_after: bool) -> Self {
+        #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+        struct NativeRelease {
+            original: Option<Info>,
+        }
+        if release_after {
+            self.info = Some(Info::new(NativeRelease {
+                original: self.info.take(),
+            }));
+        }
+        self
+    }
+
     /// Set the [execution mode](ExecutionMode).
     pub fn mode(&mut self, mode: ExecutionMode) {
         self.mode = mode;

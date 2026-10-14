@@ -193,7 +193,9 @@ impl WgpuServer {
         mode: ExecutionMode,
     ) -> Result<Arc<ComputePipeline>, LaunchError> {
         let native_operator_name = kernel.name();
+        let native_release_after = kernel.native_release_after();
         let mut kernel_id = kernel.id();
+        kernel_id = kernel_id.native_release_boundary(native_release_after);
         kernel_id.mode(mode);
         let external_mask = super::public_external::external_mask(bindings).map_err(|reason| {
             LaunchError::Unknown {
@@ -218,7 +220,13 @@ impl WgpuServer {
         // External imports require actual WGSL reflection, so do not accept a
         // disk/SPIRV cache entry without the original readonly declaration.
         let cached = if external_mask == 0 {
-            self.load_cached_pipeline(&kernel_id, bindings, mode, native_operator_name)?
+            self.load_cached_pipeline(
+                &kernel_id,
+                bindings,
+                mode,
+                native_operator_name,
+                native_release_after,
+            )?
         } else {
             None
         };
@@ -285,12 +293,11 @@ impl WgpuServer {
             mode,
             !bindings.info.data.is_empty(),
         )?;
-        super::strata_graph::label_module(&module, native_operator_name).map_err(|_| {
-            LaunchError::Unknown {
+        super::strata_graph::label_module(&module, native_operator_name, native_release_after)
+            .map_err(|_| LaunchError::Unknown {
                 reason: "native public operator registration".into(),
                 backtrace: BackTrace::capture(),
-            }
-        })?;
+            })?;
         // Original generated layouts conservatively allow writes for aliased
         // slices. This explicit immutable-source variant uses the actually
         // reflected WGSL layout; ordinary kernels keep the exact old path.

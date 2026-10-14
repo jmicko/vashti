@@ -4,10 +4,13 @@ use std::collections::HashMap;
 
 pub(crate) struct Access {
     pub buffer: u64,
+    pub first: u64,
+    pub bytes: u64,
     pub write: bool,
 }
 pub(crate) struct NodeAccess {
     pub copy: bool,
+    pub release_after: bool,
     pub accesses: Vec<Access>,
 }
 #[derive(Debug)]
@@ -21,20 +24,123 @@ pub(crate) struct Plan {
     pub node_segments: Vec<usize>,
     pub last_copy: u64,
 }
-#[derive(Default)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 struct Hazard {
     readers: [u64; 2],
     writers: [u64; 2],
 }
-/// Full-buffer hazards are conservative for carved views. Independent buffers
-/// may overlap; a read/read pair never invents a data dependency. Segment0 is
-/// the compute-queue upload/initialization release, before any native work.
-pub const NATIVE_QUEUE_HOST_BYTES: usize = 80 * 1024 * 1024;
+#[derive(Clone, Copy)]
+struct Region {
+    first: u64,
+    end: u64,
+    hazard: Hazard,
+}
+const MAX_REGIONS: usize = 262144;
+/// Actual descriptor/copy intervals, not invented narrower declarations.
+/// Segment0 releases Wgpu initialization before either queue's native work.
+pub const NATIVE_QUEUE_HOST_BYTES: usize = 128 * 1024 * 1024;
+
+fn insert_region(
+    regions: &mut Vec<Region>,
+    at: usize,
+    region: Region,
+    total: &mut usize,
+) -> Result<(), &'static str> {
+    if *total >= MAX_REGIONS {
+        return Err("native queue interval metadata capacity");
+    }
+    regions.insert(at, region);
+    *total += 1;
+    Ok(())
+}
+fn split_region(regions: &mut Vec<Region>, at: u64, total: &mut usize) -> Result<(), &'static str> {
+    let i = regions.partition_point(|r| r.end <= at);
+    if i < regions.len() && regions[i].first < at {
+        let original = regions[i];
+        insert_region(
+            regions,
+            i + 1,
+            Region {
+                first: at,
+                ..original
+            },
+            total,
+        )?;
+        regions[i].end = at;
+    }
+    Ok(())
+}
+fn update_regions(
+    regions: &mut Vec<Region>,
+    access: &Access,
+    own: usize,
+    signal: u64,
+    total: &mut usize,
+) -> Result<u64, &'static str> {
+    let end = access
+        .first
+        .checked_add(access.bytes)
+        .filter(|_| access.bytes != 0)
+        .ok_or("native queue access interval")?;
+    split_region(regions, access.first, total)?;
+    split_region(regions, end, total)?;
+    let mut i = regions.partition_point(|r| r.end <= access.first);
+    let mut cursor = access.first;
+    let mut wait = 0;
+    while cursor < end {
+        if i == regions.len() || regions[i].first > cursor {
+            let last = regions.get(i).map_or(end, |r| end.min(r.first));
+            insert_region(
+                regions,
+                i,
+                Region {
+                    first: cursor,
+                    end: last,
+                    hazard: Hazard::default(),
+                },
+                total,
+            )?;
+        }
+        let cell = &mut regions[i];
+        let h = &mut cell.hazard;
+        wait = wait.max(h.writers[1 - own]);
+        if access.write {
+            wait = wait.max(h.readers[1 - own]);
+            h.writers[own] = signal;
+        } else {
+            h.readers[own] = signal;
+        }
+        cursor = cell.end;
+        i += 1;
+    }
+    // Rejoin equal neighboring states after edits so repeated views do not
+    // accumulate permanent fragmentation. Outside intervals keep their history.
+    let mut keep = 0usize;
+    for read in 0..regions.len() {
+        let value = regions[read];
+        if keep > 0
+            && regions[keep - 1].end == value.first
+            && regions[keep - 1].hazard == value.hazard
+        {
+            regions[keep - 1].end = value.end;
+        } else {
+            regions[keep] = value;
+            keep += 1;
+        }
+    }
+    *total -= regions.len() - keep;
+    regions.truncate(keep);
+    Ok(wait)
+}
+
 pub(crate) struct Planner {
     result: Plan,
-    hazards: HashMap<u64, Hazard>,
+    hazards: HashMap<u64, Vec<Region>>,
+    regions: usize,
+    region_capacity: usize,
     capacity: usize,
     serialize: bool,
+    release_next: bool,
 }
 impl Planner {
     pub fn new(capacity: usize, serialize: bool) -> Result<Self, &'static str> {
@@ -54,8 +160,11 @@ impl Planner {
                 last_copy: 0,
             },
             hazards: HashMap::new(),
+            regions: 0,
+            region_capacity: 0,
             capacity,
             serialize,
+            release_next: false,
         })
     }
     pub fn push(&mut self, node: &NodeAccess) -> Result<(), &'static str> {
@@ -64,7 +173,7 @@ impl Planner {
         if index >= self.capacity {
             return Err("native queue plan node capacity");
         }
-        if index == 0 || result.segments.last().unwrap().copy != node.copy {
+        if index == 0 || self.release_next || result.segments.last().unwrap().copy != node.copy {
             let signal = result.segments.len() as u64 + 1;
             result.segments.push(Segment {
                 copy: node.copy,
@@ -75,11 +184,11 @@ impl Planner {
                 result.last_copy = signal;
             }
         }
+        self.release_next = node.release_after;
         let s = result.segments.len() - 1;
         result.node_segments.push(s);
         let segment = &mut result.segments[s];
         let own = usize::from(node.copy);
-        let other = 1 - own;
         for access in &node.accesses {
             if access.buffer == 0 {
                 return Err("native queue plan null buffer");
@@ -90,13 +199,27 @@ impl Planner {
             if !self.hazards.contains_key(&access.buffer) && self.hazards.len() >= 65536 {
                 return Err("native queue root metadata capacity");
             }
-            let h = self.hazards.entry(access.buffer).or_default();
-            segment.wait = segment.wait.max(h.writers[other]);
-            if access.write {
-                segment.wait = segment.wait.max(h.readers[other]);
-                h.writers[own] = segment.signal;
-            } else {
-                h.readers[own] = segment.signal;
+            let regions = self.hazards.entry(access.buffer).or_default();
+            let previous_capacity = regions.capacity();
+            segment.wait = segment.wait.max(update_regions(
+                regions,
+                access,
+                own,
+                segment.signal,
+                &mut self.regions,
+            )?);
+            // A bound on live intervals alone does not bound old Vec capacities
+            // after contraction on many different buffers.
+            if regions.capacity() > regions.len().saturating_mul(2) {
+                regions.shrink_to_fit();
+            }
+            self.region_capacity = self
+                .region_capacity
+                .checked_sub(previous_capacity)
+                .and_then(|n| n.checked_add(regions.capacity()))
+                .ok_or("native queue interval capacity overflow")?;
+            if self.region_capacity > MAX_REGIONS * 2 {
+                return Err("native queue interval reserved capacity");
             }
         }
         Ok(())
@@ -270,7 +393,13 @@ mod tests {
     fn node(copy: bool, buffer: u64, write: bool) -> NodeAccess {
         NodeAccess {
             copy,
-            accesses: vec![Access { buffer, write }],
+            release_after: false,
+            accesses: vec![Access {
+                buffer,
+                first: 0,
+                bytes: 4096,
+                write,
+            }],
         }
     }
     #[test]
@@ -345,6 +474,133 @@ mod tests {
                 }
             }
         }
+    }
+    fn range_node(copy: bool, buffer: u64, first: u64, bytes: u64, write: bool) -> NodeAccess {
+        NodeAccess {
+            copy,
+            release_after: false,
+            accesses: vec![Access {
+                buffer,
+                first,
+                bytes,
+                write,
+            }],
+        }
+    }
+    #[test]
+    fn disjoint_slots_in_one_buffer_overlap_but_reuse_waits_for_its_reader() {
+        let p = plan(
+            &[
+                range_node(true, 1, 0, 4096, true),
+                range_node(false, 1, 0, 4096, false),
+                range_node(true, 1, 4096, 4096, true),
+                range_node(false, 1, 4096, 4096, false),
+                range_node(true, 1, 0, 4096, true),
+            ],
+            false,
+        )
+        .unwrap();
+        assert_eq!(p.segments[2].wait, 2);
+        assert_eq!(p.segments[3].wait, 1); // Slot1 need not wait for slot0 reader.
+        assert_eq!(p.segments[4].wait, 4);
+        assert_eq!(p.segments[5].wait, 3); // Slot0 reuse waits for its real reader.
+    }
+    #[test]
+    fn dequant_release_allows_raw_reuse_before_following_gemms_finish() {
+        let mut dequant = range_node(false, 1, 0, 4096, false);
+        dequant.release_after = true;
+        let p = plan(
+            &[
+                dequant,
+                range_node(false, 2, 0, 4096, true), // GU/GEMM continuation on compute.
+                range_node(true, 1, 0, 4096, true),  // Same raw slot, different queue.
+            ],
+            false,
+        )
+        .unwrap();
+        assert_eq!(p.node_segments, [1, 2, 3]);
+        assert_eq!(p.segments[3].wait, 2); // The dequant signal, not GEMM signal3.
+        assert!(!p.segments[1].copy && !p.segments[2].copy);
+    }
+    #[test]
+    fn partial_updates_keep_untouched_prefixes_gaps_and_suffixes() {
+        let p = plan(
+            &[
+                range_node(true, 1, 0, 64, true),
+                range_node(false, 1, 16, 16, false),
+                range_node(true, 1, 48, 16, true),
+                range_node(false, 1, 0, 16, false),
+                range_node(true, 1, 24, 24, true),
+                range_node(false, 1, 56, 8, false),
+            ],
+            false,
+        )
+        .unwrap();
+        assert_eq!(p.segments[3].wait, 1);
+        assert_eq!(p.segments[4].wait, 2);
+        assert_eq!(p.segments[5].wait, 3);
+        assert_eq!(p.segments[6].wait, 4);
+        assert!(plan(&[range_node(true, 1, 0, 0, true)], false).is_err());
+        assert!(plan(&[range_node(true, 1, u64::MAX, 2, true)], false).is_err());
+    }
+    #[test]
+    fn mixed_intervals_and_multi_binding_aliases_match_pairwise_byte_oracle() {
+        let mut nodes = Vec::new();
+        let mut state = 71u64;
+        for i in 0..2048 {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let mut n = range_node(
+                state & 1 != 0,
+                1 + ((state >> 4) % 7),
+                ((state >> 12) % 64) * 4,
+                (1 + ((state >> 20) % 16)) * 4,
+                state & 8 != 0,
+            );
+            if i % 7 == 0 {
+                n.accesses.push(Access {
+                    buffer: 1 + ((state >> 8) % 7),
+                    first: ((state >> 16) % 64) * 4,
+                    bytes: 32,
+                    write: state & 32 != 0,
+                });
+            }
+            nodes.push(n);
+        }
+        let p = plan(&nodes, false).unwrap();
+        for (j, n) in nodes.iter().enumerate() {
+            let current = &p.segments[p.node_segments[j]];
+            assert!(current.wait < current.signal);
+            for (i, previous) in nodes[..j].iter().enumerate() {
+                if previous.copy == n.copy {
+                    continue;
+                }
+                for a in &n.accesses {
+                    for b in &previous.accesses {
+                        if a.buffer == b.buffer
+                            && a.first < b.first + b.bytes
+                            && b.first < a.first + a.bytes
+                            && (a.write || b.write)
+                        {
+                            assert!(current.wait >= p.segments[p.node_segments[i]].signal);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn interval_contraction_releases_reserved_capacity_on_each_buffer() {
+        let mut planner = Planner::new(1025, false).unwrap();
+        for i in 0..512 {
+            planner.push(&range_node(false, 1, i * 4, 4, true)).unwrap();
+            planner.push(&range_node(true, 2, 0, 4, false)).unwrap();
+        }
+        assert_eq!(planner.hazards[&1].len(), 512);
+        planner.push(&range_node(false, 1, 0, 2048, true)).unwrap();
+        assert_eq!(planner.hazards[&1].len(), 1);
+        assert!(planner.hazards[&1].capacity() <= 2);
+        assert!(planner.region_capacity <= 4);
+        planner.finish().unwrap();
     }
     #[test]
     fn replays_and_partial_epochs_never_reuse_timeline_values() {

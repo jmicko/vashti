@@ -152,6 +152,7 @@ pub(crate) struct Program {
     entry: CString,
     required_subgroup: Option<u32>,
     physical_reads: bool,
+    release_after: bool,
 }
 #[derive(Default)]
 struct Registry {
@@ -254,6 +255,7 @@ pub(crate) fn register_module(
             || source.contains("STRATA_DENSE_PACKED"))
         .then_some(32),
         physical_reads: source.contains("STRATA_PHYSICAL_EXPERTS"),
+        release_after: false,
         accesses: bindings.iter().map(|b| b.2).collect(),
         bindings: bindings.into_iter().map(|b| b.1).collect(),
         entry: CString::new(entry).map_err(|_| fault("native graph entrypoint"))?,
@@ -336,6 +338,7 @@ pub(crate) fn register_spirv_module(
         entry: CString::new(entry).map_err(|_| fault("native SPIRV entrypoint"))?,
         required_subgroup,
         physical_reads: false,
+        release_after: false,
     });
     registry()
         .lock()
@@ -347,6 +350,7 @@ pub(crate) fn register_spirv_module(
 pub(crate) fn label_module(
     module: &wgpu::ShaderModule,
     name: &'static str,
+    release_after: bool,
 ) -> Result<(), ServerError> {
     if !enabled() {
         return Ok(());
@@ -360,6 +364,7 @@ pub(crate) fn label_module(
         .and_then(Arc::get_mut)
         .ok_or_else(|| fault("native operator module identity"))?;
     p.name = name;
+    p.release_after = release_after;
     Ok(())
 }
 pub(crate) fn register_pipeline(pipeline: &wgpu::ComputePipeline, module: &wgpu::ShaderModule) {
@@ -786,21 +791,17 @@ impl Graph {
         });
         Ok(())
     }
-    fn node_accesses(&self, n: &Node) -> Result<HashMap<vk::Buffer, vk::AccessFlags>, ServerError> {
-        let mut accesses = HashMap::new();
+    fn node_bindings<'a>(
+        &self,
+        n: &'a Node,
+    ) -> Result<Vec<(&'a WgpuResource, vk::AccessFlags)>, ServerError> {
+        let mut accesses = Vec::new();
         match n.dispatch {
             Dispatch::Copy => {
-                *accesses.entry(raw_buffer(&n.resources[0])?).or_default() |=
-                    vk::AccessFlags::TRANSFER_READ;
-                *accesses.entry(raw_buffer(&n.resources[1])?).or_default() |=
-                    vk::AccessFlags::TRANSFER_WRITE;
+                accesses.push((&n.resources[0], vk::AccessFlags::TRANSFER_READ));
+                accesses.push((&n.resources[1], vk::AccessFlags::TRANSFER_WRITE));
             }
-            Dispatch::Fill => {
-                accesses.insert(
-                    raw_buffer(&n.resources[0])?,
-                    vk::AccessFlags::TRANSFER_WRITE,
-                );
-            }
+            Dispatch::Fill => accesses.push((&n.resources[0], vk::AccessFlags::TRANSFER_WRITE)),
             _ => {
                 let p = &self.pipelines[n
                     .pipeline
@@ -808,19 +809,47 @@ impl Graph {
                     .ok_or_else(|| fault("native graph compute identity"))?];
                 for (r, access) in n.resources.iter().zip(&p.program.accesses) {
                     if !access.is_empty() {
-                        *accesses.entry(raw_buffer(r)?).or_default() |= *access;
+                        accesses.push((r, *access));
                     }
                 }
                 for r in &n.read_dependencies {
-                    *accesses.entry(raw_buffer(r)?).or_default() |= vk::AccessFlags::SHADER_READ;
+                    accesses.push((r, vk::AccessFlags::SHADER_READ));
                 }
                 if let Dispatch::Indirect(r) = &n.dispatch {
-                    *accesses.entry(raw_buffer(r)?).or_default() |=
-                        vk::AccessFlags::INDIRECT_COMMAND_READ;
+                    accesses.push((r, vk::AccessFlags::INDIRECT_COMMAND_READ));
                 }
             }
         }
         Ok(accesses)
+    }
+    fn node_accesses(&self, n: &Node) -> Result<HashMap<vk::Buffer, vk::AccessFlags>, ServerError> {
+        let mut accesses = HashMap::new();
+        for (r, access) in self.node_bindings(n)? {
+            *accesses.entry(raw_buffer(r)?).or_default() |= access;
+        }
+        Ok(accesses)
+    }
+    fn node_ranges(&self, n: &Node) -> Result<Vec<strata_schedule::Access>, ServerError> {
+        self.node_bindings(n)?
+            .into_iter()
+            .map(|(r, access)| {
+                if r.size == 0
+                    || r.offset
+                        .checked_add(r.size)
+                        .is_none_or(|end| end > r.buffer.size())
+                {
+                    return Err(fault("native queue actual resource interval"));
+                }
+                Ok(strata_schedule::Access {
+                    buffer: raw_buffer(r)?.as_raw(),
+                    first: r.offset,
+                    bytes: r.size,
+                    write: access.intersects(
+                        vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::TRANSFER_WRITE,
+                    ),
+                })
+            })
+            .collect()
     }
     pub(crate) fn clear_completed_recordings(&mut self) -> Result<(), ServerError> {
         if self.submitted || self.pending() {
@@ -1010,19 +1039,14 @@ impl Graph {
         let mut planner =
             strata_schedule::Planner::new(self.nodes.len(), profiling).map_err(fault)?;
         for node in &self.nodes {
-            let accesses = self
-                .node_accesses(node)?
-                .into_iter()
-                .map(|(buffer, access)| strata_schedule::Access {
-                    buffer: buffer.as_raw(),
-                    write: access.intersects(
-                        vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::TRANSFER_WRITE,
-                    ),
-                })
-                .collect();
+            let accesses = self.node_ranges(node)?;
             planner
                 .push(&strata_schedule::NodeAccess {
                     copy: matches!(node.dispatch, Dispatch::Copy | Dispatch::Fill),
+                    release_after: node
+                        .pipeline
+                        .as_ref()
+                        .is_some_and(|p| self.pipelines[p].program.release_after),
                     accesses,
                 })
                 .map_err(fault)?;

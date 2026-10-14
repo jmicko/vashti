@@ -74,14 +74,13 @@ impl Op {
                 ("fault", "read_write", "atomic<u32>"),
                 ("strata_grid", "read", "u32"),
                 ("addresses", "read", "vec4<u32>"),
-                ("stage_addresses", "read", "vec4<u32>"),
             ] {
                 bindings.push_str(&format!(
                     "@group(0) @binding({index}) var<storage,{access}> {name}:array<{ty}>;\n"
                 ));
                 index += 1;
             }
-            bindings.push_str(&format!("@group(0) @binding({index}) var<uniform> p:Params;\nvar<private> strata_gate_address:vec2<u32>;\nvar<private> host_gate:bool;\n"));
+            bindings.push_str(&format!("const DOWN_IMAGE:bool={down};\n@group(0) @binding({index}) var<uniform> p:Params;\nvar<private> strata_gate_address:vec2<u32>;\nvar<private> host_gate:bool;\n"));
             if !down {
                 bindings.push_str("var<private> strata_up_address:vec2<u32>;\nvar<private> host_up:bool;\nfn strata_up(index:u32)->u32 {if host_up {return raw[p.r0+p.r1+index];}return up0[index/4u][index%4u];}\n");
             }
@@ -106,6 +105,9 @@ impl Op {
     }
 }
 impl KernelMetadata for Op {
+    fn native_release_after(&self) -> bool {
+        matches!(self, Self::Dequant { down: true, .. })
+    }
     fn name(&self) -> &'static str {
         match self {
             Self::Gather => "StrataPromptExpertGather",
@@ -116,7 +118,7 @@ impl KernelMetadata for Op {
     }
     fn id(&self) -> KernelId {
         KernelId::new::<Self>()
-            .info(*self)
+            .info((*self, "prompt-raw-slot-v2"))
             .cube_dim(CubeDim::new_1d(self.lanes()))
     }
     fn address_type(&self) -> StorageType {
@@ -174,6 +176,33 @@ const DEQUANT_SLOTS: usize = 2;
 const GU_WORDS: usize = 1280 * 2560 / 2;
 const DOWN_WORDS: usize = 2560 * 640 / 2;
 const DQ_WORDS: usize = GU_WORDS + DOWN_WORDS;
+
+/// Actual descriptor view of one raw transfer slot. All source role spans are
+/// original-format bytes; no scheduler-only narrowed declaration is accepted.
+fn raw_slot(root: &Handle, slot: usize, roles: [usize; 3]) -> Result<Handle> {
+    let bytes = roles
+        .iter()
+        .try_fold(0usize, |sum, &n| sum.checked_add(n))
+        .ok_or(Error::ArithmeticOverflow)?;
+    if slot >= RAW_SLOTS
+        || roles[0] != roles[1]
+        || roles.iter().any(|&n| n == 0 || !n.is_multiple_of(256))
+        || bytes
+            .checked_mul(RAW_SLOTS)
+            .is_none_or(|n| n > 64 * 1024 * 1024)
+        || root.size_in_used() != 128 * 1024 * 1024
+        || root.offset_start.unwrap_or(0) != 0
+        || root.offset_end.unwrap_or(0) != 0
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    let first = slot * bytes;
+    let end = first + bytes;
+    Ok(root
+        .clone()
+        .offset_start(first as u64)
+        .offset_end(128 * 1024 * 1024 - end as u64))
+}
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn enqueue(
@@ -250,12 +279,12 @@ pub(crate) fn enqueue(
             projections[0].row_bytes() as u32,
             group as u32,
             0,
-            ((group % RAW_SLOTS) * raw_stride / 4) as u32,
+            0, // The actual raw descriptor starts at this slot, not the root.
             (role_bytes[0] / 4) as u32,
             ((role_bytes[0] + role_bytes[1]) / 4) as u32,
             dq as u32,
             (dq + GU_WORDS) as u32,
-            0,
+            (raw_stride / 4) as u32,
             0,
             0,
             0,
@@ -294,12 +323,12 @@ pub(crate) fn enqueue(
             }
             args = args.with_buffers(vec![
                 owners[0].clone().binding(),
-                stage[2].clone().offset_end(64 * 1024 * 1024).binding(),
+                raw_slot(&stage[2], group % RAW_SLOTS, role_bytes)?.binding(),
                 stage[1].clone().binding(),
                 fault.clone().binding(),
             ]);
             args = crate::strata_intel_core::bind(args, owners[0].stream)?;
-            args = sources.bind(layer, args)?;
+            args = sources.bind_prompt_image(layer, args)?;
             dispatch(
                 client,
                 Op::Dequant {
@@ -466,5 +495,88 @@ mod copy_contract_tests {
         let mut outside = make();
         outside.destination_first = 32768;
         assert!(validate_host_copies(&[outside], stream).is_err());
+    }
+}
+
+#[cfg(test)]
+mod raw_slot_tests {
+    use super::*;
+    use cubecl_common::stream_id::StreamId;
+
+    #[test]
+    fn exact_views_cover_original_gu_up_down_for_every_supported_quant_pair() {
+        let root = Handle::new(StreamId { value: 91 }, 128 * 1024 * 1024);
+        let mut old_guard_would_exceed_exact_slot = false;
+        for gu in [q::IQ2_S, q::IQ3_S, q::IQ3_XXS, q::IQ4_XS] {
+            for down in [q::IQ4_NL, q::Q2_0] {
+                let (gv, gb) = q::block_layout(gu).unwrap();
+                let (dv, db) = q::block_layout(down).unwrap();
+                let gu_bytes = 640 * (2560 / gv) * gb;
+                let down_bytes = 2560 * (640 / dv) * db;
+                let total = gu_bytes * 2 + down_bytes;
+                old_guard_would_exceed_exact_slot |= gu_bytes > down_bytes;
+                let mut prior_end = 0;
+                for slot in 0..RAW_SLOTS {
+                    let view = raw_slot(&root, slot, [gu_bytes, gu_bytes, down_bytes]).unwrap();
+                    let first = view.offset_start.unwrap();
+                    let end = 128 * 1024 * 1024 - view.offset_end.unwrap();
+                    assert_eq!(first, prior_end);
+                    assert_eq!(view.size_in_used(), total as u64);
+                    assert!(end <= 64 * 1024 * 1024);
+                    assert!(first.is_multiple_of(256));
+                    for (offset, bytes) in [
+                        (0, gu_bytes),
+                        (gu_bytes, gu_bytes),
+                        (gu_bytes * 2, down_bytes),
+                    ] {
+                        assert!(first + offset as u64 + bytes as u64 <= end);
+                    }
+                    prior_end = end;
+                }
+            }
+        }
+        assert!(old_guard_would_exceed_exact_slot);
+    }
+    #[test]
+    fn release_cache_identity_preserves_different_original_quant_formats() {
+        let iq4 = Op::Dequant {
+            dtype: q::IQ4_NL,
+            down: true,
+        };
+        let q2 = Op::Dequant {
+            dtype: q::Q2_0,
+            down: true,
+        };
+        assert!(iq4.native_release_after() && q2.native_release_after());
+        let a = iq4
+            .id()
+            .native_release_boundary(true)
+            .public_external_read_mask(3);
+        let b = q2
+            .id()
+            .native_release_boundary(true)
+            .public_external_read_mask(3);
+        assert_ne!(a.stable_hash(), b.stable_hash());
+        assert!(a != b);
+        let ordinary = Op::Gather.id();
+        assert_eq!(
+            ordinary.stable_hash(),
+            ordinary
+                .clone()
+                .native_release_boundary(false)
+                .stable_hash()
+        );
+        assert!(ordinary.clone().native_release_boundary(false) == ordinary);
+    }
+    #[test]
+    fn slot_descriptors_reject_partial_roots_bad_geometry_and_upper_half_use() {
+        let root = Handle::new(StreamId { value: 91 }, 128 * 1024 * 1024);
+        let roles = [1024, 1024, 2048];
+        assert!(raw_slot(&root, RAW_SLOTS, roles).is_err());
+        assert!(raw_slot(&root.clone().offset_end(256), 0, roles).is_err());
+        assert!(raw_slot(&root, 0, [1024, 512, 2048]).is_err());
+        assert!(raw_slot(&root, 0, [1025, 1025, 2048]).is_err());
+        assert!(raw_slot(&root, 0, [0, 0, 2048]).is_err());
+        assert!(raw_slot(&root, 0, [4 * 1024 * 1024; 3]).is_err());
     }
 }

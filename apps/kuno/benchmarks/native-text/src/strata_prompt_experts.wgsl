@@ -37,11 +37,14 @@ fn strata_gate(index:u32)->u32 {
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) id:vec3<u32>) {
     if !valid() {return;}
-    if arrayLength(&addresses)!=2048u||arrayLength(&stage_addresses)!=2048u||arrayLength(&strata_grid)!=8192u
-        || arrayLength(&raw)!=16777216u||arrayLength(&packed)!=16777216u {atomicOr(&fault[0],128u);return;}
+    if arrayLength(&addresses)!=2048u||arrayLength(&strata_grid)!=8192u
+        || arrayLength(&raw)!=p.r5||p.r5>2097152u||p.r0!=0u||p.r1==0u||p.r1>p.r5
+        || p.r2!=2u*p.r1||p.r2>=p.r5||p.role!=select(0u,2u,DOWN_IMAGE)
+        || arrayLength(&packed)!=16777216u {atomicOr(&fault[0],128u);return;}
     let src=addresses[p.role*512u+map[4u+p.group]];
     let original_rows=select(p.rows/2u,p.rows,p.role==2u);let bytes=original_rows*p.row_bytes;
-    if src.z!=bytes/4u||src.w>1u||p.r0+p.r2+bytes/4u>arrayLength(&raw) {atomicOr(&fault[0],128u);return;}
+    let expected=select(p.r1,p.r5-p.r2,DOWN_IMAGE);
+    if src.z!=bytes/4u||src.z!=expected||src.w>1u {atomicOr(&fault[0],128u);return;}
     strata_gate_address=src.xy;host_gate=src.w==1u;
     CHOOSE_UP
     let i=id.x;if i>=p.rows*p.columns/2u {return;}let row=i/(p.columns/2u);let col=(i%(p.columns/2u))*2u;

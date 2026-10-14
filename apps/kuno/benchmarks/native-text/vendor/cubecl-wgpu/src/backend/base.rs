@@ -37,6 +37,7 @@ impl WgpuServer {
         bindings: &KernelArguments,
         mode: ExecutionMode,
         _native_name: &'static str,
+        _native_release_after: bool,
     ) -> Result<Option<Result<Arc<ComputePipeline>, (u64, StableHash)>>, CompilationError> {
         #[cfg(not(feature = "spirv"))]
         let res = Ok(None);
@@ -54,12 +55,15 @@ impl WgpuServer {
                     mode,
                     !bindings.info.data.is_empty(),
                 )?;
-                crate::compute::strata_graph::label_module(&module, _native_name).map_err(
-                    |_| CompilationError::Generic {
-                        reason: "native cached operator registration".into(),
-                        backtrace: cubecl_common::backtrace::BackTrace::capture(),
-                    },
-                )?;
+                crate::compute::strata_graph::label_module(
+                    &module,
+                    _native_name,
+                    _native_release_after,
+                )
+                .map_err(|_| CompilationError::Generic {
+                    reason: "native cached operator registration".into(),
+                    backtrace: cubecl_common::backtrace::BackTrace::capture(),
+                })?;
                 let pipeline =
                     self.create_pipeline(&entry.entrypoint_name, Some(repr), module, bindings);
                 Ok(Some(Ok(pipeline)))

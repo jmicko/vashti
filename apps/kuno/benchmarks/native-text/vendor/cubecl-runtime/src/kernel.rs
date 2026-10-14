@@ -27,6 +27,13 @@ pub trait KernelMetadata: Send + Sync + 'static {
         core::any::type_name::<Self>()
     }
 
+    /// Static native recording release point, part of the operator identity.
+    /// Kuno uses this after the last raw-slot dequantization, before GEMMs.
+    /// It is not a host wait and must not depend on request content.
+    fn native_release_after(&self) -> bool {
+        false
+    }
+
     /// Identifier for the kernel, used for caching kernel compilation.
     fn id(&self) -> KernelId;
 

@@ -414,6 +414,23 @@ impl Sources {
                     .collect(),
             ))
     }
+    /// Prompt-image dequantization has no fetch-stage pointer table or pointer
+    /// reads. Its real raw-slot descriptor is tracked separately. This binder
+    /// is only for that closed shader family, whose interface omits stage_table.
+    pub(crate) fn bind_prompt_image(
+        &self,
+        layer: usize,
+        args: KernelArguments,
+    ) -> Result<KernelArguments> {
+        if self.closed || self.closing_failed || self.mutation_pending || self.stages.is_none() {
+            return Err(reject());
+        }
+        let table = self.tables.get(layer).ok_or_else(reject)?;
+        let reads = self.reads.get(layer).ok_or_else(reject)?;
+        Ok(args
+            .with_buffer(table.clone().binding())
+            .with_read_dependencies(reads.iter().cloned().map(Handle::binding).collect()))
+    }
     /// Consumer boundaries have completed. Verify exact initial physical cells,
     /// then execute all role exchanges as one joined owning transaction. The
     /// static tables never change; subsequent consumers await PRIVATE remap.
