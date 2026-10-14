@@ -2122,13 +2122,39 @@ impl<'a> GpuExecutor<'a> {
             .active()?;
         Ok((self.target_iq4_decoder, self.target_iq4_decoder_calls))
     }
+    /// Source authority of the connected core, never a fabricated frozen-bank
+    /// identity. Construction before source attachment is not an active scope.
+    pub(crate) fn global_target_scope(&self) -> Result<bool> {
+        let Some(sources) = &self.strata_global_sources else {
+            return Ok(false);
+        };
+        if !crate::strata_intel_core::enabled()
+            || self.packed_profile != expert_banks::OriginalPackedProfile::DaslabIq3
+            || !self.banks.is_empty()
+            || self.bank_reserved != 0
+            || self.resident_banks_frozen
+            || self.target_frozen_host_source_identity.is_some()
+            || self.batch_moe.is_some()
+            || self.adaptive.is_some()
+            || self.secondary.is_some()
+            || self.cache.keys().any(|k| k.tensor.contains("_exps.weight"))
+        {
+            return Err(Error::InvalidFormat("global target execution authority"));
+        }
+        self.resident_admission
+            .as_ref()
+            .ok_or(Error::InvalidFormat("global target admission absent"))?
+            .active()?;
+        sources.validate_attached()?;
+        Ok(true)
+    }
     fn q6_verify_head_scope(&self) -> bool {
         self.target_rows_reserved
             && self.target_verify3_dense
             && self.target_verify3_fused
             && self.token_io_checkpoint
-            && self.resident_banks_frozen
-            && self.target_frozen_host_source_identity.is_some()
+            && ((self.resident_banks_frozen && self.target_frozen_host_source_identity.is_some())
+                || self.global_target_scope().unwrap_or(false))
             && self.target_frozen_gu_integer_reserved
             && self.target_frozen_down_integer_reserved
             && self.packed_profile == expert_banks::OriginalPackedProfile::DaslabIq3
@@ -2205,6 +2231,7 @@ impl<'a> GpuExecutor<'a> {
         Ok(())
     }
     pub(crate) fn check_target_rows_policy(&self) -> Result<()> {
+        let global = self.global_target_scope()?;
         if self.q6_integer_verify_head && !self.q6_verify_head_scope()
             || !self.q6_integer_verify_head
                 && (self.q6_integer_verify_head_prepares != 0
@@ -2220,8 +2247,9 @@ impl<'a> GpuExecutor<'a> {
             || self.target_four_rows_active
                 && (!self.target_four_rows_reserved
                     || self.resident_admission.is_none()
-                    || !self.resident_banks_frozen
-                    || self.target_frozen_host_source_identity.is_none())
+                    || !(global
+                        || self.resident_banks_frozen
+                            && self.target_frozen_host_source_identity.is_some()))
             || !self.target_four_rows_active
                 && (self.target_verify4_dense_calls != 0 || self.target_verify4_fused_calls != 0)
         {

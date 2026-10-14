@@ -19,18 +19,26 @@ fn rejected() -> Error {
     Error::InvalidFormat("public language request I/O boundary rejected")
 }
 
-/// Identity of one of the two compiled thinking-off ChatML fixtures. No
-/// arbitrary context, prompt length, generation limit or warm-reset permit.
+/// Charged request geometry. Historical public fixtures keep their exact
+/// contract; the connected core accepts bounded request-local lengths.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Geometry {
     prompt: usize,
+    outputs: usize,
 }
 impl Geometry {
     pub(crate) fn new(prompt: usize, outputs: usize) -> Result<Self> {
-        if !matches!(prompt, 30 | 35) || outputs != MAX_OUTPUTS {
+        if crate::strata_intel_core::enabled() {
+            if prompt == 0
+                || !(1..=MAX_OUTPUTS).contains(&outputs)
+                || prompt.checked_add(outputs).is_none_or(|n| n > 4096)
+            {
+                return Err(rejected());
+            }
+        } else if !matches!(prompt, 30 | 35) || outputs != MAX_OUTPUTS {
             return Err(rejected());
         }
-        Ok(Self { prompt })
+        Ok(Self { prompt, outputs })
     }
     pub(crate) fn prompt(self) -> usize {
         self.prompt
@@ -38,7 +46,7 @@ impl Geometry {
     /// Retain capacity for the whole public output budget. The first output
     /// was predicted by prompt prefill; at most199 continuation inputs run.
     pub(crate) fn context(self) -> usize {
-        self.prompt + MAX_OUTPUTS
+        self.prompt + self.outputs
     }
     pub(crate) fn final_cursor(self) -> usize {
         self.context() - 1
@@ -77,7 +85,7 @@ struct Authority {
 }
 impl Authority {
     fn new(geometry: Geometry, context: usize, actual: bool) -> Result<Self> {
-        Geometry::new(geometry.prompt, MAX_OUTPUTS)?;
+        Geometry::new(geometry.prompt, geometry.outputs)?;
         if context != geometry.context() || actual {
             return Err(rejected());
         }
@@ -154,6 +162,7 @@ impl Authority {
 impl Drop for Authority {
     fn drop(&mut self) {
         self.geometry.prompt.zeroize();
+        self.geometry.outputs.zeroize();
         self.scopes.zeroize();
         self.phase = Phase::Closed;
     }
@@ -164,6 +173,14 @@ pub(super) struct Permit {
     authority: Authority,
 }
 impl Permit {
+    pub(super) fn validate_geometry(&self, prompt: usize, outputs: usize) -> Result<()> {
+        if self.authority.phase != Phase::Prefill
+            || self.authority.geometry != Geometry::new(prompt, outputs)?
+        {
+            return Err(rejected());
+        }
+        Ok(())
+    }
     pub(super) fn enable_four_rows(&mut self) -> Result<()> {
         if self.authority.phase == Phase::Active || self.authority.four_rows {
             return Err(rejected());
@@ -342,6 +359,29 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn core_geometry_charges_arbitrary_bounded_request_and_checks_lifecycle() {
+        if !crate::strata_intel_core::enabled() {
+            return;
+        }
+        for (prompt, outputs) in [(1, 1), (23, 7), (4095, 1), (1024, 512)] {
+            let geometry = Geometry::new(prompt, outputs).unwrap();
+            assert_eq!(geometry.context(), prompt + outputs);
+            let mut authority = Authority::new(geometry, geometry.context(), false).unwrap();
+            authority.run(0, prompt.min(3), false).unwrap();
+            assert!(authority.validate_begin(prompt - 1, false).is_err());
+            authority.begin(prompt, true).unwrap();
+            if outputs > 1 {
+                authority.run(prompt, 1, true).unwrap();
+            }
+            assert!(authority.run(prompt + outputs - 1, 1, true).is_err());
+            authority.end(prompt + outputs - 1, false).unwrap();
+            assert!(authority.run(prompt, 1, false).is_err());
+        }
+        for (p, o) in [(0, 1), (1, 0), (1, 513), (4096, 1), (usize::MAX, 1)] {
+            assert!(Geometry::new(p, o).is_err());
+        }
+    }
     #[test]
     fn four_language_permission_keeps_prefill_original_and_requires_active_real_cursor() {
         let geometry = Geometry::new(30, MAX_OUTPUTS).unwrap();

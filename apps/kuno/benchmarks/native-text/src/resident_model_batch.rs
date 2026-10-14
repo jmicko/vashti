@@ -1969,6 +1969,18 @@ impl Workspace {
         grouped_status_states(states)
     }
     fn decode_kernels(&self) -> Result<NativeDecodeKernels> {
+        if crate::strata_intel_core::enabled() {
+            if self.global_moe.is_none() || self.dense_member_capacity != 8 {
+                return Err(error());
+            }
+            return match self.gdn.recurrence_policy() {
+                crate::gdn_chunk::RecurrencePolicy::Chunk => Ok(NativeDecodeKernels::Chunk),
+                crate::gdn_chunk::RecurrencePolicy::FourStreaming => {
+                    Ok(NativeDecodeKernels::FourGdn)
+                }
+                _ => Err(error()),
+            };
+        }
         decode_family_policy(
             self.moe.projection_tile(),
             self.gdn.recurrence_policy(),
@@ -1983,6 +1995,9 @@ impl Workspace {
         executor: &GpuExecutor<'_>,
         admission: &crate::executor::ResidentAdmission,
     ) -> Result<()> {
+        if crate::strata_intel_core::enabled() {
+            return self.validate_global_scope(executor, admission);
+        }
         if self.public_four_rows_reserved != executor.target_four_rows_reserved
             || executor.target_four_rows_active
                 != (self.decode_kernels()? == NativeDecodeKernels::FourGdn)
@@ -2039,6 +2054,52 @@ impl Workspace {
             }
             _ => Err(error()),
         }
+    }
+    fn validate_execution_scope(
+        &self,
+        executor: &GpuExecutor<'_>,
+        admission: &crate::executor::ResidentAdmission,
+    ) -> Result<()> {
+        if crate::strata_intel_core::enabled() {
+            self.validate_global_scope(executor, admission)
+        } else {
+            self.three_gdn_scope(executor, admission)?.validate()
+        }
+    }
+    fn validate_global_scope(
+        &self,
+        executor: &GpuExecutor<'_>,
+        admission: &crate::executor::ResidentAdmission,
+    ) -> Result<()> {
+        executor.check_resident_admission(admission)?;
+        if !executor.global_target_scope()?
+            || !executor.target_rows_reserved
+            || self.target_rows.is_none()
+            || !self.latest_target_checkpoint_reserved
+            || !executor.token_io_checkpoint
+            || !admission.deferred_token_io()
+            || !admission.transient_io()
+            || self.public_language_request_io.is_none()
+            || self.public_target_request_io.is_some()
+            || self.public_four_rows_reserved != executor.target_four_rows_reserved
+            || executor.target_four_rows_active
+                != (self.decode_kernels()? == NativeDecodeKernels::FourGdn)
+            || executor.target_four_rows_active && !self.public_four_rows_reserved
+            || executor.native_projection_tile() != 8
+            || executor.native_projection_member_capacity() != 8
+            || !executor.target_verify3_dense
+            || !executor.target_verify3_fused
+            || self.moe.cpu_miss_cap().is_some()
+            || self.moe.cpu_gpu_overlap().is_some()
+            || self.moe.resident_router_active()
+            || self.moe.frozen_host_sources_enabled()
+            || self.moe.prepared_verify3_owner_id().is_some()
+            || self.moe.live_member_reduction_enabled()
+        {
+            return Err(Error::InvalidFormat("global native controller authority"));
+        }
+        self.global_moe.as_ref().ok_or(error())?.validate_idle()?;
+        executor.check_target_rows_policy()
     }
     fn three_gdn_scope(
         &self,
@@ -2613,11 +2674,53 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         native.shared.validate_all_consumers_queued()?;
         if let Some(global) = &native.global_moe {
             global.validate_idle()?;
+            match &executor.strata_global_sources {
+                Some(sources) => sources.validate_graph_ready(self.graph)?,
+                None if self.position == 0 && !executor.target_four_rows_active => (),
+                None => return Err(error()),
+            }
         }
         native.ple.validate_completed_projection_boundary(self)?;
         Ok(CompletedNativeProjectionBoundary { _private: () })
     }
 
+    pub(crate) fn adapt_global_after_window(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        self.completed_native_projection_boundary(executor)?;
+        self.native_batch
+            .as_ref()
+            .ok_or(error())?
+            .validate_global_scope(executor, &self.admission)?;
+        self.native_batch
+            .as_mut()
+            .ok_or(error())?
+            .global_moe
+            .as_mut()
+            .ok_or(error())?
+            .adapt_after_finished(
+                self.graph,
+                &self.arena,
+                &self.admission,
+                executor.strata_global_sources.as_mut().ok_or(error())?,
+                cancel,
+            )
+    }
+    pub(crate) fn validate_global_request_geometry(
+        &self,
+        executor: &GpuExecutor<'f>,
+        prompt: usize,
+        outputs: usize,
+    ) -> Result<()> {
+        self.completed_native_projection_boundary(executor)?;
+        let native = self.native_batch.as_ref().ok_or(error())?;
+        native.validate_global_scope(executor, &self.admission)?;
+        let permit = native.public_language_request_io.as_ref().ok_or(error())?;
+        permit.identity(self.graph.binding_id(), self.context)?;
+        permit.validate_geometry(prompt, outputs)
+    }
     /// Actual committed cursor for the explicitly reserved target-row owner.
     /// This performs the existing complete native boundary proof; it does not
     /// infer completion from the returned result's start/count metadata.
@@ -3872,10 +3975,11 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             native.decode_kernels()?,
             accepted_prefill,
             self.admission.request_io_reuse_active(),
-        ) || !native.moe.frozen_host_sources_enabled()
-            || native.moe.frozen_gu_integer_owner_id().is_none()
-            || !native.moe.frozen_host_source_down_integer_selected()
-            || !native.ple.public_grouped_reads()
+        ) || !native.ple.public_grouped_reads()
+            || !crate::strata_intel_core::enabled()
+                && (!native.moe.frozen_host_sources_enabled()
+                    || native.moe.frozen_gu_integer_owner_id().is_none()
+                    || !native.moe.frozen_host_source_down_integer_selected())
         {
             return Err(Error::InvalidFormat(concat!(
                 "native model chunk rejected at source line ",
@@ -3979,9 +4083,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         let boundary = self.completed_native_projection_boundary(executor)?;
         executor.check_target_rows_policy()?;
         let native = self.native_batch.as_ref().ok_or(error())?;
-        native
-            .three_gdn_scope(executor, &self.admission)?
-            .validate()?;
+        native.validate_execution_scope(executor, &self.admission)?;
         let accepted_prefill = match (
             &native.public_target_request_io,
             &native.public_language_request_io,
@@ -4097,17 +4199,16 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         }
         let native = self.native_batch.as_ref().ok_or(error())?;
         if !native.public_four_rows_reserved
-            || !native.moe.public_four_members_policy()
-            || !native.moe.frozen_host_sources_enabled()
+            || !crate::strata_intel_core::enabled()
+                && (!native.moe.public_four_members_policy()
+                    || !native.moe.frozen_host_sources_enabled())
         {
             return Err(Error::InvalidFormat(concat!(
                 "native model chunk rejected at source line ",
                 line!()
             )));
         }
-        native
-            .three_gdn_scope(executor, &self.admission)?
-            .validate()?;
+        native.validate_execution_scope(executor, &self.admission)?;
         let accepted_prefill = match (
             &native.public_target_request_io,
             &native.public_language_request_io,
@@ -4251,9 +4352,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         let boundary = self.completed_native_projection_boundary(executor)?;
         executor.check_target_rows_policy()?;
         let native = self.native_batch.as_ref().ok_or(error())?;
-        native
-            .three_gdn_scope(executor, &self.admission)?
-            .validate()?;
+        native.validate_execution_scope(executor, &self.admission)?;
         let accepted_prefill = match (
             &native.public_target_request_io,
             &native.public_language_request_io,
@@ -4325,9 +4424,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         let boundary = self.completed_native_projection_boundary(executor)?;
         executor.check_target_rows_policy()?;
         let native = self.native_batch.as_ref().ok_or(error())?;
-        native
-            .three_gdn_scope(executor, &self.admission)?
-            .validate()?;
+        native.validate_execution_scope(executor, &self.admission)?;
         let accepted_prefill = match (
             &native.public_target_request_io,
             &native.public_language_request_io,
@@ -5263,16 +5360,6 @@ impl Workspace {
         qa.finish(&m.arena, cancel)?;
         self.global_moe.as_mut().ok_or(error())?.finish()?;
         ple.commit(cancel)?;
-        self.global_moe
-            .as_mut()
-            .ok_or(error())?
-            .adapt_after_finished(
-                m.graph,
-                &m.arena,
-                &m.admission,
-                e.strata_global_sources.as_mut().ok_or(error())?,
-                cancel,
-            )?;
         *m.phase_ns.entry("native_all_family_commit").or_default() +=
             commit_start.elapsed().as_nanos();
         u::cancel(cancel)?;

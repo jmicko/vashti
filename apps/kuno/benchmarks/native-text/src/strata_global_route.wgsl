@@ -16,7 +16,7 @@ fn finite(x:f32)->bool { return abs(x)<=bitcast<f32>(0x7f7fffffu); }
 fn main(@builtin(local_invocation_index) local:u32,@builtin(subgroup_id) sg:u32,
         @builtin(subgroup_invocation_id) lane:u32,@builtin(subgroup_size) width:u32,
         @builtin(num_subgroups) nsg:u32) {
-    if p.count<1u || p.count>8u || p.layer>=48u || p.epoch==0u || p.r0!=0u
+    if p.count<1u || p.count>8u || p.layer>=48u || p.epoch==0u || p.r0>1u
         || width!=32u || nsg!=8u || arrayLength(&logits)<p.count*512u
         || arrayLength(&remap)!=32768u || arrayLength(&map)!=8192u
         || arrayLength(&probability)!=8192u || arrayLength(&usage)!=32768u || arrayLength(&fault)<1u {return;}
@@ -70,7 +70,7 @@ fn main(@builtin(local_invocation_index) local:u32,@builtin(subgroup_id) sg:u32,
         }
         // Count actual logical routes, not physical-cell IDs. Only one lane
         // writes this layer; ordered windows share no concurrent usage writer.
-        for(var route=0u;route<p.count*10u;route++) {usage[p.layer*512u+logical[route]]+=1.0;}
+        if p.r0==1u {for(var route=0u;route<p.count*10u;route++) {usage[p.layer*512u+logical[route]]+=1.0;}}
         map[0]=p.count;map[1]=0u;map[2]=p.count;map[3]=groups;
     }
 }

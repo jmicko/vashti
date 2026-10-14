@@ -31,6 +31,8 @@ use std::{
 };
 use zeroize::Zeroizing;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+#[path = "strata_global_controller.rs"]
+mod global_controller;
 const VOCAB: usize = 248320;
 const HIDDEN: usize = 10240;
 pub(crate) const MAX_OUTPUTS: usize = if crate::strata_port::enabled() {
@@ -1196,7 +1198,7 @@ pub(crate) fn run(
     executor.target_verify3_dense = input.verify3_dense;
     executor.target_verify3_fused = input.verify3_fused;
     executor.token_io_checkpoint = input.chunk_io;
-    if input.four_lookahead {
+    if input.four_lookahead || crate::strata_intel_core::enabled() {
         executor.reserve_public_four_rows()?;
     }
     executor.enable_transient_resident(target_retired.clone())?;
@@ -1238,13 +1240,13 @@ pub(crate) fn run(
         if input.frozen_down_integer {
             config = config.reserve_public_frozen_down_integer()?;
         }
-        if input.public_grouped_ple_reads {
+        if input.public_grouped_ple_reads || crate::strata_intel_core::enabled() {
             config = config.reserve_public_grouped_ple_reads()?;
         }
-        if input.public_grouped_status_folds {
+        if input.public_grouped_status_folds || crate::strata_intel_core::enabled() {
             config = config.reserve_public_grouped_status_folds()?;
         }
-        if input.four_lookahead {
+        if input.four_lookahead || crate::strata_intel_core::enabled() {
             config = config.reserve_public_four_rows()?;
         }
         let prepared_host = std::cell::OnceCell::new();
@@ -1271,6 +1273,21 @@ pub(crate) fn run(
             }
         }
         let runs = (|| -> Result<serde_json::Value> {
+            if crate::strata_intel_core::enabled() {
+                return global_controller::run(
+                    &mut target,
+                    &mut executor,
+                    draft.as_mut(),
+                    global_controller::Request {
+                        prompt: &prompt,
+                        max_outputs: MAX_OUTPUTS,
+                        eos: graph.eos_token(),
+                        window: crate::strata_port::verify_capacity(),
+                    },
+                    &cancel,
+                    &mut |_| Ok(()),
+                );
+            }
             let load_ns = elapsed(whole)?;
             let prefill = Instant::now();
             let before_prefill_repair = draft.as_ref().map(|draft| draft.traffic());
@@ -2453,18 +2470,20 @@ pub(crate) fn run(
             } else {
                 None
             };
-            crate::target_lab_build::validate_frozen_integer_math_close(
-                input.frozen_gu_integer,
-                input.frozen_down_integer,
-                main.buffers,
-                main.bytes,
-            )?;
-            if input.decode_mode == DecodeMode::TargetOnly {
-                crate::target_lab_build::validate_public_target_only_close(
+            if !crate::strata_intel_core::enabled() {
+                crate::target_lab_build::validate_frozen_integer_math_close(
                     input.frozen_gu_integer,
+                    input.frozen_down_integer,
                     main.buffers,
                     main.bytes,
                 )?;
+                if input.decode_mode == DecodeMode::TargetOnly {
+                    crate::target_lab_build::validate_public_target_only_close(
+                        input.frozen_gu_integer,
+                        main.buffers,
+                        main.bytes,
+                    )?;
+                }
             }
             Ok((main, sources, host_close))
         })();
@@ -2555,6 +2574,21 @@ pub(crate) fn run(
     )?;
     if final_backlog_receipt != target_submission_backlog_receipt {
         return Err("immutable target backlog policy changed before full close".into());
+    }
+    if crate::strata_intel_core::enabled() {
+        let value = serde_json::json!({"scope":"strata-global-connected-execution-check",
+            "benchmark":false,"whole_rewrite_accepted":false,"record":record,
+            "draft_owners_erased":draft_close.is_some(),"target_owners_erased":true,
+            "target_submission_backlog":final_backlog_receipt});
+        serde_json::to_writer_pretty(
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(input.receipt)?,
+            &value,
+        )?;
+        println!("strata_global_execution_complete owners_erased=true speed_acceptance=false");
+        return Ok(());
     }
     let draft_close = draft_close.map(|closed| {
         serde_json::json!({

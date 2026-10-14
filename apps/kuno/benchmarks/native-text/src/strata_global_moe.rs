@@ -103,6 +103,7 @@ pub(crate) struct Workspace {
     adaptive: Option<crate::strata_global_adapt::Cache>,
     stages: [BufferId; 3],
     epoch: u32,
+    verify_usage: bool,
     active: Option<Zeroizing<[usize; 3]>>, // active count, next layer, accepted flag
 }
 impl Workspace {
@@ -174,6 +175,7 @@ impl Workspace {
             ids: ids.try_into().map_err(|_| reject())?,
             stages,
             epoch: 0,
+            verify_usage: false,
             active: None,
             adaptive: None,
         })
@@ -250,7 +252,12 @@ impl Workspace {
             .with_buffer(owners[4].clone().binding())
             .with_buffer(full(fault)?.binding())
             .with_buffer(full(self.ids[9])?.binding())
-            .with_info(info(&[count as u32, layer as u32, self.epoch, 0]));
+            .with_info(info(&[
+                count as u32,
+                layer as u32,
+                self.epoch,
+                u32::from(self.verify_usage),
+            ]));
         // SAFETY: exact private routing/remap roots; no host readback or cache
         // transfer can bypass the owning graph's dependencies.
         unsafe {
@@ -394,6 +401,14 @@ impl Workspace {
         } else {
             Ok(())
         }
+    }
+    pub(crate) fn set_verify_usage(&mut self, enabled: bool) -> Result<()> {
+        self.validate_idle()?;
+        if self.verify_usage == enabled {
+            return Err(reject());
+        }
+        self.verify_usage = enabled;
+        Ok(())
     }
 }
 pub(crate) fn compiled_sources() -> Vec<CompiledKernel<AutoCompiler>> {

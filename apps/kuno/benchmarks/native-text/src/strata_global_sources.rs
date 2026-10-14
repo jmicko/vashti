@@ -275,6 +275,29 @@ impl Sources {
     pub(crate) fn plan(&self) -> &Plan {
         &self.plan
     }
+    /// Actual attachment authority, independent of the retired frozen-bank
+    /// receipts. A half-published exchange cannot authorize another window.
+    pub(crate) fn validate_attached(&self) -> Result<()> {
+        if self.closed
+            || self.closing_failed
+            || self.mutation_pending
+            || self.gpu.is_none()
+            || self.host.is_none()
+            || self.queue.is_none()
+            || self.stages.is_none()
+            || self.stage_table.is_none()
+            || self.tables.len() != LAYERS
+            || self.reads.len() != LAYERS
+            || self.reads.iter().any(Vec::is_empty)
+        {
+            return Err(reject());
+        }
+        Ok(())
+    }
+    pub(crate) fn validate_graph_ready(&self, graph: BoundGraph<'_, '_>) -> Result<()> {
+        self.validate_attached()?;
+        self.plan.check_binding(graph)
+    }
     /// Retains the actual immutable roots in native recording/fence tracking.
     /// Adds only static physical-cell/stage address descriptors. Private
     /// logical remaps stay in the family arena and never enter these tables.

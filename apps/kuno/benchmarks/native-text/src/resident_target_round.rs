@@ -230,9 +230,29 @@ impl<'a, 'm, 'f> LatestTargetRound<'a, 'm, 'f> {
             if self.packet.phase != Phase::Captured || self.checkpoint.is_none() {
                 return Err(rejected());
             }
+            if let Some(global) = self
+                .model
+                .native_batch
+                .as_mut()
+                .ok_or(rejected())?
+                .global_moe
+                .as_mut()
+            {
+                global.set_verify_usage(true)?;
+            }
             let output =
                 self.model
                     .prefill_chunk_with_carry(self.executor, self.packet.inputs(), cancel)?;
+            if let Some(global) = self
+                .model
+                .native_batch
+                .as_mut()
+                .ok_or(rejected())?
+                .global_moe
+                .as_mut()
+            {
+                global.set_verify_usage(false)?;
+            }
             let cursor = self.model.completed_target_rows_cursor(self.executor)?;
             self.packet
                 .verified(output.binding_id(), output.start(), output.count(), cursor)?;
@@ -262,7 +282,12 @@ impl<'a, 'm, 'f> LatestTargetRound<'a, 'm, 'f> {
         cancel: &AtomicBool,
     ) -> Result<Option<NativeTargetRows>> {
         let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.finish_inner(accepted_inputs, cancel)
+            let output = self.finish_inner(accepted_inputs, cancel)?;
+            if crate::strata_intel_core::enabled() {
+                self.model
+                    .adapt_global_after_window(self.executor, cancel)?;
+            }
+            Ok(output)
         }));
         match attempt {
             Ok(Ok(output)) => {
