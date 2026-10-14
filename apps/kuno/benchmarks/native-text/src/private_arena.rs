@@ -140,6 +140,25 @@ pub struct BufferLayout {
 }
 
 impl BufferLayout {
+    /// An attested complete external cache buffer has its exact physical size,
+    /// not an allocator-bin rounding. This constructor is never an allocator.
+    fn borrowed_complete(owned_bytes: usize) -> Result<Self> {
+        if !(MIN_SPAN_BYTES..=MAX_SPAN_BYTES).contains(&owned_bytes)
+            || !owned_bytes.is_multiple_of(256)
+        {
+            return Err(ArenaError::InvalidLayout);
+        }
+        let owned_words = owned_bytes / 4;
+        let groups = owned_words.div_ceil(LANES);
+        let x = groups.min(65535);
+        Ok(Self {
+            logical_words: owned_words,
+            owned_words,
+            owned_bytes,
+            workgroups_x: x as u32,
+            workgroups_y: groups.div_ceil(x) as u32,
+        })
+    }
     pub fn new(logical_words: usize) -> Result<Self> {
         if logical_words == 0 {
             return Err(ArenaError::InvalidLayout);
@@ -207,6 +226,18 @@ impl Ledger {
         if layout != BufferLayout::new(layout.logical_words)? {
             return Err(ArenaError::InvalidLayout);
         }
+        self.reserve_checked(layout)
+    }
+    fn reserve_borrowed(&mut self, layout: BufferLayout) -> Result<BufferId> {
+        if self.closed {
+            return Err(ArenaError::Closed);
+        }
+        if layout != BufferLayout::borrowed_complete(layout.owned_bytes)? {
+            return Err(ArenaError::InvalidLayout);
+        }
+        self.reserve_checked(layout)
+    }
+    fn reserve_checked(&mut self, layout: BufferLayout) -> Result<BufferId> {
         let charged = self
             .charged
             .checked_add(layout.owned_bytes)
@@ -530,6 +561,9 @@ pub struct PrivateArena {
     public_zero_audit: bool,
     zero_audit_counts: OwnedZeroAudit,
     closed_clean: bool,
+    // Registered roots remain charged to their persistent cache owner. Ledger
+    // charge here is private coverage, never a new physical allocation credit.
+    borrowed_roots: bool,
     // CubeCL default stream depends on the current thread. Pin all arena
     // construction, commands, cleanup and Drop to the same worker thread.
     _same_thread: PhantomData<Rc<()>>,
@@ -556,6 +590,7 @@ impl PrivateArena {
             public_zero_audit: false,
             zero_audit_counts: OwnedZeroAudit::default(),
             closed_clean: false,
+            borrowed_roots: false,
             _same_thread: PhantomData,
         })
     }
@@ -592,6 +627,89 @@ impl PrivateArena {
         let mut arena = Self::new(client, budget_bytes, retired)?;
         arena.io_policy = IoPolicy::OwnedTransient;
         Ok(arena)
+    }
+    /// Register real persistent cache roots under an exclusive lending owner.
+    /// No allocation/public upload/configuration is performed here. Local ledger
+    /// bytes describe private coverage of ALREADY precharged persistent memory.
+    ///
+    /// # Safety
+    /// The caller owns the complete cache roots and their persistent charge,
+    /// has joined all prior readers, excludes all ordinary source consumers and
+    /// retains that exclusion through completed erasure AND model restoration.
+    /// No handle/ID may escape that transaction or survive close. Same configured
+    /// serialized transient client/worker, with the real shared retirement flag.
+    pub(crate) unsafe fn register_cache_roots_on_configured(
+        client: ComputeClient<WgpuRuntime>,
+        roots: [Handle; 3],
+        retired: Arc<AtomicBool>,
+    ) -> Result<(Self, [BufferId; 3])> {
+        if !cfg!(feature = "strata-intel-core") {
+            return Err(ArenaError::InvalidLayout);
+        }
+        let mut layouts = Vec::with_capacity(3);
+        let mut budget = 0usize;
+        for (i, h) in roots.iter().enumerate() {
+            let bytes = usize::try_from(h.size_in_used()).map_err(|_| ArenaError::InvalidLayout)?;
+            if h.size() != bytes as u64
+                || h.offset_start.unwrap_or(0) != 0
+                || h.offset_end.unwrap_or(0) != 0
+                || h.stream != roots[0].stream
+                || roots[..i].iter().any(|other| {
+                    h.clone().binding().memory.allocation_id()
+                        == other.clone().binding().memory.allocation_id()
+                })
+            {
+                return Err(ArenaError::InvalidLayout);
+            }
+            layouts.push(BufferLayout::borrowed_complete(bytes)?);
+            budget = budget
+                .checked_add(bytes)
+                .ok_or(ArenaError::BudgetExceeded)?;
+        }
+        // Backend proves these are the actual complete buffers. A logical
+        // Handle or a cache subview is insufficient, including hidden tails.
+        let resources = client
+            .retained_resource_metadata(roots.to_vec())
+            .map_err(|_| ArenaError::DeviceAllocation)?;
+        if resources.len() != roots.len() {
+            return Err(ArenaError::DeviceAllocation);
+        }
+        for (i, r) in resources.iter().enumerate() {
+            let r = r.resource();
+            if r.offset != 0
+                || r.size != roots[i].size_in_used()
+                || r.buffer.size() != r.size
+                || resources[..i]
+                    .iter()
+                    .any(|prior| prior.resource().buffer == r.buffer)
+            {
+                return Err(ArenaError::DeviceAllocation);
+            }
+        }
+        let mut arena = Self::new_transient_on_configured(client, budget, retired)?;
+        arena.borrowed_roots = true;
+        arena.public_zero_audit = true;
+        arena
+            .handles
+            .try_reserve_exact(3)
+            .map_err(|_| ArenaError::HostAllocation)?;
+        let mut ids = Vec::with_capacity(3);
+        for (h, layout) in roots.into_iter().zip(layouts) {
+            let id = arena.ledger.reserve_borrowed(layout)?;
+            arena.handles.push(h);
+            ids.push(id);
+        }
+        // All owning handles are retained before the first destructive write.
+        for slot in 0..3 {
+            if arena.initialize_transient(slot, None).is_err() {
+                arena.fail();
+                return Err(ArenaError::Initialization);
+            }
+        }
+        Ok((
+            arena,
+            ids.try_into().map_err(|_| ArenaError::Initialization)?,
+        ))
     }
     /// Source-only arena for same-stream immediate copies. A full-span owned
     /// upload is QUEUED before its ID returns; it is not a completed fence.
@@ -682,6 +800,9 @@ impl PrivateArena {
     }
     fn allocate(&mut self, layout: BufferLayout, upload: Option<Upload>) -> Result<BufferId> {
         self.active()?;
+        if self.borrowed_roots {
+            return Err(ArenaError::InvalidLayout);
+        }
         // Allocate metadata capacity before any device operation. Charge the
         // complete span before allocating; never publish an uninitialized ID.
         self.handles
@@ -894,6 +1015,9 @@ impl PrivateArena {
     /// allocation uses a new epoch. Reallocation is explicit and budgeted.
     pub fn reset(&mut self) -> Result<()> {
         self.active()?;
+        if self.borrowed_roots {
+            return Err(ArenaError::InvalidLayout);
+        }
         if self.ledger.epoch == u64::MAX {
             self.fail();
             return Err(ArenaError::IdentityExhausted);
@@ -920,7 +1044,7 @@ impl PrivateArena {
     /// This is not a recovery operation for a poisoned or retired context.
     pub(crate) fn erase_retained_public_owners(&self) -> Result<OwnedZeroAudit> {
         self.active()?;
-        if !self.public_owned_zero_audit_enabled() {
+        if self.borrowed_roots || !self.public_owned_zero_audit_enabled() {
             return Err(ArenaError::Cleanup);
         }
         let accepted = accept_retained_public_erasure(
@@ -987,6 +1111,83 @@ impl Drop for PrivateArena {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn borrowed_complete_layout_has_exact_coverage_without_weakening_owned_bins() {
+        for bytes in [
+            MIN_SPAN_BYTES + 256,
+            MIN_SPAN_BYTES * 2 - 256,
+            MAX_SPAN_BYTES - 256,
+        ] {
+            let layout = BufferLayout::borrowed_complete(bytes).unwrap();
+            assert_eq!(layout.owned_bytes, bytes);
+            assert_eq!(layout.owned_words * 4, bytes);
+            assert_eq!(layout.logical_words, layout.owned_words);
+            assert!(
+                (layout.workgroups_x as usize) * (layout.workgroups_y as usize) * LANES
+                    >= layout.owned_words
+            );
+            let mut ledger = Ledger::new(bytes).unwrap();
+            assert_eq!(
+                ledger.reserve(layout).err(),
+                Some(ArenaError::InvalidLayout)
+            );
+            let id = ledger.reserve_borrowed(layout).unwrap();
+            assert_eq!(ledger.lookup(id).unwrap(), layout);
+            assert_eq!(ledger.charged, bytes);
+            assert_eq!(
+                ledger.reserve_borrowed(layout).err(),
+                Some(ArenaError::BudgetExceeded)
+            );
+            let mut forged = layout;
+            forged.owned_words -= 1;
+            assert_eq!(
+                Ledger::new(bytes).unwrap().reserve_borrowed(forged).err(),
+                Some(ArenaError::InvalidLayout)
+            );
+        }
+        for bytes in [
+            0,
+            MIN_SPAN_BYTES - 256,
+            MIN_SPAN_BYTES + 1,
+            MAX_SPAN_BYTES + 256,
+        ] {
+            assert_eq!(
+                BufferLayout::borrowed_complete(bytes),
+                Err(ArenaError::InvalidLayout)
+            );
+        }
+    }
+    #[test]
+    fn borrowed_irregular_root_erasure_audits_the_last_short_window_before_credit() {
+        let mut good = fake_zero_audit("none", usize::MAX);
+        good.spans = [
+            MIN_SPAN_BYTES + 256,
+            MIN_SPAN_BYTES + 512,
+            MIN_SPAN_BYTES + 768,
+        ]
+        .map(|n| BufferLayout::borrowed_complete(n).unwrap())
+        .to_vec();
+        good.budget = 4096;
+        let spans = good.spans.clone();
+        let proof = inspect_owned_zero_window(&mut good, &spans, 4096).unwrap();
+        assert_eq!(
+            proof,
+            OwnedZeroAudit {
+                bytes: spans.iter().map(|s| s.owned_bytes as u64).sum(),
+                buffers: 3
+            }
+        );
+        assert_eq!(good.reads.len(), 27); // eight full windows + each irregular tail
+        assert_eq!(good.cleanups, 27);
+        for failure in ["tail", "tail map"] {
+            let mut bad = fake_zero_audit(failure, 2);
+            bad.spans = spans.clone();
+            bad.budget = 4096;
+            assert!(inspect_owned_zero_window(&mut bad, &spans, 4096).is_err());
+            assert_eq!(bad.live.get(), 0);
+            assert_eq!(bad.reads.len(), 27);
+        }
+    }
     #[test]
     fn retained_public_erasure_audits_full_padding_without_close_credit() {
         let retired = AtomicBool::new(false);

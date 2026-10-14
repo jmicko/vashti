@@ -2701,6 +2701,13 @@ impl<'a> GpuExecutor<'a> {
             .as_ref()
             .ok_or(Error::InvalidFormat("global expert admission required"))?;
         let requests = crate::strata_global_sources::Sources::gpu_requests(&plan);
+        let shared_retirement =
+            self.transient_resident
+                .as_ref()
+                .cloned()
+                .ok_or(Error::InvalidFormat(
+                    "global source shared retirement absent",
+                ))?;
         let retired = AtomicBool::new(false);
         let result = admission.allocate_banks(&requests, || {
             crate::expert_banks::exact_persistent::persistent_scope(
@@ -2718,6 +2725,7 @@ impl<'a> GpuExecutor<'a> {
                         &self.client,
                         device,
                         host_reserved,
+                        shared_retirement,
                     )
                 },
             )

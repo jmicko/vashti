@@ -10,11 +10,35 @@ use cubecl_runtime::server::{Handle, KernelArguments};
 use kuno_text::{Error, Result, model::BoundGraph};
 use std::collections::HashMap;
 
+#[path = "strata_cache_placement.rs"]
+mod placement;
+pub(crate) use placement::Placement;
+pub(crate) const PLACEMENT_HOST_BYTES: u64 = placement::HOST_BYTES;
 pub(crate) const TABLE_BYTES: u64 = 32768;
 fn reject() -> Error {
     Error::InvalidFormat("Strata global source owner")
 }
 
+/// One real completion gate for the source lending transaction. Prefix/tail
+/// mismatch, clear/restore errors and panics cannot reopen model consumers.
+fn finish_borrowed_roots(
+    expected: crate::private_arena::OwnedZeroAudit,
+    erase: impl FnOnce() -> Result<crate::private_arena::OwnedZeroAudit>,
+    restore: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    if expected.buffers != 3 || expected.bytes < 3 * crate::private_arena::MIN_SPAN_BYTES as u64 {
+        return Err(reject());
+    }
+    let erased = std::panic::catch_unwind(std::panic::AssertUnwindSafe(erase));
+    if !matches!(erased,Ok(Ok(receipt)) if receipt==expected) {
+        return Err(reject());
+    }
+    let restored = std::panic::catch_unwind(std::panic::AssertUnwindSafe(restore));
+    if !matches!(restored, Ok(Ok(()))) {
+        return Err(reject());
+    }
+    Ok(())
+}
 pub(crate) struct Sources {
     client: ComputeClient<WgpuRuntime>,
     plan: Plan,
@@ -28,9 +52,19 @@ pub(crate) struct Sources {
     closed: bool,
     closing_failed: bool,
     mutation_pending: bool,
+    loan_pending: bool,
+    placement: Placement,
+    pending_placement: Option<Placement>,
+    retired: std::sync::Arc<std::sync::atomic::AtomicBool>,
     queue: Option<wgpu::Queue>,
 }
 impl Sources {
+    fn unavailable(&self) -> bool {
+        self.closed
+            || self.closing_failed
+            || self.retired.load(std::sync::atomic::Ordering::Acquire)
+    }
+
     pub(crate) fn gpu_requests(plan: &Plan) -> Vec<u64> {
         let mut requests = Cache::requests(plan);
         requests.extend([TABLE_BYTES; LAYERS + 1]);
@@ -47,9 +81,11 @@ impl Sources {
         client: &ComputeClient<WgpuRuntime>,
         device: &wgpu::Device,
         host_reserved: u64,
+        retired: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<Self> {
         if !crate::strata_intel_core::enabled()
             || host_reserved != Host::reservation(&plan)?
+            || retired.load(std::sync::atomic::Ordering::Acquire)
             || client.public_external_host_usage().is_ok()
         {
             return Err(reject());
@@ -68,6 +104,10 @@ impl Sources {
             closed: false,
             closing_failed: false,
             mutation_pending: false,
+            loan_pending: false,
+            placement: Placement::identity(),
+            pending_placement: None,
+            retired,
             queue: None,
         };
         // Incremental ownership makes every construction failure take the same
@@ -195,7 +235,7 @@ impl Sources {
         layer: usize,
         role: usize,
     ) -> Result<Handle> {
-        if self.closed || self.closing_failed || self.mutation_pending {
+        if self.unavailable() || self.mutation_pending {
             return Err(reject());
         }
         if let Some((h, _, _)) = self
@@ -384,9 +424,9 @@ impl Sources {
     /// Actual attachment authority, independent of the retired frozen-bank
     /// receipts. A half-published exchange cannot authorize another window.
     pub(crate) fn validate_attached(&self) -> Result<()> {
-        if self.closed
-            || self.closing_failed
+        if self.unavailable()
             || self.mutation_pending
+            || self.loan_pending
             || self.gpu.is_none()
             || self.host.is_none()
             || self.queue.is_none()
@@ -422,7 +462,7 @@ impl Sources {
     /// Adds only static physical-cell/stage address descriptors. Private
     /// logical remaps stay in the family arena and never enter these tables.
     pub(crate) fn bind(&self, layer: usize, args: KernelArguments) -> Result<KernelArguments> {
-        if self.closed || self.closing_failed || self.mutation_pending {
+        if self.unavailable() || self.mutation_pending {
             return Err(reject());
         }
         let table = self.tables.get(layer).ok_or_else(reject)?;
@@ -454,11 +494,7 @@ impl Sources {
         layer: usize,
         args: KernelArguments,
     ) -> Result<KernelArguments> {
-        if self.closed
-            || self.closing_failed
-            || self.mutation_pending
-            || self.prompt_stage.is_none()
-        {
+        if self.unavailable() || self.mutation_pending || self.prompt_stage.is_none() {
             return Err(reject());
         }
         let table = self.tables.get(layer).ok_or_else(reject)?;
@@ -475,15 +511,16 @@ impl Sources {
         graph: BoundGraph<'_, '_>,
         swaps: &[crate::strata_global_adapt::Swap],
     ) -> Result<()> {
-        if self.closed
-            || self.closing_failed
+        if self.unavailable()
             || self.mutation_pending
             || swaps.len() > crate::strata_global_adapt::MAX_SWAPS
         {
             return Err(reject());
         }
         self.plan.check_binding(graph)?;
+        let next_placement = self.placement.propose(swaps)?;
         if swaps.is_empty() {
+            self.pending_placement = Some(next_placement);
             self.mutation_pending = true;
             return Ok(());
         }
@@ -541,6 +578,7 @@ impl Sources {
         // From here until full private publication, unknown/failed completion
         // cannot resume inference. close can still attempt ordinary joined erase.
         self.mutation_pending = true;
+        self.pending_placement = Some(next_placement);
         // SAFETY: immutable capabilities above authenticate all owning cells,
         // this exclusive source owner joined every prior CubeCL/BDA reader.
         unsafe {
@@ -553,13 +591,115 @@ impl Sources {
     }
     /// Join PRIVATE remap/usage writes before admitting another source reader.
     pub(crate) fn finish_publication(&mut self, commit: impl FnOnce() -> Result<()>) -> Result<()> {
-        if self.closed || self.closing_failed {
+        if self.unavailable()
+            || self.loan_pending
+            || !self.mutation_pending
+            || self.pending_placement.is_none()
+        {
             return Err(reject());
         }
         cubecl_common::future::block_on(self.client.sync()).map_err(crate::resident_util::fault)?;
         commit()?;
+        self.placement = self.pending_placement.take().ok_or_else(reject)?;
         self.mutation_pending = false;
         Ok(())
+    }
+    /// Actual private scratch lease of three complete cache roots. All model
+    /// source readers stay excluded for this entire transaction. Prompt MoE's
+    /// leased-cell fallback/table patching is a separate connected continuation;
+    /// this method deliberately does NOT expose Sources inside the body.
+    /// Caller holds the persistent precharge and same configured protected
+    /// worker/shared retirement flag.
+    ///
+    /// # Safety
+    /// Caller holds exclusive same-worker execution through this whole closure.
+    /// No ID, raw handle, Scope or scheduled replay may escape the body. Private
+    /// writes/readbacks must retain configured transient I/O and the protected
+    /// worker policy. Source exclusion cannot police an escaped raw GPU client.
+    pub(crate) unsafe fn with_private_cache_roots<T>(
+        &mut self,
+        graph: BoundGraph<'_, '_>,
+        indices: [usize; 3],
+        body: impl FnOnce(
+            &crate::private_arena::PrivateArena,
+            [crate::private_arena::BufferId; 3],
+        ) -> Result<T>,
+    ) -> Result<T> {
+        use crate::private_arena::{OwnedZeroAudit, PrivateArena};
+        use std::sync::atomic::Ordering;
+        self.validate_graph_ready(graph)?;
+        let retired = self.retired.clone();
+        if retired.load(Ordering::Acquire)
+            || indices
+                .iter()
+                .enumerate()
+                .any(|(i, n)| indices[..i].contains(n))
+        {
+            return Err(reject());
+        }
+        let gpu = self.gpu.as_ref().ok_or_else(reject)?;
+        let roots: [Handle; 3] = indices
+            .iter()
+            .map(|&i| gpu.roots().get(i).cloned().ok_or_else(reject))
+            .collect::<Result<Vec<_>>>()?
+            .try_into()
+            .map_err(|_| reject())?;
+        crate::strata_prompt::storage::Storage::new(roots.clone())?;
+        let expected = OwnedZeroAudit {
+            bytes: roots.iter().map(Handle::size_in_used).sum(),
+            buffers: 3,
+        };
+        cubecl_common::future::block_on(self.client.sync()).map_err(crate::resident_util::fault)?;
+        self.loan_pending = true;
+        self.mutation_pending = true;
+        // SAFETY: real owning cache roots/precharge remain held by self. The
+        // exclusive source owner has joined all readers and revoked every bind.
+        let registered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+            PrivateArena::register_cache_roots_on_configured(
+                self.client.clone(),
+                roots,
+                retired.clone(),
+            )
+        }));
+        let (mut arena, ids) = match registered {
+            Ok(Ok(v)) => v,
+            _ => {
+                self.closing_failed = true;
+                retired.store(true, Ordering::Release);
+                return Err(reject());
+            }
+        };
+        let attempted =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| body(&arena, ids)));
+        let completed = finish_borrowed_roots(
+            expected,
+            || {
+                arena.close().map_err(crate::resident_util::fault)?;
+                arena.owned_zero_audit_receipt().ok_or_else(reject)
+            },
+            || {
+                self.gpu.as_ref().ok_or_else(reject)?.restore_chunks(
+                    graph,
+                    &self.plan,
+                    indices,
+                    &self.placement,
+                )
+            },
+        );
+        // Successful close is idempotent; Drop cannot erase restored weights.
+        // A failed close retries best-effort cleanup while sources stay blocked.
+        drop(arena);
+        if completed.is_err() {
+            self.closing_failed = true;
+            retired.store(true, Ordering::Release);
+            return Err(reject());
+        }
+        self.loan_pending = false;
+        self.mutation_pending = false;
+        match attempted {
+            Ok(result) => result,
+            Err(_) => Err(reject()),
+        }
     }
     pub(crate) fn close(&mut self) -> Result<()> {
         if self.closed {
@@ -609,5 +749,72 @@ impl Drop for Sources {
                 std::mem::forget(host);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod borrowed_completion_tests {
+    use super::*;
+    use crate::private_arena::OwnedZeroAudit;
+    use std::cell::RefCell;
+    #[test]
+    fn only_complete_erasure_then_complete_restoration_can_reopen_sources() {
+        let expected = OwnedZeroAudit {
+            bytes: 3 * 33024,
+            buffers: 3,
+        };
+        for failure in [
+            "none",
+            "erase",
+            "erase panic",
+            "prefix",
+            "missing root",
+            "restore",
+            "restore panic",
+        ] {
+            let order = RefCell::new(Vec::new());
+            let result = finish_borrowed_roots(
+                expected,
+                || {
+                    order.borrow_mut().push("erase");
+                    match failure {
+                        "erase" => Err(reject()),
+                        "erase panic" => panic!("public synthetic borrowed erasure fault"),
+                        "prefix" => Ok(OwnedZeroAudit {
+                            bytes: expected.bytes - 256,
+                            ..expected
+                        }),
+                        "missing root" => Ok(OwnedZeroAudit {
+                            buffers: 2,
+                            ..expected
+                        }),
+                        _ => Ok(expected),
+                    }
+                },
+                || {
+                    order.borrow_mut().push("restore");
+                    match failure {
+                        "restore" => Err(reject()),
+                        "restore panic" => panic!("public synthetic restore fault"),
+                        _ => Ok(()),
+                    }
+                },
+            );
+            assert_eq!(result.is_ok(), failure == "none");
+            let expected_order = if matches!(failure, "none" | "restore" | "restore panic") {
+                vec!["erase", "restore"]
+            } else {
+                vec!["erase"]
+            };
+            assert_eq!(*order.borrow(), expected_order);
+        }
+        assert!(
+            finish_borrowed_roots(
+                OwnedZeroAudit::default(),
+                || panic!("must not erase"),
+                || panic!("must not restore")
+            )
+            .is_err()
+        );
     }
 }

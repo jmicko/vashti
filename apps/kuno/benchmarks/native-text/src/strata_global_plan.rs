@@ -537,6 +537,28 @@ impl Plan {
         first: u64,
         destination: &mut [u8],
     ) -> Result<()> {
+        self.load_chunk_range_with(graph, index, first, destination, |pair| Ok(pair.expert))
+    }
+    pub(crate) fn load_chunk_placed(
+        &self,
+        graph: BoundGraph<'_, '_>,
+        index: usize,
+        first: u64,
+        destination: &mut [u8],
+        placement: &crate::strata_global_sources::Placement,
+    ) -> Result<()> {
+        self.load_chunk_range_with(graph, index, first, destination, |pair| {
+            placement.original_at(pair.layer, pair.expert)
+        })
+    }
+    fn load_chunk_range_with(
+        &self,
+        graph: BoundGraph<'_, '_>,
+        index: usize,
+        first: u64,
+        destination: &mut [u8],
+        mut original: impl FnMut(RankedPair) -> Result<usize>,
+    ) -> Result<()> {
         self.check_binding(graph)?;
         if destination.len() as u64 > PUBLIC_UPLOAD_WINDOW {
             return Err(Error::InvalidBufferLength);
@@ -554,7 +576,11 @@ impl Plan {
                 ][role];
                 let tensor = graph.tensor(&format!("blk.{}.{name}", pair.layer))?;
                 let role_bytes = self.layers[pair.layer].role_expert_bytes[role];
-                let source = (pair.expert as u64)
+                let logical = original(pair)?;
+                if logical >= EXPERTS {
+                    return Err(reject());
+                }
+                let source = (logical as u64)
                     .checked_mul(role_bytes)
                     .and_then(|at| at.checked_add(source_first))
                     .ok_or(Error::ArithmeticOverflow)?;

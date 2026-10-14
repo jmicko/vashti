@@ -14,7 +14,8 @@ const SOURCE_WINDOW: u64 = 1024 * 1024;
 // Global plan, owner maps/aliases and inspection temporaries replace the old
 // fixed-bank metadata cap. Bounded startup upload owns at most one original
 // chunk plus its backend copy; the HOST reader owns one additional window.
-const GLOBAL_METADATA_CAP: u64 = 32 * 1024 * 1024;
+const GLOBAL_METADATA_CAP: u64 =
+    32 * 1024 * 1024 + crate::strata_global_sources::PLACEMENT_HOST_BYTES;
 const SETUP_WINDOWS: u64 = 2 * crate::strata_global_plan::PUBLIC_UPLOAD_WINDOW + SOURCE_WINDOW;
 const MAX_ALIGNMENT: u64 = 1024 * 1024;
 fn envelope(bytes: u64) -> KResult<u64> {

@@ -108,6 +108,62 @@ impl Cache {
             plan_instance: plan.instance(),
         })
     }
+    /// Exclusive source transaction only: private exposure has already been
+    /// completely erased/inspected. Restore CURRENT logical placement, not the
+    /// initial ranked profile. No allocation or private public-upload shortcut.
+    pub(crate) fn restore_chunks(
+        &self,
+        graph: BoundGraph<'_, '_>,
+        plan: &Plan,
+        indices: [usize; 3],
+        placement: &crate::strata_global_sources::Placement,
+    ) -> Result<()> {
+        plan.check_binding(graph)?;
+        if self.plan_instance != plan.instance() {
+            return Err(reject());
+        }
+        for (j, &index) in indices.iter().enumerate() {
+            if indices[..j].contains(&index) {
+                return Err(reject());
+            }
+            let root = self.roots.get(index).ok_or_else(reject)?;
+            let chunk = plan.chunks.get(index).ok_or_else(reject)?;
+            if root.size_in_used() != chunk.physical_bytes
+                || root.size() != chunk.physical_bytes
+                || root.offset_start.unwrap_or(0) != 0
+                || root.offset_end.unwrap_or(0) != 0
+            {
+                return Err(reject());
+            }
+            let mut first = 0u64;
+            while first < chunk.physical_bytes {
+                let n = (chunk.physical_bytes - first)
+                    .min(crate::strata_global_plan::PUBLIC_UPLOAD_WINDOW)
+                    as usize;
+                let mut bytes = Vec::new();
+                bytes
+                    .try_reserve_exact(n)
+                    .map_err(|_| Error::LimitExceeded("cache restore public window"))?;
+                if bytes.capacity() != n {
+                    return Err(reject());
+                }
+                bytes.resize(n, 0);
+                plan.load_chunk_placed(graph, index, first, &mut bytes, placement)?;
+                let view = root
+                    .clone()
+                    .offset_start(first)
+                    .offset_end(chunk.physical_bytes - first - n as u64);
+                self.client
+                    .write_public_owned_batch(vec![(view, bytes)])
+                    .map_err(crate::resident_util::fault)?;
+                cubecl_common::future::block_on(self.client.sync())
+                    .map_err(crate::resident_util::fault)?;
+                first += n as u64;
+            }
+        }
+        graph.verify_unchanged()?;
+        Ok(())
+    }
     pub(crate) fn requests(plan: &Plan) -> Vec<u64> {
         plan.chunks.iter().map(|c| c.physical_bytes).collect()
     }
