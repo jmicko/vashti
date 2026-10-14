@@ -4352,3 +4352,16 @@ trial, model numerical acceptance, installation or consumer change is claimed.
 Goal remains active and the full rewrite incomplete; continue the dependency
 checklist, preserving the connected port instead of selecting an intermediate
 speed winner. Required Vashti changes: none.
+
+Global allocation/loading source: `65e6e19` implements pinned Strata's native-pack
+ranked byte-prefix plan from actual original graph metadata and an owning bounded
+persistent GPU loader under existing admission. The same expert-byte budget gives
+11,570 public-profile pairs and 160..342 residents/layer. Host-only prefix/source
+coverage tests and strict core Clippy pass. **The GPU loader was not executed and
+inference consumers still use the old uniform banks.** Read the completion guide's
+**Global byte-prefix and owning-loader block** before continuing: replace banks,
+HOST imports, per-expert BDA ownership, routing/grouping and exchange together;
+do not allocate both caches or force the new layout into fixed old extents.
+No GPU speed/profile, API/UI, installed binary or service change. Required Vashti
+changes: none. Goal active, full rewrite incomplete, earlier core-suite failures
+still open. The refreshed bounded helper's path/process audit is in that handoff.
