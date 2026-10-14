@@ -900,6 +900,32 @@ impl ResidentGdn<'_> {
                     }
                 }
                 Operation::Projection(i) => {
+                    if crate::strata_intel_core::enabled() && count == 4 {
+                        if i == 0 {
+                            let jobs = [
+                                (self.projections.qkv, QKV),
+                                (self.projections.z, Z),
+                                (self.projections.alpha, ALPHA),
+                                (self.projections.beta, BETA),
+                            ]
+                            .map(|(p, target)| {
+                                (
+                                    p,
+                                    ids[target],
+                                    BatchSpans::new(
+                                        count,
+                                        0,
+                                        spans.input_first(),
+                                        spans.input_stride(),
+                                        0,
+                                        layout.widths[target],
+                                    ),
+                                )
+                            });
+                            projector.enqueue_bundle(&jobs, arena, input, cancel)?;
+                        }
+                        return Ok(());
+                    }
                     let (projection, target) = [
                         (self.projections.qkv, QKV),
                         (self.projections.z, Z),

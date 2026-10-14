@@ -219,7 +219,12 @@ pub(crate) fn prepare(
             args,
         );
     }
+    PREPARES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     Ok(())
+}
+static PREPARES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub(crate) fn prepares() -> u64 {
+    PREPARES.load(std::sync::atomic::Ordering::Relaxed)
 }
 static CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub(crate) fn calls() -> u64 {

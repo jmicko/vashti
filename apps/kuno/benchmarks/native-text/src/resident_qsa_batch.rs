@@ -1309,6 +1309,26 @@ impl ResidentQsa<'_> {
                     l.widths[APPEND],
                 ),
                 Operation::Project(i) => {
+                    if crate::strata_intel_core::enabled() && count == 4 {
+                        if i == 0 {
+                            let projections = [
+                                self.projections.query,
+                                self.projections.key,
+                                self.projections.value,
+                                self.projections.iq,
+                                self.projections.ik,
+                            ];
+                            let jobs = std::array::from_fn::<_, 5, _>(|target| {
+                                (
+                                    projections[target],
+                                    ids[target],
+                                    project_input_spans(spans, l.widths[target]),
+                                )
+                            });
+                            projector.enqueue_bundle(&jobs, arena, input, cancel)?;
+                        }
+                        return Ok(());
+                    }
                     let p = [
                         self.projections.query,
                         self.projections.key,

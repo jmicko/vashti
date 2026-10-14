@@ -66,6 +66,20 @@ pub trait BatchedResidentProjector {
         }
         Ok(())
     }
+    /// Consecutive projections borrow one immutable input epoch. Distinct
+    /// output owners and original per-projection spans remain authoritative.
+    fn enqueue_bundle(
+        &mut self,
+        jobs: &[(BoundProjection<'_>, BufferId, BatchSpans)],
+        arena: &PrivateArena,
+        input: BufferId,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        for (projection, output, spans) in jobs {
+            self.enqueue_batch(*projection, arena, input, *output, spans, cancel)?;
+        }
+        Ok(())
+    }
     /// The ordinary path ignores this non-reusable Final-only capability.
     /// true means the caller must queue a full scratch clear after all reads.
     #[allow(clippy::too_many_arguments)]
@@ -166,8 +180,8 @@ impl BatchedResidentProjector for ResidentBatchProjection<'_, '_> {
                     cancel,
                     true,
                 )?;
-                // The parent lends this existing GU scratch only during its
-                // attention stage, before the layer's authentic GU prepare.
+                // The parent retains the authentic private scratch through
+                // all consumers, before its next explicitly ordered reuse.
                 u::cancel(cancel)?;
                 return Ok(());
             }
@@ -190,6 +204,91 @@ impl BatchedResidentProjector for ResidentBatchProjection<'_, '_> {
         // columns are zero-initialized; a prior failed chunk cannot be reused.
         if !fused {
             u::validate(arena, output, self.fault)?;
+        }
+        u::cancel(cancel)
+    }
+    fn enqueue_bundle(
+        &mut self,
+        jobs: &[(BoundProjection<'_>, BufferId, BatchSpans)],
+        arena: &PrivateArena,
+        input: BufferId,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        if !crate::strata_intel_core::enabled() || self.dense_q8.is_none() {
+            for (p, output, spans) in jobs {
+                self.enqueue_batch(*p, arena, input, *output, spans, cancel)?;
+            }
+            return Ok(());
+        }
+        u::cancel(cancel)?;
+        self.executor
+            .check_client(arena.client().map_err(u::fault)?)?;
+        let planes = self.dense_q8.ok_or(Error::InvalidBufferLength)?;
+        let Some((first, _, first_spans)) = jobs.first() else {
+            return Err(Error::InvalidBufferLength);
+        };
+        let inputs = first.matrix.inputs();
+        let roots = [input, planes, self.fault];
+        if !(1..=5).contains(&jobs.len())
+            || roots
+                .iter()
+                .enumerate()
+                .any(|(i, id)| roots[..i].contains(id))
+            || u::words(arena, self.fault)? != 1
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        for (i, (p, output, spans)) in jobs.iter().enumerate() {
+            if roots.contains(output)
+                || jobs[..i].iter().any(|(_, out, _)| out == output)
+                || p.matrix.inputs() != inputs
+                || spans.count() != first_spans.count()
+                || spans.input_first() != first_spans.input_first()
+                || spans.input_stride() != first_spans.input_stride()
+            {
+                return Err(Error::InvalidBufferLength);
+            }
+            validate_view(
+                spans.count(),
+                spans.input_first(),
+                spans.input_stride(),
+                inputs,
+                u::words(arena, input)?,
+            )?;
+            validate_view(
+                spans.count(),
+                spans.output_first(),
+                spans.output_stride(),
+                p.matrix.outputs(),
+                u::words(arena, *output)?,
+            )?;
+        }
+        let scratch_bytes = arena.handle(planes).map_err(u::fault)?.size_in_used();
+        let mut prepared = false;
+        for (p, output, spans) in jobs {
+            if spans.count() == 4
+                && crate::strata_dense::supports(
+                    p.tensor.info().dtype().gguf_id(),
+                    inputs,
+                    scratch_bytes,
+                )
+            {
+                self.executor.enqueue_strata_dense(
+                    p.tensor,
+                    &u::handle(arena, input)?,
+                    arena.handle(planes).map_err(u::fault)?,
+                    &u::handle(arena, *output)?,
+                    &u::handle(arena, self.fault)?,
+                    spans,
+                    cancel,
+                    !prepared,
+                )?;
+                prepared = true;
+            } else {
+                // The ordinary leaf writes only its distinct output and fault;
+                // it cannot alter this input or the borrowed packed scratch.
+                self.enqueue_batch(*p, arena, input, *output, spans, cancel)?;
+            }
         }
         u::cancel(cancel)
     }
