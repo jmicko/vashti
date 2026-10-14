@@ -41,8 +41,8 @@ all need a final audit of actual connected dispatches, not just file names.
 | GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp` | Core now connects native BF16 alpha/beta window projection, conv/L2, controls, double-buffered four-row-group FMA recurrence/output norm and state-only accepted-prefix replay. See the GDN receipts below. Optional Q8 producer fusion, prompt-path fidelity, physical execution and final numerical/queue audit remain open. |
 | QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects FP16 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. See the QSA receipt below for precise storage/scheduling substitutions and remaining numerical/state acceptance; do not claim full QSA fidelity yet. |
 | PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Original grouped reads/hash/history exist. Audit asynchronous deduplicated source reads, grouped BF16 projections and ordered history snapshots/commit. Never persist request n-grams. |
-| Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, MoE MMQ/Intel implementations | Rust bounded graph prefill is not full prompt-path parity. Port connected chunk budget, streamed layer staging and dense/expert batches, including prompt history consumed by MTP. |
-| MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native FP16 cache, dense attention and BF16 FF/head GR to real draft/repair consumers. Original Q2 experts still need the native scaled activation/integer path; router/shared and queue/capture fidelity, numerical/state acceptance, arbitrary input and supported sampling remain required. See the front and rest receipts. |
+| Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rust bounded graph prefill is not full prompt-path parity. Port connected chunk budget, streamed layer staging and Intel GEMM/expert batches, including prompt history consumed by MTP. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation; its stub does not remove the real Intel prompt path requirement. |
+| MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native FP16 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Queue/branch/capture fidelity, numerical/state acceptance, arbitrary input and supported sampling remain required. See the front/rest/MoE receipts. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Request-local Rust suffix/cost controller exists; audit supported window lengths and coupled sampling rather than fixing to four public-fixture rows. |
 | Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Real greedy verification/state-only repair exists. Audit all active windows and acceptance cases against GDN/QSA/PLE/positions; independent correctness oracle remains missing. |
 | Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay exists. Audit stable complete recordings, transfer dependencies, scratch lifetimes and actual overlap; a sequence of independent Wgpu launches is not equivalent. |
@@ -1055,3 +1055,81 @@ do not infer F64 from the fallback router implementation or old chat summaries.
 Full rewrite remains incomplete. Whole prompt MMQ/PLE, recorded graphs/queues,
 arbitrary input/sampling, source/conversion audit, earlier full-core failures and
 final numerical/state/recovery acceptance remain open. Speed gate stays closed.
+
+## Connected native MTP routed/shared MoE (2026-10-14)
+
+Source `a4aa0dc`, isolated `codex/strata-rust-port`. Core `native_moe` is selected
+unconditionally for the original Strata Q2 profile, replacing the old F32 expert
+activation path as a complete producer/consumer family:
+
+- Original BF16 router GEMV uses native256-thread ordered pair FMAs and XOR/block
+  reduction. Native top10 computes full512-expert softmax, stable ID ties and
+  selected-weight normalization accumulated by winning expert lane.
+- S2 input quantization retains native reciprocal-multiply/half-away integer
+  codes, separate F32 scales and signed chunk sums. Paired gate/up and paired
+  down use native256-thread/eight-subgroup geometry, transposed activation/code
+  words, exact integer dot-minus-sum, native ordered lane chunks and down-shuffle
+  reduction. Real original top10 destinations are preserved; no expert remapping.
+- Gate-major SwiGLU is quantized into the separate F32-scaled down activation
+  owner. All512 experts remain resident in authenticated original four-shard
+  roles. Native count1 routes are unique, so group/destination identity is actual
+  rank; no host routing read or per-request weight transfer is introduced.
+- Shared gate/up use one prepared dense Q8_1 input. Native fused SwiGLU/Q8
+  produces the actual down planes; original BF16 shared scalar and native ordered
+  routed/shared merge feed the existing real GR/head/carry consumers.
+
+Router and shared scalar are preserved BF16 during loading. Original Q2 pages
+remain read-only: their interleaved block headers/code fields are decoded directly
+instead of allocating native S2's separate-code/scale conversion. Activation
+transposition/scales/sums are kept in aligned owning planes instead of native
+34-byte Q8 records; the paired integer products and scales are the same contract.
+These layout substitutions still require physical numerical acceptance.
+
+Three admitted private owners add131,072 bytes: input800 words, gate-major
+gate/up12,800 F32 values and down2,000 words. Front/rest workspace now has25
+owners and total MTP private plan18,776,064 bytes. Allocation, full padding
+checks, erasure and close accounting include them. Integer planes do not receive
+invalid F32 bit scans. Native fault/route/readiness proof remains connected.
+
+Native dense Q8 preparation now admits the legal640-column shared projection,
+without requiring Q6's256-value weight blocks. Its native quantizer and fused
+shared producer use pinned `q8_1_finite.hpp`: half-away rounding and finite half
+scale/sum clamping. Effective half scales/sums are present in the existing
+private plane ABI; the unused second packed plane stays zero. All target/native
+dense users share this corrected producer. Audit the original format-specific
+dense minimum/correction consumers separately; this does not claim every dense
+format has complete arithmetic parity.
+
+Validation under `/media/jmicko/faststore/kuno-development`:
+
+- Final `strata-mtp-moe-build-20261014.log` and strict release
+  `strata-mtp-moe-clippy-20261014.log` pass.
+- Final `strata-mtp-moe-shaders-20261014.log`:229 offline WGSL/SPIR-V variants
+  pass, including all eight connected MoE variants and fused shared quantization.
+- `strata-mtp-moe-math-tests-20261014.log`: independent canonical GGUF decoder
+  agrees with S2 transposition/F32 scales/paired integer dots for both640 and2560
+  inputs, original scale/code blocks, lane order and the all-zero case.
+- `strata-mtp-moe-shared-tests-20261014.log`:640-column producer covers real1..8
+  batched input/plane bounds; Q6 admission remains rejected for this geometry.
+- `strata-mtp-moe-owner-tests-20261014.log`:nine accepted-prefix/owner tests pass
+  with the new exact private plan.
+- Feature-off regression at the pre-fusion checkpoint:
+  `strata-mtp-moe-ordinary-regression-20261014.log`,1,367 pass/one ignored.
+  Subsequent changes affect core shader bodies/bindings only; final core build,
+  Clippy and offline shader checks cover those. No repeated feature-off suite.
+
+Remaining MTP schedule gaps: shared/routed work is serialized on the owning
+Vulkan queue rather than native side-queue fork/join; stable graph/capture and
+whole-prompt enqueue/final-fence scheduling remain incomplete. GPU numerics,
+MTP/target acceptance and physical recovery are untested. Earlier full-core
+failures remain open. No live GPU/model or speed run, service/API/UI change,
+installation or root action occurred. Full rewrite incomplete; goal active.
+
+Next major coupled port is **Intel prompt prefill plus PLE/source history**.
+Authoritative pinned `sycl/CMakeLists.txt:212` builds `gemm.dp.cpp`,
+`kernels.dp.cpp`, `prefill.cpp` and `moe_fused_stub.cpp`, with sequential MKL
+linkage. It does not define/build CUDA/HIP `STRATA_PREFILL_MMQ` or fused experts.
+Port real Intel GEMM/chunk budget/streamed staging and its history consumers;
+do not port the inactive MMQ stub or treat existing three-row verification
+looping as prompt-path parity. Preserve the full graph/queue/input/sampling and
+final completeness/state/recovery gates before any speed trial.

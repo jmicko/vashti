@@ -4649,3 +4649,30 @@ consumers as one coherent block; then complete remaining prompt/PLE, graph/
 queues and arbitrary-input/sampling checklist. Earlier full-core failures remain
 open. Do not select partial speed winners or reopen live speed benchmarking.
 Goal active; full rewrite incomplete. Required Vashti changes: none.
+
+### Active Kuno engine handoff — connected MTP native MoE (2026-10-14)
+
+Source `a4aa0dc`, isolated `codex/strata-rust-port`. Read completion guide
+**Connected native MTP routed/shared MoE** for actual original source roles,
+activation/data layout substitutions, validation and remaining queue gaps.
+
+Core now connects BF16 router, native top10, F32-scaled S2 input and SwiGLU
+quantization, paired integer gate/up/down, fused shared Q8, BF16 scalar and
+native merge to the real GR/head/carry graph. All original512 Q2 experts stay
+resident; no per-request weight upload or host route read. Native dense input
+quantization now follows half-away/finite-half scale/sum contract and supports
+the legal640-column shared projection. Private plan18,776,064 bytes includes
+all25 front/rest owners, guard/erasure/close accounting.
+
+Final release build, strict Clippy and229 offline shaders pass. Independent
+GGUF/S2 host math,640-column batch bounds and nine repair/owner tests pass.
+Ordinary pre-fusion regression:1,367 pass/one ignored; subsequent core-only
+shader/binding changes pass final core build/shader checks. No GPU/model/state/
+recovery or speed acceptance, root/service/API/UI change or installation.
+
+Next implement actual Intel GEMM/streamed prompt prefill plus PLE/history,
+then finish graph/queues and arbitrary input/sampling. Pinned SYCL CMake builds
+GEMM/prefill with fused stubs and no CUDA/HIP MMQ; port its real Intel consumers,
+not the inactive MMQ stub. MTP side-queue/capture scheduling, dense-format audit,
+earlier full-core failures and whole-model acceptance remain open. Full rewrite
+incomplete; goal active; speed gate closed. Required Vashti changes: none.
