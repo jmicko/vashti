@@ -83,3 +83,9 @@ owns execution and state; WGSL/Vulkan is the kernel backend. Neither upstream
 SYCL nor C/C++ inference code is linked. Backend layout/state substitutions
 and outstanding numerical acceptance are recorded in the rewrite completion
 guide; this notice does not assert complete engine parity.
+
+The experimental Intel GDN family translates the same Strata revision's
+verify_kernels.dp.cpp multirow convolution/L2 and four-row-group FMA state
+recurrence/output normalization into WGSL, including accepted-prefix replay.
+Rust owns the graph and private state. Existing MIT attribution applies;
+no upstream SYCL/C++ graph or inference library is linked.

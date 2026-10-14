@@ -986,6 +986,7 @@ pub(crate) fn validate_shader_set() -> Result<(), Box<dyn std::error::Error>> {
         shaders.extend(crate::strata_dense::sources());
         shaders.extend(crate::strata_stage::sources());
         shaders.extend(crate::strata_gr::sources());
+        shaders.extend(crate::strata_gdn::sources());
         shaders.extend(crate::strata_qsa::sources());
         shaders.extend(crate::strata_global_experts::compiled_sources());
         shaders.extend(crate::strata_global_moe::compiled_sources());

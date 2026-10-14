@@ -755,6 +755,88 @@ impl Drop for ResidentGdn<'_> {
 
 impl ResidentGdn<'_> {
     #[allow(clippy::too_many_arguments)]
+    fn enqueue_native_gdn_operation(
+        &self,
+        op: Operation,
+        arena: &PrivateArena,
+        public: &PublicGdnParameters,
+        ids: &[BufferId; N],
+        layout: Layout,
+        start: usize,
+        count: usize,
+    ) -> Result<bool> {
+        use crate::strata_gdn::{self as native, Kernel};
+        let p = layout.stage.pointwise;
+        if p.shape.head_dim != 128 {
+            return Err(fault("native GDN requires original128-state graph"));
+        }
+        let h = |id| u::handle(arena, id);
+        let info = [
+            count as u32,
+            start as u32,
+            p.channels as u32,
+            p.shape.key_heads as u32,
+            p.shape.value_heads as u32,
+            (public.gamma_words == 128) as u32,
+            layout.stage.epsilon.to_bits(),
+            0,
+        ];
+        match op {
+            Operation::Convolution => native::launch(
+                arena,
+                Kernel::Conv,
+                [p.channels / 128, count, 1],
+                vec![
+                    h(ids[QKV])?,
+                    public.convolution.clone(),
+                    h(self.buffers.raw_conv[0])?,
+                    h(self.buffers.raw_conv[1])?,
+                    h(ids[Q])?,
+                    h(ids[K])?,
+                    h(ids[V])?,
+                    h(ids[STATUS])?,
+                    h(ids[STATUS + 1])?,
+                ],
+                info,
+            )?,
+            Operation::Preparation | Operation::Closing => {}
+            Operation::Controls => native::launch(
+                arena,
+                Kernel::Controls,
+                [p.shape.value_heads.div_ceil(64), count, 1],
+                vec![
+                    h(ids[ALPHA])?,
+                    h(ids[BETA])?,
+                    public.controls.clone(),
+                    h(ids[CONTROL])?,
+                    h(ids[STATUS + 2])?,
+                ],
+                info,
+            )?,
+            Operation::Recurrence => native::launch(
+                arena,
+                Kernel::Step,
+                [p.shape.value_heads, 1, 1],
+                vec![
+                    h(ids[Q])?,
+                    h(ids[K])?,
+                    h(ids[V])?,
+                    h(ids[CONTROL])?,
+                    h(self.buffers.recurrent[0])?,
+                    h(self.buffers.recurrent[1])?,
+                    h(ids[Z])?,
+                    public.gamma.clone(),
+                    h(ids[GATED])?,
+                    h(ids[STATUS + 3])?,
+                    h(ids[STATUS + 4])?,
+                ],
+                info,
+            )?,
+            _ => return Ok(false),
+        }
+        Ok(true)
+    }
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn enqueue_batch(
         &mut self,
         graph: BoundGraph<'_, '_>,
@@ -889,6 +971,30 @@ impl ResidentGdn<'_> {
         let dim = CubeDim::new_1d(64);
         let arg = |i: usize| u::arg(arena, ids[i]);
         queue_stage(cancel, |operation| {
+            if crate::strata_intel_core::enabled() {
+                if operation == Operation::Recurrence
+                    && let Some(cache) = &mut self.strata_inputs
+                {
+                    cache.retain(
+                        arena,
+                        [ids[QKV], ids[Q], ids[K], ids[V], ids[CONTROL]],
+                        start,
+                        count,
+                        chunk,
+                    )?;
+                }
+                if self.enqueue_native_gdn_operation(
+                    operation,
+                    arena,
+                    public,
+                    ids,
+                    layout,
+                    start as usize,
+                    count,
+                )? {
+                    return Ok(());
+                }
+            }
             match operation {
                 Operation::Clear(i) => {
                     if u::grouped_scratch_clear_enabled() {

@@ -148,51 +148,104 @@ impl PrefixReplay<'_, '_> {
             .as_ref()
             .ok_or_else(|| fault("Strata GDN prefix cache"))?;
         let client = arena.client().map_err(arena_fault)?;
-        let conv = bounded_view(&public.convolution, 0, p.conv_weight_elements)?;
-        point::conv_silu::launch::<WgpuRuntime>(
-            client,
-            u::grid(p.channels)?,
-            CubeDim::new_1d(64),
-            u::arg(arena, cache.ids[0])?,
-            raw_f32_arg(conv, p.conv_weight_elements),
-            u::arg(arena, s.buffers.raw_conv[1])?,
-            u::arg(arena, s.buffers.raw_conv[0])?,
-            u::arg(arena, ids[ACT])?,
-            u::arg(arena, ids[STATUS])?,
-            self.accepted,
-            0,
-            p.channels,
-            0,
-            3,
-            0,
-            3,
-            0,
-            p.channels,
-            0,
-            p.channels,
-            p.channels,
-        );
-        gdn_chunk::enqueue_with_policy(
-            arena,
-            p.shape,
-            workspace.layout.chunk(self.accepted)?,
-            &ChunkBuffers([
-                cache.ids[1],
-                cache.ids[2],
-                cache.ids[3],
-                cache.ids[4],
-                s.buffers.recurrent[1],
-                s.buffers.recurrent[0],
-                ids[RECURRENT],
-                ids[STATUS + 3],
-            ]),
-            cancel,
-            if self.accepted <= 3 {
-                RecurrencePolicy::ThreeStreaming
-            } else {
-                RecurrencePolicy::Chunk
-            },
-        )?;
+        if crate::strata_intel_core::enabled() {
+            use crate::strata_gdn::{self as native, Kernel};
+            let h = |id| u::handle(arena, id);
+            let info = [
+                self.accepted as u32,
+                self.checkpoint.metadata.start as u32,
+                p.channels as u32,
+                p.shape.key_heads as u32,
+                p.shape.value_heads as u32,
+                (public.gamma_words == 128) as u32,
+                s.layout.epsilon.to_bits(),
+                0,
+            ];
+            // Restore actual RAW history and the native recurrence from the
+            // separately retained pre-window owners. No output graph runs.
+            native::launch(
+                arena,
+                Kernel::Conv,
+                [p.channels / 128, self.accepted, 1],
+                vec![
+                    h(cache.ids[0])?,
+                    public.convolution.clone(),
+                    h(s.buffers.raw_conv[1])?,
+                    h(s.buffers.raw_conv[0])?,
+                    h(ids[Q])?,
+                    h(ids[K])?,
+                    h(ids[V])?,
+                    h(ids[STATUS])?,
+                    h(ids[STATUS + 1])?,
+                ],
+                info,
+            )?;
+            native::launch(
+                arena,
+                Kernel::Replay,
+                [p.shape.value_heads, 1, 1],
+                vec![
+                    h(cache.ids[1])?,
+                    h(cache.ids[2])?,
+                    h(cache.ids[3])?,
+                    h(cache.ids[4])?,
+                    h(s.buffers.recurrent[1])?,
+                    h(s.buffers.recurrent[0])?,
+                    h(ids[Z])?,
+                    public.gamma.clone(),
+                    h(ids[GATED])?,
+                    h(ids[STATUS + 3])?,
+                    h(ids[STATUS + 4])?,
+                ],
+                info,
+            )?;
+        } else {
+            let conv = bounded_view(&public.convolution, 0, p.conv_weight_elements)?;
+            point::conv_silu::launch::<WgpuRuntime>(
+                client,
+                u::grid(p.channels)?,
+                CubeDim::new_1d(64),
+                u::arg(arena, cache.ids[0])?,
+                raw_f32_arg(conv, p.conv_weight_elements),
+                u::arg(arena, s.buffers.raw_conv[1])?,
+                u::arg(arena, s.buffers.raw_conv[0])?,
+                u::arg(arena, ids[ACT])?,
+                u::arg(arena, ids[STATUS])?,
+                self.accepted,
+                0,
+                p.channels,
+                0,
+                3,
+                0,
+                3,
+                0,
+                p.channels,
+                0,
+                p.channels,
+                p.channels,
+            );
+            gdn_chunk::enqueue_with_policy(
+                arena,
+                p.shape,
+                workspace.layout.chunk(self.accepted)?,
+                &ChunkBuffers([
+                    cache.ids[1],
+                    cache.ids[2],
+                    cache.ids[3],
+                    cache.ids[4],
+                    s.buffers.recurrent[1],
+                    s.buffers.recurrent[0],
+                    ids[RECURRENT],
+                    ids[STATUS + 3],
+                ]),
+                cancel,
+                if self.accepted <= 3 {
+                    RecurrencePolicy::ThreeStreaming
+                } else {
+                    RecurrencePolicy::Chunk
+                },
+            )?;
+        }
         prefix_validate::launch::<WgpuRuntime>(
             client,
             u::grid(
