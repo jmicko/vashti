@@ -65,10 +65,17 @@ impl Tables {
             return Err(reject());
         }
         let device = device.ok_or_else(reject)?;
+        let mut tables = Vec::with_capacity(48);
+        for _ in 0..48 {
+            tables.push(AddressTable {
+                roots: Vec::new(),
+                handle: client.create_public_owned(vec![0; 32768]),
+            });
+        }
         ADDRESSES.with(|t| {
             *t.borrow_mut() = Some(AddressState {
                 device: device.clone(),
-                tables: Vec::new(),
+                tables,
             })
         });
         TABLE.with(|t| *t.borrow_mut() = Some(handle));
@@ -180,16 +187,20 @@ pub(crate) fn bind_addresses(
         if let Some(table) = state.tables.iter().find(|t| t.roots == roots) {
             return Ok(args.with_buffer(table.handle.clone().binding()));
         }
-        if state.tables.len() >= 48 {
-            return Err(reject());
-        }
+        let index = state
+            .tables
+            .iter()
+            .position(|t| t.roots.is_empty())
+            .ok_or_else(reject)?;
         words.resize(8192, 0);
-        let handle =
-            client.create_public_owned(words.into_iter().flat_map(u32::to_le_bytes).collect());
-        state.tables.push(AddressTable {
-            roots,
-            handle: handle.clone(),
-        });
+        let handle = state.tables[index].handle.clone();
+        let bytes = words.into_iter().flat_map(u32::to_le_bytes).collect();
+        // Public source-address metadata only; no MAIN allocation or private
+        // upload enters this completed frozen source construction boundary.
+        client
+            .write_public_owned_batch(vec![(handle.clone(), bytes)])
+            .map_err(crate::resident_util::fault)?;
+        state.tables[index].roots = roots;
         Ok(args.with_buffer(handle.binding()))
     })
 }

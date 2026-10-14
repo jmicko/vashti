@@ -1574,6 +1574,10 @@ pub(crate) struct TransientIo {
     // scopes retain their existing begin-time environment interpretation.
     public_target_metadata: Option<ReuseMetadataConfig>,
     pending_info: Vec<PendingInfo>,
+    // Native graph parameters retain stable GPU pages, with fresh owned upload
+    // sources. Rewrites happen only between completed serialized submissions.
+    core_info_pages: Vec<usize>,
+    core_info_cursor: usize,
 }
 impl std::fmt::Debug for TransientIo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -2475,6 +2479,8 @@ impl TransientIo {
                 inline_readback,
                 public_target_metadata: None,
                 pending_info: Vec::new(),
+                core_info_pages: Vec::new(),
+                core_info_cursor: 0,
             })
         }
     }
@@ -2518,6 +2524,8 @@ impl TransientIo {
                 inline_readback: config.inline_readback,
                 public_target_metadata: Some(config.metadata),
                 pending_info: Vec::new(),
+                core_info_pages: Vec::new(),
+                core_info_cursor: 0,
             })
         }
     }
@@ -2790,6 +2798,7 @@ impl TransientIo {
     }
     fn info_cache_bytes(&self) -> usize {
         self.info_cache.as_ref().map_or(0, InfoCache::host_bytes)
+            + self.core_info_pages.capacity() * std::mem::size_of::<usize>()
     }
     fn check_reuse_metadata(
         &mut self,
@@ -2937,6 +2946,7 @@ impl TransientIo {
             encoder.copy_buffer_to_buffer(&entry.source, 0, &entry.target, 0, entry.source.size());
         }
         self.pending_info.clear();
+        self.core_info_cursor = 0;
         Ok(Some(encoder.finish()))
     }
 
@@ -2967,7 +2977,8 @@ impl TransientIo {
         if !plan.slab {
             return Err(fault("batched INFO record exceeds fixed page"));
         }
-        let cache_hash = if self.reuse_active() {
+        let core = super::strata_graph::enabled() && self.reuse_active();
+        let cache_hash = if self.reuse_active() && !core {
             if self.info_cache.is_none() {
                 // Admit both fixed allocations before creating the optional cache.
                 self.check_reuse_metadata(
@@ -3016,13 +3027,35 @@ impl TransientIo {
         } else {
             None
         };
+        let replay_target = if core && !plan.existing {
+            self.core_info_pages.get(self.core_info_cursor).copied()
+        } else {
+            None
+        };
+        if let Some(index) = replay_target {
+            let owner = self
+                .buffers
+                .get(index)
+                .ok_or_else(|| fault("native parameter owner missing"))?;
+            if owner.kind != Kind::Uniform
+                || !owner.info_pinned
+                || owner.buffer.size() != plan.target_bytes
+                || owner.reuse_ready
+            {
+                return Err(fault("native parameter owner mismatch"));
+            }
+        }
         let source_charge = if plan.existing { 0 } else { plan.target_bytes };
         self.ledger
             .check_info_audit_group(
                 self.additional_charge(Kind::Upload, source_charge)?,
                 self.additional_charge(
                     Kind::Uniform,
-                    if plan.existing { 0 } else { plan.target_bytes },
+                    if plan.existing || replay_target.is_some() {
+                        0
+                    } else {
+                        plan.target_bytes
+                    },
                 )?,
                 0,
             )
@@ -3047,7 +3080,33 @@ impl TransientIo {
                     .try_reserve(1)
                     .map_err(|_| fault("batched INFO pointer allocation"))?;
             }
-            let (target, target_index) = self.allocate_indexed(Kind::Uniform, plan.target_bytes)?;
+            let (target, target_index) = if let Some(index) = replay_target {
+                (self.buffers[index].buffer.clone(), index)
+            } else {
+                if core {
+                    if self.core_info_pages.len() >= 512 {
+                        return Err(fault("native parameter page capacity"));
+                    }
+                    self.core_info_pages
+                        .try_reserve_exact(1)
+                        .map_err(|_| fault("native parameter metadata allocation"))?;
+                    self.check_reuse_metadata(
+                        self.buffers.capacity(),
+                        self.pending_info.capacity(),
+                        self.info_cache_bytes(),
+                    )?;
+                }
+                let allocated = self.allocate_indexed(Kind::Uniform, plan.target_bytes)?;
+                if core {
+                    self.buffers[allocated.1].info_pinned = true;
+                    self.core_info_pages.push(allocated.1);
+                }
+                allocated
+            };
+            if core {
+                self.core_info_cursor += 1;
+            }
+
             let (source, source_index) = self.allocate_indexed(Kind::Upload, source_charge)?;
             {
                 let mut map = source.get_mapped_range_mut(..);
@@ -3556,6 +3615,9 @@ impl TransientIo {
         // full sanitizer touches original GPU owners. Those remain charged here.
         self.binding_cache = None;
         self.info_cache = None;
+        self.core_info_pages.fill(0);
+        self.core_info_pages.clear();
+        self.core_info_cursor = 0;
         // Audit invalidates every intrusive index before moving or releasing owners.
         self.reuse_scope.free.reset();
         // Failed submission/preparation can leave append sources mapped. Their
