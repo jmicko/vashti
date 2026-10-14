@@ -152,6 +152,16 @@ impl Host {
                     pass.dispatch_workgroups((pair.gpu.size / 4).div_ceil(256) as u32, 1, 1);
                 }
             }
+            // SAFETY: compute pass ended, original public HOST roots retained;
+            // checked fence completion precedes all CPU mappings/invalidations.
+            unsafe {
+                encoder.as_hal_mut::<wgpu::hal::api::Vulkan, _, _>(|encoder| {
+                    encoder
+                        .ok_or_else(fail)?
+                        .kuno_public_host_read_barrier()
+                        .map_err(Error::InvalidFormat)
+                })?;
+            }
             queue.submit([encoder.finish()]);
             join(&self.device).map_err(Error::InvalidFormat)
         })();

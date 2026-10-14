@@ -24,8 +24,8 @@ use kuno_text::{
 use std::sync::atomic::AtomicBool;
 use zeroize::Zeroizing;
 
-const ROOT_BYTES: [u64; 10] = [
-    32768, 262144, 1048576, 32768, 32768, 65536, 131072, 131072, 32768, 131072,
+const ROOT_BYTES: [u64; 11] = [
+    32768, 262144, 1048576, 32768, 32768, 65536, 131072, 131072, 32768, 131072, 1048576,
 ];
 pub(crate) const MAIN_BYTES: u64 = 32768
     + 262144
@@ -37,6 +37,7 @@ pub(crate) const MAIN_BYTES: u64 = 32768
     + 131072
     + 32768
     + 131072
+    + 1048576
     + 3 * crate::strata_global_experts::STAGE_BYTES;
 fn reject() -> Error {
     Error::InvalidFormat("Strata global routed family")
@@ -45,12 +46,14 @@ fn reject() -> Error {
 enum Kernel {
     Route,
     Reduce,
+    CpuMerge,
 }
 impl Kernel {
     fn source(self) -> String {
         match self {
             Self::Route => include_str!("strata_global_route.wgsl").into(),
             Self::Reduce => include_str!("strata_global_reduce.wgsl").into(),
+            Self::CpuMerge => include_str!("strata_global_cpu_merge.wgsl").into(),
         }
     }
 }
@@ -59,6 +62,7 @@ impl KernelMetadata for Kernel {
         match self {
             Self::Route => "StrataGlobalRouteAndPlan",
             Self::Reduce => "StrataGlobalRouteReduceAndStamp",
+            Self::CpuMerge => "StrataGlobalNativeCpuJoin",
         }
     }
     fn id(&self) -> KernelId {
@@ -99,7 +103,9 @@ fn info(words: &[u32]) -> MetadataBindingInfo {
 pub(crate) struct Workspace {
     binding: GraphBindingId,
     geometries: [g::Geometry; 48],
-    ids: [BufferId; 10],
+    ids: [BufferId; 11],
+    pub(crate) cpu: std::sync::Arc<kuno_text::cpu_expert::native::Pool>,
+    layer_pending: bool,
     adaptive: Option<crate::strata_global_adapt::Cache>,
     stages: [BufferId; 3],
     epoch: u32,
@@ -145,7 +151,7 @@ impl Workspace {
                     .map_err(Error::InvalidFormat)?,
             );
         }
-        let mut ids = Vec::with_capacity(10);
+        let mut ids = Vec::with_capacity(11);
         for (index, bytes) in ROOT_BYTES.iter().enumerate() {
             let id = if index == 7 {
                 let mut remap = Zeroizing::new(vec![0u32; 32768]);
@@ -171,6 +177,8 @@ impl Workspace {
         graph.verify_unchanged()?;
         Ok(Self {
             binding: graph.binding_id(),
+            cpu: std::sync::Arc::new(kuno_text::cpu_expert::native::Pool::new()?),
+            layer_pending: false,
             geometries: geometries.try_into().map_err(|_| reject())?,
             ids: ids.try_into().map_err(|_| reject())?,
             stages,
@@ -211,17 +219,22 @@ impl Workspace {
         graph: BoundGraph<'_, '_>,
         arena: &PrivateArena,
         sources: &Sources,
+        admission: &crate::executor::ResidentAdmission,
         layer: usize,
         input: BufferId,
         output: BufferId,
         logits: BufferId,
         fault: BufferId,
         cancel: &AtomicBool,
-    ) -> Result<()> {
+    ) -> Result<crate::strata_global_cpu::Plan> {
         u::cancel(cancel)?;
         let active = self.active.as_ref().ok_or_else(reject)?;
         let count = active[0];
-        if active[1] != layer || active[2] != 0 || graph.binding_id() != self.binding {
+        if self.layer_pending
+            || active[1] != layer
+            || active[2] != 0
+            || graph.binding_id() != self.binding
+        {
             return Err(reject());
         }
         sources.plan().check_binding(graph)?;
@@ -263,30 +276,95 @@ impl Workspace {
         unsafe {
             client.launch_unchecked(Box::new(Kernel::Route), CubeCount::Static(1, 1, 1), args);
         }
-        let stages = self.stage_handles(arena)?;
-        let gu = full(self.ids[5])?;
-        let down = full(self.ids[6])?;
-        crate::strata_global_experts::prepare(client, &spans, &owners, &gu, count, false)?;
-        crate::strata_global_experts::fetch(
-            client, graph, sources, layer, geometry, &owners[0], &owners[6], &stages, count,
+        let cpu_plan = crate::strata_global_cpu::prepare(
+            graph,
+            arena,
+            admission,
+            sources,
+            layer,
+            count,
+            self.ids[0],
+            input,
+            cancel,
         )?;
-        for role in [1, 2] {
+        if cpu_plan.gpu_groups > 0 {
+            let stages = self.stage_handles(arena)?;
+            let gu = full(self.ids[5])?;
+            let down = full(self.ids[6])?;
+            crate::strata_global_experts::prepare(client, &spans, &owners, &gu, count, false)?;
+            crate::strata_global_experts::fetch(
+                client, graph, sources, layer, geometry, &owners[0], &owners[6], &stages, count,
+            )?;
+            for role in [1, 2] {
+                crate::strata_global_experts::role(
+                    client, graph, sources, layer, geometry, &spans, &owners, &gu, &stages, count,
+                    role,
+                )?;
+            }
+            crate::strata_global_experts::activate(client, &spans, &owners, count)?;
+            crate::strata_global_experts::prepare(client, &spans, &owners, &down, count, true)?;
             crate::strata_global_experts::role(
-                client, graph, sources, layer, geometry, &spans, &owners, &gu, &stages, count, role,
+                client, graph, sources, layer, geometry, &spans, &owners, &down, &stages, count, 3,
             )?;
         }
-        crate::strata_global_experts::activate(client, &spans, &owners, count)?;
-        crate::strata_global_experts::prepare(client, &spans, &owners, &down, count, true)?;
-        crate::strata_global_experts::role(
-            client, graph, sources, layer, geometry, &spans, &owners, &down, &stages, count, 3,
-        )?;
+        self.layer_pending = true;
+        Ok(cpu_plan)
+    }
+    pub(crate) fn finish_layer(
+        &mut self,
+        arena: &PrivateArena,
+        layer: usize,
+        output: BufferId,
+        fault: BufferId,
+        cpu: Option<&kuno_text::cpu_expert::native::Partials>,
+    ) -> Result<()> {
+        let active = self.active.as_ref().ok_or_else(reject)?;
+        let count = active[0];
+        if !self.layer_pending || active[1] != layer || active[2] != 0 {
+            return Err(reject());
+        }
+        let client = arena.client().map_err(u::fault)?;
+        let full = |id| arena.handle(id).cloned().map_err(u::fault);
+        if let Some(cpu) = cpu {
+            if cpu.values().len() != 80 * 2560 {
+                return Err(reject());
+            }
+            let mut bytes = Zeroizing::new(vec![0u8; 1048576]);
+            for (i, &x) in cpu.values().iter().enumerate() {
+                if !x.is_finite() {
+                    return Err(reject());
+                }
+                bytes[i * 4..i * 4 + 4].copy_from_slice(&x.to_le_bytes());
+            }
+            client
+                .write_private(full(self.ids[10])?, std::mem::take(&mut *bytes))
+                .map_err(u::fault)?;
+            let args = KernelArguments::new()
+                .with_buffers(vec![
+                    full(self.ids[10])?.binding(),
+                    full(self.ids[0])?.binding(),
+                    full(self.ids[2])?.binding(),
+                    full(self.ids[4])?.binding(),
+                    full(fault)?.binding(),
+                ])
+                .with_info(info(&[count as u32, 0, 0, 0]));
+            // SAFETY: real joined CPU result and authenticated private masks;
+            // GPU and CPU routes are disjoint, all parent owners retained.
+            unsafe {
+                client.launch_unchecked(
+                    Box::new(Kernel::CpuMerge),
+                    CubeCount::Static(10, (count * 10) as u32, 1),
+                    args,
+                );
+            }
+        }
         let args = KernelArguments::new()
             .with_buffers(vec![
-                owners[3].clone().binding(),
-                owners[4].clone().binding(),
-                owners[6].clone().binding(),
-                owners[0].clone().binding(),
-                owners[5].clone().binding(),
+                full(self.ids[2])?.binding(),
+                full(self.ids[3])?.binding(),
+                full(self.ids[4])?.binding(),
+                full(self.ids[0])?.binding(),
+                full(output)?.binding(),
                 full(self.ids[8])?.binding(),
                 full(fault)?.binding(),
             ])
@@ -310,6 +388,7 @@ impl Workspace {
             );
         }
         self.active.as_mut().ok_or_else(reject)?[1] += 1;
+        self.layer_pending = false;
         Ok(())
     }
     pub(crate) fn accept(
@@ -319,7 +398,7 @@ impl Workspace {
         cancel: &AtomicBool,
     ) -> Result<()> {
         let state = self.active.as_ref().ok_or_else(reject)?;
-        if state[1] != 48 || state[2] != 0 {
+        if self.layer_pending || state[1] != 48 || state[2] != 0 {
             return Err(reject());
         }
         let stamp =
@@ -396,7 +475,7 @@ impl Workspace {
         Ok(())
     }
     pub(crate) fn validate_idle(&self) -> Result<()> {
-        if self.active.is_some() {
+        if self.active.is_some() || self.layer_pending {
             Err(reject())
         } else {
             Ok(())
@@ -412,7 +491,7 @@ impl Workspace {
     }
 }
 pub(crate) fn compiled_sources() -> Vec<CompiledKernel<AutoCompiler>> {
-    [Kernel::Route, Kernel::Reduce]
+    [Kernel::Route, Kernel::Reduce, Kernel::CpuMerge]
         .into_iter()
         .map(|k| {
             k.compile(

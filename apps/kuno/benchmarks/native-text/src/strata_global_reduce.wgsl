@@ -19,7 +19,7 @@ fn main(@builtin(global_invocation_id) id:vec3<u32>) {
         || p.count-1u>(arrayLength(&output)-p.output_first-2560u)/p.output_stride {return;}
     let row=id.y;let column=id.x;
     if row>=p.count || column>=2560u || id.z!=0u {return;}
-    var valid=map[0]==p.count && map[1]==0u && map[2]==p.count && map[3]>0u && map[3]<=p.count*10u;
+    var valid=map[0]==p.count && map[1]==0u && map[2]==p.count && map[3]<=p.count*10u;
     var sum=0.0;var weight_sum=0.0;
     for(var rank=0u;rank<10u;rank++) {
         let route=row*10u+rank;

@@ -39,6 +39,35 @@ impl super::Texture {
 }
 
 impl super::CommandEncoder {
+    /// Kuno's original public HOST source exchanges are later read through a
+    /// scoped native CPU alias. Fence completion alone does not provide the
+    /// device-to-host visibility domain operation (Vulkan synchronization spec).
+    /// This adds no allocation, layout change or resource ownership transfer.
+    ///
+    /// # Safety
+    /// The caller owns this active encoder outside any render/compute pass and
+    /// retains the written HOST_VISIBLE public source allocations through the
+    /// submitted fence, cache invalidation and all joined CPU readers.
+    pub unsafe fn kuno_public_host_read_barrier(&mut self) -> Result<(), &'static str> {
+        if self.active == vk::CommandBuffer::null() {
+            return Err("public HOST barrier has no active command buffer");
+        }
+        let barrier = vk::MemoryBarrier::default()
+            .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+            .dst_access_mask(vk::AccessFlags::HOST_READ);
+        unsafe {
+            self.device.raw.cmd_pipeline_barrier(
+                self.active,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::PipelineStageFlags::HOST,
+                vk::DependencyFlags::empty(),
+                &[barrier],
+                &[],
+                &[],
+            );
+        }
+        Ok(())
+    }
     fn write_pass_end_timestamp_if_requested(&mut self) {
         if let Some((query_set, index)) = self.end_of_pass_timer_query.take() {
             unsafe {

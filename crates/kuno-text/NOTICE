@@ -64,3 +64,13 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+The separate cpu_expert::native backend ports the MIT GGML native CPU Q8_K
+quantizer and IQ2_S/IQ3_XXS/IQ3_S/IQ4_XS/IQ4_NL integer equations from llama.cpp
+3cf03257f219afbe7334045ff7c6a06ac68c627d, the ggml revision pinned by MIT Strata
+fb58e0dbc8399662c0e47c76578c6e878b14f6cf. Its ID42 Q2_0 path follows Strata's
+CPU Q8_1 activation rounding and original four-code signed layout. Runtime is
+Rust; no ggml or Strata C/C++ engine/library is linked. Existing public GGML
+codebook attribution and license below/above continue to apply. Native SIMD
+integer sums are exact; floating-point multi-token reduction parity remains an
+explicit validation gate rather than an original64 arithmetic claim.

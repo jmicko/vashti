@@ -42,8 +42,93 @@ pub(crate) struct Host {
     logical: u64,
     physical: u64,
     exchange_runtime: Option<exchange::Runtime>,
+    cpu_borrow: std::sync::atomic::AtomicBool,
 }
 impl Host {
+    pub(crate) fn borrow_cpu<'a>(
+        &'a self,
+        graph: BoundGraph<'_, '_>,
+        plan: &GlobalPlan,
+        layer: usize,
+        cells: &[usize],
+    ) -> KResult<CpuLayer<'a>> {
+        plan.check_binding(graph)?;
+        if self.closed
+            || self.instance != plan.instance()
+            || layer >= 48
+            || cells.len() > 80
+            || self
+                .cpu_borrow
+                .compare_exchange(
+                    false,
+                    true,
+                    std::sync::atomic::Ordering::AcqRel,
+                    std::sync::atomic::Ordering::Acquire,
+                )
+                .is_err()
+        {
+            return Err(fail());
+        }
+        let mut guard = CpuLayer {
+            host: self,
+            layer,
+            maps: Vec::new(),
+        };
+        for &cell in cells {
+            for role in 0..3 {
+                let GlobalSource::Host { piece, .. } = plan.source(layer, cell, role)? else {
+                    return Err(fail());
+                };
+                if guard.maps.iter().any(|(r, p, _)| *r == role && *p == piece) {
+                    continue;
+                }
+                let page = self
+                    .pages
+                    .iter()
+                    .find(|p| (p.layer, p.role, p.piece) == (layer, role, piece))
+                    .ok_or_else(fail)?;
+                if page.owner.phase != Phase::Registered || page.authority.is_none() {
+                    return Err(fail());
+                }
+                let backing = page.owner.backing.as_ref().ok_or_else(fail)?;
+                let memory = backing.memory.ok_or_else(fail)?;
+                // SAFETY: sole scoped CPU map, authenticated original HOST_VISIBLE
+                // source; source publication has joined before this readonly borrow.
+                let pointer = unsafe {
+                    backing
+                        .raw
+                        .map_memory(memory, 0, backing.bytes, vk::MemoryMapFlags::empty())
+                }
+                .map_err(|_| fail())?
+                .cast::<u8>() as *const u8;
+                guard.maps.push((
+                    role,
+                    piece,
+                    ReadOnlyMapped {
+                        owner: &page.owner,
+                        pointer,
+                    },
+                ));
+                if page.owner.placement.property_flags
+                    & vk::MemoryPropertyFlags::HOST_COHERENT.as_raw()
+                    == 0
+                {
+                    // SAFETY: whole actual mapped allocation, no pending GPU writes;
+                    // invalidate after the last joined exchange for noncoherent HOST.
+                    unsafe {
+                        backing.raw.invalidate_mapped_memory_ranges(&[
+                            vk::MappedMemoryRange::default()
+                                .memory(memory)
+                                .offset(0)
+                                .size(vk::WHOLE_SIZE),
+                        ])
+                    }
+                    .map_err(|_| fail())?;
+                }
+            }
+        }
+        Ok(guard)
+    }
     pub(crate) fn reservation(plan: &GlobalPlan) -> KResult<u64> {
         let physical = plan
             .layers
@@ -93,6 +178,7 @@ impl Host {
             logical: 0,
             physical: 0,
             exchange_runtime: None,
+            cpu_borrow: std::sync::atomic::AtomicBool::new(false),
         };
         if count == 0 {
             return Ok(host);
@@ -395,6 +481,49 @@ impl Host {
         }
         self.closed = true;
         Ok(())
+    }
+}
+
+pub(crate) struct CpuLayer<'a> {
+    host: &'a Host,
+    layer: usize,
+    maps: Vec<(usize, usize, ReadOnlyMapped<'a>)>,
+}
+impl CpuLayer<'_> {
+    pub(crate) fn role(
+        &self,
+        graph: BoundGraph<'_, '_>,
+        plan: &GlobalPlan,
+        layer: usize,
+        cell: usize,
+        role: usize,
+    ) -> KResult<&[u8]> {
+        plan.check_binding(graph)?;
+        if layer != self.layer || self.host.instance != plan.instance() {
+            return Err(fail());
+        }
+        let GlobalSource::Host {
+            piece,
+            offset,
+            bytes,
+        } = plan.source(layer, cell, role)?
+        else {
+            return Err(fail());
+        };
+        let map = self
+            .maps
+            .iter()
+            .find(|(r, p, _)| *r == role && *p == piece)
+            .ok_or_else(fail)?;
+        map.2.span(offset, bytes).map_err(Error::InvalidFormat)
+    }
+}
+impl Drop for CpuLayer<'_> {
+    fn drop(&mut self) {
+        self.maps.clear();
+        self.host
+            .cpu_borrow
+            .store(false, std::sync::atomic::Ordering::Release);
     }
 }
 impl Drop for Host {

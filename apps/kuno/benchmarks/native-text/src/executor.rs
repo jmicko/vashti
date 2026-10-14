@@ -989,7 +989,7 @@ pub struct GpuExecutor<'a> {
     budget: usize,
     tick: u64,
     banks: BTreeMap<String, ExpertBanks>,
-    pub(crate) strata_global_sources: Option<crate::strata_global_sources::Sources>,
+    pub(crate) strata_global_sources: Option<std::sync::Arc<crate::strata_global_sources::Sources>>,
     batch_moe: Option<batch_moe::Registry>,
     native_projection_tile: NativeProjectionTile,
     native_projection_members: usize,
@@ -1410,7 +1410,9 @@ impl<'a> GpuExecutor<'a> {
             }
         })?;
         if let Some(sources) = &mut self.strata_global_sources {
-            sources.close()?;
+            std::sync::Arc::get_mut(sources)
+                .ok_or(Error::InvalidFormat("global source readers still live"))?
+                .close()?;
         }
         self.strata_global_sources = None;
         self.cache.clear();
@@ -2722,7 +2724,7 @@ impl<'a> GpuExecutor<'a> {
         });
         match result {
             Ok(sources) => {
-                self.strata_global_sources = Some(sources);
+                self.strata_global_sources = Some(std::sync::Arc::new(sources));
                 Ok(())
             }
             Err(error) => {

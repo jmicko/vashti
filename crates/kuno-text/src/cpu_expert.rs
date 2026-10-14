@@ -25,6 +25,8 @@ const WORKER_FIXED_PRIVATE_BYTES: usize = (256 + LANES) * size_of::<f32>() + 409
 const MAX_WORKER_PRIVATE_BYTES: usize = 32 * 1024;
 #[path = "cpu_expert_batch.rs"]
 pub mod batch;
+#[path = "cpu_expert_native.rs"]
+pub mod native;
 #[path = "cpu_quantized.rs"]
 mod quantized;
 

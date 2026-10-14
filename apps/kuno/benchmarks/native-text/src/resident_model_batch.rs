@@ -81,7 +81,7 @@ const NATIVE_GR_MAIN: u64 = if cfg!(feature = "strata-intel-core") {
 };
 const PUBLIC_MAIN: u64 = 25_165_824;
 const CORE_CACHE_HOST: usize = if cfg!(feature = "strata-intel-core") {
-    crate::strata_global_adapt::HOST_BYTES
+    crate::strata_global_adapt::HOST_BYTES + kuno_text::cpu_expert::native::HOST_BYTES
 } else {
     0
 };
@@ -2641,6 +2641,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor
             .strata_global_sources
             .as_mut()
+            .and_then(std::sync::Arc::get_mut)
             .ok_or(error())?
             .attach_stages(device, queue, stages)?;
         self.completed_native_projection_boundary(executor)?;
@@ -2706,7 +2707,11 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 self.graph,
                 &self.arena,
                 &self.admission,
-                executor.strata_global_sources.as_mut().ok_or(error())?,
+                executor
+                    .strata_global_sources
+                    .as_mut()
+                    .and_then(std::sync::Arc::get_mut)
+                    .ok_or(error())?,
                 cancel,
             )
     }
@@ -5044,10 +5049,12 @@ impl Workspace {
             *m.phase_ns
                 .entry("native_ffn_gr_and_router_enqueue")
                 .or_default() += router_enqueue_start.elapsed().as_nanos();
-            self.global_moe.as_mut().ok_or(error())?.enqueue(
+            let sources = e.strata_global_sources.as_ref().ok_or(error())?.clone();
+            let cpu_plan = self.global_moe.as_mut().ok_or(error())?.enqueue(
                 m.graph,
                 &m.arena,
-                e.strata_global_sources.as_ref().ok_or(error())?,
+                &sources,
+                &m.admission,
                 layer,
                 prepared.mixed(),
                 self.outer.block[0],
@@ -5055,32 +5062,15 @@ impl Workspace {
                 m.b.fault,
                 cancel,
             )?;
-            let overlap_shared = false; // selected single-queue all-GPU HOST-fetch path
             let shared_start = Instant::now();
-            let mut projector = ResidentBatchProjection {
-                executor: e,
-                fault: m.b.fault,
-                dense_q8,
-            };
-            if overlap_shared {
-                self.shared.finish_prepared(
-                    m.graph,
-                    layer,
-                    &m.arena,
-                    &mut m.public,
-                    prepared.mixed(),
-                    self.outer.block[0],
-                    self.outer.block[1],
-                    m.b.fault,
-                    *count,
-                    cancel,
-                )?;
-                e.shared_overlap_calls = e
-                    .shared_overlap_calls
-                    .checked_add(1)
-                    .ok_or(Error::ArithmeticOverflow)?;
-            } else {
-                self.shared.enqueue(
+            let pool = self.global_moe.as_ref().ok_or(error())?.cpu.clone();
+            let mut parent = || -> Result<()> {
+                let mut projector = ResidentBatchProjection {
+                    executor: e,
+                    fault: m.b.fault,
+                    dense_q8,
+                };
+                self.shared.prepare(
                     m.graph,
                     layer,
                     &m.arena,
@@ -5093,7 +5083,74 @@ impl Workspace {
                     *count,
                     cancel,
                 )?;
-            }
+                // Submit actual GPU expert/shared work without waiting for it,
+                // while the scoped native CPU workers drain their disjoint rows.
+                m.arena
+                    .client()
+                    .map_err(u::fault)?
+                    .flush()
+                    .map_err(u::fault)
+            };
+            let cpu = if cpu_plan.jobs.is_empty() {
+                parent()?;
+                None
+            } else {
+                let cells =
+                    Zeroizing::new(cpu_plan.jobs.iter().map(|j| j.cell).collect::<Vec<_>>());
+                let host = sources.borrow_cpu(m.graph, layer, &cells)?;
+                let tensors = [
+                    "ffn_gate_exps.weight",
+                    "ffn_up_exps.weight",
+                    "ffn_down_exps.weight",
+                ]
+                .map(|name| m.graph.tensor(&format!("blk.{layer}.{name}")));
+                let geometry = kuno_text::cpu_expert::native::Geometry::new([
+                    tensors[0].as_ref().copied().map_err(|_| error())?,
+                    tensors[1].as_ref().copied().map_err(|_| error())?,
+                    tensors[2].as_ref().copied().map_err(|_| error())?,
+                ])?;
+                let mut jobs = Vec::with_capacity(cpu_plan.jobs.len());
+                for j in &cpu_plan.jobs {
+                    jobs.push(kuno_text::cpu_expert::native::Group {
+                        routes: &j.routes,
+                        packed: [
+                            host.role(m.graph, sources.plan(), layer, j.cell, 0)?,
+                            host.role(m.graph, sources.plan(), layer, j.cell, 1)?,
+                            host.role(m.graph, sources.plan(), layer, j.cell, 2)?,
+                        ],
+                    });
+                }
+                let (result, ()) =
+                    pool.alongside(&geometry, &jobs, &cpu_plan.input, *count, cancel, parent)?;
+                for (r, &mask) in result.mask().iter().enumerate() {
+                    let expected = cpu_plan.jobs.iter().any(|j| j.routes.contains(&r));
+                    if mask != u32::from(expected) {
+                        return Err(error());
+                    }
+                }
+                Some(result)
+            };
+            self.global_moe.as_mut().ok_or(error())?.finish_layer(
+                &m.arena,
+                layer,
+                self.outer.block[0],
+                m.b.fault,
+                cpu.as_ref(),
+            )?;
+            self.shared.finish_prepared(
+                m.graph,
+                layer,
+                &m.arena,
+                &mut m.public,
+                prepared.mixed(),
+                self.outer.block[0],
+                self.outer.block[1],
+                m.b.fault,
+                *count,
+                cancel,
+            )?;
+            *m.phase_ns.entry("native_shared_and_cpu_join").or_default() +=
+                shared_start.elapsed().as_nanos();
             prepared.combine(self.outer.block[1], self.outer.residual[1 - *current])?;
             *current = 1 - *current;
             *m.phase_ns

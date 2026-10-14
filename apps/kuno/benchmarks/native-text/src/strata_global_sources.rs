@@ -298,6 +298,20 @@ impl Sources {
         self.validate_attached()?;
         self.plan.check_binding(graph)
     }
+    pub(crate) fn borrow_cpu(
+        &self,
+        graph: BoundGraph<'_, '_>,
+        layer: usize,
+        cells: &[usize],
+    ) -> Result<crate::public_host_expert_mirror::strata_global::CpuLayer<'_>> {
+        self.validate_graph_ready(graph)?;
+        // All HOST writes joined before source publication. Queued inference
+        // consumers only read these roots, so mapping must not drain GPU work.
+        self.host
+            .as_ref()
+            .ok_or_else(reject)?
+            .borrow_cpu(graph, &self.plan, layer, cells)
+    }
     /// Retains the actual immutable roots in native recording/fence tracking.
     /// Adds only static physical-cell/stage address descriptors. Private
     /// logical remaps stay in the family arena and never enter these tables.
