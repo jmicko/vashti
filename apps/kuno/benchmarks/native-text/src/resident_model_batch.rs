@@ -4857,7 +4857,7 @@ impl Workspace {
                 && e.target_four_rows_active
                 && *count == 4
             {
-                self.moe.frozen_gu_integer_owner_id()
+                self.core_stages.map(|ids| ids[0])
             } else {
                 None
             };
@@ -4969,7 +4969,7 @@ impl Workspace {
                 u::cancel(cancel)?;
             }
             let router_enqueue_start = Instant::now();
-            projector.dense_q8 = None;
+
             let prepared = self.gr.read(
                 m.graph,
                 &m.arena,
@@ -5276,7 +5276,7 @@ impl Workspace {
             let mut projector = ResidentBatchProjection {
                 executor: e,
                 fault: m.b.fault,
-                dense_q8: None,
+                dense_q8,
             };
             if overlap_shared {
                 self.shared.finish_prepared(

@@ -71,12 +71,12 @@ fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(subgroup_id) sg:u32,
         @builtin(subgroup_invocation_id) lane:u32,@builtin(subgroup_size) width:u32,
         @builtin(local_invocation_index) local:u32) {
     if arrayLength(&fault)!=1u {return;}
-    if width!=32u || p.count!=4u || p.stride<PLANE_WORDS
+    if width!=32u || p.count<1u || p.count>MEMBERS || p.stride<PLANE_WORDS
         || arrayLength(&weight)*4u<ROWS*ROW_BYTES
-        || arrayLength(&planes)<4u*p.stride || p.output_stride<ROWS
+        || arrayLength(&planes)<p.count*p.stride || p.output_stride<ROWS
         || p.output_first>arrayLength(&output)
         || ROWS>arrayLength(&output)-p.output_first
-        || 3u*p.output_stride>arrayLength(&output)-p.output_first-ROWS {
+        || (p.count-1u)*p.output_stride>arrayLength(&output)-p.output_first-ROWS {
         if local==0u {atomicOr(&fault[0],8u);}return;
     }
     let row=g.x*4u+sg;var sum=vec4<f32>(0.0);
@@ -85,12 +85,18 @@ fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(subgroup_id) sg:u32,
             let f=factors(row*ROW_BYTES,group);var dots=vec4<i32>(0);var sums=vec4<i32>(0);
             for(var word=0u;word<GROUP_VALUES/4u;word++) {
                 let q=codes(row*ROW_BYTES,group,word);let at=group*(GROUP_VALUES/4u)+word;
-                let x=vec4<u32>(planes[at],planes[p.stride+at],planes[2u*p.stride+at],planes[3u*p.stride+at]);
+                var x=vec4<u32>(planes[at],0u,0u,0u);
+                if MEMBERS>1u && p.count>=2u {x.y=planes[p.stride+at];}
+                if MEMBERS>1u && p.count>=3u {x.z=planes[2u*p.stride+at];}
+                if MEMBERS>1u && p.count>=4u {x.w=planes[3u*p.stride+at];}
                 dots+=vec4<i32>(dot4I8Packed(q,x.x),dot4I8Packed(q,x.y),dot4I8Packed(q,x.z),dot4I8Packed(q,x.w));
                 if DTYPE==12u || DTYPE==13u {sums+=vec4<i32>(dot4I8Packed(0x01010101u,x.x),dot4I8Packed(0x01010101u,x.y),dot4I8Packed(0x01010101u,x.z),dot4I8Packed(0x01010101u,x.w));}
             }
             let at=2u*PACKED_WORDS+(group*GROUP_VALUES)/32u;
-            let d=bitcast<vec4<f32>>(vec4<u32>(planes[at],planes[p.stride+at],planes[2u*p.stride+at],planes[3u*p.stride+at]));
+            var d=vec4<f32>(bitcast<f32>(planes[at]),0.0,0.0,0.0);
+            if MEMBERS>1u && p.count>=2u {d.y=bitcast<f32>(planes[p.stride+at]);}
+            if MEMBERS>1u && p.count>=3u {d.z=bitcast<f32>(planes[2u*p.stride+at]);}
+            if MEMBERS>1u && p.count>=4u {d.w=bitcast<f32>(planes[3u*p.stride+at]);}
             sum=fma(vec4<f32>(f.x)*d,vec4<f32>(dots),sum);
             if DTYPE==12u || DTYPE==13u {sum-=vec4<f32>(f.y)*d*vec4<f32>(sums);}
         }
@@ -99,8 +105,8 @@ fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(subgroup_id) sg:u32,
     if row<ROWS && lane==0u {
         if !finite(total.x) || !finite(total.y) || !finite(total.z) || !finite(total.w) {atomicOr(&fault[0],1u);}
         output[p.output_first+row]=total.x;
-        output[p.output_first+p.output_stride+row]=total.y;
-        output[p.output_first+2u*p.output_stride+row]=total.z;
-        output[p.output_first+3u*p.output_stride+row]=total.w;
+        if MEMBERS>1u && p.count>=2u {output[p.output_first+p.output_stride+row]=total.y;}
+        if MEMBERS>1u && p.count>=3u {output[p.output_first+2u*p.output_stride+row]=total.z;}
+        if MEMBERS>1u && p.count>=4u {output[p.output_first+3u*p.output_stride+row]=total.w;}
     }
 }

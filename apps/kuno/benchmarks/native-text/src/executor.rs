@@ -3093,6 +3093,7 @@ impl<'a> GpuExecutor<'a> {
         fault: &Handle,
         spans: &quant_matvec::matmul::BatchSpans,
         cancel: &AtomicBool,
+        prepare: bool,
     ) -> Result<()> {
         let matrix = Matrix::new(tensor)?;
         let dtype = tensor.info().dtype().gguf_id();
@@ -3106,14 +3107,16 @@ impl<'a> GpuExecutor<'a> {
         }
         self.model.verify_file_unchanged()?;
         self.check_target_rows_policy()?;
-        crate::strata_dense::prepare(
-            &self.client,
-            matrix.inputs(),
-            input.clone(),
-            planes.clone(),
-            fault.clone(),
-            spans,
-        )?;
+        if prepare {
+            crate::strata_dense::prepare(
+                &self.client,
+                matrix.inputs(),
+                input.clone(),
+                planes.clone(),
+                fault.clone(),
+                spans,
+            )?;
+        }
         let row_bytes = tensor.info().row_bytes() as usize;
         if row_bytes == 0 || row_bytes > TILE_BYTES {
             return Err(Error::InvalidBufferLength);
@@ -3136,6 +3139,7 @@ impl<'a> GpuExecutor<'a> {
                 fault.clone(),
                 spans.output_first() + first,
                 spans.output_stride(),
+                spans.count(),
             )?;
         }
         Ok(())

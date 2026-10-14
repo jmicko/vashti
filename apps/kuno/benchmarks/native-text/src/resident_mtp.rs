@@ -625,6 +625,7 @@ pub struct ResidentMtp<'g, 'f> {
     arena: PrivateArena,
     ids: [BufferId; N],
     draft_window: Option<BufferId>,
+    dense_planes: Option<BufferId>,
     client: ComputeClient<WgpuRuntime>,
     public: Option<Public>,
     ledger: MainAdmission,
@@ -905,10 +906,18 @@ fn grid(words: usize) -> Result<CubeCount> {
     Ok(CubeCount::Static(l.workgroups_x, l.workgroups_y, 1))
 }
 fn private_plan() -> Result<u64> {
-    WORDS.into_iter().try_fold(window::EXTRA_BYTES, |sum, w| {
-        sum.checked_add(BufferLayout::new(w).map_err(error)?.owned_bytes as u64)
-            .ok_or(Error::ArithmeticOverflow)
-    })
+    WORDS.into_iter().try_fold(
+        window::EXTRA_BYTES
+            + if crate::strata_intel_core::enabled() {
+                32768
+            } else {
+                0
+            },
+        |sum, w| {
+            sum.checked_add(BufferLayout::new(w).map_err(error)?.owned_bytes as u64)
+                .ok_or(Error::ArithmeticOverflow)
+        },
+    )
 }
 fn tile_plan(spec: Spec) -> Result<Vec<(usize, usize, usize, usize)>> {
     let row_bytes = quant_matvec::packed_row_bytes(spec.columns, spec.dtype);
@@ -1296,6 +1305,9 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         if crate::strata_port::enabled() {
             plan.push(16);
         }
+        if crate::strata_intel_core::enabled() {
+            plan.push(32768);
+        }
         ledger.precharge(&plan).map_err(error)?;
         let mut allocated = Vec::with_capacity(N);
         for n in WORDS {
@@ -1306,6 +1318,11 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             .map_err(|_| Error::InvalidBufferLength)?;
         let draft_window = if crate::strata_port::enabled() {
             Some(arena.allocate_zeroed(window::PACKET_WORDS).map_err(error)?)
+        } else {
+            None
+        };
+        let dense_planes = if crate::strata_intel_core::enabled() {
+            Some(arena.allocate_zeroed(8192).map_err(error)?)
         } else {
             None
         };
@@ -1323,6 +1340,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             arena,
             ids,
             draft_window,
+            dense_planes,
             client: owned_client,
             public: None,
             ledger,
@@ -1427,6 +1445,9 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             .map(|&id| self.arena.handle(id).cloned().map_err(error))
             .collect::<Result<_>>()?;
         if let Some(id) = self.draft_window {
+            owners.push(self.arena.handle(id).cloned().map_err(error)?);
+        }
+        if let Some(id) = self.dense_planes {
             owners.push(self.arena.handle(id).cloned().map_err(error)?);
         }
         if let Some(public) = &self.public {
@@ -2269,6 +2290,52 @@ impl ResidentMtp<'_, '_> {
         if self.public_english_vocab.is_some() && name == "output.weight" {
             return self.project_public_english(input, output);
         }
+        if let Some(id) = self.dense_planes {
+            let planes = self.arena.handle(id).cloned().map_err(error)?;
+            if crate::strata_dense::supports_count(
+                spec.dtype,
+                spec.columns,
+                planes.size_in_used(),
+                1,
+            ) {
+                let client = self.client()?;
+                let x = u::handle(&self.arena, self.id(input))?;
+                let y = u::handle(&self.arena, self.id(output))?;
+                let fault = u::handle(&self.arena, self.id(B::Fault))?;
+                crate::strata_dense::prepare(
+                    client,
+                    spec.columns,
+                    x,
+                    planes.clone(),
+                    fault.clone(),
+                    &matmul::BatchSpans::new(1, 0, 0, spec.columns, 0, spec.rows),
+                )?;
+                let pages = self.public()?.pages(name)?;
+                let row_bytes = quant_matvec::packed_row_bytes(spec.columns, spec.dtype);
+                for page in pages {
+                    if page.logical_bytes != page.rows * row_bytes
+                        || page.first + page.rows > spec.rows
+                    {
+                        return Err(Error::InvalidBufferLength);
+                    }
+                    crate::strata_dense::project(
+                        client,
+                        spec.dtype,
+                        page.rows,
+                        spec.columns,
+                        page.handle.clone(),
+                        planes.clone(),
+                        y.clone(),
+                        fault.clone(),
+                        page.first,
+                        spec.rows,
+                        1,
+                    )?;
+                }
+                self.tick(pages.len() + 1)?;
+                return self.finite(output);
+            }
+        }
         let pages = self.public()?.pages(name)?;
         let row_bytes = quant_matvec::packed_row_bytes(spec.columns, spec.dtype);
         for (index, page) in pages.iter().enumerate() {
@@ -2376,6 +2443,60 @@ impl ResidentMtp<'_, '_> {
             return Err(Error::InvalidFormat(
                 "MTP indexed original Q8 head geometry",
             ));
+        }
+        if let Some(id) = self.dense_planes {
+            let planes = self.arena.handle(id).cloned().map_err(error)?;
+            let client = self.client()?;
+            let x = u::handle(&self.arena, self.id(input))?;
+            let y = u::handle(&self.arena, self.id(output))?;
+            let fault = u::handle(&self.arena, self.id(B::Fault))?;
+            crate::strata_dense::prepare(
+                client,
+                k::D,
+                x,
+                planes.clone(),
+                fault.clone(),
+                &matmul::BatchSpans::new(1, 0, 0, k::D, 0, k::VOCAB),
+            )?;
+            let map = self
+                .public()?
+                .english_ids
+                .as_ref()
+                .ok_or(Error::InvalidBufferLength)?;
+            let pages = self.public()?.pages("output.weight")?;
+            if pages.len() != english::SEGMENTS {
+                return Err(Error::InvalidBufferLength);
+            }
+            let mut dispatches = 1;
+            for (index, page) in pages.iter().enumerate() {
+                let segment = proof.segment(index)?;
+                segment.validate()?;
+                if page.first != segment.source_first
+                    || page.rows != segment.source_rows
+                    || page.logical_bytes != segment.source_rows * k::ROW_BYTES
+                {
+                    return Err(Error::InvalidBufferLength);
+                }
+                if segment.subset_rows == 0 {
+                    continue;
+                }
+                crate::strata_dense::project_indexed(
+                    client,
+                    segment.source_first,
+                    segment.source_rows,
+                    segment.subset_first,
+                    segment.subset_rows,
+                    k::D,
+                    page.handle.clone(),
+                    planes.clone(),
+                    y.clone(),
+                    fault.clone(),
+                    map.handle.clone(),
+                )?;
+                dispatches += 1;
+            }
+            self.tick(dispatches)?;
+            return self.finite(output);
         }
         let map = self
             .public()?
@@ -3623,7 +3744,10 @@ impl ResidentMtp<'_, '_> {
             .owned_zero_audit_receipt()
             .ok_or(Error::InvalidFormat("MTP complete erasure receipt"))?;
         if private.bytes != private_plan()?
-            || private.buffers != N as u64 + u64::from(self.draft_window.is_some())
+            || private.buffers
+                != N as u64
+                    + u64::from(self.draft_window.is_some())
+                    + u64::from(self.dense_planes.is_some())
         {
             return Err(Error::InvalidBufferLength);
         }

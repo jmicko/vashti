@@ -51,6 +51,21 @@ pub trait BatchedResidentProjector {
         spans: &BatchSpans,
         cancel: &AtomicBool,
     ) -> Result<()>;
+    #[allow(clippy::too_many_arguments)]
+    fn enqueue_pair(
+        &mut self,
+        projections: [BoundProjection<'_>; 2],
+        arena: &PrivateArena,
+        input: BufferId,
+        outputs: [BufferId; 2],
+        spans: &BatchSpans,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        for (p, out) in projections.into_iter().zip(outputs) {
+            self.enqueue_batch(p, arena, input, out, spans, cancel)?;
+        }
+        Ok(())
+    }
     /// The ordinary path ignores this non-reusable Final-only capability.
     /// true means the caller must queue a full scratch clear after all reads.
     #[allow(clippy::too_many_arguments)]
@@ -149,6 +164,7 @@ impl BatchedResidentProjector for ResidentBatchProjection<'_, '_> {
                     &u::handle(arena, self.fault)?,
                     spans,
                     cancel,
+                    true,
                 )?;
                 // The parent lends this existing GU scratch only during its
                 // attention stage, before the layer's authentic GU prepare.
@@ -174,6 +190,75 @@ impl BatchedResidentProjector for ResidentBatchProjection<'_, '_> {
         // columns are zero-initialized; a prior failed chunk cannot be reused.
         if !fused {
             u::validate(arena, output, self.fault)?;
+        }
+        u::cancel(cancel)
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn enqueue_pair(
+        &mut self,
+        projections: [BoundProjection<'_>; 2],
+        arena: &PrivateArena,
+        input: BufferId,
+        outputs: [BufferId; 2],
+        spans: &BatchSpans,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        let supported = self.dense_q8.is_some_and(|id| {
+            spans.count() == 4
+                && projections.iter().all(|p| {
+                    arena.handle(id).is_ok_and(|h| {
+                        crate::strata_dense::supports(
+                            p.tensor.info().dtype().gguf_id(),
+                            p.matrix.inputs(),
+                            h.size_in_used(),
+                        )
+                    })
+                })
+        });
+        if !supported {
+            for (p, out) in projections.into_iter().zip(outputs) {
+                self.enqueue_batch(p, arena, input, out, spans, cancel)?;
+            }
+            return Ok(());
+        }
+        u::cancel(cancel)?;
+        self.executor
+            .check_client(arena.client().map_err(u::fault)?)?;
+        let planes = self.dense_q8.ok_or(Error::InvalidBufferLength)?;
+        let ids = [input, outputs[0], outputs[1], planes, self.fault];
+        if ids.iter().enumerate().any(|(i, id)| ids[..i].contains(id))
+            || u::words(arena, self.fault)? != 1
+            || projections[0].matrix.inputs() != projections[1].matrix.inputs()
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        for (p, out) in projections.iter().zip(outputs) {
+            validate_view(
+                spans.count(),
+                spans.input_first(),
+                spans.input_stride(),
+                p.matrix.inputs(),
+                u::words(arena, input)?,
+            )?;
+            validate_view(
+                spans.count(),
+                spans.output_first(),
+                spans.output_stride(),
+                p.matrix.outputs(),
+                u::words(arena, out)?,
+            )?;
+        }
+        for (ordinal, (p, out)) in projections.into_iter().zip(outputs).enumerate() {
+            self.executor.enqueue_strata_dense(
+                p.tensor,
+                &u::handle(arena, input)?,
+                arena.handle(planes).map_err(u::fault)?,
+                &u::handle(arena, out)?,
+                &u::handle(arena, self.fault)?,
+                spans,
+                cancel,
+                ordinal == 0,
+            )?;
         }
         u::cancel(cancel)
     }

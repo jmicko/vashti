@@ -81,9 +81,17 @@ impl Profile {
             return self.validate_close(receipt);
         }
         if receipt.public_bytes != self.public_bytes_with_english(true)?
-            || receipt.private.buffers != 42 + u64::from(crate::strata_port::enabled())
+            || receipt.private.buffers
+                != 42
+                    + u64::from(crate::strata_port::enabled())
+                    + u64::from(crate::strata_intel_core::enabled())
             || receipt.private.bytes
                 != 11_698_176
+                    + if crate::strata_intel_core::enabled() {
+                        32768
+                    } else {
+                        0
+                    }
                     + if crate::strata_port::enabled() {
                         32768
                     } else {
@@ -153,9 +161,17 @@ impl Profile {
     /// this also binds the numeric receipt to its immutable draft profile.
     pub(crate) fn validate_close(self, receipt: &CloseReceipt) -> Result<()> {
         if receipt.public_bytes != self.public_bytes()
-            || receipt.private.buffers != 42 + u64::from(crate::strata_port::enabled())
+            || receipt.private.buffers
+                != 42
+                    + u64::from(crate::strata_port::enabled())
+                    + u64::from(crate::strata_intel_core::enabled())
             || receipt.private.bytes
                 != 11_698_176
+                    + if crate::strata_intel_core::enabled() {
+                        32768
+                    } else {
+                        0
+                    }
                     + if crate::strata_port::enabled() {
                         32768
                     } else {

@@ -371,10 +371,15 @@ impl Workspace {
         }
         let weight = public.vector(graph, &format!("{base}ffn_gate_inp_shexp.weight"))?;
         self.prove(arena, input, routed, output, fault, &weight)?;
-        for (projection, id) in projections[..2].iter().copied().zip([GATE, UP]) {
-            let spans = BatchSpans::new(count, 0, 0, self.layout.width, 0, self.layout.hidden);
-            projector.enqueue_batch(projection, arena, input, self.ids[id], &spans, cancel)?;
-        }
+        let spans = BatchSpans::new(count, 0, 0, self.layout.width, 0, self.layout.hidden);
+        projector.enqueue_pair(
+            [projections[0], projections[1]],
+            arena,
+            input,
+            [self.ids[GATE], self.ids[UP]],
+            &spans,
+            cancel,
+        )?;
         let client = arena.client().map_err(u::fault)?;
         let CubeCount::Static(hidden_grid, _, _) = u::grid(self.layout.hidden)? else {
             return Err(Error::InvalidBufferLength);
