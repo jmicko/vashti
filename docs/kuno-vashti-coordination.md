@@ -5010,3 +5010,9 @@ buffers at context<=32768 (default2048 rows), so audit those actual branches
 before declaring remainder GEMMs or cache lending unconditional missing work.
 Finish the full source review and protected whole-engine acceptance before any
 speed comparisons. Required Vashti changes: none.
+
+Supplemental read-only inventory is recorded at the end of that receipt. The
+B70 driver exposes cooperative-matrix and BF16 extensions and FP16/F32 matrix
+shapes; no matrix computation was run. The existing device adopts one family0
+queue; families1/2 exist but were not requested. These are concrete starting
+points for the connected compiler/device/queue block, not performance evidence.

@@ -1981,3 +1981,36 @@ Next connected source work before model/speed trials:
    completeness review. Only afterward run protected numerical/completion/state/
    recovery cases and then comparative throughput. Sudo is needed for protected
    content-bearing GPU tests, not ordinary source/build work.
+
+### Matrix/queue inventory after the connected controller commit
+
+Read-only Vulkan physical-device queries (no model, private workload or device
+reset) succeeded. Public metadata logs in `kuno-development`:
+`strata-matrix-capabilities-20261014.log` and
+`strata-matrix-geometry-20261014.log`; the latter was produced by the same-named
+standalone Rust/ash inventory source, not an inference engine.
+
+The Intel BMG G31 driver advertises `VK_KHR_cooperative_matrix`,
+`VK_KHR_shader_bfloat16` and `VK_NV_cooperative_matrix2`. Enumerated subgroup
+matrices include8x16x16 FP16 operands with F32 accumulation and8x16x32 signed or
+unsigned8-bit operands with32-bit accumulation. The older ash0.38 inventory also
+prints component code1000141000 for another16-bit operand family, including
+F32 accumulation; resolve that code against the modern Vulkan BF16 enumeration
+before selecting it. This is capability evidence, not matrix execution proof.
+
+Intel queue families0(graphics/compute/transfer),1(compute/transfer),2(transfer)
+each expose one queue. The vendored Vulkan constructor currently requests only
+family0's one queue (`backend/vulkan.rs:104-109`). Independent transfer work
+therefore needs actual extra device queue creation plus semaphore/ownership and
+tracked resource-lifetime integration; inventing a second family0 queue cannot
+work. Existing graph copy nodes and their root ownership must remain valid.
+
+The optional Rust SPIR-V feature is `cubecl/wgpu-spirv`, forwarding to
+`cubecl-wgpu/spirv`; it is not enabled in this lab's current manifest. Its Vulkan
+feature loader already knows cooperative matrices/BF16, but merely enabling the
+feature does not prove the manually constructed target/MTP Wgpu device enabled
+those extensions. `WgpuSetup` currently adopts an existing requested device.
+Audit and connect device creation, kernel compiler selection, native rounded
+operand owners and their consumers together. WGSL custom factories must keep
+working alongside SPIR-V/Cube kernels. No runtime/default selection was changed
+by this read-only inventory.
