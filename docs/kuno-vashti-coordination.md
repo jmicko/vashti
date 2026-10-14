@@ -4241,3 +4241,42 @@ image residency before trials; no device reset/rebind/reboot. No frontend handof
 release or installed performance claim is implied. Next scope is connected
 placement/weight-access/router/group-execution/quantized-kernel/verification/state
 commit parity with explicit Vulkan substitutions, keeping v260 as fallback.
+
+
+## Native Intel coherent core checkpoint (2026-10-14)
+
+Backend-only work stays on `codex/strata-rust-port` in
+`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`; canonical source and
+installed Kuno/Ollama/Vashti binaries/configuration are unchanged. Read the top
+and **Native Intel core receipt** in [the port handoff](kuno-strata-rust-port.md)
+for exact reproduction/limitations. No API, protocol, runtime ABI or UI change;
+**required Vashti changes: none**. Do not package this fixed-public laboratory
+binary as an accepted private text worker.
+
+The connected range after `ca2cadb` includes native Rust/ash Vulkan command
+recording, retained buffer ownership/initialization, shared IQ codebooks, native
+physical expert reads, stable parameter pages and ordered private copies/fills.
+Key commits: `0e6f2b7` initializes Wgpu ownership correctly; `049d493` tracks real
+buffer dependencies; `2f53b6c`/`66b198d` lower/check physical pointers;
+`1c9c9d8` preallocates pointers and stabilizes parameters; `617537b` orders private
+copies; `a68ac87`/`f2d4048` match subgroup32 and record large replay counts;
+`55adf7d` adds six packed dense attention formats; `9dc6eeb` stages selected
+original RAM experts in three genuinely owned64MiB private GPU roots;
+`9be8a65`/`44bb1d1` charge/check those owners at construction, physical admission
+and closure; `a0c6c3c` bounds the complete stage union. Retain licenses and the
+source/error-order fixes with the optimized path.
+
+Frozen v282 source `a0c6c3c9c21745faed6ee7362983bcd00f5a72e6`, SHA256
+`9b41ea8fb312ad1fd1ddb3f5986eb479832c5ab9d173c0ffdf51188c102f38c6`, completes
+real DASLab IQ3_S/Q2 MTP code14.625229 /prose13.546277 timed continuations/s.
+139 /165 large verification graphs replay. Actual target erasure proves1565
+buffers /1,064,534,016 bytes; MTP43 /11,730,944 bytes; all original host source
+pages detach, B70 returns to50,688,000 bytes, NVIDIA compute processes0, classified
+GPU faults0 and normal HTTP/admission recover. Source checks: strict core Clippy,
+fmt/whitespace,56 WGSL/SPIRV sources including13 physical `spirv-val` modules,
+and1346 original direct-device tests /1 ignored. Full Strata-feature unit suite,
+independent whole-model state oracle, private worker/API acceptance and long soak
+are not established.30t/s and complete upstream parity remain unmet. v260 is
+retained as a faster prose fallback; generated token sequences/lengths differ,
+so these are not same-output speed ratios. The existing goal is active and
+continues; repository notes must preserve that unfinished scope.

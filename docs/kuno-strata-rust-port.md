@@ -1,23 +1,32 @@
 # Strata Rust whole-model port experiment
 
-## Current checkpoint: combined residency measurements; coherent Intel port next
+## Current checkpoint: native Intel graph, physical experts and packed operators
 
 The latest user instruction supersedes all incremental next-step proposals below:
 **port the connected Strata Intel core first, then benchmark the whole model and
 fix integration bugs.** A negative speed measurement of an isolated ingredient
-must not veto it while its upstream dependencies are still missing. The prior
-pass drifted into individual comparisons again; do not continue that pattern.
-Keep loading/placement/public weight access, device routing/group planning,
+must not veto it while its upstream dependencies are still missing. Keep loading/placement/public weight access, device routing/group planning,
 quantized operators, draft/target verification and accepted-state commit in one
 implementation scope. Follow the pinned MIT source, retain attribution, and
 record any necessary Vulkan/WGSL substitutions rather than claiming exact parity.
 Do not expand this request into API, UI or release work.
 
 Work stays on `codex/strata-rust-port` in
-`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`. Canonical Vashti remains
-untouched. Goal controller is still paused. This completed manual pass leaves no
-GPU/compiler job queued; the bounded sudo refresher was stopped deliberately.
-No deployed binary or application contract changed.
+`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`. Canonical Vashti and
+installed services/binaries remain unchanged. Goal controller is active (checked2026-10-14); it continues toward30t/s after
+this tested checkpoint. See the native-core receipt
+below for the latest artifact and host state, rather than the historical
+"no jobs queued" statements further down.
+
+The connected native backend now owns Vulkan compute pipelines and recorded
+command buffers in Rust, shared read-only IQ tables, physical expert pointers,
+stable parameter pages, ordered private copies/fills, and the upstream expert
+subgroup32 launch. It replays large verification graphs, not only short helper
+submissions. Packed Q8 dense attention covers six original GGUF formats. New
+host-expert fetch/rebase stages are implemented in the same core and undergoing
+whole-model validation. This is still **not the complete Strata rewrite**:
+unequal global expert allocation, all shared/dense/MTP fusions, native prefill
+parity and independent full-model numerical acceptance remain incomplete.
 
 **Working fallback is v260**, runtime source
 `86a98a4def023ce4bd5834a0cdf40087dd938f1e`, artifact SHA256
@@ -664,3 +673,131 @@ causes of the speed gap. Document unavoidable Vulkan/WGSL substitutions and
 remaining missing operators precisely. Retain transient memory, real routing,
 complete target verification and actual cleanup. No API/UI scope or release
 acceptance is implied by this native-engine checkpoint.
+
+## Native Intel core receipt (2026-10-14, in progress)
+
+Source through `9be8a65` adds the coherent `strata-intel-core` feature to the
+isolated laboratory workspace. Build with `build-strata-port.py FRESH_BUILD
+--intel-core`; run the frozen executable with `run-strata-port.py BUILD
+FRESH_OUT code q2 --intel-core` (or `prose`) in the protected shared terminal.
+The builder rejects dirty tracked sources and changing HEAD during compilation.
+The runner still disables swap/core dumps, selects B70 only, pauses admission,
+and restores/checks it in a finally block. There is no installed backend/API change.
+
+The native executor borrows the existing Vulkan device/queue through vendored
+wgpu-hal 29.0.4 (licenses retained). Rust ash owns its compute pipelines,
+descriptors, fences and bounded command recordings; Rust NAGA/rspirv lower the
+shaders. No C++/SYCL inference implementation is linked. Supported buffer device
+addresses and shaderInt64 are required. The logical Wgpu zero-work initialization
+pass is necessary: otherwise Wgpu may clear a raw-native result before readback.
+Producer execution precedes readback; private uploads and scratch fills retain
+their actual positions within the graph. Parameter target pages remain stable
+and are updated only across completed serialized submissions. Cleanup discards
+recordings before original full-owner erasure/audit and source detachment.
+
+Public code runs (seed424242, temperature0, 512-output cap, original DASLab IQ3_S
+shards and Q2_0 MTP) complete with362 emitted including EOS /361 timed
+continuations, readable output and physical recovery:
+
+| Frozen build | Source | Timed continuations/s | Native submissions/dispatches/replays, process totals |
+| --- | --- | ---: | --- |
+| v269 | `0e6f2b7` | 10.539086 | 4912 /441263 /54 |
+| v270 | `049d493` | 12.112745 | 4912 /441263 /54 |
+| v271 | `600a887` | 8.302945 | 4912 /441263 /54 |
+| v274 | `1c9c9d8` | 12.416320 | 4960 /441263 /53 |
+| v275 | `617537b` | 12.852923 | 4312 /441263 /84 |
+| v277 | `f2d4048` | 12.594086 | 4312 /441263 /134 |
+| v278 | `55adf7d` | 12.408893 | 4312 /491807 /134 |
+
+All directories are under `/media/jmicko/faststore/kuno-development`, named
+`native-next-vNNN-strata-intel-core-build-20261014` and
+`native-next-vNNN-strata-intel-core-code-20261014`; `source.json` retains exact
+source commit and executable SHA256. v271's duplicated source-page projection
+was replaced by physical pointers; retain it as evidence, not a selected path.
+v277/v278 have107 graphs containing at least2048 compute dispatches and104
+replays in that bucket. Process-wide counts include load/prefill/draft/repair;
+they are not per-target GPU timings. v278 actually executes16848 packed dense
+attention dispatches. It did not improve the whole-model rate yet. Keep the
+coupled implementation; do not veto its components using standalone timings.
+
+Completed runs restore B70 to50,688,000 bytes, NVIDIA compute processes to0,
+normal admission/HTTP and unchanged classified GPU fault counters. Each original
+private/source closure passes. v278 erases1562 target buffers /863,207,424 bytes
+and43 MTP buffers /11,730,944 bytes. There is no private-input, deployment,
+independent full-state oracle, long-soak, complete upstream parity or30t/s claim.
+
+### Coupled fetch/rebase continuation
+
+`9dc6eeb` and `9be8a65` implement the missing default Strata kernel-fetch path:
+GPU MAP selects actual HOST groups; one role-copy shader reads their original
+RAM-mirrored packed bytes contiguously and writes three distinct64MiB private
+stage roots. GU/DOWN use physical pointers rebased to the selected group's stage
+slot; original VRAM groups keep their resident addresses. Original source
+ownership/shape proofs remain. Extra bound stage roots provide genuine buffer
+lifetimes and dependency edges for the physical reads. All stages are allocated
+upfront in PrivateArena, charged201,326,592 bytes in both the constructor plan
+and exact target-extent gate, physical target/MTP admission and the complete
+owner closing check, and erased/audited with the target. Nothing is
+allocated, read from disk, or persisted per stage. No forced/substituted experts.
+Core limits are18 storage buffers /19 bindings; pointer tables include the three
+actual stage addresses and never log them.
+
+The same change removes redundant per-matrix scratch clears: packed preparation
+writes every active plane, and the authentic subsequent GU preparation clears
+its complete header/frame/tail before using that root. Borrowing is restricted to
+the attention/PLE stage, before GU preparation. Shared-expert and other callers
+retain their original path. Dense types areQ8_0, Q4_K, Q5_K, Q6_K, IQ4_NL and
+IQ4_XS; original model weights are not requantized. Activation arithmetic is
+single Q8_1, so this does not restore the CPU13/F32 precision contract.
+
+v279 passed56 WGSL/SPIRV sources, including13 physical modules through
+`spirv-val`, then rejected the old exact target construction-extent gate before
+inference. Cleanup/physical recovery pass. `9be8a65` adds the genuinely owned
+stage extent to that gate; v280 runs generation but rejects the old closing owner count. Physical cleanup
+passes. `44bb1d1` adds three buffers /201,326,592 bytes to that closing gate and
+the same bytes to combined physical admission; `a0c6c3c` bounds every shader copy
+to its complete64MiB stage owner. v281 builds but is not GPU-run. v282 is the
+fresh combined artifact. Its code run passes at14.625229 timed continuations/s,
+456 emitted including EOS /455 timed,31.110624 seconds,143 actual four-row
+windows and139 large-graph replays. Target close proves1565 buffers /
+1,064,534,016 bytes; staged source copies20592 dispatches, packed dense22308.
+Readable public output, original source detachment, private erasure, actual50MB
+B70 recovery, no NVIDIA compute process and unchanged faults pass. This answer
+has a different token sequence/length from v260, so the rates are not a matched
+same-output speed ratio. Prose completes512 /511 timed at13.546277 continuations/s in37.722541s,
+169 actual four-row windows /165 large-graph replays. The same private/source
+and physical cleanup pass. Current original direct-device regression passes
+1346 tests /1 ignored; the full Strata-feature unit suite is not run.
+Strict core Clippy passed after the closing/admission fix and the final shader
+bound;56 source validations including13 physical SPIRV modules pass. Do not
+claim general private inference or30t/s from this receipt.
+
+Next work must stay in the coherent core: finish fetch/rebase numerical/physical
+validation, follow the actual GPU/CPU execution costs, and then resolve variable
+global residency and remaining quantized shared/MTP/fused operators. Keeping the
+fast v260 fallback does not mean removing coupled components because a partial
+translation is slower. No Vashti connector changes are required for this lab.
+
+Current frozen coherent artifact: source
+`a0c6c3c9c21745faed6ee7362983bcd00f5a72e6`, SHA256
+`9b41ea8fb312ad1fd1ddb3f5986eb479832c5ab9d173c0ffdf51188c102f38c6`.
+Use the v282 build/code/prose directories above; v260 remains the speed fallback.
+Final read-only host inspection at02:26:33 UTC proves Kuno/Ollama/Vashti HTTP200,
+admission idle/unpaused/not recovering, B70 used50,688,000 bytes, NVIDIA compute
+processes0 and all classified GPU faults0. No GPU/compiler job remains. The
+previous bounded sudo helper was stopped; a fresh90-minute helper supports the
+active goal under `strata-intel-core-continuation-sudo-20261014.pid`. Stop it when
+actual work ends. No reset/reboot/rebind, installed binary or canonical source edit.
+
+Resume from this coherent path. Large graph replay is now real and its capture
+cost is small in aggregate; do not spend the next pass rebuilding another graph
+analogue. Complete the remaining packed shared/dense/MTP and fusion paths and
+measure actual device costs; global unequal residency remains a substantial
+unported loading/placement dependency. Any variable-capacity/global pool needs
+new truthful owning slot/source metadata, not changed bytes behind the old
+frozen provenance. Staging currently supports up to40 union groups /four target
+rows; core eight-row verification is not connected. Upstream SYCL/XMX prefill,
+CPU expert doorbells, pipeline split and other platform options are not claimed.
+New activation arithmetic changes the generated sequence, so independent
+whole-state/answer-quality acceptance still matters before private deployment.
+The goal remains unfinished; do not mark30t/s or the complete rewrite achieved.

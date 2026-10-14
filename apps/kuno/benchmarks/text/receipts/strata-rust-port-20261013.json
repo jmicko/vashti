@@ -1,22 +1,21 @@
 {
-  "source_commit": "a0bd7153f3385e1fd994ae7a88e2178c8d110515",
+  "source_commit": "a0c6c3c9c21745faed6ee7362983bcd00f5a72e6",
   "source_branch": "codex/strata-rust-port",
-  "status": "clean_checkpoint_after_combined_residency_trials_coherent_port_next",
+  "status": "coherent_native_intel_core_tested_checkpoint_goal_continues",
   "original_working_engine_commit": "6792453",
   "upstream_revision": "fb58e0dbc8399662c0e47c76578c6e878b14f6cf",
   "license": "MIT with Strata/ggml notices retained",
   "latest_source_checks": {
     "strict_port_clippy": true,
-    "strict_clippy_source_commit": "a0bd7153f3385e1fd994ae7a88e2178c8d110515",
+    "strict_clippy_source_commit": "a0c6c3c9c21745faed6ee7362983bcd00f5a72e6",
     "strict_port_clippy_features": [
-      "strata-rust-port",
-      "strata-resident-240"
+      "strata-intel-core"
     ],
     "fmt": true,
     "whitespace": true,
     "full_original_regression_current_source": true,
     "last_full_regression": {
-      "commit": "a0bd7153f3385e1fd994ae7a88e2178c8d110515",
+      "commit": "a0c6c3c9c21745faed6ee7362983bcd00f5a72e6",
       "pass": 1346,
       "failed": 0,
       "ignored": 1,
@@ -34,162 +33,74 @@
         "strata-resident-240"
       ]
     },
-    "port_shader_variants": 49,
-    "shader_checked_artifact_source": "86a98a4def023ce4bd5834a0cdf40087dd938f1e",
+    "port_shader_variants": 56,
+    "shader_checked_artifact_source": "a0c6c3c9c21745faed6ee7362983bcd00f5a72e6",
     "later_v261_shader_check": true,
     "full_strata_feature_unit_suite_run": false,
-    "strict_port_clippy_log": "/media/jmicko/faststore/kuno-development/native-strata-v261-final-clippy-20261013.log",
-    "full_original_regression_log": "/media/jmicko/faststore/kuno-development/native-strata-v261-original-regression-20261013.log",
+    "strict_port_clippy_log": "/media/jmicko/faststore/kuno-development/strata-native-core-final-clippy-20261014.log",
+    "full_original_regression_log": "/media/jmicko/faststore/kuno-development/strata-native-core-original-regression-20261014.log",
     "targeted_test_logs": [
       "/media/jmicko/faststore/kuno-development/native-strata-v261-profile-plan-tests-20261013.log",
       "/media/jmicko/faststore/kuno-development/native-strata-v261-expanded-address-tests-20261013.log"
-    ]
+    ],
+    "physical_spirv_validated_variants": 13
   },
   "last_gpu_trial": {
-    "directory": "/media/jmicko/faststore/kuno-development/native-next-v261-strata-profile240-code-intel-20261013",
-    "artifact_source_commit": "bb336a10e3c781dec3c6948f3f528f49c5c665bb",
-    "artifact_sha256": "7267f0173dcd6ade656508790b37be6765580884de7d71b45f0d3e1193cc6597",
-    "features": [
-      "strata-rust-port",
-      "strata-resident-240"
+    "build": 282,
+    "directory": "/media/jmicko/faststore/kuno-development/native-next-v282-strata-intel-core-prose-20261014",
+    "source_commit": "a0c6c3c9c21745faed6ee7362983bcd00f5a72e6",
+    "artifact_sha256": "9b41ea8fb312ad1fd1ddb3f5986eb479832c5ab9d173c0ffdf51188c102f38c6",
+    "continuation_tokens_per_second": 13.546277346145345,
+    "timed_continuations": 511,
+    "emitted_with_eos": 512,
+    "native_graph_totals": [
+      4443,
+      717543,
+      251
     ],
-    "options": [
-      "--cache-eight",
-      "--profile-first"
+    "native_graph_execution_totals": [
+      [
+        3124,
+        900,
+        249,
+        1,
+        169
+      ],
+      [
+        0,
+        0,
+        86,
+        0,
+        165
+      ],
+      675440694,
+      19881325069
     ],
-    "seed": 424242,
-    "temperature": 0,
-    "fixture": "code",
-    "accepted_continuations_per_second": 13.884123197788071,
-    "elapsed_ns": 26000921690,
-    "emitted_including_eos": 362,
-    "timed_continuations": 361,
-    "verify_ns": 17477008724,
-    "draft_ns": 3857323750,
-    "repair_ns": 2140931113,
-    "full_target_recomputations": 0,
-    "state_only_repairs": 36,
-    "cache": {
-      "adapt_every_rounds": 4,
-      "adaptation_ns": 2497772063,
-      "all_resident_slots_adaptive": true,
-      "cpu_weight_staging": false,
-      "decay": 0.7,
-      "evicted_weights_preserved_in_ram": true,
-      "gpu_direct_two_way_exchange": true,
-      "history_persisted": false,
-      "max_swaps_per_boundary": 384,
-      "public_bytes_moved": 15600435200,
-      "slots_per_layer": 240,
-      "swaps": 7706
-    },
-    "routes": {
-      "compact_audits": 5184,
-      "compact_down_dispatches": 25920,
-      "compact_gu_dispatches": 25920,
-      "down_stride_four_dispatches": 0,
-      "down_stride_four_layers": 0,
-      "gu_integer_audits": 5184,
-      "gu_integer_dispatches": 25920,
-      "gu_integer_preparations": 5184,
-      "gu_stride_four_dispatches": 25920,
-      "host_routes": 31720,
-      "source_dispatches": 51840,
-      "staged_packed_bytes": 0,
-      "staged_unique_host_groups": 0,
-      "staging_dispatches": 0,
-      "vram_routes": 175640
-    },
-    "fill_receipt": {
-      "actual_policy": "profile-ranked-public",
-      "bank_completion_experts": 7819,
-      "completed_layers": 48,
-      "completed_setup_only": true,
-      "filler_experts": 7819,
-      "new_gpu_owner_bytes": 0,
-      "preserved_residents": 3701,
-      "public_profile_sha256": "8f59b4aa8873209dff11c11e37bcda9529a1335b724a1afeea37bf6388975baf",
-      "route_history_persisted": false,
-      "selected": true,
-      "selected_public_rank_table_bytes": 13824
-    },
-    "private_target_close": {
-      "main_buffers": 1562,
-      "main_bytes": 863207424,
+    "native_stage_dispatches": 24480,
+    "dense_attention_dispatches": 26364,
+    "target_closure": {
+      "main_buffers": 1565,
+      "main_bytes": 1064534016,
       "source_buffers": 0,
       "source_bytes": 0
     },
-    "private_draft_close": {
-      "main_reserved": 0,
-      "private_buffers": 43,
-      "private_bytes": 11730944,
-      "public_bytes": 2434793472
+    "request_scope": {
+      "closing_audit_ns": 10932987,
+      "full_io_audit": true,
+      "scope_closed": true,
+      "scope_sequence": 1
     },
-    "resident_bank_allocation": {
-      "admission_headroom_bytes": 0,
-      "attached_close_snapshot_match": true,
-      "conservative_bin_bytes": 23574528000,
-      "host_mirror_excluded": true,
-      "layers": 48,
-      "logical_bytes": 23574528000,
-      "padding_bytes": 0,
-      "physical_buffer_bytes": 23574528000,
-      "physical_buffers": 288,
-      "release_erasure_or_admission_credit": false,
-      "source_bindings": 288
-    },
-    "target_public_cache_bytes_including_banks": 27740595200,
-    "target_static_cache_limit_bytes": 5368709120,
-    "actual_physical_vram_at_decode": {
-      "xe_memory": [
-        {
-          "total_bytes": 34242297856,
-          "used_bytes": 32243515392
-        }
-      ]
-    },
-    "host_after": {
-      "admission": {
-        "action": "status",
-        "state": {
-          "admission": {
-            "active": false,
-            "completed": 0,
-            "paused": false,
-            "recovery_required": false,
-            "rejected": 0,
-            "waiting": 0
-          }
-        },
-        "status": 200
-      },
-      "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
-      "http_statuses": {
-        "kuno": 200,
-        "ollama": 200,
-        "vashti": 200
-      },
-      "intel": {
-        "xe_memory": [
-          {
-            "total_bytes": 34242297856,
-            "used_bytes": 50688000
-          }
-        ]
-      },
-      "kernel": "7.0.0-38-generic",
-      "kernel_fault_counts": {
-        "nvidia_xid": 0,
-        "xe_memory_faults": 0,
-        "xe_reset_failures": 0,
-        "xe_timeouts": 0,
-        "xe_wedged": 0
-      },
-      "nvidia_compute_process_count": 0,
-      "nvidia_memory_mib": 578,
-      "time": "2026-10-13T23:04:20.580921+00:00"
-    },
-    "private_or_production_accepted": false
+    "physical_intel_used_bytes": [
+      50688000
+    ],
+    "nvidia_compute_process_count": 0,
+    "gpu_faults_after": {
+      "nvidia_xid": 0,
+      "xe_memory_faults": 0,
+      "xe_reset_failures": 0,
+      "xe_timeouts": 0,
+      "xe_wedged": 0
+    }
   },
   "last_completed_broad_port": [
     {
@@ -3513,5 +3424,436 @@
     "resident_slots_per_layer": 144,
     "direct_gpu_exchange": false
   },
-  "temporary_service_action": "One graceful Kuno restart to evict idle image residency; deployed binary/configuration unchanged"
+  "temporary_service_action": "One graceful Kuno restart to evict idle image residency; deployed binary/configuration unchanged",
+  "native_intel_core": {
+    "status": "code_and_prose_complete_private_and_physical_cleanup_pass",
+    "source_commit": "a0c6c3c9c21745faed6ee7362983bcd00f5a72e6",
+    "feature": "strata-intel-core",
+    "upstream_complete": false,
+    "goal_30_tps_met": false,
+    "required_vashti_changes": null,
+    "new_contract": "backend laboratory only; no API/runtime ABI/deployment changes",
+    "code_trials": [
+      {
+        "build": 269,
+        "directory": "/media/jmicko/faststore/kuno-development/native-next-v269-strata-intel-core-code-20261014",
+        "source_commit": "0e6f2b7fdc962c8112f18c0eb4e9867f51029a1f",
+        "artifact_sha256": "034b2d1d2d53dff0e1fbceb1e05c208d9a5b3948fa98e5b6600c6e40cf38a631",
+        "continuation_tokens_per_second": 10.539085728452624,
+        "timed_continuations": 361,
+        "emitted_with_eos": 362,
+        "native_graph_totals": [
+          4912,
+          441263,
+          54
+        ],
+        "native_graph_execution_totals": null,
+        "target_closure": {
+          "main_buffers": 1562,
+          "main_bytes": 863207424,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        "request_scope": {
+          "closing_audit_ns": 5710228,
+          "full_io_audit": true,
+          "scope_closed": true,
+          "scope_sequence": 1
+        },
+        "physical_intel_used_bytes": [
+          50688000
+        ],
+        "nvidia_compute_process_count": 0,
+        "gpu_faults_after": {
+          "nvidia_xid": 0,
+          "xe_memory_faults": 0,
+          "xe_reset_failures": 0,
+          "xe_timeouts": 0,
+          "xe_wedged": 0
+        }
+      },
+      {
+        "build": 270,
+        "directory": "/media/jmicko/faststore/kuno-development/native-next-v270-strata-intel-core-code-20261014",
+        "source_commit": "049d493ba32c31805ba2ab80c639482479596d0b",
+        "artifact_sha256": "46f5f9b2d9f9c02a1f704111ff374b5d0cf3543d883c5055db4215e2f4dd7c5d",
+        "continuation_tokens_per_second": 12.112745437213851,
+        "timed_continuations": 361,
+        "emitted_with_eos": 362,
+        "native_graph_totals": [
+          4912,
+          441263,
+          54
+        ],
+        "native_graph_execution_totals": null,
+        "target_closure": {
+          "main_buffers": 1562,
+          "main_bytes": 863207424,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        "request_scope": {
+          "closing_audit_ns": 6240137,
+          "full_io_audit": true,
+          "scope_closed": true,
+          "scope_sequence": 1
+        },
+        "physical_intel_used_bytes": [
+          50688000
+        ],
+        "nvidia_compute_process_count": 0,
+        "gpu_faults_after": {
+          "nvidia_xid": 0,
+          "xe_memory_faults": 0,
+          "xe_reset_failures": 0,
+          "xe_timeouts": 0,
+          "xe_wedged": 0
+        }
+      },
+      {
+        "build": 271,
+        "directory": "/media/jmicko/faststore/kuno-development/native-next-v271-strata-intel-core-code-20261014",
+        "source_commit": "600a8874f2ecc7b72a7d1259d7df475bf86fc60a",
+        "artifact_sha256": "b62dfffeb3741eaca5a48c48654369b51ab60ad0a9b660bd3a1b66dde82a8d10",
+        "continuation_tokens_per_second": 8.302945396891827,
+        "timed_continuations": 361,
+        "emitted_with_eos": 362,
+        "native_graph_totals": [
+          4912,
+          441263,
+          54
+        ],
+        "native_graph_execution_totals": null,
+        "target_closure": {
+          "main_buffers": 1562,
+          "main_bytes": 863207424,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        "request_scope": {
+          "closing_audit_ns": 6532869,
+          "full_io_audit": true,
+          "scope_closed": true,
+          "scope_sequence": 1
+        },
+        "physical_intel_used_bytes": [
+          50688000
+        ],
+        "nvidia_compute_process_count": 0,
+        "gpu_faults_after": {
+          "nvidia_xid": 0,
+          "xe_memory_faults": 0,
+          "xe_reset_failures": 0,
+          "xe_timeouts": 0,
+          "xe_wedged": 0
+        }
+      },
+      {
+        "build": 274,
+        "directory": "/media/jmicko/faststore/kuno-development/native-next-v274-strata-intel-core-code-20261014",
+        "source_commit": "1c9c9d81e24214cef39ac2e2f202ea19fa9e7383",
+        "artifact_sha256": "ec676865636d899a3c6ffbc85672e282d6d5f43018a3bea5f2070829a481b640",
+        "continuation_tokens_per_second": 12.416319800831301,
+        "timed_continuations": 361,
+        "emitted_with_eos": 362,
+        "native_graph_totals": [
+          4960,
+          441263,
+          53
+        ],
+        "native_graph_execution_totals": null,
+        "target_closure": {
+          "main_buffers": 1562,
+          "main_bytes": 863207424,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        "request_scope": {
+          "closing_audit_ns": 8220863,
+          "full_io_audit": true,
+          "scope_closed": true,
+          "scope_sequence": 1
+        },
+        "physical_intel_used_bytes": [
+          50688000
+        ],
+        "nvidia_compute_process_count": 0,
+        "gpu_faults_after": {
+          "nvidia_xid": 0,
+          "xe_memory_faults": 0,
+          "xe_reset_failures": 0,
+          "xe_timeouts": 0,
+          "xe_wedged": 0
+        }
+      },
+      {
+        "build": 275,
+        "directory": "/media/jmicko/faststore/kuno-development/native-next-v275-strata-intel-core-code-20261014",
+        "source_commit": "617537bd0f4a5a06b3f6da9401007429065b1192",
+        "artifact_sha256": "6c7fe132cda2cee636f102f64503314d49eea4b047ad371d12d16c4f0f6b05c1",
+        "continuation_tokens_per_second": 12.852922934114128,
+        "timed_continuations": 361,
+        "emitted_with_eos": 362,
+        "native_graph_totals": [
+          4312,
+          441263,
+          84
+        ],
+        "native_graph_execution_totals": null,
+        "target_closure": {
+          "main_buffers": 1562,
+          "main_bytes": 863207424,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        "request_scope": {
+          "closing_audit_ns": 7953479,
+          "full_io_audit": true,
+          "scope_closed": true,
+          "scope_sequence": 1
+        },
+        "physical_intel_used_bytes": [
+          50688000
+        ],
+        "nvidia_compute_process_count": 0,
+        "gpu_faults_after": {
+          "nvidia_xid": 0,
+          "xe_memory_faults": 0,
+          "xe_reset_failures": 0,
+          "xe_timeouts": 0,
+          "xe_wedged": 0
+        }
+      },
+      {
+        "build": 277,
+        "directory": "/media/jmicko/faststore/kuno-development/native-next-v277-strata-intel-core-code-20261014",
+        "source_commit": "f2d40481bf2674cfb23fdf31434f3eacf68d0e99",
+        "artifact_sha256": "d28ac17414a1e4627bdca77ad5936be8cfe7afd96584e13bc18feacc2a45c20a",
+        "continuation_tokens_per_second": 12.594085948447354,
+        "timed_continuations": 361,
+        "emitted_with_eos": 362,
+        "native_graph_totals": [
+          4312,
+          441263,
+          134
+        ],
+        "native_graph_execution_totals": [
+          [
+            3146,
+            933,
+            125,
+            1,
+            107
+          ],
+          [
+            0,
+            0,
+            30,
+            0,
+            104
+          ],
+          569975584,
+          18267563655
+        ],
+        "target_closure": {
+          "main_buffers": 1562,
+          "main_bytes": 863207424,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        "request_scope": {
+          "closing_audit_ns": 9695317,
+          "full_io_audit": true,
+          "scope_closed": true,
+          "scope_sequence": 1
+        },
+        "physical_intel_used_bytes": [
+          50688000
+        ],
+        "nvidia_compute_process_count": 0,
+        "gpu_faults_after": {
+          "nvidia_xid": 0,
+          "xe_memory_faults": 0,
+          "xe_reset_failures": 0,
+          "xe_timeouts": 0,
+          "xe_wedged": 0
+        }
+      },
+      {
+        "build": 278,
+        "directory": "/media/jmicko/faststore/kuno-development/native-next-v278-strata-intel-core-code-20261014",
+        "source_commit": "55adf7d65d11765c07ca8ba4f94b26cbdb81d1a4",
+        "artifact_sha256": "670c822d3dc7fcb9515950934b421962a2b6eddd3437a06852db3f1552263b3a",
+        "continuation_tokens_per_second": 12.408892807332624,
+        "timed_continuations": 361,
+        "emitted_with_eos": 362,
+        "native_graph_totals": [
+          4312,
+          491807,
+          134
+        ],
+        "native_graph_execution_totals": [
+          [
+            3146,
+            933,
+            125,
+            1,
+            107
+          ],
+          [
+            0,
+            0,
+            30,
+            0,
+            104
+          ],
+          572651979,
+          18227619861
+        ],
+        "target_closure": {
+          "main_buffers": 1562,
+          "main_bytes": 863207424,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        "request_scope": {
+          "closing_audit_ns": 10029748,
+          "full_io_audit": true,
+          "scope_closed": true,
+          "scope_sequence": 1
+        },
+        "physical_intel_used_bytes": [
+          50688000
+        ],
+        "nvidia_compute_process_count": 0,
+        "gpu_faults_after": {
+          "nvidia_xid": 0,
+          "xe_memory_faults": 0,
+          "xe_reset_failures": 0,
+          "xe_timeouts": 0,
+          "xe_wedged": 0
+        }
+      },
+      {
+        "build": 282,
+        "directory": "/media/jmicko/faststore/kuno-development/native-next-v282-strata-intel-core-code-20261014",
+        "source_commit": "a0c6c3c9c21745faed6ee7362983bcd00f5a72e6",
+        "artifact_sha256": "9b41ea8fb312ad1fd1ddb3f5986eb479832c5ab9d173c0ffdf51188c102f38c6",
+        "continuation_tokens_per_second": 14.625228760358956,
+        "timed_continuations": 455,
+        "emitted_with_eos": 456,
+        "native_graph_totals": [
+          4501,
+          613836,
+          187
+        ],
+        "native_graph_execution_totals": [
+          [
+            3184,
+            998,
+            176,
+            1,
+            142
+          ],
+          [
+            0,
+            0,
+            48,
+            0,
+            139
+          ],
+          630793885,
+          17585951070
+        ],
+        "native_stage_dispatches": 20592,
+        "dense_attention_dispatches": 22308,
+        "target_closure": {
+          "main_buffers": 1565,
+          "main_bytes": 1064534016,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        "request_scope": {
+          "closing_audit_ns": 9710068,
+          "full_io_audit": true,
+          "scope_closed": true,
+          "scope_sequence": 1
+        },
+        "physical_intel_used_bytes": [
+          50688000
+        ],
+        "nvidia_compute_process_count": 0,
+        "gpu_faults_after": {
+          "nvidia_xid": 0,
+          "xe_memory_faults": 0,
+          "xe_reset_failures": 0,
+          "xe_timeouts": 0,
+          "xe_wedged": 0
+        }
+      }
+    ],
+    "pending_trial": null,
+    "goal_controller": "active",
+    "private_or_production_accepted": false,
+    "final_host_state": "/media/jmicko/faststore/kuno-development/strata-intel-core-final-state-20261014.json",
+    "prose_trials": [
+      {
+        "build": 282,
+        "directory": "/media/jmicko/faststore/kuno-development/native-next-v282-strata-intel-core-prose-20261014",
+        "source_commit": "a0c6c3c9c21745faed6ee7362983bcd00f5a72e6",
+        "artifact_sha256": "9b41ea8fb312ad1fd1ddb3f5986eb479832c5ab9d173c0ffdf51188c102f38c6",
+        "continuation_tokens_per_second": 13.546277346145345,
+        "timed_continuations": 511,
+        "emitted_with_eos": 512,
+        "native_graph_totals": [
+          4443,
+          717543,
+          251
+        ],
+        "native_graph_execution_totals": [
+          [
+            3124,
+            900,
+            249,
+            1,
+            169
+          ],
+          [
+            0,
+            0,
+            86,
+            0,
+            165
+          ],
+          675440694,
+          19881325069
+        ],
+        "native_stage_dispatches": 24480,
+        "dense_attention_dispatches": 26364,
+        "target_closure": {
+          "main_buffers": 1565,
+          "main_bytes": 1064534016,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        "request_scope": {
+          "closing_audit_ns": 10932987,
+          "full_io_audit": true,
+          "scope_closed": true,
+          "scope_sequence": 1
+        },
+        "physical_intel_used_bytes": [
+          50688000
+        ],
+        "nvidia_compute_process_count": 0,
+        "gpu_faults_after": {
+          "nvidia_xid": 0,
+          "xe_memory_faults": 0,
+          "xe_reset_failures": 0,
+          "xe_timeouts": 0,
+          "xe_wedged": 0
+        }
+      }
+    ]
+  }
 }
