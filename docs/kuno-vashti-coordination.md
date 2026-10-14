@@ -5256,3 +5256,51 @@ recording and verifier repair, source/unit-failure audits and protected whole-
 engine completion/numerical/state/recovery acceptance before throughput.
 Do not revert coupled port work because of incidental timing. Required Vashti
 changes: none.
+
+
+### Active Kuno engine handoff — contiguous cache / bounded source windows (2026-10-14)
+
+Source `16e99d8`, following `d75549f`, isolated `codex/strata-rust-port`.
+Read completion guide **Cache contiguity and bounded public initialization**.
+The previous goal turn made source/verification progress. **Cache lending is
+still incomplete; this is a real model-loader prerequisite, not a loan receipt
+or permission to run speed benchmarks.**
+
+Actual global plan/GPU allocation now packs ranked experts into roots up to
+512MiB while retaining16MiB original-model host uploads. GPU contiguity and
+host staging no longer share one constant. `Cache::load` allocates an empty
+persistent root, fills every byte/padding using `load_chunk_range` and exact
+public upload views, and drains each window before another. Source tables and
+consumers publish only after complete full-root attestation. Exact root requests
+still feed persistent admission; actual `Cell` addresses and original ranked
+prefix/HOST complement remain authoritative. The setup quote stays two16MiB
+windows plus the1MiB HOST reader, and the internal receipt distinguishes root
+limit from upload window. A smaller final root is not fictitious512MiB authority.
+
+Core release build, strict core/feature-off Clippy and all five global-plan tests
+pass. They retain the independently recorded11570-pair prefix, empty/partial/
+full complete source coverage and exact HOST quote. New tests reconstruct
+original roles/padding with independent byte streams across awkward byte windows
+and inspect pinned-model root/window boundaries without a512MiB host allocation.
+Exact logs are in the receipt. No shader arithmetic changed; prior308 variants
+were not rerun. No live GPU/allocation/model/numerical/state/recovery/speed run,
+full unit suite, services/residency, API/Vashti, install or release change.
+Prior228-failure baseline remains unaudited. Canonical/bytecode preserved; no root
+needed. Goal active, complete rewrite and benchmark gate remain unfinished.
+
+**Next connect actual cache-backed private ownership, exclusion and restoration.**
+Pinned `sycl/src/program/generate.cpp:11524-11624` marks lent tail pairs unavailable,
+initializes prompt scratch there and restores their actual slots before decode.
+Kuno's private arena currently attests exclusive power-of-two private allocations;
+public cache roots are actual alignment-sized owners, possibly smaller than512MiB.
+A real borrowed registration must attest/charge the complete physical root,
+include full erasure/inspection and retain it on unknown completion. No cast of
+public handles into ordinary private ownership, fake larger descriptor or mere
+host bitmap. Leased resident pairs also need a real original-weight staging
+source (HOST complement only contains initially nonresident pairs), patched
+physical source tables and retained BDA dependencies excluding borrowed cells.
+Restore current placement/remaps after the joined prompt close, accounting for
+adaptive exchanges before publishing residency. Then finish conditional ring/
+stream-all policy and remaining arbitrary input/sampling, branch/recording,
+verifier-repair, source/unit-failure and protected whole-engine acceptance gates.
+Required Vashti changes: none.

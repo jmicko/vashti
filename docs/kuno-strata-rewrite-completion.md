@@ -2637,3 +2637,76 @@ at4096. Do not claim configurable native chunk/long-context parity from this
 recording and verifier-repair audits, classify the historical unit failures and
 run protected whole-engine completion/numerical/state/recovery acceptance.
 Only after the documented completeness gate may throughput steer fixes.
+
+
+## Cache contiguity and bounded public initialization (2026-10-14)
+
+Source `16e99d8`, following native2048 consumers `d75549f`.
+This is a connected model-loading prerequisite for lending, **not an implemented
+cache loan, private borrowed owner, residency exclusion or restoration receipt**.
+
+Pinned `sycl/src/program/generate.cpp:11524-11624` plans a tail loan, marks its
+resident pairs unavailable before prompt initialization, and refills the actual
+lent slots before publishing residency again. The queued refill waits before
+its finite source ring wraps. Its default context<=32768 branch still owns
+prompt buffers; the explicit/long-context borrowed branch remains required.
+Kuno had packed the cache into16MiB GPU roots because the same constant also
+controlled its host upload window. Those are different lifetimes and ownership
+requirements: a bounded host upload does not require small GPU allocations.
+
+The actual global plan now packs ranked expert blobs into roots of at most
+512MiB, retaining original byte-aligned pair order and real per-role `Cell`
+addresses. It still prices each exact physical root through `Cache::requests`,
+`Sources::gpu_requests` and the existing persistent-bank admission. HOST
+complements and original model bytes are unchanged; this does not manufacture
+additional resident experts or a virtual contiguous buffer across allocations.
+The final root may be smaller, and alignment/padding are actual charged bytes.
+
+`Cache::load` allocates each real persistent GPU owner with `client.empty`, then
+initializes *every byte*, including all padding, through bounded original-model
+windows. `Plan::load_chunk_range` intersects the requested window with actual
+gate/up/down source spans and reads the corresponding original tensor byte
+ranges; everything outside those spans is explicitly zeroed. The upload view
+preserves its full root identity and exact start/end offsets. Only immutable
+model bytes use `write_public_owned_batch`; no private input is allowed here.
+Each moved16MiB window drains before another is allocated, including its runtime
+upload copy. The model source table/consumers are constructed only after all
+roots have been initialized and attested as complete, distinct physical buffers.
+The setup quote remains two16MiB windows plus the separate1MiB HOST reader;
+it no longer follows GPU root size. The internal receipt reports root limit
+and actual bounded host window separately. No GPU math/dispatch source changes.
+
+Validation logs in `/media/jmicko/faststore/kuno-development`:
+
+- `strata-contiguous-cache-build-20261014.log`: core release binary builds.
+- `strata-contiguous-cache-clippy-20261014.log` and
+  `strata-contiguous-cache-feature-off-clippy-20261014.log`: strict core and
+  ordinary feature-off release Clippy pass.
+- `strata-contiguous-cache-plan-tests-20261014.log`: all five plan tests pass.
+  Existing tests preserve the independently recorded11570-pair ranked prefix
+  and exact complete HOST complement at the same byte budget; empty/partial/
+  full tiers and exact HOST reservation remain covered. New tests reassemble
+  independently constructed original role bytes and all padding through1/7/
+  31/257/1023-byte windows, reject empty/overflow/out-of-root ranges, and inspect
+  real pinned-model512MiB root/16MiB window boundaries without a giant host Vec.
+- `git diff --check` passes. GPU math sources are unchanged, so the prior308
+  shader validations were not repeated for this model-loader change.
+
+No live GPU allocation/model/numerical/state/recovery/speed acceptance, full
+unit suite, installed service/residency change, install, release, public API or
+Vashti change. Prior228-failure unit baseline remains unaudited. Canonical and
+inherited bytecode preserved; no privileged work needed. Goal remains active.
+
+Remaining: implement genuine cache-backed private ownership, exclusion and
+original-format restoration in the connected prompt lifecycle. Do not pass a
+model-public root to ordinary private upload/cleanup or invent512MiB authority
+from a smaller cache tail. The borrowed owner must attest its actual complete
+physical span, be included in content erasure/inspection, and remain retained on
+unknown GPU completion. Borrowed pairs need an actual original-weight staging
+source while their cache cells contain scratch; the existing HOST complement
+contains only initially nonresident pairs. Per-layer address tables and retained
+BDA dependencies must exclude leased cells, not just change a host bitmap.
+On successful closure, restore original current physical placement/remaps (not
+blindly initial profile bytes after adaptive swaps) and publish only after a
+joined completion. Then finish conditional ring sizing/stream-all and remaining
+source/completeness/numerical/state/recovery gates. No speed benchmark yet.
