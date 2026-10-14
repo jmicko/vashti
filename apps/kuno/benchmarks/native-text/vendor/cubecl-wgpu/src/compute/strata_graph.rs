@@ -43,6 +43,7 @@ pub(crate) struct Program {
     bindings: Vec<vk::DescriptorType>,
     accesses: Vec<vk::AccessFlags>,
     entry: CString,
+    expert_subgroup_32: bool,
 }
 #[derive(Default)]
 struct Registry {
@@ -130,6 +131,7 @@ pub(crate) fn register_module(
     }
     let p = Arc::new(Program {
         words,
+        expert_subgroup_32: source.contains("STRATA_PHYSICAL_EXPERTS"),
         accesses: bindings.iter().map(|b| b.2).collect(),
         bindings: bindings.into_iter().map(|b| b.1).collect(),
         entry: CString::new(entry).map_err(|_| fault("native graph entrypoint"))?,
@@ -220,6 +222,10 @@ impl Graph {
             .contains(&ash::khr::buffer_device_address::NAME)
         {
             return Err(fault("native expert pointer extension missing"));
+        }
+        let limits = device.limits();
+        if limits.min_subgroup_size > 32 || limits.max_subgroup_size < 32 {
+            return Err(fault("native Strata requires Intel expert subgroup32"));
         }
         let d = h.raw_device().clone();
         let queue = h.raw_queue();
@@ -372,11 +378,20 @@ impl Graph {
                     return Err(fault("native graph pipeline layout"));
                 }
             };
-            let stage = vk::PipelineShaderStageCreateInfo::default()
+            let mut required = vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo::default()
+                .required_subgroup_size(32);
+            let mut stage = vk::PipelineShaderStageCreateInfo::default()
                 .stage(vk::ShaderStageFlags::COMPUTE)
                 .module(shader)
-                .name(&p.entry)
-                .flags(vk::PipelineShaderStageCreateFlags::ALLOW_VARYING_SUBGROUP_SIZE);
+                .name(&p.entry);
+            // The pinned SYCL expert dispatch uses reqd_sub_group_size(32),
+            // with four independent eight-lane rows inside that subgroup.
+            if p.expert_subgroup_32 {
+                stage = stage.push_next(&mut required);
+            } else {
+                stage =
+                    stage.flags(vk::PipelineShaderStageCreateFlags::ALLOW_VARYING_SUBGROUP_SIZE);
+            }
             let pipeline_native = match unsafe {
                 self.device.create_compute_pipelines(
                     vk::PipelineCache::null(),
@@ -547,7 +562,9 @@ impl Graph {
             .iter()
             .position(|r| r.signature == signature)
         {
-            let command = self.recordings[hit].command;
+            let recording = self.recordings.remove(hit);
+            let command = recording.command;
+            self.recordings.push(recording);
             let commands = [command];
             unsafe {
                 self.device.queue_submit(
@@ -572,8 +589,8 @@ impl Graph {
             return Ok(());
         }
         // All earlier native work is complete. Cached command buffers contain
-        // addresses, not tensor contents, and are bounded to four exact plans.
-        if self.recordings.len() == 4 {
+        // addresses, not tensor contents, and are bounded to sixteen exact plans.
+        if self.recordings.len() == 16 {
             self.recordings.remove(0);
         }
         if self.pool == vk::CommandPool::null() {
