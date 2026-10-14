@@ -383,7 +383,7 @@ fn launch_width(
             args = args.with_buffer(stages[role].clone().binding());
         }
         // Copies all original selected HOST words exactly once per layer.
-        if !down {
+        if !down && member_width <= 1 {
             crate::strata_stage::launch(
                 client,
                 geometry,
@@ -498,4 +498,51 @@ pub(crate) fn compiled_sources() -> Vec<CompiledKernel<AutoCompiler>> {
         }
     }
     result
+}
+
+#[cfg(all(test, feature = "strata-intel-core"))]
+mod native_member_tests {
+    use super::*;
+
+    #[test]
+    fn width_variants_preserve_full_guard_and_unique_gpu_group_writer() {
+        for (down, dtype, columns) in [(false, 21, 2560), (true, 42, 640)] {
+            for four in [false, true] {
+                let capacity = if four { 4 } else { 3 };
+                for member_width in 1..=capacity {
+                    let source = Kernel {
+                        down,
+                        dtype,
+                        row_bytes: kuno_text::TensorType::from_gguf_id(dtype)
+                            .unwrap()
+                            .row_bytes(columns)
+                            .unwrap() as usize,
+                        four,
+                        member_width,
+                    }
+                    .source();
+                    let guard = format!("if length!={member_width}u {{return;}}");
+                    assert_eq!(source.matches(&guard).count(), 1);
+                    assert!(source.contains("!valid_group(group.y)"));
+                    assert!(source.contains("strata_addresses"));
+                    assert!(!source.contains("if length>"));
+                    let ty = if member_width == 1 {
+                        "f32".into()
+                    } else {
+                        format!("vec{member_width}<f32>")
+                    };
+                    assert!(source.contains(&format!(
+                        "var {}={ty}(0.0)",
+                        if down { "values" } else { "gates" }
+                    )));
+                    // Every actual routed entry belongs to exactly one fixed
+                    // variant, and no unsupported entry can acquire a writer.
+                    for length in 0..=capacity + 1 {
+                        let writers = (1..=capacity).filter(|&width| width == length).count();
+                        assert_eq!(writers, usize::from((1..=capacity).contains(&length)));
+                    }
+                }
+            }
+        }
+    }
 }
