@@ -4327,3 +4327,13 @@ API/protocol/UI or release changes; required Vashti changes **none**. Completion
 is not claimed: global expert allocation, full GR/native schedules, prompt prefill
 and general request connection remain among the explicit audit gaps. Preserve
 existing source, public comparison evidence, Q2 sidecar and attribution.
+
+First connected block: `d58bce4` selects native separate gate/up/DOWN 4/2/1
+chunks, activation and scratch reuse together, with all extra INFO charged. The
+protected runner requires execution-only validation and blocks speed/profile
+trials. Release build, strict core Clippy, 158 WGSL/SPIR-V variants (105 physical
+checks) and original regression 1,346/1 ignored pass. **No live GPU inference or
+speed test, complete rewrite, numerical model acceptance or production claim.**
+The next implementation continues the connected upstream dependency checklist;
+no per-component speed selection. Logs live under `kuno-development` with names
+`strata-connected-expert-{build,final-clippy,shaders,original-regression}-20261014.log`.
