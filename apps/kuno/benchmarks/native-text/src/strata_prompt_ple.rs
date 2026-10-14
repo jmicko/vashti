@@ -4,15 +4,16 @@
 use super::*;
 use std::{cell::RefCell, sync::mpsc};
 
-// One additional full embedding owner, one bounded coordinator stack, and
-// independent row/descriptor metadata. The four
-// finite source-reader stacks are already in the native embedding reservation.
-pub(crate) const HOST_BYTES: usize = 12 * 1024 * 1024;
+// At2048 rows, current and prefetched20MiB embeddings, runtime upload copy,
+// <=3.44MiB original packed rows, wiping read plans and finite worker stacks
+// coexist. Reserve64MiB; target embedding/other model copies are separately
+// charged in resident_model_prompt. No stack-sized2048-row metadata arrays.
+pub(crate) const HOST_BYTES: usize = 64 * 1024 * 1024;
 struct Prepared {
     binding: GraphBindingId,
     start: usize,
     count: usize,
-    rows: Zeroizing<[[u32; 16]; crate::strata_prompt::groups::CAPACITY]>,
+    rows: Zeroizing<Vec<[u32; 16]>>,
     data: Zeroizing<Vec<u8>>,
 }
 impl Drop for Prepared {
@@ -107,7 +108,7 @@ pub(crate) fn run<T>(
                     let count = (prompt.len() - start).min(chunk);
                     let result = (|| -> Result<Prepared> {
                         let mut rows =
-                            Zeroizing::new([[0; 16]; crate::strata_prompt::groups::CAPACITY]);
+                            Zeroizing::new(vec![[0; 16]; crate::strata_prompt::groups::CAPACITY]);
                         for t in 0..count {
                             crate::ple_chunk::rows_into(
                                 graph.ple_hash().metadata(),

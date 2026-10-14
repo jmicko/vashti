@@ -8,8 +8,8 @@ use cubecl::server::Handle;
 // all-family tickets and bounded argument tables coexist during acceptance.
 // Native recordings retain dual-queue plans across prompt and decode. Reserve
 // their bounded cache/temporary metadata in this same core lifetime quote.
-pub(super) const HOST_BYTES: usize = 8 * 1024 * 1024 + cubecl::wgpu::NATIVE_QUEUE_HOST_BYTES;
-pub(super) const RUNTIME_BYTES: u64 = 8 * 1024 * 1024;
+pub(super) const HOST_BYTES: usize = 64 * 1024 * 1024 + cubecl::wgpu::NATIVE_QUEUE_HOST_BYTES;
+pub(super) const RUNTIME_BYTES: u64 = 64 * 1024 * 1024;
 /// Constructed here only after real completed model/fault/I/O proofs. The
 /// MAX8 workspace can record that boundary without fabricating issued rows.
 pub(crate) struct Completed {

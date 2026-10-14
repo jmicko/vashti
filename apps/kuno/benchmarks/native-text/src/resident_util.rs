@@ -497,7 +497,20 @@ pub fn read_prefix_u32(
     id: BufferId,
     n: usize,
 ) -> Result<Zeroizing<Vec<u32>>> {
-    let capacity = words(arena, id)?;
+    read_handle_prefix_u32(arena, handle(arena, id)?, n)
+}
+/// Read an exact prefix of an already-attested private view. Preserve both
+/// existing offsets when narrowing; no whole-owner or unrelated tail readback.
+pub(crate) fn read_handle_prefix_u32(
+    arena: &PrivateArena,
+    view: Handle,
+    n: usize,
+) -> Result<Zeroizing<Vec<u32>>> {
+    let capacity =
+        usize::try_from(view.size_in_used() / 4).map_err(|_| Error::ArithmeticOverflow)?;
+    if !view.size_in_used().is_multiple_of(4) {
+        return Err(Error::InvalidBufferLength);
+    }
     if n == 0 || n > capacity {
         return Err(Error::InvalidBufferLength);
     }
@@ -505,7 +518,7 @@ pub fn read_prefix_u32(
         arena
             .client()
             .map_err(fault)?
-            .read_one(handle(arena, id)?.offset_end(((capacity - n) * 4) as u64))
+            .read_one(view.offset_end(((capacity - n) * 4) as u64))
             .map_err(fault)?,
     );
     let values = u32::from_bytes(&bytes.0);

@@ -189,7 +189,7 @@ mod native {
                         if valid && status[route] == 1 {
                             good = 1;
                         }
-                        status[2560 + route] = good;
+                        status[20480 + route] = good;
                     }
                 } else {
                     fault[0].fetch_or(128);
@@ -415,7 +415,7 @@ pub(crate) fn dense(
 ) -> Result<()> {
     if !crate::strata_prompt::active()
         || count == 0
-        || count > 4096
+        || count > crate::strata_prompt::groups::CAPACITY * 4
         || columns == 0
         || columns > 16384
         || !columns.is_multiple_of(16)
@@ -472,20 +472,25 @@ pub(crate) fn expert(
 ) -> Result<()> {
     if !crate::strata_prompt::active()
         || count == 0
-        || count > 256
+        || count > crate::strata_prompt::groups::ROUTE_CAPACITY
         || group >= 512
         || u32::try_from(weight_first).is_err()
         || columns != if down { 640 } else { 2560 }
         || rows != if down { 2560 } else { 1280 }
         || h.iter().any(|v| v.stream != h[0].stream)
         || h[5].size_in_used() != 4
-        || h[3].size_in_used() != 32768
-        || h[4].size_in_used() != 32768
+        || h[3].size_in_used() != (crate::strata_prompt::groups::MAP_WORDS * 4) as u64
+        || h[4].size_in_used() != (crate::strata_prompt::groups::STATUS_WORDS * 4) as u64
         || (count * columns * 2) as u64 > h[0].size_in_used()
         || weight_first
             .checked_add(rows * columns)
             .is_none_or(|n| n as u64 * 2 > h[1].size_in_used())
-        || (if down { 256 * 10 * 2560 } else { count * 1280 } * 4) as u64 > h[2].size_in_used()
+        || (if down {
+            crate::strata_prompt::groups::ROUTES * 2560
+        } else {
+            count * 1280
+        } * 4) as u64
+            > h[2].size_in_used()
     {
         return Err(Error::InvalidBufferLength);
     }

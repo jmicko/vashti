@@ -331,7 +331,7 @@ pub(crate) fn launch(
                 | Kernel::PromptScoreFault
         ) && crate::strata_prompt::active()
         {
-            256
+            crate::strata_prompt::groups::CAPACITY as u32
         } else {
             8
         })
@@ -345,7 +345,9 @@ pub(crate) fn launch(
                 | Kernel::PromptAttentionFault
                 | Kernel::PromptMergeFault
         ) {
-            info[11].checked_add(info[0]).is_none_or(|end| end > 256)
+            info[11]
+                .checked_add(info[0])
+                .is_none_or(|end| end > crate::strata_prompt::groups::CAPACITY as u32)
                 || info[1]
                     .checked_add(info[11])
                     .and_then(|first| first.checked_add(info[0]))

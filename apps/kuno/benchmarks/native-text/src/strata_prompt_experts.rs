@@ -118,7 +118,7 @@ impl KernelMetadata for Op {
     }
     fn id(&self) -> KernelId {
         KernelId::new::<Self>()
-            .info((*self, "prompt-raw-slot-v2"))
+            .info((*self, "prompt-owned-routes-v3"))
             .cube_dim(CubeDim::new_1d(self.lanes()))
     }
     fn address_type(&self) -> StorageType {
@@ -218,18 +218,18 @@ pub(crate) fn enqueue(
 ) -> Result<()> {
     sources.validate_graph_ready(graph)?;
     let stage = stages()?;
-    if !(1..=super::groups::CAPACITY).contains(&count)
+    if !(1..=super::groups::ROUTE_CAPACITY).contains(&count)
         || fault.size_in_used() != 4
         || owners
             .iter()
             .chain(stage.iter())
             .chain([fault])
             .any(|h| h.stream != owners[0].stream)
-        || owners[0].size_in_used() != 32768
+        || owners[0].size_in_used() != (groups::MAP_WORDS * 4) as u64
         || owners[1].size_in_used() < (count * 2560 * 4) as u64
-        || owners[2].size_in_used() != 2 * 1024 * 1024
-        || owners[3].size_in_used() != 32 * 1024 * 1024
-        || owners[6].size_in_used() != 32768
+        || owners[2].size_in_used() != groups::GU_BYTES
+        || owners[3].size_in_used() != groups::PART_BYTES
+        || owners[6].size_in_used() != (groups::STATUS_WORDS * 4) as u64
         || (DEQUANT_SLOTS * DQ_WORDS * 4) as u64 > stage[1].size_in_used()
     {
         return Err(Error::InvalidBufferLength);

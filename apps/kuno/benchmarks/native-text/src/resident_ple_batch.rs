@@ -1448,7 +1448,11 @@ fn native_embedding(
     };
     let mut upload = source(output_bytes)?;
     let mut decoded = Zeroizing::new([0f32; 160]);
-    for slot in 0..unique.len() {
+    // Scatter by the stable destination plan. Each packed row is still read
+    // once, but do not scan every destination for every unique row (quadratic
+    // at2048 tokens). Re-decoding a shared row preserves exact original bytes
+    // and uses the same single wiping160-float scratch.
+    for (destination, &slot) in slots.iter().enumerate() {
         u::cancel(cancel)?;
         decode_ple_row(
             profile,
@@ -1456,16 +1460,12 @@ fn native_embedding(
             &raw[slot * rb..(slot + 1) * rb],
             &mut decoded[..],
         )?;
-        for (destination, &source_slot) in slots.iter().enumerate() {
-            if source_slot == slot {
-                let at = destination * 160 * 4;
-                for (bytes, &v) in upload[at..at + 160 * 4]
-                    .chunks_exact_mut(4)
-                    .zip(decoded.iter())
-                {
-                    bytes.copy_from_slice(&v.to_bits().to_le_bytes());
-                }
-            }
+        let at = destination * 160 * 4;
+        for (bytes, &v) in upload[at..at + 160 * 4]
+            .chunks_exact_mut(4)
+            .zip(decoded.iter())
+        {
+            bytes.copy_from_slice(&v.to_bits().to_le_bytes());
         }
     }
     graph.verify_unchanged()?;

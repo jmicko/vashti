@@ -25,7 +25,7 @@ pub fn prepare_prompt<'a>(
     cancelled(cancel)?;
     let owned = owner_capacity_bytes(conv, history)?;
     let rows = tokens.len().min(HISTORY);
-    if !(1..=256).contains(&tokens.len())
+    if !(1..=2048).contains(&tokens.len())
         || config.history_len() != 2
         || config.heads_per_ngram != 8
         || config.boundary_token != 248044
@@ -289,7 +289,7 @@ mod tests {
     }
     #[test]
     fn large_prompt_tail_matches_scalar_history_across_the_max8_boundary() {
-        for count in [1usize, 8, 9, 32, 256] {
+        for count in [1usize, 8, 9, 32, 256, 257, 1024, 2048] {
             let (mut conv, mut history, hash) = state();
             let mut reference = CausalConvState::new(CHANNELS, 4, 3).unwrap();
             reference.history.copy_from_slice(conv.history());

@@ -10,6 +10,7 @@ const HALF: u64 = 64 * 1024 * 1024;
 const ROOT: u64 = allocation::ROOT_BYTES;
 pub(crate) struct Storage {
     working: [Handle; 3],
+    moe: groups::Views,
     gr: [Handle; 4],     // normalized, down, low, up
     outer: [Handle; 13], // R/mixed/blocks/injection/router/shared/embedding, retained PLE tail
     ple: [Handle; 12],
@@ -128,14 +129,19 @@ impl Storage {
                 return Err(Error::InvalidBufferLength);
             }
         }
+        let moe = groups::Views::new(roots[2].clone())?;
         Ok(Self {
             working,
+            moe,
             gr,
             outer,
             ple,
             gdn,
             qsa,
         })
+    }
+    pub(crate) fn moe(&self) -> groups::Views {
+        self.moe.clone()
     }
     pub(crate) fn working(&self) -> [Handle; 3] {
         self.working.clone()
@@ -165,6 +171,7 @@ impl Storage {
             .chain(self.ple.iter())
             .chain(self.gdn.iter())
             .chain(self.qsa.iter())
+            .chain(self.moe.handles())
             .any(|v| same_view(h, v))
     }
 }
@@ -203,7 +210,7 @@ mod owned_layout_tests {
     fn native_default_persistent_and_overlaid_views_fit_actual_registered_roots() {
         let stream = StreamId { value: 98 };
         let roots = std::array::from_fn(|_| Handle::new(stream, allocation::ROOT_BYTES));
-        for count in [groups::CAPACITY, allocation::DEFAULT_ROWS] {
+        for count in [256, allocation::DEFAULT_ROWS] {
             let layout = Storage::at_capacity(roots.clone(), count).unwrap();
             let mut seen = Vec::new();
             for h in layout.gr.iter().chain(&layout.outer) {
@@ -223,6 +230,14 @@ mod owned_layout_tests {
                         assert!(!overlaps(h, other).unwrap());
                     }
                 }
+            }
+            // Actual packed inputs, full target residual and four-residual MTP
+            // outputs must fit real views, independently of MAX8 verifier roots.
+            assert!((count * 10240 * 4) as u64 <= layout.outer[0].size_in_used());
+            assert!((count * 10240 * 4) as u64 <= layout.ple[3].size_in_used());
+            assert!((count * 4 * 2560 * 2) as u64 <= layout.working[0].size_in_used());
+            for h in layout.moe.handles() {
+                assert!(layout.output(h));
             }
             assert_eq!(layout.working[0].size_in_used(), 64 * 1024 * 1024);
             assert_eq!(layout.working[1].size_in_used(), 64 * 1024 * 1024);

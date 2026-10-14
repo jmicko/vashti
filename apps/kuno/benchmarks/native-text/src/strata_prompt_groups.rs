@@ -2,15 +2,26 @@
 //! rows, one bounded host grouping per layer. All maps remain request-private.
 use super::*;
 use zeroize::Zeroizing;
-pub(crate) const HOST_BYTES: usize = 256 * 1024;
+// Raw packet/readback lease, grouped map/upload and validation scratch peak
+// below1MiB at2048 rows; actual arena bytes are carved from priced owners.
+pub(crate) const HOST_BYTES: usize = 1024 * 1024;
 pub(crate) const RUNTIME_BYTES: u64 = 8 * 1024 * 1024;
-pub(crate) const CAPACITY: usize = 256;
-pub(crate) const LOGICAL: usize = 4100;
+pub(crate) const CAPACITY: usize = allocation::DEFAULT_ROWS;
+// Separate prompt geometry from MAX8 verifier/decode and hardware workgroups.
+pub(crate) const ROUTE_CAPACITY: usize = allocation::DEFAULT_ROWS;
+pub(crate) const ROUTES: usize = ROUTE_CAPACITY * 10;
+pub(crate) const LOGICAL: usize = 32768;
+pub(crate) const RAW_WORDS: usize = 65536;
+pub(crate) const MAP_WORDS: usize = 32768;
+pub(crate) const PROB_WORDS: usize = 32768;
+pub(crate) const STATUS_WORDS: usize = 65536;
+pub(crate) const GU_BYTES: u64 = 16 * 1024 * 1024;
+pub(crate) const PART_BYTES: u64 = 256 * 1024 * 1024;
 const MEMBERS: usize = 1540;
 const LENGTHS: usize = 516;
 const OFFSETS: usize = 1028;
 pub(crate) fn group(raw: &[u32], count: usize) -> Result<Zeroizing<Vec<u32>>> {
-    if !(1..=CAPACITY).contains(&count)
+    if !(1..=ROUTE_CAPACITY).contains(&count)
         || raw.len() != LOGICAL + count * 10
         || raw[..4] != [count as u32, 0, count as u32, 0]
     {
@@ -39,7 +50,7 @@ pub(crate) fn group(raw: &[u32], count: usize) -> Result<Zeroizing<Vec<u32>>> {
         inverse[c] = logical;
         lengths[l] += 1;
     }
-    let mut map = Zeroizing::new(vec![0u32; 8192]);
+    let mut map = Zeroizing::new(vec![0u32; MAP_WORDS]);
     map[..3].copy_from_slice(&[count as u32, 0, count as u32]);
     let mut offsets = Zeroizing::new([0usize; 512]);
     let mut n = 0;
@@ -65,8 +76,8 @@ pub(crate) fn group(raw: &[u32], count: usize) -> Result<Zeroizing<Vec<u32>>> {
     Ok(map)
 }
 pub(crate) fn validate(map: &[u32], count: usize) -> Result<usize> {
-    if !(1..=CAPACITY).contains(&count)
-        || map.len() != 8192
+    if !(1..=ROUTE_CAPACITY).contains(&count)
+        || map.len() != MAP_WORDS
         || map[..3] != [count as u32, 0, count as u32]
     {
         return Err(Error::InvalidBufferLength);
@@ -75,7 +86,7 @@ pub(crate) fn validate(map: &[u32], count: usize) -> Result<usize> {
     if groups == 0 || groups > 512 || groups > count * 10 {
         return Err(Error::InvalidBufferLength);
     }
-    let mut seen = Zeroizing::new([false; CAPACITY * 10]);
+    let mut seen = Zeroizing::new([false; ROUTES]);
     let mut seen_cells = Zeroizing::new([false; 512]);
     let mut cursor = 0;
     for g in 0..groups {
@@ -107,24 +118,159 @@ pub(crate) fn validate(map: &[u32], count: usize) -> Result<usize> {
     }
     Ok(groups)
 }
-/// Borrow the unused upper half of the already-admitted raw-stage root. Raw
-/// transfers remain below64 MiB; these distinct views hold one group's GU and
-/// all actual rank outputs. No larger permanent MAX8 allocation is introduced.
-pub(crate) fn scratch() -> Result<[Handle; 2]> {
-    let root = stages()?[2].clone();
-    if root.size_in_used() != allocation::ROOT_BYTES
-        || root.offset_start.unwrap_or(0) != 0
-        || root.offset_end.unwrap_or(0) != 0
-    {
-        return Err(Error::InvalidBufferLength);
+/// Real prompt-only views. The raw ring remains below64MiB; GU/PART and
+/// router/control cells occupy disjoint upper ranges of the admitted third root.
+/// Decode's MAX8 roots and descriptors are never reinterpreted or enlarged.
+#[derive(Clone)]
+pub(crate) struct Views {
+    pub(crate) raw: Handle,
+    pub(crate) map: Handle,
+    pub(crate) probability: Handle,
+    pub(crate) status: Handle,
+    pub(crate) gu: Handle,
+    pub(crate) partial: Handle,
+}
+impl Views {
+    pub(crate) fn new(root: Handle) -> Result<Self> {
+        if root.size_in_used() != allocation::ROOT_BYTES
+            || root.offset_start.unwrap_or(0) != 0
+            || root.offset_end.unwrap_or(0) != 0
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        let mut cursor: u64 = 64 * 1024 * 1024;
+        let mut take = |bytes: u64| -> Result<Handle> {
+            let first = cursor;
+            let end = first.checked_add(bytes).ok_or(Error::ArithmeticOverflow)?;
+            if bytes == 0 || !bytes.is_multiple_of(256) || end > allocation::ROOT_BYTES {
+                return Err(Error::InvalidBufferLength);
+            }
+            cursor = end;
+            Ok(root
+                .clone()
+                .offset_start(first)
+                .offset_end(allocation::ROOT_BYTES - end))
+        };
+        Ok(Self {
+            gu: take(GU_BYTES)?,
+            partial: take(PART_BYTES)?,
+            raw: take((RAW_WORDS * 4) as u64)?,
+            map: take((MAP_WORDS * 4) as u64)?,
+            probability: take((PROB_WORDS * 4) as u64)?,
+            status: take((STATUS_WORDS * 4) as u64)?,
+        })
     }
-    let view = |start: u64, bytes: u64| {
-        root.clone()
-            .offset_start(start)
-            .offset_end(allocation::ROOT_BYTES - start - bytes)
-    };
-    Ok([
-        view(64 * 1024 * 1024, 2 * 1024 * 1024),
-        view(66 * 1024 * 1024, 32 * 1024 * 1024),
-    ])
+    pub(crate) fn handles(&self) -> [&Handle; 6] {
+        [
+            &self.raw,
+            &self.map,
+            &self.probability,
+            &self.status,
+            &self.gu,
+            &self.partial,
+        ]
+    }
+    /// Header/probability/role flags belong to this layer. Clear their actual
+    /// views; stale proof words must not survive a failed router or expert.
+    pub(crate) fn reset(&self, client: &ComputeClient<WgpuRuntime>) -> Result<()> {
+        use cubecl::prelude::ArrayArg;
+        for h in [&self.raw, &self.probability, &self.status] {
+            let words =
+                usize::try_from(h.size_in_used() / 4).map_err(|_| Error::ArithmeticOverflow)?;
+            crate::private_arena::erase_full_span::launch::<WgpuRuntime>(
+                client,
+                CubeCount::Static(words.div_ceil(64) as u32, 1, 1),
+                CubeDim::new_1d(64),
+                // SAFETY: exact private view and actual word length, in-stream.
+                unsafe { ArrayArg::from_raw_parts(h.clone(), words) },
+            );
+        }
+        Ok(())
+    }
+}
+pub(crate) fn views() -> Result<Views> {
+    STAGES.with(|s| {
+        s.borrow()
+            .as_ref()
+            .map(storage::Storage::moe)
+            .ok_or(Error::InvalidBufferLength)
+    })
+}
+
+#[cfg(test)]
+mod native_route_layout_tests {
+    use super::*;
+    use cubecl_common::stream_id::StreamId;
+    fn packet(count: usize) -> Zeroizing<Vec<u32>> {
+        let mut raw = Zeroizing::new(vec![0u32; LOGICAL + count * 10]);
+        raw[..3].copy_from_slice(&[count as u32, 0, count as u32]);
+        for token in 0..count {
+            for rank in 0..10 {
+                let route = token * 10 + rank;
+                let logical = ((token * 7 + rank * 37) % 512) as u32;
+                raw[MEMBERS + route] = (logical * 13 + 17) % 512;
+                raw[LOGICAL + route] = logical;
+            }
+        }
+        raw
+    }
+    #[test]
+    fn full_native_chunk_roundtrips_every_route_without_raw_packet_overlap() {
+        for count in [1, 8, 256, 257, 1024, ROUTE_CAPACITY] {
+            let raw = packet(count);
+            assert!(MEMBERS + count * 10 <= LOGICAL);
+            assert!(raw.len() <= RAW_WORDS);
+            let grouped = group(&raw, count).unwrap();
+            let groups = validate(&grouped, count).unwrap();
+            for g in 0..groups {
+                let cell = grouped[4 + g];
+                let first = grouped[OFFSETS + g] as usize;
+                let n = grouped[LENGTHS + g] as usize;
+                for &route in &grouped[MEMBERS + first..MEMBERS + first + n] {
+                    assert_eq!(raw[MEMBERS + route as usize], cell);
+                }
+            }
+            assert!(count * 10 <= PROB_WORDS);
+            assert!(ROUTES + count * 10 <= STATUS_WORDS);
+            assert!((count * 1280 * 4) as u64 <= GU_BYTES);
+            assert!((count * 10 * 2560 * 4) as u64 <= PART_BYTES);
+        }
+    }
+    #[test]
+    fn native_tail_corruption_and_duplicate_routes_cannot_pass_grouping() {
+        let count = ROUTE_CAPACITY;
+        let mut raw = packet(count);
+        let tail = count * 10 - 1;
+        let saved = raw[LOGICAL + tail];
+        raw[LOGICAL + tail] = 512;
+        assert!(group(&raw, count).is_err());
+        raw[LOGICAL + tail] = saved;
+        let mut grouped = group(&raw, count).unwrap();
+        let groups = grouped[3] as usize;
+        let last = groups - 1;
+        let end = MEMBERS + (grouped[OFFSETS + last] + grouped[LENGTHS + last]) as usize;
+        grouped[end - 1] = grouped[end - 2];
+        assert!(validate(&grouped, count).is_err());
+        raw[LOGICAL + tail] = raw[LOGICAL + tail - 1];
+        raw[MEMBERS + tail] = raw[MEMBERS + tail - 1];
+        assert!(group(&raw, count).is_err());
+    }
+    #[test]
+    fn actual_moe_descriptors_are_disjoint_from_raw_ring_and_each_other() {
+        let root = Handle::new(StreamId { value: 99 }, allocation::ROOT_BYTES);
+        let v = Views::new(root.clone()).unwrap();
+        let raw_ring = root.offset_end(allocation::ROOT_BYTES - 64 * 1024 * 1024);
+        let views = v.handles();
+        for (i, h) in views.iter().enumerate() {
+            assert!(!storage::overlaps(h, &raw_ring).unwrap());
+            for prior in &views[..i] {
+                assert!(!storage::overlaps(h, prior).unwrap());
+            }
+            assert!(h.offset_start.unwrap() + h.size_in_used() <= allocation::ROOT_BYTES);
+        }
+        assert_eq!(v.raw.size_in_used(), (RAW_WORDS * 4) as u64);
+        assert_eq!(v.map.size_in_used(), (MAP_WORDS * 4) as u64);
+        assert_eq!(v.probability.size_in_used(), (PROB_WORDS * 4) as u64);
+        assert_eq!(v.status.size_in_used(), (STATUS_WORDS * 4) as u64);
+    }
 }

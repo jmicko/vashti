@@ -6,9 +6,10 @@ use super::*;
 #[path = "strata_prompt_qsa_full.rs"]
 mod full;
 pub(crate) use full::{compatibility, run};
-// Fourteen extra attention/merge records at the largest256-row chunk, plus
-// native dead initialization and the two GPU selection passes for12 layers.
-pub(crate) const INFO_BYTES: u64 = 12 * (14 + 3 + 17) * 2048;
+// Two attention/merge records per32 rows, initialization and selection passes
+// for12 layers. Workgroup/attention tile32 is separate from prompt capacity.
+pub(crate) const INFO_BYTES: u64 =
+    12 * (2 * crate::strata_prompt::groups::CAPACITY.div_ceil(32) as u64 + 3 + 17) * 2048;
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 enum Op {

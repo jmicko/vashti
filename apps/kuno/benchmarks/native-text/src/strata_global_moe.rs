@@ -57,13 +57,7 @@ impl Kernel {
             Self::Route => include_str!("strata_global_route.wgsl").into(),
             Self::Reduce => include_str!("strata_global_reduce.wgsl").into(),
             Self::PromptRoute => include_str!("strata_prompt_route.wgsl").into(),
-            Self::PromptReduce => include_str!("strata_global_reduce.wgsl")
-                .replace("p.count>8u", "p.count>256u")
-                .replace(
-                    "arrayLength(&partial)!=262144u",
-                    "arrayLength(&partial)!=8388608u",
-                )
-                .replace("status[80u+route]", "status[2560u+route]"),
+            Self::PromptReduce => include_str!("strata_prompt_reduce.wgsl").into(),
             Self::CpuMerge => include_str!("strata_global_cpu_merge.wgsl").into(),
         }
     }
@@ -338,9 +332,13 @@ impl Workspace {
         ];
         let prompt = crate::strata_prompt::active();
         if prompt {
-            let [gu, partial] = crate::strata_prompt::groups::scratch()?;
-            owners[2] = gu;
-            owners[3] = partial;
+            let views = crate::strata_prompt::groups::views()?;
+            views.reset(client)?;
+            owners[0] = views.map;
+            owners[2] = views.gu;
+            owners[3] = views.partial;
+            owners[4] = views.probability;
+            owners[6] = views.status;
             if owners[1].size_in_used() < (count * 2560 * 4) as u64
                 || owners[5].size_in_used() < (count * 2560 * 4) as u64
                 || data[2].size_in_used() < (count * 512 * 4) as u64
@@ -366,7 +364,14 @@ impl Workspace {
         let args = KernelArguments::new()
             .with_buffer(data[2].clone().binding())
             .with_buffer(full(self.ids[7])?.binding())
-            .with_buffer(owners[0].clone().binding())
+            .with_buffer(
+                if prompt {
+                    crate::strata_prompt::groups::views()?.raw
+                } else {
+                    owners[0].clone()
+                }
+                .binding(),
+            )
             .with_buffer(owners[4].clone().binding())
             .with_buffer(full(fault)?.binding())
             .with_buffer(full(self.ids[9])?.binding())
@@ -393,14 +398,16 @@ impl Workspace {
             // Intel prompt grouping is a single bounded router readback. No
             // activation readback or CPU expert contribution is scheduled.
             let raw = admission.readback_audited(cancel, || {
-                u::read_prefix_u32(
+                u::read_handle_prefix_u32(
                     arena,
-                    self.ids[0],
+                    crate::strata_prompt::groups::views()?.raw,
                     crate::strata_prompt::groups::LOGICAL + count * 10,
                 )
             })?;
             let map = crate::strata_prompt::groups::group(&raw, count)?;
-            let mut bytes = Zeroizing::new(Vec::with_capacity(32768));
+            let mut bytes = Zeroizing::new(Vec::with_capacity(
+                crate::strata_prompt::groups::MAP_WORDS * 4,
+            ));
             for &word in map.iter() {
                 bytes.extend_from_slice(&word.to_le_bytes());
             }
@@ -543,17 +550,23 @@ impl Workspace {
                 );
             }
         }
+        let [partial, probability, status, map] = if prompt {
+            let views = crate::strata_prompt::groups::views()?;
+            [views.partial, views.probability, views.status, views.map]
+        } else {
+            [
+                full(self.ids[2])?,
+                full(self.ids[3])?,
+                full(self.ids[4])?,
+                full(self.ids[0])?,
+            ]
+        };
         let args = KernelArguments::new()
             .with_buffers(vec![
-                if prompt {
-                    crate::strata_prompt::groups::scratch()?[1].clone()
-                } else {
-                    full(self.ids[2])?
-                }
-                .binding(),
-                full(self.ids[3])?.binding(),
-                full(self.ids[4])?.binding(),
-                full(self.ids[0])?.binding(),
+                partial.binding(),
+                probability.binding(),
+                status.binding(),
+                map.binding(),
                 output.binding(),
                 full(self.ids[8])?.binding(),
                 full(fault)?.binding(),

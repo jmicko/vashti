@@ -303,6 +303,18 @@ impl Kernel {
             Self::SharedPair => "SHARED_PAIR",
             Self::SharedMerge => "SHARED_MERGE",
         }));
+        // These kernels consume one linear word interval. Native2048 R has
+        // more than65535 workgroups, so flatten only these genuinely linear
+        // grids; GR/QSA/head geometries retain their independent dimensions.
+        if matches!(
+            self,
+            Self::Copy | Self::Embedding | Self::GrWrite | Self::Pack | Self::Dequant(_)
+        ) {
+            source = source
+                .replace("@builtin(global_invocation_id) id:vec3<u32>",
+                    "@builtin(global_invocation_id) id:vec3<u32>,@builtin(num_workgroups) grid:vec3<u32>")
+                .replace("id.x", "(id.x+id.y*grid.x*256u)");
+        }
         source
     }
 }
@@ -351,6 +363,27 @@ impl CubeTask<AutoCompiler> for Kernel {
         })
     }
 }
+fn dispatch_grid(kernel: Kernel, grid: [usize; 3]) -> Result<[usize; 3]> {
+    if grid.contains(&0) {
+        return Err(Error::InvalidBufferLength);
+    }
+    if grid[0] > 65535
+        && grid[1..] == [1, 1]
+        && matches!(
+            kernel,
+            Kernel::Copy | Kernel::Embedding | Kernel::GrWrite | Kernel::Pack | Kernel::Dequant(_)
+        )
+    {
+        let rows = grid[0].div_ceil(65535);
+        if rows <= 65535 {
+            return Ok([65535, rows, 1]);
+        }
+    }
+    if grid.iter().any(|&g| g > 65535) {
+        return Err(Error::InvalidBufferLength);
+    }
+    Ok(grid)
+}
 pub(crate) fn launch(
     client: &ComputeClient<WgpuRuntime>,
     kernel: Kernel,
@@ -358,6 +391,7 @@ pub(crate) fn launch(
     handles: Vec<Handle>,
     info: [u32; 16],
 ) -> Result<()> {
+    let grid = dispatch_grid(kernel, grid)?;
     if !active()
         || grid.contains(&0)
         || grid.iter().any(|&g| g > 65535)
@@ -420,7 +454,7 @@ pub(crate) fn project(
         || rows == 0
         || rows > 16384
         || count == 0
-        || count > 4096
+        || count > groups::CAPACITY * 4
         || stride < columns
         || out_stride < rows
         || fault.size_in_used() != 4
@@ -943,6 +977,34 @@ pub(crate) fn ab_handles(q: AbHandles<'_>, weights: [Handle; 2]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn native_residual_dispatch_covers_rows_past_the_vulkan_x_limit_once() {
+        use super::*;
+        let words = groups::CAPACITY * 10240;
+        let requested = words.div_ceil(256);
+        assert!(requested > 65535);
+        for kernel in [Kernel::Copy, Kernel::Embedding, Kernel::GrWrite] {
+            let grid = dispatch_grid(kernel, [requested, 1, 1]).unwrap();
+            assert_eq!(grid, [65535, 2, 1]);
+            let mut covered = 0;
+            for y in 0..grid[1] {
+                for x in 0..grid[0] {
+                    let start = (x + y * grid[0]) * 256;
+                    if start < words {
+                        assert_eq!(start, covered);
+                        covered += (words - start).min(256);
+                    }
+                }
+            }
+            assert_eq!(covered, words);
+        }
+        assert!(dispatch_grid(Kernel::GrNorm, [requested, 1, 1]).is_err());
+        assert!(dispatch_grid(Kernel::Copy, [requested, 2, 1]).is_err());
+        assert_eq!(
+            dispatch_grid(Kernel::GrNorm, [4, groups::CAPACITY, 1]).unwrap(),
+            [4, groups::CAPACITY, 1]
+        );
+    }
     fn h(b: &[u8], at: usize) -> f32 {
         half::f16::from_bits(u16::from_le_bytes([b[at], b[at + 1]])).to_f32()
     }
