@@ -5101,3 +5101,54 @@ unit completeness audits. Protected full-engine acceptance precedes speed tests.
 Goal active, full rewrite incomplete, speed gate closed. Root was not needed for
 this source/offline block; last prior shared-shell check had required a password.
 Required Vashti changes: none.
+
+
+### Active Kuno engine handoff — exact raw-slot ranges and early release (2026-10-14)
+
+Source `3ca345c`, isolated `codex/strata-rust-port`, following queue `ac05da8` and
+matrix `d326f23`. Read completion guide **Connected exact raw-slot ranges and
+dequant release**. Actual graph descriptors/copy spans now feed a bounded
+byte-interval RAW/WAR/WAW planner, preserving untouched intervals and allowing
+disjoint slots within one buffer to overlap. Bounds include retained Vec
+capacities after contraction; host queue reservation is now128MiB, cached queue
+vectors still capped64MiB. Hardware/driver memory admission remains unproved.
+
+Prompt dequant binds the actual raw slot, uses local zero offset and exact length/
+role extent checks, retaining original packed formulas and paired products.
+The old generic binder also declared every scratch stage as a hidden BDA read:
+the prompt shader now has no stage-address binding, and its dedicated binder
+retains only genuine original-model GPU/HOST roots. Decode still uses its real
+stage pointer table/dependencies. This is a real interface change, not a
+scheduler-only narrowing. The internal cache key carries `prompt-raw-slot-v2`.
+
+Pinned Intel `prefill.cpp:3975` releases the slot after both dequants and before
+GEMMs. The actual Down-image metadata now forces that same native recording
+boundary; fresh/cached pipelines preserve it, and the copy queue can acquire its
+timeline signal while matrix products continue from the separate dequantized
+owner. Native release keys wrap/preserve original quantization identity, including
+external masks; false leaves ordinary cache keys unchanged. Upload acquisition,
+replay epochs, both pools/resources and final dual-queue completion remain joined.
+No timing switch or speed-driven fallback was introduced.
+
+Release build, strict core/feature-off Clippy,11 queue tests, three raw-view/cache
+tests,308 shader variants (122 physical validations) and32 matrix variants pass.
+No live GPU/model/numerical/state/recovery/speed run; full unit suite not rerun and
+the prior228-failure baseline remains unaudited. No global tensor root, API/Vashti,
+installed service/model residency, installation or release change. Canonical and
+bytecode preserved. Goal active, rewrite incomplete, speed gate closed. Root was
+not needed for source/offline work; last earlier credential check had expired.
+
+**Next port native prompt allocation/placement and configured size policy as a
+connected block.** Capacity256/fixed three128MiB stages do not establish native
+owned/default2048 grouping or cache loans. Do not emulate2048 by eight separately
+routed256-row prompts. Audit the true Intel owned-at-context<=32768 / otherwise
+loaned branch, dependent GR/GDN/QSA/MoE/PLE/MTP owners, INFO/host/runtime charges
+and expert-cache placement together. The receipt explains native STAGE8/DQ2 and
+conditional stream-all/big-ring policy: do not assume a large ring is always
+selected (nonresident share>=10% defaults to eight even for large T).
+
+Then finish complete branch/graph capture, arbitrary input/sampling, verifier/
+repair, source and unit-failure audits, followed by protected whole-engine
+completion/numerical/state/recovery acceptance and only then throughput. The
+passing host schedule oracle does not prove actual GPU overlap or performance.
+Required Vashti changes: none.

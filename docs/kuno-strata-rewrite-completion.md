@@ -46,7 +46,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native FP16 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Queue/branch/capture fidelity, numerical/state acceptance, arbitrary input and supported sampling remain required. See the front/rest/MoE receipts. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Request-local Rust suffix/cost controller exists; audit supported window lengths and coupled sampling rather than fixing to four public-fixture rows. |
 | Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Real greedy verification/state-only repair exists. Audit all active windows and acceptance cases against GDN/QSA/PLE/positions; independent correctness oracle remains missing. |
-| Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Exact ring-slot range declarations/overlap, stable complete branch recordings, scratch lifetimes and physical acceptance remain open; a sequence of independent Wgpu launches is not equivalent. |
+| Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; physical ring overlap, stable complete branch recordings, scratch lifetimes and full execution acceptance remain open; a sequence of independent Wgpu launches is not equivalent. |
 | Request lifecycle and arbitrary input | upstream CLI/session/inference entry points | Current Rust public-fixture gate is not a general engine. Connect bounded arbitrary prompts and request-local sampling/history, with no persistent content, protected memory and orderly erase/close. No gateway/UI work required. |
 
 ## Validation and the speed gate
@@ -2271,3 +2271,133 @@ After range/ring connection, finish whole-native graph/branch recording audit,
 owned/default2048 versus loaned sizing and placement, arbitrary input/sampling,
 verifier repair and all unit/source completeness checks. Only then protected
 whole-engine correctness/completion/state/recovery and speed trials.
+
+
+## Connected exact raw-slot ranges and dequant release (2026-10-14)
+
+Source `3ca345c`, following queue `ac05da8`. The real prompt expert
+path now binds one actual raw slot and releases it at the upstream dequant
+boundary. This closes the prior whole-buffer/unused-stage dependency problem;
+physical overlap, numerical correctness and full-engine acceptance are still
+unproved. Speed gate stays closed.
+
+### Declared ranges are real owned resources
+
+`strata_graph::node_bindings` supplies both the existing same-queue barrier
+accesses and the new cross-queue byte intervals. Shader descriptors use their
+actual Wgpu offset/size, transfers their real source/destination spans, and BDA
+and indirect reads retain their genuine resources. The scheduler does not infer
+narrower accesses from kernel names, routes or private INFO values. Range changes
+remain part of the exact existing capture/replay resource signature.
+
+The interval planner splits at access boundaries, initializes uncovered gaps,
+retains untouched prefixes/suffixes and rejoins equal neighboring states.
+Opposite-queue RAW/WAR/WAW edges cover every overlapping interval. Disjoint views
+within one VkBuffer can overlap; read/read has no new data edge. Same-queue
+barriers may remain conservative without falsely inventing cross-queue read
+ranges. Upload acquisition, monotone replay epochs, both queues' retained owners
+and final joined completion from `ac05da8` remain intact.
+
+Intervals are bounded at262,144, roots at65,536, and actual retained Vec capacities
+at524,288 region cells. Contraction shrinks old oversized capacities, so repeating
+fragmentation on different roots cannot hide unbounded retained allocations
+behind a small live-region count. The core lifetime host charge increases from
+80MiB to128MiB for native queue metadata/planning; the retained recording-vector
+cap remains64MiB. This is a bounded host reservation, not measured driver memory
+or hardware admission evidence.
+
+### Native prompt raw image ABI
+
+`strata_prompt_experts::raw_slot` creates an actual checked descriptor view of
+one of the eight slots in stage2's lower64MiB. It rejects partial/wrong roots,
+misaligned/unequal GU/up geometry and any ring entering the upper scratch half.
+The existing group-ahead copy loop writes those same original role spans. No
+extra weight root, host activation readback, conversion or weight mirror is added.
+
+The shader uses slot-local `p.r0=0`, exact `p.r5` word length and separate GU/up
+versus DOWN extent checks. This fixes the old guard's assumption that a gate
+blob cannot exceed DOWN: the supported IQ4_XS/Q2_0 pair is a counterexample.
+The field remains in the existing64-byte Params packet. The closed Down/GU image
+variant also verifies its role. Original dequantization formulas, paired FP16
+images, row/member mapping, faults and downstream matrix products are unchanged.
+The operator cache identity carries `prompt-raw-slot-v2` for the changed interface.
+
+Inspection found `Sources::bind` also attached all three fetch-stage roots as
+possible BDA reads. Prompt image dequantization never uses their pointer table,
+so retaining those declarations would still serialize its slot copies even with
+correct explicit views. The actual prompt shader now has **no stage-address
+binding**, and `bind_prompt_image` supplies only its original-model address table
+and genuine per-layer GPU/HOST source owners. Those tables are built from
+`gpu.roots()` and original HOST handles before stages attach, not scratch pointers.
+The raw slot is tracked by its own actual descriptor. Ordinary decode consumers
+keep the original stage table and stage read dependencies in `Sources::bind`.
+
+### Release at the connected upstream event
+
+Pinned Intel `prefill.cpp:3958-3983` dequantizes GU and DOWN, records `used[slot]`,
+then submits the two GEMMs with SwiGLU between them. Releasing only at a later
+queue change after GEMMs is conservative but loses the intended overlap.
+
+The Down-image operator now declares a static `KernelMetadata::native_release_after`
+boundary. Fresh and cached pipeline creation carry it into the native Program,
+and the actual planner splits after that node even if the next node uses the
+same compute queue. Its timeline signal can release the real raw slot to the
+copy queue while GU/SwiGLU/DOWN continue from the separate dequantized owner.
+There is no host wait, runtime tuning switch or request-derived marker.
+
+The native release cache wrapper preserves original quant/format Info instead
+of replacing it. Otherwise different DOWN quantizations could reuse the wrong
+pipeline. External read-only masks still wrap that full identity. A false marker
+preserves the ordinary cache key exactly. This is internal laboratory Rust
+metadata; no Kuno/Vashti network API or installed package contract changes.
+
+Validation logs in `/media/jmicko/faststore/kuno-development`:
+
+- `strata-ring-ranges-build-20261014.log`: release core build passes.
+- `strata-ring-ranges-clippy-20261014.log` and
+  `strata-ring-ranges-feature-off-clippy-20261014.log`: strict core and ordinary
+  feature-off release Clippy pass.
+- `strata-ring-ranges-host-tests-20261014.log`: all11 queue tests pass, including
+  two independent pairwise oracles over2,048 operations, mixed partial byte
+  intervals/multiple bindings, preserved gaps/prefixes/suffixes, disjoint slots,
+  real-reader reuse, dequant release before GEMMs and reserved-capacity contraction.
+- `strata-ring-slot-tests-20261014.log`: three actual host view/cache tests pass.
+  Original GU/up/DOWN spans are independently checked for all eight supported
+  quant pairs and slots, including the gate-larger-than-DOWN counterexample;
+  wrong/partial/misaligned/oversized owners are rejected; release keys preserve
+  original quant identities and false preserves ordinary keys.
+- `strata-ring-ranges-shaders-20261014.log`: all308 existing shader variants,
+  including122 physical-pointer validations of the changed image interfaces,
+  and32 cooperative variants pass modern offline validation.
+- `git diff --check` passes; canonical checkout is clean and inherited bytecode
+  remains untracked/preserved.
+
+No live GPU,
+model, numerical/state/recovery or speed run occurs in this block. The full-core
+unit suite is not rerun; the earlier228 failures remain an unaudited baseline.
+Canonical checkout, installed services/model residency and inherited bytecode
+remain preserved.
+
+### Next source work before whole-engine acceptance
+
+Finish native prompt allocation/placement and size selection with **all dependent
+owners and consumers**. Current capacity256 and three fixed128MiB stage roots are
+not proof of native owned/default2048-row prefill or cache lending. Do not emulate
+native2048-row grouping by eight separately routed256-row prompts and call it
+parity. Native Intel defaults owned buffers at context<=32768, loans above that
+unless flags decide otherwise; the actual selected policy must price the expert
+cache and prompt/DQ/raw/PLE/MTP lifetimes together.
+
+Do not assume the eight-slot ring is universally wrong either. Pinned
+`prefill.cpp:100,212-226` uses STAGE8/DQ2, and even large chunks keep STAGE8 when
+nonresident share is at least10% unless stream-all is explicitly forced. Its
+larger byte-budget ring is conditional on stream-all eligibility and T>=1024.
+Implement/audit the actual policy from the admitted model/cache data rather than
+unconditionally reserving384/1024 slots. Retain the exact-slot and dequant-release
+contracts while resizing/borrowing; do not disable them because of incidental
+timings.
+
+Then finish whole graph/branch recording, arbitrary input/supported sampling,
+verifier/repair and the full source/unit-failure audits. Protected whole-engine
+completion, numerical/state/recovery acceptance still precede any live speed
+comparison. Driver allocation and physical queue overlap remain acceptance gaps.
