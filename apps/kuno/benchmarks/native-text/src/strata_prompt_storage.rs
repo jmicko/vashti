@@ -5,13 +5,13 @@
 use super::*;
 // Persistent view tables, construction vectors and the largest live QSA
 // argument bundle are charged together; all GPU bytes remain in old roots.
-pub(crate) const HOST_BYTES: usize = 16 * 1024;
+pub(crate) const HOST_BYTES: usize = 32 * 1024;
 const HALF: u64 = 64 * 1024 * 1024;
 pub(crate) struct Storage {
     working: [Handle; 3],
     gr: [Handle; 4],   // normalized, down, low, up
     gdn: [Handle; 7],  // QKV, Z, H, readout, AB raw/controls/closing
-    qsa: [Handle; 14], // five projections, Q/K/IQ, candidate, out, partial/stats, shared mean/valid
+    qsa: [Handle; 20], // projections/data, partials, pooled, compact norm/score flags and selections
 }
 impl Storage {
     pub(crate) fn new(roots: [Handle; 3]) -> Result<Self> {
@@ -49,7 +49,7 @@ impl Storage {
         )?
         .try_into()
         .map_err(|_| Error::InvalidBufferLength)?;
-        let qsa: [Handle; 14] = carve(
+        let qsa: [Handle; 20] = carve(
             &roots[1],
             &[
                 12288 * capacity,
@@ -66,6 +66,12 @@ impl Storage {
                 crate::strata_qsa::STATS_WORDS * 32,
                 1024 * 128,
                 1024,
+                24 * capacity,
+                2 * capacity,
+                4 * capacity,
+                1024 * capacity,
+                1024 * capacity,
+                2051 * capacity,
             ],
         )?
         .try_into()
@@ -111,7 +117,7 @@ impl Storage {
     pub(crate) fn gdn_controls(&self) -> [Handle; 3] {
         std::array::from_fn(|i| self.gdn[i + 4].clone())
     }
-    pub(crate) fn qsa(&self) -> [Handle; 14] {
+    pub(crate) fn qsa(&self) -> [Handle; 20] {
         self.qsa.clone()
     }
     pub(crate) fn output(&self, h: &Handle) -> bool {

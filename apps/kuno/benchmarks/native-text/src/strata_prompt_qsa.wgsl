@@ -3,6 +3,37 @@
 struct Params {count:u32,start:u32,capacity:u32,input_stride:u32,output_stride:u32,status_stride:u32,heads:u32,width:u32,block_positions:u32,epsilon:f32,theta_scale:f32,reserved:u32}
 fn finite(x:f32)->bool {return abs(x)<=3.4028234663852886e38;}
 // COMMON_END
+// POSITIONS_BEGIN
+@group(0) @binding(0) var<storage,read_write> positions:array<u32>;
+@group(0) @binding(1) var<uniform> p:Params;
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) id:vec3<u32>){if id.x<p.count{positions[p.start+id.x]=p.start+id.x;}}
+// POSITIONS_END
+// JOIN_FLAGS_BEGIN
+@group(0) @binding(0) var<storage,read> flags:array<u32>;
+@group(0) @binding(1) var<storage,read_write> fault:array<atomic<u32>>;
+@group(0) @binding(2) var<uniform> p:Params;
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) id:vec3<u32>){
+    let i=id.x;if i>=p.count*p.status_stride{return;}
+    let row=i/p.status_stride;let col=i%p.status_stride;
+    if flags[p.input_stride+row*p.output_stride+col]!=1u{atomicOr(&fault[0],1u);}
+}
+// JOIN_FLAGS_END
+// COMPATIBILITY_BEGIN
+@group(0) @binding(0) var<storage,read_write> fault:array<atomic<u32>>;
+@group(0) @binding(1) var<storage,read_write> flags:array<u32>;
+@group(0) @binding(2) var<uniform> p:Params;
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) id:vec3<u32>){
+    let t=id.y;let i=id.x;if t>=p.count{return;}
+    let n=p.start+t+1u;var width=p.input_stride;
+    if p.output_stride==1u{width=n/4u;}
+    if p.output_stride==2u{width=n/4u+select(0u,1u,n%4u!=0u);}
+    if p.output_stride==3u{width=24u*min(n,2051u);}
+    if i<width{flags[t*p.status_stride+i]=select(0u,1u,atomicLoad(&fault[0])==0u);}
+}
+// COMPATIBILITY_END
 // POOL_MEAN_BEGIN
 @group(0) @binding(0) var<storage,read> cache:array<u32>;
 @group(0) @binding(1) var<storage,read> candidate:array<u32>;
@@ -61,7 +92,8 @@ var<workgroup> good:array<u32,8>;
 @compute @workgroup_size(256)
 fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(local_invocation_index) tid:u32,@builtin(subgroup_invocation_id) lane:u32,@builtin(subgroup_id) warp:u32,@builtin(subgroup_size) sw:u32) {
     let t=g.y;let head=g.x;let n=select(p.heads,(p.start+t+1u)/4u,p.block_positions!=0u);
-    if sw!=32u||t>=p.count||head>=n||(p.block_positions!=0u&&head<p.start/4u){return;}
+    if sw!=32u{if tid==0u&&t<p.count&&head<n&&(p.block_positions==0u||head>=p.start/4u){status[t*p.status_stride+head]=0u;}return;}
+    if t>=p.count||head>=n||(p.block_positions!=0u&&head<p.start/4u){return;}
     let at=t*p.input_stride+head*p.width;var x=0.0;var ss=0.0;var ok=1u;
     if tid<p.width{x=input[at+tid];ss=x*x;if !finite(x)||!finite(gamma[tid]){ok=0u;}}
     for(var d=16u;d>0u;d/=2u){ss+=subgroupShuffleXor(ss,d);ok&=subgroupShuffleXor(ok,d);}

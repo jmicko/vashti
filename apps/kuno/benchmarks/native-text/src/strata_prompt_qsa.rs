@@ -3,9 +3,12 @@
 //! decode's fused norm. The existing default Intel attention remains selected;
 //! the opt-in XMX kernel and native chunk/queue owners are separate audit rows.
 use super::*;
+#[path = "strata_prompt_qsa_full.rs"]
+mod full;
+pub(crate) use full::{compatibility, run};
 // Fourteen extra attention/merge records at the largest256-row chunk, plus
 // native dead initialization and the two GPU selection passes for12 layers.
-pub(crate) const INFO_BYTES: u64 = 12 * (14 + 3) * 2048;
+pub(crate) const INFO_BYTES: u64 = 12 * (14 + 3 + 17) * 2048;
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 enum Op {
@@ -17,6 +20,11 @@ enum Op {
     PoolNorm,
     PoolRope,
     PoolFlags,
+    SplitFault,
+    GateFault,
+    Positions,
+    JoinFlags,
+    Compatibility,
 }
 impl Op {
     fn lanes(self) -> u32 {
@@ -42,14 +50,17 @@ impl Op {
             "{}\n{}",
             section("COMMON"),
             section(match self {
-                Self::Split => "SPLIT",
+                Self::Split | Self::SplitFault => "SPLIT",
                 Self::Norm => "NORM",
                 Self::Rope => "ROPE",
-                Self::Gate => "GATE",
+                Self::Gate | Self::GateFault => "GATE",
                 Self::PoolMean => "POOL_MEAN",
                 Self::PoolNorm => "NORM",
                 Self::PoolRope => "ROPE",
                 Self::PoolFlags => "POOL_FLAGS",
+                Self::Positions => "POSITIONS",
+                Self::JoinFlags => "JOIN_FLAGS",
+                Self::Compatibility => "COMPATIBILITY",
             })
         );
         if matches!(self, Self::PoolNorm | Self::PoolRope) {
@@ -57,6 +68,33 @@ impl Op {
         }
         if self == Self::PoolNorm {
             result = result.replace("var ok=1u;", "var ok=status[head];");
+        }
+        let edits: &[(&str, &str)] = match self {
+            Self::SplitFault => &[
+                (
+                    "@binding(2) var<storage,read_write> status:array<u32>;",
+                    "@binding(2) var<storage,read_write> fault:array<atomic<u32>>;",
+                ),
+                (
+                    "status[t*12288u+i]=select(0u,1u,good);",
+                    "if !good{atomicOr(&fault[0],1u);}",
+                ),
+            ],
+            Self::GateFault => &[
+                (
+                    "@binding(3) var<storage,read_write> status:array<u32>;",
+                    "@binding(3) var<storage,read_write> fault:array<atomic<u32>>;",
+                ),
+                (
+                    "status[t*p.status_stride+i]=select(0u,1u,oka);status[t*p.status_stride+i+1u]=select(0u,1u,okb);",
+                    "if !oka||!okb{atomicOr(&fault[0],1u);}",
+                ),
+            ],
+            _ => &[],
+        };
+        for &(old, new) in edits {
+            assert!(result.contains(old), "prompt QSA producer source drift");
+            result = result.replace(old, new);
         }
         result
     }
@@ -72,6 +110,11 @@ impl KernelMetadata for Op {
             Self::PoolNorm => "StrataPromptSharedIndexNorm",
             Self::PoolRope => "StrataPromptSharedIndexRope",
             Self::PoolFlags => "StrataPromptSharedIndexClosingFlags",
+            Self::SplitFault => "StrataPromptFullQsaSplit",
+            Self::GateFault => "StrataPromptFullQsaGate",
+            Self::Positions => "StrataPromptQsaPositions",
+            Self::JoinFlags => "StrataPromptCompactHeadFault",
+            Self::Compatibility => "StrataPromptQsaLegacyClosingViews",
         }
     }
     fn id(&self) -> KernelId {
@@ -354,6 +397,11 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
         Op::PoolNorm,
         Op::PoolRope,
         Op::PoolFlags,
+        Op::SplitFault,
+        Op::GateFault,
+        Op::Positions,
+        Op::JoinFlags,
+        Op::Compatibility,
     ]
     .into_iter()
     .map(|k| {

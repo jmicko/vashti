@@ -96,7 +96,7 @@ pub(crate) fn gdn_controls() -> Result<[Handle; 3]> {
             .ok_or(Error::InvalidBufferLength)
     })
 }
-pub(crate) fn qsa_workspace() -> Result<[Handle; 14]> {
+pub(crate) fn qsa_workspace() -> Result<[Handle; 20]> {
     STAGES.with(|s| {
         s.borrow()
             .as_ref()

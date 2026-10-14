@@ -52,6 +52,11 @@ pub(crate) enum Kernel {
     Gate,
     Append,
     PromptAppend,
+    PromptPackFault,
+    PromptAppendFault,
+    PromptAttentionFault,
+    PromptMergeFault,
+    PromptScoreFault,
 }
 impl Kernel {
     fn lanes(self) -> u32 {
@@ -63,8 +68,11 @@ impl Kernel {
             | Self::MtpMerge
             | Self::PromptAttention
             | Self::PromptMerge
+            | Self::PromptAttentionFault
+            | Self::PromptMergeFault
             | Self::Score
             | Self::PromptScore => 256,
+            Self::PromptScoreFault => 256,
             _ => 64,
         }
     }
@@ -81,23 +89,32 @@ impl Kernel {
         let mut s = section("COMMON").to_owned();
         s.push_str(section(match self {
             Self::Norm => "NORM",
-            Self::Pack | Self::PromptPack => "PACK",
+            Self::Pack | Self::PromptPack | Self::PromptPackFault => "PACK",
             Self::Pool => "POOL",
             Self::RetainedPool => "RETAINED_POOL",
             Self::PublishPool => "PUBLISH_POOL",
-            Self::Score | Self::PromptScore => "SCORE",
-            Self::Attention | Self::MtpAttention | Self::PromptAttention => "ATTENTION",
-            Self::Merge | Self::MtpMerge | Self::PromptMerge => "MERGE",
+            Self::Score | Self::PromptScore | Self::PromptScoreFault => "SCORE",
+            Self::Attention
+            | Self::MtpAttention
+            | Self::PromptAttention
+            | Self::PromptAttentionFault => "ATTENTION",
+            Self::Merge | Self::MtpMerge | Self::PromptMerge | Self::PromptMergeFault => "MERGE",
             Self::Gate => "GATE",
-            Self::Append | Self::PromptAppend => "APPEND",
+            Self::Append | Self::PromptAppend | Self::PromptAppendFault => "APPEND",
         }));
-        if self == Self::PromptScore {
+        if matches!(self, Self::PromptScore | Self::PromptScoreFault) {
             s = s.replace(
                 "token*p.input_stride+block*128u+lane*4u",
                 "block*128u+lane*4u",
             );
         }
-        if matches!(self, Self::PromptAttention | Self::PromptMerge) {
+        if matches!(
+            self,
+            Self::PromptAttention
+                | Self::PromptMerge
+                | Self::PromptAttentionFault
+                | Self::PromptMergeFault
+        ) {
             // Keep partial/stats indexed by the local <=32-query tile. Q,
             // selection, output and closing flags retain full chunk indices.
             // In particular selection's 2051-word stride is not256-aligned:
@@ -115,13 +132,90 @@ impl Kernel {
             for binding in ["query", "selected", "output", "status"] {
                 s = s.replace(&format!("{binding}[t*"), &format!("{binding}[query_row*"));
             }
-            if self == Self::PromptAttention {
+            if matches!(self, Self::PromptAttention | Self::PromptAttentionFault) {
                 // Prompt append is ordered before index scoring/attention.
                 // Every causal cell now comes from the authoritative cache.
                 let a = s.find("fn kv(").unwrap();
                 let z = a + s[a..].find("@compute").unwrap();
                 s.replace_range(a..z,"fn kv(token:u32,offset:u32)->f32 {let v=unpack2x16float(cache[token*640u+offset/2u]);return select(v.x,v.y,(offset&1u)!=0u);}\n");
             }
+        }
+        let edits: &[(&str, &str)] = match self {
+            Self::PromptScoreFault => &[
+                (
+                    "@group(0) @binding(5) var<uniform> p:Params;",
+                    "@group(0) @binding(5) var<storage,read_write> fault:array<atomic<u32>>;\n@group(0) @binding(6) var<uniform> p:Params;",
+                ),
+                (
+                    "if sw!=32u || token>=p.count",
+                    "if sw!=32u{if lane==0u{atomicOr(&fault[0],1u);}return;}if token>=p.count",
+                ),
+            ],
+            Self::PromptPackFault => &[
+                (
+                    "@binding(4) var<storage,read_write> status:array<u32>;",
+                    "@binding(4) var<storage,read_write> fault:array<atomic<u32>>;",
+                ),
+                (
+                    "status[t*p.status_stride+first]=flag;status[t*p.status_stride+first+1u]=flag;",
+                    "if !ok{atomicOr(&fault[0],1u);}",
+                ),
+                (
+                    "status[t*p.status_stride+1024u+i-512u]=select(0u,1u,finite(raw) && finite(x));",
+                    "if !finite(raw)||!finite(x){atomicOr(&fault[0],1u);}",
+                ),
+            ],
+            Self::PromptAppendFault => &[
+                (
+                    "@binding(3) var<storage,read_write> status:array<u32>;",
+                    "@binding(3) var<storage,read_write> fault:array<atomic<u32>>;",
+                ),
+                (
+                    "status[t*p.status_stride+first]=select(0u,1u,ok);status[t*p.status_stride+first+1u]=select(0u,1u,ok);",
+                    "if !ok{atomicOr(&fault[0],1u);}",
+                ),
+                (
+                    "status[t*p.status_stride+1024u+i-512u]=select(0u,1u,ok);",
+                    "if !ok{atomicOr(&fault[0],1u);}",
+                ),
+            ],
+            Self::PromptAttentionFault => &[
+                (
+                    "@binding(6) var<storage,read_write> status:array<u32>;",
+                    "@binding(6) var<storage,read_write> fault:array<atomic<u32>>;",
+                ),
+                (
+                    "status[query_row*p.status_stride+(kvh*12u+h)*n+chunk*64u+c]=select(0u,1u,finite(score));",
+                    "",
+                ),
+                (
+                    "for(var i=tid;i<here*12u;i+=256u) {let h=i/here;let c=i%here;status[query_row*p.status_stride+(kvh*12u+h)*n+chunk*64u+c]=0u;}",
+                    "if tid==0u{atomicOr(&fault[0],1u);}",
+                ),
+                (
+                    "if sw!=32u || t>=p.count",
+                    "if sw!=32u{if tid==0u{atomicOr(&fault[0],1u);}return;}if t>=p.count",
+                ),
+            ],
+            Self::PromptMergeFault => &[
+                (
+                    "@binding(3) var<storage,read_write> status:array<u32>;",
+                    "@binding(3) var<storage,read_write> fault:array<atomic<u32>>;",
+                ),
+                (
+                    "status[query_row*p.status_stride+h]=valid;",
+                    "if valid!=1u{atomicOr(&fault[0],1u);}",
+                ),
+                (
+                    "if sw!=32u || h>=24u",
+                    "if sw!=32u{if d==0u{atomicOr(&fault[0],1u);}return;}if h>=24u",
+                ),
+            ],
+            _ => &[],
+        };
+        for &(old, new) in edits {
+            assert!(s.contains(old), "prompt QSA closing source drift");
+            s = s.replace(old, new);
         }
         if matches!(self, Self::MtpAttention | Self::MtpMerge) {
             s = s.replace(
@@ -162,6 +256,11 @@ impl KernelMetadata for Kernel {
             Self::Gate => "StrataQsaGate",
             Self::Append => "StrataQsaAppendFp16",
             Self::PromptAppend => "StrataPromptQsaAppendFp16",
+            Self::PromptPackFault => "StrataPromptFullQsaPack",
+            Self::PromptAppendFault => "StrataPromptFullQsaAppend",
+            Self::PromptAttentionFault => "StrataPromptFullAttentionBatch32",
+            Self::PromptMergeFault => "StrataPromptFullMergeBatch32",
+            Self::PromptScoreFault => "StrataPromptFullIndexerScore",
         }
     }
     fn id(&self) -> KernelId {
@@ -205,13 +304,23 @@ pub(crate) fn launch(
         || grid.iter().any(|&x| x > 65535)
         || handles.is_empty()
         || handles.iter().any(|h| h.stream != handles[0].stream)
-        || !(1..=if matches!(kernel, Kernel::PromptAttention | Kernel::PromptMerge)
-            && crate::strata_prompt::active()
+        || !(1..=if matches!(
+            kernel,
+            Kernel::PromptAttention
+                | Kernel::PromptMerge
+                | Kernel::PromptAttentionFault
+                | Kernel::PromptMergeFault
+        ) && crate::strata_prompt::active()
         {
             32
         } else if matches!(
             kernel,
-            Kernel::PromptScore | Kernel::PromptPack | Kernel::PromptAppend
+            Kernel::PromptScore
+                | Kernel::PromptPack
+                | Kernel::PromptAppend
+                | Kernel::PromptPackFault
+                | Kernel::PromptAppendFault
+                | Kernel::PromptScoreFault
         ) && crate::strata_prompt::active()
         {
             256
@@ -221,7 +330,13 @@ pub(crate) fn launch(
             .contains(&info[0])
         || info[1].checked_add(info[0]).is_none_or(|end| end > info[2])
         || info[2] > 4096
-        || if matches!(kernel, Kernel::PromptAttention | Kernel::PromptMerge) {
+        || if matches!(
+            kernel,
+            Kernel::PromptAttention
+                | Kernel::PromptMerge
+                | Kernel::PromptAttentionFault
+                | Kernel::PromptMergeFault
+        ) {
             info[11].checked_add(info[0]).is_none_or(|end| end > 256)
                 || info[1]
                     .checked_add(info[11])
@@ -275,6 +390,11 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
         Kernel::Gate,
         Kernel::Append,
         Kernel::PromptAppend,
+        Kernel::PromptPackFault,
+        Kernel::PromptAppendFault,
+        Kernel::PromptAttentionFault,
+        Kernel::PromptMergeFault,
+        Kernel::PromptScoreFault,
     ]
     .into_iter()
     .map(|k| {

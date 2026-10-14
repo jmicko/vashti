@@ -1222,6 +1222,67 @@ impl ResidentQsa<'_> {
             qsa::THETA.powf(-2.0 / 64.0).to_bits(),
             0,
         ];
+        if prompt {
+            match op {
+                Operation::Split => {
+                    native::prompt::run(
+                        arena,
+                        info,
+                        [
+                            public.vectors[0].clone(),
+                            public.vectors[1].clone(),
+                            public.vectors[2].clone(),
+                            public.vectors[3].clone(),
+                        ],
+                        [
+                            h(self.ids[CACHE])?,
+                            h(self.ids[POSITIONS])?,
+                            h(self.ids[POOLED])?,
+                            h(fault_id)?,
+                        ],
+                    )?;
+                    // The native full family uses only compact/scoped flags
+                    // and the true model fault. Keep the existing MAX8 receipt
+                    // readers explicit until the large prompt owner takes over.
+                    for i in 0..11 {
+                        let mode = match i {
+                            5 | 6 => 1,
+                            7 => 2,
+                            8 => 3,
+                            _ => 0,
+                        };
+                        native::prompt::compatibility(
+                            arena,
+                            info,
+                            h(ids[FLAGS + i])?,
+                            h(fault_id)?,
+                            l.widths[FLAGS + i],
+                            mode,
+                        )?;
+                    }
+                    native::prompt::compatibility(
+                        arena,
+                        info,
+                        h(ids[APPEND])?,
+                        h(fault_id)?,
+                        l.widths[APPEND],
+                        0,
+                    )?;
+                    return Ok(true);
+                }
+                Operation::Norm(_)
+                | Operation::Pack
+                | Operation::Pool
+                | Operation::PoolNorm
+                | Operation::Score
+                | Operation::Selector
+                | Operation::Logits
+                | Operation::Softmax
+                | Operation::Values
+                | Operation::Append => return Ok(true),
+                _ => {}
+            }
+        }
         match op {
             Operation::Split if crate::strata_prompt::active() => {
                 native::prompt::split(arena, info, [view(0)?, view(5)?, h(ids[FLAGS])?])?;
