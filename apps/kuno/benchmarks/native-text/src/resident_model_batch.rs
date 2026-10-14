@@ -81,7 +81,9 @@ const NATIVE_GR_MAIN: u64 = if cfg!(feature = "strata-intel-core") {
 };
 const PUBLIC_MAIN: u64 = 25_165_824;
 const CORE_CACHE_HOST: usize = if cfg!(feature = "strata-intel-core") {
-    crate::strata_global_adapt::HOST_BYTES + kuno_text::cpu_expert::native::HOST_BYTES
+    crate::strata_global_adapt::HOST_BYTES
+        + kuno_text::cpu_expert::native::HOST_BYTES
+        + crate::strata_prompt::groups::HOST_BYTES
 } else {
     0
 };
@@ -1714,7 +1716,13 @@ fn runtime_bytes(head_tiles: u64) -> Result<u64> {
     // Keep the helper's conservative embedding eight-record INFO envelope.
     // These nine actual outer/scalar clears are a separate one-time category.
     const OUTER_CLEAR_INFO: u64 = 9 * 2048;
-    const WITHOUT_HEAD: u64 = 61_751_296 + OUTER_CLEAR_INFO;
+    const WITHOUT_HEAD: u64 = 61_751_296
+        + OUTER_CLEAR_INFO
+        + if cfg!(feature = "strata-intel-core") {
+            crate::strata_prompt::groups::RUNTIME_BYTES
+        } else {
+            0
+        };
     let dispatches = head_tiles
         .checked_mul(2)
         .and_then(|n| n.checked_add(1))

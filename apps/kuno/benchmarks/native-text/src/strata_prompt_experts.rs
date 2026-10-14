@@ -189,7 +189,7 @@ pub(crate) fn enqueue(
 ) -> Result<()> {
     sources.validate_graph_ready(graph)?;
     let stage = stages()?;
-    if !(1..=8).contains(&count)
+    if !(1..=super::groups::CAPACITY).contains(&count)
         || fault.size_in_used() != 4
         || owners
             .iter()
@@ -198,8 +198,8 @@ pub(crate) fn enqueue(
             .any(|h| h.stream != owners[0].stream)
         || owners[0].size_in_used() != 32768
         || owners[1].size_in_used() < (count * 2560 * 4) as u64
-        || owners[2].size_in_used() != 262144
-        || owners[3].size_in_used() != 1048576
+        || owners[2].size_in_used() != 2 * 1024 * 1024
+        || owners[3].size_in_used() != 32 * 1024 * 1024
         || owners[6].size_in_used() != 32768
         || (DEQUANT_SLOTS * DQ_WORDS * 4) as u64 > stage[1].size_in_used()
     {
@@ -223,15 +223,12 @@ pub(crate) fn enqueue(
     }
     let role_bytes = projections.map(|p| p.expert_bytes());
     let raw_stride = role_bytes.iter().sum::<usize>();
-    if (RAW_SLOTS * raw_stride) as u64 > stage[2].size_in_used() {
+    if (RAW_SLOTS * raw_stride) as u64 > 64 * 1024 * 1024 {
         return Err(Error::InvalidBufferLength);
     }
     // Native Intel prefill groups on the host once per layer. This is a bounded
     // routing-only readback, not decode's CPU expert/input contribution.
-    let (_, jobs, groups) = crate::strata_global_cpu::split(map, count, |_| Ok(false))?;
-    if !jobs.is_empty() || groups != map[3] as usize {
-        return Err(Error::InvalidBufferLength);
-    }
+    let groups = super::groups::validate(map, count)?;
     let mut issued = 0;
     for group in 0..groups {
         while issued < groups && issued < group + RAW_SLOTS {
@@ -297,7 +294,7 @@ pub(crate) fn enqueue(
             }
             args = args.with_buffers(vec![
                 owners[0].clone().binding(),
-                stage[2].clone().binding(),
+                stage[2].clone().offset_end(64 * 1024 * 1024).binding(),
                 stage[1].clone().binding(),
                 fault.clone().binding(),
             ]);
@@ -326,7 +323,13 @@ pub(crate) fn enqueue(
             owners[6].clone().binding(),
             fault.clone().binding(),
         ]);
-        dispatch(client, Op::Gemm, [1280 / 8, 1, 1], args, base)?;
+        dispatch(
+            client,
+            Op::Gemm,
+            [1280 / 8, (map[516 + group] as usize).div_ceil(8), 1],
+            args,
+            base,
+        )?;
         let args = KernelArguments::new().with_buffers(vec![
             owners[0].clone().binding(),
             owners[2].clone().binding(),
@@ -354,7 +357,13 @@ pub(crate) fn enqueue(
             owners[6].clone().binding(),
             fault.clone().binding(),
         ]);
-        dispatch(client, Op::Gemm, [2560 / 8, 1, 1], args, down)?;
+        dispatch(
+            client,
+            Op::Gemm,
+            [2560 / 8, (map[516 + group] as usize).div_ceil(8), 1],
+            args,
+            down,
+        )?;
     }
     Ok(())
 }

@@ -46,6 +46,8 @@ fn reject() -> Error {
 enum Kernel {
     Route,
     Reduce,
+    PromptRoute,
+    PromptReduce,
     CpuMerge,
 }
 impl Kernel {
@@ -53,6 +55,14 @@ impl Kernel {
         match self {
             Self::Route => include_str!("strata_global_route.wgsl").into(),
             Self::Reduce => include_str!("strata_global_reduce.wgsl").into(),
+            Self::PromptRoute => include_str!("strata_prompt_route.wgsl").into(),
+            Self::PromptReduce => include_str!("strata_global_reduce.wgsl")
+                .replace("p.count>8u", "p.count>256u")
+                .replace(
+                    "arrayLength(&partial)!=262144u",
+                    "arrayLength(&partial)!=8388608u",
+                )
+                .replace("status[80u+route]", "status[2560u+route]"),
             Self::CpuMerge => include_str!("strata_global_cpu_merge.wgsl").into(),
         }
     }
@@ -62,6 +72,8 @@ impl KernelMetadata for Kernel {
         match self {
             Self::Route => "StrataGlobalRouteAndPlan",
             Self::Reduce => "StrataGlobalRouteReduceAndStamp",
+            Self::PromptRoute => "StrataPromptNativeRoutes",
+            Self::PromptReduce => "StrataPromptRankReduceAndStamp",
             Self::CpuMerge => "StrataGlobalNativeCpuJoin",
         }
     }
@@ -205,7 +217,12 @@ impl Workspace {
         count: usize,
     ) -> Result<()> {
         self.validate_idle()?;
-        if graph.binding_id() != self.binding || !(1..=8).contains(&count) {
+        let capacity = if crate::strata_prompt::active() {
+            crate::strata_prompt::groups::CAPACITY
+        } else {
+            8
+        };
+        if graph.binding_id() != self.binding || !(1..=capacity).contains(&count) {
             return Err(reject());
         }
         self.epoch = self.epoch.checked_add(1).ok_or(Error::ArithmeticOverflow)?;
@@ -241,7 +258,7 @@ impl Workspace {
         let client = arena.client().map_err(u::fault)?;
         u::zero_many(arena, &self.ids[..7])?;
         let full = |id| arena.handle(id).cloned().map_err(u::fault);
-        let owners = [
+        let mut owners = [
             full(self.ids[0])?,
             full(input)?,
             full(self.ids[1])?,
@@ -250,14 +267,27 @@ impl Workspace {
             full(output)?,
             full(self.ids[4])?,
         ];
+        let prompt = crate::strata_prompt::active();
+        if prompt {
+            let [gu, partial] = crate::strata_prompt::groups::scratch()?;
+            owners[2] = gu;
+            owners[3] = partial;
+            if owners[1].size_in_used() < (count * 2560 * 4) as u64
+                || owners[5].size_in_used() < (count * 2560 * 4) as u64
+            {
+                return Err(reject());
+            }
+        }
         let spans = g::Spans::new([0, 0, 2560, 0, 640, 0, 2560, 0, 0, 2560, 0]);
         let geometry = *self.geometries.get(layer).ok_or_else(reject)?;
-        spans
-            .validate(
-                geometry,
-                owners.each_ref().map(|h| h.size_in_used() as usize / 4),
-            )
-            .map_err(Error::InvalidFormat)?;
+        if !prompt {
+            spans
+                .validate(
+                    geometry,
+                    owners.each_ref().map(|h| h.size_in_used() as usize / 4),
+                )
+                .map_err(Error::InvalidFormat)?;
+        }
         let args = KernelArguments::new()
             .with_buffer(full(logits)?.binding())
             .with_buffer(full(self.ids[7])?.binding())
@@ -269,18 +299,39 @@ impl Workspace {
                 count as u32,
                 layer as u32,
                 self.epoch,
-                u32::from(self.verify_usage) | (u32::from(crate::strata_prompt::active()) << 1),
+                u32::from(self.verify_usage),
             ]));
         // SAFETY: exact private routing/remap roots; no host readback or cache
         // transfer can bypass the owning graph's dependencies.
         unsafe {
-            client.launch_unchecked(Box::new(Kernel::Route), CubeCount::Static(1, 1, 1), args);
+            client.launch_unchecked(
+                Box::new(if prompt {
+                    Kernel::PromptRoute
+                } else {
+                    Kernel::Route
+                }),
+                CubeCount::Static(1, 1, 1),
+                args,
+            );
         }
-        if crate::strata_prompt::active() {
+        if prompt {
             // Intel prompt grouping is a single bounded router readback. No
             // activation readback or CPU expert contribution is scheduled.
-            let map = admission
-                .readback_audited(cancel, || u::read_prefix_u32(arena, self.ids[0], 804))?;
+            let raw = admission.readback_audited(cancel, || {
+                u::read_prefix_u32(
+                    arena,
+                    self.ids[0],
+                    crate::strata_prompt::groups::LOGICAL + count * 10,
+                )
+            })?;
+            let map = crate::strata_prompt::groups::group(&raw, count)?;
+            let mut bytes = Zeroizing::new(Vec::with_capacity(32768));
+            for &word in map.iter() {
+                bytes.extend_from_slice(&word.to_le_bytes());
+            }
+            client
+                .write_private(owners[0].clone(), std::mem::take(&mut *bytes))
+                .map_err(u::fault)?;
             crate::strata_prompt::experts::enqueue(
                 client,
                 graph,
@@ -351,6 +402,10 @@ impl Workspace {
         }
         let client = arena.client().map_err(u::fault)?;
         let full = |id| arena.handle(id).cloned().map_err(u::fault);
+        let prompt = crate::strata_prompt::active();
+        if prompt && cpu.is_some() {
+            return Err(reject());
+        }
         if let Some(cpu) = cpu {
             if cpu.values().len() != 80 * 2560 {
                 return Err(reject());
@@ -386,7 +441,12 @@ impl Workspace {
         }
         let args = KernelArguments::new()
             .with_buffers(vec![
-                full(self.ids[2])?.binding(),
+                if prompt {
+                    crate::strata_prompt::groups::scratch()?[1].clone()
+                } else {
+                    full(self.ids[2])?
+                }
+                .binding(),
                 full(self.ids[3])?.binding(),
                 full(self.ids[4])?.binding(),
                 full(self.ids[0])?.binding(),
@@ -408,7 +468,11 @@ impl Workspace {
         // sticky fault joins every row and the whole-model acceptance stamp.
         unsafe {
             client.launch_unchecked(
-                Box::new(Kernel::Reduce),
+                Box::new(if prompt {
+                    Kernel::PromptReduce
+                } else {
+                    Kernel::Reduce
+                }),
                 CubeCount::Static(10, count as u32, 1),
                 args,
             );
@@ -517,16 +581,22 @@ impl Workspace {
     }
 }
 pub(crate) fn compiled_sources() -> Vec<CompiledKernel<AutoCompiler>> {
-    [Kernel::Route, Kernel::Reduce, Kernel::CpuMerge]
-        .into_iter()
-        .map(|k| {
-            k.compile(
-                &mut AutoCompiler::Wgsl(Default::default()),
-                &Default::default(),
-                ExecutionMode::Unchecked,
-                StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
-            )
-            .unwrap()
-        })
-        .collect()
+    [
+        Kernel::Route,
+        Kernel::Reduce,
+        Kernel::PromptRoute,
+        Kernel::PromptReduce,
+        Kernel::CpuMerge,
+    ]
+    .into_iter()
+    .map(|k| {
+        k.compile(
+            &mut AutoCompiler::Wgsl(Default::default()),
+            &Default::default(),
+            ExecutionMode::Unchecked,
+            StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+        )
+        .unwrap()
+    })
+    .collect()
 }

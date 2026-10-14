@@ -20,6 +20,8 @@ use kuno_text::{Error, Result};
 use std::cell::RefCell;
 #[path = "strata_prompt_experts.rs"]
 pub(crate) mod experts;
+#[path = "strata_prompt_groups.rs"]
+pub(crate) mod groups;
 thread_local! {static STAGES:RefCell<Option<[Handle;3]>>=const{RefCell::new(None)};}
 pub(crate) struct Scope;
 impl Scope {
