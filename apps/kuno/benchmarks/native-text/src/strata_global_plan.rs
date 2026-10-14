@@ -12,9 +12,11 @@ pub(crate) const EXPERTS: usize = 512;
 pub(crate) const RANKED_PAIRS: usize = LAYERS * EXPERTS;
 pub(crate) const ALIGNMENT: u64 = 256;
 pub(crate) const MAX_PIECE_BYTES: u64 = 128 * 1024 * 1024;
-// Original constructor's complete source/target/inspection envelope. Keep one
-// public upload window bounded instead of allocating a whole-model RAM mirror.
-pub(crate) const MAX_GPU_CHUNK_BYTES: u64 = 16 * 1024 * 1024;
+// Persistent cache contiguity and startup host staging are separate quantities.
+// Large actual roots permit native cache lending; public original-byte uploads
+// remain bounded16MiB and never mirror an entire root/model in system RAM.
+pub(crate) const MAX_GPU_CHUNK_BYTES: u64 = 512 * 1024 * 1024;
+pub(crate) const PUBLIC_UPLOAD_WINDOW: u64 = 16 * 1024 * 1024;
 const PROFILE: &[u8] = include_bytes!("../fixtures/strata-bank-profile/expert-profile.bin");
 fn reject() -> Error {
     Error::InvalidFormat("Strata global expert allocation")
@@ -479,57 +481,91 @@ impl Plan {
             })
         }
     }
-    /// Startup-only bounded original GGUF reads. The destination is one admitted
-    /// PUBLIC upload window, not a decoded mirror or a second on-disk model.
-    pub(crate) fn load_chunk(
+    /// Visit exact original role spans intersecting a physical cache window.
+    /// Padding has no source; the caller must initialize the destination first.
+    /// The callback receives pair/role/source-byte offset/destination range.
+    fn chunk_range(
         &self,
-        graph: BoundGraph<'_, '_>,
         index: usize,
-        destination: &mut [u8],
+        first: u64,
+        bytes: usize,
+        mut visit: impl FnMut(RankedPair, usize, u64, std::ops::Range<usize>) -> Result<()>,
     ) -> Result<()> {
-        self.check_binding(graph)?;
         let chunk = self.chunks.get(index).ok_or_else(reject)?;
-        if destination.len() as u64 != chunk.physical_bytes {
+        let end = first
+            .checked_add(bytes as u64)
+            .ok_or(Error::ArithmeticOverflow)?;
+        if bytes == 0 || end > chunk.physical_bytes {
             return Err(Error::InvalidBufferLength);
         }
-        destination.fill(0);
         for slot_index in chunk.first_slot..chunk.first_slot + chunk.slots {
-            let slot = self.slots[slot_index];
-            let cell = self.cells[slot_index];
-            let l = &self.layers[slot.pair.layer];
+            let slot = self.slots.get(slot_index).ok_or_else(reject)?;
+            let cell = self.cells.get(slot_index).ok_or_else(reject)?;
             if cell.chunk != index {
                 return Err(reject());
             }
-            let mut at = usize::try_from(cell.offset).map_err(|_| Error::ArithmeticOverflow)?;
-            for (role, name) in [
-                "ffn_gate_exps.weight",
-                "ffn_up_exps.weight",
-                "ffn_down_exps.weight",
-            ]
-            .into_iter()
-            .enumerate()
+            let mut at = cell.offset;
+            for (role, &role_bytes) in self.layers[slot.pair.layer]
+                .role_expert_bytes
+                .iter()
+                .enumerate()
             {
-                let t = graph.tensor(&format!("blk.{}.{name}", slot.pair.layer))?;
-                let bytes = usize::try_from(l.role_expert_bytes[role])
-                    .map_err(|_| Error::ArithmeticOverflow)?;
-                let end = at.checked_add(bytes).ok_or(Error::ArithmeticOverflow)?;
-                let target = destination
-                    .get_mut(at..end)
-                    .ok_or(Error::InvalidBufferLength)?;
-                t.read_range(
-                    (slot.pair.expert as u64)
-                        .checked_mul(bytes as u64)
-                        .ok_or(Error::ArithmeticOverflow)?,
-                    target,
-                )?;
-                at = end;
+                let role_end = at
+                    .checked_add(role_bytes)
+                    .ok_or(Error::ArithmeticOverflow)?;
+                if role_end > chunk.logical_bytes {
+                    return Err(reject());
+                }
+                let lo = first.max(at);
+                let hi = end.min(role_end);
+                if lo < hi {
+                    let dst = usize::try_from(lo - first).map_err(|_| Error::ArithmeticOverflow)?;
+                    let len = usize::try_from(hi - lo).map_err(|_| Error::ArithmeticOverflow)?;
+                    visit(slot.pair, role, lo - at, dst..dst + len)?;
+                }
+                at = role_end;
             }
         }
+        Ok(())
+    }
+    /// Fill one bounded public startup/refill window from original GGUF bytes.
+    /// This is model-only data, never a private prompt/activation upload path.
+    pub(crate) fn load_chunk_range(
+        &self,
+        graph: BoundGraph<'_, '_>,
+        index: usize,
+        first: u64,
+        destination: &mut [u8],
+    ) -> Result<()> {
+        self.check_binding(graph)?;
+        if destination.len() as u64 > PUBLIC_UPLOAD_WINDOW {
+            return Err(Error::InvalidBufferLength);
+        }
+        destination.fill(0);
+        self.chunk_range(
+            index,
+            first,
+            destination.len(),
+            |pair, role, source_first, range| {
+                let name = [
+                    "ffn_gate_exps.weight",
+                    "ffn_up_exps.weight",
+                    "ffn_down_exps.weight",
+                ][role];
+                let tensor = graph.tensor(&format!("blk.{}.{name}", pair.layer))?;
+                let role_bytes = self.layers[pair.layer].role_expert_bytes[role];
+                let source = (pair.expert as u64)
+                    .checked_mul(role_bytes)
+                    .and_then(|at| at.checked_add(source_first))
+                    .ok_or(Error::ArithmeticOverflow)?;
+                tensor.read_range(source, &mut destination[range])
+            },
+        )?;
         graph.verify_unchanged()?;
         Ok(())
     }
     pub(crate) fn receipt(&self) -> serde_json::Value {
-        serde_json::json!({"global_profile_prefix":true,"ranked_pairs":self.slots.len(),"budget_bytes":self.budget,"strata_arena_bytes":self.arena_bytes,"resident_logical_bytes":self.resident_logical_bytes,"resident_piece_bytes":self.resident_piece_bytes,"resident_chunks":self.chunks.len(),"public_load_window_bytes":self.chunks.iter().map(|c|c.physical_bytes).max().unwrap_or(0),"host_logical_bytes":self.host_logical_bytes,"host_piece_bytes":self.host_piece_bytes,"layer_resident_counts":self.layers.iter().map(|l|l.resident).collect::<Vec<_>>(),"gpu_root_consumers_connected":false,"request_routes_or_scores_used":false})
+        serde_json::json!({"global_profile_prefix":true,"ranked_pairs":self.slots.len(),"budget_bytes":self.budget,"strata_arena_bytes":self.arena_bytes,"resident_logical_bytes":self.resident_logical_bytes,"resident_piece_bytes":self.resident_piece_bytes,"resident_chunks":self.chunks.len(),"public_load_window_bytes":self.chunks.iter().map(|c|c.physical_bytes.min(PUBLIC_UPLOAD_WINDOW)).max().unwrap_or(0),"public_gpu_root_max_bytes":MAX_GPU_CHUNK_BYTES,"host_logical_bytes":self.host_logical_bytes,"host_piece_bytes":self.host_piece_bytes,"layer_resident_counts":self.layers.iter().map(|l|l.resident).collect::<Vec<_>>(),"gpu_root_consumers_connected":false,"request_routes_or_scores_used":false})
     }
 }
 /// Exact original profile metadata, also used by independent host-only fixtures.
@@ -552,6 +588,104 @@ fn pinned_roles() -> [[u64; 3]; LAYERS] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn bounded_cache_windows_reassemble_original_roles_and_all_padding() {
+        // Independent whole byte stream for a small heterogeneous public model:
+        // concatenate gate/up/down, then align each expert. This does not use
+        // chunk_range's intersection walk or its Cell offsets as an oracle.
+        let roles = std::array::from_fn(|l| [4 * (l as u64 % 5 + 1), 12, 20]);
+        let plan = Plan::from_roles(roles, 8192, ALIGNMENT).unwrap();
+        assert_eq!(plan.chunks.len(), 1);
+        let mut original = Vec::new();
+        let value = |pair: RankedPair, role: usize, i: u64| {
+            (pair.layer as u64 * 17 + pair.expert as u64 * 29 + role as u64 * 47 + i * 13) as u8
+        };
+        for slot in &plan.slots {
+            for role in 0..3 {
+                for i in 0..roles[slot.pair.layer][role] {
+                    original.push(value(slot.pair, role, i));
+                }
+            }
+            original.resize(align(original.len() as u64, ALIGNMENT).unwrap() as usize, 0);
+        }
+        original.resize(plan.chunks[0].physical_bytes as usize, 0);
+        for width in [1usize, 7, 31, 257, 1023, original.len()] {
+            let mut joined = Vec::new();
+            for first in (0..original.len()).step_by(width) {
+                let n = width.min(original.len() - first);
+                let mut window = vec![0u8; n];
+                let mut writers = vec![false; n];
+                plan.chunk_range(0, first as u64, n, |pair, role, source, target| {
+                    for (j, dst) in target.enumerate() {
+                        assert!(!writers[dst]);
+                        writers[dst] = true;
+                        window[dst] = value(pair, role, source + j as u64);
+                    }
+                    Ok(())
+                })
+                .unwrap();
+                joined.extend(window);
+            }
+            assert_eq!(joined, original);
+        }
+        assert!(plan.chunk_range(0, 0, 0, |_, _, _, _| Ok(())).is_err());
+        assert!(
+            plan.chunk_range(0, original.len() as u64, 1, |_, _, _, _| Ok(()))
+                .is_err()
+        );
+        assert!(
+            plan.chunk_range(0, u64::MAX, 2, |_, _, _, _| Ok(()))
+                .is_err()
+        );
+        assert!(plan.chunk_range(1, 0, 1, |_, _, _, _| Ok(())).is_err());
+    }
+    #[test]
+    fn persistent_cache_roots_and_upload_window_have_independent_real_bounds() {
+        let roles = pinned_roles();
+        let plan = Plan::from_roles(roles, 24 * 1024 * 1024 * 1024, ALIGNMENT).unwrap();
+        assert!(
+            plan.chunks
+                .iter()
+                .any(|c| c.physical_bytes > PUBLIC_UPLOAD_WINDOW)
+        );
+        assert!(plan.chunks.len() < 64);
+        assert_eq!(
+            plan.resident_piece_bytes,
+            plan.chunks.iter().map(|c| c.physical_bytes).sum::<u64>()
+        );
+        for (i, chunk) in plan.chunks.iter().enumerate() {
+            assert!(chunk.physical_bytes <= MAX_GPU_CHUNK_BYTES);
+            let mut cursor = 0;
+            for (local, cell) in plan.cells[chunk.first_slot..chunk.first_slot + chunk.slots]
+                .iter()
+                .enumerate()
+            {
+                assert_eq!(cell.chunk, i);
+                assert_eq!(cell.offset, cursor);
+                cursor += plan.slots[chunk.first_slot + local].aligned_bytes;
+            }
+            assert_eq!(cursor, chunk.logical_bytes);
+            // Exercise both sides of each16MiB window and the final physical
+            // tail without allocating a512MiB synthetic tensor or loading GGUF.
+            for first in [
+                0,
+                (PUBLIC_UPLOAD_WINDOW - 1).min(chunk.physical_bytes - 1),
+                chunk.physical_bytes.saturating_sub(17),
+            ] {
+                let n = (chunk.physical_bytes - first).min(33) as usize;
+                plan.chunk_range(i, first, n, |pair, role, source, target| {
+                    assert!(source + target.len() as u64 <= roles[pair.layer][role]);
+                    assert!(target.end <= n);
+                    Ok(())
+                })
+                .unwrap();
+            }
+        }
+        assert_eq!(
+            plan.receipt()["public_load_window_bytes"],
+            PUBLIC_UPLOAD_WINDOW
+        );
+    }
     #[test]
     fn global_host_reservation_charges_only_the_complement_for_empty_partial_and_full_tiers() {
         let roles = pinned_roles();

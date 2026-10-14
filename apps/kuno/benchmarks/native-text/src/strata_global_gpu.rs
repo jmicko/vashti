@@ -36,13 +36,10 @@ impl Cache {
             }
             let size =
                 usize::try_from(chunk.physical_bytes).map_err(|_| Error::ArithmeticOverflow)?;
-            let mut window = Vec::new();
-            window
-                .try_reserve_exact(size)
-                .map_err(|_| Error::LimitExceeded("global cache public load window"))?;
-            window.resize(size, 0);
-            plan.load_chunk(graph, index, &mut window)?;
-            let handle = client.create_public_owned(window);
+            // Allocate the true persistent GPU root without a same-sized host
+            // Vec. Every byte, including slot/root padding, is initialized by
+            // bounded original-model windows before any table/consumer exists.
+            let handle = client.empty(size);
             if handle.offset_start.unwrap_or(0) != 0
                 || handle.offset_end.unwrap_or(0) != 0
                 || handle.size() != chunk.physical_bytes
@@ -50,11 +47,34 @@ impl Cache {
             {
                 return Err(reject());
             }
-            roots.push(handle);
-            // Drain this moved public window and its upload before creating
-            // another. A nominal 16-MiB reader must not queue the whole cache's
-            // Vec payloads in system RAM. This is startup, never decode staging.
-            cubecl_common::future::block_on(client.sync()).map_err(crate::resident_util::fault)?;
+            roots.push(handle.clone());
+            let mut first = 0u64;
+            while first < chunk.physical_bytes {
+                let count = (chunk.physical_bytes - first)
+                    .min(crate::strata_global_plan::PUBLIC_UPLOAD_WINDOW)
+                    as usize;
+                let mut window = Vec::new();
+                window
+                    .try_reserve_exact(count)
+                    .map_err(|_| Error::LimitExceeded("global cache public load window"))?;
+                if window.capacity() != count {
+                    return Err(reject());
+                }
+                window.resize(count, 0);
+                plan.load_chunk_range(graph, index, first, &mut window)?;
+                let view = handle
+                    .clone()
+                    .offset_start(first)
+                    .offset_end(chunk.physical_bytes - first - count as u64);
+                client
+                    .write_public_owned_batch(vec![(view, window)])
+                    .map_err(crate::resident_util::fault)?;
+                // Moved source/upload resources drain before the next window;
+                // increasing GPU contiguity never enlarges the host envelope.
+                cubecl_common::future::block_on(client.sync())
+                    .map_err(crate::resident_util::fault)?;
+                first += count as u64;
+            }
             bytes = bytes
                 .checked_add(chunk.physical_bytes)
                 .ok_or(Error::ArithmeticOverflow)?;
