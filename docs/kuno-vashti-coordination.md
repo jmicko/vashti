@@ -5058,3 +5058,46 @@ Full rewrite incomplete, goal active, speed gate closed. Last shared-shell
 `sudo -n -v` still required a password; no protected operation or workaround was
 attempted. There is useful source work before root is needed. Required Vashti
 changes: none.
+
+
+### Active Kuno engine handoff — real compute/copy queues and joined replay (2026-10-14)
+
+Source `ac05da8`, isolated `codex/strata-rust-port`, following matrix `d326f23`.
+Read completion guide **Connected native compute/copy queue ownership**. The
+Intel device now actually creates/adopts a second transfer-family queue before
+allocation. Both Wgpu roots and actual HOST copy sources use concurrent sharing
+for the two admitted families. Device-local metadata describes the queue really
+created; ordinary feature-off construction retains one queue.
+
+Actual native recordings now split shaders/copies/fills into queue-owned command
+segments with RAW/WAR/WAW timeline edges, an upload-release header and a final
+fence joining both queues. Cached replay uses fresh timeline epochs. Recording
+owns both pools, semaphores and retained roots; partial submissions become
+in-flight before the first submit, and unknown work cannot be reset/reused or
+freed based only on an unsubmitted final fence. Six host planner/epoch tests,
+release build, strict core/feature-off Clippy,308 existing shader variants
+(122 physical validations) and32 matrix variants pass. Added host queue metadata
+is bounded/charged (80MiB core lifetime reservation,64MiB retained queue-vector
+cap). Opaque driver allocation and real hardware admission remain unproved.
+No live GPU/model/numerical/state/recovery/speed test. Complete unit suite not
+rerun; its earlier228-failure baseline remains unaudited. No API/Vashti, installed
+service, model-residency, installation or release change. Canonical checkout and
+inherited bytecode preserved.
+
+**Next connect exact ring-slot descriptors and byte-range hazards together.**
+Current hazards conservatively key whole buffers, so separate slots within the
+same64MiB raw buffer still serialize. This is not complete native overlap or a
+performance result. The receipt names the actual group-ahead staging loop,
+Dequant whole-root binding, `p.r0` offset and shader's fixed raw length/extent
+checks. Do not merely tell the scheduler a narrower range: narrow the real
+binding and update shader/source bounds coherently, including unequal GU/DOWN
+blob sizes. Add independent partial-overlap/disjoint-slot/reuse oracle coverage
+and charge bounded interval metadata. Keep BDA/indirect dependencies, replay
+signatures, upload acquisition and final dual-queue join intact.
+
+Then finish whole graph/branch capture fidelity, native default2048/owned/loaned
+sizing and placement, arbitrary input/sampling, verifier repair and all source/
+unit completeness audits. Protected full-engine acceptance precedes speed tests.
+Goal active, full rewrite incomplete, speed gate closed. Root was not needed for
+this source/offline block; last prior shared-shell check had required a password.
+Required Vashti changes: none.

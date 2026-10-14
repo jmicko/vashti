@@ -46,7 +46,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native FP16 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Queue/branch/capture fidelity, numerical/state acceptance, arbitrary input and supported sampling remain required. See the front/rest/MoE receipts. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Request-local Rust suffix/cost controller exists; audit supported window lengths and coupled sampling rather than fixing to four public-fixture rows. |
 | Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Real greedy verification/state-only repair exists. Audit all active windows and acceptance cases against GDN/QSA/PLE/positions; independent correctness oracle remains missing. |
-| Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay exists. Audit stable complete recordings, transfer dependencies, scratch lifetimes and actual overlap; a sequence of independent Wgpu launches is not equivalent. |
+| Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Exact ring-slot range declarations/overlap, stable complete branch recordings, scratch lifetimes and physical acceptance remain open; a sequence of independent Wgpu launches is not equivalent. |
 | Request lifecycle and arbitrary input | upstream CLI/session/inference entry points | Current Rust public-fixture gate is not a general engine. Connect bounded arbitrary prompts and request-local sampling/history, with no persistent content, protected memory and orderly erase/close. No gateway/UI work required. |
 
 ## Validation and the speed gate
@@ -2154,3 +2154,120 @@ The B70 inventory's previously unresolved component value1000141000 is
 capability. This resolves the public enumeration label, not device execution.
 The final shared-shell `sudo -n -v` check still required a password; no protected
 operation followed. Source/offline work was not blocked by that credential.
+
+
+## Connected native compute/copy queue ownership (2026-10-14)
+
+Source `ac05da8`, following `d326f23`. This is a connected scheduling
+block, not hardware execution or a completed queue-fidelity claim. Speed gate
+remains closed.
+
+### Actual created queues and shared buffers
+
+The Intel constructor now requests queue0 in a second transfer-capable family,
+preferring the dedicated transfer family (the public B70 inventory's family2).
+It does not request nonexistent family0 queue1. Before exposing the device it
+adopts this actually created family into per-device HAL metadata, requiring
+supported/enabled timeline semaphores. Generic feature-off device construction
+keeps its original single queue. Missing independent capacity is an explicit
+native-core setup error.
+
+Ordinary Wgpu buffer creation on that device and the actual imported
+`strata_global_host` copy sources both select CONCURRENT sharing for the exact
+compute/copy families. Compute-only imported host descriptors retain their
+existing usage; no extra mirror of expert bytes is created. The metadata is
+stored with the owning device, not inferred later from physical capabilities,
+an environment flag or a process-global registry. Textures/other devices retain
+the original allocation path.
+
+### Connected planner, recording, replay and completion
+
+`strata_graph::execute` consumes `node_accesses` for the real retained shader,
+BDA, indirect, copy and fill resources. `strata_schedule::Planner` streams one
+node's accesses at a time, keeps both queues' latest readers/writers, and builds
+actual command segments with backward RAW/WAR/WAW semaphore edges. Independent
+buffers can overlap; read/read does not invent a data dependency. Every copy
+queue acquires an initial compute-queue header after the real Wgpu
+upload/initialization boundary. No host wait is inserted between segments.
+
+Each `Recording` owns both command pools' buffers, its descriptor pool,
+semaphores, retained resources and the complete plan. Same-queue barriers use
+only that queue's supported pipeline stages; transfer-only command buffers do
+not declare COMPUTE_SHADER stages. Two timeline semaphores carry real cross-queue
+memory/execution dependencies. Replay reserves strictly new values before any
+submission, including after a partial failed epoch. The final compute-queue
+join waits for the last copy signal, and its real fence covers both queues
+before state acceptance, source/INFO retirement, erase or normal owner release.
+
+Readiness is published only after every command ends successfully. In-flight
+state is set **before** the first queue submit, so a partial failure cannot free
+the copy pool just because a final compute fence was never issued. Existing
+terminal protected-lab teardown retains unknown in-flight owners rather than
+resetting the GPU. Reentry cannot reset/reuse an unknown in-flight fence. This
+is source-level lifetime handling; device-loss/recovery behavior still requires
+protected execution and the final recovery audit. Diagnostic timestamp mode
+serializes both queues/query reset and requires compatible timestamp bits; it is
+not an uninstrumented speed result and stays disabled for interim model checks.
+
+Native queue plans retain at most16 recordings with actual queue-vector metadata
+capped at64MiB. Planner roots are capped at65,536 and nodes at the existing32,768;
+there is no whole-graph duplicate of every access list. An additional80MiB host
+reservation (retained cache plus bounded temporary planning) is charged through
+the core prompt/controller lifetime quote. No global tensor/weight root is added.
+Opaque driver command-pool allocations and real hardware memory admission remain
+part of the final runtime/placement audit; this host reservation is not evidence
+of measured Vulkan allocation usage.
+
+Validation logs in `/media/jmicko/faststore/kuno-development`:
+
+- `strata-dual-queue-build-20261014.log`: release core build passes.
+- `strata-dual-queue-clippy-20261014.log` and
+  `strata-dual-queue-feature-off-clippy-20261014.log`: strict core and ordinary
+  feature-off release Clippy pass.
+- `strata-dual-queue-host-tests-20261014.log`: six focused host tests pass. They
+  cover upload acquisition/independent buffers, RAW/WAR/WAW and slot reuse,
+  read/read, a pairwise oracle over2,048 operations, diagnostic ordering and
+  monotonically reserved replay/partial epochs including overflow. No device or
+  Vulkan queue is created by these tests.
+- `strata-dual-queue-shaders-20261014.log`:308 existing shader variants,
+  including122 physical-pointer validations, and32 cooperative variants pass
+  the same modern offline validation as the preceding matrix block.
+- `git diff --check` passes. Canonical checkout is still clean; inherited
+  bytecode remains untracked/preserved. No live GPU/model, physical/numerical,
+  state/recovery or speed acceptance was attempted.
+
+These changes
+do not alter the gateway, Vashti API/UI, installed service or model residency.
+The earlier full-core228-failure result remains an unaudited historical baseline;
+the complete unit suite has not been rerun for the changed host reservation.
+
+### Important remaining queue fidelity gap: real ring-slot ranges
+
+The planner currently keys hazards by whole VkBuffer, as the earlier recorded
+backend did. That is correct/conservative, but the prompt's eight raw slots share
+one64MiB buffer, so it prevents their intended transfer/compute overlap. Do not
+call the independent-buffer host test proof of physical ring-slot overlap or
+complete Strata queue parity.
+
+Next connect byte-range hazards **and actual narrowed raw-slot descriptors** as
+one block. `strata_prompt_experts::enqueue` already stages eight groups ahead in
+`stage_prompt_group`, with exact raw slot offset/stride. Its Dequant currently
+binds the whole stage2 lower64MiB; `strata_prompt_experts.wgsl` also requires
+`arrayLength(raw)==16777216` and uses `p.r0` as that global slot offset. Simply
+making the scheduler believe this descriptor is narrower would be unsound.
+Change the real binding/view, shader offset/extent checks and planner together.
+Preserve GU/up/DOWN source geometry, dequant slots, faults, private owner checks
+and BDA read dependencies. In particular, the existing raw guard uses `p.r2`
+even for GU; with an exact-sized slot, validate the actually accessed GU/up or
+DOWN extent rather than assuming a gate blob is always smaller than DOWN.
+
+The interval oracle must cover partially overlapping views, disjoint slots in
+one buffer, opposite-queue readers/writers and later slot reuse. Keep interval
+metadata bounded/charged, replay signatures sensitive to real views, and the
+final join/lifetime guarantees above. Conservative barriers on the *same* queue
+do not replace the required accurate cross-queue resource declarations.
+
+After range/ring connection, finish whole-native graph/branch recording audit,
+owned/default2048 versus loaned sizing and placement, arbitrary input/sampling,
+verifier repair and all unit/source completeness checks. Only then protected
+whole-engine correctness/completion/state/recovery and speed trials.
