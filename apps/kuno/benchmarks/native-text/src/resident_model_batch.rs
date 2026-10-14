@@ -4812,6 +4812,14 @@ impl Workspace {
         let mut current = Zeroizing::new(0usize);
         drive_layers(cancel, |layer| {
             let attention_start = Instant::now();
+            let dense_q8 = if crate::strata_intel_core::enabled()
+                && e.target_four_rows_active
+                && *count == 4
+            {
+                self.moe.frozen_gu_integer_owner_id()
+            } else {
+                None
+            };
             if layer == 1 {
                 m.numeric_boundary.observe(
                     numeric_boundaries::Boundary::Input,
@@ -4827,6 +4835,7 @@ impl Workspace {
                 let mut projector = ResidentBatchProjection {
                     executor: e,
                     fault: m.b.fault,
+                    dense_q8,
                 };
                 let spans = BatchSpans::new(*count, 0, 0, HC * D, 0, HC * D);
                 pending.ple = Some(self.ple.enqueue(
@@ -4856,6 +4865,7 @@ impl Workspace {
             let mut projector = ResidentBatchProjection {
                 executor: e,
                 fault: m.b.fault,
+                dense_q8,
             };
             let prepared = self.gr.read(
                 m.graph,
@@ -4918,6 +4928,7 @@ impl Workspace {
                 u::cancel(cancel)?;
             }
             let router_enqueue_start = Instant::now();
+            projector.dense_q8 = None;
             let prepared = self.gr.read(
                 m.graph,
                 &m.arena,
@@ -5141,6 +5152,7 @@ impl Workspace {
                     let mut projector = ResidentBatchProjection {
                         executor: e,
                         fault: m.b.fault,
+                        dense_q8: None,
                     };
                     self.shared.prepare(
                         m.graph,
@@ -5223,6 +5235,7 @@ impl Workspace {
             let mut projector = ResidentBatchProjection {
                 executor: e,
                 fault: m.b.fault,
+                dense_q8: None,
             };
             if overlap_shared {
                 self.shared.finish_prepared(
@@ -5271,6 +5284,7 @@ impl Workspace {
             let mut projector = ResidentBatchProjection {
                 executor: e,
                 fault: m.b.fault,
+                dense_q8: None,
             };
             self.gr
                 .read(
@@ -5290,6 +5304,7 @@ impl Workspace {
             let mut projector = ResidentBatchProjection {
                 executor: e,
                 fault: m.b.fault,
+                dense_q8: None,
             };
             self.gr
                 .read(

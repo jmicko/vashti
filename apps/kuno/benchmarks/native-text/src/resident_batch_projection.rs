@@ -89,6 +89,7 @@ pub trait BatchedResidentProjector {
 pub struct ResidentBatchProjection<'e, 'f> {
     pub executor: &'e mut crate::executor::GpuExecutor<'f>,
     pub fault: BufferId,
+    pub dense_q8: Option<BufferId>,
 }
 impl BatchedResidentProjector for ResidentBatchProjection<'_, '_> {
     fn global_fault(&self) -> BufferId {
@@ -129,6 +130,34 @@ impl BatchedResidentProjector for ResidentBatchProjection<'_, '_> {
             projection.matrix.outputs(),
             output_words,
         )?;
+        if let Some(planes) = self.dense_q8 {
+            if planes == input || planes == output || planes == self.fault {
+                return Err(Error::InvalidBufferLength);
+            }
+            if spans.count() == 4
+                && crate::strata_dense::supports(
+                    projection.tensor.info().dtype().gguf_id(),
+                    projection.matrix.inputs(),
+                    arena.handle(planes).map_err(u::fault)?.size_in_used(),
+                )
+            {
+                u::zero(arena, planes)?;
+                self.executor.enqueue_strata_dense(
+                    projection.tensor,
+                    &u::handle(arena, input)?,
+                    &arena.handle(planes).map_err(u::fault)?.clone(),
+                    &u::handle(arena, output)?,
+                    &u::handle(arena, self.fault)?,
+                    spans,
+                    cancel,
+                )?;
+                // The parent lends this existing GU scratch only during its
+                // attention stage, before the layer's authentic GU prepare.
+                u::zero(arena, planes)?;
+                u::cancel(cancel)?;
+                return Ok(());
+            }
+        }
         // SAFETY: live distinct arena IDs are exclusive actual physical owners;
         // the enclosing owner retains them through completion and erasure.
         let fused = unsafe {

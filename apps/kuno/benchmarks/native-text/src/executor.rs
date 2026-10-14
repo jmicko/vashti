@@ -3075,14 +3075,75 @@ impl<'a> GpuExecutor<'a> {
         Ok(fused)
     }
 
-    /// MAX8 original packed projection for a future whole-chunk owner.
+    /// Core-only attention stage borrows authentic private GU scratch before
+    /// that layer's prepare; the ordinary projection path remains separate.
     /// This queues work only; the caller still accepts every finite/device
     /// fence and commits all causal candidates together, or poisons/erases.
     /// # Safety
     /// x/y are distinct live same-client/arena owners covering their logical
     /// words through completed execution and full-span erasure. Spans are a
     /// guarded runtime packet, never a shader or persistent cache key.
-    #[allow(dead_code, clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn enqueue_strata_dense(
+        &mut self,
+        tensor: TensorView<'_>,
+        input: &Handle,
+        planes: &Handle,
+        output: &Handle,
+        fault: &Handle,
+        spans: &quant_matvec::matmul::BatchSpans,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        let matrix = Matrix::new(tensor)?;
+        let dtype = tensor.info().dtype().gguf_id();
+        if !tensor.belongs_to(self.model)
+            || matrix.experts() != 1
+            || spans.count() != 4
+            || spans.packed_first() != 0
+            || !crate::strata_dense::supports(dtype, matrix.inputs(), planes.size_in_used())
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        self.model.verify_file_unchanged()?;
+        self.check_target_rows_policy()?;
+        crate::strata_dense::prepare(
+            &self.client,
+            matrix.inputs(),
+            input.clone(),
+            planes.clone(),
+            fault.clone(),
+            spans,
+        )?;
+        let row_bytes = tensor.info().row_bytes() as usize;
+        if row_bytes == 0 || row_bytes > TILE_BYTES {
+            return Err(Error::InvalidBufferLength);
+        }
+        let per_tile = (TILE_BYTES / row_bytes).min(16384);
+        for first in (0..matrix.outputs()).step_by(per_tile) {
+            if cancel.load(Ordering::Acquire) {
+                return Err(Error::InvalidFormat("resident batch cancelled"));
+            }
+            let rows = per_tile.min(matrix.outputs() - first);
+            let (weights, _) = self.weight(tensor, 0, first, rows)?;
+            crate::strata_dense::project(
+                &self.client,
+                dtype,
+                rows,
+                matrix.inputs(),
+                weights,
+                planes.clone(),
+                output.clone(),
+                fault.clone(),
+                spans.output_first() + first,
+                spans.output_stride(),
+            )?;
+        }
+        Ok(())
+    }
+    /// x/y/fault remain distinct live arena roots through completion and erase.
+    /// # Safety
+    /// All logical views must cover the checked original matrix intervals.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) unsafe fn enqueue_matrix_batch(
         &mut self,
         tensor: TensorView<'_>,

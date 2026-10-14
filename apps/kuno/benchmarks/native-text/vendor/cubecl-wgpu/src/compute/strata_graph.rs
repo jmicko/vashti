@@ -157,7 +157,7 @@ pub(crate) fn register_module(
     }
     let p = Arc::new(Program {
         words,
-        expert_subgroup_32: source.contains("STRATA_PHYSICAL_EXPERTS"),
+        expert_subgroup_32: source.contains("STRATA_PHYSICAL_EXPERTS") || source.contains("STRATA_DENSE_PACKED"),
         accesses: bindings.iter().map(|b| b.2).collect(),
         bindings: bindings.into_iter().map(|b| b.1).collect(),
         entry: CString::new(entry).map_err(|_| fault("native graph entrypoint"))?,
