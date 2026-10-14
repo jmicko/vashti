@@ -38,6 +38,22 @@ impl Kernel {
             self.columns / 2 + self.columns / 16,
             include_str!("strata_dense.wgsl")
         );
+        // Match upstream native_mmvq's compile-time packed dot expansion. Keep
+        // integer accumulation order, original weight addresses and Q8 scales.
+        let start = source
+            .find("            for(var word=0u;word<GROUP_VALUES/4u;word++) {")
+            .expect("dense packed dot loop");
+        let end = source[start..]
+            .find("            let at=2u*PACKED_WORDS")
+            .unwrap()
+            + start;
+        let loop_source = &source[start..end];
+        let body = loop_source.split_once('{').unwrap().1;
+        let body = &body[..body.rfind('}').unwrap()];
+        let expansion = (0..if self.dtype == 14 { 4 } else { 8 })
+            .map(|word| format!("{{let word={word}u;{body}}}\n"))
+            .collect::<String>();
+        source.replace_range(start..end, &expansion);
         if self.indexed {
             source = source.replace(
                 "count:u32}",
@@ -59,6 +75,50 @@ impl Kernel {
                 .replace("-p.output_first-ROWS", "-p.output_first-p.source_rows");
         }
         source
+    }
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+struct PrepareKernel(usize);
+impl PrepareKernel {
+    fn source(self) -> String {
+        format!(
+            "// STRATA_DENSE_PACKED\nconst COLUMNS:u32={}u;const PACKED_WORDS:u32={}u;const BLOCKS:u32={}u;const PLANE_WORDS:u32={}u;\n{}",
+            self.0,
+            self.0 / 4,
+            self.0 / 32,
+            self.0 / 2 + self.0 / 16,
+            include_str!("strata_dense_prepare.wgsl")
+        )
+    }
+}
+impl KernelMetadata for PrepareKernel {
+    fn name(&self) -> &'static str {
+        "StrataSubgroupQ8Prepare"
+    }
+    fn id(&self) -> KernelId {
+        KernelId::new::<Self>().info(*self)
+    }
+    fn address_type(&self) -> StorageType {
+        StorageType::Scalar(ElemType::UInt(UIntKind::U32))
+    }
+}
+impl CubeTask<AutoCompiler> for PrepareKernel {
+    fn compile(
+        &self,
+        _: &mut AutoCompiler,
+        _: &cubecl::WgpuCompilationOptions,
+        _: ExecutionMode,
+        _: StorageType,
+    ) -> std::result::Result<CompiledKernel<AutoCompiler>, CompilationError> {
+        Ok(CompiledKernel {
+            entrypoint_name: "main".into(),
+            debug_info: None,
+            debug_name: None,
+            source: self.source(),
+            repr: None,
+            cube_dim: CubeDim::new_1d(128),
+        })
     }
 }
 impl KernelMetadata for Kernel {
@@ -112,21 +172,54 @@ pub(crate) fn prepare(
     spans: &BatchSpans,
 ) -> Result<()> {
     let spec = crate::q6_integer_matvec::Spec::new(1, columns)?;
-    crate::q6_integer_matvec::batch::prepare(
-        client,
+    if !supports_count(8, columns, planes.size_in_used(), spans.count())
+        || fault.size_in_used() != 4
+        || !input.size_in_used().is_multiple_of(4)
+        || [&input, &fault].iter().any(|h| h.stream != planes.stream)
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    let checked = crate::q6_integer_matvec::batch::PrepareSpans {
+        count: spans.count(),
+        input_first: spans.input_first(),
+        input_stride: spans.input_stride(),
+        planes_first: 0,
+        planes_stride: spec.plane_words(),
+        fault_first: 0,
+    };
+    checked.validate(
         spec,
-        input,
-        planes,
-        fault,
-        crate::q6_integer_matvec::batch::PrepareSpans {
-            count: spans.count(),
-            input_first: spans.input_first(),
-            input_stride: spans.input_stride(),
-            planes_first: 0,
-            planes_stride: spec.plane_words(),
-            fault_first: 0,
-        },
-    )
+        [
+            input.size_in_used() as usize / 4,
+            planes.size_in_used() as usize / 4,
+            fault.size_in_used() as usize / 4,
+        ],
+    )?;
+    let info = [
+        checked.input_first as u32,
+        checked.input_stride as u32,
+        checked.planes_stride as u32,
+        checked.count as u32,
+    ];
+    let args = KernelArguments::new()
+        .with_buffer(input.binding())
+        .with_buffer(planes.binding())
+        .with_buffer(fault.binding())
+        .with_info(MetadataBindingInfo::custom(
+            info.chunks_exact(2)
+                .map(|v| v[0] as u64 | ((v[1] as u64) << 32))
+                .collect(),
+        ));
+    // SAFETY: original checked input spans, complete borrowed private scratch,
+    // one subgroup per 32-value block, and serialized owning graph lifetime.
+    unsafe {
+        client.launch_unchecked(
+            Box::new(PrepareKernel(columns)),
+            CubeCount::Static((columns / 128) as u32, checked.count as u32, 1),
+            args,
+        );
+    }
+    Ok(())
 }
 static CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub(crate) fn calls() -> u64 {
@@ -232,6 +325,18 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
             .unwrap()
         })
         .collect::<Vec<_>>();
+    for columns in [2560, 16384] {
+        result.push(
+            PrepareKernel(columns)
+                .compile(
+                    &mut AutoCompiler::Wgsl(Default::default()),
+                    &Default::default(),
+                    ExecutionMode::Unchecked,
+                    StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+                )
+                .unwrap(),
+        );
+    }
     result.push(
         Kernel {
             dtype: 8,
