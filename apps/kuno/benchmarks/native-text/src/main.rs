@@ -8,6 +8,10 @@ mod cpu_gpu_expert_schedule;
 mod strata_cache;
 mod strata_dense;
 mod strata_expert_fused;
+#[allow(dead_code)] // Root consumers are the next connected port block.
+mod strata_global_gpu;
+#[allow(dead_code)] // Global root/consumer connection continues as one port.
+mod strata_global_plan;
 mod strata_gr;
 mod strata_intel_core;
 mod strata_packet;

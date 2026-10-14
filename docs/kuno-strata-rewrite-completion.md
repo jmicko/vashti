@@ -33,7 +33,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | Component | Pinned upstream | Current Rust connection and required completion |
 | --- | --- | --- |
 | Artifact geometry, packing and tokenizer | `sycl/src/core/weights.cpp`, `src/io`, native expert layout, program model setup | Rust GGUF/tokenizer/binding exist. Audit format-specific load/conversion, chat-template and sampling behavior; original files remain shared/read-only. |
-| Exact dense placement and expert budget | `sycl/src/program/generate.cpp` model/cache setup; `sycl/src/core/expert_cache.cpp::open_sized` | Exact dense roots exist. Uniform 240 slots/layer differs from global ranked variable-size allocation; implement the connected global plan and consumers. |
+| Exact dense placement and expert budget | `sycl/src/program/generate.cpp` model/cache setup; `sycl/src/core/expert_cache.cpp::open_sized` | Exact dense roots exist. Native global byte-prefix planning and an owning bounded GPU loader now compile; graph validation consumes the real artifact plan. Current inference still uses uniform 240-slot banks: global allocation, HOST imports, pointer tables, routing and exchange consumers must replace that path together. No global residency execution is claimed. |
 | Low-RAM host complement and promotion | `generate.cpp` source/adaptive tier; `sycl/src/core/verify.cpp` fetch/rebase | Original host complement, direct exchange and GPU selected fetch exist. Audit full byte ownership and asynchronous safe publication against upstream; do not duplicate the whole model in RAM. |
 | GPU route/group planning and CPU contribution | `verify.cpp` router, `resident_plan`, doorbell/pool/host plans; `src/kernels/cpu` | Real GPU router exists. Audit the selected working Intel all-GPU-fetch versus host-pool mode and reproduce its actual mode, including overlap/merge where active. |
 | Native expert math and grouped rows | `sycl/src/kernels/cuda/iq_kernels.dp.cpp::row_entries`, `native_gu_kernel`, `native_down_kernel` | Packed integer math/BDA roots exist. Separate GU roles, 4/2/1 chunks, activation, intermediate storage and downstream consumers are now selected together in the Intel core; all 158 WGSL/SPIR-V variants validate, including 105 physical-pointer checks; numerical/model execution acceptance remains pending. The Vulkan port uses separate fixed chunk launches with GPU guards, not upstream row_entries within one launch; audit that substitution explicitly. |
@@ -148,3 +148,70 @@ No live GPU inference, operator profile, speed trial, installation or API/UI cha
 was performed. Full rewrite and numerical/state acceptance remain unfinished.
 Continue the complete source-to-source checklist; do not benchmark or disable the
 GR sequence to select an intermediate throughput winner.
+
+## Global byte-prefix and owning-loader block (2026-10-14)
+
+Pinned Intel `generate.cpp:4336` sizes native-pack slots from the **global ranked
+prefix in bytes**, using each layer's original blob size and 256-byte alignment.
+It stops at the first pair that exceeds the budget. Copying a uniform number of
+experts per layer changes that design even when the total byte budget matches.
+
+`strata_global_plan.rs` implements that policy from actual `BoundGraph` tensor
+metadata, validates the embedded full `STRP` ranking/reverse table, and assigns
+every original expert to exactly one resident or HOST source. With the existing
+240-slot-equivalent budget of 23,574,528,000 bytes, the actual pinned artifacts
+select 11,570 ranked pairs / 23,573,836,800 bytes; layer counts range 160..342.
+These are public header/profile calculations, **not throughput measurements**.
+
+The resident layout is one logical original gate/up/down blob arena in rank
+order, represented by bounded physical chunks in Vulkan. Expert blobs never
+cross a chunk boundary; chunk offsets and role offsets are explicit. The public
+startup upload window is at most 16 MiB, rather than a whole-model RAM mirror.
+Missing experts have separate bounded original role pieces in HOST memory. Empty
+tiers allocate no invented weight roots. `source()` resolves the authoritative
+resident chunk or HOST piece for every (layer, expert, role). The startup reader
+copies original GGUF ranges into one chunk and zeroes its padding; no dequantized
+model or on-disk conversion is created. Plan instance/binding checks keep source
+capabilities tied to one original graph and layout.
+
+`strata_global_gpu.rs` adds the owning cache loader. The executor verifies model
+provenance, precharges all persistent roots, and scopes exact allocation through
+the existing admission mechanism. The owner verifies full physical roots, distinct
+backings and byte totals; role borrowing cannot claim HOST experts as GPU resident.
+Allocation errors poison the owning admission. This constructor is **not yet
+called by the inference coordinator**: it must replace legacy banks, never add
+a second 23.6 GB cache alongside them. Its GPU load/closure has not been executed.
+Graph validation currently runs only the host-only plan check.
+
+Required connected continuation (no intermediate speed trials):
+
+1. Replace core ordinary-bank construction with this single global owner and
+   its actual complete precharge. Preserve the original feature-off engine.
+2. Import the planned HOST complement and connect the GPU fetch/stage path to
+   original blob/role addresses; retain real source owners and recover them on
+   errors. Do not force unequal counts into old fixed 120/120/128/128/16 extents.
+3. Connect per-expert physical pointer tables, GPU routing/group plans and all
+   private arena/stage budgets. The native backend must retain and track the
+   actual BDA source owners even when descriptor bindings do not list every
+   global chunk. Do not use fake buffers, invented residency or loose lifetime
+   assumptions to satisfy the old 15-source layout.
+4. Connect adaptive exchange/map publication to the same global layout, with
+   varying blob sizes and joined reader/writer boundaries. Correct commit and
+   full private erasure remain mandatory.
+5. Then validate execution/correctness of the connected path. Remaining full-port
+   checklist rows still block any speed trial or completion claim.
+
+Strict selected core Clippy and fmt/whitespace pass. Two host-only allocation
+tests pass: independently checked pinned prefix/counts, complete 512-expert source
+coverage, exact per-role bounds, and empty/partial/full cache cases. Logs:
+`strata-global-owner-final-clippy-20261014.log` and
+`strata-global-plan-final-tests-20261014.log` in `kuno-development`. No model
+GPU load, private-request execution, speed/profile, service or installed change.
+The preceding 200 core-suite failures remain unresolved; these tests do not
+supersede that acceptance gap.
+
+The authorized sudo refresher was renewed to one bounded 240-minute helper at
+`/media/jmicko/faststore/kuno-development/strata-global-port-sudo-20261014.pid`;
+the preceding helper was stopped only after verifying the new process. Recheck
+the process/cache before protected work, and stop cleanly if required root access
+is unavailable. Do not infer cache validity from this note alone.

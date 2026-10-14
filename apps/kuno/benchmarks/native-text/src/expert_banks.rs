@@ -104,6 +104,17 @@ impl OriginalPackedProfile {
                 .collect::<Result<Vec<_>>>()?;
             crate::daslab_profile::validate_inventory(inventory)
                 .map_err(|_| Error::InvalidFormat("DASLab original tensor inventory"))?;
+            if crate::strata_intel_core::enabled() {
+                // Authoritative pre-device sizing from the actual bound artifact.
+                // Root consumers are not yet switched: this is validation only,
+                // never credit for a global allocation that was not performed.
+                let budget = crate::strata_global_plan::Plan::uniform_budget(graph, 240)?;
+                let plan = crate::strata_global_plan::Plan::from_graph(graph, budget, 256)?;
+                plan.check_binding(graph)?;
+                if plan.layers.len() != graph.geometry().layers {
+                    return Err(Error::InvalidBufferLength);
+                }
+            }
         }
         if graph.geometry().layers != 48 {
             return Err(Error::InvalidFormat(

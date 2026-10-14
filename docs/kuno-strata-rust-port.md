@@ -59,8 +59,19 @@ completion guide's **Connected GR implementation block** for exact substitutions
 logs and unfinished numerical acceptance; do not interpret these checks as a
 complete rewrite or model correctness proof.
 
-A bounded sudo refresher was started for the new implementation block at
-`/media/jmicko/faststore/kuno-development/strata-coherent-rewrite-sudo-20261014.pid`.
+Global byte-prefix planning and its owning loader now compile; current inference
+has **not yet switched** from uniform banks. The actual public profile selects
+11,570 pairs within the same expert-byte budget, with 160..342 residents/layer.
+The plan defines complete HOST complements and bounded native blob chunks. Root
+allocation, imports, BDA pointer tables, routing and adaptive exchange must now
+be connected together, replacing the old banks rather than allocating both.
+Read the completion guide's **Global byte-prefix and owning-loader block** for
+exact code, tests, binding/ownership limits and required continuation. Two
+host-only allocation tests and strict core Clippy pass; no GPU load or speed
+trial was performed. The earlier core-suite failures remain unresolved.
+
+A bounded 240-minute sudo refresher is now at
+`/media/jmicko/faststore/kuno-development/strata-global-port-sudo-20261014.pid`.
 Inspect the actual process and cache before protected work. If sudo is unavailable,
 leave a documented checkpoint and stop; do not declare the rewrite complete.
 

@@ -2602,6 +2602,36 @@ impl<'a> GpuExecutor<'a> {
         Ok(())
     }
 
+    #[allow(dead_code)] // New source-table/controller connection continues.
+    pub(crate) fn load_strata_global_experts(
+        &self,
+        graph: kuno_text::model::BoundGraph<'_, '_>,
+        plan: &crate::strata_global_plan::Plan,
+    ) -> Result<crate::strata_global_gpu::Cache> {
+        if !crate::strata_intel_core::enabled()
+            || self.packed_profile != expert_banks::OriginalPackedProfile::DaslabIq3
+        {
+            return Err(Error::InvalidFormat("global expert loader selection"));
+        }
+        graph.verify_unchanged()?;
+        for name in graph.tensor_names() {
+            if !graph.tensor(name)?.belongs_to(self.model) {
+                return Err(Error::InvalidFormat("global expert model binding"));
+            }
+        }
+        let admission = self
+            .resident_admission
+            .as_ref()
+            .ok_or(Error::InvalidFormat("global expert admission required"))?;
+        let requests = crate::strata_global_gpu::Cache::requests(plan);
+        let result = admission.allocate_banks(&requests, || {
+            crate::strata_global_gpu::Cache::persistent_load(&self.client, graph, plan)
+        });
+        if result.is_err() {
+            self.poison_resident();
+        }
+        result
+    }
     pub(crate) fn strata_gr_weights(
         &mut self,
         tensors: [TensorView<'_>; 2],
