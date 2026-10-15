@@ -1,20 +1,16 @@
 # Native DASLab/Strata checkpoint — 2026-10-09
 
 **Current Rust port resume pointer (2026-10-14):** isolated
-`codex/strata-rust-port`, source through `8b503e2` (cache-loan connection `60f6760`, aggregate GR `12b310f`). Read the latest
-[coordination handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--prompt-only-cache-sourcescontroller-2026-10-14)
-and [completion receipt](kuno-strata-rewrite-completion.md#connected-prompt-only-cache-sources-and-one-session-controller-2026-10-14).
-The full rewrite is incomplete; no live speed test before source completeness
-and protected whole-engine correctness/state/recovery acceptance. Older numbers
-and paused states below are historical and do not describe this active goal.
-The user is using both GPUs again during source work; reconfirm availability
-before any GPU/model execution or admission/residency change.
+`codex/strata-rust-port`, source through `97e22f9`. Read the latest
+[coordination handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--native-last-prompt-input-2026-10-14)
+and [completion receipt](kuno-strata-rewrite-completion.md#native-prompt-prefix-and-final-decode-boundary-2026-10-14).
+The controller now batches N-1 inputs and uses normal decode for the final
+original input/first prediction; cache sources/rebasing prerequisites remain
+`60f6760`/`12b310f`/`8b503e2`. The full rewrite is incomplete: no speed trials
+before source completeness and protected numerical/state/recovery acceptance.
+Older numbers and paused states below are historical. The user is using both
+GPUs; reconfirm availability before any GPU/model/admission/residency work.
 
-
-For the next model or a fresh session, start with the
-[standalone resume handoff](kuno-native-next-model-handoff.md). It distinguishes
-accepted hardware results from the source-only candidate and gives the exact
-checkout, helper selection change, ordered gates, and recovery procedure.
 
 **Current checkpoint:** user requested a stop for usage conservation. Standalone
 Strata is removed; original model shards, alternate draft and comparison evidence

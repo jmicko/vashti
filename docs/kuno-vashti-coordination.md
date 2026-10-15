@@ -6,8 +6,8 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-14):** the isolated Rust rewrite
-is through `8b503e2` on `codex/strata-rust-port`; read the
-[prompt-only cache sources/controller handoff](#active-kuno-engine-handoff--prompt-only-cache-sourcescontroller-2026-10-14)
+is through `97e22f9` on `codex/strata-rust-port`; read the
+[native last-prompt-input handoff](#active-kuno-engine-handoff--native-last-prompt-input-2026-10-14)
 and [whole-rewrite gate](kuno-strata-rewrite-completion.md). It is incomplete;
 no live speed benchmark before the connected source and correctness gates.
 This backend work does not change the published image/application contract.
@@ -5469,3 +5469,30 @@ source/build phase continues (2026-10-14). Do not start GPU/model execution,
 change admission/residency or stop their workloads without reconfirming that the
 cards are available. Source edits, CPU-only unit checks and compilation may
 continue. No GPU job or installed-service change was started in this pass.
+
+
+### Active Kuno engine handoff — native last prompt input (2026-10-14)
+
+Source `97e22f9`, following `8b503e2`, on isolated
+`codex/strata-rust-port`. Read completion guide **Native prompt prefix and final
+decode boundary**. Previous turn made authoritative cache-loan/registry/arena
+progress; this turn corrects another real coupled math/controller difference.
+
+The selected controller now follows pinned generate.cpp: batch N-1 prompt inputs,
+round the requested chunk to256 (cap2048), teach every prefix R_i with input_i+1,
+then close/join prompt scratch and restore any loan BEFORE normal count1 decode
+consumes the last original input. It predicts the first result, including for a
+one-token prompt. The former prompt-precision final head/full-logits readback is
+removed. Actual positions/committed cursor/carry are checked; MTP remains atN-1.
+The PLE worker prefetches only the prefix and joins before ordinary decode.
+
+Exact source/build/host-check receipts are in the linked section. No GPU math,
+model completion, numerical/state/recovery or speed acceptance and no full suite.
+The full Rust rewrite remains incomplete. No public API/Vashti, service/admission/
+residency, install or release change. Canonical and inherited bytecode preserved.
+
+Continue runtime context/pre-device grants/cache budgeting, native conditional
+ring/stream-all/auto chunk policy, actual GPU sampling and captured verifier/state
+repair/source/failure audits. Sampling source pointers/semantics are recorded;
+no sampling implementation is claimed. The user is using BOTH GPUs: reconfirm
+availability before any GPU work. Goal active; required Vashti changes:none.

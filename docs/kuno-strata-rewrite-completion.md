@@ -41,7 +41,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp`, `prefill/kernels.dp.cpp` | Core connects native BF16 alpha/beta, controls, recurrence/norm and accepted-prefix replay. Prompt scope selects contiguous H, causal convolution/history/L2, CB32 recurrence and directly consumed FP16 output. Source 9a7a23b connects prompt-capacity whole-chunk math without per-element status/replay owners, carved AB staging, and native row/value-head recurrent state shared by prompt/decode/repair. The large chunk caller/acceptance is connected in the latest controller receipt; remaining split verifier replay, physical execution and final numerical/queue audit remain open. |
 | QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects FP16 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. See the QSA receipt below for precise storage/scheduling substitutions and remaining numerical/state acceptance; do not claim full QSA fidelity yet. |
 | PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Core connects native BF16 MAX8 projections, normalization/gate/conv/history, deduplicated positional reads and accepted-prefix ownership. Prompt calls now consume a bounded, joined double-buffered source prefetch. The latest controller receipt connects native large chunk geometry, joined uploads, retained tail and exact history acceptance. Native loans/queue scheduling and numerical/device acceptance remain open. Never persist request n-grams. |
-| Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. The bounded prompt path now uses logical-ID expert order, checked native transfer nodes, an eight-slot raw ring and two paired dequantization slots. The latest owned-consumer receipt connects full2048-row owners, non-overlapping raw/grouped route packets, causal math/state scopes, final-only head and full device MTP teaching (up to8192 matrix rows). Independent transfer/compute queues and real release boundaries are connected. Dynamic cache loans, conditional ring sizing and physical whole-model acceptance remain open. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
+| Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. The bounded prompt path now uses logical-ID expert order, checked native transfer nodes, an eight-slot raw ring and two paired dequantization slots. The latest owned-consumer receipt connects full2048-row owners, non-overlapping raw/grouped route packets, causal math/state scopes, the unbatched final prompt input uses normal count1 decode for the first head, and full device MTP teaching covers the preceding prefix (up to8192 matrix rows). Independent transfer/compute queues and real release boundaries are connected. Dynamic cache loans, conditional ring sizing and physical whole-model acceptance remain open. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
 | Prompt dense/expert matrix backend | Intel oneMKL rounded BF16/FP16 GEMMs | Connected Rust cooperative8x16x16/F32 kernels now consume the actual rounded dense and grouped GU/DOWN images, with enabled device features, SPIR-V native registration and required16 subgroup in both pipeline paths. See the cooperative-matrix receipt; physical numerical/model acceptance remains open. |
 | MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native FP16 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Queue/branch/capture fidelity, numerical/state acceptance, arbitrary input and supported sampling remain required. See the front/rest/MoE receipts. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Request-local Rust suffix/cost controller exists; audit supported window lengths and coupled sampling rather than fixing to four public-fixture rows. |
@@ -3015,3 +3015,85 @@ compiled but current graph/request permits remain4096, so no supported long-
 context invocation or physical parity is claimed. Run the protected complete
 engine numerical/completion/state/recovery gates before opening speed testing.
 Required Vashti changes: none.
+
+
+## Native prompt prefix and final decode boundary (2026-10-14)
+
+Source `97e22f9`, after `8b503e2`/handoff `0b25010` on isolated
+`codex/strata-rust-port`. This corrects the actual selected controller/math path;
+it does not remove the remaining context/sampling/configuration gates or claim
+whole-model numerical acceptance. Both GPUs remain reserved for the user.
+
+Pinned upstream `sycl/src/program/generate.cpp:11520-11624` sets
+`n_batched=n_prompt-1`, uses `request_chunk` (round up256, capped by the configured
+chunk), teaches MTP's every prefix residual with the actual next prompt token,
+and restores lent cache slots before returning to ordinary decode. Its
+`11837` decode sampler is indexed by that ordinary input position. Equalized
+chunks are an opt-in branch at5804-5828, not the default.
+
+The old connected Rust controller batched ALL prompt inputs, gave its last
+chunk a prompt-precision vocabulary head, and returned that chunk's hidden row.
+That executes different arithmetic for the final prompt input even with the
+same tokens/settings. This source removes that alternate head rather than
+retaining it as a partial-performance option:
+
+- `PromptPlan` selects exactly the firstN-1 inputs and the native default rounded
+  chunk, bounded by the actual2048-row stage. Each chunk supplies equally sized
+  input/next-token teacher slices, with the final teacher containing the last
+  original prompt token. A one-token prompt has no batched prefix or loan
+  execution. Construction still reserves its default owned prompt roots even
+  for that case; request-sized construction/pricing is pending context work.
+- The request-scoped PLE prefetch reads only this batched prefix. One actual
+  borrowed/owned Scope spans its chunks and MTP teaching. The worker joins,
+  private scratch closes/inspects and borrowed weights restore BEFORE decode.
+- `prefill_prompt_chunk` is now prefix-only and returns no vocabulary output.
+  It preflights exact teacher length/draft position before executing target math.
+  The old prompt-output_hc/head, full host logits readback and alternate carry
+  extraction are removed from this selected path. GDN/QSA/PLE/fault/state commit
+  remain coupled to the same layer-major prefix execution.
+- The final original input always goes through the existing normal count1
+  `prefill_chunk_with_carry` graph, exactly once. Its actual output position/count,
+  compact pick/carry, full fault/state acceptance and final committed cursor are
+  checked before normal request output/reuse. MTP is already atN-1; no extra or
+  missing teacher cell and no provisional target row is emitted as a result.
+
+Validation logs under `/media/jmicko/faststore/kuno-development/`:
+
+- `strata-native-prompt-boundary-plan-tests-20261014.log`: schedule/teacher checks
+  pass for1,2,30,35,255/256/257/258,2048/2049/2050,3073,4095/4096 inputs. Every
+  prefix input is consumed once, every R_i pairs with the exact next token,
+  the final original input is excluded from batching, and malformed ranges/
+  lengths/overflow reject. This uses the actual controller's plan and slicer.
+- `strata-native-prompt-boundary-final-io-tests-20261014.log`: the actual I/O
+  authority accepts prefix chunks then count1 final input in Prefill, followed
+  by output scope/early-EOS closure. Its obsolete257-row rejection now rejects
+  CAPACITY+1; valid2048-row prompt chunks are no longer treated as invalid.
+- `strata-native-prompt-boundary-accept-tests-20261014.log`: existing accepted-
+  prefix/rejection/EOS test passes for every supported verification width.
+- `strata-native-prompt-boundary-build-20261014.log`: core release build passes.
+- `strata-native-prompt-boundary-final-clippy-20261014.log` and
+  `strata-native-prompt-boundary-off-clippy-20261014.log`: strict core and
+  ordinary feature-off Clippy pass. Formatting/whitespace pass. Existing Cargo
+  duplicate-binary-path warning remains; no new compiler warning.
+
+Commands use `--locked --release --manifest-path
+apps/kuno/benchmarks/native-text/Cargo.toml --bin kuno-strata-rust`, core feature
+`strata-intel-core` or ordinary `strata-rust-port`, and Clippy `-- -D warnings`.
+No shader arithmetic/ABI changed; the prior offline shader receipt was not
+repeated. These host checks are not a whole-model or full-suite run.
+
+The host schedule/permit checks do not execute math or prove kernel precision,
+physical erasure/restoration, MTP numerical alignment or whole-engine output.
+No GPU/device/model execution, services/admission/residency changes, API/Vashti,
+installation/release or speed trial. Prior full-suite failure audit is still
+unfinished; no old failure is waived. The complete source/physical acceptance
+gates remain closed, and runtime context/sampling/conditional-ring/branch/repair
+work is still required before any throughput trial. Required Vashti changes:none.
+
+For the later sampled path, follow the pinned Intel
+`sycl/src/kernels/cuda/sampler.dp.cpp` and `sycl/include/strata/kernels/sampler.hpp`:
+original penalty order, split4096/top64 GPU candidates and ordered F32 tail,
+Philox4x32-10 keyed by seed/counter, per-verification-row penalty history, and
+coupled draft staging/sample/probability/target acceptance. A CPU sampler or
+random draft alone does not finish this source-to-source dependency. This pass
+inspected those actual files but did not claim to implement sampling.
