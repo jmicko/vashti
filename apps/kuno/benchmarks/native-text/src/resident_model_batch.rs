@@ -94,6 +94,12 @@ const NATIVE_QSA_BATCH_MAIN: u64 = if cfg!(feature = "strata-intel-core") {
     0
 };
 const NEW_MAIN: u64 = 33_062_912 + NATIVE_GR_MAIN + NATIVE_QSA_BATCH_MAIN;
+const NATIVE_GDN_RUNTIME_INFO: u64 = if cfg!(feature = "strata-intel-core") {
+    // runtime_info_reservation(..., true) retains both audited copies.
+    2 * crate::strata_gdn::prompt::INFO_BYTES
+} else {
+    0
+};
 const TOTAL_MAIN: u64 = OLD_MAIN + NEW_MAIN;
 const NATIVE_GR_MAIN: u64 = if cfg!(feature = "strata-intel-core") {
     crate::strata_gr::PRIVATE_INCREMENT
@@ -1692,7 +1698,8 @@ impl Plan {
             return Err(Error::LimitExceeded("native model aggregate private plan"));
         }
         // All component/API-visible reservations remain independent of MAIN.
-        if gdn::GdnBatchWorkspace::runtime_info_reservation(graph, true)? != 4_718_592
+        if gdn::GdnBatchWorkspace::runtime_info_reservation(graph, true)?
+            != 4_718_592 + NATIVE_GDN_RUNTIME_INFO
             || qsa::QsaBatchWorkspace::runtime_io_reservation(graph, true)? != 7_864_320
             || batch_moe::Workspace::runtime_io_increment() != 524288
             || ops::GUARDED_ROUTER_CAPACITY_BYTES > 8192
@@ -1751,7 +1758,7 @@ fn runtime_bytes(head_tiles: u64) -> Result<u64> {
                 + prompt_full::RUNTIME_BYTES
                 + gdn::strata_replay::PROMPT_INFO_BYTES
                 + crate::strata_qsa::prompt::INFO_BYTES
-                + crate::strata_gdn::prompt::INFO_BYTES
+                + NATIVE_GDN_RUNTIME_INFO
         } else {
             0
         };
