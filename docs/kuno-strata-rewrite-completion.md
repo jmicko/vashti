@@ -3688,3 +3688,112 @@ GPU/model/residency/admission work. CPU source work may continue without sudo.
 Whole rewrite remains incomplete and goal active. Next: original device residual
 handoff plus captured round/step/chain dependencies, then remaining full-source,
 runtime and protected correctness/recovery gates before speed trials.
+
+
+## Original verifier device residual grant for accepted MTP rounds (2026-10-14)
+
+Source `2532963`, after `f671543`, isolated `codex/strata-rust-port`. Continuing
+accepted MTP rounds now consume the original verifier residual owner directly.
+This supersedes that part of the previous grouped-round handoff; **host packet
+readback, initial/final host-carry paths and full captured scheduling remain open**.
+No speed-based path selection or live model execution was performed.
+
+### Connected source and lifetime
+
+Pinned Intel `Verifier::final_R_all()` returns the actual device R_ carved by
+`verify.cpp:507/544`. Serial `generate.cpp` binds it directly to MTP; native
+`capture_round` copies its accepted rows into Rin_. Rust's packet producer already
+receives the actual `outer.residual[current]` BufferId. `resident_target_rows.rs`
+now mints a private `DeviceCarryReceipt` only after its real compact packet has
+passed decode/finite/fault checks. It records that exact source ID, opaque graph
+binding, target write generation, original start/count and bounded wiping picks.
+No raw handle, erase/free authority, Clone/Debug/serialization or persistent
+content is exposed by the receipt. The original host output lease still must be
+dropped before target prefix commit.
+
+`ResidentModel::borrow_target_carry` checks the completed original projection/
+state boundary, current generation/binding, actual committed accepted cursor,
+source membership in the original outer residual pair, complete owner extent
+and physical provenance. BufferId authenticates arena/reset epoch/slot, including
+multiple instances sharing one public graph. Receipt generation is invalidated
+before **all native chunk purposes, prompt prefill, scalar stepping and warm
+reset** may reuse/erase target scratch; overflow rejects without wrapping. Target
+state-only prefix replay and public expert adaptation do not overwrite that R
+owner, so a receipt from the real verified window remains valid across commit.
+
+The resulting `DeviceCarry` holds an immutable lifetime-bound borrow of the
+actual parent arena/receipt and original retirement flag. Safe caller code cannot
+mutate/reset/close the target while it exists. It validates the supplied original
+prediction prefix and permits only the accepted row interval. Copies authenticate
+same client/stream, full source/destination/fault owners and actual disjoint
+physical extents before borrowing read-only source views. No sliced view becomes
+an owner, no extra GPU source allocation is made, and no source is erased by MTP.
+
+The actual selected global controller now retains this receipt instead of a
+host residual vector between rounds. Next native MTP entry copies the selected
+last R row directly into the existing B::Carry and the complete accepted R prefix
+into the existing front CARRY owner. Original token staging, front clearing,
+rewind, last-row R/injection/mixed selection, Q8_1 preparation, real rest/head,
+confidence and exact target verification all remain connected. Both zero-threshold
+queued chains and positive-threshold serial chains retain the source borrow
+through their actual final result/sticky-fault fence. Only that completed return
+clears its in-flight marker, at one documented unsafe proof site. Dropping an
+unjoined grant retires the **original source context** and leaves original parent
+cleanup authority intact. Enqueue is never credited as source completion.
+
+The implementation uses the existing guarded CubeCL word-copy kernel and native
+queue dependency tracking. No new WGSL, MAIN root or runtime envelope is added.
+Core target HOST_INCREMENT explicitly adds8192 bytes for receipt/grant/pick and
+resource metadata:12,582,912 ->12,591,104. Legacy feature-off quotes remain
+unchanged. Full private source/destination padding stays under original owners'
+guards/erasure. Receipt coordinates, source ID, generation and pick storage wipe;
+no request values enter logs, shader source or cache keys.
+
+### Remaining fidelity and acceptance work
+
+The existing full private verifier packet still contains host residuals, and the
+controller still decodes them for its initial/final legacy carry/repair paths.
+This block removes **their upload as the continuing accepted MTP source**, not
+all residual readback. Complete the device source through first proposal and
+final/count1 cache repair, then a finite-checked compact ids-only native result
+path; do not silently weaken full source fault/finite validation to save readback.
+The existing host laboratory interfaces can remain separately scoped.
+
+Physical original-source placement/numerical copy, all-prefix GDN/QSA/PLE state,
+queue ordering, unknown-completion retention, erasure and recovery are unverified.
+Stable complete native round/step/branch captures, mapped/event publication,
+applicable nonblocking/force-token chains and commit overlap remain incomplete.
+Runtime input/context/cache/ring sizing and the complete source audit are still
+required. Neither narrow CPU tests nor an incidental timing number opens the
+whole-engine throughput gate.
+
+### Final CPU receipt
+
+Under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-device-carry-tests-20261014.log`:4 new pure checks pass: every accepted
+  prefix against generation/binding/cursor, rejected/changed prediction prefix,
+  full-owner prefix/last-row interval math and unknown-completion retirement
+  without clearing prior poison. Generic CPU identity fixtures create no opaque
+  graph binding, arena, GPU source or ownership grant.
+- `strata-device-carry-grouped-tests-20261014.log`:4 grouped-front/window/entry
+  checks pass. The entry test uses the actual shared pure validator, not a forged
+  device receipt. `strata-device-carry-confidence-tests-20261014.log`:8 pass;
+  `strata-device-carry-sampler-tests-20261014.log`:10 pass.
+- `strata-device-carry-prefix-tests-20261014.log`:the all-width acceptance/
+  rejection/EOS check passes. `strata-device-carry-packet-tests-20261014.log`:
+  original core-eight compact packet/padding/finite check passes.28 total focused
+  checks. No full-suite run or waiver of the previous228 failures.
+- `strata-device-carry-build-20261014.log`:core release build passes.
+- `strata-device-carry-shaders-20261014.log`:317 ordinary shader bodies,
+  122 physical-pointer and32 cooperative-matrix variants validate offline using
+  the pinned2026.1 validator, without device initialization.
+- `strata-device-carry-{core,off}-clippy-20261014.log`:strict core/off Clippy pass.
+  Formatting/whitespace pass. Existing duplicate binary-path notice remains.
+
+No GPU/model/device, speed trial, sudo, service/admission/residency, public API,
+Vashti, installation, deployment or release operation. Canonical checkout remains
+clean and inherited isolated bytecode remains preserved. BOTH GPUs belong to the
+user; reconfirm before GPU work. Source/CPU work may continue. Whole goal active,
+full rewrite incomplete. Next connect remaining direct-carry/compact results and
+native captured-branch dependencies before protected correctness/recovery gates.

@@ -6,15 +6,14 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-14):** isolated
-`codex/strata-rust-port`, source through `f671543`. Read the
-[grouped native round handoff](#active-kuno-engine-handoff--native-grouped-mtp-round-2026-10-14)
-and [whole-rewrite gate](kuno-strata-rewrite-completion.md). Actual accepted front
-rows and next draft rest now group in the selected controller. Original device
-residual handoff, stable captured branches/pipeline, runtime and whole-source/
-device acceptance remain incomplete. No speed trials before the full gates.
-The user owns BOTH GPUs; reconfirm availability before GPU/model/admission/
-residency work. CPU source/build checks may continue. This backend work does
-not change the published image/application contract.
+`codex/strata-rust-port`, source through `2532963`. Read the
+[device residual handoff](#active-kuno-engine-handoff--original-device-residual-grants-2026-10-14)
+and [whole-rewrite gate](kuno-strata-rewrite-completion.md). Grouped accepted MTP
+rounds now borrow/copy the actual verifier residual buffer directly. Initial/
+final host carries, packet readback, complete captured branches/pipeline, runtime
+and whole-source/device acceptance remain incomplete. No speed trials before the
+full gates. User owns BOTH GPUs; reconfirm before GPU/model/admission/residency
+work. CPU source/build checks may continue. Published application API unchanged.
 
 ## Ownership
 
@@ -5681,3 +5680,43 @@ No GPU/model, speed, sudo, service/admission/residency, API/Vashti, installation
 or release operation. Canonical clean checkout/inherited bytecode preserved.
 Both GPUs remain with the user; reconfirm availability before any GPU work.
 Required Vashti changes:none. Whole rewrite goal remains active.
+
+
+### Active Kuno engine handoff — original device residual grants (2026-10-14)
+
+Source `2532963`, after `f671543`, isolated `codex/strata-rust-port` at
+`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`. Read completion guide
+**Original verifier device residual grant for accepted MTP rounds**. Full rewrite
+and physical acceptance remain incomplete; this is backend-only engine work.
+
+The real compact packet producer now issues a private source receipt tied to
+its actual outer residual BufferId, opaque graph, write generation, start/count
+and wiping target picks. Before native/prompt/scalar/reset writes, old receipts
+are invalidated without generation wrap. Actual state-only prefix commit/public
+cache adaptation preserve the original R rows. The parent checks committed state/
+cursor, source membership/full extent/provenance and original identity before
+returning a lifetime-bound immutable arena borrow. A receipt alone is neither a
+raw handle nor erase/free permission. Prediction prefix and accepted copy ranges
+are checked; same-client/stream/disjoint full owners are authenticated again.
+
+Selected continuing MTP rounds copy the original selected R row into B::Carry
+and accepted R prefix into native CARRY, preserving grouped last-row R/injection/
+mixed selection, quantization, sampler counter/history and target verification.
+No host carry vector is retained as the next round's MTP source. The source
+borrow survives the real result/fault fence. An unjoined copy retires the original
+source context; original parent cleanup authority remains. No new MAIN/runtime
+owner; core host increment adds8192 bytes (now12,591,104). No content persistence.
+
+Remaining: initial/final/count1 host-carry/repair and full residual packet readback
+still exist. This is not a claim of zero host residual reads. Connect those device
+paths and ids-only finite-checked results, stable native round/step/branch capture,
+mapped/event publication, applicable nonblocking/force-token/commit overlap,
+runtime sizing and full-source/physical correctness/recovery gates before speed.
+
+Final28 focused CPU checks, core release build, strict core/off Clippy, fmt and
+317 ordinary/122 physical-pointer/32 matrix offline shader validations pass.
+Exact logs and limits are in the receipt. No full-suite waiver of prior228 failures.
+No GPU/model/device, sudo, service/admission/residency, API/Vashti, install,
+deployment or release change. Canonical clean checkout and inherited bytecode
+preserved. Both GPUs remain with the user; reconfirm availability before GPU work.
+Required Vashti changes:none. Goal active; CPU source work may continue.
