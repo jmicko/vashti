@@ -1,19 +1,19 @@
 # Native DASLab/Strata checkpoint — 2026-10-09
 
 **Current Rust port resume pointer (2026-10-14):** isolated
-`codex/strata-rust-port`, source through `2532963`. Read the latest
-[coordination handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--original-device-residual-grants-2026-10-14)
-and [device source receipt](kuno-strata-rewrite-completion.md#original-verifier-device-residual-grant-for-accepted-mtp-rounds-2026-10-14).
-Grouped accepted MTP rounds now borrow/copy the actual original target R owner;
-typed lifetime/generation/prefix/complete-owner checks and joined source retention
-are connected. Core host increment adds8192 bytes; no new GPU root/runtime quote.
-Initial/final host carries, full residual packet readback, stable native branch
-captures, applicable pipeline/events, runtime and full-source/physical acceptance
-remain incomplete. Next connect remaining direct-carry/ids-only result and capture
-dependencies. No live speed trials until all whole-engine gates pass. Older
-results/states below are historical. User retains BOTH GPUs: reconfirm before
-GPU/model/admission/residency work. CPU source work can continue without sudo.
-No installed service or public API change.
+`codex/strata-rust-port`, source through `9edc3f6`. Read the latest
+[handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--native-device-ends-and-constructor-gap-2026-10-14)
+and [device ends/construction receipt](kuno-strata-rewrite-completion.md#native-target-ids-only-results-and-firstrequest-exit-device-paths-2026-10-14).
+Target ids-only and first/grouped device paths compile; **current core speculative
+entry still builds a separate MTP client and cannot satisfy same-client preflight**.
+NEXT unify actual Intel context/client plus combined admission/accounting,
+transient-I/O, retirement and close ownership. Do not weaken identity checks or
+just clone the client. Then captured/native policy, compact positive-threshold
+draft observation, runtime and full-source/physical gates remain. No speed trials.
+Native EOS/cap now skips further MTP catch-up; full erasure is original parent
+close's responsibility. User owns BOTH GPUs: reconfirm before GPU/model/
+admission/residency work. CPU source work can continue without sudo. No installed
+service or public API change; older results below are historical.
 
 
 **Current checkpoint:** user requested a stop for usage conservation. Standalone

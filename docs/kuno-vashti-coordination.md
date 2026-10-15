@@ -6,14 +6,15 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-14):** isolated
-`codex/strata-rust-port`, source through `2532963`. Read the
-[device residual handoff](#active-kuno-engine-handoff--original-device-residual-grants-2026-10-14)
-and [whole-rewrite gate](kuno-strata-rewrite-completion.md). Grouped accepted MTP
-rounds now borrow/copy the actual verifier residual buffer directly. Initial/
-final host carries, packet readback, complete captured branches/pipeline, runtime
-and whole-source/device acceptance remain incomplete. No speed trials before the
-full gates. User owns BOTH GPUs; reconfirm before GPU/model/admission/residency
-work. CPU source/build checks may continue. Published application API unchanged.
+`codex/strata-rust-port`, source through `9edc3f6`. Read the
+[native device-end and constructor handoff](#active-kuno-engine-handoff--native-device-ends-and-constructor-gap-2026-10-14)
+and [whole-rewrite gate](kuno-strata-rewrite-completion.md). Target ids-only and
+first/grouped device paths compile, but the current speculative harness still
+creates an incompatible separate MTP client. Next unify actual shared context,
+combined accounting/transient-I/O and cleanup, preserving identity checks.
+Whole-source/physical/capture/runtime acceptance remains incomplete; no speed
+trials. Both GPUs belong to the user; reconfirm before GPU/model/admission/
+residency work. CPU source work may continue. Application API unchanged.
 
 ## Ownership
 
@@ -5720,3 +5721,50 @@ No GPU/model/device, sudo, service/admission/residency, API/Vashti, install,
 deployment or release change. Canonical clean checkout and inherited bytecode
 preserved. Both GPUs remain with the user; reconfirm availability before GPU work.
 Required Vashti changes:none. Goal active; CPU source work may continue.
+
+
+### Active Kuno engine handoff — native device ends and constructor gap (2026-10-14)
+
+Source `9edc3f6`, after `2532963`, isolated `codex/strata-rust-port` at
+`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`. Read completion guide
+**Native target ids-only results and first/request-exit device paths**.
+**The current core speculative harness is not runnable through the shared-client
+path yet.** CPU/source connection is not whole-model acceptance.
+
+Selected controller explicitly opts into target packet v3:96 logical bytes for
+ids, geometry, prior fault and per-row finite status; original R stays in its
+full device owner. GPU128-thread row groups inspect all active10240 residual
+values. CPU checks every id/status/header/inactive row, then issues the same
+original device receipt. Legacy host-carry mode remains separately scoped.
+First proposal now uses the final prompt's original device receipt, including
+cell0. Count1 target inputs front real KV without a proposal head; distinct
+LastFront cannot authorize LastForward/follow. All mutation/prompt/close paths
+invalidate old stamps. Native EOS/cap exit commits target state and does not
+perform another MTP catch-up; only original parent close owns cache erasure.
+No new GPU owner/budget or request persistence. Target host residual extraction
+is gone in the selected controller. Positive-threshold draft hidden readback is
+still a separate remaining gap.
+
+NEXT, before capture work: `daslab_language_probe::draft_client` still creates
+another Vulkan device/client; caller configures independent runtime/backlog.
+`ResidentMtp::construct` demands a fresh client and6GiB ledger baseline0. Prompt
+device teaching/coupled sampling/direct grants require the actual same client,
+so this old constructor cannot satisfy the new path. Unify Intel construction,
+combined pre-device/main/runtime/host accounting, transient-I/O policy, retirement
+and both-owner close ordering. Do not relax identity checks, clone the client
+without resolving budgets, fake peer allocation credit, or pass foreign handles.
+Source/CPU work is available without sudo/GPU; goal is not blocked.
+
+Afterwards finish native capture/warm/event/chain/commit dependencies, reconcile
+configured native draft count versus remaining-output/count1 policy, compact
+positive-threshold observations, runtime/context/cache/ring and full-source/
+physical correctness/recovery gates. No speed trials yet.
+
+Final32 focused CPU checks, core release build, strict core/off Clippy, format,
+317-body/controller +122 physical-pointer/32 matrix offline validations pass.
+New ids packet also passes external Vulkan1.3 SPIR-V validation. Exact final
+log prefix `strata-device-ends-accepted-*` is recorded in the receipt; it does
+not mean full-rewrite acceptance. Prior228 core failures remain unaudited.
+No GPU/model, sudo, service/admission/residency, API/Vashti, install, deployment
+or release change. Canonical/inherited bytecode preserved. Both GPUs remain with
+the user; reconfirm before GPU work. Required Vashti changes:none. Goal active.

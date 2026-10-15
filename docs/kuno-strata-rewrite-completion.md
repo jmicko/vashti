@@ -43,7 +43,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Core connects native BF16 MAX8 projections, normalization/gate/conv/history, deduplicated positional reads and accepted-prefix ownership. Prompt calls now consume a bounded, joined double-buffered source prefetch. The latest controller receipt connects native large chunk geometry, joined uploads, retained tail and exact history acceptance. Native loans/queue scheduling and numerical/device acceptance remain open. Never persist request n-grams. |
 | Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. The bounded prompt path now uses logical-ID expert order, checked native transfer nodes, an eight-slot raw ring and two paired dequantization slots. The latest owned-consumer receipt connects full2048-row owners, non-overlapping raw/grouped route packets, causal math/state scopes, the unbatched final prompt input uses normal count1 decode for the first head, and full device MTP teaching covers the preceding prefix (up to8192 matrix rows). Independent transfer/compute queues and real release boundaries are connected. Dynamic cache loans, conditional ring sizing and physical whole-model acceptance remain open. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
 | Prompt dense/expert matrix backend | Intel oneMKL rounded BF16/FP16 GEMMs | Connected Rust cooperative8x16x16/F32 kernels now consume the actual rounded dense and grouped GU/DOWN images, with enabled device features, SPIR-V native registration and required16 subgroup in both pipeline paths. See the cooperative-matrix receipt; physical numerical/model acceptance remains open. |
-| MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native FP16 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Queue/branch/capture fidelity, numerical/state acceptance, arbitrary input and supported sampling remain required. See the front/rest/MoE receipts. |
+| MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native FP16 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. First/grouped device-source and ids-only target result consumers now exist through 9edc3f6, but the speculative harness still constructs a separate MTP client and cannot satisfy their same-client preflight. Unify construction/admission/cleanup before runtime acceptance. Queue/branch/capture fidelity, numerical/state acceptance and runtime policy remain required. See the latest device-end receipt. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Request-local Rust suffix/cost controller exists; audit supported window lengths and coupled sampling rather than fixing to four public-fixture rows. |
 | Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Real greedy verification/state-only repair exists. Audit all active windows and acceptance cases against GDN/QSA/PLE/positions; independent correctness oracle remains missing. |
 | Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; physical ring overlap, stable complete branch recordings, scratch lifetimes and full execution acceptance remain open; a sequence of independent Wgpu launches is not equivalent. |
@@ -3797,3 +3797,144 @@ clean and inherited isolated bytecode remains preserved. BOTH GPUs belong to the
 user; reconfirm before GPU work. Source/CPU work may continue. Whole goal active,
 full rewrite incomplete. Next connect remaining direct-carry/compact results and
 native captured-branch dependencies before protected correctness/recovery gates.
+
+
+## Native target ids-only results and first/request-exit device paths (2026-10-14)
+
+Source `9edc3f6`, after `2532963`, isolated `codex/strata-rust-port`.
+**Source/CPU progress only. The current core speculative harness still creates
+an incompatible separate MTP client; it cannot execute the new shared-client
+path until the construction/accounting/cleanup block below is implemented.**
+This explicitly supersedes any implication that call-site connection alone
+established a runnable complete engine. No live speed gate is open.
+
+### Selected target dataflow and private packet
+
+The global controller explicitly calls `Scope::use_device_residuals()` before
+its last normal prompt decode. The lexical request flag defaults false for old
+laboratory users, validates idle phase, client and original graph at packet read,
+and selects the device-source output for **every** target result in this
+controller. It is not a benchmark-driven optional rollback. No gateway/API or
+Vashti protocol is changed.
+
+The selected packet producer still consumes the real full-vocabulary sampled/
+greedy picks, original complete residual root, sticky fault and full output root.
+`strata-device-packet.wgsl` uses one128-thread group per compiled row. It scans
+all10240 active residual values for finite bits, joins a workgroup-local atomic
+bad flag with barriers, and publishes a separate status per row. The header
+writer never races another group's newly discovered fault. CPU decode rejects
+any row status, original sticky fault, invalid id, nonzero inactive id, bad
+geometry/version/reserved word or wrong packet length. Successful payloads own
+wiping ids and coordinates; their host logits/hidden vectors are empty and
+`hidden()` is unavailable. The original source receipt is minted from that
+finite-checked result and still authenticates the actual arena BufferId.
+
+Internal packet version3 (not an application wire ABI):
+
+| Word | Meaning |
+| --- | --- |
+| 0..8 | version3, active count, original start, vocabulary248320, HC width10240, compiled capacity8, original sticky fault, reserved0 |
+| 8..16 | active selected ids (<248320), inactive0 |
+| 16..24 | per-row residual finite statuses, all0 for acceptance |
+
+Logical readback is96 bytes rather than327744 for the old core-eight carry
+packet. This is a source byte count, not measured PCIe traffic or speed.
+The complete8MiB packet owner/clear/erasure authority and original private read
+scope remain; the96-byte view does not acquire owner authority. Legacy packet
+version2 remains for callers without the explicit device-source policy. No new
+MAIN root, runtime quote or host reservation is added by this block; the existing
+device-grant8192-byte host increment remains.
+
+### First cell, count1 windows and native request exit
+
+Pinned `mtp.cpp::draft_first` (1954) stages the actual token/R pair in row0 and
+calls draft with accepted row0. Default `mtp_catchup_all=false` truncates its
+front to that one row; the unused duplicate source staging is not reproduced.
+Rust now seeds its pending device receipt from the actual final-prompt output.
+The first source's count1/untouched teacher cursor is distinguished from an
+accepted catch-up requiring completed cache authority, including cell0 for a
+one-token prompt. No host target residual is extracted/uploaded by the selected
+controller for that first proposal or later accepted proposals.
+
+When the controller supplies only one target input, the device front still
+appends its actual current token/R cell without running a draft rest/head.
+A new distinct `LastFront` capability records only a completed KV front. It is
+not interchangeable with `LastForward` and cannot authorize `follow_draft`.
+Normal forward publication, step, append, rewind, prompt teaching, failure and
+close invalidate the appropriate old stamps. Both device-source copies and the
+actual private fault fence complete before front position/capability publication.
+
+The source audit of `generate.cpp:12310..12345` found that native EOS/output-cap
+exit commits the target prefix and performs **no further MTP catch-up**. The
+selected Rust exit now follows that rule instead of retaining the old eager
+final repair. `finish_native_request` checks completed scope/live-output state
+and discards provisional follow/front permits. It does not mark cache contents
+accepted, erase buffers or claim memory was released. The actual original owners
+retain all provisional KV and perform full erasure/closure: existing harness
+`target.close()` around2470 and `draft.close()` around2537, with their audits
+before reporting success. No live erasure/recovery claim is made here.
+
+### Newly verified construction gap: next required source block
+
+`daslab_language_probe.rs::draft_client` (910 onward) still requests another
+`wgpu::Device`, calls `init_device`, and proves a **distinct** runtime client,
+even for the same Intel physical adapter. Its caller (1125 onward) configures
+independent transient I/O and rejects inherited target request/backlog policy.
+`ResidentMtp::construct` (around1390) additionally requires a completely fresh
+client and starts its6GiB `MainAdmission` at baseline0. These are old isolated
+laboratory assumptions, not a valid shared-runtime implementation of Strata.
+
+The new source grants, existing prompt device teaching and coupled sampler all
+correctly require the **same** actual client/device context. Consequently the
+current core speculative entry cannot pass those preflights. Do not bypass or
+weaken them, substitute a same-physical-adapter comparison, transfer foreign raw
+handles, or claim completion from these CPU checks.
+
+Next unify the selected Intel constructor under the actual target Vulkan device/
+client, with truthful combined pre-device MAIN/runtime/host reservations,
+allocation attribution/fences and context retirement. Reconcile fresh-client/
+per-owner ledger assumptions against `main_admission.rs`, target admission and
+both real arenas. Audit shared transient-I/O policy and final close ordering;
+merely cloning the client or treating existing peer allocations as zero would
+be incorrect. Keep non-core independent legacy laboratories separately scoped.
+This work can proceed on source/CPU without sudo or GPU access.
+
+Then complete stable native branch recording/warm-up and mapped/event/chain/
+commit overlap dependencies. Two additional remaining source audits are explicit:
+current draft count is capped by remaining outputs/count1 front-only, whereas
+native draft uses configured max_drafts; reconcile native window/no-MTP/suffix
+policy as one block. Positive-threshold MTP currently still uses its old scalar
+`DraftOutput` readback containing an unused hidden vector; the **target** ids-only
+change does not fix that draft observation path. Arbitrary input/context/cache/
+ring policy and the entire dependency checklist/physical correctness and recovery
+remain required before any throughput trial.
+
+### Exact final CPU-only validation
+
+Logs under `/media/jmicko/faststore/kuno-development`, prefix
+`strata-device-ends-accepted-`, suffix `-20261014.log`:
+
+- `native_device_end`:4 new checks pass: initial/accepted boundary distinction,
+  typed front stamp binding/position, all-width ids/status packet rejection and
+  new producer Naga/SPIR-V lowering. No device/source grant is fabricated.
+- `native_device_carry`:4 pass; `native_grouped_round`:4;
+  `native_confidence`:8; `native_sampl`:10; `global_prefix_acceptance`:1;
+  `core_eight_compact`:1.32 focused checks, not full-suite or numerical acceptance.
+- `build`:core release build passes. `core-clippy`/`off-clippy`:strict core/off
+  Clippy pass; final ownership spelling is the lint-clean last-use move.
+- `shaders`:317 ordinary bodies plus the controllers (including the new ids-only
+  producer),122 physical-pointer and32 cooperative-matrix validations pass with
+  the pinned2026.1 validator. The standalone public-source-only checker
+  `/tmp/kuno-native-device-packet-check-20261014` also emits SPIR-V accepted by
+  `spirv-val --target-env vulkan1.3`. Formatting/whitespace pass.
+
+Earlier final-repair staging/validation receipts are superseded by this native
+request-exit source; the change follows upstream source, not any speed result.
+The omitted prompt-teaching front-stamp invalidation and final Clippy spelling
+were repaired before the above exact final checks. Existing duplicate-bin-path
+Cargo notice remains. Prior228 full-core failures are not waived or audited by
+these focused tests. No GPU/model/device, speed trial, sudo, service/admission/
+residency, install, release or application/API operation. Canonical clean checkout
+and inherited bytecode preserved. Both GPUs remain with the user; obtain
+availability before GPU work. Goal active, rewrite incomplete. Resume with the
+shared-context construction/accounting/cleanup block, before captured execution.
