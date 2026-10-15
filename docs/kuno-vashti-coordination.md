@@ -6,20 +6,18 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-15):** isolated
-`codex/strata-rust-port`, source through `30f5220` (logical fault view fix
-`da7a74e`). Read the latest
-[shared-source handoff](#active-kuno-engine-handoff--shared-source-initialization-and-cpugpu-submission-2026-10-15)
-and **Prompt expert logical fault view and overnight stop** in
-[the completion gate](kuno-strata-rewrite-completion.md). The native upload
-submission validation failure is resolved in the latest protected path. The
-next exact rejection is the prompt expert consumer receiving a full 32 KiB
-fault owner instead of its logical four-byte view. The caller is corrected;
-GPU validation of that correction is pending. Whole rewrite, full execution,
-numerical/state/owning-erasure and speed acceptance remain incomplete.
-Both GPUs are released to the user: continue CPU-only until explicitly returned.
-Normal admission and Kuno/Ollama/Vashti HTTP200 verified; goal remains paused.
-Exact30f5220 locked release core/off strict Clippy, fmt and whitespace checks pass.
-No API or installed service change; required Vashti changes: none.
+`codex/strata-rust-port`, source through `cd8993d`. Read the
+[selected-Intel handoff](#active-kuno-engine-handoff--selected-intel-path-and-cpu-only-continuation-2026-10-15)
+and selected-serving-mode audit in [the completion gate](kuno-strata-rewrite-completion.md).
+Prompt prefix and MTP teaching now complete. Final count1 head view correction
+is built, hardware validation pending. Actual NO_HOST expert access and stable
+branch ownership are connected; true direct graph replay, INT8 caches and CJK
+head remain incomplete. No numerical/speed/owning-erasure acceptance claim.
+
+**CPU-only work is authorized; goal remains active.** No more GPU/model/service
+work until reauthorized. Last run ended with normal admission, all three HTTP200,
+Intel50,688,000 bytes, no NVIDIA compute and fault counts unchanged0. Installed
+system and application API unchanged; required Vashti changes:none.
 
 ## Ownership
 
@@ -5982,3 +5980,39 @@ three HTTP200. Owning erasure/numerical acceptance is still NOT established.
 No speed comparison, install, model/service/driver change, reset or reboot.
 Goal paused; next GPU gate is protected original completion with corrected view,
 then continue the full connected rewrite. Required Vashti changes:none.
+
+
+### Active Kuno engine handoff — selected Intel path and CPU-only continuation (2026-10-15)
+
+This supersedes the older CPU-doorbell/warmup requirement and paused-goal notes.
+Read the normative [completion gate](kuno-strata-rewrite-completion.md), including
+its **Selected serving-mode audit and resumed completion checks**. The actual
+retained Strata server enables DEVICE_PLAN/NO_HOST; GPU directly consumes real
+resident or mapped HOST expert bytes. Generic CPU servicing and optional split
+windows are not dependencies of that measured B70 path. Selected INT8 KV/CJK
+draft head and full lazy branch capture remain required; no speed-driven retreat.
+
+Latest integrated source on `codex/strata-rust-port`:
+- `b17bbb0`: exact BF16 shared-gate vectors admitted as one-row projections.
+- `36d13d3`: GPU direct HOST/VRAM expert plan, no per-layer CPU readback/join.
+- `8c239bc`: authenticated four-byte fault view for the native final-head bridge.
+- `19aa565`: request-owned stable branch parameter slabs and native MTP captures.
+- `7aa574f`: target verification branch capture with actual immutable context.
+
+Prompt prefix + MTP teaching pass protected execution. Final count1 head still
+failed in the latest36d13d3 run; the proven view fix8c239bc is built but not GPU
+validated. Whole-model generation/numerical/owning-erasure acceptance remains
+open. Process exit recovery is separately verified at06:07:22Z: Intel50,688,000
+bytes, no NVIDIA compute, fault counts0unchanged, normal admission and all three
+HTTP200. Evidence: `strata-native-no-host-check-20261015/host-after.json`.
+Release build through19aa565 and strict core Clippy through7aa574f pass.
+
+**Current user instruction: CPU-only work, goal remains active.** No further
+GPU/model/service work until the user returns authorization. Continue isolated
+source/compile checks; do not interpret cached sudo as GPU permission.
+Current peer worktrees are `strata-branch-parameters` (PLE staging / typed graph
+invocation), `strata-int8-kv` (target/MTP INT8), and `strata-resident-first` branch
+`codex/strata-native-cjk` (original-order CJK head + coupled sampling). Their
+unintegrated work is not validated main behavior; preserve it if interrupted.
+No frontend or shared application API change. Required Vashti changes:none.
+No release, installation, reset, reboot, model mutation or task message.

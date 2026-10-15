@@ -18,6 +18,19 @@ caches and benchmark programs are not required to reproduce this inference path.
 Do not use those scope boundaries to omit prompt prefill, sampling, state commit,
 CPU/GPU residency, or a dependency of the working measured Intel path.
 
+**Selected Intel mode, corrected 2026-10-15:** the actual tested SYCL serving
+launcher sets `STRATA_VERIFY_DEVICE_PLAN=1` and `STRATA_VERIFY_NO_HOST=1`.
+The saved comparison receipt confirms those settings. Its GPU groups both VRAM
+experts and the mapped HOST complement into the primary pointer plan and reads
+either source directly. It skips the per-layer CPU expert service/doorbells.
+For the B70/Xe port, reproduce this mode with complete original source ownership;
+CPU expert splitting/doorbell servicing and `--spec-split` A/B windows are optional
+upstream modes, not missing prerequisites of this selected path. Earlier notes
+below requiring those modes before completion are superseded on that point.
+Whole-window graph/parameter reuse, target/MTP state, prompt behavior and correct
+source placement remain required. Do not replace missing experts with other IDs
+or remove the system-RAM source complement.
+
 Rust must own model loading, graph execution, request state and inference kernels.
 Generated WGSL/SPIRV and Rust/ash Vulkan are the explicit backend substitution for
 SYCL kernels/queues. No foreign inference graph/library is linked. Preserve MIT and
@@ -33,20 +46,20 @@ all need a final audit of actual connected dispatches, not just file names.
 | Component | Pinned upstream | Current Rust connection and required completion |
 | --- | --- | --- |
 | Artifact geometry, packing and tokenizer | `sycl/src/core/weights.cpp`, `src/io`, native expert layout, program model setup | Rust GGUF/tokenizer/binding exist. Audit format-specific load/conversion, chat-template and sampling behavior; original files remain shared/read-only. |
-| Exact dense placement and expert budget | `sycl/src/program/generate.cpp` model/cache setup; `sycl/src/core/expert_cache.cpp::open_sized` | Exact dense roots exist. Native global byte-prefix planning and an owning bounded GPU loader now compile; graph validation consumes the real artifact plan. Experimental core construction now invokes the sole global owner before prefill, and the core48-layer coordinator selects global routing/HOST fetch/role execution. Adaptive exchange/private remap updates, native format conversion audit and physical/numerical acceptance are unfinished. The ordinary feature-off engine retains uniform banks. |
+| Exact dense placement and expert budget | `sycl/src/program/generate.cpp` model/cache setup; `sycl/src/core/expert_cache.cpp::open_sized` | Exact dense roots exist. Native global byte-prefix planning and an owning bounded GPU loader now compile; graph validation consumes the real artifact plan. Experimental core construction now invokes the sole global owner before prefill, and the core48-layer coordinator selects global routing/HOST fetch/role execution. Physical/numerical acceptance remains unfinished. All777 required original float tensors already match the selected native format (484 BF16,292 F32,1 F16); generic conversion is not required for this artifact. Target embedding currently occupies GPU memory while the measured source uses mapped HOST; this residency substitution remains explicit. The ordinary feature-off engine retains uniform banks. |
 | Low-RAM host complement and promotion | `generate.cpp` source/adaptive tier; `sycl/src/core/verify.cpp` fetch/rebase | Original host complement, direct exchange and GPU selected fetch exist. Audit full byte ownership and asynchronous safe publication against upstream; do not duplicate the whole model in RAM. |
-| GPU route/group planning and CPU contribution | `verify.cpp` router, `resident_plan`, doorbell/pool/host plans; `src/kernels/cpu` | Native BF16 router/shared-gate projections and full512-expert softmax/winning-lane normalization are selected in the core. Physical/numerical acceptance and working Intel all-GPU-fetch versus host-pool mode/overlap still require audit. |
+| GPU route/group planning and original HOST access | `verify.cpp` / `verify_kernels.dp.cpp::resident_plan_kernel`, selected SYCL `DEVICE_PLAN=1,NO_HOST=1` | Native BF16 router and full512-expert normalization exist. Correct selected path reads actual VRAM or mapped HOST aliases directly on the GPU, preserving every selected expert. Source36d13d3 replaces the CPU split/staging consumer with direct authentic source aliases and removes per-layer CPU joins/submissions; protected execution is pending. Generic CPU doorbells/split windows are optional modes, not this B70 completion gate. Physical/numerical acceptance remains required. |
 | Native expert math and grouped rows | `sycl/src/kernels/cuda/iq_kernels.dp.cpp::row_entries`, `native_gu_kernel`, `native_down_kernel` | Packed integer math/BDA roots exist. Separate GU roles, 4/2/1 chunks, activation, intermediate storage and downstream consumers are now selected together in the Intel core; all 158 WGSL/SPIR-V variants validate, including 105 physical-pointer checks; numerical/model execution acceptance remains pending. The global core now uses one per-role launch containing pinned row_entries4/2/1 loops, scalar IQ4_XS, native signed integer finish and XOR reduction; numerical/model execution acceptance remains pending. Historical fixed-chunk kernels are retained separately. |
 | GR write/read/norm/down/up/injection | `sycl/src/kernels/cuda/fused_gr.dp.cpp::fused_gr_read_multi`; `verify.cpp::gr_read_group` | Native pending-write norm, sliced BF16 down/injection, fixed slice reduction and up/mix/commit are now connected and unconditionally selected in the core, including explicit PLE/final boundary writes. Resident original weights and the enlarged private scratch owner are charged together. Structural acceptance passes; numerical/model execution acceptance and final substitution audit remain pending. |
-| GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp`, `prefill/kernels.dp.cpp` | Core connects native BF16 alpha/beta, controls, recurrence/norm and accepted-prefix replay. Prompt scope selects contiguous H, causal convolution/history/L2, CB32 recurrence and directly consumed FP16 output. Source 9a7a23b connects prompt-capacity whole-chunk math without per-element status/replay owners, carved AB staging, and native row/value-head recurrent state shared by prompt/decode/repair. The large chunk caller/acceptance is connected in the latest controller receipt; remaining split verifier replay, physical execution and final numerical/queue audit remain open. |
-| QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects FP16 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. See the QSA receipt below for precise storage/scheduling substitutions and remaining numerical/state acceptance; do not claim full QSA fidelity yet. |
-| PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Core connects native BF16 MAX8 projections, normalization/gate/conv/history, deduplicated positional reads and accepted-prefix ownership. Prompt calls now consume a bounded, joined double-buffered source prefetch. The latest controller receipt connects native large chunk geometry, joined uploads, retained tail and exact history acceptance. Native loans/queue scheduling and numerical/device acceptance remain open. Never persist request n-grams. |
-| Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. The bounded prompt path now uses logical-ID expert order, checked native transfer nodes, an eight-slot raw ring and two paired dequantization slots. The latest owned-consumer receipt connects full2048-row owners, non-overlapping raw/grouped route packets, causal math/state scopes, the unbatched final prompt input uses normal count1 decode for the first head, and full device MTP teaching covers the preceding prefix (up to8192 matrix rows). Independent transfer/compute queues and real release boundaries are connected. Dynamic cache loans, conditional ring sizing and physical whole-model acceptance remain open. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
+| GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp`, `prefill/kernels.dp.cpp` | Core connects native BF16 alpha/beta, controls, recurrence/norm and accepted-prefix replay. Prompt scope selects contiguous H, causal convolution/history/L2, CB32 recurrence and directly consumed FP16 output. Source 9a7a23b connects prompt-capacity whole-chunk math without per-element status/replay owners, carved AB staging, and native row/value-head recurrent state shared by prompt/decode/repair. The large chunk caller/acceptance is connected in the latest controller receipt; physical execution and final numerical/queue audit remain open. Split verifier mode is an optional upstream path, not selected by the measured server. |
+| QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects FP16 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. The measured server explicitly selects INT8 for target and MTP; FP16 is a remaining substantive difference and its coupled port is in progress. Earlier generic-default FP16 scope claims below are superseded. Numerical/state acceptance remains required. |
+| PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Core connects native BF16 MAX8 projections, normalization/gate/conv/history, deduplicated positional reads and accepted-prefix ownership. Prompt calls now consume a bounded, joined double-buffered source prefetch. The latest controller receipt connects native large chunk geometry, joined uploads, retained tail and exact history acceptance. Numerical/device acceptance remains open. Prompt loans are disabled in the measured32768-context configuration and are not a completion prerequisite. Never persist request n-grams. |
+| Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. The bounded prompt path now uses logical-ID expert order, checked native transfer nodes, an eight-slot raw ring and two paired dequantization slots. The latest owned-consumer receipt connects full2048-row owners, non-overlapping raw/grouped route packets, causal math/state scopes, the unbatched final prompt input uses normal count1 decode for the first head, and full device MTP teaching covers the preceding prefix (up to8192 matrix rows). Independent transfer/compute queues and real release boundaries are connected. The measured server uses4096 prompt rows and32768 context, versus current2048/4096. Its no-borrow selection and nonresident fraction select the existing eight-slot/two-dequant-ring path; alternative loans/ring sizes are not prerequisites. Physical whole-model acceptance remains open. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
 | Prompt dense/expert matrix backend | Intel oneMKL rounded BF16/FP16 GEMMs | Connected Rust cooperative8x16x16/F32 kernels now consume the actual rounded dense and grouped GU/DOWN images, with enabled device features, SPIR-V native registration and required16 subgroup in both pipeline paths. See the cooperative-matrix receipt; physical numerical/model acceptance remains open. |
-| MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native FP16 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Positive-threshold chains now keep hidden carries on device and observe the same token/probability/fault packet as zero-threshold chains; mapped/event scheduling remains open. First/grouped device-source and ids-only target result consumers now exist; the shared-context constructor receipt below supersedes the separate-client blocker. Core construction now selects the actual target client and one combined account. Source9de7fef pins the original target embedding/head once, shares them with MTP and gathers target embeddings on GPU. Actual device/state acceptance is pending. Queue/branch/capture fidelity, numerical/state acceptance and runtime policy remain required. See the latest device-end receipt. |
+| MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native FP16 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Positive-threshold chains now keep hidden carries on device and observe the same token/probability/fault packet as zero-threshold chains; mapped/event scheduling remains open. First/grouped device-source and ids-only target result consumers now exist; the shared-context constructor receipt below supersedes the separate-client blocker. Core construction now selects the actual target client and one combined account. Source9de7fef pins the original target embedding/head once, shares them with MTP and gathers target embeddings on GPU. Actual device/state acceptance is pending. The measured CJK106299-row draft head and INT8 cache remain substantive differences from the current full head/FP16 path. Queue/branch/capture fidelity, numerical/state acceptance and runtime policy remain required. See the latest device-end receipt. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Sourcea26adc2 ports the native bounded trigram index, longest/recent suffix choice, cost priors, probing/stale rules and optional lookup-chain accounting into the selected controller. Configured MTP/target windows no longer shrink at the output cap; state commit and emission are separate. Coupled sampling and physical state acceptance still need end-to-end validation. |
 | Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Real greedy verification/state-only repair exists. Audit all active windows and acceptance cases against GDN/QSA/PLE/positions; independent correctness oracle remains missing. |
-| Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; physical ring overlap, stable complete branch recordings, scratch lifetimes and full execution acceptance remain open; a sequence of independent Wgpu launches is not equivalent. |
+| Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; physical ring overlap, stable complete branch recordings, scratch lifetimes and full execution acceptance remain open. Measured serving lazily captures branches; eager all-branch warmup is not a prerequisite; a sequence of independent Wgpu launches is not equivalent. |
 | Request lifecycle and arbitrary input | upstream CLI/session/inference entry points | Current Rust public-fixture gate is not a general engine. Connect bounded arbitrary prompts and request-local sampling/history, with no persistent content, protected memory and orderly erase/close. No gateway/UI work required. |
 
 ## Validation and the speed gate
@@ -4591,3 +4604,135 @@ strata-native-logical-fault-{core,off}-clippy-20261015.log. The first exact
 core attempt caught an unused Error import left by tracing;30f5220 fixes it,
 and both final checks pass. The existing duplicate-bin-path Cargo warning is
 unchanged. No full core suite, new numerical acceptance or GPU test is implied.
+
+
+## Resumed selected Intel execution path (2026-10-15)
+
+The user returned the GPUs and authorized continued work; the earlier overnight
+stop is superseded. Source18ce0ae freezes as
+strata-native-logical-fault-build-20261015, SHA256
+2a65bc5bd71f62c7bb6c0d2be0074c54db89906421dff80a5a6ed2112ddc6030.
+The protected check passes the prompt expert fault-view rejection and then stops
+at InvalidFormat("matrix rank"). Exact public original shard header inspection
+confirms all48 `blk.N.ffn_gate_inp_shexp.weight` are rank-one[2560], BF16.
+Pinned sycl/src/prefill/prefill.cpp treats them as a one-row BF16 GEMM. b17bbb0
+adapts ONLY this named original native vector in prompt/BF16 projection, and
+checks its expert0/first0/rows1 packed-source request before cache lookup. The
+weight offset no longer indexes an absent second dimension. Generic Matrix
+rank constraints are unchanged. Final build/tests/physical acceptance pending.
+
+The same source review uncovered the selected-mode mismatch described at the
+start of this guide. Evidence: pinned sycl/serve/strata-sycl.sh defaults;
+sycl/src/kernels/cuda/verify_kernels.dp.cpp resident_plan_kernel uses either cache
+slot address or the authentic HOST mirror address; sycl/src/core/verify.cpp's
+no_host loop condition skips host service; the retained comparison guide's
+Verified runtime containment explicitly records device-plan/no-host. The
+in-progress native core correction removes the per-layer CPU plan/readback and
+stage fetch from decode, not the original HOST complement or real selected
+experts. In parallel, request-local stable branch parameter/recording ownership
+is being connected through the existing runtime ledger and full eraser. Do not
+claim implementation, whole rewrite or speed acceptance until those commits and
+checks are recorded.
+
+After the failed18ce0ae fixture, Intel again returns to50,688,000 bytes; no NVIDIA
+compute owners, all classified faults unchanged at zero, normal admission and
+Kuno/Ollama/Vashti HTTP200. Failed owning cleanup remains unaccepted. No production
+service, model, driver, installation or API change. Only public compiled fixtures
+are used; private content never enters these receipts.
+
+## Selected serving-mode audit and resumed completion checks (2026-10-15)
+
+The user returned both GPUs and requested continued implementation. No throughput
+comparison or speed-based selection is authorized before the whole-port gate.
+Source audit now uses the retained tested serving configuration, not generic
+program defaults or optional CUDA paths. Evidence remains under
+`strata-comparison-evidence-20261009` in the external development directory.
+
+- `sycl/serve/strata-sycl.sh:22–25` defaults DEVICE_PLAN/NO_HOST to1. The
+  resident-plan shader resolves actual cache or HOST addresses into the primary
+  list and writes zero secondary groups (`verify_kernels.dp.cpp:2097–2207`).
+  `verify.cpp:1936–1970` skips host servicing in this mode. Source36d13d3 ports
+  that connected behavior, keeping original source leases and real role stamps.
+  Existing staging and CPU scratch budget reservations remain, unused by decode.
+- The only expert-usage increment is inside the host callback
+  (`expert_source.cpp:2578–2580`), skipped by NO_HOST. The scheduled every4-window
+  adaptive pass has no eligible usage>=2 candidates. Dynamic promotion is not a
+  demonstrated contributor to the measured serving result.
+- Context32768 selects no prompt borrowing unless explicitly overridden
+  (`generate.cpp:2144–2151`). Explicit prefill4096 bypasses the auto2048 fallback.
+  The eight raw/two dequant prompt slots apply at this nonresident fraction.
+- Both target and MTP use requested INT8 KV (`mtp.cpp:388–414`). Selected CJK
+  draft vocab has106299 IDs, gathered original head rows (`mtp.cpp:749–778`).
+  These remain real pending differences; the misleading English-named helper
+  alone does not connect the selected CJK path.
+- The serve branch exits before `ver.warm`/`mtp.warm` (`generate.cpp:11506,12150`).
+  Serving lazily retains complete branch captures; that reuse is required. Single
+  GPU async commit is enabled at3115 and joined at explicit state boundaries.
+- All777 required DASLab original float tensor headers match `iq_pack.py::FORM`.
+  Generic dense conversion is unnecessary here. Target embedding uses HOST in
+  source2638–2647; current shared-weight GPU embedding placement is a remaining
+  budget/residency substitution.
+
+### Completed prompt-prefix receipt
+
+Source`b17bbb0` admits only exact original BF16 `[2560]` shared-expert gate
+vectors as one-row projections. All48 source headers have this shape; generic
+matrix-rank validation stays strict. The frozen artifact in
+`strata-native-shared-gate-build-20261015` has SHA256
+`4a8a29d09a61b012123c40120ac3cac7c296984534c66e9abbf5f86f08709cae`.
+Release build and18 focused native_shared tests pass.
+
+Protected `strata-native-shared-gate-check-20261015` completed the original
+batched prompt prefix including MTP teaching and reached last_prompt_input.
+The final count1 prompt token then returned `InvalidBufferLength`; generation
+and numerical parity are **not accepted**. Owning target/draft erase receipts
+were not accepted. Process recovery was verified separately: admission restored,
+HTTP200, Intel50,688,000 bytes, no Nvidia compute, fault counters unchanged.
+
+Source`36d13d3` no-host integration builds. Frozen artifact in
+`strata-native-no-host-build-20261015` has SHA256
+`5d72b4d20322cb55390fa062b44fdc3c87f42927c203704f7143f5070aa2f240`.
+Its whole-fixture completion check is pending; no speed result is claimed.
+
+### CPU-only continuation after the GPU stop request
+
+The user explicitly withdrew further GPU tests due usage and then chose to
+leave the goal active for CPU-only work. Last protected36d13d3 run ended with
+the same final-head `InvalidBufferLength`, no whole-generation receipt, and
+separately verified physical recovery at06:07:22Z. No further GPU run follows.
+
+Source`8c239bc` fixes that exact static boundary: the batched head bridge first
+authenticates the full fault owner, then derives its four-byte logical view for
+`strata_dense::prepare`. Erasure still covers the full allocation.
+
+Source`19aa565` pins request-local original INFO pages by static branch shape,
+nonce and submission segment. Record sizes/counts, pages and actual graph resource
+signatures must match on repeat; named recordings survive the incidental LRU.
+Real MTP round/step consumers are connected. Position-dependent attention grids
+use admitted fixed context with original logical-visible guards. Source`7aa574f`
+connects target AllRowsWithCarry verification captures by count and actual context,
+excluding the final prompt token before request reuse. Source`cd8993d` stages PLE
+OLD/EMB and source lookups before target capture; its armed prepared receipt is
+consumed exactly once by layer1 math. Original source/state proofs stay required.
+These changes do **not** yet eliminate rebuilding engine enqueue calls. True
+direct replay still needs typed invocation parameters and all-family transaction
+preparation without stale request positions. Cross-request retention is not yet
+provided; original request owners are erased at request close.
+
+CPU-only receipts in the external development directory:
+- `strata-native-branch-params-build-20261015`:19aa565 release build, immutable
+  SHA256`6278c613fbfb67c626a6e37518e74539b331cd4be75c2034b42c9626ca16cce4`.
+- `strata-native-branch-clippy-20261015.log`: strict selected-core Clippy through
+  7aa574f passes.
+- `strata-native-branch-root-tests-20261015.log`:3 actual vendor branch-layout
+  tests pass via root CPU-only harness (`683c97f`). Direct dependency package
+  test invocation was rejected by Cargo because vendor crate is not a workspace
+  member; no test executed in that attempted invocation.
+- `strata-native-no-host-shaders-current-validator-20261015.log`:317 shader
+  variants plus cooperative-matrix lowering pass using the pinned current
+  validator in `spirv-tools-matrix-20261014/build/tools`. The earlier invocation
+  without this PATH failed because system spirv-val lacks capability5116.
+
+PLE source throughcd8993d is reviewed/formatted; its combined compile/test receipt
+is pending. Concurrent INT8/CJK/typed-invocation work remains isolated, not current
+accepted behavior. No installed service/model/API/UI change or speed claim.

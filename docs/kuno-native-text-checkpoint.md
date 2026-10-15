@@ -1,23 +1,36 @@
-<!-- Current resume: 2026-10-15, source30f5220, codex/strata-rust-port.
-Read coordination latest handoff and completion guide overnight stop.
-Whole rewrite incomplete; no speed trials. GPUs belong to user; goal paused. -->
+<!-- Current resume: 2026-10-15, sourcecd8993d, codex/strata-rust-port.
+Read coordination active selected-Intel handoff and completion guide.
+Whole rewrite incomplete; no speed trials. CPU-only work; goal active. -->
 # Native DASLab/Strata checkpoint — 2026-10-09
 
 **Current native-engine resume pointer (2026-10-15):** isolated
-`codex/strata-rust-port`, source through `30f5220` (logical fault view fix
-`da7a74e`). Read the latest
-[shared-source handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--shared-source-initialization-and-cpugpu-submission-2026-10-15)
-and **Prompt expert logical fault view and overnight stop** in
-[the completion gate](kuno-strata-rewrite-completion.md). The native upload
-submission validation failure is resolved in the latest protected path. The
-next exact rejection is the prompt expert consumer receiving a full 32 KiB
-fault owner instead of its logical four-byte view. The caller is corrected;
-GPU validation of that correction is pending. Whole rewrite, full execution,
-numerical/state/owning-erasure and speed acceptance remain incomplete.
-Both GPUs are released to the user: continue CPU-only until explicitly returned.
-Normal admission and Kuno/Ollama/Vashti HTTP200 verified; goal remains paused.
-Exact30f5220 locked release core/off strict Clippy, fmt and whitespace checks pass.
-No API or installed service change; required Vashti changes: none.
+`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
+`codex/strata-rust-port`, source through `cd8993d`. Read the
+[active selected-Intel handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--selected-intel-path-and-cpu-only-continuation-2026-10-15)
+and latest selected-serving-mode audit in
+[the completion gate](kuno-strata-rewrite-completion.md).
+
+**Current authority: CPU-only.** The user withdrew further GPU tests due low
+usage, then explicitly kept the goal active for CPU-only work. Do not start
+models, GPU tests, service changes or privileged runtime work until authorized.
+Last protected run has ended: normal admission, Kuno/Ollama/Vashti HTTP200,
+Intel50,688,000 bytes, no NVIDIA compute, all classified GPU faults unchanged0.
+Exact evidence: external `strata-native-no-host-check-20261015/host-after.json`
+at2026-10-15T06:07:22Z. Installed system unchanged.
+
+The complete prompt prefix, including original MTP teaching, now executes.
+Final count1 prompt token failed a proven full-fault-owner/logical-view mismatch;
+source`8c239bc` corrects it, hardware validation pending. Source`36d13d3` selects
+the actual measured Intel NO_HOST path: GPU reads real VRAM or mapped HOST
+experts directly, with no CPU expert jobs/per-layer joins. Source`19aa565` pins
+branch parameter owners and actual MTP recordings; `7aa574f` adds target-window
+capture. Release build through19aa and strict core Clippy through7aa pass.
+
+True no-enqueue graph invocation, INT8 target/MTP KV and original CJK draft head
+are being completed in separate isolated worktrees; inspect their current
+commits before integrating. They are not yet accepted whole-model behavior.
+Full numerical/state/owning-erasure and speed acceptance remain incomplete.
+No API/UI/release changes; required Vashti changes:none.
 
 All older checkpoints below are historical.
 
