@@ -450,7 +450,9 @@ impl Workspace {
                 layer,
                 geometry,
                 &owners,
-                &full(fault)?,
+                // Consumers bind the exact logical fault word; the arena
+                // retains the complete32KiB owner for original final erasure.
+                &u::handle(arena, fault)?,
                 count,
                 &map,
             )?;
