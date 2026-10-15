@@ -118,13 +118,12 @@ impl PleBatchWorkspace {
         }
         let client = model.arena.client().map_err(u::fault)?;
         let fault = u::handle(&model.arena, model.b.fault)?;
-        client
-            .write_private(
-                v[0].clone()
-                    .offset_end(v[0].size_in_used() - data.len() as u64),
-                std::mem::take(&mut *data),
-            )
-            .map_err(u::fault)?;
+        crate::strata_prompt::stage_private_view(
+            &model.arena,
+            model.b.logit_packet,
+            v[0].clone(),
+            &data,
+        )?;
         // GPU history is authoritative across full prompt chunks. At the first
         // chunk both original owners must still describe the empty sequence.
         if start == 0 && model.ple_conv.history().iter().any(|x| x.to_bits() != 0) {

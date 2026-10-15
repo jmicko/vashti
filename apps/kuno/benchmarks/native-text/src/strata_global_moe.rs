@@ -437,9 +437,12 @@ impl Workspace {
             for &word in map.iter() {
                 bytes.extend_from_slice(&word.to_le_bytes());
             }
-            client
-                .write_private(owners[0].clone(), std::mem::take(&mut *bytes))
-                .map_err(u::fault)?;
+            crate::strata_prompt::stage_private_view(
+                arena,
+                self.ids[0],
+                owners[0].clone(),
+                &bytes,
+            )?;
             crate::strata_prompt::experts::enqueue(
                 client,
                 graph,

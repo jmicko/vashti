@@ -134,6 +134,98 @@ pub(crate) fn validate_output(handle: &Handle) -> Result<()> {
 pub(crate) fn activation_stage() -> Result<Handle> {
     Ok(stages()?[0].clone())
 }
+/// Move host data into an authorized carved prompt view without weakening
+/// write_private's full-owner contract. A separately owned scratch packet is
+/// uploaded whole; ordered GPU copies preserve every neighboring live region.
+/// Original arena/scope owners outlive all queued uploads and copies.
+pub(crate) fn stage_private_view(
+    arena: &PrivateArena,
+    scratch: BufferId,
+    target: Handle,
+    data: &[u8],
+) -> Result<()> {
+    if !crate::strata_intel_core::enabled() || !active() {
+        return Err(Error::InvalidBufferLength);
+    }
+    validate_output(&target)?;
+    let source = arena.handle(scratch).map_err(u::fault)?.clone();
+    let owned = arena.layout(scratch).map_err(u::fault)?.owned_bytes;
+    if source.offset_start.unwrap_or(0) != 0
+        || source.offset_end.unwrap_or(0) != 0
+        || source.size_in_used() != owned as u64
+        || source.stream != target.stream
+        || storage::overlaps(&source, &target)?
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    validate_staged_payload(owned, target.size_in_used(), data.len())?;
+    let client = arena.client().map_err(u::fault)?;
+    for (index, chunk) in data.chunks(owned).enumerate() {
+        let mut upload = zeroize::Zeroizing::new(Vec::new());
+        upload
+            .try_reserve_exact(owned)
+            .map_err(|_| Error::LimitExceeded("native private staging window"))?;
+        upload.resize(owned, 0);
+        upload[..chunk.len()].copy_from_slice(chunk);
+        client
+            .write_private(source.clone(), std::mem::take(&mut *upload))
+            .map_err(u::fault)?;
+        let first = index.checked_mul(owned).ok_or(Error::ArithmeticOverflow)? as u64;
+        let output = target
+            .clone()
+            .offset_start(first)
+            .offset_end(target.size_in_used() - first - chunk.len() as u64);
+        copy_handles(client, source.clone(), output, 0, chunk.len() / 4)?;
+    }
+    Ok(())
+}
+fn validate_staged_payload(owned: usize, target: u64, count: usize) -> Result<()> {
+    if !(32768..=1024 * 1024).contains(&owned)
+        || !owned.is_multiple_of(4)
+        || count == 0
+        || !count.is_multiple_of(4)
+        || count as u64 > target
+        || count > groups::CAPACITY * 2560 * 4
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod staged_private_tests {
+    use super::*;
+    #[test]
+    fn native_shared_prompt_staging_is_bounded_and_preserves_partial_last_windows() {
+        for owned in [32768, 1024 * 1024] {
+            for count in [4, owned, owned + 4, groups::CAPACITY * 2560 * 4] {
+                validate_staged_payload(owned, count as u64, count).unwrap();
+                let mut next = 0;
+                for bytes in (0..count)
+                    .step_by(owned)
+                    .map(|first| (count - first).min(owned))
+                {
+                    assert!(bytes > 0 && bytes <= owned && bytes.is_multiple_of(4));
+                    next += bytes;
+                }
+                assert_eq!(next, count);
+                assert!(validate_staged_payload(owned, count as u64 - 1, count).is_err());
+            }
+        }
+        for (owned, target, count) in [
+            (0, 4, 4),
+            (32767, 4, 4),
+            (32769, 4, 4),
+            (1024 * 1024 + 4, 4, 4),
+            (32768, 4, 0),
+            (32768, 4, 3),
+            (32768, u64::MAX, groups::CAPACITY * 2560 * 4 + 4),
+        ] {
+            assert!(validate_staged_payload(owned, target, count).is_err());
+        }
+    }
+}
+
 /// Exact request-private device copy, including copies into another admitted
 /// arena on the same native client. No host activation map is created.
 pub(crate) fn copy_handles(
