@@ -79,16 +79,20 @@ pub struct NativeStrataBranch {
     verify_capacity: u8,
 }
 impl NativeStrataBranch {
-    /// The admitted MAX8 target shape at the fixed 4096-cell context.
+    /// The admitted MAX8 target shape at the maximum 4096-cell context.
     pub fn target_window(rows: u8) -> Result<Self, &'static str> {
-        if !(1..=8).contains(&rows) {
-            return Err("native target branch rows");
+        Self::target_window_for_context(rows, 4096)
+    }
+    /// Verification-only target shape with its actual immutable context capacity.
+    pub fn target_window_for_context(rows: u8, context: u16) -> Result<Self, &'static str> {
+        if !(1..=8).contains(&rows) || !(1..=4096).contains(&context) {
+            return Err("native target branch shape");
         }
         Ok(Self {
             family: 1,
             rows,
             proposals: 0,
-            context_capacity: 4096,
+            context_capacity: context,
             verify_capacity: 8,
         })
     }

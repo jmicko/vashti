@@ -5072,6 +5072,30 @@ impl Workspace {
             .as_mut()
             .ok_or(error())?
             .begin(m.graph, &m.arena, *count)?;
+        // Prompt-final count1 uses the same implementation before the request
+        // scope opens. Capture only the active verification shape, whose head
+        // and target-row consumers are invariant for this count/context pair.
+        // Input gather/clears precede capture. PLE's real ordered uploads may
+        // split the graph internally; the branch owns each stable segment.
+        let branch =
+            if purpose == Purpose::AllRowsWithCarry && m.admission.request_io_reuse_active() {
+                Some(
+                    cubecl_runtime::server::NativeStrataBranch::target_window_for_context(
+                        u8::try_from(*count).map_err(u::fault)?,
+                        u16::try_from(m.context).map_err(u::fault)?,
+                    )
+                    .map_err(u::fault)?,
+                )
+            } else {
+                None
+            };
+        if let Some(key) = branch {
+            m.arena
+                .client()
+                .map_err(u::fault)?
+                .begin_native_strata_branch(key)
+                .map_err(u::fault)?;
+        }
         let mut current = Zeroizing::new(0usize);
         drive_layers(cancel, |layer| {
             let attention_start = Instant::now();
@@ -5367,6 +5391,16 @@ impl Workspace {
                 "native model chunk rejected at source line ",
                 line!()
             )));
+        }
+        if let Some(key) = branch {
+            // Join/seal the real native recording before any logical output or
+            // state proof is published. This grants no fault/erasure credit;
+            // completed_proof below retains both original observations.
+            m.arena
+                .client()
+                .map_err(u::fault)?
+                .end_native_strata_branch(key)
+                .map_err(u::fault)?;
         }
         let final_proof_start = Instant::now();
         let (output, ple) = completed_proof(
