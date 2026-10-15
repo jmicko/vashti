@@ -4,7 +4,7 @@ use crate::{
     private_arena::{BufferId, PrivateArena},
     resident_util as u,
 };
-use kuno_text::{Error, Result};
+use kuno_text::Result;
 pub(crate) const DEFAULT_ROWS: usize = 2048;
 pub(crate) const ROOT_BYTES: u64 = 512 * 1024 * 1024;
 pub(crate) const MAIN_BYTES: u64 = 3 * ROOT_BYTES;
