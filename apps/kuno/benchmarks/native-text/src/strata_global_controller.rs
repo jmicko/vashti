@@ -29,6 +29,66 @@ impl Request<'_> {
     }
 }
 
+/// Native generate.cpp batches exactly n_prompt-1 inputs. The final input is
+/// decoded with normal arithmetic; only it predicts the first generated token.
+/// Request chunk rounds the prefix up to256 and caps at the actual owned stage.
+struct PromptPlan(Zeroizing<[usize; 2]>);
+impl PromptPlan {
+    fn new(prompt: usize) -> Result<Self> {
+        if !(1..=4096).contains(&prompt) {
+            return Err("global prompt plan geometry".into());
+        }
+        let prefix = prompt - 1;
+        let chunk = if prefix == 0 {
+            0
+        } else {
+            prefix
+                .checked_add(255)
+                .ok_or("global prompt chunk overflow")?
+                / 256
+                * 256
+        }
+        .min(crate::strata_prompt::groups::CAPACITY);
+        Ok(Self(Zeroizing::new([prompt, chunk])))
+    }
+    fn prefix(&self) -> usize {
+        self.0[0] - 1
+    }
+    fn chunk(&self) -> usize {
+        self.0[1]
+    }
+    fn chunks(&self) -> impl Iterator<Item = std::ops::Range<usize>> {
+        let prefix = self.prefix();
+        let chunk = self.chunk();
+        (0..prefix)
+            .step_by(chunk.max(1))
+            .map(move |first| first..(first + chunk).min(prefix))
+    }
+    fn inputs<'a>(
+        &self,
+        prompt: &'a [u32],
+        chunk: std::ops::Range<usize>,
+    ) -> kuno_text::Result<(&'a [u32], &'a [u32])> {
+        if prompt.len() != self.0[0]
+            || chunk.is_empty()
+            || self.chunk() == 0
+            || !chunk.start.is_multiple_of(self.chunk())
+            || chunk.end > self.prefix()
+            || chunk.end != (chunk.start + self.chunk()).min(self.prefix())
+        {
+            return Err(kuno_text::Error::InvalidFormat(
+                "native prompt teacher chunk",
+            ));
+        }
+        // Every batched R_i teaches its real next input token, including the
+        // final unbatched prompt token. No result/last-output token is invented.
+        Ok((
+            &prompt[chunk.clone()],
+            &prompt[chunk.start + 1..chunk.end + 1],
+        ))
+    }
+}
+
 /// Accepted *input* prefix includes the confirmed predecessor. Emits exactly
 /// that many target predictions, stopping at the first target EOS. Drafts can
 /// never overrule a target prediction. This is the pinned greedy contract.
@@ -70,59 +130,65 @@ pub(super) fn run<'m, 'f>(
     {
         return Err("global request controller scope rejected".into());
     }
-    let (mut confirmed, mut carry) = target.with_prompt_ple_source(
-        executor,
-        request.prompt,
-        crate::strata_prompt::groups::CAPACITY,
-        cancel,
-        |target, executor| {
-            let loan = target.begin_prompt_cache_loan(executor)?;
-            let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                // One lease/scope spans the complete prompt and all MTP teaching
-                // chunks; never restore/reborrow the cache for each chunk.
-                let _scope = target.prompt_scope(loan.as_ref())?;
-                let mut final_output = None;
-                for start in
-                    (0..request.prompt.len()).step_by(crate::strata_prompt::groups::CAPACITY)
-                {
-                    let end =
-                        (start + crate::strata_prompt::groups::CAPACITY).min(request.prompt.len());
-                    let teacher_end = end.min(request.prompt.len() - 1);
-                    let teacher = if start < teacher_end {
-                        &request.prompt[start + 1..teacher_end + 1]
-                    } else {
-                        &[]
-                    };
-                    let output = target.prefill_prompt_full(
-                        executor,
-                        &request.prompt[start..end],
-                        teacher,
-                        draft.as_deref_mut(),
-                        end == request.prompt.len(),
-                        cancel,
-                    )?;
-                    if target.completed_target_rows_cursor(executor)? != end {
-                        return Err(kuno_text::Error::InvalidFormat(
-                            "global committed full prompt cursor rejected",
-                        ));
+    let plan = PromptPlan::new(request.prompt.len())?;
+    if plan.prefix() != 0 {
+        target.with_prompt_ple_source(
+            executor,
+            &request.prompt[..plan.prefix()],
+            plan.chunk(),
+            cancel,
+            |target, executor| {
+                let loan = target.begin_prompt_cache_loan(executor)?;
+                let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    // The single lease spans all batched inputs and MTP
+                    // teaching, and ends BEFORE normal decode reads the cache.
+                    let _scope = target.prompt_scope(loan.as_ref())?;
+                    for chunk in plan.chunks() {
+                        let end = chunk.end;
+                        let (inputs, teacher) = plan.inputs(request.prompt, chunk)?;
+                        target.prefill_prompt_chunk(
+                            executor,
+                            inputs,
+                            teacher,
+                            draft.as_deref_mut(),
+                            cancel,
+                        )?;
+                        if target.completed_target_rows_cursor(executor)? != end {
+                            return Err(kuno_text::Error::InvalidFormat(
+                                "global committed prompt prefix cursor",
+                            ));
+                        }
                     }
-                    if output.is_some() {
-                        final_output = output;
-                    }
+                    Ok(())
+                }));
+                target.finish_prompt_cache_loan(executor, loan)?;
+                match attempted {
+                    Ok(result) => result,
+                    Err(_) => Err(kuno_text::Error::InvalidFormat(
+                        "global prompt prefix execution unwound",
+                    )),
                 }
-                final_output.ok_or(kuno_text::Error::InvalidFormat(
-                    "global final prompt output absent",
-                ))
-            }));
-            target.finish_prompt_cache_loan(executor, loan)?;
-            match attempted {
-                Ok(result) => result,
-                Err(_) => Err(kuno_text::Error::InvalidFormat(
-                    "global prompt execution unwound",
-                )),
-            }
-        },
-    )?;
+            },
+        )?;
+    }
+    if crate::strata_prompt::active()
+        || target.completed_target_rows_cursor(executor)? != plan.prefix()
+    {
+        return Err("global final prompt decode boundary rejected".into());
+    }
+    // Same original count1 decode path as generated continuations, not the
+    // prompt BF16/FP16 matrix path. Even a one-token prompt must do this once.
+    let output =
+        target.prefill_chunk_with_carry(executor, &request.prompt[plan.prefix()..], cancel)?;
+    if output.start() != plan.prefix() || output.count() != 1 {
+        return Err("global final prompt decode identity rejected".into());
+    }
+    let mut confirmed = output.greedy(0)?;
+    let mut carry = Zeroizing::new(output.hidden(0)?.to_vec());
+    drop(output);
+    if target.completed_target_rows_cursor(executor)? != request.prompt.len() {
+        return Err("global final prompt decode cursor rejected".into());
+    }
     if draft
         .as_ref()
         .is_some_and(|d| d.position() != request.prompt.len() - 1)
@@ -286,6 +352,47 @@ pub(super) fn run<'m, 'f>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_prompt_prefix_and_teacher_exclude_exactly_one_normal_decode_input() {
+        for n in [
+            1, 2, 30, 35, 255, 256, 257, 258, 2048, 2049, 2050, 3073, 4095, 4096,
+        ] {
+            let prompt: Vec<u32> = (0..n as u32).collect();
+            let plan = PromptPlan::new(n).unwrap();
+            assert_eq!(plan.prefix(), n - 1);
+            if n == 1 {
+                assert_eq!(plan.chunk(), 0);
+                assert_eq!(plan.chunks().count(), 0);
+            } else {
+                assert!(plan.chunk().is_multiple_of(256));
+                assert!(plan.chunk() <= crate::strata_prompt::groups::CAPACITY);
+            }
+            let mut consumed = 0;
+            let mut taught = Vec::new();
+            for chunk in plan.chunks() {
+                assert_eq!(chunk.start, consumed);
+                let end = chunk.end;
+                let (inputs, teacher) = plan.inputs(&prompt, chunk).unwrap();
+                assert_eq!(inputs.len(), teacher.len());
+                assert!(inputs.iter().zip(teacher).all(|(a, b)| a + 1 == *b));
+                consumed = end;
+                taught.extend_from_slice(teacher);
+            }
+            assert_eq!(consumed, n - 1);
+            assert_eq!(taught, prompt[1..]);
+            // This SAME final input reaches count1 after scope/cache restore;
+            // no batched row/head consumes it, and no token is skipped/repeated.
+            assert_eq!(&prompt[plan.prefix()..], &[(n - 1) as u32]);
+        }
+        assert!(PromptPlan::new(0).is_err());
+        assert!(PromptPlan::new(4097).is_err());
+        let plan = PromptPlan::new(35).unwrap();
+        let prompt = vec![0; 35];
+        for bad in [0..0, 1..34, 0..35, 0..33] {
+            assert!(plan.inputs(&prompt, bad).is_err());
+        }
+        assert!(plan.inputs(&prompt[..34], 0..34).is_err());
+    }
     #[test]
     fn global_prefix_acceptance_covers_every_width_rejection_and_eos() {
         for count in 1..=crate::strata_port::verify_capacity() {

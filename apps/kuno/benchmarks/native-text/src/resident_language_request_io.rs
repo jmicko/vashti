@@ -393,12 +393,25 @@ mod tests {
             let geometry = Geometry::new(prompt, outputs).unwrap();
             assert_eq!(geometry.context(), prompt + outputs);
             let mut authority = Authority::new(geometry, geometry.context(), false).unwrap();
-            authority.run(0, prompt.min(3), false).unwrap();
-            authority
-                .prompt_chunk(0, prompt.min(crate::strata_prompt::groups::CAPACITY), false)
-                .unwrap();
+            let prefix = prompt - 1;
+            for start in (0..prefix).step_by(crate::strata_prompt::groups::CAPACITY) {
+                authority
+                    .prompt_chunk(
+                        start,
+                        (prefix - start).min(crate::strata_prompt::groups::CAPACITY),
+                        false,
+                    )
+                    .unwrap();
+            }
+            // The normal decoder consumes the final prompt input while the
+            // request is still in Prefill. Only then may output reuse begin.
+            authority.run(prefix, 1, false).unwrap();
             assert!(authority.prompt_chunk(prompt, 1, false).is_err());
-            assert!(authority.prompt_chunk(0, 257, false).is_err());
+            assert!(
+                authority
+                    .prompt_chunk(0, crate::strata_prompt::groups::CAPACITY + 1, false)
+                    .is_err()
+            );
             assert!(authority.prompt_chunk(0, 1, true).is_err());
             assert!(authority.validate_begin(prompt - 1, false).is_err());
             authority.begin(prompt, true).unwrap();

@@ -89,17 +89,23 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         Ok(())
     }
 
-    /// Full target chunk plus device-only MTP teacher forcing. The last chunk
-    /// alone produces a head and one host carry for the subsequent decode loop.
-    pub(crate) fn prefill_prompt_full(
+    /// Batched prompt prefix plus device-only MTP teacher forcing. This path
+    /// never runs a vocabulary head; the final prompt input uses count1 decode.
+    pub(crate) fn prefill_prompt_chunk(
         &mut self,
         executor: &mut GpuExecutor<'f>,
         tokens: &[u32],
         teacher: &[u32],
         mut draft: Option<&mut crate::resident_mtp::ResidentMtp<'_, '_>>,
-        final_chunk: bool,
         cancel: &AtomicBool,
-    ) -> Result<Option<(u32, Zeroizing<Vec<f32>>)>> {
+    ) -> Result<()> {
+        if teacher.len() != tokens.len()
+            || draft
+                .as_ref()
+                .is_some_and(|d| d.position() != self.position)
+        {
+            return Err(error());
+        }
         let mut native = self.native_batch.take().ok_or_else(error)?;
         let mut flight = Flight {
             poison: native.poison.clone(),
@@ -109,12 +115,8 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             if !p::active() {
                 return Err(error());
             }
-            let start = self.position;
-            let result = native.run_prompt_full(self, executor, tokens, final_chunk, cancel)?;
+            native.run_prompt_full(self, executor, tokens, cancel)?;
             if let Some(draft) = draft.as_deref_mut() {
-                if teacher.len() > tokens.len() || draft.position() != start {
-                    return Err(error());
-                }
                 let carry =
                     p::outer_workspace()?[native.prompt_final_residual(tokens.len())?].clone();
                 if !teacher.is_empty() {
@@ -127,7 +129,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 }
             }
             u::cancel(cancel)?;
-            Ok(result)
+            Ok(())
         }));
         self.native_batch = Some(native);
         match attempted {
@@ -205,9 +207,8 @@ impl Workspace {
         m: &mut ResidentModel<'_, '_>,
         e: &mut GpuExecutor<'_>,
         tokens: &[u32],
-        final_chunk: bool,
         cancel: &AtomicBool,
-    ) -> Result<Option<(u32, Zeroizing<Vec<f32>>)>> {
+    ) -> Result<()> {
         self.prove_outer(m)?;
         self.validate_global_scope(e, &m.admission)?;
         let start = m.position;
@@ -451,84 +452,11 @@ impl Workspace {
         if current != self.prompt_final_residual(count)? {
             return Err(error());
         }
-        if final_chunk {
-            Self::prompt_gr(
-                m,
-                e,
-                "output_hc",
-                v[current].clone(),
-                None,
-                v[5].clone(),
-                v[2].clone(),
-                1,
-                (count - 1) * HC * D,
-                false,
-            )?;
-            e.enqueue_strata_prompt_projection(
-                m.graph.tensor("output.weight")?,
-                &v[2],
-                &u::handle(&m.arena, m.b.logits)?,
-                &fault,
-                &BatchSpans::new(1, 0, 0, D, 0, 248320),
-                cancel,
-            )?;
-        }
         // First completed whole-model proof precedes every state readback.
         batch_io::read_fault(&m.arena, &m.admission, m.b.fault, cancel)?;
         let ple = ple.ok_or_else(error)?;
         self.ple.validate_prompt_full(m, &ple, start, count)?;
         let history = self.ple.prompt_readback(m, &ple, cancel)?;
-        let output = if final_chunk {
-            let logits = batch_io::read_last_logits(
-                m.graph,
-                &m.arena,
-                &m.admission,
-                m.b.logits,
-                m.b.logit_packet,
-                m.b.fault,
-                cancel,
-            )?;
-            let mut best = 0;
-            for i in 1..logits.len() {
-                if logits[i] > logits[best] {
-                    best = i;
-                }
-            }
-            let carry = m.admission.readback_audited(cancel, || {
-                let row = v[current]
-                    .clone()
-                    .offset_start(((count - 1) * HC * D * 4) as u64)
-                    .offset_end(((p::groups::CAPACITY - count) * HC * D * 4) as u64);
-                struct Lease(cubecl::bytes::Bytes);
-                impl Drop for Lease {
-                    fn drop(&mut self) {
-                        self.0.zeroize();
-                    }
-                }
-                let bytes = Lease(
-                    m.arena
-                        .client()
-                        .map_err(u::fault)?
-                        .read_one(row)
-                        .map_err(u::fault)?,
-                );
-                if bytes.0.len() != HC * D * 4 {
-                    return Err(error());
-                }
-                let mut carry = Zeroizing::new(Vec::with_capacity(HC * D));
-                for word in bytes.0.chunks_exact(4) {
-                    let x = f32::from_le_bytes(word.try_into().map_err(|_| error())?);
-                    if !x.is_finite() {
-                        return Err(error());
-                    }
-                    carry.push(x);
-                }
-                Ok(carry)
-            })?;
-            Some((best as u32, carry))
-        } else {
-            None
-        };
         batch_io::read_fault(&m.arena, &m.admission, m.b.fault, cancel)?;
         if stages.len() != m.layers.len() {
             return Err(error());
@@ -585,6 +513,6 @@ impl Workspace {
         gdn_boundary.commit();
         qsa_boundary.commit();
         m.position = end;
-        Ok(output)
+        Ok(())
     }
 }
