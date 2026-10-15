@@ -339,19 +339,30 @@ pub(crate) fn checked_resident_io_audit(
 ) -> Result<()> {
     checked_transient_cleanup(retired, || {
         let receipt = audit()?;
-        let total = receipt
-            .upload_bytes
-            .checked_add(receipt.uniform_bytes)
-            .and_then(|n| n.checked_add(receipt.readback_bytes));
-        if total.is_none_or(|n| n == 0 || n != receipt.inspected_bytes)
-            || receipt.inspected_buffers == 0
-        {
-            return Err(Error::InvalidFormat(
-                "resident runtime I/O audit incomplete",
-            ));
-        }
-        Ok(())
+        validate_io_receipt(receipt, false)
     })
+}
+fn validate_io_receipt(receipt: TransientIoReceipt, shared_observation: bool) -> Result<()> {
+    let total = receipt
+        .upload_bytes
+        .checked_add(receipt.uniform_bytes)
+        .and_then(|n| n.checked_add(receipt.readback_bytes));
+    let empty = total == Some(0);
+    if total != Some(receipt.inspected_bytes)
+        || empty != (receipt.inspected_buffers == 0)
+        || empty && (!shared_observation || receipt.epoch == 0)
+    {
+        return Err(Error::InvalidFormat(
+            "resident runtime I/O audit incomplete",
+        ));
+    }
+    Ok(())
+}
+fn checked_shared_io_observation(
+    retired: &AtomicBool,
+    audit: impl FnOnce() -> Result<TransientIoReceipt>,
+) -> Result<()> {
+    checked_transient_cleanup(retired, || validate_io_receipt(audit()?, true))
 }
 
 /// Same policy for the real admission and fault-injected host fixtures. The
@@ -718,7 +729,58 @@ impl ResidentAdmission {
         self.with_ledger(|ledger| f(ledger).map_err(admission_error))
     }
     pub(crate) fn shared_observation_checkpoint(&self) -> Result<()> {
-        self.readback_audited(&AtomicBool::new(false), || Ok(()))
+        // Public uploads bypass private I/O; an already accepted private audit
+        // can also leave no I/O roots here. Still obtain a REAL completed audit
+        // epoch from this same stream. Private-readback authority stays strict.
+        if self.request_io_nonce.load(Ordering::Acquire) != 0 {
+            return self.readback_audited(&AtomicBool::new(false), || Ok(()));
+        }
+        self.active()?;
+        if !self.transient_io {
+            return Err(Error::InvalidFormat(
+                "shared observation requires transient I/O",
+            ));
+        }
+        self.with_ledger(|ledger| {
+            checked_sequence_guard(ledger, &self.sequence_poison, |ledger| {
+                guarded_readback(
+                    ledger,
+                    || Ok(()),
+                    || {
+                        checked_audited_boundary(&self.retired, || {
+                            let complete = || {
+                                checked_shared_io_observation(&self.retired, || {
+                                    cubecl::future::block_on(
+                                        self.client.sanitize_transient_io_audited(),
+                                    )
+                                    .map_err(|_| {
+                                        Error::InvalidFormat("shared observation I/O audit failed")
+                                    })
+                                })?;
+                                if self.retired.load(Ordering::Acquire)
+                                    || self.sequence_poison.load(Ordering::Acquire)
+                                {
+                                    return Err(Error::InvalidFormat(
+                                        "shared observation invalidated",
+                                    ));
+                                }
+                                Ok(())
+                            };
+                            // Joining source owners is still mandatory. Empty I/O
+                            // is not a shortcut around their completed erasure.
+                            if let Some(sources) = &self.ordered_sources {
+                                sources.borrow_mut().after_completed_read(complete)?;
+                                self.client.memory_cleanup();
+                                Ok(())
+                            } else {
+                                complete()
+                            }
+                        })
+                    },
+                    || self.telemetry(),
+                )
+            })
+        })
     }
     fn with_ledger<T>(&self, f: impl FnOnce(&mut MainAdmission) -> Result<T>) -> Result<T> {
         let mut ledger = self
@@ -6388,6 +6450,74 @@ mod q6_verify_head_tests {
                     .validate(prepare_spec, [20480, count * 1440 - 1, 8192])
                     .is_err()
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod shared_empty_io_tests {
+    use super::*;
+    #[test]
+    fn native_shared_public_fence_allows_only_a_completed_exact_empty_audit() {
+        let empty = TransientIoReceipt {
+            epoch: 1,
+            upload_bytes: 0,
+            uniform_bytes: 0,
+            readback_bytes: 0,
+            inspected_bytes: 0,
+            inspected_buffers: 0,
+        };
+        let good = AtomicBool::new(false);
+        checked_shared_io_observation(&good, || Ok(empty)).unwrap();
+        assert!(!good.load(Ordering::Acquire));
+        let private = AtomicBool::new(false);
+        assert!(checked_resident_io_audit(&private, || Ok(empty)).is_err());
+        assert!(private.load(Ordering::Acquire));
+        for bad in [
+            TransientIoReceipt { epoch: 0, ..empty },
+            TransientIoReceipt {
+                upload_bytes: 32768,
+                ..empty
+            },
+            TransientIoReceipt {
+                inspected_bytes: 32768,
+                ..empty
+            },
+            TransientIoReceipt {
+                inspected_buffers: 1,
+                ..empty
+            },
+            TransientIoReceipt {
+                upload_bytes: u64::MAX,
+                uniform_bytes: 1,
+                ..empty
+            },
+        ] {
+            let retired = AtomicBool::new(false);
+            assert!(checked_shared_io_observation(&retired, || Ok(bad)).is_err());
+            assert!(retired.load(Ordering::Acquire));
+        }
+        let occupied = TransientIoReceipt {
+            upload_bytes: 32768,
+            inspected_bytes: 32768,
+            inspected_buffers: 1,
+            ..empty
+        };
+        checked_shared_io_observation(&good, || Ok(occupied)).unwrap();
+        checked_resident_io_audit(&good, || Ok(occupied)).unwrap();
+        for failed in [false, true] {
+            let retired = AtomicBool::new(failed);
+            assert!(
+                checked_shared_io_observation(&retired, || {
+                    if failed {
+                        Ok(empty)
+                    } else {
+                        Err(Error::InvalidFormat("audit_nonzero"))
+                    }
+                })
+                .is_err()
+            );
+            assert!(retired.load(Ordering::Acquire));
         }
     }
 }
