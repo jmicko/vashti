@@ -3287,6 +3287,15 @@ impl ResidentMtp<'_, '_> {
             .ok_or(Error::InvalidBufferLength)?
             .ids;
         let visible = k::validate_position(self.position)?;
+        // Named native recordings keep a constant admitted-context grid. The
+        // identity kernel guards i<=start; attention rejects chunk>=ceil(n/64)
+        // before any load/barrier, and merge consumes only those logical chunks.
+        // The scratch clear retains zero inactive/status semantics.
+        let attention_grid = if cfg!(feature = "strata-intel-core") {
+            k::CONTEXT.div_ceil(64)
+        } else {
+            visible.div_ceil(64)
+        };
         self.native_front_project(
             "blk.48.attn_q.weight",
             self.id(B::Mixed),
@@ -3340,7 +3349,7 @@ impl ResidentMtp<'_, '_> {
         f::launch(
             &self.arena,
             f::Kernel::Identity,
-            [visible.div_ceil(64), 1, 1],
+            [attention_grid, 1, 1],
             vec![u::handle(&self.arena, self.id(B::Packet))?],
             [1, self.position as u32, 0, 0, 0, 0, 0, 0],
         )?;
@@ -3348,7 +3357,7 @@ impl ResidentMtp<'_, '_> {
         q::launch(
             &self.arena,
             q::Kernel::MtpAttention,
-            [visible.div_ceil(64), 2, 1],
+            [attention_grid, 2, 1],
             vec![
                 u::handle(&self.arena, self.id(B::Query))?,
                 u::handle(&self.arena, self.id(B::Keys))?,

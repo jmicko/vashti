@@ -1106,6 +1106,42 @@ impl ComputeServer for WgpuServer {
         result
     }
 
+    fn begin_native_strata_branch(
+        &mut self,
+        stream_id: StreamId,
+        key: cubecl_runtime::server::NativeStrataBranch,
+    ) -> Result<(), ServerError> {
+        let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
+        self.scheduler.execute_streams(vec![stream_id]);
+        let result = self
+            .scheduler
+            .stream(&stream_id)
+            .begin_native_strata_branch(key);
+        if result.is_ok()
+            && let Some(mutation) = mutation
+        {
+            mutation.accept();
+        }
+        result
+    }
+    fn end_native_strata_branch(
+        &mut self,
+        stream_id: StreamId,
+        key: cubecl_runtime::server::NativeStrataBranch,
+    ) -> Result<(), ServerError> {
+        let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
+        self.scheduler.execute_streams(vec![stream_id]);
+        let result = self
+            .scheduler
+            .stream(&stream_id)
+            .end_native_strata_branch(key);
+        if result.is_ok()
+            && let Some(mutation) = mutation
+        {
+            mutation.accept();
+        }
+        result
+    }
     fn submit_native_strata_experts(&mut self, stream_id: StreamId) -> Result<(), ServerError> {
         let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
         self.scheduler.execute_streams(vec![stream_id]);

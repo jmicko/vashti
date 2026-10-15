@@ -7,6 +7,7 @@ mod storage;
 pub(crate) mod strata_graph;
 mod strata_physical;
 mod strata_schedule;
+mod strata_parameters;
 pub use strata_graph::{
     native_strata_graph_execution_stats, native_strata_graph_stats, native_strata_operator_profile,
     set_native_strata_profile_active,

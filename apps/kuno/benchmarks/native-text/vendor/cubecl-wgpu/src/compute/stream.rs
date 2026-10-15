@@ -1284,6 +1284,34 @@ impl WgpuStream {
     pub fn flush(&mut self, mode: StreamErrorMode) -> Result<(), ServerError> {
         self.flush_native_mode(mode, true)
     }
+    pub(crate) fn begin_native_strata_branch(
+        &mut self,
+        key: cubecl_runtime::server::NativeStrataBranch,
+    ) -> Result<(), ServerError> {
+        self.private_io_active()?;
+        if self.strata_graph.is_none() {
+            return Err(super::transient_io::fault(
+                "native branch requires selected graph",
+            ));
+        }
+        // No parameter owner may be rewritten while its old recording is live.
+        self.flush(StreamErrorMode {
+            ignore: false,
+            flush: true,
+        })?;
+        self.transient_io.as_mut().unwrap().begin_native_branch(key)
+    }
+    pub(crate) fn end_native_strata_branch(
+        &mut self,
+        key: cubecl_runtime::server::NativeStrataBranch,
+    ) -> Result<(), ServerError> {
+        self.private_io_active()?;
+        self.flush(StreamErrorMode {
+            ignore: false,
+            flush: true,
+        })?;
+        self.transient_io.as_mut().unwrap().end_native_branch(key)
+    }
     pub(crate) fn submit_native_strata_experts(&mut self) -> Result<(), ServerError> {
         self.private_io_active()?;
         if self.strata_graph.is_none() {
@@ -1382,7 +1410,19 @@ impl WgpuStream {
                     }
                     super::transient_io::fault("native graph upload completion")
                 })?;
-            self.strata_graph.as_mut().unwrap().execute(wait_native)?;
+            let branch = self
+                .transient_io
+                .as_mut()
+                .map(|io| io.native_branch_recording())
+                .transpose()?
+                .flatten();
+            self.strata_graph
+                .as_mut()
+                .unwrap()
+                .execute(wait_native, branch)?;
+            if let Some(io) = self.transient_io.as_mut() {
+                io.native_branch_submitted()?;
+            }
         }
         if wait_native {
             self.cleanup_boundary.ordinary_regulation(|| {

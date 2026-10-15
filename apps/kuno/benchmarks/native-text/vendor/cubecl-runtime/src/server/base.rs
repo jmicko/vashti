@@ -67,6 +67,59 @@ impl PublicTargetSubmissionBacklog {
     }
 }
 
+/// Content-free shape of a selected native Intel request branch. Buffer/context
+/// identities are checked again by the backend's exact recorded signature.
+/// Positions, tokens, probabilities and sampling seeds are never keys.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub struct NativeStrataBranch {
+    family: u8,
+    rows: u8,
+    proposals: u8,
+    context_capacity: u16,
+    verify_capacity: u8,
+}
+impl NativeStrataBranch {
+    /// The admitted MAX8 target shape at the fixed 4096-cell context.
+    pub fn target_window(rows: u8) -> Result<Self, &'static str> {
+        if !(1..=8).contains(&rows) {
+            return Err("native target branch rows");
+        }
+        Ok(Self {
+            family: 1,
+            rows,
+            proposals: 0,
+            context_capacity: 4096,
+            verify_capacity: 8,
+        })
+    }
+    /// One accepted-prefix round, optionally followed by a zero-threshold chain.
+    pub fn mtp_round(rows: u8, proposals: u8) -> Result<Self, &'static str> {
+        if !(1..=8).contains(&rows) || !(1..=7).contains(&proposals) {
+            return Err("native MTP round branch shape");
+        }
+        Ok(Self {
+            family: 2,
+            rows,
+            proposals,
+            context_capacity: 4096,
+            verify_capacity: 8,
+        })
+    }
+    /// A subsequent confidence-observed draft cell (indices one through six).
+    pub fn mtp_step(step: u8) -> Result<Self, &'static str> {
+        if !(1..=6).contains(&step) {
+            return Err("native MTP step branch shape");
+        }
+        Ok(Self {
+            family: 3,
+            rows: 1,
+            proposals: step,
+            context_capacity: 4096,
+            verify_capacity: 8,
+        })
+    }
+}
+
 #[derive(Error, Clone)]
 #[cfg_attr(std_io, derive(serde::Serialize, serde::Deserialize))]
 /// An error during profiling.
@@ -726,6 +779,29 @@ where
     /// The backend must retain every command/buffer and join before any later
     /// stream mutation, readback, reuse or cleanup. Unsupported servers reject.
     fn submit_native_strata_experts(&mut self, _stream_id: StreamId) -> Result<(), ServerError> {
+        Err(IoError::UnsupportedIoOperation {
+            backtrace: BackTrace::capture(),
+        }
+        .into())
+    }
+
+    /// Open a request-local stable native parameter/recording shape.
+    fn begin_native_strata_branch(
+        &mut self,
+        _stream_id: StreamId,
+        _key: NativeStrataBranch,
+    ) -> Result<(), ServerError> {
+        Err(IoError::UnsupportedIoOperation {
+            backtrace: BackTrace::capture(),
+        }
+        .into())
+    }
+    /// Complete and seal that exact shape; this is not an erasure receipt.
+    fn end_native_strata_branch(
+        &mut self,
+        _stream_id: StreamId,
+        _key: NativeStrataBranch,
+    ) -> Result<(), ServerError> {
         Err(IoError::UnsupportedIoOperation {
             backtrace: BackTrace::capture(),
         }

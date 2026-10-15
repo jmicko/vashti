@@ -1317,6 +1317,27 @@ impl<R: Runtime> ComputeClient<R> {
             .unwrap()
     }
 
+    /// Begin a stable native shape on this exact serialized request stream.
+    pub fn begin_native_strata_branch(
+        &self,
+        key: crate::server::NativeStrataBranch,
+    ) -> Result<(), ServerError> {
+        let stream_id = self.stream_id();
+        self.device
+            .submit_blocking(move |server| server.begin_native_strata_branch(stream_id, key))
+            .unwrap()
+    }
+    /// Join and seal the original branch. Private owners remain charged.
+    pub fn end_native_strata_branch(
+        &self,
+        key: crate::server::NativeStrataBranch,
+    ) -> Result<(), ServerError> {
+        let stream_id = self.stream_id();
+        self.device
+            .submit_blocking(move |server| server.end_native_strata_branch(stream_id, key))
+            .unwrap()
+    }
+
     /// Wait for the completion of every task in the server.
     pub fn sync(&self) -> DynFut<Result<(), ServerError>> {
         let stream_id = self.stream_id();

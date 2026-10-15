@@ -1597,6 +1597,7 @@ pub(crate) struct TransientIo {
     // sources. Rewrites happen only between completed serialized submissions.
     core_info_pages: Vec<usize>,
     core_info_cursor: usize,
+    branch_parameters: super::strata_parameters::Parameters,
 }
 impl std::fmt::Debug for TransientIo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -2500,6 +2501,7 @@ impl TransientIo {
                 pending_info: Vec::new(),
                 core_info_pages: Vec::new(),
                 core_info_cursor: 0,
+                branch_parameters: Default::default(),
             })
         }
     }
@@ -2545,6 +2547,7 @@ impl TransientIo {
                 pending_info: Vec::new(),
                 core_info_pages: Vec::new(),
                 core_info_cursor: 0,
+                branch_parameters: Default::default(),
             })
         }
     }
@@ -2868,9 +2871,59 @@ impl TransientIo {
         self.reuse_scope.free.reset();
         Ok(())
     }
+    pub(crate) fn begin_native_branch(
+        &mut self,
+        key: cubecl_runtime::server::NativeStrataBranch,
+    ) -> Result<(), ServerError> {
+        self.active()?;
+        if !self.info_batch || !self.pending_info.is_empty() || self.info_slab.is_some() {
+            return Err(fault("native branch requires drained parameter staging"));
+        }
+        let nonce = self
+            .reuse_scope
+            .nonce
+            .ok_or_else(|| fault("native branch requires request reuse"))?;
+        self.branch_parameters.begin(key, nonce)?;
+        self.check_branch_metadata()
+    }
+    pub(crate) fn end_native_branch(
+        &mut self,
+        key: cubecl_runtime::server::NativeStrataBranch,
+    ) -> Result<(), ServerError> {
+        self.active()?;
+        let nonce = self
+            .reuse_scope
+            .nonce
+            .ok_or_else(|| fault("native branch request missing"))?;
+        if !self.pending_info.is_empty() || self.info_slab.is_some() {
+            return Err(fault("native branch pending parameters"));
+        }
+        self.branch_parameters.end(key, nonce)
+    }
+    pub(crate) fn native_branch_recording(
+        &mut self,
+    ) -> Result<Option<super::strata_parameters::RecordingKey>, ServerError> {
+        if !self.branch_parameters.active() {
+            return Ok(None);
+        }
+        let key = self.branch_parameters.recording()?;
+        self.check_branch_metadata()?;
+        Ok(key)
+    }
+    pub(crate) fn native_branch_submitted(&mut self) -> Result<(), ServerError> {
+        self.branch_parameters.submitted()
+    }
+    fn check_branch_metadata(&mut self) -> Result<(), ServerError> {
+        self.check_reuse_metadata(
+            self.buffers.capacity(),
+            self.pending_info.capacity(),
+            self.info_cache_bytes(),
+        )
+    }
     fn info_cache_bytes(&self) -> usize {
         self.info_cache.as_ref().map_or(0, InfoCache::host_bytes)
             + self.core_info_pages.capacity() * std::mem::size_of::<usize>()
+            + self.branch_parameters.metadata_bytes()
     }
     fn check_reuse_metadata(
         &mut self,
@@ -3050,6 +3103,11 @@ impl TransientIo {
             return Err(fault("batched INFO record exceeds fixed page"));
         }
         let core = super::strata_graph::enabled() && self.reuse_active();
+        let branch = core && self.branch_parameters.active();
+        if branch {
+            self.branch_parameters.record(logical)?;
+            self.check_branch_metadata()?;
+        }
         let cache_hash = if self.reuse_active() && !core {
             if self.info_cache.is_none() {
                 // Admit both fixed allocations before creating the optional cache.
@@ -3099,7 +3157,9 @@ impl TransientIo {
         } else {
             None
         };
-        let replay_target = if core && !plan.existing {
+        let replay_target = if branch && !plan.existing {
+            self.branch_parameters.page()?
+        } else if core && !plan.existing {
             self.core_info_pages.get(self.core_info_cursor).copied()
         } else {
             None
@@ -3155,7 +3215,7 @@ impl TransientIo {
             let (target, target_index) = if let Some(index) = replay_target {
                 (self.buffers[index].buffer.clone(), index)
             } else {
-                if core {
+                if core && !branch {
                     if self.core_info_pages.len() >= 512 {
                         return Err(fault("native parameter page capacity"));
                     }
@@ -3171,11 +3231,16 @@ impl TransientIo {
                 let allocated = self.allocate_indexed(Kind::Uniform, plan.target_bytes)?;
                 if core {
                     self.buffers[allocated.1].info_pinned = true;
-                    self.core_info_pages.push(allocated.1);
+                    if !branch {
+                        self.core_info_pages.push(allocated.1);
+                    }
                 }
                 allocated
             };
-            if core {
+            if branch {
+                self.branch_parameters.use_page(target_index)?;
+                self.check_branch_metadata()?;
+            } else if core {
                 self.core_info_cursor += 1;
             }
 
@@ -3737,6 +3802,7 @@ impl TransientIo {
         // full sanitizer touches original GPU owners. Those remain charged here.
         self.binding_cache = None;
         self.info_cache = None;
+        self.branch_parameters.clear();
         self.core_info_pages.fill(0);
         self.core_info_pages.clear();
         self.core_info_cursor = 0;

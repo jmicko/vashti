@@ -429,6 +429,7 @@ struct Submitted {
     profiling: bool,
 }
 struct Recording {
+    key: Option<super::strata_parameters::RecordingKey>,
     ready: bool,
     work: strata_schedule::Commands,
     profile: Option<OperatorProfile>,
@@ -438,6 +439,18 @@ struct Recording {
     command: vk::CommandBuffer,
     signature: Vec<u64>,
     _resources: Vec<WgpuResource>,
+}
+impl Recording {
+    fn metadata_bytes(&self) -> Option<usize> {
+        self.work
+            .metadata_bytes()
+            .checked_add(self.signature.capacity().checked_mul(size_of::<u64>())?)?
+            .checked_add(
+                self._resources
+                    .capacity()
+                    .checked_mul(size_of::<WgpuResource>())?,
+            )
+    }
 }
 impl Drop for Recording {
     fn drop(&mut self) {
@@ -910,7 +923,11 @@ impl Graph {
         self.submitted = false;
         Ok(())
     }
-    pub(crate) fn execute(&mut self, wait: bool) -> Result<(), ServerError> {
+    pub(crate) fn execute(
+        &mut self,
+        wait: bool,
+        key: Option<super::strata_parameters::RecordingKey>,
+    ) -> Result<(), ServerError> {
         self.complete_submission()?;
         if self.nodes.is_empty() {
             return Ok(());
@@ -946,10 +963,17 @@ impl Graph {
         }
         let compute_count = self.nodes.iter().filter(|n| n.pipeline.is_some()).count();
         let profiling = profile_active() && compute_count >= 2048;
+        if let Some(key) = key {
+            if let Some(previous) = self.recordings.iter().find(|r| r.key == Some(key)) {
+                if !previous.ready || previous.signature != signature {
+                    return Err(fault("native named branch recording changed"));
+                }
+            }
+        }
         if let Some(hit) = self
             .recordings
             .iter()
-            .position(|r| r.ready && r.signature == signature)
+            .position(|r| r.ready && r.key == key && r.signature == signature)
             .filter(|_| !profiling)
         {
             let recording = self.recordings.remove(hit);
@@ -973,10 +997,17 @@ impl Graph {
             }
             return Ok(());
         }
-        // All earlier native work is complete. Cached command buffers contain
-        // addresses, not tensor contents, and are bounded to sixteen exact plans.
-        if self.recordings.len() == 16 {
-            self.recordings.remove(0);
+        // Named branches pin their original owners until request erasure; only
+        // unnamed opportunistic recordings participate in the sixteen-plan LRU.
+        // Profiling may re-record an identical named shape after its real fence.
+        if let Some(key) = key {
+            if let Some(i) = self.recordings.iter().position(|r| r.key == Some(key)) {
+                self.recordings.remove(i);
+            }
+        } else if self.recordings.iter().filter(|r| r.key.is_none()).count() >= 16 {
+            if let Some(i) = self.recordings.iter().position(|r| r.key.is_none()) {
+                self.recordings.remove(i);
+            }
         }
         if self.pool == vk::CommandPool::null() {
             self.pool = unsafe {
@@ -1096,17 +1127,48 @@ impl Graph {
             plan,
         )
         .map_err(fault)?;
+        let resources: Vec<_> = self
+            .nodes
+            .iter()
+            .flat_map(|n| {
+                n.resources
+                    .iter()
+                    .chain(&n.read_dependencies)
+                    .cloned()
+                    .chain(match &n.dispatch {
+                        Dispatch::Indirect(r) => Some(r.clone()),
+                        _ => None,
+                    })
+            })
+            .collect();
+        let own_metadata = work
+            .metadata_bytes()
+            .checked_add(
+                signature
+                    .capacity()
+                    .checked_mul(size_of::<u64>())
+                    .ok_or_else(|| fault("native queue metadata overflow"))?,
+            )
+            .and_then(|n| {
+                n.checked_add(
+                    resources
+                        .capacity()
+                        .checked_mul(size_of::<WgpuResource>())?,
+                )
+            })
+            .ok_or_else(|| fault("native queue metadata overflow"))?;
         let metadata = self
             .recordings
             .iter()
-            .try_fold(work.metadata_bytes(), |total, r| {
-                total.checked_add(r.work.metadata_bytes())
+            .try_fold(own_metadata, |total, r| {
+                total.checked_add(r.metadata_bytes()?)
             })
             .ok_or_else(|| fault("native queue metadata overflow"))?;
         if metadata > 64 * 1024 * 1024 {
             return Err(fault("native queue retained metadata capacity"));
         }
         let recording = Recording {
+            key,
             ready: false,
             work,
             profile,
@@ -1115,20 +1177,7 @@ impl Graph {
             descriptors: self.descriptors,
             command: self.command,
             signature,
-            _resources: self
-                .nodes
-                .iter()
-                .flat_map(|n| {
-                    n.resources
-                        .iter()
-                        .chain(&n.read_dependencies)
-                        .cloned()
-                        .chain(match &n.dispatch {
-                            Dispatch::Indirect(r) => Some(r.clone()),
-                            _ => None,
-                        })
-                })
-                .collect(),
+            _resources: resources,
         };
         // Ownership transfers before any fallible recording/submission step.
         self.pool = vk::CommandPool::null();

@@ -448,7 +448,47 @@ impl ResidentMtp<'_, '_> {
                 self.tick(1)?;
                 let mut last_enqueue_ns = 0;
                 let mut observation = None;
+                // The connected Intel controller owns stable target device rows.
+                // Host/scalar entry points retain their original unkeyed path.
+                let branch_rows = if cfg!(feature = "strata-intel-core") {
+                    match source {
+                        WindowStart::Device { tokens, .. } => {
+                            Some(u8::try_from(tokens.len()).map_err(error)?)
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                let whole_branch = branch_rows
+                    .filter(|_| minimum == 0.)
+                    .map(|rows| {
+                        cubecl_runtime::server::NativeStrataBranch::mtp_round(rows, count as u8)
+                            .map_err(error)
+                    })
+                    .transpose()?;
+                if let Some(key) = whole_branch {
+                    self.client()?
+                        .begin_native_strata_branch(key)
+                        .map_err(error)?;
+                }
                 for member in 0..count {
+                    let step_branch = branch_rows
+                        .filter(|_| minimum > 0.)
+                        .map(|rows| {
+                            if member == 0 {
+                                cubecl_runtime::server::NativeStrataBranch::mtp_round(rows, 1)
+                            } else {
+                                cubecl_runtime::server::NativeStrataBranch::mtp_step(member as u8)
+                            }
+                            .map_err(error)
+                        })
+                        .transpose()?;
+                    if let Some(key) = step_branch {
+                        self.client()?
+                            .begin_native_strata_branch(key)
+                            .map_err(error)?;
+                    }
                     let clock = Instant::now();
                     if member == 0 {
                         self.forward_window_first(source, cancel)?;
@@ -473,6 +513,11 @@ impl ResidentMtp<'_, '_> {
                     u::cancel(cancel)?;
                     if minimum > 0. || member + 1 == count {
                         let payload = self.observe_window(id, member + 1)?;
+                        if let Some(key) = step_branch {
+                            self.client()?
+                                .end_native_strata_branch(key)
+                                .map_err(error)?;
+                        }
                         let stop = minimum > 0. && payload.probabilities[member] < minimum;
                         observation = Some(payload);
                         if stop {
@@ -505,6 +550,11 @@ impl ResidentMtp<'_, '_> {
                         self.clear_scratch_preserving_inputs(true)?;
                         self.guard_private(self.position)?;
                     }
+                }
+                if let Some(key) = whole_branch {
+                    self.client()?
+                        .end_native_strata_branch(key)
+                        .map_err(error)?;
                 }
                 let WindowPayload {
                     tokens,
