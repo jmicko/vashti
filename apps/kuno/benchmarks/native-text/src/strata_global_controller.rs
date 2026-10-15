@@ -296,6 +296,7 @@ pub(super) fn run<'m, 'f>(
     };
     sampling.use_device_residuals()?;
     sampling.stage_target(plan.prefix(), &request.prompt[plan.prefix()..])?;
+    public_phase("last_prompt_input");
     let mut output =
         target.prefill_chunk_with_carry(executor, &request.prompt[plan.prefix()..], cancel)?;
     if output.start() != plan.prefix() || output.count() != 1 {

@@ -9,7 +9,7 @@ use cubecl_common::{
 use cubecl_core::{
     CubeCount, MemoryConfiguration,
     future::{self, DynFut},
-    server::{IoError, ProfileError, ProfilingToken, ServerError, StreamErrorMode},
+    server::{IoError, LaunchError, ProfileError, ProfilingToken, ServerError, StreamErrorMode},
     zspace::Shape,
 };
 use cubecl_ir::MemoryDeviceProperties;
