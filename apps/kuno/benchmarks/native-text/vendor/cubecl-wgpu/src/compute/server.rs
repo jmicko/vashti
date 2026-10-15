@@ -1106,6 +1106,21 @@ impl ComputeServer for WgpuServer {
         result
     }
 
+    fn submit_native_strata_experts(&mut self, stream_id: StreamId) -> Result<(), ServerError> {
+        let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
+        self.scheduler.execute_streams(vec![stream_id]);
+        let result = self
+            .scheduler
+            .stream(&stream_id)
+            .submit_native_strata_experts();
+        if result.is_ok()
+            && let Some(mutation) = mutation
+        {
+            mutation.accept();
+        }
+        result
+    }
+
     /// Returns the total time of GPU work this sync completes.
     fn sync(&mut self, stream_id: StreamId) -> DynFut<Result<(), ServerError>> {
         let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();

@@ -414,11 +414,19 @@ pub(crate) struct Graph {
     pipelines: HashMap<wgpu::ComputePipeline, Pipeline>,
     nodes: Vec<Node>,
     submitted: bool,
+    flight: Option<Submitted>,
     pub submissions: u64,
     pub dispatches: u64,
     recordings: Vec<Recording>,
     pub replays: u64,
     initialized: HashSet<wgpu::Buffer>,
+}
+// No completion credit is minted by submission. The original recording and
+// complete node inventory remain retained until the actual final queue fence.
+struct Submitted {
+    compute_count: usize,
+    replay: bool,
+    profiling: bool,
 }
 struct Recording {
     ready: bool,
@@ -598,6 +606,7 @@ impl Graph {
             pipelines: HashMap::new(),
             nodes: Vec::new(),
             submitted: false,
+            flight: None,
             submissions: 0,
             dispatches: 0,
             recordings: Vec::new(),
@@ -619,6 +628,7 @@ impl Graph {
         read_dependencies: Vec<WgpuResource>,
         dispatch: Dispatch,
     ) -> Result<(), ServerError> {
+        self.complete_submission()?;
         if self.nodes.len() >= 32768 {
             return Err(fault("native graph node capacity"));
         }
@@ -758,6 +768,7 @@ impl Graph {
         source: Option<WgpuResource>,
         target: WgpuResource,
     ) -> Result<(), ServerError> {
+        self.complete_submission()?;
         if self.nodes.len() >= 32768
             || target.size == 0
             || target.offset % 4 != 0
@@ -862,12 +873,45 @@ impl Graph {
     pub(crate) fn pending(&self) -> bool {
         !self.nodes.is_empty()
     }
-    pub(crate) fn execute(&mut self) -> Result<(), ServerError> {
-        if self.submitted {
-            return Err(fault(
-                "native graph cannot reuse unknown in-flight commands",
-            ));
+    pub(crate) fn complete_submission(&mut self) -> Result<(), ServerError> {
+        if !self.submitted {
+            return Ok(());
         }
+        let flight = self
+            .flight
+            .as_ref()
+            .ok_or_else(|| fault("native partial submission has no completed join"))?;
+        let wait_start = std::time::Instant::now();
+        unsafe {
+            self.device
+                .wait_for_fences(&[self.fence], true, 120_000_000_000)
+        }
+        .map_err(|_| fault("native graph completion"))?;
+        WAIT_NS.fetch_add(
+            wait_start.elapsed().as_nanos().min(u64::MAX as u128) as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        if flight.profiling {
+            self.recordings
+                .last()
+                .and_then(|r| r.profile.as_ref())
+                .ok_or_else(|| fault("native sampled submission owner"))?
+                .collect()?;
+        }
+        let flight = self.flight.take().unwrap();
+        if flight.profiling {
+            self.recordings.pop();
+        }
+        self.submissions += 1;
+        self.replays += u64::from(flight.replay);
+        self.dispatches += flight.compute_count as u64;
+        credit(flight.compute_count, flight.replay);
+        self.nodes.clear();
+        self.submitted = false;
+        Ok(())
+    }
+    pub(crate) fn execute(&mut self, wait: bool) -> Result<(), ServerError> {
+        self.complete_submission()?;
         if self.nodes.is_empty() {
             return Ok(());
         }
@@ -919,22 +963,14 @@ impl Graph {
                 .work
                 .submit([self.queue, self.copy_queue], self.fence)
                 .map_err(fault)?;
-            let wait_start = std::time::Instant::now();
-            unsafe {
-                self.device
-                    .wait_for_fences(&[self.fence], true, 120_000_000_000)
+            self.flight = Some(Submitted {
+                compute_count,
+                replay: true,
+                profiling: false,
+            });
+            if wait {
+                self.complete_submission()?;
             }
-            .map_err(|_| fault("native graph replay completion"))?;
-            WAIT_NS.fetch_add(
-                wait_start.elapsed().as_nanos().min(u64::MAX as u128) as u64,
-                std::sync::atomic::Ordering::Relaxed,
-            );
-            self.submitted = false;
-            self.submissions += 1;
-            self.replays += 1;
-            self.dispatches += compute_count as u64;
-            credit(compute_count, true);
-            self.nodes.clear();
             return Ok(());
         }
         // All earlier native work is complete. Cached command buffers contain
@@ -1307,28 +1343,14 @@ impl Graph {
             .map_err(fault)?;
         // Protected public lab only. Bound to prevent a wedged device leaving
         // native descriptor/buffer lifetimes unowned. Never reset the GPU.
-        let wait_start = std::time::Instant::now();
-        unsafe {
-            self.device
-                .wait_for_fences(&[self.fence], true, 120_000_000_000)
+        self.flight = Some(Submitted {
+            compute_count,
+            replay: false,
+            profiling,
+        });
+        if wait {
+            self.complete_submission()?;
         }
-        .map_err(|_| fault("native graph completion"))?;
-        WAIT_NS.fetch_add(
-            wait_start.elapsed().as_nanos().min(u64::MAX as u128) as u64,
-            std::sync::atomic::Ordering::Relaxed,
-        );
-        self.submitted = false;
-        if profiling {
-            // Completed sampled command is never cached or replayed during an
-            // unprofiled round. Failed in-flight pools stay with Recording and
-            // are leaked with its other owners at terminal device teardown.
-            let recording = self.recordings.pop().unwrap();
-            recording.profile.as_ref().unwrap().collect()?;
-        }
-        self.submissions += 1;
-        self.dispatches += compute_count as u64;
-        credit(compute_count, false);
-        self.nodes.clear();
         Ok(())
     }
 }

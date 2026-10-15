@@ -5264,7 +5264,7 @@ impl Workspace {
                 m.arena
                     .client()
                     .map_err(u::fault)?
-                    .flush()
+                    .submit_native_strata_experts()
                     .map_err(u::fault)
             };
             let cpu = if cpu_plan.jobs.is_empty() {

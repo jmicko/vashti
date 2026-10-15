@@ -1260,12 +1260,34 @@ impl WgpuStream {
     }
 
     pub fn flush(&mut self, mode: StreamErrorMode) -> Result<(), ServerError> {
+        self.flush_native_mode(mode, true)
+    }
+    pub(crate) fn submit_native_strata_experts(&mut self) -> Result<(), ServerError> {
+        self.private_io_active()?;
+        if self.strata_graph.is_none() {
+            return Err(super::transient_io::fault(
+                "native expert submission requires selected graph",
+            ));
+        }
+        self.flush_native_mode(
+            StreamErrorMode {
+                ignore: false,
+                flush: true,
+            },
+            false,
+        )
+    }
+    fn flush_native_mode(
+        &mut self,
+        mode: StreamErrorMode,
+        wait_native: bool,
+    ) -> Result<(), ServerError> {
         let mutation = self.transient_io.as_ref().map(|io| io.mutation_guard());
         let scopes = self
             .transient_io
             .as_ref()
             .map(|_| super::transient_io::IoScopes::new(&self.device));
-        let result = self.flush_inner(mode);
+        let result = self.flush_inner(mode, wait_native);
         if let Some(scopes) = scopes {
             scopes.finish(self.transient_io.as_mut().unwrap());
         }
@@ -1276,7 +1298,12 @@ impl WgpuStream {
         }
         result
     }
-    fn flush_inner(&mut self, mode: StreamErrorMode) -> Result<(), ServerError> {
+    fn flush_inner(&mut self, mode: StreamErrorMode, wait_native: bool) -> Result<(), ServerError> {
+        // Wgpu does not track our native queue fence. Join before parameter
+        // uploads, readback, reuse, errors or memory cleanup touch shared owners.
+        if let Some(graph) = self.strata_graph.as_mut() {
+            graph.complete_submission()?;
+        }
         if self.tasks_count == 0
             && !self
                 .transient_io
@@ -1320,16 +1347,16 @@ impl WgpuStream {
                     timeout: Some(std::time::Duration::from_secs(120)),
                 })
                 .map_err(|_| super::transient_io::fault("native graph upload completion"))?;
-            self.strata_graph.as_mut().unwrap().execute()?;
+            self.strata_graph.as_mut().unwrap().execute(wait_native)?;
         }
-        self.cleanup_boundary.ordinary_regulation(|| {
-            self.submission_load
-                .regulate(&self.device, self.tasks_count, index);
-        });
-
-        // Cleanup allocations and deallocations.
-        self.mem_manage.memory_cleanup(false);
-        self.mem_manage.release_uniforms();
+        if wait_native {
+            self.cleanup_boundary.ordinary_regulation(|| {
+                self.submission_load
+                    .regulate(&self.device, self.tasks_count, index);
+            });
+            self.mem_manage.memory_cleanup(false);
+            self.mem_manage.release_uniforms();
+        }
 
         self.tasks_count = 0;
         self.pending_write_count = 0;

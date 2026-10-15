@@ -1308,6 +1308,15 @@ impl<R: Runtime> ComputeClient<R> {
             .unwrap()
     }
 
+    /// Selected native Intel expert submission. This is NOT completion or
+    /// erasure authority; normal sync/readback/cleanup still joins the work.
+    pub fn submit_native_strata_experts(&self) -> Result<(), ServerError> {
+        let stream_id = self.stream_id();
+        self.device
+            .submit_blocking(move |server| server.submit_native_strata_experts(stream_id))
+            .unwrap()
+    }
+
     /// Wait for the completion of every task in the server.
     pub fn sync(&self) -> DynFut<Result<(), ServerError>> {
         let stream_id = self.stream_id();

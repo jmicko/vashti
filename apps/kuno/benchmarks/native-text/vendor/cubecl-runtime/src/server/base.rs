@@ -722,6 +722,16 @@ where
     /// Flush all outstanding tasks in the server.
     fn flush(&mut self, stream_id: StreamId) -> Result<(), ServerError>;
 
+    /// Submit selected native Intel expert work without a host completion wait.
+    /// The backend must retain every command/buffer and join before any later
+    /// stream mutation, readback, reuse or cleanup. Unsupported servers reject.
+    fn submit_native_strata_experts(&mut self, _stream_id: StreamId) -> Result<(), ServerError> {
+        Err(IoError::UnsupportedIoOperation {
+            backtrace: BackTrace::capture(),
+        }
+        .into())
+    }
+
     /// The current memory usage of the server.
     fn memory_usage(&mut self, stream_id: StreamId) -> Result<MemoryUsage, ServerError>;
 
