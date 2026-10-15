@@ -9,6 +9,53 @@ use std::sync::atomic::AtomicBool;
 fn reject() -> Error {
     Error::InvalidFormat("Strata owning global GPU cache")
 }
+// Diagnostic is scoped to the fixed public artifact constructor. Emit only
+// static stages/error classes, never backend descriptions or tensor contents.
+fn public_load_fault(stage: &'static str, cause: cubecl_runtime::server::ServerError) -> Error {
+    use cubecl_runtime::server::{IoError, LaunchError, ServerError};
+    fn classify(error: &ServerError, depth: usize) {
+        if depth > 8 {
+            return;
+        }
+        let class = match error {
+            ServerError::Generic { reason, .. }
+                if reason == "public weight write requires exact aligned same-stream views" =>
+            {
+                "public_view_descriptor"
+            }
+            ServerError::Generic { .. } => "generic",
+            ServerError::Launch(LaunchError::OutOfMemory { .. }) => "launch_oom",
+            ServerError::Launch(LaunchError::CompilationError(_)) => "launch_compile",
+            ServerError::Launch(LaunchError::TooManyResources(_)) => "launch_limits",
+            ServerError::Launch(_) => "launch_other",
+            ServerError::Profile(_) => "profile",
+            ServerError::Io(IoError::BufferTooBig { .. }) => "io_buffer_size",
+            ServerError::Io(IoError::UnsupportedStrides { .. }) => "io_strides",
+            ServerError::Io(IoError::NotFound { .. }) => "io_missing_owner",
+            ServerError::Io(IoError::FreeError { .. }) => "io_free",
+            ServerError::Io(IoError::UnsupportedIoOperation { .. }) => "io_unsupported",
+            ServerError::Io(IoError::Unknown { .. }) => "io_unknown",
+            ServerError::Io(IoError::Execution(inner)) => {
+                classify(inner, depth + 1);
+                "io_execution"
+            }
+            ServerError::ServerUnhealthy { errors, .. } => {
+                for error in errors.iter().take(8) {
+                    classify(error, depth + 1);
+                }
+                "unhealthy"
+            }
+        };
+        eprintln!("native_public_cache_fault class={class}");
+    }
+    if crate::strata_intel_core::enabled()
+        && std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1")
+    {
+        eprintln!("native_public_cache_fault stage={stage}");
+        classify(&cause, 0);
+    }
+    Error::InvalidFormat("Strata original cache public load")
+}
 pub(crate) struct Cache {
     client: ComputeClient<WgpuRuntime>,
     roots: Vec<Handle>,
@@ -68,11 +115,11 @@ impl Cache {
                     .offset_end(chunk.physical_bytes - first - count as u64);
                 client
                     .write_public_owned_batch(vec![(view, window)])
-                    .map_err(crate::resident_util::fault)?;
+                    .map_err(|cause| public_load_fault("upload", cause))?;
                 // Moved source/upload resources drain before the next window;
                 // increasing GPU contiguity never enlarges the host envelope.
                 cubecl_common::future::block_on(client.sync())
-                    .map_err(crate::resident_util::fault)?;
+                    .map_err(|cause| public_load_fault("completion", cause))?;
                 first += count as u64;
             }
             bytes = bytes
