@@ -2619,7 +2619,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         prefix: &[u32],
         draft: Option<u64>,
     ) -> Result<crate::strata_sampler::request::Scope> {
-        self.completed_native_projection_boundary(executor)?;
+        self.validate_native_request_boundary(executor)?;
         if self.position != prefix.len() {
             return Err(error());
         }
@@ -2701,7 +2701,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         queue: &wgpu::Queue,
         prompt_host_grant: u64,
     ) -> Result<()> {
-        self.completed_native_projection_boundary(executor)?;
+        self.validate_unstarted_native_boundary(executor)?;
         if self.position != 0 || !crate::strata_intel_core::enabled() {
             return Err(error());
         }
@@ -2758,14 +2758,11 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 sources.prepare_prompt_loan(self.graph, indices, prompt_host_grant)?;
             }
         }
-        self.completed_native_projection_boundary(executor)?;
+        self.validate_unstarted_native_boundary(executor)?;
         executor.activate_native_core_q6_head()
     }
 
-    fn completed_native_projection_boundary(
-        &self,
-        executor: &GpuExecutor<'f>,
-    ) -> Result<CompletedNativeProjectionBoundary> {
+    fn validate_native_projection_owners(&self, executor: &GpuExecutor<'f>) -> Result<()> {
         if self.poisoned
             || self.retired.load(Ordering::Acquire)
             || !self.pending_qsa.is_empty()
@@ -2797,8 +2794,46 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 None => return Err(error()),
             }
         }
-        native.ple.validate_completed_projection_boundary(self)?;
+        Ok(())
+    }
+
+    fn completed_native_projection_boundary(
+        &self,
+        executor: &GpuExecutor<'f>,
+    ) -> Result<CompletedNativeProjectionBoundary> {
+        self.validate_native_projection_owners(executor)?;
+        self.native_batch
+            .as_ref()
+            .ok_or(error())?
+            .ple
+            .validate_completed_projection_boundary(self)?;
         Ok(CompletedNativeProjectionBoundary { _private: () })
+    }
+
+    fn validate_unstarted_native_boundary(&self, executor: &GpuExecutor<'f>) -> Result<()> {
+        self.validate_native_projection_owners(executor)?;
+        if !crate::strata_intel_core::enabled()
+            || self.position != 0
+            || self.ple_history.tokens().iter().any(|&t| t != -1)
+            || self.ple_conv.history().iter().any(|&v| v != 0.)
+        {
+            return Err(error());
+        }
+        self.native_batch
+            .as_ref()
+            .ok_or(error())?
+            .ple
+            .validate_unstarted_projection_boundary(self)
+    }
+
+    // No completed-policy token escapes this initial-or-committed request gate.
+    fn validate_native_request_boundary(&self, executor: &GpuExecutor<'f>) -> Result<()> {
+        if crate::strata_intel_core::enabled() && self.position == 0 {
+            self.validate_unstarted_native_boundary(executor)
+        } else {
+            self.completed_native_projection_boundary(executor)
+                .map(|_| ())
+        }
     }
 
     pub(crate) fn adapt_global_after_window(
@@ -2835,7 +2870,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         prompt: usize,
         outputs: usize,
     ) -> Result<()> {
-        self.completed_native_projection_boundary(executor)?;
+        self.validate_native_request_boundary(executor)?;
         let native = self.native_batch.as_ref().ok_or(error())?;
         native.validate_global_scope(executor, &self.admission)?;
         let permit = native.public_language_request_io.as_ref().ok_or(error())?;
@@ -2855,7 +2890,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             )));
         }
         executor.check_target_rows_policy()?;
-        self.completed_native_projection_boundary(executor)?;
+        self.validate_native_request_boundary(executor)?;
         Ok(self.position)
     }
 

@@ -60,6 +60,20 @@ fn completed_projection_cursor(next: usize, position: usize, pending: bool) -> R
     }
     Ok(())
 }
+// Construction is not an accepted-token commit. Only an untouched original
+// workspace can authorize initial source/request preparation; it cannot mint a
+// CompletedNativeProjectionBoundary used by runtime policy changes.
+fn unstarted_projection_cursor(
+    next: usize,
+    position: usize,
+    generation: u64,
+    pending: bool,
+) -> Result<()> {
+    if next != 0 || position != 0 || generation != 0 || pending {
+        return Err(error());
+    }
+    Ok(())
+}
 fn guarded<T>(poison: &AtomicBool, f: impl FnOnce() -> Result<T>) -> Result<T> {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
         Ok(Ok(v)) => Ok(v),
@@ -728,6 +742,17 @@ impl PleBatchWorkspace {
             return Err(error());
         }
         self.validate_ids(&model.arena)
+    }
+    pub(super) fn validate_unstarted_projection_boundary(
+        &self,
+        model: &ResidentModel<'_, '_>,
+    ) -> Result<()> {
+        self.healthy(model, &AtomicBool::new(false))?;
+        unstarted_projection_cursor(self.next, model.position, self.generation, self.pending)?;
+        if self.public_grouped_reads || self.public_four_rows {
+            return Err(error());
+        }
+        Ok(())
     }
     /// PLE advances this cursor only in the all-family accepted commit. Scalar
     /// continuation leaves it behind and therefore cannot change native policy.
@@ -2133,6 +2158,23 @@ mod tests {
         }
         assert!(decode_three(&ReadBatch(Vec::new()), 1).is_err());
     }
+    #[test]
+    fn native_shared_unstarted_boundary_is_distinct_from_a_committed_cursor() {
+        assert!(unstarted_projection_cursor(0, 0, 0, false).is_ok());
+        assert!(completed_projection_cursor(0, 0, false).is_err());
+        for (next, position, generation, pending) in [
+            (1, 0, 0, false),
+            (0, 1, 0, false),
+            (1, 1, 0, false),
+            (0, 0, 1, false),
+            (0, 0, 0, true),
+            (0, 0, u64::MAX, false),
+        ] {
+            assert!(unstarted_projection_cursor(next, position, generation, pending).is_err());
+        }
+        assert!(completed_projection_cursor(1, 1, false).is_ok());
+    }
+
     #[test]
     fn projection_switch_requires_an_accepted_matching_idle_native_cursor() {
         use super::completed_projection_cursor;
