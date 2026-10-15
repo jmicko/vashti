@@ -12,6 +12,8 @@ Native PLE follows native_ple_postops.dp.cpp, native_bf16.dp.cpp,
 ple.dp.cpp, verify.cpp and the original ngram.cpp/table gather contract.
 Prompt operand images, GR/AB consumers and the Rust/Vulkan GEMM substitution
 follow sycl/src/prefill/gemm.dp.cpp, kernels.dp.cpp and prefill.cpp.
+Sampler adaptation follows sycl/src/kernels/cuda/sampler.dp.cpp,
+sycl/include/strata/kernels/sampler.hpp and core/coupled_draft.hpp.
 Existing iq_moe_integer-NOTICE.txt retains additional llama.cpp/ggml attribution.
 
 MIT License

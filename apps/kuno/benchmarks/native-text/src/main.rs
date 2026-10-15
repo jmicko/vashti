@@ -34,6 +34,7 @@ mod strata_qsa;
 #[allow(dead_code)] // Host planner tests do not construct native Vulkan queues.
 #[path = "../vendor/cubecl-wgpu/src/compute/strata_schedule.rs"]
 mod strata_queue_tests;
+mod strata_sampler;
 mod strata_stage;
 // Shared with the standalone CPU writer; writer-only methods are inert here.
 #[allow(dead_code)]
