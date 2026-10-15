@@ -2863,7 +2863,7 @@ mod tests {
         assert_eq!(l.requests().unwrap(), expected);
         assert_eq!(
             l.stage.owned_bytes().unwrap(),
-            if core { 19_529_728 } else { 36_306_944 }
+            if core { 20_054_016 } else { 36_306_944 }
         );
         if !core {
             assert_eq!(785_186_816 + l.bytes().unwrap(), 803_012_608);

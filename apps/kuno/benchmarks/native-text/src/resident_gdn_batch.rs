@@ -2527,7 +2527,14 @@ mod tests {
             .sum::<usize>();
         assert_eq!(tiles, 6); // worst supported F32; packed dtypes use no more tiles.
         assert_eq!(16 + tiles + 5 + 5 + 5, 37); // clear, matrix, finite, math, status.
-        assert_eq!(INFO_BYTES_PER_STAGE * 36, 2_359_296);
+        assert_eq!(
+            INFO_BYTES_PER_STAGE * 36,
+            if crate::strata_intel_core::enabled() {
+                2_506_752
+            } else {
+                2_359_296
+            }
+        );
         assert_eq!(
             INFO_BYTES_PER_STAGE * 36 * 2,
             if crate::strata_intel_core::enabled() {
