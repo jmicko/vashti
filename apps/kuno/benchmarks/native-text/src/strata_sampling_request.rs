@@ -373,6 +373,7 @@ pub(crate) fn draft_pick(
     greedy: Handle,
     confidence: Handle,
     fault: Handle,
+    cjk: Option<[Handle; 2]>,
 ) -> Result<bool> {
     if !active() {
         return Ok(false);
@@ -406,52 +407,74 @@ pub(crate) fn draft_pick(
             d.copy_from_slice(&w.to_le_bytes());
         }
         s.write(CONTROL, control)?;
-        bridge(
-            client,
-            Bridge::Prepare,
-            vec![
-                s.roots[P].clone(),
-                s.roots[HIST].clone(),
-                s.roots[RING].clone(),
-                s.roots[BASE].clone(),
-                positions,
-                s.roots[CONTROL].clone(),
-                input,
-                fault.clone(),
-                s.roots[OUT].clone(),
-            ],
-        )?;
-        s.params.counter = counter;
-        let h = s.params.penalty_last_n.min(HISTORY_MAX);
-        unsafe {
-            super::launch(
-                client,
-                [
-                    logits,
-                    s.roots[HIST].clone(),
-                    s.roots[CAND].clone(),
-                    s.roots[OUT].clone(),
-                    fault.clone(),
-                    s.roots[P].clone(),
-                ],
-                &s.params,
-                1,
-                h,
-                0,
-                2,
-            )?;
+        if let Some(maps) = &cjk {
+            if maps[0].size_in_used() < crate::resident_mtp::cjk::MAP_BYTES as u64
+                || maps[1].size_in_used() < (VOCAB * 4) as u64
+            {
+                return Err(reject());
+            }
+        }
+        let mut prepare = vec![
+            s.roots[P].clone(),
+            s.roots[HIST].clone(),
+            s.roots[RING].clone(),
+            s.roots[BASE].clone(),
+            positions,
+            s.roots[CONTROL].clone(),
+            input,
+            fault.clone(),
+            s.roots[OUT].clone(),
+        ];
+        if let Some(maps) = &cjk {
+            prepare.push(maps[1].clone());
         }
         bridge(
             client,
-            Bridge::Publish,
-            vec![
-                s.roots[OUT].clone(),
-                s.roots[RING].clone(),
-                greedy,
-                s.roots[CONTROL].clone(),
-                fault,
-                confidence,
-            ],
+            if cjk.is_some() {
+                Bridge::PrepareCjk
+            } else {
+                Bridge::Prepare
+            },
+            prepare,
+        )?;
+        s.params.counter = counter;
+        let h = s.params.penalty_last_n.min(HISTORY_MAX);
+        let owners = [
+            logits,
+            s.roots[HIST].clone(),
+            s.roots[CAND].clone(),
+            s.roots[OUT].clone(),
+            fault.clone(),
+            s.roots[P].clone(),
+        ];
+        // SAFETY: bridge publishes the same parameter/history domain as the
+        // selected shader. Public map owners remain retained by the MTP model.
+        unsafe {
+            if cjk.is_some() {
+                super::launch_cjk(client, owners, &s.params, h)?;
+            } else {
+                super::launch(client, owners, &s.params, 1, h, 0, 2)?;
+            }
+        }
+        let mut publish = vec![
+            s.roots[OUT].clone(),
+            s.roots[RING].clone(),
+            greedy,
+            s.roots[CONTROL].clone(),
+            fault,
+            confidence,
+        ];
+        if let Some(maps) = &cjk {
+            publish.push(maps[0].clone());
+        }
+        bridge(
+            client,
+            if cjk.is_some() {
+                Bridge::PublishCjk
+            } else {
+                Bridge::Publish
+            },
+            publish,
         )?;
         s.coordinates[3] += 1;
         Ok(true)
@@ -461,23 +484,45 @@ pub(crate) fn draft_pick(
 enum Bridge {
     Prepare,
     Publish,
+    PrepareCjk,
+    PublishCjk,
 }
 impl Bridge {
     fn source(self) -> String {
-        include_str!("strata-sampling-bridge.wgsl")
+        let source = include_str!("strata-sampling-bridge.wgsl")
             .split_once(match self {
-                Self::Prepare => "// PREPARE_BEGIN\n",
-                Self::Publish => "// PUBLISH_BEGIN\n",
+                Self::Prepare | Self::PrepareCjk => "// PREPARE_BEGIN\n",
+                Self::Publish | Self::PublishCjk => "// PUBLISH_BEGIN\n",
             })
             .unwrap()
             .1
             .split_once("// END")
             .unwrap()
             .0
-            .into()
+            .to_owned();
+        match self {
+            Self::PrepareCjk=>source
+                .replace("@compute @workgroup_size(256)","@group(0) @binding(9) var<storage,read> inverse:array<u32>;\n@compute @workgroup_size(256)")
+                .replace("if arrayLength(&params)<32u", "if arrayLength(&inverse)<248320u||arrayLength(&params)<32u")
+                .replace("lane!=16u&&lane!=17u", "lane!=1u&&lane!=3u&&lane!=16u&&lane!=17u")
+                .replace("params[16]=positions[cell]+1u;", "params[1]=106299u;params[3]=26u;params[16]=positions[cell]+1u;")
+                .replace("history[i]=ring[4096u+j-h+i];", "let token=ring[4096u+j-h+i];var compact=-1;if token>=0&&token<248320 {let index=inverse[u32(token)];if index<106299u {compact=i32(index);}else if index!=0xffffffffu {atomicOr(&fault[0],0x10000000u);}}history[i]=compact;"),
+            Self::PublishCjk=>source
+                .replace("@compute @workgroup_size(64)","@group(0) @binding(6) var<storage,read> ids:array<u32>;\n@compute @workgroup_size(64)")
+                .replace("if arrayLength(&picks)<1u", "if arrayLength(&ids)<106299u||arrayLength(&picks)<1u")
+                .replace("pick.x>=248320u", "pick.x>=106299u")
+                .replace("confidence[64]=pick.y;", "let original=ids[pick.x];if original>=248320u {atomicOr(&fault[0],0x10000000u);token[0]=248320u;return;}confidence[64]=pick.y;")
+                .replace("ring[4096u+j]=i32(pick.x)","ring[4096u+j]=i32(original)")
+                .replace("token[0]=pick.x", "token[0]=original"),
+            _=>source,
+        }
     }
     fn lanes(self) -> u32 {
-        if self == Self::Prepare { 256 } else { 64 }
+        if matches!(self, Self::Prepare | Self::PrepareCjk) {
+            256
+        } else {
+            64
+        }
     }
 }
 impl KernelMetadata for Bridge {
@@ -485,6 +530,8 @@ impl KernelMetadata for Bridge {
         match self {
             Self::Prepare => "StrataCoupledDraftDevicePrepare",
             Self::Publish => "StrataCoupledDraftDevicePublish",
+            Self::PrepareCjk => "StrataCoupledCjkDraftDevicePrepare",
+            Self::PublishCjk => "StrataCoupledCjkDraftDevicePublish",
         }
     }
     fn id(&self) -> KernelId {
@@ -538,17 +585,22 @@ fn bridge(client: &ComputeClient<WgpuRuntime>, k: Bridge, handles: Vec<Handle>) 
     Ok(())
 }
 pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
-    [Bridge::Prepare, Bridge::Publish]
-        .into_iter()
-        .map(|k| CompiledKernel {
-            entrypoint_name: "main".into(),
-            debug_name: None,
-            source: k.source(),
-            repr: None,
-            cube_dim: CubeDim::new_1d(k.lanes()),
-            debug_info: None,
-        })
-        .collect()
+    [
+        Bridge::Prepare,
+        Bridge::Publish,
+        Bridge::PrepareCjk,
+        Bridge::PublishCjk,
+    ]
+    .into_iter()
+    .map(|k| CompiledKernel {
+        entrypoint_name: "main".into(),
+        debug_name: None,
+        source: k.source(),
+        repr: None,
+        cube_dim: CubeDim::new_1d(k.lanes()),
+        debug_info: None,
+    })
+    .collect()
 }
 
 // These are the actual controller-to-I/O state transitions, separated from

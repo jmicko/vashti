@@ -425,3 +425,47 @@ fn native_sampler_coupled_draft_histories_match_every_target_row_for_each_window
         }
     }
 }
+
+#[test]
+fn native_cjk_subset_keeps_original_tie_order_and_penalty_ids() {
+    let raw = include_bytes!("../fixtures/strata-cjk-vocab/draft_vocab_cjk_original.bin");
+    let ids: Vec<_> = raw
+        .chunks_exact(4)
+        .map(|v| u32::from_le_bytes(v.try_into().unwrap()))
+        .collect();
+    assert_eq!(ids.len(), 106299);
+    assert_eq!(ids.len().div_ceil(BLOCK), 26);
+    let mut inverse = vec![-1; VOCAB];
+    for (compact, &original) in ids.iter().enumerate() {
+        inverse[original as usize] = compact as i32;
+    }
+    let absent = inverse.iter().position(|&v| v == -1).unwrap() as u32;
+    let history = [ids[0], absent, ids[0], ids[1]];
+    let compact_history: Vec<_> = history.iter().map(|&id| inverse[id as usize]).collect();
+    assert_eq!(compact_history, [0, -1, 0, 1]);
+    let logits = vec![0.; ids.len()];
+    let p = Params {
+        top_k: 20,
+        penalty_last_n: 4,
+        penalty_freq: 1.,
+        top_p: 1.,
+        seed: 5713,
+        ..Default::default()
+    };
+    let ranked = ordered(&logits, &compact_history, &p);
+    // Absent original tokens never penalize compact token0; true repeats do.
+    assert_eq!(ranked[0], (2, 0.));
+    assert_eq!(ranked[ranked.len() - 1], (0, -2.));
+    assert_eq!(ranked[ranked.len() - 2], (1, -1.));
+    let split = split(&ranked, p.k());
+    assert_eq!(split, ranked[..p.k()]);
+    for counter in [0, 1, 4095] {
+        let (compact, probability) = pick(&split, &p, counter);
+        assert_eq!(pick(&ranked, &p, counter), (compact, probability));
+        let original = ids[compact as usize];
+        assert_eq!(inverse[original as usize], compact as i32);
+        assert_eq!(probability, 1. / 20.);
+    }
+    assert_ne!(Kernel::CjkPart.id(), Kernel::Part.id());
+    assert_ne!(Kernel::CjkMerge.id(), Kernel::Merge.id());
+}

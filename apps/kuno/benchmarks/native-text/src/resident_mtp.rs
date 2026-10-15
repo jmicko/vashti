@@ -8,6 +8,8 @@
 //! A failed queued step destroys the entire cache and poisons this sequence.
 #![allow(dead_code)] // Parent fixed-public registration/physical gate is separate.
 
+#[path = "strata_mtp_cjk.rs"]
+pub(crate) mod cjk;
 #[path = "resident_mtp_prompt.rs"]
 mod prompt;
 #[path = "resident_strata_mtp.rs"]
@@ -586,6 +588,7 @@ struct Public {
     sin: Page,
     cos: Page,
     english_ids: Option<Page>,
+    cjk: Option<cjk::Head>,
     bytes: u64,
 }
 impl Public {
@@ -609,6 +612,7 @@ impl Public {
             .map(|p| p.handle.clone())
             .chain([self.sin.handle.clone(), self.cos.handle.clone()])
             .chain(self.english_ids.iter().map(|p| p.handle.clone()))
+            .chain(self.cjk.iter().flat_map(cjk::Head::handles))
             .collect()
     }
 }
@@ -852,6 +856,14 @@ fn public_guard(
                 if values[i - 1] >= word {
                     fault[0].fetch_or(1);
                 }
+            }
+        } else if comptime!(dtype == cjk::MAP_KIND) {
+            if logical_bytes != cjk::MAP_BYTES || word >= k::VOCAB as u32 {
+                fault[0].fetch_or(1);
+            }
+        } else if comptime!(dtype == cjk::INVERSE_KIND) {
+            if logical_bytes != k::VOCAB * 4 || (word != u32::MAX && word >= cjk::ROWS as u32) {
+                fault[0].fetch_or(1);
             }
         } else if comptime!(dtype == quant_matvec::F32) {
             let value = f32::reinterpret(word);
@@ -1216,6 +1228,9 @@ fn public_plan_for(profile: MtpProfile) -> Result<u64> {
     }
     bytes += 2 * main_admission::page_bytes((crate::qsa_gpu::ROPE_TABLE_WORDS * 4) as u64)
         .map_err(error)?;
+    if cjk::selected(profile) {
+        bytes += cjk::public_bytes();
+    }
     Ok(bytes)
 }
 fn validate_source(bytes: &[u8], dtype: u32) -> Result<()> {
@@ -1435,6 +1450,11 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             expected_profile,
             graph.target_binding_id().is_some(),
         )?;
+        if cjk::selected(expected_profile) && public_english {
+            return Err(Error::InvalidFormat(
+                "native CJK head excludes legacy Q8 vocabulary policy",
+            ));
+        }
         let public_bytes = public_bytes_with_english(expected_profile, public_english)?;
         let public_english_vocab = public_english
             .then(english::EnglishVocabulary::embedded)
@@ -1665,6 +1685,12 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             owners.extend(front.handles(&self.arena)?);
         }
         if let Some(public) = &self.public {
+            if public.cjk.is_some() != cjk::selected(self.graph.profile()) {
+                return Err(Error::InvalidFormat("native CJK owner selection"));
+            }
+            if let Some(head) = &public.cjk {
+                head.validate()?;
+            }
             validate_english_owner(
                 self.graph.profile(),
                 self.public_english_vocab.is_some(),
@@ -2033,6 +2059,12 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         if let Some(map) = &english_ids {
             bytes += map.owned_bytes as u64;
         }
+        let cjk = if cjk::selected(profile) {
+            bytes += cjk::public_bytes();
+            Some(cjk::Head::load(self)?)
+        } else {
+            None
+        };
         if bytes != public_bytes_with_english(profile, self.public_english_vocab.is_some())?
             || pages.len() != 30
         {
@@ -2043,6 +2075,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             sin,
             cos,
             english_ids,
+            cjk,
             bytes,
         })
     }
@@ -2602,6 +2635,23 @@ impl ResidentMtp<'_, '_> {
             || input == output
         {
             return Err(Error::InvalidBufferLength);
+        }
+        if name == "output.weight" && self.public()?.cjk.is_some() {
+            let planes = self.dense_planes.ok_or(Error::InvalidBufferLength)?;
+            let calls = self
+                .public()?
+                .cjk
+                .as_ref()
+                .ok_or(Error::InvalidBufferLength)?
+                .project(
+                    self.client()?,
+                    u::handle(&self.arena, self.id(input))?,
+                    self.arena.handle(planes).cloned().map_err(error)?,
+                    u::handle(&self.arena, self.id(output))?,
+                    u::handle(&self.arena, self.id(B::Fault))?,
+                )?;
+            self.tick(calls)?;
+            return self.finite(output);
         }
         if self.public_english_vocab.is_some() && name == "output.weight" {
             return self.project_public_english(input, output);
@@ -3819,6 +3869,7 @@ impl ResidentMtp<'_, '_> {
                 u::handle(&self.arena, self.id(B::Greedy))?,
                 u::handle(&self.arena, self.id(B::Candidates))?,
                 u::handle(&self.arena, self.id(B::Fault))?,
+                self.public()?.cjk.as_ref().map(cjk::Head::maps),
             )? {
                 self.tick(4)?;
                 self.physical()?;
@@ -3835,6 +3886,7 @@ impl ResidentMtp<'_, '_> {
                     u::handle(&self.arena, self.id(B::Logits))?,
                     u::handle(&self.arena, self.id(B::Greedy))?,
                     u::handle(&self.arena, self.id(B::Fault))?,
+                    self.public()?.cjk.is_some(),
                 )?;
             }
             self.tick(1)?;
@@ -3850,9 +3902,19 @@ impl ResidentMtp<'_, '_> {
                     u::handle(&self.arena, self.id(B::Greedy))?,
                     u::handle(&self.arena, self.id(B::Candidates))?,
                     u::handle(&self.arena, self.id(B::Fault))?,
+                    self.public()?.cjk.is_some(),
                 )?;
             }
             self.tick(1)?;
+            if let Some(head) = &self.public()?.cjk {
+                crate::strata_mtp_probability::map_cjk(
+                    self.client()?,
+                    head.maps()[0].clone(),
+                    u::handle(&self.arena, self.id(B::Greedy))?,
+                    u::handle(&self.arena, self.id(B::Fault))?,
+                )?;
+                self.tick(1)?;
+            }
             self.physical()?;
             self.guard_private(self.position + 1)?;
             return Ok(());
@@ -3913,7 +3975,9 @@ impl ResidentMtp<'_, '_> {
             && self.public_english_vocab.is_none()
     }
     fn output(&mut self, lease: OutputLease) -> Result<Output> {
-        validate_full_output(self.public_english_vocab.is_some())?;
+        validate_full_output(
+            self.public_english_vocab.is_some() || cjk::selected(self.graph.profile()),
+        )?;
         self.finish_gpu()?;
         self.complete_fault()?;
         let logits = self.read_f32(B::Logits)?;
@@ -4250,7 +4314,9 @@ impl ResidentMtp<'_, '_> {
         Ok(values)
     }
     pub fn step(&mut self, token: u32, carry: &[f32], cancel: &AtomicBool) -> Result<Output> {
-        validate_full_output(self.public_english_vocab.is_some())?;
+        validate_full_output(
+            self.public_english_vocab.is_some() || cjk::selected(self.graph.profile()),
+        )?;
         // Publisher alignment: cell c consumes T[c+1] with R[c], using RoPE
         // position c, to predict T[c+2]. The caller starts with this real pair,
         // never a dummy zero-conditioned cell. A provisional next cell can

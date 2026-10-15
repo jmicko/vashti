@@ -170,6 +170,8 @@ pub(crate) enum Kernel {
     Greedy { penalties: bool },
     Part,
     Merge,
+    CjkPart,
+    CjkMerge,
 }
 impl Kernel {
     pub(crate) fn source(self) -> String {
@@ -178,9 +180,17 @@ impl Kernel {
             include_str!("strata-sampler-common.wgsl"),
             match self {
                 Self::Greedy { .. } => include_str!("strata-sampler-greedy.wgsl"),
-                Self::Part => include_str!("strata-sampler-part.wgsl"),
-                Self::Merge => include_str!("strata-sampler-merge.wgsl"),
+                Self::Part | Self::CjkPart => include_str!("strata-sampler-part.wgsl"),
+                Self::Merge | Self::CjkMerge => include_str!("strata-sampler-merge.wgsl"),
             }
+        )
+        .replace(
+            "const NV:u32=248320u;const NB:u32=61u;",
+            if matches!(self, Self::CjkPart | Self::CjkMerge) {
+                "const NV:u32=106299u;const NB:u32=26u;"
+            } else {
+                "const NV:u32=248320u;const NB:u32=61u;"
+            },
         )
         .replace(
             "BITMAP_WORDS",
@@ -194,8 +204,8 @@ impl Kernel {
     fn threads(self) -> u32 {
         match self {
             Self::Greedy { .. } => 1024,
-            Self::Part => 128,
-            Self::Merge => 32,
+            Self::Part | Self::CjkPart => 128,
+            Self::Merge | Self::CjkMerge => 32,
         }
     }
 }
@@ -206,6 +216,8 @@ impl KernelMetadata for Kernel {
             Self::Greedy { penalties: false } => "StrataNativeSamplerGreedy",
             Self::Part => "StrataNativeSamplerSplitPart",
             Self::Merge => "StrataNativeSamplerSplitMerge",
+            Self::CjkPart => "StrataNativeCjkSamplerSplitPart",
+            Self::CjkMerge => "StrataNativeCjkSamplerSplitMerge",
         }
     }
     fn id(&self) -> KernelId {
@@ -241,6 +253,8 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
         Kernel::Greedy { penalties: true },
         Kernel::Part,
         Kernel::Merge,
+        Kernel::CjkPart,
+        Kernel::CjkMerge,
     ]
     .into_iter()
     .map(|k| CompiledKernel {
@@ -280,17 +294,50 @@ pub(crate) unsafe fn launch(
     first: usize,
     stride: usize,
 ) -> Result<()> {
-    if !crate::strata_intel_core::enabled() {
+    // SAFETY: identical full-vocabulary owner contract forwarded unchanged.
+    unsafe { launch_domain(client, owners, params, rows, history, first, stride, false) }
+}
+/// Compact CJK logits use compact penalty-history IDs. The owner maps the
+/// selected result back to original IDs before publishing to the draft ring.
+/// # Safety
+/// Same retained private owner contract as launch; the caller publishes device
+/// parameters with vocabulary106299/blocks26 and original-order subset history.
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn launch_cjk(
+    client: &ComputeClient<WgpuRuntime>,
+    owners: [Handle; 6],
+    params: &Params,
+    history: usize,
+) -> Result<()> {
+    if params.greedy() {
+        return Err(reject());
+    }
+    unsafe { launch_domain(client, owners, params, 1, history, 0, 2, true) }
+}
+#[allow(clippy::too_many_arguments)]
+unsafe fn launch_domain(
+    client: &ComputeClient<WgpuRuntime>,
+    owners: [Handle; 6],
+    params: &Params,
+    rows: usize,
+    history: usize,
+    first: usize,
+    stride: usize,
+    cjk: bool,
+) -> Result<()> {
+    if !crate::strata_intel_core::enabled() || (cjk && (rows != 1 || params.greedy())) {
         return Err(reject());
     }
     let _checked_words = params.words(rows, history, first, stride)?;
+    let vocabulary = if cjk { 106299 } else { VOCAB };
+    let blocks = vocabulary.div_ceil(BLOCK);
     let need = [
-        (rows * VOCAB * 4) as u64,
+        (rows * vocabulary * 4) as u64,
         (rows * history * 4).max(4) as u64,
         if params.greedy() {
             4
         } else {
-            scratch_bytes(rows)?
+            (rows * blocks * KMAX * 8) as u64
         },
         first
             .checked_add(
@@ -334,6 +381,8 @@ pub(crate) unsafe fn launch(
     }];
     for kernel in if params.greedy() {
         &greedy[..]
+    } else if cjk {
+        &[Kernel::CjkPart, Kernel::CjkMerge][..]
     } else {
         &[Kernel::Part, Kernel::Merge][..]
     } {
@@ -341,8 +390,8 @@ pub(crate) unsafe fn launch(
         for h in &owners {
             args = args.with_buffer(h.clone().binding());
         }
-        let grid = if *kernel == Kernel::Part {
-            [BLOCKS as u32, rows as u32, 1]
+        let grid = if matches!(*kernel, Kernel::Part | Kernel::CjkPart) {
+            [blocks as u32, rows as u32, 1]
         } else {
             [rows as u32, 1, 1]
         };

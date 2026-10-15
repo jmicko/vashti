@@ -18,12 +18,18 @@ pub(crate) const WORD: usize = 64;
 enum Kernel {
     Argmax,
     Probability,
+    CjkArgmax,
+    CjkProbability,
+    CjkMap,
 }
 impl KernelMetadata for Kernel {
     fn name(&self) -> &'static str {
         match self {
             Self::Argmax => "StrataNativeMtpArgmax",
             Self::Probability => "StrataNativeMtpTopProbability",
+            Self::CjkArgmax => "StrataNativeCjkMtpArgmax",
+            Self::CjkProbability => "StrataNativeCjkMtpTopProbability",
+            Self::CjkMap => "StrataNativeCjkMtpMapId",
         }
     }
     fn id(&self) -> KernelId {
@@ -48,7 +54,11 @@ impl CubeTask<AutoCompiler> for Kernel {
 }
 impl Kernel {
     fn lanes(self) -> u32 {
-        if self == Self::Argmax { 1024 } else { 128 }
+        match self {
+            Self::Argmax | Self::CjkArgmax => 1024,
+            Self::CjkMap => 64,
+            _ => 128,
+        }
     }
 }
 fn compiled(k: Kernel) -> CompiledKernel<AutoCompiler> {
@@ -56,23 +66,42 @@ fn compiled(k: Kernel) -> CompiledKernel<AutoCompiler> {
         entrypoint_name: "main".into(),
         debug_name: None,
         source: match k {
-            Kernel::Argmax => include_str!("strata-mtp-argmax.wgsl"),
-            Kernel::Probability => include_str!("strata-mtp-probability.wgsl"),
+            Kernel::Argmax | Kernel::CjkArgmax => include_str!("strata-mtp-argmax.wgsl"),
+            Kernel::Probability | Kernel::CjkProbability => {
+                include_str!("strata-mtp-probability.wgsl")
+            }
+            Kernel::CjkMap => include_str!("strata-mtp-cjk-map.wgsl"),
         }
-        .into(),
+        .replace(
+            "248320u",
+            if matches!(k, Kernel::CjkArgmax | Kernel::CjkProbability) {
+                "106299u"
+            } else {
+                "248320u"
+            },
+        ),
         repr: None,
         cube_dim: CubeDim::new_1d(k.lanes()),
         debug_info: None,
     }
 }
 pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
-    [Kernel::Argmax, Kernel::Probability]
-        .into_iter()
-        .map(compiled)
-        .collect()
+    [
+        Kernel::Argmax,
+        Kernel::Probability,
+        Kernel::CjkArgmax,
+        Kernel::CjkProbability,
+        Kernel::CjkMap,
+    ]
+    .into_iter()
+    .map(compiled)
+    .collect()
 }
 /// # Safety
-/// Original full-vocabulary logits/selected argmax and fault are authenticated
+/// Full owning logits allocation, selected argmax and fault are authenticated
+/// roots; cjk selects its real106299-row compact prefix for the reduction.
+/// The remaining logits are never interpreted as missing token probabilities.
+/// These are
 /// private roots in the same protected client. Candidates is its complete,
 /// newly zeroed32KiB owner, retained through both queues' join/arena erasure.
 pub(crate) unsafe fn launch(
@@ -81,9 +110,10 @@ pub(crate) unsafe fn launch(
     selected: Handle,
     candidates: Handle,
     fault: Handle,
+    cjk: bool,
 ) -> Result<()> {
     if !crate::strata_intel_core::enabled()
-        || logits.size_in_used() < (248320 * 4) as u64
+        || logits.size_in_used() < (if cjk { 106299 } else { 248320 } * 4) as u64
         || selected.size_in_used() < 4
         || fault.size_in_used() < 4
         || candidates.size() != 32768
@@ -122,7 +152,11 @@ pub(crate) unsafe fn launch(
     }
     unsafe {
         client.launch_unchecked(
-            Box::new(Kernel::Probability),
+            Box::new(if cjk {
+                Kernel::CjkProbability
+            } else {
+                Kernel::Probability
+            }),
             CubeCount::Static(8, 1, 1),
             args,
         );
@@ -138,9 +172,10 @@ pub(crate) unsafe fn argmax(
     logits: Handle,
     selected: Handle,
     fault: Handle,
+    cjk: bool,
 ) -> Result<()> {
     let handles = [logits, selected, fault];
-    let need = [248320 * 4, 4, 4];
+    let need = [(if cjk { 106299 } else { 248320 }) * 4, 4, 4];
     if !crate::strata_intel_core::enabled() {
         return Err(Error::InvalidBufferLength);
     }
@@ -160,7 +195,51 @@ pub(crate) unsafe fn argmax(
         args = args.with_buffer(h.binding());
     }
     unsafe {
-        client.launch_unchecked(Box::new(Kernel::Argmax), CubeCount::Static(1, 1, 1), args);
+        client.launch_unchecked(
+            Box::new(if cjk {
+                Kernel::CjkArgmax
+            } else {
+                Kernel::Argmax
+            }),
+            CubeCount::Static(1, 1, 1),
+            args,
+        );
+    }
+    Ok(())
+}
+
+/// Resolve the actual compact argmax only after its compact-domain confidence
+/// reduction has consumed that index. The map is immutable public model data.
+pub(crate) fn map_cjk(
+    client: &ComputeClient<WgpuRuntime>,
+    ids: Handle,
+    selected: Handle,
+    fault: Handle,
+) -> Result<()> {
+    if !crate::strata_intel_core::enabled() {
+        return Err(Error::InvalidBufferLength);
+    }
+    let owners = [ids, selected, fault];
+    let need = [crate::resident_mtp::cjk::MAP_BYTES as u64, 4, 4];
+    for (i, h) in owners.iter().enumerate() {
+        if h.size_in_used() < need[i]
+            || h.stream != owners[0].stream
+            || owners[..i].iter().any(|a| {
+                a.clone().binding().memory.allocation_id()
+                    == h.clone().binding().memory.allocation_id()
+            })
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+    }
+    let mut args = KernelArguments::new();
+    for h in owners {
+        args = args.with_buffer(h.binding());
+    }
+    // SAFETY: original map and distinct private selected/fault roots remain
+    // retained through the parent fence. Shader bounds both index and token.
+    unsafe {
+        client.launch_unchecked(Box::new(Kernel::CjkMap), CubeCount::Static(1, 1, 1), args);
     }
     Ok(())
 }
@@ -196,7 +275,7 @@ mod tests {
                 }),
             )
             .unwrap();
-            if index == 1 {
+            if matches!(index, 1 | 3) {
                 let mut constants = std::collections::HashMap::new();
                 let mut barriers = Vec::new();
                 let mut atomic_rmw = false;
@@ -251,6 +330,9 @@ mod tests {
         }
         let uniform = vec![0f32; 248320];
         assert_eq!(probability(&uniform, 0.), 1. / 248320f32);
+        // The CJK denominator includes only actual projected rows. Padding and
+        // omitted original vocabulary rows cannot dilute draft confidence.
+        assert_eq!(probability(&uniform[..106299], 0.), 1. / 106299f32);
         let values: Vec<_> = (0..248320).map(|i| (i % 37) as f32 * 0.11).collect();
         let max = 36f32 * 0.11;
         let reference = 1.
