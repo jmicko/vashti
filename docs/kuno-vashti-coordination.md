@@ -6,11 +6,11 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-14):** isolated
-`codex/strata-rust-port`, source through `ab0b15c`. Read the
-[connected sampling handoff](#active-kuno-engine-handoff--request-sampling-connection-2026-10-14)
-and [whole-rewrite gate](kuno-strata-rewrite-completion.md). The request owner,
-target consumer and coupled MTP ID/ring hooks now connect; confidence-policy,
-arbitrary runtime and full-source/device acceptance remain incomplete. No speed
+`codex/strata-rust-port`, source through `8f1377c`. Read the
+[native confidence handoff](#active-kuno-engine-handoff--native-mtp-confidence-2026-10-14)
+and [whole-rewrite gate](kuno-strata-rewrite-completion.md). Original head
+probabilities now feed serial stopping/target selection; full round/step/catch-up,
+pipeline, runtime and whole-source/device acceptance remain incomplete. No speed
 trials before the full gates. The user owns BOTH GPUs; reconfirm availability
 before GPU/model/admission/residency work. CPU source/build checks may continue.
 This backend work does not change the published image/application contract.
@@ -5590,3 +5590,54 @@ consumer-parity claim. The harness explicitly constructs greedy Params while
 internal Request takes sampling parameters; a general input command is still
 pending. Retain the full rewrite goal and all protected numerical/state/recovery
 gates before any speed trial. Required Vashti changes:none; goal active.
+
+
+### Active Kuno engine handoff — native MTP confidence (2026-10-14)
+
+Source `8f1377c`, after `ab0b15c`, isolated `codex/strata-rust-port` at
+`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`. Read completion guide
+**Native MTP confidence producers and serial consumers**, its substitutions and
+final CPU receipts. This supersedes the earlier missing probability/serial
+threshold consumers; **full rewrite and physical acceptance remain incomplete**.
+
+Native full-Q2 head now uses1024-thread no-penalty argmax and8x128 top probability
+with original strided F32/XOR32/ordered32-warp sums, last-CTA counter and explicit
+Device release/acquire ordering. Atomic u32 bit parts replace native volatile
+floats; exp accuracy and physical memory ordering remain to accept. Existing
+Candidates32KiB root lends disjoint scratch/word64 probability views. No new MAIN.
+Coupled sample Publish feeds its actual final-distribution probability into
+that same slot; it does not replace sampled confidence with an argmax mass or1.
+Scalar and queued draft packets return bounded wiping probabilities and check
+full owner/padding. The native mode keeps its original32/64KiB owner sizes.
+
+The controller takes native maximum length capped by remaining output, with
+new internal `draft_min_probability` (public harness explicitly0). Zero queues
+all draft steps before one final fence. Positive values gate launching each
+later step on the preceding completed probability, and the first low draft is
+excluded from target inputs. Drafts complete BEFORE suffix-policy choice. Native
+repair permits a longer accepted suffix than a confidence-stopped draft and
+replays only actual target-approved token/residual pairs; Q8/frozen plan bounds
+remain separate. Source-level CPU state/format coverage is not numerical proof.
+
+Probability0 is valid; no-token/NaN output initialization and sticky invalid-
+launch faults preserve missing-writer detection. The additional full private
+32KiB target-output initialization is charged: request/MTP runtime4063232,
+MAIN557056/host2MiB unchanged. No seed/prompt/logits/probability persistence or
+cache-key data. Existing same-thread Scope and full parent owner cleanup remain.
+
+Final8 confidence +10 sampler/request checks, core release build, strict core/
+off Clippy, formatting and offline316-body shader validation pass, including122
+physical-pointer/32 cooperative-matrix cases. Packet expansions cover checked/
+unchecked and native/legacy modes. Exact command/log paths are in the receipt.
+No GPU/model/device, live speed or full-suite acceptance; prior228 failures are
+not waived. No service/admission/residency, API/Vashti, install or release change.
+Canonical/inherited bytecode preserved. Goal active, required Vashti changes:none.
+
+Next: coherent native capture_round/capture_step and accepted-front catch-up/
+next-rest grouping (current repair-front then next-cell split is still different),
+applicable nonblocking/force-token chain event consumers, stable captured branch/
+state/failure audit. Keep suffix/cost/no-MTP lookup and runtime input/context/
+cache sizing/conditional-ring/stream-all and remaining completion rows open.
+No throughput trials until full source and protected correctness gates pass.
+Both GPUs remain with the user: request availability before ANY GPU/model or
+residency/admission work. Source/CPU work may continue without sudo.

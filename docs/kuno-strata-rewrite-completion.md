@@ -3406,3 +3406,174 @@ checks are authoritative progress; source completion, whole-model correctness,
 physical root/I/O erasure and GPU recovery are not proven. Prior228 full-suite
 failures remain an explicit audit item. Goal stays active. Canonical checkout
 was checked clean, and inherited isolated bytecode is preserved.
+
+## Native MTP confidence producers and serial consumers (2026-10-14)
+
+Source `8f1377c` extends `ab0b15c`. The source now connects native-style greedy top
+probability and coupled sampled probability to real draft packets, threshold
+stopping and target-window selection. It is not whole-rewrite completion or GPU
+acceptance. Both GPUs remain with the user; this pass is CPU/source work only.
+
+Pinned references at `fb58e0dbc8399662c0e47c76578c6e878b14f6cf`:
+`sycl/src/kernels/cuda/verify_kernels.dp.cpp::row_top_prob_split_kernel`,
+`row_top_prob_kernel`, `multi_block_head_ops` / `argmax_rows_wanted`;
+`sampler.dp.cpp::sampler_greedy_kernel` / coupled sampled tail;
+`sycl/src/core/mtp.cpp::record_rest` / `draft` / `chain_launch` and
+`sycl/src/program/generate.cpp` serial `spec_min_p` loops. Intel builds default
+to the multi-block top-probability implementation. CUDA-architecture-specific
+argmax dispatch is distinct; this port selects the native1024-thread no-penalty
+fallback and retains a selection/numerical audit, rather than claiming a CUDA
+architecture branch is automatically appropriate to Intel.
+
+### Real head producers and existing private owner
+
+`strata_mtp_probability` now supplies two real consumers of the original full
+Q2 MTP head in `ResidentMtp::finish_gpu`:
+
+- A1024-thread/no-penalty argmax, native32-lane strided scan, shuffle-down32
+  reductions and two shared/subgroup reduction levels. Lower token id wins
+  finite ties. Original private logits/token/fault roots stay authoritative.
+- The native8x128 top-probability shape. Virtual thread b*128+j visits vocabulary
+  elements at stride1024, sums F32 exponentials relative to the selected maximum,
+  then XOR-reduces offsets16/8/4/2/1 within each32-lane subgroup. Each of32 warp
+  sums has its own slot. The last CTA after an8-way atomic counter sums those
+  slots in ascending order and writes reciprocal total, then resets the counter.
+
+Scratch reuses the original complete private `B::Candidates`32KiB allocation:
+first256 bytes for counter/padding/32 parts, a disjoint4-byte view at byte256
+for probability (`WORD=64`). No new MAIN allocation or constructor credit is
+introduced. Cell start already clears Candidates in both fused/scalar and
+normal/follow paths; neither native front/rest nor the new argmax writes it.
+The top-probability kernel initializes its output to NaN before the counter
+publication, so an absent final producer cannot silently become probability0.
+Native greedy head selection plus probability remains two dispatches.
+
+Coupled sampled MTP keeps the previously connected filtered sampler and device
+ring. Its Publish bridge additionally copies the actual selected probability
+bits into Candidates[64]. It does not run unfiltered top probability on sampled
+logits, overwrite the chosen token with an argmax, or replace probability by1.
+Thus both paths feed one checked packet consumer, with their distinct meanings:
+full-vocabulary argmax mass versus the sampled chain's final filtered mass.
+
+Necessary Vulkan/Rust substitutions remain explicit:
+
+- WGSL `exp` represents SYCL `native::exp`; no bitwise transcendental equivalence
+  is established. Physical numerical comparison/rounding review is outstanding.
+- Native volatile float warp parts are atomic u32 bit stores/loads here. Release
+  precedes the counter RMW; acquire follows it before the final32-part read.
+  WGSL storage barriers lower to Workgroup execution + **Device** memory scope,
+  AcquireRelease|UniformMemory. The CPU SPIR-V test verifies both device barriers
+  and the atomic increment exist; that is not physical cross-queue/device proof.
+- The probability view aliases a disjoint part of an existing complete private
+  owner. It gets binding/read authority only; original arena cleanup retains
+  the entire allocation and its admission. No subview may acquire free authority.
+
+### Packets, native threshold and suffix interactions
+
+`DraftOutput` now owns an optional wiping scalar confidence, with an explicit
+error for unsupported legacy profiles. The existing full64KiB RawQuery packet
+uses one additional logical word for native probability; readback allocation,
+carry/token/fault offsets, owner lease and padding checks remain. CPU parsing
+checks the selected native format, finite[0,1] probability, token range, sticky
+fault and all unused bytes. The legacy parser/format remains separate.
+
+`DraftWindow` similarly returns bounded wiping probabilities with its actual
+proposed ids. Its existing32KiB packet uses two ROWS-wide logical planes: token/
+fault and probability/reserved, with inactive rows/padding zero. Both scalar
+packet generation and queued window generation have checked/unchecked, mode-
+specific CubeCL-to-WGSL validation; the raw head shaders validate/lower separately.
+
+`draft_window_with_min_probability` mirrors pinned serial `draft()`:
+minimum0 queues the complete requested chain before one final read/fault fence.
+A positive threshold generates draft0 and launches j only when j-1's completed
+probability is >=minimum. The first low draft is returned for observation; the
+controller's `confidence_window` excludes it from the target inputs. Threshold
+comparison includes equality. A legitimate rounded probability0 is accepted;
+NaN/range/fault/sentinel checks detect an absent or invalid producer instead.
+
+The selected controller uses the request's native maximum window, capped by
+remaining output/context, rather than the earlier custom adaptive MTP-length
+chooser. It produces the confidence-bearing chain BEFORE suffix-policy choice,
+then chooses the target prefix from probabilities. A lookup candidate whose
+first token agrees with the original draft can still win the existing suffix
+policy even when MTP confidence is low. Only chosen actual inputs reach target
+verification, whose exact-match acceptance remains unchanged.
+
+Native accepted-cache repair now permits an accepted suffix prefix longer than
+the short confidence-stopped MTP chain. The real Strata-Q2/core entry selects an
+explicit native plan mode: retain the correct first cell, rewind provisional
+later KV and append actual accepted tokens with their actual target residuals.
+All count/context/input/finite/source checks remain. Legacy Q8/frozen repair
+constructors keep their older draft-count boundary. The plan never approves a
+token or substitutes a draft residual for an accepted target residual.
+
+### Zero-probability handling and remaining source gates
+
+F32 sampled distributions may return probability0 (e.g. rounded tail fallback),
+and native confidence0 is a valid stop signal. Packet/publish checks now accept
+finite[0,1]. To preserve missing-writer detection, target Scope resets each
+active output pair to no-token/NaN through its complete private output owner,
+and the GPU draft Prepare initializes the single output pair likewise. Invalid
+sampler geometry/subgroup support sets the sticky fault rather than silently
+returning. The output initialization adds one full32KiB private upload/target
+window; its source/destination/inspection cost is explicitly added to the
+pre-device request/MTP runtime envelope:4063232 bytes total. MAIN557056 and
+host2MiB grants remain unchanged; no prompt, seed, logits or probabilities are
+written to disk/logs/cache keys.
+
+Still outstanding: force-token/nonblocking pipelined `chain_launch` event and
+partial-output publication, stable complete native round/step graph branches,
+and the exact placement/grouping of accepted-front catch-up and next draft rest.
+This serial connection still repairs its accepted front then starts the next
+cell; source-schedule parity with native capture_round needs its own connected
+audit/port. Existing cost/suffix-policy fidelity and no-MTP lookup branches also
+remain audit items. Do not close those rows because probability math compiles.
+
+Also retain arbitrary request/context/grants/cache sizing, conditional ring/
+stream-all, source/228 prior unit-failure audits and protected whole-model
+numerical/state/erasure/recovery gates. No live speed trial until full source
+completeness and whole-engine correctness pass. No public API/Vashti, service,
+installation, residency/admission or release changes are part of this block.
+
+
+### Native confidence source validation receipt
+
+CPU-only final receipts under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-mtp-confidence-final-tests-20261014.log`:8 focused confidence tests
+  pass. Covers native optional scalar/window packet formats and full padding,
+  zero/NaN/range behavior, threshold equality/first-low exclusion, every supported
+  width, suffix repair outgrowing a short native draft, head shader lowering and
+  the two actual Device/AcquireRelease/UniformMemory barriers plus atomic RMW.
+  The scalar1024-thread/XOR32/ordered32-part oracle agrees with an independent
+  full-vocabulary reference within its stated CPU tolerance. Actual packet
+  CubeCL expansion validates checked/unchecked and legacy/native modes, including
+  the dynamic window index. This does not run kernels or prove GPU math/order.
+- `strata-mtp-confidence-final-sampler-tests-20261014.log`:10 sampler/request
+  regressions pass after zero-probability/sentinel/runtime-quote changes.
+- `strata-mtp-confidence-final-build-20261014.log`:core release build passes.
+- `strata-mtp-confidence-final-shaders-20261014.log`:316 ordinary shader bodies
+  validate/lower, with122 existing physical-pointer and32 cooperative-matrix
+  validations. Uses the documented pinned2026.1 validator. Separate offline
+  `spirv-val --target-env vulkan1.3` checks accept Prepare/Publish/selected packet
+  and both new head kernels. No GPU/device is initialized by these checks.
+- `strata-mtp-confidence-final-core-clippy-20261014.log` and
+  `strata-mtp-confidence-final-off-clippy-20261014.log`: strict core and ordinary
+  feature-off Clippy pass. Formatting/whitespace pass. Existing Cargo duplicate
+  binary path notice remains. The targeted CubeCL `collapsible_if` allowance
+  keeps compile-time mode specialization separate from runtime device control;
+  both generated modes are validated. No broad warning suppression was added.
+
+Commands retain the same locked/release manifest/bin/core/off features; test
+filters `native_confidence` and `native_sampl`. Earlier fixture compile/entrypoint
+and Clippy failures were corrected before these final receipts; no source or
+speed-based rollback. No full-suite run/waiver of the prior228 failures, live
+model/numerical/recovery test or throughput trial. Source code and compiler
+checks are progress, not completion of the faithful whole-engine goal.
+
+Next connect native round/step/catch-up state/branch scheduling and applicable
+pipelined chain event consumers, then runtime input/context/cache policy and all
+remaining completion rows. Continue CPU/source work while the user owns BOTH
+GPUs; obtain availability before any device/model or residency/admission work.
+Canonical checkout remains untouched/clean; isolated inherited bytecode is
+preserved. No service, public API, Vashti, install or release change. Goal active.

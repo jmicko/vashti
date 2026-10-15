@@ -1,17 +1,17 @@
 # Native DASLab/Strata checkpoint — 2026-10-09
 
 **Current Rust port resume pointer (2026-10-14):** isolated
-`codex/strata-rust-port`, source through `ab0b15c`. Read the latest
-[coordination handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--request-sampling-connection-2026-10-14)
-and [connected sampling receipt](kuno-strata-rewrite-completion.md#connected-request-sampling-owners-and-targetmtp-hooks-2026-10-14).
-The real request owner, target sampler-to-packet and sampled MTP token/ring
-connections now compile and pass CPU/offline checks. Confidence consumers,
-full graph/state/failure audit, runtime configuration and physical acceptance
-remain incomplete. Prior prompt boundary/source prerequisites remain `97e22f9`
-and `60f6760`/`12b310f`/`8b503e2`. No speed trials until full connected-source
-and protected numerical/state/recovery gates pass. Older results/states below
-are historical. User owns BOTH GPUs: reconfirm availability before any GPU/
-model/admission/residency work. CPU source work can continue without sudo.
+`codex/strata-rust-port`, source through `8f1377c`. Read the latest
+[coordination handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--native-mtp-confidence-2026-10-14)
+and [confidence receipt](kuno-strata-rewrite-completion.md#native-mtp-confidence-producers-and-serial-consumers-2026-10-14).
+Native head confidence, actual probability packets and serial threshold/target
+consumers now connect in source; the earlier owner/sampler prerequisite is
+`ab0b15c`. Native round/step/catch-up grouping, applicable pipeline events, full
+branch/state/failure and runtime audits/physical acceptance remain incomplete.
+No speed trials until the whole connected-source and protected correctness gates
+pass. Older results/states below are historical. User owns BOTH GPUs: reconfirm
+availability before any GPU/model/admission/residency work. CPU source work can
+continue without sudo. No installed service or public API change.
 
 
 **Current checkpoint:** user requested a stop for usage conservation. Standalone
