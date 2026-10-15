@@ -109,6 +109,30 @@ pub(crate) struct Page {
     pub handle: Handle,
     pub tile: Tile,
 }
+// Token staging uses an original FULL private owner, including zero padding.
+// Never pass a sliced logical token view to the strict private upload API.
+fn token_upload(tokens: &[u32], owned: usize) -> Result<zeroize::Zeroizing<Vec<u8>>> {
+    if tokens.is_empty()
+        || tokens.len() > crate::strata_prompt::groups::CAPACITY
+        || tokens.iter().any(|&t| t as usize >= ROWS)
+        || owned == 0
+        || owned > 1024 * 1024
+        || !owned.is_multiple_of(4)
+        || tokens.len().checked_mul(4).is_none_or(|n| n > owned)
+    {
+        return Err(rejected());
+    }
+    let mut bytes = zeroize::Zeroizing::new(Vec::new());
+    bytes
+        .try_reserve_exact(owned)
+        .map_err(|_| Error::LimitExceeded("native token upload owner"))?;
+    bytes.resize(owned, 0);
+    for (cell, token) in bytes.chunks_exact_mut(4).zip(tokens) {
+        cell.copy_from_slice(&token.to_le_bytes());
+    }
+    Ok(bytes)
+}
+
 pub(crate) struct Weights {
     client: ComputeClient<WgpuRuntime>,
     binding: GraphBindingId,
@@ -288,19 +312,17 @@ impl Weights {
             }
         }
         u::cancel(cancel)?;
-        let mut upload = zeroize::Zeroizing::new(
-            tokens
-                .iter()
-                .flat_map(|t| t.to_le_bytes())
-                .collect::<Vec<u8>>(),
-        );
+        let upload_owner = arena.handle(token_owner).map_err(u::fault)?.clone();
+        let owned = arena.layout(token_owner).map_err(u::fault)?.owned_bytes;
+        if upload_owner.offset_start.unwrap_or(0) != 0
+            || upload_owner.offset_end.unwrap_or(0) != 0
+            || upload_owner.size_in_used() != owned as u64
+        {
+            return Err(rejected());
+        }
+        let mut upload = token_upload(tokens, owned)?;
         client
-            .write_private(
-                source
-                    .clone()
-                    .offset_end(source.size_in_used() - (tokens.len() * 4) as u64),
-                std::mem::take(&mut *upload),
-            )
+            .write_private(upload_owner, std::mem::take(&mut *upload))
             .map_err(u::fault)?;
         let launch = |kernel, grid, bindings, info| {
             if prompt {
@@ -344,6 +366,34 @@ impl Weights {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_shared_token_upload_covers_the_full_private_owner_and_zeroes_unused_bytes() {
+        for count in [1, 8, crate::strata_prompt::groups::CAPACITY] {
+            let tokens = (0..count)
+                .map(|i| (i * 29 % ROWS) as u32)
+                .collect::<Vec<_>>();
+            let bytes = token_upload(&tokens, 1024 * 1024).unwrap();
+            assert_eq!(bytes.len(), 1024 * 1024);
+            for (cell, token) in bytes.chunks_exact(4).zip(&tokens) {
+                assert_eq!(u32::from_le_bytes(cell.try_into().unwrap()), *token);
+            }
+            assert!(bytes[count * 4..].iter().all(|&b| b == 0));
+            assert!(token_upload(&tokens, count * 4 - 1).is_err());
+        }
+        for (tokens, size) in [
+            (vec![], 32768),
+            (vec![ROWS as u32], 32768),
+            (vec![u32::MAX], 32768),
+            (vec![1], 0),
+            (vec![1], 5),
+            (vec![1], 1024 * 1024 + 4),
+            (vec![1; crate::strata_prompt::groups::CAPACITY + 1], 32768),
+        ] {
+            assert!(token_upload(&tokens, size).is_err());
+        }
+        assert!(token_upload(&[ROWS as u32 - 1], 4).is_ok());
+    }
+
     #[test]
     fn native_shared_weights_original_tiles_cover_every_row_once_with_exact_roots() {
         assert_eq!(Tensor::Embedding.row_bytes(), 1360);
