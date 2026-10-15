@@ -48,6 +48,8 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             return Err(Error::InvalidBufferLength);
         }
         public_plan_for(MtpProfile::StrataQ2)?
+            .checked_sub(crate::strata_shared_weights::public_bytes())
+            .ok_or(Error::ArithmeticOverflow)?
             .checked_add(PRIVATE_BYTES as u64)
             .and_then(|n| n.checked_add(PUBLIC_SOURCE_BYTES as u64))
             .ok_or(Error::ArithmeticOverflow)
@@ -93,5 +95,42 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         // or resurrect the target's already poisoned admission ledger.
         receipt.main_reserved = 0;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod shared_weight_tests {
+    use super::*;
+    #[test]
+    fn native_shared_weights_mtp_consumes_the_same_original_tiles_without_a_second_charge() {
+        if !crate::strata_intel_core::enabled() {
+            return;
+        }
+        for role in [
+            crate::strata_shared_weights::Tensor::Embedding,
+            crate::strata_shared_weights::Tensor::Head,
+        ] {
+            let spec = if role == crate::strata_shared_weights::Tensor::Embedding {
+                embedding_for(MtpProfile::StrataQ2)
+            } else {
+                *matrices_for(MtpProfile::StrataQ2)
+                    .iter()
+                    .find(|s| s.name == role.name())
+                    .unwrap()
+            };
+            assert_eq!(spec.dtype, role.dtype());
+            let actual = tile_plan(spec).unwrap();
+            let expected = crate::strata_shared_weights::tiles(role)
+                .into_iter()
+                .map(|t| (t.first, t.rows, t.logical, t.owned))
+                .collect::<Vec<_>>();
+            assert_eq!(actual, expected);
+        }
+        assert_eq!(
+            ResidentMtp::shared_capacity().unwrap() + crate::strata_shared_weights::public_bytes(),
+            public_plan_for(MtpProfile::StrataQ2).unwrap()
+                + PRIVATE_BYTES as u64
+                + PUBLIC_SOURCE_BYTES as u64
+        );
     }
 }

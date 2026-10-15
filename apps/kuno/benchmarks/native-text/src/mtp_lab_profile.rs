@@ -141,7 +141,9 @@ impl Profile {
         }
     }
 
-    /// The selected public plan must be the one actually released. Successful
+    /// The selected public view plan must be the one actually closed. Native
+    /// shared weight roots remain pinned by the target until both models close.
+    /// Successful
     /// workspace close already proves full private owning erasure; physical
     /// GPU-memory recovery remains the protected runner's separate check.
     /// this also binds the numeric receipt to its immutable draft profile.

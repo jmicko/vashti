@@ -1142,7 +1142,11 @@ pub(crate) fn run(
         if !input.request_reuse || !client.public_target_request_io_configured()? {
             return Err("shared native target runtime configuration".into());
         }
-        serde_json::json!({"shared_native_stream":true,"configured":true,"independent_draft_stream":false})
+        crate::target_lab_build::native_shared_backlog_record(
+            input.target_submission_backlog,
+            actual_target_backlog,
+            input.request_reuse,
+        )?
     } else {
         crate::target_lab_build::public_target_submission_backlog_record(
             input.target_submission_backlog,
@@ -1287,16 +1291,7 @@ pub(crate) fn run(
             true,
         )?;
         if crate::strata_intel_core::enabled() {
-            // SAFETY: this protected original-artifact probe retains the full
-            // parent hash evidence/RAM envelope and exact target device.
-            unsafe {
-                target.prepare_global_sources_before_prefill(
-                    &mut executor,
-                    host_device.ok_or("global target device missing")?,
-                    host_queue.ok_or("global target queue missing")?,
-                    0, // compiled4096-row fixture: owned prompt, no loan HOST grant
-                )?;
-            }
+            executor.prepare_native_shared_target_weights(graph.bound_graph())?;
         }
         if crate::strata_intel_core::enabled()
             && let Some(g) = &draft_graph
@@ -1318,6 +1313,18 @@ pub(crate) fn run(
                 serde_json::json!({"device":"intel","shared_target_runtime":true,
                 "distinct_vulkan_device":false,"independent_runtime":false,"main_account":"shared"}),
             );
+        }
+        if crate::strata_intel_core::enabled() {
+            // SAFETY: this protected original-artifact probe retains the full
+            // parent hash evidence/RAM envelope and exact target device.
+            unsafe {
+                target.prepare_global_sources_before_prefill(
+                    &mut executor,
+                    host_device.ok_or("global target device missing")?,
+                    host_queue.ok_or("global target queue missing")?,
+                    0, // compiled4096-row fixture: owned prompt, no loan HOST grant
+                )?;
+            }
         }
         let runs = (|| -> Result<serde_json::Value> {
             if crate::strata_intel_core::enabled() {
@@ -2645,17 +2652,35 @@ pub(crate) fn run(
         }
         None
     };
-    let final_backlog_receipt = crate::target_lab_build::public_target_submission_backlog_record(
-        input.target_submission_backlog,
-        final_target_backlog,
-        input.request_reuse,
-        draft_target_backlog_query_rejected,
-    )?;
+    let final_backlog_receipt = if crate::strata_intel_core::enabled() {
+        crate::target_lab_build::native_shared_backlog_record(
+            input.target_submission_backlog,
+            final_target_backlog,
+            input.request_reuse,
+        )?
+    } else {
+        crate::target_lab_build::public_target_submission_backlog_record(
+            input.target_submission_backlog,
+            final_target_backlog,
+            input.request_reuse,
+            draft_target_backlog_query_rejected,
+        )?
+    };
     if final_backlog_receipt != target_submission_backlog_receipt {
         return Err("immutable target backlog policy changed before full close".into());
     }
     if crate::strata_intel_core::enabled() {
-        let value = serde_json::json!({"scope":"strata-global-connected-execution-check",
+        let draft_addressable = draft_close.as_ref().map_or(0, |r| r.public_bytes);
+        let draft_additional = if draft_close.is_some() {
+            draft_addressable
+                .checked_sub(crate::strata_shared_weights::public_bytes())
+                .ok_or("native shared public quote")?
+        } else {
+            0
+        };
+        let value = serde_json::json!({"shared_target_public_bytes":crate::strata_shared_weights::public_bytes(),
+            "draft_public_addressable_bytes":draft_addressable,"draft_public_additional_bytes":draft_additional,
+            "scope":"strata-global-connected-execution-check",
             "benchmark":false,"whole_rewrite_accepted":false,"record":record,
             "draft_owners_erased":draft_close.is_some(),"target_owners_erased":true,
             "target_submission_backlog":final_backlog_receipt});

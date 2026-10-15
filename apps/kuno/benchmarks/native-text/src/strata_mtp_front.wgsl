@@ -50,6 +50,14 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) id:vec3<u32>) {let i=id.x;let t=id.y;if t>=p.count || i>=10240u {return;}let at=t*10240u+i;let x=residual[at]+embedding[t*2560u+i%2560u];residual[at]=select(0.0,x,finite(x));if !finite(x) {atomicOr(&fault[0],1u);}}
 // BROADCAST_END
+// TARGET_BROADCAST_BEGIN
+@group(0) @binding(0) var<storage,read> embedding:array<f32>;
+@group(0) @binding(1) var<storage,read_write> residual:array<f32>;
+@group(0) @binding(2) var<storage,read_write> fault:array<atomic<u32>>;
+@group(0) @binding(3) var<uniform> p:Params;
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) id:vec3<u32>) {let i=id.x;let t=id.y;if t>=p.count || i>=10240u {return;}let at=t*10240u+i;let x=embedding[t*2560u+i%2560u];residual[at]=select(0.0,x,finite(x));if !finite(x) {atomicOr(&fault[0],1u);}}
+// TARGET_BROADCAST_END
 // POSITIONS_BEGIN
 @group(0) @binding(0) var<storage,read_write> positions:array<u32>;
 @group(0) @binding(1) var<uniform> p:Params;

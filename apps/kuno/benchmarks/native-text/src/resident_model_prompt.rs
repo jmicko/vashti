@@ -264,11 +264,13 @@ impl Workspace {
         let fault = u::handle(&m.arena, m.b.fault)?;
         p::embedding(
             m.graph,
-            m.arena.client().map_err(u::fault)?,
+            &m.arena,
+            &m.admission,
+            m.b.logit_packet,
+            m.b.fault,
             tokens,
             v[11].clone(),
             v[0].clone(),
-            fault.clone(),
             cancel,
         )?;
         self.global_moe

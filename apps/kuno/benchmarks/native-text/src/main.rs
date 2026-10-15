@@ -36,6 +36,7 @@ mod strata_qsa;
 #[path = "../vendor/cubecl-wgpu/src/compute/strata_schedule.rs"]
 mod strata_queue_tests;
 mod strata_sampler;
+mod strata_shared_weights;
 mod strata_stage;
 // Shared with the standalone CPU writer; writer-only methods are inert here.
 #[allow(dead_code)]

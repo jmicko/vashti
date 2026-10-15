@@ -846,6 +846,21 @@ pub(crate) fn public_target_submission_backlog(
     }
 }
 
+pub(crate) fn native_shared_backlog_record(
+    selected: cubecl_runtime::server::PublicTargetSubmissionBacklog,
+    actual: Option<cubecl_runtime::server::PublicTargetSubmissionBacklog>,
+    request_reuse: bool,
+) -> Result<serde_json::Value, &'static str> {
+    if !crate::strata_intel_core::enabled() || !request_reuse || actual != Some(selected) {
+        return Err("native shared target actual backlog rejected");
+    }
+    Ok(
+        serde_json::json!({"shared_native_stream":true,"configured":true,
+        "independent_draft_stream":false,"actual_task_window":selected.task_window(),
+        "actual_minimum_submission_cost":selected.minimum_submission_cost()}),
+    )
+}
+
 pub(crate) fn public_target_submission_backlog_record(
     selected: cubecl_runtime::server::PublicTargetSubmissionBacklog,
     actual: Option<cubecl_runtime::server::PublicTargetSubmissionBacklog>,

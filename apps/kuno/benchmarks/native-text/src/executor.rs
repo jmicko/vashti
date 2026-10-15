@@ -522,6 +522,7 @@ pub(crate) struct ResidentAdmission {
     client: ComputeClient<WgpuRuntime>,
     ledger: Arc<Mutex<MainAdmission>>,
     binding: kuno_text::model::GraphBindingId,
+    shared_target_weights: Arc<Mutex<Option<Arc<crate::strata_shared_weights::Weights>>>>,
     transient_io: bool,
     token_io_checkpoint: bool,
     ordered_sources: Option<OrderedSources>,
@@ -593,6 +594,27 @@ fn checked_construction_origin<T>(
 }
 
 impl ResidentAdmission {
+    pub(crate) fn shared_target_weights(
+        &self,
+    ) -> Result<Arc<crate::strata_shared_weights::Weights>> {
+        self.active()?;
+        let weights = self
+            .shared_target_weights
+            .lock()
+            .map_err(|_| Error::InvalidFormat("shared target weight lock"))?
+            .as_ref()
+            .cloned()
+            .ok_or(Error::InvalidFormat("shared target weights missing"))?;
+        weights.check(&self.client, self.binding)?;
+        Ok(weights)
+    }
+    pub(crate) fn allocate_public_roots<T>(
+        &self,
+        requests: &[u64],
+        allocate: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        self.allocate_banks(requests, allocate)
+    }
     /// The model obtains this capability only at a completed public laboratory
     /// boundary. Clones share the nonce; a different model cannot recycle it.
     pub(crate) fn begin_request_io_reuse(&self) -> Result<()> {
@@ -1098,6 +1120,8 @@ pub struct GpuExecutor<'a> {
     native_mtp_capacity: u64,
     native_mtp_claimed: bool,
     native_expert_budget: Option<u64>,
+    native_shared_public_bytes: usize,
+    native_shared_public_live: bool,
     transient_resident: Option<Arc<AtomicBool>>,
     pub by_tensor: BTreeMap<String, u128>,
     pub gdn_ns: u128,
@@ -1436,6 +1460,8 @@ impl<'a> GpuExecutor<'a> {
             native_mtp_capacity: 0,
             native_mtp_claimed: false,
             native_expert_budget: None,
+            native_shared_public_bytes: 0,
+            native_shared_public_live: false,
             transient_resident: None,
             by_tensor: BTreeMap::new(),
             gdn_ns: 0,
@@ -1521,6 +1547,18 @@ impl<'a> GpuExecutor<'a> {
         self.strata_global_sources = None;
         self.cache.clear();
         self.cache_bytes = 0;
+        if let Some(a) = &self.resident_admission {
+            let mut shared = a
+                .shared_target_weights
+                .lock()
+                .map_err(|_| Error::InvalidFormat("shared target weight close lock"))?;
+            if shared.as_ref().is_some_and(|w| Arc::strong_count(w) != 1) {
+                retired.store(true, Ordering::Release);
+                return Err(Error::InvalidFormat("shared target weight readers remain"));
+            }
+            shared.take();
+            self.native_shared_public_live = false;
+        }
         self.banks.clear();
         self.resident_banks_frozen = false;
         self.target_frozen_host_source_identity = None;
@@ -1557,7 +1595,13 @@ impl<'a> GpuExecutor<'a> {
             .map_or(0, |sources| sources.borrow().bytes())
     }
     pub fn cache_bytes(&self) -> usize {
-        self.cache_bytes + self.bank_reserved
+        self.cache_bytes
+            + self.bank_reserved
+            + if self.native_shared_public_live {
+                self.native_shared_public_bytes
+            } else {
+                0
+            }
     }
     pub(crate) fn check_lab_oracle_fixture(
         &self,
@@ -2681,6 +2725,16 @@ impl<'a> GpuExecutor<'a> {
             source_pages = source_pages.max(pages);
         }
         let baseline = self.reserved_bytes()?;
+        if crate::strata_intel_core::enabled() {
+            crate::strata_shared_weights::Weights::validate_graph(graph)?;
+            self.native_shared_public_bytes = crate::strata_shared_weights::public_bytes() as usize;
+            if self.native_shared_public_bytes >= self.budget {
+                return Err(Error::LimitExceeded("native shared static weight budget"));
+            }
+            source_pages = source_pages
+                .checked_add(crate::strata_shared_weights::SOURCE_BYTES)
+                .ok_or(Error::ArithmeticOverflow)?;
+        }
         let fixed = [
             self.budget as u64,
             private_owned,
@@ -2718,6 +2772,7 @@ impl<'a> GpuExecutor<'a> {
             .map_err(admission_error)?;
         let admission = ResidentAdmission {
             binding: graph.binding_id(),
+            shared_target_weights: Arc::new(Mutex::new(None)),
             target_verify3_dense: self.target_verify3_dense,
             target_verify3_fused: self.target_verify3_fused,
             target_four_rows_reserved: self.target_four_rows_reserved,
@@ -3014,6 +3069,41 @@ impl<'a> GpuExecutor<'a> {
             self.weight(tensors[1], 0, 0, rows)?.0,
         ])
     }
+    pub(crate) fn prepare_native_shared_target_weights(
+        &mut self,
+        graph: kuno_text::model::BoundGraph<'_, '_>,
+    ) -> Result<()> {
+        if !crate::strata_intel_core::enabled()
+            || self.native_shared_public_bytes as u64
+                != crate::strata_shared_weights::public_bytes()
+        {
+            return Err(Error::InvalidFormat("native shared target weight capacity"));
+        }
+        let admission = self
+            .resident_admission
+            .as_ref()
+            .ok_or(Error::InvalidFormat(
+                "native shared target weight admission",
+            ))?;
+        if graph.binding_id() != admission.binding
+            || admission
+                .shared_target_weights
+                .lock()
+                .map_err(|_| Error::InvalidFormat("native shared weight lock"))?
+                .is_some()
+        {
+            return Err(Error::InvalidFormat(
+                "native shared target weight rebinding",
+            ));
+        }
+        let weights = crate::strata_shared_weights::Weights::load(graph, &self.client, admission)?;
+        *admission
+            .shared_target_weights
+            .lock()
+            .map_err(|_| Error::InvalidFormat("native shared weight lock"))? = Some(weights);
+        self.native_shared_public_live = true;
+        Ok(())
+    }
     fn weight(
         &mut self,
         tensor: TensorView<'_>,
@@ -3041,6 +3131,21 @@ impl<'a> GpuExecutor<'a> {
         }
         if let Some(admission) = &self.resident_admission {
             admission.active()?;
+        }
+        if crate::strata_intel_core::enabled() && tensor.info().name() == "output.weight" {
+            if expert != 0
+                || !tensor.belongs_to(self.model)
+                || tensor.info().dtype().gguf_id() != quant_matvec::Q6_K
+            {
+                return Err(Error::InvalidBufferLength);
+            }
+            let shared = self
+                .resident_admission
+                .as_ref()
+                .ok_or(Error::InvalidBufferLength)?
+                .shared_target_weights()?;
+            let p = shared.page(crate::strata_shared_weights::Tensor::Head, first, rows)?;
+            return Ok((p.handle.clone(), p.tile.logical / 4));
         }
         self.tick = self.tick.checked_add(1).ok_or(Error::ArithmeticOverflow)?;
         let key = Key {
@@ -3073,7 +3178,11 @@ impl<'a> GpuExecutor<'a> {
         } else {
             padded.max(32 * 1024).next_power_of_two()
         };
-        while self.cache_bytes + reserved > self.budget {
+        let usable = self
+            .budget
+            .checked_sub(self.native_shared_public_bytes)
+            .ok_or(Error::ArithmeticOverflow)?;
+        while self.cache_bytes + reserved > usable {
             let old = self
                 .cache
                 .iter()

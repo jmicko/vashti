@@ -4999,21 +4999,15 @@ impl Workspace {
         if let Some(rows) = &self.target_rows {
             u::zero_many(&m.arena, &rows.ids())?;
         }
-        batch_io::enqueue_embedding(
+        m.admission.shared_target_weights()?.gather(
             m.graph,
             &m.arena,
-            &m.admission,
-            self.outer.residual[0],
-            batch_io::InputView {
-                first: 0,
-                stride: HC * D,
-                words: RESIDUAL_WORDS,
-            },
-            *count,
-            *start,
-            m.context,
-            &ids,
-            &positions,
+            m.b.logit_packet,
+            m.b.fault,
+            tokens,
+            u::handle(&m.arena, self.outer.block[0])?,
+            u::handle(&m.arena, self.outer.residual[0])?,
+            false,
             cancel,
         )?;
         self.global_moe

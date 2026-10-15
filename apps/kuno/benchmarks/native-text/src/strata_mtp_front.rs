@@ -22,6 +22,7 @@ pub(crate) enum Kernel {
     Embed,
     Norm,
     Broadcast,
+    TargetBroadcast,
     Positions,
     Append,
     Guard,
@@ -48,6 +49,7 @@ impl Kernel {
             Self::Embed => "EMBED",
             Self::Norm => "NORM",
             Self::Broadcast => "BROADCAST",
+            Self::TargetBroadcast => "TARGET_BROADCAST",
             Self::Positions => "POSITIONS",
             Self::Append => "APPEND",
             Self::Guard => "GUARD",
@@ -64,6 +66,7 @@ impl KernelMetadata for Kernel {
             Self::Embed => "StrataMtpFrontEmbedding",
             Self::Norm => "StrataMtpFrontNorm",
             Self::Broadcast => "StrataMtpFrontBroadcast",
+            Self::TargetBroadcast => "StrataTargetEmbeddingBroadcast",
             Self::Positions => "StrataMtpFrontPositions",
             Self::Append => "StrataMtpFrontAppend",
             Self::Guard => "StrataMtpPackedCacheGuard",
@@ -120,7 +123,12 @@ pub(crate) fn launch_prompt(
     if !crate::strata_prompt::active()
         || !matches!(
             kernel,
-            Kernel::Embed | Kernel::Norm | Kernel::Broadcast | Kernel::Positions | Kernel::Append
+            Kernel::Embed
+                | Kernel::Norm
+                | Kernel::Broadcast
+                | Kernel::TargetBroadcast
+                | Kernel::Positions
+                | Kernel::Append
         )
     {
         return Err(Error::InvalidBufferLength);
@@ -177,6 +185,7 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
         Kernel::Embed,
         Kernel::Norm,
         Kernel::Broadcast,
+        Kernel::TargetBroadcast,
         Kernel::Positions,
         Kernel::Append,
         Kernel::Guard,

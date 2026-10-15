@@ -780,6 +780,25 @@ impl PrivateArena {
         self.layout(id)?;
         self.handles.get(id.slot).ok_or(ArenaError::StaleHandle)
     }
+    /// Membership only: a bounded view inside an actual live private owner.
+    /// This grants no new allocation, release, or narrowed erasure authority.
+    pub(crate) fn contains_private_view(&self, view: &Handle) -> Result<bool> {
+        self.active()?;
+        let start = view.offset_start.unwrap_or(0);
+        let Some(end) = view.size().checked_sub(view.offset_end.unwrap_or(0)) else {
+            return Ok(false);
+        };
+        if start >= end {
+            return Ok(false);
+        }
+        Ok(self.handles.iter().any(|root| {
+            root.stream == view.stream
+                && root.clone().binding().memory.allocation_id()
+                    == view.clone().binding().memory.allocation_id()
+                && start >= root.offset_start.unwrap_or(0)
+                && end <= root.size().saturating_sub(root.offset_end.unwrap_or(0))
+        }))
+    }
     pub fn client(&self) -> Result<&ComputeClient<WgpuRuntime>> {
         self.active()?;
         Ok(&self.client)

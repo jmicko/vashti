@@ -643,6 +643,8 @@ impl Output {
 }
 pub struct CloseReceipt {
     pub private: OwnedZeroAudit,
+    /// Closed public addressable spans, including shared views. This is not
+    /// physical release credit for roots still pinned by the target owner.
     pub public_bytes: u64,
     pub main_reserved: u64,
 }
@@ -719,6 +721,7 @@ pub struct ResidentMtp<'g, 'f> {
     native_front: Option<crate::strata_mtp_front::Workspace>,
     client: ComputeClient<WgpuRuntime>,
     public: Option<Public>,
+    shared_target_weights: Option<Arc<crate::strata_shared_weights::Weights>>,
     ledger: Ledger,
     retired: Arc<AtomicBool>,
     position: usize,
@@ -1050,7 +1053,15 @@ fn tile_plan(spec: Spec) -> Result<Vec<(usize, usize, usize, usize)>> {
             let logical = rows
                 .checked_mul(row_bytes)
                 .ok_or(Error::ArithmeticOverflow)?;
-            let owned = main_admission::page_bytes(logical as u64).map_err(error)? as usize;
+            let owned = if crate::strata_intel_core::enabled()
+                && crate::strata_shared_weights::Tensor::named(spec.name)
+                    .is_some_and(|t| t.dtype() == spec.dtype)
+            {
+                (logical + crate::strata_shared_weights::ALIGNMENT as usize - 1)
+                    & !(crate::strata_shared_weights::ALIGNMENT as usize - 1)
+            } else {
+                main_admission::page_bytes(logical as u64).map_err(error)? as usize
+            };
             Ok((first, rows, logical, owned))
         })
         .collect()
@@ -1443,7 +1454,9 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             main_admission::check_capacity(
                 Self::shared_capacity()?,
                 &[
-                    public_bytes,
+                    public_bytes
+                        .checked_sub(crate::strata_shared_weights::public_bytes())
+                        .ok_or(Error::ArithmeticOverflow)?,
                     PRIVATE_BYTES as u64,
                     PUBLIC_SOURCE_BYTES as u64,
                 ],
@@ -1459,6 +1472,10 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         if let Some(a) = &shared {
             a.check_client(&client)?;
         }
+        let shared_target_weights = shared
+            .as_ref()
+            .map(|a| a.shared_target_weights())
+            .transpose()?;
 
         let owned_client = client.clone();
         let mut arena =
@@ -1515,6 +1532,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             native_front,
             client: owned_client,
             public: None,
+            shared_target_weights,
             ledger,
             retired,
             position: 0,
@@ -1664,7 +1682,11 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         if logical == 0
             || !logical.is_multiple_of(4)
             || owned > PUBLIC_SOURCE_BYTES
-            || main_admission::page_bytes(logical as u64).map_err(error)? as usize != owned
+            || (main_admission::page_bytes(logical as u64).map_err(error)? as usize != owned
+                && !(crate::strata_intel_core::enabled()
+                    && crate::strata_shared_weights::Tensor::named(name)
+                        .is_some_and(|t| t.dtype() == dtype)
+                    && owned == (logical + 4095) & !4095))
         {
             return Err(Error::InvalidBufferLength);
         }
@@ -1748,7 +1770,21 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         self.ledger
             .precharge(&[owned as u64, owned as u64])
             .map_err(error)?;
-        let handle = self.client()?.create_public_owned(source.take());
+        let data = source.take();
+        let handle = if crate::strata_intel_core::enabled()
+            && main_admission::page_bytes(logical as u64).map_err(error)? as usize != owned
+        {
+            crate::expert_banks::exact_persistent::persistent_scope(
+                |mode| {
+                    unsafe { self.client()?.allocation_mode(mode) };
+                    Ok(())
+                },
+                &self.retired,
+                || Ok(self.client()?.create_public_owned(data)),
+            )?
+        } else {
+            self.client()?.create_public_owned(data)
+        };
         if handle.size() != owned as u64 {
             return Err(Error::InvalidBufferLength);
         }
@@ -1843,6 +1879,25 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             }
             let mut list = Vec::new();
             let row_bytes = tensor.info().row_bytes() as usize;
+            if let Some(shared) = &self.shared_target_weights
+                && let Some(role) = crate::strata_shared_weights::Tensor::named(spec.name)
+            {
+                if spec.dtype != role.dtype() {
+                    return Err(Error::InvalidBufferLength);
+                }
+                for p in shared.pages(role) {
+                    list.push(Page {
+                        handle: p.handle.clone(),
+                        logical_bytes: p.tile.logical,
+                        owned_bytes: p.tile.owned,
+                        first: p.tile.first,
+                        rows: p.tile.rows,
+                    });
+                    bytes += p.tile.owned as u64;
+                }
+                pages.insert(spec.name, list);
+                continue;
+            }
             for (first, rows, logical, owned) in tile_plan(spec)? {
                 list.push(self.load_page(
                     spec.name,
@@ -4993,6 +5048,7 @@ impl ResidentMtp<'_, '_> {
             return Err(Error::InvalidBufferLength);
         }
         let public_bytes = self.public.take().map(|p| p.bytes).unwrap_or(0);
+        self.shared_target_weights.take();
         // Arena close completed all queued work and inspected every complete
         // private owner. Public model handles are now released, not private data.
         self.client()?.memory_cleanup();
