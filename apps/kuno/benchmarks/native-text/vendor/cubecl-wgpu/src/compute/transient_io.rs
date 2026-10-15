@@ -116,7 +116,21 @@ const POLL_TIMEOUT: Duration = Duration::from_secs(30);
 const INLINE_MAP_SPIN_BUDGET: Duration = Duration::from_millis(1);
 pub(crate) type ErrorFuture = Pin<Box<dyn Future<Output = Option<wgpu::Error>> + Send>>;
 
+#[track_caller]
 pub(crate) fn fault(reason: &'static str) -> ServerError {
+    // Fixed-public port completion diagnostics only. Preserve the FIRST
+    // failing backend source location even if orderly retirement later fails
+    // cleanup too. Never print backend descriptions, INFO bytes or contents.
+    if super::strata_graph::enabled()
+        && std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1")
+    {
+        let source = std::panic::Location::caller();
+        eprintln!(
+            "native_public_backend_fault source_file={} source_line={}",
+            source.file(),
+            source.line()
+        );
+    }
     ServerError::Generic {
         reason: reason.into(),
         backtrace: BackTrace::capture(),
