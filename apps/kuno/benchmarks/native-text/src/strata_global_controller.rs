@@ -4,6 +4,12 @@
 //! reports. Prompt/carries/drafts/history are bounded, transient and wiped.
 use super::*;
 
+fn public_phase(phase: &'static str) {
+    if std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1") {
+        eprintln!("native_public_execution phase={phase}");
+    }
+}
+
 pub(super) struct Request<'a> {
     pub prompt: &'a [u32],
     pub max_outputs: usize,
@@ -214,6 +220,7 @@ pub(super) fn run<'m, 'f>(
     cancel: &AtomicBool,
     emit: &mut dyn FnMut(u32) -> Result<()>,
 ) -> Result<serde_json::Value> {
+    public_phase("request_preflight");
     request.validate()?;
     target.validate_global_request_geometry(executor, request.prompt.len(), request.max_outputs)?;
     if !crate::strata_intel_core::enabled()
@@ -226,6 +233,7 @@ pub(super) fn run<'m, 'f>(
     }
     let plan = PromptPlan::new(request.prompt.len())?;
     if plan.prefix() != 0 {
+        public_phase("prompt_prefix");
         target.with_prompt_ple_source(
             executor,
             &request.prompt[..plan.prefix()],
@@ -240,6 +248,7 @@ pub(super) fn run<'m, 'f>(
                     for chunk in plan.chunks() {
                         let end = chunk.end;
                         let (inputs, teacher) = plan.inputs(request.prompt, chunk)?;
+                        public_phase("prompt_chunk");
                         target.prefill_prompt_chunk(
                             executor,
                             inputs,
@@ -276,6 +285,7 @@ pub(super) fn run<'m, 'f>(
     // SAFETY: run owns exclusive model/executor/draft borrows throughout this
     // lexical scope. It never resets/closes them; sampling closes before return
     // and the parent's model cleanup. Errors retire before arena ownership ends.
+    public_phase("sampling_scope");
     let sampling = unsafe {
         target.begin_sampling_request(
             executor,

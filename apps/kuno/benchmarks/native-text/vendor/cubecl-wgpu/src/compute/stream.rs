@@ -1144,6 +1144,23 @@ impl WgpuStream {
 
     /// Registers a new error into the error sink.
     pub fn error(&mut self, error: ServerError) {
+        if super::strata_graph::enabled()
+            && std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1")
+        {
+            // Fixed public completion only. Never print shader/backend error
+            // descriptions, request data or arbitrary panic payloads.
+            let class = match &error {
+                ServerError::Launch(LaunchError::CompilationError(_)) => "launch_compile",
+                ServerError::Launch(LaunchError::OutOfMemory { .. }) => "launch_oom",
+                ServerError::Launch(LaunchError::TooManyResources(_)) => "launch_limits",
+                ServerError::Launch(_) => "launch_other",
+                ServerError::Io(_) => "io",
+                ServerError::Profile(_) => "profile",
+                ServerError::Generic { .. } => "generic",
+                ServerError::ServerUnhealthy { .. } => "unhealthy",
+            };
+            eprintln!("native_public_stream_fault class={class}");
+        }
         self.errors.push(error);
     }
 
