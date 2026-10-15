@@ -55,13 +55,11 @@ pub fn resources(
             .filter(|h| h.offset_start.unwrap_or(0) != 0 || h.offset_end.unwrap_or(0) != 0)
             .count();
         let count = handles.len();
-        let result = client
-            .retained_resource_metadata(handles)
-            .map_err(|cause| {
+        retained_batches(handles, |batch| {
+            let result = client.retained_resource_metadata(batch).map_err(|cause| {
                 if crate::strata_port::enabled() {
                     eprintln!("strata_metadata_failure count={count} sliced={sliced}");
-                    // PUBLIC fixtures only: static buffer/compiler lifecycle
-                    // diagnostics, never an upstream inference response body.
+                    // PUBLIC fixtures only: static lifecycle diagnostics.
                     eprintln!("strata_static_runtime_diagnostic={cause}");
                     if let Err(launch) = client.flush() {
                         eprintln!("strata_static_launch_diagnostic={launch}");
@@ -69,10 +67,11 @@ pub fn resources(
                 }
                 Error::InvalidFormat("resident retained metadata lookup rejected")
             })?;
-        METADATA_CALLS
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
-            .map_err(|_| Error::ArithmeticOverflow)?;
-        Ok(result)
+            METADATA_CALLS
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+                .map_err(|_| Error::ArithmeticOverflow)?;
+            Ok(result)
+        })
     } else {
         handles
             .into_iter()
@@ -80,6 +79,27 @@ pub fn resources(
             .collect()
     }
 }
+/// The backend admits at most128 full bindings per query, not128 owners per
+/// model. Retain ALL original owners/results across batches; the caller still
+/// proves complete extents and cross-batch aliasing before accepting the model.
+fn retained_batches<H: Clone, R>(
+    handles: Vec<H>,
+    mut query: impl FnMut(Vec<H>) -> Result<Vec<R>>,
+) -> Result<Vec<R>> {
+    if handles.is_empty() || handles.len() > 4096 {
+        return Err(Error::LimitExceeded("resident full metadata inventory"));
+    }
+    let mut result = Vec::with_capacity(handles.len());
+    for batch in handles.chunks(128) {
+        let rows = query(batch.to_vec())?;
+        if rows.len() != batch.len() {
+            return Err(Error::InvalidFormat("resident metadata batch incomplete"));
+        }
+        result.extend(rows);
+    }
+    Ok(result)
+}
+
 struct ScrubBytes(cubecl::bytes::Bytes);
 impl Drop for ScrubBytes {
     fn drop(&mut self) {
@@ -780,5 +800,47 @@ mod tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod retained_batch_tests {
+    use super::*;
+    #[test]
+    fn native_shared_metadata_preserves_full_inventory_across_backend_batch_limit() {
+        for count in [1, 128, 129, 137, 379, 2048, 4096] {
+            let owners: Vec<_> = (0..count).collect();
+            let actual = retained_batches(owners.clone(), |batch| {
+                assert!(!batch.is_empty() && batch.len() <= 128);
+                Ok(batch)
+            })
+            .unwrap();
+            assert_eq!(actual, owners);
+        }
+        assert!(retained_batches(Vec::<usize>::new(), Ok).is_err());
+        assert!(retained_batches(vec![0; 4097], Ok).is_err());
+        let mut calls = 0;
+        let failure = retained_batches((0..379).collect::<Vec<_>>(), |mut batch| {
+            calls += 1;
+            if calls == 2 {
+                batch.pop();
+            }
+            Ok(batch)
+        });
+        assert!(failure.is_err());
+        assert_eq!(calls, 2);
+        let mut calls = 0;
+        assert!(
+            retained_batches((0..379).collect::<Vec<_>>(), |batch| {
+                calls += 1;
+                if calls == 2 {
+                    Err(Error::InvalidFormat("synthetic metadata failure"))
+                } else {
+                    Ok(batch)
+                }
+            })
+            .is_err()
+        );
+        assert_eq!(calls, 2);
     }
 }
