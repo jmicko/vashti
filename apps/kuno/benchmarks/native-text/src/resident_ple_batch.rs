@@ -1,7 +1,8 @@
-//! Unconnected native layer1 PLE bridge into the actual CPU history owner.
-//! Cached original projections/public vectors only. GPU OLD is a readonly
-//! snapshot, NEXT is candidate-only. Enqueue never maps/syncs/audits/commits.
-//! Count1 uses the separately accepted GPU-tail topology, not scalar CPU tail.
+//! Native layer1 PLE bridge into the actual CPU history owner.
+//! Invocation preparation owns/stages original OLD/EMB before graph capture;
+//! math enqueue consumes that exact prepared transaction without host uploads.
+//! GPU OLD is readonly and NEXT candidate-only; completion/commit stay separate.
+//! Count1 uses the accepted GPU-tail topology, not scalar CPU tail.
 #![allow(dead_code)] // Future all-family coordinator; no default/model hook.
 use super::*;
 use crate::{
@@ -193,6 +194,11 @@ impl Drop for Anchor {
         }
         self.armed.zeroize();
     }
+}
+/// Staged original inputs and an armed transaction, not a queued/completed
+/// receipt. Dropping this before consumption poisons the same original owner.
+pub(crate) struct PreparedPleBatch {
+    receipt: PendingPleBatch,
 }
 pub(crate) struct PendingPleBatch {
     metadata: Zeroizing<Metadata>,
@@ -827,6 +833,73 @@ impl PleBatchWorkspace {
         positions: &Zeroizing<[u32; MAX_BATCH]>,
         cancel: &AtomicBool,
     ) -> Result<PendingPleBatch> {
+        if projector.global_fault() != model.b.fault {
+            return Err(error());
+        }
+        let prepared = self.prepare_invocation_checked(
+            model, input, output, spans, start, tokens, positions, cancel,
+        )?;
+        self.enqueue_prepared_checked(model, projector, input, output, spans, prepared, cancel)
+    }
+    /// Bind the exact original history/input owners, fetch ngram rows and stage
+    /// both private upload buffers before the target's captured math begins.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn prepare_invocation(
+        &mut self,
+        model: &mut ResidentModel<'_, '_>,
+        input: BufferId,
+        output: BufferId,
+        spans: &BatchSpans,
+        start: usize,
+        tokens: &Zeroizing<[u32; MAX_BATCH]>,
+        positions: &Zeroizing<[u32; MAX_BATCH]>,
+        cancel: &AtomicBool,
+    ) -> Result<PreparedPleBatch> {
+        let poison = self.poison.clone();
+        let result = guarded(&poison, || {
+            self.prepare_invocation_checked(
+                model, input, output, spans, start, tokens, positions, cancel,
+            )
+        });
+        if result.is_err() {
+            model.poisoned = true;
+        }
+        result
+    }
+    /// Consume the staged invocation exactly once. No OLD/EMB upload or source
+    /// lookup occurs inside this math-only portion of the captured branch.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn enqueue_prepared(
+        &mut self,
+        model: &mut ResidentModel<'_, '_>,
+        projector: &mut impl BatchedResidentProjector,
+        input: BufferId,
+        output: BufferId,
+        spans: &BatchSpans,
+        prepared: PreparedPleBatch,
+        cancel: &AtomicBool,
+    ) -> Result<PendingPleBatch> {
+        let poison = self.poison.clone();
+        let result = guarded(&poison, || {
+            self.enqueue_prepared_checked(model, projector, input, output, spans, prepared, cancel)
+        });
+        if result.is_err() {
+            model.poisoned = true;
+        }
+        result
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_invocation_checked(
+        &mut self,
+        model: &mut ResidentModel<'_, '_>,
+        input: BufferId,
+        output: BufferId,
+        spans: &BatchSpans,
+        start: usize,
+        tokens: &Zeroizing<[u32; MAX_BATCH]>,
+        positions: &Zeroizing<[u32; MAX_BATCH]>,
+        cancel: &AtomicBool,
+    ) -> Result<PreparedPleBatch> {
         self.healthy(model, cancel)?;
         graph_preflight(model.graph)?;
         let count = spans.count();
@@ -836,7 +909,6 @@ impl PleBatchWorkspace {
             || start != self.next
             || start != model.position
             || spans.packed_first() != 0
-            || projector.global_fault() != model.b.fault
         {
             return Err(error());
         }
@@ -911,7 +983,7 @@ impl PleBatchWorkspace {
             self.profile,
         )?;
         let arena = &model.arena;
-        queue(cancel, |operation| {
+        queue_preparation(cancel, |operation| {
             match operation {
                 Operation::Clear(i) => u::zero(arena, self.ids[i])?,
                 Operation::Upload(i) => {
@@ -927,6 +999,47 @@ impl PleBatchWorkspace {
                         .write_private(arena.handle(id).map_err(u::fault)?.clone(), data)
                         .map_err(u::fault)?;
                 }
+                _ => return Err(error()),
+            }
+            Ok(())
+        })?;
+        Ok(PreparedPleBatch {
+            receipt: PendingPleBatch {
+                metadata,
+                poison: self.poison.clone(),
+                armed: true,
+            },
+        })
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn enqueue_prepared_checked(
+        &mut self,
+        model: &mut ResidentModel<'_, '_>,
+        projector: &mut impl BatchedResidentProjector,
+        input: BufferId,
+        output: BufferId,
+        spans: &BatchSpans,
+        prepared: PreparedPleBatch,
+        cancel: &AtomicBool,
+    ) -> Result<PendingPleBatch> {
+        let receipt = prepared.receipt;
+        self.receipt(model, &receipt, cancel)?;
+        let metadata = &*receipt.metadata;
+        let count = spans.count();
+        let start = metadata.start;
+        if projector.global_fault() != model.b.fault
+            || spans.packed_first() != 0
+            || metadata.input != input
+            || metadata.output != output
+            || metadata.count != count
+            || metadata.first != [spans.input_first(), spans.output_first()]
+            || metadata.stride != [spans.input_stride(), spans.output_stride()]
+        {
+            return Err(error());
+        }
+        let arena = &model.arena;
+        queue_compute(cancel, |operation| {
+            match operation {
                 Operation::Projection(i) => {
                     let (name, target) = [
                         ("blk.1.ple_key.weight", KEY),
@@ -977,15 +1090,13 @@ impl PleBatchWorkspace {
                     u::status_prefix(arena, self.ids[18], CHANNELS, model.b.fault)?
                 }
                 Operation::Finite => u::validate(arena, output, model.b.fault)?,
+                Operation::Clear(_) | Operation::Upload(_) => return Err(error()),
             }
             Ok(())
         })?;
-        Ok(PendingPleBatch {
-            metadata,
-            poison: self.poison.clone(),
-            armed: true,
-        })
+        Ok(receipt)
     }
+
     fn receipt(
         &self,
         model: &ResidentModel<'_, '_>,
@@ -1526,11 +1637,22 @@ enum Operation {
     History,
     Finite,
 }
-fn queue(cancel: &AtomicBool, mut f: impl FnMut(Operation) -> Result<()>) -> Result<()> {
+fn queue_preparation(
+    cancel: &AtomicBool,
+    mut f: impl FnMut(Operation) -> Result<()>,
+) -> Result<()> {
     for op in (0..N)
         .map(Operation::Clear)
         .chain((0..2).map(Operation::Upload))
-        .chain((0..2).map(Operation::Projection))
+    {
+        u::cancel(cancel)?;
+        f(op)?;
+    }
+    u::cancel(cancel)
+}
+fn queue_compute(cancel: &AtomicBool, mut f: impl FnMut(Operation) -> Result<()>) -> Result<()> {
+    for op in (0..2)
+        .map(Operation::Projection)
         .chain([Operation::Tail])
         .chain((0..7).map(Operation::Status))
         .chain([Operation::History, Operation::Finite])
@@ -1539,6 +1661,11 @@ fn queue(cancel: &AtomicBool, mut f: impl FnMut(Operation) -> Result<()>) -> Res
         f(op)?;
     }
     u::cancel(cancel)
+}
+#[cfg(test)]
+fn queue(cancel: &AtomicBool, mut f: impl FnMut(Operation) -> Result<()>) -> Result<()> {
+    queue_preparation(cancel, &mut f)?;
+    queue_compute(cancel, f)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2309,6 +2436,45 @@ mod tests {
         assert_eq!(ops[first], Operation::Clear(0));
     }
     #[test]
+    fn prepared_ple_phase_has_all_uploads_and_math_phase_has_none() {
+        let cancel = AtomicBool::new(false);
+        let mut staged = Vec::new();
+        queue_preparation(&cancel, |op| {
+            staged.push(op);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(staged.len(), N + 2);
+        assert!(
+            staged
+                .iter()
+                .all(|op| matches!(op, Operation::Clear(_) | Operation::Upload(_)))
+        );
+        let mut math = Vec::new();
+        queue_compute(&cancel, |op| {
+            math.push(op);
+            Ok(())
+        })
+        .unwrap();
+        assert!(
+            math.iter()
+                .all(|op| !matches!(op, Operation::Clear(_) | Operation::Upload(_)))
+        );
+        assert_eq!(math[0], Operation::Projection(0));
+        assert_eq!(math.last(), Some(&Operation::Finite));
+        // Cancellation after staging cannot begin a single math consumer.
+        cancel.store(true, Ordering::Release);
+        let mut dispatched = false;
+        assert!(
+            queue_compute(&cancel, |_| {
+                dispatched = true;
+                Ok(())
+            })
+            .is_err()
+        );
+        assert!(!dispatched);
+    }
+    #[test]
     fn exact_runtime_packet_bound_and_overflow_reject_before_private_fill() {
         for count in [1, 3, 5, 8] {
             let mut tokens = [0; 8];
@@ -2449,6 +2615,15 @@ mod tests {
             positions: [0; 8],
             old_tokens: [-1; 2],
         };
+        let staged_poison = Arc::new(AtomicBool::new(false));
+        drop(PreparedPleBatch {
+            receipt: PendingPleBatch {
+                metadata: Zeroizing::new(metadata.clone()),
+                poison: staged_poison.clone(),
+                armed: true,
+            },
+        });
+        assert!(staged_poison.load(Ordering::Acquire));
         let poison = Arc::new(AtomicBool::new(false));
         drop(PendingPleBatch {
             metadata: Zeroizing::new(metadata),

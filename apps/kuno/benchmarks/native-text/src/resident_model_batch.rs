@@ -5072,11 +5072,24 @@ impl Workspace {
             .as_mut()
             .ok_or(error())?
             .begin(m.graph, &m.arena, *count)?;
+        // Layer0 performs attention+FFN, hence two residual swaps. The actual
+        // layer1 PLE input/output roots are known before its math is queued.
+        // Source/history uploads happen now, outside the retained native graph.
+        let mut ple_invocation = Some(self.ple.prepare_invocation(
+            m,
+            self.outer.residual[0],
+            self.outer.residual[1],
+            &BatchSpans::new(*count, 0, 0, HC * D, 0, HC * D),
+            *start,
+            &ids,
+            &positions,
+            cancel,
+        )?);
         // Prompt-final count1 uses the same implementation before the request
         // scope opens. Capture only the active verification shape, whose head
         // and target-row consumers are invariant for this count/context pair.
-        // Input gather/clears precede capture. PLE's real ordered uploads may
-        // split the graph internally; the branch owns each stable segment.
+        // Input gather/clears and original PLE uploads precede capture. Any
+        // remaining required internal submission has its own retained segment.
         let branch =
             if purpose == Purpose::AllRowsWithCarry && m.admission.request_io_reuse_active() {
                 Some(
@@ -5125,15 +5138,13 @@ impl Workspace {
                     dense_q8,
                 };
                 let spans = BatchSpans::new(*count, 0, 0, HC * D, 0, HC * D);
-                pending.ple = Some(self.ple.enqueue(
+                pending.ple = Some(self.ple.enqueue_prepared(
                     m,
                     &mut projector,
                     self.outer.residual[*current],
                     self.outer.residual[1 - *current],
                     &spans,
-                    *start,
-                    &ids,
-                    &positions,
+                    ple_invocation.take().ok_or(error())?,
                     cancel,
                 )?);
                 m.numeric_boundary.observe(
