@@ -6,11 +6,12 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-14):** isolated
-`codex/strata-rust-port`, source through `267a71b`. Read the
-[sampler-component handoff](#active-kuno-engine-handoff--sampler-source-component-2026-10-14)
-and [whole-rewrite gate](kuno-strata-rewrite-completion.md). Full rewrite and
-sampling integration remain incomplete. No speed trials before connected source
-and protected correctness gates. The user owns BOTH GPUs; reconfirm availability
+`codex/strata-rust-port`, source through `ab0b15c`. Read the
+[connected sampling handoff](#active-kuno-engine-handoff--request-sampling-connection-2026-10-14)
+and [whole-rewrite gate](kuno-strata-rewrite-completion.md). The request owner,
+target consumer and coupled MTP ID/ring hooks now connect; confidence-policy,
+arbitrary runtime and full-source/device acceptance remain incomplete. No speed
+trials before the full gates. The user owns BOTH GPUs; reconfirm availability
 before GPU/model/admission/residency work. CPU source/build checks may continue.
 This backend work does not change the published image/application contract.
 
@@ -5541,3 +5542,51 @@ or residency/admission/service change. Source/CPU work can proceed without sudo.
 No installed services, API, Vashti, deployment or release change. Canonical clean
 checkout and inherited bytecode preserved. Goal active; required Vashti changes:
 none.
+
+
+### Active Kuno engine handoff — request sampling connection (2026-10-14)
+
+Source `ab0b15c`, after `267a71b`, isolated `codex/strata-rust-port` at
+`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`. Read completion guide
+**Connected request sampling owners and target/MTP hooks**, including the CPU
+receipts. This supersedes the preceding missing owner/target/MTP ID hookups;
+**full rewrite, sampling-policy parity and GPU execution remain incomplete**.
+
+The selected controller now owns wiping consumed-input history/settings through
+a same-thread lexical sampler Scope. Seven real full private owners add557056
+MAIN bytes, quoted constructor/host/runtime costs and no implicit GPU allocation.
+The constructor's unsafe lifetime contract retains original arenas/models and
+pre-device grants through close/retirement. Same-client/binding/full-owner checks,
+no reset/close, non-Send/Sync guard and complete private uploads are explicit.
+Target sampling runs after the actual head inside its protected packet-I/O
+closure, feeding a separate authenticated selected-id/probability/carry packet.
+History advances only after actual accepted state/input-prefix commit. The first
+normal prompt input follows that same target path.
+
+Sampled full-Q2 MTP hooks read the native-front DEVICE position table for
+cell+1, check its real GPU input against the coupled ring, apply the same chain
+and draw, publish the selected token to the existing draft/follow consumers and
+extend the ring. Probability bits are retained in the private ring. Each param
+word has one writer. Greedy retains native uncoupled drafting; subset-head use
+is rejected for this owning original-vocabulary request. Normal close erases/
+inspects all seven owners before original transient-I/O closure. Abandonment
+retires context and retains original arena cleanup authority. None of this
+runtime/numerical/erasure behavior has been physically accepted yet.
+
+Final core build, strict core/off Clippy, formatting,10 focused CPU checks and
+offline shader validation pass.314 regular variants +122 physical pointer and
+32 cooperative-matrix checks; see exact paths in the receipt. No full-suite run
+or waiver of the prior228 failures. No GPU/model/device operation, speed test,
+installed service/admission/residency change, API/Vashti, deployment or release.
+Canonical clean checkout/inherited bytecode preserved. Both GPUs remain with
+the user: reconfirm before ANY GPU work; source/CPU work needs no sudo.
+
+Next source block: original confidence/probability/early-stop/chain-launch
+consumers and greedy top-probability behavior, then the remaining captured
+branch/repair/failure audit, arbitrary request/context/grants/cache policy,
+conditional ring/stream-all and whole completeness audit. Current DraftWindow
+still returns ids and old cost/suffix policy; probability storage is not a
+consumer-parity claim. The harness explicitly constructs greedy Params while
+internal Request takes sampling parameters; a general input command is still
+pending. Retain the full rewrite goal and all protected numerical/state/recovery
+gates before any speed trial. Required Vashti changes:none; goal active.

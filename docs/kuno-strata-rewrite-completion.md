@@ -3242,3 +3242,167 @@ Canonical checkout was verified clean and left untouched; inherited bytecode
 in the isolated checkout is preserved. No public API/consumer, service,
 installation, residency/admission, release or live-speed change. The goal stays
 active; completeness and protected numerical/state/recovery gates remain open.
+
+## Connected request sampling owners and target/MTP hooks (2026-10-14)
+
+Source `ab0b15c` follows sampler component `267a71b`. Source connection is now implemented;
+GPU numerical/queue/erasure acceptance, complete Strata confidence-policy parity,
+arbitrary-request invocation and the full rewrite remain **unproven/incomplete**.
+The user still owns both GPUs. No GPU/model run, install, service change or speed
+trial belongs to this receipt.
+
+### Actual connected calls and ownership
+
+The selected global controller's internal `Request` now takes wiping sampler
+parameters. It creates `ResidentModel::begin_sampling_request` after prompt-only
+loans/teaching finish, before the final original input is normally decoded. The
+current fixed public harness explicitly requests greedy behavior; the internal
+request type supports the sampler chain without adding an HTTP/API/UI contract.
+There is still no general arbitrary-input command/worker acceptance claim.
+
+`strata_global_moe::Workspace` allocates seven additional, exact complete arena
+owners and includes them in `requests_for_context`, `main_bytes_for_context` and
+`MAIN_BYTES`. Sizes are32768/131072/262144/32768/32768/32768/32768 bytes,
+**557056 MAIN bytes** total: parameters, target-history rows, split scratch,
+id/probability pairs, coupled ring/probabilities, step controls and round base.
+The constructor is unsafe: its sole-worker caller must retain both original
+models, complete arena ownership and pre-device grants, without reset/close or
+client replacement, until the lexical scope joins/closes or retires. The actual
+controller keeps those exclusive model/executor/draft borrows throughout.
+The roots retain their original arena IDs/epoch and are never public model weights,
+cache loans, borrowed source pages or uncharged implicit allocations.
+
+The new `strata_sampling_request` Scope validates all seven original layouts,
+full spans, distinct allocations, common stream, target graph and optional MTP
+binding, protected owning-I/O audit mode, and bounded prefix/settings before
+publishing TLS state. It is non-Clone, `must_use`, and explicitly **not Send/Sync**;
+a request guard cannot move away from the TLS history it owns. Consumed tokens
+and staged window have bounded wiping capacities and request positions wipe on
+drop. Parameters retain their non-Debug/non-serializing wiping contract.
+
+Private uploads use the existing **full-owner** `write_private` interface;
+subviews do not acquire write/free authority. Main roots do not grow during a
+request. Parent pre-device host accounting adds2MiB for request/history/staging/
+inspection. Target runtime accounting and the MTP runtime envelope explicitly
+include3932160 bytes: source/destination/independent inspection allowances for
+one maximal draft/target window and full-owner close inspection. No existing
+expert/INFO credit is reused; sampler/bridge dispatches have no request INFO
+literals. The current allocator's32KiB minimum means parameter/control uploads
+include authenticated zero padding, a backend granularity substitution.
+
+### Target and history commit
+
+`Scope::stage_target` records the real proposed *inputs*, absolute start and
+count. `resident_target_rows::Owners::read` authenticates original logits,
+carry, fault and packet as before. Inside the original protected packet-I/O
+closure it calls `request::target_pick`: build the pinned per-row histories,
+refresh full private history/parameter owners, then dispatch the real GPU
+sampler. Its output is consumed by the new separate selected-token/carry packet
+kernel, with unchanged compact header/carry geometry and fault fence. It checks
+ids/probabilities and zeros inactive rows. The old greedy packet remains for
+other laboratory calls outside this owning request; the selected controller
+uses the new path even for the first normal input/greedy generation.
+
+No host logits or host fallback select the token. Existing `NativeTargetRows`
+selected-token accessor feeds the controller's exact-match verification. Only
+AFTER target acceptance/state commit does `Scope::commit_target(n)` append the
+accepted input prefix to its consumed history and wipe the provisional window.
+Rejected suffix inputs and the newest predicted-but-not-fed token are excluded.
+The next target window draws at its real absolute start, regardless of drafts.
+
+### Coupled MTP connection and explicit substitution
+
+Before proposing each window, `Scope::begin_round` uploads the native padded
+4096-slot consumed-tail-plus-confirmed-token base and request chain to its real
+round owner. The last slot always holds the actual next input, including when
+penalties are disabled. Normal greedy requests preserve Strata's uncoupled
+argmax drafting; sampled requests use the following hook in
+`ResidentMtp::finish_gpu`, after the original full Q2 head projection:
+
+1. Prove the same client/original MTP binding; reject subset-head use in this
+   owning full-vocabulary request. Stage the current cell and chain index in a
+   complete private control owner. The GPU Prepare bridge reads the **actual
+   native-front device position table**, checks the expected current cell and
+   round-relative index, and sets the sampler counter to device-cell+1.
+2. The first step copies the request/base to device parameters/ring; subsequent
+   steps keep the ring and read `[cap+j-h, cap+j)`. Prepare verifies the actual
+   GPU-fed `B::Token` against the predecessor in the ring. Each parameter word
+   has one writer, with explicit storage/workgroup ordering before history reads.
+3. Dispatch the same original-vocabulary sampler against actual MTP logits.
+   The Publish bridge checks the sampled id/probability/sticky fault, writes
+   `B::Greedy[0]` for the existing draft packet/follow-step consumers and the
+   actual token to ring[cap+j]. Probability bits are retained at ring[4104+j].
+   The subsequent queued step consumes this actual GPU token/residual.
+
+`source fb58e0` carries the current cell in `step_rec[0]`; Rust's grouped front
+already writes its authenticated position table, which is the selected device
+position input here. The separate private control supplies the expected index,
+not the draw value or seed; the GPU reads/verifies its table value before setting
+cell+1. This preserves the counter/data dependency with a different record layout.
+Full native round/step branch and queue acceptance is still required: compilation
+of this substitution is not physical proof of correct front/head execution or
+replay. Request values stay in device storage, not generated source/kernel keys.
+
+The existing accepted-prefix target/GDN/QSA/PLE and MTP repair remains in force;
+this hook never approves a draft on its own. Confidence probabilities are produced
+and checked, but the original host confidence/early-stop/`chain_launch` consumers
+are **not yet ported**: `DraftWindow` still returns ids, and the controller still
+uses the earlier cost/suffix policy. Greedy MTP's original top-probability chain
+also needs its source/consumer audit. Do not label this complete sampler/MTP
+policy parity until those dependencies and numerical/state behavior are proved.
+
+### Normal close, failures and remaining gates
+
+After the final accepted output/cursor check and before the original language
+I/O close, `Scope::close` clears all seven complete main owners, reads each via
+protected cleanup, checks every byte/padding is zero and wipes host inspection
+bytes. The parent's existing close then erases/audits transient I/O. Abandoned or
+failed scopes retire the model context; the original arena retains root ownership
+and its established failure cleanup rather than freeing borrowed views or
+publishing clean recovery without proof. Device close/recovery has not been run.
+
+CPU state tests use the actual staging/commit functions: all supported widths/
+accepted lengths, rejected/duplicate commit, untouched preflight failure, exact
+owner rounding and global request/MAIN sums. Existing scalar sampler/history/
+Philox/ABI checks remain. Added bridge/selected-packet tests parse/validate/lower
+without a device. These prove source/control relationships only. Whole-model
+outputs, captured replay changes, actual zero inspection and GPU memory recovery
+still require protected execution after GPU availability is reconfirmed.
+
+Continue confidence/captured branch/repair and failure audits, arbitrary runtime
+input/context and pre-device grants/cache policy, conditional ring/stream-all and
+remaining source completeness work. Prior full-suite failures remain unresolved;
+no unit failure is waived. No speed trial until the full connected-source and
+whole-engine correctness gates pass. No Vashti changes are required by this
+internal engine block.
+
+
+### Connected sampling CPU/source receipts
+
+Final receipts under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-sampling-connected-final-tests-20261014.log`: all10 focused checks
+  pass (`native_sampl` filter). Seven sampler/ABI/history/Philox checks plus
+  actual request stage/commit transitions for all widths/accepted lengths,
+  preflight/price/layout invariants and bridge/selected-packet lowering. These
+  do not construct a GPU Scope, execute sampled math or prove recovery.
+- `strata-sampling-connected-final-build-20261014.log`: core release build passes.
+- `strata-sampling-connected-final-core-clippy-20261014.log` and
+  `strata-sampling-connected-final-off-clippy-20261014.log`: strict core and
+  ordinary feature-off Clippy pass after the final owner-lifetime/thread guards.
+  Formatting and whitespace pass. Cargo's existing duplicate binary path
+  notice remains; no new source warning is accepted.
+- `strata-sampling-connected-final-shaders-20261014.log`:314 regular shader
+  bodies parse/validate/lower, selected-packet controller validation passes,
+  and122 physical-pointer /32 cooperative-matrix checks pass. Uses the existing
+  pinned2026.1 validator PATH described above. The focused selected-packet
+  test also lowers it to SPIR-V. Independent offline checks validate the new
+  Prepare/Publish/selected modules with `spirv-val --target-env vulkan1.3`.
+
+Locked release manifest/bin/core/off feature commands are unchanged from the
+preceding receipt. The new binary's source-only shader option exits before any
+device is selected/initialized. No GPU/model process was started. Source and CPU
+checks are authoritative progress; source completion, whole-model correctness,
+physical root/I/O erasure and GPU recovery are not proven. Prior228 full-suite
+failures remain an explicit audit item. Goal stays active. Canonical checkout
+was checked clean, and inherited isolated bytecode is preserved.
