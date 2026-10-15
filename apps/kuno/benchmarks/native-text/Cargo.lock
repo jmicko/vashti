@@ -1201,6 +1201,7 @@ dependencies = [
  "cubecl",
  "cubecl-common",
  "cubecl-runtime",
+ "cubecl-wgpu",
  "half",
  "kuno-text",
  "serde_json",

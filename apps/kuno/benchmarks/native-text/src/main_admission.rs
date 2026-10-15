@@ -1,6 +1,8 @@
 //! Main-pool admission for one exclusively owned, ordered resident context.
 //!
-//! The required allocator has exclusive power-of-two bins, 32 KiB..128 MiB.
+//! The required allocator has exclusive power-of-two bins, starting at32 KiB.
+//! Its upper bound follows the actual private allocator (512MiB in the native
+//! Intel core, 128MiB in the independent laboratories).
 //! `upper` includes its actual baseline plus every newly admitted page bound
 //! since the last COMPLETED fence. Dropping/evicting handles grants no credit:
 //! queued wgpu buffer references can outlive CubeCL's own allocation counters.
@@ -15,7 +17,7 @@
 //! Uniform/readback/driver pools are not part of CubeCL main-pool telemetry.
 
 pub const MIN_PAGE_BYTES: u64 = 32 * 1024;
-pub const MAX_PAGE_BYTES: u64 = 128 * 1024 * 1024;
+pub const MAX_PAGE_BYTES: u64 = crate::private_arena::MAX_SPAN_BYTES as u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AdmissionError {
@@ -61,6 +63,22 @@ pub fn check_capacity(limit: u64, components: &[u64]) -> Result<u64> {
         return Err(AdmissionError::LimitExceeded);
     }
     Ok(total)
+}
+
+/// Choose the native ranked-prefix byte budget AFTER all simultaneously live
+/// fixed owners and the peer model are priced. This is not allocation credit:
+/// the real owner still precharges each actual root against the same ledger.
+pub(crate) fn shared_expert_capacity(
+    limit: u64,
+    fixed: &[u64],
+    requested_expert_bytes: u64,
+) -> Result<u64> {
+    let fixed = check_capacity(limit, fixed)?;
+    let budget = requested_expert_bytes.min(limit - fixed);
+    if budget == 0 {
+        return Err(AdmissionError::LimitExceeded);
+    }
+    Ok(budget)
 }
 
 #[derive(Debug)]
@@ -179,6 +197,79 @@ impl MainAdmission {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_shared_prompt_roots_use_the_actual_allocator_limit() {
+        assert_eq!(MAX_PAGE_BYTES, crate::private_arena::MAX_SPAN_BYTES as u64);
+        let roots = crate::strata_prompt::allocation::Plan::new(4096)
+            .unwrap()
+            .requests();
+        let mut ledger = MainAdmission::new(31 * 1024 * 1024 * 1024, 0).unwrap();
+        if crate::strata_intel_core::enabled() {
+            assert_eq!(
+                ledger.precharge(&roots),
+                Ok(crate::strata_prompt::allocation::MAIN_BYTES)
+            );
+            assert_eq!(ledger.upper_bytes(), 3 * 512 * 1024 * 1024);
+        } else {
+            assert_eq!(MAX_PAGE_BYTES, 128 * 1024 * 1024);
+            assert_eq!(
+                ledger.precharge(&roots),
+                Err(AdmissionError::InvalidAllocation)
+            );
+            assert_eq!(ledger.upper_bytes(), 0);
+        }
+    }
+    #[test]
+    fn native_shared_capacity_accounts_for_peer_before_ranked_prefix() {
+        let fixed = [32, 64, 128, 256];
+        assert_eq!(shared_expert_capacity(1024, &fixed, 1024), Ok(544));
+        assert_eq!(shared_expert_capacity(1024, &fixed, 128), Ok(128));
+        for (limit, wanted) in [(480, 1), (479, 1), (1024, 0)] {
+            assert_eq!(
+                shared_expert_capacity(limit, &fixed, wanted),
+                Err(AdmissionError::LimitExceeded)
+            );
+        }
+        assert_eq!(
+            shared_expert_capacity(u64::MAX, &[u64::MAX, 1], 1),
+            Err(AdmissionError::ArithmeticOverflow)
+        );
+        // Planning neither creates a ledger nor grants an allocation or fence.
+        let mut ledger = MainAdmission::new(4 * MIN_PAGE_BYTES, MIN_PAGE_BYTES).unwrap();
+        shared_expert_capacity(4 * MIN_PAGE_BYTES, &[MIN_PAGE_BYTES], MIN_PAGE_BYTES).unwrap();
+        ledger.observe_after(MIN_PAGE_BYTES).unwrap();
+        assert_eq!(ledger.upper_bytes(), MIN_PAGE_BYTES);
+    }
+    #[test]
+    fn native_shared_peer_fence_retains_target_roots_and_poison() {
+        // Both consumers mutate this ONE account. A peer's completed close
+        // can release its own pages only; an observation alone refunds none.
+        let account = std::sync::Arc::new(std::sync::Mutex::new(
+            MainAdmission::new(5 * MIN_PAGE_BYTES, 2 * MIN_PAGE_BYTES).unwrap(),
+        ));
+        let peer = account.clone();
+        peer.lock().unwrap().precharge(&[1, 1]).unwrap();
+        account
+            .lock()
+            .unwrap()
+            .observe_after(2 * MIN_PAGE_BYTES)
+            .unwrap();
+        assert_eq!(peer.lock().unwrap().upper_bytes(), 4 * MIN_PAGE_BYTES);
+        peer.lock()
+            .unwrap()
+            .completed_fence(2 * MIN_PAGE_BYTES)
+            .unwrap();
+        assert_eq!(account.lock().unwrap().upper_bytes(), 2 * MIN_PAGE_BYTES);
+        account.lock().unwrap().poison();
+        assert_eq!(
+            peer.lock().unwrap().precharge(&[1]),
+            Err(AdmissionError::Poisoned)
+        );
+        assert_eq!(
+            peer.lock().unwrap().completed_fence(0),
+            Err(AdmissionError::Poisoned)
+        );
+    }
     #[test]
     fn full_bin_geometry_including_minimum_and_maximum() {
         assert_eq!(page_bytes(1), Ok(32768));

@@ -23,6 +23,7 @@ required-features = ["strata-rust-port"]
 [dependencies]
 ash = "=0.38.0"
 cubecl-common = "=0.10.0"
+cubecl-wgpu = { version = "=0.10.0", default-features = false, features = ["std"] }
 cubecl-runtime = "=0.10.0"
 serde_json = "1"
 zeroize = "1.9"
@@ -46,7 +47,7 @@ strata-rust-port = ["direct-device"]
 strata-eight-window = ["strata-rust-port"]
 strata-resident-224 = ["strata-rust-port"]
 strata-resident-240 = ["strata-resident-224"]
-strata-intel-core = ["strata-resident-240", "cubecl/wgpu-spirv"]
+strata-intel-core = ["strata-resident-240", "cubecl/wgpu-spirv", "cubecl-wgpu/kuno-strata-shared"]
 # Separate arithmetic candidate: original weights, explicit FMA/32-lane CPU.
 cpu-fma = []
 cpu-buffered-weights = []

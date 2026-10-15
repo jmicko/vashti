@@ -81,22 +81,8 @@ impl Profile {
             return self.validate_close(receipt);
         }
         if receipt.public_bytes != self.public_bytes_with_english(true)?
-            || receipt.private.buffers
-                != 42
-                    + u64::from(crate::strata_port::enabled())
-                    + u64::from(crate::strata_intel_core::enabled())
-            || receipt.private.bytes
-                != 11_698_176
-                    + if crate::strata_intel_core::enabled() {
-                        32768
-                    } else {
-                        0
-                    }
-                    + if crate::strata_port::enabled() {
-                        32768
-                    } else {
-                        0
-                    }
+            || (receipt.private.buffers, receipt.private.bytes)
+                != crate::resident_mtp::private_owned_geometry()?
             || receipt.main_reserved != 0
         {
             return Err(Error::InvalidFormat(
@@ -161,22 +147,8 @@ impl Profile {
     /// this also binds the numeric receipt to its immutable draft profile.
     pub(crate) fn validate_close(self, receipt: &CloseReceipt) -> Result<()> {
         if receipt.public_bytes != self.public_bytes()
-            || receipt.private.buffers
-                != 42
-                    + u64::from(crate::strata_port::enabled())
-                    + u64::from(crate::strata_intel_core::enabled())
-            || receipt.private.bytes
-                != 11_698_176
-                    + if crate::strata_intel_core::enabled() {
-                        32768
-                    } else {
-                        0
-                    }
-                    + if crate::strata_port::enabled() {
-                        32768
-                    } else {
-                        0
-                    }
+            || (receipt.private.buffers, receipt.private.bytes)
+                != crate::resident_mtp::private_owned_geometry()?
             || receipt.main_reserved != 0
         {
             return Err(Error::InvalidFormat(
@@ -191,6 +163,73 @@ impl Profile {
 mod tests {
     use super::*;
     use crate::private_arena::OwnedZeroAudit;
+
+    #[test]
+    fn native_shared_close_prices_all_front_roots_and_rejects_incomplete_receipts() {
+        let (buffers, bytes) = crate::resident_mtp::private_owned_geometry().unwrap();
+        let front = crate::strata_mtp_front::Workspace::requests();
+        let front_bytes = front
+            .iter()
+            .map(|&n| crate::main_admission::page_bytes(n).unwrap())
+            .sum::<u64>();
+        assert_eq!(
+            buffers,
+            42 + u64::from(crate::strata_port::enabled())
+                + u64::from(crate::strata_intel_core::enabled())
+                + front.len() as u64
+        );
+        assert_eq!(
+            bytes,
+            11_698_176
+                + if crate::strata_port::enabled() {
+                    32768
+                } else {
+                    0
+                }
+                + if crate::strata_intel_core::enabled() {
+                    // Native split attention replaces two legacy256KiB
+                    // roots with a2MiB value root and32KiB reduction root.
+                    32768 + (2 * 1024 * 1024 + 32768 - 2 * 262144)
+                } else {
+                    0
+                }
+                + front_bytes
+        );
+        // Numeric validator fixtures are not device erasure/recovery evidence.
+        let good = CloseReceipt {
+            private: OwnedZeroAudit { buffers, bytes },
+            public_bytes: Profile::StrataQ2.public_bytes(),
+            main_reserved: 0,
+        };
+        Profile::StrataQ2.validate_close(&good).unwrap();
+        for (b, n, r) in [
+            (buffers - 1, bytes, 0),
+            (buffers, bytes - 1, 0),
+            (buffers + 1, bytes, 0),
+            (buffers, bytes + 1, 0),
+            (buffers, bytes, 32768),
+        ] {
+            let bad = CloseReceipt {
+                private: OwnedZeroAudit {
+                    buffers: b,
+                    bytes: n,
+                },
+                main_reserved: r,
+                ..good
+            };
+            assert!(Profile::StrataQ2.validate_close(&bad).is_err());
+        }
+        if !front.is_empty() {
+            let omitted = CloseReceipt {
+                private: OwnedZeroAudit {
+                    buffers: buffers - front.len() as u64,
+                    bytes: bytes - front_bytes,
+                },
+                ..good
+            };
+            assert!(Profile::StrataQ2.validate_close(&omitted).is_err());
+        }
+    }
 
     #[test]
     fn exact_opt_in_has_no_alias_auto_or_filename_selection() {

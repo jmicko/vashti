@@ -8,7 +8,12 @@ use kuno_text::model::GraphBindingId;
 
 pub(crate) const METADATA_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) const BINDING_ENTRIES: usize = 4096;
-pub(crate) const RUNTIME_BYTES: u64 = 128 * 1024 * 1024;
+pub(crate) const RUNTIME_BYTES: u64 = if cfg!(feature = "strata-intel-core") {
+    256
+} else {
+    128
+} * 1024
+    * 1024;
 pub(crate) const MAX_OUTPUTS: usize = if crate::strata_port::enabled() {
     512
 } else {

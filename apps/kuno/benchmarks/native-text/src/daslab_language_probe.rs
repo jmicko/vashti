@@ -1119,9 +1119,9 @@ pub(crate) fn run(
         }
         None
     };
-    let _shared_iq_tables = crate::strata_intel_core::Tables::new(client, host_device)?;
+    let shared_iq_tables = crate::strata_intel_core::Tables::new(client, host_device)?;
     let mut draft_target_backlog_query_rejected = None;
-    let draft_gpu = if draft_graph.is_some() {
+    let draft_gpu = if draft_graph.is_some() && !crate::strata_intel_core::enabled() {
         let (draft_client, draft_limits, mtp_device_receipt) = cubecl::future::block_on(
             draft_client(input.fused_sweeps, input.mtp_device, client, host_device),
         )?;
@@ -1138,19 +1138,29 @@ pub(crate) fn run(
     } else {
         None
     };
-    let target_submission_backlog_receipt =
+    let target_submission_backlog_receipt = if crate::strata_intel_core::enabled() {
+        if !input.request_reuse || !client.public_target_request_io_configured()? {
+            return Err("shared native target runtime configuration".into());
+        }
+        serde_json::json!({"shared_native_stream":true,"configured":true,"independent_draft_stream":false})
+    } else {
         crate::target_lab_build::public_target_submission_backlog_record(
             input.target_submission_backlog,
             actual_target_backlog,
             input.request_reuse,
             draft_target_backlog_query_rejected,
-        )?;
+        )?
+    };
     let target_retired = Arc::new(AtomicBool::new(false));
-    let draft_retired = Arc::new(AtomicBool::new(false));
+    let draft_retired = if crate::strata_intel_core::enabled() {
+        target_retired.clone()
+    } else {
+        Arc::new(AtomicBool::new(false))
+    };
     let cancel = AtomicBool::new(false);
     let whole = Instant::now();
     let load_disk_before = process_disk_read_bytes()?;
-    let mtp_device_receipt = draft_gpu.as_ref().map(|(_, _, receipt)| receipt.clone());
+    let mut mtp_device_receipt = draft_gpu.as_ref().map(|(_, _, receipt)| receipt.clone());
     let mut draft = if let Some((draft_client, draft_limits, _)) = draft_gpu {
         let draft_graph = draft_graph
             .as_ref()
@@ -1181,7 +1191,9 @@ pub(crate) fn run(
     } else {
         None
     };
-    if draft.is_none() != (input.decode_mode == DecodeMode::TargetOnly) {
+    if !crate::strata_intel_core::enabled()
+        && draft.is_none() != (input.decode_mode == DecodeMode::TargetOnly)
+    {
         return Err("language actual draft construction scope rejected".into());
     }
     let mut executor = GpuExecutor::new_with_profile(
@@ -1189,9 +1201,19 @@ pub(crate) fn run(
         client.clone(),
         crate::strata_port::static_cache_bytes(),
         crate::daslab_profile::BANK_SLOTS,
-        31 * 1024 * 1024 * 1024,
+        crate::target_lab_build::NATIVE_SHARED_MAIN_BYTES as usize,
         OriginalPackedProfile::DaslabIq3,
     )?;
+    if crate::strata_intel_core::enabled() && draft_graph.is_some() {
+        if input.mtp_device != crate::target_lab_build::MtpDevice::Intel
+            || input.draft_profile != Profile::StrataQ2
+            || !input.fused_sweeps
+        {
+            return Err("native shared draft requires Intel/original Q2/fused scope".into());
+        }
+        executor.reserve_native_mtp(resident_mtp::ResidentMtp::shared_capacity()?)?;
+    }
+    let mut shared_draft_close: Option<kuno_text::Result<resident_mtp::CloseReceipt>> = None;
     executor.target_rows_reserved = true;
     executor.target_batch_router_reserved = input.frozen_host_router;
     executor.target_frozen_host_router_reserved = input.frozen_host_router;
@@ -1275,6 +1297,27 @@ pub(crate) fn run(
                     0, // compiled4096-row fixture: owned prompt, no loan HOST grant
                 )?;
             }
+        }
+        if crate::strata_intel_core::enabled()
+            && let Some(g) = &draft_graph
+        {
+            let device = host_device.ok_or("shared native target device missing")?;
+            if device.adapter_info().vendor != 0x8086
+                || g.target_binding_id() != Some(graph.bound_graph().binding_id())
+            {
+                return Err("shared native target/draft identity rejected".into());
+            }
+            let admission = executor.shared_mtp_admission()?;
+            draft = Some(resident_mtp::ResidentMtp::new_shared_strata_q2(
+                g,
+                client.clone(),
+                limits,
+                admission,
+            )?);
+            mtp_device_receipt = Some(
+                serde_json::json!({"device":"intel","shared_target_runtime":true,
+                "distinct_vulkan_device":false,"independent_runtime":false,"main_account":"shared"}),
+            );
         }
         let runs = (|| -> Result<serde_json::Value> {
             if crate::strata_intel_core::enabled() {
@@ -2467,6 +2510,13 @@ pub(crate) fn run(
             .as_ref()
             .map(|owner| owner.resident_bank_allocation())
             .transpose();
+        if crate::strata_intel_core::enabled()
+            && let Some(d) = draft.as_mut()
+        {
+            // Peer cleanup uses the live authoritative ledger. Target close
+            // deliberately poisons it, so this order is part of the contract.
+            shared_draft_close = Some(d.close());
+        }
         let close = target.close();
         let audit = target.public_owned_zero_audit_receipt();
         drop(target);
@@ -2534,7 +2584,25 @@ pub(crate) fn run(
     })();
     let target_close = executor.close_transient_resident();
     drop(executor);
-    let draft_close = draft.as_mut().map(|draft| draft.close()).transpose();
+    // This public root belongs to the same client. Release it only after its
+    // executor consumers close, and before the final physical-empty audit.
+    drop(shared_iq_tables);
+    let draft_close = if crate::strata_intel_core::enabled() {
+        match shared_draft_close {
+            Some(result) => result.map(Some),
+            None => draft.as_mut().map(|d| d.close()).transpose(),
+        }
+        .and_then(|mut closed| {
+            if let (Some(d), Some(r)) = (draft.as_ref(), closed.as_mut()) {
+                d.finish_shared_root(r)?;
+            } else if draft.is_none() {
+                crate::executor::audit_native_context_recovery(client, &target_retired)?;
+            }
+            Ok(closed)
+        })
+    } else {
+        draft.as_mut().map(|d| d.close()).transpose()
+    };
     drop(draft);
     let draft_close = draft_close.and_then(|closed| {
         if let Some(closed) = &closed {

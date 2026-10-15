@@ -1000,7 +1000,12 @@ struct PublicTargetIoConfig {
 }
 impl PublicTargetIoConfig {
     const FIXED: Self = Self {
-        budget: 128 * 1024 * 1024,
+        budget: if cfg!(feature = "kuno-strata-shared") {
+            256
+        } else {
+            128
+        } * 1024
+            * 1024,
         slab_bytes: 4096,
         info_batch: true,
         inline_readback: true,
@@ -6322,7 +6327,14 @@ mod reuse_metadata_selection_tests {
     fn public_target_policy_is_inline_only_fixed_and_separately_charged() {
         assert!(PublicTargetIoConfig::admit(false).is_err());
         let fixed = PublicTargetIoConfig::admit(true).unwrap();
-        assert_eq!(fixed.budget, 134_217_728);
+        assert_eq!(
+            fixed.budget,
+            if cfg!(feature = "kuno-strata-shared") {
+                268_435_456
+            } else {
+                134_217_728
+            }
+        );
         assert_eq!(fixed.slab_bytes, 4096);
         assert!(fixed.info_batch && fixed.inline_readback);
         assert!(!fixed.gpu_upload_clear && !fixed.clean_readback_reuse);

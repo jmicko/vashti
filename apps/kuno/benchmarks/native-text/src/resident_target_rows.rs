@@ -51,7 +51,12 @@ pub(crate) const RUNTIME_INCREMENT: u64 = if cfg!(feature = "strata-intel-core")
     0
 } + 2 * (OWNER_BYTES as u64 - 1024 * 1024)
     + 2 * 2048;
-pub(crate) const RUNTIME_LIMIT: u64 = 128 * 1024 * 1024;
+pub(crate) const RUNTIME_LIMIT: u64 = if cfg!(feature = "strata-intel-core") {
+    256
+} else {
+    128
+} * 1024
+    * 1024;
 
 macro_rules! rejected {
     () => {

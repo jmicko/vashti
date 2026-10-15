@@ -1667,7 +1667,9 @@ impl Plan {
                 })
             })
             .ok_or(Error::ArithmeticOverflow)?;
-        if runtime > executor.resident_runtime_io_limit()
+        if runtime
+            .checked_add(executor.native_mtp_runtime())
+            .is_none_or(|n| n > executor.resident_runtime_io_limit())
             || HOST_COMPONENTS + if hybrid { HYBRID_HOST } else { 0 } > HOST_CAP
             || metadata_bytes() > META_CAP
         {
@@ -2681,10 +2683,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             return Err(error());
         }
         let client = self.arena.client().map_err(u::fault)?;
-        let budget = crate::strata_global_plan::Plan::uniform_budget(
-            self.graph,
-            executor.resident_bank_capacity(),
-        )?;
+        let budget = executor.native_expert_capacity()?;
         let plan = crate::strata_global_plan::Plan::from_graph(
             self.graph,
             budget,

@@ -9,7 +9,12 @@ use std::time::Instant;
 
 pub(crate) const METADATA_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) const BINDING_ENTRIES: usize = 4096;
-const RUNTIME_BYTES: u64 = 128 * 1024 * 1024;
+const RUNTIME_BYTES: u64 = if cfg!(feature = "strata-intel-core") {
+    256
+} else {
+    128
+} * 1024
+    * 1024;
 
 fn rejected() -> Error {
     Error::InvalidFormat("public target request I/O boundary rejected")

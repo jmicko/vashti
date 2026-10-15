@@ -233,6 +233,74 @@ pub(crate) fn sanitize_resident_io(client: &ComputeClient<WgpuRuntime>) -> Resul
     }
 }
 
+fn check_native_closed_usage(allocations: u64, used: u64, reserved: u64) -> Result<()> {
+    if allocations != 0 || used != 0 || reserved != 0 {
+        return Err(Error::InvalidFormat(
+            "shared native complete physical recovery",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod native_shared_recovery_tests {
+    use super::*;
+    #[test]
+    fn native_shared_recovery_needs_all_counters_empty_and_does_not_revive_retirement() {
+        assert!(check_native_closed_usage(0, 0, 0).is_ok());
+        for counters in [(1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 32768, 32768)] {
+            assert!(check_native_closed_usage(counters.0, counters.1, counters.2).is_err());
+        }
+        let retired = AtomicBool::new(true);
+        assert!(
+            checked_transient_cleanup(&retired, || check_native_closed_usage(0, 0, 0)).is_err()
+        );
+        assert!(retired.load(Ordering::Acquire));
+        let retired = AtomicBool::new(false);
+        assert!(
+            checked_transient_cleanup(&retired, || check_native_closed_usage(0, 0, 32768)).is_err()
+        );
+        assert!(retired.load(Ordering::Acquire));
+    }
+}
+
+/// Final observation only, after both original model owners, their executor
+/// and shared public tables have closed. Never resets or credits admission.
+/// Any failure retires the real context, including failed sync/telemetry/audit.
+pub(crate) fn audit_native_context_recovery(
+    client: &ComputeClient<WgpuRuntime>,
+    retired: &AtomicBool,
+) -> Result<()> {
+    checked_transient_cleanup(retired, || {
+        if !crate::strata_intel_core::enabled()
+            || !client
+                .public_target_request_io_configured()
+                .map_err(|_| Error::InvalidBufferLength)?
+        {
+            return Err(Error::InvalidFormat("shared native recovery stream policy"));
+        }
+        client.memory_cleanup();
+        cubecl::future::block_on(client.sync())
+            .map_err(|_| Error::InvalidFormat("shared native recovery sync"))?;
+        let audit = cubecl::future::block_on(client.sanitize_transient_io_audited())
+            .map_err(|_| Error::InvalidFormat("shared native recovery I/O audit"))?;
+        if audit.inspected_bytes > crate::resident_model::batch::TARGET_ROWS_RUNTIME_LIMIT {
+            return Err(Error::InvalidBufferLength);
+        }
+        client.memory_cleanup();
+        cubecl::future::block_on(client.sync())
+            .map_err(|_| Error::InvalidFormat("shared native recovery sync"))?;
+        let usage = client
+            .memory_usage()
+            .map_err(|_| Error::InvalidFormat("shared native recovery telemetry"))?;
+        check_native_closed_usage(
+            usage.number_allocs,
+            usage.bytes_in_use,
+            usage.bytes_reserved,
+        )
+    })
+}
+
 fn checked_transient_cleanup(
     retired: &AtomicBool,
     cleanup: impl FnOnce() -> Result<()>,
@@ -453,6 +521,7 @@ fn checked_sequence_guard<T>(
 pub(crate) struct ResidentAdmission {
     client: ComputeClient<WgpuRuntime>,
     ledger: Arc<Mutex<MainAdmission>>,
+    binding: kuno_text::model::GraphBindingId,
     transient_io: bool,
     token_io_checkpoint: bool,
     ordered_sources: Option<OrderedSources>,
@@ -464,6 +533,25 @@ pub(crate) struct ResidentAdmission {
     target_verify3_dense: bool,
     target_verify3_fused: bool,
     target_four_rows_reserved: bool,
+}
+/// One pre-device peer reservation, consumed once by original Q2 construction.
+/// No caller can manufacture this token from a client, byte count or sample.
+pub(crate) struct NativeMtpAdmission {
+    admission: ResidentAdmission,
+    capacity: u64,
+}
+impl NativeMtpAdmission {
+    pub(crate) fn consume(
+        self,
+        binding: Option<kuno_text::model::GraphBindingId>,
+        capacity: u64,
+    ) -> Result<ResidentAdmission> {
+        if binding != Some(self.admission.binding) || capacity != self.capacity {
+            return Err(Error::InvalidFormat("native MTP peer construction binding"));
+        }
+        self.admission.active()?;
+        Ok(self.admission)
+    }
 }
 /// Borrowed only inside the existing guarded model allocation callback. This
 /// proves that its MAIN lock is already held; constructor checks must not
@@ -585,6 +673,16 @@ impl ResidentAdmission {
                 Ok(())
             })
         })
+    }
+    pub(crate) fn shared_main<T>(
+        &self,
+        f: impl FnOnce(&mut MainAdmission) -> std::result::Result<T, main_admission::AdmissionError>,
+    ) -> Result<T> {
+        self.active()?;
+        self.with_ledger(|ledger| f(ledger).map_err(admission_error))
+    }
+    pub(crate) fn shared_observation_checkpoint(&self) -> Result<()> {
+        self.readback_audited(&AtomicBool::new(false), || Ok(()))
     }
     fn with_ledger<T>(&self, f: impl FnOnce(&mut MainAdmission) -> Result<T>) -> Result<T> {
         let mut ledger = self
@@ -997,6 +1095,9 @@ pub struct GpuExecutor<'a> {
     bank_slots: usize,
     reserved_limit: usize,
     resident_admission: Option<ResidentAdmission>,
+    native_mtp_capacity: u64,
+    native_mtp_claimed: bool,
+    native_expert_budget: Option<u64>,
     transient_resident: Option<Arc<AtomicBool>>,
     pub by_tensor: BTreeMap<String, u128>,
     pub gdn_ns: u128,
@@ -1332,6 +1433,9 @@ impl<'a> GpuExecutor<'a> {
             bank_slots,
             reserved_limit,
             resident_admission: None,
+            native_mtp_capacity: 0,
+            native_mtp_claimed: false,
+            native_expert_budget: None,
             transient_resident: None,
             by_tensor: BTreeMap::new(),
             gdn_ns: 0,
@@ -2389,6 +2493,50 @@ impl<'a> GpuExecutor<'a> {
     /// Before ANY owner allocation, admit all static full pages and every
     /// simultaneously queued source page. Capacity plan is distinct from the
     /// actual baseline ledger; this laboratory executor binds only one owner.
+    pub(crate) fn reserve_native_mtp(&mut self, capacity: u64) -> Result<()> {
+        if !crate::strata_intel_core::enabled()
+            || self.resident_admission.is_some()
+            || self.native_mtp_capacity != 0
+            || capacity == 0
+            || capacity > self.reserved_limit as u64
+        {
+            return Err(Error::InvalidFormat(
+                "native MTP pre-device capacity reservation",
+            ));
+        }
+        self.native_mtp_capacity = capacity;
+        Ok(())
+    }
+    pub(crate) fn native_expert_capacity(&self) -> Result<u64> {
+        self.native_expert_budget
+            .ok_or(Error::InvalidFormat("native expert capacity missing"))
+    }
+    pub(crate) fn native_mtp_runtime(&self) -> u64 {
+        if self.native_mtp_capacity != 0 {
+            crate::resident_mtp::RUNTIME_BYTES
+        } else {
+            0
+        }
+    }
+    pub(crate) fn shared_mtp_admission(&mut self) -> Result<NativeMtpAdmission> {
+        if !crate::strata_intel_core::enabled()
+            || self.native_mtp_capacity == 0
+            || self.native_mtp_claimed
+        {
+            return Err(Error::InvalidFormat("native MTP reservation missing"));
+        }
+        let a = self
+            .resident_admission
+            .as_ref()
+            .ok_or(Error::InvalidFormat("native MTP target admission missing"))?;
+        a.active()?;
+        let admission = a.clone();
+        self.native_mtp_claimed = true;
+        Ok(NativeMtpAdmission {
+            admission,
+            capacity: self.native_mtp_capacity,
+        })
+    }
     pub(crate) fn begin_resident(
         &mut self,
         graph: kuno_text::model::BoundGraph<'_, '_>,
@@ -2496,7 +2644,7 @@ impl<'a> GpuExecutor<'a> {
                 return Err(Error::LimitExceeded("ordered public runtime window"));
             }
         }
-        let banks = expert_banks::preflight_residency_with_profile(
+        let requested_banks = expert_banks::preflight_residency_with_profile(
             graph,
             self.bank_slots,
             self.budget,
@@ -2533,25 +2681,43 @@ impl<'a> GpuExecutor<'a> {
             source_pages = source_pages.max(pages);
         }
         let baseline = self.reserved_bytes()?;
-        main_admission::check_capacity(
-            self.reserved_limit as u64,
-            &[
-                self.budget as u64,
-                banks,
-                private_owned,
-                RESIDENT_IO_MAX,
-                if self.transient_resident.is_some() {
-                    self.resident_runtime_io_limit()
-                } else {
-                    0
-                },
-                public_pages,
-                source_pages,
-                baseline,
-            ],
-        )
-        .map_err(admission_error)?;
+        let fixed = [
+            self.budget as u64,
+            private_owned,
+            RESIDENT_IO_MAX,
+            if self.transient_resident.is_some() {
+                self.resident_runtime_io_limit()
+            } else {
+                0
+            },
+            public_pages,
+            source_pages,
+            baseline,
+            self.native_mtp_capacity,
+            if crate::strata_intel_core::enabled() {
+                crate::strata_global_sources::OWNED_TABLE_BYTES
+            } else {
+                0
+            },
+        ];
+        let banks = if crate::strata_intel_core::enabled() {
+            let budget = main_admission::shared_expert_capacity(
+                self.reserved_limit as u64,
+                &fixed,
+                requested_banks,
+            )
+            .map_err(admission_error)?;
+            self.native_expert_budget = Some(budget);
+            budget
+        } else {
+            requested_banks
+        };
+        let mut complete = fixed.to_vec();
+        complete.push(banks);
+        main_admission::check_capacity(self.reserved_limit as u64, &complete)
+            .map_err(admission_error)?;
         let admission = ResidentAdmission {
+            binding: graph.binding_id(),
             target_verify3_dense: self.target_verify3_dense,
             target_verify3_fused: self.target_verify3_fused,
             target_four_rows_reserved: self.target_four_rows_reserved,
@@ -2719,6 +2885,20 @@ impl<'a> GpuExecutor<'a> {
             .as_ref()
             .ok_or(Error::InvalidFormat("global expert admission required"))?;
         let requests = crate::strata_global_sources::Sources::gpu_requests(&plan);
+        let quoted = requests.iter().try_fold(0u64, |n, &r| {
+            n.checked_add(r).ok_or(Error::ArithmeticOverflow)
+        })?;
+        if plan.budget != self.native_expert_capacity()?
+            || quoted
+                > self
+                    .native_expert_capacity()?
+                    .checked_add(crate::strata_global_sources::OWNED_TABLE_BYTES)
+                    .ok_or(Error::ArithmeticOverflow)?
+        {
+            return Err(Error::LimitExceeded(
+                "native global sources exceed shared quote",
+            ));
+        }
         let shared_retirement =
             self.transient_resident
                 .as_ref()

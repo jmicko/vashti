@@ -18,6 +18,7 @@ pub(crate) use placement::Placement;
 pub(crate) use prompt_loan::BorrowedPrompt;
 pub(crate) const PLACEMENT_HOST_BYTES: u64 = placement::HOST_BYTES;
 pub(crate) const TABLE_BYTES: u64 = 32768;
+pub(crate) const OWNED_TABLE_BYTES: u64 = TABLE_BYTES * (LAYERS as u64 + 1);
 fn reject() -> Error {
     Error::InvalidFormat("Strata global source owner")
 }
@@ -735,6 +736,38 @@ impl Drop for Sources {
             }
             if let Some(host) = self.host.take() {
                 std::mem::forget(host);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod native_shared_table_tests {
+    use super::*;
+    #[test]
+    fn native_shared_prefix_quote_includes_all_original_address_tables() {
+        for budget in [1024 * 1024, 1024 * 1024 * 1024, 20 * 1024 * 1024 * 1024] {
+            let plan = Plan::shadow_test_fixture(budget).unwrap();
+            let requests = Sources::gpu_requests(&plan);
+            let gpu = Cache::requests(&plan);
+            assert_eq!(&requests[..gpu.len()], &gpu);
+            assert_eq!(&requests[gpu.len()..], &[TABLE_BYTES; LAYERS + 1]);
+            assert_eq!(OWNED_TABLE_BYTES, 49 * 32768);
+            assert!(gpu.iter().sum::<u64>() <= budget);
+            assert!(requests.iter().sum::<u64>() <= budget + OWNED_TABLE_BYTES);
+            // Tables get their own fixed charge; they cannot consume space
+            // already promised to the actual ranked expert prefix.
+            assert_eq!(
+                requests.iter().sum::<u64>() - gpu.iter().sum::<u64>(),
+                OWNED_TABLE_BYTES
+            );
+            if crate::strata_intel_core::enabled() {
+                let mut ledger =
+                    crate::main_admission::MainAdmission::new(budget + OWNED_TABLE_BYTES, 0)
+                        .unwrap();
+                let charged = ledger.precharge_persistent(&requests, 256).unwrap();
+                assert_eq!(charged, requests.iter().sum::<u64>());
+                assert_eq!(ledger.upper_bytes(), charged);
             }
         }
     }

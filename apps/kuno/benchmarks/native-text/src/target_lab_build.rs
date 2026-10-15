@@ -3,6 +3,9 @@
 //! modes retain their existing build/dispatch policies.
 use std::ffi::OsStr;
 
+pub(crate) const NATIVE_SHARED_MAIN_BYTES: u64 = 31 * 1024 * 1024 * 1024;
+const NATIVE_SHARED_DRIVER_MARGIN: u64 = 512 * 1024 * 1024;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Build {
     Threaded,
@@ -85,6 +88,31 @@ pub(crate) struct IntelTargetOwners {
     pub(crate) down_integer: bool,
 }
 impl IntelMtpMemory {
+    /// Physical admission for the ONE native target/MTP allocator. The31GiB
+    /// ceiling includes both models, source windows and the shared256MiB I/O
+    /// envelope. Exact owner pricing and ranked-prefix clipping happen before
+    /// allocation in begin_resident; do not add a fictitious second6GiB pool.
+    fn admit_shared_native(self, target_device: u32) -> Result<serde_json::Value, &'static str> {
+        let required = NATIVE_SHARED_MAIN_BYTES + NATIVE_SHARED_DRIVER_MARGIN;
+        if !crate::strata_intel_core::enabled()
+            || self.used == 0
+            || self.used >= self.total
+            || self.device == 0
+            || target_device != self.device
+            || self.total - self.used < required
+        {
+            return Err("native shared target/MTP physical envelope rejected");
+        }
+        Ok(serde_json::json!({"source":"protected-xe-memory-regions",
+            "physical_total_bytes":self.total,"physical_used_bytes":self.used,
+            "physical_available_bytes":self.total-self.used,"physical_device_id":self.device,
+            "shared_target_mtp_runtime":true,"shared_main_ceiling_bytes":NATIVE_SHARED_MAIN_BYTES,
+            "shared_runtime_io_bytes":crate::resident_model::batch::TARGET_ROWS_RUNTIME_LIMIT,
+            "shared_driver_margin_bytes":NATIVE_SHARED_DRIVER_MARGIN,
+            "combined_reserved_bytes":required,
+            "remaining_beyond_margin_bytes":self.total-self.used-required,
+            "expert_placement":"actual-fixed-owners-then-ranked-byte-prefix"}))
+    }
     /// The protected runner supplies a fresh Xe MEM_REGIONS query while other
     /// inference is paused. Privilege-masked zero never means a free card.
     pub(crate) fn parse(
@@ -280,6 +308,14 @@ pub(crate) fn intel_mtp_preflight_with_down_math(
     let usage = client.memory_usage()?;
     if usage.bytes_in_use != 0 || usage.bytes_reserved != 0 || usage.number_allocs != 0 {
         return Err("Intel MTP combined admission requires a fresh target runtime".into());
+    }
+    if crate::strata_intel_core::enabled() {
+        if profile != crate::mtp_lab_profile::Profile::StrataQ2 || !integer || !down_integer {
+            return Err(
+                "native shared Intel MTP requires original Q2 and coupled integer math".into(),
+            );
+        }
+        return proof.admit_shared_native(info.device).map_err(Into::into);
     }
     let banks = crate::expert_banks::preflight_residency_with_profile(
         graph,
@@ -2939,6 +2975,49 @@ mod tests {
         ] {
             assert!(IntelMtpMemory::parse(MtpDevice::Intel, total, used, device).is_err());
         }
+    }
+    #[test]
+    fn native_shared_physical_envelope_rejects_foreign_masked_and_short_samples() {
+        let proof = IntelMtpMemory {
+            total: 34_242_297_856,
+            used: 50_688_000,
+            device: 4660,
+        };
+        if !crate::strata_intel_core::enabled() {
+            assert!(proof.admit_shared_native(4660).is_err());
+            return;
+        }
+        let required = NATIVE_SHARED_MAIN_BYTES + NATIVE_SHARED_DRIVER_MARGIN;
+        let got = proof.admit_shared_native(4660).unwrap();
+        assert_eq!(got["combined_reserved_bytes"], required);
+        assert_eq!(got["shared_runtime_io_bytes"], 256 * 1024 * 1024u64);
+        let exact = IntelMtpMemory {
+            total: proof.used + required,
+            ..proof
+        };
+        assert_eq!(
+            exact.admit_shared_native(4660).unwrap()["remaining_beyond_margin_bytes"],
+            0u64
+        );
+        for bad in [
+            IntelMtpMemory {
+                total: exact.total - 1,
+                ..proof
+            },
+            IntelMtpMemory { used: 0, ..proof },
+            IntelMtpMemory {
+                used: proof.total,
+                ..proof
+            },
+            IntelMtpMemory {
+                used: u64::MAX,
+                ..proof
+            },
+            IntelMtpMemory { device: 0, ..proof },
+        ] {
+            assert!(bad.admit_shared_native(4660).is_err());
+        }
+        assert!(proof.admit_shared_native(4661).is_err());
     }
     #[test]
     fn intel_mtp_combined_admission_charges_complete_full144_target_and_each_draft_owner() {

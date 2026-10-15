@@ -704,6 +704,9 @@ impl DraftOutput {
 
 #[path = "resident_mtp_device.rs"]
 mod device_cache;
+#[path = "resident_mtp_admission.rs"]
+mod shared_admission;
+use shared_admission::Ledger;
 #[path = "resident_mtp_window.rs"]
 mod window;
 
@@ -716,7 +719,7 @@ pub struct ResidentMtp<'g, 'f> {
     native_front: Option<crate::strata_mtp_front::Workspace>,
     client: ComputeClient<WgpuRuntime>,
     public: Option<Public>,
-    ledger: MainAdmission,
+    ledger: Ledger,
     retired: Arc<AtomicBool>,
     position: usize,
     poisoned: bool,
@@ -1022,6 +1025,21 @@ fn private_plan() -> Result<u64> {
                 .ok_or(Error::ArithmeticOverflow)
         },
     )
+}
+/// The same full owning geometry is checked at original arena close and by
+/// the final profile validator. No reduced readback/view acquires this credit.
+pub(crate) fn private_owned_geometry() -> Result<(u64, u64)> {
+    Ok((
+        N as u64
+            + u64::from(crate::strata_port::enabled())
+            + u64::from(crate::strata_intel_core::enabled())
+            + if crate::strata_intel_core::enabled() {
+                crate::strata_mtp_front::WORDS.len() as u64
+            } else {
+                0
+            },
+        private_plan()?,
+    ))
 }
 fn tile_plan(spec: Spec) -> Result<Vec<(usize, usize, usize, usize)>> {
     let row_bytes = quant_matvec::packed_row_bytes(spec.columns, spec.dtype);
@@ -1361,6 +1379,28 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         expected_profile: MtpProfile,
         public_english: bool,
     ) -> Result<Self> {
+        Self::construct_mode(
+            graph,
+            client,
+            limits,
+            retired,
+            fused_sweeps,
+            expected_profile,
+            public_english,
+            None,
+        )
+    }
+    #[allow(clippy::too_many_arguments)] // Explicit owning constructor dependencies.
+    fn construct_mode(
+        graph: &'g MtpGraph<'f>,
+        client: ComputeClient<WgpuRuntime>,
+        limits: &wgpu::Limits,
+        retired: Arc<AtomicBool>,
+        fused_sweeps: bool,
+        expected_profile: MtpProfile,
+        public_english: bool,
+        shared: Option<crate::executor::ResidentAdmission>,
+    ) -> Result<Self> {
         validate_profile(
             graph.profile(),
             expected_profile,
@@ -1386,26 +1426,50 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         {
             return Err(Error::LimitExceeded("MTP fixed resident capacity plan"));
         }
-        main_admission::check_capacity(
-            MAIN_BYTES,
-            &[
-                public_bytes,
-                PRIVATE_BYTES as u64,
-                RUNTIME_BYTES,
-                PUBLIC_SOURCE_BYTES as u64,
-            ],
-        )
-        .map_err(error)?;
+        if shared.is_none() {
+            main_admission::check_capacity(
+                MAIN_BYTES,
+                &[
+                    public_bytes,
+                    PRIVATE_BYTES as u64,
+                    RUNTIME_BYTES,
+                    PUBLIC_SOURCE_BYTES as u64,
+                ],
+            )
+            .map_err(error)?;
+        } else {
+            // The consumed peer permit already priced this exact owner in
+            // the target's shared plan. Runtime I/O is priced ONCE there.
+            main_admission::check_capacity(
+                Self::shared_capacity()?,
+                &[
+                    public_bytes,
+                    PRIVATE_BYTES as u64,
+                    PUBLIC_SOURCE_BYTES as u64,
+                ],
+            )
+            .map_err(error)?;
+        }
         let usage = client.memory_usage().map_err(error)?;
-        if usage.number_allocs != 0 || usage.bytes_in_use != 0 || usage.bytes_reserved != 0 {
+        if shared.is_none()
+            && (usage.number_allocs != 0 || usage.bytes_in_use != 0 || usage.bytes_reserved != 0)
+        {
             return Err(Error::InvalidFormat("MTP resident requires fresh client"));
         }
+        if let Some(a) = &shared {
+            a.check_client(&client)?;
+        }
+
         let owned_client = client.clone();
         let mut arena =
             PrivateArena::new_transient_on_configured(client, PRIVATE_BYTES, retired.clone())
                 .map_err(error)?;
         arena.enable_public_owned_zero_audit().map_err(error)?;
-        let mut ledger = MainAdmission::new(MAIN_BYTES, 0).map_err(error)?;
+        let mut ledger = match shared {
+            Some(a) => Ledger::Shared(a),
+            None => Ledger::Exclusive(MainAdmission::new(MAIN_BYTES, 0).map_err(error)?),
+        };
+        ledger.observe_before(usage.bytes_reserved)?;
         let mut plan: Vec<u64> = WORDS.map(|n| (n * 4) as u64).to_vec();
         if crate::strata_port::enabled() {
             plan.push(16);
@@ -1752,7 +1816,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         })?;
         validate_english_readback(&bytes.0)?;
         drop(bytes);
-        io_audit(self.client()?, &self.retired)?;
+        self.audit_io()?;
         self.ledger
             .completed_fence(sample(self.client()?)?)
             .map_err(error)?;
@@ -2151,7 +2215,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
                 .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])),
         );
         drop(bytes);
-        io_audit(self.client()?, &self.retired)?;
+        self.audit_io()?;
         if words.capacity() * 4 > layout.owned_bytes
             || words[layout.logical_words..].iter().any(|&x| x != 0)
         {
@@ -2344,7 +2408,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
                 }
             }
             cubecl::future::block_on(self.client()?.sync()).map_err(error)?;
-            io_audit(self.client()?, &self.retired)
+            self.audit_io()
         }));
         if !matches!(result, Ok(Ok(()))) {
             self.retired.store(true, Ordering::Release);
@@ -4913,7 +4977,9 @@ impl ResidentMtp<'_, '_> {
             .arena
             .owned_zero_audit_receipt()
             .ok_or(Error::InvalidFormat("MTP complete erasure receipt"))?;
-        if private.bytes != private_plan()?
+        let (expected_buffers, expected_bytes) = private_owned_geometry()?;
+        if private.bytes != expected_bytes
+            || private.buffers != expected_buffers
             || private.buffers
                 != N as u64
                     + u64::from(self.draft_window.is_some())
@@ -4931,13 +4997,12 @@ impl ResidentMtp<'_, '_> {
         // private owner. Public model handles are now released, not private data.
         self.client()?.memory_cleanup();
         cubecl::future::block_on(self.client()?.sync()).map_err(error)?;
-        io_audit(self.client()?, &self.retired)?;
+        self.audit_io()?;
         self.client()?.memory_cleanup();
         cubecl::future::block_on(self.client()?.sync()).map_err(error)?;
         let usage = self.client()?.memory_usage().map_err(error)?;
-        if usage.number_allocs != 0
-            || usage.bytes_in_use != 0
-            || usage.bytes_reserved != 0
+        if self.ledger.shared().is_none()
+            && (usage.number_allocs != 0 || usage.bytes_in_use != 0 || usage.bytes_reserved != 0)
             || self.retired.load(Ordering::Acquire)
         {
             self.retired.store(true, Ordering::Release);
