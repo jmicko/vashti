@@ -1,23 +1,25 @@
-<!-- Current resume: 2026-10-15, sourceec37fad, codex/strata-rust-port.
-Read coordination latest handoff and completion guide Final checkpoint.
-Whole rewrite incomplete; no speed trials. GPUs idle, services normal; goal paused. -->
+<!-- Current resume: 2026-10-15, source30f5220, codex/strata-rust-port.
+Read coordination latest handoff and completion guide overnight stop.
+Whole rewrite incomplete; no speed trials. GPUs belong to user; goal paused. -->
 # Native DASLab/Strata checkpoint — 2026-10-09
 
-**Current Rust port resume pointer (2026-10-15):** isolated
-`codex/strata-rust-port`, source through `ec37fad`. Read coordination latest
-handoff and completion guide **Full-owner prompt uploads / Final checkpoint**.
-Shared constructors/global GPU+HOST sources initialize. All identified sliced
-private-upload callers now use original full packet/scratch roots and ordered
-GPU copies; original full-owner/padding/cleanup contracts unchanged. Exact core/
-off Clippy pass;17 focused shared cases pass throughf4400a7. Protected combined
-completion fails FIRST at stream.rs1366's native upload poll inside prompt
-execution; later4-owner metadata/retirement faults are cascades. Inspect actual
-PollError/preceding typed validation before another model run; no timeout or
-health waiver. No complete inference/numerical/owning-erasure or speed receipt.
-Mapped/stable captures/warm/doorbells/events/commit overlap and runtime/input
-remain unfinished. Both GPUs idle, Intel50,688,000 bytes, zero unchanged faults,
-normal admission and all HTTP200. No installation/API change; goal remains
-paused. All older checkpoints below are historical.
+**Current native-engine resume pointer (2026-10-15):** isolated
+`codex/strata-rust-port`, source through `30f5220` (logical fault view fix
+`da7a74e`). Read the latest
+[shared-source handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--shared-source-initialization-and-cpugpu-submission-2026-10-15)
+and **Prompt expert logical fault view and overnight stop** in
+[the completion gate](kuno-strata-rewrite-completion.md). The native upload
+submission validation failure is resolved in the latest protected path. The
+next exact rejection is the prompt expert consumer receiving a full 32 KiB
+fault owner instead of its logical four-byte view. The caller is corrected;
+GPU validation of that correction is pending. Whole rewrite, full execution,
+numerical/state/owning-erasure and speed acceptance remain incomplete.
+Both GPUs are released to the user: continue CPU-only until explicitly returned.
+Normal admission and Kuno/Ollama/Vashti HTTP200 verified; goal remains paused.
+Exact30f5220 locked release core/off strict Clippy, fmt and whitespace checks pass.
+No API or installed service change; required Vashti changes: none.
+
+All older checkpoints below are historical.
 
 **Current checkpoint:** user requested a stop for usage conservation. Standalone
 Strata is removed; original model shards, alternate draft and comparison evidence

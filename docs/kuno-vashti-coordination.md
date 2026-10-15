@@ -6,19 +6,20 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-15):** isolated
-`codex/strata-rust-port`, source through `ec37fad`. Read the latest
+`codex/strata-rust-port`, source through `30f5220` (logical fault view fix
+`da7a74e`). Read the latest
 [shared-source handoff](#active-kuno-engine-handoff--shared-source-initialization-and-cpugpu-submission-2026-10-15)
-and **Full-owner prompt uploads and ordered carved copies / Final checkpoint**
-in [the completion gate](kuno-strata-rewrite-completion.md). Shared model/global
-GPU+HOST sources now initialize. Target tokens, PLE/routing maps and MTP teacher
-tokens preserve strict full-owner private uploads via bounded scratch/GPU copies.
-Exact core/off Clippy and17 focused shared tests pass at the named revisions.
-Protected completion reaches prompt execution but fails its first native upload
-completion poll; later metadata/retirement errors are cascades. No full execution,
-numerical/owning-erasure or speed acceptance. Whole rewrite incomplete. Finish
-mapped/captured/warm/doorbell/commit scheduling and runtime/input/state gates.
-GPUs idle, admission/services normal, physical baseline/fault checks pass. Goal
-remains paused. API unchanged; required Vashti changes:none.
+and **Prompt expert logical fault view and overnight stop** in
+[the completion gate](kuno-strata-rewrite-completion.md). The native upload
+submission validation failure is resolved in the latest protected path. The
+next exact rejection is the prompt expert consumer receiving a full 32 KiB
+fault owner instead of its logical four-byte view. The caller is corrected;
+GPU validation of that correction is pending. Whole rewrite, full execution,
+numerical/state/owning-erasure and speed acceptance remain incomplete.
+Both GPUs are released to the user: continue CPU-only until explicitly returned.
+Normal admission and Kuno/Ollama/Vashti HTTP200 verified; goal remains paused.
+Exact30f5220 locked release core/off strict Clippy, fmt and whitespace checks pass.
+No API or installed service change; required Vashti changes: none.
 
 ## Ownership
 
@@ -5962,3 +5963,22 @@ acceptance. Worker exits, exact physical baseline/zero unchanged faults and all
 services/admission recover. GPUs idle; no install/reset/reboot. Both canonical
 and isolated source scope remain unchanged. Resume the whole-source gate; goal
 still paused. Required Vashti changes:none.
+
+
+**Superseding continuation (source30f5220, GPUs returned to user):**
+Read completion guide **First submission validation and native root bookkeeping**
+and **Prompt expert logical fault view and overnight stop**.31a2e6f identifies
+WrongSubmissionIndex and validation_usage;0eb9b36 initializes each true storage
+root separately with a readonly zero-work shader, preserving actual native
+range/queue/owner contracts. Protected0eb9b36 and6d7f037 pass that earlier failure.
+Latest physical6d7f037 rejects at strata_prompt_experts.rs:235. Actual caller
+passed the full fault root (32 KiB), while the consumer correctly requires its
+four-byte logical view. da7a74e passes u::handle(arena,fault) instead; the arena
+still retains the full owning root for cleanup.30f5220 removes an unused import.
+No further GPU run is authorized until the user returns the cards. Final state
+strata-native-gpu-release-state-20261015.json: Intel50,688,000 bytes, zero NVIDIA
+compute owners, all five classified fault counts zero, normal admission, all
+three HTTP200. Owning erasure/numerical acceptance is still NOT established.
+No speed comparison, install, model/service/driver change, reset or reboot.
+Goal paused; next GPU gate is protected original completion with corrected view,
+then continue the full connected rewrite. Required Vashti changes:none.

@@ -4510,3 +4510,84 @@ parameter staging and commit/event overlap, followed by runtime/arbitrary-input
 and full numerical/state/recovery audits. This block's source fixes do not satisfy
 those remaining rows. No throughput/profile comparisons or speed-driven rollback.
 Goal remains paused; no claim of whole rewrite completion.
+
+
+## First submission validation and native root bookkeeping (2026-10-15)
+
+Further first-failure diagnosis: source31a2e6f, frozen55dee858694fff6453eb8a39398583baf2dff8c31cbff0d61e550553ad890b94,
+strata-native-submit-validation-build-20261015. Core/off strict Clippy pass.
+Protected check DIRECTLY confirms WrongSubmissionIndex(requested5276,
+last-successful5275) and already-ready typed Wgpu validation scope category
+validation_usage. The prior timeout hypothesis is not the failure. The failed
+flush observer polls only already-ready error futures, preserves pending ones,
+records typed failures before mutation-abandoned and logs static categories;
+no backend description/content, completion credit, wait or health revival.
+Physical baseline/fault/service recovery passes again. No numerical acceptance.
+
+Source audit finds native register_pipeline's Wgpu initialization stub binding
+ALL original inference views to a zero-work dispatch of the original pipeline.
+Distinct carved read/write regions can share the same physical VkBuffer.
+WebGPU usage validation treats the buffer as one scope even though the actual
+Vulkan ranges are disjoint, so this bookkeeping path is incompatible with the
+native buffer carving. Source0eb9b36 changes ONLY initialization bookkeeping:
+one full true root at a time, through one READONLY zero-work storage pipeline.
+No public model write is authorized; Wgpu still initializes untouched ranges
+BEFORE actual native commands. Each native instruction keeps its original
+pipeline, descriptor spans, access/barrier/copy plan and full original owners.
+No alias/initialization validation is waived and no numerical consumer changed.
+
+The actual generated readonly initialization WGSL parses/validates through the
+same installed Naga and retains exactly one LOAD-only storage global; log
+strata-native-root-init-wgsl-20261015.log (small standalone Rust verifier source
+native-root-init-validate-20261015.rs in evidence directory). Frozen0eb9b36
+release passes, SHA25610d969e803d535e3e5dc6f308045e8e62dda779361d307461a931a8e4811a32e,
+strata-native-root-init-build-20261015. Protected original whole-model completion
+and final strict core/off Clippy running at writing. Do not infer resolution of
+the GPU failure or complete capture/numerical parity from static WGSL alone.
+
+
+## Prompt expert logical fault view and overnight stop (2026-10-15)
+
+This supersedes the earlier pending root-init checks above. Exact0eb9b36
+core/off strict Clippy pass. Both its protected run and the subsequent6d7f037
+run get past the previous upload/submission validation failure and through
+initial prompt GPU preparation/router work. Neither completes inference.
+6d7f037 adds fixed-public source-location tags for explicit prompt layout
+rejections, returning the same original Error::InvalidBufferLength. It emits
+no values/content and does not relax guards. Frozen release:
+strata-native-prompt-layout-trace-build-20261015,
+SHA256473aff7b8d1d4f8430a358521508c8e4c9991db83d0f89091b219e79c4fe0065.
+Protected evidence: strata-native-prompt-layout-trace-check-20261015 and
+strata-native-prompt-layout-trace-root-run-20261015.log.
+
+The first guard is strata_prompt_experts.rs:235: fault.size_in_used()!=4.
+Its actual strata_global_moe::enqueue_data prompt caller passed full(fault),
+the true 32 KiB root, instead of the four-byte logical view. Source da7a74e
+changes that argument to u::handle(arena,fault). Full root ownership and cleanup
+stay in the arena; the consumer guard is unchanged.30f5220 removes the stale
+Error import left by the earlier tracing conversion. No GPU run has tested this
+latest correction: user reclaimed the cards. Next physical gate, ONLY after
+the user returns them, is the same protected original completion fixture, not
+a speed comparison. Do not equate successful GPU router work with full-model
+numerical or complete native capture acceptance.
+
+Final read-only state strata-native-gpu-release-state-20261015.json at
+05:38:22 UTC confirms Intel50,688,000 bytes used, zero NVIDIA compute owners
+(NVIDIA desktop allocation591 MiB), zero all five classified GPU fault counts,
+normal/unpaused Kuno admission, and Kuno/Ollama/Vashti HTTP200. All protected
+workers exited. This is physical process recovery, NOT accepted owning erasure.
+No production binary/config/model/driver change, GPU reset or reboot. Both GPUs
+belong to the user until explicitly returned; all remaining work is CPU-only.
+Goal remains paused, at the user's request; stop at this documented checkpoint
+for the night. Whole rewrite remains incomplete. Stable whole target/MTP branch
+capture/warm-up, mapped observation and CPU doorbell/plan service, native mapped
+parameter publication, event/commit overlap, arbitrary request input and final
+numerical/state/recovery audit remain required before throughput comparisons.
+
+Exact source30f5220 final CPU checks pass: locked release strict Clippy for
+strata-intel-core and feature-off strata-rust-port, both with -D warnings;
+cargo fmt --check and git diff --check pass. Logs:
+strata-native-logical-fault-{core,off}-clippy-20261015.log. The first exact
+core attempt caught an unused Error import left by tracing;30f5220 fixes it,
+and both final checks pass. The existing duplicate-bin-path Cargo warning is
+unchanged. No full core suite, new numerical acceptance or GPU test is implied.
