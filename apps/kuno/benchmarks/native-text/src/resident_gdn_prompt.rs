@@ -65,12 +65,12 @@ impl ResidentGdn<'_> {
             || output.size_in_used() < (count * 2560 * 4) as u64
             || crate::strata_prompt::storage::overlaps(&input, &output)?
         {
-            return Err(Error::InvalidBufferLength);
+            return Err(crate::strata_prompt::invalid_buffer_length());
         }
         let shape = self.layout.pointwise.shape;
         let channels = self.layout.pointwise.channels;
         if shape.head_dim != 128 || channels != 10240 || self.layout.input_words != 2560 {
-            return Err(Error::InvalidBufferLength);
+            return Err(crate::strata_prompt::invalid_buffer_length());
         }
         let roots = [
             self.buffers.raw_conv[0],

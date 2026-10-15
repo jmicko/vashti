@@ -22,7 +22,7 @@ impl Storage {
     }
     fn at_capacity(roots: [Handle; 3], capacity: usize) -> Result<Self> {
         if capacity == 0 || capacity > allocation::DEFAULT_ROWS {
-            return Err(Error::InvalidBufferLength);
+            return Err(crate::strata_prompt::invalid_buffer_length());
         }
         let sizes = [
             allocation::whole_root_bytes(&roots[0])?,
@@ -37,7 +37,7 @@ impl Storage {
                 })
             })
         {
-            return Err(Error::InvalidBufferLength);
+            return Err(crate::strata_prompt::invalid_buffer_length());
         }
         let carve = |root: &Handle, words: &[usize]| -> Result<Vec<Handle>> {
             let root_bytes = allocation::whole_root_bytes(root)?;
@@ -49,7 +49,7 @@ impl Storage {
                 let end = cursor.checked_add(bytes).ok_or(Error::ArithmeticOverflow)?;
                 let next = end.checked_add(511).ok_or(Error::ArithmeticOverflow)? & !255;
                 if next > root_bytes {
-                    return Err(Error::InvalidBufferLength);
+                    return Err(crate::strata_prompt::invalid_buffer_length());
                 }
                 views.push(
                     root.clone()
@@ -119,25 +119,25 @@ impl Storage {
                     .iter()
                     .any(|b| overlaps(a, b).unwrap_or(true))
             {
-                return Err(Error::InvalidBufferLength);
+                return Err(crate::strata_prompt::invalid_buffer_length());
             }
         }
         for (i, a) in ple.iter().enumerate() {
             if overlaps(a, &working[1])? || ple[..i].iter().any(|b| overlaps(a, b).unwrap_or(true))
             {
-                return Err(Error::InvalidBufferLength);
+                return Err(crate::strata_prompt::invalid_buffer_length());
             }
         }
         for (i, a) in gdn.iter().enumerate() {
             if overlaps(a, &working[1])? || gdn[..i].iter().any(|b| overlaps(a, b).unwrap_or(true))
             {
-                return Err(Error::InvalidBufferLength);
+                return Err(crate::strata_prompt::invalid_buffer_length());
             }
         }
         for (i, a) in qsa.iter().enumerate() {
             if overlaps(a, &working[1])? || qsa[..i].iter().any(|b| overlaps(a, b).unwrap_or(true))
             {
-                return Err(Error::InvalidBufferLength);
+                return Err(crate::strata_prompt::invalid_buffer_length());
             }
         }
         let moe = groups::Views::new(roots[2].clone())?;
@@ -197,7 +197,7 @@ fn same_view(a: &Handle, b: &Handle) -> bool {
 /// are carved. Admit only genuinely disjoint ranges of the same retained root.
 pub(crate) fn overlaps(a: &Handle, b: &Handle) -> Result<bool> {
     if a.stream != b.stream {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     if a.clone().binding().memory.allocation_id() != b.clone().binding().memory.allocation_id() {
         return Ok(false);

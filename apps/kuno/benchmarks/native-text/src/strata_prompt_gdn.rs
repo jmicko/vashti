@@ -194,7 +194,7 @@ fn launch(
         || handles.is_empty()
         || handles.iter().any(|h| h.stream != handles[0].stream)
     {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     let mut args = KernelArguments::new();
     for h in handles {
@@ -239,7 +239,7 @@ pub(crate) fn retain(
         || target.size_in_used() != (8 * channels * 4) as u64
         || crate::strata_prompt::storage::overlaps(&source, &target)?
     {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     crate::strata_prompt::validate_output(&source)?;
     span(&source, count * channels * 4)?;
@@ -355,7 +355,7 @@ fn compatibility(
     h: [Handle; 3],
 ) -> Result<()> {
     if !(1..=8).contains(&p[0]) {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     span(&h[0], 4)?;
     span(&h[1], p[0] as usize * width * 4)?;
@@ -378,7 +378,7 @@ pub(crate) fn convolution_full(arena: &PrivateArena, p: [u32; 8], h: [Handle; 6]
     if !(1..=crate::strata_prompt::groups::CAPACITY).contains(&t)
         || crate::strata_prompt::storage::overlaps(&h[2], &h[3])?
     {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     for (handle, n) in h.iter().zip([t * c, c * 4, c * 3, c * 3, t * c, 1]) {
         span(handle, n * 4)?;
@@ -423,7 +423,7 @@ pub(crate) fn recurrence_full(arena: &PrivateArena, p: [u32; 8], h: [Handle; 8])
     if !(1..=crate::strata_prompt::groups::CAPACITY).contains(&t)
         || crate::strata_prompt::storage::overlaps(&h[2], &h[3])?
     {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     for (handle, n) in h.iter().zip([
         t * c,

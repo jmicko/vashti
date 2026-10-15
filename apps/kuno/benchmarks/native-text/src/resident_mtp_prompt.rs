@@ -26,7 +26,7 @@ impl ResidentMtp<'_, '_> {
             || carry.size_in_used() < (count * k::WIDE * 4) as u64
             || !std::ptr::eq(source_client.info(), self.client()?.info())
         {
-            return Err(Error::InvalidBufferLength);
+            return Err(crate::strata_prompt::invalid_buffer_length());
         }
         p::validate_output(&carry)?;
         self.verify_source()?;
@@ -73,7 +73,7 @@ impl ResidentMtp<'_, '_> {
             .find(|s| s.name == name)
             .ok_or(Error::InvalidBufferLength)?;
         if spec.dtype != quant_matvec::Q8_0 {
-            return Err(Error::InvalidBufferLength);
+            return Err(crate::strata_prompt::invalid_buffer_length());
         }
         let fault = u::handle(&self.arena, self.id(B::Fault))?;
         let pages = self.public()?.pages(name)?.len();

@@ -19,7 +19,7 @@ pub(crate) fn whole_root_bytes(root: &cubecl_runtime::server::Handle) -> Result<
         || root.offset_start.unwrap_or(0) != 0
         || root.offset_end.unwrap_or(0) != 0
     {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     Ok(bytes)
 }
@@ -36,7 +36,7 @@ pub(crate) struct Plan {
 impl Plan {
     pub(crate) fn new(context: usize) -> Result<Self> {
         if context == 0 {
-            return Err(Error::InvalidBufferLength);
+            return Err(crate::strata_prompt::invalid_buffer_length());
         }
         Ok(Self {
             mode: if context <= 32768 {
@@ -59,7 +59,7 @@ impl Plan {
             return Ok(None);
         }
         if self.rows != DEFAULT_ROWS {
-            return Err(Error::InvalidBufferLength);
+            return Err(crate::strata_prompt::invalid_buffer_length());
         }
         let words = ROOT_BYTES as usize / 4;
         Ok(Some([

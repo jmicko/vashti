@@ -64,7 +64,7 @@ impl ResidentQsa<'_> {
             || output.size_in_used() < (count * 2560 * 4) as u64
             || crate::strata_prompt::storage::overlaps(&input, &output)?
         {
-            return Err(Error::InvalidBufferLength);
+            return Err(crate::strata_prompt::invalid_buffer_length());
         }
         batch::latest_qsa_roots(self, arena, fault_id)?;
         let roots = [

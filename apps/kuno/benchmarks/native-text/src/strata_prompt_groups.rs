@@ -25,7 +25,7 @@ pub(crate) fn group(raw: &[u32], count: usize) -> Result<Zeroizing<Vec<u32>>> {
         || raw.len() != LOGICAL + count * 10
         || raw[..4] != [count as u32, 0, count as u32, 0]
     {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     let mut lengths = Zeroizing::new([0usize; 512]);
     let mut cells = Zeroizing::new([512u32; 512]);
@@ -34,17 +34,17 @@ pub(crate) fn group(raw: &[u32], count: usize) -> Result<Zeroizing<Vec<u32>>> {
         let logical = raw[LOGICAL + route];
         let cell = raw[MEMBERS + route];
         if logical >= 512 || cell >= 512 {
-            return Err(Error::InvalidBufferLength);
+            return Err(crate::strata_prompt::invalid_buffer_length());
         }
         for earlier in (route / 10) * 10..route {
             if raw[LOGICAL + earlier] == logical {
-                return Err(Error::InvalidBufferLength);
+                return Err(crate::strata_prompt::invalid_buffer_length());
             }
         }
         let l = logical as usize;
         let c = cell as usize;
         if (cells[l] != 512 && cells[l] != cell) || (inverse[c] != 512 && inverse[c] != logical) {
-            return Err(Error::InvalidBufferLength);
+            return Err(crate::strata_prompt::invalid_buffer_length());
         }
         cells[l] = cell;
         inverse[c] = logical;
@@ -80,11 +80,11 @@ pub(crate) fn validate(map: &[u32], count: usize) -> Result<usize> {
         || map.len() != MAP_WORDS
         || map[..3] != [count as u32, 0, count as u32]
     {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     let groups = map[3] as usize;
     if groups == 0 || groups > 512 || groups > count * 10 {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     let mut seen = Zeroizing::new([false; ROUTES]);
     let mut seen_cells = Zeroizing::new([false; 512]);
@@ -99,14 +99,14 @@ pub(crate) fn validate(map: &[u32], count: usize) -> Result<usize> {
             || map[OFFSETS + g] as usize != cursor
             || cursor + length > count * 10
         {
-            return Err(Error::InvalidBufferLength);
+            return Err(crate::strata_prompt::invalid_buffer_length());
         }
         seen_cells[cell] = true;
         let mut previous = None;
         for i in 0..length {
             let route = map[MEMBERS + cursor + i] as usize;
             if route >= count * 10 || seen[route] || previous.is_some_and(|p| p >= route / 10) {
-                return Err(Error::InvalidBufferLength);
+                return Err(crate::strata_prompt::invalid_buffer_length());
             }
             seen[route] = true;
             previous = Some(route / 10);
@@ -114,7 +114,7 @@ pub(crate) fn validate(map: &[u32], count: usize) -> Result<usize> {
         cursor += length;
     }
     if cursor != count * 10 || seen[..count * 10].iter().any(|&v| !v) {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     Ok(groups)
 }
@@ -138,7 +138,7 @@ impl Views {
             let first = cursor;
             let end = first.checked_add(bytes).ok_or(Error::ArithmeticOverflow)?;
             if bytes == 0 || !bytes.is_multiple_of(256) || end > root_bytes {
-                return Err(Error::InvalidBufferLength);
+                return Err(crate::strata_prompt::invalid_buffer_length());
             }
             cursor = end;
             Ok(root

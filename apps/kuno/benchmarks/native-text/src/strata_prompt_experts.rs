@@ -151,7 +151,7 @@ fn dispatch(
     words: [u32; 16],
 ) -> Result<()> {
     if grid.contains(&0) || grid.iter().any(|&v| v > 65535) || !active() {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     args = args.with_info(MetadataBindingInfo::custom(
         words
@@ -194,7 +194,7 @@ fn raw_slot(root: &Handle, slot: usize, roles: [usize; 3]) -> Result<Handle> {
         || root.offset_start.unwrap_or(0) != 0
         || root.offset_end.unwrap_or(0) != 0
     {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     let first = slot * bytes;
     let end = first + bytes;
@@ -232,7 +232,7 @@ pub(crate) fn enqueue(
         || owners[6].size_in_used() != (groups::STATUS_WORDS * 4) as u64
         || (DEQUANT_SLOTS * DQ_WORDS * 4) as u64 > stage[1].size_in_used()
     {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     let projections = geometry.projections();
     for (role, p) in projections.iter().enumerate() {
@@ -244,16 +244,16 @@ pub(crate) fn enqueue(
                 (0 | 1, q::IQ2_S | q::IQ3_S | q::IQ3_XXS | q::IQ4_XS) | (2, q::IQ4_NL | q::Q2_0)
             )
         {
-            return Err(Error::InvalidBufferLength);
+            return Err(crate::strata_prompt::invalid_buffer_length());
         }
     }
     if projections[0].dtype() != projections[1].dtype() {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     let role_bytes = projections.map(|p| p.expert_bytes());
     let raw_stride = role_bytes.iter().sum::<usize>();
     if (RAW_SLOTS * raw_stride) as u64 > 64 * 1024 * 1024 {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     // Native Intel prefill groups on the host once per layer. This is a bounded
     // routing-only readback, not decode's CPU expert/input contribution.

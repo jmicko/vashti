@@ -27,6 +27,22 @@ pub(crate) mod groups;
 #[path = "strata_prompt_storage.rs"]
 pub(crate) mod storage;
 thread_local! {static STAGES:RefCell<Option<storage::Storage>>=const{RefCell::new(None)};}
+// Preserve the original error variant while locating the first explicit
+// prompt-layout guard in fixed-public completion checks. No sizes or contents.
+#[track_caller]
+pub(crate) fn invalid_buffer_length() -> Error {
+    if crate::strata_intel_core::enabled()
+        && std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1")
+    {
+        let source = std::panic::Location::caller();
+        eprintln!(
+            "native_public_prompt_layout_fault source_file={} source_line={}",
+            source.file(),
+            source.line()
+        );
+    }
+    Error::InvalidBufferLength
+}
 pub(crate) struct Scope;
 impl Scope {
     pub(crate) fn new(arena: &PrivateArena, ids: [BufferId; 3]) -> Result<Self> {
@@ -35,7 +51,7 @@ impl Scope {
             || ids[0] == ids[2]
             || ids[1] == ids[2]
         {
-            return Err(Error::InvalidBufferLength);
+            return Err(crate::strata_prompt::invalid_buffer_length());
         }
         let handles = [
             u::handle(arena, ids[0])?,
@@ -45,13 +61,13 @@ impl Scope {
         for h in &handles {
             allocation::whole_root_bytes(h)?;
             if h.stream != handles[0].stream {
-                return Err(Error::InvalidBufferLength);
+                return Err(crate::strata_prompt::invalid_buffer_length());
             }
         }
         STAGES.with(|s| {
             let mut s = s.borrow_mut();
             if s.is_some() {
-                return Err(Error::InvalidBufferLength);
+                return Err(crate::strata_prompt::invalid_buffer_length());
             }
             *s = Some(storage::Storage::new(handles)?);
             Ok(Self)
@@ -145,7 +161,7 @@ pub(crate) fn stage_private_view(
     data: &[u8],
 ) -> Result<()> {
     if !crate::strata_intel_core::enabled() || !active() {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     validate_output(&target)?;
     let source = arena.handle(scratch).map_err(u::fault)?.clone();
@@ -156,7 +172,7 @@ pub(crate) fn stage_private_view(
         || source.stream != target.stream
         || storage::overlaps(&source, &target)?
     {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     validate_staged_payload(owned, target.size_in_used(), data.len())?;
     let client = arena.client().map_err(u::fault)?;
@@ -191,7 +207,7 @@ fn validate_staged_payload(owned: usize, target: u64, count: usize) -> Result<()
         || count as u64 > target
         || count > groups::CAPACITY * 2560 * 4
     {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     Ok(())
 }
@@ -248,7 +264,7 @@ pub(crate) fn copy_handles(
         || storage::overlaps(&input, &output)?
         || first > u32::MAX as usize
     {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     let mut p = [0; 16];
     p[0] = 1;
@@ -275,7 +291,7 @@ pub(crate) fn head_flags(
         || flags.size_in_used() < (count * heads * 4) as u64
         || fault.size_in_used() != 4
     {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     let mut p = [0; 16];
     p[0] = count as u32;
@@ -432,7 +448,7 @@ impl CubeTask<AutoCompiler> for Kernel {
 }
 fn dispatch_grid(kernel: Kernel, grid: [usize; 3]) -> Result<[usize; 3]> {
     if grid.contains(&0) {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     if grid[0] > 65535
         && grid[1..] == [1, 1]
@@ -447,7 +463,7 @@ fn dispatch_grid(kernel: Kernel, grid: [usize; 3]) -> Result<[usize; 3]> {
         }
     }
     if grid.iter().any(|&g| g > 65535) {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     Ok(grid)
 }
@@ -466,7 +482,7 @@ pub(crate) fn launch(
         || handles.iter().any(|h| h.stream != handles[0].stream)
         || client.properties().hardware.max_units_per_cube < kernel.lanes()
     {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     let mut args = KernelArguments::new();
     for h in handles {
@@ -551,7 +567,7 @@ pub(crate) fn project(
             .and_then(|n| n.checked_add(rows))
             .is_none_or(|n| n as u64 * 4 > output.size_in_used())
     {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     let info = [
         count as u32,
@@ -664,7 +680,7 @@ pub(crate) fn gr(request: crate::strata_gr::Read<'_>, weights: [Handle; 3]) -> R
         || weights[1].size_in_used() != 6553600
         || q.inject && weights[2].size_in_used() != 81920
     {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     for (id, words) in [
         (b.normalized, 81920),
@@ -675,7 +691,7 @@ pub(crate) fn gr(request: crate::strata_gr::Read<'_>, weights: [Handle; 3]) -> R
         (b.mixed, 20480),
     ] {
         if u::words(a, id)? != words {
-            return Err(Error::InvalidBufferLength);
+            return Err(crate::strata_prompt::invalid_buffer_length());
         }
     }
     let previous = q
@@ -721,14 +737,14 @@ pub(crate) fn write_handles(
     count: usize,
 ) -> Result<()> {
     if !(1..=groups::CAPACITY).contains(&count) {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     for (v, n) in h
         .iter()
         .zip([count * 10240, count * 2560, count * 4, count * 10240, 1])
     {
         if v.size_in_used() < (n * 4) as u64 {
-            return Err(Error::InvalidBufferLength);
+            return Err(crate::strata_prompt::invalid_buffer_length());
         }
     }
     if h[..3]
@@ -736,7 +752,7 @@ pub(crate) fn write_handles(
         .chain(h[4..].iter())
         .any(|v| storage::overlaps(v, &h[3]).unwrap_or(true))
     {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     let mut p = [0; 16];
     p[0] = count as u32;
@@ -770,7 +786,7 @@ pub(crate) fn gr_handles(q: GrHandles<'_>, weights: [Handle; 3]) -> Result<()> {
         || !q.epsilon.is_finite()
         || q.epsilon <= 0.
     {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     let external = [&q.residual, &q.injection, &q.mixed, &q.fault, &q.gamma];
     for h in [&normalized, &down, &low, &up] {
@@ -778,7 +794,7 @@ pub(crate) fn gr_handles(q: GrHandles<'_>, weights: [Handle; 3]) -> Result<()> {
             .iter()
             .any(|v| storage::overlaps(h, v).unwrap_or(true))
         {
-            return Err(Error::InvalidBufferLength);
+            return Err(crate::strata_prompt::invalid_buffer_length());
         }
     }
     if let Some((source, block)) = &q.previous
@@ -789,7 +805,7 @@ pub(crate) fn gr_handles(q: GrHandles<'_>, weights: [Handle; 3]) -> Result<()> {
                     || storage::overlaps(h, block).unwrap_or(true)
             }))
     {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     let info = [
         q.count as u32,
@@ -918,7 +934,7 @@ pub(crate) fn ab(q: crate::strata_gdn::Ab<'_>, weights: [Handle; 2]) -> Result<(
         || q.params.size_in_used() < (q.heads * 8) as u64
         || u::words(q.arena, q.fault)? != 1
     {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     crate::resident_batch_projection::validate_view(
         q.count,
@@ -981,7 +997,7 @@ pub(crate) fn ab_handles(q: AbHandles<'_>, weights: [Handle; 2]) -> Result<()> {
             .iter()
             .any(|h| storage::overlaps(&raw, h).unwrap_or(true))
     {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     let outputs = [&q.controls, &q.status, &q.fault];
     for (i, h) in outputs.iter().enumerate() {
@@ -990,7 +1006,7 @@ pub(crate) fn ab_handles(q: AbHandles<'_>, weights: [Handle; 2]) -> Result<()> {
             .chain(outputs[..i].iter())
             .any(|other| storage::overlaps(h, other).unwrap_or(true))
         {
-            return Err(Error::InvalidBufferLength);
+            return Err(crate::strata_prompt::invalid_buffer_length());
         }
     }
     let client = q.client;

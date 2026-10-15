@@ -147,7 +147,7 @@ impl CubeTask<AutoCompiler> for Op {
 }
 fn span(handle: &Handle, words: usize) -> Result<()> {
     if handle.size_in_used() < words.checked_mul(4).ok_or(Error::ArithmeticOverflow)? as u64 {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     Ok(())
 }
@@ -167,7 +167,7 @@ fn launch(
         || handles.is_empty()
         || handles.iter().any(|h| h.stream != handles[0].stream)
     {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     let mut args = KernelArguments::new();
     for h in handles {
@@ -274,7 +274,7 @@ pub(crate) fn attention(
         || (p[5] as usize) < 24 * cells_for_capacity(p[2] as usize)
         || merge_stride < 24
     {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     span(&q[5], count * 6144)?;
     span(&q[9], count * 6144)?;
@@ -341,7 +341,7 @@ pub(crate) fn norm_rope(arena: &PrivateArena, p: [u32; 12], h: [Handle; 5]) -> R
         || f32::from_bits(p[10]) <= 0.
         || p[11] != 0
     {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     span(&h[0], count * p[3] as usize)?;
     span(&h[1], width)?;
@@ -369,7 +369,7 @@ pub(crate) fn gate(arena: &PrivateArena, p: [u32; 12], h: [Handle; 3]) -> Result
     span(&h[0], p[0] as usize * 12288)?;
     span(&h[1], p[0] as usize * 6144)?;
     if p[5] < 6144 {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     span(&h[2], p[0] as usize * p[5] as usize)?;
     let packed = crate::strata_prompt::activation_stage()?;
@@ -378,7 +378,7 @@ pub(crate) fn gate(arena: &PrivateArena, p: [u32; 12], h: [Handle; 3]) -> Result
     if h.iter().any(|v| {
         v.stream != packed.stream || v.clone().binding().memory.allocation_id() == packed_id
     }) {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     launch(
         arena,

@@ -24,7 +24,7 @@ pub(crate) fn run(
         || !f32::from_bits(p[10]).is_finite()
         || f32::from_bits(p[10]) <= 0.
     {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     let blocks = capacity / 4;
     let [cache, positions, pooled, fault] = owners;
@@ -40,7 +40,7 @@ pub(crate) fn run(
         span(h, n)?;
     }
     if fault.size_in_used() != 4 {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     let q = crate::strata_prompt::qsa_workspace()?;
     for (i, n) in [12288, 512, 512, 512, 128, 6144, 512, 512, 640, 6144]
@@ -276,7 +276,7 @@ pub(crate) fn compatibility(
     mode: u32,
 ) -> Result<()> {
     if !(1..=8).contains(&p[0]) || width == 0 || mode > 3 {
-        return Err(Error::InvalidBufferLength);
+        return Err(crate::strata_prompt::invalid_buffer_length());
     }
     span(&status, p[0] as usize * width)?;
     span(&fault, 1)?;
