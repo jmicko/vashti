@@ -2,7 +2,8 @@
 //! ordered F32 truncation/temperature/Philox tail. Caller owns private buffers.
 //! No content allocation, output storage or host-logit sampling in this launcher.
 //! Device parameters are a private, mutable buffer: graph identity contains no
-//! request values. Request owners and target/draft connection remain incomplete.
+//! request values. Connected ownership is in request; full physical acceptance
+//! and whole-engine completeness remain pending.
 #[path = "strata_sampling_request.rs"]
 pub(crate) mod request;
 use cubecl::{

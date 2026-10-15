@@ -25,6 +25,7 @@ mod strata_intel_core;
 mod strata_matrix;
 mod strata_mtp_front;
 mod strata_mtp_moe;
+mod strata_mtp_probability;
 mod strata_packet;
 mod strata_ple;
 mod strata_port;

@@ -32,7 +32,8 @@ pub(crate) const MAIN_BYTES: u64 = 557056;
 pub(crate) const HOST_BYTES: usize = 2 * 1024 * 1024;
 // Source, destination and independent inspection allowances for one maximal
 // queued draft/target window, plus complete request-owner erase inspection.
-pub(crate) const RUNTIME_BYTES: u64 = 4 * MAIN_BYTES + 4 * (131072 + 32768 + 32768 + 7 * 32768);
+pub(crate) const RUNTIME_BYTES: u64 =
+    4 * MAIN_BYTES + 4 * (131072 + 32768 + 32768 + 32768 + 7 * 32768);
 const P: usize = 0;
 const HIST: usize = 1;
 const CAND: usize = 2;
@@ -300,6 +301,12 @@ pub(crate) fn target_pick(
             d.copy_from_slice(&w.to_le_bytes());
         }
         s.write(P, bytes)?;
+        let mut empty = Zeroizing::new(vec![0; ROOT_BYTES[OUT] as usize]);
+        for pair in empty[..count * 8].chunks_exact_mut(8) {
+            pair[..4].copy_from_slice(&(VOCAB as u32).to_le_bytes());
+            pair[4..].copy_from_slice(&f32::NAN.to_bits().to_le_bytes());
+        }
+        s.write(OUT, empty)?;
         // All complete roots were authenticated in Scope::new. Target authenticates
         // its own original logits and sticky fault before entering this closure.
         unsafe {
@@ -336,6 +343,7 @@ pub(crate) fn draft_pick(
     positions: Handle,
     input: Handle,
     greedy: Handle,
+    confidence: Handle,
     fault: Handle,
 ) -> Result<bool> {
     if !active() {
@@ -382,6 +390,7 @@ pub(crate) fn draft_pick(
                 s.roots[CONTROL].clone(),
                 input,
                 fault.clone(),
+                s.roots[OUT].clone(),
             ],
         )?;
         s.params.counter = counter;
@@ -413,6 +422,7 @@ pub(crate) fn draft_pick(
                 greedy,
                 s.roots[CONTROL].clone(),
                 fault,
+                confidence,
             ],
         )?;
         s.coordinates[3] += 1;

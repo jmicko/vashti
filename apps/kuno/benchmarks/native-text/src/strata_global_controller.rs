@@ -9,11 +9,17 @@ pub(super) struct Request<'a> {
     pub max_outputs: usize,
     pub eos: u32,
     pub window: usize,
+    pub draft_min_probability: f32,
     pub sampling: crate::strata_sampler::Params,
 }
 impl Request<'_> {
     fn validate(&self) -> Result<()> {
         self.sampling.validate()?;
+        if !self.draft_min_probability.is_finite()
+            || !(0. ..=1.).contains(&self.draft_min_probability)
+        {
+            return Err("global draft confidence bound".into());
+        }
         if self.prompt.is_empty()
             || self.prompt.iter().any(|&t| t >= VOCAB as u32)
             || !(1..=MAX_OUTPUTS).contains(&self.max_outputs)
@@ -93,7 +99,7 @@ impl PromptPlan {
 
 /// Accepted *input* prefix includes the confirmed predecessor. Emits exactly
 /// that many target predictions, stopping at the first target EOS. Drafts can
-/// never overrule a target prediction. This is the pinned greedy contract.
+/// never overrule a target prediction. This is pinned exact-match target verification, for greedy or sampled picks.
 fn accepted(inputs: &[u32], predicted: &[u32], eos: u32) -> Result<usize> {
     if inputs.is_empty()
         || inputs.len() != predicted.len()
@@ -236,7 +242,7 @@ pub(super) fn run<'m, 'f>(
         sampling.begin_round(position, confirmed)?;
         let remaining = request.max_outputs - history.len();
         let mut count = if draft.is_some() {
-            policy.choose_mtp(remaining.min(request.window))
+            remaining.min(request.window)
         } else {
             1
         };
@@ -244,54 +250,40 @@ pub(super) fn run<'m, 'f>(
         inputs.push(confirmed);
         let started = Instant::now();
         let mut suffix = None;
-        if let Some(draft) = draft.as_deref_mut() {
+        if let Some(draft) = draft.as_deref_mut()
+            && count > 1
+        {
+            let maximum = count;
+            let output = draft.draft_window_with_min_probability(
+                confirmed,
+                &carry,
+                maximum - 1,
+                request.draft_min_probability,
+                cancel,
+            )?;
+            if output.start != position - 1
+                || output.binding != draft.binding()
+                || output.tokens().is_empty()
+                || output.tokens().len() > maximum - 1
+                || draft.position() != position - 1 + output.tokens().len()
+            {
+                return Err("global confidence draft identity rejected".into());
+            }
+            count = output.usable_window(request.draft_min_probability, maximum)?;
             let candidate = crate::strata_port::lookup(
                 request.prompt,
                 &history,
                 remaining.min(request.window) - 1,
             );
-            if count > 1 {
-                if candidate.is_none() {
-                    let output = draft.draft_window(confirmed, &carry, count - 1, cancel)?;
-                    if output.start != position - 1
-                        || output.binding != draft.binding()
-                        || output.tokens().len() != count - 1
-                        || draft.position() != position + count - 2
-                    {
-                        return Err("global queued draft identity rejected".into());
-                    }
-                    inputs.extend_from_slice(output.tokens());
-                } else {
-                    let output = draft.step_draft(confirmed, &carry, cancel)?;
-                    if output.start() != position - 1 {
-                        return Err("global first draft stamp rejected".into());
-                    }
-                    inputs.push(output.greedy());
-                    drop(output);
-                    if let Some(candidate) = candidate.filter(|p| p.tokens.first() == inputs.get(1))
-                        && let Some(selected) = policy.choose(count, &candidate)
-                    {
-                        count = selected;
-                        for &token in candidate.tokens.iter().skip(1).take(count - 2) {
-                            draft.append_kv(
-                                *inputs.last().ok_or("global suffix predecessor absent")?,
-                                &carry,
-                                cancel,
-                            )?;
-                            inputs.push(token);
-                        }
-                        suffix = Some(candidate);
-                    }
-                    while inputs.len() < count {
-                        let output = draft.follow_draft(cancel)?;
-                        if output.start() != position + inputs.len() - 2
-                            || output.binding() != draft.binding()
-                        {
-                            return Err("global follow draft identity rejected".into());
-                        }
-                        inputs.push(output.greedy());
-                    }
-                }
+            if let Some(candidate) =
+                candidate.filter(|p| p.tokens.first() == output.tokens().first())
+                && let Some(selected) = policy.choose(count, &candidate)
+            {
+                count = selected;
+                inputs.extend_from_slice(&candidate.tokens[..count - 1]);
+                suffix = Some(candidate);
+            } else {
+                inputs.extend_from_slice(&output.tokens()[..count - 1]);
             }
         }
         if inputs.len() != count || count > remaining {

@@ -722,9 +722,9 @@ fn minimal_packet_and_followup_use_existing_complete_owners_without_new_main() {
 }
 
 #[test]
-fn draft_copy_producer_and_seal_lower_with_full_bindings_and_no_fma() {
+fn native_confidence_draft_copy_producer_and_seal_lower_with_full_bindings_and_no_fma() {
     use cubecl::{Compiler, WgpuCompilationOptions, server::ExecutionMode, wgpu::WgslCompiler};
-    for which in 0..3 {
+    for which in 0..4 {
         for mode in [ExecutionMode::Checked, ExecutionMode::Unchecked] {
             let mut builder = KernelBuilder::default();
             builder.runtime_properties(WgpuRuntime::target_properties());
@@ -740,12 +740,21 @@ fn draft_copy_producer_and_seal_lower_with_full_bindings_and_no_fma() {
                     let fault = builder.output_array(a).into();
                     copy_committed::expand(&mut builder.scope, hidden, greedy, carry, token, fault);
                 }
-                1 => {
+                1 | 2 => {
                     let hidden = builder.input_array(u).into();
                     let greedy = builder.input_array(u).into();
                     let packet = builder.output_array(u).into();
                     let fault = builder.output_array(a).into();
-                    pack_draft::expand(&mut builder.scope, hidden, greedy, packet, fault);
+                    let confidence = builder.input_array(u).into();
+                    pack_draft::expand(
+                        &mut builder.scope,
+                        hidden,
+                        greedy,
+                        packet,
+                        fault,
+                        confidence,
+                        which == 2,
+                    );
                 }
                 _ => {
                     let packet = builder.output_array(u).into();
@@ -774,7 +783,7 @@ fn draft_copy_producer_and_seal_lower_with_full_bindings_and_no_fma() {
             .validate(&module)
             .unwrap();
             assert!(!source.contains("fma(") && !source.contains("f64"));
-            if which < 2 {
+            if which < 3 {
                 assert!(source.contains("atomicOr"));
             } else {
                 assert!(source.contains("atomicLoad"));

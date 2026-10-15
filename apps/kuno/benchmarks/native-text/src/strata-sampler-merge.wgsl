@@ -6,7 +6,7 @@ var<workgroup> ordered_sum:f32;
 var<workgroup> ordered_cut:u32;
 @compute @workgroup_size(32)
 fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(subgroup_invocation_id) lane:u32,@builtin(subgroup_size) ss:u32){
- if !valid()||group.x>=p.dims.x||ss!=32u{return;}let row=group.x;let k=p.dims.z;
+ if arrayLength(&fault)<1u{return;}if !valid()||ss!=32u{atomicOr(&fault[0],0x10000000u);return;}if group.x>=p.dims.x{return;}let row=group.x;let k=p.dims.z;
  for(var i=lane;i<NB*k;i+=32u){lists[i]=candidates[row*NB*k+i];}workgroupBarrier();
  // Exactly two list cursors per lane, kept in registers as upstream's
  // warp_merge_lists. No per-candidate shared cursor or workgroup barrier.

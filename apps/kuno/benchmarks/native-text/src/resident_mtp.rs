@@ -88,6 +88,8 @@ const OUTPUT_HOST_BYTES: usize = (k::VOCAB + k::WIDE) * 4;
 const DRAFT_TOKEN: usize = k::WIDE;
 const DRAFT_FAULT: usize = k::WIDE + 1;
 const DRAFT_WORDS: usize = k::WIDE + 2;
+const DRAFT_PROBABILITY: usize = DRAFT_WORDS;
+const DRAFT_NATIVE_WORDS: usize = DRAFT_WORDS + 1;
 
 /// Unforgeable workspace-private authorization for the last completed full
 /// forward. It never keys a shader/cache or crosses the public lab boundary.
@@ -121,6 +123,28 @@ impl AcceptedCacheRepair {
         preceding: &[f32],
         carries: &[f32],
     ) -> Result<Self> {
+        Self::new_mode(
+            old,
+            start,
+            completed_forward,
+            tokens,
+            preceding,
+            carries,
+            false,
+        )
+    }
+    fn new_mode(
+        old: usize,
+        start: usize,
+        completed_forward: bool,
+        tokens: &[u32],
+        preceding: &[f32],
+        carries: &[f32],
+        native_short_chain: bool,
+    ) -> Result<Self> {
+        if native_short_chain && !crate::strata_intel_core::enabled() {
+            return Err(Error::InvalidFormat("native MTP repair mode"));
+        }
         let count = tokens.len();
         let capacity = if crate::strata_intel_core::enabled() {
             8
@@ -141,7 +165,10 @@ impl AcceptedCacheRepair {
             .ok_or(Error::OutOfBounds)?;
         let rewind = old >= start;
         if rewind {
-            if !completed_forward || old - start > capacity - 2 || count > old - start + 2 {
+            if !completed_forward
+                || old - start > capacity - 2
+                || !native_short_chain && count > old - start + 2
+            {
                 return Err(Error::InvalidFormat("MTP accepted repair draft boundary"));
             }
         } else if completed_forward || old != start - 1 || count != 1 {
@@ -627,9 +654,10 @@ pub struct Traffic {
 }
 
 /// Provisional draft result without a full vocabulary host copy. The complete
-/// vocabulary is selected by immutable construction policy and actual greedy
-/// is chosen onGPU. The original target always verifies provisional proposals.
+/// vocabulary is selected by immutable construction policy. Token/probability
+/// come from the real GPU head/sampler; the target verifies every proposal.
 pub struct DraftOutput {
+    probability: Option<Zeroizing<f32>>,
     hidden: Zeroizing<Vec<f32>>,
     greedy: Zeroizing<u32>,
     binding: u64,
@@ -637,6 +665,12 @@ pub struct DraftOutput {
     _lease: OutputLease,
 }
 impl DraftOutput {
+    pub fn probability(&self) -> Result<f32> {
+        self.probability
+            .as_deref()
+            .copied()
+            .ok_or(Error::InvalidFormat("MTP confidence unavailable"))
+    }
     pub fn hidden(&self) -> &[f32] {
         &self.hidden
     }
@@ -904,13 +938,27 @@ fn copy_committed(
 /// separate same-stream dispatch AFTER every producer/check has completed.
 #[cube(launch)]
 #[allow(clippy::manual_range_contains)]
+#[allow(clippy::collapsible_if)] // Keep comptime specialization outside device control flow.
 fn pack_draft(
     hidden: &Array<u32>,
     greedy: &Array<u32>,
     packet: &mut Array<u32>,
     fault: &mut Array<Atomic<u32>>,
+    confidence: &Array<u32>,
+    #[comptime] with_probability: bool,
 ) {
     let i = ABSOLUTE_POS;
+    if with_probability {
+        if i == DRAFT_PROBABILITY {
+            let bits = confidence[64];
+            let p = f32::reinterpret(bits);
+            if p >= 0.0 && p <= 1.0 {
+                packet[DRAFT_PROBABILITY] = bits;
+            } else {
+                fault[0].fetch_or(1);
+            }
+        }
+    }
     if i < k::WIDE {
         let bits = hidden[i];
         let value = f32::reinterpret(bits);
@@ -3593,6 +3641,7 @@ impl ResidentMtp<'_, '_> {
                 u::handle(&self.arena, positions)?,
                 u::handle(&self.arena, self.id(B::Token))?,
                 u::handle(&self.arena, self.id(B::Greedy))?,
+                u::handle(&self.arena, self.id(B::Candidates))?,
                 u::handle(&self.arena, self.id(B::Fault))?,
             )? {
                 self.tick(4)?;
@@ -3600,6 +3649,37 @@ impl ResidentMtp<'_, '_> {
                 self.guard_private(self.position + 1)?;
                 return Ok(());
             }
+        }
+        if self.native_confidence_supported() {
+            // SAFETY: same original private head/token/fault roots as the
+            // legacy selector; all grants survive this scope's fault fence.
+            unsafe {
+                crate::strata_mtp_probability::argmax(
+                    self.client()?,
+                    u::handle(&self.arena, self.id(B::Logits))?,
+                    u::handle(&self.arena, self.id(B::Greedy))?,
+                    u::handle(&self.arena, self.id(B::Fault))?,
+                )?;
+            }
+            self.tick(1)?;
+            // SAFETY: cell start cleared Candidates (both normal/follow and
+            // fused/scalar clear-role paths), and no front/rest/argmax consumer
+            // writes it. Original full head/token/fault roots stay authenticated.
+            // The COMPLETE Candidates page is lent to
+            // disjoint scratch/probability views and survives the fault fence.
+            unsafe {
+                crate::strata_mtp_probability::launch(
+                    self.client()?,
+                    u::handle(&self.arena, self.id(B::Logits))?,
+                    u::handle(&self.arena, self.id(B::Greedy))?,
+                    u::handle(&self.arena, self.id(B::Candidates))?,
+                    u::handle(&self.arena, self.id(B::Fault))?,
+                )?;
+            }
+            self.tick(1)?;
+            self.physical()?;
+            self.guard_private(self.position + 1)?;
+            return Ok(());
         }
         if self.public_english_vocab.is_some() {
             let map = self
@@ -3651,6 +3731,11 @@ impl ResidentMtp<'_, '_> {
         self.guard_private(self.position + 1)?;
         Ok(())
     }
+    fn native_confidence_supported(&self) -> bool {
+        crate::strata_intel_core::enabled()
+            && self.graph.profile() == MtpProfile::StrataQ2
+            && self.public_english_vocab.is_none()
+    }
     fn output(&mut self, lease: OutputLease) -> Result<Output> {
         validate_full_output(self.public_english_vocab.is_some())?;
         self.finish_gpu()?;
@@ -3683,6 +3768,7 @@ impl ResidentMtp<'_, '_> {
     }
     fn draft_output(&mut self, lease: OutputLease) -> Result<DraftOutput> {
         self.finish_gpu()?;
+        let with_probability = self.native_confidence_supported();
         let layout = self.arena.layout(self.id(B::RawQuery)).map_err(error)?;
         if WORDS[B::RawQuery as usize] < DRAFT_WORDS || layout.owned_bytes != 65536 {
             return Err(Error::InvalidBufferLength);
@@ -3693,12 +3779,18 @@ impl ResidentMtp<'_, '_> {
         self.tick(1)?;
         pack_draft::launch::<WgpuRuntime>(
             self.client()?,
-            u::grid(DRAFT_WORDS)?,
+            u::grid(if with_probability {
+                DRAFT_NATIVE_WORDS
+            } else {
+                DRAFT_WORDS
+            })?,
             CubeDim::new_1d(64),
             self.a(B::Residual2)?,
             self.a(B::Greedy)?,
             self.full(B::RawQuery)?,
             self.a(B::Fault)?,
+            self.a(B::Candidates)?,
+            with_probability,
         );
         self.tick(1)?;
         // Distinct dispatch is essential: no grid-wide barrier exists in the
@@ -3719,13 +3811,15 @@ impl ResidentMtp<'_, '_> {
                 .ok_or(Error::ArithmeticOverflow)?;
             Ok(())
         })?;
-        let (hidden, greedy) = decode_draft(&packet)?;
+        let (hidden, greedy, probability) =
+            decode_draft_with_probability(&packet, with_probability)?;
         self.verify_source()?;
         self.ledger
             .completed_fence(sample(self.client()?)?)
             .map_err(error)?;
         Ok(DraftOutput {
             hidden,
+            probability: probability.map(Zeroizing::new),
             greedy: Zeroizing::new(greedy),
             binding: self.binding,
             start: Zeroizing::new(self.position),
@@ -4542,7 +4636,7 @@ impl ResidentMtp<'_, '_> {
         {
             return Err(Error::InvalidFormat("MTP accepted repair workspace"));
         }
-        let plan = AcceptedCacheRepair::new(
+        let plan = AcceptedCacheRepair::new_mode(
             self.position,
             target_start,
             self.last_forward
@@ -4551,6 +4645,7 @@ impl ResidentMtp<'_, '_> {
             accepted_tokens,
             preceding_carry,
             accepted_carries,
+            crate::strata_intel_core::enabled() && self.graph.profile() == MtpProfile::StrataQ2,
         )?;
         self.repair_accepted_cache_plan(
             plan,
@@ -4800,13 +4895,27 @@ fn greedy_host(values: &[f32]) -> Result<u32> {
 }
 
 fn decode_draft(packet: &[u32]) -> Result<(Zeroizing<Vec<f32>>, u32)> {
+    let (h, t, _) = decode_draft_with_probability(packet, false)?;
+    Ok((h, t))
+}
+fn decode_draft_with_probability(
+    packet: &[u32],
+    with_probability: bool,
+) -> Result<(Zeroizing<Vec<f32>>, u32, Option<f32>)> {
     let owned = BufferLayout::new(WORDS[B::RawQuery as usize])
         .map_err(error)?
         .owned_words;
     if packet.len() != owned
         || packet[DRAFT_TOKEN] as usize >= k::VOCAB
         || packet[DRAFT_FAULT] != 0
-        || packet[DRAFT_WORDS..].iter().any(|&x| x != 0)
+        || packet[if with_probability {
+            DRAFT_NATIVE_WORDS
+        } else {
+            DRAFT_WORDS
+        }..]
+            .iter()
+            .any(|&x| x != 0)
+        || with_probability && !(0. ..=1.).contains(&f32::from_bits(packet[DRAFT_PROBABILITY]))
         || packet[..k::WIDE]
             .iter()
             .any(|&x| !f32::from_bits(x).is_finite())
@@ -4818,7 +4927,11 @@ fn decode_draft(packet: &[u32]) -> Result<(Zeroizing<Vec<f32>>, u32)> {
     if hidden.capacity() != k::WIDE {
         return Err(Error::LimitExceeded("MTP draft host capacity"));
     }
-    Ok((hidden, packet[DRAFT_TOKEN]))
+    Ok((
+        hidden,
+        packet[DRAFT_TOKEN],
+        with_probability.then(|| f32::from_bits(packet[DRAFT_PROBABILITY])),
+    ))
 }
 
 #[cfg(test)]
@@ -4877,4 +4990,61 @@ fn validate_input(token: u32, carry: &[f32], position: usize) -> Result<()> {
         return Err(Error::InvalidBufferLength);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod native_confidence_tests {
+    use super::*;
+    #[test]
+    fn native_confidence_draft_packet_has_checked_optional_probability() {
+        let owned = BufferLayout::new(WORDS[B::RawQuery as usize])
+            .unwrap()
+            .owned_words;
+        let mut p = vec![0; owned];
+        p[DRAFT_TOKEN] = 17;
+        for value in [0., 0.1, 1.] {
+            p[DRAFT_PROBABILITY] = f32::to_bits(value);
+            let (_, token, prob) = decode_draft_with_probability(&p, true).unwrap();
+            assert_eq!(token, 17);
+            assert_eq!(prob, Some(value));
+        }
+        for value in [f32::NAN, f32::INFINITY, -0.1, 1.1] {
+            p[DRAFT_PROBABILITY] = value.to_bits();
+            assert!(decode_draft_with_probability(&p, true).is_err());
+        }
+        p[DRAFT_PROBABILITY] = 0.5f32.to_bits();
+        assert!(decode_draft(&p).is_err());
+        p[owned - 1] = 1;
+        assert!(decode_draft_with_probability(&p, true).is_err());
+    }
+    #[test]
+    fn native_confidence_suffix_repair_can_outgrow_short_confidence_chain() {
+        if !crate::strata_intel_core::enabled() {
+            return;
+        }
+        let preceding = vec![0.; k::WIDE];
+        for drafted in 1..crate::strata_port::verify_capacity() {
+            for accepted in 1..=crate::strata_port::verify_capacity() {
+                let tokens = vec![3; accepted];
+                let carries = vec![0.; accepted * k::WIDE];
+                let plan = AcceptedCacheRepair::new_mode(
+                    32 + drafted - 1,
+                    32,
+                    true,
+                    &tokens,
+                    &preceding,
+                    &carries,
+                    true,
+                )
+                .unwrap();
+                assert_eq!(plan.first_row, 1);
+                assert!(plan.rewind);
+                assert_eq!(plan.end, 32 + accepted - 1);
+            }
+        }
+        assert!(
+            AcceptedCacheRepair::new(32, 32, true, &[1, 2, 3], &preceding, &vec![0.; 3 * k::WIDE])
+                .is_err()
+        );
+    }
 }

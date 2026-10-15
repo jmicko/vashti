@@ -2,7 +2,7 @@ var<workgroup> bits:array<atomic<u32>,BITMAP_WORDS>;
 var<workgroup> winners:array<vec2<u32>,32>;
 @compute @workgroup_size(1024)
 fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) lane:u32,@builtin(subgroup_invocation_id) sl:u32,@builtin(subgroup_size) ss:u32,@builtin(subgroup_id) sg:u32){
- if !valid()||group.x>=p.dims.x||ss!=32u{return;}let row=group.x;let h=min(p.hist.x,p.hist.y);
+ if arrayLength(&fault)<1u{return;}if !valid()||ss!=32u{atomicOr(&fault[0],0x10000000u);return;}if group.x>=p.dims.x{return;}let row=group.x;let h=min(p.hist.x,p.hist.y);
  if BITMAP_WORDS==1u&&h>0u {atomicOr(&fault[0],0x10000000u);return;}
  if h>0u {
   for(var i=lane;i<7760u;i+=1024u){atomicStore(&bits[i],0u);}workgroupBarrier();

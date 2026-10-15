@@ -14,6 +14,8 @@ Prompt operand images, GR/AB consumers and the Rust/Vulkan GEMM substitution
 follow sycl/src/prefill/gemm.dp.cpp, kernels.dp.cpp and prefill.cpp.
 Sampler adaptation follows sycl/src/kernels/cuda/sampler.dp.cpp,
 sycl/include/strata/kernels/sampler.hpp and core/coupled_draft.hpp.
+Argmax/top-probability and confidence consumption also follow
+verify_kernels.dp.cpp, core/mtp.cpp and program/generate.cpp.
 Existing iq_moe_integer-NOTICE.txt retains additional llama.cpp/ggml attribution.
 
 MIT License
