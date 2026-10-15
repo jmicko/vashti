@@ -1281,6 +1281,24 @@ pub fn validate_fused_sweep_limits(limits: &wgpu::Limits) -> Result<()> {
     Ok(())
 }
 
+/// Native Intel uses split attention, not the old QH*CONTEXT one-dimensional
+/// scalar grid. Keep that old validator for its actual legacy consumers. The
+/// native frontend/head still require the full common1024-thread/18-binding
+/// core, plus the genuine complete-page guard and original public root bounds.
+fn validate_native_strata_limits(limits: &wgpu::Limits) -> Result<()> {
+    if !crate::strata_intel_core::enabled() {
+        return Err(Error::InvalidFormat("native MTP limits require core"));
+    }
+    crate::strata_port::validate_limits(limits)?;
+    if limits.max_compute_workgroups_per_dimension < 65535
+        || limits.max_storage_buffer_binding_size < 128 * 1024 * 1024
+        || limits.max_buffer_size < 128 * 1024 * 1024
+    {
+        return Err(Error::LimitExceeded("native MTP complete page limits"));
+    }
+    Ok(())
+}
+
 impl<'g, 'f> ResidentMtp<'g, 'f> {
     /// Caller must initialize required_memory_configuration and enable physical
     /// SUBGROUP16..32 before entering this laboratory-only constructor. This
@@ -1422,7 +1440,9 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             .then(english::EnglishVocabulary::embedded)
             .transpose()?;
         graph.verify_unchanged()?;
-        if fused_sweeps {
+        if crate::strata_intel_core::enabled() && expected_profile == MtpProfile::StrataQ2 {
+            validate_native_strata_limits(limits)?;
+        } else if fused_sweeps {
             validate_fused_sweep_limits(limits)?;
         } else {
             validate_limits(limits)?;

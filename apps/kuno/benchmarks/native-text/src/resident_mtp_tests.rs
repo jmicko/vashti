@@ -846,3 +846,36 @@ fn full_span_guards_lower_checked_and_unchecked_for_all_public_roles() {
         }
     }
 }
+
+#[test]
+fn native_shared_mtp_limits_follow_actual_split_attention_not_legacy_flat_grid() {
+    let limits = wgpu::Limits {
+        max_compute_invocations_per_workgroup: 1024,
+        max_compute_workgroup_size_x: 1024,
+        max_compute_workgroup_storage_size: 32912,
+        max_storage_buffers_per_shader_stage: 18,
+        max_bindings_per_bind_group: 19,
+        max_compute_workgroups_per_dimension: 65535,
+        ..Default::default()
+    };
+    if !crate::strata_intel_core::enabled() {
+        assert!(validate_native_strata_limits(&limits).is_err());
+        return;
+    }
+    // Real Intel exposes65535 groups; the legacy flat query-head/context grid
+    // does not fit. Native split attention does, under stricter workgroup caps.
+    assert!(validate_limits(&limits).is_err());
+    validate_native_strata_limits(&limits).unwrap();
+    let mut short = limits.clone();
+    short.max_compute_workgroups_per_dimension = 65534;
+    assert!(validate_native_strata_limits(&short).is_err());
+    short = limits.clone();
+    short.max_compute_invocations_per_workgroup = 1023;
+    assert!(validate_native_strata_limits(&short).is_err());
+    short = limits.clone();
+    short.max_storage_buffers_per_shader_stage = 17;
+    assert!(validate_native_strata_limits(&short).is_err());
+    short = limits;
+    short.max_storage_buffer_binding_size = 128 * 1024 * 1024 - 1;
+    assert!(validate_native_strata_limits(&short).is_err());
+}
