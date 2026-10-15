@@ -1,25 +1,23 @@
-<!-- Current resume: 2026-10-14, source9de7fef, codex/strata-rust-port.
-Read kuno-vashti-coordination.md active shared-target-dense-roots handoff and
-kuno-strata-rewrite-completion.md Shared original dense roots and GPU embedding.
-Whole rewrite incomplete; no speed trials. Both GPUs now authorized for protected
-correctness work; sudo refreshed. Compact confidence/capture/policy/input remain. -->
+<!-- Current resume: 2026-10-15, sourceec37fad, codex/strata-rust-port.
+Read coordination latest handoff and completion guide Final checkpoint.
+Whole rewrite incomplete; no speed trials. GPUs idle, services normal; goal paused. -->
 # Native DASLab/Strata checkpoint — 2026-10-09
 
-**Current Rust port resume pointer (2026-10-14):** isolated
-`codex/strata-rust-port`, source through `e418929`. Read the latest
-[handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--shared-native-intel-construction-2026-10-14)
-and [shared-context receipt](kuno-strata-rewrite-completion.md#shared-native-intel-construction-accounting-and-close-2026-10-14).
-The selected core now uses one actual target/MTP client and combined admission,
-I/O and retirement account; earlier separate-client constructor blockers are
-superseded. This is source/CPU acceptance, not whole-model/device acceptance.
-Target embedding/head roots still duplicate uploads. Next implement actual pinned
-shared model ownership and native stable capture/warm/branch/event/chain/commit,
-compact positive-threshold draft observations, native policy and runtime/input
-gates. Full-source and physical correctness/recovery are incomplete. No speed
-trials. The user owns BOTH GPUs: reconfirm before live GPU/model/admission/residency
-work. CPU source work can continue without sudo. No installed service or public
-API change; all older results below are historical.
-
+**Current Rust port resume pointer (2026-10-15):** isolated
+`codex/strata-rust-port`, source through `ec37fad`. Read coordination latest
+handoff and completion guide **Full-owner prompt uploads / Final checkpoint**.
+Shared constructors/global GPU+HOST sources initialize. All identified sliced
+private-upload callers now use original full packet/scratch roots and ordered
+GPU copies; original full-owner/padding/cleanup contracts unchanged. Exact core/
+off Clippy pass;17 focused shared cases pass throughf4400a7. Protected combined
+completion fails FIRST at stream.rs1366's native upload poll inside prompt
+execution; later4-owner metadata/retirement faults are cascades. Inspect actual
+PollError/preceding typed validation before another model run; no timeout or
+health waiver. No complete inference/numerical/owning-erasure or speed receipt.
+Mapped/stable captures/warm/doorbells/events/commit overlap and runtime/input
+remain unfinished. Both GPUs idle, Intel50,688,000 bytes, zero unchanged faults,
+normal admission and all HTTP200. No installation/API change; goal remains
+paused. All older checkpoints below are historical.
 
 **Current checkpoint:** user requested a stop for usage conservation. Standalone
 Strata is removed; original model shards, alternate draft and comparison evidence

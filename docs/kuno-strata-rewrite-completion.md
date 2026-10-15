@@ -43,8 +43,8 @@ all need a final audit of actual connected dispatches, not just file names.
 | PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Core connects native BF16 MAX8 projections, normalization/gate/conv/history, deduplicated positional reads and accepted-prefix ownership. Prompt calls now consume a bounded, joined double-buffered source prefetch. The latest controller receipt connects native large chunk geometry, joined uploads, retained tail and exact history acceptance. Native loans/queue scheduling and numerical/device acceptance remain open. Never persist request n-grams. |
 | Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. The bounded prompt path now uses logical-ID expert order, checked native transfer nodes, an eight-slot raw ring and two paired dequantization slots. The latest owned-consumer receipt connects full2048-row owners, non-overlapping raw/grouped route packets, causal math/state scopes, the unbatched final prompt input uses normal count1 decode for the first head, and full device MTP teaching covers the preceding prefix (up to8192 matrix rows). Independent transfer/compute queues and real release boundaries are connected. Dynamic cache loans, conditional ring sizing and physical whole-model acceptance remain open. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
 | Prompt dense/expert matrix backend | Intel oneMKL rounded BF16/FP16 GEMMs | Connected Rust cooperative8x16x16/F32 kernels now consume the actual rounded dense and grouped GU/DOWN images, with enabled device features, SPIR-V native registration and required16 subgroup in both pipeline paths. See the cooperative-matrix receipt; physical numerical/model acceptance remains open. |
-| MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native FP16 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. First/grouped device-source and ids-only target result consumers now exist; the shared-context constructor receipt below supersedes the separate-client blocker. Core construction now selects the actual target client and one combined account. Source9de7fef pins the original target embedding/head once, shares them with MTP and gathers target embeddings on GPU. Actual device/state acceptance is pending. Queue/branch/capture fidelity, numerical/state acceptance and runtime policy remain required. See the latest device-end receipt. |
-| Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Request-local Rust suffix/cost controller exists; audit supported window lengths and coupled sampling rather than fixing to four public-fixture rows. |
+| MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native FP16 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Positive-threshold chains now keep hidden carries on device and observe the same token/probability/fault packet as zero-threshold chains; mapped/event scheduling remains open. First/grouped device-source and ids-only target result consumers now exist; the shared-context constructor receipt below supersedes the separate-client blocker. Core construction now selects the actual target client and one combined account. Source9de7fef pins the original target embedding/head once, shares them with MTP and gathers target embeddings on GPU. Actual device/state acceptance is pending. Queue/branch/capture fidelity, numerical/state acceptance and runtime policy remain required. See the latest device-end receipt. |
+| Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Sourcea26adc2 ports the native bounded trigram index, longest/recent suffix choice, cost priors, probing/stale rules and optional lookup-chain accounting into the selected controller. Configured MTP/target windows no longer shrink at the output cap; state commit and emission are separate. Coupled sampling and physical state acceptance still need end-to-end validation. |
 | Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Real greedy verification/state-only repair exists. Audit all active windows and acceptance cases against GDN/QSA/PLE/positions; independent correctness oracle remains missing. |
 | Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; physical ring overlap, stable complete branch recordings, scratch lifetimes and full execution acceptance remain open; a sequence of independent Wgpu launches is not equivalent. |
 | Request lifecycle and arbitrary input | upstream CLI/session/inference entry points | Current Rust public-fixture gate is not a general engine. Connect bounded arbitrary prompts and request-local sampling/history, with no persistent content, protected memory and orderly erase/close. No gateway/UI work required. |
@@ -4103,3 +4103,410 @@ build pass. Offline shader set318 ordinary bodies plus controller,122
 physical-pointer and32 cooperative-matrix cases pass; no device is initialized.
 Formatting/whitespace pass. Existing duplicate-bin-path Cargo notice remains.
 These focused checks are not a full-suite waiver or whole-model acceptance.
+
+
+## Native draft observations, lookup policy and exact commits (2026-10-14)
+
+Source `a26adc2`, after `9de7fef`. Connected source/CPU acceptance; whole
+rewrite remains incomplete and no speed trial is authorized. Pinned references
+are Intel `mtp.cpp::draft/capture_round/capture_step`, native `generate.cpp`
+speculation and `src/spec/{suffix_drafter,draft_policy}.cpp`.
+
+Positive confidence thresholds previously called `draft_output` per cell,
+copying its10240-value hidden vector to host although the next cell used the
+original device owner. Both threshold modes now use one exclusive queued
+window: the same full private packet contains only token ids, probabilities
+and sealed sticky fault. A positive threshold joins/validates that original
+packet after each cell and stops before the next cell on probability<minimum;
+zero threshold joins once at the chain end. Both keep Residual2 on GPU and
+feed Carry/Token through the existing same-stream original-source copy. Only
+the completed final cell grants LastForward authority. Device source grants
+stay borrowed through the actual final result/fault fence. Cancellation,
+invalid padding/fault or incomplete completion still fails the whole window.
+
+Explicit remaining Vulkan substitution: logical packet16 words / full32KiB
+owner, with actual fenced readback and complete padding validation; this is
+not Strata's permanently mapped tiny per-step observation/event publication.
+The scalar/legacy diagnostic APIs still expose their explicit hidden outputs;
+the selected native controller no longer calls those APIs. Source compilation
+does not establish device numerical/state equivalence.
+
+`strata_speculation` ports the native four-way trigram hash index, including
+the current occurrence consuming one of the four entries. Longest64-token
+match wins, most recent wins ties; proposals after provisional drafts do not
+index those drafts, and the temporary tail is wiped before truncation. The
+fixed8192-token history and16384-slot wiping index plus bounded proposals fit
+inside the existing4MiB request HOST quote; no token-dependent graph key,
+output log or persistent history is introduced.
+
+The selected controller now uses the pinned eight-size cost shape, per-match
+lookup/chain priors, cost and acceptance EMAs, three unmeasured-size probes,
+300-round stale-cost refresh, and exact reached-chain accounting. Default
+native config enables suffix minimum3 and leaves optional lookup-chain off;
+its actual request config carries target/MTP windows and chain parameters.
+Whole-model adapter is still the fixed public fixture, not an application API.
+Cost observations span this verify/commit plus the next actual draft, before
+choosing the following round's policy; no timing is published or used to
+reject coupled port changes. Optional chained suffixes use the real selected
+MTP probability product and only target-verified emitted tokens reach history.
+
+Configured draft windows no longer shrink to remaining requested output.
+Target commits the entire exact-match input prefix; EOS/output cap limit
+delivery separately, matching native generate.cpp. Terminal state can
+therefore be ahead of the last emitted token, and final acceptance checks
+that real committed cursor rather than inventing another draft/catch-up.
+All continuing rounds still require emitted prefix=committed prefix. Context
+exhaustion rejects the full configured window rather than silently clipping.
+
+CPU receipts under `kuno-development/strata-native-policy-*-20261014.log`:
+6 new translated native policy/suffix/commit cases,8 native confidence cases,
+4 grouped-round cases and1 prefix-acceptance case pass. Core/off strict binary
+Clippy and core release build pass. No shader producer changed in this block;
+confidence packet producer lowering is included in those confidence checks.
+Frozen protected artifact sourcea26adc2:SHA256
+`1060d768291811596c56e022bc556e0308143dbec46073642a9d800db0e4fd83`.
+
+A first protected code/Q2 completion check stopped before model loading on
+`native model chunk rejected at source line1155`. This exposed a REAL stale
+constructor expectation: the original target root sum still assumed F32 QSA
+cache/pool roots. Independent CPU geometry confirmed590,151,680 native base
+bytes instead of785,186,816, plus the unchanged GDN replay roots. Source
+`575971f` prices all12 native QSA full owners together: each32MiB cache becomes
+16MiB and each512KiB pooled-key root becomes1MiB. Exact sum/root-count equality
+checks remain; no relaxed limit or fallback was added. The owning plan test
+now includes actual selected GDN replay inputs, full native padding, exact
+constructor aggregate and old feature-off behavior. Follow-up execution pending.
+
+Failed-run evidence:
+`strata-native-policy-a26adc2-check-20261014` and
+`strata-native-policy-a26adc2-root-run-20261014.log`. Cleanup accepted: actual
+Intel used bytes50,688,000, no NVIDIA compute process, all classified GPU fault
+counters unchanged0, normal admission restored, Kuno/Ollama/Vashti HTTP200.
+No reset/reboot, driver, installed binary, API/UI or release change. This failed
+check is not numerical/whole-engine acceptance or a speed result.
+
+Capture audit next: `run_global`/`strata_global_cpu::prepare` still use actual
+per-layer packet/input readbacks; parent flush enters native `Graph::execute`,
+which waits its completion fence. Exact-node recording uses a16-entry LRU,
+not native warm capture of all stable target windows and MTP round/step
+branches. Complete the mapped doorbell/input/output ownership, original
+CPU/GPU plan publication, branch parameter staging and event/commit overlap
+as a connected block. Merely raising an LRU size or keeping buffers without
+those consumers does not finish capture. The current adaptive exchange IS
+called from LatestTargetRound::finish; its synchronous publication/overlap
+still needs the same whole-source audit. Prior228 full-core failures remain
+untriaged beyond the explicitly reproduced/fixed constructor issue.
+
+Further connected constructor audit: source395f4b2 joins the actual native
+QSA MAX8 geometry (22,052,864 vs17,825,792 bytes) into BOTH the component check
+and aggregate NEW_MAIN. Source1554d5c also joins both audited copies of the
+native GDN compatibility INFO into the parent expected value and real runtime
+quote:5,013,504 vs4,718,592 bytes. These were missing connected consumers of
+previously changed family layouts, not reasons to abandon those families.
+The exact old-owner test passes at source575971f; QSA full-page inspection
+confirmed its original scalar owner also includes the extra512KiB pooled-key
+root (20,054,016 bytes per native QSA stage), and its stale CPU test expectation
+needs correction. The broader core suite remains unaccepted.
+
+Protected attempts at source575971f and395f4b2 stopped before payload load at
+parent layout checks1317 (QSA batch) and1702 (GDN INFO), respectively. Both
+recovered the exact physical50,688,000-byte Intel baseline, no NVIDIA compute,
+unchanged zero classified faults and normal admission/HTTP200. Logs/output
+directories: `strata-native-qsa-geometry-{root-run,check}-20261014` and
+`strata-native-qsa-batch-{root-run,check}-20261014` (root-run files end.log).
+Source1554d5c follow-up pending. No speed number or full correctness acceptance.
+
+The actual protected public fixture now selects native spec4/min-probability0.5
+instead of treating MAX8 compilation as the request default. The saved upstream
+comparison configuration independently confirms those settings. Full-vocabulary
+drafting, FP16 KV and the4096-token owned context remain the explicitly selected
+source-port mode; the earlier upstream comparison used its CJK subset, INT8 KV
+and32768 context. Do not claim matched whole-engine performance from either mode
+without the explicit final completeness/substitution and numerical/state audit.
+
+The owning scalar plan check passes at575971f. Source3fe048e reconciles the
+independently observed20,054,016-byte native QSA stage and2,506,752/5,013,504-byte
+GDN INFO expectations. Final focused CPU checks pass:2 exact-full-page cases
+(QSA and PLE),1 GDN INFO inventory and1 original model-owner case. Sourcebb705ae
+strict core/off Clippy and core release build pass. Existing duplicate-bin-path
+Cargo warning remains. No all-suite waiver is implied.
+
+The source1554d5c protected check passed the parent geometry gates but stopped
+with `resident runtime I/O cleanup failed`; target/draft owning cleanup did NOT
+produce an acceptance receipt. Process-exit physical recovery still passed
+Intel50,688,000 bytes, no NVIDIA compute, unchanged zero faults and restored
+admission/HTTP. Treat physical process recovery and private owning erasure as
+separate evidence. Sourcebb705ae adds fixed-public backend source-location
+diagnostics; the same failure occurs without invoking that backend fault helper.
+Sourceab4bf67 adds static constructor phase and cleanup-retirement booleans to
+identify the boundary. Neither diagnostic prints backend descriptions, request
+values, token ids, INFO buffers or images. Follow-up pending; no speed trial.
+
+Sourceab4bf67's protected trace isolated the failure AFTER complete target
+construction, at `phase=shared_target_weights`. No vendor failure occurred:
+the native public upload uses no private transient stages, so its actual
+completed audit returned all-zero I/O counts. The old private-readback validator
+incorrectly demanded a nonempty private audit for this public observation and
+retired the shared context. This is a parent-contract bug, not a GPU crash.
+
+Source172e6df gives only `ResidentAdmission::shared_observation_checkpoint`
+a separate completed-empty-audit policy. It still invokes the real same-stream
+full sanitizer/audit, requires a nonzero completed epoch for an empty receipt,
+exact byte accounting and empty-buffer/count consistency, joins original
+ordered sources, checks context/sequence health and obtains actual post-fence
+MAIN telemetry. It does not reacquire the MAIN mutex from inside that mutex.
+Active request-I/O scopes retain their original reuse/checkpoint branch.
+`readback_audited` and the ordinary private-readback validator STILL reject
+empty receipts. No synthetic receipt, skipped drain, retirement reset, extra
+memory credit or ignored cleanup failure is introduced. Failure cases retire
+exactly as before. The focused CPU test covers empty/private rejection,
+missing epoch, inconsistent bytes/buffers, overflow, nonempty acceptance,
+audit errors and prior retirement. Build/protected retest pending.
+
+Sourcebb705ae/ab4bf67 fixed-public diagnostics print only static constructor
+phases, cleanup booleans and source locations. They do not dump error
+descriptions or request bytes. Both protected diagnostic attempts also
+recovered the exact Intel50,688,000-byte baseline and normal services while
+properly reporting that owning private erasure was not accepted.
+
+Source172e6df strict core Clippy/build and its completed-empty-audit CPU check
+pass. The existing production-audit negative test also passes unchanged
+(`strata-native-empty-public-private-audit-exact-20261014.log`); the earlier
+`private-audit` filter selected0 tests and is NOT coverage.
+
+Protected source172e6df now successfully constructs target AND uploads all
+shared target weights. It reaches `phase=shared_draft` and fails the historical
+`MTP original resident kernel limits` check. Source560474b selects a native
+Q2-specific validator: the real split-attention native dispatches use the
+common1024-thread/18-storage-binding core and65535-grid/page-root capabilities,
+not the legacy flat QH*CONTEXT dimension. The old validator remains unchanged
+for actual legacy/self-contained consumers. Native source validation remains
+strict; no hardware limit is raised or fabricated. A CPU fixture tests native
+acceptance at65535 and smaller workgroup/grid/binding/root rejection, alongside
+continued legacy-grid refusal. Shared-context cleanup retires on constructor
+failure as before; physical process recovery again accepted exact50,688,000
+Intel bytes, no NVIDIA compute, zero unchanged GPU faults and normal services.
+Build/test/protected source560474b follow-up pending.
+
+
+## Shared construction continuation and real CPU/GPU submit boundary (2026-10-14)
+
+This receipt supersedes pending construction notes above; source through
+`dbf2312` on isolated `codex/strata-rust-port`. Whole rewrite remains incomplete.
+No speed/profile trial, installation, API/UI/release change or GPU reset.
+
+- `172e6df`: completed empty public-upload audit accepted only at the shared
+  observation checkpoint; ordinary private readback remains nonempty/strict.
+  New empty-audit unit and the original exact private-audit refusal case pass.
+- `560474b`: validate the actual native split-attention grid/capabilities,
+  preserving the old legacy flat-grid check. Thirteen native_shared tests,
+  strict core/off Clippy and frozen core release pass.
+- `5b91d9a`: query all137 original MTP owners in batches of at most128, preserving
+  the backend limit and the complete cross-batch physical-span/alias proof.
+  Fourteen native_shared tests, strict core/off Clippy and frozen release pass.
+- `851475a`: source loading requires untouched construction, not an accepted
+  token. The new initial boundary proves the same model/graph/client/arena,
+  fault/retirement/source health plus PLE next=position=generation=0, no pending
+  operation or selected runtime PLE policy, unseeded token history and zero
+  convolution history. Request geometry/cursor/one-token sampling may inspect
+  this state. It cannot mint CompletedNativeProjectionBoundary; lab policy
+  switches still require an actual accepted nonzero cursor. Fifteen native_shared
+  tests and strict core/off Clippy pass. Full unit suite still unaccepted.
+- `f597084`: connect a distinct submit-only server/client/stream path to the
+  real core expert/shared work inside the existing scoped CPU pool. Previously
+  parent.flush claimed overlap while native Graph::execute waited its fence.
+  The new path keeps the recording, full node/resource inventory, actual queue
+  plan and fence alive. Only successful completed join credits execution and
+  clears nodes. Partial submission/failed join remains terminal. Later compute,
+  transfer, ordinary flush, readback/sync/sanitizer joins before reuse; submit-only
+  skips allocator/uniform cleanup. Other servers reject the extension; ordinary
+  flush keeps its old synchronous behavior. Frozen core release passes; focused
+  checks/strict Clippy and protected follow-up are pending at writing.
+  This does NOT implement mapped CPU doorbells or stable whole-window capture.
+
+Protected frozen checks: `strata-native-mtp-limits-*`,
+`strata-native-metadata-batches-*`, `strata-native-initial-boundary-*`, under
+`/media/jmicko/faststore/kuno-development`. The560474b check passed model/draft
+load then rejected137 metadata bindings. The5b91d9a check passed both models
+and reached global_sources, rejecting the old zero-cursor PLE check. The851475a
+check passes that boundary, then fails `resident graph device operation` during
+original global source preparation. There is no accepted full source-load,
+whole-model completion, numerical/state or owning-erasure receipt yet. All
+three process exits restore exact Intel50,688,000 bytes, no NVIDIA compute,
+zero unchanged classified GPU faults, normal admission and all three HTTP200.
+Failed owning cleanup is not retroactively accepted because physical exit worked.
+
+Next: locate the global-source preparation error, then finish mapped observation/
+CPU doorbell plan service, stable complete target/MTP branch capture/warm-up,
+parameter staging and commit/event overlap as one connected schedule. Finish
+arbitrary-input/runtime and complete numerical/state/recovery gates before speed
+trials. Retain coupled source changes regardless of incidental duration. Do not
+waive historical228 full-core failures; only the specifically repaired cases
+have new acceptance evidence. Both GPUs authorized; sudo refreshed in Demons.
+
+
+Source `dbf2312` adds bounded, fixed-public global-cache stage/error CLASS
+classification (no backend strings/content); it includes f597084 and builds.
+Frozen SHA256 d9a465e70d61d7e90046a07fb26b7b6a787130f992dde3d9016d4013a5bbf7a4,
+`strata-native-global-source-trace-build-20261014` in the evidence directory.
+Protected completion running at writing; no accepted inference/speed claim.
+
+
+The dbf2312 protected check reproduces the generic source-setup failure WITHOUT
+triggering either cache-upload/completion classifier: do not describe that as
+an upload failure. Source audit found a SECOND complete-inventory call in
+Sources::build_tables directly sending GPU+HOST roots to the128-binding API.
+Source8b5f7aa centralizes always-retained bounded inspection and connects both
+that address-table builder and the GPU cache inventory. Full root extents,
+physical-address map, owner identity, cross-batch uniqueness/aliases and all
+source consumer limits remain unchanged; no truncation/raised backend limit.
+The same CPU helper fixture already covers1/128/129/137/379/2048/4096 owners,
+short batches and second-batch failure. Frozen8b5f7aa core release passes:
+`strata-native-global-inventory-build-20261014`, SHA256
+3c9ca431d93881f67b429b689c92e0c81f8ae95209aa3143961698cdbd6b6a66.
+Protected original full-source completion check running at writing. Actual
+acceptance is pending; no numerical/whole-port/speed claim. The prior dbf2312
+exit again recovers exact physical baseline, unchanged faults and normal services.
+
+
+The8b5f7aa protected run gets THROUGH prepare_global_sources_before_prefill and
+into the request's runs closure (its public_language_failed_cleanup path is
+now invoked); global construction is no longer the current blocker. It stops
+with resident graph device operation during request execution before a complete
+receipt. Exact error stage pending. All physical recovery/service/fault checks
+pass again. Sourcea3cd02a adds fixed-public controller phases and static stream
+error classes. Its build failed due to a missing LaunchError import, corrected
+byea2b53c; do not select the failed artifact. No backend description/token data
+is printed. Final corrected release and strict core/off Clippy pending.
+
+Source throughdbf2312 passes15 native_shared and6 native_speculation cases;
+strict core/off Clippy passes through8b5f7aa. Exact logs:
+strata-native-submission-final-{shared,policy,core-clippy,off-clippy}-20261014.log.
+Do not confuse those focused CPU checks with a full core regression or numerical
+acceptance, nor submit-only source compilation with a live overlap receipt.
+
+
+## Full-owner prompt uploads and ordered carved copies (2026-10-15)
+
+Corrected ea2b53c release and strict core/off Clippy pass. Frozen SHA256
+4126af0c785ebaf6ab5dbdc9b38fe70f46f1fd372d114bd0b24ebc9b341d49ab,
+strata-native-execution-phase-fixed-build-20261014. Protected phase check gets
+through source initialization, request_preflight, prompt_prefix and prompt_chunk,
+then fails resident graph device operation without a queued stream error. All
+physical recovery/services pass as before; owning cleanup is NOT accepted.
+No speed result. Error occurs during first prompt chunk, not global setup.
+
+Source audit identifies a deterministic invalid private API call in shared
+embedding gather: write_private requires a complete unoffset owning span but
+new gathering passed a token-length sliced logit-packet view. Source539f205
+uses the original FULL packet root, validates its actual layout and uploads
+zero-padded full-owner bytes (at most1MiB). Shader token reads keep their exact
+logical spans; no private API/erasure policy is weakened. New CPU test checks
+1/8/2048 tokens, complete zero padding, original vocabulary bounds and malformed/
+short/oversized owner rejection. Test and strict core/off Clippy pass; frozen
+539f205 SHA25628ff3a691f62acfd160205553a8bacd442030040fc862a5aad2cfad983be7b40.
+It is not separately GPU-tested; the next artifact includes the coupled fixes.
+
+The same audit found future full-owner violations at BOTH carved prompt uploads:
+resident_ple_prompt's embedding rows and strata_global_moe's grouped route map.
+Sourcef4400a7 connects strata_prompt::stage_private_view at both actual consumers.
+The selected original prompt scope must authorize the EXACT destination view;
+the original arena supplies a distinct, full, aligned scratch root on the same
+stream (32KiB..1MiB). Extents, bounded payload and source/target disjointness are
+checked before mutation. Each zero-padded source window uses strict full-owner
+write_private; original GPU copy kernels write only the destination subrange.
+
+PLE uses the model logit packet, whose embedding token reads are ordered earlier;
+routing maps use the existing decode-map root, unused by prompt routing. No GPU
+allocation or new I/O privilege/API is added. Later overwrite of the same scratch
+is an ordered graph write AFTER prior GPU copy reads, using actual retained
+buffers/ranges and compute/copy dependencies; no premature root release. Source
+host windows are wiping buffers, at most the already owned scratch size. Source
+allocations remain under original private runtime/sanitizer ownership. Target
+neighbors are preserved; padding and final erasure still cover the true owner.
+
+This is an explicit bounded-upload/GPU-copy substitution, NOT Strata's mapped
+parameter staging or proof of complete capture fidelity. Never count it as a
+speed gain before all completeness/correctness gates. New staging CPU test
+covers full/partial windows, total byte coverage and capacity/alignment/overflow
+bounds. Full original numerical/state/owning-erasure acceptance remains pending.
+Final f4400a7 release/focused tests/Clippy/protected check pending at writing.
+
+
+Sourceeb4ff8e completes the carved-upload caller audit for MTP teacher tokens:
+resident_mtp_prompt previously passed another sliced token view to strict
+write_private. It now uses the same checked staging/copy path, with MTP's
+original scalar-token root as scratch and the shared target prompt view as the
+GPU destination. This requires the already implemented SAME actual context/
+stream and lexical prompt scope, not an alias between separate devices. No
+native shared-weight or private-upload limit is relaxed. The native_shared
+staging/payload suite now has17 passing cases atf4400a7; strict core/off Clippy
+and final combined corrected artifact/physical acceptance pending. These source
+fixes do not imply completion of mapped parameter publication/capture scheduling.
+
+
+Sourceec37fad additionally queues a FULL scratch erase after the final ordered
+copy reader. Staging may legitimately use bytes beyond a scalar role's logical
+word; those words must be zero again before the original MTP padding guards or
+next scalar operation examine that root. It does not weaken those guards or
+credit queued erasure as completed cleanup. No scope, view or target neighbor is
+cleared by this scratch restoration. Failed staging remains owned by the same
+terminal model cleanup. eb4ff8e/f4400a7 intermediate artifacts are not selected
+for GPU acceptance; use the final combined ec37fad build below once validated.
+
+
+Final combined sourceec37fad frozen release passes, SHA256
+ d0d79071d30de626dd173ef93b8304f2b8eacaa914592f5addcdaacbe8b829a0
+(strata-native-private-staging-final-build-20261015).17 native_shared CPU cases
+pass atf4400a7; strict core Clippy passes throughf4400a7, off Clippy through
+ ec37fad. Final exact core Clippy running. The corresponding protected combined
+whole-model completion check is running; do not infer live acceptance from the
+successful compiler. Logs use strata-native-private-staging-final-*20261015.
+
+
+### Final checkpoint for this block
+
+Sourceec37fad, immutable d0d79071d30de626dd173ef93b8304f2b8eacaa914592f5addcdaacbe8b829a0.
+Final exact core Clippy passes; off Clippy also passes. Focused17 shared cases
+pass throughf4400a7; later changes connect MTP's same helper and restore scratch
+before existing padding checks. Prior6 speculation cases pass; full core suite
+and numerical/state/owning-erasure acceptance remain unaccepted.
+
+Protected combined ec37fad run gets through original target/draft/shared roots,
+global GPU/HOST initialization, request_preflight, prompt_prefix and prompt_chunk.
+It now reaches an actual Wgpu parameter/upload completion poll, instead of the
+known invalid sliced private-upload call. FIRST backend failure is
+vendor/cubecl-wgpu/src/compute/stream.rs:1366 (`native graph upload completion`).
+That poll's original error variant is currently masked. The last displayed error,
+resident retained metadata lookup rejected, is a CASCADE: a later4-owner query
+finds kuno_private_io_failure:mutation_abandoned after the first failure. Do NOT
+loosen metadata/health/retirement to address that cascade. Native stream174 and
+sanitizer3798/3822/3587 are subsequent retired-stream cleanup failures.
+
+Exact protected evidence: strata-native-private-staging-final-{root-run.log,
+check}/20261015 naming in the development directory (actual files use the full
+prefix followed by -20261015; root log:
+strata-native-private-staging-final-root-run-20261015.log). host-before.json /
+host-after.json are original sanitized snapshots. Parent elapsed clock is about95s,
+less than its120s poll deadline. From installed wgpu-types29.0.4, PollError only
+has Timeout / WrongSubmissionIndex. This SUGGESTS queue-submit validation or a
+wrong successful index, not a demonstrated hardware hang; the actual variant
+and preceding Wgpu validation scopes still need direct evidence. Do not simply
+raise deadlines, ignore poll failure or mark completion. Inspect the FIRST queue
+submission and its captured typed validation error, initialization and retained
+resources before any additional full-model run.
+
+The protected worker exits. Physical recovery accepts Intel50,688,000 bytes,
+no NVIDIA compute, unchanged zero classified GPU faults, normal admission and
+Kuno/Ollama/Vashti HTTP200. Owning private cleanup was NOT accepted and must not
+be inferred from process exit. Current source is a development checkpoint,
+NOT a selected production/release artifact. Both GPUs are idle after this block.
+No reset/reboot/service binary/config/driver/model mutation. Final separate
+read-only state: strata-native-private-staging-final-state-20261015.json.
+
+NEXT source work is still the complete coupled Strata schedule: mapped observation/
+CPU doorbell and plan servicing, stable target/MTP branch capture/warm-up, native
+parameter staging and commit/event overlap, followed by runtime/arbitrary-input
+and full numerical/state/recovery audits. This block's source fixes do not satisfy
+those remaining rows. No throughput/profile comparisons or speed-driven rollback.
+Goal remains paused; no claim of whole rewrite completion.

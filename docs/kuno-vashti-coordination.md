@@ -5,17 +5,20 @@ This is the shared handoff between the **Build Kuno inference helper** task
 Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
-**Current native-engine resume pointer (2026-10-14):** isolated
-`codex/strata-rust-port`, source through `9de7fef`. Read the latest
-[shared-weight handoff](#active-kuno-engine-handoff--shared-target-dense-roots-2026-10-14)
-and [whole-rewrite gate](kuno-strata-rewrite-completion.md). Actual shared
-target/MTP context/account and pinned original embedding/head roots are now
-connected. Target embedding gather is on GPU. Whole rewrite remains incomplete;
-no speed trials. Next complete compact confidence observations, native stable
-capture/warm/event/chain/commit, policy and runtime/input gates, then the full
-source/physical correctness/recovery audit. Both GPUs are authorized for our
-protected correctness work; sudo was refreshed in the shared shell. Recheck live
-state before tests. Application API unchanged.
+**Current native-engine resume pointer (2026-10-15):** isolated
+`codex/strata-rust-port`, source through `ec37fad`. Read the latest
+[shared-source handoff](#active-kuno-engine-handoff--shared-source-initialization-and-cpugpu-submission-2026-10-15)
+and **Full-owner prompt uploads and ordered carved copies / Final checkpoint**
+in [the completion gate](kuno-strata-rewrite-completion.md). Shared model/global
+GPU+HOST sources now initialize. Target tokens, PLE/routing maps and MTP teacher
+tokens preserve strict full-owner private uploads via bounded scratch/GPU copies.
+Exact core/off Clippy and17 focused shared tests pass at the named revisions.
+Protected completion reaches prompt execution but fails its first native upload
+completion poll; later metadata/retirement errors are cascades. No full execution,
+numerical/owning-erasure or speed acceptance. Whole rewrite incomplete. Finish
+mapped/captured/warm/doorbell/commit scheduling and runtime/input/state gates.
+GPUs idle, admission/services normal, physical baseline/fault checks pass. Goal
+remains paused. API unchanged; required Vashti changes:none.
 
 ## Ownership
 
@@ -5840,3 +5843,122 @@ focused native regressions, strict core/off Clippy, core release build and
 318 ordinary/controller plus122 physical-pointer/32 matrix offline shaders pass.
 Exact logs/limits are in the completion receipt. No GPU work was needed for
 this source block.
+
+
+### Active Kuno engine handoff — native policy and connected owner pricing (2026-10-14)
+
+Source1554d5c (after395f4b2,575971f,a26adc2,9de7fef), isolated
+`codex/strata-rust-port`. Completion guide **Native draft observations, lookup
+policy and exact commits** contains exact changes, substitutions and evidence.
+This is backend source-port work; required Vashti changes:none.
+
+Core positive-threshold drafting now reads token/probability/fault only from
+the original32KiB packet owner; real hidden vectors stay on GPU. Zero threshold
+joins once, positive threshold joins each required step and preserves native
+equality/stopping. Native four-way suffix index and lookup/chain cost policy
+are connected, including unmeasured/stale probes and reached-chain accounting.
+Policy costs include verify/commit plus the next actual draft. Configured
+windows no longer shrink to output count; state commit and EOS/cap delivery
+are separate. Temporary lookup tails, history/index and observations are
+request-local/wiped. Original full-owner erase/fault/source identity remain.
+
+CPU policy/confidence/grouped/prefix checks and strict core/off Clippy pass at
+a26adc2. Exact original target-owner test passes at575971f. Protected runs
+a26adc2,575971f,395f4b2 stopped BEFORE payload load at stale exact-parent quotes
+for native scalar QSA, batch QSA and GDN INFO. Their connected parent consumers
+are now priced in source1554d5c, preserving strict equalities and old feature-off
+contracts. A stale scalar-QSA CPU expected value and first GDN INFO assertion
+still need updating before final tests. Next protected completion check pending.
+
+All three failed attempts restored Intel50,688,000 bytes, no NVIDIA compute,
+zero unchanged classified faults, normal Kuno admission and all three HTTP200.
+No service binary, driver, API/UI, install, release or model file was changed.
+Both GPUs remain authorized; refresh/check sudo before protected work.
+
+NEXT connected block after constructor completion: native mapped ownership
+and CPU doorbell/plan service, stable complete target and MTP branch recording/
+warm-up, parameter staging and event/commit overlap. Current CPU plan still
+reads route/input per layer and native flush waits a fence;16 exact-node LRU
+entries are not the native captured graph. Do not benchmark or revert source
+based on incidental durations. Full rewrite, arbitrary-input/runtime and
+numerical/state acceptance remain incomplete. Historical228 full-core failures
+have NOT been waived by the specific reproduced/fixed constructor issues.
+
+
+Latest continuation: source172e6df afterab4bf67/bb705ae. Both trace runs
+identified a false empty-I/O rejection at shared target-weight loading, AFTER
+real target construction; they recovered the same physical baseline and
+services. Source172e6df adds a scoped completed-empty observation while
+ordinary private-readback proofs remain nonempty and strict. Actual sanitizer,
+source joins, completed epoch and MAIN/health checks remain mandatory. See
+the completion receipt for exact contract and pending test/build/protected run.
+The native QSA/GDN CPU owner fixtures now pass; earlier notes saying their
+assertions still need updates are superseded by3fe048e. Whole goal incomplete.
+
+
+Continuation throughf597084: see the completion guide's **Shared construction
+continuation and real CPU/GPU submit boundary** receipt for exact revisions and
+negative-test/physical evidence. Constructor fixes are connected to the real
+caller, not waived validators. Latest protected851475a check gets past the PLE
+zero-cursor gate and fails within original global-source setup; no full execution
+or numerical acceptance. New CPU/GPU submit-only path retains original owners
+through an actual completion fence; build/test pending. No installation/API/UI
+work or other-task message. Historical pending assertions above are superseded
+only by the named focused tests; full core regression remains unaccepted.
+
+
+### Active Kuno engine handoff — shared source initialization and CPU/GPU submission (2026-10-15)
+
+Isolated `codex/strata-rust-port`, sourceea2b53c after8b5f7aa/dbf2312/f597084/
+851475a/5b91d9a/560474b/172e6df. No canonical checkout, installed binary, driver,
+API, UI, release or model-file change. No speed/profile run or GPU reset.
+
+Real shared constructors/global sources are past their prior blockers:
+- Native exact QSA/GDN quotes and actual MTP split-attention device limits.
+- 137 original MTP owners and combined GPU+HOST source inventories inspected
+  through128-binding batches; full cross-batch physical checks preserved.
+- Untouched zero-token setup proven separately from an accepted nonzero commit;
+  completed-policy tokens still require real committed execution.
+- Actual submit-only expert/shared GPU recording alongside scoped CPU workers;
+  all owners/queue plans/fence retained, later mutation/read/sync/cleanup joins,
+  failed/partial submissions cannot mint completion. Ordinary flush unchanged.
+
+Frozen8b5f7aa gets through global source setup into request execution, then
+fails resident graph device operation. Owning cleanup is NOT accepted; process
+exit recovers Intel50,688,000 bytes, no NVIDIA compute, zero unchanged GPU faults,
+normal Kuno admission and all three HTTP200. This is neither GPU crash evidence
+nor numerical acceptance. Sourceea2b53c adds fixed-public phase/error-class tags;
+release and strict core/off Clippy pass, protected follow-up running at writing.
+The interim a3cd02a build failed a missing import; use corrected ea2b53c.
+
+CPU checks throughdbf2312:15 native_shared and6 native_speculation pass; their
+full-inventory helper covers4096 owners/failed batches. Strict core/off Clippy
+also passes8b5f7aa andea2b53c. Full core suite/historical228 failures remain
+unaccepted beyond the named repaired cases. See completion guide for exact
+logs, immutable binary hashes, scope/substitutions and latest protected result.
+
+NEXT: finish current execution-failure diagnosis, then the remaining connected
+mapped observation/CPU doorbell service, stable target/MTP branch recording and
+warm-up, parameter staging and commit/event overlap. Do not rank partial engines
+by speed or back out connected source solely due duration. Full arbitrary-input,
+numerical/state and physical recovery acceptance precedes speed comparisons.
+Goal controller remains paused; user authorizes active-turn GPU work. No consumer
+handoff beyond documentation is needed: required Vashti changes:none.
+
+
+**Latest continuation (sourceec37fad):** see completion guide **Full-owner prompt
+uploads and ordered carved copies / Final checkpoint**.539f205/f4400a7/eb4ff8e/
+ec37fad fix all identified sliced private-upload callers without weakening the
+full-owner API: target token packet, PLE/routing-map views and MTP teacher tokens.
+Existing complete scratch roots are uploaded/zero-padded, GPU copies preserve
+neighboring data, full scratch is restored before original padding guards. No
+new GPU allocation or user-facing API. The combined protected run fails FIRST at
+stream.rs1366's Wgpu upload completion poll; the later4-owner metadata rejection
+is abandoned-mutation retirement, not the root failure. Actual PollError variant/
+preceding validation error still need evidence. Do not waive validation, erase
+proofs, retired health or raise deadlines. Final release/core/off Clippy pass;
+17 focused shared cases pass throughf4400a7. No whole/model numerical/speed
+acceptance. Worker exits, exact physical baseline/zero unchanged faults and all
+services/admission recover. GPUs idle; no install/reset/reboot. Both canonical
+and isolated source scope remain unchanged. Resume the whole-source gate; goal
+still paused. Required Vashti changes:none.
