@@ -5,11 +5,13 @@ This is the shared handoff between the **Build Kuno inference helper** task
 Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
-**Current native-engine resume pointer (2026-10-14):** the isolated Rust rewrite
-is through `97e22f9` on `codex/strata-rust-port`; read the
-[native last-prompt-input handoff](#active-kuno-engine-handoff--native-last-prompt-input-2026-10-14)
-and [whole-rewrite gate](kuno-strata-rewrite-completion.md). It is incomplete;
-no live speed benchmark before the connected source and correctness gates.
+**Current native-engine resume pointer (2026-10-14):** isolated
+`codex/strata-rust-port`, source through `267a71b`. Read the
+[sampler-component handoff](#active-kuno-engine-handoff--sampler-source-component-2026-10-14)
+and [whole-rewrite gate](kuno-strata-rewrite-completion.md). Full rewrite and
+sampling integration remain incomplete. No speed trials before connected source
+and protected correctness gates. The user owns BOTH GPUs; reconfirm availability
+before GPU/model/admission/residency work. CPU source/build checks may continue.
 This backend work does not change the published image/application contract.
 
 ## Ownership
@@ -5496,3 +5498,46 @@ ring/stream-all/auto chunk policy, actual GPU sampling and captured verifier/sta
 repair/source/failure audits. Sampling source pointers/semantics are recorded;
 no sampling implementation is claimed. The user is using BOTH GPUs: reconfirm
 availability before any GPU work. Goal active; required Vashti changes:none.
+
+
+### Active Kuno engine handoff — sampler source component (2026-10-14)
+
+Source `267a71b`, after `97e22f9`, on isolated `codex/strata-rust-port` at
+`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`. Read completion guide
+**Native sampler source and request-data boundary**, including its final CPU
+validation receipt and actual pinned caller references. This turn makes source
+progress; it does not complete the engine/sampling gate.
+
+New Rust-owned sampler component follows original penalties,1024-thread greedy,
+4096-logit/four-subgroup split top-k, private two-list merge cursors, distributed
+exponentials/quotients with ordered F32 scans, Philox and id/probability output.
+History helpers match each target row and the coupled draft base/cell+1 counter.
+Request parameters are wiped host-side and must live in a private128-byte DEVICE
+storage view; kernels/cache identities contain no seed/prompt/history/counter.
+No implicit GPU allocations, host-logit sampling or persistent content is added.
+
+**Not connected yet:** the actual controller, target packet and MTP head still
+use earlier greedy paths. Do not claim sampled model inference from these helper
+checks or call the unsafe launcher without actual parent ownership/staging/price
+proofs. Next connect request configuration/consumed history, pre-device MAIN/
+HOST/I/O grants and real private owner, target sampler-to-packet consumer,
+coupled GPU stage/ring/actual step-record counter/publish chain and actual MTP
+probability consumers together. Preserve exact-match TARGET sampled-token
+acceptance and repair only accepted input state/history. The completion receipt
+identifies the pinned target call outside its recorded graph and the MTP
+round/step device-staging dependencies; read them before making the hookups.
+
+All7 focused CPU checks, core release build, strict core/feature-off Clippy and
+formatting pass. Full offline shader set is312 variants, with122 existing
+physical-pointer and32 cooperative-matrix checks. Use the already-built pinned
+2026.1 SPIR-V validator path in the receipt; distro2025 does not understand the
+existing BF16 capabilities. No GPU/model/math/state/recovery/live-speed proof or
+full-suite pass. Prior228 full-core failures remain to audit. Remaining runtime
+context/grants/cache policy, conditional ring/stream-all, captured branches and
+verifier-repair dependencies also remain; read the whole completion gate.
+
+Both GPUs remain with the user: request availability before any GPU/model test
+or residency/admission/service change. Source/CPU work can proceed without sudo.
+No installed services, API, Vashti, deployment or release change. Canonical clean
+checkout and inherited bytecode preserved. Goal active; required Vashti changes:
+none.

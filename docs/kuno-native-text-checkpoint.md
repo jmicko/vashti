@@ -1,15 +1,17 @@
 # Native DASLab/Strata checkpoint — 2026-10-09
 
 **Current Rust port resume pointer (2026-10-14):** isolated
-`codex/strata-rust-port`, source through `97e22f9`. Read the latest
-[coordination handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--native-last-prompt-input-2026-10-14)
-and [completion receipt](kuno-strata-rewrite-completion.md#native-prompt-prefix-and-final-decode-boundary-2026-10-14).
-The controller now batches N-1 inputs and uses normal decode for the final
-original input/first prediction; cache sources/rebasing prerequisites remain
-`60f6760`/`12b310f`/`8b503e2`. The full rewrite is incomplete: no speed trials
-before source completeness and protected numerical/state/recovery acceptance.
-Older numbers and paused states below are historical. The user is using both
-GPUs; reconfirm availability before any GPU/model/admission/residency work.
+`codex/strata-rust-port`, source through `267a71b`. Read the latest
+[coordination handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--sampler-source-component-2026-10-14)
+and [sampler component receipt](kuno-strata-rewrite-completion.md#native-sampler-source-and-request-data-boundary-2026-10-14).
+Rust GPU sampler sources and wiping history/counter helpers pass CPU/offline
+checks; actual target/draft request-owner integration is still pending. The
+controller's native prefix/final-decode prerequisite remains `97e22f9`; cache
+sources/rebasing prerequisites remain `60f6760`/`12b310f`/`8b503e2`. The full
+rewrite is incomplete: no speed trials before connected source completeness and
+protected numerical/state/recovery acceptance. Older numbers and paused states
+below are historical. The user is using both GPUs; reconfirm availability before
+any GPU/model/admission/residency work. CPU work may continue without sudo.
 
 
 **Current checkpoint:** user requested a stop for usage conservation. Standalone

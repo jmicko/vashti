@@ -3097,3 +3097,148 @@ Philox4x32-10 keyed by seed/counter, per-verification-row penalty history, and
 coupled draft staging/sample/probability/target acceptance. A CPU sampler or
 random draft alone does not finish this source-to-source dependency. This pass
 inspected those actual files but did not claim to implement sampling.
+
+## Native sampler source and request-data boundary (2026-10-14)
+
+**Source `267a71b`: sampler component only; NOT connected target/draft sampling.**
+This extends `97e22f9`; it does not satisfy the sampling or arbitrary-request completion row.
+The existing controller/target packet/MTP head still take their earlier greedy
+paths. No GPU/model execution or speed comparison was conducted. The user owns
+both GPUs until availability is reconfirmed.
+
+Pinned sources inspected: `sycl/include/strata/kernels/sampler.hpp`,
+`sycl/src/kernels/cuda/sampler.dp.cpp`, `sycl/src/kernels/sampler_parity.cpp`,
+`sycl/include/strata/core/coupled_draft.hpp`, and the actual call sites in
+`sycl/src/core/{verify,mtp}.cpp` / `sycl/src/program/generate.cpp` at
+`fb58e0dbc8399662c0e47c76578c6e878b14f6cf`. MIT notice is retained/extended in
+`strata-port-NOTICE.txt`.
+
+### Implemented component, not a connected engine claim
+
+`strata_sampler.rs` and its four WGSL sources provide:
+
+- Full original248320 vocabulary; one1024-thread workgroup per greedy row,
+  including two subgroup reduction levels. Penalty membership uses the native
+  vocabulary bitmap and exact counts only on hits. A separate no-penalty
+  specialization avoids reserving the full31KiB bitmap. WGSL requires a
+  nonempty static array, so that specialization retains one unused4-byte word
+  (native SYCL's dynamic local bitmap has zero bytes in this case).
+- Sampled split top-k:61 blocks of4096, four32-lane subgroups per block,32
+  register-held values per lane and separate even/odd selection chains. A
+  subgroup merges four lists using private cursors. One32-lane workgroup per
+  row merges the61 lists, with two private list cursors per lane. There is no
+  workgroup barrier per selected token and no partial-workgroup barrier.
+- Penalties precede top-k, then top-p, min-p, temperature and inverse-CDF draw.
+  Tail exponentials and quotients are distributed among32 lanes. Lane0 alone
+  performs ascending F32 sums/cumulative scans. Both selected id and its final
+  probability are returned in the private output, including probability1 for
+  greedy. Finite logits/normalizers join the sticky fault; this is not a
+  substitute for the existing target/state completion proof.
+- Pinned Philox4x32-10 uses upstream's actual `0x9E3779B9` / `0xBB67AE85`
+  multipliers, not the more familiar Random123 constants. Integer high products
+  use a checked16-bit partial-product decomposition; draw counters use full
+  low/high carry and24-bit uniforms below1.
+- `penalty_rows` packs the last history tokens from consumed tail plus each
+  target row's own input prefix, with front `-1` padding. `coupled_base` is its
+  row0. `coupled_counter(cell)` is cell+1, the target row checking that draft,
+  rather than the cell's predicted-token position cell+2. Helpers/staging wipe
+  host storage on drop; no diagnostic/persistent token history is added.
+
+The GPU launch contract uses six disjoint, same-stream private views in order:
+logits, per-row history, split scratch, strided `[id, probability-bits]` output,
+sticky fault,128-byte request parameter storage. The last buffer is **device
+storage**, not shader text, kernel identity or an INFO/uniform literal. Request
+seed/counter/settings must be refreshed there at execution; native graph replay
+must never reuse a captured literal draw. Kernel identity contains only the
+static algorithm/penalty specialization. Launcher performs geometry/extent/
+non-overlap checks but is unsafe: its eventual owning caller must authenticate
+complete arena grants and exact parameter-buffer contents, stage them through
+owned private I/O, retain owners through both queue joins, and erase them.
+It allocates no GPU buffers, samples no host logits and writes no persistent
+request data.
+
+Sampled scratch is rows*61*64*8 bytes (31232 for one row,249856 for eight);
+greedy needs only a dummy4-byte candidate view. Per-row history is at most
+4096 int32 slots. Values are fixed to this original model/currentMAX8 scope,
+not an assertion of general-vocabulary or arbitrary-context support. Runtime
+request grants, actual buffer carving and resource admission remain to connect.
+
+Substitution requiring final review/numerical acceptance: WGSL subgroup max plus
+minimum tied token id implements the native finite-logit total-order reduction
+instead of spelling SYCL's shuffle tree. Grouping, private cursor ownership and
+ordered sums are preserved; device transcendental/rounding behavior and selected
+probabilities still need physical comparison. This component is not evidence of
+bitwise device equivalence, correct whole-model output or graph recovery.
+
+### Next connected block and remaining audit
+
+Do **not** finish by selecting a CPU sampler or merely binding these shaders to
+the old greedy packet. Connect these dependencies together:
+
+1. Real pre-device MAIN/HOST/private-I/O prices, owning request buffers and
+   bounded wiping history/configuration. The component's unsafe launcher is
+   deliberately not called with fabricated owners or ordinary uploads.
+2. Actual target logits -> per-window parameter/history staging -> sampler ->
+   authenticated compact output/carry/fault packet. Pinned verify.cpp:2166 draws
+   target row t with counter pos0+t, after the main verification graph; source
+   explicitly keeps this call outside the recorded head to avoid stale draws.
+   Greedy-with-penalties must use the same history path.
+3. Actual MTP head and coupled round/step inputs: pinned mtp.cpp::setup_coupled,
+   set_draft_sampling/history, capture_round, capture_step and record_rest.
+   Refresh device parameters and the base ring before the round; read the
+   actual cell position from its device step record; draft j reads
+   ring[cap+j-h,cap+j), and writes its actual id into ring[cap+j]. Probability
+   is part of its output. Keep original full Q2 head/source authority. The
+   request helpers here do not implement this GPU ring/stage/publish chain.
+4. Existing exact-match target acceptance remains authoritative under sampling
+   (coupled_draft.hpp): a draft may only increase accepted length when it equals
+   the target's sampled token. Consume only the accepted input prefix in history
+   and state; repair rejected GDN/QSA/PLE/MTP state and keep absolute draw indices
+   invariant across window sizes. Do not count proposed suffixes as consumed.
+5. Extend actual graph ownership/branch recordings, INFO/host grants and final
+   erasure paths, plus CPU/source failure audit. Then protected numerical/model/
+   state/recovery acceptance, still before speed trials. No frontend/API change.
+
+The prior full-core suite's228 failures remain unaudited; this source receipt
+neither skips them nor treats focused helper/shader checks as a full suite pass.
+Validation receipts are recorded with the source commit in the coordination
+handoff after the CPU checks complete.
+
+
+### Sampler source validation receipt
+
+Final CPU-only receipts in `/media/jmicko/faststore/kuno-development`:
+
+- `strata-native-sampler-final-tests-20261014.log`: all7 focused checks pass.
+  Coverage is independent full-vocabulary sorting versus partition/merge,
+  penalties/ties/partial last block, ordered scalar tail/probability invariants,
+  pinned Philox draws/high-product/counter carry, exact device payload and
+  storage reflection, input rejection/extent overflow, and all supported target
+  row histories/coupled base/cell-counter relationships. Four sampler variants
+  parse/validate and lower to SPIR-V. These are CPU source/geometry checks,
+  **not execution of GPU sampling against an independent device oracle**.
+- `strata-native-sampler-final-build-20261014.log`: core release build passes.
+- `strata-native-sampler-final-shaders-20261014.log`:312 WGSL variants validate
+  and lower, including the4 new sampler variants. The122 existing physical
+  pointer checks and32 cooperative-matrix/layout variants pass external SPIR-V
+  validation as well. No Vulkan device is created by this command; main returns
+  from `--validate-port-shaders` before selecting/initializing a device.
+- `strata-native-sampler-final-core-clippy-20261014.log` and
+  `strata-native-sampler-final-off-clippy-20261014.log`: strict core and ordinary
+  feature-off Clippy pass. Formatting and staged whitespace checks pass. The
+  pre-existing Cargo duplicate-binary-path notice is unchanged.
+
+Same locked release manifest/bin as the preceding receipt, test filter
+`native_sampler`, features `strata-intel-core` / `strata-rust-port`, Clippy
+`-- -D warnings`. Full shader validation uses the existing pinned2026.1 tool:
+`PATH=/media/jmicko/faststore/kuno-development/spirv-tools-matrix-20261014/build/tools:$PATH`.
+Its revision/version is in `strata-native-sampler-validator-20261014.log`.
+The first full-set attempt with the distro2025 validator stopped at an existing
+BF16 capability it does not recognize; the final receipt uses the already
+built pinned official tool documented above. No capability was skipped or
+removed and no installed tool/service was changed.
+
+Canonical checkout was verified clean and left untouched; inherited bytecode
+in the isolated checkout is preserved. No public API/consumer, service,
+installation, residency/admission, release or live-speed change. The goal stays
+active; completeness and protected numerical/state/recovery gates remain open.
