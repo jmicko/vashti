@@ -27,6 +27,8 @@ mod strata_mtp_front;
 mod strata_mtp_moe;
 mod strata_mtp_probability;
 mod strata_packet;
+#[cfg(test)]
+mod strata_parameter_tests;
 mod strata_ple;
 mod strata_port;
 mod strata_prompt;
