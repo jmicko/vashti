@@ -2,6 +2,7 @@
 //! single final read/fault fence completes every cell. Original scalar APIs
 //! retain their completed-forward authority and numerical paths.
 use super::*;
+use crate::resident_model::batch::target_rows::DeviceCarry;
 use std::time::Instant;
 
 const ROWS: usize = crate::strata_port::verify_capacity();
@@ -87,6 +88,11 @@ enum WindowStart<'a> {
         token: u32,
         carry: &'a [f32],
     },
+    Device {
+        start: usize,
+        tokens: &'a [u32],
+        source: &'a DeviceCarry<'a>,
+    },
     Accepted {
         start: usize,
         tokens: &'a [u32],
@@ -105,16 +111,9 @@ impl WindowStart<'_> {
                 tokens,
                 carries,
             } => {
-                if !crate::strata_intel_core::enabled()
-                    || !completed
-                    || *start == 0
-                    || !(1..=ROWS).contains(&tokens.len())
-                    || old > k::CONTEXT
-                    || old < *start
-                    || old - start > MAX_PROPOSALS - 1
-                    || carries.len() != tokens.len() * k::WIDE
-                {
-                    return Err(Error::InvalidFormat("MTP accepted-front boundary"));
+                accepted_front_position(old, *start, tokens.len(), completed)?;
+                if carries.len() != tokens.len() * k::WIDE {
+                    return Err(Error::InvalidBufferLength);
                 }
                 for (row, &token) in tokens.iter().enumerate() {
                     validate_input(
@@ -125,8 +124,39 @@ impl WindowStart<'_> {
                 }
                 Ok(start + tokens.len() - 1)
             }
+            Self::Device {
+                start,
+                tokens,
+                source,
+            } => {
+                source.validate_predictions(*start, tokens)?;
+                accepted_front_position(old, *start, tokens.len(), completed)
+            }
         }
     }
+}
+
+fn accepted_front_position(
+    old: usize,
+    start: usize,
+    count: usize,
+    completed: bool,
+) -> Result<usize> {
+    if !crate::strata_intel_core::enabled()
+        || !completed
+        || start == 0
+        || !(1..=ROWS).contains(&count)
+        || old > k::CONTEXT
+        || old < start
+        || old - start > MAX_PROPOSALS - 1
+    {
+        return Err(Error::InvalidFormat("MTP accepted-front boundary"));
+    }
+    let last = start
+        .checked_add(count - 1)
+        .ok_or(Error::ArithmeticOverflow)?;
+    k::validate_position(last)?;
+    Ok(last)
 }
 
 impl ResidentMtp<'_, '_> {
@@ -169,13 +199,44 @@ impl ResidentMtp<'_, '_> {
         )
     }
 
+    /// Original verifier R rows stay borrowed until the actual MTP packet and
+    /// fault fence joins every copy/consumer, including early-stopped chains.
+    pub(crate) fn draft_accepted_device_window(
+        &mut self,
+        start: usize,
+        tokens: &[u32],
+        source: &DeviceCarry<'_>,
+        count: usize,
+        minimum: f32,
+        cancel: &AtomicBool,
+    ) -> Result<DraftWindow> {
+        let output = self.window_with_min_probability(
+            &WindowStart::Device {
+                start,
+                tokens,
+                source,
+            },
+            count,
+            minimum,
+            cancel,
+        )?;
+        // SAFETY: both confidence paths return ONLY after the original full
+        // private result/fault read and completed ledger fence on this client.
+        unsafe {
+            source.completed();
+        }
+        Ok(output)
+    }
     fn window_start_position(&self, source: &WindowStart<'_>, count: usize) -> Result<usize> {
         if !(1..=MAX_PROPOSALS).contains(&count)
             || self.closed
             || self.poisoned
             || self.retired.load(Ordering::Acquire)
             || self.live_outputs.load(Ordering::Acquire) != 0
-            || matches!(source, WindowStart::Accepted { .. }) && !self.native_confidence_supported()
+            || matches!(
+                source,
+                WindowStart::Accepted { .. } | WindowStart::Device { .. }
+            ) && !self.native_confidence_supported()
         {
             return Err(Error::InvalidFormat("MTP window source scope"));
         }
@@ -196,6 +257,33 @@ impl ResidentMtp<'_, '_> {
     fn start_window(&mut self, source: &WindowStart<'_>) -> Result<()> {
         match source {
             WindowStart::Input { token, carry } => self.start(*token, carry),
+            WindowStart::Device {
+                start,
+                tokens,
+                source,
+            } => {
+                let last = tokens.len() - 1;
+                if self.closed || self.poisoned || self.retired.load(Ordering::Acquire) {
+                    return Err(Error::InvalidFormat("MTP resident poisoned"));
+                }
+                self.q8_head_policy_locked = true;
+                self.verify_source()?;
+                self.physical()?;
+                self.ledger
+                    .observe_before(sample(self.client()?)?)
+                    .map_err(error)?;
+                self.poisoned = true;
+                self.dispatches = 0;
+                self.clear_scratch()?;
+                self.write(B::Token, &[tokens[last]])?;
+                source.copy_rows(&self.arena, self.id(B::Carry), self.id(B::Fault), last, 1)?;
+                self.tick(1)?;
+                self.guard_private(self.position)?;
+                self.rewind_cache(self.position, *start)?;
+                self.guard_private(*start)?;
+                self.position = start + last;
+                Ok(())
+            }
             WindowStart::Accepted {
                 start,
                 tokens,
@@ -223,6 +311,19 @@ impl ResidentMtp<'_, '_> {
     ) -> Result<()> {
         match source {
             WindowStart::Input { .. } => self.forward(),
+            WindowStart::Device {
+                start,
+                tokens,
+                source,
+            } => {
+                self.queue_native_front(
+                    tokens.len(),
+                    Some(NativeFrontInputs::Device(tokens, source)),
+                    *start,
+                    cancel,
+                )?;
+                self.native_selected_rest(tokens.len())
+            }
             WindowStart::Accepted {
                 start,
                 tokens,

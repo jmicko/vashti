@@ -109,6 +109,14 @@ impl Drop for LastForward {
     }
 }
 
+enum NativeFrontInputs<'a> {
+    Host(&'a [u32], &'a [f32]),
+    Device(
+        &'a [u32],
+        &'a crate::resident_model::batch::target_rows::DeviceCarry<'a>,
+    ),
+}
+
 struct AcceptedCacheRepair {
     rewind: bool,
     first_row: usize,
@@ -4325,12 +4333,33 @@ impl ResidentMtp<'_, '_> {
         start: usize,
         cancel: &AtomicBool,
     ) -> Result<()> {
-        self.queue_native_front(tokens.len(), Some((tokens, carries)), start, cancel)
+        self.queue_native_front(
+            tokens.len(),
+            Some(NativeFrontInputs::Host(tokens, carries)),
+            start,
+            cancel,
+        )
+    }
+    fn upload_native_front(&self, id: BufferId, words: &[u32]) -> Result<()> {
+        let l = self.arena.layout(id).map_err(error)?;
+        if words.len() > l.logical_words {
+            return Err(Error::InvalidBufferLength);
+        }
+        let mut upload = Upload(vec![0; l.owned_bytes]);
+        for (dest, word) in upload.0.chunks_exact_mut(4).zip(words) {
+            dest.copy_from_slice(&word.to_le_bytes());
+        }
+        self.client()?
+            .write_private(
+                self.arena.handle(id).cloned().map_err(error)?,
+                upload.take(),
+            )
+            .map_err(error)
     }
     fn queue_native_front(
         &mut self,
         count: usize,
-        inputs: Option<(&[u32], &[f32])>,
+        inputs: Option<NativeFrontInputs<'_>>,
         start: usize,
         cancel: &AtomicBool,
     ) -> Result<()> {
@@ -4340,30 +4369,23 @@ impl ResidentMtp<'_, '_> {
             .as_ref()
             .ok_or(Error::InvalidBufferLength)?
             .ids;
-        let h = |i| u::handle(&self.arena, ids[i]);
         let fault_id = self.id(B::Fault);
         for &id in &ids {
             u::zero(&self.arena, id)?;
         }
-        if let Some((tokens, carries)) = inputs {
-            for (slot, words) in [
-                (f::TOKEN, Zeroizing::new(tokens.to_vec())),
-                (
-                    f::CARRY,
-                    Zeroizing::new(carries.iter().map(|v| v.to_bits()).collect::<Vec<_>>()),
-                ),
-            ] {
-                let l = self.arena.layout(ids[slot]).map_err(error)?;
-                let mut upload = Upload(vec![0; l.owned_bytes]);
-                for (dest, word) in upload.0.chunks_exact_mut(4).zip(words.iter()) {
-                    dest.copy_from_slice(&word.to_le_bytes());
+        if let Some(inputs) = &inputs {
+            match inputs {
+                NativeFrontInputs::Host(tokens, carries) => {
+                    self.upload_native_front(ids[f::TOKEN], tokens)?;
+                    let words =
+                        Zeroizing::new(carries.iter().map(|v| v.to_bits()).collect::<Vec<_>>());
+                    self.upload_native_front(ids[f::CARRY], &words)?;
                 }
-                self.client()?
-                    .write_private(
-                        self.arena.handle(ids[slot]).cloned().map_err(error)?,
-                        upload.take(),
-                    )
-                    .map_err(error)?;
+                NativeFrontInputs::Device(tokens, source) => {
+                    self.upload_native_front(ids[f::TOKEN], tokens)?;
+                    source.copy_rows(&self.arena, ids[f::CARRY], fault_id, 0, count)?;
+                    self.tick(1)?;
+                }
             }
         } else {
             for (source, dest, words) in [(B::Token, f::TOKEN, 1), (B::Carry, f::CARRY, k::WIDE)] {
@@ -4386,6 +4408,7 @@ impl ResidentMtp<'_, '_> {
                 );
             }
         }
+        let h = |i| u::handle(&self.arena, ids[i]);
         let info = [count as u32, start as u32, 0, 0, 0, 0, EPS.to_bits(), 0];
         let embedding_pages = self.public()?.pages(EMBEDDING.name)?.len();
         for page in self.public()?.pages(EMBEDDING.name)? {

@@ -634,6 +634,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         {
             return Err(Error::InvalidFormat("invalid resident sequence"));
         }
+        self.invalidate_target_carry()?;
         self.poisoned = true;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.step_checked(executor, token, cancel, purpose)

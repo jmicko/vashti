@@ -125,7 +125,7 @@ struct AcceptedRound {
     coordinates: Zeroizing<[usize; 2]>, // original target start, complete old MTP cursor
     binding: Zeroizing<u64>,
     predicted: Zeroizing<Vec<u32>>,
-    carries: Zeroizing<Vec<f32>>,
+    device: crate::resident_model::batch::target_rows::DeviceCarryReceipt,
 }
 impl AcceptedRound {
     fn validate_entry(
@@ -135,17 +135,35 @@ impl AcceptedRound {
         draft_position: usize,
         binding: u64,
     ) -> Result<()> {
-        if !(1..=crate::strata_port::verify_capacity()).contains(&self.predicted.len())
-            || self.coordinates[0].checked_add(self.predicted.len()) != Some(position)
-            || self.predicted.last() != Some(&confirmed)
-            || self.carries.len() != self.predicted.len() * HIDDEN
-            || self.coordinates[1] != draft_position
-            || *self.binding != binding
-        {
-            return Err("global accepted-round entry rejected".into());
-        }
-        Ok(())
+        validate_round_entry(
+            &self.coordinates,
+            *self.binding,
+            &self.predicted,
+            position,
+            confirmed,
+            draft_position,
+            binding,
+        )
     }
+}
+fn validate_round_entry(
+    coordinates: &[usize; 2],
+    original_binding: u64,
+    predicted: &[u32],
+    position: usize,
+    confirmed: u32,
+    draft_position: usize,
+    binding: u64,
+) -> Result<()> {
+    if !(1..=crate::strata_port::verify_capacity()).contains(&predicted.len())
+        || coordinates[0].checked_add(predicted.len()) != Some(position)
+        || predicted.last() != Some(&confirmed)
+        || coordinates[1] != draft_position
+        || original_binding != binding
+    {
+        return Err("global accepted-round entry rejected".into());
+    }
+    Ok(())
 }
 
 /// The model's charged request geometry must match this request. The caller
@@ -294,10 +312,15 @@ pub(super) fn run<'m, 'f>(
         {
             let maximum = count;
             let output = if let Some(accepted) = pending.take() {
-                draft.draft_accepted_window(
+                let source = target.borrow_target_carry(
+                    executor,
+                    &accepted.device,
+                    accepted.predicted.len(),
+                )?;
+                draft.draft_accepted_device_window(
                     accepted.coordinates[0],
                     &accepted.predicted,
-                    &accepted.carries,
+                    &source,
                     maximum - 1,
                     request.draft_min_probability,
                     cancel,
@@ -342,7 +365,7 @@ pub(super) fn run<'m, 'f>(
         }
         sampling.stage_target(position, &inputs)?;
         let mut round = LatestTargetRound::begin(target, executor, &inputs, cancel)?;
-        let rows = round.verify(cancel)?;
+        let mut rows = round.verify(cancel)?;
         if rows.start() != position || rows.count() != count {
             return Err("global verification identity rejected".into());
         }
@@ -358,6 +381,7 @@ pub(super) fn run<'m, 'f>(
         for row in 0..n {
             carries.extend_from_slice(rows.hidden(row)?);
         }
+        let device = rows.take_device_carry()?;
         drop(rows);
         // The core repairs only real recurrent/KV/history state. Cache routes
         // count the original verified window once; repair does not count twice.
@@ -400,7 +424,7 @@ pub(super) fn run<'m, 'f>(
                 coordinates: Zeroizing::new([position, d.position()]),
                 binding: Zeroizing::new(d.binding()),
                 predicted,
-                carries,
+                device,
             });
         }
         // Native policy needs request-local cost observations. They are not
@@ -443,18 +467,14 @@ mod tests {
     #[test]
     fn native_grouped_round_entry_is_bound_to_accepted_prefix_and_original_model() {
         for n in 1..=crate::strata_port::verify_capacity() {
-            let prefix = AcceptedRound {
-                coordinates: Zeroizing::new([20, 22]),
-                binding: Zeroizing::new(99),
-                predicted: Zeroizing::new((10..10 + n as u32).collect()),
-                carries: Zeroizing::new(vec![0.; n * HIDDEN]),
-            };
+            let predicted: Vec<_> = (10..10 + n as u32).collect();
             let next = 9 + n as u32;
-            prefix.validate_entry(20 + n, next, 22, 99).unwrap();
-            assert!(prefix.validate_entry(21 + n, next, 22, 99).is_err());
-            assert!(prefix.validate_entry(20 + n, next + 1, 22, 99).is_err());
-            assert!(prefix.validate_entry(20 + n, next, 23, 99).is_err());
-            assert!(prefix.validate_entry(20 + n, next, 22, 100).is_err());
+            let check = |p, t, d, b| validate_round_entry(&[20, 22], 99, &predicted, p, t, d, b);
+            check(20 + n, next, 22, 99).unwrap();
+            assert!(check(21 + n, next, 22, 99).is_err());
+            assert!(check(20 + n, next + 1, 22, 99).is_err());
+            assert!(check(20 + n, next, 23, 99).is_err());
+            assert!(check(20 + n, next, 22, 100).is_err());
         }
     }
     #[test]

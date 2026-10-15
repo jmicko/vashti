@@ -4764,6 +4764,17 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             ),
         }
     }
+    pub(super) fn invalidate_target_carry(&self) -> Result<()> {
+        if let Some(rows) = self
+            .native_batch
+            .as_ref()
+            .and_then(|n| n.target_rows.as_ref())
+        {
+            rows.check_no_live_output()?;
+            rows.invalidate_carry()?;
+        }
+        Ok(())
+    }
     /// Real layer-major enqueue and whole-chunk acceptance. Opaque receipts
     /// cannot publish a token until ALL families and both required fences pass.
     pub(crate) fn prefill_chunk(
@@ -4837,6 +4848,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             // No command/state mutation occurs while an admitted output-host
             // payload is still held. This guard also covers legacy purposes.
             rows.check_no_live_output()?;
+            rows.invalidate_carry()?;
         }
         let mut native = self.native_batch.take().ok_or(error())?;
         let mut flight = Flight {

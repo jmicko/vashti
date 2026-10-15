@@ -39,7 +39,12 @@ pub(crate) const HOST_INCREMENT: usize = if crate::strata_port::eight_rows() {
 } else {
     6
 } * 1024
-    * 1024;
+    * 1024
+    + if cfg!(feature = "strata-intel-core") {
+        device_carry::HOST_BYTES
+    } else {
+        0
+    };
 pub(crate) const RUNTIME_INCREMENT: u64 = if cfg!(feature = "strata-intel-core") {
     crate::strata_sampler::request::RUNTIME_BYTES
 } else {
@@ -57,6 +62,10 @@ macro_rules! rejected {
         })
     };
 }
+#[path = "resident_target_carry.rs"]
+mod device_carry;
+pub(crate) use device_carry::{DeviceCarry, DeviceCarryReceipt};
+
 pub(super) fn check_public_audit(reserved: bool, public_zero_audit: bool) -> Result<()> {
     if reserved && !public_zero_audit {
         return Err(rejected!());
@@ -84,6 +93,7 @@ pub(crate) fn coordinates(count: usize, start: usize) -> Result<()> {
 pub(crate) struct NativeTargetRows {
     payload: Payload,
     binding: Option<GraphBindingId>,
+    device_carry: Option<DeviceCarryReceipt>,
     // Field order retains the lease through payload destruction.
     _lease: OutputLease,
 }
@@ -94,6 +104,10 @@ struct Payload {
     coordinates: Zeroizing<[usize; 2]>,
 }
 impl NativeTargetRows {
+    pub(crate) fn take_device_carry(&mut self) -> Result<DeviceCarryReceipt> {
+        self.device_carry.take().ok_or_else(|| rejected!())
+    }
+
     pub(crate) fn binding_id(&self) -> GraphBindingId {
         self.binding.expect("live target rows binding")
     }
@@ -407,6 +421,7 @@ pub(super) struct Owners {
     ids: Zeroizing<[BufferId; 2]>,
     output_live: Arc<AtomicBool>,
     four_reserved: bool,
+    carry_generation: std::cell::Cell<u64>,
 }
 impl Owners {
     pub(super) fn allocation_requests() -> Result<[u64; 2]> {
@@ -445,7 +460,14 @@ impl Owners {
             ]),
             output_live: Arc::new(AtomicBool::new(false)),
             four_reserved,
+            carry_generation: std::cell::Cell::new(0),
         })
+    }
+    /// Invalidate old carry receipts BEFORE any path may write target scratch.
+    pub(super) fn invalidate_carry(&self) -> Result<()> {
+        self.carry_generation
+            .set(device_carry::next_generation(self.carry_generation.get())?);
+        Ok(())
     }
     pub(super) fn check_no_live_output(&self) -> Result<()> {
         if self.output_live.load(Ordering::Acquire) {
@@ -511,6 +533,7 @@ impl Owners {
             return Err(rejected!());
         }
         let [logits, packet] = self.prove(arena)?;
+        let carry_id = carry;
         let carry = gr::full_private(arena, carry, MAX_BATCH * HC_WIDTH)?;
         let fault = gr::full_private(arena, fault, 1)?;
         gr::physical(
@@ -554,8 +577,12 @@ impl Owners {
                     Ok(())
                 },
                 |bytes| {
+                    let payload = decode_compact(bytes, count, start)?;
+                    let device_carry =
+                        device_carry::receipt(self, graph.binding_id(), carry_id, &payload)?;
                     Ok(NativeTargetRows {
-                        payload: decode_compact(bytes, count, start)?,
+                        payload,
+                        device_carry,
                         binding: Some(graph.binding_id()),
                         _lease: lease,
                     })
@@ -598,6 +625,7 @@ impl Owners {
             |bytes| {
                 Ok(NativeTargetRows {
                     payload: decode_selected(bytes, count, start, four)?,
+                    device_carry: None,
                     binding: Some(graph.binding_id()),
                     _lease: lease,
                 })
@@ -776,6 +804,7 @@ mod tests {
         let lease = OutputLease::acquire(&live).unwrap();
         assert!(OutputLease::acquire(&live).is_err());
         let rows = NativeTargetRows {
+            device_carry: None,
             payload: decode(&packet(3, 11), 3, 11).unwrap(),
             binding: None, // No graph instance is created by this host test.
             _lease: lease,
@@ -794,6 +823,7 @@ mod tests {
         let attempt = (|| -> Result<NativeTargetRows> {
             let lease = OutputLease::acquire(&live)?;
             Ok(NativeTargetRows {
+                device_carry: None,
                 payload: decode(&[], 1, 0)?,
                 binding: None,
                 _lease: lease,

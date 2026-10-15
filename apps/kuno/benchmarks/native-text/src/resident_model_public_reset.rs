@@ -184,6 +184,11 @@ impl ResidentModel<'_, '_> {
             .ok_or(rejected())?
             .check_no_live_output()?;
         native
+            .target_rows
+            .as_ref()
+            .ok_or(rejected())?
+            .invalidate_carry()?;
+        native
             .moe
             .validate_public_warm_boundary(executor, self.graph, &self.arena)?;
         for (layer, moe) in self.moe_layers.iter().enumerate() {

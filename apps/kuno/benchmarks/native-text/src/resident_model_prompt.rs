@@ -106,6 +106,14 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         {
             return Err(error());
         }
+        if let Some(rows) = self
+            .native_batch
+            .as_ref()
+            .and_then(|n| n.target_rows.as_ref())
+        {
+            rows.check_no_live_output()?;
+            rows.invalidate_carry()?;
+        }
         let mut native = self.native_batch.take().ok_or_else(error)?;
         let mut flight = Flight {
             poison: native.poison.clone(),
