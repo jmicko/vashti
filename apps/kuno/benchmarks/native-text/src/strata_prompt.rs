@@ -177,6 +177,10 @@ pub(crate) fn stage_private_view(
             .offset_end(target.size_in_used() - first - chunk.len() as u64);
         copy_handles(client, source.clone(), output, 0, chunk.len() / 4)?;
     }
+    // Scratch padding may have held more words than its scalar logical role.
+    // Restore the COMPLETE owner after its final copy reader and before MTP's
+    // original private-padding guards or the next scalar use inspect it.
+    u::zero(arena, scratch)?;
     Ok(())
 }
 fn validate_staged_payload(owned: usize, target: u64, count: usize) -> Result<()> {
