@@ -1,17 +1,17 @@
-<!-- Current resume: 2026-10-15, sourcecd8993d, codex/strata-rust-port.
+<!-- Current resume: 2026-10-15, source4bf3ed9, codex/strata-rust-port.
 Read coordination active selected-Intel handoff and completion guide.
-Whole rewrite incomplete; no speed trials. CPU-only work; goal active. -->
+Whole rewrite incomplete; no speed trials. User-requested stop; goal paused. -->
 # Native DASLab/Strata checkpoint — 2026-10-09
 
 **Current native-engine resume pointer (2026-10-15):** isolated
 `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
-`codex/strata-rust-port`, source through `cd8993d`. Read the
+`codex/strata-rust-port`, source through `4bf3ed9`. Read the
 [active selected-Intel handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--selected-intel-path-and-cpu-only-continuation-2026-10-15)
 and latest selected-serving-mode audit in
 [the completion gate](kuno-strata-rewrite-completion.md).
 
-**Current authority: CPU-only.** The user withdrew further GPU tests due low
-usage, then explicitly kept the goal active for CPU-only work. Do not start
+**Current authority: stopped; goal paused.** After the CPU-only continuation,
+the user requested finishing the current task and stopping after usage reset. Do not start
 models, GPU tests, service changes or privileged runtime work until authorized.
 Last protected run has ended: normal admission, Kuno/Ollama/Vashti HTTP200,
 Intel50,688,000 bytes, no NVIDIA compute, all classified GPU faults unchanged0.
@@ -26,9 +26,11 @@ experts directly, with no CPU expert jobs/per-layer joins. Source`19aa565` pins
 branch parameter owners and actual MTP recordings; `7aa574f` adds target-window
 capture. Release build through19aa and strict core Clippy through7aa pass.
 
-True no-enqueue graph invocation, INT8 target/MTP KV and original CJK draft head
-are being completed in separate isolated worktrees; inspect their current
-commits before integrating. They are not yet accepted whole-model behavior.
+INT8 target/MTP KV is integrated as2a3d1ad; final strict core Clippy at4bf3ed9
+passes. INT8 shader/numerical/hardware validation remains pending. True no-enqueue
+graph invocation is unfinished. Original CJK draft-head source is isolated;
+inspect saved`cd703bc` and`docs/kuno-strata-cjk-checkpoint.md` in the
+`strata-resident-first` worktree before integrating. All peer worktrees are clean. They are not yet accepted whole-model behavior.
 Full numerical/state/owning-erasure and speed acceptance remain incomplete.
 No API/UI/release changes; required Vashti changes:none.
 

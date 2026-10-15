@@ -6,16 +6,16 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-15):** isolated
-`codex/strata-rust-port`, source through `cd8993d`. Read the
+`codex/strata-rust-port`, source through `4bf3ed9`. Read the
 [selected-Intel handoff](#active-kuno-engine-handoff--selected-intel-path-and-cpu-only-continuation-2026-10-15)
 and selected-serving-mode audit in [the completion gate](kuno-strata-rewrite-completion.md).
 Prompt prefix and MTP teaching now complete. Final count1 head view correction
 is built, hardware validation pending. Actual NO_HOST expert access and stable
-branch ownership are connected; true direct graph replay, INT8 caches and CJK
-head remain incomplete. No numerical/speed/owning-erasure acceptance claim.
+branch ownership are connected; INT8 source is integrated but not hardware validated. True direct graph replay
+and CJK integration remain incomplete. No numerical/speed/owning-erasure acceptance claim.
 
-**CPU-only work is authorized; goal remains active.** No more GPU/model/service
-work until reauthorized. Last run ended with normal admission, all three HTTP200,
+**Stopped at the user's request after usage reset; goal paused.** No more
+GPU/model/service work until reauthorized. Last run ended with normal admission, all three HTTP200,
 Intel50,688,000 bytes, no NVIDIA compute and fault counts unchanged0. Installed
 system and application API unchanged; required Vashti changes:none.
 
@@ -6016,3 +6016,23 @@ invocation), `strata-int8-kv` (target/MTP INT8), and `strata-resident-first` bra
 unintegrated work is not validated main behavior; preserve it if interrupted.
 No frontend or shared application API change. Required Vashti changes:none.
 No release, installation, reset, reboot, model mutation or task message.
+
+
+**Final superseding stop:** user requested finish-and-stop after usage reset.
+Goal paused. Source4bf3ed9 includes INT8 target/MTP cache and actual GDN binding-role
+capture keys; locked release strict core Clippy passes. INT8 shader/unit/GPU
+validation remains pending; prior317shader receipt predates INT8. PLE staging is
+connected but true direct graph invocation/receipt separation is unfinished.
+CJK work stays isolated pending review/integration. See final completion-gate
+receipt for exact source, tests, substitutions and next steps. Last physical
+recovery evidence remains06:07:22Z, no subsequent GPU run or service change.
+
+Isolated CJK source is saved cleanly as`cd703bc` on`codex/strata-native-cjk`,
+worktree`/home/jmicko/.codex/worktrees/strata-resident-first/vashti`. Detailed
+handoff: `docs/kuno-strata-cjk-checkpoint.md` in that worktree. It connects
+original-order106299-row Q6 head, public ownership/budget and mapped coupled
+sampling; no compile/tests/GPU acceptance. It adds224800768 public device bytes
+and no private roots. **Not cherry-picked into main engine yet.** Next resume
+review/cherry-pick onlycd703bc, preserve the distinct INT8 Append changes, then
+compile and validate all compact-head/sampler variants. The two other peer
+worktrees are clean and their completed source is already integrated.

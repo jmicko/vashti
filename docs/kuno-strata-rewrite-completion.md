@@ -4736,3 +4736,55 @@ CPU-only receipts in the external development directory:
 PLE source throughcd8993d is reviewed/formatted; its combined compile/test receipt
 is pending. Concurrent INT8/CJK/typed-invocation work remains isolated, not current
 accepted behavior. No installed service/model/API/UI change or speed claim.
+
+### Final user-requested stop, selected core source4bf3ed9 (2026-10-15)
+
+After usage reset, the user explicitly requested finishing the current work and
+stopping. No further GPU work was started after the earlier CPU-only request.
+All compilation/check subprocesses have finished; goal is paused at this stop.
+
+Integrated `2a3d1ad` ports original INT8 target/MTP cache arithmetic together:
+64-value groups, FP16-stored scale from amax/127, nearest-even/clamped signed
+codes, and F32 code-times-stored-scale reads. Prompt/verify/index pooling, append,
+guards, rewind, rejected-suffix handling and budget consumers are updated. Target
+cache allocation decreases96MiB across12layers; MTP logical data shrinks but its
+original allocator-rounded private owners remain4MiB. Token-contiguous target
+transaction rows and per-head interleaved MTP scales remain explicit layout
+substitutions versus upstream separated planes. Numerical equivalence is pending.
+
+Integrated `4bf3ed9` keys target captures by the actual original GDN state-buffer
+roles. Both recurrent and convolution pairs must align, across all GDN stages.
+This uses two static physical binding arrangements, not token positions/contents.
+It preserves Kuno's existing commit/restore swaps; upstream fixed-address commit
+is still a documented scheduling substitution. No stale binding replay allowed.
+
+CPU receipts: `strata-native-int8-check-20261015.log` passes release check through
+2a3d1ad; `strata-native-int8-final-clippy-20261015.log` passes locked release strict
+core Clippy at4bf3ed9, including the PLE staging/capture integration. These are
+not shader/numerical/GPU validation for the newly changed INT8 code. The317-shader
+receipt above predates INT8 and must not be counted as INT8 acceptance. Existing
+updated layout/unit tests still need execution for this final source. No
+feature-off final regression was rerun in this stop block.
+
+Next: inspect the isolated CJK source checkpoint before integrating; complete
+typed invocation parameters and GDN/QSA transaction preparation, then true direct
+graph launch without recreating enqueue calls. Current branch reuse still walks
+the engine to refresh parameters and validate exact signatures. The whole-port
+source audit and original full-model numerical/owning-erasure acceptance are
+incomplete. No speed comparisons until the entire completion gate passes.
+
+Last physical evidence remains06:07:22Z, external
+`strata-native-no-host-check-20261015/host-after.json`: normal admission, all three
+HTTP200, Intel50,688,000 bytes, no NVIDIA compute and fault counters unchanged0.
+Installed binaries/configuration/model files untouched. GPU tests require renewed
+authorization; cached sudo is not permission. Required Vashti changes:none.
+
+Isolated CJK source is saved cleanly as`cd703bc` on`codex/strata-native-cjk`,
+worktree`/home/jmicko/.codex/worktrees/strata-resident-first/vashti`. Detailed
+handoff: `docs/kuno-strata-cjk-checkpoint.md` in that worktree. It connects
+original-order106299-row Q6 head, public ownership/budget and mapped coupled
+sampling; no compile/tests/GPU acceptance. It adds224800768 public device bytes
+and no private roots. **Not cherry-picked into main engine yet.** Next resume
+review/cherry-pick onlycd703bc, preserve the distinct INT8 Append changes, then
+compile and validate all compact-head/sampler variants. The two other peer
+worktrees are clean and their completed source is already integrated.
