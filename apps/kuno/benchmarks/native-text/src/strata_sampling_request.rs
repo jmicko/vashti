@@ -54,6 +54,7 @@ struct State {
     params: Params,
     target: GraphBindingId,
     draft: Option<u64>,
+    device_residuals: bool,
     retired: Arc<AtomicBool>,
     consumed: Zeroizing<Vec<u32>>,
     window: Zeroizing<Vec<u32>>,
@@ -132,6 +133,7 @@ impl Scope {
             params,
             target,
             draft,
+            device_residuals: false,
             retired: retired.clone(),
             consumed,
             window: Zeroizing::new(Vec::with_capacity(crate::strata_port::verify_capacity())),
@@ -164,6 +166,17 @@ impl Scope {
     }
     pub(crate) fn commit_target(&self, n: usize) -> Result<()> {
         with(|s| commit_window(&mut s.consumed, &mut s.window, &mut s.coordinates, n))
+    }
+    /// Explicit selected-controller policy. Legacy sampler users retain their
+    /// existing host carry packet until they select original device consumers.
+    pub(crate) fn use_device_residuals(&self) -> Result<()> {
+        with(|s| {
+            if s.coordinates[0] != 0 {
+                return Err(reject());
+            }
+            s.device_residuals = true;
+            Ok(())
+        })
     }
     pub(crate) fn begin_round(&self, position: usize, next: u32) -> Result<()> {
         with(|s| {
@@ -264,6 +277,21 @@ impl State {
         }
         Ok(())
     }
+}
+pub(crate) fn device_residuals(
+    client: &ComputeClient<WgpuRuntime>,
+    binding: GraphBindingId,
+) -> Result<bool> {
+    if !active() {
+        return Ok(false);
+    }
+    with(|s| {
+        s.context(client)?;
+        if s.target != binding {
+            return Err(reject());
+        }
+        Ok(s.device_residuals)
+    })
 }
 /// Runs inside the original authenticated target packet I/O closure, after the
 /// real target head. No host logits, arbitrary compute owner, or shadow routes.

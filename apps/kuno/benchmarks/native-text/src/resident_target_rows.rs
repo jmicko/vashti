@@ -89,7 +89,9 @@ pub(crate) fn coordinates(count: usize, start: usize) -> Result<()> {
 /// Immutable request-derived output; no Debug, persistence or mutable payload.
 /// The opaque public binding token is released on drop; payload capacities and
 /// request-derived start/count are wiped. A row consumed start+row and predicts
-/// the next token; hidden is the unnormalized pre-output_hc residual.
+/// the next token; hidden is the unnormalized pre-output_hc residual in host
+/// packet mode. Explicit native device mode returns ids plus an authenticated
+/// device-source receipt, and hidden() is unavailable.
 pub(crate) struct NativeTargetRows {
     payload: Payload,
     binding: Option<GraphBindingId>,
@@ -274,6 +276,51 @@ fn decode_selected(bytes: &[u8], count: usize, start: usize, four: bool) -> Resu
     })
 }
 
+const DEVICE_WORDS: usize = HEADER_WORDS + 2 * FOUR_ROWS;
+fn decode_device(bytes: &[u8], count: usize, start: usize) -> Result<Payload> {
+    coordinates_selected(count, start, true)?;
+    if bytes.len() != DEVICE_WORDS * 4 {
+        return Err(rejected!());
+    }
+    for (i, v) in [
+        3,
+        count as u32,
+        start as u32,
+        VOCABULARY as u32,
+        HC_WIDTH as u32,
+        FOUR_ROWS as u32,
+        0,
+        0,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if word(bytes, i)? != v {
+            return Err(rejected!());
+        }
+    }
+    let mut tokens = Zeroizing::new(Vec::with_capacity(count));
+    for row in 0..FOUR_ROWS {
+        let id = word(bytes, HEADER_WORDS + row)?;
+        if word(bytes, HEADER_WORDS + FOUR_ROWS + row)? != 0 {
+            return Err(rejected!());
+        }
+        if row < count {
+            if id >= VOCABULARY as u32 {
+                return Err(rejected!());
+            }
+            tokens.push(id);
+        } else if id != 0 {
+            return Err(rejected!());
+        }
+    }
+    Ok(Payload {
+        logits: Zeroizing::new(Vec::new()),
+        greedy: Some(tokens),
+        hidden: Zeroizing::new(Vec::new()),
+        coordinates: Zeroizing::new([start, count]),
+    })
+}
 const COMPACT_WORDS: usize = HEADER_WORDS + FOUR_ROWS + FOUR_ROWS * HC_WIDTH;
 fn decode_compact(bytes: &[u8], count: usize, start: usize) -> Result<Payload> {
     if crate::strata_port::enabled() && bytes.len() >= HEADER_WORDS * 4 && word(bytes, 6)? != 0 {
@@ -542,12 +589,15 @@ impl Owners {
         )?;
         let lease = OutputLease::acquire(&self.output_live)?;
         if crate::strata_port::enabled() {
+            let device = crate::strata_sampler::request::device_residuals(
+                arena.client().map_err(u::fault)?,
+                graph.binding_id(),
+            )?;
+            let words = if device { DEVICE_WORDS } else { COMPACT_WORDS };
             return batch_io::read_target_output(
                 arena,
                 admission,
-                packet
-                    .clone()
-                    .offset_end((OWNER_BYTES - COMPACT_WORDS * 4) as u64),
+                packet.clone().offset_end((OWNER_BYTES - words * 4) as u64),
                 cancel,
                 || {
                     let client = arena.client().map_err(u::fault)?;
@@ -559,13 +609,25 @@ impl Owners {
                         count,
                         start,
                     )? {
-                        crate::strata_packet::launch_selected(
-                            client,
-                            [picks, carry, fault, packet],
-                            count,
-                            start,
-                        );
+                        if device {
+                            crate::strata_packet::launch_device(
+                                client,
+                                [picks, carry, fault, packet],
+                                count,
+                                start,
+                            );
+                        } else {
+                            crate::strata_packet::launch_selected(
+                                client,
+                                [picks, carry, fault, packet],
+                                count,
+                                start,
+                            );
+                        }
                     } else {
+                        if device {
+                            return Err(rejected!());
+                        }
                         crate::strata_packet::launch(
                             client,
                             [logits, carry, fault, packet],
@@ -577,7 +639,11 @@ impl Owners {
                     Ok(())
                 },
                 |bytes| {
-                    let payload = decode_compact(bytes, count, start)?;
+                    let payload = if device {
+                        decode_device(bytes, count, start)?
+                    } else {
+                        decode_compact(bytes, count, start)?
+                    };
                     let device_carry =
                         device_carry::receipt(self, graph.binding_id(), carry_id, &payload)?;
                     Ok(NativeTargetRows {
@@ -637,6 +703,82 @@ impl Owners {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_device_end_ids_packet_checks_all_row_statuses_without_host_residuals() {
+        for count in 1..=FOUR_ROWS {
+            let mut bytes = vec![0; DEVICE_WORDS * 4];
+            let header = [
+                3,
+                count as u32,
+                17,
+                VOCABULARY as u32,
+                HC_WIDTH as u32,
+                FOUR_ROWS as u32,
+                0,
+                0,
+            ];
+            for (i, x) in header.into_iter().enumerate() {
+                bytes[4 * i..4 * i + 4].copy_from_slice(&x.to_le_bytes());
+            }
+            for r in 0..count {
+                let i = HEADER_WORDS + r;
+                bytes[4 * i..4 * i + 4].copy_from_slice(&(r as u32).to_le_bytes());
+            }
+            let decoded = decode_device(&bytes, count, 17).unwrap();
+            assert!(decoded.hidden.is_empty() && decoded.logits.is_empty());
+            assert_eq!(decoded.greedy.unwrap().len(), count);
+            for r in 0..FOUR_ROWS {
+                let mut bad = bytes.clone();
+                let at = 4 * (HEADER_WORDS + FOUR_ROWS + r);
+                bad[at] = 1;
+                assert!(decode_device(&bad, count, 17).is_err());
+            }
+            for slot in [0, 1, 2, 3, 4, 5, 6, 7] {
+                let mut bad = bytes.clone();
+                bad[slot * 4] ^= 1;
+                assert!(decode_device(&bad, count, 17).is_err());
+            }
+            let mut bad = bytes.clone();
+            bad[HEADER_WORDS * 4..HEADER_WORDS * 4 + 4]
+                .copy_from_slice(&(VOCABULARY as u32).to_le_bytes());
+            assert!(decode_device(&bad, count, 17).is_err());
+            if count < FOUR_ROWS {
+                let mut bad = bytes.clone();
+                bad[4 * (HEADER_WORDS + count)] = 1;
+                assert!(decode_device(&bad, count, 17).is_err());
+            }
+            assert!(decode_device(&bytes[..bytes.len() - 4], count, 17).is_err());
+            assert!(decode_compact(&bytes, count, 17).is_err());
+        }
+    }
+    #[test]
+    fn native_device_end_status_producer_lowers_offline_with_full_original_carry_binding() {
+        use wgpu::naga as n;
+        let source = crate::strata_packet::device_shader();
+        let m = n::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&source)));
+        let info = n::valid::Validator::new(
+            n::valid::ValidationFlags::all(),
+            n::valid::Capabilities::all(),
+        )
+        .validate(&m)
+        .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&source)));
+        assert_eq!(m.entry_points[0].workgroup_size, [128, 1, 1]);
+        assert!(source.contains("col<10240u"));
+        assert!(
+            !n::back::spv::write_vec(
+                &m,
+                &info,
+                &n::back::spv::Options::default(),
+                Some(&n::back::spv::PipelineOptions {
+                    shader_stage: n::ShaderStage::Compute,
+                    entry_point: "main".into()
+                })
+            )
+            .unwrap()
+            .is_empty()
+        );
+    }
     #[test]
     fn core_eight_compact_packet_authenticates_full_capacity_and_inactive_rows() {
         if !crate::strata_intel_core::enabled() {

@@ -83,7 +83,7 @@ fn seal_window(packet: &mut Array<u32>, fault: &Array<Atomic<u32>>) {
 }
 /// Borrowed actual target predictions/R rows. The controller owns their wiping
 /// storage until this round has joined; this is never a fabricated carry/token.
-enum WindowStart<'a> {
+pub(super) enum WindowStart<'a> {
     Input {
         token: u32,
         carry: &'a [f32],
@@ -130,13 +130,28 @@ impl WindowStart<'_> {
                 source,
             } => {
                 source.validate_predictions(*start, tokens)?;
-                accepted_front_position(old, *start, tokens.len(), completed)
+                device_front_position(old, *start, tokens.len(), completed)
             }
         }
     }
 }
 
-fn accepted_front_position(
+/// Native draft_first fronts exactly one verified final-prompt prediction
+/// at the untouched teacher cursor. Accepted windows require completed front
+/// authority; a missing head result is never fabricated into a full forward.
+pub(super) fn device_front_position(
+    old: usize,
+    start: usize,
+    count: usize,
+    completed: bool,
+) -> Result<usize> {
+    if crate::strata_intel_core::enabled() && !completed && count == 1 && old == start {
+        k::validate_position(start)?;
+        return Ok(start);
+    }
+    accepted_front_position(old, start, count, completed)
+}
+pub(super) fn accepted_front_position(
     old: usize,
     start: usize,
     count: usize,
@@ -227,7 +242,11 @@ impl ResidentMtp<'_, '_> {
         }
         Ok(output)
     }
-    fn window_start_position(&self, source: &WindowStart<'_>, count: usize) -> Result<usize> {
+    pub(super) fn window_start_position(
+        &self,
+        source: &WindowStart<'_>,
+        count: usize,
+    ) -> Result<usize> {
         if !(1..=MAX_PROPOSALS).contains(&count)
             || self.closed
             || self.poisoned
@@ -240,12 +259,16 @@ impl ResidentMtp<'_, '_> {
         {
             return Err(Error::InvalidFormat("MTP window source scope"));
         }
-        let start = source.position(
-            self.position,
-            self.last_forward
-                .as_ref()
-                .is_some_and(|s| s.valid(self.binding, self.position)),
-        )?;
+        let completed = self
+            .last_forward
+            .as_ref()
+            .is_some_and(|s| s.valid(self.binding, self.position))
+            || matches!(source, WindowStart::Device { .. })
+                && self
+                    .last_front
+                    .as_ref()
+                    .is_some_and(|s| s.valid(self.binding, self.position));
+        let start = source.position(self.position, completed)?;
         k::validate_position(
             start
                 .checked_add(count - 1)
@@ -254,7 +277,7 @@ impl ResidentMtp<'_, '_> {
         Ok(start)
     }
 
-    fn start_window(&mut self, source: &WindowStart<'_>) -> Result<()> {
+    pub(super) fn start_window(&mut self, source: &WindowStart<'_>) -> Result<()> {
         match source {
             WindowStart::Input { token, carry } => self.start(*token, carry),
             WindowStart::Device {
@@ -362,6 +385,7 @@ impl ResidentMtp<'_, '_> {
                 u::cancel(cancel)?;
                 let lease = OutputLease::acquire(&self.live_outputs)?;
                 self.last_forward.take();
+                self.last_front.take();
                 let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     self.start_window(source)?;
                     self.forward_window_first(source, cancel)?;
@@ -425,6 +449,7 @@ impl ResidentMtp<'_, '_> {
         let id = self.draft_window.ok_or(Error::InvalidBufferLength)?;
         let lease = OutputLease::acquire(&self.live_outputs)?;
         self.last_forward.take();
+        self.last_front.take();
         // At most the compiled number of bounded per-cell INFO sets may remain queued together.
         // Credit is retired only at the final completed fence, never on enqueue.
         self.ledger

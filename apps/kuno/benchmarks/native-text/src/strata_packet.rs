@@ -13,10 +13,13 @@ use cubecl_runtime::{
 #[derive(Clone)]
 struct Packet {
     selected: bool,
+    device: bool,
 }
 impl KernelMetadata for Packet {
     fn name(&self) -> &'static str {
-        if self.selected {
+        if self.device {
+            "StrataGpuSelectedDevicePacket"
+        } else if self.selected {
             "StrataGpuSelectedCarryPacket"
         } else {
             "StrataGpuGreedyCarryPacket"
@@ -24,7 +27,7 @@ impl KernelMetadata for Packet {
     }
     fn id(&self) -> KernelId {
         KernelId::new::<Self>()
-            .info(self.selected)
+            .info((self.selected, self.device))
             .cube_dim(CubeDim::new_1d(128))
     }
     fn address_type(&self) -> StorageType {
@@ -42,7 +45,9 @@ impl CubeTask<AutoCompiler> for Packet {
         Ok(CompiledKernel {
             entrypoint_name: "main".into(),
             debug_name: None,
-            source: if self.selected {
+            source: if self.device {
+                device_shader()
+            } else if self.selected {
                 selected_shader()
             } else {
                 shader()
@@ -53,13 +58,21 @@ impl CubeTask<AutoCompiler> for Packet {
         })
     }
 }
+pub(crate) fn launch_device(
+    client: &ComputeClient<WgpuRuntime>,
+    owners: [Handle; 4],
+    count: usize,
+    start: usize,
+) {
+    launch_impl(client, owners, count, start, true, true)
+}
 pub(crate) fn launch_selected(
     client: &ComputeClient<WgpuRuntime>,
     owners: [Handle; 4],
     count: usize,
     start: usize,
 ) {
-    launch_impl(client, owners, count, start, true)
+    launch_impl(client, owners, count, start, true, false)
 }
 pub(crate) fn launch(
     client: &ComputeClient<WgpuRuntime>,
@@ -67,7 +80,7 @@ pub(crate) fn launch(
     count: usize,
     start: usize,
 ) {
-    launch_impl(client, owners, count, start, false)
+    launch_impl(client, owners, count, start, false, false)
 }
 fn launch_impl(
     client: &ComputeClient<WgpuRuntime>,
@@ -75,6 +88,7 @@ fn launch_impl(
     count: usize,
     start: usize,
     selected: bool,
+    device: bool,
 ) {
     let mut args = KernelArguments::new();
     for owner in owners {
@@ -88,13 +102,16 @@ fn launch_impl(
     // no reduced span acquires free/erasure authority over a backing owner.
     unsafe {
         client.launch_unchecked(
-            Box::new(Packet { selected }),
+            Box::new(Packet { selected, device }),
             CubeCount::Static(crate::strata_port::verify_capacity() as u32, 1, 1),
             args,
         );
     }
 }
 
+pub(crate) fn device_shader() -> String {
+    configure(include_str!("strata-device-packet.wgsl"))
+}
 pub(crate) fn selected_shader() -> String {
     configure(include_str!("strata-selected-packet.wgsl"))
 }

@@ -119,8 +119,8 @@ fn accepted(inputs: &[u32], predicted: &[u32], eos: u32) -> Result<usize> {
 }
 
 /// One accepted verifier prefix retained only until the next round's grouped
-/// front. These are actual target predictions/R rows, never rejected proposals.
-/// Moving the existing verifier vectors avoids a second host prefix mirror.
+/// front. These are actual target predictions plus their original device-source
+/// receipt, never rejected proposals or a host residual mirror.
 struct AcceptedRound {
     coordinates: Zeroizing<[usize; 2]>, // original target start, complete old MTP cursor
     binding: Zeroizing<u64>,
@@ -246,14 +246,15 @@ pub(super) fn run<'m, 'f>(
             draft.as_ref().map(|d| d.binding()),
         )?
     };
+    sampling.use_device_residuals()?;
     sampling.stage_target(plan.prefix(), &request.prompt[plan.prefix()..])?;
-    let output =
+    let mut output =
         target.prefill_chunk_with_carry(executor, &request.prompt[plan.prefix()..], cancel)?;
     if output.start() != plan.prefix() || output.count() != 1 {
         return Err("global final prompt decode identity rejected".into());
     }
     let mut confirmed = output.greedy(0)?;
-    let mut carry = Zeroizing::new(output.hidden(0)?.to_vec());
+    let initial_device = output.take_device_carry()?;
     drop(output);
     if target.completed_target_rows_cursor(executor)? != request.prompt.len() {
         return Err("global final prompt decode cursor rejected".into());
@@ -277,7 +278,17 @@ pub(super) fn run<'m, 'f>(
     history.push(confirmed);
     emit(confirmed)?;
     let mut policy = crate::strata_port::DraftPolicy::default();
-    let mut pending: Option<AcceptedRound> = None;
+    let mut pending: Option<AcceptedRound> = if request.max_outputs > 1 && confirmed != request.eos
+    {
+        draft.as_ref().map(|d| AcceptedRound {
+            coordinates: Zeroizing::new([plan.prefix(), d.position()]),
+            binding: Zeroizing::new(d.binding()),
+            predicted: Zeroizing::new(vec![confirmed]),
+            device: initial_device,
+        })
+    } else {
+        None
+    };
     let mut rounds = 0u64;
     let mut repairs = 0u64;
     while history.len() < request.max_outputs && confirmed != request.eos {
@@ -306,58 +317,54 @@ pub(super) fn run<'m, 'f>(
         inputs.push(confirmed);
         let started = Instant::now();
         let mut suffix = None;
-        let mut drafted = false;
-        if let Some(draft) = draft.as_deref_mut()
-            && count > 1
-        {
-            let maximum = count;
-            let output = if let Some(accepted) = pending.take() {
-                let source = target.borrow_target_carry(
-                    executor,
-                    &accepted.device,
-                    accepted.predicted.len(),
-                )?;
-                draft.draft_accepted_device_window(
+        if let Some(draft) = draft.as_deref_mut() {
+            let accepted = pending.take().ok_or("global device front source missing")?;
+            let source =
+                target.borrow_target_carry(executor, &accepted.device, accepted.predicted.len())?;
+            if count > 1 {
+                let maximum = count;
+                let output = draft.draft_accepted_device_window(
                     accepted.coordinates[0],
                     &accepted.predicted,
                     &source,
                     maximum - 1,
                     request.draft_min_probability,
                     cancel,
-                )?
+                )?;
+                if output.start != position - 1
+                    || output.binding != draft.binding()
+                    || output.tokens().is_empty()
+                    || output.tokens().len() > maximum - 1
+                    || draft.position() != position - 1 + output.tokens().len()
+                {
+                    return Err("global confidence draft identity rejected".into());
+                }
+                count = output.usable_window(request.draft_min_probability, maximum)?;
+                let candidate = crate::strata_port::lookup(
+                    request.prompt,
+                    &history,
+                    remaining.min(request.window) - 1,
+                );
+                if let Some(candidate) =
+                    candidate.filter(|p| p.tokens.first() == output.tokens().first())
+                    && let Some(selected) = policy.choose(count, &candidate)
+                {
+                    count = selected;
+                    inputs.extend_from_slice(&candidate.tokens[..count - 1]);
+                    suffix = Some(candidate);
+                } else {
+                    inputs.extend_from_slice(&output.tokens()[..count - 1]);
+                }
             } else {
-                draft.draft_window_with_min_probability(
-                    confirmed,
-                    &carry,
-                    maximum - 1,
-                    request.draft_min_probability,
+                draft.append_device_front(
+                    accepted.coordinates[0],
+                    &accepted.predicted,
+                    &source,
                     cancel,
-                )?
-            };
-            drafted = true;
-            if output.start != position - 1
-                || output.binding != draft.binding()
-                || output.tokens().is_empty()
-                || output.tokens().len() > maximum - 1
-                || draft.position() != position - 1 + output.tokens().len()
-            {
-                return Err("global confidence draft identity rejected".into());
-            }
-            count = output.usable_window(request.draft_min_probability, maximum)?;
-            let candidate = crate::strata_port::lookup(
-                request.prompt,
-                &history,
-                remaining.min(request.window) - 1,
-            );
-            if let Some(candidate) =
-                candidate.filter(|p| p.tokens.first() == output.tokens().first())
-                && let Some(selected) = policy.choose(count, &candidate)
-            {
-                count = selected;
-                inputs.extend_from_slice(&candidate.tokens[..count - 1]);
-                suffix = Some(candidate);
-            } else {
-                inputs.extend_from_slice(&output.tokens()[..count - 1]);
+                )?;
+                if draft.position() != position {
+                    return Err("global count1 MTP front cursor rejected".into());
+                }
             }
         }
         if inputs.len() != count || count > remaining || pending.is_some() {
@@ -377,10 +384,6 @@ pub(super) fn run<'m, 'f>(
             predicted.push(rows.greedy(row)?);
         }
         let n = accepted(&inputs, &predicted, request.eos)?;
-        let mut carries = Zeroizing::new(Vec::with_capacity(n * HIDDEN));
-        for row in 0..n {
-            carries.extend_from_slice(rows.hidden(row)?);
-        }
         let device = rows.take_device_carry()?;
         drop(rows);
         // The core repairs only real recurrent/KV/history state. Cache routes
@@ -397,19 +400,8 @@ pub(super) fn run<'m, 'f>(
         // its confirmed next input in ONE batch. Do not eagerly repair n-1
         // rows here and then run a separate count1 front at the next entry.
         let next_total = history.len() + n;
-        let defer_front = drafted
-            && predicted[n - 1] != request.eos
-            && request.max_outputs - next_total > 1
-            && request.window > 1;
-        if !defer_front && let Some(draft) = draft.as_deref_mut() {
-            // Final/count1-only rounds need no new proposal. Preserve the
-            // existing exact end cursor and orderly final cache boundary.
-            draft.repair_accepted_cache(position, &inputs[..n], &carry, &carries, cancel)?;
-            if draft.position() != position + n - 1 {
-                return Err("global accepted MTP cursor rejected".into());
-            }
-        }
-        carry.copy_from_slice(&carries[(n - 1) * HIDDEN..n * HIDDEN]);
+        let defer_front =
+            draft.is_some() && predicted[n - 1] != request.eos && next_total < request.max_outputs;
         confirmed = predicted[n - 1];
         for &token in &predicted[..n] {
             history.push(token);
@@ -443,6 +435,9 @@ pub(super) fn run<'m, 'f>(
             != request.prompt.len() + history.len() - 1
     {
         return Err("global final output accounting rejected".into());
+    }
+    if let Some(draft) = draft {
+        draft.finish_native_request()?;
     }
     sampling.close()?;
     let closed = target.end_public_language_request_io(executor, cancel)?;

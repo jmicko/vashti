@@ -109,6 +109,15 @@ impl Drop for LastForward {
     }
 }
 
+/// Completed KV front is deliberately a different capability from a completed
+/// full forward; it cannot be passed to start_follow or publish a draft token.
+struct LastFront(LastForward);
+impl LastFront {
+    fn valid(&self, binding: u64, position: usize) -> bool {
+        self.0.valid(binding, position)
+    }
+}
+
 enum NativeFrontInputs<'a> {
     Host(&'a [u32], &'a [f32]),
     Device(
@@ -693,6 +702,8 @@ impl DraftOutput {
     }
 }
 
+#[path = "resident_mtp_device.rs"]
+mod device_cache;
 #[path = "resident_mtp_window.rs"]
 mod window;
 
@@ -714,6 +725,7 @@ pub struct ResidentMtp<'g, 'f> {
     binding: u64,
     live_outputs: Arc<AtomicUsize>,
     last_forward: Option<LastForward>,
+    last_front: Option<LastFront>,
     traffic: Cell<Traffic>,
     fused_sweeps: bool,
     q8_head_broadcast: bool,
@@ -1448,6 +1460,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             binding,
             live_outputs: Arc::new(AtomicUsize::new(0)),
             last_forward: None,
+            last_front: None,
             traffic: Cell::new(Traffic::default()),
             fused_sweeps,
             q8_head_broadcast: false,
@@ -2309,6 +2322,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
 
     fn fail(&mut self) {
         self.last_forward.take();
+        self.last_front.take();
         self.poisoned = true;
         self.position.zeroize();
         // Every private owner, including all candidate/committed KV, is erased
@@ -4016,6 +4030,7 @@ impl ResidentMtp<'_, '_> {
         self.tick(6)
     }
     fn commit_forward(&mut self) {
+        self.last_front.take();
         let start = self.position;
         self.position += 1;
         self.poisoned = false;
@@ -4095,6 +4110,7 @@ impl ResidentMtp<'_, '_> {
         // Invalid preflight/cancellation must not destroy a previous valid KV
         // sequence. Once start() begins writes, any failure wipes and poisons.
         self.last_forward.take();
+        self.last_front.take();
         u::cancel(cancel)?;
         if self.poisoned || self.closed {
             return Err(Error::InvalidFormat("MTP resident poisoned"));
@@ -4135,6 +4151,7 @@ impl ResidentMtp<'_, '_> {
         cancel: &AtomicBool,
     ) -> Result<DraftOutput> {
         self.last_forward.take();
+        self.last_front.take();
         u::cancel(cancel)?;
         if self.poisoned || self.closed {
             return Err(Error::InvalidFormat("MTP resident poisoned"));
@@ -4205,6 +4222,7 @@ impl ResidentMtp<'_, '_> {
             return self.append_kv_group(&[token], carry, cancel);
         }
         self.last_forward.take();
+        self.last_front.take();
         u::cancel(cancel)?;
         if self.poisoned || self.closed {
             return Err(Error::InvalidFormat("MTP resident poisoned"));
@@ -4270,6 +4288,7 @@ impl ResidentMtp<'_, '_> {
         self.verify_source()?;
         self.physical()?;
         self.last_forward.take();
+        self.last_front.take();
         self.poisoned = true;
         self.dispatches = 0;
         let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<()> {
@@ -4746,6 +4765,7 @@ impl ResidentMtp<'_, '_> {
                 .observe_before(sample(self.client()?)?)
                 .map_err(error)?;
             self.last_forward.take();
+            self.last_front.take();
             self.q8_head_policy_locked = true;
             self.poisoned = true;
             self.dispatches = 0;
@@ -4844,6 +4864,7 @@ impl ResidentMtp<'_, '_> {
     }
     pub fn rewind(&mut self, new_position: usize) -> Result<()> {
         self.last_forward.take();
+        self.last_front.take();
         if self.closed || self.poisoned || self.retired.load(Ordering::Acquire) {
             return Err(Error::InvalidFormat("MTP resident poisoned"));
         }
@@ -4877,6 +4898,7 @@ impl ResidentMtp<'_, '_> {
     }
     pub fn close(&mut self) -> Result<CloseReceipt> {
         self.last_forward.take();
+        self.last_front.take();
         if self.closed {
             return Err(Error::InvalidFormat("MTP resident already closed"));
         }

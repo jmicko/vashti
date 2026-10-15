@@ -33,6 +33,7 @@ impl ResidentMtp<'_, '_> {
         self.physical()?;
         u::cancel(cancel)?;
         self.last_forward.take();
+        self.last_front.take();
         self.poisoned = true;
         self.dispatches = 0;
         let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<()> {

@@ -976,6 +976,7 @@ pub(crate) fn validate_shader_set() -> Result<(), Box<dyn std::error::Error>> {
         crate::public_host_expert_mirror::strata_gpu_exchange::SHADER.into(),
         crate::strata_packet::shader(),
         crate::strata_packet::selected_shader(),
+        crate::strata_packet::device_shader(),
     ];
     controllers.extend(crate::next_shared::port_verify_sources()?);
     for source in controllers {
