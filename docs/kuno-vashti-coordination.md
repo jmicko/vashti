@@ -6,16 +6,16 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-14):** isolated
-`codex/strata-rust-port`, source through `e418929`. Read the
-[shared-context handoff](#active-kuno-engine-handoff--shared-native-intel-construction-2026-10-14)
-and [whole-rewrite gate](kuno-strata-rewrite-completion.md). The core now selects
-one actual target/MTP client and one combined account; this resolves the earlier
-separate-client source blocker. GPU/model acceptance is still pending. Next
-resolve shared target embedding/head ownership and native capture/branch/event/
-commit dependencies, compact positive-threshold draft observations, native
-policy and runtime/input gates. Whole rewrite remains incomplete; no speed
-trials. Both GPUs belong to the user; reconfirm before live GPU/model/admission/
-residency work. CPU source work may continue. Application API unchanged.
+`codex/strata-rust-port`, source through `9de7fef`. Read the latest
+[shared-weight handoff](#active-kuno-engine-handoff--shared-target-dense-roots-2026-10-14)
+and [whole-rewrite gate](kuno-strata-rewrite-completion.md). Actual shared
+target/MTP context/account and pinned original embedding/head roots are now
+connected. Target embedding gather is on GPU. Whole rewrite remains incomplete;
+no speed trials. Next complete compact confidence observations, native stable
+capture/warm/event/chain/commit, policy and runtime/input gates, then the full
+source/physical correctness/recovery audit. Both GPUs are authorized for our
+protected correctness work; sudo was refreshed in the shared shell. Recheck live
+state before tests. Application API unchanged.
 
 ## Ownership
 
@@ -5808,3 +5808,35 @@ draft hidden readback, and run the full source/physical numerical/state/recovery
 audit. Revalidate the protected HOST/cgroup envelope for the actual complement.
 Historical228 full-core failures remain unaudited. No speed trials until the
 whole rewrite and correctness gates pass.
+
+
+### Active Kuno engine handoff — shared target dense roots (2026-10-14)
+
+Source `9de7fef`, after `e418929`, isolated `codex/strata-rust-port` at
+`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`. See completion guide
+**Shared original dense roots and GPU embedding** for actual ownership,
+accounting and the bounded-tile Vulkan substitution. This supersedes the
+duplicate-weight blocker, not the incomplete whole-rewrite gate.
+
+Original embedding/head are now pinned once, loaded before MTP/expert cache
+and shared by real graph/client identity. Static target LRU cannot evict or
+refund those roots; MTP peer admission prices only additional allocations.
+Selected target prompt/decode embeddings gather on GPU. Actual private/loan
+view membership and disjoint spans are checked without fabricating owner
+authority. MTP releases its shared views before target closure; final real
+shared-context close/audit remains required. Initial/final core backlog
+receipts now query the same actual immutable shared-runtime policy.
+
+Whole source, numerical/state and physical-recovery acceptance remains open;
+no GPU/model/speed run, install, release or API/Vashti change. Required Vashti
+changes:none. Both cards are now authorized for protected correctness work,
+superseding older GPU-reservation notes. Sudo was refreshed in Demons. Continue
+compact confidence observations, native capture/branch/warm/event/chain/commit,
+policy and arbitrary-input/runtime gates. Preserve inherited bytecode and
+canonical checkout. Historical228 core-suite failures still need audit.
+
+Source9de7fef validation:11 core/shared and11 feature-off/shared checks,32 prior
+focused native regressions, strict core/off Clippy, core release build and
+318 ordinary/controller plus122 physical-pointer/32 matrix offline shaders pass.
+Exact logs/limits are in the completion receipt. No GPU work was needed for
+this source block.

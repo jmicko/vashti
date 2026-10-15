@@ -1,3 +1,8 @@
+<!-- Current resume: 2026-10-14, source9de7fef, codex/strata-rust-port.
+Read kuno-vashti-coordination.md active shared-target-dense-roots handoff and
+kuno-strata-rewrite-completion.md Shared original dense roots and GPU embedding.
+Whole rewrite incomplete; no speed trials. Both GPUs now authorized for protected
+correctness work; sudo refreshed. Compact confidence/capture/policy/input remain. -->
 # Native DASLab/Strata checkpoint — 2026-10-09
 
 **Current Rust port resume pointer (2026-10-14):** isolated
