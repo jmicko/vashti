@@ -133,14 +133,9 @@ impl ResidentMtp<'_, '_> {
         for (word, t) in upload.chunks_exact_mut(4).zip(tokens) {
             word.copy_from_slice(&t.to_le_bytes());
         }
-        self.client()?
-            .write_private(
-                token_view
-                    .clone()
-                    .offset_end(token_view.size_in_used() - (count * 4) as u64),
-                std::mem::take(&mut *upload),
-            )
-            .map_err(error)?;
+        // Same shared native client and active target prompt scope; the
+        // scalar-token owner is scratch during whole-prefix teacher forcing.
+        p::stage_private_view(&self.arena, self.id(B::Token), token_view.clone(), &upload)?;
         let info = [count as u32, start as u32, 0, 0, 0, 0, EPS.to_bits(), 0];
         let pages = self.public()?.pages(EMBEDDING.name)?.len();
         for page in self.public()?.pages(EMBEDDING.name)? {
