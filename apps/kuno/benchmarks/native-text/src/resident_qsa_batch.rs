@@ -1,5 +1,5 @@
 //! Connected MAX8 adapter into actual ResidentQsa state owners.
-//! Core couples native FP16 KV, fused norm/RoPE, indexer and chunked attention.
+//! Core couples native INT8 KV, fused norm/RoPE, indexer and chunked attention.
 //! The ordinary feature-off path retains its original F32 kernels.
 //! Original CPU selection uses a guarded chunk dependency fence. An explicit
 //! public-target alternative keeps exact all-retained selection on the GPU;
@@ -1213,7 +1213,7 @@ fn validate_full_regions(
 }
 impl ResidentQsa<'_> {
     /// Core storage/math selection is indivisible: both current speculative
-    /// candidates and the committed prefix use packed FP16 K/V. The ordinary
+    /// candidates and the committed prefix use packed INT8 K/V. The ordinary
     /// scalar/F32 consumers must never see these pages.
     #[allow(clippy::too_many_arguments)]
     fn enqueue_native_qsa_operation(
@@ -1410,7 +1410,7 @@ impl ResidentQsa<'_> {
                     } else {
                         Kernel::Pack
                     },
-                    [native::CACHE_WORDS.div_ceil(64), count, 1],
+                    [native::PACK_GROUPS, count, 1],
                     if prompt {
                         vec![view(6)?, view(2)?, view(4)?, view(8)?, h(ids[FLAGS + 4])?]
                     } else {
@@ -2863,7 +2863,7 @@ mod tests {
         assert_eq!(l.requests().unwrap(), expected);
         assert_eq!(
             l.stage.owned_bytes().unwrap(),
-            if core { 20_054_016 } else { 36_306_944 }
+            if core { 11_665_408 } else { 36_306_944 }
         );
         if !core {
             assert_eq!(785_186_816 + l.bytes().unwrap(), 803_012_608);

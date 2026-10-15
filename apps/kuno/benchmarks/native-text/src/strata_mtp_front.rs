@@ -32,7 +32,11 @@ pub(crate) enum Kernel {
 }
 impl Kernel {
     fn lanes(self) -> u32 {
-        if matches!(self, Self::Norm) { 1024 } else { 64 }
+        match self {
+            Self::Norm => 1024,
+            Self::Append => 128,
+            _ => 64,
+        }
     }
     fn source(self) -> String {
         let all = include_str!("strata_mtp_front.wgsl");
@@ -335,24 +339,24 @@ mod tests {
     }
     #[test]
     fn native_four_cell_page_mapping_covers_packed_words_and_preserves_rejected_prefix() {
-        let mut seen = vec![false; 4096 * 256];
+        let mut seen = vec![false; 4096 * 132];
         for token in 0usize..4096 {
             for head in 0..2 {
-                for dim in 0..128 {
+                for dim in 0..66 {
                     let row = ((token / 4) * 2 + head) * 4 + token % 4;
-                    let at = row * 128 + dim;
+                    let at = row * 66 + dim;
                     assert!(!seen[at]);
                     seen[at] = true;
-                    assert_eq!((at / 1024) * 4 + (at / 128) % 4, token);
+                    assert_eq!((at / 66 / 8) * 4 + (at / 66) % 4, token);
                 }
             }
         }
         assert!(seen.iter().all(|&v| v));
         for accepted in [0, 1, 3, 4, 5, 63, 64, 4095, 4096] {
-            let cleared = (0..4096 * 256)
-                .filter(|&word| (word / 1024) * 4 + (word / 128) % 4 >= accepted)
+            let cleared = (0..4096 * 132)
+                .filter(|&word| (word / 66 / 8) * 4 + (word / 66) % 4 >= accepted)
                 .count();
-            assert_eq!(cleared, (4096 - accepted) * 256);
+            assert_eq!(cleared, (4096 - accepted) * 132);
         }
     }
     #[test]

@@ -75,7 +75,9 @@ codebook attribution and license below/above continue to apply. Native SIMD
 integer sums are exact; floating-point multi-token reduction parity remains an
 explicit validation gate rather than an original64 arithmetic claim.
 
-The experimental connected Intel QSA family ports the FP16 KV storage,
+The experimental connected Intel QSA and MTP families port the INT8 KV storage
+and FP16 per64-value scales from kv_q8.dp.cpp, including quantization against
+the stored scale and nearest-even signed codes. The QSA family also ports
 fused RMSNorm/RoPE, scalar Intel indexer scoring and 64-cell attention chunk /
 merge equations from the same MIT Strata fb58e0 revision's native_rope.dp.cpp,
 native_qsa_indexer.dp.cpp, qsa_select.dp.cpp and qsa_decode_attn.dp.cpp. Rust

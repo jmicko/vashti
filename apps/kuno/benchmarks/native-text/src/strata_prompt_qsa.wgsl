@@ -47,7 +47,7 @@ fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(local_invocation_index) d:u3
     var sum=0.0;var valid=1u;
     for(var j=0u;j<4u;j++) {
         let token=block*4u+j;var bits=0u;
-        if token<p.start {bits=cache[token*640u+512u+d];}else{bits=candidate[(token-p.start)*640u+512u+d];}
+        if token<p.start {bits=cache[token*392u+264u+d];}else{bits=candidate[(token-p.start)*392u+264u+d];}
         let x=bitcast<f32>(bits);if j==0u {sum=x;}else{sum+=x;}if !finite(x){valid=0u;}
     }
     let mean=fma(0.25,sum,0.0);if !finite(mean){valid=0u;}

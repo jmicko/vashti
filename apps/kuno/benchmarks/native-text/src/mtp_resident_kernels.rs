@@ -39,7 +39,8 @@ pub const CONTEXT: usize = if crate::strata_intel_core::enabled() {
 };
 pub const CACHE_WORDS: usize = CONTEXT * KV;
 pub const CACHE_STRIDE: usize = if crate::strata_intel_core::enabled() {
-    KV / 2
+    // Two256-value heads:64 packed code words and two packed FP16-scale words.
+    KVH * (HD / 4 + HD / 64 / 2)
 } else {
     KV
 };

@@ -92,7 +92,7 @@ impl Storage {
                 6144 * capacity,
                 512 * capacity,
                 512 * capacity,
-                640 * capacity,
+                crate::strata_qsa::CACHE_WORDS * capacity,
                 6144 * capacity,
                 crate::strata_qsa::PARTIAL_WORDS * 32,
                 crate::strata_qsa::STATS_WORDS * 32,

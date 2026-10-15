@@ -1,8 +1,16 @@
-// MIT Strata fb58e0 Intel native_rope / qsa_decode_attn / FP16 kv append.
+// MIT Strata fb58e0 Intel native_rope / qsa_decode_attn / kv_q8 append.
 // COMMON_BEGIN
 struct Params {count:u32,start:u32,capacity:u32,input_stride:u32,output_stride:u32,status_stride:u32,heads:u32,width:u32,block_positions:u32,epsilon:f32,theta_scale:f32,reserved:u32}
 fn finite(x:f32)->bool {return abs(x)<=3.4028234663852886e38;}
 fn cells(token:u32,start:u32)->u32 {let n=start+token+1u;return min(n,2051u);}
+// One token: 1024 signed codes, 16 FP16 scales, 128 F32 index-key values.
+// K/V use the original64-value grouping and quantize against the STORED scale.
+const CACHE_WORDS:u32=392u;
+const INDEX_OFFSET:u32=264u;
+fn signed_code(bits:u32,index:u32)->i32 {return (bitcast<i32>((bits>>((index&3u)*8u))<<24u))>>24u;}
+fn scale_pair_valid(bits:u32)->bool {let s=unpack2x16float(bits);return finite(s.x)&&finite(s.y)&&s.x>=0.0&&s.y>=0.0;}
+fn q8_value(code:u32,scales:u32,element:u32)->f32 {let s=unpack2x16float(scales);return f32(signed_code(code,element))*select(s.x,s.y,((element/64u)&1u)!=0u);}
+fn nearest_even(x:f32)->i32 {let lo=floor(x);let d=x-lo;return i32(lo)+select(0,1,d>0.5||(d==0.5&&(i32(lo)&1)!=0));}
 // COMMON_END
 // NORM_BEGIN
 @group(0) @binding(0) var<storage,read> input:array<f32>;
@@ -51,27 +59,36 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
 }
 // NORM_END
 // PACK_BEGIN
+// STRATA_DENSE_PACKED: this original packed KV kernel requires subgroup32.
 @group(0) @binding(0) var<storage,read> key:array<f32>;
 @group(0) @binding(1) var<storage,read> value:array<f32>;
 @group(0) @binding(2) var<storage,read> index_key:array<f32>;
 @group(0) @binding(3) var<storage,read_write> candidate:array<u32>;
 @group(0) @binding(4) var<storage,read_write> status:array<u32>;
 @group(0) @binding(5) var<uniform> p:Params;
-@compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) id:vec3<u32>) {
-    let t=id.y;let i=id.x;if t>=p.count || i>=640u {return;}
-    if i<512u {
-        let off=(i%256u)*2u;var a=0.0;var b=0.0;
-        if i<256u {a=key[t*512u+off];b=key[t*512u+off+1u];}else {a=value[t*512u+off];b=value[t*512u+off+1u];}
-        let bits=pack2x16float(vec2<f32>(a,b));let restored=unpack2x16float(bits);
-        let ok=finite(a) && finite(b) && finite(restored.x) && finite(restored.y);
-        candidate[t*640u+i]=select(0u,bits,ok);
-        let flag=select(0u,1u,ok);let first=(i/256u)*512u+off;
-        status[t*p.status_stride+first]=flag;status[t*p.status_stride+first+1u]=flag;
-    }else {
-        let raw=index_key[t*128u+i-512u];let x=unpack2x16float(pack2x16float(vec2<f32>(raw,0.0))).x;candidate[t*640u+i]=select(0u,bitcast<u32>(x),finite(raw) && finite(x));
-        status[t*p.status_stride+1024u+i-512u]=select(0u,1u,finite(raw) && finite(x));
-    }
+var<workgroup> maxima:array<f32,4>;
+var<workgroup> validity:array<u32,4>;
+var<workgroup> scales:array<f32,2>;
+var<workgroup> codes:array<u32,128>;
+fn record_valid(t:u32,element:u32,ok:bool) {status[t*p.status_stride+element]=select(0u,1u,ok);}
+@compute @workgroup_size(128)
+fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(local_invocation_index) tid:u32,@builtin(subgroup_invocation_id) lane:u32,@builtin(subgroup_id) warp:u32,@builtin(subgroup_size) sw:u32) {
+    let t=g.y;let group=g.x;if t>=p.count||group>=8u{return;}
+    if sw!=32u {record_valid(t,group*128u+tid,false);if group==0u{record_valid(t,1024u+tid,false);}return;}
+    let element=group*128u+tid;var x=0.0;
+    if element<512u{x=key[t*512u+element];}else{x=value[t*512u+element-512u];}
+    var good=select(0u,1u,finite(x));var a=abs(select(0.0,x,good==1u));
+    for(var d=16u;d>0u;d/=2u){a=max(a,subgroupShuffleXor(a,d));good&=subgroupShuffleXor(good,d);}
+    if lane==0u{maxima[warp]=a;validity[warp]=good;}workgroupBarrier();
+    let pair=(tid/64u)*2u;let amax=max(maxima[pair],maxima[pair+1u]);
+    let scale=unpack2x16float(pack2x16float(vec2<f32>(amax/127.0,0.0))).x;
+    let ok=(validity[pair]&validity[pair+1u])==1u&&finite(scale)&&scale>=0.0;
+    var q=0;if ok&&scale>0.0{q=clamp(nearest_even(x/scale),-127,127);}
+    codes[tid]=bitcast<u32>(q)&255u;if tid%64u==0u{scales[tid/64u]=select(0.0,scale,ok);}
+    record_valid(t,element,ok);workgroupBarrier();
+    if tid<32u{let at=tid*4u;candidate[t*CACHE_WORDS+group*32u+tid]=codes[at]|(codes[at+1u]<<8u)|(codes[at+2u]<<16u)|(codes[at+3u]<<24u);}
+    if tid==0u{candidate[t*CACHE_WORDS+256u+group]=pack2x16float(vec2<f32>(scales[0],scales[1]));}
+    if group==0u{let raw=index_key[t*128u+tid];let x=unpack2x16float(pack2x16float(vec2<f32>(raw,0.0))).x;let valid=finite(raw)&&finite(x);candidate[t*CACHE_WORDS+INDEX_OFFSET+tid]=select(0u,bitcast<u32>(x),valid);record_valid(t,1024u+tid,valid);}
 }
 // PACK_END
 // RETAINED_POOL_BEGIN
@@ -113,7 +130,7 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
         let d=tile*64u+lane;var sum=0.0;
         for(var j=0u;j<4u;j++) {
             let token=block*4u+j;var bits=0u;
-            if token<p.start {bits=cache[token*640u+512u+d];}else {bits=candidate[(token-p.start)*640u+512u+d];}
+            if token<p.start {bits=cache[token*CACHE_WORDS+INDEX_OFFSET+d];}else {bits=candidate[(token-p.start)*CACHE_WORDS+INDEX_OFFSET+d];}
             let x=bitcast<f32>(bits);sum+=x;if !finite(x) {good=0u;}
         }
         let mean=fma(0.25,sum,0.0);means[t*p.output_stride+block*128u+d]=select(0.0,mean,finite(mean));if !finite(mean) {good=0u;}
@@ -166,8 +183,10 @@ var<workgroup> sp:array<f32,768>;
 var<workgroup> row:array<u32,64>;
 var<workgroup> broken:atomic<u32>;
 fn kv(token:u32,offset:u32)->f32 {
-    var bits=0u;if token<p.start {bits=cache[token*640u+offset/2u];}else {bits=candidate[(token-p.start)*640u+offset/2u];}
-    let v=unpack2x16float(bits);return select(v.x,v.y,(offset&1u)!=0u);
+    var bits=0u;var scales=0u;
+    if token<p.start {bits=cache[token*CACHE_WORDS+offset/4u];scales=cache[token*CACHE_WORDS+256u+offset/128u];}
+    else {bits=candidate[(token-p.start)*CACHE_WORDS+offset/4u];scales=candidate[(token-p.start)*CACHE_WORDS+256u+offset/128u];}
+    return q8_value(bits,scales,offset);
 }
 @compute @workgroup_size(256)
 fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) tid:u32,@builtin(subgroup_invocation_id) lane:u32,@builtin(subgroup_id) warp:u32,@builtin(subgroup_size) sw:u32) {
@@ -260,12 +279,17 @@ fn main(@builtin(global_invocation_id) id:vec3<u32>) {
 @group(0) @binding(2) var<storage,read> positions:array<u32>;
 @group(0) @binding(3) var<storage,read_write> status:array<u32>;
 @group(0) @binding(4) var<uniform> p:Params;
+fn record_valid(t:u32,element:u32,ok:bool) {status[t*p.status_stride+element]=select(0u,1u,ok);}
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) id:vec3<u32>) {
-    let i=id.x;let t=id.y;if t>=p.count || i>=640u {return;}
-    let position=p.start+t;let bits=candidate[t*640u+i];var ok=positions[position]==position;
-    if i<512u {let pair=unpack2x16float(bits);ok=ok && finite(pair.x) && finite(pair.y);let first=i*2u;status[t*p.status_stride+first]=select(0u,1u,ok);status[t*p.status_stride+first+1u]=select(0u,1u,ok);}
-    else {ok=ok && finite(bitcast<f32>(bits));status[t*p.status_stride+1024u+i-512u]=select(0u,1u,ok);}
-    cache[position*640u+i]=select(0u,bits,ok);
+    let i=id.x;let t=id.y;if t>=p.count || i>=CACHE_WORDS {return;}
+    let position=p.start+t;let bits=candidate[t*CACHE_WORDS+i];var ok=position<p.capacity&&positions[position]==position;
+    if i<256u {
+        let scale=candidate[t*CACHE_WORDS+256u+i/32u];ok=ok&&scale_pair_valid(scale);
+        for(var j=0u;j<4u;j++){ok=ok&&signed_code(bits,j)!=-128;}
+        for(var j=0u;j<4u;j++){record_valid(t,i*4u+j,ok);}
+    }else if i<INDEX_OFFSET {ok=ok&&scale_pair_valid(bits);}
+    else {ok=ok&&finite(bitcast<f32>(bits));record_valid(t,1024u+i-INDEX_OFFSET,ok);}
+    cache[position*CACHE_WORDS+i]=select(0u,bits,ok);
 }
 // APPEND_END

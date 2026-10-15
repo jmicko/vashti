@@ -16,7 +16,7 @@ fn main(@builtin(local_invocation_index) tid:u32,@builtin(subgroup_invocation_id
     if sw!=32u {if tid==0u{atomicOr(&fault[0],1u);}return;}
     var mean=0.0;var ss=0.0;var ok=1u;
     if tid<128u {
-        let incoming=bitcast<f32>(candidate[512u+tid]);
+        let incoming=bitcast<f32>(candidate[264u+tid]);
         var sum=incoming;for(var j=1u;j<4u;j++){sum+=incoming;}
         mean=fma(0.25,sum,0.0);ss=mean*mean;
         if !finite(incoming)||!finite(mean)||!finite(gamma[tid]){ok=0u;}

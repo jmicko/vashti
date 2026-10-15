@@ -29,7 +29,7 @@ pub(crate) fn run(
     let blocks = capacity / 4;
     let [cache, positions, pooled, fault] = owners;
     for (h, n) in [&cache, &positions, &pooled, &fault].into_iter().zip([
-        capacity * 640,
+        capacity * CACHE_WORDS,
         capacity,
         (blocks + 1) * 128,
         1,
@@ -43,7 +43,7 @@ pub(crate) fn run(
         return Err(crate::strata_prompt::invalid_buffer_length());
     }
     let q = crate::strata_prompt::qsa_workspace()?;
-    for (i, n) in [12288, 512, 512, 512, 128, 6144, 512, 512, 640, 6144]
+    for (i, n) in [12288, 512, 512, 512, 128, 6144, 512, 512, CACHE_WORDS, 6144]
         .into_iter()
         .enumerate()
     {
@@ -105,7 +105,7 @@ pub(crate) fn run(
     super::super::launch(
         arena,
         Kernel::PromptPackFault,
-        [640usize.div_ceil(64), count, 1],
+        [super::super::PACK_GROUPS, count, 1],
         vec![
             q[6].clone(),
             q[2].clone(),
@@ -130,7 +130,7 @@ pub(crate) fn run(
     super::super::launch(
         arena,
         Kernel::PromptAppendFault,
-        [640usize.div_ceil(64), count, 1],
+        [CACHE_WORDS.div_ceil(64), count, 1],
         vec![
             q[8].clone(),
             cache.clone(),

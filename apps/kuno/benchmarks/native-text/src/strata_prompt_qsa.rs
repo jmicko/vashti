@@ -206,8 +206,8 @@ pub(crate) fn split(arena: &PrivateArena, p: [u32; 12], h: [Handle; 3]) -> Resul
 /// them. Pooled state is private and cannot publish before the model fence.
 pub(crate) fn pool(arena: &PrivateArena, mut p: [u32; 12], h: [Handle; 2]) -> Result<()> {
     let q = crate::strata_prompt::qsa_workspace()?;
-    span(&h[0], p[2] as usize * 640)?;
-    span(&h[1], p[0] as usize * 640)?;
+    span(&h[0], p[2] as usize * CACHE_WORDS)?;
+    span(&h[1], p[0] as usize * CACHE_WORDS)?;
     span(&q[12], (p[2] as usize / 4) * 128)?;
     span(&q[13], p[2] as usize / 4)?;
     p[3] = (p[2] / 4) * 128;

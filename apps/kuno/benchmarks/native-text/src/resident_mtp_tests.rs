@@ -444,8 +444,13 @@ fn exact_original_tensor_registry_and_full_page_plan() {
 fn private_plan_owns_complete_two_kv_caches_and_separate_work_roles() {
     assert_eq!(N, 42);
     assert_eq!(private_plan().unwrap(), 11_698_176);
-    assert_eq!(WORDS[B::Keys as usize], 2048 * 2 * 256);
-    assert_eq!(WORDS[B::Values as usize], 2048 * 2 * 256);
+    let cache_words = if crate::strata_intel_core::enabled() {
+        4096 * 132
+    } else {
+        2048 * 2 * 256
+    };
+    assert_eq!(WORDS[B::Keys as usize], cache_words);
+    assert_eq!(WORDS[B::Values as usize], cache_words);
     assert_eq!(
         BufferLayout::new(WORDS[B::Keys as usize])
             .unwrap()

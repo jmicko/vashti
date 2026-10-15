@@ -119,7 +119,7 @@ pub(crate) fn initialize(arena: &PrivateArena, owners: [Handle; 4], capacity: us
         return Err(Error::InvalidBufferLength);
     }
     let dead = (capacity / 4) * 128;
-    for (h, n) in owners.iter().zip([640, 128, dead + 128, 1]) {
+    for (h, n) in owners.iter().zip([super::CACHE_WORDS, 128, dead + 128, 1]) {
         span(h, n)?;
     }
     launch(

@@ -4742,7 +4742,7 @@ impl ResidentMtp<'_, '_> {
         f::launch(
             &self.arena,
             f::Kernel::Append,
-            [8, count, 1],
+            [4, count, 1],
             vec![
                 h(f::ROTATED)?,
                 h(f::VALUE)?,

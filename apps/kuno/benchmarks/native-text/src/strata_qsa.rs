@@ -1,4 +1,4 @@
-//! Connected native Intel QSA: FP16 KV, fused norm/RoPE, chunked attention.
+//! Connected native Intel QSA: INT8 KV, fused norm/RoPE, chunked attention.
 //! MIT Strata fb58e0: native_rope.dp.cpp, qsa_decode_attn.dp.cpp, kv append.
 //! All private owners/strides are supplied by the admitted MAX8 QSA workspace.
 use crate::{
@@ -22,7 +22,11 @@ pub(crate) mod prompt;
 #[path = "strata_qsa_select.rs"]
 pub(crate) mod selection;
 
-pub(crate) const CACHE_WORDS: usize = 640; // 512 half K + 512 half V + 128 F32 index key
+// Original64-value quantization groups: 1024 signed codes,16 half scales,
+// followed by the128 FP16-rounded F32 index-key values.
+pub(crate) const INDEX_OFFSET: usize = 264;
+pub(crate) const CACHE_WORDS: usize = INDEX_OFFSET + 128;
+pub(crate) const PACK_GROUPS: usize = 8;
 pub(crate) const CHUNKS: usize = 33; // ceil((2048 + incomplete tail <=3)/64)
 pub(crate) const PARTIAL_WORDS: usize = 24 * CHUNKS * 256;
 pub(crate) const STATS_WORDS: usize = 24 * CHUNKS * 2;
@@ -62,6 +66,7 @@ pub(crate) enum Kernel {
 impl Kernel {
     fn lanes(self) -> u32 {
         match self {
+            Self::Pack | Self::PromptPack | Self::PromptPackFault => 128,
             Self::Norm
             | Self::PromptNorm
             | Self::Attention
@@ -139,7 +144,7 @@ impl Kernel {
                 // Every causal cell now comes from the authoritative cache.
                 let a = s.find("fn kv(").unwrap();
                 let z = a + s[a..].find("@compute").unwrap();
-                s.replace_range(a..z,"fn kv(token:u32,offset:u32)->f32 {let v=unpack2x16float(cache[token*640u+offset/2u]);return select(v.x,v.y,(offset&1u)!=0u);}\n");
+                s.replace_range(a..z,"fn kv(token:u32,offset:u32)->f32 {return q8_value(cache[token*CACHE_WORDS+offset/4u],cache[token*CACHE_WORDS+256u+offset/128u],offset);}\n");
             }
         }
         let edits: &[(&str, &str)] = match self {
@@ -163,12 +168,8 @@ impl Kernel {
                     "@binding(4) var<storage,read_write> fault:array<atomic<u32>>;",
                 ),
                 (
-                    "status[t*p.status_stride+first]=flag;status[t*p.status_stride+first+1u]=flag;",
-                    "if !ok{atomicOr(&fault[0],1u);}",
-                ),
-                (
-                    "status[t*p.status_stride+1024u+i-512u]=select(0u,1u,finite(raw) && finite(x));",
-                    "if !finite(raw)||!finite(x){atomicOr(&fault[0],1u);}",
+                    "fn record_valid(t:u32,element:u32,ok:bool) {status[t*p.status_stride+element]=select(0u,1u,ok);}",
+                    "fn record_valid(t:u32,element:u32,ok:bool) {if !ok{atomicOr(&fault[0],1u);}}",
                 ),
             ],
             Self::PromptAppendFault => &[
@@ -177,12 +178,8 @@ impl Kernel {
                     "@binding(3) var<storage,read_write> fault:array<atomic<u32>>;",
                 ),
                 (
-                    "status[t*p.status_stride+first]=select(0u,1u,ok);status[t*p.status_stride+first+1u]=select(0u,1u,ok);",
-                    "if !ok{atomicOr(&fault[0],1u);}",
-                ),
-                (
-                    "status[t*p.status_stride+1024u+i-512u]=select(0u,1u,ok);",
-                    "if !ok{atomicOr(&fault[0],1u);}",
+                    "fn record_valid(t:u32,element:u32,ok:bool) {status[t*p.status_stride+element]=select(0u,1u,ok);}",
+                    "fn record_valid(t:u32,element:u32,ok:bool) {if !ok{atomicOr(&fault[0],1u);}}",
                 ),
             ],
             Self::PromptAttentionFault => &[
@@ -236,7 +233,7 @@ impl Kernel {
             if matches!(self, Self::MtpAttention) {
                 let a = s.find("fn kv(").unwrap();
                 let z = a + s[a..].find("@compute").unwrap();
-                s.replace_range(a..z,"fn kv(token:u32,offset:u32)->f32 {let component=offset%512u;let row=((token/4u)*2u+component/256u)*4u+token%4u;let at=row*128u+(component%256u)/2u;var bits=0u;if offset<512u {bits=cache[at];}else{bits=candidate[at];}let v=unpack2x16float(bits);return select(v.x,v.y,(offset&1u)!=0u); }\n");
+                s.replace_range(a..z,"fn kv(token:u32,offset:u32)->f32 {let component=offset%512u;let row=((token/4u)*2u+component/256u)*4u+token%4u;let d=component%256u;let at=row*66u+d/4u;let scale_at=row*66u+64u+d/128u;var bits=0u;var scales=0u;if offset<512u {bits=cache[at];scales=cache[scale_at];}else{bits=candidate[at];scales=candidate[scale_at];}return q8_value(bits,scales,d); }\n");
             }
         }
         s
@@ -247,8 +244,8 @@ impl KernelMetadata for Kernel {
         match self {
             Self::Norm => "StrataQsaNormRope",
             Self::PromptNorm => "StrataQsaPromptMtpNormRope",
-            Self::Pack => "StrataQsaPackFp16",
-            Self::PromptPack => "StrataPromptQsaPackFp16",
+            Self::Pack => "StrataQsaPackInt8",
+            Self::PromptPack => "StrataPromptQsaPackInt8",
             Self::Pool => "StrataQsaRawIndexerPool",
             Self::RetainedPool => "StrataQsaRetainedIndexerPrefix",
             Self::PublishPool => "StrataQsaPublishIndexerBlocks",
@@ -261,8 +258,8 @@ impl KernelMetadata for Kernel {
             Self::MtpMerge => "StrataMtpChunkMerge",
             Self::Merge => "StrataQsaChunkMerge",
             Self::Gate => "StrataQsaGate",
-            Self::Append => "StrataQsaAppendFp16",
-            Self::PromptAppend => "StrataPromptQsaAppendFp16",
+            Self::Append => "StrataQsaAppendInt8",
+            Self::PromptAppend => "StrataPromptQsaAppendInt8",
             Self::PromptPackFault => "StrataPromptFullQsaPack",
             Self::PromptAppendFault => "StrataPromptFullQsaAppend",
             Self::PromptAttentionFault => "StrataPromptFullAttentionBatch32",
@@ -424,9 +421,9 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
 mod tests {
     use super::*;
     #[test]
-    fn packed_fp16_current_and_committed_geometry_covers_all_real_causal_rows() {
-        // The original separate half pools have exactly the same component
-        // address as this packed token owner (both little-endian pairs).
+    fn packed_int8_current_and_committed_geometry_covers_all_real_causal_rows() {
+        // Token owners retain both code planes, packed half scales and raw
+        // index keys. Candidate and committed rows use identical local offsets.
         for count in 1usize..=8 {
             for start in [0, 1, 3, 63, 64, 2047, 2048, 4096 - count] {
                 for t in 0..count {
@@ -445,10 +442,12 @@ mod tests {
                         for dim in [0, 255] {
                             for kvh in 0..2 {
                                 for value in [0, 1] {
-                                    let half = value * 512 + kvh * 256 + dim;
-                                    let at = row * CACHE_WORDS + half / 2;
-                                    assert!(at < bound);
-                                    assert_eq!(half / 2, (value * 256) + (kvh * 128) + dim / 2);
+                                    let element = value * 512 + kvh * 256 + dim;
+                                    let code = row * CACHE_WORDS + element / 4;
+                                    let scale = row * CACHE_WORDS + 256 + element / 128;
+                                    assert!(code < bound && scale < bound);
+                                    assert_eq!(element / 4, value * 128 + kvh * 64 + dim / 4);
+                                    assert!(element / 128 < 8);
                                 }
                             }
                         }
@@ -481,7 +480,7 @@ mod tests {
                     }
                 }
                 // Rejected suffix erasure preserves every byte of the accepted
-                // prefix, including all packed halves and historical index keys.
+                // prefix, including codes, scales and historical index keys.
                 for accepted in 1..=count {
                     let from = (start + accepted) * CACHE_WORDS;
                     let end = (start + count) * CACHE_WORDS;
