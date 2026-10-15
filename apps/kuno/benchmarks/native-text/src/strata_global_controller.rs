@@ -118,6 +118,36 @@ fn accepted(inputs: &[u32], predicted: &[u32], eos: u32) -> Result<usize> {
     Ok(n)
 }
 
+/// One accepted verifier prefix retained only until the next round's grouped
+/// front. These are actual target predictions/R rows, never rejected proposals.
+/// Moving the existing verifier vectors avoids a second host prefix mirror.
+struct AcceptedRound {
+    coordinates: Zeroizing<[usize; 2]>, // original target start, complete old MTP cursor
+    binding: Zeroizing<u64>,
+    predicted: Zeroizing<Vec<u32>>,
+    carries: Zeroizing<Vec<f32>>,
+}
+impl AcceptedRound {
+    fn validate_entry(
+        &self,
+        position: usize,
+        confirmed: u32,
+        draft_position: usize,
+        binding: u64,
+    ) -> Result<()> {
+        if !(1..=crate::strata_port::verify_capacity()).contains(&self.predicted.len())
+            || self.coordinates[0].checked_add(self.predicted.len()) != Some(position)
+            || self.predicted.last() != Some(&confirmed)
+            || self.carries.len() != self.predicted.len() * HIDDEN
+            || self.coordinates[1] != draft_position
+            || *self.binding != binding
+        {
+            return Err("global accepted-round entry rejected".into());
+        }
+        Ok(())
+    }
+}
+
 /// The model's charged request geometry must match this request. The caller
 /// controls accepted-token delivery; this module never persists text or tokens.
 pub(super) fn run<'m, 'f>(
@@ -229,15 +259,23 @@ pub(super) fn run<'m, 'f>(
     history.push(confirmed);
     emit(confirmed)?;
     let mut policy = crate::strata_port::DraftPolicy::default();
+    let mut pending: Option<AcceptedRound> = None;
     let mut rounds = 0u64;
     let mut repairs = 0u64;
     while history.len() < request.max_outputs && confirmed != request.eos {
         crate::resident_util::cancel(cancel)?;
         let position = target.completed_target_rows_cursor(executor)?;
-        if position != request.prompt.len() + history.len() - 1
-            || draft.as_ref().is_some_and(|d| d.position() != position - 1)
-        {
-            return Err("global target/draft entry alignment rejected".into());
+        if position != request.prompt.len() + history.len() - 1 {
+            return Err("global target entry alignment rejected".into());
+        }
+        if let Some(d) = draft.as_ref() {
+            if let Some(accepted) = &pending {
+                accepted.validate_entry(position, confirmed, d.position(), d.binding())?;
+            } else if d.position() != position - 1 {
+                return Err("global draft entry alignment rejected".into());
+            }
+        } else if pending.is_some() {
+            return Err("global accepted-round owner missing".into());
         }
         sampling.begin_round(position, confirmed)?;
         let remaining = request.max_outputs - history.len();
@@ -250,17 +288,30 @@ pub(super) fn run<'m, 'f>(
         inputs.push(confirmed);
         let started = Instant::now();
         let mut suffix = None;
+        let mut drafted = false;
         if let Some(draft) = draft.as_deref_mut()
             && count > 1
         {
             let maximum = count;
-            let output = draft.draft_window_with_min_probability(
-                confirmed,
-                &carry,
-                maximum - 1,
-                request.draft_min_probability,
-                cancel,
-            )?;
+            let output = if let Some(accepted) = pending.take() {
+                draft.draft_accepted_window(
+                    accepted.coordinates[0],
+                    &accepted.predicted,
+                    &accepted.carries,
+                    maximum - 1,
+                    request.draft_min_probability,
+                    cancel,
+                )?
+            } else {
+                draft.draft_window_with_min_probability(
+                    confirmed,
+                    &carry,
+                    maximum - 1,
+                    request.draft_min_probability,
+                    cancel,
+                )?
+            };
+            drafted = true;
             if output.start != position - 1
                 || output.binding != draft.binding()
                 || output.tokens().is_empty()
@@ -286,7 +337,7 @@ pub(super) fn run<'m, 'f>(
                 inputs.extend_from_slice(&output.tokens()[..count - 1]);
             }
         }
-        if inputs.len() != count || count > remaining {
+        if inputs.len() != count || count > remaining || pending.is_some() {
             return Err("global draft window bound rejected".into());
         }
         sampling.stage_target(position, &inputs)?;
@@ -318,7 +369,17 @@ pub(super) fn run<'m, 'f>(
         if target.completed_target_rows_cursor(executor)? != position + n {
             return Err("global accepted target cursor rejected".into());
         }
-        if let Some(draft) = draft.as_deref_mut() {
+        // The native next round fronts all accepted (prediction,R) rows plus
+        // its confirmed next input in ONE batch. Do not eagerly repair n-1
+        // rows here and then run a separate count1 front at the next entry.
+        let next_total = history.len() + n;
+        let defer_front = drafted
+            && predicted[n - 1] != request.eos
+            && request.max_outputs - next_total > 1
+            && request.window > 1;
+        if !defer_front && let Some(draft) = draft.as_deref_mut() {
+            // Final/count1-only rounds need no new proposal. Preserve the
+            // existing exact end cursor and orderly final cache boundary.
             draft.repair_accepted_cache(position, &inputs[..n], &carry, &carries, cancel)?;
             if draft.position() != position + n - 1 {
                 return Err("global accepted MTP cursor rejected".into());
@@ -329,6 +390,18 @@ pub(super) fn run<'m, 'f>(
         for &token in &predicted[..n] {
             history.push(token);
             emit(token)?;
+        }
+        if defer_front {
+            let d = draft
+                .as_ref()
+                .ok_or("global accepted-round draft owner missing")?;
+            predicted.truncate(n);
+            pending = Some(AcceptedRound {
+                coordinates: Zeroizing::new([position, d.position()]),
+                binding: Zeroizing::new(d.binding()),
+                predicted,
+                carries,
+            });
         }
         // Native policy needs request-local cost observations. They are not
         // printed, persisted or used to choose between incomplete port paths.
@@ -341,7 +414,10 @@ pub(super) fn run<'m, 'f>(
         );
         rounds += 1;
     }
-    if target.completed_target_rows_cursor(executor)? != request.prompt.len() + history.len() - 1 {
+    if pending.is_some()
+        || target.completed_target_rows_cursor(executor)?
+            != request.prompt.len() + history.len() - 1
+    {
         return Err("global final output accounting rejected".into());
     }
     sampling.close()?;
@@ -364,6 +440,23 @@ pub(super) fn run<'m, 'f>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_grouped_round_entry_is_bound_to_accepted_prefix_and_original_model() {
+        for n in 1..=crate::strata_port::verify_capacity() {
+            let prefix = AcceptedRound {
+                coordinates: Zeroizing::new([20, 22]),
+                binding: Zeroizing::new(99),
+                predicted: Zeroizing::new((10..10 + n as u32).collect()),
+                carries: Zeroizing::new(vec![0.; n * HIDDEN]),
+            };
+            let next = 9 + n as u32;
+            prefix.validate_entry(20 + n, next, 22, 99).unwrap();
+            assert!(prefix.validate_entry(21 + n, next, 22, 99).is_err());
+            assert!(prefix.validate_entry(20 + n, next + 1, 22, 99).is_err());
+            assert!(prefix.validate_entry(20 + n, next, 23, 99).is_err());
+            assert!(prefix.validate_entry(20 + n, next, 22, 100).is_err());
+        }
+    }
     #[test]
     fn native_prompt_prefix_and_teacher_exclude_exactly_one_normal_decode_input() {
         for n in [

@@ -2255,10 +2255,16 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         }
     }
     fn start(&mut self, token: u32, carry: &[f32]) -> Result<()> {
+        self.start_at(token, carry, self.position)
+    }
+    /// Stage a real input at its eventual cell while validating cache contents
+    /// at the current completed cursor. Accepted-front catch-up may rewind a
+    /// full cache; that cursor is not itself another cell to execute.
+    fn start_at(&mut self, token: u32, carry: &[f32], cell: usize) -> Result<()> {
         if self.closed || self.poisoned || self.retired.load(Ordering::Acquire) {
             return Err(Error::InvalidFormat("MTP resident poisoned"));
         }
-        validate_input(token, carry, self.position)?;
+        validate_input(token, carry, cell)?;
         self.q8_head_policy_locked = true;
         self.verify_source()?;
         self.physical()?;
@@ -3829,28 +3835,7 @@ impl ResidentMtp<'_, '_> {
     fn forward(&mut self) -> Result<()> {
         if crate::strata_intel_core::enabled() && self.graph.profile() == MtpProfile::StrataQ2 {
             self.queue_native_front(1, None, self.position, &AtomicBool::new(false))?;
-            let ids = *self
-                .native_front
-                .as_ref()
-                .ok_or(Error::InvalidBufferLength)?
-                .ids;
-            for (source, dest, words) in [
-                (crate::strata_mtp_front::RES, B::Residual0, k::WIDE),
-                (crate::strata_mtp_front::MIXED, B::Mixed, k::D),
-                (crate::strata_mtp_front::INJ, B::Injection, k::HC),
-            ] {
-                u::copy_words::launch::<WgpuRuntime>(
-                    self.client()?,
-                    u::grid(words)?,
-                    CubeDim::new_1d(64),
-                    u::arg(&self.arena, ids[source])?,
-                    self.a(dest)?,
-                );
-            }
-            self.tick(3)?;
-            self.native_rest_gr(1)?;
-            self.moe()?;
-            return self.native_rest_gr(2);
+            return self.native_selected_rest(1);
         } else {
             self.condition()?;
             self.hc(B::Residual0, 0, true)?;
@@ -3861,6 +3846,67 @@ impl ResidentMtp<'_, '_> {
         self.moe()?;
         self.combine(B::Residual1, B::Residual2)?;
         self.hc(B::Residual2, 2, false)
+    }
+    /// capture_round's selected last accepted row becomes the sole rest input.
+    /// The original full front roots stay owned; no offset view becomes an owner.
+    fn native_selected_rest(&mut self, count: usize) -> Result<()> {
+        use crate::strata_mtp_front as f;
+        if !(1..=8).contains(&count) {
+            return Err(Error::InvalidBufferLength);
+        }
+        if count > 1 {
+            let ids = *self
+                .native_front
+                .as_ref()
+                .ok_or(Error::InvalidBufferLength)?
+                .ids;
+            f::launch(
+                &self.arena,
+                f::Kernel::Select,
+                [k::WIDE.div_ceil(64), 1, 1],
+                vec![
+                    u::handle(&self.arena, ids[f::RES])?,
+                    u::handle(&self.arena, ids[f::INJ])?,
+                    u::handle(&self.arena, ids[f::MIXED])?,
+                    u::handle(&self.arena, self.id(B::Fault))?,
+                ],
+                [count as u32, 0, (count - 1) as u32, 0, 0, 0, 0, 0],
+            )?;
+            self.tick(1)?;
+        }
+        let ids = *self
+            .native_front
+            .as_ref()
+            .ok_or(Error::InvalidBufferLength)?
+            .ids;
+        for (source, dest, words) in [
+            (crate::strata_mtp_front::RES, B::Residual0, k::WIDE),
+            (crate::strata_mtp_front::MIXED, B::Mixed, k::D),
+            (crate::strata_mtp_front::INJ, B::Injection, k::HC),
+        ] {
+            u::copy_words::launch::<WgpuRuntime>(
+                self.client()?,
+                u::grid(words)?,
+                CubeDim::new_1d(64),
+                u::arg(&self.arena, ids[source])?,
+                self.a(dest)?,
+            );
+        }
+        self.tick(3)?;
+        if count > 1 {
+            crate::strata_dense::prepare(
+                self.client()?,
+                k::D,
+                u::handle(&self.arena, self.id(B::Mixed))?,
+                u::handle(&self.arena, ids[f::PLANES])?,
+                u::handle(&self.arena, self.id(B::Fault))?,
+                &matmul::BatchSpans::new(1, 0, 0, k::D, 0, k::D),
+            )?;
+            self.tick(1)?;
+        }
+        self.native_rest_gr(1)?;
+        self.moe()?;
+        self.native_rest_gr(2)
     }
     fn native_rest_gr(&mut self, kind: usize) -> Result<()> {
         use crate::strata_mtp_front as f;

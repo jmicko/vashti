@@ -80,6 +80,55 @@ fn seal_window(packet: &mut Array<u32>, fault: &Array<Atomic<u32>>) {
         packet[MAX_PROPOSALS] = fault[0].load();
     }
 }
+/// Borrowed actual target predictions/R rows. The controller owns their wiping
+/// storage until this round has joined; this is never a fabricated carry/token.
+enum WindowStart<'a> {
+    Input {
+        token: u32,
+        carry: &'a [f32],
+    },
+    Accepted {
+        start: usize,
+        tokens: &'a [u32],
+        carries: &'a [f32],
+    },
+}
+impl WindowStart<'_> {
+    fn position(&self, old: usize, completed: bool) -> Result<usize> {
+        match self {
+            Self::Input { token, carry } => {
+                validate_input(*token, carry, old)?;
+                Ok(old)
+            }
+            Self::Accepted {
+                start,
+                tokens,
+                carries,
+            } => {
+                if !crate::strata_intel_core::enabled()
+                    || !completed
+                    || *start == 0
+                    || !(1..=ROWS).contains(&tokens.len())
+                    || old > k::CONTEXT
+                    || old < *start
+                    || old - start > MAX_PROPOSALS - 1
+                    || carries.len() != tokens.len() * k::WIDE
+                {
+                    return Err(Error::InvalidFormat("MTP accepted-front boundary"));
+                }
+                for (row, &token) in tokens.iter().enumerate() {
+                    validate_input(
+                        token,
+                        &carries[row * k::WIDE..(row + 1) * k::WIDE],
+                        start.checked_add(row).ok_or(Error::ArithmeticOverflow)?,
+                    )?;
+                }
+                Ok(start + tokens.len() - 1)
+            }
+        }
+    }
+}
+
 impl ResidentMtp<'_, '_> {
     pub(crate) fn draft_window_with_min_probability(
         &mut self,
@@ -89,32 +138,136 @@ impl ResidentMtp<'_, '_> {
         minimum: f32,
         cancel: &AtomicBool,
     ) -> Result<DraftWindow> {
+        self.window_with_min_probability(
+            &WindowStart::Input { token, carry },
+            count,
+            minimum,
+            cancel,
+        )
+    }
+
+    /// Pinned capture_round(T=a+1), called from the next round with exactly the
+    /// accepted target predictions and residuals. Rejected rows never enter it.
+    pub(crate) fn draft_accepted_window(
+        &mut self,
+        start: usize,
+        tokens: &[u32],
+        carries: &[f32],
+        count: usize,
+        minimum: f32,
+        cancel: &AtomicBool,
+    ) -> Result<DraftWindow> {
+        self.window_with_min_probability(
+            &WindowStart::Accepted {
+                start,
+                tokens,
+                carries,
+            },
+            count,
+            minimum,
+            cancel,
+        )
+    }
+
+    fn window_start_position(&self, source: &WindowStart<'_>, count: usize) -> Result<usize> {
+        if !(1..=MAX_PROPOSALS).contains(&count)
+            || self.closed
+            || self.poisoned
+            || self.retired.load(Ordering::Acquire)
+            || self.live_outputs.load(Ordering::Acquire) != 0
+            || matches!(source, WindowStart::Accepted { .. }) && !self.native_confidence_supported()
+        {
+            return Err(Error::InvalidFormat("MTP window source scope"));
+        }
+        let start = source.position(
+            self.position,
+            self.last_forward
+                .as_ref()
+                .is_some_and(|s| s.valid(self.binding, self.position)),
+        )?;
+        k::validate_position(
+            start
+                .checked_add(count - 1)
+                .ok_or(Error::ArithmeticOverflow)?,
+        )?;
+        Ok(start)
+    }
+
+    fn start_window(&mut self, source: &WindowStart<'_>) -> Result<()> {
+        match source {
+            WindowStart::Input { token, carry } => self.start(*token, carry),
+            WindowStart::Accepted {
+                start,
+                tokens,
+                carries,
+            } => {
+                // Clear scratch/stage the actual selected token/carry at the OLD
+                // complete boundary, then discard only speculative cache cells.
+                let last = tokens.len() - 1;
+                self.start_at(
+                    tokens[last],
+                    &carries[last * k::WIDE..(last + 1) * k::WIDE],
+                    start + last,
+                )?;
+                self.rewind_cache(self.position, *start)?;
+                self.guard_private(*start)?;
+                self.position = start + last;
+                Ok(())
+            }
+        }
+    }
+    fn forward_window_first(
+        &mut self,
+        source: &WindowStart<'_>,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        match source {
+            WindowStart::Input { .. } => self.forward(),
+            WindowStart::Accepted {
+                start,
+                tokens,
+                carries,
+            } => {
+                self.enqueue_native_front(tokens, carries, *start, cancel)?;
+                self.native_selected_rest(tokens.len())
+            }
+        }
+    }
+    fn window_with_min_probability(
+        &mut self,
+        source: &WindowStart<'_>,
+        count: usize,
+        minimum: f32,
+        cancel: &AtomicBool,
+    ) -> Result<DraftWindow> {
         if !minimum.is_finite()
             || !(0. ..=1.).contains(&minimum)
-            || !(1..=MAX_PROPOSALS).contains(&count)
             || !self.native_confidence_supported()
         {
             return Err(Error::InvalidFormat("MTP confidence-window scope"));
         }
+        let start = self.window_start_position(source, count)?;
         if minimum == 0. {
-            return self.draft_window(token, carry, count, cancel);
+            return self.queued_window_from(source, count, cancel);
         }
         // Same stopping rule as pinned draft(): generate the first draft, then
         // launch j only if j-1's probability met the configured threshold.
-        validate_input(token, carry, self.position)?;
-        k::validate_position(
-            self.position
-                .checked_add(count - 1)
-                .ok_or(Error::ArithmeticOverflow)?,
-        )?;
-        let start = self.position;
         let mut tokens = Zeroizing::new(Vec::with_capacity(MAX_PROPOSALS));
         let mut probabilities = Zeroizing::new(Vec::with_capacity(MAX_PROPOSALS));
         let mut last_enqueue_ns = 0;
         for step in 0..count {
             let clock = Instant::now();
             let output = if step == 0 {
-                self.step_draft(token, carry, cancel)?
+                u::cancel(cancel)?;
+                let lease = OutputLease::acquire(&self.live_outputs)?;
+                self.last_forward.take();
+                let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    self.start_window(source)?;
+                    self.forward_window_first(source, cancel)?;
+                    u::cancel(cancel)?;
+                    self.draft_output(lease)
+                }));
+                self.accept_draft(attempted, cancel)?
             } else {
                 self.follow_draft(cancel)?
             };
@@ -149,6 +302,14 @@ impl ResidentMtp<'_, '_> {
         count: usize,
         cancel: &AtomicBool,
     ) -> Result<DraftWindow> {
+        self.queued_window_from(&WindowStart::Input { token, carry }, count, cancel)
+    }
+    fn queued_window_from(
+        &mut self,
+        source: &WindowStart<'_>,
+        count: usize,
+        cancel: &AtomicBool,
+    ) -> Result<DraftWindow> {
         u::cancel(cancel)?;
         if !crate::strata_port::enabled()
             || !self.fused_sweeps
@@ -159,14 +320,8 @@ impl ResidentMtp<'_, '_> {
         {
             return Err(Error::InvalidFormat("MTP queued window scope"));
         }
-        validate_input(token, carry, self.position)?;
-        k::validate_position(
-            self.position
-                .checked_add(count - 1)
-                .ok_or(Error::ArithmeticOverflow)?,
-        )?;
+        let start = self.window_start_position(source, count)?;
         let id = self.draft_window.ok_or(Error::InvalidBufferLength)?;
-        let start = self.position;
         let lease = OutputLease::acquire(&self.live_outputs)?;
         self.last_forward.take();
         // At most the compiled number of bounded per-cell INFO sets may remain queued together.
@@ -176,13 +331,17 @@ impl ResidentMtp<'_, '_> {
             .map_err(error)?;
         let result =
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<DraftWindow> {
-                self.start(token, carry)?;
+                self.start_window(source)?;
                 u::zero(&self.arena, id)?;
                 self.tick(1)?;
                 let mut last_enqueue_ns = 0;
                 for member in 0..count {
                     let clock = Instant::now();
-                    self.forward()?;
+                    if member == 0 {
+                        self.forward_window_first(source, cancel)?;
+                    } else {
+                        self.forward()?;
+                    }
                     self.finish_gpu()?;
                     save_proposal::launch::<WgpuRuntime>(
                         self.client()?,
@@ -346,6 +505,82 @@ fn decode_window(packet: &[u32], count: usize, with_probability: bool) -> Result
 #[cfg(test)]
 mod confidence_tests {
     use super::*;
+    #[test]
+    fn native_grouped_round_covers_every_accepted_prefix_and_short_draft_chain() {
+        if !crate::strata_intel_core::enabled() {
+            return;
+        }
+        for n in 1..=ROWS {
+            for start in [1, 2, 63, 2048, k::CONTEXT - n] {
+                let tokens: Vec<_> = (0..n as u32).map(|i| i + 10).collect();
+                let carries: Vec<_> = (0..n * k::WIDE).map(|i| (i / k::WIDE) as f32).collect();
+                let source = WindowStart::Accepted {
+                    start,
+                    tokens: &tokens,
+                    carries: &carries,
+                };
+                // A suffix-selected accepted window may be LONGER than the
+                // actual confidence-stopped chain. Only old KV below start is kept.
+                for produced in 1..=MAX_PROPOSALS {
+                    let old = start - 1 + produced;
+                    if old <= k::CONTEXT {
+                        assert_eq!(source.position(old, true).unwrap(), start + n - 1);
+                        assert!(source.position(old, false).is_err());
+                    }
+                }
+                assert!(source.position(start - 1, true).is_err());
+                assert!(source.position(start + MAX_PROPOSALS, true).is_err());
+                // Native front row r consumes PREDICTION[r] and R[r] at cell
+                // start+r, including the new confirmed last prediction. It is
+                // not the prior accepted input/R[r-1] pair used by old repair.
+                for row in 0..n {
+                    validate_input(
+                        tokens[row],
+                        &carries[row * k::WIDE..(row + 1) * k::WIDE],
+                        start + row,
+                    )
+                    .unwrap();
+                    assert_eq!(carries[row * k::WIDE], row as f32);
+                }
+            }
+        }
+    }
+    #[test]
+    fn native_grouped_round_rejects_invalid_sources_before_consuming_follow_stamp() {
+        let tokens = [1, 2];
+        let mut carries = vec![0.; 2 * k::WIDE];
+        let check = |start, ts: &[u32], rs: &[f32], old| {
+            WindowStart::Accepted {
+                start,
+                tokens: ts,
+                carries: rs,
+            }
+            .position(old, true)
+        };
+        if !crate::strata_intel_core::enabled() {
+            assert!(check(1, &tokens, &carries, 1).is_err());
+            return;
+        }
+        assert_eq!(check(1, &tokens, &carries, 1).unwrap(), 2);
+        assert!(check(0, &tokens, &carries, 1).is_err());
+        assert!(check(1, &[], &[], 1).is_err());
+        assert!(check(1, &tokens, &carries[..k::WIDE], 1).is_err());
+        assert!(check(1, &[k::VOCAB as u32, 2], &carries, 1).is_err());
+        assert!(check(k::CONTEXT - 1, &tokens, &carries, k::CONTEXT).is_err());
+        assert!(check(k::CONTEXT - 1, &[1], &carries[..k::WIDE], k::CONTEXT + 1).is_err());
+        carries[k::WIDE] = f32::NAN;
+        assert!(check(1, &tokens, &carries, 1).is_err());
+        carries[k::WIDE] = f32::INFINITY;
+        assert!(check(1, &tokens, &carries, 1).is_err());
+        assert!(
+            WindowStart::Input {
+                token: 1,
+                carry: &[0.; k::WIDE]
+            }
+            .position(1, false)
+            .is_ok()
+        );
+    }
     #[test]
     fn native_confidence_prefix_excludes_first_low_draft_and_keeps_equality() {
         for maximum in 1..=crate::strata_port::verify_capacity() {

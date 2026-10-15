@@ -103,3 +103,24 @@ fn main(@builtin(global_invocation_id) id:vec3<u32>) {
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) id:vec3<u32>) {let i=id.x;if i<=p.start && i<4096u {ids[i]=i;}}
 // IDENTITY_END
+// SELECT_BEGIN
+// capture_round: copy_row_to_first selects R, injection and mixed TOGETHER.
+// All selected source rows are disjoint from row0; each destination has one writer.
+@group(0) @binding(0) var<storage,read_write> residual:array<f32>;
+@group(0) @binding(1) var<storage,read_write> injection:array<f32>;
+@group(0) @binding(2) var<storage,read_write> mixed:array<f32>;
+@group(0) @binding(3) var<storage,read_write> fault:array<atomic<u32>>;
+@group(0) @binding(4) var<uniform> p:Params;
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) id:vec3<u32>) {
+    let i=id.x;let row=p.columns;
+    if p.count<2u || p.count>8u || row!=p.count-1u ||
+       arrayLength(&residual)<p.count*10240u || arrayLength(&injection)<p.count*4u ||
+       arrayLength(&mixed)<p.count*2560u {
+        if i==0u {atomicOr(&fault[0],8u);}return;
+    }
+    if i<10240u {let x=residual[row*10240u+i];residual[i]=select(0.0,x,finite(x));if !finite(x) {atomicOr(&fault[0],1u);}}
+    if i<4u {let x=injection[row*4u+i];injection[i]=select(0.0,x,finite(x));if !finite(x) {atomicOr(&fault[0],1u);}}
+    if i<2560u {let x=mixed[row*2560u+i];mixed[i]=select(0.0,x,finite(x));if !finite(x) {atomicOr(&fault[0],1u);}}
+}
+// SELECT_END

@@ -27,6 +27,7 @@ pub(crate) enum Kernel {
     Guard,
     Rewind,
     Identity,
+    Select,
 }
 impl Kernel {
     fn lanes(self) -> u32 {
@@ -52,6 +53,7 @@ impl Kernel {
             Self::Guard => "GUARD",
             Self::Rewind => "REWIND",
             Self::Identity => "IDENTITY",
+            Self::Select => "SELECT",
         }));
         source
     }
@@ -67,6 +69,7 @@ impl KernelMetadata for Kernel {
             Self::Guard => "StrataMtpPackedCacheGuard",
             Self::Rewind => "StrataMtpPackedCacheRewind",
             Self::Identity => "StrataMtpDenseIdentity",
+            Self::Select => "StrataMtpAcceptedFrontSelect",
         }
     }
     fn id(&self) -> KernelId {
@@ -179,6 +182,7 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
         Kernel::Guard,
         Kernel::Rewind,
         Kernel::Identity,
+        Kernel::Select,
     ]
     .into_iter()
     .map(|k| {
@@ -272,6 +276,54 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_grouped_round_front_shaders_lower_without_device_or_new_owners() {
+        use wgpu::naga as n;
+        for source in sources() {
+            let module = n::front::wgsl::parse_str(&source.source)
+                .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&source.source)));
+            let info = n::valid::Validator::new(
+                n::valid::ValidationFlags::all(),
+                n::valid::Capabilities::all(),
+            )
+            .validate(&module)
+            .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&source.source)));
+            let binary = n::back::spv::write_vec(
+                &module,
+                &info,
+                &n::back::spv::Options {
+                    lang_version: (1, 3),
+                    ..Default::default()
+                },
+                Some(&n::back::spv::PipelineOptions {
+                    shader_stage: n::ShaderStage::Compute,
+                    entry_point: "main".into(),
+                }),
+            )
+            .unwrap();
+            assert!(!binary.is_empty());
+            if source.source == Kernel::Select.source() {
+                assert_eq!(module.entry_points[0].workgroup_size, [64, 1, 1]);
+                assert_eq!(
+                    module
+                        .global_variables
+                        .iter()
+                        .filter(|(_, v)| v.binding.is_some())
+                        .count(),
+                    5
+                );
+                assert!(source.source.contains("row!=p.count-1u"));
+            }
+        }
+        // All three selected row intervals are disjoint from row0. A single
+        // read_write binding per full plane avoids aliasing two storage views.
+        for n in 2..=8 {
+            for (root, width) in [(RES, 10240), (INJ, 4), (MIXED, 2560)] {
+                let source = (n - 1) * width..n * width;
+                assert!(source.start >= width && source.end <= WORDS[root]);
+            }
+        }
+    }
     #[test]
     fn native_four_cell_page_mapping_covers_packed_words_and_preserves_rejected_prefix() {
         let mut seen = vec![false; 4096 * 256];
