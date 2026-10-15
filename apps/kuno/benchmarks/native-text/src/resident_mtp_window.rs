@@ -31,6 +31,20 @@ impl DraftWindow {
         }
         confidence_window(&self.probabilities, threshold, maximum)
     }
+    pub(crate) fn joint_probability(&self, count: usize) -> Result<f64> {
+        if count > self.probabilities.len()
+            || self
+                .probabilities
+                .iter()
+                .any(|p| !p.is_finite() || !(0. ..=1.).contains(p))
+        {
+            return Err(Error::InvalidFormat("MTP joint probability"));
+        }
+        Ok(self.probabilities[..count]
+            .iter()
+            .map(|&p| p as f64)
+            .product())
+    }
     pub(crate) fn tokens(&self) -> &[u32] {
         &self.tokens
     }
@@ -236,7 +250,7 @@ impl ResidentMtp<'_, '_> {
             cancel,
         )?;
         // SAFETY: both confidence paths return ONLY after the original full
-        // private result/fault read and completed ledger fence on this client.
+        // packet/fault owner read and completed ledger fence on this client.
         unsafe {
             source.completed();
         }
@@ -370,54 +384,7 @@ impl ResidentMtp<'_, '_> {
         {
             return Err(Error::InvalidFormat("MTP confidence-window scope"));
         }
-        let start = self.window_start_position(source, count)?;
-        if minimum == 0. {
-            return self.queued_window_from(source, count, cancel);
-        }
-        // Same stopping rule as pinned draft(): generate the first draft, then
-        // launch j only if j-1's probability met the configured threshold.
-        let mut tokens = Zeroizing::new(Vec::with_capacity(MAX_PROPOSALS));
-        let mut probabilities = Zeroizing::new(Vec::with_capacity(MAX_PROPOSALS));
-        let mut last_enqueue_ns = 0;
-        for step in 0..count {
-            let clock = Instant::now();
-            let output = if step == 0 {
-                u::cancel(cancel)?;
-                let lease = OutputLease::acquire(&self.live_outputs)?;
-                self.last_forward.take();
-                self.last_front.take();
-                let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    self.start_window(source)?;
-                    self.forward_window_first(source, cancel)?;
-                    u::cancel(cancel)?;
-                    self.draft_output(lease)
-                }));
-                self.accept_draft(attempted, cancel)?
-            } else {
-                self.follow_draft(cancel)?
-            };
-            if output.start() != start + step || output.binding() != self.binding {
-                drop(output);
-                self.fail();
-                return Err(Error::InvalidFormat("MTP confidence-step stamp"));
-            }
-            let probability = output.probability()?;
-            tokens.push(output.greedy());
-            probabilities.push(probability);
-            drop(output);
-            last_enqueue_ns =
-                u64::try_from(clock.elapsed().as_nanos()).map_err(|_| Error::ArithmeticOverflow)?;
-            if probability < minimum {
-                break;
-            }
-        }
-        Ok(DraftWindow {
-            tokens,
-            probabilities,
-            start,
-            binding: self.binding,
-            last_enqueue_ns,
-        })
+        self.queued_window_with_minimum(source, count, minimum, cancel)
     }
 
     pub(crate) fn draft_window(
@@ -435,6 +402,25 @@ impl ResidentMtp<'_, '_> {
         count: usize,
         cancel: &AtomicBool,
     ) -> Result<DraftWindow> {
+        self.queued_window_with_minimum(source, count, 0., cancel)
+    }
+    fn queued_window_with_minimum(
+        &mut self,
+        source: &WindowStart<'_>,
+        count: usize,
+        minimum: f32,
+        cancel: &AtomicBool,
+    ) -> Result<DraftWindow> {
+        // The native zero-threshold path joins the full chain once. Positive
+        // thresholds observe ONLY the token/probability/fault packet after
+        // each cell, never the10240-value hidden vector. Original carries stay
+        // on GPU and feed the next cell through copy_committed in both modes.
+        if !minimum.is_finite()
+            || !(0. ..=1.).contains(&minimum)
+            || minimum > 0. && !self.native_confidence_supported()
+        {
+            return Err(Error::InvalidFormat("MTP queued confidence scope"));
+        }
         u::cancel(cancel)?;
         if !crate::strata_port::enabled()
             || !self.fused_sweeps
@@ -461,6 +447,7 @@ impl ResidentMtp<'_, '_> {
                 u::zero(&self.arena, id)?;
                 self.tick(1)?;
                 let mut last_enqueue_ns = 0;
+                let mut observation = None;
                 for member in 0..count {
                     let clock = Instant::now();
                     if member == 0 {
@@ -484,6 +471,14 @@ impl ResidentMtp<'_, '_> {
                     last_enqueue_ns = u64::try_from(clock.elapsed().as_nanos())
                         .map_err(|_| Error::ArithmeticOverflow)?;
                     u::cancel(cancel)?;
+                    if minimum > 0. || member + 1 == count {
+                        let payload = self.observe_window(id, member + 1)?;
+                        let stop = minimum > 0. && payload.probabilities[member] < minimum;
+                        observation = Some(payload);
+                        if stop {
+                            break;
+                        }
+                    }
                     if member + 1 < count {
                         // This copy consumes this window's preceding queued producer
                         // on the same stream. It is not a completed LastForward stamp.
@@ -511,30 +506,10 @@ impl ResidentMtp<'_, '_> {
                         self.guard_private(self.position)?;
                     }
                 }
-                seal_window::launch::<WgpuRuntime>(
-                    self.client()?,
-                    CubeCount::Static(1, 1, 1),
-                    CubeDim::new_1d(64),
-                    u::arg(&self.arena, id)?,
-                    self.a(B::Fault)?,
-                );
-                self.tick(1)?;
-                let packet = self.read_words_id(id)?;
                 let WindowPayload {
                     tokens,
                     probabilities,
-                } = decode_window(&packet, count, self.native_confidence_supported())?;
-                self.verify_source()?;
-                self.ledger
-                    .completed_fence(sample(self.client()?)?)
-                    .map_err(error)?;
-                self.count_traffic(|t| {
-                    t.draft_window_reads = t
-                        .draft_window_reads
-                        .checked_add(1)
-                        .ok_or(Error::ArithmeticOverflow)?;
-                    Ok(())
-                })?;
+                } = observation.ok_or(Error::InvalidFormat("MTP window observation absent"))?;
                 Ok(DraftWindow {
                     tokens,
                     probabilities,
@@ -565,6 +540,33 @@ impl ResidentMtp<'_, '_> {
                 Err(Error::InvalidFormat("MTP queued window failure"))
             }
         }
+    }
+    /// Complete one observation of the original packet owner. The same stream
+    /// seals its sticky fault AFTER every producer; no provisional receipt is
+    /// published on enqueue, partial reads, cancellation or an invalid tail.
+    fn observe_window(&mut self, id: BufferId, count: usize) -> Result<WindowPayload> {
+        seal_window::launch::<WgpuRuntime>(
+            self.client()?,
+            CubeCount::Static(1, 1, 1),
+            CubeDim::new_1d(64),
+            u::arg(&self.arena, id)?,
+            self.a(B::Fault)?,
+        );
+        self.tick(1)?;
+        let packet = self.read_words_id(id)?;
+        let payload = decode_window(&packet, count, self.native_confidence_supported())?;
+        self.verify_source()?;
+        self.ledger
+            .completed_fence(sample(self.client()?)?)
+            .map_err(error)?;
+        self.count_traffic(|t| {
+            t.draft_window_reads = t
+                .draft_window_reads
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow)?;
+            Ok(())
+        })?;
+        Ok(payload)
     }
 }
 

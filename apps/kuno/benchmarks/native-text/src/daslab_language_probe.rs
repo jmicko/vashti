@@ -1336,7 +1336,9 @@ pub(crate) fn run(
                         prompt: &prompt,
                         max_outputs: MAX_OUTPUTS,
                         eos: graph.eos_token(),
-                        window: crate::strata_port::verify_capacity(),
+                        speculation: crate::strata_speculation::Config::native(
+                            crate::strata_port::verify_capacity(),
+                        ),
                         draft_min_probability: 0.,
                         sampling: crate::strata_sampler::Params {
                             greedy: true,

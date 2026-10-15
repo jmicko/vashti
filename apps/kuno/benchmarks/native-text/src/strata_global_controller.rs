@@ -8,13 +8,18 @@ pub(super) struct Request<'a> {
     pub prompt: &'a [u32],
     pub max_outputs: usize,
     pub eos: u32,
-    pub window: usize,
+    pub speculation: crate::strata_speculation::Config,
     pub draft_min_probability: f32,
     pub sampling: crate::strata_sampler::Params,
 }
 impl Request<'_> {
     fn validate(&self) -> Result<()> {
         self.sampling.validate()?;
+        self.speculation.validate()?;
+        if crate::strata_speculation::HOST_BYTES + MAX_OUTPUTS * 4 + 64 * 1024 > FIXTURE_HOST_BYTES
+        {
+            return Err("global speculative host quote rejected".into());
+        }
         if !self.draft_min_probability.is_finite()
             || !(0. ..=1.).contains(&self.draft_min_probability)
         {
@@ -24,7 +29,7 @@ impl Request<'_> {
             || self.prompt.iter().any(|&t| t >= VOCAB as u32)
             || !(1..=MAX_OUTPUTS).contains(&self.max_outputs)
             || self.eos >= VOCAB as u32
-            || !(1..=crate::strata_port::verify_capacity()).contains(&self.window)
+            || self.speculation.window > crate::strata_port::verify_capacity()
             || self
                 .prompt
                 .len()
@@ -98,9 +103,10 @@ impl PromptPlan {
 }
 
 /// Accepted *input* prefix includes the confirmed predecessor. Emits exactly
-/// that many target predictions, stopping at the first target EOS. Drafts can
-/// never overrule a target prediction. This is pinned exact-match target verification, for greedy or sampled picks.
-fn accepted(inputs: &[u32], predicted: &[u32], eos: u32) -> Result<usize> {
+/// that many target state inputs, even when output delivery stops earlier at
+/// EOS or the cap. Drafts never overrule target predictions. Native commit is
+/// independent of how many predictions the request chooses to emit.
+fn accepted(inputs: &[u32], predicted: &[u32]) -> Result<usize> {
     if inputs.is_empty()
         || inputs.len() != predicted.len()
         || inputs.len() > crate::strata_port::verify_capacity()
@@ -109,13 +115,45 @@ fn accepted(inputs: &[u32], predicted: &[u32], eos: u32) -> Result<usize> {
         return Err("global target prefix rejected".into());
     }
     let mut n = 1;
-    while n < inputs.len() && predicted[n - 1] != eos && inputs[n] == predicted[n - 1] {
+    while n < inputs.len() && inputs[n] == predicted[n - 1] {
         n += 1;
     }
-    if let Some(first) = predicted[..n].iter().position(|&t| t == eos) {
-        n = first + 1;
-    }
     Ok(n)
+}
+
+fn emitted(predicted: &[u32], remaining: usize, eos: u32) -> usize {
+    let limit = remaining.min(predicted.len());
+    predicted[..limit]
+        .iter()
+        .position(|&t| t == eos)
+        .map_or(limit, |i| i + 1)
+}
+
+/// Native costs cover this verification/commit plus the NEXT draft. This
+/// observation never escapes the request; no incomplete engine is ranked.
+struct PolicyObservation {
+    started: Instant,
+    window: usize,
+    accepted: usize,
+    lookup: Option<usize>,
+    chain: Option<(usize, usize, usize)>, // MTP window, chain count, match
+}
+impl PolicyObservation {
+    fn finish(self, policy: &mut crate::strata_speculation::Policy) -> Result<()> {
+        let ns = elapsed(self.started)?;
+        if let Some((mtp, count, matched)) = self.chain {
+            policy.observe_chain(mtp, count, self.accepted, matched, ns)?;
+        } else {
+            policy.observe(
+                self.lookup.is_some(),
+                self.window,
+                self.accepted,
+                self.lookup.unwrap_or(0),
+                ns,
+            )?;
+        }
+        Ok(())
+    }
 }
 
 /// One accepted verifier prefix retained only until the next round's grouped
@@ -277,7 +315,13 @@ pub(super) fn run<'m, 'f>(
     let mut history = Zeroizing::new(Vec::with_capacity(request.max_outputs));
     history.push(confirmed);
     emit(confirmed)?;
-    let mut policy = crate::strata_port::DraftPolicy::default();
+    let mut policy = crate::strata_speculation::Policy::new(request.speculation.window)?;
+    let mut suffix_index =
+        crate::strata_speculation::Suffix::new(request.speculation.suffix_minimum.max(3))?;
+    suffix_index.append(request.prompt)?;
+    suffix_index.append(&history)?;
+    let mut observation: Option<PolicyObservation> = None;
+    let mut committed_cursor = request.prompt.len();
     let mut pending: Option<AcceptedRound> = if request.max_outputs > 1 && confirmed != request.eos
     {
         draft.as_ref().map(|d| AcceptedRound {
@@ -309,14 +353,14 @@ pub(super) fn run<'m, 'f>(
         sampling.begin_round(position, confirmed)?;
         let remaining = request.max_outputs - history.len();
         let mut count = if draft.is_some() {
-            remaining.min(request.window)
+            request.speculation.mtp_window
         } else {
             1
         };
         let mut inputs = Zeroizing::new(Vec::with_capacity(crate::strata_port::verify_capacity()));
         inputs.push(confirmed);
-        let started = Instant::now();
-        let mut suffix = None;
+        let mut joint_probability = 1.;
+        let mut first_draft = None;
         if let Some(draft) = draft.as_deref_mut() {
             let accepted = pending.take().ok_or("global device front source missing")?;
             let source =
@@ -340,21 +384,9 @@ pub(super) fn run<'m, 'f>(
                     return Err("global confidence draft identity rejected".into());
                 }
                 count = output.usable_window(request.draft_min_probability, maximum)?;
-                let candidate = crate::strata_port::lookup(
-                    request.prompt,
-                    &history,
-                    remaining.min(request.window) - 1,
-                );
-                if let Some(candidate) =
-                    candidate.filter(|p| p.tokens.first() == output.tokens().first())
-                    && let Some(selected) = policy.choose(count, &candidate)
-                {
-                    count = selected;
-                    inputs.extend_from_slice(&candidate.tokens[..count - 1]);
-                    suffix = Some(candidate);
-                } else {
-                    inputs.extend_from_slice(&output.tokens()[..count - 1]);
-                }
+                first_draft = output.tokens().first().copied();
+                joint_probability = output.joint_probability(count - 1)?;
+                inputs.extend_from_slice(&output.tokens()[..count - 1]);
             } else {
                 draft.append_device_front(
                     accepted.coordinates[0],
@@ -367,7 +399,54 @@ pub(super) fn run<'m, 'f>(
                 }
             }
         }
-        if inputs.len() != count || count > remaining || pending.is_some() {
+        // The preceding round's native cost includes the draft just joined.
+        // Finish it BEFORE choosing the current lookup/chain policy.
+        if let Some(previous) = observation.take() {
+            previous.finish(&mut policy)?;
+        }
+        let started = Instant::now();
+        let mut suffix = None;
+        if request.speculation.suffix_minimum > 0 {
+            let candidate = suffix_index.propose(request.speculation.window - 1);
+            if let Some(candidate) =
+                candidate.filter(|p| draft.is_none() || p.tokens.first().copied() == first_draft)
+                && let Some(selected) = policy.choose(count, &candidate)
+            {
+                count = selected;
+                inputs.truncate(1);
+                inputs.extend_from_slice(&candidate.tokens[..count - 1]);
+                suffix = Some(candidate);
+            }
+        }
+        let mut chain = None;
+        if request.speculation.lookup_chain > 0
+            && draft.is_some()
+            && suffix.is_none()
+            && count < request.speculation.window
+        {
+            let candidate = suffix_index.propose_after(
+                &inputs[1..],
+                request
+                    .speculation
+                    .lookup_chain
+                    .min(request.speculation.window - count),
+            )?;
+            if let Some(candidate) =
+                candidate.filter(|p| p.matched >= request.speculation.chain_minimum)
+            {
+                let extra = policy.chain(count, joint_probability, &candidate);
+                if extra > 0 {
+                    chain = Some((count, extra, candidate.matched));
+                    inputs.extend_from_slice(&candidate.tokens[..extra]);
+                    count += extra;
+                }
+            }
+        }
+        if inputs.len() != count
+            || count > request.speculation.window
+            || pending.is_some()
+            || position.checked_add(count).is_none_or(|end| end > 4096)
+        {
             return Err("global draft window bound rejected".into());
         }
         sampling.stage_target(position, &inputs)?;
@@ -383,7 +462,7 @@ pub(super) fn run<'m, 'f>(
             }
             predicted.push(rows.greedy(row)?);
         }
-        let n = accepted(&inputs, &predicted, request.eos)?;
+        let n = accepted(&inputs, &predicted)?;
         let device = rows.take_device_carry()?;
         drop(rows);
         // The core repairs only real recurrent/KV/history state. Cache routes
@@ -399,11 +478,18 @@ pub(super) fn run<'m, 'f>(
         // The native next round fronts all accepted (prediction,R) rows plus
         // its confirmed next input in ONE batch. Do not eagerly repair n-1
         // rows here and then run a separate count1 front at the next entry.
-        let next_total = history.len() + n;
-        let defer_front =
-            draft.is_some() && predicted[n - 1] != request.eos && next_total < request.max_outputs;
-        confirmed = predicted[n - 1];
-        for &token in &predicted[..n] {
+        committed_cursor = position + n;
+        let emit_count = emitted(&predicted[..n], remaining, request.eos);
+        let next_total = history.len() + emit_count;
+        let continuing =
+            predicted[emit_count - 1] != request.eos && next_total < request.max_outputs;
+        if continuing && emit_count != n {
+            return Err("global continuing committed prefix rejected".into());
+        }
+        let defer_front = draft.is_some() && continuing;
+        confirmed = predicted[emit_count - 1];
+        suffix_index.append(&predicted[..emit_count])?;
+        for &token in &predicted[..emit_count] {
             history.push(token);
             emit(token)?;
         }
@@ -419,20 +505,27 @@ pub(super) fn run<'m, 'f>(
                 device,
             });
         }
-        // Native policy needs request-local cost observations. They are not
-        // printed, persisted or used to choose between incomplete port paths.
-        policy.observe(
-            suffix.is_some(),
-            count,
-            n,
-            suffix.as_ref().map_or(0, |s| s.matched),
-            elapsed(started)?,
-        );
+        // Native DraftPolicy consumes ACCEPTED DRAFTS (n-1), not emitted
+        // rows or output clipping. EOS exits without another policy/draft pass.
+        if confirmed != request.eos {
+            let measured = PolicyObservation {
+                started,
+                window: count,
+                accepted: n - 1,
+                lookup: suffix.as_ref().map(|s| s.matched),
+                chain,
+            };
+            if continuing {
+                observation = Some(measured);
+            } else {
+                measured.finish(&mut policy)?;
+            }
+        }
         rounds += 1;
     }
     if pending.is_some()
-        || target.completed_target_rows_cursor(executor)?
-            != request.prompt.len() + history.len() - 1
+        || observation.is_some()
+        || target.completed_target_rows_cursor(executor)? != committed_cursor
     {
         return Err("global final output accounting rejected".into());
     }
@@ -514,24 +607,40 @@ mod tests {
         assert!(plan.inputs(&prompt[..34], 0..34).is_err());
     }
     #[test]
+    fn native_speculation_commit_is_independent_of_eos_and_output_cap() {
+        // Native commits all exact target matches, even when delivery stops
+        // at EOS or before the end of the configured verification window.
+        let inputs = [5, 99, 7, 8];
+        let predictions = [99, 7, 8, 9];
+        assert_eq!(accepted(&inputs, &predictions).unwrap(), 4);
+        assert_eq!(emitted(&predictions, 4, 99), 1);
+        assert_eq!(emitted(&predictions, 2, 100), 2);
+        assert_eq!(emitted(&predictions, 1, 100), 1);
+        for count in 1..=crate::strata_port::verify_capacity() {
+            let config = crate::strata_speculation::Config::native(count);
+            config.validate().unwrap();
+            assert_eq!(config.mtp_window, count); // Never clipped to remaining output.
+        }
+    }
+    #[test]
     fn global_prefix_acceptance_covers_every_width_rejection_and_eos() {
         for count in 1..=crate::strata_port::verify_capacity() {
             let inputs: Vec<_> = (0..count as u32).collect();
             let next: Vec<_> = (1..=count as u32).collect();
-            assert_eq!(accepted(&inputs, &next, 99).unwrap(), count);
+            assert_eq!(accepted(&inputs, &next).unwrap(), count);
             for n in 1..count {
                 let mut rejected = next.clone();
                 rejected[n - 1] = 50;
-                assert_eq!(accepted(&inputs, &rejected, 99).unwrap(), n);
+                assert_eq!(accepted(&inputs, &rejected).unwrap(), n);
             }
             for row in 0..count {
                 let mut eos = next.clone();
                 eos[row] = 99;
-                assert_eq!(accepted(&inputs, &eos, 99).unwrap(), row + 1);
+                assert_eq!(accepted(&inputs, &eos).unwrap(), row + 1);
             }
         }
-        assert!(accepted(&[], &[], 99).is_err());
-        assert!(accepted(&[0], &[VOCAB as u32], 99).is_err());
-        assert!(accepted(&[0], &[1, 2], 99).is_err());
+        assert!(accepted(&[], &[]).is_err());
+        assert!(accepted(&[0], &[VOCAB as u32]).is_err());
+        assert!(accepted(&[0], &[1, 2]).is_err());
     }
 }
