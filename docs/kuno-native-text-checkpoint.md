@@ -1,17 +1,19 @@
 # Native DASLab/Strata checkpoint — 2026-10-09
 
 **Current Rust port resume pointer (2026-10-14):** isolated
-`codex/strata-rust-port`, source through `8f1377c`. Read the latest
-[coordination handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--native-mtp-confidence-2026-10-14)
-and [confidence receipt](kuno-strata-rewrite-completion.md#native-mtp-confidence-producers-and-serial-consumers-2026-10-14).
-Native head confidence, actual probability packets and serial threshold/target
-consumers now connect in source; the earlier owner/sampler prerequisite is
-`ab0b15c`. Native round/step/catch-up grouping, applicable pipeline events, full
-branch/state/failure and runtime audits/physical acceptance remain incomplete.
-No speed trials until the whole connected-source and protected correctness gates
-pass. Older results/states below are historical. User owns BOTH GPUs: reconfirm
-availability before any GPU/model/admission/residency work. CPU source work can
-continue without sudo. No installed service or public API change.
+`codex/strata-rust-port`, source through `f671543`. Read the latest
+[coordination handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--native-grouped-mtp-round-2026-10-14)
+and [grouped-round receipt](kuno-strata-rewrite-completion.md#grouped-accepted-mtp-front-and-next-draft-rest-2026-10-14).
+Actual accepted front/selected next rest now group in the selected controller;
+confidence/sampling prerequisites are `8f1377c`/`ab0b15c`. Original device
+residual handoff still uses a wiping host round trip; stable native round/step
+captures, applicable pipeline/events, runtime and whole source/physical acceptance
+remain incomplete. Next connect authenticated lifetime-bound original device
+residual handoff and captured-branch dependencies. No speed trials until full
+source/protected correctness gates pass. Older results/states below are
+historical. User retains BOTH GPUs: reconfirm availability before any GPU/model/
+admission/residency work. CPU source work can continue without sudo. No installed
+service or public API change.
 
 
 **Current checkpoint:** user requested a stop for usage conservation. Standalone

@@ -3577,3 +3577,114 @@ remaining completion rows. Continue CPU/source work while the user owns BOTH
 GPUs; obtain availability before any device/model or residency/admission work.
 Canonical checkout remains untouched/clean; isolated inherited bytecode is
 preserved. No service, public API, Vashti, install or release change. Goal active.
+
+
+## Grouped accepted MTP front and next draft rest (2026-10-14)
+
+Source `f671543`, isolated `codex/strata-rust-port`, after `8f1377c`. This is a
+connected scheduling block, **not complete captured-graph/device handoff parity**.
+It is selected in the actual global controller, not a default-off helper.
+
+### Source mapping and dependent consumers
+
+Pinned Intel `sycl/src/core/mtp.cpp::capture_round` (1227), `capture_step` (1280)
+and `draft` (1534) group `T=a+1` accepted rows, copy row a's R/injection/mixed to
+row0, requantize its mixed input, then execute one rest/head. Later drafts use
+one front/rest each. `sycl/src/program/generate.cpp` (12335) supplies the actual
+previous target predictions, p and a after target commit. Rust now follows that
+row grouping in `strata_global_controller.rs`, `resident_mtp_window.rs` and
+`ResidentMtp::native_selected_rest`:
+
+- A continuing speculative round moves its existing actual target prediction/R
+  vectors into one bounded request-local `AcceptedRound`. No second prefix mirror
+  is allocated. Start/old cursor/model binding and vectors wipe on drop. No
+  predictions, residuals, probabilities or coordinates are persisted or logged.
+- At the next entry, the controller checks original binding/cursor, accepted row
+  count and confirmed last token, then begins the existing coupled sampler round.
+  The native MTP entry validates every real token/carry/cell before consuming the
+  completed-forward stamp. It supports all accepted counts1..8, including a
+  suffix window longer than a confidence-stopped draft chain.
+- If target window p accepts n inputs, the retained known first draft cell is
+  p-1. Rewind removes provisional cells from p onward; one front call appends
+  **predicted[r], R[r] at cell p+r**, r=0..n-1. The final cell p+n-1 includes the
+  newly confirmed next token. These are not the old repair's accepted inputs
+  paired with the preceding residual. Rejected target rows never enter catch-up.
+- `strata_mtp_front::Kernel::Select` copies the selected final row's full10240 R,
+  four injection and2560 mixed values together into row0 of the existing complete
+  front owners. Source/destination intervals are disjoint; each plane has one
+  read_write binding and each destination one writer. Geometry, full lengths and
+  finite checks feed the sticky fault. Count1 needs no selection dispatch.
+- The selected mixed input is requantized into the existing Q8_1 PLANES before
+  the rest's query projection reuses it. The actual selected token remains in
+  B::Token, the absolute device POS table selects the new cell, and sampled draft
+  draws still use that cell+1 and the actual request penalty ring. Subsequent
+  steps consume the preceding GPU token/residual, never a host substitute.
+- Zero probability threshold queues the first grouped front/rest and subsequent
+  steps before the original final full-owner packet/fault fence. Positive
+  threshold joins the first grouped result, then gates each following step on
+  its actual probability. Target prefix verification/commit is unchanged.
+  A remaining count1-only/final round uses the existing exact cache repair;
+  there is no next proposal needing a grouped front. EOS/output-limit exits do
+  not leave an unconsumed pending prefix.
+- `start_at` distinguishes the selected input cell from the old completed cache
+  cursor, so a valid rewind from a full cache is not mistaken for execution at
+  cell4096. All original full owners, admission, guards, retirement/failure and
+  closing authority remain in their original arenas. No new MAIN, runtime or
+  host reservation is introduced. Existing per-cell512 INFO enforcement and
+  queued count*INFO precharge remain; physical dispatch-budget acceptance is open.
+
+The first prompt-produced proposal still uses the same count1 native front/rest.
+The old eager accepted n-1 front plus separate next-cell front is no longer used
+between continuing speculative windows in the selected controller.
+
+### Explicit remaining substitutions and gaps
+
+The grouped dataflow is now connected, but **the target-to-MTP residual source
+still differs from Strata**. Upstream `Verifier::final_R_all()` is its device R_
+owner (`verify.hpp:251`, `verify.cpp:507/544`); serial `mtp.bind` uses that owner
+and the round graph copies its rows directly. Rust still decodes the original
+full private verifier packet to bounded wiping host carries and uploads them to
+its front CARRY owner. That round trip is not required by the model. Replace it
+with a lifetime-bound original device-source grant and authenticated GPU copy;
+do not invent ownership/erase authority from a slice or keep an obsolete source
+across target scratch reuse. The scalar host carry path remains for existing
+laboratory interfaces; it does not establish native placement parity.
+
+The selected row copy and requantization are Rust/WGSL substitutes for native
+`copy_row_to_first`/`native_quantize_q8_1`. Their offline lowering is checked;
+physical arithmetic, state, barriers, failure erasure and recovery are unproven.
+Native stable round/step branch captures/warm-up, proper mapped staging/event
+publication, applicable nonblocking/force-token chain consumers and overlap with
+commit remain open. Existing bounded Vulkan node replay is not proof of those
+whole native branch captures. No incidental timing changed the port direction.
+
+### CPU-only receipt
+
+Final logs in `/media/jmicko/faststore/kuno-development`:
+
+- `strata-mtp-grouped-round-final-tests-20261014.log`:4 checks pass. Covers all
+  accepted widths/short-chain bounds, invalid token/carry/context/completion
+  preflight, original binding/cursor/confirmed entry and all front shader lowering
+  plus disjoint selected-row spans. These are source/CPU proofs, not GPU math.
+- `strata-mtp-grouped-round-confidence-tests-20261014.log`:8 prior native
+  confidence/packet/threshold/repair tests pass.
+- `strata-mtp-grouped-round-sampler-tests-20261014.log`:10 prior native
+  sampler/request ownership/payload/shader tests pass.
+- `strata-mtp-grouped-round-prefix-tests-20261014.log`:every supported target
+  acceptance/rejection/EOS width passes its existing pure controller check.
+- `strata-mtp-grouped-round-build-20261014.log`:core release build passes.
+- `strata-mtp-grouped-round-shaders-20261014.log`:317 ordinary shader bodies,
+  122 physical-pointer and32 cooperative-matrix variants validate offline with
+  the existing pinned2026.1 validator. No GPU/device initialized.
+- `strata-mtp-grouped-round-{core,off}-clippy-20261014.log`:strict core/off
+  Clippy pass. Formatting/whitespace pass. Existing duplicate-bin-path Cargo
+  notice remains. No full-suite claim or waiver of prior228 failures.
+
+No GPU/model/device, live correctness/recovery or speed trial, sudo, service,
+admission/residency, public API, Vashti, installation, deployment or release
+operation. Canonical checkout remains clean; inherited isolated bytecode remains
+untracked/preserved. The user retains BOTH GPUs; obtain availability before any
+GPU/model/residency/admission work. CPU source work may continue without sudo.
+Whole rewrite remains incomplete and goal active. Next: original device residual
+handoff plus captured round/step/chain dependencies, then remaining full-source,
+runtime and protected correctness/recovery gates before speed trials.

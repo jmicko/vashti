@@ -6,14 +6,15 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-14):** isolated
-`codex/strata-rust-port`, source through `8f1377c`. Read the
-[native confidence handoff](#active-kuno-engine-handoff--native-mtp-confidence-2026-10-14)
-and [whole-rewrite gate](kuno-strata-rewrite-completion.md). Original head
-probabilities now feed serial stopping/target selection; full round/step/catch-up,
-pipeline, runtime and whole-source/device acceptance remain incomplete. No speed
-trials before the full gates. The user owns BOTH GPUs; reconfirm availability
-before GPU/model/admission/residency work. CPU source/build checks may continue.
-This backend work does not change the published image/application contract.
+`codex/strata-rust-port`, source through `f671543`. Read the
+[grouped native round handoff](#active-kuno-engine-handoff--native-grouped-mtp-round-2026-10-14)
+and [whole-rewrite gate](kuno-strata-rewrite-completion.md). Actual accepted front
+rows and next draft rest now group in the selected controller. Original device
+residual handoff, stable captured branches/pipeline, runtime and whole-source/
+device acceptance remain incomplete. No speed trials before the full gates.
+The user owns BOTH GPUs; reconfirm availability before GPU/model/admission/
+residency work. CPU source/build checks may continue. This backend work does
+not change the published image/application contract.
 
 ## Ownership
 
@@ -5641,3 +5642,42 @@ cache sizing/conditional-ring/stream-all and remaining completion rows open.
 No throughput trials until full source and protected correctness gates pass.
 Both GPUs remain with the user: request availability before ANY GPU/model or
 residency/admission work. Source/CPU work may continue without sudo.
+
+
+### Active Kuno engine handoff — native grouped MTP round (2026-10-14)
+
+Source `f671543`, after `8f1377c`, isolated `codex/strata-rust-port` at
+`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`. Read completion guide
+**Grouped accepted MTP front and next draft rest**, including remaining device
+residual/graph substitutions. Full rewrite/physical acceptance remain incomplete.
+
+The continuing controller moves actual accepted target predictions/R rows into
+one bounded wiping request-local prefix. Next MTP round checks original binding/
+cursor/token, retains the known p-1 cell, rewinds provisional p onward, and runs
+one front for predicted[r]/R[r] at p+r, r<n. This includes the new confirmed
+last input. One GPU kernel selects the last row's R/injection/mixed together,
+then requantizes mixed before the real rest/head. No eager n-1 accepted repair
+followed by separate next-cell front remains between speculative windows.
+Native scalar follow-ups, confidence gating/queued zero-threshold completion,
+actual sampled counter/penalty ring and unchanged target prefix verification
+remain connected. Final/count1-only exits keep the exact old cache end boundary.
+No new owner/budget or persistence; complete parent arena authority is retained.
+
+Important remaining gap: Strata binds the verifier's actual device R_ rows to
+MTP. Rust still reads the full private verifier packet to wiping host carries
+and uploads them. Next connect a lifetime-bound original device-source grant/
+copy with safe scratch retention; a view is not erase/free authority. Stable
+whole round/step captures, mapped/event publication, applicable force-token/
+nonblocking chains, commit overlap and physical state/failure/recovery remain
+open. Grouping alone does not prove those dependencies or numerical parity.
+Runtime input/context/cache sizing, conditional-ring/stream-all, full-source
+and protected correctness gates remain required before any live speed trial.
+
+Final4 new CPU checks +8 confidence +10 sampler/request +1 existing all-width
+prefix check pass. Core release build, strict core/off Clippy, formatting and
+317 ordinary/122 physical-pointer/32 matrix offline shader checks pass. Exact
+logs/limits are in the receipt. No full-suite waiver of prior228 failures.
+No GPU/model, speed, sudo, service/admission/residency, API/Vashti, installation
+or release operation. Canonical clean checkout/inherited bytecode preserved.
+Both GPUs remain with the user; reconfirm availability before any GPU work.
+Required Vashti changes:none. Whole rewrite goal remains active.
