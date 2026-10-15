@@ -1,14 +1,8 @@
-//! MIT Strata expert_pool_dispatch_multi's distinct routing-order split.
-//! Last floor(missing*141/256) missing groups use GPU staging (native default
-//! 0.55); resident groups stay on GPU. Headers/inputs remain request-private.
-use crate::{
-    private_arena::{BufferId, PrivateArena},
-    resident_util as u,
-    strata_global_plan::Source,
-    strata_global_sources::Sources,
-};
-use kuno_text::{Error, Result, model::BoundGraph};
-use std::sync::atomic::AtomicBool;
+//! Reference coverage for Strata's optional mixed CPU/GPU planner. The pinned
+//! Intel launcher selects DEVICE_PLAN + NO_HOST, so this split is not part of
+//! that execution path. Keep its pure routing oracle only in the test build.
+#![cfg(test)]
+use kuno_text::{Error, Result};
 use zeroize::{Zeroize, Zeroizing};
 pub(crate) struct Job {
     pub cell: usize,
@@ -19,63 +13,8 @@ impl Drop for Job {
         self.cell.zeroize();
     }
 }
-pub(crate) struct Plan {
-    pub jobs: Vec<Job>,
-    pub input: Zeroizing<Vec<f32>>,
-    pub gpu_groups: usize,
-}
-impl Drop for Plan {
-    fn drop(&mut self) {
-        self.gpu_groups.zeroize();
-    }
-}
 fn reject() -> Error {
     Error::InvalidFormat("native global CPU/GPU plan")
-}
-#[allow(clippy::too_many_arguments)] // Separate graph, source, admission and private-owner authorities.
-pub(crate) fn prepare(
-    graph: BoundGraph<'_, '_>,
-    arena: &PrivateArena,
-    admission: &crate::executor::ResidentAdmission,
-    sources: &Sources,
-    layer: usize,
-    count: usize,
-    map_id: BufferId,
-    input_id: BufferId,
-    c: &AtomicBool,
-) -> Result<Plan> {
-    sources.validate_graph_ready(graph)?;
-    let (map, input) = admission.readback_audited(c, || {
-        Ok((
-            u::read_prefix_u32(arena, map_id, 804)?,
-            u::read_prefix_f32(arena, input_id, count * 2560)?,
-        ))
-    })?;
-    let (rewritten, jobs, gpu_groups) = split(&map, count, |cell| {
-        Ok(matches!(
-            sources.plan().source(layer, cell, 0)?,
-            Source::Host { .. }
-        ))
-    })?;
-    let mut bytes = Zeroizing::new(
-        rewritten
-            .iter()
-            .flat_map(|x| x.to_le_bytes())
-            .collect::<Vec<_>>(),
-    );
-    arena
-        .client()
-        .map_err(u::fault)?
-        .write_private(
-            arena.handle(map_id).map_err(u::fault)?.clone(),
-            std::mem::take(&mut *bytes),
-        )
-        .map_err(u::fault)?;
-    Ok(Plan {
-        jobs,
-        input,
-        gpu_groups,
-    })
 }
 pub(crate) fn split(
     map: &[u32],
@@ -181,6 +120,7 @@ mod tests {
                 let mut visits = [0; 80];
                 for j in jobs {
                     for &r in j.routes.iter() {
+                        assert_eq!(j.cell, r);
                         visits[r] += 1;
                         assert_eq!(out[1024 + r], 1);
                     }

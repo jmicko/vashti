@@ -1,6 +1,8 @@
 //! MIT Strata fb58e0 native expert row_entries over the owning global cache.
-//! Original packed role cells, one selected HOST fetch, and a single 4/2/1
-//! row-entry loop per role. Request state is supplied solely by PrivateArena.
+//! Original packed VRAM cells or registered HOST aliases are read directly in
+//! one 4/2/1 row-entry loop per role, matching the Intel NO_HOST device plan.
+//! Request state is supplied solely by PrivateArena. The older explicit fetch
+//! kernel remains available outside this selected decode path.
 use super::*;
 use crate::strata_global_sources::Sources;
 
@@ -140,12 +142,6 @@ fn role_source(role: u8, dtype: u32, row_bytes: usize) -> String {
     if !down {
         index += 1;
     }
-    for name in names {
-        descriptors.push_str(&format!(
-            "@group(0) @binding({index}) var<storage,read> staged_{name}:array<u32>;\n"
-        ));
-        index += 1;
-    }
     descriptors.push_str(&format!(
         "@group(0) @binding({index}) var<storage,read> addresses:array<vec4<u32>>;\n"
     ));
@@ -180,7 +176,10 @@ fn role_source(role: u8, dtype: u32, row_bytes: usize) -> String {
             _ => 2,
         };
         let rows = if down { 2560 } else { 640 };
-        choose.push_str(&format!("{{let src=addresses[{role}u*512u+slot];let words={rows}u*(ROW_BYTES/4u);if src.z!=words || src.w>1u || p.f>arrayLength(&status) || 400u>arrayLength(&status)-p.f || status[p.f+160u+group*3u+{role}u]!=1u || arrayLength(&staged_{name})!=33554432u {{return false;}}strata_{name}_address=src.xy;if src.w==1u {{let dst=stage_addresses[{role}u];if dst.z!=33554432u || words*80u>dst.z {{return false;}}strata_{name}_address=add_address(dst.xy,group*words*4u);}}}}\n"));
+        // Both tiers are actual immutable original-weight allocations. HOST
+        // already has a registered device address; do not redirect it through
+        // a stage or require a stamp from a fetch that does not execute.
+        choose.push_str(&format!("{{let src=addresses[{role}u*512u+slot];let words={rows}u*(ROW_BYTES/4u);if src.z!=words || src.w>1u || (src.x==0u && src.y==0u) || (src.x&15u)!=0u {{return false;}}strata_{name}_address=src.xy;}}\n"));
     }
     base = base.replace(old, &choose);
     for name in names {
@@ -189,7 +188,6 @@ fn role_source(role: u8, dtype: u32, row_bytes: usize) -> String {
             "\nfn strata_{name}(index:u32)->u32 {{return {name}0[index/4u][index%4u];}}\n"
         ));
     }
-    base.push_str("\nfn add_address(base:vec2<u32>,offset:u32)->vec2<u32> {let low=base.x+offset;return vec2<u32>(low,base.y+select(0u,1u,low<base.x));}\n");
     if !down {
         base = crate::strata_intel_core::shared_table(base, grid_binding, dtype);
     }
@@ -251,8 +249,8 @@ pub(crate) fn fetch(
     }
     Ok(())
 }
-/// Prompt GEMM reuses one raw stage after each role's dequantization. Decode
-/// retains its three simultaneous role stages and calls this through `fetch`.
+/// Explicit staging helper for consumers that request it. The selected Intel
+/// NO_HOST decode path reads source aliases directly and never invokes this.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn fetch_role(
     client: &ComputeClient<WgpuRuntime>,
@@ -310,7 +308,6 @@ pub(crate) fn role(
     spans: &g::Spans,
     owners: &[Handle; 7],
     planes: &Handle,
-    stages: &[Handle; 3],
     count: usize,
     role: u8,
 ) -> Result<()> {
@@ -328,10 +325,7 @@ pub(crate) fn role(
     if !down {
         args = crate::strata_intel_core::bind(args, owners[0].stream)?;
     }
-    for r in if down { 2..3 } else { 0..2 } {
-        args = args.with_buffer(stages[r].clone().binding());
-    }
-    full(owners.iter().chain([planes]).chain(stages).cloned())?;
+    full(owners.iter().chain([planes]).cloned())?;
     let args = sources.bind(layer, args)?.with_info(params([
         spans.map_first(),
         0,

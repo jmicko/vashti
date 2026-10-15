@@ -5226,7 +5226,7 @@ impl Workspace {
                 .entry("native_ffn_gr_and_router_enqueue")
                 .or_default() += router_enqueue_start.elapsed().as_nanos();
             let sources = e.strata_global_sources.as_ref().ok_or(error())?.clone();
-            let cpu_plan = self.global_moe.as_mut().ok_or(error())?.enqueue(
+            self.global_moe.as_mut().ok_or(error())?.enqueue(
                 m.graph,
                 &m.arena,
                 &sources,
@@ -5239,79 +5239,32 @@ impl Workspace {
                 cancel,
             )?;
             let shared_start = Instant::now();
-            let pool = self.global_moe.as_ref().ok_or(error())?.cpu.clone();
-            let mut parent = || -> Result<()> {
-                let mut projector = ResidentBatchProjection {
-                    executor: e,
-                    fault: m.b.fault,
-                    dense_q8,
-                };
-                self.shared.prepare(
-                    m.graph,
-                    layer,
-                    &m.arena,
-                    &mut m.public,
-                    &mut projector,
-                    prepared.mixed(),
-                    self.outer.block[0],
-                    self.outer.block[1],
-                    m.b.fault,
-                    *count,
-                    cancel,
-                )?;
-                // Submit actual GPU expert/shared work without waiting for it,
-                // while the scoped native CPU workers drain their disjoint rows.
-                m.arena
-                    .client()
-                    .map_err(u::fault)?
-                    .submit_native_strata_experts()
-                    .map_err(u::fault)
+            let mut projector = ResidentBatchProjection {
+                executor: e,
+                fault: m.b.fault,
+                dense_q8,
             };
-            let cpu = if cpu_plan.jobs.is_empty() {
-                parent()?;
-                None
-            } else {
-                let cells =
-                    Zeroizing::new(cpu_plan.jobs.iter().map(|j| j.cell).collect::<Vec<_>>());
-                let host = sources.borrow_cpu(m.graph, layer, &cells)?;
-                let tensors = [
-                    "ffn_gate_exps.weight",
-                    "ffn_up_exps.weight",
-                    "ffn_down_exps.weight",
-                ]
-                .map(|name| m.graph.tensor(&format!("blk.{layer}.{name}")));
-                let geometry = kuno_text::cpu_expert::native::Geometry::new([
-                    tensors[0].as_ref().copied().map_err(|_| error())?,
-                    tensors[1].as_ref().copied().map_err(|_| error())?,
-                    tensors[2].as_ref().copied().map_err(|_| error())?,
-                ])?;
-                let mut jobs = Vec::with_capacity(cpu_plan.jobs.len());
-                for j in &cpu_plan.jobs {
-                    jobs.push(kuno_text::cpu_expert::native::Group {
-                        routes: &j.routes,
-                        packed: [
-                            host.role(m.graph, sources.plan(), layer, j.cell, 0)?,
-                            host.role(m.graph, sources.plan(), layer, j.cell, 1)?,
-                            host.role(m.graph, sources.plan(), layer, j.cell, 2)?,
-                        ],
-                    });
-                }
-                let (result, ()) =
-                    pool.alongside(&geometry, &jobs, &cpu_plan.input, *count, cancel, parent)?;
-                for (r, &mask) in result.mask().iter().enumerate() {
-                    let expected = cpu_plan.jobs.iter().any(|j| j.routes.contains(&r));
-                    if mask != u32::from(expected) {
-                        return Err(error());
-                    }
-                }
-                Some(result)
-            };
+            self.shared.prepare(
+                m.graph,
+                layer,
+                &m.arena,
+                &mut m.public,
+                &mut projector,
+                prepared.mixed(),
+                self.outer.block[0],
+                self.outer.block[1],
+                m.b.fault,
+                *count,
+                cancel,
+            )?;
+            // Intel's selected NO_HOST branch has no CPU jobs to join. Leave
+            // all routed/shared work in the owning window's queued graph;
+            // its normal completion/fault boundary observes the real results.
             self.global_moe.as_mut().ok_or(error())?.finish_layer(
                 &m.arena,
                 layer,
                 self.outer.block[0],
                 m.b.fault,
-                cpu.as_ref(),
             )?;
             self.shared.finish_prepared(
                 m.graph,
@@ -5325,8 +5278,9 @@ impl Workspace {
                 *count,
                 cancel,
             )?;
-            *m.phase_ns.entry("native_shared_and_cpu_join").or_default() +=
-                shared_start.elapsed().as_nanos();
+            *m.phase_ns
+                .entry("native_shared_and_no_host_enqueue")
+                .or_default() += shared_start.elapsed().as_nanos();
             prepared.combine(self.outer.block[1], self.outer.residual[1 - *current])?;
             *current = 1 - *current;
             *m.phase_ns

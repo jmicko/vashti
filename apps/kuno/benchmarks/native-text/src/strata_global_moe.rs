@@ -1,5 +1,7 @@
 //! Connected native global expert family. All routing/remaps/quantized inputs,
-//! selected HOST copies, intermediate rows and acceptance stamps are private.
+//! intermediate rows and acceptance stamps are private. The selected Intel
+//! device plan reads both original VRAM cells and registered HOST aliases on
+//! the GPU; no CPU expert service or decode staging is part of this path.
 use crate::{
     private_arena::{BufferId, PrivateArena},
     quant_matvec::grouped_moe as g,
@@ -50,7 +52,6 @@ enum Kernel {
     Reduce,
     PromptRoute,
     PromptReduce,
-    CpuMerge,
 }
 impl Kernel {
     fn source(self) -> String {
@@ -59,7 +60,6 @@ impl Kernel {
             Self::Reduce => include_str!("strata_global_reduce.wgsl").into(),
             Self::PromptRoute => include_str!("strata_prompt_route.wgsl").into(),
             Self::PromptReduce => include_str!("strata_prompt_reduce.wgsl").into(),
-            Self::CpuMerge => include_str!("strata_global_cpu_merge.wgsl").into(),
         }
     }
 }
@@ -70,7 +70,6 @@ impl KernelMetadata for Kernel {
             Self::Reduce => "StrataGlobalRouteReduceAndStamp",
             Self::PromptRoute => "StrataPromptNativeRoutes",
             Self::PromptReduce => "StrataPromptRankReduceAndStamp",
-            Self::CpuMerge => "StrataGlobalNativeCpuJoin",
         }
     }
     fn id(&self) -> KernelId {
@@ -113,7 +112,6 @@ pub(crate) struct Workspace {
     geometries: [g::Geometry; 48],
     ids: [BufferId; 11],
     sampler: [BufferId; 7],
-    pub(crate) cpu: std::sync::Arc<kuno_text::cpu_expert::native::Pool>,
     layer_pending: bool,
     adaptive: Option<crate::strata_global_adapt::Cache>,
     stages: [BufferId; 3],
@@ -214,7 +212,6 @@ impl Workspace {
         graph.verify_unchanged()?;
         Ok(Self {
             binding: graph.binding_id(),
-            cpu: std::sync::Arc::new(kuno_text::cpu_expert::native::Pool::new()?),
             layer_pending: false,
             geometries: geometries.try_into().map_err(|_| reject())?,
             ids: ids.try_into().map_err(|_| reject())?,
@@ -283,7 +280,7 @@ impl Workspace {
         logits: BufferId,
         fault: BufferId,
         cancel: &AtomicBool,
-    ) -> Result<crate::strata_global_cpu::Plan> {
+    ) -> Result<()> {
         let h = |id| arena.handle(id).cloned().map_err(u::fault);
         self.enqueue_data(
             graph,
@@ -292,7 +289,6 @@ impl Workspace {
             admission,
             layer,
             [h(input)?, h(output)?, h(logits)?],
-            Some(input),
             fault,
             cancel,
         )
@@ -315,9 +311,7 @@ impl Workspace {
         for h in &data {
             crate::strata_prompt::validate_output(h)?;
         }
-        self.enqueue_data(
-            graph, arena, sources, admission, layer, data, None, fault, cancel,
-        )?;
+        self.enqueue_data(graph, arena, sources, admission, layer, data, fault, cancel)?;
         Ok(())
     }
     #[allow(clippy::too_many_arguments)]
@@ -329,10 +323,9 @@ impl Workspace {
         admission: &crate::executor::ResidentAdmission,
         layer: usize,
         data: [Handle; 3],
-        input_id: Option<BufferId>,
         fault: BufferId,
         cancel: &AtomicBool,
-    ) -> Result<crate::strata_global_cpu::Plan> {
+    ) -> Result<()> {
         u::cancel(cancel)?;
         let active = self.active.as_ref().ok_or_else(reject)?;
         let count = active[0];
@@ -344,6 +337,11 @@ impl Workspace {
             return Err(reject());
         }
         sources.plan().check_binding(graph)?;
+        // Decode requires the complete attached source partition before any
+        // pointer consumer is enqueued. Prompt has its separate loan lifecycle.
+        if !crate::strata_prompt::active() {
+            sources.validate_graph_ready(graph)?;
+        }
         let client = arena.client().map_err(u::fault)?;
         u::zero_many(arena, &self.ids[..7])?;
         let full = |id| arena.handle(id).cloned().map_err(u::fault);
@@ -457,48 +455,27 @@ impl Workspace {
                 &map,
             )?;
             self.layer_pending = true;
-            // All prompt expert work is already queued. There are no CPU jobs
-            // or remaining decode GPU groups for the caller to schedule; this
-            // does not claim that the router selected zero experts.
-            return Ok(crate::strata_global_cpu::Plan {
-                jobs: Vec::new(),
-                input: Zeroizing::new(Vec::new()),
-                gpu_groups: 0,
-            });
+            return Ok(());
         }
-        let cpu_plan = crate::strata_global_cpu::prepare(
-            graph,
-            arena,
-            admission,
-            sources,
-            layer,
-            count,
-            self.ids[0],
-            input_id.ok_or_else(reject)?,
-            cancel,
-        )?;
-        if cpu_plan.gpu_groups > 0 {
-            let stages = self.stage_handles(arena)?;
-            let gu = full(self.ids[5])?;
-            let down = full(self.ids[6])?;
-            crate::strata_global_experts::prepare(client, &spans, &owners, &gu, count, false)?;
-            crate::strata_global_experts::fetch(
-                client, graph, sources, layer, geometry, &owners[0], &owners[6], &stages, count,
-            )?;
-            for role in [1, 2] {
-                crate::strata_global_experts::role(
-                    client, graph, sources, layer, geometry, &spans, &owners, &gu, &stages, count,
-                    role,
-                )?;
-            }
-            crate::strata_global_experts::activate(client, &spans, &owners, count)?;
-            crate::strata_global_experts::prepare(client, &spans, &owners, &down, count, true)?;
+        // Pinned Intel launcher selects VERIFY_DEVICE_PLAN + VERIFY_NO_HOST.
+        // Its resident_plan puts both cached cells and HOST mirror aliases in
+        // the primary GPU group list. Every real group is consumed directly;
+        // no CPU routing readback, HOST staging or second fetch list is needed.
+        let gu = full(self.ids[5])?;
+        let down = full(self.ids[6])?;
+        crate::strata_global_experts::prepare(client, &spans, &owners, &gu, count, false)?;
+        for role in [1, 2] {
             crate::strata_global_experts::role(
-                client, graph, sources, layer, geometry, &spans, &owners, &down, &stages, count, 3,
+                client, graph, sources, layer, geometry, &spans, &owners, &gu, count, role,
             )?;
         }
+        crate::strata_global_experts::activate(client, &spans, &owners, count)?;
+        crate::strata_global_experts::prepare(client, &spans, &owners, &down, count, true)?;
+        crate::strata_global_experts::role(
+            client, graph, sources, layer, geometry, &spans, &owners, &down, count, 3,
+        )?;
         self.layer_pending = true;
-        Ok(cpu_plan)
+        Ok(())
     }
     pub(crate) fn finish_layer(
         &mut self,
@@ -506,14 +483,12 @@ impl Workspace {
         layer: usize,
         output: BufferId,
         fault: BufferId,
-        cpu: Option<&kuno_text::cpu_expert::native::Partials>,
     ) -> Result<()> {
         self.finish_data(
             arena,
             layer,
             arena.handle(output).cloned().map_err(u::fault)?,
             fault,
-            cpu,
         )
     }
     pub(crate) fn finish_prompt(
@@ -527,7 +502,7 @@ impl Workspace {
             return Err(reject());
         }
         crate::strata_prompt::validate_output(&output)?;
-        self.finish_data(arena, layer, output, fault, None)
+        self.finish_data(arena, layer, output, fault)
     }
     fn finish_data(
         &mut self,
@@ -535,7 +510,6 @@ impl Workspace {
         layer: usize,
         output: Handle,
         fault: BufferId,
-        cpu: Option<&kuno_text::cpu_expert::native::Partials>,
     ) -> Result<()> {
         let active = self.active.as_ref().ok_or_else(reject)?;
         let count = active[0];
@@ -545,42 +519,6 @@ impl Workspace {
         let client = arena.client().map_err(u::fault)?;
         let full = |id| arena.handle(id).cloned().map_err(u::fault);
         let prompt = crate::strata_prompt::active();
-        if prompt && cpu.is_some() {
-            return Err(reject());
-        }
-        if let Some(cpu) = cpu {
-            if cpu.values().len() != 80 * 2560 {
-                return Err(reject());
-            }
-            let mut bytes = Zeroizing::new(vec![0u8; 1048576]);
-            for (i, &x) in cpu.values().iter().enumerate() {
-                if !x.is_finite() {
-                    return Err(reject());
-                }
-                bytes[i * 4..i * 4 + 4].copy_from_slice(&x.to_le_bytes());
-            }
-            client
-                .write_private(full(self.ids[10])?, std::mem::take(&mut *bytes))
-                .map_err(u::fault)?;
-            let args = KernelArguments::new()
-                .with_buffers(vec![
-                    full(self.ids[10])?.binding(),
-                    full(self.ids[0])?.binding(),
-                    full(self.ids[2])?.binding(),
-                    full(self.ids[4])?.binding(),
-                    full(fault)?.binding(),
-                ])
-                .with_info(info(&[count as u32, 0, 0, 0]));
-            // SAFETY: real joined CPU result and authenticated private masks;
-            // GPU and CPU routes are disjoint, all parent owners retained.
-            unsafe {
-                client.launch_unchecked(
-                    Box::new(Kernel::CpuMerge),
-                    CubeCount::Static(10, (count * 10) as u32, 1),
-                    args,
-                );
-            }
-        }
         let [partial, probability, status, map] = if prompt {
             let views = crate::strata_prompt::groups::views()?;
             [views.partial, views.probability, views.status, views.map]
@@ -734,7 +672,6 @@ pub(crate) fn compiled_sources() -> Vec<CompiledKernel<AutoCompiler>> {
         Kernel::Reduce,
         Kernel::PromptRoute,
         Kernel::PromptReduce,
-        Kernel::CpuMerge,
     ]
     .into_iter()
     .map(|k| {
