@@ -2886,3 +2886,132 @@ suite is not rerun; historical228 failures remain unaudited.
 No installed services/residency, public API/Vashti, installation or release
 changes. Canonical and inherited bytecode are preserved; no privileged/GPU work
 occurred in this source block. The goal remains active and incomplete.
+
+
+## Connected prompt-only cache sources and one-session controller (2026-10-14)
+
+Source `60f6760` + aggregate-GR correction `12b310f` + model rebase `8b503e2`, following `f82d00c`, isolated `codex/strata-rust-port`.
+This connects the previously missing original-weight fallback and prompt/source
+transaction. **It is not whole-port completion, long-context acceptance or a
+speed result. The compiled public fixture remains4096 tokens with owned prompt
+buffers. Its explicit loan HOST grant is zero.**
+
+### Original model sources and memory accounting
+
+- `strata_prompt_shadow_plan.rs` maps every role of every cell in the three real
+  lent roots to bounded original-weight HOST pages. Pages are at most128MiB,
+  starts256-byte aligned, with actual driver-backing envelopes rounded to1MiB.
+  A page contains bytes from exactly one authenticated GGUF shard; mixed-layer
+  and mixed-role roots do not falsely inherit the first shard's identity. At
+  most30 pages and4MiB extra setup/metadata are quoted. No unleased cell is
+  invented, and the exact plan instance is checked.
+- `strata_prompt_shadow.rs` allocates/maps/initializes/imports/registers these
+  actual non-device-local HOST_VISIBLE buffers through the same owning Vulkan
+  code as the original complement. Full allocation/padding is initialized;
+  bounded1MiB wiping source reads select the current inverse placement, including
+  prior adaptive exchanges. The three actual cache roots are retained, not
+  replaced with fake descriptors. Setup holds a separately explicit RAM grant.
+- The persistent fallback is refreshed under joined source exclusion on each
+  loan; it does not detach/re-register every request or exhaust lifetime slots.
+  Existing authority/owner-before-exposure, joined detach, erase and retention
+  on unknown exposure apply to both complement and fallback pages.
+- The original immutable-source contract now has an explicit checked model-only
+  rebase transaction (`8b503e2`). A non-cloneable token atomically revokes
+  whole distinct source roots before the backend flushes/joins prior readers.
+  Warm fallback refresh and actual adaptive GPU/HOST swaps use this authority;
+  only fully initialized/flushed original model bytes and completed raw writes
+  can resume readers. A dropped/failed token leaves them revoked; it cannot be
+  replaced by ordinary uploads or a forced active flag. Token metadata is quoted
+  against the registry's live bound, with identities/counters preserved. Private
+  data is still forbidden in every registered source.
+- The typed CubeCL external registry now supports joined monotonic budget
+  extension on its owning Vulkan stream. It preserves live/retired allocation
+  identities, cumulative counters and non-recycled slots. A replacement vector
+  is admitted against its old+new metadata peak before any state change. Shrink,
+  closing entries, foreign/unhealthy streams and insufficient grants reject.
+
+### Actual consumers and transaction
+
+`Sources::begin_prompt_loan` joins/excludes prior readers, refreshes original
+weights and republishes the actual physical-cell pointer tables before private
+registration clears any lent byte. Every leased role points at its real HOST
+fallback with HOST flag1. BDA read dependencies exclude the lent GPU roots;
+prototype buffers also resolve to original weights. Prompt HOST copies keep the
+registered `stage_public_host_copies` path and native transfer queue/acquisition/
+header/ring lifetime; no ordinary untracked upload replaces a transfer node.
+
+The new owning `BorrowedPrompt` token supplies its actual registered arena IDs
+to Scope. The request controller holds one session/Scope across all prompt
+chunks and device MTP teaching. Prompt-only bind/staging/scheduler boundaries
+accept that state; ordinary decode, CPU expert borrowing and adaptive mutation
+remain excluded. Ordinary model close refuses an active loan and retains owners.
+Abandonment retires the actual shared context and attempts private cleanup.
+
+After Scope drops, finish requires complete private erase/readback inspection,
+then restores every actual cache byte from current logical placement. Only then
+are normal model tables/read sets and previous prompt-stage attachment restored
+and joined. Failure/panic cannot publish residency. The closed private arena is
+dropped before normal publication and cannot erase restored original weights.
+
+Owned-versus-loan selection now flows through actual Workspace allocation and
+MAIN request pricing: loan mode omits all three512MiB owned buffers. Constructor
+shape validation compares the equivalent native shape while admission charges
+only the actual request. The local model arena now uses the exact already held
+MAIN grant rather than its obsolete2GiB ceiling, which could not contain the
+new default owned prompt buffers plus existing model state. Default owned mode
+still selects the existing three actual512MiB private allocations.
+
+A further source audit found mutually contradictory constructor checks: GR's
+native524288-byte increment appeared in the actual family requests and TOTAL,
+but was absent from NEW. `12b310f` includes it in NEW and defines TOTAL as OLD+NEW,
+so both checks describe the same owner vector. Exact admission is preserved;
+this does not waive mismatched requests or claim whole-model construction.
+
+### Validation and remaining gate
+
+Validation receipts are under `/media/jmicko/faststore/kuno-development/`:
+
+- `strata-shadow-connected-tests-20261014.log`: three registry/layout tests pass,
+  including retired identity/counters, failed extension atomicity/metadata peak,
+  all and only lent roles, exact nonoverlapping ranges and mixed-shard identity.
+- `strata-shadow-prompt-tests-20261014.log`: all15 focused prompt tests pass.
+- `strata-shadow-plan-tests-20261014.log`: allfive original source/window and
+  empty/partial/full-cache reservation tests pass.
+- `strata-shadow-close-tests-20261014.log`: erasure/restoration order, full receipt
+  and fault/panic rejection pass (caught synthetic panic text is expected).
+- `strata-shadow-pricing-tests-20261014.log` and
+  `strata-shadow-placement-tests-20261014.log`: both pass, checking absent loan
+  owners/bytes versus default owned allocation and exact inverse placement
+  through repeated adaptive swaps.
+- `strata-shadow-gr-owner-tests-20261014.log`: actual MAX8 GR owner-envelope
+  test passes after the aggregate correction.
+- `strata-model-rebase-accept-tests-20261014.log`: allfour registry/layout tests
+  pass, including active/selected/unselected identities, atomic duplicate reject,
+  token metadata accounting, extension/detach exclusion and abandoned rebase.
+- `strata-model-rebase-accept-build-20261014.log`: final core release build passes.
+- `strata-model-rebase-accept-final-core-clippy-20261014.log` and
+  `strata-model-rebase-accept-off-clippy-20261014.log`: final strict core and
+  ordinary feature-off Clippy both pass. Two transient dependency documentation
+  warnings in the first rebase check were fixed; final checks are clean apart
+  from Cargo's existing duplicate-binary-path warning.
+
+These use `--locked --release --manifest-path
+apps/kuno/benchmarks/native-text/Cargo.toml --bin kuno-strata-rust`;
+core feature `strata-intel-core`, ordinary feature `strata-rust-port`, and Clippy
+`-- -D warnings`. No unprotected inference invocation is part of these checks.
+
+No shader arithmetic changed, so the preceding308-variant offline shader receipt
+was not repeated. No live allocation/model/loan refresh/erasure/restoration,
+whole-model numerical/state/recovery or speed execution was performed. The historical
+228 full-core failures still require a complete audit; these focused checks do not waive
+them. No installed services/model residency, API/Vashti, install/release, driver
+or reset change. Canonical checkout and inherited bytecode remain untouched.
+
+Next finish actual runtime context/configuration and pre-device HOST grants,
+cache-budget placement, conditional STAGE8/stream-all/big-ring/auto-chunk policy,
+then complete arbitrary input/sampling, full captured branch/state-repair and
+source/unit-failure audits. The new loan source/constructor/controller path is
+compiled but current graph/request permits remain4096, so no supported long-
+context invocation or physical parity is claimed. Run the protected complete
+engine numerical/completion/state/recovery gates before opening speed testing.
+Required Vashti changes: none.

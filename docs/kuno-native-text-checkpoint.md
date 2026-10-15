@@ -1,5 +1,16 @@
 # Native DASLab/Strata checkpoint — 2026-10-09
 
+**Current Rust port resume pointer (2026-10-14):** isolated
+`codex/strata-rust-port`, source through `8b503e2` (cache-loan connection `60f6760`, aggregate GR `12b310f`). Read the latest
+[coordination handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--prompt-only-cache-sourcescontroller-2026-10-14)
+and [completion receipt](kuno-strata-rewrite-completion.md#connected-prompt-only-cache-sources-and-one-session-controller-2026-10-14).
+The full rewrite is incomplete; no live speed test before source completeness
+and protected whole-engine correctness/state/recovery acceptance. Older numbers
+and paused states below are historical and do not describe this active goal.
+The user is using both GPUs again during source work; reconfirm availability
+before any GPU/model execution or admission/residency change.
+
+
 For the next model or a fresh session, start with the
 [standalone resume handoff](kuno-native-next-model-handoff.md). It distinguishes
 accepted hardware results from the source-only candidate and gives the exact

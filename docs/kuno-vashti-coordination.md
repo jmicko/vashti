@@ -5,6 +5,13 @@ This is the shared handoff between the **Build Kuno inference helper** task
 Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
+**Current native-engine resume pointer (2026-10-14):** the isolated Rust rewrite
+is through `8b503e2` on `codex/strata-rust-port`; read the
+[prompt-only cache sources/controller handoff](#active-kuno-engine-handoff--prompt-only-cache-sourcescontroller-2026-10-14)
+and [whole-rewrite gate](kuno-strata-rewrite-completion.md). It is incomplete;
+no live speed benchmark before the connected source and correctness gates.
+This backend work does not change the published image/application contract.
+
 ## Ownership
 
 | Area | Default owner |
@@ -5412,3 +5419,53 @@ context remains4096. Keeping unused owned buffers is not loan/cache price parity
 Then finish conditional ring/stream-all/auto chunk policy, branch/recording,
 input/sampling, verifier repair, source/unit-failure audits and protected complete
 engine acceptance before throughput. Required Vashti changes: none.
+
+
+### Active Kuno engine handoff — prompt-only cache sources/controller (2026-10-14)
+
+Source `60f6760` + aggregate-GR correction `12b310f` + model rebase `8b503e2`, after `f82d00c`, isolated `codex/strata-rust-port` at
+`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`. Read completion guide
+**Connected prompt-only cache sources and one-session controller**. This
+supersedes the previous handoff's missing fallback/table/prototype/controller
+hookup. **The full rewrite and live validation remain incomplete.**
+
+Real bounded registered HOST pages now hold original weights for lent cells,
+refreshed from current placement under joined exclusion. Each page authenticates
+its actual single source shard. Typed registry extension preserves all live and
+retired identities/counters and quotes the metadata peak. A separately explicit
+RAM grant is required; the compiled4096 fixture grants zero and stays owned.
+
+The actual source transaction patches pointer/flag tables, prototype handles and
+BDA read dependencies before exposing private scratch; native queued HOST copies
+remain in use. One owning session/Scope spans the complete prompt plus MTP
+teaching, with decode/adaptation excluded. Full private erase/inspection and
+current-placement model restoration precede normal source publication. Unknown
+completion/abandonment retires the shared context and retains owners. Loan mode
+omits the three owned512MiB buffers from constructor/MAIN pricing. The obsolete
+local2GiB arena ceiling is replaced by the actual precharged model plan.
+
+Exact build/Clippy/focused test results and limitations are in the receipt above.
+No GPU/model/allocation/state/recovery/speed acceptance or full suite this turn;
+prior228 full-core failures remain unaudited. No services/residency, public API,
+Vashti, install or release changes. Canonical/bytecode preserved. Goal active.
+
+Next connect runtime context/configuration and pre-device RAM grants/cache
+budget, conditional ring/stream-all/auto chunks, arbitrary input/sampling and
+remaining captured branch/verifier-repair and source/unit-failure audits. Current
+bound graph/request permits still cap4096; compiled conditional loan consumers
+are not a supported live long-context invocation. Complete the whole-engine
+correctness/state/recovery gates before speed tests. Required Vashti changes:none.
+
+The follow-up `8b503e2` makes original-weight refresh explicit in the typed
+registry, rather than mutating a resource still declared immutable. Begin revokes
+lookups and joins native queues; its non-cloneable token grants only authenticated
+model rebasing. Both fallback refresh and adaptive GPU/HOST exchange consume it.
+Successful initialization/flush/raw completion is required to resume. Abandonment
+keeps readers revoked and backing retained. This is an internal engine contract,
+with no Kuno HTTP or Vashti change. See the final rebase receipts above.
+
+**Current hardware coordination:** the user has reclaimed both GPUs while this
+source/build phase continues (2026-10-14). Do not start GPU/model execution,
+change admission/residency or stop their workloads without reconfirming that the
+cards are available. Source edits, CPU-only unit checks and compilation may
+continue. No GPU job or installed-service change was started in this pass.
