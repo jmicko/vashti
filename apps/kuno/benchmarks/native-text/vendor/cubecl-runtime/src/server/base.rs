@@ -77,6 +77,7 @@ pub struct NativeStrataBranch {
     proposals: u8,
     context_capacity: u16,
     verify_capacity: u8,
+    state_role: u8,
 }
 impl NativeStrataBranch {
     /// The admitted MAX8 target shape at the maximum 4096-cell context.
@@ -85,7 +86,15 @@ impl NativeStrataBranch {
     }
     /// Verification-only target shape with its actual immutable context capacity.
     pub fn target_window_for_context(rows: u8, context: u16) -> Result<Self, &'static str> {
-        if !(1..=8).contains(&rows) || !(1..=4096).contains(&context) {
+        Self::target_window_with_state(rows, context, 0)
+    }
+    /// Fixed original GDN old/next binding arrangement, never a token position.
+    pub fn target_window_with_state(
+        rows: u8,
+        context: u16,
+        state_role: u8,
+    ) -> Result<Self, &'static str> {
+        if !(1..=8).contains(&rows) || !(1..=4096).contains(&context) || state_role > 1 {
             return Err("native target branch shape");
         }
         Ok(Self {
@@ -94,6 +103,7 @@ impl NativeStrataBranch {
             proposals: 0,
             context_capacity: context,
             verify_capacity: 8,
+            state_role,
         })
     }
     /// One accepted-prefix round, optionally followed by a zero-threshold chain.
@@ -107,6 +117,7 @@ impl NativeStrataBranch {
             proposals,
             context_capacity: 4096,
             verify_capacity: 8,
+            state_role: 0,
         })
     }
     /// A subsequent confidence-observed draft cell (indices one through six).
@@ -120,6 +131,7 @@ impl NativeStrataBranch {
             proposals: step,
             context_capacity: 4096,
             verify_capacity: 8,
+            state_role: 0,
         })
     }
 }

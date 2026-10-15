@@ -5092,10 +5092,21 @@ impl Workspace {
         // remaining required internal submission has its own retained segment.
         let branch =
             if purpose == Purpose::AllRowsWithCarry && m.admission.request_io_reuse_active() {
+                let mut state_role = None;
+                for layer in &m.layers {
+                    if let Layer::Gdn(stage, _) = layer {
+                        let role = stage.native_capture_state_role()?;
+                        if state_role.is_some_and(|previous| previous != role) {
+                            return Err(Error::InvalidFormat("native GDN capture role alignment"));
+                        }
+                        state_role = Some(role);
+                    }
+                }
                 Some(
-                    cubecl_runtime::server::NativeStrataBranch::target_window_for_context(
+                    cubecl_runtime::server::NativeStrataBranch::target_window_with_state(
                         u8::try_from(*count).map_err(u::fault)?,
                         u16::try_from(m.context).map_err(u::fault)?,
+                        state_role.ok_or(error())?,
                     )
                     .map_err(u::fault)?,
                 )

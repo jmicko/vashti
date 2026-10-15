@@ -754,6 +754,18 @@ fn state_ids(stage: &ResidentGdn<'_>) -> [BufferId; 4] {
         stage.buffers.raw_conv[1],
     ]
 }
+impl ResidentGdn<'_> {
+    /// The original old/next pairs swap together on accepted commit/restore.
+    /// These two static binding arrangements are independent of token position.
+    pub(crate) fn native_capture_state_role(&self) -> Result<u8> {
+        let recurrent = self.buffers.recurrent[0].original_pair_role(self.buffers.recurrent[1]);
+        let convolution = self.buffers.raw_conv[0].original_pair_role(self.buffers.raw_conv[1]);
+        match (recurrent, convolution) {
+            (Some(a), Some(b)) if a == b => Ok(u8::from(a)),
+            _ => Err(fault("native GDN state role alignment")),
+        }
+    }
+}
 impl Lifecycle {
     fn begin_batch(&mut self, start: u64, count: usize) -> Result<()> {
         if self.phase != Phase::Ready(start)

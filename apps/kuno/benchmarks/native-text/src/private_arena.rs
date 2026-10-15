@@ -113,6 +113,22 @@ pub struct BufferId {
     slot: usize,
 }
 
+impl BufferId {
+    /// Content-free ordering of original slots in the same arena epoch. This
+    /// distinguishes fixed old/next bindings without exposing an address/slot
+    /// or granting any buffer access authority.
+    pub(crate) fn original_pair_role(self, other: Self) -> Option<bool> {
+        if self.arena == 0
+            || self.arena != other.arena
+            || self.epoch != other.epoch
+            || self.slot == other.slot
+        {
+            return None;
+        }
+        Some(self.slot > other.slot)
+    }
+}
+
 #[cfg(test)]
 impl BufferId {
     pub(crate) fn metadata_fixture(arena: u64, epoch: u64, slot: usize) -> Self {
