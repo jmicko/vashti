@@ -3,7 +3,8 @@
 //! No content allocation, output storage or host-logit sampling in this launcher.
 //! Device parameters are a private, mutable buffer: graph identity contains no
 //! request values. Request owners and target/draft connection remain incomplete.
-#![allow(dead_code)] // Owning request/target/draft hookup is the next coupled block.
+#[path = "strata_sampling_request.rs"]
+pub(crate) mod request;
 use cubecl::{
     ir::{ElemType, StorageType, UIntKind},
     prelude::*,

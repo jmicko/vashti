@@ -40,7 +40,12 @@ pub(crate) const HOST_INCREMENT: usize = if crate::strata_port::eight_rows() {
     6
 } * 1024
     * 1024;
-pub(crate) const RUNTIME_INCREMENT: u64 = 2 * (OWNER_BYTES as u64 - 1024 * 1024) + 2 * 2048;
+pub(crate) const RUNTIME_INCREMENT: u64 = if cfg!(feature = "strata-intel-core") {
+    crate::strata_sampler::request::RUNTIME_BYTES
+} else {
+    0
+} + 2 * (OWNER_BYTES as u64 - 1024 * 1024)
+    + 2 * 2048;
 pub(crate) const RUNTIME_LIMIT: u64 = 128 * 1024 * 1024;
 
 macro_rules! rejected {
@@ -522,12 +527,30 @@ impl Owners {
                     .offset_end((OWNER_BYTES - COMPACT_WORDS * 4) as u64),
                 cancel,
                 || {
-                    crate::strata_packet::launch(
-                        arena.client().map_err(u::fault)?,
-                        [logits, carry, fault, packet],
+                    let client = arena.client().map_err(u::fault)?;
+                    if let Some(picks) = crate::strata_sampler::request::target_pick(
+                        client,
+                        graph.binding_id(),
+                        logits.clone(),
+                        fault.clone(),
                         count,
                         start,
-                    );
+                    )? {
+                        crate::strata_packet::launch_selected(
+                            client,
+                            [picks, carry, fault, packet],
+                            count,
+                            start,
+                        );
+                    } else {
+                        crate::strata_packet::launch(
+                            client,
+                            [logits, carry, fault, packet],
+                            count,
+                            start,
+                        );
+                    }
+
                     Ok(())
                 },
                 |bytes| {

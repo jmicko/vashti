@@ -27,7 +27,8 @@ use zeroize::Zeroizing;
 const ROOT_BYTES: [u64; 11] = [
     32768, 262144, 1048576, 32768, 32768, 65536, 131072, 131072, 32768, 131072, 1048576,
 ];
-pub(crate) const MAIN_BYTES: u64 = 32768
+pub(crate) const MAIN_BYTES: u64 = crate::strata_sampler::request::MAIN_BYTES
+    + 32768
     + 262144
     + 1048576
     + 32768
@@ -111,6 +112,7 @@ pub(crate) struct Workspace {
     binding: GraphBindingId,
     geometries: [g::Geometry; 48],
     ids: [BufferId; 11],
+    sampler: [BufferId; 7],
     pub(crate) cpu: std::sync::Arc<kuno_text::cpu_expert::native::Pool>,
     layer_pending: bool,
     adaptive: Option<crate::strata_global_adapt::Cache>,
@@ -121,12 +123,16 @@ pub(crate) struct Workspace {
     active: Option<Zeroizing<[usize; 3]>>, // active count, next layer, accepted flag
 }
 impl Workspace {
+    pub(crate) fn sampler_ids(&self) -> [BufferId; 7] {
+        self.sampler
+    }
     pub(crate) fn requests() -> Vec<u64> {
         Self::requests_for_context(4096).expect("fixed prompt context")
     }
     pub(crate) fn requests_for_context(context: usize) -> Result<Vec<u64>> {
         Ok(ROOT_BYTES
             .into_iter()
+            .chain(crate::strata_sampler::request::ROOT_BYTES)
             .chain([crate::strata_global_experts::STAGE_BYTES; 3])
             .chain(crate::strata_prompt::allocation::Plan::new(context)?.requests())
             .collect())
@@ -191,6 +197,12 @@ impl Workspace {
             };
             ids.push(id);
         }
+        let sampler = crate::strata_sampler::request::ROOT_BYTES
+            .into_iter()
+            .map(|b| arena.allocate_zeroed(b as usize / 4).map_err(u::fault))
+            .collect::<Result<Vec<_>>>()?
+            .try_into()
+            .map_err(|_| reject())?;
         let stage_words = (crate::strata_global_experts::STAGE_BYTES / 4) as usize;
         let stages = [
             arena.allocate_zeroed(stage_words).map_err(u::fault)?,
@@ -207,6 +219,7 @@ impl Workspace {
             geometries: geometries.try_into().map_err(|_| reject())?,
             ids: ids.try_into().map_err(|_| reject())?,
             stages,
+            sampler,
             prompt_stages,
             epoch: 0,
             verify_usage: false,

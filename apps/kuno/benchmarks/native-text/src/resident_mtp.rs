@@ -53,7 +53,12 @@ pub const PRIVATE_BYTES: usize = if crate::strata_intel_core::enabled() {
     16
 } * 1024
     * 1024;
-pub const RUNTIME_BYTES: u64 = 64 * 1024 * 1024;
+pub const RUNTIME_BYTES: u64 = 64 * 1024 * 1024
+    + if cfg!(feature = "strata-intel-core") {
+        crate::strata_sampler::request::RUNTIME_BYTES
+    } else {
+        0
+    };
 pub const HOST_BYTES: usize = 16 * 1024 * 1024;
 pub const PUBLIC_SOURCE_BYTES: usize = 128 * 1024 * 1024;
 const READ_CHUNK: usize = 64 * 1024 * 1024;
@@ -3569,6 +3574,33 @@ impl ResidentMtp<'_, '_> {
     }
     fn finish_gpu(&mut self) -> Result<()> {
         self.project("output.weight", B::Mixed, B::Logits)?;
+        if crate::strata_intel_core::enabled() && self.graph.profile() == MtpProfile::StrataQ2 {
+            if crate::strata_sampler::request::active() && self.public_english_vocab.is_some() {
+                return Err(Error::InvalidFormat(
+                    "native sampling requires original full MTP head",
+                ));
+            }
+            let positions = self
+                .native_front
+                .as_ref()
+                .ok_or(Error::InvalidBufferLength)?
+                .ids[crate::strata_mtp_front::POS];
+            if crate::strata_sampler::request::draft_pick(
+                self.client()?,
+                self.binding,
+                self.position,
+                u::handle(&self.arena, self.id(B::Logits))?,
+                u::handle(&self.arena, positions)?,
+                u::handle(&self.arena, self.id(B::Token))?,
+                u::handle(&self.arena, self.id(B::Greedy))?,
+                u::handle(&self.arena, self.id(B::Fault))?,
+            )? {
+                self.tick(4)?;
+                self.physical()?;
+                self.guard_private(self.position + 1)?;
+                return Ok(());
+            }
+        }
         if self.public_english_vocab.is_some() {
             let map = self
                 .public()?

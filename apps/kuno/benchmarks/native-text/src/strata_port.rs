@@ -975,6 +975,7 @@ pub(crate) fn validate_shader_set() -> Result<(), Box<dyn std::error::Error>> {
         ))),
         crate::public_host_expert_mirror::strata_gpu_exchange::SHADER.into(),
         crate::strata_packet::shader(),
+        crate::strata_packet::selected_shader(),
     ];
     controllers.extend(crate::next_shared::port_verify_sources()?);
     for source in controllers {
@@ -1015,6 +1016,7 @@ pub(crate) fn validate_shader_set() -> Result<(), Box<dyn std::error::Error>> {
         shaders.extend(crate::strata_global_experts::compiled_sources());
         shaders.extend(crate::strata_global_moe::compiled_sources());
         shaders.extend(crate::strata_sampler::sources());
+        shaders.extend(crate::strata_sampler::request::sources());
     }
     for (index, compiled) in shaders.iter().enumerate() {
         let module = n::front::wgsl::parse_str(&compiled.source)

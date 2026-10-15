@@ -87,6 +87,7 @@ const NATIVE_GR_MAIN: u64 = if cfg!(feature = "strata-intel-core") {
 const PUBLIC_MAIN: u64 = 25_165_824;
 const CORE_CACHE_HOST: usize = if cfg!(feature = "strata-intel-core") {
     crate::strata_global_adapt::HOST_BYTES
+        + crate::strata_sampler::request::HOST_BYTES
         + kuno_text::cpu_expert::native::HOST_BYTES
         + crate::strata_prompt::groups::HOST_BYTES
         + crate::strata_prompt::storage::HOST_BYTES
@@ -2582,6 +2583,37 @@ impl Drop for Flight {
 }
 
 impl<'m, 'f> ResidentModel<'m, 'f> {
+    /// # Safety
+    /// Retain this original model/arena, its admission and the original draft
+    /// on the sole worker through the lexical sampler scope's close/drop.
+    /// No model reset/close/client swap is allowed during that scope.
+    pub(crate) unsafe fn begin_sampling_request(
+        &self,
+        executor: &GpuExecutor<'f>,
+        params: crate::strata_sampler::Params,
+        prefix: &[u32],
+        draft: Option<u64>,
+    ) -> Result<crate::strata_sampler::request::Scope> {
+        self.completed_native_projection_boundary(executor)?;
+        if self.position != prefix.len() {
+            return Err(error());
+        }
+        let native = self.native_batch.as_ref().ok_or(error())?;
+        let global = native.global_moe.as_ref().ok_or(error())?;
+        global.validate_idle()?;
+        unsafe {
+            crate::strata_sampler::request::Scope::new(
+                &self.arena,
+                global.sampler_ids(),
+                self.graph.binding_id(),
+                draft,
+                params,
+                prefix,
+                self.retired.clone(),
+            )
+        }
+    }
+
     /// Exclusive fixed-public proposal/verification/accepted-prefix round.
     #[allow(dead_code)] // Parent owns the protected lab consumer.
     pub(crate) fn begin_latest_target_round<'a>(

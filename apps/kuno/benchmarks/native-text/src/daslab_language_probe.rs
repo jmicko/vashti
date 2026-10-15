@@ -1287,6 +1287,11 @@ pub(crate) fn run(
                         max_outputs: MAX_OUTPUTS,
                         eos: graph.eos_token(),
                         window: crate::strata_port::verify_capacity(),
+                        sampling: crate::strata_sampler::Params {
+                            greedy: true,
+                            temperature: 0.,
+                            ..Default::default()
+                        },
                     },
                     &cancel,
                     &mut |_| Ok(()),

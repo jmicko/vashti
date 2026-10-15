@@ -9,9 +9,11 @@ pub(super) struct Request<'a> {
     pub max_outputs: usize,
     pub eos: u32,
     pub window: usize,
+    pub sampling: crate::strata_sampler::Params,
 }
 impl Request<'_> {
     fn validate(&self) -> Result<()> {
+        self.sampling.validate()?;
         if self.prompt.is_empty()
             || self.prompt.iter().any(|&t| t >= VOCAB as u32)
             || !(1..=MAX_OUTPUTS).contains(&self.max_outputs)
@@ -178,6 +180,19 @@ pub(super) fn run<'m, 'f>(
     }
     // Same original count1 decode path as generated continuations, not the
     // prompt BF16/FP16 matrix path. Even a one-token prompt must do this once.
+    let greedy_request = request.sampling.greedy();
+    // SAFETY: run owns exclusive model/executor/draft borrows throughout this
+    // lexical scope. It never resets/closes them; sampling closes before return
+    // and the parent's model cleanup. Errors retire before arena ownership ends.
+    let sampling = unsafe {
+        target.begin_sampling_request(
+            executor,
+            request.sampling,
+            &request.prompt[..plan.prefix()],
+            draft.as_ref().map(|d| d.binding()),
+        )?
+    };
+    sampling.stage_target(plan.prefix(), &request.prompt[plan.prefix()..])?;
     let output =
         target.prefill_chunk_with_carry(executor, &request.prompt[plan.prefix()..], cancel)?;
     if output.start() != plan.prefix() || output.count() != 1 {
@@ -195,6 +210,7 @@ pub(super) fn run<'m, 'f>(
     {
         return Err("global teacher MTP alignment rejected".into());
     }
+    sampling.commit_target(1)?;
     // Shared state owners are activated with actual global source authority.
     target.set_public_four_rows(executor, cancel)?;
     target.set_public_grouped_ple_reads(executor, true, cancel)?;
@@ -217,6 +233,7 @@ pub(super) fn run<'m, 'f>(
         {
             return Err("global target/draft entry alignment rejected".into());
         }
+        sampling.begin_round(position, confirmed)?;
         let remaining = request.max_outputs - history.len();
         let mut count = if draft.is_some() {
             policy.choose_mtp(remaining.min(request.window))
@@ -280,6 +297,7 @@ pub(super) fn run<'m, 'f>(
         if inputs.len() != count || count > remaining {
             return Err("global draft window bound rejected".into());
         }
+        sampling.stage_target(position, &inputs)?;
         let mut round = LatestTargetRound::begin(target, executor, &inputs, cancel)?;
         let rows = round.verify(cancel)?;
         if rows.start() != position || rows.count() != count {
@@ -303,6 +321,7 @@ pub(super) fn run<'m, 'f>(
         if round.finish(n, cancel)?.is_some() {
             return Err("global state-only repair contract rejected".into());
         }
+        sampling.commit_target(n)?;
         repairs += u64::from(n < count);
         if target.completed_target_rows_cursor(executor)? != position + n {
             return Err("global accepted target cursor rejected".into());
@@ -333,6 +352,7 @@ pub(super) fn run<'m, 'f>(
     if target.completed_target_rows_cursor(executor)? != request.prompt.len() + history.len() - 1 {
         return Err("global final output accounting rejected".into());
     }
+    sampling.close()?;
     let closed = target.end_public_language_request_io(executor, cancel)?;
     if !closed.full_io_audit
         || !closed.scope_closed
@@ -342,7 +362,7 @@ pub(super) fn run<'m, 'f>(
         return Err("global request erasure rejected".into());
     }
     Ok(
-        serde_json::json!({"controller":"global-original-sources","greedy_target_verification":true,
+        serde_json::json!({"controller":"global-original-sources","greedy_target_verification":greedy_request,
         "outputs":history.len(),"windows":rounds,"state_repairs":repairs,
         "eos":confirmed==request.eos,"request_scope_erased":true,"content_persisted":false,
         "speed_acceptance":false,"full_rewrite_accepted":false}),
