@@ -50,34 +50,42 @@ pub fn resources(
     handles: Vec<Handle>,
 ) -> Result<Vec<ManagedResource<cubecl::wgpu::WgpuResource>>> {
     if RETAINED_METADATA.load(Ordering::Acquire) {
-        let sliced = handles
-            .iter()
-            .filter(|h| h.offset_start.unwrap_or(0) != 0 || h.offset_end.unwrap_or(0) != 0)
-            .count();
-        let count = handles.len();
-        retained_batches(handles, |batch| {
-            let result = client.retained_resource_metadata(batch).map_err(|cause| {
-                if crate::strata_port::enabled() {
-                    eprintln!("strata_metadata_failure count={count} sliced={sliced}");
-                    // PUBLIC fixtures only: static lifecycle diagnostics.
-                    eprintln!("strata_static_runtime_diagnostic={cause}");
-                    if let Err(launch) = client.flush() {
-                        eprintln!("strata_static_launch_diagnostic={launch}");
-                    }
-                }
-                Error::InvalidFormat("resident retained metadata lookup rejected")
-            })?;
-            METADATA_CALLS
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
-                .map_err(|_| Error::ArithmeticOverflow)?;
-            Ok(result)
-        })
+        retained_resources(client, handles)
     } else {
         handles
             .into_iter()
             .map(|h| client.get_resource(h).map_err(fault))
             .collect()
     }
+}
+/// Original global-source owners always require non-submitting retained
+/// inspection, independently of the legacy lab's optional metadata policy.
+pub(crate) fn retained_resources(
+    client: &ComputeClient<WgpuRuntime>,
+    handles: Vec<Handle>,
+) -> Result<Vec<ManagedResource<cubecl::wgpu::WgpuResource>>> {
+    let sliced = handles
+        .iter()
+        .filter(|h| h.offset_start.unwrap_or(0) != 0 || h.offset_end.unwrap_or(0) != 0)
+        .count();
+    let count = handles.len();
+    retained_batches(handles, |batch| {
+        let result = client.retained_resource_metadata(batch).map_err(|cause| {
+            if crate::strata_port::enabled() {
+                eprintln!("strata_metadata_failure count={count} sliced={sliced}");
+                // PUBLIC fixtures only: static lifecycle diagnostics.
+                eprintln!("strata_static_runtime_diagnostic={cause}");
+                if let Err(launch) = client.flush() {
+                    eprintln!("strata_static_launch_diagnostic={launch}");
+                }
+            }
+            Error::InvalidFormat("resident retained metadata lookup rejected")
+        })?;
+        METADATA_CALLS
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+            .map_err(|_| Error::ArithmeticOverflow)?;
+        Ok(result)
+    })
 }
 /// The backend admits at most128 full bindings per query, not128 owners per
 /// model. Retain ALL original owners/results across batches; the caller still

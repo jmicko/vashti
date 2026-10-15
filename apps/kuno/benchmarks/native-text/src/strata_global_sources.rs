@@ -143,10 +143,7 @@ impl Sources {
             .map(|(_, h)| h.clone())
             .collect::<Vec<_>>();
         handles.extend(host.handles()?);
-        let resources = self
-            .client
-            .retained_resource_metadata(handles.clone())
-            .map_err(crate::resident_util::fault)?;
+        let resources = crate::resident_util::retained_resources(&self.client, handles.clone())?;
         if resources.len() != handles.len() {
             return Err(reject());
         }

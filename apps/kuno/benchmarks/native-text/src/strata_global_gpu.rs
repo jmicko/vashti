@@ -129,9 +129,7 @@ impl Cache {
         if bytes != plan.resident_piece_bytes {
             return Err(reject());
         }
-        let resources = client
-            .retained_resource_metadata(roots.clone())
-            .map_err(|_| reject())?;
+        let resources = crate::resident_util::retained_resources(client, roots.clone())?;
         if resources.len() != roots.len() {
             return Err(reject());
         }
