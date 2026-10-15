@@ -24,6 +24,63 @@ use zeroize::Zeroize;
 pub(crate) mod batch_moe;
 
 const TILE_BYTES: usize = 64 * 1024 * 1024;
+
+// The original GGUF stores this BF16 dot-product weight as a vector. Intel
+// prefill.cpp passes it to GEMM as one row; retain those bytes and geometry
+// rather than widening the generic matrix reader's rank contract.
+fn native_shared_gate_vector(name: &str, dtype: u32, dimensions: &[u64]) -> bool {
+    name.strip_prefix("blk.")
+        .and_then(|s| s.strip_suffix(".ffn_gate_inp_shexp.weight"))
+        .and_then(|layer| layer.parse::<usize>().ok())
+        .is_some_and(|layer| layer < 48)
+        && dtype == 30
+        && dimensions == [2560]
+}
+
+fn strata_projection_shape(tensor: TensorView<'_>) -> Result<[usize; 3]> {
+    if crate::strata_intel_core::enabled()
+        && native_shared_gate_vector(
+            tensor.info().name(),
+            tensor.info().dtype().gguf_id(),
+            tensor.info().dimensions(),
+        )
+    {
+        return Ok([2560, 1, 1]);
+    }
+    let matrix = Matrix::new(tensor)?;
+    Ok([matrix.inputs(), matrix.outputs(), matrix.experts()])
+}
+
+#[cfg(test)]
+mod native_shared_gate_tests {
+    use super::native_shared_gate_vector;
+
+    #[test]
+    fn native_shared_gate_vector_keeps_original_name_type_and_geometry() {
+        for layer in 0..48 {
+            assert!(native_shared_gate_vector(
+                &format!("blk.{layer}.ffn_gate_inp_shexp.weight"),
+                30,
+                &[2560]
+            ));
+        }
+        for name in [
+            "blk.48.ffn_gate_inp_shexp.weight",
+            "blk.x.ffn_gate_inp_shexp.weight",
+            "blk.0.ffn_gate_inp.weight",
+            "output_norm.weight",
+        ] {
+            assert!(!native_shared_gate_vector(name, 30, &[2560]));
+        }
+        let name = "blk.0.ffn_gate_inp_shexp.weight";
+        for dims in [&[][..], &[2561], &[2560, 1], &[2560, 1, 1]] {
+            assert!(!native_shared_gate_vector(name, 30, dims));
+        }
+        for dtype in [0, 1, 12, 14] {
+            assert!(!native_shared_gate_vector(name, dtype, &[2560]));
+        }
+    }
+}
 pub(crate) const RESIDENT_IO_MAX: u64 = 64 * 1024 * 1024;
 /// Separate runtime upload/uniform/readback ownership. Not main-pool telemetry.
 pub(crate) const RESIDENT_RUNTIME_IO_MAX: u64 = 64 * 1024 * 1024;
@@ -3223,6 +3280,20 @@ impl<'a> GpuExecutor<'a> {
             let p = shared.page(crate::strata_shared_weights::Tensor::Head, first, rows)?;
             return Ok((p.handle.clone(), p.tile.logical / 4));
         }
+        // The native shared scalar gate is the sole rank-one packed projection.
+        // Validate its exact one-row request even on a cache hit.
+        if tensor.info().dimensions().len() == 1
+            && (!crate::strata_intel_core::enabled()
+                || !tensor.belongs_to(self.model)
+                || !native_shared_gate_vector(
+                    tensor.info().name(),
+                    tensor.info().dtype().gguf_id(),
+                    tensor.info().dimensions(),
+                )
+                || (expert, first, rows) != (0, 0, 1))
+        {
+            return Err(Error::InvalidBufferLength);
+        }
         self.tick = self.tick.checked_add(1).ok_or(Error::ArithmeticOverflow)?;
         let key = Key {
             tensor: tensor.info().name().into(),
@@ -3288,7 +3359,7 @@ impl<'a> GpuExecutor<'a> {
             }
         }
         let mut packed = vec![0u8; padded];
-        let output_rows = tensor.info().dimensions()[1] as usize;
+        let output_rows = tensor.info().dimensions().get(1).copied().unwrap_or(1) as usize;
         let offset = expert
             .checked_mul(output_rows)
             .and_then(|n| n.checked_add(first))
@@ -3719,35 +3790,33 @@ impl<'a> GpuExecutor<'a> {
         cancel: &AtomicBool,
         prepacked: bool,
     ) -> Result<()> {
-        let m = Matrix::new(tensor)?;
+        let [inputs, outputs, experts] = strata_projection_shape(tensor)?;
         let dtype = tensor.info().dtype().gguf_id();
         if !crate::strata_prompt::active()
             || !tensor.belongs_to(self.model)
-            || m.experts() != 1
+            || experts != 1
             || spans.packed_first() != 0
-            || !crate::strata_prompt::supports(dtype, m.inputs())
+            || !crate::strata_prompt::supports(dtype, inputs)
         {
             return Err(Error::InvalidBufferLength);
         }
         self.model.verify_file_unchanged()?;
         self.check_target_rows_policy()?;
         let rb = tensor.info().row_bytes() as usize;
-        let per_tile = (TILE_BYTES / rb)
-            .min(16384)
-            .min(TILE_BYTES / (m.inputs() * 2));
+        let per_tile = (TILE_BYTES / rb).min(16384).min(TILE_BYTES / (inputs * 2));
         if per_tile == 0 {
             return Err(Error::InvalidBufferLength);
         }
-        for first in (0..m.outputs()).step_by(per_tile) {
+        for first in (0..outputs).step_by(per_tile) {
             if cancel.load(Ordering::Acquire) {
                 return Err(Error::InvalidFormat("prompt projection cancelled"));
             }
-            let rows = (m.outputs() - first).min(per_tile);
+            let rows = (outputs - first).min(per_tile);
             let weights = self.weight(tensor, 0, first, rows)?.0;
             crate::strata_prompt::project(
                 &self.client,
                 dtype,
-                m.inputs(),
+                inputs,
                 rows,
                 rb,
                 weights,
@@ -3777,7 +3846,7 @@ impl<'a> GpuExecutor<'a> {
         if !crate::strata_intel_core::enabled() || tensor.info().dtype().gguf_id() != 30 {
             return Ok(false);
         }
-        let m = Matrix::new(tensor)?;
+        let [inputs, outputs, experts] = strata_projection_shape(tensor)?;
         let rows = match tensor.info().name() {
             "blk.1.ple_key.weight" => 10240,
             "blk.1.ple_value.weight" => 2560,
@@ -3786,9 +3855,9 @@ impl<'a> GpuExecutor<'a> {
             _ => return Err(Error::InvalidBufferLength),
         };
         if !tensor.belongs_to(self.model)
-            || m.experts() != 1
-            || m.inputs() != 2560
-            || m.outputs() != rows
+            || experts != 1
+            || inputs != 2560
+            || outputs != rows
             || spans.packed_first() != 0
             || fault.size_in_used() != 4
         {
