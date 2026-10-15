@@ -1282,6 +1282,9 @@ pub(crate) fn run(
         let mut host_attachment = None;
         let mut host_setup = None;
         let mut bank_fill_setup_experts = None;
+        if crate::strata_intel_core::enabled() {
+            eprintln!("native_public_construct phase=target");
+        }
         let mut target = ResidentModel::new_with_native_batch(
             graph.bound_graph(),
             client.clone(),
@@ -1291,11 +1294,13 @@ pub(crate) fn run(
             true,
         )?;
         if crate::strata_intel_core::enabled() {
+            eprintln!("native_public_construct phase=shared_target_weights");
             executor.prepare_native_shared_target_weights(graph.bound_graph())?;
         }
         if crate::strata_intel_core::enabled()
             && let Some(g) = &draft_graph
         {
+            eprintln!("native_public_construct phase=shared_draft");
             let device = host_device.ok_or("shared native target device missing")?;
             if device.adapter_info().vendor != 0x8086
                 || g.target_binding_id() != Some(graph.bound_graph().binding_id())
@@ -1315,6 +1320,7 @@ pub(crate) fn run(
             );
         }
         if crate::strata_intel_core::enabled() {
+            eprintln!("native_public_construct phase=global_sources");
             // SAFETY: this protected original-artifact probe retains the full
             // parent hash evidence/RAM envelope and exact target device.
             unsafe {

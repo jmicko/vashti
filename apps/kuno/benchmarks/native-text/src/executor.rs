@@ -301,13 +301,27 @@ pub(crate) fn audit_native_context_recovery(
     })
 }
 
+#[track_caller]
 fn checked_transient_cleanup(
     retired: &AtomicBool,
     cleanup: impl FnOnce() -> Result<()>,
 ) -> Result<()> {
     // Retired streams still get one best-effort attempt, never a clean receipt.
+    let already_retired = retired.load(Ordering::Acquire);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(cleanup));
     if !matches!(result, Ok(Ok(()))) || retired.load(Ordering::Acquire) {
+        if crate::strata_intel_core::enabled()
+            && std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1")
+        {
+            let source = std::panic::Location::caller();
+            eprintln!(
+                "native_public_cleanup_failure already_retired={} cleanup_ok={} source_file={} source_line={}",
+                already_retired,
+                matches!(result, Ok(Ok(()))),
+                source.file(),
+                source.line()
+            );
+        }
         retired.store(true, Ordering::Release);
         return match result {
             Ok(Err(Error::InvalidFormat(code))) if cleanup_failure_category(code).is_some() => {
