@@ -1255,6 +1255,9 @@ mod admission_tests {
                 words.extend(qsa.allocation_words());
             } else {
                 words.extend(gdn.allocation_words());
+                words.extend(crate::resident_gdn::batch::strata_replay::allocation_words(
+                    gdn,
+                ));
             }
         }
         for _ in 0..48 {
@@ -1272,10 +1275,27 @@ mod admission_tests {
             .map(|&n| BufferLayout::new(n).unwrap().owned_bytes as u64)
             .collect::<Vec<_>>();
         let total = requests.iter().sum::<u64>();
-        assert_eq!(total, 785_186_816);
-        // The largest private span is the 4096-token QSA cache (32 MiB).
-        assert_eq!(requests.iter().copied().max(), Some(32 * 1024 * 1024));
-        assert_eq!(requests.len(), 36 * 18 + 12 * 31 + 48 * 5 + 10 + 16);
+        let native = crate::strata_intel_core::enabled();
+        assert_eq!(
+            total,
+            if native { 590_151_680 } else { 785_186_816 }
+                + crate::resident_gdn::batch::strata_replay::MAIN_BYTES
+        );
+        assert_eq!(total, batch::OLD_MAIN);
+        // Full cache owners include padding, never just logical packed bytes.
+        assert_eq!(
+            requests.iter().copied().max(),
+            Some(if native { 16 } else { 32 } * 1024 * 1024)
+        );
+        assert_eq!(
+            requests.len(),
+            36 * 18
+                + 12 * 31
+                + 48 * 5
+                + 10
+                + 16
+                + crate::resident_gdn::batch::strata_replay::EXTRA_BUFFERS as usize
+        );
         assert!(requests.iter().all(|&n| n >= 32768 && n.is_power_of_two()));
         let mut ledger = crate::main_admission::MainAdmission::new(total, 0).unwrap();
         assert_eq!(ledger.precharge(&requests).unwrap(), total);

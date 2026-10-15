@@ -73,7 +73,16 @@ pub(crate) const TARGET_ROWS_PRIVATE_MAIN: u64 = TOTAL_MAIN
 pub(crate) const TARGET_ROWS_PREPARED_VERIFY3_MAIN: u64 =
     TARGET_ROWS_PRIVATE_MAIN + batch_moe::prepared_verify3::MAIN_BYTES;
 
-const OLD_MAIN: u64 = 785_186_816 + gdn::strata_replay::MAIN_BYTES;
+// The native packed QSA cache owns16MiB instead of32MiB per layer;
+// retaining one extra pooled-key row raises its full owner from512KiB to1MiB.
+// All12 QSA layers change together. Match the actual selected full roots,
+// including padding and the separate unchanged GDN replay input owners.
+pub(super) const OLD_MAIN: u64 = 785_186_816 + gdn::strata_replay::MAIN_BYTES
+    - if cfg!(feature = "strata-intel-core") {
+        12 * (16 * 1024 * 1024 - 512 * 1024)
+    } else {
+        0
+    };
 // Family requests already include the native GR increment. Both aggregate
 // equalities below must describe that SAME full request vector; charging it
 // only in TOTAL_MAIN made the two constructor checks mutually impossible.
