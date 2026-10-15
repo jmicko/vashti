@@ -2603,6 +2603,59 @@ impl TransientIo {
     pub(crate) fn reuse_active(&self) -> bool {
         self.reuse_scope.nonce.is_some()
     }
+    /// Fixed-public FAILED flush only: observe already-ready typed scope
+    /// failures before mutation-abandoned obscures their cause. Pending futures
+    /// remain owned; this does not wait, sanitize, grant credit or revive health.
+    pub(crate) fn observe_public_submission_failure(&mut self) {
+        if !super::strata_graph::enabled()
+            || std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() != Ok("1")
+        {
+            return;
+        }
+        let _ = self.device.poll(wgpu::PollType::Poll);
+        let mut pending = Vec::with_capacity(self.errors.len());
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        for mut future in self.errors.drain(..) {
+            match future.as_mut().poll(&mut cx) {
+                std::task::Poll::Ready(Some(error)) => {
+                    self.leases.record(gpu_failure(&error));
+                    let class = match &error {
+                        wgpu::Error::OutOfMemory { .. } => "out_of_memory",
+                        wgpu::Error::Internal { .. } => "internal",
+                        wgpu::Error::Validation { description, .. } => {
+                            if description.contains("max_storage_buffer_binding_size")
+                                || description.contains("binding size")
+                            {
+                                "validation_binding_size"
+                            } else if description.contains("destroyed") {
+                                "validation_destroyed"
+                            } else if description.contains("aligned")
+                                || description.contains("alignment")
+                            {
+                                "validation_alignment"
+                            } else if description.contains("usage")
+                                || description.contains("Usages")
+                            {
+                                "validation_usage"
+                            } else if description.contains("Invalid buffer")
+                                || description.contains("invalid buffer")
+                            {
+                                "validation_invalid_buffer"
+                            } else if description.contains("initialized") {
+                                "validation_initialization"
+                            } else {
+                                "validation_other"
+                            }
+                        }
+                    };
+                    eprintln!("native_public_submission_scope_fault class={class}");
+                }
+                std::task::Poll::Ready(None) => (),
+                std::task::Poll::Pending => pending.push(future),
+            }
+        }
+        self.errors = pending;
+    }
     /// Completion and all GPU validation/OOM/internal scope results are
     /// mandatory even when the private bytes stay dirty inside their owner.
     fn drain_accept_errors(&mut self) -> Result<(), ServerError> {

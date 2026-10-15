@@ -1308,6 +1308,11 @@ impl WgpuStream {
         if let Some(scopes) = scopes {
             scopes.finish(self.transient_io.as_mut().unwrap());
         }
+        if result.is_err()
+            && let Some(io) = self.transient_io.as_mut()
+        {
+            io.observe_public_submission_failure();
+        }
         if result.is_ok() {
             if let Some(mutation) = mutation {
                 mutation.accept();
@@ -1363,7 +1368,15 @@ impl WgpuStream {
                     submission_index: Some(index.clone()),
                     timeout: Some(std::time::Duration::from_secs(120)),
                 })
-                .map_err(|_| super::transient_io::fault("native graph upload completion"))?;
+                .map_err(|error| {
+                    if std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1") {
+                        match error {
+                            wgpu::PollError::Timeout => eprintln!("native_public_upload_poll_fault class=timeout"),
+                            wgpu::PollError::WrongSubmissionIndex(requested, completed) => eprintln!("native_public_upload_poll_fault class=wrong_submission_index requested={requested} successful={completed}"),
+                        }
+                    }
+                    super::transient_io::fault("native graph upload completion")
+                })?;
             self.strata_graph.as_mut().unwrap().execute(wait_native)?;
         }
         if wait_native {
