@@ -205,7 +205,7 @@ impl WgpuStream {
                     {
                         self.compute_pass = None;
                         let result = self.private_io_active().and_then(|()| {
-                            self.initialize_native_upload(&buffer)?;
+                            self.initialize_native_storage_root(&buffer)?;
                             let copies = self
                                 .transient_io
                                 .as_mut()
@@ -291,7 +291,10 @@ impl WgpuStream {
         }
     }
 
-    fn initialize_native_upload(&mut self, resource: &WgpuResource) -> Result<(), ServerError> {
+    fn initialize_native_storage_root(
+        &mut self,
+        resource: &WgpuResource,
+    ) -> Result<(), ServerError> {
         if !self
             .strata_graph
             .as_mut()
@@ -303,7 +306,7 @@ impl WgpuStream {
         if self.native_init_pipeline.is_none() {
             let module=self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label:Some("Native Strata upload ownership"),
-                source:wgpu::ShaderSource::Wgsl("@group(0) @binding(0) var<storage,read_write> data:array<u32>; @compute @workgroup_size(1) fn main() {if arrayLength(&data)==0u {return;} data[0]=data[0];}".into()),
+                source:wgpu::ShaderSource::Wgsl("@group(0) @binding(0) var<storage,read> data:array<u32>; @compute @workgroup_size(1) fn main() {if arrayLength(&data)==0u {return;} workgroupBarrier();}".into()),
             });
             self.native_init_pipeline = Some(self.device.create_compute_pipeline(
                 &wgpu::ComputePipelineDescriptor {
@@ -317,8 +320,10 @@ impl WgpuStream {
             ));
         }
         let pipeline = self.native_init_pipeline.as_ref().unwrap();
-        // Bind the full owning root. Wgpu initializes only untouched ranges,
-        // preserving data already produced/uploaded before this submission.
+        // Bind exactly one full owning root READONLY. Wgpu initializes only
+        // untouched ranges; no original/public model write is authorized.
+        // Carved read/write regions share a VkBuffer and cannot appear together
+        // in a WebGPU usage scope even when their actual ranges are disjoint.
         let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Native Strata upload root"),
             layout: &pipeline.get_bind_group_layout(0),
@@ -750,7 +755,7 @@ impl WgpuStream {
             let r = managed.resource();
             if self.strata_graph.is_some() && r.buffer.usage().contains(wgpu::BufferUsages::STORAGE)
             {
-                self.initialize_native_upload(r)?;
+                self.initialize_native_storage_root(r)?;
                 self.strata_graph
                     .as_mut()
                     .unwrap()
@@ -1435,40 +1440,14 @@ impl WgpuStream {
 
         if self.strata_graph.is_some() {
             let retained = resources.cloned().collect::<Vec<_>>();
-            let initialize = self
-                .strata_graph
-                .as_mut()
-                .unwrap()
-                .initialize_resources(&retained);
-            if initialize {
-                // Native writes cannot update Wgpu's initialization tracker.
-                // A zero-work dispatch registers the original binding usages
-                // and lets Wgpu initialize only previously untouched ranges.
-                // It runs before the native graph, never after its outputs.
-                self.compute_pass = None;
-                let entries = retained
-                    .iter()
-                    .enumerate()
-                    .map(|(i, r)| wgpu::BindGroupEntry {
-                        binding: i as u32,
-                        resource: r.as_wgpu_bind_resource(),
-                    })
-                    .collect::<Vec<_>>();
-                let layout = pipeline.get_bind_group_layout(0);
-                let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("Native Strata buffer initialization ownership"),
-                    layout: &layout,
-                    entries: &entries,
-                });
-                let mut pass = self
-                    .encoder
-                    .begin_compute_pass(&wgpu::ComputePassDescriptor {
-                        label: Some("Native Strata zero-work initialization"),
-                        timestamp_writes: None,
-                    });
-                pass.set_pipeline(&pipeline);
-                pass.set_bind_group(0, &group, &[]);
-                pass.dispatch_workgroups(0, 1, 1);
+            // Register each true root independently, not the inference
+            // pipeline's disjoint aliases in one WebGPU usage scope. Native
+            // commands retain their original exact range/hazard validation.
+            for resource in &retained {
+                if let Err(error) = self.initialize_native_storage_root(resource) {
+                    self.error(error);
+                    return;
+                }
             }
             let actual = match dispatch.clone() {
                 CubeCount::Static(x, y, z) => super::strata_graph::Dispatch::Direct(x, y, z),
