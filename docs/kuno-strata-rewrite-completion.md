@@ -43,7 +43,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Core connects native BF16 MAX8 projections, normalization/gate/conv/history, deduplicated positional reads and accepted-prefix ownership. Prompt calls now consume a bounded, joined double-buffered source prefetch. The latest controller receipt connects native large chunk geometry, joined uploads, retained tail and exact history acceptance. Native loans/queue scheduling and numerical/device acceptance remain open. Never persist request n-grams. |
 | Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. The bounded prompt path now uses logical-ID expert order, checked native transfer nodes, an eight-slot raw ring and two paired dequantization slots. The latest owned-consumer receipt connects full2048-row owners, non-overlapping raw/grouped route packets, causal math/state scopes, the unbatched final prompt input uses normal count1 decode for the first head, and full device MTP teaching covers the preceding prefix (up to8192 matrix rows). Independent transfer/compute queues and real release boundaries are connected. Dynamic cache loans, conditional ring sizing and physical whole-model acceptance remain open. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
 | Prompt dense/expert matrix backend | Intel oneMKL rounded BF16/FP16 GEMMs | Connected Rust cooperative8x16x16/F32 kernels now consume the actual rounded dense and grouped GU/DOWN images, with enabled device features, SPIR-V native registration and required16 subgroup in both pipeline paths. See the cooperative-matrix receipt; physical numerical/model acceptance remains open. |
-| MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native FP16 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. First/grouped device-source and ids-only target result consumers now exist through 9edc3f6, but the speculative harness still constructs a separate MTP client and cannot satisfy their same-client preflight. Unify construction/admission/cleanup before runtime acceptance. Queue/branch/capture fidelity, numerical/state acceptance and runtime policy remain required. See the latest device-end receipt. |
+| MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native FP16 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. First/grouped device-source and ids-only target result consumers now exist; the shared-context constructor receipt below supersedes the separate-client blocker. Core construction now selects the actual target client and one combined account. Shared target embedding/head roots are still duplicated, and actual device/state acceptance is pending. Queue/branch/capture fidelity, numerical/state acceptance and runtime policy remain required. See the latest device-end receipt. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Request-local Rust suffix/cost controller exists; audit supported window lengths and coupled sampling rather than fixing to four public-fixture rows. |
 | Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Real greedy verification/state-only repair exists. Audit all active windows and acceptance cases against GDN/QSA/PLE/positions; independent correctness oracle remains missing. |
 | Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; physical ring overlap, stable complete branch recordings, scratch lifetimes and full execution acceptance remain open; a sequence of independent Wgpu launches is not equivalent. |
@@ -3938,3 +3938,105 @@ residency, install, release or application/API operation. Canonical clean checko
 and inherited bytecode preserved. Both GPUs remain with the user; obtain
 availability before GPU work. Goal active, rewrite incomplete. Resume with the
 shared-context construction/accounting/cleanup block, before captured execution.
+
+
+## Shared native Intel construction, accounting and close (2026-10-14)
+
+Source `e418929`, isolated `codex/strata-rust-port`, after
+`9edc3f6`. This supersedes the separate-client constructor blocker in the
+preceding receipt. It is source/CPU acceptance, **not a runnable whole-engine or
+physical-recovery claim**. No GPU/model or speed run occurred; both GPUs remain
+with the user.
+
+The selected `daslab_language_probe::run` skips `draft_client` in the core.
+Before target construction, its executor reserves the original Q2 MTP public
+plan, full64MiB private envelope and128MiB public-source envelope. After the
+actual target/global source owners are constructed, a non-clone one-shot
+`NativeMtpAdmission` permits `ResidentMtp::new_shared_strata_q2` to consume the
+same original graph binding, client and context-retirement flag. It does not
+accept a same-physical-adapter comparison as client identity. The existing
+device-carry/prompt-teaching/coupled-sampling identity checks remain intact.
+No foreign handles, duplicate Vulkan device or separate6GiB MTP ledger is used
+by this core path. The independent legacy laboratories retain their old path.
+
+Both real owners now precharge and observe the same `Arc<Mutex<MainAdmission>>`.
+The MTP ledger adapter delegates to that actual target account. Actual target
+baseline bytes (including the original shared IQ table) are retained; they never
+become a fabricated zero. Allocation failure/drop grants no refund, retirement
+and sequence failure remain sticky, and only completed fences reduce debt.
+MAIN page admission now follows the actual allocator's core512MiB/legacy128MiB
+upper bin; the former128MiB hard stop made the three512MiB prompt roots and
+native persistent cache chunks inadmissible.
+
+The fresh protected Xe proof still checks actual Intel/discrete/Vulkan identity,
+fresh runtime, matching device and nonzero/unmasked consistent occupancy. Core
+physical preflight reserves one31GiB combined envelope plus512MiB driver margin.
+The old uniform-target-plus-independent-draft arithmetic is no longer applied
+to this topology. Before allocation, the actual fixed target/private/vector/
+source/baseline/MTP owners,49 original address-table roots and combined runtime
+window leave the remaining expert byte budget. The global ranked-prefix loader
+consumes that exact budget; its actual requests must fit it plus their separately
+priced tables. HOST complement geometry is recomputed from that same prefix.
+The table charge is49*32768=1,605,632 bytes; it is not hidden in expert capacity.
+The shared runtime window is256MiB, selected by the isolated core's vendored
+`kuno-strata-shared` feature; legacy fixed target I/O remains128MiB. Target and
+MTP runtime quotes are added and checked together. Per-buffer bounds and private
+owner erasure are not enlarged by the runtime-window change.
+
+MTP observations now join the actual shared request-I/O nonce/checkpoint rather
+than sanitizing an unrelated stream. The original MTP arena closes/inspects all
+its roots before target close poisons the shared account. Its own close may
+truthfully observe still-live target bytes; it cannot claim an empty allocator.
+The target, executor/global sources and shared public IQ table then close.
+Only a final real sync, full transient-I/O audit, cleanup/sync and allocator
+sample with all three counters zero can publish final recovery. Every failure
+retires the original context; this final observation neither revives nor credits
+the poisoned admission ledger. The target-only core also takes that final audit.
+The profile close validator now includes all25 native-front roots and native
+split-attention geometry, matching the original arena's full audit. Core MTP
+private geometry is69 roots /18,776,064 bytes; this numeric plan is not itself
+proof of erasure.
+
+Final CPU-only receipt (logs under
+`/media/jmicko/faststore/kuno-development/strata-shared-context-accepted-*-20261014.log`):
+
+- `core-native_shared`:7 checks pass (shared capacity/debt, prompt roots,
+  physical-plan rejection, final recovery guards, complete MTP receipt and
+  global table/persistent-root pricing). `core-main_admission-tests`:10 pass.
+- `core-native_device_end`:4, `core-native_device_carry`:4,
+  `core-native_grouped_round`:4, `core-native_confidence`:8,
+  `core-native_sampl`:10, `core-global_prefix_acceptance`:1 and
+  `core-core_eight_compact`:1 pass. Including the3 overlapping MAIN cases,
+  this is46 distinct core checks, not full-suite or numerical acceptance.
+- `off-native_shared`:7 pass for `strata-rust-port` without the core feature.
+  `core-clippy`/`off-clippy`:strict binary Clippy with `-D warnings` pass.
+  `core-build`:release build passes. Root formatting, vendored-file formatting
+  and whitespace checks pass; the existing duplicate-bin-path Cargo notice remains.
+- `shaders`:317 ordinary shader bodies, the controller producers,
+  122 physical-pointer cases and32 cooperative-matrix cases pass offline with
+  the pinned2026.1 validator. The early main branch returns before device/model
+  initialization. No numerical or physical execution proof is implied.
+
+The vendored library's own policy-unit target was not run: Cargo rejected
+feature selection for that dependency outside the workspace. Its source policy
+is compiled by both accepted application configurations, and physical shared-I/O
+configuration acceptance remains pending. No full-suite waiver is granted.
+
+Remaining fidelity/runtime gates are explicit: target embedding/output weights
+are still uploaded twice rather than sharing pinned target dense roots; merely
+cloning cache handles while letting target LRU eviction refund them would be
+incorrect. Concrete next source audit: `GpuExecutor::weight_inner` releases LRU
+entries and keys them by tensor/expert/first; its hit path does not check a new
+request's row extent. `ResidentMtp::load_page`/`tile_plan` independently upload
+the original target tensors. Shared owners must establish common tile geometry,
+original dtype/graph/full-range identity and pinned lifetime for both consumers,
+price roots once, and release only after both owners complete. Do not turn a
+matching cache key or cloned handle into a shared-weight ownership proof.
+The public request fixture and protected host/cgroup envelope need
+whole-model acceptance with the newly computed HOST complement. Stable native
+branch/round capture and warm-up, mapped/event/chain/commit dependencies,
+positive-threshold draft hidden readback, native draft-count/remaining-output
+policy, arbitrary prompt/context/cache/ring behavior and the full dependency
+checklist remain incomplete. Historical228 full-core failures remain unaudited;
+focused tests do not waive them. No speed trial before the whole-source and
+correctness gates. No installed service, API, Vashti, release or driver change.

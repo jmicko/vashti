@@ -6,14 +6,15 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-14):** isolated
-`codex/strata-rust-port`, source through `9edc3f6`. Read the
-[native device-end and constructor handoff](#active-kuno-engine-handoff--native-device-ends-and-constructor-gap-2026-10-14)
-and [whole-rewrite gate](kuno-strata-rewrite-completion.md). Target ids-only and
-first/grouped device paths compile, but the current speculative harness still
-creates an incompatible separate MTP client. Next unify actual shared context,
-combined accounting/transient-I/O and cleanup, preserving identity checks.
-Whole-source/physical/capture/runtime acceptance remains incomplete; no speed
-trials. Both GPUs belong to the user; reconfirm before GPU/model/admission/
+`codex/strata-rust-port`, source through `e418929`. Read the
+[shared-context handoff](#active-kuno-engine-handoff--shared-native-intel-construction-2026-10-14)
+and [whole-rewrite gate](kuno-strata-rewrite-completion.md). The core now selects
+one actual target/MTP client and one combined account; this resolves the earlier
+separate-client source blocker. GPU/model acceptance is still pending. Next
+resolve shared target embedding/head ownership and native capture/branch/event/
+commit dependencies, compact positive-threshold draft observations, native
+policy and runtime/input gates. Whole rewrite remains incomplete; no speed
+trials. Both GPUs belong to the user; reconfirm before live GPU/model/admission/
 residency work. CPU source work may continue. Application API unchanged.
 
 ## Ownership
@@ -5768,3 +5769,42 @@ not mean full-rewrite acceptance. Prior228 core failures remain unaudited.
 No GPU/model, sudo, service/admission/residency, API/Vashti, install, deployment
 or release change. Canonical/inherited bytecode preserved. Both GPUs remain with
 the user; reconfirm before GPU work. Required Vashti changes:none. Goal active.
+
+
+### Active Kuno engine handoff — shared native Intel construction (2026-10-14)
+
+Source `e418929`, after `9edc3f6`, isolated `codex/strata-rust-port`
+at `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`. Read completion guide
+**Shared native Intel construction, accounting and close**. This supersedes the
+preceding separate-client constructor gap, not the whole-rewrite gate.
+
+Core construction now consumes a one-shot original-graph permit and uses the
+actual target client, MAIN account, request-I/O scope and retirement flag for
+original Q2 MTP. Peer capacity is priced before target/expert allocation. Both
+owner quotes and49 address-table roots leave the exact global ranked-prefix
+budget; HOST complement follows that plan. Core admission now accepts the actual
+allocator's512MiB roots. Fresh Xe physical proof uses the combined31GiB envelope
+plus512MiB margin; shared transient I/O is256MiB, while non-core target policy
+remains128MiB. The real MTP arena closes before target poisons the shared account;
+all remaining owners/public IQ tables close before the actual final sync/audit/
+zero-allocator observation. Profile close validation includes the25 native-front
+roots and split-attention geometry. Independent legacy laboratories retain their
+separate clients/accounts. No identity checks are weakened or zero bases invented.
+
+Final46 distinct core checks (7 shared,10 MAIN,32 prior regressions with3
+MAIN overlaps),7 non-core shared checks, strict core/non-core Clippy, core release
+build and317 ordinary/controller +122 physical-pointer/32 matrix offline shader
+checks pass. Exact log prefix `strata-shared-context-accepted-*` and limitations
+are in the completion receipt. This is not full-suite or whole-model acceptance.
+No GPU/model, speed, sudo, service/admission/residency,
+installation, API/Vashti, driver or release operation. Canonical checkout and
+inherited bytecode preserved. Both GPUs stay with the user; obtain availability
+before any GPU work. Required Vashti changes:none. Whole goal active/incomplete.
+
+Remaining: target embedding/head roots are still duplicated; implement actual
+pinned shared ownership without LRU/refund errors. Complete native stable capture/
+warm/event/chain/commit and policy/input gates, remove unused positive-threshold
+draft hidden readback, and run the full source/physical numerical/state/recovery
+audit. Revalidate the protected HOST/cgroup envelope for the actual complement.
+Historical228 full-core failures remain unaudited. No speed trials until the
+whole rewrite and correctness gates pass.

@@ -1,19 +1,19 @@
 # Native DASLab/Strata checkpoint — 2026-10-09
 
 **Current Rust port resume pointer (2026-10-14):** isolated
-`codex/strata-rust-port`, source through `9edc3f6`. Read the latest
-[handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--native-device-ends-and-constructor-gap-2026-10-14)
-and [device ends/construction receipt](kuno-strata-rewrite-completion.md#native-target-ids-only-results-and-firstrequest-exit-device-paths-2026-10-14).
-Target ids-only and first/grouped device paths compile; **current core speculative
-entry still builds a separate MTP client and cannot satisfy same-client preflight**.
-NEXT unify actual Intel context/client plus combined admission/accounting,
-transient-I/O, retirement and close ownership. Do not weaken identity checks or
-just clone the client. Then captured/native policy, compact positive-threshold
-draft observation, runtime and full-source/physical gates remain. No speed trials.
-Native EOS/cap now skips further MTP catch-up; full erasure is original parent
-close's responsibility. User owns BOTH GPUs: reconfirm before GPU/model/
-admission/residency work. CPU source work can continue without sudo. No installed
-service or public API change; older results below are historical.
+`codex/strata-rust-port`, source through `e418929`. Read the latest
+[handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--shared-native-intel-construction-2026-10-14)
+and [shared-context receipt](kuno-strata-rewrite-completion.md#shared-native-intel-construction-accounting-and-close-2026-10-14).
+The selected core now uses one actual target/MTP client and combined admission,
+I/O and retirement account; earlier separate-client constructor blockers are
+superseded. This is source/CPU acceptance, not whole-model/device acceptance.
+Target embedding/head roots still duplicate uploads. Next implement actual pinned
+shared model ownership and native stable capture/warm/branch/event/chain/commit,
+compact positive-threshold draft observations, native policy and runtime/input
+gates. Full-source and physical correctness/recovery are incomplete. No speed
+trials. The user owns BOTH GPUs: reconfirm before live GPU/model/admission/residency
+work. CPU source work can continue without sudo. No installed service or public
+API change; all older results below are historical.
 
 
 **Current checkpoint:** user requested a stop for usage conservation. Standalone
