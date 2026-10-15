@@ -1337,9 +1337,11 @@ pub(crate) fn run(
                         max_outputs: MAX_OUTPUTS,
                         eos: graph.eos_token(),
                         speculation: crate::strata_speculation::Config::native(
-                            crate::strata_port::verify_capacity(),
+                            crate::strata_port::verify_capacity().min(4),
                         ),
-                        draft_min_probability: 0.,
+                        // Native working Intel default. MAX8 remains a real
+                        // compiled capacity; it is not the request's default.
+                        draft_min_probability: 0.5,
                         sampling: crate::strata_sampler::Params {
                             greedy: true,
                             temperature: 0.,

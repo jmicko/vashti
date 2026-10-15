@@ -86,7 +86,14 @@ pub(super) const OLD_MAIN: u64 = 785_186_816 + gdn::strata_replay::MAIN_BYTES
 // Family requests already include the native GR increment. Both aggregate
 // equalities below must describe that SAME full request vector; charging it
 // only in TOTAL_MAIN made the two constructor checks mutually impossible.
-const NEW_MAIN: u64 = 33_062_912 + NATIVE_GR_MAIN;
+const NATIVE_QSA_BATCH_MAIN: u64 = if cfg!(feature = "strata-intel-core") {
+    // Original MAX8 KV candidate page shrinks; split attention's partial and
+    // statistics planes replace the two full-score softmax pages together.
+    22_052_864 - 17_825_792
+} else {
+    0
+};
+const NEW_MAIN: u64 = 33_062_912 + NATIVE_GR_MAIN + NATIVE_QSA_BATCH_MAIN;
 const TOTAL_MAIN: u64 = OLD_MAIN + NEW_MAIN;
 const NATIVE_GR_MAIN: u64 = if cfg!(feature = "strata-intel-core") {
     crate::strata_gr::PRIVATE_INCREMENT
@@ -1290,7 +1297,7 @@ impl Plan {
             ),
             (
                 qsa::QsaBatchWorkspace::allocation_requests(graph)?.to_vec(),
-                17_825_792,
+                17_825_792 + NATIVE_QSA_BATCH_MAIN,
             ),
             (
                 executor
