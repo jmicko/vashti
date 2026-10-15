@@ -68,6 +68,28 @@ impl Host {
                 }
             }
         }
+        let mut bindings = Vec::new();
+        for pair in pairs {
+            let owner = self
+                .pages
+                .iter()
+                .find(|p| p.owner.buffer.as_ref() == Some(&pair.host.buffer))
+                .ok_or_else(fail)?;
+            let binding = owner
+                .authority
+                .as_ref()
+                .ok_or_else(fail)?
+                .handle()
+                .binding();
+            if !bindings.iter().any(|b: &cubecl_runtime::server::Binding| {
+                b.memory.allocation_id() == binding.memory.allocation_id()
+            }) {
+                bindings.push(binding);
+            }
+        }
+        // Swap only original model weights while registry readers are revoked.
+        let token =
+            unsafe { self.client.begin_public_external_rebase(bindings) }.map_err(|_| fail())?;
         let oom = self.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
         let validation = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let result = (|| -> KResult<()> {
@@ -170,6 +192,9 @@ impl Host {
         if invalid || out_of_memory {
             return Err(fail());
         }
-        result
+        result?;
+        // Actual raw GPU model-only exchange and cache barrier joined above;
+        // only complete success permits the registered source to become active.
+        unsafe { self.client.finish_public_external_rebase(token) }.map_err(|_| fail())
     }
 }

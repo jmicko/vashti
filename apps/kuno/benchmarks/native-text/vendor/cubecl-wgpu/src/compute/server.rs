@@ -385,6 +385,67 @@ impl ComputeServer for WgpuServer {
         Ok(())
     }
 
+    fn begin_public_external_rebase(
+        &mut self,
+        bindings: Vec<Binding>,
+        stream_id: StreamId,
+    ) -> Result<cubecl_runtime::public_external::PublicExternalRebase, ServerError> {
+        if self.backend != wgpu::Backend::Vulkan || self.public_external_stream != Some(stream_id) {
+            return Err(super::public_external::fault(
+                "public external rebase owning Vulkan stream",
+            ));
+        }
+        let token = {
+            let stream = self.scheduler.stream(&stream_id);
+            if !stream.errors.is_empty() {
+                return Err(super::public_external::fault(
+                    "public external rebase unhealthy stream",
+                ));
+            }
+            stream
+                .mem_manage
+                .public_external
+                .as_mut()
+                .ok_or_else(|| super::public_external::fault("public external registry absent"))?
+                .begin_rebase(bindings)
+                .map_err(super::public_external::fault)?
+        };
+        // Scheduled users already hold authenticated resources: revoke new
+        // lookups first, then flush and join both original owning queues.
+        self.scheduler.execute_streams(vec![stream_id]);
+        cubecl_common::future::block_on(self.scheduler.stream(&stream_id).sync())?;
+        Ok(token)
+    }
+    fn finish_public_external_rebase(
+        &mut self,
+        token: cubecl_runtime::public_external::PublicExternalRebase,
+        stream_id: StreamId,
+    ) -> Result<(), ServerError> {
+        if self.backend != wgpu::Backend::Vulkan || self.public_external_stream != Some(stream_id) {
+            return Err(super::public_external::fault(
+                "public external rebase owning Vulkan stream",
+            ));
+        }
+        let stream = self.scheduler.stream(&stream_id);
+        if !stream.errors.is_empty() {
+            return Err(super::public_external::fault(
+                "public external rebase unhealthy stream",
+            ));
+        }
+        cubecl_common::future::block_on(stream.sync())?;
+        // SAFETY: unforgeable token came from this registry. Its unsafe owning
+        // client contract attests original-model bytes and raw queue completion.
+        unsafe {
+            stream
+                .mem_manage
+                .public_external
+                .as_mut()
+                .ok_or_else(|| super::public_external::fault("public external registry absent"))?
+                .finish_rebase(token)
+        }
+        .map_err(super::public_external::fault)
+    }
+
     fn extend_public_external_host(
         &mut self,
         budget: cubecl_runtime::public_external::PublicExternalBudget,

@@ -536,6 +536,38 @@ mod loan_registry_tests {
         assert!(pool.resolve(&retired_binding).is_err());
     }
     #[test]
+    fn joined_model_rebase_revokes_only_selected_roots_and_preserves_identity() {
+        let mut pool = PublicExternalPool::new(budget(3), StreamId { value: 78 }).unwrap();
+        let first = pool.register(source(1)).unwrap();
+        let second = pool.register(source(2)).unwrap();
+        let bindings = [first.handle().binding(), second.handle().binding()];
+        let before = pool.usage();
+        assert!(
+            pool.begin_rebase(vec![bindings[0].clone(), bindings[0].clone()])
+                .is_err()
+        );
+        assert_eq!(pool.usage(), before);
+        assert_eq!(pool.resolve(&bindings[0]).unwrap(), 1);
+        let token = pool.begin_rebase(vec![bindings[0].clone()]).unwrap();
+        assert!(pool.resolve(&bindings[0]).is_err());
+        assert_eq!(pool.resolve(&bindings[1]).unwrap(), 2);
+        assert!(pool.begin_detach(&first).is_err());
+        assert!(pool.extend_budget(budget(4)).is_err());
+        assert!(pool.begin_rebase(vec![bindings[1].clone()]).is_err());
+        assert!(pool.usage().metadata_owned_bytes > before.metadata_owned_bytes);
+        // Synthetic immutable integer values only; no device/memory mutated.
+        unsafe { pool.finish_rebase(token) }.unwrap();
+        assert_eq!(pool.resolve(&bindings[0]).unwrap(), 1);
+        assert_eq!(pool.usage(), before);
+        let token = pool
+            .begin_rebase(vec![bindings[0].clone(), bindings[1].clone()])
+            .unwrap();
+        drop(token); // no successful publication authority remains
+        assert!(pool.resolve(&bindings[0]).is_err());
+        assert!(pool.resolve(&bindings[1]).is_err());
+        assert!(pool.begin_detach(&second).is_err());
+    }
+    #[test]
     fn shadow_extension_rejects_shrinking_closing_and_unquoted_metadata_peaks() {
         let mut pool = PublicExternalPool::new(budget(2), StreamId { value: 83 }).unwrap();
         let live = pool.register(source(4)).unwrap();

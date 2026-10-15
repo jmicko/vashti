@@ -229,6 +229,37 @@ impl<R: Runtime> ComputeClient<R> {
             })?
     }
 
+    /// # Safety
+    /// Sole authenticated original-model owner; all raw aliases/readers remain
+    /// excluded until finish. Only original public model bytes may be written.
+    pub unsafe fn begin_public_external_rebase(
+        &self,
+        bindings: Vec<crate::server::Binding>,
+    ) -> Result<crate::public_external::PublicExternalRebase, ServerError> {
+        let stream = self.stream_id();
+        self.device
+            .submit_blocking(move |server| server.begin_public_external_rebase(bindings, stream))
+            .map_err(|_| ServerError::Generic {
+                reason: "public external rebase channel unavailable".into(),
+                backtrace: BackTrace::capture(),
+            })?
+    }
+    /// # Safety
+    /// Original public bytes fully initialized/flushed, all raw writes/maps
+    /// complete and every external queue joined. No inference/private payload.
+    pub unsafe fn finish_public_external_rebase(
+        &self,
+        token: crate::public_external::PublicExternalRebase,
+    ) -> Result<(), ServerError> {
+        let stream = self.stream_id();
+        self.device
+            .submit_blocking(move |server| server.finish_public_external_rebase(token, stream))
+            .map_err(|_| ServerError::Generic {
+                reason: "public external rebase channel unavailable".into(),
+                backtrace: BackTrace::capture(),
+            })?
+    }
+
     /// Extend a precharged public registry without resetting prior identities.
     /// This adds no model backing itself and never applies to private payloads.
     pub fn extend_public_external_host(

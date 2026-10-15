@@ -403,6 +403,28 @@ where
         .into())
     }
 
+    /// Revoke selected original-model sources and join all prior readers.
+    fn begin_public_external_rebase(
+        &mut self,
+        _bindings: Vec<Binding>,
+        _stream: StreamId,
+    ) -> Result<crate::public_external::PublicExternalRebase, ServerError> {
+        Err(ServerError::Generic {
+            reason: "public external rebase unsupported".into(),
+            backtrace: BackTrace::capture(),
+        })
+    }
+    /// Publish a completed authenticated model-only rebase on its owning stream.
+    fn finish_public_external_rebase(
+        &mut self,
+        _token: crate::public_external::PublicExternalRebase,
+        _stream: StreamId,
+    ) -> Result<(), ServerError> {
+        Err(ServerError::Generic {
+            reason: "public external rebase unsupported".into(),
+            backtrace: BackTrace::capture(),
+        })
+    }
     /// Extend an existing same-stream PUBLIC registry grant without resetting
     /// identities, counters, retirement or immutable resource ownership.
     fn extend_public_external_host(

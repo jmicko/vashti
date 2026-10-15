@@ -317,6 +317,19 @@ impl Host {
         shadow.layout.check(global)?;
         cubecl_common::future::block_on(self.client.sync()).map_err(crate::resident_util::fault)?;
         join(&self.device).map_err(Error::InvalidFormat)?;
+        let bindings = self.pages[shadow.first_page..]
+            .iter()
+            .map(|p| {
+                p.authority
+                    .as_ref()
+                    .map(|a| a.handle().binding())
+                    .ok_or_else(fail)
+            })
+            .collect::<KResult<Vec<_>>>()?;
+        // Explicit registry revocation precedes raw mapping. A failed refresh
+        // drops only the token; lookups stay revoked until process recovery.
+        let token =
+            unsafe { self.client.begin_public_external_rebase(bindings) }.map_err(|_| fail())?;
         let mut window = Zeroizing::new(vec![0; SOURCE_WINDOW as usize]);
         for (i, spec) in shadow.layout.pages().iter().enumerate() {
             let page = self.pages.get(shadow.first_page + i).ok_or_else(fail)?;
@@ -348,7 +361,10 @@ impl Host {
             map.cache(page.owner.placement.coherent(), true)
                 .map_err(Error::InvalidFormat)?;
         }
-        graph.verify_unchanged()
+        graph.verify_unchanged()?;
+        // Every original-model byte/padding was initialized and flushed; raw
+        // mappings are gone, and no inference/private data entered these pages.
+        unsafe { self.client.finish_public_external_rebase(token) }.map_err(|_| fail())
     }
     pub(crate) fn loan_shadow_indices(&self) -> Option<[usize; 3]> {
         self.shadow.as_ref().map(|s| s.layout.indices())

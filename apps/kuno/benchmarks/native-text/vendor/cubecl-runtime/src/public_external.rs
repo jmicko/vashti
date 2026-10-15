@@ -114,7 +114,12 @@ impl<R> PublicExternalHostSource<R> {
     /// No prompt, image, activation, private key or other private bytes may enter.
     /// The resource and backing must belong to the selected target device. The
     /// caller must retain backing+device and prohibit CPU/raw GPU mutation until
-    /// successful detach. This must be the allocation's SOLE external registry:
+    /// successful detach, except while holding this registry's non-cloneable
+    /// joined PUBLIC-model rebase token. That exclusive operation may replace
+    /// only authenticated original-model bytes, never inference/private data;
+    /// all readers must stay revoked until complete initialization/cache flush
+    /// and raw-queue completion. Dropping a token does not resume readers.
+    /// This must be the allocation's SOLE external registry:
     /// no other server, raw/wgpu queue or alias may consume it while registered.
     /// All consumers must use this one owning stream through the checked backend.
     /// On failed detach/channel/queue join it MUST retain them
@@ -232,6 +237,7 @@ pub struct PublicExternalUsage {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum State {
     Active,
+    Rebasing,
     Closing,
 }
 struct Entry<R> {
@@ -241,6 +247,14 @@ struct Entry<R> {
     backing_bytes: u64,
     source_sha256: [u8; 32],
     state: State,
+}
+
+/// Sole authority to publish an exclusive original-model rebase. Not Clone;
+/// dropped/failed transactions leave lookups revoked and backing retained.
+pub struct PublicExternalRebase {
+    bindings: Vec<Binding>,
+    stream: StreamId,
+    metadata_bytes: usize,
 }
 
 /// Separate, bounded, never-reused registration pool. It never allocates a GPU
@@ -351,6 +365,85 @@ impl<R: Clone> PublicExternalPool<R> {
         self.entries = next;
         self.budget = budget;
         self.usage.metadata_owned_bytes = actual;
+        Ok(())
+    }
+    /// Revoke all selected complete original-model roots atomically. The
+    /// backend must join all already scheduled readers before returning token.
+    pub fn begin_rebase(
+        &mut self,
+        bindings: Vec<Binding>,
+    ) -> Result<PublicExternalRebase, &'static str> {
+        if bindings.is_empty()
+            || bindings.len() > MAX_BUFFERS
+            || self
+                .entries
+                .iter()
+                .flatten()
+                .any(|e| e.state != State::Active)
+        {
+            return Err("public external rebase healthy exclusive owner");
+        }
+        for (i, b) in bindings.iter().enumerate() {
+            let (_, e) = self.entry(b)?;
+            if e.state != State::Active
+                || b.offset_start.is_some()
+                || b.offset_end.is_some()
+                || bindings[..i]
+                    .iter()
+                    .any(|old| old.memory.allocation_id() == b.memory.allocation_id())
+            {
+                return Err("public external rebase complete distinct roots");
+            }
+        }
+        let metadata_bytes = bindings
+            .capacity()
+            .checked_mul(size_of::<Binding>())
+            .and_then(|n| n.checked_add(size_of::<PublicExternalRebase>()))
+            .ok_or("public external rebase metadata overflow")?;
+        let metadata = self
+            .usage
+            .metadata_owned_bytes
+            .checked_add(metadata_bytes)
+            .filter(|&n| n <= self.budget.metadata_bytes)
+            .ok_or("public external rebase metadata grant")?;
+        for b in &bindings {
+            let (i, _) = self.entry(b)?;
+            self.entries[i].as_mut().unwrap().state = State::Rebasing;
+        }
+        self.usage.metadata_owned_bytes = metadata;
+        Ok(PublicExternalRebase {
+            bindings,
+            stream: self.stream,
+            metadata_bytes,
+        })
+    }
+    /// # Safety
+    /// Every byte remains authenticated original public model data; all CPU
+    /// mappings/cache flushes and raw GPU writes have completed, no reader or
+    /// raw alias overlaps, and the backend has joined its actual owning queues.
+    pub unsafe fn finish_rebase(
+        &mut self,
+        token: PublicExternalRebase,
+    ) -> Result<(), &'static str> {
+        if token.stream != self.stream || token.bindings.is_empty() {
+            return Err("public external rebase token identity");
+        }
+        for b in &token.bindings {
+            let (_, e) = self.entry(b)?;
+            if e.state != State::Rebasing {
+                return Err("public external rebase not revoked");
+            }
+        }
+        let metadata = self
+            .usage
+            .metadata_owned_bytes
+            .checked_sub(token.metadata_bytes)
+            .ok_or("public external rebase metadata accounting")?;
+        for b in &token.bindings {
+            let (i, _) = self.entry(b)?;
+            self.entries[i].as_mut().unwrap().state = State::Active;
+        }
+        self.usage.metadata_owned_bytes = metadata;
         Ok(())
     }
     /// Snapshot only numeric registry ownership, separate from managed memory.
