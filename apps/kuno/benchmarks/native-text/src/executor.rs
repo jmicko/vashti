@@ -4536,7 +4536,14 @@ impl<'a> GpuExecutor<'a> {
                 .q6_integer_verify_head_members
                 .checked_add(spans.count() as u64)
                 .ok_or(Error::ArithmeticOverflow)?;
-            self.enqueue_strata_dense(tensor, x, planes, y, fault, spans, cancel, true)?;
+            // The bridge above authenticates the complete fault owner. Dense
+            // kernels consume only its first u32; erasure and lifetime still
+            // belong to the original full arena allocation.
+            if fault.size() < 4 {
+                return Err(Error::InvalidBufferLength);
+            }
+            let dense_fault = fault.clone().offset_end(fault.size() - 4);
+            self.enqueue_strata_dense(tensor, x, planes, y, &dense_fault, spans, cancel, true)?;
             self.q6_integer_verify_head_prepares = prepares;
             self.q6_integer_verify_head_tiles = tiles;
             self.q6_integer_verify_head_members = members;
