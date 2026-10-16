@@ -6,11 +6,12 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through `4083258`. Read the latest
-[retained commit graph handoff](#active-kuno-engine-handoff--retained-commit-graph-2026-10-16)
+`codex/strata-rust-port`, engine source through `91e1f9e`. Read the latest
+[pending commit handoff](#active-kuno-engine-handoff--pending-commit-ownership-2026-10-16)
 and [completion gate](kuno-strata-rewrite-completion.md). Direct target/MTP
 submission, accepted-prefix state publication and retained commit graph are connected
-in source. Pending event/draft fidelity and full GPU/numerical acceptance remain incomplete.
+in source. Original pending submissions/joins are connected; independent draft/event
+fidelity and full GPU/numerical acceptance remain incomplete.
 No new speed result.
 
 The user authorized **CPU-only continuation**; the goal controller is active.
@@ -6282,7 +6283,7 @@ API/connector/UI change, installation or release. Required Vashti changes:none.
 
 ### Active Kuno engine handoff — GPU PLE history (2026-10-16)
 
-Engine source through `4083258` (includes `595393e`) keeps native PLE float history
+Engine source through `91e1f9e` (includes `595393e`) keeps native PLE float history
 in the existing original GPU OLD/NEXT owners across prompt, decode and prefix
 repair. Default float readbacks/uploads and the prompt diagnostic tail copy are
 removed together; host publication advances only the two original ngram token IDs.
@@ -6368,3 +6369,32 @@ Do not claim overlap from wait=false or a host flag.
 Goal stays active for CPU-only work. No GPU/model/sudo/service, installation,
 deployment, release or API/connector/UI action. Last physical recovery evidence
 remains historical Oct15. Required Vashti changes:none.
+
+
+### Active Kuno engine handoff — pending commit ownership (2026-10-16)
+
+Engine source `91e1f9e` adds actual cold/replay pending-commit APIs and exact
+original graph/scope/submission joins. Unique submission epochs distinguish
+replays of the same recording; ordinary drains retain completion until ack.
+Partial, stale, duplicate and foreign identities cannot authorize a join. Real
+matching-lane fence success remains required; old joined-bool APIs retain their
+meaning. Actual INFO wait epochs are credited only by their own math-fence join,
+preventing a false INFO-only dependency or credit to a newer unrelated copy.
+Original resources remain retained and cleanup cannot forget unknown work.
+
+The selected engine consumes this pending receipt but explicitly joins it before
+its original fault/I/O/family acceptance. No independent draft overlap yet. Next
+is verified-row readiness before commit plus original MTP staging/math on the
+independent lane, coordinated with whole INFO-copy destinations, graph/stream
+hazards and final joins. Existing global guards must not simply be removed.
+Full-owner INFO copies can overlap even when record offsets do not.
+
+107 focused CPU cases, strict selected/off Clippy, immutable release and330
+offline shader variants pass. Exact source/hash/logs, limitations and new internal
+runtime method names are in completion guide **Original pending commit submissions
+and exact joins**. GPU numerical/visibility/completion/recovery remains unverified.
+No public HTTP/connector/UI contract changed; required Vashti changes:none.
+
+Goal remains active for CPU-only work. No GPU/model/sudo/service operation,
+installation, deployment or release. Last physical recovery evidence remains
+historical Oct15; installed services/runtime/models were untouched.

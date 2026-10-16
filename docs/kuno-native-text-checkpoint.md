@@ -1,19 +1,53 @@
-<!-- Current resume: 2026-10-16, source 4083258, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source 91e1f9e, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, engine source through `4083258`. The user authorized
+branch `codex/strata-rust-port`, engine source through `91e1f9e`. The user authorized
 continuing CPU-only work; the goal controller is active for that scope.
 GPU/model/service/sudo work still needs renewed user authorization. Last physical recovery evidence
 is historical 06:07:22Z on Oct15; no subsequent GPU run or live health claim.
 
-Read the latest [retained commit graph receipt](kuno-strata-rewrite-completion.md#retained-native-commit-graph-and-explicit-accepted-count-2026-10-16)
+Read the latest [pending commit receipt](kuno-strata-rewrite-completion.md#original-pending-commit-submissions-and-exact-joins-2026-10-16)
 and coordination handoff. Earlier CJK source `cd703bc` was integrated as `0bfbea8`;
 **do not cherry-pick it again**. Its original 106299-row Q6 head, inverse-ID sampler
 and target/MTP INT8 caches remain connected.
 
-**Latest retained commit graph:** `4083258` connects original preflight and real
+**Latest pending commit receipt block:** `91e1f9e` connects separate pending
+cold/replay APIs to the selected prefix path. They return original graph/scope/
+submission identity after actual queue submission, without joining its math
+fence. The original joined bool API still waits before returning true. Every
+native submission now has a monotonic epoch distinct from its reusable recording
+ID; stale receipts cannot join a later replay. Exact original request scope,
+recording and lane fence are validated at join. A dependent drain can complete
+the fence first; original completion metadata survives until acknowledgement.
+
+The engine explicitly joins that receipt immediately before its existing real
+fault/I/O/family proof. **No independent draft overlap yet.** Keeping this join
+is deliberate until original row readiness, MTP preparation, actual intervals and
+INFO destinations have the coupled dependency contract. Pending state does not
+publish a model cursor, numeric success or owning erasure. Partial/error owners
+remain retained; cleanup can invalidate exports only after actual joins. Pending
+profiling is rejected, while the old joined APIs preserve their behavior.
+
+Each original flight also retains its actual INFO timeline wait. Only its real
+math-fence join credits that epoch, never a newer unrelated upload. This avoids
+mistaking explicitly joined commit math for a copy with no completed consumer;
+it does not itself establish independent cross-queue visibility. Fixed flight/
+export metadata still fits the original1KiB bound. No GPU data root is added.
+107 focused CPU cases, selected/off strict Clippy and formatting pass; immutable
+release and330 offline shader receipts are in the completion guide. No GPU/
+numerical/visibility/speed/recovery acceptance. Installed services are untouched.
+
+Next is the scoped independent-draft consumer and real verified-row readiness
+edge *before* commit. MTP `start_window` already clears/stages/copies and performs
+private guards before named math capture; selecting a queue only at branch begin
+is too late. Audit global graph/stream drains, INFO uploader reuse, copy/compute
+header waits and queue-switch handoffs together. INFO copies cover complete
+owners, so merely disjoint record offsets do not prove a live uniform page can
+be rewritten. Preserve original family/row/flight ownership and final joins.
+
+**Earlier retained commit graph:** `4083258` connects original preflight and real
 capture/direct replay in `resident_native_commit.rs`. Multirow commits have their
 own model-instance/proposed-T/context/GDN-PLE-role namespace. Accepted n and current
 position are typed invocation INFO; they are never graph keys or frozen constants.
@@ -38,7 +72,7 @@ receipts are in the completion guide. **No async overlap is claimed.**
 Next is the actual pending event and independent draft consumer. Review the
 single INFO uploader, stream drains, live uniform destinations, queue-switch
 handoffs and MTP preparation *before* its named branch together. The current
-MTP `prepare_window_first` happens before `begin_native_strata_invocation`:
+MTP `start_window`/`prepare_window_first` happen before `begin_native_strata_invocation`:
 leaving that work on main behind a pending commit would serialize drafting.
 A dependency on verified-row readiness must be signaled before commit, rather
 than a new main-queue signal placed behind commit. Original resources/permits,
@@ -267,7 +301,7 @@ artifact hash and logs are in the completion guide.
 These are not whole-model/GPU/numerical acceptance. Historical full-core regression
 failures remain untriaged; do not call the complete regression suite green.
 
-**Next block: pending commit graph and queue/event fidelity.** Direct target/MTP
+**Next block: independent readiness and queue/event fidelity.** Direct target/MTP
 submission is connected; do not repeat typed/staging work or benchmark incomplete
 source. Pinned Intel `generate.cpp:3115` enables asynchronous single-device commits;
 `verify.cpp:2364–2483` queues its original commit graph, records `commit_done_`, and
@@ -286,8 +320,7 @@ completion, target queue order and draft carry ownership; final/cleanup consumer
 must join outstanding commits. Review all-accept and one-token self-commit too.
 
 The backend now adopts real target/draft/copy queues (`b6732c8`) and actual INFO
-transfer (`414e2c3`). **Next block: separately owned pending commit events and independent draft
-consumers.** Preserve the new actual current-source INFO submission
+transfer (`414e2c3`). **Next block: actual independent draft consumers of the owned pending commit.** Preserve the new actual current-source INFO submission
 and timeline wait; do not redo it or bake variable Upload handles into math graphs.
 
 `Graph` now has separate actual lane fences and stable original recording flights
@@ -298,8 +331,9 @@ queue-switch handoffs can also signal behind all primary work. These must change
 together for a genuine pending target commit and independent draft. Original
 request/model identity, recording resources and INFO pages must stay retained until
 their own actual completion. Do not use the existing completed-replay bool as a
-submission receipt. Provide a separately owned pending commit/event contract and
-join it at the next dependent target/session/final/cleanup consumer. Do not redo
+submission receipt. `91e1f9e` now exports/join-validates actual pending submissions; the current
+engine still joins them immediately. Move that join only with the scoped draft
+consumer and real dependent target/session/final/cleanup contract. Do not redo
 flight identity or INFO ownership work. The remaining coupling is selecting only
 real dependencies, original family-state publication and exact carry consumers.
 
@@ -311,10 +345,11 @@ disarmed just because work was submitted. A scoped post-submit draft consumer
 while permits remain on the stack is still one viable design; no model-ready
 cursor receipt may escape before the actual dependent join.
 
-Next actual source block: target-lane pending event, retained INFO and independently
-scheduled draft, then next-target/session/final/cleanup joins. `4083258` connects the
-real dynamic n_keep commit graph and count1 skip; its runtime API still joins.
-Adding only a wait=false flag is not source fidelity. Typed commit count/position fields must be explicit, rather than
+Next actual source block: retained INFO, verified-row readiness and independently
+scheduled draft, then next-target/session/final/cleanup joins. `4083258` connects
+the real dynamic n_keep commit graph/count1 skip; `91e1f9e` exports its original
+pending execution. Current engine consumption still immediately joins. Moving that
+join without the real data/queue dependencies is not source fidelity. Typed commit count/position fields must be explicit, rather than
 inferred from equal old INFO values. Live uniform targets must not be overwritten
 by an unrelated flight. Review the single INFO uploader and queue-switch handoffs
 together with global stream drains. Already verified carry rows and draft-local
