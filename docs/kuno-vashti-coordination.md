@@ -6,8 +6,8 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through `f9d1e06`. Read the latest
-[scoped admission handoff](#active-kuno-engine-handoff--scoped-admission-and-allocator-lifetimes-2026-10-16)
+`codex/strata-rust-port`, engine source through `89da25f`. Read the latest
+[mapped embedding handoff](#active-kuno-engine-handoff--mapped-host-embedding-2026-10-16)
 and [completion gate](kuno-strata-rewrite-completion.md). Direct target/MTP
 submission, accepted-prefix state publication and retained commit graph are connected
 in source. Original pending submissions/joins and scoped next-draft consumption are connected;
@@ -6624,3 +6624,32 @@ complete-rewrite claim. Ordinary frozen `0bf0b5f` is stale; rebuild current sour
 before protected work. No shader/layout/public API/connector/UI change.
 Required Vashti changes:none. No service/model/GPU/install/release action.
 Sudo refresh succeeds in Demons. Goal stays active for CPU-only work.
+
+
+### Active Kuno engine handoff — mapped HOST embedding (2026-10-16)
+
+Source `89da25f` moves the shared native IQ4_XS embedding into the original HOST
+owner/sole readonly registry. All16 full original pages use the existing actual
+nonlocal allocation/import/flush and exact detach/zero/free lifecycle. The same
+source pages feed target and MTP GPU gathers. Global source construction now
+precedes sharing; shared reader loans must release before HOST detach. Unknown/
+live readers refuse release. No duplicate model source or request persistence.
+
+Quotes distinguish head-only MAIN521474048 bytes, HOST embedding337715200 bytes
+and shared addressable859189248 bytes. MTP excludes BOTH borrowed tensors from
+its extra MAIN allocation. HOST quote includes all embedding allocation envelopes
+and registry slots. GPU gather tiling is unchanged and still needs final review;
+static dense capacity remains5GiB, so no larger expert cache/speed is claimed.
+
+301 focused CPU cases/29 nonempty suites, final selected build, strict selected/
+off Clippy and format/whitespace pass. Exact receipts and next source/physical/
+substitution gates: completion guide **Shared native embedding in original HOST
+backing**. No GPU/model/service/protected inference, install or release action.
+No shader/layout or public API/connector/UI change; required Vashti changes:none.
+Sudo refresh succeeds. Goal stays active for CPU-only work; rewrite incomplete.
+
+Frozen ordinary selected release builds at source89da25f in
+`/media/jmicko/faststore/kuno-development/strata-mapped-embedding-ordinary-20261016/`,
+SHA2566016128a10833a9ef2448209e25f43afe2dac4e4cfbb7c895fa7f43f44fb840c.
+No binary/device/model execution occurred. Use this current artifact instead of
+stale0bf0b5f when protected correctness work is authorized; no speed trials yet.

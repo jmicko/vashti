@@ -46,7 +46,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | Component | Pinned upstream | Current Rust connection and required completion |
 | --- | --- | --- |
 | Artifact geometry, packing and tokenizer | `sycl/src/core/weights.cpp`, `src/io`, native expert layout, program model setup | Rust GGUF/tokenizer/binding exist. Audit format-specific load/conversion, chat-template and sampling behavior; original files remain shared/read-only. |
-| Exact dense placement and expert budget | `sycl/src/program/generate.cpp` model/cache setup; `sycl/src/core/expert_cache.cpp::open_sized` | Exact dense roots exist. Native global byte-prefix planning and an owning bounded GPU loader now compile; graph validation consumes the real artifact plan. Experimental core construction now invokes the sole global owner before prefill, and the core48-layer coordinator selects global routing/HOST fetch/role execution. Physical/numerical acceptance remains unfinished. All777 required original float tensors already match the selected native format (484 BF16,292 F32,1 F16); generic conversion is not required for this artifact. Target embedding currently occupies GPU memory while the measured source uses mapped HOST; this residency substitution remains explicit. The ordinary feature-off engine retains uniform banks. |
+| Exact dense placement and expert budget | `sycl/src/program/generate.cpp` model/cache setup; `sycl/src/core/expert_cache.cpp::open_sized` | Exact dense roots exist. Native global byte-prefix planning and an owning bounded GPU loader now compile; graph validation consumes the real artifact plan. Experimental core construction now invokes the sole global owner before prefill, and the core48-layer coordinator selects global routing/HOST fetch/role execution. Physical/numerical acceptance remains unfinished. All777 required original float tensors already match the selected native format (484 BF16,292 F32,1 F16); generic conversion is not required for this artifact. Source `89da25f` moves the shared original IQ4_XS embedding into the sole mapped HOST owner and updates constructor/reader/close accounting. Actual physical/numerical acceptance and the unchanged tiled gather substitution remain open. The5GiB dense cache allowance still requires exact pricing review. The ordinary feature-off engine retains uniform banks. |
 | Low-RAM host complement and promotion | `generate.cpp` source/adaptive tier; `sycl/src/core/verify.cpp` fetch/rebase | Original host complement, direct exchange and GPU selected fetch exist. Audit full byte ownership and asynchronous safe publication against upstream; do not duplicate the whole model in RAM. |
 | GPU route/group planning and original HOST access | `verify.cpp` / `verify_kernels.dp.cpp::resident_plan_kernel`, selected SYCL `DEVICE_PLAN=1,NO_HOST=1` | Native BF16 router and full512-expert normalization exist. Correct selected path reads actual VRAM or mapped HOST aliases directly on the GPU, preserving every selected expert. Source36d13d3 replaces the CPU split/staging consumer with direct authentic source aliases and removes per-layer CPU joins/submissions; protected execution is pending. Generic CPU doorbells/split windows are optional modes, not this B70 completion gate. Physical/numerical acceptance remains required. |
 | Native expert math and grouped rows | `sycl/src/kernels/cuda/iq_kernels.dp.cpp::row_entries`, `native_gu_kernel`, `native_down_kernel` | Packed integer math/BDA roots exist. Separate GU roles, 4/2/1 chunks, activation, intermediate storage and downstream consumers are now selected together in the Intel core; all 158 WGSL/SPIR-V variants validate, including 105 physical-pointer checks; numerical/model execution acceptance remains pending. The global core now uses one per-role launch containing pinned row_entries4/2/1 loops, scalar IQ4_XS, native signed integer finish and XOR reduction; numerical/model execution acceptance remains pending. Historical fixed-chunk kernels are retained separately. |
@@ -58,7 +58,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | Prompt dense/expert matrix backend | Intel oneMKL rounded BF16/FP16 GEMMs | Connected Rust cooperative8x16x16/F32 kernels now consume the actual rounded dense and grouped GU/DOWN images, with enabled device features, SPIR-V native registration and required16 subgroup in both pipeline paths. See the cooperative-matrix receipt; physical numerical/model acceptance remains open. |
 | MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native INT8 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Positive-threshold chains now keep hidden carries on device and observe the same token/probability/fault packet as zero-threshold chains; mapped/event scheduling remains open. First/grouped device-source and ids-only target result consumers now exist; the shared-context constructor receipt below supersedes the separate-client blocker. Core construction now selects the actual target client and one combined account. Source9de7fef pins the original target embedding/head once, shares them with MTP and gathers target embeddings on GPU. Actual device/state acceptance is pending. Source0bfbea8 connects the original-order CJK106299-row Q6 draft head, inverse-ID history mapping, compact confidence and coupled sampling; source2a3d1ad connects INT8 caches. Combined CPU checks pass, with full numerical/GPU execution still pending. Source `862f5fa` separates first-front staging and actual observation from capture, and prestages all coupled draft controls once per round. Source `8262367` connects typed MTP phases/4096 boundaries and original model-instance graph namespaces; source `d0670b0` connects direct original MTP replay and capture-derived host/sampler handback. Physical acceptance, commit/event fidelity, numerical/state acceptance and runtime policy remain required. See the latest device-end receipt. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Sourcea26adc2 ports the native bounded trigram index, longest/recent suffix choice, cost priors, probing/stale rules and optional lookup-chain accounting into the selected controller. Configured MTP/target windows no longer shrink at the output cap; state commit and emission are separate. Coupled sampling and physical state acceptance still need end-to-end validation. |
-| Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Source `131d29c` connects real provisional rows to accepted GDN/QSA/PLE candidates while original full-window transactions remain open, then publishes only n after real fault/I/O proof. Count1 uses its candidate and all-accept multirow runs original state replay. Old diagnostic full-window repair is not selected by the native controller. Source `4083258` connects the retained multirow commit graph with explicit dynamic accepted-count/position fields, original family preflight and count1 skip. Source `91e1f9e` connects original pending commit export/join; `1f46f76` connects a scoped original next-draft consumer before explicit commit acknowledgement. Source `0bf0b5f` emits real verified predictions before next drafting, matching the source delivery order. Global waits still serialize GPU execution. Independent draft/readiness/INFO dependencies, original storage substitutions and independent GPU/numerical oracle remain open. |
+| Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Source `131d29c` connects real provisional rows to accepted GDN/QSA/PLE candidates while original full-window transactions remain open, then publishes only n after real fault/I/O proof. Count1 uses its candidate and all-accept multirow runs original state replay. Old diagnostic full-window repair is not selected by the native controller. Source `4083258` connects the retained multirow commit graph with explicit dynamic accepted-count/position fields, original family preflight and count1 skip. Source `91e1f9e` connects original pending commit export/join; `1f46f76` connects a scoped original next-draft consumer before explicit commit acknowledgement. Source `0bf0b5f` emits real verified predictions before next drafting, matching the source delivery order. Source `f9d1e06` connects scoped admission/allocator lifetimes and INFO visibility; physical independent execution, full source substitution audit and independent numerical oracle remain open. |
 | Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; Source `d40442c` connects direct retained target submission with typed control uploads and original family receipts; source `d0670b0` connects direct MTP invocation with original actual packet observations and sampler/actor handback. Source `b6732c8` adopts independent MTP compute and concurrent buffer families with semaphore handoffs. Source `414e2c3` connects actual current INFO copies on the native transfer timeline and avoids empty primary submissions; source `86f4c35` replaces the global single fence/last-recording assumption with actual lane fences and stable original recording flights. Source `131d29c` connects synchronous original accepted-prefix publication; source `4083258` connects the retained commit graph. Source `91e1f9e` connects original pending submission identities and exact joins; `1f46f76` connects scoped original MTP consumption before explicit commit acknowledgement. Real independent readiness/INFO/draft execution remain open; source `543bc73` couples original pending commits to retained shared MAIN debt; source `a8e538f` retains actual recording ranges and preflights whole INFO-copy conflicts; source `d2d3228` pins original verified R, submits its real readiness dependency before commit and scopes all unkeyed/named draft lane selection. Source `7ad47ca` connects original native packet fill/copy, real HOST_READ availability, final fence and checked HAL host map without primary Wgpu readback copies/callbacks. Source `7cb1cbc` connects native upload state/render/flush/unmap and all-owner joined I/O reuse without Wgpu remaps or primary reuse clears. Source `7477b66` connects original per-owner selective reuse, current INFO copy completion and named/future/live recording exclusions. Source `f9d1e06` connects scoped graph/stream current-lane/conflict admission, original allocator pins and copy-vs-math INFO visibility. Required ordinary/cold/final global drains remain. Physical independent execution and full draft/event fidelity remain unverified. Physical ring overlap, scratch lifetimes and full execution acceptance remain open. Measured serving lazily captures branches; eager all-branch warmup is not a prerequisite; a sequence of independent Wgpu launches is not equivalent. |
 | Request lifecycle and arbitrary input | upstream CLI/session/inference entry points | Current Rust public-fixture gate is not a general engine. Connect bounded arbitrary prompts and request-local sampling/history, with no persistent content, protected memory and orderly erase/close. No gateway/UI work required. |
 
@@ -6694,8 +6694,104 @@ still fully join by design. Confirm no hidden ordinary sync or unexpected cold
 root is required in steady state before claiming independent execution.
 
 General arbitrary request entry remains public-fixture gated; prompt/context
-capacity and target embedding GPU-vs-mapped-HOST placement still differ. Old core
+capacity still differs. Source89da25f below resolves embedding placement in source;
+actual physical acceptance and exact dense pricing remain open. Old core
 regression failures remain untriaged. Physical queue/event/lifetime, full numerical
 and actual recovery acceptance remain open. No speed testing until the COMPLETE
 connected source audit passes. Renew GPU authority before protected device work;
 current authority remains CPU-only despite sudo availability.
+
+
+## Shared native embedding in original HOST backing (2026-10-16)
+
+Source `89da25fb6e7c4b0a30a562a188f7d27473502e40` closes the mapped embedding
+placement gap in source. Pinned Intel `generate.cpp:2630..2647` loads NativeEmbed
+before model serving, and `sycl/src/core/native_head.cpp:168..290` keeps the packed
+table in HOST memory with a GPU alias and GPU gather. This applies to both target
+and `sycl/src/core/mtp.cpp:818` consumers. No CPU prompt-dependent row read or
+whole-model duplicate is substituted.
+
+`Host::reservation/load` now quotes/constructs16 original IQ4_XS embedding pages
+beside the expert complement in the SAME immutable public external registry.
+Each page uses the existing actual non-DEVICE_LOCAL HOST-visible allocation,
+dedicated-memory envelope/heap checks, concurrent queue families, full initialized
+padding, coherent/noncoherent cache publication, HAL import and registration.
+Read directly from the authenticated original tensor into its mapped backing;
+original packed finite-scale/padding validation is preserved before publication.
+Every actual page/shard and full logical/backing size remains owned on failure.
+
+Embedding pages use a disjoint internal coordinate tag (49): neither expert
+layers0..47 nor optional prompt shadow48 may alias it. Existing expert pointer
+planning, exchange and shadow charges remain; only the original embedding gather
+consumers use these embedding page handles. HAL-imported Wgpu29.0.4 buffers use
+`BufferInitTracker::new(0)` (`device/resource.rs:1309`), so their externally
+initialized weights are not Wgpu-clear candidates. Real first-use primary usage
+transitions still occur; no cold initialization/visibility boundary is skipped.
+
+Global sources/stages are fully constructed before Weights and shared MTP. The
+shared Weights keeps an original embedding reader loan, with graph binding and
+exact same-client checks. Both target and MTP retain that same Weights ownership.
+HOST close refuses live loans BEFORE any registry detach. Executor close drops
+its last shared weight owner (after real owning cleanup and other-reader checks)
+before Sources detach; unknown/live readers keep the original backing retained.
+The existing exact detach receipt, actual queue join, source destroy and zero/free
+path remains mandatory. No Arc counter is a GPU/numerical/erasure receipt.
+
+Accounting separates three real quantities:
+
+| Quantity | Bytes | Owner |
+| --- | ---: | --- |
+| Embedding API pages |337715200 |HOST quote (each actual allocation envelope also reserved) |
+| Shared Q6 head API pages |521474048 |MAIN |
+| Target/MTP addressable original pages |859189248 |Both tiers, one copy each |
+
+`public_bytes` now names the shared MAIN quote; `embedding_bytes` is separate
+HOST data; `addressable_bytes` preserves the complete borrowed tensor extent.
+MTP additional capacity and constructor admission subtract BOTH borrowed tensors,
+not merely MAIN head bytes, so moving the embedding does not charge MTP for a
+second phantom copy. Addressable public validation/page shapes remain unchanged.
+Internal execution-check JSON records all three; public HTTP API is unchanged.
+
+**Explicit remaining substitutions:** the existing16-page descriptor gather and
+tiled head kernels are unchanged. Upstream gathers from one full alias; full
+work-sharing/numerical substitution review is still required. The static dense
+cache allowance stays5GiB rather than recomputing a larger expert prefix from
+observed free memory. This source removes the embedding's actual GPU allocation;
+it does NOT prove a larger expert cache or throughput gain. Do not run speed A/Bs
+or roll back coupled placement due unaccepted partial timings.
+
+Receipts under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-mapped-embedding-final-test-build-20261016.log`: locked selected release
+  test build passes. Earlier unsuffixed build passed but preceded final loan/
+  reservation tests and same-client checks; use the final receipt.
+- `strata-mapped-embedding-cpu-20261016.log`:301 passed/29 nonempty CPU suites.
+  Previous283 scheduling/lifetime cases plus18 placement-related cases: shared
+  weight full-page/token/payload/backlog4; MTP shared tile/capacity1; original HOST
+  registry/embedding loan5; global plan/reservation5; source table/borrow3.
+  New loan case uses real Arc lifetime only; other original registry tests use
+  synthetic public integers, not fake device/fence success. Complete GPU/HOST/
+  addressable totals, full/partial/no resident expert tiers and unchanged shared
+  MTP capacities are checked. These tests do not establish real native allocation,
+  alias/coherence, queue execution, math, erasure/recovery or speed acceptance.
+- `strata-mapped-embedding-{core,off}-clippy-20261016.log`: strict locked selected/
+  off Clippy passes. Changed Rust rustfmt and `git diff --check` pass; only existing
+  duplicate-main-bin manifest warning remains.
+
+No shader/binding layout changed;330 offline shader cases were not repeated.
+No GPU/model/service/driver/protected inference/install/release action. Sudo
+refresh succeeded in the shared shell. Required Vashti changes:none. Goal stays
+active for CPU-only work; the full rewrite is incomplete.
+
+Normal immutable selected release also builds successfully (no binary execution):
+`strata-mapped-embedding-ordinary-20261016.out`, source89da25f,
+SHA256 `6016128a10833a9ef2448209e25f43afe2dac4e4cfbb7c895fa7f43f44fb840c`,
+artifact directory `strata-mapped-embedding-ordinary-20261016/`. Its source commit,
+build features and Cargo logs are retained there. Builder checked clean source
+paths and unchanged HEAD throughout compilation. This replaces0bf0b5f as the
+current frozen ordinary source artifact; it is NOT physical/model/speed acceptance.
+
+Next CPU work remains the full connected scope/source audit, general request entry,
+prompt/context capacities and exact dense/cache pricing. Embedding placement is now
+connected but its physical acceptance and tiled-gather substitution review remain.
+Keep the existing full numerical/physical/recovery gates and no-speed condition.
