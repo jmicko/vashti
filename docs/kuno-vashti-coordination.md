@@ -6,8 +6,8 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through `543bc73`. Read the latest
-[pending retirement handoff](#active-kuno-engine-handoff--pending-retirement-accounting-2026-10-16)
+`codex/strata-rust-port`, engine source through `a8e538f`. Read the latest
+[recording/INFO handoff](#active-kuno-engine-handoff--recordinginfo-ownership-2026-10-16)
 and [completion gate](kuno-strata-rewrite-completion.md). Direct target/MTP
 submission, accepted-prefix state publication and retained commit graph are connected
 in source. Original pending submissions/joins and scoped next-draft consumption are connected;
@@ -15,7 +15,9 @@ independent execution/event fidelity and full GPU/numerical acceptance remain in
 No new speed result.
 
 The user authorized **CPU-only continuation**; the goal controller is active.
-No GPU/model/service/sudo work is authorized by this continuation. Last physical
+No GPU/model/service work is authorized by this continuation. The user separately
+authorized sudo timestamp refresh in Demons; that validation does not widen the
+GPU/testing scope. Last physical
 recovery evidence remains historical Oct15. Installed services, runtime settings,
 model files and application APIs were untouched. Required Vashti changes:none.
 
@@ -6455,3 +6457,27 @@ I/O recycle still globally flushes. Do not remove waits based on this hold alone
 
 Goal stays active for CPU-only work. No GPU/model/sudo/service/install/release or
 public API/connector/UI change. Required Vashti changes:none.
+
+
+### Active Kuno engine handoff — recording/INFO ownership (2026-10-16)
+
+Source `a8e538f` retains actual original descriptor/copy/physical/indirect access
+ranges with each recording. Canonicalization preserves real gaps, shared readers
+and historical writes. Capacity remains charged inside the original64MiB retained
+metadata bound. Actual whole-owner INFO copy accesses preflight both original
+flights and join only conflicting matching-lane fences; partial/missing/foreign
+owners fail. INFO command-pool reuse waits on its own copy. Final visibility is
+decided after actual math joins, so older math cannot credit a newer INFO epoch.
+Runtime exports, pending MAIN retention and original close remain mandatory.
+
+156 focused CPU tests and strict selected/off Clippy pass. See completion guide
+**Original recording access and INFO copy ownership** for exact source/logs and
+limitations, and its **Next connected scope design** before implementation.
+Global stream/graph waits still prevent physical independent execution. No new
+shader/layout or immutable artifact; latest frozen `0bf0b5f` is stale for current
+source. Build current source before physical acceptance. No new speed result.
+
+Public APIs/connector/UI unchanged; required Vashti changes:none. Goal remains
+active for CPU-only work. User requested keeping sudo refreshed; noninteractive
+validation succeeded in the shared Demons shell. No GPU/model/service/install/
+release or protected inference/driver operation ran.

@@ -1,19 +1,51 @@
-<!-- Current resume: 2026-10-16, source 543bc73, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source a8e538f, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, engine source through `543bc73`. The user authorized
+branch `codex/strata-rust-port`, engine source through `a8e538f`. The user authorized
 continuing CPU-only work; the goal controller is active for that scope.
-GPU/model/service/sudo work still needs renewed user authorization. Last physical recovery evidence
+GPU/model/service work still needs renewed user authorization. The user has
+authorized keeping sudo refreshed in the shared Demons shell; noninteractive
+validation succeeded. This does not expand the GPU/testing scope. Last physical recovery evidence
 is historical 06:07:22Z on Oct15; no subsequent GPU run or live health claim.
 
-Read the latest [pending retirement receipt](kuno-strata-rewrite-completion.md#original-pending-commit-retirement-2026-10-16)
-and coordination handoff. Earlier CJK source `cd703bc` was integrated as `0bfbea8`;
-**do not cherry-pick it again**. Its original106299-row Q6 head, inverse-ID sampler
-and target/MTP INT8 caches remain connected.
+Read the latest [recording/INFO ownership receipt](kuno-strata-rewrite-completion.md#original-recording-access-and-info-copy-ownership-2026-10-16)
+and its next scoped-execution design before changing queue/stream behavior.
+Earlier CJK source `cd703bc` was integrated as `0bfbea8`; do not cherry-pick it again.
 
-**Latest pending retirement:** `543bc73` couples the original runtime submission
+**Latest recording/INFO ownership:** `a8e538f` retains the actual descriptor,
+physical read-dependency, copy/fill and indirect intervals in each original plan.
+Canonical ranges preserve holes and shared readers; any historical write remains
+a write. The original recording owns this inventory through its real lane fence,
+including direct replay. Its actual capacity is charged within the existing64MiB
+retained-recording metadata bound; the INFO2MiB bound includes temporary accesses.
+No GPU data owner, model mirror, request values or serialized roots are added.
+
+INFO copies use their actual whole original source/read and target/write owners.
+`Graph::upload_parameters` preflights both original flights, rejects missing/
+partial/foreign-family owners and joins only conflicting original lane fences.
+It then completes only the previous INFO copy before reusing its copy pool.
+Original runtime export/ack and shared MAIN retention remain authoritative. A final
+drain now decides outstanding INFO visibility after math joins: an older consumer
+cannot stand in for a newer disjoint upload.
+
+156 focused CPU cases and selected/off strict Clippy pass. No shader/layout change,
+new immutable artifact, GPU/model/service run or speed result. Latest frozen
+`0bf0b5f` still predates both this and the pending-retirement block; build current
+source before any protected execution. Only requested sudo timestamp validations
+ran in Demons. Required Vashti changes:none.
+
+**Next:** connect the complete independent MTP scope, not only named branch math.
+The completion guide records the coupled design and actual source findings:
+private uploads already use mapped sources/native copies; generic core INFO pages
+are distinct from named branch pages. Keep those owners. Signal verified-R
+readiness before commit, then route sampler controls, scratch/token/front work,
+math, confidence packet readback and reuse under the same original scope. Global
+push/flush/replay/switch/recycle waits remain today. `Graph::pending` includes live
+flights as well as queued nodes; do not mistake the former for a new dispatch.
+
+**Earlier pending retirement:** `543bc73` couples the original runtime submission
 with its shared MAIN debt hold in `PendingNativeCommit`. Each actual multirow
 prefix submission acquires the hold before invoking the scoped drafter. Peer
 observations still check real growth/limits but cannot lower the retained upper

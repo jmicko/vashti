@@ -59,7 +59,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native INT8 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Positive-threshold chains now keep hidden carries on device and observe the same token/probability/fault packet as zero-threshold chains; mapped/event scheduling remains open. First/grouped device-source and ids-only target result consumers now exist; the shared-context constructor receipt below supersedes the separate-client blocker. Core construction now selects the actual target client and one combined account. Source9de7fef pins the original target embedding/head once, shares them with MTP and gathers target embeddings on GPU. Actual device/state acceptance is pending. Source0bfbea8 connects the original-order CJK106299-row Q6 draft head, inverse-ID history mapping, compact confidence and coupled sampling; source2a3d1ad connects INT8 caches. Combined CPU checks pass, with full numerical/GPU execution still pending. Source `862f5fa` separates first-front staging and actual observation from capture, and prestages all coupled draft controls once per round. Source `8262367` connects typed MTP phases/4096 boundaries and original model-instance graph namespaces; source `d0670b0` connects direct original MTP replay and capture-derived host/sampler handback. Physical acceptance, commit/event fidelity, numerical/state acceptance and runtime policy remain required. See the latest device-end receipt. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Sourcea26adc2 ports the native bounded trigram index, longest/recent suffix choice, cost priors, probing/stale rules and optional lookup-chain accounting into the selected controller. Configured MTP/target windows no longer shrink at the output cap; state commit and emission are separate. Coupled sampling and physical state acceptance still need end-to-end validation. |
 | Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Source `131d29c` connects real provisional rows to accepted GDN/QSA/PLE candidates while original full-window transactions remain open, then publishes only n after real fault/I/O proof. Count1 uses its candidate and all-accept multirow runs original state replay. Old diagnostic full-window repair is not selected by the native controller. Source `4083258` connects the retained multirow commit graph with explicit dynamic accepted-count/position fields, original family preflight and count1 skip. Source `91e1f9e` connects original pending commit export/join; `1f46f76` connects a scoped original next-draft consumer before explicit commit acknowledgement. Source `0bf0b5f` emits real verified predictions before next drafting, matching the source delivery order. Global waits still serialize GPU execution. Independent draft/readiness/INFO dependencies, original storage substitutions and independent GPU/numerical oracle remain open. |
-| Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; Source `d40442c` connects direct retained target submission with typed control uploads and original family receipts; source `d0670b0` connects direct MTP invocation with original actual packet observations and sampler/actor handback. Source `b6732c8` adopts independent MTP compute and concurrent buffer families with semaphore handoffs. Source `414e2c3` connects actual current INFO copies on the native transfer timeline and avoids empty primary submissions; source `86f4c35` replaces the global single fence/last-recording assumption with actual lane fences and stable original recording flights. Source `131d29c` connects synchronous original accepted-prefix publication; source `4083258` connects the retained commit graph. Source `91e1f9e` connects original pending submission identities and exact joins; `1f46f76` connects scoped original MTP consumption before explicit commit acknowledgement. Real independent readiness/INFO/draft execution remain open; source `543bc73` couples original pending commits to retained shared MAIN debt; global drains and lane-scoped I/O still require the coupled dependency change. Global drain removal and draft/event fidelity remain incomplete. Physical ring overlap, scratch lifetimes and full execution acceptance remain open. Measured serving lazily captures branches; eager all-branch warmup is not a prerequisite; a sequence of independent Wgpu launches is not equivalent. |
+| Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; Source `d40442c` connects direct retained target submission with typed control uploads and original family receipts; source `d0670b0` connects direct MTP invocation with original actual packet observations and sampler/actor handback. Source `b6732c8` adopts independent MTP compute and concurrent buffer families with semaphore handoffs. Source `414e2c3` connects actual current INFO copies on the native transfer timeline and avoids empty primary submissions; source `86f4c35` replaces the global single fence/last-recording assumption with actual lane fences and stable original recording flights. Source `131d29c` connects synchronous original accepted-prefix publication; source `4083258` connects the retained commit graph. Source `91e1f9e` connects original pending submission identities and exact joins; `1f46f76` connects scoped original MTP consumption before explicit commit acknowledgement. Real independent readiness/INFO/draft execution remain open; source `543bc73` couples original pending commits to retained shared MAIN debt; source `a8e538f` retains actual recording ranges and preflights whole INFO-copy conflicts; global drains and lane-scoped I/O still require the coupled dependency change. Global drain removal and draft/event fidelity remain incomplete. Physical ring overlap, scratch lifetimes and full execution acceptance remain open. Measured serving lazily captures branches; eager all-branch warmup is not a prerequisite; a sequence of independent Wgpu launches is not equivalent. |
 | Request lifecycle and arbitrary input | upstream CLI/session/inference entry points | Current Rust public-fixture gate is not a general engine. Connect bounded arbitrary prompts and request-local sampling/history, with no persistent content, protected memory and orderly erase/close. No gateway/UI work required. |
 
 ## Validation and the speed gate
@@ -6081,3 +6081,121 @@ No GPU/model/sudo/service/API/UI/install/release action. Required Vashti changes
 Whole source audit, arbitrary-input/context/placement substitutions, historical
 core-regression failures and numerical/physical/recovery gates remain open. No
 throughput result; goal stays active for CPU-only work.
+
+
+## Original recording access and INFO copy ownership (2026-10-16)
+
+Source `a8e538f52767fde9a211cf9ffea2a8a9d2f9c3f5` retains canonical actual
+accesses in `strata_schedule::Plan`, derived from the existing planner's original
+node histories. They include real descriptor views, physical read dependencies,
+copy/fill and indirect reads supplied by `Graph::node_ranges`. Shared readers do
+not conflict; any historical write remains a write. Canonicalization never fills
+unused holes or narrows a descriptor. Sorted disjoint ranges support bounded
+binary lookup without comparing every new copy to every original dispatch.
+
+The actual original recording owns these ranges on cold capture and direct replay.
+`Commands::metadata_bytes` includes the retained vector's actual capacity; the
+existing64MiB retained-recording limit stays enforced. Temporary interval counts/
+capacities retain their existing bounds, with contraction after adjacent-range
+compression. No new GPU root, source mirror or content-bearing cache is added.
+
+`strata_info_transfer::accesses` resolves the same complete original Vulkan
+source/target owners and usage/span/alias checks used by the actual copy command.
+A new source is a full-owner read and destination a full-owner write. Record
+positions cannot pretend a whole INFO page copy writes a narrower view. Temporary
+access capacity is included in the original2MiB INFO host-bound assertion and is
+dropped before submit's validation allocation. The native CPU harness aliases the
+actual sibling schedule module so both unmodified source modules are tested;
+there is no mock replacement for their ownership/layout logic.
+
+`Graph::upload_parameters` now preflights both actual original flight recordings
+and rejects partial/missing/foreign-family owners before any fence credit. It uses
+the retained original ranges to join only conflicting original lanes through
+`complete_lane_submission`; that function still requires the actual matching
+Vulkan fence and exact recording identity. Nonconflicting math remains owned and
+gets no completion credit. Only the old INFO copy's own fence is required before
+resetting its copy pool. Original exported completion remains retained until ack;
+`543bc73` still protects pending target MAIN debt from peer observations.
+
+A newer disjoint INFO upload can coexist with older math. Final drain therefore
+decides unconsumed INFO visibility AFTER joining original math and crediting each
+actual header epoch. An older consumer cannot excuse the newer copy's handoff.
+Unknown/partial failure retains original resources; cleanup/erasure is unchanged.
+
+CPU receipts under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-pending-access-final-test-build-20261016.log`: locked selected release
+  test build passes. `strata-pending-access-cpu-20261016.log`:156 tests pass across
+  the16 nonempty focused suites (previous152 plus3 original schedule and1 INFO).
+  New checks cover historical reads/writes, gaps/boundaries, malformed tails,
+  whole-page INFO writes, compact reserved capacity and4096 seeded comparisons
+  against the original descriptor lists across compute/copy nodes. These are host
+  range/ownership/epoch tests, not live Vulkan visibility, queue or erasure proof.
+- `strata-pending-access-{core,off}-clippy-20261016.log`: strict selected/off locked
+  release Clippy pass. Changed-source formatting and `git diff --check` pass.
+  Existing duplicate-main-bin Cargo warning remains; no Rust/Clippy warning.
+
+No shader/binding layout changed; the unchanged shader suite was not repeated.
+No new immutable artifact was frozen. Frozen `0bf0b5f` predates both retirement and
+access ownership changes; build current source before future protected execution.
+Global graph push/stream flush/replay/queue-switch/recycle waits still serialize
+execution, so this is not physical overlap or full scheduling parity. No speed
+result. No GPU/model/service/API/UI/install/release or protected driver/inference
+operation ran. Only user-authorized sudo timestamp validations ran in Demons.
+Required Vashti changes:none. Whole rewrite and physical acceptance remain open.
+
+### Next connected scope design
+
+This is the next implementation contract, **not an implemented scope API**. Follow
+pinned serving's real order: verified output rows; submit accepted-prefix commit;
+emit accepted predictions; draft on its own queue; wait for commit before final
+session access. The current source already selects that logical consumer order.
+Complete the dependencies as one connected scope before claiming independent math:
+
+1. Establish an actual main-to-MTP verified-R readiness dependency BEFORE commit
+   work is queued. Bind it to the original graph, active request scope, original
+   model/source owner and monotonic backend identity. This is a queue dependency,
+   never numeric/model-ready/erasure authority. The immutable original source
+   grant/generation/window proof remains mandatory. Prevent new writes/reset of
+   that source while the dependent consumer is live.
+2. Enter the scoped MTP lane before sampler `begin_round`, `start_window`, scratch/
+   token/carry preparation and `prepare_window_first`, not just at named capture.
+   Keep unkeyed preparation and every named first/continuation branch on this lane.
+   Do not enqueue a fresh main-queue readiness signal behind its pending commit.
+3. Gate new original descriptor/copy/INFO accesses against the retained flight
+   inventory. Preserve actual conflicts, original recording resources, copy
+   timelines and `543bc73` retirement. Queue selection must distinguish queued
+   nodes from already submitted flights (`Graph::pending` currently combines them).
+   Do not globally delete all completion guards.
+4. Cover observation and reuse, including each positive-confidence MTP cell.
+   Current private packet readback uses a primary Wgpu encoder, and shared request
+   I/O recycle globally flushes. They cannot silently join the target before all
+   intended independent work or remap/overwrite live upload/INFO owners. Keep
+   actual map/fault completion, source-copy completion and final audit/erasure.
+   No fake per-lane successful fence or metadata-only reuse credit is allowed.
+5. Scope success/failure/final close must retain original dependency, source,
+   recording and pending-commit owners until their real joins. Unknown Drop may
+   retire, never forget or declare clean. Preserve original target family/fault
+   proofs and verified-output-versus-completed-state distinction. Cleanup must
+   join known pending work even after the original context is retired.
+
+Actual source findings to preserve rather than reimplement unnecessarily:
+
+- Private uploads already use `MAP_WRITE|COPY_SRC` mapped-at-creation owners and
+  native copy nodes, not ordinary `Queue::write_buffer` staging. Inspect
+  `transient_io.rs` and `stream.rs::push_transfer` before inventing a new uploader.
+- `batched_uniform` already gives named branches their original pinned parameter
+  pages separately from unkeyed `core_info_pages`. `prepare_native_info` unmaps
+  full original sources, resets the slab/cursor and returns full-owner copies.
+  Keep these owners; prove actual hazards instead of assuming record offsets or
+  replacing all INFO storage. Upload-source CPU remapping also requires genuine
+  completion/reuse authority before the copy, not just a later read-range check.
+- Retained metadata inspection exists in `server.rs::retained_resource_metadata`
+  without submitting/cleaning. `resident_util::resources` selects it under its
+  existing policy; native global roots already require it. Check the actual
+  selected policy and MTP physical guards so metadata calls do not restore a
+  hidden global wait while the independent scope is meant to be active.
+
+Continue full source/ownership integration, not timing trials. Arbitrary-input,
+context/embedding placement, historical regression triage and final numerical/
+physical/recovery acceptance still remain beyond this scheduling scope.
