@@ -160,6 +160,116 @@ fn cancelled(cancel: &AtomicBool) -> Result<()> {
 
 /// Opaque borrowing ticket. Mutable ownership pins BOTH actual committed CPU
 /// histories until commit or abandonment. Preparation leaves them unchanged;
+/// Ordered CPU ngram-token publication for an independently owned GPU
+/// convolution history. This is NOT device-state or completion authority.
+pub struct DeviceHistoryTokens<'a> {
+    history: &'a mut PleTokenHistory,
+    expected: Zeroizing<[i32; 2]>,
+    next: Zeroizing<[i32; 2]>,
+}
+fn token_pair(config: &PleHashConfig, old: [i32; 2], tokens: &[u32]) -> Result<[i32; 2]> {
+    if config.history_len() != 2
+        || config.heads_per_ngram != 8
+        || config.boundary_token != 248044
+        || config.token_vocab_size != 248320
+        || old.iter().any(|&t| !(-1..248320).contains(&t))
+        || tokens.len() > 2048
+        || tokens.iter().any(|&t| t >= 248320)
+    {
+        return Err(OpsError::InvalidParameter(CONTEXT));
+    }
+    let mut next = old;
+    for &t in tokens {
+        next = [next[1], t as i32];
+    }
+    Ok(next)
+}
+pub fn prepare_device_history_tokens<'a>(
+    history: &'a mut PleTokenHistory,
+    config: &PleHashConfig,
+    expected: [i32; 2],
+    tokens: &[u32],
+    cancel: &AtomicBool,
+) -> Result<DeviceHistoryTokens<'a>> {
+    cancelled(cancel)?;
+    if history.tokens.len() != 2 || history.tokens() != expected || tokens.is_empty() {
+        return Err(OpsError::InvalidParameter(CONTEXT));
+    }
+    let next = token_pair(config, expected, tokens)?;
+    Ok(DeviceHistoryTokens {
+        history,
+        expected: Zeroizing::new(expected),
+        next: Zeroizing::new(next),
+    })
+}
+impl DeviceHistoryTokens<'_> {
+    pub fn preflight(&self, cancel: &AtomicBool) -> Result<()> {
+        cancelled(cancel)?;
+        if self.history.tokens() != *self.expected {
+            return Err(OpsError::InvalidParameter(CONTEXT));
+        }
+        Ok(())
+    }
+    /// Caller must accept the real GPU-history/fault/whole-family fence first.
+    pub fn commit(self) {
+        clear_i32_capacity(&mut self.history.tokens);
+        self.history.tokens.copy_from_slice(&*self.next);
+    }
+}
+/// A bounded token-owner checkpoint, never a CPU mirror of GPU convolution data.
+pub struct DeviceHistoryTokenCheckpoint {
+    old: Zeroizing<[i32; 2]>,
+    owner: Zeroizing<usize>,
+}
+impl DeviceHistoryTokenCheckpoint {
+    pub fn capture(history: &PleTokenHistory) -> Result<Self> {
+        if history.tokens.len() != 2 || history.tokens.iter().any(|&t| !(-1..248320).contains(&t)) {
+            return Err(OpsError::InvalidParameter(CONTEXT));
+        }
+        Ok(Self {
+            old: Zeroizing::new([history.tokens[0], history.tokens[1]]),
+            owner: Zeroizing::new(history as *const _ as usize),
+        })
+    }
+    pub fn preflight(
+        &self,
+        history: &PleTokenHistory,
+        config: &PleHashConfig,
+        proposed: &[u32],
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        cancelled(cancel)?;
+        if *self.owner != history as *const _ as usize
+            || proposed.is_empty()
+            || proposed.len() > MAX_BATCH
+            || history.tokens() != token_pair(config, *self.old, proposed)?
+        {
+            return Err(OpsError::InvalidParameter(CONTEXT));
+        }
+        Ok(())
+    }
+    pub fn prepare_prefix<'a>(
+        &self,
+        history: &'a mut PleTokenHistory,
+        config: &PleHashConfig,
+        proposed: &[u32],
+        accepted: usize,
+        cancel: &AtomicBool,
+    ) -> Result<DeviceHistoryTokens<'a>> {
+        self.preflight(history, config, proposed, cancel)?;
+        if accepted > proposed.len() {
+            return Err(OpsError::InvalidParameter(CONTEXT));
+        }
+        let expected = token_pair(config, *self.old, proposed)?;
+        let next = token_pair(config, *self.old, &proposed[..accepted])?;
+        Ok(DeviceHistoryTokens {
+            history,
+            expected: Zeroizing::new(expected),
+            next: Zeroizing::new(next),
+        })
+    }
+}
+
 /// Drop wipes candidate and discarded full capacities on every path.
 pub struct PleChunkCommit<'a> {
     conv: &'a mut CausalConvState,
@@ -264,6 +374,90 @@ mod tests {
         hash.rows_and_advance(17, &mut history).unwrap();
         hash.rows_and_advance(248046, &mut history).unwrap();
         (conv, history, hash)
+    }
+    #[test]
+    fn device_token_commits_leave_float_history_and_discarded_candidates_unchanged() {
+        let (conv, mut history, config) = state();
+        let before = conv.history.clone();
+        let old = [history.tokens[0], history.tokens[1]];
+        drop(
+            prepare_device_history_tokens(
+                &mut history,
+                &config,
+                old,
+                &[19, 20],
+                &AtomicBool::new(false),
+            )
+            .unwrap(),
+        );
+        assert_eq!(history.tokens(), old);
+        let p = prepare_device_history_tokens(
+            &mut history,
+            &config,
+            old,
+            &[19, 20],
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        p.preflight(&AtomicBool::new(false)).unwrap();
+        p.commit();
+        assert_eq!(history.tokens(), [19, 20]);
+        assert_eq!(conv.history, before);
+    }
+    #[test]
+    fn device_token_checkpoint_replays_every_real_prefix_and_rejects_another_owner() {
+        let (_, mut history, config) = state();
+        let old = [history.tokens[0], history.tokens[1]];
+        let proposed = [10, 11, 12, 13, 14, 15, 16, 17];
+        for n in 0..=MAX_BATCH {
+            let cp = DeviceHistoryTokenCheckpoint::capture(&history).unwrap();
+            prepare_device_history_tokens(
+                &mut history,
+                &config,
+                old,
+                &proposed,
+                &AtomicBool::new(false),
+            )
+            .unwrap()
+            .commit();
+            let (_, other, _) = state();
+            assert!(
+                cp.preflight(&other, &config, &proposed, &AtomicBool::new(false))
+                    .is_err()
+            );
+            cp.prepare_prefix(&mut history, &config, &proposed, n, &AtomicBool::new(false))
+                .unwrap()
+                .commit();
+            assert_eq!(
+                history.tokens(),
+                token_pair(&config, old, &proposed[..n]).unwrap()
+            );
+            history.tokens.copy_from_slice(&old);
+        }
+        assert!(
+            prepare_device_history_tokens(
+                &mut history,
+                &config,
+                [0, 0],
+                &[1],
+                &AtomicBool::new(false)
+            )
+            .is_err()
+        );
+        assert!(
+            prepare_device_history_tokens(
+                &mut history,
+                &config,
+                old,
+                &[248320],
+                &AtomicBool::new(false)
+            )
+            .is_err()
+        );
+        assert!(
+            prepare_device_history_tokens(&mut history, &config, old, &[1], &AtomicBool::new(true))
+                .is_err()
+        );
     }
     fn inputs(count: usize) -> Zeroizing<Vec<f32>> {
         let mut v = Zeroizing::new(vec![0.; MAX_BATCH * CHANNELS]);

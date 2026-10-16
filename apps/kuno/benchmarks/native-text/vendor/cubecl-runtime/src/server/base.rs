@@ -127,13 +127,13 @@ impl NativeStrataBranch {
     pub fn target_window_for_context(rows: u8, context: u16) -> Result<Self, &'static str> {
         Self::target_window_with_state(rows, context, 0)
     }
-    /// Fixed original GDN old/next binding arrangement, never a token position.
+    /// Fixed original GDN (bit0) and PLE (bit1) old/next bindings, never a token position.
     pub fn target_window_with_state(
         rows: u8,
         context: u16,
         state_role: u8,
     ) -> Result<Self, &'static str> {
-        if !(1..=8).contains(&rows) || !(1..=4096).contains(&context) || state_role > 1 {
+        if !(1..=8).contains(&rows) || !(1..=4096).contains(&context) || state_role > 3 {
             return Err("native target branch shape");
         }
         Ok(Self {

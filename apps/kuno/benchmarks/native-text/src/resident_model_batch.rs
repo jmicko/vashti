@@ -5181,7 +5181,7 @@ impl Workspace {
                 cubecl_runtime::server::NativeStrataBranch::target_window_with_state(
                     u8::try_from(*count).map_err(u::fault)?,
                     u16::try_from(m.context).map_err(u::fault)?,
-                    state_role.ok_or(error())?,
+                    state_role.ok_or(error())? | (self.ple.native_capture_history_role()? << 1),
                 )
                 .map_err(u::fault)?,
             )

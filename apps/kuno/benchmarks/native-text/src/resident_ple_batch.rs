@@ -1,4 +1,5 @@
-//! Native layer1 PLE bridge into the actual CPU history owner.
+//! Native layer1 PLE with original GPU history in the Intel core; legacy
+//! paths retain the separately checked CPU convolution-history owner.
 //! Invocation preparation owns/stages original OLD/EMB before graph capture;
 //! math enqueue consumes that exact prepared transaction without host uploads.
 //! GPU OLD is readonly and NEXT candidate-only; completion/commit stay separate.
@@ -16,6 +17,8 @@ use crate::{
 use cubecl::server::Handle;
 use kuno_text::{cpu::Matrix, model::GraphBindingId, ops::ple_transition as core};
 use std::sync::atomic::AtomicU64;
+#[path = "strata_ple_history.rs"]
+mod device_history;
 #[path = "resident_ple_prompt.rs"]
 pub(crate) mod prompt;
 #[path = "strata_prompt_ple.rs"]
@@ -243,6 +246,7 @@ impl Drop for PleBatchWorkspace {
 
 pub(crate) struct LatestPleCheckpoint {
     snapshot: Option<ops::ple_checkpoint::Checkpoint>,
+    device_snapshot: Option<core::DeviceHistoryTokenCheckpoint>,
     metadata: Zeroizing<LatestPleMetadata>,
     binding: Option<GraphBindingId>,
     poison: Arc<AtomicBool>,
@@ -272,6 +276,12 @@ impl Zeroize for LatestPleMetadata {
     }
 }
 impl PleBatchWorkspace {
+    pub(crate) fn native_capture_history_role(&self) -> Result<u8> {
+        self.ids[OLD]
+            .original_pair_role(self.ids[NEXT])
+            .map(u8::from)
+            .ok_or(error())
+    }
     pub(crate) fn checkpoint_latest(
         &self,
         model: &ResidentModel<'_, '_>,
@@ -309,16 +319,31 @@ impl PleBatchWorkspace {
         self.generation
             .checked_add(1)
             .ok_or(Error::ArithmeticOverflow)?;
-        let snapshot = ops::ple_checkpoint::Checkpoint::capture(
-            &model.ple_conv,
-            &model.ple_history,
-            ops::ple_checkpoint::MAX_OWNED_BYTES,
-        )
-        .map_err(u::fault)?;
+        let snapshot = if crate::strata_intel_core::enabled() {
+            None
+        } else {
+            Some(
+                ops::ple_checkpoint::Checkpoint::capture(
+                    &model.ple_conv,
+                    &model.ple_history,
+                    ops::ple_checkpoint::MAX_OWNED_BYTES,
+                )
+                .map_err(u::fault)?,
+            )
+        };
+        let device_snapshot = if crate::strata_intel_core::enabled() {
+            Some(
+                core::DeviceHistoryTokenCheckpoint::capture(&model.ple_history)
+                    .map_err(u::fault)?,
+            )
+        } else {
+            None
+        };
         let mut packet = Zeroizing::new([0; crate::strata_port::verify_capacity()]);
         packet[..tokens.len()].copy_from_slice(tokens);
         Ok(LatestPleCheckpoint {
-            snapshot: Some(snapshot),
+            snapshot,
+            device_snapshot,
             metadata: Zeroizing::new(LatestPleMetadata {
                 owner: self.identity,
                 generation: self.generation,
@@ -346,11 +371,16 @@ impl LatestPleCheckpoint {
         self.binding
     }
     pub(crate) fn owned_bytes(&self) -> Result<usize> {
-        self.snapshot
-            .as_ref()
-            .ok_or(error())?
-            .owned_bytes()
-            .map_err(u::fault)?
+        let payload = if self.device_snapshot.is_some() && self.snapshot.is_none() {
+            std::mem::size_of::<core::DeviceHistoryTokenCheckpoint>()
+        } else {
+            self.snapshot
+                .as_ref()
+                .ok_or(error())?
+                .owned_bytes()
+                .map_err(u::fault)?
+        };
+        payload
             .checked_add(std::mem::size_of::<Self>())
             .ok_or(Error::ArithmeticOverflow)
     }
@@ -372,6 +402,10 @@ impl LatestPleCheckpoint {
         graph_preflight(graph)?;
         workspace.validate_ids(arena)?;
         let m = &self.metadata;
+        let mut expected_ids = m.ids;
+        if crate::strata_intel_core::enabled() {
+            expected_ids.swap(OLD, NEXT);
+        }
         if !self.armed
             || pending
             || workspace.pending
@@ -383,7 +417,7 @@ impl LatestPleCheckpoint {
             || workspace.binding != graph.binding_id()
             || workspace.identity != m.owner
             || workspace.sequence != m.sequence
-            || *workspace.ids != m.ids
+            || *workspace.ids != expected_ids
             || workspace.generation
                 != m.generation
                     .checked_add(1)
@@ -404,11 +438,19 @@ impl LatestPleCheckpoint {
         if history.tokens() != *next_tokens {
             return Err(error());
         }
-        self.snapshot
-            .as_ref()
-            .ok_or(error())?
-            .preflight(conv, history, cancel)
-            .map_err(u::fault)
+        if crate::strata_intel_core::enabled() {
+            self.device_snapshot
+                .as_ref()
+                .ok_or(error())?
+                .preflight(history, graph.ple_hash(), &m.tokens[..m.count], cancel)
+                .map_err(u::fault)
+        } else {
+            self.snapshot
+                .as_ref()
+                .ok_or(error())?
+                .preflight(conv, history, cancel)
+                .map_err(u::fault)
+        }
     }
     pub(crate) fn validate_completed(
         &self,
@@ -447,12 +489,29 @@ impl LatestPleCheckpoint {
             c.retired,
             cancel,
         )?;
-        let restore = self
-            .snapshot
-            .take()
-            .ok_or(error())?
-            .prepare_restore(c.conv, c.history, cancel)
-            .map_err(u::fault)?;
+        let restore = if crate::strata_intel_core::enabled() {
+            device_history::Restore::Device(
+                self.device_snapshot
+                    .as_ref()
+                    .ok_or(error())?
+                    .prepare_prefix(
+                        c.history,
+                        c.graph.ple_hash(),
+                        &self.metadata.tokens[..self.metadata.count],
+                        0,
+                        cancel,
+                    )
+                    .map_err(u::fault)?,
+            )
+        } else {
+            device_history::Restore::Legacy(
+                self.snapshot
+                    .take()
+                    .ok_or(error())?
+                    .prepare_restore(c.conv, c.history, cancel)
+                    .map_err(u::fault)?,
+            )
+        };
         Ok(LatestPleRestore {
             checkpoint: self,
             workspace,
@@ -482,18 +541,35 @@ impl LatestPleCheckpoint {
         if !crate::strata_port::enabled() || accepted == 0 || accepted >= self.metadata.count {
             return Err(error());
         }
-        let restore = self
-            .snapshot
-            .take()
-            .ok_or(error())?
-            .prepare_accepted_prefix(
-                c.conv,
-                c.history,
-                &self.metadata.tokens[..self.metadata.count],
-                accepted,
-                cancel,
+        let restore = if crate::strata_intel_core::enabled() {
+            device_history::Restore::Device(
+                self.device_snapshot
+                    .as_ref()
+                    .ok_or(error())?
+                    .prepare_prefix(
+                        c.history,
+                        c.graph.ple_hash(),
+                        &self.metadata.tokens[..self.metadata.count],
+                        accepted,
+                        cancel,
+                    )
+                    .map_err(u::fault)?,
             )
-            .map_err(u::fault)?;
+        } else {
+            device_history::Restore::Legacy(
+                self.snapshot
+                    .take()
+                    .ok_or(error())?
+                    .prepare_accepted_prefix(
+                        c.conv,
+                        c.history,
+                        &self.metadata.tokens[..self.metadata.count],
+                        accepted,
+                        cancel,
+                    )
+                    .map_err(u::fault)?,
+            )
+        };
         Ok(LatestPleRestore {
             checkpoint: self,
             workspace,
@@ -524,14 +600,17 @@ impl Drop for LatestPleCheckpoint {
 pub(crate) struct LatestPleRestore<'a> {
     checkpoint: LatestPleCheckpoint,
     workspace: &'a mut PleBatchWorkspace,
-    restore: ops::ple_checkpoint::Restore<'a>,
+    restore: device_history::Restore<'a>,
     accepted: usize,
 }
-impl LatestPleRestore<'_> {
-    pub(crate) fn commit(mut self) {
-        self.restore.commit();
-        self.workspace.next = self.checkpoint.metadata.start + self.accepted;
-        self.checkpoint.armed = false;
+impl<'a> LatestPleRestore<'a> {
+    pub(crate) fn enqueue(
+        self,
+        arena: &PrivateArena,
+        fault: BufferId,
+        cancel: &AtomicBool,
+    ) -> Result<device_history::QueuedRestore<'a>> {
+        device_history::enqueue_restore(self, arena, fault, cancel)
     }
 }
 
@@ -969,10 +1048,16 @@ impl PleBatchWorkspace {
         });
         self.pending = true;
         self.generation = generation;
-        let mut old = source(BufferLayout::new(words(OLD)).map_err(u::fault)?.owned_bytes)?;
-        for (bytes, &v) in old.chunks_exact_mut(4).zip(model.ple_conv.history()) {
-            bytes.copy_from_slice(&v.to_bits().to_le_bytes());
-        }
+        let resident_history = crate::strata_intel_core::enabled();
+        let mut old = if resident_history {
+            Zeroizing::new(Vec::new())
+        } else {
+            let mut old = source(BufferLayout::new(words(OLD)).map_err(u::fault)?.owned_bytes)?;
+            for (bytes, &v) in old.chunks_exact_mut(4).zip(model.ple_conv.history()) {
+                bytes.copy_from_slice(&v.to_bits().to_le_bytes());
+            }
+            old
+        };
         let mut embedding = embedding(
             model.graph,
             count,
@@ -983,7 +1068,7 @@ impl PleBatchWorkspace {
             self.profile,
         )?;
         let arena = &model.arena;
-        queue_preparation(cancel, |operation| {
+        queue_preparation(cancel, resident_history, |operation| {
             match operation {
                 Operation::Clear(i) => u::zero(arena, self.ids[i])?,
                 Operation::Upload(i) => {
@@ -1019,7 +1104,8 @@ impl PleBatchWorkspace {
         cancel: &AtomicBool,
     ) -> Result<PendingPleBatch> {
         // Receipt Drop remains armed on every failure, poisoning its original
-        // sequence. OLD/EMB were freshly uploaded before the graph submission.
+        // sequence. EMB was staged; core OLD is its actual committed GPU owner
+        // and legacy OLD was uploaded before the graph submission.
         let receipt = prepared.receipt;
         self.receipt(model, &receipt, cancel)?;
         completed.check(
@@ -1225,6 +1311,9 @@ impl PleBatchWorkspace {
         receipt: PendingPleBatch,
         cancel: &AtomicBool,
     ) -> Result<PleBatchAcceptance<'a>> {
+        if crate::strata_intel_core::enabled() {
+            return self.prepare_device_history_after_whole_model_fence(c, receipt, cancel);
+        }
         let poison = self.poison.clone();
         let diagnostics = guarded(&poison, || {
             self.receipt_parts(&c, &receipt, cancel)?;
@@ -1316,7 +1405,7 @@ impl PleBatchWorkspace {
                 anchor: c.anchor,
                 arena: c.arena,
                 retired: c.retired,
-                transition: Some(transition),
+                transition: Some(device_history::Commit::Legacy(transition)),
                 receipt,
                 armed: true,
                 public_grouped_read,
@@ -1354,7 +1443,7 @@ pub(crate) struct PleBatchAcceptance<'a> {
     anchor: &'a mut Option<Anchor>,
     arena: &'a PrivateArena,
     retired: &'a AtomicBool,
-    transition: Option<core::PleChunkCommit<'a>>,
+    transition: Option<device_history::Commit<'a>>,
     receipt: PendingPleBatch,
     armed: bool,
     public_grouped_read: bool,
@@ -1377,11 +1466,7 @@ impl PleBatchAcceptance<'_> {
                 return Err(error());
             }
             self.workspace.validate_ids(self.arena)?;
-            self.transition
-                .as_ref()
-                .ok_or(error())?
-                .preflight(cancel)
-                .map_err(u::fault)
+            self.transition.as_ref().ok_or(error())?.preflight(cancel)
         })
     }
     /// Requires ALL family permits preflighted before the first commit. Exact
@@ -1390,7 +1475,11 @@ impl PleBatchAcceptance<'_> {
     pub(crate) fn commit(mut self, cancel: &AtomicBool) -> Result<()> {
         self.preflight(cancel)?;
         if let Some(transition) = self.transition.take() {
+            let device = transition.device();
             transition.commit();
+            if device {
+                self.workspace.ids.swap(OLD, NEXT);
+            }
         }
         self.workspace.next = self.receipt.metadata.start + self.receipt.metadata.count;
         self.workspace.pending = false;
@@ -1661,11 +1750,17 @@ enum Operation {
 }
 fn queue_preparation(
     cancel: &AtomicBool,
+    resident_history: bool,
     mut f: impl FnMut(Operation) -> Result<()>,
 ) -> Result<()> {
     for op in (0..N)
+        .filter(|&i| !resident_history || i != OLD)
         .map(Operation::Clear)
-        .chain((0..2).map(Operation::Upload))
+        .chain(
+            (0..2)
+                .filter(|&i| !resident_history || i != 0)
+                .map(Operation::Upload),
+        )
     {
         u::cancel(cancel)?;
         f(op)?;
@@ -1686,7 +1781,7 @@ fn queue_compute(cancel: &AtomicBool, mut f: impl FnMut(Operation) -> Result<()>
 }
 #[cfg(test)]
 fn queue(cancel: &AtomicBool, mut f: impl FnMut(Operation) -> Result<()>) -> Result<()> {
-    queue_preparation(cancel, &mut f)?;
+    queue_preparation(cancel, false, &mut f)?;
     queue_compute(cancel, f)
 }
 
@@ -2461,7 +2556,7 @@ mod tests {
     fn prepared_ple_phase_has_all_uploads_and_math_phase_has_none() {
         let cancel = AtomicBool::new(false);
         let mut staged = Vec::new();
-        queue_preparation(&cancel, |op| {
+        queue_preparation(&cancel, false, |op| {
             staged.push(op);
             Ok(())
         })
@@ -2495,6 +2590,21 @@ mod tests {
             .is_err()
         );
         assert!(!dispatched);
+    }
+    #[test]
+    fn resident_gpu_history_preparation_never_clears_or_uploads_its_committed_owner() {
+        let cancel = AtomicBool::new(false);
+        let mut ops = Vec::new();
+        queue_preparation(&cancel, true, |op| {
+            ops.push(op);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(ops.len(), N);
+        assert!(!ops.contains(&Operation::Clear(OLD)));
+        assert!(!ops.contains(&Operation::Upload(0)));
+        assert!(ops.contains(&Operation::Clear(NEXT)));
+        assert!(ops.contains(&Operation::Upload(1)));
     }
     #[test]
     fn exact_runtime_packet_bound_and_overflow_reject_before_private_fill() {

@@ -476,6 +476,7 @@ impl<'a, 'm, 'f> LatestTargetRound<'a, 'm, 'f> {
         for permit in qp {
             cleared.push(permit.enqueue_clear(&model.arena, model.b.fault, cancel)?);
         }
+        let pp = pp.enqueue(&model.arena, model.b.fault, cancel)?;
         commit_repair_after_fence(
             || batch_io::read_fault(&model.arena, &model.admission, model.b.fault, cancel),
             cancel,
@@ -551,6 +552,7 @@ impl<'a, 'm, 'f> LatestTargetRound<'a, 'm, 'f> {
         for permit in qp {
             cleared.push(permit.enqueue_clear(&model.arena, model.b.fault, cancel)?);
         }
+        let pp = pp.enqueue(&model.arena, model.b.fault, cancel)?;
         commit_repair_after_fence(
             || batch_io::read_fault(&model.arena, &model.admission, model.b.fault, cancel),
             cancel,

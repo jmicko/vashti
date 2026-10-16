@@ -7,7 +7,7 @@ out.mkdir()
 options=set(sys.argv[2:])
 if options-{'--eight','--resident-224','--resident-240','--intel-core'}:raise ValueError('build feature selector')
 features=['strata-rust-port']+(['strata-eight-window'] if '--eight' in options else [])+(['strata-resident-224'] if '--resident-224' in options else [])+(['strata-resident-240'] if '--resident-240' in options else [])+(['strata-intel-core'] if '--intel-core' in options else [])
-source_paths=['apps/kuno/benchmarks/native-text','apps/kuno/benchmarks/text/build-strata-port.py','apps/kuno/benchmarks/text/run-strata-port.py']
+source_paths=['apps/kuno/benchmarks/native-text','crates/kuno-text','apps/kuno/benchmarks/text/build-strata-port.py','apps/kuno/benchmarks/text/run-strata-port.py']
 subprocess.run(['git','diff','--quiet','HEAD','--',*source_paths],cwd=root,check=True)
 commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()
 (out/'source-commit.txt').write_text(commit+'\n')
