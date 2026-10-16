@@ -1,19 +1,48 @@
-<!-- Current resume: 2026-10-16, source 86f4c35, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source 57147a8, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, engine source through `86f4c35`. The user authorized
+branch `codex/strata-rust-port`, engine source through `57147a8`. The user authorized
 continuing CPU-only work; the goal controller is active for that scope.
 GPU/model/service/sudo work still needs renewed user authorization. Last physical recovery evidence
 is historical 06:07:22Z on Oct15; no subsequent GPU run or live health claim.
 
-Read the latest [lane-flight receipt](kuno-strata-rewrite-completion.md#native-lane-fences-and-original-recording-flight-ownership-2026-10-16)
+Read the latest [GPU PLE history receipt](kuno-strata-rewrite-completion.md#native-gpu-ple-history-and-real-prefix-consumers-2026-10-16)
 and coordination handoff. Earlier CJK source `cd703bc` was integrated as `0bfbea8`;
 **do not cherry-pick it again**. Its original 106299-row Q6 head, inverse-ID sampler
 and target/MTP INT8 caches remain connected.
 
-**Latest lane-flight block:** `86f4c35` replaces the global single math fence and
+**Latest GPU PLE history block:** `595393e` plus `57147a8` keep the actual committed PLE float
+history in its existing GPU OLD/NEXT owners. Native preparation neither clears nor
+uploads committed OLD. Real full-window completion swaps their roles; CPU publication
+advances only the original two ngram token IDs with a checked ordered token permit.
+Default native decode no longer maps OLD/NORMALIZED/NEXT float histories to the CPU.
+Native prompt completion uses the same token-only permit; it no longer copies a
+diagnostic tail or reads GPU float history unless diagnostics are explicitly
+selected. Full prompt, decode and short prompt continuations share the actual
+existing GPU roots rather than rebuilding a stale CPU convolution mirror.
+An explicitly enabled grouped-read diagnostic still performs/credits actual reads.
+
+Native latest-window checkpoints retain exact token-owner/control metadata, not a
+CPU float-history snapshot. Rejection queues the existing GPU History kernel over
+original prewindow history and original normalized accepted rows; zero-prefix restore
+queues the actual original history copy. Only the existing joint fault fence can
+precede queued PLE/token/cursor publication. Original poison/drop and full-root
+validation remain. Legacy CPU history/diagnostics are preserved. No private GPU root
+is added. Target recording keys now encode independent GDN bit0/PLE bit1 roles;
+all4 binding inventories are distinct, without putting positions/content in keys.
+
+61 focused native CPU checks and9 core transition tests pass, including mixed
+2048-row prompt/decode/short-prompt continuation and every decode prefix0..8.
+Selected/off strict Clippy and formatting pass. Immutable release/offline shader
+receipts are in the completion guide. **No GPU/numerical/speed acceptance claim.**
+Default window publication still commits the full proposal before prefix repair. GPU role swaps
+and global joins remain explicit source scheduling substitutions. Do not reupload
+`model.ple_conv.history()` during native decode: that legacy CPU float owner is
+not authoritative after native GPU-history advancement.
+
+**Earlier lane-flight block:** `86f4c35` replaces the global single math fence and
 last-recording completion assumption with2 actual lane fences and a bounded original-
 recording flight book. All cold/hit/direct submissions use it. Each recording has a
 nonzero monotonic identity; its original family/compute count must match the submit.
@@ -217,8 +246,10 @@ join it at the next dependent target/session/final/cleanup consumer. Do not redo
 flight identity or INFO ownership work. The remaining coupling is selecting only
 real dependencies, original family-state publication and exact carry consumers.
 
-The controller currently verifies/commits the full proposed window then synchronously
-repairs the accepted prefix. Replace that schedule coherently: original family
+The controller still verifies/commits the full proposed window then synchronously
+repairs the accepted prefix. `595393e` removes PLE's authoritative CPU float-history
+transition from native decode and queues real GPU prefix history, but does not yet
+change this outer publication schedule. Replace that schedule coherently: original family
 permits/stamps, accepted-prefix kernels, fault proof, cursor publication, carried
 rows and MTP borrow lifetime. Holding pending `&mut` target owners must still allow
 only the exact original verified carry rows into drafting; do not mint a new
@@ -227,7 +258,11 @@ count1 self-commit with rejection, output cap/EOS and failure cleanup. Unkeyed M
 prompt/preparation scheduling and full numerical/physical acceptance remain open.
 
 Implementation audit leads (not new product requirements): `run_global` keeps
-GDN/QSA/PLE permits borrowed across the final proof/commit. An owned deferred object
+GDN/QSA/PLE permits borrowed across the final proof/commit. Native PLE now retains
+only its checked two-token CPU permit, not a mutable CPU convolution transition;
+its common Preparation signature still shares lifetimes and may need field splitting.
+Native prompt completion now uses that same token-only permit; explicit diagnostic
+readbacks remain separate. An owned deferred object
 cannot casually store those self-borrows; consider a scoped verified-prefix/draft
 consumer while original permits stay on the stack, or explicit original-owner
 pause/resume permits. Do not leak/disarm a permit without preserving its policy

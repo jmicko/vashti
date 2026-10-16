@@ -6,8 +6,8 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through `86f4c35`. Read the latest
-[lane-flight handoff](#active-kuno-engine-handoff--native-lane-flight-ownership-2026-10-16)
+`codex/strata-rust-port`, engine source through `57147a8`. Read the latest
+[GPU PLE history handoff](#active-kuno-engine-handoff--gpu-ple-history-2026-10-16)
 and [completion gate](kuno-strata-rewrite-completion.md). Direct target and MTP submission
 are now connected in source; accepted-prefix commit/event fidelity and full
 GPU/numerical acceptance remain incomplete. No new speed result.
@@ -6277,3 +6277,33 @@ GDN/QSA/PLE lifetime constraint, dynamic commit controls and remaining source ga
 
 Goal stays active for CPU-only work. No GPU/model/service/sudo operation, public
 API/connector/UI change, installation or release. Required Vashti changes:none.
+
+
+### Active Kuno engine handoff — GPU PLE history (2026-10-16)
+
+Engine source through `57147a8` (includes `595393e`) keeps native PLE float history
+in the existing original GPU OLD/NEXT owners across prompt, decode and prefix
+repair. Default float readbacks/uploads and the prompt diagnostic tail copy are
+removed together; host publication advances only the two original ngram token IDs.
+Explicit diagnostics still read real data, while the feature-off CPU oracle stays.
+Native checkpoints retain token/control metadata; rejection uses original GPU
+prewindow/normalized owners and the real joint fault fence. Actual target capture
+keys distinguish independent GDN/PLE roles. No public API or private GPU root is
+added. Never reupload the now-stale legacy CPU convolution mirror in native decode.
+
+61 focused native CPU checks and9 core transition cases, strict selected/off
+Clippy and formatting pass. Immutable artifact/offline shader evidence is in
+**Native GPU PLE history and real prefix consumers** in the completion guide.
+No GPU/numerical/speed acceptance claim. Installed runtime/services are untouched;
+last physical recovery evidence remains historical Oct15.
+
+Next is the actual accepted-prefix commit block: source dynamic n_keep, count1
+self-commit and multirow commit together, original verified carry ownership,
+pending state events, draft dependencies and final/cleanup joins. Current Rust
+still commits the full proposal before prefix repair and joins globally. The PLE
+normalized-row recomputation/role swap differs from source indexed snapshots;
+that and GDN state roles require explicit resolution in this block/final audit.
+Do not remove waits or abandon coupled components based on incidental speed.
+
+Goal remains active for CPU-only work. No GPU/model/service/sudo, installation,
+deployment, release or API/connector/UI changes. Required Vashti changes:none.
