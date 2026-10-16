@@ -3502,8 +3502,9 @@ impl<'a> GpuExecutor<'a> {
         if native_tile.is_some_and(|tile| tile.payload != padded) {
             return Err(Error::InvalidBufferLength);
         }
-        let exact = crate::strata_port::exact_static_cache()
-            && self.packed_profile == expert_banks::OriginalPackedProfile::DaslabIq3;
+        let exact = native_tile.is_some()
+            || (crate::strata_port::exact_static_cache()
+                && self.packed_profile == expert_banks::OriginalPackedProfile::DaslabIq3);
         let alignment = self.client.properties().memory.alignment as usize;
         if exact && (alignment == 0 || !alignment.is_power_of_two() || alignment > 4096) {
             return Err(Error::InvalidFormat("exact public static alignment"));

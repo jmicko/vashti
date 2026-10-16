@@ -515,6 +515,7 @@ mod tests {
         .unwrap();
         let mut logical = 0;
         let mut physical = 0;
+        let mut selected_logical = 0;
         for t in receipt["tensor_inventory"].as_array().unwrap() {
             let name = t["name"].as_str().unwrap();
             if name.ends_with("ffn_gate_exps.weight")
@@ -525,15 +526,25 @@ mod tests {
                 assert_eq!(total % EXPERT_COUNT as u64, 0);
                 let expert = total / EXPERT_COUNT as u64;
                 assert_eq!(expert_bytes(t["type_id"].as_u64().unwrap() as u32), expert);
-                logical += expert * BANK_SLOTS as u64;
-                physical += 2
-                    * (expert * SEGMENT_SLOTS as u64)
-                        .max(32768)
-                        .next_power_of_two();
+                // This is the independent historical144-slot receipt, even
+                // when the executable selects a240-slot port configuration.
+                logical += expert * 144;
+                selected_logical += expert * BANK_SLOTS as u64;
+                physical += 2 * (expert * 72).max(32768).next_power_of_two();
             }
         }
         assert_eq!(bank_bytes_144(), BankBytes { logical, physical });
         assert_eq!(logical, 14_144_716_800);
         assert_eq!(physical, 18_723_373_056);
+        let selected = selected_bank_bytes();
+        assert_eq!(selected.logical, selected_logical);
+        assert_eq!(
+            selected.physical,
+            if crate::strata_port::enabled() {
+                selected_logical
+            } else {
+                physical
+            }
+        );
     }
 }

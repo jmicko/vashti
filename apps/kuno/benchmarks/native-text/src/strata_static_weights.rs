@@ -325,6 +325,82 @@ mod tests {
         );
     }
     #[test]
+    fn original_shard_header_receipt_covers_every_dense_matrix_without_omission_or_conversion() {
+        let receipt: serde_json::Value = serde_json::from_str(include_str!(
+            "../../text/receipts/daslab-iq3-artifact-20261009.json"
+        ))
+        .unwrap();
+        let inventory = receipt["tensor_inventory"].as_array().unwrap();
+        let mut actual = inventory
+            .iter()
+            .map(|t| (t["name"].as_str().unwrap(), t))
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(actual.len(), crate::daslab_profile::TENSOR_COUNT);
+        assert_eq!(actual.len(), inventory.len());
+        let mut bytes = 0u64;
+        for g in geometries() {
+            let t = actual.remove(g.name.as_str()).unwrap();
+            let dims = t["dimensions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_u64().unwrap() as usize)
+                .collect::<Vec<_>>();
+            let expected = if g.name.ends_with("ffn_gate_inp_shexp.weight") {
+                vec![g.inputs]
+            } else {
+                vec![g.inputs, g.rows]
+            };
+            assert_eq!(dims, expected);
+            let dtype = t["type_id"].as_u64().unwrap() as u32;
+            assert_eq!(Some(dtype), crate::daslab_profile::expected_dtype(&g.name));
+            for alignment in [256, 4096] {
+                let tile = Tile::new(
+                    g.inputs,
+                    g.rows,
+                    t["row_bytes"].as_u64().unwrap() as usize,
+                    dtype,
+                    alignment,
+                )
+                .unwrap();
+                assert_eq!(tile.payload as u64, t["tensor_bytes"].as_u64().unwrap());
+                assert!(
+                    tile.owned >= tile.payload && tile.owned - tile.payload < alignment as usize
+                );
+                if alignment == 256 {
+                    bytes += tile.owned as u64;
+                }
+            }
+        }
+        assert_eq!(bytes, 3_644_840_960);
+        assert_eq!(actual.len(), 440);
+        assert_eq!(
+            actual
+                .keys()
+                .filter(|n| n.ends_with("_exps.weight"))
+                .count(),
+            144
+        );
+        for (name, t) in actual {
+            if matches!(
+                name,
+                "token_embd.weight" | "output.weight" | "per_layer_token_embd.weight"
+            ) || name.ends_with("_exps.weight")
+            {
+                continue;
+            }
+            // Every remaining original tensor is a separately prewarmed norm,
+            // control or convolution vector, never an omitted projection.
+            let dims = t["dimensions"].as_array().unwrap();
+            assert!(
+                dims.len() == 1
+                    || name.ends_with("ssm_conv1d.weight")
+                    || name == "blk.1.ple_conv1d.weight"
+            );
+            assert!(dims.iter().map(|v| v.as_u64().unwrap()).product::<u64>() <= 65536);
+        }
+    }
+    #[test]
     fn pinned_original_formats_fit_identical_complete_prompt_and_decode_tiles() {
         let mut bytes = 0u64;
         let mut payload = 0u64;
