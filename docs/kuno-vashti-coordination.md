@@ -6,17 +6,16 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, source `5d668c3cdbb669eb5d72bfa93fcccfbb3abe15ad`. Read the
-[subgroup handoff](#active-kuno-engine-handoff--original-device-subgroup-policy-2026-10-16)
-and [completion gate](kuno-strata-rewrite-completion.md). Original device policy
-and both pipeline builders now preserve fixed32 WGSL and separate cooperative16.
-463 distinct CPU cases and331 offline shaders pass. The PLE subgroup source gap
-is resolved; physical/numerical acceptance and full rewrite remain incomplete.
+`codex/strata-rust-port`, source `81ff9640afcaf9c520e1915ea668cd49bdef60dc`. Read the
+[sole residual handoff](#active-kuno-engine-handoff--sole-prompt-residual-2026-10-16)
+and [completion gate](kuno-strata-rewrite-completion.md). GR/PLE and actual MTP
+teacher now connect one target R plus idle teacher scratch.467 focused CPU cases
+pass. Full rewrite incomplete; physical/numerical/pricing gates remain open.
 
 User continuation remains CPU-only; goal active. No GPU/model/service/install/
-release/API/frontend action or current-health claim. Root not needed. Physical
-recovery stays historicalOct15. Canonical work and inherited untracked files
-preserved. Required Vashti changes:none.
+release/API/frontend action. Root not needed; shared-shell sudo refresh unconfirmed.
+Physical recovery stays historicalOct15; no current-health claim. Canonical work/
+inherited untracked files preserved. Required Vashti changes:none.
 
 ## Ownership
 
@@ -7083,3 +7082,31 @@ gated; current CLI compiled-public/one-request. Goal active CPU-only, rewrite
 incomplete, live speed gate closed. No GPU/model/service/install/release/API/
 frontend action; required Vashti changes:none. Root not needed. Physical recovery
 remains historicalOct15. Preserve canonical application work/untracked files.
+
+
+## Active Kuno engine handoff — sole prompt residual (2026-10-16)
+
+Source `81ff9640afcaf9c520e1915ea668cd49bdef60dc`, isolated `codex/strata-rust-port`.
+Read the [exact receipt](kuno-strata-rewrite-completion.md#sole-prompt-residual-and-coupled-teacher-scratch-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). Coupled GR/PLE now update the
+same original target R through one writable descriptor, with partial aliases
+rejected. Actual MTP teacher uses original idle PLE key scratch, preserving target
+carry. All outer/dynamic shared/mixed/tail consumers move together; second-R
+payload160MiB is removed. Fixed2080MiB roots remain; no physical refund/speed claim.
+The packed GR producer gains the required storage-memory ordering before other-
+lane reads. Earlier fixed32/cooperative16 policies remain connected.
+
+467 distinct CPU cases /58 nonempty suites, final locked release test build,
+strict core/off lint and changed formatting pass. Linked receipt preserves exact
+logs and corrected import/null-ID fixture failures. Normal artifact
+`strata-single-residual-ordinary-20261016/`, SHA256
+`215dc87b810702baa372bb7fd4709a2929695371508c7b0d6ef7728de0616d2c`; source-clean/stable build,
+independent hash/mode0500 and334 offline variants pass (122 physical checks). No device initialized; these
+checks do not establish numerical/device correctness. Remaining allocator/whole-
+device pricing/source/scheduling audit and full numerical/state/hot-request/
+failure/recovery acceptance remain required. Private executable input is an
+independent gate; current CLI compiled-public/one-request. Goal active CPU-only,
+rewrite incomplete, speed gate closed. No GPU/model/service/install/release/API/
+frontend action; required Vashti changes:none. Sudo refresh in the shared shell
+unconfirmed; no root needed. Physical recovery historicalOct15. Preserve canonical
+application work and inherited untracked files.

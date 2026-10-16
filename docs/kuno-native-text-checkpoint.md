@@ -1,34 +1,43 @@
-<!-- Current resume: 2026-10-16, source 5d668c3cdbb669eb5d72bfa93fcccfbb3abe15ad, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source 81ff9640afcaf9c520e1915ea668cd49bdef60dc, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, source `5d668c3cdbb669eb5d72bfa93fcccfbb3abe15ad`. Goal active CPU-only.
-Read the [subgroup receipt](kuno-strata-rewrite-completion.md#original-device-subgroup-policy-and-shared-pipeline-construction-2026-10-16)
-and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--original-device-subgroup-policy-2026-10-16).
-The original selected device now establishes fixed32 WGSL policy before module
-creation; ordinary and retained builders share exact required-size/flags/pNext
-construction. Cooperative-matrix SPIR-V stays16. Generic devices remain unset.
-Physical capabilities are checked before original device creation. No shader
-arithmetic, model/root allocation or application contract changed.
+branch `codex/strata-rust-port`, source `81ff9640afcaf9c520e1915ea668cd49bdef60dc`. Goal active CPU-only.
+Read the [sole residual receipt](kuno-strata-rewrite-completion.md#sole-prompt-residual-and-coupled-teacher-scratch-2026-10-16)
+and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--sole-prompt-residual-2026-10-16).
+All prompt GR/PLE halves now update original `outer[0]` in place. Exact view
+identity selects one writable descriptor; partial aliases fail. MTP teacher
+preserves the target carry and uses idle PLE `phase[1]` as its residual, with
+separate normalized hidden and token/status. Dynamic shared-expert indices,
+mixed-image identity, final carry and PLE diagnostic tail move together. The
+packed GR producer now has an explicit storage-memory barrier before other-lane
+reads. Fixed32/cooperative16 selection remains connected.
 
-463 distinct focused CPU cases /58 nonempty suites, locked checked release test
-build, strict core/off lint, formatting and331 offline shader variants pass
-(including122 physical checks). Normal artifact
-`strata-subgroup-owner-ordinary-20261016/`, SHA256
-`0810aa82d7699be35d866ec238010ec2272cb0ea9e27f84d04472e4d4fd27263`;
-source-clean/stable build and independent hash/mode0500 verified. Linked receipt
-records exact logs, earlier API correction and metadata-only fixture limitations.
-No adapter/device initialized; numerical/hardware acceptance is not established.
+467 distinct focused CPU cases /58 suites, final locked selected release test
+build, strict core/off lint and changed formatting pass. Linked receipt records
+exact logs, fixed test-import/null-ID fixture failures and source limits.
+Normal frozen artifact `strata-single-residual-ordinary-20261016/`, SHA256
+`215dc87b810702baa372bb7fd4709a2929695371508c7b0d6ef7728de0616d2c`; source-clean/stable build,
+independent hash/mode0500 and334 offline variants (122 physical checks) pass. No GPU/adapter
+initialized, numerical/model acceptance or performance claim. Removing the second
+R removes160MiB logical scratch inside unchanged2080MiB registered prompt roots;
+no physical memory refund.
 
-**Next:** native GR/PLE residual in-place consumers, allocator/whole-device pricing
-and final source/scheduling/substitution audit. The preceding PLE subgroup source
-gap is resolved; live subgroup acceptance remains open. Numerical/state/full-
-context/hot-request/failure/recovery gates remain. Protected private executable
-input is independently gated; current CLI is compiled-public/one-request. Whole
+**Next:** allocator granularity/whole-device pricing and final source/scheduling/
+substitution audit, then numerical/state/full-context/hot-request/failure/recovery
+acceptance under renewed GPU authorization. Protected private executable input
+remains an independent gate; current CLI compiled-public/one-request. Whole
 rewrite incomplete, speed gate closed. No GPU/model/service/install/release/API/
-frontend action; required Vashti changes:none. Root not needed; physical recovery
-remains historicalOct15. Preserve canonical work and inherited untracked files.
+frontend action; required Vashti changes:none. Root not needed; shared-shell sudo
+refresh is unconfirmed. Last physical recovery stays historicalOct15. Preserve
+canonical application work and inherited untracked files.
+
+**Previous subgroup block (`5d668c3`):**463 CPU cases,331 offline variants
+(122 physical checks), strict core/off lint and normal frozen artifact pass.
+Original selected device/module ownership preserves WGSL32 and cooperative16
+through both pipeline builders. See the previous subgroup receipt for exact
+artifact hash and physical acceptance limits. This source remains connected.
 
 **Previous PLE region block (`9d7821a`):**
 Key normalization uses one writable binding; query/conv regions share storage

@@ -1,16 +1,16 @@
 # Strata Rust whole-model port experiment
 
-**Current CPU-only resume (2026-10-16):** source `5d668c3cdbb669eb5d72bfa93fcccfbb3abe15ad`.
-Read the [original-device subgroup receipt](kuno-strata-rewrite-completion.md#original-device-subgroup-policy-and-shared-pipeline-construction-2026-10-16)
-and [checkpoint](kuno-native-text-checkpoint.md). Both actual Vulkan pipeline
-builders now preserve original selected WGSL32/cooperative16 requirements using
-one shared stage helper. Generic devices remain unset.463 distinct focused CPU
-cases /58 suites, strict core/off lint and331 offline shaders pass (122 physical
-checks). Normal artifact `strata-subgroup-owner-ordinary-20261016/`, SHA256
-`0810aa82d7699be35d866ec238010ec2272cb0ea9e27f84d04472e4d4fd27263`; source-clean/stable build,
-independent hash/mode0500 verified. No device initialization or numerical/model
-acceptance. Remaining in-place residual/allocator/source/scheduling and physical
-acceptance gates stay open. Full rewrite incomplete; live speed gate closed.
+**Current CPU-only resume (2026-10-16):** source `81ff9640afcaf9c520e1915ea668cd49bdef60dc`.
+Read the [sole residual receipt](kuno-strata-rewrite-completion.md#sole-prompt-residual-and-coupled-teacher-scratch-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). Actual GR/PLE prompt execution
+now keeps one target R with single writable descriptors; MTP teacher uses idle
+PLE scratch and preserves target carry.467 distinct focused CPU cases /58 suites,
+strict core/off lint and formatting pass. Normal artifact `strata-single-residual-ordinary-20261016/`, SHA256
+`215dc87b810702baa372bb7fd4709a2929695371508c7b0d6ef7728de0616d2c`; source-clean/stable build,
+independent hash/mode0500 and334 offline variants pass (122 physical checks). No device initialized. Second-R removal saves160MiB logical
+payload, while owning2080MiB roots remain unchanged. Remaining allocator/whole-
+device pricing/source/scheduling and numerical/hardware gates stay open. Whole
+rewrite incomplete, no live speed tests. Required Vashti changes:none.
 
 ## Active direction — finish the complete Rust port before speed testing (2026-10-14)
 
