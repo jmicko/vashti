@@ -17,6 +17,7 @@ use wgpu::BufferUsages;
 
 #[derive(Debug)]
 pub(crate) struct WgpuMemManager {
+    native_pins: super::strata_allocator_scope::Pins,
     memory_pool: MemoryManagement<WgpuStorage>,
     memory_uniforms: MemoryManagement<WgpuStorage>,
     memory_pool_staging: MemoryManagement<WgpuStorage>,
@@ -81,6 +82,7 @@ impl WgpuMemManager {
         );
 
         Self {
+            native_pins: Default::default(),
             memory_pool: memory_main,
             memory_pool_staging: memory_staging,
             memory_uniforms,
@@ -94,10 +96,21 @@ impl WgpuMemManager {
     }
 
     pub(crate) fn reserve(&mut self, size: u64) -> Result<ManagedMemoryHandle, IoError> {
-        match self.memory_pool.reserve(size) {
-            Ok(handle) => Ok(handle),
-            Err(err) => Err(err),
-        }
+        let handle = self.memory_pool.reserve(size)?;
+        self.native_pins
+            .retain(&handle.clone().binding())
+            .map_err(public_external_error)?;
+        Ok(handle)
+    }
+    pub(crate) fn begin_native_pins(&mut self, request: u64) -> Result<(), IoError> {
+        self.native_pins
+            .begin(request)
+            .map_err(public_external_error)
+    }
+    pub(crate) fn release_native_pins_joined(&mut self, request: u64) -> Result<(), IoError> {
+        self.native_pins
+            .release_joined(request)
+            .map_err(public_external_error)
     }
 
     pub(crate) fn reserve_staging(
@@ -115,6 +128,9 @@ impl WgpuMemManager {
     }
 
     pub(crate) fn get_resource(&mut self, binding: Binding) -> Result<WgpuResource, IoError> {
+        self.native_pins
+            .retain(&binding.memory)
+            .map_err(public_external_error)?;
         if cubecl_runtime::public_external::is_public_external_binding(&binding) {
             let mut resource = self
                 .public_external
@@ -151,7 +167,9 @@ impl WgpuMemManager {
     }
 
     pub(crate) fn memory_cleanup(&mut self, explicit: bool) {
-        self.memory_pool.cleanup(explicit);
+        if !self.native_pins.active() {
+            self.memory_pool.cleanup(explicit);
+        }
     }
 
     pub(crate) fn mode(&mut self, mode: MemoryAllocationMode) {
@@ -159,7 +177,9 @@ impl WgpuMemManager {
     }
 
     pub(crate) fn release_uniforms(&mut self) {
-        self.uniforms.clear();
+        if !self.native_pins.active() {
+            self.uniforms.clear();
+        }
     }
 }
 

@@ -28,6 +28,9 @@ pub(crate) struct Plan {
     accesses: Vec<Access>,
 }
 impl Plan {
+    pub fn accesses(&self) -> &[Access] {
+        &self.accesses
+    }
     /// Original canonical recorded descriptor/physical/indirect/copy owners.
     /// A whole dedicated I/O overwrite conflicts with ANY range on that buffer.
     /// No new allocation, caller-declared interval or data read is involved.
@@ -81,7 +84,8 @@ const MAX_REGIONS: usize = 262144;
 /// Segment0 releases Wgpu initialization before either queue's native work.
 pub const NATIVE_QUEUE_HOST_BYTES: usize = 128 * 1024 * 1024
     + super::strata_info_transfer::HOST_BYTES
-    + super::strata_io_reuse::HOST_BYTES;
+    + super::strata_io_reuse::HOST_BYTES
+    + super::strata_allocator_scope::HOST_BYTES;
 
 fn insert_region(
     regions: &mut Vec<Region>,

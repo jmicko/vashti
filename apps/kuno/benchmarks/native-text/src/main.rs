@@ -28,6 +28,9 @@ mod strata_handoff_tests;
 #[cfg(test)]
 use cubecl::wgpu::WgpuResource;
 #[cfg(test)]
+#[path = "../vendor/cubecl-wgpu/src/compute/strata_allocator_scope.rs"]
+mod strata_allocator_scope;
+#[cfg(test)]
 #[allow(dead_code)] // Test original scope bookkeeping without constructing a device.
 #[path = "../vendor/cubecl-wgpu/src/compute/strata_draft_scope.rs"]
 mod strata_draft_scope_tests;

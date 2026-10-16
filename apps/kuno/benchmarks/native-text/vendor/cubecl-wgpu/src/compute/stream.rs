@@ -280,6 +280,12 @@ impl WgpuStream {
                         flush: false,
                     })
                     .ok();
+                if let Some(graph) = self.strata_graph.as_mut() {
+                    if let Err(error) = graph.complete_primary_access() {
+                        self.error(error);
+                        return;
+                    }
+                }
                 self.write_to_buffer(&buffer, &data);
             }
             ScheduleTask::Execute {
@@ -363,6 +369,9 @@ impl WgpuStream {
                 ignore: false,
                 flush: true,
             })?;
+        }
+        if let Some(graph) = self.strata_graph.as_mut() {
+            graph.complete_primary_access()?;
         }
         Ok(())
     }
@@ -584,6 +593,12 @@ impl WgpuStream {
             .flush(StreamErrorMode {
                 ignore: false,
                 flush: true,
+            })
+            .and_then(|()| {
+                if let Some(graph) = self.strata_graph.as_mut() {
+                    graph.complete_primary_access()?;
+                }
+                Ok(())
             })
             .err();
 
@@ -961,6 +976,7 @@ impl WgpuStream {
             .is_err()
             || self.cleanup_boundary.retired();
         if let Some(graph) = &mut self.strata_graph {
+            graph.complete_primary_access()?;
             graph.clear_completed_recordings()?;
         }
         self.transient_io
@@ -1030,8 +1046,8 @@ impl WgpuStream {
     /// Selected native graph's real packet copy and synchronous HAL host map.
     /// Keep original I/O leases and wiping output controllers; no Wgpu primary
     /// copy/map callback/poll may serialize this observation behind MAIN work.
-    /// Conservative graph/flush/reuse joins still remain until scoped admission
-    /// is complete; this is not by itself an independent-execution claim.
+    /// Actual scoped admission and original allocator/I/O retention are still
+    /// subject to full physical/numerical acceptance; no overlap is claimed.
     fn read_native_private_resources(
         &mut self,
         descriptors: Vec<(WgpuResource, Shape, usize)>,
@@ -1063,8 +1079,9 @@ impl WgpuStream {
                     self.initialize_native_storage_root(source)?;
                 }
             }
-            // This is the existing conservative join, not a completion minted
-            // from an empty encoder, timer, metadata query or pending token.
+            // Finish original queued/current-lane producers. Actual fresh
+            // primary initialization still forces a full drain; warm native
+            // observation does not join unrelated target commit work.
             self.flush(StreamErrorMode {
                 ignore: false,
                 flush: true,
@@ -1711,9 +1728,17 @@ impl WgpuStream {
             .as_mut()
             .unwrap()
             .native_submission_scope()?;
+        if self.strata_graph.is_none() {
+            return Err(super::transient_io::fault(
+                "draft requires original native graph",
+            ));
+        }
+        self.mem_manage
+            .begin_native_pins(request)
+            .map_err(ServerError::Io)?;
         self.strata_graph
             .as_mut()
-            .ok_or_else(|| super::transient_io::fault("draft requires original native graph"))?
+            .unwrap()
             .prepare_draft_scope(request, source)
     }
     pub(crate) fn enter_native_strata_draft_scope(
@@ -1752,7 +1777,15 @@ impl WgpuStream {
         self.strata_graph
             .as_mut()
             .ok_or_else(|| super::transient_io::fault("draft original graph missing"))?
-            .end_draft_scope(scope, request)
+            .end_draft_scope(scope, request)?;
+        // Both original native lanes/readiness/visibility joined before pins,
+        // uniform ownership or the allocator's deferred cleanup can be released.
+        self.mem_manage
+            .release_native_pins_joined(request)
+            .map_err(ServerError::Io)?;
+        self.mem_manage.memory_cleanup(false);
+        self.mem_manage.release_uniforms();
+        Ok(())
     }
     pub(crate) fn submit_native_strata_experts(&mut self) -> Result<(), ServerError> {
         self.private_io_active()?;
@@ -1796,10 +1829,15 @@ impl WgpuStream {
         result
     }
     fn flush_inner(&mut self, mode: StreamErrorMode, wait_native: bool) -> Result<(), ServerError> {
-        // Wgpu does not track our native queue fence. Join before parameter
-        // uploads, readback, reuse, errors or memory cleanup touch shared owners.
+        // Actual primary work still requires a global drain/visibility. Native
+        // draft-only work finishes its own lane; original access admission and
+        // managed allocation pins retain any unrelated pending target owners.
         if let Some(graph) = self.strata_graph.as_mut() {
-            graph.complete_submission()?;
+            if self.encoder_dirty || self.pending_write_count != 0 {
+                graph.complete_primary_access()?;
+            } else {
+                graph.complete_scoped_submission()?;
+            }
         }
         if self.tasks_count == 0
             && !self.encoder_dirty
@@ -1855,7 +1893,7 @@ impl WgpuStream {
         } else {
             None
         };
-        let pending_native = self.strata_graph.as_ref().is_some_and(|g| g.pending());
+        let pending_native = self.strata_graph.as_ref().is_some_and(|g| g.queued());
         if (pending_native || native_info.as_ref().is_some_and(|p| !p.is_empty()))
             && let Some(index) = &index
         {
@@ -1888,9 +1926,10 @@ impl WgpuStream {
             }
         }
         if wait_native {
-            // Also join an INFO-only transfer if no math was queued.
+            // INFO source completion alone does not consume visibility owed
+            // to a future native math header. Keep unrelated target work live.
             if let Some(graph) = self.strata_graph.as_mut() {
-                graph.complete_submission()?;
+                graph.complete_scoped_submission()?;
             }
             if let Some(index) = index {
                 self.cleanup_boundary.ordinary_regulation(|| {

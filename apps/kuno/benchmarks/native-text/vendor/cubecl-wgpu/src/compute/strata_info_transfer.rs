@@ -178,7 +178,7 @@ impl Uploads {
         self.pending
     }
     pub fn wait(&self) -> Option<Wait> {
-        self.pending.then_some(Wait {
+        self.needs_visibility().then_some(Wait {
             semaphore: self.timeline,
             value: self.epoch,
         })
@@ -188,7 +188,7 @@ impl Uploads {
         record_joined(&mut self.joined_epoch, self.epoch, epoch)
     }
     pub fn needs_visibility(&self) -> bool {
-        self.pending && self.joined_epoch < self.epoch
+        visibility_pending(self.epoch, self.joined_epoch)
     }
     pub fn complete(&mut self) -> Result<(), &'static str> {
         if self.pending {
@@ -288,6 +288,12 @@ const _: () = assert!(
         <= HOST_BYTES
 );
 
+// Copy completion is deliberately absent: a signaled copy timeline still
+// owes a GPU wait until an original consumer or explicit full handoff joins.
+fn visibility_pending(latest: u64, joined: u64) -> bool {
+    joined < latest
+}
+
 fn record_joined(joined: &mut u64, latest: u64, epoch: u64) -> Result<(), &'static str> {
     if epoch > latest {
         return Err("native joined INFO epoch not submitted");
@@ -341,6 +347,21 @@ mod tests {
         assert_eq!(incoming[1].first, 0);
         assert_eq!(incoming[1].bytes, 4096);
         assert!(incoming[1].write);
+    }
+    #[test]
+    fn completed_copy_still_owes_visibility_until_a_real_consumer_or_full_handoff() {
+        let mut joined = 0;
+        assert!(!visibility_pending(0, joined));
+        let epoch = 1;
+        assert!(visibility_pending(epoch, joined));
+        // Production completes/reuses the copy fence without mutating either
+        // epoch. A later header must still carry this exact timeline value.
+        assert!(visibility_pending(epoch, joined));
+        record_joined(&mut joined, epoch, epoch).unwrap();
+        assert!(!visibility_pending(epoch, joined));
+        assert!(visibility_pending(2, joined));
+        assert!(record_joined(&mut joined, 2, 3).is_err());
+        assert!(visibility_pending(2, joined));
     }
     #[test]
     fn joined_math_credits_only_its_original_info_wait_not_a_newer_copy() {

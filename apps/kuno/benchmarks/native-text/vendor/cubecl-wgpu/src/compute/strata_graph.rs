@@ -761,7 +761,6 @@ impl Graph {
         read_dependencies: Vec<WgpuResource>,
         dispatch: Dispatch,
     ) -> Result<(), ServerError> {
-        self.complete_submission()?;
         if self.nodes.len() >= 32768 {
             return Err(fault("native graph node capacity"));
         }
@@ -892,9 +891,9 @@ impl Graph {
             read_dependencies,
             dispatch,
         };
-        self.draft_scope
-            .check_accesses(&self.node_ranges(&node)?)
-            .map_err(fault)?;
+        let accesses = self.node_ranges(&node)?;
+        self.draft_scope.check_accesses(&accesses).map_err(fault)?;
+        self.admit_accesses(&accesses, self.queue)?;
         self.nodes.push(node);
         Ok(())
     }
@@ -905,7 +904,6 @@ impl Graph {
         source: Option<WgpuResource>,
         target: WgpuResource,
     ) -> Result<(), ServerError> {
-        self.complete_submission()?;
         if self.nodes.len() >= 32768
             || target.size == 0
             || target.offset % 4 != 0
@@ -937,9 +935,9 @@ impl Graph {
             read_dependencies: Vec::new(),
             dispatch,
         };
-        self.draft_scope
-            .check_accesses(&self.node_ranges(&node)?)
-            .map_err(fault)?;
+        let accesses = self.node_ranges(&node)?;
+        self.draft_scope.check_accesses(&accesses).map_err(fault)?;
+        self.admit_accesses(&accesses, self.queue)?;
         self.nodes.push(node);
         Ok(())
     }
@@ -1103,15 +1101,20 @@ impl Graph {
         Ok(())
     }
     /// Every unkeyed producer and named MTP branch stays inside the original
-    /// active scope. Conservative global joins remain until observation/reuse
-    /// and all exact cross-lane hazards are connected as one execution scope.
+    /// active scope. Entry waits on the desired lane, never MAIN behind commit.
     pub(crate) fn select_branch_queue(
         &mut self,
         branch: Option<cubecl_runtime::server::NativeStrataBranch>,
     ) -> Result<(), ServerError> {
         let named = branch.map(|b| usize::from(b.mtp_geometry().is_some()));
         let lane = self.draft_scope.lane(named).map_err(fault)?;
-        self.complete_submission()?;
+        if self.draft_scope.active_request().is_some() {
+            self.preflight_flights()?;
+            self.complete_lane_submission(lane)?;
+            self.handoff.complete().map_err(fault)?;
+        } else {
+            self.complete_submission()?;
+        }
         if !self.nodes.is_empty() {
             return Err(fault("native queue switch has unsubmitted nodes"));
         }
@@ -1152,7 +1155,7 @@ impl Graph {
         }
         let accesses = super::strata_info_transfer::accesses(&copies).map_err(fault)?;
         self.draft_scope.check_accesses(&accesses).map_err(fault)?;
-        self.join_conflicting_accesses(&accesses)?;
+        self.admit_accesses(&accesses, self.copy_queue)?;
         // Reuse only the INFO command pool's original completed copy. Its old
         // math consumers retain their own complete resources and header epochs.
         // Drop temporary ranges before allocating submit's validation metadata.
@@ -1162,36 +1165,111 @@ impl Graph {
             .submit(self.copy_queue, copies)
             .map_err(fault)
     }
-    fn join_conflicting_accesses(
-        &mut self,
-        incoming: &[strata_schedule::Access],
-    ) -> Result<(), ServerError> {
-        let mut joins = [false; 2];
-        // Preflight BOTH original flights before waiting on or crediting any.
-        // Unknown/partial work never authorizes an independent upload.
-        for (lane, needed) in joins.iter_mut().enumerate() {
-            let Some(flight) = self.flights.peek(lane).map_err(fault)? else {
-                continue;
-            };
-            if !flight.submitted {
-                return Err(fault("native partial pending access owner"));
-            }
-            let recording = self
-                .recordings
-                .iter()
-                .find(|r| r.id == flight.recording)
-                .ok_or_else(|| fault("native pending access recording missing"))?;
-            if recording.family != self.compute_queues[lane].family {
-                return Err(fault("native pending access original family"));
-            }
-            *needed = recording.work.plan.conflicts(incoming).map_err(fault)?;
-        }
-        for (lane, needed) in joins.into_iter().enumerate() {
-            if needed {
-                self.complete_lane_submission(lane)?;
+    /// Preflight BOTH original lanes before granting any completion credit.
+    fn preflight_flights(&self) -> Result<(), ServerError> {
+        for lane in 0..2 {
+            if let Some(flight) = self.flights.peek(lane).map_err(fault)? {
+                let recording = self
+                    .recordings
+                    .iter()
+                    .find(|r| r.id == flight.recording)
+                    .ok_or_else(|| fault("native pending access recording missing"))?;
+                if !flight.submitted || recording.family != self.compute_queues[lane].family {
+                    return Err(fault("native pending access original family/submission"));
+                }
             }
         }
         Ok(())
+    }
+    fn access_joins(&self, incoming: &[strata_schedule::Access]) -> Result<[bool; 2], ServerError> {
+        self.preflight_flights()?;
+        let mut joins = [false; 2];
+        for (lane, needed) in joins.iter_mut().enumerate() {
+            if let Some(flight) = self.flights.peek(lane).map_err(fault)? {
+                let recording = self
+                    .recordings
+                    .iter()
+                    .find(|r| r.id == flight.recording)
+                    .ok_or_else(|| fault("native pending access recording missing"))?;
+                *needed = recording.work.plan.conflicts(incoming).map_err(fault)?;
+            }
+        }
+        Ok(joins)
+    }
+    fn join_accesses(
+        &mut self,
+        mut joins: [bool; 2],
+        destination: vk::Queue,
+    ) -> Result<(), ServerError> {
+        // The selected compute lane owns its command/fence scratch. Copies
+        // may additionally use the transfer lane; conflicts still name their
+        // original compute fence, which covers every segment of that work.
+        joins[self.compute_lane] = true;
+        for (lane, needed) in joins.into_iter().enumerate() {
+            if needed && self.flights.peek(lane).map_err(fault)?.is_some() {
+                self.complete_lane_submission(lane)?;
+                let source = self.compute_queues[lane].queue;
+                if source != destination {
+                    self.handoff.transfer(source, destination).map_err(fault)?;
+                    self.handoff.complete().map_err(fault)?;
+                }
+            }
+        }
+        Ok(())
+    }
+    fn admit_accesses(
+        &mut self,
+        incoming: &[strata_schedule::Access],
+        destination: vk::Queue,
+    ) -> Result<(), ServerError> {
+        if self.draft_scope.active_request().is_none() {
+            self.complete_submission()?;
+            return Ok(());
+        }
+        let joins = self.access_joins(incoming)?;
+        self.join_accesses(joins, destination)
+    }
+    fn admit_math_submission(&mut self) -> Result<(), ServerError> {
+        if self.draft_scope.active_request().is_some() {
+            self.complete_scoped_submission()
+        } else {
+            // Preserve the original math header's actual INFO timeline wait.
+            self.complete_math_submission()
+        }
+    }
+    /// Ordinary/final synchronization remains global. Only the original active
+    /// draft scope can finish its own lane without joining unrelated MAIN.
+    pub(crate) fn complete_scoped_submission(&mut self) -> Result<(), ServerError> {
+        if self.draft_scope.active_request().is_none() {
+            return self.complete_submission();
+        }
+        if self.compute_lane != 1 {
+            return Err(fault("native active draft selected lane mismatch"));
+        }
+        self.preflight_flights()?;
+        self.complete_lane_submission(1)?;
+        self.handoff.complete().map_err(fault)?;
+        if let Some(ready) = self.draft_readiness.as_mut() {
+            ready.complete().map_err(fault)?;
+        }
+        // CPU reuse of an INFO source requires the real transfer fence, but
+        // does not consume the timeline visibility owed to future math.
+        self.info_uploads.complete().map_err(fault)
+    }
+    /// Real Wgpu work needs all old native users and MAIN visibility. Cold root
+    /// initialization must not be silently skipped to manufacture overlap.
+    pub(crate) fn complete_primary_access(&mut self) -> Result<(), ServerError> {
+        self.complete_submission()?;
+        if self.compute_lane != 0 {
+            self.handoff
+                .transfer(self.queue, self.compute_queues[0].queue)
+                .map_err(fault)?;
+            self.handoff.complete().map_err(fault)?;
+        }
+        Ok(())
+    }
+    pub(crate) fn queued(&self) -> bool {
+        !self.nodes.is_empty()
     }
     /// Actual selective checkpoint for the same serialized stream's immutable
     /// full I/O owners. No new work/owner mutation may interleave before apply.
@@ -1296,17 +1374,29 @@ impl Graph {
         wait: bool,
         primary_writes: bool,
     ) -> Result<(), ServerError> {
-        self.complete_math_submission()?;
-        if self.pending() || !self.has_recording(key) {
+        self.admit_math_submission()?;
+        if self.queued() || !self.has_recording(key) {
             return Err(fault("native direct replay recording unavailable"));
         }
-        let hit = self
+        let original = self
             .recordings
             .iter()
-            .position(|r| {
+            .find(|r| {
                 r.ready && r.key == Some(key) && r.family == self.family && !self.flights.live(r.id)
             })
             .ok_or_else(|| fault("native direct replay recording missing"))?;
+        let id = original.id;
+        // The actual retained plan supplies all ranges. No rebuilt-node or
+        // caller-declared substitute is accepted for direct replay.
+        let joins = self.access_joins(original.work.plan.accesses())?;
+        self.join_accesses(joins, self.queue)?;
+        // Joining sampled peer work can remove a Vec entry. Re-find the exact
+        // stable original ID rather than using a pre-join position.
+        let hit = self
+            .recordings
+            .iter()
+            .position(|r| r.id == id)
+            .ok_or_else(|| fault("native direct replay original disappeared"))?;
         let recording = self.recordings.remove(hit);
         let compute_count = recording.compute_count;
         self.recordings.push(recording);
@@ -1317,7 +1407,7 @@ impl Graph {
         }
         self.submit_last_recording(compute_count, true, false)?;
         if wait {
-            self.complete_submission()?;
+            self.complete_scoped_submission()?;
         }
         Ok(())
     }
@@ -1402,9 +1492,9 @@ impl Graph {
         // copy. Only its actual header epoch was consumed, so decide AFTER
         // joining the original flights whether any newer copy still lacks a
         // completed consumer. Merely having had math is not visibility proof.
-        let info_only = self.info_uploads.needs_visibility();
+        let info_only = self.info_uploads.wait();
         self.info_uploads.complete().map_err(fault)?;
-        if info_only {
+        if let Some(info_only) = info_only {
             // Without a math header no GPU consumer has waited on the upload
             // timeline. An explicit INFO-only drain must establish visibility
             // for both its selected native lane and later Wgpu read/cleanup.
@@ -1418,6 +1508,9 @@ impl Graph {
                     .map_err(fault)?;
                 self.handoff.complete().map_err(fault)?;
             }
+            self.info_uploads
+                .math_fence_joined(info_only.value)
+                .map_err(fault)?;
         }
         Ok(())
     }
@@ -1451,6 +1544,13 @@ impl Graph {
             ));
         }
         let id = recording.id;
+        let joins = self.access_joins(recording.work.plan.accesses())?;
+        self.join_accesses(joins, self.queue)?;
+        // Joining a sampled peer may remove an earlier Vec entry; ownership
+        // must still resolve to this exact original tail, never an old index.
+        if self.recordings.last().is_none_or(|r| r.id != id) {
+            return Err(fault("native original submission recording changed"));
+        }
         let fence = self.fences[self.compute_lane];
         self.flights
             .begin(self.compute_lane, id, compute_count, replay, profiling)
@@ -1556,7 +1656,7 @@ impl Graph {
         key: Option<super::strata_parameters::RecordingKey>,
         primary_writes: bool,
     ) -> Result<(), ServerError> {
-        self.complete_math_submission()?;
+        self.admit_math_submission()?;
         if self.nodes.is_empty() {
             return Ok(());
         }
@@ -1621,7 +1721,7 @@ impl Graph {
             self.recordings.push(recording);
             self.submit_last_recording(compute_count, true, false)?;
             if wait {
-                self.complete_submission()?;
+                self.complete_scoped_submission()?;
             }
             return Ok(());
         }
@@ -2029,7 +2129,7 @@ impl Graph {
         );
         self.submit_last_recording(compute_count, false, profiling)?;
         if wait {
-            self.complete_submission()?;
+            self.complete_scoped_submission()?;
         }
         Ok(())
     }
