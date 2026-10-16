@@ -6,18 +6,18 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, source `308de4079bae86efa59c9bbeaba75d93dc481448`. Read the
-[whole-head handoff](#active-kuno-engine-handoff--whole-original-heads-2026-10-16)
-and [completion gate](kuno-strata-rewrite-completion.md). Target and compact-CJK
-MTP now each project the whole original head in one launch, owning/charging their
-32 KiB metadata tables and retaining all original weight pages. 532 CPU cases,
-strict core/off binary lint and356 offline shaders/139 physical checks pass.
-Whole rewrite incomplete; final source/physical/numerical/recovery gates stay open.
-No live speed trial or consumer/API change; required Vashti changes: none.
+`codex/strata-rust-port`, source `8a4ee5b820ad3508b6d7f60d4d58e5efd81bd408`. Read the
+[coupled-sampler handoff](#active-kuno-engine-handoff--coupled-draft-sampling-2026-10-16)
+and [completion gate](kuno-strata-rewrite-completion.md). Both draft domains now
+use original in-place penalties, fixed 64 candidate lists and request-K merge
+before the original output/ring publication. Target/greedy sampling stays separate.
+534 selected CPU cases, strict binary core/off lint and 360 offline
+variants/139 physical checks pass. Whole rewrite incomplete; no live speed
+trial or numerical/device acceptance. No API/consumer change; Vashti changes: none.
 
-Continuation CPU-only; goal active. No GPU/model/service/install/release/frontend
-action. Root not needed; latest shared-shell sudo refresh still reports a password
-required. Physical recovery historicalOct 15. Preserve canonical/inherited work.
+Goal active CPU-only. No GPU/model/service/install/release/frontend action. Root
+not needed; latest shared-shell refresh unsuccessful. Physical recovery remains
+historical Oct 15. Preserve canonical/inherited work.
 
 ## Ownership
 
@@ -7315,3 +7315,32 @@ release/frontend/API action or physical performance/residency/refund claim.
 Required Vashti changes: none. Goal active CPU-only. Root not needed; latest shared
 shell refresh still reports a password required. Physical recovery historicalOct 15.
 Preserve canonical application work and inherited files. No deployment authority.
+
+## Active Kuno engine handoff — coupled draft sampling (2026-10-16)
+
+Source `8a4ee5b820ad3508b6d7f60d4d58e5efd81bd408`, isolated `codex/strata-rust-port`. Read the
+[source/acceptance receipt](kuno-strata-rewrite-completion.md#coupled-draft-penalty-writes-and-fixed-64-selection-2026-10-16) and
+[checkpoint](kuno-native-text-checkpoint.md). Full and compact-CJK draft callers
+now select the complete original coupled sequence, including the logits writer
+and fixed 64 list/merge dependency. Candidate/Params/output/history owners and
+all admission prices remain unchanged; no weight, private or public root is added.
+Target and greedy MTP sampling retain their separate original selection. Existing
+GPU counter/ring/ID bridges and target position-based draw semantics were audited;
+physical/numerical execution remains unverified.
+
+534 CPU cases / 68 suites, selected release check/test build, strict core/off
+binary lint and changed formatting pass. Normal stable-source frozen artifact
+`strata-coupled-sampling-ordinary-20261016/` has SHA256
+`c8ee12ced38eb658a5ebd8082a221dd0e49ea778b429b78d956417021ea295a6`; independent source/original hash/mode0500 pass. Offline validator
+accepts 360 Naga/SPIR-V variants and 139 physical checks before device
+creation. Exact logs and CPU oracle limits are in the linked receipt. Do not claim
+all-target/test lint passing; inherited findings remain in the previous receipt.
+
+Whole rewrite incomplete; speed gate closed. Remaining final source/queue/
+ownership/pricing/substitution audit and protected numerical/state/context/hot-
+request/failure/recovery acceptance stay required. Preserve existing adaptive
+substitutions and independent protected-private-caller gate (CLI compiled-public/
+one-request). Goal active CPU-only. No GPU/model/inference/service/install/
+release/frontend/API action. Required Vashti changes: none. Root not needed;
+last shared-shell sudo refresh unsuccessful. Physical recovery historical Oct 15.
+Canonical/inherited files preserved. No deployment authority.

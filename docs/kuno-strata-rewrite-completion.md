@@ -6,33 +6,30 @@ checklist is a source-to-source audit, not a sequence of throughput experiments.
 Each row needs its connected consumer, real ownership/placement and state contract;
 adding an unused helper or optional switch does not complete a row.
 
-**Current CPU-only source:** `308de4079bae86efa59c9bbeaba75d93dc481448`. Read the
-[whole-head receipt](#whole-original-target-and-compact-cjk-head-dispatch-2026-10-16)
-and [checkpoint](kuno-native-text-checkpoint.md).
-Target and compact-CJK MTP now each prepare Q8 once and project their whole
-original Q6 head in one 128-thread/four-row dispatch. Original bounded source
-pages remain; actual native recordings retain every page they read. Two owning
-32 KiB address tables add 65,536 public GPU bytes in the shared model plan. Exact
-original tensor subtraction, private/source windows and model bytes are unchanged.
+**Current CPU-only source:** `8a4ee5b820ad3508b6d7f60d4d58e5efd81bd408`, isolated
+`codex/strata-rust-port`. Read the [coupled-sampler receipt](kuno-strata-rewrite-completion.md#coupled-draft-penalty-writes-and-fixed-64-selection-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). Full-vocabulary and compact-CJK
+MTP now select Strata's complete coupled sequence: once-per-token in-place
+penalties, fixed 64-entry part lists, request-sized merge/tail, then original
+ID/probability/ring publication. Target sampling and greedy MTP remain separate.
+The same private logits/history/candidates/params/output roots are retained;
+no model/public/private allocation or application contract changes.
 
-532 distinct selected CPU cases / 68 suites, strict core/off binary Clippy,
-changed formatting/whitespace and normal stable-source build pass. Frozen artifact
-`strata-whole-head-ordinary-20261016/` has SHA256
-`5766b594472a1debfcf18c07a8ff01459239d60913e3266971a17ba2995a3f0a`. Independent source/hash/mode0500 checks pass;
-`strata-whole-head-shaders-20261016.log` accepts 356 offline Naga/SPIR-V
-variants and 139 physical-pointer checks. The validator returns before device
-creation. These are source/CPU/compiler checks, not GPU numerical/model acceptance.
+534 selected CPU cases / 68 suites and strict core/off **binary** Clippy
+pass. Stable-source frozen artifact `strata-coupled-sampling-ordinary-20261016/`
+has SHA256 `c8ee12ced38eb658a5ebd8082a221dd0e49ea778b429b78d956417021ea295a6`; independent source/original hash and mode0500 checks pass.
+Its offline validator accepts 360 Naga/SPIR-V variants and 139 physical
+checks, before device creation. These do not establish GPU numerical correctness.
 
 Whole rewrite remains incomplete; live speed gate closed. Next final connected
-sampling/source/queue/ownership/pricing/substitution audit, then protected full
-numerical/state/context/hot-request/failure/recovery acceptance under renewed GPU
-permission. Keep adaptive serial-proposal/shared-copy-queue/first-window
-substitutions explicit. Protected private caller remains independently gated;
-current CLI compiled-public/one-request. No GPU/model/inference/service/install/
-release/frontend/API action or physical performance/residency/refund claim.
-Required Vashti changes: none. Goal active CPU-only. Root not needed; latest shared
-shell refresh still reports a password required. Physical recovery historicalOct 15.
-Preserve canonical application work and inherited files. No deployment authority.
+source/queue/ownership/pricing/substitution audit and protected full numerical/
+state/context/hot-request/failure/recovery acceptance under renewed GPU permission.
+Keep existing adaptive serial-proposal/shared-copy-queue/first-window substitutions
+explicit. Protected private caller remains independently gated; CLI is compiled-
+public/one-request. Goal active CPU-only. No GPU/model/inference/service/install/
+release/frontend/API action. Required Vashti changes: none. Root not needed;
+last shared-shell sudo refresh unsuccessful. Physical recovery remains historical
+Oct 15; canonical and inherited files preserved. No deployment authorization.
 
 ## Reference and execution scope
 
@@ -85,7 +82,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. The bounded prompt path now uses logical-ID expert order, checked native transfer nodes, an eight-slot raw ring and two paired dequantization slots. The latest owned-consumer receipt connects full2048-row owners, non-overlapping raw/grouped route packets, causal math/state scopes, the unbatched final prompt input uses normal count1 decode for the first head, and full device MTP teaching covers the preceding prefix (up to8192 matrix rows). Independent transfer/compute queues and real release boundaries are connected. The measured server uses4096 prompt rows and32768 context. Source `bcc30dd` connects4096-row prompt owners/ABI; source `8d301b1` subsequently connects32768 runtime context; full-prefix/device acceptance is open. Source `12a60bf` connects native phase overlays, actual2080MiB admitted roots and256-query score/selection reuse; see the latest prompt-overlay receipt. Packed/in-place prompt scratch is connected in the latest receipts. Source allocation granularity and shared inventory are connected in the latest exact-page receipt. Physical/runtime/HOST pricing and lifetimes still require final review. Its no-borrow selection and nonresident fraction select the existing eight-slot/two-dequant-ring path; alternative loans/ring sizes are not prerequisites. Physical whole-model acceptance remains open. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
 | Prompt dense/expert matrix backend | Intel oneMKL rounded BF16/FP16 GEMMs | Connected Rust cooperative8x16x16/F32 kernels now consume the actual rounded dense and grouped GU/DOWN images, with enabled device features, SPIR-V native registration and required16 subgroup in both pipeline paths. See the cooperative-matrix receipt; physical numerical/model acceptance remains open. |
 | MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native INT8 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Positive-threshold chains now keep hidden carries on device and observe the same token/probability/fault packet as zero-threshold chains; mapped/event scheduling remains open. First/grouped device-source and ids-only target result consumers now exist; the shared-context constructor receipt below supersedes the separate-client blocker. Core construction now selects the actual target client and one combined account. Source9de7fef pins the original target embedding/head once, shares them with MTP and gathers target embeddings on GPU. Actual device/state acceptance is pending. Source0bfbea8 connects the original-order CJK106299-row Q6 draft head, inverse-ID history mapping, compact confidence and coupled sampling; source2a3d1ad connects INT8 caches. Combined CPU checks pass, with full numerical/GPU execution still pending. Source `862f5fa` separates first-front staging and actual observation from capture, and prestages all coupled draft controls once per round. Source `8262367` connects typed MTP phases/4096 boundaries and original model-instance graph namespaces; source `d0670b0` connects direct original MTP replay and capture-derived host/sampler handback. Physical acceptance, commit/event fidelity, numerical/state acceptance and runtime policy remain required. See the latest device-end receipt. |
-| Output heads and sampling | `core/native_head.cpp`, `native_mmvq.dp.cpp`, `core/verify.cpp`, `core/mtp.cpp` | Source `ffe7293` connects original aligned wide Q6 A2/RPW1/SG32 and exact1–8 RHS math. Source `308de40` connects ONE whole-head target and compact-CJK MTP projection over the same original bounded roots, owning authenticated address tables, all physical read dependencies and exact admission. This supersedes the earlier per-page source gap. Final sampling/draw/verification audit and numerical/model acceptance remain open. |
+| Output heads and sampling | `core/native_head.cpp`, `native_mmvq.dp.cpp`, `core/verify.cpp`, `core/mtp.cpp` | Source `ffe7293` connects original aligned wide Q6 A2/RPW1/SG32 and exact1–8 RHS math. Source `308de40` connects ONE whole-head target and compact-CJK MTP projection over the same original bounded roots, owning authenticated address tables, all physical read dependencies and exact admission. This supersedes the earlier per-page source gap. Final sampling/draw/verification audit and numerical/model acceptance remain open.  Source `8a4ee5b` connects original in-place coupled penalties, fixed 64 lists, request-K merge and original publication for BOTH draft domains; target sampling stays separate. Counter/history source audit below passes; numerical/device acceptance remains open. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Sourcea26adc2 ports the native bounded trigram index, longest/recent suffix choice, cost priors, probing/stale rules and optional lookup-chain accounting into the selected controller. Configured MTP/target windows no longer shrink at the output cap; state commit and emission are separate. Coupled sampling and physical state acceptance still need end-to-end validation. |
 | Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Source `131d29c` connects real provisional rows to accepted GDN/QSA/PLE candidates while original full-window transactions remain open, then publishes only n after real fault/I/O proof. Count1 uses its candidate and all-accept multirow runs original state replay. Old diagnostic full-window repair is not selected by the native controller. Source `4083258` connects the retained multirow commit graph with explicit dynamic accepted-count/position fields, original family preflight and count1 skip. Source `91e1f9e` connects original pending commit export/join; `1f46f76` connects a scoped original next-draft consumer before explicit commit acknowledgement. Source `0bf0b5f` emits real verified predictions before next drafting, matching the source delivery order. Source `f9d1e06` connects scoped admission/allocator lifetimes and INFO visibility; physical independent execution, full source substitution audit and independent numerical oracle remain open. |
 | Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; Source `d40442c` connects direct retained target submission with typed control uploads and original family receipts; source `d0670b0` connects direct MTP invocation with original actual packet observations and sampler/actor handback. Source `b6732c8` adopts independent MTP compute and concurrent buffer families with semaphore handoffs. Source `414e2c3` connects actual current INFO copies on the native transfer timeline and avoids empty primary submissions; source `86f4c35` replaces the global single fence/last-recording assumption with actual lane fences and stable original recording flights. Source `131d29c` connects synchronous original accepted-prefix publication; source `4083258` connects the retained commit graph. Source `91e1f9e` connects original pending submission identities and exact joins; `1f46f76` connects scoped original MTP consumption before explicit commit acknowledgement. Real independent readiness/INFO/draft execution remain open; source `543bc73` couples original pending commits to retained shared MAIN debt; source `a8e538f` retains actual recording ranges and preflights whole INFO-copy conflicts; source `d2d3228` pins original verified R, submits its real readiness dependency before commit and scopes all unkeyed/named draft lane selection. Source `7ad47ca` connects original native packet fill/copy, real HOST_READ availability, final fence and checked HAL host map without primary Wgpu readback copies/callbacks. Source `7cb1cbc` connects native upload state/render/flush/unmap and all-owner joined I/O reuse without Wgpu remaps or primary reuse clears. Source `7477b66` connects original per-owner selective reuse, current INFO copy completion and named/future/live recording exclusions. Source `f9d1e06` connects scoped graph/stream current-lane/conflict admission, original allocator pins and copy-vs-math INFO visibility. Required ordinary/cold/final global drains remain. Physical independent execution and full draft/event fidelity remain unverified. Physical ring overlap, scratch lifetimes and full execution acceptance remain open. Measured serving lazily captures branches; eager all-branch warmup is not a prerequisite; a sequence of independent Wgpu launches is not equivalent. |
@@ -8668,3 +8665,89 @@ release/frontend/API action or physical performance/residency/refund claim.
 Required Vashti changes: none. Goal active CPU-only. Root not needed; latest shared
 shell refresh still reports a password required. Physical recovery historicalOct 15.
 Preserve canonical application work and inherited files. No deployment authority.
+
+## Coupled draft penalty writes and fixed 64 selection (2026-10-16)
+
+Source `8a4ee5b820ad3508b6d7f60d4d58e5efd81bd408`, isolated `codex/strata-rust-port`. Keep the complete
+connected branch, including original shared model/arena/graph dependencies. This
+supersedes the former draft reuse of target's request-sized inline-penalty sampler.
+It does not change which native model, cache format, device or application is selected.
+
+Pinned MIT Strata `fb58e0dbc8399662c0e47c76578c6e878b14f6cf` source audit:
+
+- `sycl/src/kernels/cuda/sampler.dp.cpp:1664..1791` defines `coupled_kpart` as 64
+  for both selected vocabularies, and always enqueues original in-place penalty,
+  128-thread fixed 64 part, then 32-thread coupled merge. Only merge reads the
+  mutable request top-k. Each distinct historical token is penalized once using
+  its full window count. The prior Rust reuse fused penalties into part selection
+  and used request K for list stride; that source substitution is now removed.
+- Actual `strata_sampling_request::draft_pick` invokes `launch_coupled` in BOTH
+  full and compact-CJK modes. The actual `coupled_kernels` order is penalty write
+  (1024 threads), fixed 64 part (128), merge/request tail (32). Source/kernel IDs
+  distinguish these roles and vocabulary. Request values remain in private
+  Params and do not enter kernel cache keys.
+  The target path still calls its own ordinary `launch`; greedy MTP still uses
+  its original argmax/top-probability path, as upstream does when coupling is off.
+- `strata-sampler-coupled-penalize.wgsl` declares the original private logits
+  descriptor writable. Its complete workgroup membership bitmap is initialized
+  before atomic first-writer selection; repeat/presence/frequency arithmetic runs
+  once per distinct in-domain history token. History counts use the same selected
+  tail; absent compact IDs remain -1 and are ignored. The existing inverse-ID
+  bridge maps original history to compact IDs before this stage, preserving each
+  count and original-order tie semantics without another weight or history root.
+- Coupled part reads already penalized logits with no second penalty and emits
+  64 entries per original 4096-logit block, including sentinels for short parts.
+  Merge loads/advances fixed 64-stride lists while retaining actual request K for
+  the selected tail. Thus request K can change through the original device Params
+  without changing captured program identity or misreading candidate layout.
+- The existing original candidate owner already covers full 61*64*8 = 31,232 B
+  or CJK 26*64*8 = 13,312 B for one actual draft. No GPU root, public/model copy,
+  private allocation, source window, INFO owner or admission refund is added.
+  All six original private descriptors are retained. Actual native reflection sees
+  logits WRITE followed by READ and candidates WRITE followed by READ; existing
+  recording dependency tracking orders these original consumers in the same lane.
+  Physical execution/order/ownership acceptance is still unproven by CPU checks.
+- Audited existing counters: upstream `verify.cpp:2155..2173` draws with
+  `Philox(seed,pos0+t)`; `mtp.cpp:1129..1133` uses the same verifying row counter.
+  Actual Rust `target_pick` posts counter=start; the original GPU prepare bridge
+  uses positions[cell]+1 for each coupled draft, with request/round controls and
+  real preceding-token/ring checks. Existing target penalty rows include only
+  consumed tail plus the real per-row input prefix; draft rings append only the
+  actual pick. Shared full 32K request coordinates and 4096 penalty cap are unchanged.
+  `sycl/include/strata/sycl_math.hpp:20..26` selects F32 sampler accumulation by
+  default (FP64 requires a separate flag); actual Rust ordered sums/quotients,
+  top-p then min-p then temperature, original tie order and Philox are retained.
+  Hardware transcendental/numerical parity is not established.
+
+Receipts under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-coupled-sampling-check-20261016.log`: selected locked release check
+  exits0. Final `strata-coupled-sampling-test-build-20261016.log` exits0.
+  `strata-coupled-sampling-cpu-20261016.log` plus retained runner: **534
+  distinct CPU cases / 68 suites, zero failed**, retaining previous 532.
+  Two additional cases check actual stage order/read-write descriptors, fixed
+  candidate strides and mutable tail K, and independent full-sort results over
+  both vocabularies with repeated/absent IDs, positive/negative logits,
+  three thread-winner orders, K 1/20/64 and counters crossing 32-bit boundaries.
+  Existing sampler source validation lowers all actual new variants. These are
+  synthetic CPU/source/compiler checks; they do not run a GPU sampler/model.
+- `strata-coupled-sampling-{core,off}-clippy-20261016.log`: strict locked release
+  **binary** configurations exit0. Changed-source formatting/whitespace pass.
+  Do not claim all-target/test lint is green; inherited findings remain recorded
+  in the previous whole-head receipt and were not suppressed or cleaned up here.
+- Normal stable-source builder output `strata-coupled-sampling-ordinary-20261016.out`
+  freezes the executable under `strata-coupled-sampling-ordinary-20261016/`.
+  SHA256 `c8ee12ced38eb658a5ebd8082a221dd0e49ea778b429b78d956417021ea295a6`, independently matched to its original build output and
+  verified mode0500. `strata-coupled-sampling-shaders-20261016.log` exits0 with
+  360 offline Naga/SPIR-V variants and 139 physical-pointer checks.
+  Validator returns before adapter/device creation; no model or GPU was loaded.
+
+Full rewrite remains incomplete, live speed gate closed. Remaining final source/
+queue/ownership/pricing/substitution audit and full protected numerical/state/
+context/hot-request/failure/recovery acceptance are required. Previous adaptive
+substitutions and separate protected-private-caller boundary remain explicit.
+No API/protocol/configuration or consumer change; required Vashti changes: none.
+Goal active CPU-only; no GPU/inference/service/install/release/frontend action.
+Root not needed; latest shared-shell sudo refresh unsuccessful. No physical speed,
+recovery, residency or numerical/model acceptance claim. Canonical/inherited work
+preserved; no deployment authority.
