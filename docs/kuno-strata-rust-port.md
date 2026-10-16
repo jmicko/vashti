@@ -1,16 +1,16 @@
 # Strata Rust whole-model port experiment
 
-**Current CPU-only resume (2026-10-16):** source `9d7821a9145be34b190493006e4d6b46c5cc8d03` connects native
-PLE in-place key normalization and query/conv region reuse, including original
-MTP teacher scratch consumers.457 focused CPU cases, strict lint and format pass.
-Read the [current receipt](kuno-strata-rewrite-completion.md#native-ple-key-normalization-and-query-region-reuse-2026-10-16)
-and [checkpoint](kuno-native-text-checkpoint.md) for exact artifact/shader logs,
-source substitutions and next gates. Explicit32 subgroup selection for plain
-PLE shaders is a newly identified source gap; fix before hardware acceptance.
-Current normal artifact `strata-ple-reuse-ordinary-20261016/`, SHA256
-`dc1628984b186162f56fe926e2d93e2b2f8536c2059acfe447c67d8abbe9d4b4`;
-331 offline shader variants pass, with no device initialization. Full rewrite
-incomplete; no live speed tests or device correctness claim.
+**Current CPU-only resume (2026-10-16):** source `5d668c3cdbb669eb5d72bfa93fcccfbb3abe15ad`.
+Read the [original-device subgroup receipt](kuno-strata-rewrite-completion.md#original-device-subgroup-policy-and-shared-pipeline-construction-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). Both actual Vulkan pipeline
+builders now preserve original selected WGSL32/cooperative16 requirements using
+one shared stage helper. Generic devices remain unset.463 distinct focused CPU
+cases /58 suites, strict core/off lint and331 offline shaders pass (122 physical
+checks). Normal artifact `strata-subgroup-owner-ordinary-20261016/`, SHA256
+`0810aa82d7699be35d866ec238010ec2272cb0ea9e27f84d04472e4d4fd27263`; source-clean/stable build,
+independent hash/mode0500 verified. No device initialization or numerical/model
+acceptance. Remaining in-place residual/allocator/source/scheduling and physical
+acceptance gates stay open. Full rewrite incomplete; live speed gate closed.
 
 ## Active direction — finish the complete Rust port before speed testing (2026-10-14)
 

@@ -6,13 +6,13 @@ checklist is a source-to-source audit, not a sequence of throughput experiments.
 Each row needs its connected consumer, real ownership/placement and state contract;
 adding an unused helper or optional switch does not complete a row.
 
-**Current CPU-only source:** `9d7821a9145be34b190493006e4d6b46c5cc8d03`. Start at the
-[PLE reuse receipt](#native-ple-key-normalization-and-query-region-reuse-2026-10-16) and
-[checkpoint](kuno-native-text-checkpoint.md). Native key in-place normalization,
-query/conv region reuse and the actual MTP teacher consumer are connected.
-457 focused CPU cases pass. An explicit fixed32-subgroup selection gap was found;
-fix it next before hardware acceptance. Full rewrite remains incomplete; no speed
-trials. Offline source checks do not establish device correctness.
+**Current CPU-only source:** `5d668c3cdbb669eb5d72bfa93fcccfbb3abe15ad`. Read the
+[subgroup implementation receipt](#original-device-subgroup-policy-and-shared-pipeline-construction-2026-10-16) and
+[checkpoint](kuno-native-text-checkpoint.md). Original device/module ownership
+now carries fixed32 WGSL and separate cooperative16 through both Vulkan pipeline
+paths.463 focused CPU cases and331 offline shader variants pass. The preceding
+PLE subgroup source gap is resolved; physical/numerical acceptance remains open.
+Full rewrite remains incomplete; no speed trials.
 
 ## Reference and execution scope
 
@@ -7890,7 +7890,7 @@ CPU evidence in `/media/jmicko/faststore/kuno-development`:
   historical, not current source acceptance.
 
 
-**New explicit source-audit gap; fix next before hardware acceptance:** pinned
+**Historical source gap, superseded by the fixed-subgroup implementation below:** pinned
 PLE norm/gate require `reqd_sub_group_size(32)`. Their WGSL checks 32 but the native
 `vendor/cubecl-wgpu/src/compute/strata_graph.rs` registration currently sets a
 required 32 only for physical-expert/packed-dense sources (cooperative SPIR-V has
@@ -7909,3 +7909,91 @@ residual in-place consumers, allocator/whole-device/source/scheduling substituti
 and numerical/state/hot-request/failure/recovery acceptance remain required.
 Protected private executable input remains an independent unclosed boundary;
 current CLI is compiled-public/one-request. Preserve canonical work/untracked files.
+
+
+## Original device subgroup policy and shared pipeline construction (2026-10-16)
+
+Source `5d668c3cdbb669eb5d72bfa93fcccfbb3abe15ad`, isolated `codex/strata-rust-port`. This closes the preceding
+source-level PLE subgroup gap; numerical/physical validation remains unproven.
+Pinned Strata stays `fb58e0dbc8399662c0e47c76578c6e878b14f6cf`, whose Intel PLE/
+GR/GDN/QSA/router/MTP/sampling reductions use32-lane subgroups. Existing Rust
+cooperative-matrix products require16 and remain separate.
+
+Actual selected `request_strata_device` now verifies original Vulkan physical
+features/properties before creation: API1.1 Properties2, size-control support,
+range covering16 and32, required-size compute stage support, and at least32
+compute subgroups per workgroup (1024-thread norm /32). Existing subgroup/device
+features are enabled by the original constructor. Immediately after that SAME
+admitted device is imported into Wgpu, and before any shader/pipeline exists,
+its actual HAL owner selects the immutable fixed32 WGSL policy. No replacement
+client/device, renderer shadow copy, debug label, shader-name heuristic or
+external configuration grants this selection.
+
+The HAL shader factory copies the original device's policy into each WGSL module,
+including its delayed Naga/override branch. Standard devices start unset and
+retain ordinary subgroup selection. This isolated Intel core conservatively
+requires32 for all its non-matrix WGSL programs, covering fixed-width reductions
+and width-independent helper shaders together. Existing SPIR-V cooperative
+modules retain explicit16; generic non-cooperative passthrough SPIR-V stays
+unset. No existing matrix module is overwritten by the WGSL policy.
+
+Both actual ordinary and retained Vulkan pipeline builders now call the SAME
+`kuno_subgroup_stage_options` for flags, exact required size and owned stable
+pNext storage. Explicit32/16 clears ALLOW_VARYING_SUBGROUP_SIZE. Default/unmarked
+modules preserve varying-size behavior only when supported. No REQUIRE_FULL_
+SUBGROUPS flag is introduced, so small helper workgroups preserve their original
+geometry; only the size-control/maximum-workgroup requirements apply. See the
+primary [Vulkan stage contract](https://docs.vulkan.org/refpages/latest/refpages/source/VkPipelineShaderStageCreateInfo.html)
+(VUIDs02754..02757) and [required-size structure](https://docs.vulkan.org/refpages/latest/refpages/source/VkPipelineShaderStageRequiredSubgroupSizeCreateInfo.html).
+These rules support the implementation; they are not live device evidence.
+
+Retained WGSL registration receives the original Wgpu device from the actual
+module creator, reads that actual HAL factory policy and rejects an unconfigured
+device instead of inventing a required size from source strings. The immutable
+module snapshot drives ordinary compilation; matching original creator/policy
+drives retained execution. Retained cooperative SPIR-V continues using the actual
+full-module geometry classifier for16. Pipeline pNext owners live through the
+synchronous Vulkan creation call in both paths; no temporary pointer escapes.
+No shader arithmetic, buffer/root, weight placement, row capacity, GPU allocation
+or model count changes. Small content-free compiler metadata remains inside the
+existing conservative HOST/runtime quotes; physical pricing acceptance is open.
+
+CPU evidence under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-subgroup-policy-checked-build-20261016.log`: final locked selected
+  release test build, terminal exit0 before final CPU run. Earlier owner-level
+  attempts failed because Wgpu29 exposes Device.as_hal but not ShaderModule.as_hal;
+  replaced with original-device construction policy. Earlier device/final-build
+  logs precede the final shared stage helper; use this policy checked build.
+- `strata-subgroup-owner-cpu-20261016.log`:463 distinct CPU cases /58 nonempty
+  suites; runner `strata-subgroup-owner-cpu-run-20261016.py` explicitly adds the
+  actual `strata_matrix::tests` module. The six matrix tests cover original
+  workgroup layout/classification plus new actual policy/metadata selectors and
+  the SAME helper used by both pipeline builders: default/32/16, idempotent32,
+  independent owners, ordinary/delayed modules, varying flag behavior, required
+  structure type/size and null pNext. Prior457 focused cases remain included.
+  Null-handle metadata fixtures create no driver object, call no unsafe device
+  attachment and grant no physical ownership/execution proof.
+- `strata-subgroup-owner-{core,off}-clippy-20261016.log`: both strict locked
+  release lint configurations pass. Changed Rust formatting (skip_children for
+  vendor modules) and whitespace pass. Incidental recursive formatting of other
+  HAL files was removed; they are not part of this change.
+
+Normal source-clean/stable build `strata-subgroup-owner-ordinary-20261016/`
+completed at this source commit; receipt
+`strata-subgroup-owner-ordinary-20261016.out` records SHA256
+`0810aa82d7699be35d866ec238010ec2272cb0ea9e27f84d04472e4d4fd27263`. Independent hash and mode0500 checked.
+`strata-subgroup-owner-shaders-20261016.log` records terminal exit0,331 accepted
+variants and122 physical-pointer checks from this frozen artifact. A preceding
+successful invocation printed to terminal; the repeat captured the full durable
+CPU-only log. Neither invocation initializes a device.
+
+Source subgroup selection is now connected; driver acceptance, width/correctness
+and whole-model execution are still unverified. No GPU/adapter/model/inference/
+service/install/release action; CPU checks needed no root. Last actual sudo
+renewal failed, physical recovery remains historicalOct15. No application API/
+config/connector/UI change; required Vashti changes:none. Goal active CPU-only,
+whole rewrite incomplete, live speed gate closed. Next remaining native GR/PLE
+residual in-place consumers, allocator/whole-device pricing/source/scheduling
+substitutions, protected private input and full numerical/state/context/hot-request/
+failure/recovery acceptance remain required. Preserve canonical work/untracked.

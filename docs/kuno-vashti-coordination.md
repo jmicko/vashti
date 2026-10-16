@@ -6,17 +6,17 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, source `9d7821a9145be34b190493006e4d6b46c5cc8d03`. Read the
-[PLE region handoff](#active-kuno-engine-handoff--native-ple-region-reuse-2026-10-16)
-and [completion gate](kuno-strata-rewrite-completion.md). Native key in-place norm,
-query/conv reuse and MTP teacher scratch changes connect together.457 focused CPU
-cases pass. Explicit32 subgroup selection for plain PLE shaders is a newly found
-source gap; fix next before hardware acceptance. Full rewrite incomplete.
+`codex/strata-rust-port`, source `5d668c3cdbb669eb5d72bfa93fcccfbb3abe15ad`. Read the
+[subgroup handoff](#active-kuno-engine-handoff--original-device-subgroup-policy-2026-10-16)
+and [completion gate](kuno-strata-rewrite-completion.md). Original device policy
+and both pipeline builders now preserve fixed32 WGSL and separate cooperative16.
+463 distinct CPU cases and331 offline shaders pass. The PLE subgroup source gap
+is resolved; physical/numerical acceptance and full rewrite remain incomplete.
 
 User continuation remains CPU-only; goal active. No GPU/model/service/install/
-release/API/frontend action or current-health claim. Root not needed; last actual
-sudo renewal failed. Physical recovery stays historicalOct15. Canonical work and
-inherited untracked files preserved. Required Vashti changes:none.
+release/API/frontend action or current-health claim. Root not needed. Physical
+recovery stays historicalOct15. Canonical work and inherited untracked files
+preserved. Required Vashti changes:none.
 
 ## Ownership
 
@@ -7053,3 +7053,33 @@ failure/recovery gates remain. Private CLI input remains independently gated.
 No API/config/frontend change; required Vashti changes:none. Goal active CPU-only,
 rewrite incomplete, speed gate closed. No GPU/model/service/install/release action.
 Root not needed; last physical recovery historicalOct15. Preserve canonical work.
+
+
+## Active Kuno engine handoff — original device subgroup policy (2026-10-16)
+
+Source `5d668c3cdbb669eb5d72bfa93fcccfbb3abe15ad`, isolated `codex/strata-rust-port`.
+Read the [exact source/validation receipt](kuno-strata-rewrite-completion.md#original-device-subgroup-policy-and-shared-pipeline-construction-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). Before creating any shader,
+the SAME admitted original device checks real subgroup properties and establishes
+fixed32 WGSL policy. Actual module factories snapshot it, and ordinary/retained
+pipeline builders share required-size/flags/pNext construction. Matrix SPIR-V
+retains16; generic devices retain unset policy. No shader arithmetic, model/root
+allocation or application contract changes. Earlier PLE subgroup source-gap
+instructions are superseded; physical width/numerical acceptance is still open.
+
+463 distinct CPU cases /58 nonempty suites, locked selected release test build,
+strict core/off lint and formatting pass. Normal frozen artifact
+`strata-subgroup-owner-ordinary-20261016/`, SHA256
+`0810aa82d7699be35d866ec238010ec2272cb0ea9e27f84d04472e4d4fd27263`;331 offline variants pass
+(122 physical checks), source-clean/stable build and independent hash/mode0500
+verified. Exact logs and earlier ShaderModule.as_hal API correction are in the
+receipt. Null-handle metadata fixtures do not create driver objects or establish
+hardware ownership/acceptance. No adapter or GPU was initialized.
+
+Next remaining native GR/PLE residual in-place, allocator/whole-device pricing,
+source/scheduling/substitution audit and full numerical/state/full-context/hot-
+request/failure/recovery gates. Private executable input remains independently
+gated; current CLI compiled-public/one-request. Goal active CPU-only, rewrite
+incomplete, live speed gate closed. No GPU/model/service/install/release/API/
+frontend action; required Vashti changes:none. Root not needed. Physical recovery
+remains historicalOct15. Preserve canonical application work/untracked files.

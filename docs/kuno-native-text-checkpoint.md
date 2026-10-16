@@ -1,40 +1,42 @@
-<!-- Current resume: 2026-10-16, source 9d7821a9145be34b190493006e4d6b46c5cc8d03, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source 5d668c3cdbb669eb5d72bfa93fcccfbb3abe15ad, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, source `9d7821a9145be34b190493006e4d6b46c5cc8d03`. Goal active CPU-only.
-Read [PLE reuse receipt](kuno-strata-rewrite-completion.md#native-ple-key-normalization-and-query-region-reuse-2026-10-16)
-and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--native-ple-region-reuse-2026-10-16).
-Actual key normalization now uses one original writable binding, and the query
-region is reused after gate for conv normalization/history. Gated and original
-residual stay live. Ten unique PLE regions replace twelve, reducing logical
-phase payload320MiB inside unchanged2080MiB owning prompt roots. Actual MTP
-teacher now uses idle PLE token/status views8/9, preserving four-stream bounds.
-No physical refund, speed or numerical model correctness claim.
+branch `codex/strata-rust-port`, source `5d668c3cdbb669eb5d72bfa93fcccfbb3abe15ad`. Goal active CPU-only.
+Read the [subgroup receipt](kuno-strata-rewrite-completion.md#original-device-subgroup-policy-and-shared-pipeline-construction-2026-10-16)
+and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--original-device-subgroup-policy-2026-10-16).
+The original selected device now establishes fixed32 WGSL policy before module
+creation; ordinary and retained builders share exact required-size/flags/pNext
+construction. Cooperative-matrix SPIR-V stays16. Generic devices remain unset.
+Physical capabilities are checked before original device creation. No shader
+arithmetic, model/root allocation or application contract changed.
 
-457 focused CPU cases /57 nonempty suites, locked checked test build, strict
-core/off lint and formatting pass. Exact normal artifact/offline shader receipt
-is linked above. The first test build's missing closure index type is fixed;
-final CPU suite explicitly includes the new in-place shader schema test.
-Current normal artifact: `strata-ple-reuse-ordinary-20261016/`, SHA256
-`dc1628984b186162f56fe926e2d93e2b2f8536c2059acfe447c67d8abbe9d4b4`;
-clean/stable source build, independent hash/mode0500 and331 offline variants
-(including122 physical checks) verified. No device initialized.
+463 distinct focused CPU cases /58 nonempty suites, locked checked release test
+build, strict core/off lint, formatting and331 offline shader variants pass
+(including122 physical checks). Normal artifact
+`strata-subgroup-owner-ordinary-20261016/`, SHA256
+`0810aa82d7699be35d866ec238010ec2272cb0ea9e27f84d04472e4d4fd27263`;
+source-clean/stable build and independent hash/mode0500 verified. Linked receipt
+records exact logs, earlier API correction and metadata-only fixture limitations.
+No adapter/device initialized; numerical/hardware acceptance is not established.
 
-**Fix next:** native registration sets required32 only for expert/packed-dense
-WGSL; cooperative SPIR-V has its own16. Plain PLE programs allow varying subgroup
-size despite upstream's explicit32 and WGSL guard. Audit fixed32 consumers and
-preserve exact subgroup requirements through both pipeline paths, keeping matrix16
-separate. This is a source fidelity gap, not evidence of an observed GPU fault.
+**Next:** native GR/PLE residual in-place consumers, allocator/whole-device pricing
+and final source/scheduling/substitution audit. The preceding PLE subgroup source
+gap is resolved; live subgroup acceptance remains open. Numerical/state/full-
+context/hot-request/failure/recovery gates remain. Protected private executable
+input is independently gated; current CLI is compiled-public/one-request. Whole
+rewrite incomplete, speed gate closed. No GPU/model/service/install/release/API/
+frontend action; required Vashti changes:none. Root not needed; physical recovery
+remains historicalOct15. Preserve canonical work and inherited untracked files.
 
-Then remaining native GR/PLE residual in-place, allocator/whole-device/source/
-scheduling substitutions and numerical/state/prompt/hot-request/failure/recovery
-acceptance remain. Private executable input still needs independently verified
-protection/admission; current CLI stays compiled-public/one-request. Full rewrite
-incomplete, speed gate closed. No GPU/model/service/install/release/API/frontend
-action; required Vashti changes:none. Root not needed; last actual sudo renewal
-failed. Last physical recovery historicalOct15. Preserve canonical work/untracked.
+**Previous PLE region block (`9d7821a`):**
+Key normalization uses one writable binding; query/conv regions share storage
+after the final gate reader. Ten unique PLE views replace twelve; logical payload
+shrinks320MiB inside unchanged2080MiB roots. Actual MTP teacher uses views8/9.
+457 CPU cases /57 suites and331 offline shaders passed. The previous subgroup
+gap described in that historical receipt is superseded by the current source.
+No physical memory refund or numerical model correctness claim.
 
 **Previous mixed-image block (`40fe97e`):**
 Read [mixed-image receipt](kuno-strata-rewrite-completion.md#connected-native-mixed-input-image-reuse-2026-10-16)
