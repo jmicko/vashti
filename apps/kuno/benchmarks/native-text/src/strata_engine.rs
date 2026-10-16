@@ -260,6 +260,7 @@ pub(crate) struct Session<'m, 'f, 'd, 'df> {
     executor: Option<GpuExecutor<'f>>,
     target: Option<ResidentModel<'m, 'f>>,
     draft: Option<ResidentMtp<'d, 'df>>,
+    policy: Option<crate::strata_speculation::Policy>, // model aggregates only; no request content
     request_erasure: Option<(
         crate::resident_model::batch::public_warm_replay::NativeRequestResetReceipt,
         Option<crate::resident_mtp::NativeRequestResetReceipt>,
@@ -312,6 +313,7 @@ impl<'m, 'f, 'd, 'df> Session<'m, 'f, 'd, 'df> {
             executor: None,
             target: None,
             draft: None,
+            policy: None,
             request_erasure: None,
         };
         let attempted = checked(|| unsafe {
@@ -468,6 +470,7 @@ impl<'m, 'f, 'd, 'df> Session<'m, 'f, 'd, 'df> {
                 t,
                 e,
                 self.draft.as_mut(),
+                &mut self.policy,
                 controller::Request {
                     prompt: &prompt,
                     max_outputs: *outputs,
@@ -545,6 +548,7 @@ impl<'m, 'f, 'd, 'df> Session<'m, 'f, 'd, 'df> {
         result
     }
     fn close_inner(&mut self) -> Result<Closed, Failure> {
+        drop(self.policy.take()); // wipe model telemetry even if peer cleanup later fails
         // Never short-circuit peer cleanup after an inference/constructor failure.
         let mut draft_close = checked(|| {
             self.draft

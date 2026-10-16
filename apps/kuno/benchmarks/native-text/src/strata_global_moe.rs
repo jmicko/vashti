@@ -734,9 +734,32 @@ impl Workspace {
             Ok(())
         }
     }
-    /// Restore only control data erased with the private arena. The original
-    /// physical source placement is authoritative; no profile reset or expert
-    /// transfer occurs. Original weights, epochs and adaptive rounds survive.
+    /// Only completed, closed request scopes reach this hook. Keep aggregate
+    /// expert counters with the original loaded model before FULL arena erase.
+    /// No token, prompt, seed, suffix or KV data crosses this boundary.
+    pub(crate) fn retain_completed_usage(
+        &mut self,
+        arena: &PrivateArena,
+        admission: &crate::executor::ResidentAdmission,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        self.validate_idle()?;
+        if self.verify_usage || admission.request_io_reuse_active() {
+            return Err(reject());
+        }
+        let usage =
+            admission.readback_audited(cancel, || u::read_prefix_f32(arena, self.ids[9], 32768))?;
+        if usage[24576..].iter().any(|v| v.to_bits() != 0) {
+            return Err(reject());
+        }
+        self.adaptive
+            .as_mut()
+            .ok_or_else(reject)?
+            .retain_usage(&usage[..24576])
+    }
+    /// The request arena is still erased and inspected in FULL. Rebind only
+    /// original physical routing and bounded model-local aggregate usage, with
+    /// exact completed readback. No request input/output state is restored.
     pub(crate) fn restore_retained_route_map(
         &self,
         graph: BoundGraph<'_, '_>,
@@ -756,44 +779,64 @@ impl Workspace {
         let client = arena.client().map_err(u::fault)?;
         admission.check_client(client)?;
         let mapping = sources.retained_route_map(graph, client)?;
-        if let Some(cache) = &self.adaptive {
+        let empty = Zeroizing::new(vec![0.; 24576]);
+        let usage = if let Some(cache) = &self.adaptive {
             cache.check_retained_route_map(&mapping)?;
-        } else if mapping
-            .iter()
-            .enumerate()
-            .any(|(i, &cell)| usize::from(cell) != i % crate::strata_global_plan::EXPERTS)
-        {
-            return Err(reject());
+            cache.retained_usage()
+        } else {
+            if mapping
+                .iter()
+                .enumerate()
+                .any(|(i, &cell)| usize::from(cell) != i % crate::strata_global_plan::EXPERTS)
+            {
+                return Err(reject());
+            }
+            &empty
+        };
+        let mut map_bytes = crate::strata_global_adapt::encode_route_map(&mapping)?;
+        let mut usage_bytes = crate::strata_global_adapt::encode_usage(usage)?;
+        let mut roots = Vec::new();
+        for (id, bytes) in [
+            (self.ids[7], crate::strata_global_adapt::ROUTE_MAP_BYTES),
+            (self.ids[9], crate::strata_global_adapt::USAGE_BYTES),
+        ] {
+            let root = arena.handle(id).map_err(u::fault)?.clone();
+            if arena.layout(id).map_err(u::fault)?
+                != crate::private_arena::BufferLayout::new(bytes / 4).map_err(u::fault)?
+                || root.size_in_used() != bytes as u64
+                || root.offset_start.unwrap_or(0) != 0
+                || root.offset_end.unwrap_or(0) != 0
+            {
+                return Err(reject());
+            }
+            roots.push(root);
         }
-        let mut payload = crate::strata_global_adapt::encode_route_map(&mapping)?;
-        let root = arena.handle(self.ids[7]).map_err(u::fault)?.clone();
-        if arena.layout(self.ids[7]).map_err(u::fault)?
-            != crate::private_arena::BufferLayout::new(
-                crate::strata_global_adapt::ROUTE_MAP_BYTES / 4,
-            )
-            .map_err(u::fault)?
-            || root.size_in_used() != crate::strata_global_adapt::ROUTE_MAP_BYTES as u64
-            || root.offset_start.unwrap_or(0) != 0
-            || root.offset_end.unwrap_or(0) != 0
+        if roots[0].clone().binding().memory.allocation_id()
+            == roots[1].clone().binding().memory.allocation_id()
         {
             return Err(reject());
         }
         admission.readback_audited(cancel, || {
             client
-                .write_private(root, std::mem::take(&mut *payload))
+                .write_private(roots[0].clone(), std::mem::take(&mut *map_bytes))
                 .map_err(u::fault)?;
-            let actual = u::read_prefix_u32(
-                arena,
-                self.ids[7],
-                crate::strata_global_adapt::ROUTE_MAP_BYTES / 4,
-            )?;
-            if actual.len() != crate::strata_global_adapt::ROUTE_MAP_BYTES / 4
-                || actual
-                    .iter()
-                    .enumerate()
-                    .any(|(i, &cell)| cell != mapping.get(i).map_or(0, |&v| u32::from(v)))
-            {
-                return Err(reject());
+            client
+                .write_private(roots[1].clone(), std::mem::take(&mut *usage_bytes))
+                .map_err(u::fault)?;
+            for (index, id) in [self.ids[7], self.ids[9]].into_iter().enumerate() {
+                let actual = u::read_prefix_u32(arena, id, 32768)?;
+                if actual.len() != 32768
+                    || actual.iter().enumerate().any(|(i, &word)| {
+                        let expected = if index == 0 {
+                            mapping.get(i).map_or(0, |&v| u32::from(v))
+                        } else {
+                            usage.get(i).map_or(0, |v| v.to_bits())
+                        };
+                        word != expected
+                    })
+                {
+                    return Err(reject());
+                }
             }
             sources.validate_graph_ready(graph)?;
             u::cancel(cancel)

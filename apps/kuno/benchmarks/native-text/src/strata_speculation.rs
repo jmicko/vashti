@@ -1,5 +1,6 @@
 //! MIT Strata fb58e0 src/spec/{suffix_drafter,draft_policy}.cpp.
-//! Native request-local lookup index and cost policy. Never persisted/logged.
+//! Request-local lookup and loaded-model aggregate cost policy. Neither is
+//! persisted/logged; request token/suffix state never enters retained policy.
 //! Bounds are deliberate Kuno substitutions: native history covers the admitted
 //! context, ordinary history remains8192, verification stays MAX8. Overcapacity
 //! rejects rather than allocating an uncharged request-dependent extension.
@@ -196,6 +197,20 @@ impl Policy {
             rounds: 0.,
         })
     }
+    /// Resume only aggregate cost/acceptance data in the SAME loaded session.
+    /// Maximum window can change; original bounded per-width bins stay valid.
+    pub(crate) fn take_retained(slot: &mut Option<Self>, maximum: usize) -> Result<Self> {
+        if !(1..=MAX_T).contains(&maximum) {
+            return Err(rejected());
+        }
+        match slot.take() {
+            Some(mut policy) => {
+                policy.maximum = maximum;
+                Ok(policy)
+            }
+            None => Self::new(maximum),
+        }
+    }
     fn bucket(m: usize) -> usize {
         if m < 6 {
             0
@@ -370,9 +385,11 @@ impl Policy {
 }
 impl Drop for Policy {
     fn drop(&mut self) {
+        self.maximum.zeroize();
         self.rounds.zeroize();
     }
 }
+const _: () = assert!(std::mem::size_of::<Policy>() <= 16 * 1024);
 
 #[cfg(test)]
 mod tests {
@@ -547,5 +564,52 @@ mod context32768_tests {
         assert_eq!(owner.history.len(), HISTORY);
         assert!(owner.append(&[1]).is_err());
         assert_eq!(owner.history.len(), HISTORY);
+    }
+}
+
+#[cfg(test)]
+mod retained_policy_tests {
+    use super::*;
+    #[test]
+    fn model_policy_survives_request_boundaries_without_retaining_proposal_tokens() {
+        let mut uninterrupted = Policy::new(8).unwrap();
+        let mut retained = None;
+        for request in 0..6 {
+            let maximum = if request % 2 == 0 { 8 } else { 6 };
+            let mut current = Policy::take_retained(&mut retained, maximum).unwrap();
+            assert!(retained.is_none());
+            assert_eq!(current.maximum, maximum);
+            for observation in 0..4 {
+                let accepted = (request + observation) % 4;
+                let ns = 19_000_000 + (request * 73 + observation * 127) as u64;
+                current.observe(false, 4, accepted, 0, ns).unwrap();
+                uninterrupted.observe(false, 4, accepted, 0, ns).unwrap();
+                current.observe(true, 5, accepted, 12, ns + 100).unwrap();
+                uninterrupted
+                    .observe(true, 5, accepted, 12, ns + 100)
+                    .unwrap();
+            }
+            assert_eq!(*current.by_t, *uninterrupted.by_t);
+            assert_eq!(*current.by_match, *uninterrupted.by_match);
+            assert_eq!(current.rounds, uninterrupted.rounds);
+            // Proposal contents are request-local and never enter Policy's
+            // fixed scalar bins; equal public geometry gives equal decisions.
+            let a = Proposal {
+                tokens: Zeroizing::new(vec![10, 20, 30, 40, 50]),
+                matched: 12,
+            };
+            let b = Proposal {
+                tokens: Zeroizing::new(vec![101, 202, 303, 404, 505]),
+                matched: 12,
+            };
+            assert_eq!(current.choose(4, &a), current.choose(4, &b));
+            assert_eq!(current.choose(4, &a), uninterrupted.choose(4, &a));
+            retained = Some(current);
+            for bad in [0, 9, usize::MAX] {
+                assert!(Policy::take_retained(&mut retained, bad).is_err());
+                assert_eq!(*retained.as_ref().unwrap().by_t, *uninterrupted.by_t);
+            }
+        }
+        assert!(size_of::<Policy>() < 16 * 1024);
     }
 }

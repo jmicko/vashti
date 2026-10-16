@@ -230,8 +230,8 @@ impl ResidentModel<'_, '_> {
         receipt.check_original(self)?;
         self.validate_native_projection_owners(executor)?;
         self.validate_retained_native_cursor()?;
-        // MAIN erasure also cleared the route map. Restore from the SAME
-        // physical weights before granting next-request prefill authority.
+        // MAIN erasure also cleared route/usage controls. Restore only original
+        // physical placement and model aggregates before next-request prefill.
         self.native_batch
             .as_ref()
             .ok_or(rejected())?
@@ -326,6 +326,19 @@ impl ResidentModel<'_, '_> {
             .retained_native_scope()?;
         let mut started = false;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.completed_native_projection_boundary(executor)?;
+            executor
+                .strata_global_sources
+                .as_ref()
+                .ok_or(rejected())?
+                .validate_graph_ready(self.graph)?;
+            self.native_batch
+                .as_mut()
+                .ok_or(rejected())?
+                .global_moe
+                .as_mut()
+                .ok_or(rejected())?
+                .retain_completed_usage(&self.arena, &self.admission, cancel)?;
             self.reset_retained_checked(executor, cancel, &mut started, Scope::NativeRequest)
         }));
         match result {

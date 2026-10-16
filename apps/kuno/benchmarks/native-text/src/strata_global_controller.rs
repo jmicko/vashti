@@ -321,10 +321,12 @@ pub(crate) struct Completion {
     pub greedy: bool,
 }
 
+#[allow(clippy::too_many_arguments)] // Original model/runtime owners plus bounded session telemetry.
 pub(super) fn run<'m, 'f>(
     target: &mut ResidentModel<'m, 'f>,
     executor: &mut GpuExecutor<'f>,
     mut draft: Option<&mut resident_mtp::ResidentMtp<'_, '_>>,
+    retained_policy: &mut Option<crate::strata_speculation::Policy>,
     request: Request<'_>,
     cancel: &AtomicBool,
     emit: &mut dyn FnMut(u32) -> Result<()>,
@@ -429,7 +431,10 @@ pub(super) fn run<'m, 'f>(
     let mut history = Zeroizing::new(Vec::with_capacity(request.max_outputs));
     history.push(confirmed);
     emit(confirmed)?;
-    let mut policy = crate::strata_speculation::Policy::new(request.speculation.window)?;
+    let mut policy = crate::strata_speculation::Policy::take_retained(
+        retained_policy,
+        request.speculation.window,
+    )?;
     let mut suffix_index =
         crate::strata_speculation::Suffix::new(request.speculation.suffix_minimum.max(3))?;
     suffix_index.append(request.prompt)?;
@@ -701,6 +706,7 @@ pub(super) fn run<'m, 'f>(
     {
         return Err("global request erasure rejected".into());
     }
+    *retained_policy = Some(policy); // only after original request/fault/I/O scope closes
     Ok(Completion {
         outputs: history.len(),
         windows: rounds,

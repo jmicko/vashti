@@ -1,5 +1,6 @@
-//! MIT Strata generate.cpp:12040 blocking adaptive selection and publication.
-//! Original physical cells stay fixed. Logical remap remains transient with the loaded weight cells; usage resets per request.
+//! MIT Strata generate.cpp:12040 original adaptive selection and publication.
+//! Original physical cells stay fixed. Logical remap and bounded aggregate usage live with loaded weights only.
+//! Request arenas are still erased in full; no telemetry is serialized/logged.
 use crate::strata_global_plan::{EXPERTS, LAYERS, Plan};
 use kuno_text::{Error, Result};
 use zeroize::{Zeroize, Zeroizing};
@@ -7,6 +8,7 @@ pub(crate) const EVERY: u64 = 4;
 pub(crate) const MAX_SWAPS: usize = 96;
 pub(crate) const HOST_BYTES: usize = 2 * 1024 * 1024;
 pub(crate) const ROUTE_MAP_BYTES: usize = 131072;
+pub(crate) const USAGE_BYTES: usize = 131072;
 /// Original full private owner, including its unused zero padding. The caller
 /// transfers the wiping allocation directly into the actual tracked upload.
 pub(crate) fn encode_route_map(mapping: &[u16]) -> Result<Zeroizing<Vec<u8>>> {
@@ -18,6 +20,21 @@ pub(crate) fn encode_route_map(mapping: &[u16]) -> Result<Zeroizing<Vec<u8>>> {
     Ok(bytes)
 }
 
+fn validate_usage(usage: &[f32]) -> Result<()> {
+    if usage.len() != LAYERS * EXPERTS || usage.iter().any(|u| !u.is_finite() || *u < 0.) {
+        return Err(reject());
+    }
+    Ok(())
+}
+pub(crate) fn encode_usage(usage: &[f32]) -> Result<Zeroizing<Vec<u8>>> {
+    validate_usage(usage)?;
+    let mut bytes = Zeroizing::new(vec![0u8; USAGE_BYTES]);
+    for (word, &score) in bytes.chunks_exact_mut(4).zip(usage) {
+        word.copy_from_slice(&score.to_bits().to_le_bytes());
+    }
+    Ok(bytes)
+}
+const _: () = assert!(LAYERS * EXPERTS * 4 <= USAGE_BYTES && 8 * USAGE_BYTES < HOST_BYTES);
 fn reject() -> Error {
     Error::InvalidFormat("Strata global adaptive cache")
 }
@@ -49,6 +66,7 @@ pub(crate) struct Cache {
     mapping: Zeroizing<Vec<u16>>,
     resident: Vec<bool>, // static PUBLIC initial physical-cell placement
     rounds: u64,
+    usage: Zeroizing<Vec<f32>>, // bounded model aggregate; never token/seed/history payload
 }
 impl Cache {
     pub(crate) fn new(plan: &Plan) -> Result<Self> {
@@ -70,6 +88,7 @@ impl Cache {
             mapping,
             resident,
             rounds: 0,
+            usage: Zeroizing::new(vec![0.; LAYERS * EXPERTS]),
         })
     }
     pub(crate) fn check_retained_route_map(&self, mapping: &[u16]) -> Result<()> {
@@ -77,6 +96,17 @@ impl Cache {
         if self.mapping.as_slice() != mapping {
             return Err(reject());
         }
+        Ok(())
+    }
+    pub(crate) fn retained_usage(&self) -> &[f32] {
+        &self.usage
+    }
+    pub(crate) fn retain_usage(&mut self, usage: &[f32]) -> Result<()> {
+        validate_usage(usage)?;
+        if self.usage.len() != LAYERS * EXPERTS {
+            return Err(reject());
+        }
+        self.usage.copy_from_slice(usage);
         Ok(())
     }
     pub(crate) fn tick(&mut self) -> Result<bool> {
@@ -165,7 +195,9 @@ impl Cache {
             }
         }
         validate_mapping(&proposal.mapping)?;
+        validate_usage(&proposal.usage)?;
         self.mapping.copy_from_slice(&proposal.mapping);
+        self.usage.copy_from_slice(&proposal.usage);
         Ok(())
     }
 }
@@ -222,6 +254,7 @@ mod tests {
             ),
             resident,
             rounds: 4,
+            usage: Zeroizing::new(vec![0.; LAYERS * EXPERTS]),
         }
     }
     #[test]
@@ -352,5 +385,104 @@ mod tests {
         usage[0] = f32::NAN;
         c.rounds = 8;
         assert!(c.propose(&usage).is_err());
+    }
+}
+
+#[cfg(test)]
+mod retained_usage_tests {
+    use super::*;
+    fn model() -> Cache {
+        Cache {
+            mapping: Zeroizing::new(
+                (0..LAYERS * EXPERTS)
+                    .map(|i| (i % EXPERTS) as u16)
+                    .collect(),
+            ),
+            resident: (0..LAYERS * EXPERTS)
+                .map(|i| (i % EXPERTS).is_multiple_of(3))
+                .collect(),
+            rounds: 0,
+            usage: Zeroizing::new(vec![0.; LAYERS * EXPERTS]),
+        }
+    }
+    fn simulate(boundaries: &[usize]) -> (Vec<u16>, Vec<u32>, u64) {
+        let mut cache = model();
+        let mut device = vec![0f32; LAYERS * EXPERTS];
+        for window in 1..=12 {
+            for layer in 0..LAYERS {
+                for pick in 0..8 {
+                    device[layer * EXPERTS + (window * 31 + pick * 17) % EXPERTS] += 1.;
+                }
+            }
+            if cache.tick().unwrap() {
+                let p = cache.propose(&device).unwrap();
+                device.copy_from_slice(&p.usage);
+                cache.commit(p).unwrap();
+            }
+            if boundaries.contains(&window) {
+                // Snapshot AFTER complete execution, then simulate a FULL
+                // request erase; only model aggregate bytes are rebound.
+                cache.retain_usage(&device).unwrap();
+                device.fill(0.); // GPU owners retain their fixed extent after erase.
+                assert!(device.iter().all(|v| v.to_bits() == 0));
+                let bytes = encode_usage(cache.retained_usage()).unwrap();
+                assert_eq!(bytes.len(), USAGE_BYTES);
+                assert!(bytes[LAYERS * EXPERTS * 4..].iter().all(|&b| b == 0));
+                for (value, word) in device.iter_mut().zip(bytes.chunks_exact(4)) {
+                    *value = f32::from_bits(u32::from_le_bytes(word.try_into().unwrap()));
+                }
+            }
+        }
+        (
+            cache.mapping.to_vec(),
+            device.iter().map(|v| v.to_bits()).collect(),
+            cache.rounds,
+        )
+    }
+    #[test]
+    fn full_request_erase_and_rebind_preserves_the_same_original_adaptive_sequence() {
+        let uninterrupted = simulate(&[]);
+        for ends in [
+            &[1, 3, 7, 12][..],
+            &[4, 8, 12][..],
+            &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12][..],
+        ] {
+            assert_eq!(simulate(ends), uninterrupted);
+        }
+        assert_eq!(uninterrupted.2, 12);
+    }
+    #[test]
+    fn retained_usage_rejects_bad_scores_before_mutation_and_encodes_complete_padding() {
+        let mut cache = model();
+        let mut valid = vec![1.25; LAYERS * EXPERTS];
+        valid[0] = -0.;
+        cache.retain_usage(&valid).unwrap();
+        let original = cache
+            .retained_usage()
+            .iter()
+            .map(|v| v.to_bits())
+            .collect::<Vec<_>>();
+        for invalid in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -0.1] {
+            let mut bad = valid.clone();
+            bad[7] = invalid;
+            assert!(cache.retain_usage(&bad).is_err());
+            assert!(encode_usage(&bad).is_err());
+            assert_eq!(
+                cache
+                    .retained_usage()
+                    .iter()
+                    .map(|v| v.to_bits())
+                    .collect::<Vec<_>>(),
+                original
+            );
+        }
+        assert!(cache.retain_usage(&valid[1..]).is_err());
+        assert!(encode_usage(&valid[1..]).is_err());
+        let bytes = encode_usage(&valid).unwrap();
+        assert_eq!(bytes.len(), USAGE_BYTES);
+        for (expected, word) in original.iter().zip(bytes.chunks_exact(4)) {
+            assert_eq!(*expected, u32::from_le_bytes(word.try_into().unwrap()));
+        }
+        assert!(bytes[original.len() * 4..].iter().all(|&b| b == 0));
     }
 }
