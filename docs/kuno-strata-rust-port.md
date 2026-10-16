@@ -1,12 +1,17 @@
 # Strata Rust whole-model port experiment
 
-**Current CPU-only resume (2026-10-16):** source `e1458410b20f956586033b359c57186922d7ad8f`, connected retained
-loaded sessions, restored original physical routes/full32K sampler context, and
-bounded wiping rendered-text conversion in the actual compiled-public entry.
-Private process input remains gated. Physical hot reuse remains
-unverified. Read the [completion receipt and next gates](kuno-strata-rewrite-completion.md#connected-bounded-rendered-text-input-2026-10-16)
-and [checkpoint](kuno-native-text-checkpoint.md) first. Historical timing/next-step
-notes below do not authorize new speed trials. Full rewrite remains incomplete.
+**Current CPU-only resume (2026-10-16):** source `636c9f3543bbb68a188856719beb0262a033a1aa` removes
+obsolete fetch roots/table from the actual selected direct-source Intel path,
+with dedicated512KiB dense input and383.5MiB smaller private allocation quote.
+Real VRAM/HOST sources/read dependencies and prompt raw ring remain.452 focused
+selected CPU cases,31 legacy cases in both noncore/reference builds, strict lints
+and formatting pass. Read the [current receipt](kuno-strata-rewrite-completion.md#direct-source-memory-owners-and-legacy-regression-reconciliation-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md) for the current normal immutable
+`strata-direct-source-ordinary-20261016/` artifact (SHA256
+`c0032c4ed9cc065712384deeb624055a7ec1be40af952ee3216986eb6db7b662`),330 passing
+offline shader variants and remaining gates. Retained Session and bounded rendered input are connected in
+source; private launcher and physical hot reuse remain unverified. Historical
+speed/next-step notes below do not authorize new trials. Whole rewrite incomplete.
 
 ## Active direction — finish the complete Rust port before speed testing (2026-10-14)
 

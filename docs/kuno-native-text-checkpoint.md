@@ -1,44 +1,58 @@
-<!-- Current resume: 2026-10-16, source e1458410b20f956586033b359c57186922d7ad8f, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source 636c9f3543bbb68a188856719beb0262a033a1aa, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, source `e1458410b20f956586033b359c57186922d7ad8f`. Goal active CPU-only.
-Last sudo refresh still reported password required in Demons after the user's
-renewal; CPU work does not need root. No GPU/model/service/install/release work
-or current health claim. Last physical recovery remains historicalOct15.
+branch `codex/strata-rust-port`, source `636c9f3543bbb68a188856719beb0262a033a1aa`. Goal active CPU-only.
+Actual Demons `sudo -n -v` still requires a password despite the user's renewal;
+CPU work does not need root. No GPU/model/service/install/release work or current
+health claim. Last physical recovery stays historicalOct15.
 
-Read [bounded rendered-text input receipt](kuno-strata-rewrite-completion.md#connected-bounded-rendered-text-input-2026-10-16)
-and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--bounded-rendered-text-input-2026-10-16).
+Read [direct-source owner receipt](kuno-strata-rewrite-completion.md#direct-source-memory-owners-and-legacy-regression-reconciliation-2026-10-16)
+and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--direct-source-memory-owners-2026-10-16).
 Controller tests live under `strata_engine::controller`. Earlier CJK `cd703bc` was
 integrated as `0bfbea8`; do not reapply it.
 
-**Latest connected block:** `e1458410b20f956586033b359c57186922d7ad8f` connects an already-rendered
-UTF-8 reader/Rust-tokenizer consumer to the actual native Request entry. One wiping
-buffer has1MiB text plus a single overflow sentinel; controls/vocabulary/EOS,
-UTF-8 and actual token/context bounds reject with fixed errors. Text/scratch drop
-before generation; no args/files/log/receipt/template rewrite is added. Native
-public fixtures now use this exact converter after their unchanged compiled
-round-trip/token-count checks. Native tokenizer capacity expands beyond old64-ID/
-1KiB fixture limits; ordinary tokenizer behavior stays unchanged.
+**Latest connected block:** selected Intel direct-source GU/DOWN no longer retain
+three unused128MiB fetch roots or an unused32KiB public stage-address table. Dense
+Q8_1 preparation has one correctly bounded512KiB original-arena owner instead.
+Actual binding schemas, retained source-read dependencies, constructor/queue
+attachment and pricing change together. Prompt raw-ring/phase roots stay intact.
+Global private inventory2,185,068,544 bytes; complete target private quote
+3,660,939,264 bytes. Private reduction402,128,896 bytes (383.5MiB), plus32KiB
+public table. These are source allocations, not observed freed memory or speed.
 
-Original native HOST/component/metadata quotes add a separate64MiB text/BPE/regex
-phase allowance; the existing192MiB tokenizer model/cache and4MiB generation/suffix
-owners remain separate. No GPU root/model copy. Full physical HOST pricing is
-still a gate.421 focused CPU cases/53 nonempty suites, final locked test build,
-both strict lint configurations and formatting/whitespace pass; exact receipts
-are linked above. No new shader/generator/arithmetic or frozen normal artifact.
+The reproduced nine stale legacy failures are reconciled using independently
+pinned profile-specific expectations, preserving production admission/caps.
+Final selected locked release test build and452 distinct cases/56 nonempty suites
+pass; all31 legacy cases also pass under noncore Strata and original no-feature
+reference. Both strict lint configurations and changed format/whitespace pass.
+This is focused coverage, not a complete broad-core regression or device proof.
+Exact log names and intermediate corrections are in the linked receipt.
+Current normal immutable artifact is `strata-direct-source-ordinary-20261016/`,
+SHA256 `c0032c4ed9cc065712384deeb624055a7ec1be40af952ee3216986eb6db7b662`;
+all330 offline shader variants pass. Clean/stable source build, independent hash
+and mode0500 verified; no device initialization. Old12a60bf artifact is superseded.
 
-This is NOT a private CLI launcher. Executable input remains compiled-public and
-one-request; it does not accept arbitrary stdin or private preview/receipt content.
-Next independently verify real no-swap/core protection, source authentication and
-exclusive full HOST/GPU admission BEFORE reading private bytes, connect retained
-Session multi-request output/checked close, and keep the public recorder separate.
-Do not manufacture protection from request metadata or widen the public allowlist.
-Raw-token and rendered-text Request consumers are available for that caller.
-Goal active CPU-only; no model/GPU/service/install/release/API/frontend action.
-Full rewrite/scheduling/substitution/pricing/legacy/device/numerical/recovery gates
-remain; no speed trials. Old12a60bf artifact is stale. Preserve canonical work.
+The retained Session, original physical route restoration/full32K sampler and
+bounded rendered-input consumer from the preceding blocks remain connected.
+Executable input is still compiled-public/one-request. A separate private caller
+must independently verify actual no-swap/core, original sources and exclusive
+HOST/GPU admission before receiving private bytes; never widen public receipts.
+
+Next continue native packed/in-place scratch/allocator/whole-device pricing and
+final pinned-source scheduling/substitution audits. Numerical/physical hot reuse,
+whole-model completion/failure/recovery and remaining old regression acceptance
+stay open. Full rewrite incomplete; speed gate closed. No API/config/connector/
+UI change; required Vashti changes:none. Preserve canonical work/untracked files.
+
+**Preceding rendered-input block:** `e145841` connects an already-rendered UTF-8
+reader/Rust-tokenizer consumer to the actual native Request entry. One wiping
+buffer has1MiB text plus a single overflow sentinel. Actual token/context limits
+reject with fixed errors; text/scratch drop before generation. Native HOST quotes
+include a separate64MiB text/BPE/regex phase allowance;192MiB tokenizer cache and
+4MiB generation/suffix owners remain separate. No private executable input or
+GPU claim. Its421-case evidence is superseded by the current selected452 cases.
 
 **Previous connected block:** source `a8bbdf0` plus `f1dd77f6a5a5cf98253488edec1fb761c1e9a0a4` fixes two
 real dependencies found in the retained-state audit. Next-request binding restores

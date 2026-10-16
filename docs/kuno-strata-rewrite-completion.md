@@ -6,6 +6,12 @@ checklist is a source-to-source audit, not a sequence of throughput experiments.
 Each row needs its connected consumer, real ownership/placement and state contract;
 adding an unused helper or optional switch does not complete a row.
 
+**Current CPU-only source:** `636c9f3543bbb68a188856719beb0262a033a1aa`. Start at the
+[direct-source memory/legacy receipt](#direct-source-memory-owners-and-legacy-regression-reconciliation-2026-10-16) and the
+[checkpoint](kuno-native-text-checkpoint.md). It supersedes older owner quotes and
+those nine reproduced legacy failures, not outstanding physical/numerical/full-
+regression gates. Whole rewrite incomplete; no new speed trials.
+
 ## Reference and execution scope
 
 Pinned MIT upstream `fb58e0dbc8399662c0e47c76578c6e878b14f6cf`, checkout
@@ -7528,3 +7534,108 @@ Vashti changes:none. Canonical checkout and inherited untracked files preserved.
 Goal active CPU-only, full rewrite incomplete, speed gate closed. Root is not
 needed for these source/CPU checks. Next connect the independently protected caller
 and continue the remaining full pinned-source/pricing/substitution/device gates.
+
+
+## Direct-source memory owners and legacy regression reconciliation (2026-10-16)
+
+Source `636c9f3543bbb68a188856719beb0262a033a1aa`, isolated
+`codex/strata-rust-port`. Pinned upstream remains
+`fb58e0dbc8399662c0e47c76578c6e878b14f6cf`, selected Intel
+`DEVICE_PLAN=1,NO_HOST=1`. This block completes a concrete dependency of the
+already-connected direct-source path; it is not a speed-driven alternative.
+
+The actual selected expert GU/DOWN shaders consume the original immutable VRAM
+or mapped HOST cell addresses. They do not invoke the optional decode fetch
+helpers. Nevertheless, their bindings retained an unused stage-address table and
+three 128 MiB private fetch roots; only the first root had a live consumer, the
+dense Q8_1 input preparation. Those obsolete owners/dependencies are now removed
+from the selected constructor, source attachment and role bindings together.
+
+Dense preparation now has its own original-arena owner: 73728 logical words,
+294912 logical bytes, rounded 512 KiB. It covers every supported packed dtype,
+1..8 members and all real input widths through 16384. The actual selected dense
+scope and consumers bind that owner. The original prompt roots/raw transfer ring,
+real source address tables, every indirect weight-read dependency and source
+retirement/drain/erasure responsibilities remain. Source attachment verifies the
+original Vulkan device identity before retaining its queue. This source check
+is not independent physical queue/device attestation.
+
+The real global MAIN request inventory is 22 roots totaling2,185,068,544 bytes;
+the complete target private quote is3,660,939,264 bytes. Compared with its previous
+inventory, private owners shrink 402,128,896 bytes (383.5MiB). One unused 32 KiB public
+address table is removed as well: total fixed-budget reduction402,161,664 bytes.
+Existing automatic expert-prefix sizing consumes the actual remaining budget;
+no resident expert count, available physical memory, cache-hit rate or inference
+speed is claimed from these source quotes.
+
+Optional explicit fetch diagnostics retain their own caller-supplied 128 MiB
+stage destinations and real source binding. They have no dummy stage-pointer
+table and remain unselected. The internal lab receipt now reports zero selected
+`native_host_stage_private_bytes` and the actual 512 KiB
+`native_dense_input_private_bytes`; this is not an application API change.
+
+Before this block, the 31-case `resident_model::batch::tests` suite reproduced
+nine failures on the prior selected binary. They were stale profile-specific
+expectations: original 4K/reference caps versus actual native 32K state, 8-row
+integer storage, replay/INFO ownership and extra priced HOST allowances. Tests
+now independently pin each compiled profile and continue checking exact owned
+bytes, separate costs, caps, overflow and packet boundaries. No production
+admission/cap/policy check was loosened. All 31 pass on selected Intel core,
+noncore Strata port and the original no-feature reference target. This reconciles
+these nine failures, not every historical broad-core test failure.
+
+CPU evidence in `/media/jmicko/faststore/kuno-development`:
+
+- `strata-core-legacy-before-20261016.log`: prior binary 31 cases, 22 pass/nine fail.
+- `strata-direct-source-final-build-20261016.log`: final locked selected release
+  test build, verified terminal exit0 before the final run.
+- `strata-direct-source-cpu-verified-20261016.log`: 452 distinct selected CPU
+  cases / 56 nonempty suites. Runner
+  `strata-direct-source-cpu-verified-run-20261016.py` checks actual discovered
+  cases, nonempty filters and duplicate exclusion. Includes the full 31 legacy
+  cases, 14 actual generated direct-source/fetch WGSL schemas and the original
+  dense-size/full-root quote checks, plus prior lifecycle/state coverage.
+- `strata-direct-source-off-build-20261016.log` and
+  `strata-direct-source-off-legacy-cpu-20261016.log`: noncore Strata port locked
+  test build and all 31 legacy cases pass.
+- `strata-direct-source-default-lab-build-20261016.log` and
+  `strata-direct-source-default-legacy-cpu-20261016.log`: original no-feature
+  `kuno-text-lab` locked test build and all 31 legacy cases pass. Attempting the
+  feature-gated `kuno-strata-rust` name without its required feature was first
+  rejected by Cargo; the manifest gate was preserved, not bypassed.
+- `strata-direct-source-{core,off}-final-clippy-20261016.log`: both strict locked
+  release lint configurations pass. Changed Rust format/whitespace pass.
+  The earlier test build caught missing test-local dense constant imports;
+  corrected before final selected/off/reference builds. The earlier 452-case
+  `cpu-final` run predates the final core-only test-module cfg guards; use the
+  `cpu-verified` log for the committed source.
+
+- Normal immutable release: `strata-direct-source-ordinary-20261016/`, source
+  `636c9f3543bbb68a188856719beb0262a033a1aa`, SHA256
+  `c0032c4ed9cc065712384deeb624055a7ec1be40af952ee3216986eb6db7b662`. Builder
+  clean-source/stable-HEAD checks pass; independent
+  hash and mode0500 checks pass. Summary:
+  `strata-direct-source-ordinary-20261016.out`.
+- `strata-direct-source-shaders-20261016.log`: all 330 offline variants pass,
+  including 122 physical-pointer checks, direct-source role/fetch binding changes
+  and cooperative matrices using matrix-aware spirv-tools. Only this frozen
+  artifact's `--validate-port-shaders` ran; the flag returns before vendor/adapter/
+  device setup. This artifact supersedes 12a60bf for current source. It does not
+  replace numerical/device acceptance.
+
+No adapter/device/model/inference/service/install/release action occurred. No
+application API/config/connector/UI change; required Vashti changes:none.
+Whole rewrite incomplete and speed gate closed; goal remains active CPU-only.
+The user renewed sudo, but actual shared-shell noninteractive validation still
+reported password required; no root was needed for this block. Last physical
+recovery evidence remains historical Oct15, not current health evidence.
+
+Continue the remaining native packed/in-place scratch/allocator/whole-device
+pricing and final pinned-source/scheduling/substitution audit, then the required
+numerical/device/failure/recovery acceptance under renewed GPU authorization.
+A private arbitrary-input launcher still requires independently verified actual
+swap/core/source/exclusive HOST/GPU protections before reading private bytes.
+The current executable remains compiled-public/one-request; retained Session and
+bounded rendered-text consumers exist in source. Preserve canonical application
+work and inherited untracked files. This cleanup does not establish whole-model
+correctness, physical hot reuse or complete upstream equivalence.
