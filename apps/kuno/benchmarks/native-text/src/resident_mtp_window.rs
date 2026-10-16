@@ -481,6 +481,10 @@ impl ResidentMtp<'_, '_> {
                 let mut first_front = self.prepare_window_first(source, cancel)?;
                 let mut last_enqueue_ns = 0;
                 let mut observation = None;
+                let coupled = crate::strata_sampler::request::coupled_draft_active(
+                    self.client()?,
+                    self.binding,
+                )?;
                 // The connected Intel controller owns stable target device rows.
                 // Host/scalar entry points retain their original unkeyed path.
                 let branch_rows = if cfg!(feature = "strata-intel-core") {
@@ -502,10 +506,25 @@ impl ResidentMtp<'_, '_> {
                     .map(|rows| {
                         cubecl_runtime::server::NativeStrataBranch::mtp_round(rows, count as u8)
                             .and_then(|key| key.with_model_owner(self.binding))
+                            .map(|key| key.with_coupled_sampling(coupled))
                             .map_err(error)
                     })
                     .transpose()?;
+                let mut whole_capture = None;
                 if let Some(key) = whole_branch {
+                    if self.try_native_frame_replay(key, front_origin, &mut first_front, cancel)? {
+                        let WindowPayload {
+                            tokens,
+                            probabilities,
+                        } = self.read_window_payload(id, count)?;
+                        return Ok(DraftWindow {
+                            tokens,
+                            probabilities,
+                            start,
+                            binding: self.binding,
+                            last_enqueue_ns: 0,
+                        });
+                    }
                     self.client()?
                         .begin_native_strata_invocation(
                             key,
@@ -515,6 +534,11 @@ impl ResidentMtp<'_, '_> {
                             .map_err(error)?,
                         )
                         .map_err(error)?;
+                    whole_capture = Some(replay::Capture::begin(
+                        key,
+                        self.traffic.get(),
+                        self.dispatches,
+                    )?);
                 }
                 for member in 0..count {
                     let step_branch = branch_rows
@@ -526,10 +550,26 @@ impl ResidentMtp<'_, '_> {
                                 cubecl_runtime::server::NativeStrataBranch::mtp_step(member as u8)
                             }
                             .and_then(|key| key.with_model_owner(self.binding))
+                            .map(|key| key.with_coupled_sampling(coupled))
                             .map_err(error)
                         })
                         .transpose()?;
-                    if let Some(key) = step_branch {
+                    let mut step_capture = None;
+                    let step_replayed = if let Some(key) = step_branch {
+                        self.try_native_frame_replay(
+                            key,
+                            if member == 0 {
+                                front_origin
+                            } else {
+                                self.position
+                            },
+                            &mut first_front,
+                            cancel,
+                        )?
+                    } else {
+                        false
+                    };
+                    if let Some(key) = step_branch.filter(|_| !step_replayed) {
                         self.client()?
                             .begin_native_strata_invocation(
                                 key,
@@ -553,45 +593,69 @@ impl ResidentMtp<'_, '_> {
                                 )
                                 .map_err(error)?;
                         }
+                        step_capture = Some(replay::Capture::begin(
+                            key,
+                            self.traffic.get(),
+                            self.dispatches,
+                        )?);
                     }
                     let clock = Instant::now();
-                    if member == 0 {
-                        self.forward_window_first(
-                            source,
-                            first_front.take(),
-                            step_branch.is_some() || whole_branch.is_some(),
-                            cancel,
-                        )?;
+                    if !step_replayed {
+                        if member == 0 {
+                            self.forward_window_first(
+                                source,
+                                first_front.take(),
+                                step_branch.is_some() || whole_branch.is_some(),
+                                cancel,
+                            )?;
+                        } else {
+                            self.forward()?;
+                        }
+                        self.finish_gpu()?;
+                        save_proposal::launch::<WgpuRuntime>(
+                            self.client()?,
+                            CubeCount::Static(1, 1, 1),
+                            CubeDim::new_1d(64),
+                            self.a(B::Greedy)?,
+                            u::arg(&self.arena, id)?,
+                            self.a(B::Fault)?,
+                            member,
+                            self.a(B::Candidates)?,
+                            self.native_confidence_supported(),
+                        );
+                        self.tick(1)?;
+                        last_enqueue_ns = u64::try_from(clock.elapsed().as_nanos())
+                            .map_err(|_| Error::ArithmeticOverflow)?;
                     } else {
-                        self.forward()?;
+                        last_enqueue_ns = 0;
                     }
-                    self.finish_gpu()?;
-                    save_proposal::launch::<WgpuRuntime>(
-                        self.client()?,
-                        CubeCount::Static(1, 1, 1),
-                        CubeDim::new_1d(64),
-                        self.a(B::Greedy)?,
-                        u::arg(&self.arena, id)?,
-                        self.a(B::Fault)?,
-                        member,
-                        self.a(B::Candidates)?,
-                        self.native_confidence_supported(),
-                    );
-                    self.tick(1)?;
-                    last_enqueue_ns = u64::try_from(clock.elapsed().as_nanos())
-                        .map_err(|_| Error::ArithmeticOverflow)?;
                     u::cancel(cancel)?;
                     if minimum > 0. || member + 1 == count {
-                        self.seal_window(id)?;
-                        // Seal/join only the original producer graph. Actual
-                        // private readback and confidence decisions are outside
-                        // it, preserving each positive-threshold stop boundary.
-                        if let Some(key) = step_branch.or_else(|| whole_branch.take()) {
-                            self.client()?
-                                .end_native_strata_branch(key)
-                                .map_err(error)?;
+                        let mut captured = None;
+                        if !step_replayed {
+                            self.seal_window(id)?;
+                            // Seal/join only the original producer graph. Actual
+                            // private readback and confidence decisions are outside
+                            // it, preserving each positive-threshold stop boundary.
+                            if let Some(key) = step_branch.or_else(|| whole_branch.take()) {
+                                self.client()?
+                                    .end_native_strata_branch(key)
+                                    .map_err(error)?;
+                                captured = Some(
+                                    step_capture
+                                        .take()
+                                        .or_else(|| whole_capture.take())
+                                        .ok_or(Error::InvalidFormat(
+                                            "MTP capture accounting missing",
+                                        ))?
+                                        .finish(self.traffic.get(), self.dispatches)?,
+                                );
+                            }
                         }
                         let payload = self.read_window_payload(id, member + 1)?;
+                        if let Some(entry) = captured {
+                            self.native_replay.insert(entry)?;
+                        }
                         let stop = minimum > 0. && payload.probabilities[member] < minimum;
                         observation = Some(payload);
                         if stop {
@@ -619,6 +683,11 @@ impl ResidentMtp<'_, '_> {
                                 .ok_or(Error::ArithmeticOverflow)?;
                             Ok(())
                         })?;
+                        if member == 0
+                            && let Some(capture) = whole_capture.as_mut()
+                        {
+                            capture.first_reset(self.dispatches)?;
+                        }
                         self.position += 1;
                         self.dispatches = 0;
                         if whole_branch.is_some() {

@@ -857,6 +857,8 @@ mod device_cache;
 #[path = "resident_mtp_admission.rs"]
 mod shared_admission;
 use shared_admission::Ledger;
+#[path = "strata_mtp_replay.rs"]
+mod replay;
 #[path = "resident_mtp_window.rs"]
 mod window;
 
@@ -868,6 +870,7 @@ pub struct ResidentMtp<'g, 'f> {
     dense_planes: Option<BufferId>,
     native_front: Option<crate::strata_mtp_front::Workspace>,
     native_front_pending: Arc<AtomicBool>,
+    native_replay: replay::Cache,
     client: ComputeClient<WgpuRuntime>,
     public: Option<Public>,
     shared_target_weights: Option<Arc<crate::strata_shared_weights::Weights>>,
@@ -1716,6 +1719,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             dense_planes,
             native_front,
             native_front_pending: Arc::new(AtomicBool::new(false)),
+            native_replay: replay::Cache::new()?,
             client: owned_client,
             public: None,
             shared_target_weights,

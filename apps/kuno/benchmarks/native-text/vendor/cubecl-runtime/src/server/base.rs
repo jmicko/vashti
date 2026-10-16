@@ -73,6 +73,7 @@ impl PublicTargetSubmissionBacklog {
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct NativeStrataBranch {
     model_owner: u64,
+    coupled_sampling: bool,
     family: u8,
     rows: u8,
     proposals: u8,
@@ -81,6 +82,19 @@ pub struct NativeStrataBranch {
     state_role: u8,
 }
 impl NativeStrataBranch {
+    /// Separate original coupled-sampler and greedy/argmax command inventories.
+    pub fn with_coupled_sampling(mut self, coupled: bool) -> Self {
+        self.coupled_sampling = coupled;
+        self
+    }
+    /// Static MTP geometry: accepted rows, first proposal index, proposal count.
+    pub fn mtp_geometry(self) -> Option<(u8, u8, u8)> {
+        match self.family {
+            2 => Some((self.rows, 0, self.proposals)),
+            3 => Some((1, self.proposals, 1)),
+            _ => None,
+        }
+    }
     /// Namespace recordings by the immutable model-instance identity. This is
     /// content-free and restores per-drafter graph ownership on a shared stream.
     pub fn with_model_owner(mut self, owner: u64) -> Result<Self, &'static str> {
@@ -124,6 +138,7 @@ impl NativeStrataBranch {
         }
         Ok(Self {
             model_owner: 0,
+            coupled_sampling: false,
             family: 1,
             rows,
             proposals: 0,
@@ -139,6 +154,7 @@ impl NativeStrataBranch {
         }
         Ok(Self {
             model_owner: 0,
+            coupled_sampling: false,
             family: 2,
             rows,
             proposals,
@@ -154,6 +170,7 @@ impl NativeStrataBranch {
         }
         Ok(Self {
             model_owner: 0,
+            coupled_sampling: false,
             family: 3,
             rows: 1,
             proposals: step,

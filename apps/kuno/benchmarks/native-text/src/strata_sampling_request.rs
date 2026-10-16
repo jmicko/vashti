@@ -95,6 +95,141 @@ fn draft_control(root: &Handle, index: usize) -> Result<Handle> {
 pub(crate) fn active() -> bool {
     ACTIVE.with(|s| s.borrow().is_some())
 }
+pub(crate) fn coupled_draft_active(
+    client: &ComputeClient<WgpuRuntime>,
+    binding: u64,
+) -> Result<bool> {
+    if !active() {
+        return Ok(false);
+    }
+    with(|s| {
+        s.context(client)?;
+        if s.draft != Some(binding) {
+            return Err(reject());
+        }
+        Ok(!s.params.greedy())
+    })
+}
+/// CPU control handback for an actual joined graph. No draw/history/token is
+/// fabricated here; the recorded original GPU bridge remains its sole producer.
+pub(crate) struct DraftReplay {
+    binding: u64,
+    controls: Option<Zeroizing<[u64; 7]>>,
+}
+pub(crate) fn prepare_draft_replay(
+    client: &ComputeClient<WgpuRuntime>,
+    binding: u64,
+    cell: usize,
+    count: usize,
+    first_index: usize,
+) -> Result<DraftReplay> {
+    if count == 0
+        || first_index
+            .checked_add(count)
+            .is_none_or(|end| end >= crate::strata_port::verify_capacity())
+        || cell
+            .checked_add(count - 1)
+            .is_none_or(|last| last >= HISTORY_MAX)
+    {
+        return Err(reject());
+    }
+    if !coupled_draft_active(client, binding)? {
+        return Ok(DraftReplay {
+            binding,
+            controls: None,
+        });
+    }
+    with(|s| {
+        Ok(DraftReplay {
+            binding,
+            controls: Some(Zeroizing::new(replay_controls(
+                *s.coordinates,
+                s.params.counter,
+                cell,
+                count,
+                first_index,
+            )?)),
+        })
+    })
+}
+fn replay_controls(
+    coordinates: [usize; 4],
+    current_counter: u64,
+    cell: usize,
+    count: usize,
+    first_index: usize,
+) -> Result<[u64; 7]> {
+    if count == 0
+        || first_index
+            .checked_add(count)
+            .is_none_or(|end| end >= crate::strata_port::verify_capacity())
+        || cell
+            .checked_add(count - 1)
+            .is_none_or(|last| last >= HISTORY_MAX)
+    {
+        return Err(reject());
+    }
+    let counter = coupled_counter(cell)?;
+    let j = (counter as usize)
+        .checked_sub(coordinates[2])
+        .ok_or_else(reject)?;
+    let next = j.checked_add(count).ok_or_else(reject)?;
+    if coordinates[0] != 3
+        || j != first_index
+        || j != coordinates[3]
+        || next >= crate::strata_port::verify_capacity()
+    {
+        return Err(reject());
+    }
+    Ok([
+        coordinates[0] as u64,
+        coordinates[1] as u64,
+        coordinates[2] as u64,
+        coordinates[3] as u64,
+        current_counter,
+        counter + count as u64 - 1,
+        next as u64,
+    ])
+}
+fn complete_replay_controls(
+    coordinates: &mut [usize; 4],
+    counter: &mut u64,
+    c: &[u64; 7],
+) -> Result<()> {
+    if coordinates.map(|v| v as u64) != c[..4]
+        || *counter != c[4]
+        || c[0] != 3
+        || c[5] > HISTORY_MAX as u64
+        || c[6] >= crate::strata_port::verify_capacity() as u64
+    {
+        return Err(reject());
+    }
+    *counter = c[5];
+    coordinates[3] = c[6] as usize;
+    Ok(())
+}
+
+impl DraftReplay {
+    pub(crate) fn coupled(&self) -> bool {
+        self.controls.is_some()
+    }
+    /// Called only after the owning MTP replay method joined its real fence.
+    pub(crate) fn complete(self, client: &ComputeClient<WgpuRuntime>) -> Result<()> {
+        let Some(c) = self.controls else {
+            if coupled_draft_active(client, self.binding)? {
+                return Err(reject());
+            }
+            return Ok(());
+        };
+        with(|s| {
+            s.context(client)?;
+            if s.draft != Some(self.binding) || s.params.greedy() {
+                return Err(reject());
+            }
+            complete_replay_controls(&mut s.coordinates, &mut s.params.counter, &c)
+        })
+    }
+}
 fn reject() -> Error {
     Error::InvalidFormat("native sampling request owner/state")
 }
@@ -701,6 +836,71 @@ fn commit_window(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn joined_sampler_handback_matches_original_per_cell_counter_progression() {
+        let maximum = crate::strata_port::verify_capacity() - 1;
+        for base in [1, 63, 2048, HISTORY_MAX] {
+            for index in 0..maximum {
+                for count in 1..=maximum - index {
+                    let cell = base + index - 1;
+                    let coords = [3, 17, base, index];
+                    let counter = if index == 0 {
+                        base as u64
+                    } else {
+                        (base + index - 1) as u64
+                    };
+                    if cell + count > HISTORY_MAX {
+                        assert!(replay_controls(coords, counter, cell, count, index).is_err());
+                        continue;
+                    }
+                    let prepared = replay_controls(coords, counter, cell, count, index).unwrap();
+                    let mut expected_coords = coords;
+                    let mut expected_counter = counter;
+                    for next_cell in cell..cell + count {
+                        expected_counter = coupled_counter(next_cell).unwrap();
+                        expected_coords[3] += 1;
+                    }
+                    let mut actual_coords = coords;
+                    let mut actual_counter = counter;
+                    complete_replay_controls(&mut actual_coords, &mut actual_counter, &prepared)
+                        .unwrap();
+                    assert_eq!(actual_coords, expected_coords);
+                    assert_eq!(actual_counter, expected_counter);
+                }
+            }
+        }
+    }
+    #[test]
+    fn sampler_handback_rejects_stale_state_or_wrong_proposal_before_mutation() {
+        let coords = [3, 17, 63, 0];
+        let counter = 63;
+        let prepared = replay_controls(coords, counter, 62, 1, 0).unwrap();
+        for field in 0..4 {
+            let mut c = coords;
+            c[field] += 1;
+            let before = c;
+            let mut ctr = counter;
+            assert!(complete_replay_controls(&mut c, &mut ctr, &prepared).is_err());
+            assert_eq!(c, before);
+            assert_eq!(ctr, counter);
+        }
+        let mut c = coords;
+        let mut ctr = counter + 1;
+        assert!(complete_replay_controls(&mut c, &mut ctr, &prepared).is_err());
+        assert_eq!(c, coords);
+        assert_eq!(ctr, counter + 1);
+        for (cell, count, index) in [
+            (62, 0, 0),
+            (62, 1, 1),
+            (HISTORY_MAX, 1, 0),
+            (62, usize::MAX, 0),
+        ] {
+            assert!(replay_controls(coords, counter, cell, count, index).is_err());
+        }
+        for phase in 0..3 {
+            assert!(replay_controls([phase, 17, 63, 0], counter, 62, 1, 0).is_err());
+        }
+    }
     #[test]
     fn all_coupled_draft_controls_are_staged_once_in_disjoint_original_rows() {
         let count = crate::strata_port::verify_capacity() - 1;
