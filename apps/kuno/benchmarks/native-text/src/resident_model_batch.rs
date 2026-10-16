@@ -2549,6 +2549,31 @@ impl Drop for Workspace {
     }
 }
 
+/// Original armed stage transactions prepared before the captured graph.
+/// Their private wrappers prevent commit before the corresponding math enqueue.
+struct AttentionInvocations {
+    gdn: Box<[Option<gdn::PreparedGdnBatch>; LAYERS]>,
+    qsa: Box<[Option<qsa::PreparedQsaBatch>; LAYERS]>,
+}
+impl AttentionInvocations {
+    fn new() -> Result<Self> {
+        if metadata_bytes() > META_CAP {
+            return Err(Error::LimitExceeded("native prepared attention metadata"));
+        }
+        Ok(Self {
+            gdn: Box::new(std::array::from_fn(|_| None)),
+            qsa: Box::new(std::array::from_fn(|_| None)),
+        })
+    }
+    fn consumed(&self) -> Result<()> {
+        if self.gdn.iter().any(Option::is_some) || self.qsa.iter().any(Option::is_some) {
+            return Err(Error::InvalidFormat(
+                "native attention preparation unconsumed",
+            ));
+        }
+        Ok(())
+    }
+}
 struct Pending {
     gdn: Box<[Option<gdn::PendingGdnBatch>; LAYERS]>,
     qsa: Box<[Option<qsa::PendingQsaBatch>; LAYERS]>,
@@ -2567,6 +2592,12 @@ fn metadata_bytes() -> usize {
     // plus the controller/session and bounded stack/capability headroom. MoE's
     // retained dynamic candidates and plans have their separate 2 MiB budget.
     pending_bytes()
+        + if crate::strata_intel_core::enabled() {
+            std::mem::size_of::<[Option<gdn::PreparedGdnBatch>; LAYERS]>()
+                + std::mem::size_of::<[Option<qsa::PreparedQsaBatch>; LAYERS]>()
+        } else {
+            0
+        }
         + if crate::strata_intel_core::enabled() {
             crate::strata_global_adapt::HOST_BYTES
         } else {
@@ -5085,6 +5116,48 @@ impl Workspace {
             &positions,
             cancel,
         )?);
+        // Arm each original state transaction before capture. All attention
+        // inputs use the same authenticated GR MIXED scratch owner; each layer
+        // writes its current values immediately before consuming the invocation.
+        let mixed = self.gr.invocation_input_owner()?;
+        let attention_spans = BatchSpans::new(*count, 0, 0, D, 0, D);
+        let mut attention_invocations = AttentionInvocations::new()?;
+        for (layer, stage) in m.layers.iter_mut().enumerate() {
+            u::cancel(cancel)?;
+            match stage {
+                Layer::Gdn(stage, public) => {
+                    attention_invocations.gdn[layer] = Some(stage.prepare_batch(
+                        m.graph,
+                        &m.arena,
+                        public,
+                        &mut self.gdn,
+                        mixed,
+                        self.outer.block[0],
+                        &attention_spans,
+                        *start as u64,
+                        m.b.fault,
+                        cancel,
+                    )?);
+                }
+                Layer::Qsa(stage, public) => {
+                    let mut selector =
+                        qsa::BatchSelector::new(&m.admission, self.public_gpu_qsa_selector);
+                    attention_invocations.qsa[layer] = Some(stage.prepare_batch(
+                        m.graph,
+                        &m.arena,
+                        public,
+                        &mut selector,
+                        &mut self.qsa,
+                        mixed,
+                        self.outer.block[0],
+                        &attention_spans,
+                        *start as u64,
+                        m.b.fault,
+                        cancel,
+                    )?);
+                }
+            }
+        }
         // Prompt-final count1 uses the same implementation before the request
         // scope opens. Capture only the active verification shape, whose head
         // and target-row consumers are invariant for this count/context pair.
@@ -5190,7 +5263,7 @@ impl Workspace {
             let spans = BatchSpans::new(*count, 0, 0, D, 0, D);
             match &mut m.layers[layer] {
                 Layer::Gdn(stage, public) => {
-                    pending.gdn[layer] = Some(stage.enqueue_batch(
+                    pending.gdn[layer] = Some(stage.enqueue_prepared(
                         m.graph,
                         &m.arena,
                         public,
@@ -5199,15 +5272,14 @@ impl Workspace {
                         prepared.mixed(),
                         self.outer.block[0],
                         &spans,
-                        *start as u64,
-                        m.b.fault,
+                        attention_invocations.gdn[layer].take().ok_or(error())?,
                         cancel,
                     )?)
                 }
                 Layer::Qsa(stage, public) => {
                     let mut selector =
                         qsa::BatchSelector::new(&m.admission, self.public_gpu_qsa_selector);
-                    pending.qsa[layer] = Some(stage.enqueue_batch(
+                    pending.qsa[layer] = Some(stage.enqueue_prepared(
                         m.graph,
                         &m.arena,
                         public,
@@ -5217,8 +5289,7 @@ impl Workspace {
                         prepared.mixed(),
                         self.outer.block[0],
                         &spans,
-                        *start as u64,
-                        m.b.fault,
+                        attention_invocations.qsa[layer].take().ok_or(error())?,
                         cancel,
                     )?);
                 }
@@ -5414,6 +5485,7 @@ impl Workspace {
                 line!()
             )));
         }
+        attention_invocations.consumed()?;
         if let Some(key) = branch {
             // Join/seal the real native recording before any logical output or
             // state proof is published. This grants no fault/erasure credit;
@@ -7218,6 +7290,28 @@ mod tests {
             assert!(NativeDecodeKernels::parse(label).is_err());
         }
         assert_eq!(NativeDecodeKernels::default(), NativeDecodeKernels::Chunk);
+    }
+    #[test]
+    fn prepared_attention_inventory_fits_admitted_metadata_without_extra_state_roots() {
+        // Check the selected feature's real aggregate, independently of older
+        // feature-off hard-coded GPU quotes in the historical test below.
+        assert!(metadata_bytes() <= META_CAP);
+        if crate::strata_intel_core::enabled() {
+            let prepared = AttentionInvocations::new().unwrap();
+            assert_eq!(prepared.gdn.len(), LAYERS);
+            assert_eq!(prepared.qsa.len(), LAYERS);
+            assert!(prepared.gdn.iter().all(Option::is_none));
+            assert!(prepared.qsa.iter().all(Option::is_none));
+            // Each entry is an opaque metadata ticket, never a new GPU owner.
+            assert_eq!(
+                std::mem::size_of::<gdn::PreparedGdnBatch>(),
+                std::mem::size_of::<gdn::PendingGdnBatch>()
+            );
+            assert_eq!(
+                std::mem::size_of::<qsa::PreparedQsaBatch>(),
+                std::mem::size_of::<qsa::PendingQsaBatch>()
+            );
+        }
     }
     #[test]
     fn aggregate_plan_counts_original_owners_once_and_independent_runtime_head_tiles() {

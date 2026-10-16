@@ -245,8 +245,14 @@ fn anchor_matches(expected: &Metadata, received: &Metadata) -> bool {
     expected == received
 }
 
-/// Opaque enqueue receipt. Drop before a successful commit poisons the whole
-/// sequence; fixed-capacity metadata is wiped even for a consumed receipt.
+/// Original armed transaction before any math is queued. Only the matching
+/// enqueue path can turn this into a pending receipt; abandonment poisons the
+/// original workspace and wipes its metadata just like an uncommitted batch.
+pub(crate) struct PreparedGdnBatch {
+    receipt: PendingGdnBatch,
+}
+/// Opaque queued receipt. Only whole-model acceptance can authorize commit;
+/// dropping it early poisons the sequence and wipes the original metadata.
 pub(crate) struct PendingGdnBatch {
     metadata: Zeroizing<Metadata>,
     poison: Arc<AtomicBool>,
@@ -961,6 +967,56 @@ impl ResidentGdn<'_> {
         fault_id: BufferId,
         cancel: &AtomicBool,
     ) -> Result<PendingGdnBatch> {
+        if projector.global_fault() != fault_id {
+            return Err(fault("native GDN prepared projector fault"));
+        }
+        let prepared = self.prepare_batch_checked(
+            graph, arena, public, workspace, input, output, spans, start, fault_id, cancel,
+        )?;
+        self.enqueue_prepared_checked(
+            graph, arena, public, projector, workspace, input, output, spans, prepared, cancel,
+        )
+    }
+    /// Authenticate and arm original owners/state without enqueueing math,
+    /// transfers, status folds or a completion fence.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn prepare_batch(
+        &mut self,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+        public: &PublicGdnParameters,
+        workspace: &mut GdnBatchWorkspace,
+        input: BufferId,
+        output: BufferId,
+        spans: &BatchSpans,
+        start: u64,
+        fault_id: BufferId,
+        cancel: &AtomicBool,
+    ) -> Result<PreparedGdnBatch> {
+        let attempted = guarded(&workspace.poison.clone(), || {
+            self.prepare_batch_checked(
+                graph, arena, public, workspace, input, output, spans, start, fault_id, cancel,
+            )
+        });
+        if attempted.is_err() {
+            self.poison();
+        }
+        attempted
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_batch_checked(
+        &mut self,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+        public: &PublicGdnParameters,
+        workspace: &mut GdnBatchWorkspace,
+        input: BufferId,
+        output: BufferId,
+        spans: &BatchSpans,
+        start: u64,
+        fault_id: BufferId,
+        cancel: &AtomicBool,
+    ) -> Result<PreparedGdnBatch> {
         workspace.healthy(arena, cancel)?;
         workspace.recurrence_policy.validate_count(spans.count())?;
         graph.verify_unchanged()?;
@@ -975,7 +1031,6 @@ impl ResidentGdn<'_> {
             || public.identity != self.public_identity
             || self.batch_pending.is_some()
             || spans.packed_first() != 0
-            || projector.global_fault() != fault_id
             || u::words(arena, fault_id)? != 1
             || workspace.fault.is_some_and(|f| f != fault_id)
             || self
@@ -1002,20 +1057,18 @@ impl ResidentGdn<'_> {
         )?;
         layout.chunk(count)?;
         validate_full_regions(arena, workspace, self, public, input, output, fault_id)?;
-        let gamma_shared = if public.gamma_words == self.layout.pointwise.shape.head_dim {
-            true
-        } else if public.gamma_words == self.layout.pointwise.value_elements {
-            false
-        } else {
+        if public.gamma_words != self.layout.pointwise.shape.head_dim
+            && public.gamma_words != self.layout.pointwise.value_elements
+        {
             return Err(Error::InvalidBufferLength);
-        };
-        let convolution = bounded_view(
+        }
+        bounded_view(
             &public.convolution,
             0,
             self.layout.pointwise.conv_weight_elements,
         )?;
-        let params = bounded_view(&public.controls, 0, self.layout.pointwise.control_elements)?;
-        let gamma = bounded_view(&public.gamma, 0, public.gamma_words)?;
+        bounded_view(&public.controls, 0, self.layout.pointwise.control_elements)?;
+        bounded_view(&public.gamma, 0, public.gamma_words)?;
         self.lifecycle.begin_batch(start, count)?;
         self.batch_poison = Some(workspace.poison.clone());
         let (chunk, generation) = workspace.policy.issue(
@@ -1049,6 +1102,94 @@ impl ResidentGdn<'_> {
             fault: fault_id,
         });
         self.batch_pending = Some(StageAnchor(Zeroizing::new((*metadata).clone())));
+        Ok(PreparedGdnBatch {
+            receipt: PendingGdnBatch {
+                metadata,
+                poison: workspace.poison.clone(),
+                armed: true,
+            },
+        })
+    }
+    /// Consume exactly the previously authenticated transaction. This conveys
+    /// no device-success or commit credit: the whole-model fence is unchanged.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn enqueue_prepared(
+        &mut self,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+        public: &PublicGdnParameters,
+        projector: &mut impl BatchedResidentProjector,
+        workspace: &mut GdnBatchWorkspace,
+        input: BufferId,
+        output: BufferId,
+        spans: &BatchSpans,
+        prepared: PreparedGdnBatch,
+        cancel: &AtomicBool,
+    ) -> Result<PendingGdnBatch> {
+        let attempted = guarded(&workspace.poison.clone(), || {
+            self.enqueue_prepared_checked(
+                graph, arena, public, projector, workspace, input, output, spans, prepared, cancel,
+            )
+        });
+        if attempted.is_err() {
+            self.poison();
+        }
+        attempted
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn enqueue_prepared_checked(
+        &mut self,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+        public: &PublicGdnParameters,
+        projector: &mut impl BatchedResidentProjector,
+        workspace: &mut GdnBatchWorkspace,
+        input: BufferId,
+        output: BufferId,
+        spans: &BatchSpans,
+        prepared: PreparedGdnBatch,
+        cancel: &AtomicBool,
+    ) -> Result<PendingGdnBatch> {
+        let receipt = prepared.receipt;
+        workspace.healthy(arena, cancel)?;
+        graph.verify_unchanged()?;
+        workspace.check_receipt(self, &receipt, arena)?;
+        let metadata = &*receipt.metadata;
+        if graph.binding_id() != self.binding
+            || public.binding != self.binding
+            || public.layer != self.layer
+            || public.identity != self.public_identity
+            || projector.global_fault() != metadata.fault
+            || metadata.input != input
+            || metadata.output != output
+            || spans.packed_first() != 0
+            || metadata.stamp.count != spans.count()
+            || metadata.stamp.input_first != spans.input_first()
+            || metadata.stamp.input_stride != spans.input_stride()
+            || metadata.stamp.output_first != spans.output_first()
+            || metadata.stamp.output_stride != spans.output_stride()
+        {
+            return Err(fault("native GDN prepared invocation changed"));
+        }
+        let count = metadata.stamp.count;
+        let start = metadata.stamp.start;
+        let chunk = metadata.stamp.chunk;
+        let fault_id = metadata.fault;
+        let layout = workspace.layout;
+        let gamma_shared = if public.gamma_words == self.layout.pointwise.shape.head_dim {
+            true
+        } else if public.gamma_words == self.layout.pointwise.value_elements {
+            false
+        } else {
+            return Err(Error::InvalidBufferLength);
+        };
+        let convolution = bounded_view(
+            &public.convolution,
+            0,
+            self.layout.pointwise.conv_weight_elements,
+        )?;
+        let params = bounded_view(&public.controls, 0, self.layout.pointwise.control_elements)?;
+        let gamma = bounded_view(&public.gamma, 0, public.gamma_words)?;
         let ids = &workspace.ids;
         let p = self.layout.pointwise;
         let client = arena.client().map_err(arena_fault)?;
@@ -1399,11 +1540,7 @@ impl ResidentGdn<'_> {
             }
             Ok(())
         })?;
-        Ok(PendingGdnBatch {
-            metadata,
-            poison: workspace.poison.clone(),
-            armed: true,
-        })
+        Ok(receipt)
     }
     /// All GDN receipts were preflighted by this sealed permit BEFORE any state
     /// swap. Other model owners still require their whole-model preflight.
@@ -2334,6 +2471,22 @@ mod tests {
             });
             assert_eq!(poison.load(Ordering::Acquire), armed);
         }
+    }
+    #[test]
+    fn prepared_invocation_abandonment_preserves_original_poison_and_quote() {
+        assert_eq!(
+            std::mem::size_of::<PreparedGdnBatch>(),
+            std::mem::size_of::<PendingGdnBatch>()
+        );
+        let poison = Arc::new(AtomicBool::new(false));
+        drop(PreparedGdnBatch {
+            receipt: PendingGdnBatch {
+                metadata: Zeroizing::new(metadata(stamp(3, 11, 13, 17, 8))),
+                poison: poison.clone(),
+                armed: true,
+            },
+        });
+        assert!(poison.load(Ordering::Acquire));
     }
     #[test]
     fn actual_anchor_rejects_every_mixed_owner_view_and_epoch() {

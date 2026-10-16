@@ -292,6 +292,14 @@ pub struct Workspace {
     public_grouped_status: crate::status_fold_batch::PublicPolicy,
 }
 impl Workspace {
+    /// Identity of the original MIXED owner for transaction preparation. This
+    /// neither reads values nor authorizes a GR result; normal read/combine and
+    /// whole-model output proofs are still required before state acceptance.
+    pub(crate) fn invocation_input_owner(&self) -> Result<BufferId> {
+        self.validate_all_consumers_queued()?;
+        Ok(self.ids[MIXED])
+    }
+
     pub(crate) fn public_grouped_status_folds(&self) -> (bool, u64) {
         self.public_grouped_status.state()
     }

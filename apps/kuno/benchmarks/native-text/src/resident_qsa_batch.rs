@@ -237,6 +237,14 @@ impl Zeroize for Metadata {
     }
 }
 pub(super) struct StageAnchor(Zeroizing<Metadata>);
+/// Original armed transaction before any math is queued. Only the matching
+/// enqueue path can turn this into a pending receipt; abandonment poisons the
+/// original workspace and wipes its metadata just like an uncommitted batch.
+pub(crate) struct PreparedQsaBatch {
+    receipt: PendingQsaBatch,
+}
+/// Opaque queued receipt. Only whole-model acceptance can authorize commit;
+/// dropping it early poisons the sequence and wipes the original metadata.
 pub(crate) struct PendingQsaBatch {
     metadata: Zeroizing<Metadata>,
     poison: Arc<AtomicBool>,
@@ -1623,6 +1631,61 @@ impl ResidentQsa<'_> {
         fault_id: BufferId,
         cancel: &AtomicBool,
     ) -> Result<PendingQsaBatch> {
+        if projector.global_fault() != fault_id {
+            return Err(fault("native QSA prepared projector fault"));
+        }
+        let prepared = self.prepare_batch_checked(
+            graph, arena, public, selector, workspace, input, output, spans, start, fault_id,
+            cancel,
+        )?;
+        self.enqueue_prepared_checked(
+            graph, arena, public, projector, selector, workspace, input, output, spans, prepared,
+            cancel,
+        )
+    }
+    /// Authenticate and arm original owners/state without enqueueing math,
+    /// transfers, status folds or a completion fence.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn prepare_batch(
+        &mut self,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+        public: &PublicQsaParameters,
+        selector: &mut impl QsaBatchSelector,
+        workspace: &mut QsaBatchWorkspace,
+        input: BufferId,
+        output: BufferId,
+        spans: &BatchSpans,
+        start: u64,
+        fault_id: BufferId,
+        cancel: &AtomicBool,
+    ) -> Result<PreparedQsaBatch> {
+        let attempted = guarded(&workspace.poison.clone(), || {
+            self.prepare_batch_checked(
+                graph, arena, public, selector, workspace, input, output, spans, start, fault_id,
+                cancel,
+            )
+        });
+        if attempted.is_err() {
+            self.poison();
+        }
+        attempted
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_batch_checked(
+        &mut self,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+        public: &PublicQsaParameters,
+        selector: &mut impl QsaBatchSelector,
+        workspace: &mut QsaBatchWorkspace,
+        input: BufferId,
+        output: BufferId,
+        spans: &BatchSpans,
+        start: u64,
+        fault_id: BufferId,
+        cancel: &AtomicBool,
+    ) -> Result<PreparedQsaBatch> {
         workspace.healthy(arena, cancel)?;
         graph.verify_unchanged()?;
         let count = spans.count();
@@ -1636,7 +1699,6 @@ impl ResidentQsa<'_> {
             || public.identity != self.public_identity
             || self.batch_pending.is_some()
             || spans.packed_first() != 0
-            || projector.global_fault() != fault_id
             || u::words(arena, fault_id)? != 1
             || workspace.fault.is_some_and(|f| f != fault_id)
             || self
@@ -1696,6 +1758,83 @@ impl ResidentQsa<'_> {
             fault: fault_id,
         });
         self.batch_pending = Some(StageAnchor(Zeroizing::new((*metadata).clone())));
+        Ok(PreparedQsaBatch {
+            receipt: PendingQsaBatch {
+                metadata,
+                poison: workspace.poison.clone(),
+                armed: true,
+            },
+        })
+    }
+    /// Consume exactly the previously authenticated transaction. This conveys
+    /// no device-success or commit credit: the whole-model fence is unchanged.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn enqueue_prepared(
+        &mut self,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+        public: &PublicQsaParameters,
+        projector: &mut impl BatchedResidentProjector,
+        selector: &mut impl QsaBatchSelector,
+        workspace: &mut QsaBatchWorkspace,
+        input: BufferId,
+        output: BufferId,
+        spans: &BatchSpans,
+        prepared: PreparedQsaBatch,
+        cancel: &AtomicBool,
+    ) -> Result<PendingQsaBatch> {
+        let attempted = guarded(&workspace.poison.clone(), || {
+            self.enqueue_prepared_checked(
+                graph, arena, public, projector, selector, workspace, input, output, spans,
+                prepared, cancel,
+            )
+        });
+        if attempted.is_err() {
+            self.poison();
+        }
+        attempted
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn enqueue_prepared_checked(
+        &mut self,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+        public: &PublicQsaParameters,
+        projector: &mut impl BatchedResidentProjector,
+        selector: &mut impl QsaBatchSelector,
+        workspace: &mut QsaBatchWorkspace,
+        input: BufferId,
+        output: BufferId,
+        spans: &BatchSpans,
+        prepared: PreparedQsaBatch,
+        cancel: &AtomicBool,
+    ) -> Result<PendingQsaBatch> {
+        let receipt = prepared.receipt;
+        workspace.healthy(arena, cancel)?;
+        graph.verify_unchanged()?;
+        workspace.check_receipt(self, &receipt, arena)?;
+        let metadata = &*receipt.metadata;
+        if graph.binding_id() != self.binding
+            || public.binding != self.binding
+            || public.layer != self.layer
+            || public.identity != self.public_identity
+            || projector.global_fault() != metadata.fault
+            || metadata.input != input
+            || metadata.output != output
+            || spans.packed_first() != 0
+            || metadata.stamp.count != spans.count()
+            || metadata.stamp.input_first != spans.input_first()
+            || metadata.stamp.input_stride != spans.input_stride()
+            || metadata.stamp.output_first != spans.output_first()
+            || metadata.stamp.output_stride != spans.output_stride()
+        {
+            return Err(fault("native QSA prepared invocation changed"));
+        }
+        selector.validate_owner(arena, &workspace.poison)?;
+        let count = metadata.stamp.count;
+        let start = metadata.stamp.start;
+        let fault_id = metadata.fault;
+        let l = workspace.layout;
         let ids = &workspace.ids;
         let client = arena.client().map_err(arena_fault)?;
         let dim = CubeDim::new_1d(64);
@@ -2121,11 +2260,7 @@ impl ResidentQsa<'_> {
             }
             Ok(())
         })?;
-        Ok(PendingQsaBatch {
-            metadata,
-            poison: workspace.poison.clone(),
-            armed: true,
-        })
+        Ok(receipt)
     }
     /// This permit preflighted ALL graph-derived QSA owners BEFORE mutation;
     /// future coordinator must also preflight GDN/PLE/other families first.
@@ -3235,6 +3370,22 @@ mod tests {
             });
             assert_eq!(poison.load(Ordering::Acquire), armed);
         }
+    }
+    #[test]
+    fn prepared_invocation_abandonment_preserves_original_poison_and_quote() {
+        assert_eq!(
+            std::mem::size_of::<PreparedQsaBatch>(),
+            std::mem::size_of::<PendingQsaBatch>()
+        );
+        let poison = Arc::new(AtomicBool::new(false));
+        drop(PreparedQsaBatch {
+            receipt: PendingQsaBatch {
+                metadata: Zeroizing::new(metadata(stamp(3, 11, 13, 17, 8))),
+                poison: poison.clone(),
+                armed: true,
+            },
+        });
+        assert!(poison.load(Ordering::Acquire));
     }
     #[test]
     fn batch_cursor_accepts_exact_count_and_then_original_scalar_next_token() {
