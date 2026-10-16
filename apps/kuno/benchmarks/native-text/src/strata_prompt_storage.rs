@@ -15,7 +15,7 @@ pub(crate) struct Storage {
     gr: [Handle; 5], // packed BF16 norm, down, packed BF16 low, up, row scales
     mixed_images: [Handle; 2], // native BF16 and FP16 input images, persistent across each half
     mixed_rows: Option<usize>, // published only by the actual queued GR writer
-    outer: [Handle; 13], // R/mixed/blocks/injection/router/shared/embedding, retained PLE tail
+    outer: [Handle; 12], // R/mixed/blocks/injection/router/shared/embedding, retained PLE tail
     ple: [Handle; 10],
     gdn: [Handle; 7],  // QKV, Z, H, readout, AB raw/controls/closing
     qsa: [Handle; 20], // projections/data, partials, pooled, compact norm/score flags and selections
@@ -65,8 +65,8 @@ impl Storage {
             Ok(views)
         };
         let mut persistent_words = [
-            5120, 320, 160, 10240, 4, 1280, 1280, 10240, 10240, 2560, 2560, 2560, 4, 512, 640, 640,
-            2560, 1, 2560,
+            5120, 320, 160, 10240, 4, 1280, 1280, 10240, 2560, 2560, 2560, 4, 512, 640, 640, 2560,
+            1, 2560,
         ]
         .map(|w| w * capacity)
         .to_vec();
@@ -74,7 +74,7 @@ impl Storage {
         let persistent = carve(&roots[0], &persistent_words)?;
         let gr: [Handle; 5] = std::array::from_fn(|i| persistent[i].clone());
         let mixed_images = std::array::from_fn(|i| persistent[i + 5].clone());
-        let outer: [Handle; 13] = std::array::from_fn(|i| persistent[i + 7].clone());
+        let outer: [Handle; 12] = std::array::from_fn(|i| persistent[i + 7].clone());
         let ple: [Handle; 10] = carve(
             &roots[1],
             &[2560, 10240, 2560, 10240, 4, 10240, 4, 4, 4, 4].map(|w| w * capacity),
@@ -182,7 +182,7 @@ impl Storage {
     pub(crate) fn publish_mixed(&mut self, source: &Handle, count: usize) {
         // Only the original full-prompt mixed view gets automatic reuse. Small
         // arena callers keep their existing explicit F32 conversion path.
-        self.mixed_rows = (same_view(source, &self.outer[2])
+        self.mixed_rows = (same_view(source, &self.outer[1])
             && (1..=allocation::DEFAULT_ROWS).contains(&count))
         .then_some(count);
     }
@@ -197,7 +197,7 @@ impl Storage {
         (self.mixed_rows == Some(count)
             && first == 0
             && stride == 2560
-            && same_view(source, &self.outer[2]))
+            && same_view(source, &self.outer[1]))
         .then(|| self.mixed_images[usize::from(!bfloat)].clone())
     }
     pub(crate) fn gr_input(&self, h: &Handle, columns: usize) -> bool {
@@ -207,7 +207,7 @@ impl Storage {
             _ => false,
         }
     }
-    pub(crate) fn outer(&self) -> [Handle; 13] {
+    pub(crate) fn outer(&self) -> [Handle; 12] {
         self.outer.clone()
     }
     pub(crate) fn ple(&self) -> [Handle; 10] {
@@ -234,12 +234,23 @@ impl Storage {
             .any(|v| same_view(h, v))
     }
 }
-fn same_view(a: &Handle, b: &Handle) -> bool {
+pub(crate) fn same_view(a: &Handle, b: &Handle) -> bool {
     a.stream == b.stream
         && a.clone().binding().memory.allocation_id() == b.clone().binding().memory.allocation_id()
         && a.offset_start.unwrap_or(0) == b.offset_start.unwrap_or(0)
         && a.offset_end.unwrap_or(0) == b.offset_end.unwrap_or(0)
         && a.size_in_used() == b.size_in_used()
+}
+/// Select one writable descriptor only for an identical original view.
+/// Partially overlapping views cannot use either in-place or disjoint kernels.
+pub(crate) fn in_place_or_disjoint(source: &Handle, output: &Handle) -> Result<bool> {
+    if same_view(source, output) {
+        return Ok(true);
+    }
+    if overlaps(source, output)? {
+        return Err(crate::strata_prompt::invalid_buffer_length());
+    }
+    Ok(false)
 }
 /// Full allocation identity alone is insufficient once native phase regions
 /// are carved. Admit only genuinely disjoint ranges of the same retained root.
@@ -549,7 +560,7 @@ mod mixed_image_tests {
     #[test]
     fn mixed_image_selection_requires_the_original_source_and_current_writer_geometry() {
         let mut s = storage();
-        let source = s.outer[2].clone();
+        let source = s.outer[1].clone();
         assert!(s.mixed_input(&source, 4096, 0, 2560, true).is_none());
         let images = s.begin_gr();
         assert!(s.mixed_input(&source, 4096, 0, 2560, false).is_none());
@@ -633,7 +644,7 @@ mod mixed_image_tests {
                 .unwrap();
             let reader = reader.finish().unwrap();
             assert!(reader.conflicts(&[access(image, true)]).unwrap());
-            assert!(!reader.conflicts(&[access(&s.outer[2], true)]).unwrap());
+            assert!(!reader.conflicts(&[access(&s.outer[1], true)]).unwrap());
             assert!(!reader.conflicts(&[access(&s.gr[0], true)]).unwrap());
         }
     }
@@ -692,5 +703,73 @@ mod native_ple_reuse_tests {
             assert!(count * 4 <= s.ple[8].size_in_used() as usize);
             assert!(count * 4 * 4 <= s.ple[9].size_in_used() as usize);
         }
+    }
+}
+
+#[cfg(test)]
+mod residual_owner_tests {
+    use super::*;
+    use cubecl_common::stream_id::StreamId;
+    #[test]
+    fn original_view_selection_rejects_partial_aliases_and_foreign_streams() {
+        let root = Handle::new(StreamId { value: 925 }, 4096);
+        let first = root.clone().offset_end(2048);
+        let next = root.clone().offset_start(2048);
+        assert!(in_place_or_disjoint(&first, &first.clone()).unwrap());
+        assert!(!in_place_or_disjoint(&first, &next).unwrap());
+        assert!(
+            in_place_or_disjoint(&first, &root.clone().offset_start(256).offset_end(2048)).is_err()
+        );
+        assert!(in_place_or_disjoint(&first, &first.clone().offset_end(256)).is_err());
+        assert!(!in_place_or_disjoint(&first, &Handle::new(root.stream, 2048)).unwrap());
+        assert!(in_place_or_disjoint(&first, &Handle::new(StreamId { value: 926 }, 2048)).is_err());
+    }
+    #[test]
+    fn sole_target_carry_and_idle_teacher_residual_have_original_disjoint_full_chunk_owners() {
+        let s =
+            Storage::new(allocation::ROOT_SIZES.map(|n| Handle::new(StreamId { value: 927 }, n)))
+                .unwrap();
+        assert_eq!(s.outer.len(), 12);
+        let words = [10240, 2560, 2560, 2560, 4, 512, 640, 640, 2560, 1, 2560];
+        for (h, w) in s.outer.iter().zip(words) {
+            assert_eq!(h.size_in_used(), (w * allocation::DEFAULT_ROWS * 4) as u64);
+        }
+        // Removing R1 removes160MiB logical payload, not physical root bytes.
+        assert_eq!(10240 * allocation::DEFAULT_ROWS * 4, 160 * 1024 * 1024);
+        let carry = &s.outer[0];
+        let residual = &s.ple[1];
+        let hn = &s.ple[3];
+        for count in [1, 8, 9, 256, 4095, 4096] {
+            for h in [carry, residual, hn] {
+                assert!(count * 10240 * 4 <= h.size_in_used() as usize);
+            }
+        }
+        for h in [residual, hn, &s.ple[8], &s.ple[9]] {
+            assert!(!overlaps(carry, h).unwrap());
+        }
+        assert!(!overlaps(residual, hn).unwrap());
+        for token_status in [&s.ple[8], &s.ple[9]] {
+            assert!(!overlaps(residual, token_status).unwrap());
+            assert!(!overlaps(hn, token_status).unwrap());
+        }
+        // A retained target R writer must precede its teacher reader; writing
+        // independent PLE scratch must not conflict with that carry reader.
+        use crate::strata_queue_tests::{Access, NodeAccess, Planner};
+        let access = |h: &Handle, buffer, write| Access {
+            buffer,
+            first: h.offset_start.unwrap_or(0),
+            bytes: h.size_in_used(),
+            write,
+        };
+        let mut p = Planner::new(1, false).unwrap();
+        p.push(&NodeAccess {
+            copy: false,
+            release_after: false,
+            accesses: vec![access(carry, 1, false)],
+        })
+        .unwrap();
+        let p = p.finish().unwrap();
+        assert!(p.conflicts(&[access(carry, 1, true)]).unwrap());
+        assert!(!p.conflicts(&[access(residual, 2, true)]).unwrap());
     }
 }

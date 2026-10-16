@@ -27,6 +27,7 @@ pub(crate) enum Kernel {
     PromptGate,
     PromptBroadcast,
     PromptConv,
+    PromptConvInPlace,
     PromptHistory,
 }
 impl Kernel {
@@ -52,7 +53,7 @@ impl Kernel {
             Self::Norm | Self::PromptNorm | Self::PromptNormInPlace => "NORM",
             Self::Gate | Self::PromptGate => "GATE",
             Self::Broadcast | Self::PromptBroadcast => "BROADCAST",
-            Self::Conv | Self::PromptConv => "CONV",
+            Self::Conv | Self::PromptConv | Self::PromptConvInPlace => "CONV",
             Self::History | Self::PromptHistory => "HISTORY",
             Self::Projection => "PROJECTION",
         }));
@@ -85,7 +86,7 @@ impl Kernel {
                     "if !ok{atomicOr(&fault[0],1u);}",
                 ),
             ],
-            Self::PromptConv => &[
+            Self::PromptConv | Self::PromptConvInPlace => &[
                 (
                     "@group(0) @binding(5) var<storage,read_write> conv:array<f32>;\n",
                     "",
@@ -117,6 +118,22 @@ impl Kernel {
         for &(old, new) in edits {
             assert!(s.contains(old), "prompt PLE source drift");
             s = s.replace(old, new);
+        }
+        if self == Self::PromptConvInPlace {
+            for (old, new) in [
+                (
+                    "@group(0) @binding(3) var<storage,read> hidden:array<f32>;\n",
+                    "",
+                ),
+                ("@binding(4)", "@binding(3)"),
+                ("@binding(5)", "@binding(4)"),
+                ("@binding(6)", "@binding(5)"),
+                ("@binding(7)", "@binding(6)"),
+                ("hidden[p.ib+t*p.is+c]", "result[p.ob+t*p.os+c]"),
+            ] {
+                assert!(s.contains(old), "in-place PLE conv source drift");
+                s = s.replace(old, new);
+            }
         }
         if self == Self::PromptNormInPlace {
             // The original key is both source and destination. Use ONE writable
@@ -159,6 +176,7 @@ impl KernelMetadata for Kernel {
             Self::PromptGate => "StrataPromptPleGate",
             Self::PromptBroadcast => "StrataPromptPleBroadcast",
             Self::PromptConv => "StrataPromptPleConv",
+            Self::PromptConvInPlace => "StrataPromptPleConvInPlace",
             Self::PromptHistory => "StrataPromptPleHistory",
         }
     }
@@ -243,6 +261,7 @@ fn launch_impl(
                 | Kernel::PromptGate
                 | Kernel::PromptBroadcast
                 | Kernel::PromptConv
+                | Kernel::PromptConvInPlace
                 | Kernel::PromptHistory
         ) && crate::strata_prompt::active()
         {
@@ -251,8 +270,10 @@ fn launch_impl(
             8
         })
             .contains(&(info[0] as usize))
-        || kernel == Kernel::PromptNormInPlace
-            && (info[1] != info[3] || info[2] != 10240 || info[4] != 10240)
+        || matches!(
+            kernel,
+            Kernel::PromptNormInPlace | Kernel::PromptConvInPlace
+        ) && (info[1] != info[3] || info[2] != 10240 || info[4] != 10240)
         || grid.contains(&0)
         || grid.iter().any(|&g| g > 65535)
         || handles.is_empty()
@@ -299,6 +320,7 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
         Kernel::PromptGate,
         Kernel::PromptBroadcast,
         Kernel::PromptConv,
+        Kernel::PromptConvInPlace,
         Kernel::PromptHistory,
     ]
     .into_iter()
@@ -574,6 +596,51 @@ mod tests {
 #[cfg(test)]
 mod inplace_prompt_tests {
     use super::*;
+    #[test]
+    fn actual_inplace_conv_has_one_residual_descriptor_and_separate_causal_sources() {
+        let source = Kernel::PromptConvInPlace.source();
+        let m = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        )
+        .validate(&m)
+        .unwrap();
+        let mut vars = m
+            .global_variables
+            .iter()
+            .filter_map(|(_, v)| v.binding.as_ref().map(|b| (b.binding, v)))
+            .collect::<Vec<_>>();
+        vars.sort_by_key(|v| v.0);
+        assert_eq!(
+            vars.iter()
+                .map(|v| (v.0, v.1.name.as_deref().unwrap()))
+                .collect::<Vec<_>>(),
+            vec![
+                (0, "history"),
+                (1, "normalized"),
+                (2, "weight"),
+                (3, "gated"),
+                (4, "result"),
+                (5, "fault"),
+                (6, "p")
+            ]
+        );
+        assert_eq!(
+            vars[4].1.space,
+            wgpu::naga::AddressSpace::Storage {
+                access: wgpu::naga::StorageAccess::LOAD | wgpu::naga::StorageAccess::STORE
+            }
+        );
+        assert_eq!(m.entry_points[0].workgroup_size, [256, 1, 1]);
+        let ordinary = wgpu::naga::front::wgsl::parse_str(&Kernel::PromptConv.source()).unwrap();
+        assert!(
+            ordinary
+                .global_variables
+                .iter()
+                .any(|(_, v)| v.name.as_deref() == Some("hidden"))
+        );
+    }
     #[test]
     fn actual_inplace_key_norm_has_one_writable_value_binding_and_original_reduction_shape() {
         let kernel = Kernel::PromptNormInPlace;

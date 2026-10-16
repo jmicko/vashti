@@ -98,7 +98,7 @@ fn gr_workspace() -> Result<[Handle; 5]> {
             .ok_or(Error::InvalidBufferLength)
     })
 }
-pub(crate) fn outer_workspace() -> Result<[Handle; 13]> {
+pub(crate) fn outer_workspace() -> Result<[Handle; 12]> {
     STAGES.with(|s| {
         s.borrow()
             .as_ref()
@@ -351,10 +351,12 @@ pub(crate) enum Kernel {
     Dequant(u32),
     Gemm,
     GrNorm,
+    GrNormInPlace,
     GrLow,
     GrMix,
     AbControls,
     GrWrite,
+    GrWriteInPlace,
     Copy,
     Embedding,
     Flags,
@@ -390,23 +392,68 @@ impl Kernel {
             Self::Pack => "PACK",
             Self::Dequant(_) => "DEQUANT",
             Self::Gemm => "GEMM",
-            Self::GrNorm => "GR_NORM",
+            Self::GrNorm | Self::GrNormInPlace => "GR_NORM",
             Self::GrLow => "GR_LOW",
             Self::GrMix => "GR_MIX",
             Self::AbControls => "AB_CONTROLS",
-            Self::GrWrite => "GR_WRITE",
+            Self::GrWrite | Self::GrWriteInPlace => "GR_WRITE",
             Self::Copy => "COPY",
             Self::Embedding => "EMBEDDING",
             Self::Flags => "FLAGS",
             Self::SharedPair => "SHARED_PAIR",
             Self::SharedMerge => "SHARED_MERGE",
         }));
+        // One descriptor owns the native in-place residual. Never alias a
+        // read-only previous/hidden binding with the writable original R.
+        let edits: &[(&str, &str)] = match self {
+            Self::GrNormInPlace => &[
+                (
+                    "@group(0) @binding(0) var<storage,read> previous:array<f32>;\n",
+                    "",
+                ),
+                ("previous[base+col]", "residual[base+col]"),
+            ],
+            Self::GrWriteInPlace => &[
+                (
+                    "@binding(0) var<storage,read> residual:",
+                    "@binding(0) var<storage,read_write> residual:",
+                ),
+                (
+                    "@group(0) @binding(3) var<storage,read_write> output:array<f32>;\n",
+                    "",
+                ),
+                ("output[i]=", "residual[i]="),
+            ],
+            _ => &[],
+        };
+        for &(old, new) in edits {
+            assert!(source.contains(old), "in-place GR source drift");
+            source = source.replace(old, new);
+        }
+        // Compact only bindings above the removed descriptor, in ascending
+        // order so a shifted binding cannot be shifted again.
+        let removed = match self {
+            Self::GrNormInPlace => Some(0),
+            Self::GrWriteInPlace => Some(3),
+            _ => None,
+        };
+        if let Some(removed) = removed {
+            let last = if self == Self::GrNormInPlace { 8 } else { 5 };
+            for i in removed + 1..=last {
+                source = source.replace(&format!("@binding({i})"), &format!("@binding({})", i - 1));
+            }
+        }
         // These kernels consume one linear word interval. Native2048 R has
         // more than65535 workgroups, so flatten only these genuinely linear
         // grids; GR/QSA/head geometries retain their independent dimensions.
         if matches!(
             self,
-            Self::Copy | Self::Embedding | Self::GrWrite | Self::Pack | Self::Dequant(_)
+            Self::Copy
+                | Self::Embedding
+                | Self::GrWrite
+                | Self::GrWriteInPlace
+                | Self::Pack
+                | Self::Dequant(_)
         ) {
             source = source
                 .replace("@builtin(global_invocation_id) id:vec3<u32>",
@@ -423,10 +470,12 @@ impl KernelMetadata for Kernel {
             Self::Dequant(_) => "StrataPromptOriginalWeightImage",
             Self::Gemm => "StrataPromptTileGemm",
             Self::GrNorm => "StrataPromptGrNormalize",
+            Self::GrNormInPlace => "StrataPromptGrNormalizeInPlace",
             Self::GrLow => "StrataPromptGrLowActivation",
             Self::GrMix => "StrataPromptGrMix",
             Self::AbControls => "StrataPromptAbControls",
             Self::GrWrite => "StrataPromptResidualBoundaryWrite",
+            Self::GrWriteInPlace => "StrataPromptResidualBoundaryWriteInPlace",
             Self::Copy => "StrataPromptDeviceCopy",
             Self::Embedding => "StrataPromptEmbeddingBroadcast",
             Self::Flags => "StrataPromptCompactClosingFault",
@@ -469,7 +518,12 @@ fn dispatch_grid(kernel: Kernel, grid: [usize; 3]) -> Result<[usize; 3]> {
         && grid[1..] == [1, 1]
         && matches!(
             kernel,
-            Kernel::Copy | Kernel::Embedding | Kernel::GrWrite | Kernel::Pack | Kernel::Dequant(_)
+            Kernel::Copy
+                | Kernel::Embedding
+                | Kernel::GrWrite
+                | Kernel::GrWriteInPlace
+                | Kernel::Pack
+                | Kernel::Dequant(_)
         )
     {
         let rows = grid[0].div_ceil(65535);
@@ -659,10 +713,12 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
         Kernel::Dequant(23),
         Kernel::Gemm,
         Kernel::GrNorm,
+        Kernel::GrNormInPlace,
         Kernel::GrLow,
         Kernel::GrMix,
         Kernel::AbControls,
         Kernel::GrWrite,
+        Kernel::GrWriteInPlace,
         Kernel::Copy,
         Kernel::Embedding,
         Kernel::Flags,
@@ -775,20 +831,32 @@ pub(crate) fn write_handles(
             return Err(crate::strata_prompt::invalid_buffer_length());
         }
     }
+    let in_place = storage::in_place_or_disjoint(&h[0], &h[3])?;
     if h[..3]
         .iter()
-        .chain(h[4..].iter())
-        .any(|v| storage::overlaps(v, &h[3]).unwrap_or(true))
+        .enumerate()
+        .chain(std::iter::once((4, &h[4])))
+        .any(|(i, v)| !(i == 0 && in_place) && storage::overlaps(v, &h[3]).unwrap_or(true))
     {
         return Err(crate::strata_prompt::invalid_buffer_length());
     }
     let mut p = [0; 16];
     p[0] = count as u32;
+    let kernel = if in_place {
+        Kernel::GrWriteInPlace
+    } else {
+        Kernel::GrWrite
+    };
+    let handles = if in_place {
+        vec![h[0].clone(), h[1].clone(), h[2].clone(), h[4].clone()]
+    } else {
+        h.into()
+    };
     launch(
         client,
-        Kernel::GrWrite,
+        kernel,
         [(count * 10240).div_ceil(256), 1, 1],
-        h.into(),
+        handles,
         p,
     )
 }
@@ -865,23 +933,35 @@ pub(crate) fn gr_handles(q: GrHandles<'_>, weights: [Handle; 3]) -> Result<()> {
         0,
         0,
     ];
-    // The no-apply branch reads neither dummy. Both still cover full possible
-    // source intervals and remain disjoint from the writable norm/residual.
+    // The native fused writer reads and updates the SAME R through ONE
+    // writable descriptor. Keep the disjoint path for non-native callers.
     let (previous, block) = q.previous.unwrap_or((up.clone(), q.mixed.clone()));
+    let in_place = storage::in_place_or_disjoint(&previous, &q.residual)?;
+    if storage::overlaps(&block, &q.residual)? {
+        return Err(crate::strata_prompt::invalid_buffer_length());
+    }
+    let mut norm = Vec::with_capacity(8);
+    if !in_place {
+        norm.push(previous);
+    }
+    norm.extend([
+        block,
+        q.injection.clone(),
+        q.gamma.clone(),
+        q.residual.clone(),
+        normalized.clone(),
+        scales.clone(),
+        q.fault.clone(),
+    ]);
     launch(
         q.client,
-        Kernel::GrNorm,
+        if in_place {
+            Kernel::GrNormInPlace
+        } else {
+            Kernel::GrNorm
+        },
         [4, q.count, 1],
-        vec![
-            previous,
-            block,
-            q.injection.clone(),
-            q.gamma.clone(),
-            q.residual.clone(),
-            normalized.clone(),
-            scales.clone(),
-            q.fault.clone(),
-        ],
+        norm,
         info,
     )?;
     let client = q.client;
@@ -1144,7 +1224,12 @@ mod tests {
         let words = groups::CAPACITY * 10240;
         let requested = words.div_ceil(256);
         assert!(requested > 65535);
-        for kernel in [Kernel::Copy, Kernel::Embedding, Kernel::GrWrite] {
+        for kernel in [
+            Kernel::Copy,
+            Kernel::Embedding,
+            Kernel::GrWrite,
+            Kernel::GrWriteInPlace,
+        ] {
             let grid = dispatch_grid(kernel, [requested, 1, 1]).unwrap();
             assert_eq!(grid, [65535, requested.div_ceil(65535), 1]);
             let mut covered = 0;
@@ -1165,6 +1250,75 @@ mod tests {
             dispatch_grid(Kernel::GrNorm, [4, groups::CAPACITY, 1]).unwrap(),
             [4, groups::CAPACITY, 1]
         );
+    }
+    #[test]
+    fn actual_inplace_residual_kernels_bind_r_once_and_preserve_disjoint_interfaces() {
+        use super::*;
+        for (kernel, expected, rslot) in [
+            (
+                Kernel::GrNormInPlace,
+                vec![
+                    "block",
+                    "injection",
+                    "gamma",
+                    "residual",
+                    "normalized",
+                    "scales",
+                    "fault",
+                    "p",
+                ],
+                3,
+            ),
+            (
+                Kernel::GrWriteInPlace,
+                vec!["residual", "block", "injection", "fault", "p"],
+                0,
+            ),
+        ] {
+            let module = wgpu::naga::front::wgsl::parse_str(&kernel.source()).unwrap();
+            wgpu::naga::valid::Validator::new(
+                wgpu::naga::valid::ValidationFlags::all(),
+                wgpu::naga::valid::Capabilities::all(),
+            )
+            .validate(&module)
+            .unwrap();
+            let mut vars = module
+                .global_variables
+                .iter()
+                .filter_map(|(_, v)| v.binding.as_ref().map(|b| (b.binding, v)))
+                .collect::<Vec<_>>();
+            vars.sort_by_key(|v| v.0);
+            assert_eq!(
+                vars.iter().map(|v| v.0).collect::<Vec<_>>(),
+                (0..expected.len() as u32).collect::<Vec<_>>()
+            );
+            assert_eq!(
+                vars.iter()
+                    .map(|v| v.1.name.as_deref().unwrap())
+                    .collect::<Vec<_>>(),
+                expected
+            );
+            assert_eq!(
+                vars[rslot].1.space,
+                wgpu::naga::AddressSpace::Storage {
+                    access: wgpu::naga::StorageAccess::LOAD | wgpu::naga::StorageAccess::STORE
+                }
+            );
+            assert_eq!(module.entry_points[0].workgroup_size, [256, 1, 1]);
+            if kernel == Kernel::GrNormInPlace {
+                assert!(module.entry_points[0].function.body.iter().any(|s|matches!(s,wgpu::naga::Statement::ControlBarrier(flags) if flags.contains(wgpu::naga::Barrier::STORAGE))));
+            }
+        }
+        for kernel in [Kernel::GrNorm, Kernel::GrWrite] {
+            let source = kernel.source();
+            let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
+            assert!(
+                module
+                    .global_variables
+                    .iter()
+                    .any(|(_, v)| matches!(v.name.as_deref(), Some("previous" | "output")))
+            );
+        }
     }
     fn h(b: &[u8], at: usize) -> f32 {
         half::f16::from_bits(u16::from_le_bytes([b[at], b[at + 1]])).to_f32()

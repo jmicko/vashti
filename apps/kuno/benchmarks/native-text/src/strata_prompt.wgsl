@@ -122,6 +122,9 @@ fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(local_invocation_index) tid:
  @builtin(subgroup_id) sg:u32,@builtin(subgroup_invocation_id) lane:u32,@builtin(subgroup_size) sw:u32) {
     let t=g.y;let h=g.x;if sw!=32u {if tid==0u {atomicOr(&fault[0],1u);}return;}if t>=p.count||h>=4u {return;}let base=p.ib+t*10240u+h*2560u;var sum=0.0;
     for(var col=tid;col<2560u;col+=256u) {var r=residual[base+col];if p.apply!=0u {r=fma(block[t*2560u+col],injection[t*4u+h],previous[base+col]);residual[base+col]=r;}sum+=r*r;}
+    // The packed pair loop below reads R values written by OTHER lanes above.
+    // Workgroup sums alone do not order storage-buffer writes in Vulkan/WGSL.
+    storageBarrier();
     for(var d=16u;d>0u;d/=2u) {sum+=subgroupShuffleXor(sum,d);}if lane==0u {sums[sg]=sum;}workgroupBarrier();sum=0.0;if lane<8u {sum=sums[lane];}
     for(var d=16u;d>0u;d/=2u){sum+=subgroupShuffleXor(sum,d);}let rs=inverseSqrt(sum/2560.0+p.epsilon);
     if tid==0u {scales[t*4u+h]=rs;}

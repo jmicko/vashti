@@ -218,19 +218,25 @@ impl PleBatchWorkspace {
             info(CHANNELS, CHANNELS, 4, 1e-6),
         )?;
         crate::strata_prompt::head_flags(client, v[9].clone(), fault.clone(), count, 4)?;
+        let in_place = crate::strata_prompt::storage::in_place_or_disjoint(&input, &output)?;
+        let mut conv = vec![
+            u::handle(&model.arena, roots[0])?,
+            v[3].clone(),
+            self.public.conv.clone(),
+        ];
+        if !in_place {
+            conv.push(input);
+        }
+        conv.extend([v[5].clone(), output, fault.clone()]);
         n::launch(
             &model.arena,
-            n::Kernel::PromptConv,
+            if in_place {
+                n::Kernel::PromptConvInPlace
+            } else {
+                n::Kernel::PromptConv
+            },
             [40, count, 1],
-            vec![
-                u::handle(&model.arena, roots[0])?,
-                v[3].clone(),
-                self.public.conv.clone(),
-                input,
-                v[5].clone(),
-                output,
-                fault.clone(),
-            ],
+            conv,
             info(CHANNELS, CHANNELS, 0, 0.),
         )?;
         n::launch(
@@ -250,7 +256,7 @@ impl PleBatchWorkspace {
             crate::strata_prompt::copy_handles(
                 client,
                 v[3].clone(),
-                crate::strata_prompt::outer_workspace()?[12].clone(),
+                crate::strata_prompt::outer_workspace()?[11].clone(),
                 (count - keep) * CHANNELS,
                 keep * CHANNELS,
             )?;
@@ -287,7 +293,7 @@ impl PleBatchWorkspace {
     ) -> Result<HistoryReadback> {
         self.validate_prompt_full(model, p, p.stamp[1], p.stamp[2])?;
         let rows = p.stamp[2].min(HISTORY);
-        let tail = crate::strata_prompt::outer_workspace()?[12].clone();
+        let tail = crate::strata_prompt::outer_workspace()?[11].clone();
         let tail = tail
             .clone()
             .offset_end(tail.size_in_used() - (rows * CHANNELS * 4) as u64);

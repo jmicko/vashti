@@ -110,20 +110,20 @@ impl ResidentMtp<'_, '_> {
         let start = self.position;
         let v = p::outer_workspace()?;
         let phase = p::ple_workspace()?;
-        // Outer R1 is the immutable target carry. R0 becomes the MTP residual;
-        // the phase region is no longer used by target attention or PLE.
-        let embedding = v[11].clone();
-        let en = v[2].clone();
-        let e2 = v[3].clone();
+        // The sole target R remains the immutable carry. The completed PLE
+        // key region is the independent MTP residual; query holds normalized H.
+        let embedding = v[10].clone();
+        let en = v[1].clone();
+        let e2 = v[2].clone();
         let hn = phase[3].clone();
-        let residual = v[0].clone();
+        let residual = phase[1].clone();
         // PLE gate/conv flags are idle during teaching. Preserve disjoint
         // four-words-per-row token/status views after PLE's native reuse.
         let token_view = phase[8].clone();
         let status = phase[9].clone();
-        let key = v[6].clone();
-        let value = v[11].clone();
-        let rotated = v[9].clone();
+        let key = v[5].clone();
+        let value = v[10].clone();
+        let rotated = v[8].clone();
         let fault = u::handle(&self.arena, self.id(B::Fault))?;
         let ids = *self
             .native_front
@@ -196,8 +196,8 @@ impl ResidentMtp<'_, '_> {
                 residual,
                 previous: None,
                 gamma: self.front_public("blk.48.hc_attn_norm.weight")?,
-                injection: v[5].clone(),
-                mixed: v[2].clone(),
+                injection: v[4].clone(),
+                mixed: v[1].clone(),
                 fault: fault.clone(),
                 count,
                 first: 0,
@@ -213,14 +213,14 @@ impl ResidentMtp<'_, '_> {
         self.tick(9)?;
         self.prompt_project(
             "blk.48.attn_k.weight",
-            v[2].clone(),
+            v[1].clone(),
             key.clone(),
             count,
             cancel,
         )?;
         self.prompt_project(
             "blk.48.attn_v.weight",
-            v[2].clone(),
+            v[1].clone(),
             value.clone(),
             count,
             cancel,

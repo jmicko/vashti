@@ -160,13 +160,13 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
     }
 }
 impl Workspace {
-    // 96 GR writes preserve the incoming R0 parity, with one additional PLE
-    // write after layer0. Every chunk therefore ends in R1.
+    // Native prompt GR and PLE update the sole original target R in place.
+    // MTP teaching preserves this carry and uses the idle PLE key for scratch.
     fn prompt_final_residual(&self, count: usize) -> Result<usize> {
         if !(1..=p::groups::CAPACITY).contains(&count) {
             return Err(error());
         }
-        Ok(1)
+        Ok(0)
     }
     #[allow(clippy::too_many_arguments)]
     fn prompt_gr(
@@ -269,7 +269,7 @@ impl Workspace {
             m.b.logit_packet,
             m.b.fault,
             tokens,
-            v[11].clone(),
+            v[10].clone(),
             v[0].clone(),
             cancel,
         )?;
@@ -279,7 +279,6 @@ impl Workspace {
             .begin(m.graph, &m.arena, count)?;
         let mut stages = Vec::with_capacity(LAYERS);
         let mut ple = None;
-        let mut current = 0;
         let mut previous: Option<(Handle, Handle)> = None;
         for layer in 0..LAYERS {
             u::cancel(cancel)?;
@@ -287,35 +286,28 @@ impl Workspace {
                 if let Some((source, block)) = previous.take() {
                     p::write_handles(
                         m.arena.client().map_err(u::fault)?,
-                        [
-                            source,
-                            block,
-                            v[5].clone(),
-                            v[current].clone(),
-                            fault.clone(),
-                        ],
+                        [source, block, v[4].clone(), v[0].clone(), fault.clone()],
                         count,
                     )?;
                 }
                 ple = Some(self.ple.enqueue_prompt_full(
                     m,
                     e,
-                    v[current].clone(),
-                    v[1 - current].clone(),
+                    v[0].clone(),
+                    v[0].clone(),
                     start,
                     tokens,
                     cancel,
                 )?);
-                current = 1 - current;
             }
             Self::prompt_gr(
                 m,
                 e,
                 &format!("blk.{layer}.hc_attn"),
-                v[current].clone(),
+                v[0].clone(),
                 previous.take(),
-                v[5].clone(),
-                v[2].clone(),
+                v[4].clone(),
+                v[1].clone(),
                 count,
                 0,
                 true,
@@ -326,8 +318,8 @@ impl Workspace {
                     &m.arena,
                     e,
                     public,
+                    v[1].clone(),
                     v[2].clone(),
-                    v[3].clone(),
                     start,
                     count,
                     m.b.fault,
@@ -339,8 +331,8 @@ impl Workspace {
                     &m.arena,
                     e,
                     public,
+                    v[1].clone(),
                     v[2].clone(),
-                    v[3].clone(),
                     start,
                     count,
                     m.b.fault,
@@ -348,16 +340,15 @@ impl Workspace {
                     cancel,
                 )?),
             });
-            previous = Some((v[current].clone(), v[3].clone()));
-            current = 1 - current;
+            previous = Some((v[0].clone(), v[2].clone()));
             Self::prompt_gr(
                 m,
                 e,
                 &format!("blk.{layer}.hc_ffn"),
-                v[current].clone(),
+                v[0].clone(),
                 previous.take(),
-                v[5].clone(),
-                v[2].clone(),
+                v[4].clone(),
+                v[1].clone(),
                 count,
                 0,
                 true,
@@ -367,8 +358,8 @@ impl Workspace {
                 .tensor(&format!("blk.{layer}.ffn_gate_inp.weight"))?;
             e.enqueue_strata_prompt_projection(
                 tensor,
-                &v[2],
-                &v[6],
+                &v[1],
+                &v[5],
                 &fault,
                 &BatchSpans::new(count, 0, 0, D, 0, 512),
                 cancel,
@@ -380,19 +371,19 @@ impl Workspace {
                 &sources,
                 &m.admission,
                 layer,
-                [v[2].clone(), v[3].clone(), v[6].clone()],
+                [v[1].clone(), v[2].clone(), v[5].clone()],
                 m.b.fault,
                 cancel,
             )?;
             for (name, index, width) in [
-                ("ffn_gate_shexp.weight", 7, 640),
-                ("ffn_up_shexp.weight", 8, 640),
-                ("ffn_gate_inp_shexp.weight", 10, 1),
+                ("ffn_gate_shexp.weight", 6, 640),
+                ("ffn_up_shexp.weight", 7, 640),
+                ("ffn_gate_inp_shexp.weight", 9, 1),
             ] {
                 let tensor = m.graph.tensor(&format!("blk.{layer}.{name}"))?;
                 e.enqueue_strata_prompt_projection(
                     tensor,
-                    &v[2],
+                    &v[1],
                     &v[index],
                     &fault,
                     &BatchSpans::new(count, 0, 0, D, 0, width),
@@ -406,8 +397,8 @@ impl Workspace {
                 p::Kernel::SharedPair,
                 [(count * 320).div_ceil(256), 1, 1],
                 vec![
+                    v[6].clone(),
                     v[7].clone(),
-                    v[8].clone(),
                     p::activation_stage()?,
                     fault.clone(),
                 ],
@@ -419,7 +410,7 @@ impl Workspace {
             e.enqueue_strata_prompt_prepacked_projection(
                 tensor,
                 &p::activation_stage()?,
-                &v[9],
+                &v[8],
                 &fault,
                 &BatchSpans::new(count, 0, 0, 640, 0, D),
                 cancel,
@@ -427,7 +418,7 @@ impl Workspace {
             self.global_moe.as_mut().ok_or_else(error)?.finish_prompt(
                 &m.arena,
                 layer,
-                v[3].clone(),
+                v[2].clone(),
                 m.b.fault,
             )?;
             p::launch(
@@ -435,31 +426,24 @@ impl Workspace {
                 p::Kernel::SharedMerge,
                 [(count * D).div_ceil(256), 1, 1],
                 vec![
-                    v[3].clone(),
+                    v[2].clone(),
+                    v[8].clone(),
                     v[9].clone(),
-                    v[10].clone(),
-                    v[4].clone(),
+                    v[3].clone(),
                     fault.clone(),
                 ],
                 info,
             )?;
-            previous = Some((v[current].clone(), v[4].clone()));
-            current = 1 - current;
+            previous = Some((v[0].clone(), v[3].clone()));
         }
         if let Some((source, block)) = previous.take() {
             p::write_handles(
                 m.arena.client().map_err(u::fault)?,
-                [
-                    source,
-                    block,
-                    v[5].clone(),
-                    v[current].clone(),
-                    fault.clone(),
-                ],
+                [source, block, v[4].clone(), v[0].clone(), fault.clone()],
                 count,
             )?;
         }
-        if current != self.prompt_final_residual(count)? {
+        if self.prompt_final_residual(count)? != 0 {
             return Err(error());
         }
         // First completed whole-model proof precedes every state readback.
