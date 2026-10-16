@@ -141,7 +141,8 @@ const PUBLIC_MAIN: u64 = 25_165_824
         0
     };
 const CORE_CACHE_HOST: usize = if cfg!(feature = "strata-intel-core") {
-    crate::strata_global_adapt::HOST_BYTES
+    crate::executor::native_static::HOST_BYTES
+        + crate::strata_global_adapt::HOST_BYTES
         + crate::strata_sampler::request::HOST_BYTES
         + kuno_text::cpu_expert::native::HOST_BYTES
         + crate::strata_prompt::groups::HOST_BYTES
@@ -2799,6 +2800,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             return Err(error());
         }
         let client = self.arena.client().map_err(u::fault)?;
+        executor.prepare_native_static_weights(self.graph)?;
         let budget = executor.native_expert_capacity()?;
         let plan = crate::strata_global_plan::Plan::from_graph(
             self.graph,

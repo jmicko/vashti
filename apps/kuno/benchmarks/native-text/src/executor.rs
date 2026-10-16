@@ -24,6 +24,8 @@ use zeroize::Zeroize;
 pub(crate) mod batch_moe;
 
 const TILE_BYTES: usize = 64 * 1024 * 1024;
+#[path = "strata_static_weights.rs"]
+pub(crate) mod native_static;
 
 // The original GGUF stores this BF16 dot-product weight as a vector. Intel
 // prefill.cpp passes it to GEMM as one row; retain those bytes and geometry
@@ -1381,6 +1383,7 @@ pub struct GpuExecutor<'a> {
     native_mtp_capacity: u64,
     native_mtp_claimed: bool,
     native_expert_budget: Option<u64>,
+    native_static: Option<native_static::Plan>,
     native_shared_public_bytes: usize,
     native_shared_public_live: bool,
     transient_resident: Option<Arc<AtomicBool>>,
@@ -1721,6 +1724,7 @@ impl<'a> GpuExecutor<'a> {
             native_mtp_capacity: 0,
             native_mtp_claimed: false,
             native_expert_budget: None,
+            native_static: None,
             native_shared_public_bytes: 0,
             native_shared_public_live: false,
             transient_resident: None,
@@ -1820,6 +1824,7 @@ impl<'a> GpuExecutor<'a> {
         self.strata_global_sources = None;
         self.cache.clear();
         self.cache_bytes = 0;
+        self.native_static = None;
         self.banks.clear();
         self.resident_banks_frozen = false;
         self.target_frozen_host_source_identity = None;
@@ -2549,6 +2554,7 @@ impl<'a> GpuExecutor<'a> {
             || self.adaptive.is_some()
             || self.secondary.is_some()
             || self.cache.keys().any(|k| k.tensor.contains("_exps.weight"))
+            || !self.native_static.as_ref().is_some_and(|p| p.sealed)
         {
             return Err(Error::InvalidFormat("global target execution authority"));
         }
@@ -2949,13 +2955,25 @@ impl<'a> GpuExecutor<'a> {
                 return Err(Error::LimitExceeded("ordered public runtime window"));
             }
         }
-        let requested_banks = expert_banks::preflight_residency_with_profile(
-            graph,
-            self.bank_slots,
-            self.budget,
-            self.reserved_limit,
-            self.packed_profile,
-        )? as u64;
+        let requested_banks = if crate::strata_intel_core::enabled() {
+            // Native automatic residency is bounded by all original expert
+            // bytes and the remaining shared MAIN, not the retired uniform
+            // 240-slot fixture. The ranked prefix still stops at the first
+            // original blob that does not fit, including real chunk padding.
+            self.packed_profile.validate_graph(graph)?;
+            crate::strata_global_plan::Plan::uniform_budget(
+                graph,
+                crate::daslab_profile::EXPERT_COUNT,
+            )?
+        } else {
+            expert_banks::preflight_residency_with_profile(
+                graph,
+                self.bank_slots,
+                self.budget,
+                self.reserved_limit,
+                self.packed_profile,
+            )? as u64
+        };
         let mut source_pages = 0_u64;
         for layer in 0..graph.geometry().layers {
             let base = format!("blk.{layer}.");
@@ -2996,8 +3014,19 @@ impl<'a> GpuExecutor<'a> {
                 .checked_add(crate::strata_shared_weights::SOURCE_BYTES)
                 .ok_or(Error::ArithmeticOverflow)?;
         }
+        let native_static = if crate::strata_intel_core::enabled() {
+            Some(native_static::Plan::from_graph(
+                graph,
+                self.client.properties().memory.alignment,
+            )?)
+        } else {
+            None
+        };
+        let static_bytes = native_static
+            .as_ref()
+            .map_or(Ok(self.budget as u64), native_static::Plan::total)?;
         let fixed = [
-            self.budget as u64,
+            static_bytes,
             private_owned,
             RESIDENT_IO_MAX,
             if self.transient_resident.is_some() {
@@ -3055,6 +3084,7 @@ impl<'a> GpuExecutor<'a> {
             )),
         };
         self.resident_admission = Some(admission.clone());
+        self.native_static = native_static;
         // A fresh logical owner must never inherit a previous decode experiment.
         self.native_projection_tile = NativeProjectionTile::default();
         self.native_projection_members = quant_matvec::matmul::MAX_BATCH;
@@ -3187,6 +3217,7 @@ impl<'a> GpuExecutor<'a> {
             || self.adaptive.is_some()
             || self.secondary.is_some()
             || self.cache.keys().any(|k| k.tensor.contains("_exps.weight"))
+            || !self.native_static.as_ref().is_some_and(|p| p.sealed)
         {
             return Err(Error::InvalidFormat("global expert loader selection"));
         }
@@ -3415,6 +3446,19 @@ impl<'a> GpuExecutor<'a> {
             let p = shared.page(crate::strata_shared_weights::Tensor::Head, first, rows)?;
             return Ok((p.handle.clone(), p.tile.logical / 4));
         }
+        let native_tile = if crate::strata_intel_core::enabled() {
+            if !tensor.belongs_to(self.model) {
+                return Err(Error::InvalidBufferLength);
+            }
+            Some(
+                self.native_static
+                    .as_ref()
+                    .ok_or(Error::InvalidFormat("native dense inventory missing"))?
+                    .tile(tensor, expert, first, rows)?,
+            )
+        } else {
+            None
+        };
         // The native shared scalar gate is the sole rank-one packed projection.
         // Validate its exact one-row request even on a cache hit.
         if tensor.info().dimensions().len() == 1
@@ -3436,22 +3480,37 @@ impl<'a> GpuExecutor<'a> {
             first,
         };
         if let Some(cached) = self.cache.get_mut(&key) {
+            if native_tile.is_some_and(|tile| {
+                cached.words != tile.payload / 4
+                    || cached.bytes != tile.owned
+                    || cached.handle.size_in_used() != tile.payload as u64
+            }) {
+                return Err(Error::InvalidFormat("native dense cache extent changed"));
+            }
             cached.last = self.tick;
             self.cache_hits += 1;
             return Ok((cached.handle.clone(), cached.words));
+        }
+        if native_tile.is_some() && self.native_static.as_ref().is_some_and(|p| p.sealed) {
+            return Err(Error::InvalidFormat("sealed native dense cache miss"));
         }
         let row_bytes = tensor.info().row_bytes() as usize;
         let bytes = rows
             .checked_mul(row_bytes)
             .ok_or(Error::ArithmeticOverflow)?;
         let padded = bytes.checked_add(3).ok_or(Error::ArithmeticOverflow)? / 4 * 4;
+        if native_tile.is_some_and(|tile| tile.payload != padded) {
+            return Err(Error::InvalidBufferLength);
+        }
         let exact = crate::strata_port::exact_static_cache()
             && self.packed_profile == expert_banks::OriginalPackedProfile::DaslabIq3;
         let alignment = self.client.properties().memory.alignment as usize;
         if exact && (alignment == 0 || !alignment.is_power_of_two() || alignment > 4096) {
             return Err(Error::InvalidFormat("exact public static alignment"));
         }
-        let reserved = if exact {
+        let reserved = if let Some(tile) = native_tile {
+            tile.owned
+        } else if exact {
             padded
                 .checked_add(alignment - 1)
                 .ok_or(Error::ArithmeticOverflow)?
@@ -3460,10 +3519,23 @@ impl<'a> GpuExecutor<'a> {
         } else {
             padded.max(32 * 1024).next_power_of_two()
         };
-        let usable = self
-            .budget
-            .checked_sub(self.native_shared_public_bytes)
-            .ok_or(Error::ArithmeticOverflow)?;
+        let usable = if let Some(plan) = &self.native_static {
+            plan.bytes
+        } else {
+            self.budget
+                .checked_sub(self.native_shared_public_bytes)
+                .ok_or(Error::ArithmeticOverflow)?
+        };
+        if native_tile.is_some()
+            && self
+                .cache_bytes
+                .checked_add(reserved)
+                .is_none_or(|n| n > usable)
+        {
+            return Err(Error::LimitExceeded(
+                "native sealed dense inventory capacity",
+            ));
+        }
         while self.cache_bytes + reserved > usable {
             let old = self
                 .cache
@@ -3493,7 +3565,14 @@ impl<'a> GpuExecutor<'a> {
                 return Err(Error::LimitExceeded("GPU allocator reserved memory"));
             }
         }
-        let mut packed = vec![0u8; padded];
+        let mut packed = vec![
+            0u8;
+            if native_tile.is_some() {
+                reserved
+            } else {
+                padded
+            }
+        ];
         let output_rows = tensor.info().dimensions().get(1).copied().unwrap_or(1) as usize;
         let offset = expert
             .checked_mul(output_rows)
@@ -3503,15 +3582,17 @@ impl<'a> GpuExecutor<'a> {
         let started = Instant::now();
         tensor.read_range(offset as u64, &mut packed[..bytes])?;
         self.weight_read_ns += started.elapsed().as_nanos();
-        // GPU storage uses original little-endian byte packing; only final word
-        // padding is added. No host f32 mirror/requantized model copy exists.
+        // Original little-endian packed bytes plus zero word/physical padding.
+        // Native logical views keep the exact old payload span; no conversion
+        // or host F32 mirror/requantized model copy is introduced.
         let started = Instant::now();
         let upload = || {
             if exact {
                 use cubecl_runtime::memory_management::MemoryAllocationMode;
                 // Same exclusive stream admission and unwind-safe allocation
                 // guard as exact expert banks. Only ORIGINAL PUBLIC weights.
-                let retired = AtomicBool::new(false);
+                let fallback = AtomicBool::new(false);
+                let retired = self.transient_resident.as_deref().unwrap_or(&fallback);
                 expert_banks::exact_persistent::persistent_scope(
                     |mode: MemoryAllocationMode| {
                         // SAFETY: laboratory owns this stream's allocation scope.
@@ -3520,14 +3601,18 @@ impl<'a> GpuExecutor<'a> {
                         }
                         Ok(())
                     },
-                    &retired,
+                    retired,
                     || Ok(self.client.create_public_owned(packed)),
                 )
             } else {
                 Ok(self.client.create_public_owned(packed))
             }
         };
-        let handle = if let Some(admission) = &self.resident_admission {
+        let handle = if let (Some(tile), Some(admission)) = (native_tile, &self.resident_admission)
+        {
+            let root = admission.allocate_public_roots(&[reserved as u64, tile.source], upload)?;
+            root.offset_end((reserved - padded) as u64)
+        } else if let Some(admission) = &self.resident_admission {
             admission.allocate(
                 &[if exact {
                     reserved as u64
@@ -3549,6 +3634,7 @@ impl<'a> GpuExecutor<'a> {
                 || root.size != padded as u64
                 || root.buffer.size() < padded as u64
                 || root.buffer.size() > reserved as u64
+                || native_tile.is_some() && root.buffer.size() != reserved as u64
             {
                 return Err(Error::InvalidFormat("exact public static physical extent"));
             }
