@@ -125,8 +125,7 @@ fn info(words: &[u32]) -> MetadataBindingInfo {
     .with_native_parameter(2, cubecl_runtime::server::NativeStrataValue::RouteEpoch)
 }
 pub(crate) struct Adaptation {
-    proposal: crate::strata_global_adapt::Proposal,
-    flight: Option<crate::public_host_expert_mirror::strata_global::exchange::Flight>,
+    flight: crate::public_host_expert_mirror::strata_global::exchange::Flight,
 }
 pub(crate) struct Workspace {
     binding: GraphBindingId,
@@ -658,8 +657,8 @@ impl Workspace {
         Ok(())
     }
     /// Real target rows/INFO are observed; no next target reader exists. Start
-    /// original copies BEFORE commit submission/next MTP drafting. Acceptance
-    /// remains independent and all maps stay unpublished until finish below.
+    /// the original host rank/copy job BEFORE commit/MTP drafting. Its owned
+    /// copy authority is independent; maps stay unpublished until actual join.
     pub(crate) fn begin_adaptation_after_verified(
         &mut self,
         graph: BoundGraph<'_, '_>,
@@ -684,11 +683,11 @@ impl Workspace {
         }
         let usage =
             admission.readback_audited(cancel, || u::read_prefix_f32(arena, self.ids[9], 24576))?;
-        let proposal = cache.propose(&usage)?;
         u::cancel(cancel)?;
         let raw = self.prompt_stages.ok_or_else(reject)?[2];
-        let flight = sources.submit_exchange(graph, &proposal.swaps, arena, raw)?;
-        Ok(Some(Adaptation { proposal, flight }))
+        let cache = self.adaptive.take().ok_or_else(reject)?;
+        let flight = sources.submit_exchange(graph, arena, raw, cache, usage)?;
+        Ok(Some(Adaptation { flight }))
     }
     /// Original target/MTP commit/draft consumers have completed. Join the exact
     /// copy flight and its actual copy->MAIN semaphore dependency, then publish
@@ -700,12 +699,14 @@ impl Workspace {
         adaptation: Option<Adaptation>,
     ) -> Result<()> {
         self.validate_idle()?;
-        let Some(Adaptation { proposal, flight }) = adaptation else {
+        let Some(Adaptation { flight }) = adaptation else {
             return Ok(());
         };
-        if let Some(flight) = flight {
-            flight.finish()?;
+        if self.adaptive.is_some() {
+            return Err(reject());
         }
+        let (cache, proposal) = sources.complete_exchange(flight)?;
+        self.adaptive = Some(cache);
         let mut mapping = crate::strata_global_adapt::encode_route_map(&proposal.mapping)?;
         let mut counts = Zeroizing::new(vec![0u8; 131072]);
         for (i, &score) in proposal.usage.iter().enumerate() {

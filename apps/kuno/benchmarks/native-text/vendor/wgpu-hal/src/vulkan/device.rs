@@ -985,12 +985,15 @@ impl super::Device {
         ))
     }
 
-    /// Borrow queue0 of the additional transfer family actually created.
-    pub fn kuno_transfer_queue(&self) -> Option<(u32, vk::Queue)> {
+    /// Own queue0 of the additional transfer family actually created. All
+    /// graph/adaptive submitters share its device lifetime and submission lock.
+    pub fn kuno_transfer_queue_authority(&self) -> Option<super::KunoTransferQueue> {
         let (families, _) = self.kuno_buffer_queue_families()?;
-        Some((families[1], unsafe {
-            self.shared.raw.get_device_queue(families[1], 0)
-        }))
+        Some(super::KunoTransferQueue {
+            shared: Arc::clone(&self.shared),
+            family: families[1],
+            raw: unsafe { self.shared.raw.get_device_queue(families[1], 0) },
+        })
     }
 
     /// Borrow queue0 of the additional compute family actually created.

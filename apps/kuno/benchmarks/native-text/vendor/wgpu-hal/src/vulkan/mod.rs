@@ -475,6 +475,9 @@ struct DeviceShared {
     // Configured once, before allocation, only for a device that actually
     // requested this additional queue. No process-global queue inference.
     kuno_transfer_family: core::sync::atomic::AtomicU32,
+    // One actual queue0 submission authority shared by graph and adaptive
+    // workers. Never held while waiting for a GPU fence or joining a thread.
+    kuno_transfer_submission: Mutex<()>,
     kuno_compute_family: core::sync::atomic::AtomicU32,
     queue_index: u32,
     raw_queue: vk::Queue,
@@ -521,6 +524,46 @@ impl Drop for DeviceShared {
         }
     }
 }
+
+/// Owning authority for queue0 of the ACTUAL adopted transfer family. Clones
+/// share both the original device lifetime and its Vulkan external host lock.
+/// There is no independently constructible raw-queue submission capability.
+#[derive(Clone)]
+pub struct KunoTransferQueue {
+    shared: Arc<DeviceShared>,
+    family: u32,
+    raw: vk::Queue,
+}
+impl KunoTransferQueue {
+    pub fn family_index(&self) -> u32 {
+        self.family
+    }
+    /// Identity for original recording/queue validation, not a submit entry.
+    pub fn raw_identity(&self) -> vk::Queue {
+        self.raw
+    }
+    pub fn is_original(&self, device: vk::Device, queue: vk::Queue) -> bool {
+        self.shared.raw.handle() == device && self.raw == queue
+    }
+    /// # Safety
+    /// Every command/semaphore/fence belongs to this SAME device and original
+    /// queue family, and owning resources remain retained through completion.
+    /// An attempted submission grants no fence/completion/reuse authority.
+    pub unsafe fn submit(
+        &self,
+        submits: &[vk::SubmitInfo<'_>],
+        fence: vk::Fence,
+    ) -> Result<(), vk::Result> {
+        let _original_queue = self.shared.kuno_transfer_submission.lock();
+        unsafe { self.shared.raw.queue_submit(self.raw, submits, fence) }
+    }
+}
+// A future worker can move this original owned capability using Rust's actual
+// type guarantees; never add unsafe Send/Sync for borrowed queues or arenas.
+const _: fn() = || {
+    fn require<T: Send + Sync>() {}
+    require::<KunoTransferQueue>();
+};
 
 pub struct Device {
     kuno_wgsl_subgroup: KunoSubgroupRequirement,

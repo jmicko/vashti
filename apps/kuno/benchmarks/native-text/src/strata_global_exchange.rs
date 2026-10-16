@@ -4,6 +4,10 @@ use super::*;
 #[path = "strata_adapt_transfer.rs"]
 mod flight;
 pub(crate) use flight::Flight;
+#[path = "strata_adapt_inventory.rs"]
+mod inventory;
+pub(crate) use inventory::{Cell, Inventory};
+pub(crate) const INVENTORY_HOST_BYTES: usize = inventory::HOST_BYTES;
 
 pub(crate) struct Pair {
     pub gpu: WgpuResource,
@@ -61,114 +65,34 @@ const _: () = assert!(
     crate::strata_global_adapt::MAX_SWAPS * 3 * 3 * std::mem::size_of::<Copy>() < 128 * 1024
 );
 impl Host {
-    /// # Safety
-    /// Same actual owning device/queue. All source consumers have completed,
-    /// no CPU map or new consumer overlaps, and Sources authenticated every GPU
-    /// cell. All three roles of each proposed pair must be published together.
-    pub(crate) unsafe fn submit_exchange(
+    /// Revoke all original expert HOST pages before a worker can choose its
+    /// bounded swap set. Embedding/shadow pages remain separate authorities.
+    /// Registry mutation and its token NEVER leave the sole original thread.
+    pub(crate) fn begin_adaptive_rebase(
         &mut self,
-        pairs: &[Pair],
-        scratch: &WgpuResource,
-        guard: crate::strata_external_flight::Flight,
-    ) -> KResult<Flight> {
-        if self.closed
-            || pairs.is_empty()
-            || pairs.len() > crate::strata_global_adapt::MAX_SWAPS * 3
-        {
+    ) -> KResult<Option<cubecl_runtime::public_external::PublicExternalRebase>> {
+        if self.closed || self.cpu_borrow.load(std::sync::atomic::Ordering::Acquire) {
             return Err(fail());
-        }
-        // Original attached dormant prompt raw owner, not a new allocation or
-        // a source-provided replacement. Full client joins precede this call.
-        let copy_usage = wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST;
-        if scratch.offset != 0
-            || scratch.size != scratch.buffer.size()
-            || scratch.size < crate::strata_prompt::allocation::RAW_RING_BYTES
-            || !scratch.buffer.usage().contains(copy_usage)
-        {
-            return Err(fail());
-        }
-        let copies = copy_plan(pairs.iter().map(|p| p.gpu.size), scratch.size)?;
-        let align = u64::from(self.device.limits().min_storage_buffer_offset_alignment);
-        for (i, pair) in pairs.iter().enumerate() {
-            if pair.gpu.size != pair.host.size
-                || pair.gpu.size == 0
-                || pair.gpu.size > 1024 * 1024
-                || !pair.gpu.size.is_multiple_of(4)
-                || pair.gpu.buffer == pair.host.buffer
-                || pair.gpu.buffer == scratch.buffer
-                || pair.host.buffer == scratch.buffer
-                || !pair.gpu.buffer.usage().contains(copy_usage)
-                || !pair.host.buffer.usage().contains(copy_usage)
-                || !pair.gpu.offset.is_multiple_of(align)
-                || !pair.host.offset.is_multiple_of(align)
-                || pair
-                    .gpu
-                    .offset
-                    .checked_add(pair.gpu.size)
-                    .is_none_or(|n| n > pair.gpu.buffer.size())
-                || pair
-                    .host
-                    .offset
-                    .checked_add(pair.host.size)
-                    .is_none_or(|n| n > pair.host.buffer.size())
-            {
-                return Err(fail());
-            }
-            let owner = self
-                .pages
-                .iter()
-                .find(|p| p.owner.buffer.as_ref() == Some(&pair.host.buffer))
-                .ok_or_else(fail)?;
-            if owner.owner.phase != Phase::Registered
-                || owner.authority.is_none()
-                || pair.host.offset + pair.host.size > owner.owner.logical
-            {
-                return Err(fail());
-            }
-            for earlier in &pairs[..i] {
-                for a in [&earlier.gpu, &earlier.host] {
-                    for b in [&pair.gpu, &pair.host] {
-                        if a.buffer == b.buffer
-                            && a.offset < b.offset + b.size
-                            && b.offset < a.offset + a.size
-                        {
-                            return Err(fail());
-                        }
-                    }
-                }
-            }
         }
         let mut bindings = Vec::new();
-        for pair in pairs {
-            let owner = self
-                .pages
-                .iter()
-                .find(|p| p.owner.buffer.as_ref() == Some(&pair.host.buffer))
-                .ok_or_else(fail)?;
-            let binding = owner
-                .authority
-                .as_ref()
-                .ok_or_else(fail)?
-                .handle()
-                .binding();
-            if !bindings.iter().any(|b: &cubecl_runtime::server::Binding| {
-                b.memory.allocation_id() == binding.memory.allocation_id()
-            }) {
-                bindings.push(binding);
+        for page in self
+            .pages
+            .iter()
+            .filter(|p| p.layer < crate::strata_global_plan::LAYERS)
+        {
+            if page.owner.phase != Phase::Registered {
+                return Err(fail());
             }
+            bindings.push(page.authority.as_ref().ok_or_else(fail)?.handle().binding());
         }
-        // Swap only original model weights while registry readers are revoked.
-        let token =
-            unsafe { self.client.begin_public_external_rebase(bindings) }.map_err(|_| fail())?;
-        Flight::submit(
-            &self.device,
-            &self.client,
-            pairs,
-            scratch,
-            &copies,
-            token,
-            guard,
-        )
+        if bindings.is_empty() {
+            return Ok(None);
+        } // fully resident: no HOST expert source exists
+        // SAFETY: sole original source owner has joined all preceding readers;
+        // all selected pages are genuine registered expert sources on this client.
+        unsafe { self.client.begin_public_external_rebase(bindings) }
+            .map(Some)
+            .map_err(|_| fail())
     }
 }
 

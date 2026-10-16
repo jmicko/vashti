@@ -459,9 +459,16 @@ impl Commands {
     pub fn submit(
         &mut self,
         queues: [vk::Queue; 2],
+        copy_queue: &wgpu::hal::vulkan::KunoTransferQueue,
         fence: vk::Fence,
         uploads: Option<super::strata_info_transfer::Wait>,
     ) -> Result<(), &'static str> {
+        // Both native graph copies and the original adaptive worker submit
+        // through the SAME actual adopted queue authority. Compute queues stay
+        // on their original serialized engine thread; no cross-queue lock.
+        if queues[0] == queues[1] || !copy_queue.is_original(self.device.handle(), queues[1]) {
+            return Err("native original copy submission authority");
+        }
         // Reserve before any submission; even a partial failure never reuses a
         // timeline value. The caller retains this entire recording on failure.
         let base = reserve_epoch(&mut self.next_base, self.plan.segments.len())?;
@@ -495,8 +502,12 @@ impl Commands {
             }
             let submit = submit.push_next(&mut timeline);
             unsafe {
-                self.device
-                    .queue_submit(queues[own], &[submit], vk::Fence::null())
+                if segment.copy {
+                    copy_queue.submit(&[submit], vk::Fence::null())
+                } else {
+                    self.device
+                        .queue_submit(queues[own], &[submit], vk::Fence::null())
+                }
             }
             .map_err(|_| "native compute/copy submit")?;
         }

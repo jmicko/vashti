@@ -59,6 +59,9 @@ pub(crate) struct Sources {
     loan_ready: bool,
     placement: Placement,
     pending_placement: Option<Placement>,
+    exchange_inventory: Option<
+        std::sync::Arc<crate::public_host_expert_mirror::strata_global::exchange::Inventory>,
+    >,
     retired: std::sync::Arc<std::sync::atomic::AtomicBool>,
     queue: Option<wgpu::Queue>,
 }
@@ -111,6 +114,7 @@ impl Sources {
             loan_ready: false,
             placement: Placement::identity(),
             pending_placement: None,
+            exchange_inventory: None,
             retired,
             queue: None,
         };
@@ -120,6 +124,7 @@ impl Sources {
         sources.host =
             Some(unsafe { Host::load(&sources.plan, graph, client, device, host_reserved)? });
         sources.build_tables(graph, device)?;
+        sources.prepare_exchange_inventory(graph)?;
         graph.verify_unchanged()?;
         Ok(sources)
     }
@@ -557,129 +562,164 @@ impl Sources {
             .with_buffer(table.clone().binding())
             .with_read_dependencies(reads.iter().cloned().map(Handle::binding).collect()))
     }
-    /// Consumer boundaries have completed. Verify exact initial physical cells,
-    /// then execute all role exchanges as one joined owning transaction. The
-    /// static tables never change; subsequent consumers await PRIVATE remap.
+    /// Authenticate static physical cells ONCE on the sole client thread.
+    /// No raw source pointer or allocator/admission capability crosses threads.
+    fn prepare_exchange_inventory(&mut self, graph: BoundGraph<'_, '_>) -> Result<()> {
+        if self.exchange_inventory.is_some() {
+            return Ok(());
+        }
+        use crate::public_host_expert_mirror::strata_global::exchange::{Cell, Inventory};
+        let mut cells = Vec::with_capacity(LAYERS * EXPERTS * 3);
+        let mut resources = HashMap::new();
+        for layer in 0..LAYERS {
+            for cell in 0..EXPERTS {
+                for role in 0..3 {
+                    let (gpu, (handle, offset, bytes)) = match self
+                        .gpu
+                        .as_ref()
+                        .ok_or_else(reject)?
+                        .resident_role(graph, &self.plan, layer, cell, role)?
+                    {
+                        Some(r) => (true, r),
+                        None => (
+                            false,
+                            self.host
+                                .as_ref()
+                                .ok_or_else(reject)?
+                                .role(graph, &self.plan, layer, cell, role)?
+                                .ok_or_else(reject)?,
+                        ),
+                    };
+                    let id = handle.clone().binding().memory.allocation_id();
+                    if let std::collections::hash_map::Entry::Vacant(entry) = resources.entry(id) {
+                        let mut found = self
+                            .client
+                            .retained_resource_metadata(vec![handle])
+                            .map_err(crate::resident_util::fault)?;
+                        if found.len() != 1 {
+                            return Err(reject());
+                        }
+                        entry.insert(found.pop().ok_or_else(reject)?.resource().clone());
+                    }
+                    let full = resources.get(&id).ok_or_else(reject)?;
+                    if full.offset != 0
+                        || full.size != full.buffer.size()
+                        || offset.checked_add(bytes).is_none_or(|n| n > full.size)
+                    {
+                        return Err(reject());
+                    }
+                    cells.push(Cell {
+                        gpu,
+                        resource: cubecl::wgpu::WgpuResource {
+                            buffer: full.buffer.clone(),
+                            offset,
+                            size: bytes,
+                        },
+                    });
+                }
+            }
+        }
+        self.exchange_inventory = Some(std::sync::Arc::new(Inventory::new(
+            cells,
+            u64::from(self.device.limits().min_storage_buffer_offset_alignment),
+        )?));
+        Ok(())
+    }
+    /// Joined original source boundary. Revoke expert readers/pin original
+    /// scratch HERE, then delegate only owned numeric/resource capabilities.
     pub(crate) fn submit_exchange(
         &mut self,
         graph: BoundGraph<'_, '_>,
-        swaps: &[crate::strata_global_adapt::Swap],
         arena: &crate::private_arena::PrivateArena,
         scratch_id: crate::private_arena::BufferId,
-    ) -> Result<Option<crate::public_host_expert_mirror::strata_global::exchange::Flight>> {
+        cache: crate::strata_global_adapt::Cache,
+        usage: zeroize::Zeroizing<Vec<f32>>,
+    ) -> Result<crate::public_host_expert_mirror::strata_global::exchange::Flight> {
         if self.unavailable()
             || self.mutation_pending
             || self.loan_pending
             || crate::strata_prompt::active()
             || self.pending_placement.is_some()
-            || swaps.len() > crate::strata_global_adapt::MAX_SWAPS
         {
             return Err(reject());
         }
         self.plan.check_binding(graph)?;
-        let next_placement = self.placement.propose(swaps)?;
-        if swaps.is_empty() {
-            self.pending_placement = Some(next_placement);
-            self.mutation_pending = true;
-            return Ok(None);
-        }
+        cache.check_retained_route_map(&self.retained_route_map(graph, &self.client)?)?;
         cubecl_common::future::block_on(self.client.sync()).map_err(crate::resident_util::fault)?;
-        // The same attached prompt raw root is dormant during committed decode.
-        // Retain its actual complete resource through the joined transfer. It
-        // remains a private arena owner, so request reset erases ALL its bytes.
+        self.prepare_exchange_inventory(graph)?;
         let scratch_owner = self.prompt_stage.as_ref().ok_or_else(reject)?;
-        if scratch_owner.size_in_used() < crate::strata_prompt::allocation::RAW_RING_BYTES {
-            return Err(reject());
-        }
         let private_root = arena
             .handle(scratch_id)
             .map_err(crate::resident_util::fault)?;
         if private_root.clone().binding().memory.allocation_id()
             != scratch_owner.clone().binding().memory.allocation_id()
             || private_root.size_in_used() != scratch_owner.size_in_used()
+            || scratch_owner.size_in_used() < crate::strata_prompt::allocation::RAW_RING_BYTES
         {
             return Err(reject());
         }
-        let scratch_resources = self
+        let mut resources = self
             .client
             .retained_resource_metadata(vec![scratch_owner.clone()])
             .map_err(crate::resident_util::fault)?;
-        if scratch_resources.len() != 1 {
+        if resources.len() != 1 {
             return Err(reject());
         }
-        let scratch = scratch_resources[0].resource();
+        let scratch = resources.pop().ok_or_else(reject)?.resource().clone();
         if scratch.offset != 0
             || scratch.size != scratch_owner.size_in_used()
             || scratch.buffer.size() != scratch.size
+            || !scratch
+                .buffer
+                .usage()
+                .contains(wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST)
         {
             return Err(reject());
         }
-        let mut pairs = Vec::with_capacity(swaps.len() * 3);
-        for swap in swaps {
-            for role in 0..3 {
-                let (gpu, go, gb) = self
-                    .gpu
-                    .as_ref()
-                    .ok_or_else(reject)?
-                    .resident_role(graph, &self.plan, swap.layer, swap.gpu_cell, role)?
-                    .ok_or_else(reject)?;
-                let (host, ho, hb) = self
-                    .host
-                    .as_ref()
-                    .ok_or_else(reject)?
-                    .role(graph, &self.plan, swap.layer, swap.host_cell, role)?
-                    .ok_or_else(reject)?;
-                if gb != hb {
-                    return Err(reject());
-                }
-                let mut resources = self
-                    .client
-                    .retained_resource_metadata(vec![gpu, host])
-                    .map_err(crate::resident_util::fault)?;
-                if resources.len() != 2 {
-                    return Err(reject());
-                }
-                let h = resources.pop().ok_or_else(reject)?;
-                let g = resources.pop().ok_or_else(reject)?;
-                let range = |r: &cubecl::wgpu::WgpuResource,
-                             offset: u64|
-                 -> Result<cubecl::wgpu::WgpuResource> {
-                    if r.offset != 0
-                        || r.size != r.buffer.size()
-                        || offset.checked_add(gb).is_none_or(|n| n > r.size)
-                    {
-                        return Err(reject());
-                    }
-                    Ok(cubecl::wgpu::WgpuResource {
-                        buffer: r.buffer.clone(),
-                        offset,
-                        size: gb,
-                    })
-                };
-                pairs.push(
-                    crate::public_host_expert_mirror::strata_global::exchange::Pair {
-                        gpu: range(g.resource(), go)?,
-                        host: range(h.resource(), ho)?,
-                    },
-                );
-            }
-        }
-        // From here until full private publication, unknown/failed completion
-        // cannot resume inference. close can still attempt ordinary joined erase.
-        self.mutation_pending = true;
-        self.pending_placement = Some(next_placement);
-        let guard = arena
+        self.mutation_pending = true; // retained until actual control/physical publication
+        let mut guard = arena
             .begin_external_root_flight(scratch_id)
             .map_err(crate::resident_util::fault)?;
-        // SAFETY: immutable capabilities above authenticate all owning cells,
-        // this exclusive source owner joined every prior CubeCL/BDA reader.
-        unsafe {
-            self.host
-                .as_mut()
-                .ok_or_else(reject)?
-                .submit_exchange(&pairs, scratch, guard)
-                .map(Some)
+        let token = match self
+            .host
+            .as_mut()
+            .ok_or_else(reject)
+            .and_then(|host| host.begin_adaptive_rebase())
+        {
+            Ok(token) => token,
+            Err(error) => {
+                // No worker or scratch command exists yet. Release ONLY this
+                // known-idle private root; source mutation stays terminal.
+                let _ = guard.joined();
+                return Err(error);
+            }
+        };
+        crate::public_host_expert_mirror::strata_global::exchange::Flight::submit(
+            &self.device,
+            &self.client,
+            self.exchange_inventory.as_ref().ok_or_else(reject)?.clone(),
+            scratch,
+            token,
+            guard,
+            cache,
+            usage,
+        )
+    }
+    /// Actual worker and copy fences have joined; validate the next physical
+    /// placement before any private control or source-reader publication.
+    pub(crate) fn complete_exchange(
+        &mut self,
+        flight: crate::public_host_expert_mirror::strata_global::exchange::Flight,
+    ) -> Result<(
+        crate::strata_global_adapt::Cache,
+        crate::strata_global_adapt::Proposal,
+    )> {
+        if self.unavailable() || !self.mutation_pending || self.pending_placement.is_some() {
+            return Err(reject());
         }
+        let (cache, proposal) = flight.finish()?;
+        self.pending_placement = Some(self.placement.propose(&proposal.swaps)?);
+        Ok((cache, proposal))
     }
     /// Join PRIVATE remap/usage writes before admitting another source reader.
     pub(crate) fn finish_publication(&mut self, commit: impl FnOnce() -> Result<()>) -> Result<()> {
@@ -736,6 +776,7 @@ impl Sources {
         self.tables.clear();
         self.reads.clear();
         self.prompt_stage = None;
+        self.exchange_inventory = None;
         if let Some(host) = self.host.take() {
             host.close()?;
         }
@@ -753,6 +794,9 @@ impl Drop for Sources {
             std::mem::forget(std::mem::take(&mut self.reads));
             if let Some(root) = self.prompt_stage.take() {
                 std::mem::forget(root);
+            }
+            if let Some(inventory) = self.exchange_inventory.take() {
+                std::mem::forget(inventory);
             }
             if let Some(gpu) = self.gpu.take() {
                 std::mem::forget(gpu);

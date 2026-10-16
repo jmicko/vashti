@@ -1,8 +1,16 @@
-//! Owning original expert-copy flight on the already adopted transfer queue.
-//! One serialized worker submits on all queues; Vulkan resources stay retained
-//! through actual transfer and primary visibility fences, including unwinding.
+//! Original adaptive host job beside commit/MTP. The sole client thread
+//! retains registry mutation, private-arena exclusion and MAIN submissions;
+//! the worker owns only bounded ranking inputs and authenticated copy resources.
 use super::*;
 use cubecl_runtime::public_external::PublicExternalRebase;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+type WorkerOutput = (
+    crate::strata_global_adapt::Cache,
+    crate::strata_global_adapt::Proposal,
+);
 /// State of the ORIGINAL submitted fences; attempted submission never grants
 /// completion. Only wait_for_fences success below calls observed().
 #[derive(Default)]
@@ -29,6 +37,12 @@ impl State {
         self.attempted[index] = true;
         Ok(())
     }
+    fn worker_joined(&mut self, attempted: bool) -> KResult<()> {
+        if attempted && !self.attempted[1] {
+            self.attempt(1)?;
+        }
+        Ok(()) // records debt only; original copy fence still must be observed
+    }
     fn observed(&mut self, index: usize) -> KResult<()> {
         if index >= 3 || !self.pending[index] {
             return Err(fail());
@@ -47,7 +61,7 @@ pub(crate) struct Flight {
     device: Option<wgpu::Device>,
     raw: ash::Device,
     primary: vk::Queue,
-    copy: vk::Queue,
+    copy: wgpu::hal::vulkan::KunoTransferQueue,
     pool: vk::CommandPool,
     command: vk::CommandBuffer,
     ready: vk::Semaphore,
@@ -55,27 +69,141 @@ pub(crate) struct Flight {
     fences: [vk::Fence; 3],
     state: State,
     owners: Vec<WgpuResource>,
+    inventory: Option<Arc<Inventory>>,
+    worker: Option<std::thread::JoinHandle<KResult<WorkerOutput>>>,
+    worker_output: Option<KResult<WorkerOutput>>,
+    copy_attempted: Arc<AtomicBool>,
     token: Option<PublicExternalRebase>,
     client: ComputeClient<WgpuRuntime>,
-    guard: crate::strata_external_flight::Flight,
+    guard: crate::strata_external_flight::Flight, // !Send: actual original arena/TLS owner
 }
 fn raw_buffer(r: &WgpuResource) -> KResult<vk::Buffer> {
     let h = unsafe { r.buffer.as_hal::<wgpu::hal::api::Vulkan>() }.ok_or_else(fail)?;
     Ok(unsafe { h.raw_buffer_handle() })
 }
+/// The parent Flight retains/destructs ALL raw objects only AFTER joining this
+/// worker. No client, allocator, registry token, arena or MAIN queue is sent.
+struct CopyWork {
+    raw: ash::Device,
+    copy: wgpu::hal::vulkan::KunoTransferQueue,
+    command: vk::CommandBuffer,
+    ready: vk::Semaphore,
+    done: vk::Semaphore,
+    fence: vk::Fence,
+    inventory: Arc<Inventory>,
+    scratch: WgpuResource,
+    attempted: Arc<AtomicBool>,
+}
+impl CopyWork {
+    fn run(
+        &self,
+        cache: &crate::strata_global_adapt::Cache,
+        usage: &[f32],
+    ) -> KResult<crate::strata_global_adapt::Proposal> {
+        let proposal = cache.propose(usage)?;
+        if proposal.swaps.is_empty() {
+            return Ok(proposal);
+        }
+        let pairs = self.inventory.pairs(&proposal.swaps, &self.scratch)?;
+        let copies = copy_plan(pairs.iter().map(|p| p.gpu.size), self.scratch.size)?;
+        unsafe {
+            self.raw
+                .begin_command_buffer(self.command, &vk::CommandBufferBeginInfo::default())
+                .map_err(|_| fail())?;
+            self.barrier(
+                vk::PipelineStageFlags::HOST,
+                vk::AccessFlags::HOST_WRITE,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::AccessFlags::TRANSFER_READ | vk::AccessFlags::TRANSFER_WRITE,
+            );
+            for op in &copies {
+                let pair = &pairs[op.pair];
+                let resource = |which| match which {
+                    Endpoint::Gpu => &pair.gpu,
+                    Endpoint::Host => &pair.host,
+                    Endpoint::Scratch => &self.scratch,
+                };
+                let a = resource(op.from);
+                let b = resource(op.to);
+                self.raw.cmd_copy_buffer(
+                    self.command,
+                    raw_buffer(a)?,
+                    raw_buffer(b)?,
+                    &[vk::BufferCopy::default()
+                        .src_offset(a.offset)
+                        .dst_offset(b.offset)
+                        .size(op.bytes)],
+                );
+                self.barrier(
+                    vk::PipelineStageFlags::TRANSFER,
+                    vk::AccessFlags::TRANSFER_READ | vk::AccessFlags::TRANSFER_WRITE,
+                    vk::PipelineStageFlags::TRANSFER,
+                    vk::AccessFlags::TRANSFER_READ | vk::AccessFlags::TRANSFER_WRITE,
+                );
+            }
+            let (stage, access) =
+                wgpu::hal::vulkan::CommandEncoder::kuno_public_host_transfer_read_dependency();
+            self.barrier(
+                stage,
+                access,
+                vk::PipelineStageFlags::HOST,
+                vk::AccessFlags::HOST_READ,
+            );
+            self.raw
+                .end_command_buffer(self.command)
+                .map_err(|_| fail())?;
+            // Atomic records only attempted ownership debt, NEVER completion.
+            self.attempted.store(true, Ordering::Release);
+            self.copy
+                .submit(
+                    &[vk::SubmitInfo::default()
+                        .wait_semaphores(std::slice::from_ref(&self.ready))
+                        .wait_dst_stage_mask(&[vk::PipelineStageFlags::TRANSFER])
+                        .command_buffers(std::slice::from_ref(&self.command))
+                        .signal_semaphores(std::slice::from_ref(&self.done))],
+                    self.fence,
+                )
+                .map_err(|_| fail())?;
+        }
+        Ok(proposal)
+    }
+    unsafe fn barrier(
+        &self,
+        src: vk::PipelineStageFlags,
+        sa: vk::AccessFlags,
+        dst: vk::PipelineStageFlags,
+        da: vk::AccessFlags,
+    ) {
+        unsafe {
+            self.raw.cmd_pipeline_barrier(
+                self.command,
+                src,
+                dst,
+                vk::DependencyFlags::empty(),
+                &[vk::MemoryBarrier::default()
+                    .src_access_mask(sa)
+                    .dst_access_mask(da)],
+                &[],
+                &[],
+            )
+        };
+    }
+}
 impl Flight {
-    /// Actual same-device copies authenticated/revoked by Host::submit_exchange.
-    pub(super) fn submit(
+    #[allow(clippy::too_many_arguments)] // Original admission/resource owners plus bounded worker inputs.
+    pub(crate) fn submit(
         device: &wgpu::Device,
         client: &ComputeClient<WgpuRuntime>,
-        pairs: &[Pair],
-        scratch: &WgpuResource,
-        copies: &[Copy],
-        token: PublicExternalRebase,
+        inventory: Arc<Inventory>,
+        scratch: WgpuResource,
+        token: Option<PublicExternalRebase>,
         guard: crate::strata_external_flight::Flight,
+        cache: crate::strata_global_adapt::Cache,
+        usage: zeroize::Zeroizing<Vec<f32>>,
     ) -> KResult<Self> {
         let h = unsafe { device.as_hal::<wgpu::hal::api::Vulkan>() }.ok_or_else(fail)?;
-        let (family, copy) = h.kuno_transfer_queue().ok_or_else(fail)?;
+        let copy = h.kuno_transfer_queue_authority().ok_or_else(fail)?;
+        let family = copy.family_index();
         if family == h.queue_family_index() {
             return Err(fail());
         }
@@ -90,19 +218,16 @@ impl Flight {
             done: vk::Semaphore::null(),
             fences: [vk::Fence::null(); 3],
             state: State::default(),
-            owners: Vec::new(),
-            token: Some(token),
+            owners: vec![scratch.clone()],
+            inventory: Some(inventory.clone()),
+            worker: None,
+            worker_output: None,
+            copy_attempted: Arc::new(AtomicBool::new(false)),
+            token,
             client: client.clone(),
             guard,
         };
         drop(h);
-        s.owners
-            .try_reserve_exact(pairs.len() * 2 + 1)
-            .map_err(|_| fail())?;
-        s.owners.push(scratch.clone());
-        for pair in pairs {
-            s.owners.extend([pair.gpu.clone(), pair.host.clone()]);
-        }
         unsafe {
             s.pool = s
                 .raw
@@ -134,53 +259,8 @@ impl Flight {
                     .create_fence(&vk::FenceCreateInfo::default(), None)
                     .map_err(|_| fail())?;
             }
-            s.raw
-                .begin_command_buffer(s.command, &vk::CommandBufferBeginInfo::default())
-                .map_err(|_| fail())?;
-            s.barrier(
-                vk::PipelineStageFlags::HOST,
-                vk::AccessFlags::HOST_WRITE,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::AccessFlags::TRANSFER_READ | vk::AccessFlags::TRANSFER_WRITE,
-            );
-            for op in copies {
-                let pair = &pairs[op.pair];
-                let region = |which| match which {
-                    Endpoint::Gpu => &pair.gpu,
-                    Endpoint::Host => &pair.host,
-                    Endpoint::Scratch => scratch,
-                };
-                let a = region(op.from);
-                let b = region(op.to);
-                s.raw.cmd_copy_buffer(
-                    s.command,
-                    raw_buffer(a)?,
-                    raw_buffer(b)?,
-                    &[vk::BufferCopy::default()
-                        .src_offset(a.offset)
-                        .dst_offset(b.offset)
-                        .size(op.bytes)],
-                );
-                // Original scratch is reused per role. This includes transfer
-                // WAR/WAW, not only incoming scratch RAW dependencies.
-                s.barrier(
-                    vk::PipelineStageFlags::TRANSFER,
-                    vk::AccessFlags::TRANSFER_READ | vk::AccessFlags::TRANSFER_WRITE,
-                    vk::PipelineStageFlags::TRANSFER,
-                    vk::AccessFlags::TRANSFER_READ | vk::AccessFlags::TRANSFER_WRITE,
-                );
-            }
-            let (stage, access) =
-                wgpu::hal::vulkan::CommandEncoder::kuno_public_host_transfer_read_dependency();
-            s.barrier(
-                stage,
-                access,
-                vk::PipelineStageFlags::HOST,
-                vk::AccessFlags::HOST_READ,
-            );
-            s.raw.end_command_buffer(s.command).map_err(|_| fail())?;
-            // Real original MAIN->copy visibility, even for a cold source load.
-            // The existing rebase join already completed all source readers.
+            // Original ready signal is enqueued by the sole MAIN authority
+            // BEFORE spawning. The worker NEVER submits on a compute queue.
             s.state.attempt(0)?;
             s.raw
                 .queue_submit(
@@ -189,41 +269,23 @@ impl Flight {
                     s.fences[0],
                 )
                 .map_err(|_| fail())?;
-            s.state.attempt(1)?;
-            s.raw
-                .queue_submit(
-                    s.copy,
-                    &[vk::SubmitInfo::default()
-                        .wait_semaphores(std::slice::from_ref(&s.ready))
-                        .wait_dst_stage_mask(&[vk::PipelineStageFlags::TRANSFER])
-                        .command_buffers(std::slice::from_ref(&s.command))
-                        .signal_semaphores(std::slice::from_ref(&s.done))],
-                    s.fences[1],
-                )
-                .map_err(|_| fail())?;
         }
+        let work = CopyWork {
+            raw: s.raw.clone(),
+            copy: s.copy.clone(),
+            command: s.command,
+            ready: s.ready,
+            done: s.done,
+            fence: s.fences[1],
+            inventory,
+            scratch,
+            attempted: s.copy_attempted.clone(),
+        };
+        s.worker = Some(crate::strata_global_adapt::spawn_host_job(move || {
+            let proposal = work.run(&cache, &usage)?;
+            Ok((cache, proposal))
+        })?);
         Ok(s)
-    }
-    unsafe fn barrier(
-        &self,
-        src: vk::PipelineStageFlags,
-        sa: vk::AccessFlags,
-        dst: vk::PipelineStageFlags,
-        da: vk::AccessFlags,
-    ) {
-        unsafe {
-            self.raw.cmd_pipeline_barrier(
-                self.command,
-                src,
-                dst,
-                vk::DependencyFlags::empty(),
-                &[vk::MemoryBarrier::default()
-                    .src_access_mask(sa)
-                    .dst_access_mask(da)],
-                &[],
-                &[],
-            );
-        }
     }
     fn wait(&mut self, index: usize) -> KResult<()> {
         if self.state.pending[index] {
@@ -237,14 +299,17 @@ impl Flight {
         Ok(())
     }
     fn join(&mut self) -> KResult<()> {
+        if let Some(worker) = self.worker.take() {
+            self.worker_output = Some(worker.join().unwrap_or_else(|_| Err(fail())));
+        }
+        self.state
+            .worker_joined(self.copy_attempted.load(Ordering::Acquire))?;
         self.wait(0)?;
         self.wait(1)?;
-        // No physical copy was submitted if command construction failed. In
-        // that case there is no semaphore to wait and the original root is idle.
         if self.state.needs_visibility() {
-            // Submit only after a SUCCESSFUL real copy-fence completion, never
-            // after an uncertain/failed copy submission or a hypothetical event.
             self.state.attempt(2)?;
+            // Only the original client thread submits MAIN visibility, AFTER
+            // joining the actual worker and copy fence. Mutex guards are gone.
             unsafe {
                 self.raw.queue_submit(
                     self.primary,
@@ -259,26 +324,30 @@ impl Flight {
         self.wait(2)?;
         Ok(())
     }
-    pub(crate) fn finish(mut self) -> KResult<()> {
+    pub(crate) fn finish(mut self) -> KResult<WorkerOutput> {
         self.join()?;
-        // Physical root is idle before the arena exclusion is released. The
-        // registered HOST authority still needs its real joined rebase finish.
+        let output = self.worker_output.take().ok_or_else(fail)??;
         self.guard.joined().map_err(Error::InvalidFormat)?;
-        let token = self.token.take().ok_or_else(fail)?;
-        unsafe { self.client.finish_public_external_rebase(token) }.map_err(|_| fail())
+        if let Some(token) = self.token.take() {
+            unsafe { self.client.finish_public_external_rebase(token) }.map_err(|_| fail())?;
+        } else if !output.1.swaps.is_empty() {
+            return Err(fail());
+        }
+        Ok(output)
     }
 }
 impl Drop for Flight {
     fn drop(&mut self) {
         if self.join().is_err() {
             std::mem::forget(std::mem::take(&mut self.owners));
+            if let Some(i) = self.inventory.take() {
+                std::mem::forget(i);
+            }
             if let Some(d) = self.device.take() {
                 std::mem::forget(d);
             }
-            return; // guard retires/quarantines the original arena; no cleanup credit
+            return; // original guard retires/quarantines; no cleanup credit
         }
-        // Unwinding still joins submitted work BEFORE original arena teardown.
-        // A joined guard may already have been consumed by finish().
         let _ = self.guard.joined();
         if let Some(token) = self.token.take() {
             let _ = unsafe { self.client.finish_public_external_rebase(token) };
@@ -297,6 +366,25 @@ impl Drop for Flight {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn completed_host_job_records_only_submission_debt_not_copy_or_visibility_credit() {
+        let mut s = State::default();
+        assert!(s.worker_joined(true).is_err());
+        s.attempt(0).unwrap();
+        s.worker_joined(false).unwrap();
+        assert!(!s.pending[1]);
+        assert!(!s.needs_visibility());
+        s.worker_joined(true).unwrap();
+        s.worker_joined(true).unwrap();
+        assert!(s.pending[1]);
+        assert!(!s.copy_joined);
+        assert!(s.attempt(2).is_err());
+        s.observed(0).unwrap();
+        s.observed(1).unwrap();
+        assert!(s.needs_visibility());
+        s.attempt(2).unwrap();
+        assert!(s.pending[2]);
+    }
     #[test]
     fn actual_transfer_visibility_wait_requires_original_copy_fence_completion() {
         let mut s = State::default();

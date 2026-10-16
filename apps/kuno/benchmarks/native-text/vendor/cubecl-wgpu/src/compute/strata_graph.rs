@@ -423,7 +423,7 @@ pub(crate) struct Graph {
     family: u32,
     queue: vk::Queue,
     copy_family: u32,
-    copy_queue: vk::Queue,
+    copy_queue: wgpu::hal::vulkan::KunoTransferQueue,
     copy_timestamp_bits: u32,
     pool: vk::CommandPool,
     descriptors: vk::DescriptorPool,
@@ -583,9 +583,10 @@ impl Graph {
                 "native Strata requires Intel matrix16 and expert32 subgroups",
             ));
         }
-        let (copy_family, copy_queue) = h
-            .kuno_transfer_queue()
-            .ok_or_else(|| fault("native graph needs the actually adopted copy queue"))?;
+        let copy_queue = h
+            .kuno_transfer_queue_authority()
+            .ok_or_else(|| fault("native actual transfer queue missing"))?;
+        let copy_family = copy_queue.family_index();
         let (draft_family, draft_queue) = h
             .kuno_compute_queue()
             .ok_or_else(|| fault("native graph needs the actually adopted draft queue"))?;
@@ -1592,7 +1593,12 @@ impl Graph {
             .last_mut()
             .unwrap()
             .work
-            .submit([self.queue, self.copy_queue], fence, info_wait)
+            .submit(
+                [self.queue, self.copy_queue.raw_identity()],
+                &self.copy_queue,
+                fence,
+                info_wait,
+            )
             .map_err(fault)?;
         self.flights
             .submitted(self.compute_lane, id)

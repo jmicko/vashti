@@ -6,9 +6,27 @@ use kuno_text::{Error, Result};
 use zeroize::{Zeroize, Zeroizing};
 pub(crate) const EVERY: u64 = 4;
 pub(crate) const MAX_SWAPS: usize = 96;
-pub(crate) const HOST_BYTES: usize = 2 * 1024 * 1024;
+pub(crate) const WORKER_STACK_BYTES: usize = 2 * 1024 * 1024;
+pub(crate) const HOST_BYTES: usize = 2 * 1024 * 1024
+    + WORKER_STACK_BYTES
+    + crate::public_host_expert_mirror::strata_global::exchange::INVENTORY_HOST_BYTES;
 pub(crate) const ROUTE_MAP_BYTES: usize = 131072;
 pub(crate) const USAGE_BYTES: usize = 131072;
+/// One bounded host job per adaptive tick, as in pinned serve. Actual jobs
+/// send only numeric inputs and owned copy resources; clients/arenas/registry
+/// tokens stay on the original thread. No unsafe thread opt-in is provided.
+pub(crate) fn spawn_host_job<T: Send + 'static>(
+    body: impl FnOnce() -> Result<T> + Send + 'static,
+) -> Result<std::thread::JoinHandle<Result<T>>> {
+    std::thread::Builder::new()
+        .name("kuno-expert-adapt".into())
+        .stack_size(WORKER_STACK_BYTES)
+        .spawn(move || {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(body))
+                .unwrap_or_else(|_| Err(reject()))
+        })
+        .map_err(|_| reject())
+}
 /// Original full private owner, including its unused zero padding. The caller
 /// transfers the wiping allocation directly into the actual tracked upload.
 pub(crate) fn encode_route_map(mapping: &[u16]) -> Result<Zeroizing<Vec<u8>>> {
@@ -438,6 +456,85 @@ mod retained_usage_tests {
             device.iter().map(|v| v.to_bits()).collect(),
             cache.rounds,
         )
+    }
+    #[test]
+    fn actual_host_job_runs_beside_foreground_and_returns_the_same_cache_proposal() {
+        use std::sync::mpsc;
+        let mut cache = model();
+        for _ in 0..4 {
+            cache.tick().unwrap();
+        }
+        let mut usage = Zeroizing::new(vec![0.; LAYERS * EXPERTS]);
+        for layer in 0..LAYERS {
+            for e in 0..EXPERTS {
+                usage[layer * EXPERTS + e] = ((e * 17 + layer * 13) % 31) as f32;
+            }
+        }
+        let expected = cache.propose(&usage).unwrap();
+        let (started, observed) = mpsc::channel();
+        let (release, proceed) = mpsc::channel();
+        let worker = spawn_host_job(move || {
+            started.send(()).map_err(|_| reject())?;
+            proceed
+                .recv_timeout(std::time::Duration::from_secs(30))
+                .map_err(|_| reject())?;
+            let proposal = cache.propose(&usage)?;
+            Ok((cache, proposal))
+        })
+        .unwrap();
+        observed
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .unwrap();
+        // A real live worker is waiting while the foreground remains usable;
+        // no throughput clock or invented GPU completion is involved.
+        assert!(!worker.is_finished());
+        release.send(()).unwrap();
+        let (mut cache, actual) = worker.join().unwrap().unwrap();
+        assert_eq!(*actual.mapping, *expected.mapping);
+        assert_eq!(*actual.usage, *expected.usage);
+        assert_eq!(actual.swaps.len(), expected.swaps.len());
+        for (a, b) in actual.swaps.iter().zip(expected.swaps.iter()) {
+            assert_eq!(
+                (
+                    a.layer,
+                    a.incoming,
+                    a.outgoing,
+                    a.gpu_cell,
+                    a.host_cell,
+                    a.gain.to_bits()
+                ),
+                (
+                    b.layer,
+                    b.incoming,
+                    b.outgoing,
+                    b.gpu_cell,
+                    b.host_cell,
+                    b.gain.to_bits()
+                )
+            );
+        }
+        cache.commit(actual).unwrap();
+        cache.check_retained_route_map(&expected.mapping).unwrap();
+    }
+    #[test]
+    fn actual_host_job_failures_are_joined_classified_and_do_not_return_a_proposal() {
+        assert!(
+            spawn_host_job(|| Err::<(), _>(reject()))
+                .unwrap()
+                .join()
+                .unwrap()
+                .is_err()
+        );
+        assert!(
+            spawn_host_job(|| -> Result<()> {
+                panic!("synthetic host job fault");
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+            .is_err()
+        );
+        assert_eq!(HOST_BYTES, 12 * 1024 * 1024);
     }
     #[test]
     fn full_request_erase_and_rebind_preserves_the_same_original_adaptive_sequence() {
