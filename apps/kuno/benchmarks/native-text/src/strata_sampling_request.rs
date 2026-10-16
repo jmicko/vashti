@@ -41,6 +41,57 @@ const OUT: usize = 3;
 const RING: usize = 4;
 const CONTROL: usize = 5;
 const BASE: usize = 6;
+// Original CONTROL is one32KiB owner. Each possible draft borrows a disjoint
+// aligned4KiB row, so all round controls can be uploaded before graph capture.
+const DRAFT_CONTROL_ROW_BYTES: u64 = 4096;
+fn draft_control_range(index: usize) -> Result<std::ops::Range<u64>> {
+    if index >= crate::strata_port::verify_capacity() - 1 {
+        return Err(reject());
+    }
+    let start = (index as u64)
+        .checked_mul(DRAFT_CONTROL_ROW_BYTES)
+        .ok_or_else(reject)?;
+    let end = start
+        .checked_add(DRAFT_CONTROL_ROW_BYTES)
+        .ok_or_else(reject)?;
+    if end > ROOT_BYTES[CONTROL] {
+        return Err(reject());
+    }
+    Ok(start..end)
+}
+fn draft_controls(position: usize) -> Result<Zeroizing<Vec<u8>>> {
+    if !(1..=HISTORY_MAX).contains(&position) {
+        return Err(reject());
+    }
+    let mut bytes = Zeroizing::new(vec![0u8; ROOT_BYTES[CONTROL] as usize]);
+    for j in 0..crate::strata_port::verify_capacity() - 1 {
+        let counter = position.checked_add(j).ok_or_else(reject)?;
+        if counter > HISTORY_MAX {
+            break;
+        }
+        let row = draft_control_range(j)?;
+        for (dest, value) in bytes[row.start as usize..row.start as usize + 12]
+            .chunks_exact_mut(4)
+            .zip([(counter - 1) as u32, j as u32, position as u32])
+        {
+            dest.copy_from_slice(&value.to_le_bytes());
+        }
+    }
+    Ok(bytes)
+}
+fn draft_control(root: &Handle, index: usize) -> Result<Handle> {
+    if root.offset_start.unwrap_or(0) != 0
+        || root.offset_end.unwrap_or(0) != 0
+        || root.size_in_used() != ROOT_BYTES[CONTROL]
+    {
+        return Err(reject());
+    }
+    let row = draft_control_range(index)?;
+    Ok(root
+        .clone()
+        .offset_start(row.start)
+        .offset_end(ROOT_BYTES[CONTROL] - row.end))
+}
 pub(crate) fn active() -> bool {
     ACTIVE.with(|s| s.borrow().is_some())
 }
@@ -186,6 +237,7 @@ impl Scope {
             if s.params.greedy() || s.draft.is_none() {
                 return Ok(());
             }
+            let controls = draft_controls(position)?;
             let h = s.params.penalty_last_n.min(HISTORY_MAX);
             let history = coupled_base(&s.consumed, next, h)?;
             s.params.counter = position as u64;
@@ -207,6 +259,10 @@ impl Scope {
             bytes[256 + (HISTORY_MAX - 1) * 4..256 + HISTORY_MAX * 4]
                 .copy_from_slice(&next.to_le_bytes());
             s.write(BASE, bytes)?;
+            // CPU controls for every possible draft are staged once. The
+            // original GPU bridge still validates the actual positions/token,
+            // constructs history and publishes the real sampled proposal.
+            s.write(CONTROL, controls)?;
             s.coordinates[0] = 3;
             s.coordinates[2] = position;
             s.coordinates[3] = 0;
@@ -398,15 +454,7 @@ pub(crate) fn draft_pick(
         {
             return Err(reject());
         }
-        let mut control = Zeroizing::new(vec![0; ROOT_BYTES[CONTROL] as usize]);
-        for (d, w) in
-            control
-                .chunks_exact_mut(4)
-                .zip([cell as u32, j as u32, s.coordinates[2] as u32])
-        {
-            d.copy_from_slice(&w.to_le_bytes());
-        }
-        s.write(CONTROL, control)?;
+        let control = draft_control(&s.roots[CONTROL], j)?;
         if let Some(maps) = &cjk
             && (maps[0].size_in_used() < crate::resident_mtp::cjk::MAP_BYTES as u64
                 || maps[1].size_in_used() < (VOCAB * 4) as u64)
@@ -419,7 +467,7 @@ pub(crate) fn draft_pick(
             s.roots[RING].clone(),
             s.roots[BASE].clone(),
             positions,
-            s.roots[CONTROL].clone(),
+            control.clone(),
             input,
             fault.clone(),
             s.roots[OUT].clone(),
@@ -459,7 +507,7 @@ pub(crate) fn draft_pick(
             s.roots[OUT].clone(),
             s.roots[RING].clone(),
             greedy,
-            s.roots[CONTROL].clone(),
+            control,
             fault,
             confidence,
         ];
@@ -653,6 +701,45 @@ fn commit_window(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn all_coupled_draft_controls_are_staged_once_in_disjoint_original_rows() {
+        let count = crate::strata_port::verify_capacity() - 1;
+        for position in [1, 63, 2048, HISTORY_MAX - count + 1, HISTORY_MAX] {
+            let bytes = draft_controls(position).unwrap();
+            assert_eq!(bytes.len(), ROOT_BYTES[CONTROL] as usize);
+            let mut expected = vec![0u8; bytes.len()];
+            let mut end = 0;
+            for j in 0..count {
+                let row = draft_control_range(j).unwrap();
+                assert!(row.start >= end);
+                assert_eq!(row.start % 4096, 0);
+                assert_eq!(row.end - row.start, DRAFT_CONTROL_ROW_BYTES);
+                assert!(row.end <= ROOT_BYTES[CONTROL]);
+                end = row.end;
+                let counter = position + j;
+                if counter <= HISTORY_MAX {
+                    let words: Vec<_> = bytes[row.start as usize..row.start as usize + 12]
+                        .chunks_exact(4)
+                        .map(|w| u32::from_le_bytes(w.try_into().unwrap()))
+                        .collect();
+                    assert_eq!(words, [(counter - 1) as u32, j as u32, position as u32]);
+                    assert_eq!(
+                        coupled_counter(words[0] as usize).unwrap() as usize,
+                        position + j
+                    );
+                    expected[row.start as usize..row.start as usize + 12]
+                        .copy_from_slice(&bytes[row.start as usize..row.start as usize + 12]);
+                }
+            }
+            assert_eq!(&*bytes, &expected);
+        }
+        for invalid in [0, HISTORY_MAX + 1, usize::MAX] {
+            assert!(draft_controls(invalid).is_err());
+        }
+        for invalid in [count, usize::MAX] {
+            assert!(draft_control_range(invalid).is_err());
+        }
+    }
     #[test]
     fn native_sampling_request_commits_only_verified_input_prefix_and_rejects_duplicate_commit() {
         for count in 1..=crate::strata_port::verify_capacity() {

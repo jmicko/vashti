@@ -1,6 +1,6 @@
-//! Exclusive queued MTP window. No provisional state or token escapes until a
-//! single final read/fault fence completes every cell. Original scalar APIs
-//! retain their completed-forward authority and numerical paths.
+//! Exclusive queued MTP window. Proposals escape only after their original
+//! packet/fault fence: once for zero threshold, per cell for confidence stops.
+//! Original scalar APIs retain their completed-forward authority and math.
 use super::*;
 use crate::resident_model::batch::target_rows::DeviceCarry;
 use std::time::Instant;
@@ -341,34 +341,55 @@ impl ResidentMtp<'_, '_> {
             }
         }
     }
-    fn forward_window_first(
+    fn prepare_window_first(
         &mut self,
         source: &WindowStart<'_>,
         cancel: &AtomicBool,
-    ) -> Result<()> {
+    ) -> Result<Option<PreparedNativeFront>> {
         match source {
-            WindowStart::Input { .. } => self.forward(),
+            WindowStart::Input { .. } => Ok(None),
             WindowStart::Device {
                 start,
                 tokens,
                 source,
-            } => {
-                self.queue_native_front(
+            } => self
+                .prepare_native_front(
                     tokens.len(),
                     Some(NativeFrontInputs::Device(tokens, source)),
                     *start,
                     cancel,
-                )?;
-                self.native_selected_rest(tokens.len())
-            }
+                )
+                .map(Some),
             WindowStart::Accepted {
                 start,
                 tokens,
                 carries,
-            } => {
-                self.enqueue_native_front(tokens, carries, *start, cancel)?;
+            } => self
+                .prepare_native_front(
+                    tokens.len(),
+                    Some(NativeFrontInputs::Host(tokens, carries)),
+                    *start,
+                    cancel,
+                )
+                .map(Some),
+        }
+    }
+    fn forward_window_first(
+        &mut self,
+        source: &WindowStart<'_>,
+        prepared: Option<PreparedNativeFront>,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        match source {
+            WindowStart::Input { .. } if prepared.is_none() => self.forward(),
+            WindowStart::Device { tokens, .. } | WindowStart::Accepted { tokens, .. } => {
+                self.enqueue_prepared_native_front(
+                    prepared.ok_or(Error::InvalidFormat("MTP first front not prepared"))?,
+                    cancel,
+                )?;
                 self.native_selected_rest(tokens.len())
             }
+            _ => Err(Error::InvalidFormat("MTP first front preparation source")),
         }
     }
     fn window_with_min_probability(
@@ -446,6 +467,10 @@ impl ResidentMtp<'_, '_> {
                 self.start_window(source)?;
                 u::zero(&self.arena, id)?;
                 self.tick(1)?;
+                // Original TOKEN upload and borrowed carry copy happen before
+                // capture. The outer source grant stays live through the same
+                // actual final packet/fault observation as before.
+                let mut first_front = self.prepare_window_first(source, cancel)?;
                 let mut last_enqueue_ns = 0;
                 let mut observation = None;
                 // The connected Intel controller owns stable target device rows.
@@ -460,7 +485,7 @@ impl ResidentMtp<'_, '_> {
                 } else {
                     None
                 };
-                let whole_branch = branch_rows
+                let mut whole_branch = branch_rows
                     .filter(|_| minimum == 0.)
                     .map(|rows| {
                         cubecl_runtime::server::NativeStrataBranch::mtp_round(rows, count as u8)
@@ -491,7 +516,7 @@ impl ResidentMtp<'_, '_> {
                     }
                     let clock = Instant::now();
                     if member == 0 {
-                        self.forward_window_first(source, cancel)?;
+                        self.forward_window_first(source, first_front.take(), cancel)?;
                     } else {
                         self.forward()?;
                     }
@@ -512,12 +537,16 @@ impl ResidentMtp<'_, '_> {
                         .map_err(|_| Error::ArithmeticOverflow)?;
                     u::cancel(cancel)?;
                     if minimum > 0. || member + 1 == count {
-                        let payload = self.observe_window(id, member + 1)?;
-                        if let Some(key) = step_branch {
+                        self.seal_window(id)?;
+                        // Seal/join only the original producer graph. Actual
+                        // private readback and confidence decisions are outside
+                        // it, preserving each positive-threshold stop boundary.
+                        if let Some(key) = step_branch.or_else(|| whole_branch.take()) {
                             self.client()?
                                 .end_native_strata_branch(key)
                                 .map_err(error)?;
                         }
+                        let payload = self.read_window_payload(id, member + 1)?;
                         let stop = minimum > 0. && payload.probabilities[member] < minimum;
                         observation = Some(payload);
                         if stop {
@@ -551,10 +580,8 @@ impl ResidentMtp<'_, '_> {
                         self.guard_private(self.position)?;
                     }
                 }
-                if let Some(key) = whole_branch {
-                    self.client()?
-                        .end_native_strata_branch(key)
-                        .map_err(error)?;
+                if whole_branch.is_some() || first_front.is_some() {
+                    return Err(Error::InvalidFormat("MTP unfinished native window capture"));
                 }
                 let WindowPayload {
                     tokens,
@@ -578,7 +605,11 @@ impl ResidentMtp<'_, '_> {
                 }
                 // All cells, full private checks, greedy and sticky fault have
                 // completed. The only published follow stamp is the final cell.
-                self.commit_forward();
+                if let Err(e) = self.commit_forward() {
+                    drop(output);
+                    self.fail();
+                    return Err(e);
+                }
                 Ok(output)
             }
             Ok(Err(e)) => {
@@ -591,10 +622,9 @@ impl ResidentMtp<'_, '_> {
             }
         }
     }
-    /// Complete one observation of the original packet owner. The same stream
-    /// seals its sticky fault AFTER every producer; no provisional receipt is
-    /// published on enqueue, partial reads, cancellation or an invalid tail.
-    fn observe_window(&mut self, id: BufferId, count: usize) -> Result<WindowPayload> {
+    /// Queue the original packet's sticky-fault seal after every producer.
+    /// This is not an observation, output or completed-forward receipt.
+    fn seal_window(&mut self, id: BufferId) -> Result<()> {
         seal_window::launch::<WgpuRuntime>(
             self.client()?,
             CubeCount::Static(1, 1, 1),
@@ -602,7 +632,16 @@ impl ResidentMtp<'_, '_> {
             u::arg(&self.arena, id)?,
             self.a(B::Fault)?,
         );
-        self.tick(1)?;
+        self.tick(1)
+    }
+    /// Actual readback follows branch closure. Full packet/padding, fault,
+    /// source identity and the original ledger fence still gate observation.
+    fn read_window_payload(&mut self, id: BufferId, count: usize) -> Result<WindowPayload> {
+        if self.native_front_pending.load(Ordering::Acquire) {
+            return Err(Error::InvalidFormat(
+                "MTP observation has unconsumed front preparation",
+            ));
+        }
         let packet = self.read_words_id(id)?;
         let payload = decode_window(&packet, count, self.native_confidence_supported())?;
         self.verify_source()?;

@@ -128,6 +128,150 @@ enum NativeFrontInputs<'a> {
     ),
 }
 
+/// Original TOKEN/CARRY owners staged before graph capture. One outstanding
+/// preparation is allowed per MTP owner. Abandonment leaves that owner's flag
+/// set; only consuming the exact receipt clears it. It never retires the GPU
+/// context early or obstructs the original full-owner cleanup path.
+struct PreparedNativeFront {
+    binding: Zeroizing<u64>,
+    ids: Zeroizing<[BufferId; 25]>,
+    controls: Zeroizing<[usize; 4]>, // count, start, owner cursor, queued-input copies
+    pending: Arc<AtomicBool>,
+}
+impl PreparedNativeFront {
+    fn arm(
+        binding: u64,
+        ids: [BufferId; 25],
+        count: usize,
+        start: usize,
+        cursor: usize,
+        queued: bool,
+        pending: &Arc<AtomicBool>,
+    ) -> Result<Self> {
+        if !(1..=8).contains(&count)
+            || start.checked_add(count).is_none_or(|end| end > k::CONTEXT)
+            || cursor > k::CONTEXT
+            || queued && count != 1
+        {
+            return Err(Error::InvalidFormat("MTP native front preparation bounds"));
+        }
+        pending
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| Error::InvalidFormat("MTP native front preparation pending"))?;
+        Ok(Self {
+            binding: Zeroizing::new(binding),
+            ids: Zeroizing::new(ids),
+            controls: Zeroizing::new([count, start, cursor, usize::from(queued)]),
+            pending: pending.clone(),
+        })
+    }
+    fn check(
+        &self,
+        binding: u64,
+        ids: &[BufferId; 25],
+        cursor: usize,
+        pending: &Arc<AtomicBool>,
+    ) -> Result<()> {
+        if *self.binding != binding
+            || &*self.ids != ids
+            || self.controls[2] != cursor
+            || !Arc::ptr_eq(&self.pending, pending)
+            || !pending.load(Ordering::Acquire)
+        {
+            return Err(Error::InvalidFormat("MTP native front preparation changed"));
+        }
+        Ok(())
+    }
+    fn queued(self) -> Result<()> {
+        self.pending
+            .compare_exchange(true, false, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| Error::InvalidFormat("MTP native front preparation consumed"))?;
+        Ok(())
+    }
+}
+// Both caller/local receipt representations fit the existing2MiB host
+// validation/stack margin; this allocates no private GPU owner or data mirror.
+const _: () = {
+    assert!(2 * size_of::<Option<PreparedNativeFront>>() <= 2048);
+};
+
+#[cfg(test)]
+mod native_front_preparation_tests {
+    use super::*;
+    fn ids(epoch: u64) -> [BufferId; 25] {
+        std::array::from_fn(|slot| BufferId::metadata_fixture(17, epoch, slot))
+    }
+    #[test]
+    fn original_front_can_only_consume_its_exact_owner_cursor_and_roots() {
+        let pending = Arc::new(AtomicBool::new(false));
+        let roots = ids(1);
+        let p = PreparedNativeFront::arm(91, roots, 4, 10, 13, false, &pending).unwrap();
+        p.check(91, &roots, 13, &pending).unwrap();
+        assert!(p.check(92, &roots, 13, &pending).is_err());
+        assert!(p.check(91, &roots, 14, &pending).is_err());
+        assert!(p.check(91, &ids(2), 13, &pending).is_err());
+        assert!(
+            p.check(91, &roots, 13, &Arc::new(AtomicBool::new(true)))
+                .is_err()
+        );
+        assert!(PreparedNativeFront::arm(91, roots, 1, 14, 14, true, &pending).is_err());
+        p.queued().unwrap();
+        assert!(!pending.load(Ordering::Acquire));
+        PreparedNativeFront::arm(91, roots, 1, 14, 14, true, &pending)
+            .unwrap()
+            .queued()
+            .unwrap();
+        assert!(!pending.load(Ordering::Acquire));
+    }
+    #[test]
+    fn abandoning_or_panicking_with_front_preparation_keeps_owner_uncommittable() {
+        for panic in [false, true] {
+            let pending = Arc::new(AtomicBool::new(false));
+            let p = PreparedNativeFront::arm(91, ids(1), 1, 10, 10, false, &pending).unwrap();
+            if panic {
+                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let _receipt = p;
+                    panic!("fixed public preparation abandonment");
+                }));
+                assert!(r.is_err());
+            } else {
+                drop(p);
+            }
+            assert!(pending.load(Ordering::Acquire));
+            assert!(PreparedNativeFront::arm(91, ids(1), 1, 10, 10, false, &pending).is_err());
+        }
+    }
+    #[test]
+    fn front_shape_bounds_fail_before_arming_and_cover_teacher_and_selected_cursors() {
+        let pending = Arc::new(AtomicBool::new(false));
+        for (count, start, cursor, queued) in [
+            (0, 0, 0, false),
+            (9, 0, 0, false),
+            (1, usize::MAX, 0, false),
+            (8, k::CONTEXT - 7, k::CONTEXT - 1, false),
+            (1, 0, k::CONTEXT + 1, false),
+            (2, 0, 0, true),
+        ] {
+            assert!(
+                PreparedNativeFront::arm(91, ids(1), count, start, cursor, queued, &pending)
+                    .is_err()
+            );
+            assert!(!pending.load(Ordering::Acquire));
+        }
+        for count in 1..=8 {
+            for start in [0, 10, k::CONTEXT - count] {
+                for cursor in [start, start + count - 1] {
+                    PreparedNativeFront::arm(91, ids(1), count, start, cursor, false, &pending)
+                        .unwrap()
+                        .queued()
+                        .unwrap();
+                }
+            }
+        }
+        assert!(2 * size_of::<Option<PreparedNativeFront>>() <= 2048);
+    }
+}
+
 struct AcceptedCacheRepair {
     rewind: bool,
     first_row: usize,
@@ -723,6 +867,7 @@ pub struct ResidentMtp<'g, 'f> {
     draft_window: Option<BufferId>,
     dense_planes: Option<BufferId>,
     native_front: Option<crate::strata_mtp_front::Workspace>,
+    native_front_pending: Arc<AtomicBool>,
     client: ComputeClient<WgpuRuntime>,
     public: Option<Public>,
     shared_target_weights: Option<Arc<crate::strata_shared_weights::Weights>>,
@@ -1570,6 +1715,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             draft_window,
             dense_planes,
             native_front,
+            native_front_pending: Arc::new(AtomicBool::new(false)),
             client: owned_client,
             public: None,
             shared_target_weights,
@@ -4241,7 +4387,12 @@ impl ResidentMtp<'_, '_> {
         }
         self.tick(6)
     }
-    fn commit_forward(&mut self) {
+    fn commit_forward(&mut self) -> Result<()> {
+        if self.native_front_pending.load(Ordering::Acquire) {
+            return Err(Error::InvalidFormat(
+                "MTP forward has unconsumed front preparation",
+            ));
+        }
         self.last_front.take();
         let start = self.position;
         self.position += 1;
@@ -4253,6 +4404,7 @@ impl ResidentMtp<'_, '_> {
             binding: self.binding,
             start,
         });
+        Ok(())
     }
     fn start_follow(&mut self, stamp: &LastForward) -> Result<()> {
         if self.closed
@@ -4345,7 +4497,11 @@ impl ResidentMtp<'_, '_> {
                     self.fail();
                     return Err(e);
                 }
-                self.commit_forward();
+                if let Err(e) = self.commit_forward() {
+                    drop(output);
+                    self.fail();
+                    return Err(e);
+                }
                 Ok(output)
             }
             Ok(Err(e)) => {
@@ -4416,7 +4572,11 @@ impl ResidentMtp<'_, '_> {
                     self.fail();
                     return Err(e);
                 }
-                self.commit_forward();
+                if let Err(e) = self.commit_forward() {
+                    drop(output);
+                    self.fail();
+                    return Err(e);
+                }
                 Ok(output)
             }
             Ok(Err(e)) => {
@@ -4596,12 +4756,42 @@ impl ResidentMtp<'_, '_> {
         start: usize,
         cancel: &AtomicBool,
     ) -> Result<()> {
+        let prepared = self.prepare_native_front(count, inputs, start, cancel)?;
+        self.enqueue_prepared_native_front(prepared, cancel)
+    }
+    /// Full original source staging, with the receipt armed before any clear,
+    /// upload or borrowed device copy. A graph may begin only after this phase.
+    fn prepare_native_front(
+        &mut self,
+        count: usize,
+        inputs: Option<NativeFrontInputs<'_>>,
+        start: usize,
+        cancel: &AtomicBool,
+    ) -> Result<PreparedNativeFront> {
+        u::cancel(cancel)?;
         use crate::strata_mtp_front as f;
         let ids = *self
             .native_front
             .as_ref()
             .ok_or(Error::InvalidBufferLength)?
             .ids;
+        let prepared = PreparedNativeFront::arm(
+            self.binding,
+            ids,
+            count,
+            start,
+            self.position,
+            inputs.is_none(),
+            &self.native_front_pending,
+        )?;
+        if inputs.as_ref().is_some_and(|input| match input {
+            NativeFrontInputs::Host(tokens, carries) => {
+                tokens.len() != count || carries.len() != count * k::WIDE
+            }
+            NativeFrontInputs::Device(tokens, _) => tokens.len() != count,
+        }) {
+            return Err(Error::InvalidBufferLength);
+        }
         let fault_id = self.id(B::Fault);
         for &id in &ids {
             u::zero(&self.arena, id)?;
@@ -4641,6 +4831,33 @@ impl ResidentMtp<'_, '_> {
                 );
             }
         }
+        u::cancel(cancel)?;
+        Ok(prepared)
+    }
+    /// Consume the exact source plan and queue only its original front math.
+    /// The later completed fault/output ledger still owns publication.
+    fn enqueue_prepared_native_front(
+        &mut self,
+        prepared: PreparedNativeFront,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        use crate::strata_mtp_front as f;
+        u::cancel(cancel)?;
+        let ids = *self
+            .native_front
+            .as_ref()
+            .ok_or(Error::InvalidBufferLength)?
+            .ids;
+        prepared.check(
+            self.binding,
+            &ids,
+            self.position,
+            &self.native_front_pending,
+        )?;
+        let count = prepared.controls[0];
+        let start = prepared.controls[1];
+        let queued_inputs = prepared.controls[3] != 0;
+        let fault_id = self.id(B::Fault);
         let h = |i| u::handle(&self.arena, ids[i]);
         let info = [count as u32, start as u32, 0, 0, 0, 0, EPS.to_bits(), 0];
         let embedding_pages = self.public()?.pages(EMBEDDING.name)?.len();
@@ -4818,9 +5035,10 @@ impl ResidentMtp<'_, '_> {
             ],
             info,
         )?;
-        self.tick(31 + embedding_pages + if inputs.is_none() { 2 } else { 0 })?;
+        self.tick(31 + embedding_pages + if queued_inputs { 2 } else { 0 })?;
         self.guard_native_front()?;
-        u::cancel(cancel)
+        u::cancel(cancel)?;
+        prepared.queued()
     }
     #[allow(clippy::too_many_arguments)]
     fn native_front_project(
