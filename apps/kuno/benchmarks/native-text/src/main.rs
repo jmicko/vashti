@@ -7,6 +7,7 @@ pub mod cpu_gpu_expert_probe;
 mod cpu_gpu_expert_schedule;
 mod strata_cache;
 mod strata_dense;
+mod strata_engine;
 mod strata_expert_fused;
 pub(crate) use strata_expert_fused::global as strata_global_experts;
 mod strata_gdn;

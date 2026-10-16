@@ -2,14 +2,15 @@
 //! generate.cpp speculative loop at fb58e0dbc8399662c0e47c76578c6e878b14f6cf.
 //! No legacy bank receipts, fabricated dispatches, operator profiles or speed
 //! reports. Prompt/carries/drafts/history are bounded, transient and wiped.
-use super::*;
-use kuno_text::Error;
-
-fn public_phase(phase: &'static str) {
-    if std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1") {
-        eprintln!("native_public_execution phase={phase}");
-    }
+use super::{MAX_OUTPUTS, REQUEST_HOST_BYTES, VOCAB};
+use crate::{executor::GpuExecutor, resident_model::ResidentModel, resident_mtp};
+use std::{sync::atomic::AtomicBool, time::Instant};
+use zeroize::Zeroizing;
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+fn elapsed(start: Instant) -> Result<u64> {
+    u64::try_from(start.elapsed().as_nanos()).map_err(Into::into)
 }
+use kuno_text::Error;
 
 pub(super) struct Request<'a> {
     pub prompt: &'a [u32],
@@ -20,10 +21,10 @@ pub(super) struct Request<'a> {
     pub sampling: crate::strata_sampler::Params,
 }
 impl Request<'_> {
-    fn validate(&self) -> Result<()> {
+    pub(super) fn validate(&self) -> Result<()> {
         self.sampling.validate()?;
         self.speculation.validate()?;
-        if crate::strata_speculation::HOST_BYTES + MAX_OUTPUTS * 4 + 64 * 1024 > FIXTURE_HOST_BYTES
+        if crate::strata_speculation::HOST_BYTES + MAX_OUTPUTS * 4 + 64 * 1024 > REQUEST_HOST_BYTES
         {
             return Err("global speculative host quote rejected".into());
         }
@@ -311,6 +312,15 @@ fn prepare_next_draft(
 
 /// The model's charged request geometry must match this request. The caller
 /// controls accepted-token delivery; this module never persists text or tokens.
+/// Transient counts only; only caller-selected token output leaves inference.
+pub(crate) struct Completion {
+    pub outputs: usize,
+    pub windows: u64,
+    pub state_repairs: u64,
+    pub eos: bool,
+    pub greedy: bool,
+}
+
 pub(super) fn run<'m, 'f>(
     target: &mut ResidentModel<'m, 'f>,
     executor: &mut GpuExecutor<'f>,
@@ -318,8 +328,9 @@ pub(super) fn run<'m, 'f>(
     request: Request<'_>,
     cancel: &AtomicBool,
     emit: &mut dyn FnMut(u32) -> Result<()>,
-) -> Result<serde_json::Value> {
-    public_phase("request_preflight");
+    phase: &mut dyn FnMut(&'static str),
+) -> Result<Completion> {
+    phase("request_preflight");
     request.validate()?;
     target.validate_global_request_geometry(executor, request.prompt.len(), request.max_outputs)?;
     if !crate::strata_intel_core::enabled()
@@ -332,7 +343,7 @@ pub(super) fn run<'m, 'f>(
     }
     let plan = PromptPlan::new(request.prompt.len())?;
     if plan.prefix() != 0 {
-        public_phase("prompt_prefix");
+        phase("prompt_prefix");
         target.with_prompt_ple_source(
             executor,
             &request.prompt[..plan.prefix()],
@@ -347,7 +358,7 @@ pub(super) fn run<'m, 'f>(
                     for chunk in plan.chunks() {
                         let end = chunk.end;
                         let (inputs, teacher) = plan.inputs(request.prompt, chunk)?;
-                        public_phase("prompt_chunk");
+                        phase("prompt_chunk");
                         target.prefill_prompt_chunk(
                             executor,
                             inputs,
@@ -384,7 +395,7 @@ pub(super) fn run<'m, 'f>(
     // SAFETY: run owns exclusive model/executor/draft borrows throughout this
     // lexical scope. It never resets/closes them; sampling closes before return
     // and the parent's model cleanup. Errors retire before arena ownership ends.
-    public_phase("sampling_scope");
+    phase("sampling_scope");
     let sampling = unsafe {
         target.begin_sampling_request(
             executor,
@@ -395,7 +406,7 @@ pub(super) fn run<'m, 'f>(
     };
     sampling.use_device_residuals()?;
     sampling.stage_target(plan.prefix(), &request.prompt[plan.prefix()..])?;
-    public_phase("last_prompt_input");
+    phase("last_prompt_input");
     let mut output =
         target.prefill_chunk_with_carry(executor, &request.prompt[plan.prefix()..], cancel)?;
     if output.start() != plan.prefix() || output.count() != 1 {
@@ -698,12 +709,13 @@ pub(super) fn run<'m, 'f>(
     {
         return Err("global request erasure rejected".into());
     }
-    Ok(
-        serde_json::json!({"controller":"global-original-sources","greedy_target_verification":greedy_request,
-        "outputs":history.len(),"windows":rounds,"state_repairs":repairs,
-        "eos":confirmed==request.eos,"request_scope_erased":true,"content_persisted":false,
-        "speed_acceptance":false,"full_rewrite_accepted":false}),
-    )
+    Ok(Completion {
+        outputs: history.len(),
+        windows: rounds,
+        state_repairs: repairs,
+        eos: confirmed == request.eos,
+        greedy: greedy_request,
+    })
 }
 
 #[cfg(test)]

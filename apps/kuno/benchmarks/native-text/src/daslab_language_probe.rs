@@ -31,8 +31,7 @@ use std::{
 };
 use zeroize::Zeroizing;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-#[path = "strata_global_controller.rs"]
-mod global_controller;
+
 const VOCAB: usize = 248320;
 const HIDDEN: usize = 10240;
 pub(crate) const MAX_OUTPUTS: usize = if crate::strata_port::enabled() {
@@ -1097,6 +1096,103 @@ pub(crate) fn run(
             )
         })
         .transpose()?;
+    if crate::strata_intel_core::enabled() {
+        let request = crate::strata_engine::Request::new(
+            prompt,
+            MAX_OUTPUTS,
+            graph.eos_token(),
+            crate::strata_sampler::Params {
+                greedy: true,
+                temperature: 0.,
+                ..Default::default()
+            },
+            crate::strata_speculation::Config::native(4),
+            0.5,
+        )?;
+        let mut emitted = Zeroizing::new(Vec::with_capacity(MAX_OUTPUTS));
+        // SAFETY: the protected original-source launcher owns full authentication,
+        // memory/driver admission, swap/core protection and a redacted panic hook.
+        let done = unsafe {
+            crate::strata_engine::execute(
+                &file,
+                graph.bound_graph(),
+                draft_graph.as_ref(),
+                client,
+                limits,
+                host_device.ok_or("native target device missing")?,
+                host_queue.ok_or("native target queue missing")?,
+                input.target_submission_backlog,
+                request,
+                &AtomicBool::new(false),
+                &mut |token| {
+                    if emitted.len() >= MAX_OUTPUTS {
+                        return Err(kuno_text::Error::InvalidBufferLength);
+                    }
+                    emitted.push(token);
+                    Ok(())
+                },
+                &mut |phase| eprintln!("native_public_execution phase={phase}"),
+            )
+        }?;
+        if let Some(sidecar) = &sidecar {
+            sidecar.verify_file_unchanged()?;
+        }
+        if emitted.len() != done.generation.outputs {
+            return Err("native public output delivery count".into());
+        }
+        let visible = Zeroizing::new(
+            emitted
+                .iter()
+                .copied()
+                .filter(|&t| t != graph.eos_token())
+                .collect::<Vec<_>>(),
+        );
+        let preview = Zeroizing::new(tokenizer.decode(&visible)?);
+        // Explicitly public diagnostic only. The protected runner displays this
+        // line without writing its content into the persistent receipt/log.
+        println!(
+            "strata_public_preview={}",
+            serde_json::to_string(preview.as_str())?
+        );
+        let backlog_receipt = crate::target_lab_build::native_shared_backlog_record(
+            input.target_submission_backlog,
+            Some(done.backlog),
+            true,
+        )?;
+        let draft_additional = done
+            .draft_public_bytes
+            .map(|n| {
+                n.checked_sub(crate::strata_shared_weights::addressable_bytes())
+                    .ok_or("native shared public quote")
+            })
+            .transpose()?;
+        let record = serde_json::json!({"controller":"global-original-sources",
+            "greedy_target_verification":done.generation.greedy,"outputs":done.generation.outputs,
+            "windows":done.generation.windows,"state_repairs":done.generation.state_repairs,
+            "public_response_nonempty":!preview.trim().is_empty(),
+            "eos":done.generation.eos,"request_scope_erased":true,"content_persisted":false,
+            "target_close":{"main_buffers":done.target_main.buffers,"main_bytes":done.target_main.bytes,
+                "source_buffers":done.target_sources.buffers,"source_bytes":done.target_sources.bytes},
+            "speed_acceptance":false,"full_rewrite_accepted":false});
+        let value = serde_json::json!({"scope":"strata-global-connected-execution-check",
+            "benchmark":false,"whole_rewrite_accepted":false,"record":record,
+            "draft_owners_erased":done.draft_public_bytes.is_some(),"target_owners_erased":true,
+            "shared_target_public_bytes":crate::strata_shared_weights::public_bytes(),
+            "shared_target_host_embedding_bytes":crate::strata_shared_weights::embedding_bytes(),
+            "shared_target_addressable_bytes":crate::strata_shared_weights::addressable_bytes(),
+            "draft_public_addressable_bytes":done.draft_public_bytes,
+            "draft_public_additional_bytes":draft_additional,"target_submission_backlog":backlog_receipt,
+            "intel_mtp_admission":intel_mtp_admission});
+        serde_json::to_writer_pretty(
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(input.receipt)?,
+            &value,
+        )?;
+        println!("strata_global_execution_complete owners_erased=true speed_acceptance=false");
+        return Ok(());
+    }
     crate::resident_util::select_retained_metadata(true);
     crate::resident_util::select_compute_scratch_clear(true);
     if input.request_reuse {
@@ -1333,31 +1429,6 @@ pub(crate) fn run(
             );
         }
         let runs = (|| -> Result<serde_json::Value> {
-            if crate::strata_intel_core::enabled() {
-                return global_controller::run(
-                    &mut target,
-                    &mut executor,
-                    draft.as_mut(),
-                    global_controller::Request {
-                        prompt: &prompt,
-                        max_outputs: MAX_OUTPUTS,
-                        eos: graph.eos_token(),
-                        speculation: crate::strata_speculation::Config::native(
-                            crate::strata_port::verify_capacity().min(4),
-                        ),
-                        // Native working Intel default. MAX8 remains a real
-                        // compiled capacity; it is not the request's default.
-                        draft_min_probability: 0.5,
-                        sampling: crate::strata_sampler::Params {
-                            greedy: true,
-                            temperature: 0.,
-                            ..Default::default()
-                        },
-                    },
-                    &cancel,
-                    &mut |_| Ok(()),
-                );
-            }
             let load_ns = elapsed(whole)?;
             let prefill = Instant::now();
             let before_prefill_repair = draft.as_ref().map(|draft| draft.traffic());

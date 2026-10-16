@@ -14,7 +14,9 @@ pub(crate) const RUNTIME_BYTES: u64 = if cfg!(feature = "strata-intel-core") {
     128
 } * 1024
     * 1024;
-pub(crate) const MAX_OUTPUTS: usize = if crate::strata_port::enabled() {
+pub(crate) const MAX_OUTPUTS: usize = if crate::strata_intel_core::enabled() {
+    crate::strata_engine::MAX_OUTPUTS
+} else if crate::strata_port::enabled() {
     512
 } else {
     200
@@ -438,7 +440,7 @@ mod tests {
         for (p, o) in [
             (0, 1),
             (1, 0),
-            (1, 513),
+            (1, MAX_OUTPUTS + 1),
             (crate::qsa_gpu::MAX_CONTEXT, 1),
             (usize::MAX, 1),
         ] {
@@ -447,7 +449,7 @@ mod tests {
     }
     #[test]
     fn four_language_permission_keeps_prefill_original_and_requires_active_real_cursor() {
-        let geometry = Geometry::new(30, MAX_OUTPUTS).unwrap();
+        let geometry = Geometry::new(30, MAX_OUTPUTS.min(512)).unwrap();
         let mut authority = Authority::new(geometry, geometry.context(), false).unwrap();
         authority.four_rows = true;
         assert!(authority.run(0, 4, false).is_err());
@@ -470,9 +472,9 @@ mod tests {
     #[test]
     fn compiled_and_native_language_geometry_keep_distinct_bounded_contracts() {
         for prompt in [30, 35] {
-            let g = Geometry::new(prompt, MAX_OUTPUTS).unwrap();
-            assert_eq!(g.context(), prompt + MAX_OUTPUTS);
-            assert_eq!(g.final_cursor(), prompt + MAX_OUTPUTS - 1);
+            let g = Geometry::new(prompt, MAX_OUTPUTS.min(512)).unwrap();
+            assert_eq!(g.context(), prompt + MAX_OUTPUTS.min(512));
+            assert_eq!(g.final_cursor(), prompt + MAX_OUTPUTS.min(512) - 1);
             for wrong in [0, 4, 13, 229, 234, 256] {
                 assert!(Authority::new(g, wrong, false).is_err());
             }
@@ -480,13 +482,16 @@ mod tests {
         }
         for prompt in [0, 1, 4, 13, 29, 31, 34, 36] {
             assert_eq!(
-                Geometry::new(prompt, MAX_OUTPUTS).is_ok(),
+                Geometry::new(prompt, MAX_OUTPUTS.min(512)).is_ok(),
                 crate::strata_intel_core::enabled() && prompt > 0
             );
         }
         for outputs in [0, 1, 199, 201, MAX_OUTPUTS, MAX_OUTPUTS + 1, usize::MAX] {
             let allowed = if crate::strata_intel_core::enabled() {
                 (1..=MAX_OUTPUTS).contains(&outputs)
+                    && outputs
+                        .checked_add(35)
+                        .is_some_and(|n| n <= crate::qsa_gpu::MAX_CONTEXT)
             } else {
                 outputs == MAX_OUTPUTS
             };
