@@ -6,8 +6,8 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through `7ad47ca`. Read the latest
-[native packet handoff](#active-kuno-engine-handoff--native-packet-readback-2026-10-16)
+`codex/strata-rust-port`, engine source through `7cb1cbc`. Read the latest
+[native upload/reuse handoff](#active-kuno-engine-handoff--native-upload-and-joined-reuse-2026-10-16)
 and [completion gate](kuno-strata-rewrite-completion.md). Direct target/MTP
 submission, accepted-prefix state publication and retained commit graph are connected
 in source. Original pending submissions/joins and scoped next-draft consumption are connected;
@@ -6541,3 +6541,32 @@ No new shader/layout or immutable ordinary artifact; frozen `0bf0b5f` is stale.
 No GPU/model/service/protected inference/driver/install/release or public API/
 connector/UI change. Required Vashti changes:none. Sudo refresh alone succeeded
 in Demons. Goal remains active for CPU-only work; full rewrite gates remain open.
+
+
+### Active Kuno engine handoff — native upload and joined reuse (2026-10-16)
+
+Source `7cb1cbc` connects actual data/INFO/replay producers to bounded write-only
+uploads, explicit Wgpu/native-ready/writing/staged ownership, guarded actual
+native map/full flush/unmap and original copy sealing. Only a real all-owner
+stream/graph completion grants checkpoint reuse; partial/unsubmitted writers,
+held leases/INFO, wrong requests and GPU errors cannot publish free owners.
+Original I/O ledger/pins/erase, exports and MAIN debt stay owned. Selected native
+reuse no longer requests Wgpu upload map callbacks or primary transitions/
+Readback clears. The original native packet fill/copy/fence/map path still applies.
+No new GPU data root, content persistence, public API/connector/UI change.
+
+276 focused CPU cases (including original I/O/cache/parameter owner tests), strict
+selected/off Clippy and formatting/whitespace pass. The CPU harness disables
+activation and uses lab/generic budget cfg; it is not real GPU/fence/map/selected-
+limit/erasure proof. Exact source/logs/failed dependency-test attempts and remaining
+requirements are in completion guide **Original native upload and joined I/O reuse**.
+No shader/layout or frozen artifact change; frozen `0bf0b5f` is stale.
+
+This remains globally joined. Next couple original-owner selective reuse/exclusion
+with current-lane/conflicting-flight graph/stream admission. Never grant all-owner
+reuse after a peer fence; inspect actual INFO/source/descriptor and future retained
+replay pins. Preserve epochs/visibility, cold initialization, exports/MAIN debt and
+terminal drains, including positive-confidence per-cell checkpoints. No physical
+independence/parity/speed result. No GPU/model/service/protected inference/driver/
+install/release action. Required Vashti changes:none. Sudo refresh succeeded in
+Demons; goal stays active for CPU-only work and the full rewrite remains incomplete.

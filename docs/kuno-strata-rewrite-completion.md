@@ -59,7 +59,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native INT8 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Positive-threshold chains now keep hidden carries on device and observe the same token/probability/fault packet as zero-threshold chains; mapped/event scheduling remains open. First/grouped device-source and ids-only target result consumers now exist; the shared-context constructor receipt below supersedes the separate-client blocker. Core construction now selects the actual target client and one combined account. Source9de7fef pins the original target embedding/head once, shares them with MTP and gathers target embeddings on GPU. Actual device/state acceptance is pending. Source0bfbea8 connects the original-order CJK106299-row Q6 draft head, inverse-ID history mapping, compact confidence and coupled sampling; source2a3d1ad connects INT8 caches. Combined CPU checks pass, with full numerical/GPU execution still pending. Source `862f5fa` separates first-front staging and actual observation from capture, and prestages all coupled draft controls once per round. Source `8262367` connects typed MTP phases/4096 boundaries and original model-instance graph namespaces; source `d0670b0` connects direct original MTP replay and capture-derived host/sampler handback. Physical acceptance, commit/event fidelity, numerical/state acceptance and runtime policy remain required. See the latest device-end receipt. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Sourcea26adc2 ports the native bounded trigram index, longest/recent suffix choice, cost priors, probing/stale rules and optional lookup-chain accounting into the selected controller. Configured MTP/target windows no longer shrink at the output cap; state commit and emission are separate. Coupled sampling and physical state acceptance still need end-to-end validation. |
 | Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Source `131d29c` connects real provisional rows to accepted GDN/QSA/PLE candidates while original full-window transactions remain open, then publishes only n after real fault/I/O proof. Count1 uses its candidate and all-accept multirow runs original state replay. Old diagnostic full-window repair is not selected by the native controller. Source `4083258` connects the retained multirow commit graph with explicit dynamic accepted-count/position fields, original family preflight and count1 skip. Source `91e1f9e` connects original pending commit export/join; `1f46f76` connects a scoped original next-draft consumer before explicit commit acknowledgement. Source `0bf0b5f` emits real verified predictions before next drafting, matching the source delivery order. Global waits still serialize GPU execution. Independent draft/readiness/INFO dependencies, original storage substitutions and independent GPU/numerical oracle remain open. |
-| Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; Source `d40442c` connects direct retained target submission with typed control uploads and original family receipts; source `d0670b0` connects direct MTP invocation with original actual packet observations and sampler/actor handback. Source `b6732c8` adopts independent MTP compute and concurrent buffer families with semaphore handoffs. Source `414e2c3` connects actual current INFO copies on the native transfer timeline and avoids empty primary submissions; source `86f4c35` replaces the global single fence/last-recording assumption with actual lane fences and stable original recording flights. Source `131d29c` connects synchronous original accepted-prefix publication; source `4083258` connects the retained commit graph. Source `91e1f9e` connects original pending submission identities and exact joins; `1f46f76` connects scoped original MTP consumption before explicit commit acknowledgement. Real independent readiness/INFO/draft execution remain open; source `543bc73` couples original pending commits to retained shared MAIN debt; source `a8e538f` retains actual recording ranges and preflights whole INFO-copy conflicts; source `d2d3228` pins original verified R, submits its real readiness dependency before commit and scopes all unkeyed/named draft lane selection. Source `7ad47ca` connects original native packet fill/copy, real HOST_READ availability, final fence and checked HAL host map without primary Wgpu readback copies/callbacks. Global drains, selective I/O reuse and source-remap authority still require the coupled dependency change. Global drain removal and draft/event fidelity remain incomplete. Physical ring overlap, scratch lifetimes and full execution acceptance remain open. Measured serving lazily captures branches; eager all-branch warmup is not a prerequisite; a sequence of independent Wgpu launches is not equivalent. |
+| Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; Source `d40442c` connects direct retained target submission with typed control uploads and original family receipts; source `d0670b0` connects direct MTP invocation with original actual packet observations and sampler/actor handback. Source `b6732c8` adopts independent MTP compute and concurrent buffer families with semaphore handoffs. Source `414e2c3` connects actual current INFO copies on the native transfer timeline and avoids empty primary submissions; source `86f4c35` replaces the global single fence/last-recording assumption with actual lane fences and stable original recording flights. Source `131d29c` connects synchronous original accepted-prefix publication; source `4083258` connects the retained commit graph. Source `91e1f9e` connects original pending submission identities and exact joins; `1f46f76` connects scoped original MTP consumption before explicit commit acknowledgement. Real independent readiness/INFO/draft execution remain open; source `543bc73` couples original pending commits to retained shared MAIN debt; source `a8e538f` retains actual recording ranges and preflights whole INFO-copy conflicts; source `d2d3228` pins original verified R, submits its real readiness dependency before commit and scopes all unkeyed/named draft lane selection. Source `7ad47ca` connects original native packet fill/copy, real HOST_READ availability, final fence and checked HAL host map without primary Wgpu readback copies/callbacks. Source `7cb1cbc` connects native upload state/render/flush/unmap and all-owner joined I/O reuse without Wgpu remaps or primary reuse clears. Global drains and selective original-owner reuse/admission still require the coupled dependency change. Global drain removal and draft/event fidelity remain incomplete. Physical ring overlap, scratch lifetimes and full execution acceptance remain open. Measured serving lazily captures branches; eager all-branch warmup is not a prerequisite; a sequence of independent Wgpu launches is not equivalent. |
 | Request lifecycle and arbitrary input | upstream CLI/session/inference entry points | Current Rust public-fixture gate is not a general engine. Connect bounded arbitrary prompts and request-local sampling/history, with no persistent content, protected memory and orderly erase/close. No gateway/UI work required. |
 
 ## Validation and the speed gate
@@ -6173,9 +6173,10 @@ Complete the dependencies as one connected scope before claiming independent mat
    Do not globally delete all completion guards.
 4. Cover observation and reuse, including each positive-confidence MTP cell.
    Source `7ad47ca` now routes selected native packet readback through its actual
-   native copy/fence/HOST_READ/map path. Shared request I/O recycle still globally
-   flushes and submits primary transitions/clears; ordinary and terminal cleanup
-   readback retain their original Wgpu path. They cannot silently join the target before all
+   native copy/fence/HOST_READ/map path. Source `7cb1cbc` additionally removes
+   selected native upload remaps/primary reuse transitions/clears, but its all-owner
+   checkpoint still globally joins. Selective original-owner authority remains
+   required. Ordinary and terminal cleanup readback retain their Wgpu path. They cannot silently join the target before all
    intended independent work or remap/overwrite live upload/INFO owners. Keep
    actual map/fault completion, source-copy completion and final audit/erasure.
    No fake per-lane successful fence or metadata-only reuse credit is allowed.
@@ -6355,7 +6356,7 @@ counter therefore does not receive fabricated callback credit; existing scoped
 setup/flush/map counters still describe actual work. Those numeric counters are
 not completion/numerical/erasure authority.
 
-**Remaining:** current graph push/execute/flush and scope-entry drains still join
+**Remaining at packet source `7ad47ca` (native remaps/primary reuse superseded by `7cb1cbc` below):** current graph push/execute/flush and scope-entry drains still join
 all original flights. Shared `recycle_reuse` still remaps uploads via Wgpu and
 submits primary transitions/readback clears. This block is not physical independent
 execution or a throughput result. Next connect current-lane/conflicting-flight
@@ -6388,3 +6389,103 @@ Sudo timestamp refresh alone succeeded in Demons. Actual coherent/non-coherent
 Vulkan map/barrier/fence/reuse/failure/erasure proof and whole-model numerical/
 completion/recovery remain pending, alongside the other full rewrite gates.
 Goal stays active for CPU-only work. Full rewrite and speed gate remain open.
+
+
+## Original native upload and joined I/O reuse (2026-10-16)
+
+Source `7cb1cbc38de0310a3f8a98f8acd874839c9bca32` connects actual INFO/data renderers and
+native I/O checkpoints to the same original tracked upload owners. It replaces
+`upload_mapped: bool` with `strata_upload::State`:
+
+| State | Actual responsibility |
+| --- | --- |
+| `Idle` | CPU write permission revoked; actual queued readers/copies may still use it. |
+| `WgpuMapped` | Original mapped-at-creation or checked legacy map; retain real Wgpu unmap duty. |
+| `NativeReady` | Original joined checkpoint granted native write reuse; Wgpu remains unmapped. |
+| `NativeWriting` | Grant consumed before fallible native map/render/flush/unmap; cannot stage or recycle. |
+| `NativeWritten` | Native render/flush/unmap succeeded; same unsubmitted append page may receive more writes. |
+
+The state is bookkeeping, not fence/numerical/erasure authority. Only the original
+serialized stream's real completed I/O boundary grants reuse. A failed or partial
+writer cannot become staged input merely because another fence completed.
+
+`write_upload` now serves native/ordinary data uploads, fresh/appended INFO and
+direct retained INFO replay. Producers receive bounded write operations only;
+neither Wgpu's write-only contract nor original native ownership permits exposing
+a readable mapped slice/raw pointer. `render_bounded` validates every exact
+full-owner write including integer overflow and stops later writes after failure.
+Initial source fill still zeros the full original API span including padding.
+Actual original runtime controls/template renderers and byte encodings stay intact.
+INFO slabs retain the original upload index beside the original target index;
+append writes do not search/reconstruct or substitute another source owner.
+
+First-use Wgpu mappings retain their actual view/unmap. Reused native sources use
+a synchronous borrow of the original allocator's Vulkan mapping. The local guard
+unmaps even on error/panic, and non-coherent full-range writes are flushed before
+unmap, including partial/error writes. Only success advances Writing -> Written.
+`seal_upload` requires an actually staged source, completes its actual Wgpu unmap
+when needed, then revokes CPU permission before the GPU copy. Native sources were
+already flushed/unmapped. The source bytes/owner are never replaced by metadata.
+Terminal erasure resets only bookkeeping and keeps the original real remap/
+volatile full wipe/flush/audit; dirty reuse grants no storage release or clean
+receipt. No new GPU data root, content persistence or weight mirror.
+
+The selected stream's `recycle_transient_io` retains the real flush, then calls
+`Graph::join_all_io_sources`. That method joins original math/copy/INFO/readiness/
+handoff fences and rejects unsubmitted nodes, live flights or transfer owners.
+Only then may `recycle_native_after_all_joined` validate the original request,
+zero held leases, empty pending INFO/slab and accepted GPU errors. Its real all-
+owner completion preflights the ENTIRE upload cohort before granting any writer.
+The intrusive free index accepts only actual Wgpu-mapped/native-ready Uploads;
+writing/staged uploads reject. Original INFO pins, charges, retained recordings,
+exports and pending MAIN debt stay owned. No Wgpu upload map callback or primary
+reuse transition/Readback clear is requested by this selected checkpoint. Native
+readback's actual full fill/copy/HOST_READ/fence path remains required before
+its next host observation. Legacy feature-off reuse keeps its old callback path.
+
+**Still a global boundary:** this is not selective independent reuse or physical
+overlap. Do NOT delete the global joins and call the all-owner unsafe function
+after only a peer/current-lane fence. The next connected block must obtain the
+original I/O owner inventory, check full host-write reuse accesses against original
+retained flight ranges AND current INFO copy ownership, and exclude every still-
+used owner from native write grants/free-index publication. Coordinate that with
+scope entry, push/transfer, execute/replay and stream flush current-lane/conflict
+joins; preserve queued-versus-submitted work, real INFO epochs/visibility, cold
+Wgpu initialization and original final/failure drains. Audit retained replay's
+actual source/descriptor pins as well as live flights; a future replay must not
+silently consume an overwritten captured upload. Keep positive-confidence per-
+cell checkpoints under that same original scope. No timing result is used here.
+
+CPU receipts under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-native-upload-final-test-build-20261016.log`: locked selected release
+  test build passes with the complete connected upload/checkpoint/owner harness.
+  Earlier unsuffixed build predates checkpoint connection and reported unused
+  NativeReady/after_joined; it is not the final warning-free receipt.
+- `strata-native-upload-cpu-20261016.log`: 276 cases pass across 22 nonempty suites:
+  previous 165, 2 original native upload state/bounded-writer cases and 109 original
+  I/O/cache/parameter owner cases. New cohort test rejects partial/staged tails
+  before any writer publication and checks the actual intrusive index's native
+  grant consumption. Native writer cases check bit-preserving/append/bounds/
+  overflow behavior and no later writes after failure. Existing lease/error/
+  erasure/cache/index policies now compile/run against the real state refactor.
+- Cargo rejected direct dependency-library test attempts because that package
+  is outside this workspace and requires dev dependencies. Those two failed
+  `strata-native-upload-library*-test-build` logs are not passed tests. Instead,
+  `strata_io_owner_tests` includes the actual original I/O, parameter and cache
+  files. Only its device-activation predicate is disabled; no queue/fence is
+  simulated. The included I/O source uses the lab root's feature namespace, so
+  its shared-budget cfg is generic, not the production dependency's selected
+  shared-budget variant. This harness proves host logic/type/policy cases, NOT
+  native activation, actual selected device limits, map/coherence or erasure.
+- `strata-native-upload-{core,off}-clippy-20261016.log`: locked selected/off strict
+  release Clippy pass. Changed Rust formatting and `git diff --check` pass.
+  Existing duplicate-main-bin Cargo manifest warning only.
+
+No shader/layout change or new immutable ordinary artifact; frozen `0bf0b5f`
+remains stale for current source. No GPU/model/service/protected inference/driver/
+API/UI/install/release work. Sudo timestamp refresh succeeded in Demons. Required
+Vashti changes:none. Native coherent/non-coherent write/flush/unmap/reuse, real
+queue/barrier/failure/erasure and whole-model completion/numerical/recovery gates
+remain pending, alongside other full-rewrite obligations. Goal stays active for
+CPU-only work. No physical independence, source parity or speed result claimed.

@@ -1,18 +1,53 @@
-<!-- Current resume: 2026-10-16, source 7ad47ca, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source 7cb1cbc, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, engine source through `7ad47ca`. The user authorized
+branch `codex/strata-rust-port`, engine source through `7cb1cbc`. The user authorized
 continuing CPU-only work; the goal controller is active for that scope.
 GPU/model/service work still needs renewed user authorization. The user has
 authorized keeping sudo refreshed in the shared Demons shell; noninteractive
 validation succeeded. This does not expand the GPU/testing scope. Last physical recovery evidence
 is historical 06:07:22Z on Oct15; no subsequent GPU run or live health claim.
 
-Read the latest [original native packet readback receipt](kuno-strata-rewrite-completion.md#original-native-packet-readback-2026-10-16)
-and the original R scope/dependency contract before changing queue/stream behavior.
+Read the latest [original native upload/joined reuse receipt](kuno-strata-rewrite-completion.md#original-native-upload-and-joined-io-reuse-2026-10-16)
+and original R/packet scope contracts before changing queue/stream behavior.
 Earlier CJK source `cd703bc` was integrated as `0bfbea8`; do not cherry-pick it again.
+
+**Latest native uploads/reuse:** `7cb1cbc` connects original data, INFO append and
+direct INFO replay to one bounded write-only renderer and explicit original upload
+states: Idle, WgpuMapped, NativeReady, NativeWriting, NativeWritten. Native reuse
+consumes a real completed grant BEFORE map/render/flush/unmap; only success stages
+bytes. Failed/partial writes cannot be recycled or copied. First-use Wgpu map duty
+stays real; native reuses flush non-coherent full ranges and unmap locally. Original
+source index, full padding clear, typed controls, I/O budget and final erasure stay
+owned. No readable mapped slice/pointer is exposed to byte/template producers.
+
+Selected native checkpoints now use `join_all_io_sources` +
+`recycle_native_after_all_joined`, with original request/leases/INFO/GPU errors and
+full-cohort preflight. No Wgpu upload remap callback or primary reuse transitions/
+Readback clears; original native packet fill/copy/fence/map remains required. No
+ledger release, erasure or target-ready credit. This remains an ALL-OWNER global
+completion boundary. Do not replace its join with a peer/current-lane fence.
+
+276 focused CPU cases across 22 nonempty suites, selected/off strict Clippy and
+format/whitespace pass. Actual original I/O/cache/parameter tests use a CPU harness
+with device activation disabled and generic lab feature cfg; they are not native
+map/device/coherence/erasure or selected shared-budget proof. See exact logs and
+failed dependency-test attempts in completion receipt. No shader/layout or frozen
+ordinary artifact; `0bf0b5f` is stale. No GPU/model/service/protected test or speed
+result. Sudo refresh succeeded. Required Vashti changes:none.
+
+**Next connected block:** selective original I/O owner inventory, full host-write
+reuse conflicts against original flight/INFO-copy ownership and exclusion from
+native grants/free-index publication, coupled with current-lane/conflicting graph
+admission for entry/push/execute/replay/flush. Preserve original source/descriptor
+pins for FUTURE retained replay, not just currently running math. No masked all-
+owner grant or metadata-only completion. Keep queued-vs-submitted distinction,
+INFO epochs/visibility, cold initialization, exports/MAIN debt and final/failure
+drains together. Positive-confidence per-cell checkpoints remain in scope.
+Other full rewrite/arbitrary-input/context/embedding-placement/regression/
+numerical/physical/recovery gates remain; live GPU work still needs authorization.
 
 **Latest native packet path:** `7ad47ca` connects real fill/copy-only unnamed
 recordings and their original selected-lane/copy timeline final fence, explicit
@@ -31,7 +66,7 @@ format/whitespace pass. No shader/layout or immutable artifact change; frozen
 `0bf0b5f` is stale. No GPU/model/service/protected tests or speed result. Sudo
 refresh succeeded. No API/connector/UI change; required Vashti changes:none.
 
-**Next connected block:** graph current-lane/conflicting-flight admission plus
+**Earlier next block (native global reuse now replaced by `7cb1cbc` above):** graph current-lane/conflicting-flight admission plus
 selective original I/O reuse/source-remap completion authority. Current scope
 entry/push/execute/flush still drain globally; `recycle_reuse` still maps uploads
 via Wgpu and submits primary transitions/readback clears. Native packet copying/
