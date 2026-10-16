@@ -6,8 +6,8 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through `d40442c`. Read the latest
-[direct target replay handoff](#active-kuno-engine-handoff--direct-target-graph-replay-2026-10-16)
+`codex/strata-rust-port`, engine source through `862f5fa`. Read the latest
+[MTP staging handoff](#active-kuno-engine-handoff--mtp-input-staging-and-observation-2026-10-16)
 and [completion gate](kuno-strata-rewrite-completion.md). Direct target submission
 is now connected in source; MTP direct replay and full GPU/numerical acceptance
 remain incomplete. No new speed result.
@@ -6134,3 +6134,25 @@ see the current native text checkpoint for exact entry points and dependencies.
 Work and the active goal are CPU-only. No GPU/service/sudo operations or installation.
 Required Vashti changes:none. Existing unrelated files and canonical checkout remain
 untouched. Do not run throughput comparisons until the whole rewrite gate passes.
+
+### Active Kuno engine handoff — MTP input staging and observation (2026-10-16)
+
+Engine `862f5fa` connects original first-front TOKEN/borrowed target-residual
+staging before capture, original front math through an opaque prepared ticket,
+and actual packet/fault readback after closing the producer graph. Positive
+confidence thresholds still observe each actual proposal before a followup.
+No borrowed target source is released early and no synthetic forward is published.
+
+Coupled draft controls upload once per round into the original32KiB owner;
+per-step4KiB aligned views feed the unchanged actual GPU bridge/sampler. There is
+no per-draft CONTROL upload inside capture. Original main/runtime/host caps and
+complete-owner erase remain; no new GPU root or public API is introduced.
+
+26 focused CPU tests, selected/off strict Clippy, immutable release build and327
+offline shader variants pass. Exact receipts/limitations are in **MTP input staging and
+actual observation boundaries**. MTP parameters are still untyped and math is still
+enqueued. Next work is explicit phase/position schemas and real direct submission;
+current checkpoint records the required coupled state/sampler bookkeeping.
+
+Goal remains active for CPU-only work. No GPU/model/service/sudo operations,
+installation or live speed trials. Required Vashti changes:none.

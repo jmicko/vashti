@@ -1,19 +1,41 @@
-<!-- Current resume: 2026-10-16, source d40442c, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source 862f5fa, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, engine source through `d40442c`. The user authorized
+branch `codex/strata-rust-port`, engine source through `862f5fa`. The user authorized
 continuing CPU-only work; the goal controller is active for that scope.
 GPU/model/service/sudo work still needs renewed user authorization. Last physical recovery evidence
 is historical 06:07:22Z on Oct15; no subsequent GPU run or live health claim.
 
-Read the latest [direct target submission receipt](kuno-strata-rewrite-completion.md#direct-retained-target-graph-submission-2026-10-16)
+Read the latest [MTP staging receipt](kuno-strata-rewrite-completion.md#mtp-input-staging-and-actual-observation-boundaries-2026-10-16)
 and coordination handoff. Earlier CJK source `cd703bc` was integrated as `0bfbea8`;
 **do not cherry-pick it again**. Its original 106299-row Q6 head, inverse-ID sampler
 and target/MTP INT8 caches remain connected.
 
-**Latest substantial block:** `d40442c` connects actual direct target graph replay.
+**Latest MTP block:** `862f5fa` separates first TOKEN/target-residual staging from
+native front math. The actual window prepares an opaque original-owner/cursor ticket
+before capture and consumes it in the first front. A dropped ticket leaves an
+owner-local pending flag set, preventing another preparation, observation or full
+forward publication while allowing original failure cleanup. Legacy scalar/teacher
+callers compose the same stages. No new private GPU root exists.
+
+Coupled sampling now stages every possible draft's `(cell,j,round base)` once at
+`begin_round`, in disjoint aligned4KiB views of the original32KiB CONTROL owner.
+`draft_pick` no longer uploads a control packet in the captured math. Original
+GPU bridge/RNG/history/CJK mapping and CPU phase checks remain active. Actual
+producer packet sealing precedes graph closure; actual private readback and each
+positive-threshold decision follow closure. Borrowed target residuals remain held
+until the same final completed observation.
+
+This pass:26 focused CPU tests, selected/off strict Clippy and formatting pass.
+Frozen release build and327 offline shader variants plus matrix/physical-pointer
+checks pass; exact artifact hash and logs are in the completion guide. No GPU,
+model, numerical, throughput or installed-service test ran. MTP **still enqueues
+math and uses untyped branch parameters**; this is its staging dependency, not a
+claim of completed MTP replay.
+
+**Previous connected block:** `d40442c` connects actual direct target graph replay.
 The first eligible verification window captures normally. A repeat with the same
 request nonce, static shape and original GDN state role bulk-renders fresh position,
 routing epoch and verification-usage controls into its original INFO roots, joins
@@ -45,16 +67,30 @@ artifact hash and logs are in the completion guide.
 These are not whole-model/GPU/numerical acceptance. Historical full-core regression
 failures remain untriaged; do not call the complete regression suite green.
 
-**Next block:** MTP round/step typed controls and direct submission. Inspect
-`resident_mtp_window.rs::queued_window_with_minimum` and `resident_mtp.rs::queue_native_front`.
-The first front currently uploads TOKEN and copies device carries inside the branch;
-move original staging before capture without releasing the borrowed target carry.
-The observation currently seals/reads inside the branch; separate capture end from
-actual readback so observations are not silently flattened into one recording.
-Positive-threshold chains must still observe each actual proposal. Follow-up copies,
-position increments, guards, scratch clears, RNG/history and final forward stamps
-need their exact coupled consumers; never synthesize completion from a cache key.
-Do not generalize single-segment replay to arbitrary segments with host observations.
+**Next block:** MTP round/step typed parameter program and direct submission.
+First source staging and actual observation separation are now done; do not redo
+those phases or reintroduce sampler CONTROL writes inside `draft_pick`.
+Inspect `resident_mtp_window.rs::queued_window_with_minimum`,
+`resident_mtp.rs::enqueue_prepared_native_front`, `native_selected_rest`,
+`guard_private_fused`, `guard_packed_cache`, and sampler request `draft_pick`.
+
+Round controls need explicit original first-front versus selected-rest phases:
+accepted front starts at p; its selected rest uses p+rows-1; subsequent whole-chain
+cells use p+rows-1+j. Independently observed step branches start at their current
+cell. Declare these shape offsets explicitly; never discover dynamic fields by
+matching old position bytes. Guard boundary positions may equal4096 although cell
+positions stop at4095. Generic core fused-sweep cache_position scalars are unused
+because packed caches have INTEGER roles; any normalization must prove those
+actual roles and preserve separate packed-cache guards. Audit kernel-specific INFO
+semantics: Select/Identity/Rewind do not all use word1 as a cell position.
+
+Runtime NativeStrataInvocation still accepts targets only. Extend it explicitly
+for MTP before enabling typed MTP scopes. Direct replay must preserve actual first
+preparation consumption, follow copies/clears/guards, position/dispatch/traffic
+bookkeeping, request sampler coordinates/counter, original per-cell probability
+observations and final completed-forward stamp. The GPU bridge still generates
+actual random draws/history from current device positions. A cache key grants no
+numerical/state/erasure credit. Do not flatten arbitrary segments with host reads.
 
 Commit/event overlap, embedding placement/context/prefill substitutions, arbitrary
 input, final source audit and whole-model/numerical/owning-erasure acceptance remain

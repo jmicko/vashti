@@ -56,7 +56,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Core connects native BF16 MAX8 projections, normalization/gate/conv/history, deduplicated positional reads and accepted-prefix ownership. Prompt calls now consume a bounded, joined double-buffered source prefetch. The latest controller receipt connects native large chunk geometry, joined uploads, retained tail and exact history acceptance. Numerical/device acceptance remains open. Prompt loans are disabled in the measured32768-context configuration and are not a completion prerequisite. Never persist request n-grams. |
 | Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. The bounded prompt path now uses logical-ID expert order, checked native transfer nodes, an eight-slot raw ring and two paired dequantization slots. The latest owned-consumer receipt connects full2048-row owners, non-overlapping raw/grouped route packets, causal math/state scopes, the unbatched final prompt input uses normal count1 decode for the first head, and full device MTP teaching covers the preceding prefix (up to8192 matrix rows). Independent transfer/compute queues and real release boundaries are connected. The measured server uses4096 prompt rows and32768 context, versus current2048/4096. Its no-borrow selection and nonresident fraction select the existing eight-slot/two-dequant-ring path; alternative loans/ring sizes are not prerequisites. Physical whole-model acceptance remains open. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
 | Prompt dense/expert matrix backend | Intel oneMKL rounded BF16/FP16 GEMMs | Connected Rust cooperative8x16x16/F32 kernels now consume the actual rounded dense and grouped GU/DOWN images, with enabled device features, SPIR-V native registration and required16 subgroup in both pipeline paths. See the cooperative-matrix receipt; physical numerical/model acceptance remains open. |
-| MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native INT8 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Positive-threshold chains now keep hidden carries on device and observe the same token/probability/fault packet as zero-threshold chains; mapped/event scheduling remains open. First/grouped device-source and ids-only target result consumers now exist; the shared-context constructor receipt below supersedes the separate-client blocker. Core construction now selects the actual target client and one combined account. Source9de7fef pins the original target embedding/head once, shares them with MTP and gathers target embeddings on GPU. Actual device/state acceptance is pending. Source0bfbea8 connects the original-order CJK106299-row Q6 draft head, inverse-ID history mapping, compact confidence and coupled sampling; source2a3d1ad connects INT8 caches. Combined CPU checks pass, with full numerical/GPU execution still pending. Queue/branch/capture fidelity, numerical/state acceptance and runtime policy remain required. See the latest device-end receipt. |
+| MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native INT8 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Positive-threshold chains now keep hidden carries on device and observe the same token/probability/fault packet as zero-threshold chains; mapped/event scheduling remains open. First/grouped device-source and ids-only target result consumers now exist; the shared-context constructor receipt below supersedes the separate-client blocker. Core construction now selects the actual target client and one combined account. Source9de7fef pins the original target embedding/head once, shares them with MTP and gathers target embeddings on GPU. Actual device/state acceptance is pending. Source0bfbea8 connects the original-order CJK106299-row Q6 draft head, inverse-ID history mapping, compact confidence and coupled sampling; source2a3d1ad connects INT8 caches. Combined CPU checks pass, with full numerical/GPU execution still pending. Source `862f5fa` separates first-front staging and actual observation from capture, and prestages all coupled draft controls once per round. Typed MTP parameter phases and direct invocation remain missing. Queue/branch/capture fidelity, numerical/state acceptance and runtime policy remain required. See the latest device-end receipt. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Sourcea26adc2 ports the native bounded trigram index, longest/recent suffix choice, cost priors, probing/stale rules and optional lookup-chain accounting into the selected controller. Configured MTP/target windows no longer shrink at the output cap; state commit and emission are separate. Coupled sampling and physical state acceptance still need end-to-end validation. |
 | Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Real greedy verification/state-only repair exists. Audit all active windows and acceptance cases against GDN/QSA/PLE/positions; independent correctness oracle remains missing. |
 | Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; Source `d40442c` connects direct retained target submission with typed control uploads and original family receipts; draft graph invocation remains incomplete. Physical ring overlap, scratch lifetimes and full execution acceptance remain open. Measured serving lazily captures branches; eager all-branch warmup is not a prerequisite; a sequence of independent Wgpu launches is not equivalent. |
@@ -5053,3 +5053,75 @@ CPU receipts under `/media/jmicko/faststore/kuno-development`:
 No GPU model,
 private-content test, numerical/model acceptance, speed trial, install, service or
 sudo action occurred. Full rewrite is still incomplete. Required Vashti changes:none.
+
+## MTP input staging and actual observation boundaries (2026-10-16)
+
+Source `862f5fa` follows pinned Intel `mtp.cpp::capture_round/capture_step` and
+`MtpDrafter::draft`: prepare actual inputs/position controls before graph launch,
+then inspect actual proposals at the confidence boundary. Source changes stay in
+the Rust MTP owner/window and request sampler; target direct replay is preserved.
+
+`prepare_native_front` performs the original25-root clear, TOKEN upload and actual
+borrowed target-row or host-carry copy before the first captured front. Its opaque
+`PreparedNativeFront` fixes model binding, all original root IDs, start/count,
+owner cursor and source-copy mode. Only the same owner/cursor/root inventory can
+consume it. Legacy scalar/teacher/repair callers compose preparation and enqueue,
+retaining their exact mathematics and counts. Queued followup copies remain device
+operations in the original chain. The owner-local pending flag stays set on receipt
+abandonment/panic; it rejects a second preparation and publication. It leaves the
+shared context usable for the original failure cleanup. The fixed receipt/atomic
+metadata fits the existing2MiB validation/stack allowance; no new private GPU owner,
+model mirror, persistence or erasure authority is added.
+
+`Scope::begin_round` now stages all supported coupled draft controls once in its
+original full32KiB CONTROL root. Each valid draft gets the exact original tuple
+`(cell,j,round base)` in a disjoint aligned4KiB row. Out-of-context future rows and
+all padding remain zero. `draft_pick` borrows that row instead of performing a host
+write during recorded math. The unchanged GPU bridge checks actual device positions,
+reads the original token/history, constructs params and publishes actual RNG draws,
+CJK original IDs and probabilities. CPU phase/counter updates remain in the original
+consumer. The complete owner retains its existing reservation and erase/audit path;
+views never become independent owners. This is an explicit Vulkan staging
+substitution for the original mapped step controls, using an already reserved GPU
+root with all controls uploaded before capture.
+
+Window packet sealing is queued after its real producers. Graph end/fence precedes
+actual private packet readback, full padding/fault/source/ledger checks and the
+confidence decision. Zero threshold retains its single final observation; positive
+threshold retains each cell's actual observation before any followup. No readback
+is silently recorded as replayable math. The original target residual grant remains
+borrowed until the actual completed window observation, then its original caller
+marks completion. Final forward publication also rejects an unconsumed preparation.
+
+This does **not** implement MTP direct invocation. Existing MTP branches remain
+untyped and traverse/enqueue the original math. Remaining typed controls need
+explicit accepted-front/rest/follow-step phases, original guard boundaries and
+actual request sampler/position bookkeeping before enabling the shortcut. Do not
+reinterpret every INFO word1 as a position: native Select/Identity/closing packets
+have other semantics, and packed-cache guard boundaries may equal4096. No timing
+report or intermediate performance choice changes the selected source direction.
+
+CPU receipts in `/media/jmicko/faststore/kuno-development`:
+- `strata-mtp-staging-check-20261016.log`: selected-core release check passes.
+- `strata-mtp-staging-test-build-20261016.log` and
+  `strata-mtp-staging-cpu-tests-20261016.log`:26 tests pass:3 preparation lifecycle,
+  4 confidence/source/packet,4 request sampler/staging/offline bridge,4 native front,
+  11 actual vendor parameter-program cases. New cases cover exact owner/root/cursor
+  checks, abandoned/panicking preparations, bounds before arming, all supported
+  teacher/selected cursor shapes, complete staged-control rows/counters/disjointness,
+  context-end inactive rows and full padding. Nonexistent initial window-test filter
+  was caught and corrected; zero-test runs were not counted.
+- `strata-mtp-staging-{core,off}-clippy-20261016.log`: strict locked selected-core
+  and feature-off release checks pass. Changed-file formatting and whitespace pass.
+
+- `strata-mtp-staging-build-20261016.out` and its artifact directory: immutable
+  locked release at `862f5fa991a0f01ada832642b2d064d4d5ae8350`,
+  SHA256 `65c91cad76737a4fa8097c2a2824eaa773aedb778593861dfe61691fff5b89e2`.
+- `strata-mtp-staging-shaders-20261016.log`:327 generated variants plus native
+  cooperative-matrix lowering and physical expert-pointer checks pass using the
+  pinned current spirv-val. CLI returns before vendor/adapter/device setup.
+
+All launched processes completed; all checks are CPU-only. No whole-model/numerical/GPU/erasure acceptance, private-content test,
+throughput trial, driver reset, service change, install or sudo action occurred.
+Existing full-core regression limitations remain. Goal active; required Vashti
+changes:none.
