@@ -6,15 +6,16 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, source `39c59c1fc90dc71b94e7f671677fae9c1626be89`. Read the
-[retained-telemetry handoff](#active-kuno-engine-handoff--retained-model-telemetry-2026-10-16)
-and [completion gate](kuno-strata-rewrite-completion.md). Loaded-model usage/policy
-now survive successful fully erased requests, without request content retention.
-540 selected CPU cases, strict core/off binary lint and 360 offline variants/
-139 physical checks pass. Whole rewrite incomplete; speed gate closed. Remaining
-source gaps: adaptive host scheduling and unscoped first draft; then final source
-and protected numerical/state/context/hot-request/failure/recovery acceptance.
-Goal active CPU-only. No GPU/service/API/frontend/root action; Vashti changes: none.
+`codex/strata-rust-port`, source `01291fe0052ba7e71454ae009b86033972211cd4`. Read the
+[scoped-first-draft handoff](#active-kuno-engine-handoff--scoped-first-draft-2026-10-16)
+and [completion gate](kuno-strata-rewrite-completion.md). Actual first count1 uses
+its Pending observer for sampler/delivery/original-R MTP; outer fallback removed.
+A real short runtime nonce closes with actual full I/O audit before policy
+selection and the long generation nonce. 542 CPU cases/71 suites, strict binary
+lint and normal frozen build pass. No new device execution or speed result.
+Whole rewrite incomplete. Next: serial adaptive host scheduling and final full
+source/substitution audit, then protected numerical/state/context/hot-request/
+failure/recovery acceptance. Goal active CPU-only; Vashti changes: none.
 
 ## Ownership
 
@@ -7413,3 +7414,46 @@ required Vashti changes: none. No GPU/model/inference/service/install/release/ro
 action. Goal active CPU-only. Sudo refresh was attempted but not confirmed; root
 was not needed. Canonical/inherited files preserved. No deployment authority or
 new physical recovery/residency/performance claim.
+
+## Active Kuno engine handoff — scoped first draft (2026-10-16)
+
+Source `01291fe0052ba7e71454ae009b86033972211cd4`, isolated `codex/strata-rust-port`.
+Read the [complete source/validation/substitution receipt](kuno-strata-rewrite-completion.md#scoped-first-window-mtp-consumer-and-actual-runtime-nonce-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). Preserve the full connected
+branch, including usage/policy retention and compute-local INFO/MTP queues.
+
+Actual final-prompt count1 now uses the same Verified/Pending transaction as later
+windows: real host-row lease release, adaptive flight, original-R readiness/pin,
+sampler commit, one prediction delivery and actual MTP producer in the scoped lane,
+then original full-family publication. EOS/cap skips drafting; count1 fronts and
+confidence windows stay authentic. Outer fallback is removed; every subsequent
+MTP target input requires its real completed scoped producer.
+
+The backend scoped graph requires an ACTUAL runtime nonce. The first window
+previously preceded the long generation scope, exposing a missing owner in source.
+New explicit `InitialWindow` authority opens an admitted short runtime scope,
+allows exactly the final prompt input, and requires real model/fault/full I/O
+closure before returning. It grants no generated cursor/scope/reset/rearm credit.
+Then target policy selection and long generation scope proceed unchanged. This
+extra actual first-window audit/drain is an explicit Vulkan ownership substitution;
+physical behavior/cost remain unverified. No nonce/completion is fabricated, no
+model/KV private erasure happens between first window and continuation, and no
+extra GPU/model/root or simultaneous runtime grant is added.
+
+542 CPU cases / 71 suites, locked release test build, strict Intel/core-off binary
+lint and changed formatting pass. Normal frozen artifact
+`strata-first-scoped-draft-ordinary-20261016/` has SHA256
+`8ced9ff4099d1a4f2fc3f47e6880af9e92d03696d3e6e0cc6bd4b50e9eb42c42`; independent source/original/hash/
+mode0500 pass. Frozen binary not executed. Shader arithmetic/inventory unchanged;
+previous `39c59c1` offline 360 variants/139 physical checks are the last shader
+receipt, not rerun. Initial transition test failure and duplicate-filter rejection,
+then fixes and final accepted cases, are preserved in the detailed receipt.
+
+Remaining: serial adaptive host ranking/submission, final full connected source/
+ownership/placement/queue/pricing/substitution audit, protected whole-model
+numerical/state/context/hot-request/failure/recovery acceptance, then speed tests.
+Rewrite incomplete; CLI compiled-public/one-request and private caller independently
+gated. No API/configuration/consumer/frontend change; Vashti changes: none. Goal
+active CPU-only. No GPU/model/inference/service/install/release/root action;
+canonical/inherited files preserved. No deployment authority or new physical
+recovery/performance claim. No sudo credential was needed or used.

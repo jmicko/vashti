@@ -1,29 +1,30 @@
 # Strata Rust whole-model port experiment
 
-**Current CPU-only source:** `39c59c1fc90dc71b94e7f671677fae9c1626be89`, branch
-`codex/strata-rust-port`. Read the [retained-telemetry receipt](kuno-strata-rewrite-completion.md#loaded-model-usage-and-draft-policy-across-erased-requests-2026-10-16)
-and [checkpoint](kuno-native-text-checkpoint.md). Loaded-model expert-use aggregates
-and learned draft policy now survive successful requests. Original request arenas
-still erase/inspect in full; rearming consumes original zero receipts before exact
-route/usage restoration. Token/suffix/seed/KV/output state remains request-local.
-Model telemetry wipes on close/unload and has no persistence/log/export path.
-The preceding compute-local INFO owners/queues and coupled sampler remain connected.
+**Current CPU-only source:** `01291fe0052ba7e71454ae009b86033972211cd4`, branch
+`codex/strata-rust-port`. Read the [scoped-first-draft receipt](kuno-strata-rewrite-completion.md#scoped-first-window-mtp-consumer-and-actual-runtime-nonce-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). The final prompt count1 now uses
+its real Pending observer for sampler commit, delivery and original-R MTP drafting,
+including adaptive ticks on retained requests. The outer first-draft fallback is
+removed. A real bounded initial runtime nonce closes with the full actual I/O
+audit before immutable target-policy selection and the long generation scope.
+This explicit Vulkan ownership substitution remains subject to physical acceptance.
+Retained model usage/policy and compute-local queues remain connected.
 
-540 selected CPU cases / 71 suites, strict core/off **binary** Clippy,
-changed formatting/whitespace and normal stable-source build pass. Frozen artifact
-`strata-model-telemetry-ordinary-20261016/` has SHA256
-`47eb2abef25a3d65e6501b353b27e4f7dc756ee0dcfe7cb51f347b1d030fb823`. Independent source/original hash/mode0500
-checks and offline 360 shader variants/139 physical-pointer checks pass before
-device creation. No GPU numerical, overlap or performance acceptance is claimed.
+542 selected CPU cases / 71 suites, strict core/off **binary** lint, changed
+formatting/whitespace and normal stable-source build pass. Frozen artifact
+`strata-first-scoped-draft-ordinary-20261016/` has SHA256
+`8ced9ff4099d1a4f2fc3f47e6880af9e92d03696d3e6e0cc6bd4b50e9eb42c42`; source/original hash/mode0500
+independently match. No shader/kernel source changed; previous `39c59c1` artifact's
+360 offline variants/139 physical-pointer checks are the latest shader receipt,
+not rerun here. No new GPU numerical, overlap or performance acceptance.
 
 Whole rewrite incomplete; speed gate closed. Remaining concrete source work:
-serial adaptive host ranking/submission and the unscoped retained-session first
-draft. Final source/ownership/pricing/substitution audit and protected full
-numerical/state/context/hot-request/failure/recovery gates remain. Protected private
-caller is separately gated; current CLI compiled-public/one-request. Goal active
-CPU-only. No GPU/model/inference/service/install/release/frontend/API action; no
-root used. Required Vashti changes: none. Canonical/inherited files preserved.
-Physical recovery remains historical Oct 15.
+serial adaptive host ranking/submission, then final whole-port source/ownership/
+placement/queue/pricing/substitution audit and protected numerical/state/context/
+hot-request/failure/recovery gates. Protected private caller is separate; current
+CLI compiled-public/one-request. Goal active CPU-only. No GPU/model/inference,
+service/install/release/frontend/API/root action; Vashti changes: none. Canonical/
+inherited files preserved. Physical recovery remains historical Oct 15.
 
 ## Active direction — finish the complete Rust port before speed testing (2026-10-14)
 
