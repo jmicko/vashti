@@ -107,7 +107,7 @@ impl NativeStrataBranch {
     /// Resolve a declared math phase from immutable branch geometry only.
     pub fn phase_offset(self, phase: NativeStrataPhase) -> Result<i16, &'static str> {
         match (self.family, phase) {
-            (1 | 2, NativeStrataPhase::Front) => Ok(0),
+            (1 | 2 | 4, NativeStrataPhase::Front) => Ok(0),
             (2, NativeStrataPhase::Draft { index }) if index < self.proposals => {
                 Ok(i16::from(self.rows - 1) + i16::from(index))
             }
@@ -146,6 +146,20 @@ impl NativeStrataBranch {
             verify_capacity: 8,
             state_role,
         })
+    }
+    /// Retained target state commit. Accepted n is a runtime INFO value, never
+    /// a graph key. Count1 uses its verified candidate without a commit graph.
+    pub fn target_commit(rows: u8, context: u16, state_role: u8) -> Result<Self, &'static str> {
+        if !(2..=8).contains(&rows) {
+            return Err("native commit branch shape");
+        }
+        let mut key = Self::target_window_with_state(rows, context, state_role)?;
+        key.family = 4;
+        Ok(key)
+    }
+    /// Immutable proposed-window geometry of a commit, not accepted/request data.
+    pub fn commit_geometry(self) -> Option<(u8, u16, u8)> {
+        (self.family == 4).then_some((self.rows, self.context_capacity, self.state_role))
     }
     /// One accepted-prefix round, optionally followed by a zero-threshold chain.
     pub fn mtp_round(rows: u8, proposals: u8) -> Result<Self, &'static str> {
@@ -206,6 +220,8 @@ pub enum NativeStrataValue {
         /// Constant displacement from the shape-defined current phase.
         offset: i16,
     },
+    /// Actual accepted input count of a target commit, bounded by its shape.
+    AcceptedCount,
     /// Current expert-routing stamp, supplied outside the branch identity.
     RouteEpoch,
     /// Whether this target window contributes to the original expert-usage map.
@@ -238,6 +254,7 @@ pub struct NativeStrataInvocation {
     position: u32,
     route_epoch: u32,
     route_usage: u32,
+    accepted: u32,
 }
 impl NativeStrataInvocation {
     /// Validate fresh target controls before opening the retained shape.
@@ -258,6 +275,7 @@ impl NativeStrataInvocation {
             position,
             route_epoch,
             route_usage: u32::from(route_usage),
+            accepted: 0,
         })
     }
     /// Fresh MTP cell origin: accepted-front start for a round, current cell
@@ -271,6 +289,21 @@ impl NativeStrataInvocation {
             position,
             route_epoch: 0,
             route_usage: 0,
+            accepted: 0,
+        })
+    }
+    /// Fresh target commit controls. The matching original transaction and
+    /// device/fault authority stay with the engine, not this parameter packet.
+    pub fn commit(position: u32, accepted: u32) -> Result<Self, &'static str> {
+        if position >= 4096 || !(1..=8).contains(&accepted) {
+            return Err("native commit invocation bounds");
+        }
+        Ok(Self {
+            kind: 3,
+            position,
+            route_epoch: 0,
+            route_usage: 0,
+            accepted,
         })
     }
     /// Check that the current target/draft window fits its immutable shape.
@@ -279,6 +312,7 @@ impl NativeStrataInvocation {
             (1, 1) if self.route_epoch != 0 => u32::from(key.rows),
             (2, 2) => u32::from(key.rows) + u32::from(key.proposals) - 1,
             (2, 3) => 1,
+            (3, 4) if (1..=u32::from(key.rows)).contains(&self.accepted) => u32::from(key.rows),
             _ => return Err("native invocation family shape"),
         };
         if self
@@ -307,6 +341,7 @@ impl NativeStrataInvocation {
                 }
                 Ok(value as u32)
             }
+            NativeStrataValue::AcceptedCount if self.kind == 3 => Ok(self.accepted),
             NativeStrataValue::RouteEpoch if self.kind == 1 => Ok(self.route_epoch),
             NativeStrataValue::RouteUsage if self.kind == 1 => Ok(self.route_usage),
             _ => Err("native control expression requires declared phase or target"),
@@ -321,6 +356,7 @@ impl NativeStrataInvocation {
             core::ptr::write_volatile(&mut self.position, 0);
             core::ptr::write_volatile(&mut self.route_epoch, 0);
             core::ptr::write_volatile(&mut self.route_usage, 0);
+            core::ptr::write_volatile(&mut self.accepted, 0);
         }
         core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
     }

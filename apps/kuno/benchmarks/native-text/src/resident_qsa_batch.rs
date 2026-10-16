@@ -2710,6 +2710,26 @@ impl<'a, 'f> LatestQsaRestore<'a, 'f> {
     }
 }
 impl QsaBatchWorkspace {
+    pub(crate) fn check_pending_prefix(
+        &self,
+        stage: &ResidentQsa<'_>,
+        receipt: &PendingQsaBatch,
+        arena: &PrivateArena,
+        accepted: usize,
+        cancel: &AtomicBool,
+    ) -> Result<(usize, usize)> {
+        self.healthy(arena, cancel)?;
+        self.check_receipt(stage, receipt, arena)?;
+        if !crate::strata_intel_core::enabled()
+            || !(1..=receipt.metadata.stamp.count).contains(&accepted)
+        {
+            return Err(fault("native original QSA prefix extent"));
+        }
+        Ok((
+            receipt.metadata.stamp.start as usize,
+            receipt.metadata.stamp.count,
+        ))
+    }
     pub(crate) fn enqueue_pending_prefix(
         &self,
         stage: &ResidentQsa<'_>,
@@ -2718,22 +2738,30 @@ impl QsaBatchWorkspace {
         accepted: usize,
         cancel: &AtomicBool,
     ) -> Result<()> {
-        self.healthy(arena, cancel)?;
-        self.check_receipt(stage, receipt, arena)?;
+        self.check_pending_prefix(stage, receipt, arena, accepted, cancel)?;
         let m = &receipt.metadata;
-        if !crate::strata_intel_core::enabled() || !(1..=m.stamp.count).contains(&accepted) {
-            return Err(fault("native original QSA prefix extent"));
+        if m.stamp.count > 1 {
+            use crate::strata_prefix_qsa::{Kernel, launch};
+            for kernel in [Kernel::Clear, Kernel::Fold] {
+                launch(
+                    arena,
+                    kernel,
+                    vec![
+                        u::handle(arena, m.owners[0])?,
+                        u::handle(arena, m.owners[1])?,
+                        u::handle(arena, m.owners[2])?,
+                        u::handle(arena, m.fault)?,
+                    ],
+                    m.stamp.count,
+                    m.stamp.start as usize,
+                    accepted,
+                )?;
+            }
         }
-        enqueue_suffix_clear(
-            arena,
-            m.owners,
-            m.fault,
-            m.stamp.start as usize + accepted,
-            m.stamp.count - accepted,
-        )?;
         cancelled(cancel)
     }
 }
+
 fn enqueue_suffix_clear(
     arena: &PrivateArena,
     ids: [BufferId; 3],

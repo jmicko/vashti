@@ -100,6 +100,23 @@ impl PleBatchWorkspace {
         let accepted = receipt.metadata.count;
         self.prepare_device_prefix_after_whole_model_fence(c, receipt, accepted, cancel)
     }
+    pub(crate) fn native_recording_owner(&self) -> u64 {
+        self.identity
+    }
+    pub(crate) fn check_pending_prefix(
+        &self,
+        model: &ResidentModel<'_, '_>,
+        receipt: &PendingPleBatch,
+        accepted: usize,
+        cancel: &AtomicBool,
+    ) -> Result<(usize, usize)> {
+        self.receipt(model, receipt, cancel)?;
+        if !crate::strata_intel_core::enabled() || !(1..=receipt.metadata.count).contains(&accepted)
+        {
+            return Err(error());
+        }
+        Ok((receipt.metadata.start, receipt.metadata.count))
+    }
     pub(crate) fn enqueue_pending_prefix(
         &self,
         model: &ResidentModel<'_, '_>,
@@ -107,18 +124,12 @@ impl PleBatchWorkspace {
         accepted: usize,
         cancel: &AtomicBool,
     ) -> Result<()> {
-        self.receipt(model, receipt, cancel)?;
-        if !crate::strata_intel_core::enabled() || !(1..=receipt.metadata.count).contains(&accepted)
-        {
-            return Err(error());
-        }
+        self.check_pending_prefix(model, receipt, accepted, cancel)?;
         if receipt.metadata.count > 1 {
             let mut info = [0; 12];
             info[0] = accepted as u32;
-            crate::strata_ple::launch(
+            crate::strata_ple::launch_commit_history(
                 &model.arena,
-                crate::strata_ple::Kernel::PromptHistory,
-                [CHANNELS / 256, 1, 1],
                 vec![
                     u::handle(&model.arena, self.ids[OLD])?,
                     u::handle(&model.arena, self.ids[NORMALIZED])?,

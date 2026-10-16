@@ -185,6 +185,30 @@ pub(crate) fn launch_client(
     handles: Vec<Handle>,
     info: [u32; 12],
 ) -> Result<()> {
+    launch_impl(client, kernel, grid, handles, info, false)
+}
+pub(crate) fn launch_commit_history(
+    arena: &PrivateArena,
+    handles: Vec<Handle>,
+    info: [u32; 12],
+) -> Result<()> {
+    launch_impl(
+        arena.client().map_err(u::fault)?,
+        Kernel::PromptHistory,
+        [40, 1, 1],
+        handles,
+        info,
+        true,
+    )
+}
+fn launch_impl(
+    client: &ComputeClient<WgpuRuntime>,
+    kernel: Kernel,
+    grid: [usize; 3],
+    handles: Vec<Handle>,
+    info: [u32; 12],
+    commit: bool,
+) -> Result<()> {
     if !crate::strata_intel_core::enabled()
         || !(1..=if matches!(
             kernel,
@@ -212,11 +236,16 @@ pub(crate) fn launch_client(
     for h in handles {
         args = args.with_buffer(h.binding());
     }
-    args = args.with_info(MetadataBindingInfo::custom(
+    let mut metadata = MetadataBindingInfo::custom(
         info.chunks_exact(2)
             .map(|p| p[0] as u64 | ((p[1] as u64) << 32))
             .collect(),
-    ));
+    );
+    if commit {
+        metadata = metadata
+            .with_native_parameter(0, cubecl_runtime::server::NativeStrataValue::AcceptedCount);
+    }
+    args = args.with_info(metadata);
     // SAFETY: actual connected owner validates source roles, distinct complete
     // pages, live intervals and retained lifetime before enqueue/publication.
     unsafe {

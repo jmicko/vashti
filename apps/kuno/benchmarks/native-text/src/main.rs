@@ -44,6 +44,7 @@ mod strata_packet;
 mod strata_parameter_tests;
 mod strata_ple;
 mod strata_port;
+mod strata_prefix_qsa;
 mod strata_prompt;
 mod strata_qsa;
 #[cfg(test)]

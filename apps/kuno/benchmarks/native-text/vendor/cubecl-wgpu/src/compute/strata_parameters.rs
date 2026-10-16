@@ -638,6 +638,142 @@ impl Parameters {
 mod tests {
     use super::*;
     #[test]
+    fn retained_commit_reuses_original_pages_for_every_accepted_prefix_and_position() {
+        let schema = [
+            NativeStrataParameter {
+                word: 1,
+                value: NativeStrataValue::Position { offset: 0 },
+            },
+            NativeStrataParameter {
+                word: 2,
+                value: NativeStrataValue::AcceptedCount,
+            },
+        ];
+        let bytes = |proposed: u8, position: u32, accepted: u32| {
+            [proposed as u32, position, accepted, 1234]
+                .into_iter()
+                .flat_map(u32::to_le_bytes)
+                .collect::<Vec<_>>()
+        };
+        for proposed in 2..=8 {
+            for role in 0..4 {
+                let key = NativeStrataBranch::target_commit(proposed, 4096, role)
+                    .unwrap()
+                    .with_model_owner(73)
+                    .unwrap();
+                let mut p = Parameters::default();
+                p.begin_invocation(
+                    key,
+                    5,
+                    Some(NativeStrataInvocation::commit(11, proposed as u32).unwrap()),
+                )
+                .unwrap();
+                p.record_info(&bytes(proposed, 11, proposed as u32), &schema)
+                    .unwrap();
+                p.use_page(17).unwrap();
+                p.bind_current(17, 32).unwrap();
+                let recorded = p.recording().unwrap().unwrap();
+                p.submitted().unwrap();
+                p.end(key, 5).unwrap();
+                let capacity = p.metadata_bytes();
+                for position in [0, 4096 - proposed as u32] {
+                    for accepted in 1..=proposed as u32 {
+                        let invocation =
+                            NativeStrataInvocation::commit(position, accepted).unwrap();
+                        p.begin_replay(recorded, invocation).unwrap();
+                        let mut mapped = [0u8; 64];
+                        p.write_replay_page(17, mapped.len(), |at, data| {
+                            mapped[at..at + data.len()].copy_from_slice(data)
+                        })
+                        .unwrap();
+                        assert_eq!(&mapped[32..48], &bytes(proposed, position, accepted));
+                        assert_eq!(p.replay_pages().unwrap(), 1);
+                        assert_eq!(p.recording().unwrap(), Some(recorded));
+                        p.submitted().unwrap();
+                        p.end(key, 5).unwrap();
+                    }
+                }
+                assert_eq!(p.metadata_bytes(), capacity);
+                assert_eq!(p.branches.len(), 1);
+                assert_eq!(&p.branches[0].segments[0].template.0[4..12], &[0; 8]);
+                assert!(
+                    p.replay_key(key.with_model_owner(74).unwrap(), 5)
+                        .unwrap()
+                        .is_none()
+                );
+                assert!(
+                    NativeStrataInvocation::target(11, 7)
+                        .unwrap()
+                        .validate_for(key)
+                        .is_err()
+                );
+                assert!(
+                    NativeStrataInvocation::mtp(11)
+                        .unwrap()
+                        .validate_for(key)
+                        .is_err()
+                );
+                if proposed < 8 {
+                    assert!(
+                        p.begin_replay(
+                            recorded,
+                            NativeStrataInvocation::commit(11, proposed as u32 + 1).unwrap()
+                        )
+                        .is_err()
+                    );
+                }
+            }
+        }
+        assert!(NativeStrataBranch::target_commit(1, 4096, 0).is_err());
+        assert!(NativeStrataInvocation::commit(0, 0).is_err());
+        assert!(NativeStrataInvocation::commit(0, 9).is_err());
+        assert!(NativeStrataInvocation::commit(4096, 1).is_err());
+        assert!(
+            NativeStrataInvocation::commit(0, 1)
+                .unwrap()
+                .value(NativeStrataValue::RouteUsage)
+                .is_err()
+        );
+    }
+    #[test]
+    fn target_commit_and_draft_shapes_fit_original_bounded_branch_inventory() {
+        let mut keys = Vec::new();
+        for rows in 1..=8 {
+            for role in 0..4 {
+                keys.push(NativeStrataBranch::target_window_with_state(rows, 4096, role).unwrap());
+                if rows > 1 {
+                    keys.push(
+                        NativeStrataBranch::target_commit(rows, 4096, role)
+                            .unwrap()
+                            .with_model_owner(73)
+                            .unwrap(),
+                    );
+                }
+            }
+            for proposals in 1..=7 {
+                keys.push(
+                    NativeStrataBranch::mtp_round(rows, proposals)
+                        .unwrap()
+                        .with_model_owner(97)
+                        .unwrap(),
+                );
+            }
+        }
+        for step in 1..=6 {
+            keys.push(
+                NativeStrataBranch::mtp_step(step)
+                    .unwrap()
+                    .with_model_owner(97)
+                    .unwrap(),
+            );
+        }
+        for (i, key) in keys.iter().enumerate() {
+            assert!(!keys[..i].contains(key));
+        }
+        assert_eq!(keys.len(), 122);
+        assert!(keys.len() <= MAX_BRANCHES);
+    }
+    #[test]
     fn original_mtp_instances_do_not_share_recordings_on_the_same_request_stream() {
         let shape = NativeStrataBranch::mtp_step(1).unwrap();
         assert!(shape.with_model_owner(0).is_err());

@@ -187,6 +187,7 @@ impl PrefixReplay<'_, '_> {
             self.accepted,
             self.checkpoint.metadata.start,
             1,
+            None,
             cancel,
         )
     }
@@ -197,8 +198,7 @@ impl PrefixReplay<'_, '_> {
     }
 }
 impl GdnBatchWorkspace {
-    /// The original receipt remains armed; only its candidate roots are changed.
-    pub(crate) fn enqueue_pending_prefix(
+    pub(crate) fn check_pending_prefix(
         &self,
         stage: &ResidentGdn<'_>,
         public: &PublicGdnParameters,
@@ -206,9 +206,15 @@ impl GdnBatchWorkspace {
         arena: &PrivateArena,
         accepted: usize,
         cancel: &AtomicBool,
-    ) -> Result<()> {
+    ) -> Result<(usize, usize)> {
         self.healthy(arena, cancel)?;
         self.check_receipt(stage, receipt, arena)?;
+        if public.identity != stage.public_identity
+            || public.layer != stage.layer
+            || public.binding != stage.binding
+        {
+            return Err(fault("native prefix original public owner"));
+        }
         let stamp = receipt.metadata.stamp;
         let cache = stage
             .strata_inputs
@@ -222,6 +228,20 @@ impl GdnBatchWorkspace {
         {
             return Err(fault("native original pending prefix inputs"));
         }
+        Ok((stamp.start as usize, stamp.count))
+    }
+    /// The original receipt remains armed; only its candidate roots are changed.
+    pub(crate) fn enqueue_pending_prefix(
+        &self,
+        stage: &ResidentGdn<'_>,
+        public: &PublicGdnParameters,
+        receipt: &PendingGdnBatch,
+        arena: &PrivateArena,
+        accepted: usize,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        self.check_pending_prefix(stage, public, receipt, arena, accepted, cancel)?;
+        let stamp = receipt.metadata.stamp;
         // Count1 has already computed its one accepted candidate; multirow
         // commit uses the original retained inputs even when all rows survive.
         if stamp.count > 1 {
@@ -234,6 +254,7 @@ impl GdnBatchWorkspace {
                 accepted,
                 stamp.start,
                 0,
+                Some(stamp.count),
                 cancel,
             )?;
         }
@@ -250,6 +271,7 @@ fn enqueue_prefix(
     accepted: usize,
     start: u64,
     old_role: usize,
+    commit_span: Option<usize>,
     cancel: &AtomicBool,
 ) -> Result<()> {
     cancelled(cancel)?;
@@ -280,12 +302,18 @@ fn enqueue_prefix(
             s.layout.epsilon.to_bits(),
             0,
         ];
+        let launch = |kernel, grid, handles| {
+            if commit_span.is_some() {
+                native::launch_commit(arena, kernel, grid, handles, info)
+            } else {
+                native::launch(arena, kernel, grid, handles, info)
+            }
+        };
         // Restore actual RAW history and the native recurrence from the
         // separately retained pre-window owners. No output graph runs.
-        native::launch(
-            arena,
+        launch(
             Kernel::Conv,
-            [p.channels / 128, accepted, 1],
+            [p.channels / 128, commit_span.unwrap_or(accepted), 1],
             vec![
                 h(cache.ids[0])?,
                 public.convolution.clone(),
@@ -297,10 +325,8 @@ fn enqueue_prefix(
                 h(ids[STATUS])?,
                 h(ids[STATUS + 1])?,
             ],
-            info,
         )?;
-        native::launch(
-            arena,
+        launch(
             Kernel::Replay,
             [p.shape.value_heads, 1, 1],
             vec![
@@ -316,8 +342,30 @@ fn enqueue_prefix(
                 h(ids[STATUS + 3])?,
                 h(ids[STATUS + 4])?,
             ],
-            info,
         )?;
+        if commit_span.is_some() {
+            launch(
+                Kernel::CommitFault,
+                [
+                    s.layout
+                        .recurrence
+                        .state_elements
+                        .max(p.ring_elements)
+                        .max(MAX_BATCH * p.value_elements)
+                        .div_ceil(64),
+                    1,
+                    1,
+                ],
+                vec![
+                    h(s.buffers.recurrent[1 - old_role])?,
+                    h(s.buffers.raw_conv[1 - old_role])?,
+                    h(ids[STATUS + 3])?,
+                    h(ids[STATUS])?,
+                    h(fault_id)?,
+                ],
+            )?;
+            return Ok(());
+        }
     } else {
         let conv = bounded_view(&public.convolution, 0, p.conv_weight_elements)?;
         point::conv_silu::launch::<WgpuRuntime>(

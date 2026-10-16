@@ -154,3 +154,20 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
     if rg==0u && !good {for(var t=0u;t<p.count;t++) {status[t*p.value_heads*128u+head*128u+col]=0u;closing_status[t*p.value_heads*128u+head*128u+col]=0u;if !STATE_ONLY {output[t*p.value_heads*128u+head*128u+col]=0.0;}}}
 }
 // STEP_END
+
+// COMMIT_FAULT_BEGIN
+@group(0) @binding(0) var<storage,read> state:array<f32>;
+@group(0) @binding(1) var<storage,read> ring:array<f32>;
+@group(0) @binding(2) var<storage,read> status:array<u32>;
+@group(0) @binding(3) var<storage,read> raw_status:array<u32>;
+@group(0) @binding(4) var<storage,read_write> fault:array<atomic<u32>>;
+@group(0) @binding(5) var<uniform> p:Params;
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid:vec3<u32>) {
+    let i=gid.x;
+    if i<p.value_heads*128u*128u && !finite(state[i]) {atomicOr(&fault[0],4u);}
+    if i<p.channels*3u && !finite(ring[i]) {atomicOr(&fault[0],4u);}
+    if i<p.count*p.value_heads*128u && status[i]!=1u {atomicOr(&fault[0],2u);}
+    if i<p.count*p.channels && raw_status[i]!=1u {atomicOr(&fault[0],2u);}
+}
+// COMMIT_FAULT_END

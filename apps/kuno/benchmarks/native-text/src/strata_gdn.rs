@@ -27,11 +27,12 @@ pub(crate) enum Kernel {
     Conv,
     Step,
     Replay,
+    CommitFault,
 }
 impl Kernel {
     fn lanes(self) -> u32 {
         match self {
-            Self::Ab | Self::AbJoin => 64,
+            Self::Ab | Self::AbJoin | Self::CommitFault => 64,
             Self::Conv => 128,
             _ => 512,
         }
@@ -52,6 +53,7 @@ impl Kernel {
             Self::AbJoin => "AB_JOIN",
             Self::Conv => "CONV",
             Self::Step | Self::Replay => "STEP",
+            Self::CommitFault => "COMMIT_FAULT",
         }));
         if matches!(self, Self::Replay) {
             source = source.replace(
@@ -70,6 +72,7 @@ impl KernelMetadata for Kernel {
             Self::Conv => "StrataGdnConvL2",
             Self::Step => "StrataGdnStepNorm",
             Self::Replay => "StrataGdnAcceptedPrefixReplay",
+            Self::CommitFault => "StrataGdnCommitFault",
         }
     }
     fn id(&self) -> KernelId {
@@ -108,6 +111,28 @@ pub(crate) fn launch(
     handles: Vec<Handle>,
     info: [u32; 8],
 ) -> Result<()> {
+    launch_impl(arena, kernel, grid, handles, info, false)
+}
+pub(crate) fn launch_commit(
+    arena: &PrivateArena,
+    kernel: Kernel,
+    grid: [usize; 3],
+    handles: Vec<Handle>,
+    info: [u32; 8],
+) -> Result<()> {
+    if !matches!(kernel, Kernel::Conv | Kernel::Replay | Kernel::CommitFault) {
+        return Err(Error::InvalidBufferLength);
+    }
+    launch_impl(arena, kernel, grid, handles, info, true)
+}
+fn launch_impl(
+    arena: &PrivateArena,
+    kernel: Kernel,
+    grid: [usize; 3],
+    handles: Vec<Handle>,
+    info: [u32; 8],
+    commit: bool,
+) -> Result<()> {
     if !crate::strata_intel_core::enabled()
         || grid.contains(&0)
         || grid.iter().any(|&x| x > 65535)
@@ -145,6 +170,10 @@ pub(crate) fn launch(
             cubecl_runtime::server::NativeStrataValue::Position { offset: 0 },
         );
     }
+    if commit {
+        metadata = metadata
+            .with_native_parameter(0, cubecl_runtime::server::NativeStrataValue::AcceptedCount);
+    }
     args = args.with_info(metadata);
     // SAFETY: authenticated GDN parent validates fixed widths and complete private
     // owners before enqueue; kernels additionally bound runtime active intervals.
@@ -164,6 +193,7 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
         Kernel::Conv,
         Kernel::Step,
         Kernel::Replay,
+        Kernel::CommitFault,
     ]
     .into_iter()
     .map(|k| {

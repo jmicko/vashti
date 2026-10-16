@@ -44,6 +44,8 @@ use crate::{
     token_waves,
 };
 use kuno_text::cpu::Matrix;
+#[path = "resident_native_commit.rs"]
+mod native_commit;
 #[path = "resident_model_prompt.rs"]
 pub(crate) mod prompt_full;
 #[path = "resident_target_rows.rs"]
@@ -5715,34 +5717,9 @@ impl Workspace {
                 .as_ref()
                 .ok_or(error())?
                 .check_no_live_output()?;
-            // Original candidate roots remain unpublished. GDN replays from
-            // prewindow OLD into NEXT, QSA removes only the rejected suffix,
-            // and PLE derives accepted NEXT from original normalized rows.
-            for (layer, stage) in m.layers.iter().enumerate() {
-                match stage {
-                    Layer::Gdn(stage, public) => self.gdn.enqueue_pending_prefix(
-                        stage,
-                        public,
-                        pending.gdn[layer].as_ref().ok_or(error())?,
-                        &m.arena,
-                        keep,
-                        cancel,
-                    )?,
-                    Layer::Qsa(stage, _) => self.qsa.enqueue_pending_prefix(
-                        stage,
-                        pending.qsa[layer].as_ref().ok_or(error())?,
-                        &m.arena,
-                        keep,
-                        cancel,
-                    )?,
-                }
-            }
-            self.ple.enqueue_pending_prefix(
-                m,
-                pending.ple.as_ref().ok_or(error())?,
-                keep,
-                cancel,
-            )?;
+            // Real retained commit uses original candidate roots and typed n.
+            // Its joined recording still needs the original fault/family proof.
+            self.run_native_prefix_commit(m, &pending, *count, keep, cancel)?;
             output = ChunkOutput::AcceptedPrefix(keep);
             Some(keep)
         } else {
