@@ -6,17 +6,18 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, source `ffe7293be448bb62ebc48e0ad9c51e11cc79c7af`. Read the
-[wide-Q6 handoff](#active-kuno-engine-handoff--native-wide-q6-heads-2026-10-16)
-and [completion gate](kuno-strata-rewrite-completion.md). Actual target/compact-CJK
-MTP heads select native aligned wide Q6 with original roots and exact1–8 RHS
-variants.527 CPU cases and strict core/off lint pass. Whole-head page-dispatch is
-still an implementation gap; final source/physical/numerical/recovery gates stay
-open. Whole rewrite incomplete; no live speed trials or consumer/API change.
+`codex/strata-rust-port`, source `308de4079bae86efa59c9bbeaba75d93dc481448`. Read the
+[whole-head handoff](#active-kuno-engine-handoff--whole-original-heads-2026-10-16)
+and [completion gate](kuno-strata-rewrite-completion.md). Target and compact-CJK
+MTP now each project the whole original head in one launch, owning/charging their
+32 KiB metadata tables and retaining all original weight pages. 532 CPU cases,
+strict core/off binary lint and356 offline shaders/139 physical checks pass.
+Whole rewrite incomplete; final source/physical/numerical/recovery gates stay open.
+No live speed trial or consumer/API change; required Vashti changes: none.
 
 Continuation CPU-only; goal active. No GPU/model/service/install/release/frontend
-action. Root not needed; last shared-shell sudo refresh unsuccessful. Recovery
-historicalOct15. Preserve canonical/inherited work. Required Vashti changes:none.
+action. Root not needed; latest shared-shell sudo refresh still reports a password
+required. Physical recovery historicalOct 15. Preserve canonical/inherited work.
 
 ## Ownership
 
@@ -7274,3 +7275,43 @@ independent protected-private-caller gate (CLI remains compiled-public/one-reque
 No API/protocol/config/consumer change; required Vashti changes:none. No GPU,
 model, inference, service/install/release/frontend action. Goal active CPU-only;
 root not needed; canonical/inherited files preserved. No deployment authorization.
+
+## Active Kuno engine handoff — whole original heads (2026-10-16)
+
+Source `308de4079bae86efa59c9bbeaba75d93dc481448`, isolated `codex/strata-rust-port`. Read the
+[source/test receipt](kuno-strata-rewrite-completion.md#whole-original-target-and-compact-cjk-head-dispatch-2026-10-16) and
+[checkpoint](kuno-native-text-checkpoint.md).
+Target and compact-CJK MTP now each prepare Q8 once and project their whole
+original Q6 head in one 128-thread/four-row dispatch. Original bounded source
+pages remain; actual native recordings retain every page they read. Two owning
+32 KiB address tables add 65,536 public GPU bytes in the shared model plan. Exact
+original tensor subtraction, private/source windows and model bytes are unchanged.
+
+532 distinct selected CPU cases / 68 suites, strict core/off binary Clippy,
+changed formatting/whitespace and normal stable-source build pass. Frozen artifact
+`strata-whole-head-ordinary-20261016/` has SHA256
+`5766b594472a1debfcf18c07a8ff01459239d60913e3266971a17ba2995a3f0a`. Independent source/hash/mode0500 checks pass;
+`strata-whole-head-shaders-20261016.log` accepts 356 offline Naga/SPIR-V
+variants and 139 physical-pointer checks. The validator returns before device
+creation. These are source/CPU/compiler checks, not GPU numerical/model acceptance.
+
+Actual target output/verifier and original-order CJK MTP consumers both select
+this path. The internal metadata helper borrows the original native device and
+full same-stream resources; it grants no submission/cleanup/admission credit.
+CJK startup readback checks table bytes and owner padding. Legacy verifier tile
+counter still counts16 original source pages; actual projection instrumentation
+counts one whole dispatch. No new model copies or private scratch. Generic Q8 MTP
+public price remains4,203,216,896 B; runtime Q2 public 1,946,607,616 B; target public
+521,506,816 B; original two-tensor subtraction
+859,189,248 B remains exact. Preserve the complete connected branch, not a leaf commit.
+
+Whole rewrite remains incomplete; live speed gate closed. Next final connected
+sampling/source/queue/ownership/pricing/substitution audit, then protected full
+numerical/state/context/hot-request/failure/recovery acceptance under renewed GPU
+permission. Keep adaptive serial-proposal/shared-copy-queue/first-window
+substitutions explicit. Protected private caller remains independently gated;
+current CLI compiled-public/one-request. No GPU/model/inference/service/install/
+release/frontend/API action or physical performance/residency/refund claim.
+Required Vashti changes: none. Goal active CPU-only. Root not needed; latest shared
+shell refresh still reports a password required. Physical recovery historicalOct 15.
+Preserve canonical application work and inherited files. No deployment authority.

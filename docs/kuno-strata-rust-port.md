@@ -1,22 +1,32 @@
 # Strata Rust whole-model port experiment
 
-**Current CPU-only resume (2026-10-16):** source `ffe7293be448bb62ebc48e0ad9c51e11cc79c7af`.
-Read the [wide-Q6 receipt](kuno-strata-rewrite-completion.md#native-aligned-wide-q6-heads-2026-10-16)
-and [checkpoint](kuno-native-text-checkpoint.md). Actual target/compact-CJK MTP
-heads use default aligned wide Q6 A2/RPW1/SG32, original210-byte rows, eight lanes/
-block and four blocks/subgroup, exactly1–8 RHS variants, same existing roots and
-Q8/private scratch.527 selected CPU cases /66 suites and strict core/off lint pass.
-Normal source-clean/stable artifact `strata-wide-q6-ordinary-20261016/`
-(`strata-wide-q6-ordinary-20261016.out`) has SHA256
-`21a58866c2334c3efe54c6db56b4097783b50727b38abdf357b504468989a2dd`.
-Independent original source/hash/mode0500 checks pass. Offline
-`strata-wide-q6-shaders-20261016.log` exits0 with340 Naga/SPIR-V variants and123
-physical-pointer validation checks from that exact frozen executable. The
-validator returns before adapter/device creation.
-Whole-head page-dispatch remains a concrete implementation gap. Next connect one
-original-root/BDA whole-head launch for both consumers, then final sampling/source/
-ownership/pricing/queue/substitution and protected full-model gates. No physical/
-speed conclusion; whole rewrite incomplete. No API/frontend or Vashti changes.
+**Current CPU-only resume (2026-10-16):** source `308de4079bae86efa59c9bbeaba75d93dc481448`.
+Read the [whole-head receipt](kuno-strata-rewrite-completion.md#whole-original-target-and-compact-cjk-head-dispatch-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md).
+Target and compact-CJK MTP now each prepare Q8 once and project their whole
+original Q6 head in one 128-thread/four-row dispatch. Original bounded source
+pages remain; actual native recordings retain every page they read. Two owning
+32 KiB address tables add 65,536 public GPU bytes in the shared model plan. Exact
+original tensor subtraction, private/source windows and model bytes are unchanged.
+
+532 distinct selected CPU cases / 68 suites, strict core/off binary Clippy,
+changed formatting/whitespace and normal stable-source build pass. Frozen artifact
+`strata-whole-head-ordinary-20261016/` has SHA256
+`5766b594472a1debfcf18c07a8ff01459239d60913e3266971a17ba2995a3f0a`. Independent source/hash/mode0500 checks pass;
+`strata-whole-head-shaders-20261016.log` accepts 356 offline Naga/SPIR-V
+variants and 139 physical-pointer checks. The validator returns before device
+creation. These are source/CPU/compiler checks, not GPU numerical/model acceptance.
+
+Whole rewrite remains incomplete; live speed gate closed. Next final connected
+sampling/source/queue/ownership/pricing/substitution audit, then protected full
+numerical/state/context/hot-request/failure/recovery acceptance under renewed GPU
+permission. Keep adaptive serial-proposal/shared-copy-queue/first-window
+substitutions explicit. Protected private caller remains independently gated;
+current CLI compiled-public/one-request. No GPU/model/inference/service/install/
+release/frontend/API action or physical performance/residency/refund claim.
+Required Vashti changes: none. Goal active CPU-only. Root not needed; latest shared
+shell refresh still reports a password required. Physical recovery historicalOct 15.
+Preserve canonical application work and inherited files. No deployment authority.
 
 ## Active direction — finish the complete Rust port before speed testing (2026-10-14)
 
