@@ -1146,7 +1146,12 @@ fn validate_limits(l: &wgpu::Limits, tile: usize) -> Result<()> {
     if ![4, 8].contains(&tile)
         || l.max_compute_invocations_per_workgroup < 64
         || l.max_compute_workgroup_size_x < 64
-        || l.max_compute_workgroups_per_dimension < 16384
+        || l.max_compute_workgroups_per_dimension
+            < if crate::strata_intel_core::enabled() {
+                65535
+            } else {
+                16384
+            }
         || l.max_compute_workgroup_storage_size < 8192
         || l.max_bind_groups < 1
         || l.max_storage_buffers_per_shader_stage < 11
@@ -7844,7 +7849,11 @@ mod tests {
     #[test]
     fn actual_limit_inventory_rejects_binding_alignment_and_workspace_shortfalls() {
         let limits = wgpu::Limits {
-            max_compute_workgroups_per_dimension: 16384,
+            max_compute_workgroups_per_dimension: if crate::strata_intel_core::enabled() {
+                65535
+            } else {
+                16384
+            },
             max_storage_buffers_per_shader_stage: 11,
             max_bindings_per_bind_group: 12,
             max_compute_workgroup_storage_size: 8192,
@@ -7867,7 +7876,7 @@ mod tests {
         for kind in 0..8 {
             let mut malformed = limits.clone();
             match kind {
-                0 => malformed.max_compute_workgroups_per_dimension = 4096,
+                0 => malformed.max_compute_workgroups_per_dimension -= 1,
                 1 => malformed.max_storage_buffers_per_shader_stage = 10,
                 2 => malformed.max_bindings_per_bind_group = 11,
                 3 => malformed.max_compute_workgroup_storage_size = 8191,
