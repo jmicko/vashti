@@ -59,7 +59,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native INT8 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Positive-threshold chains now keep hidden carries on device and observe the same token/probability/fault packet as zero-threshold chains; mapped/event scheduling remains open. First/grouped device-source and ids-only target result consumers now exist; the shared-context constructor receipt below supersedes the separate-client blocker. Core construction now selects the actual target client and one combined account. Source9de7fef pins the original target embedding/head once, shares them with MTP and gathers target embeddings on GPU. Actual device/state acceptance is pending. Source0bfbea8 connects the original-order CJK106299-row Q6 draft head, inverse-ID history mapping, compact confidence and coupled sampling; source2a3d1ad connects INT8 caches. Combined CPU checks pass, with full numerical/GPU execution still pending. Source `862f5fa` separates first-front staging and actual observation from capture, and prestages all coupled draft controls once per round. Source `8262367` connects typed MTP phases/4096 boundaries and original model-instance graph namespaces; source `d0670b0` connects direct original MTP replay and capture-derived host/sampler handback. Physical acceptance, commit/event fidelity, numerical/state acceptance and runtime policy remain required. See the latest device-end receipt. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Sourcea26adc2 ports the native bounded trigram index, longest/recent suffix choice, cost priors, probing/stale rules and optional lookup-chain accounting into the selected controller. Configured MTP/target windows no longer shrink at the output cap; state commit and emission are separate. Coupled sampling and physical state acceptance still need end-to-end validation. |
 | Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Source `131d29c` connects real provisional rows to accepted GDN/QSA/PLE candidates while original full-window transactions remain open, then publishes only n after real fault/I/O proof. Count1 uses its candidate and all-accept multirow runs original state replay. Old diagnostic full-window repair is not selected by the native controller. Source `4083258` connects the retained multirow commit graph with explicit dynamic accepted-count/position fields, original family preflight and count1 skip. Source `91e1f9e` connects original pending commit export/join; `1f46f76` connects a scoped original next-draft consumer before explicit commit acknowledgement. Source `0bf0b5f` emits real verified predictions before next drafting, matching the source delivery order. Global waits still serialize GPU execution. Independent draft/readiness/INFO dependencies, original storage substitutions and independent GPU/numerical oracle remain open. |
-| Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; Source `d40442c` connects direct retained target submission with typed control uploads and original family receipts; source `d0670b0` connects direct MTP invocation with original actual packet observations and sampler/actor handback. Source `b6732c8` adopts independent MTP compute and concurrent buffer families with semaphore handoffs. Source `414e2c3` connects actual current INFO copies on the native transfer timeline and avoids empty primary submissions; source `86f4c35` replaces the global single fence/last-recording assumption with actual lane fences and stable original recording flights. Source `131d29c` connects synchronous original accepted-prefix publication; source `4083258` connects the retained commit graph. Source `91e1f9e` connects original pending submission identities and exact joins; `1f46f76` connects scoped original MTP consumption before explicit commit acknowledgement. Real independent readiness/INFO/draft execution remain open; global drains and context-wide MAIN credit still require a coupled change. Global drain removal and draft/event fidelity remain incomplete. Physical ring overlap, scratch lifetimes and full execution acceptance remain open. Measured serving lazily captures branches; eager all-branch warmup is not a prerequisite; a sequence of independent Wgpu launches is not equivalent. |
+| Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; Source `d40442c` connects direct retained target submission with typed control uploads and original family receipts; source `d0670b0` connects direct MTP invocation with original actual packet observations and sampler/actor handback. Source `b6732c8` adopts independent MTP compute and concurrent buffer families with semaphore handoffs. Source `414e2c3` connects actual current INFO copies on the native transfer timeline and avoids empty primary submissions; source `86f4c35` replaces the global single fence/last-recording assumption with actual lane fences and stable original recording flights. Source `131d29c` connects synchronous original accepted-prefix publication; source `4083258` connects the retained commit graph. Source `91e1f9e` connects original pending submission identities and exact joins; `1f46f76` connects scoped original MTP consumption before explicit commit acknowledgement. Real independent readiness/INFO/draft execution remain open; source `543bc73` couples original pending commits to retained shared MAIN debt; global drains and lane-scoped I/O still require the coupled dependency change. Global drain removal and draft/event fidelity remain incomplete. Physical ring overlap, scratch lifetimes and full execution acceptance remain open. Measured serving lazily captures branches; eager all-branch warmup is not a prerequisite; a sequence of independent Wgpu launches is not equivalent. |
 | Request lifecycle and arbitrary input | upstream CLI/session/inference entry points | Current Rust public-fixture gate is not a general engine. Connect bounded arbitrary prompts and request-local sampling/history, with no persistent content, protected memory and orderly erase/close. No gateway/UI work required. |
 
 ## Validation and the speed gate
@@ -6025,3 +6025,59 @@ Full source audit, arbitrary-input/context/placement substitutions, historical
 core-regression failures and numerical/physical/recovery gates remain open.
 No throughput result. No GPU/model/sudo/service/API/UI/install/release action.
 Required Vashti changes:none. Goal remains active for CPU-only work.
+
+
+## Original pending commit retirement (2026-10-16)
+
+Source `543bc73e078ee147329d4d73ea871a54bbf11bc9` connects original pending target submission
+and shared MAIN retention as one private `PendingNativeCommit`. The selected
+multirow path acquires it immediately after real commit submission and before the
+scoped MTP observer, then consumes it through its original runtime join. Count1
+has no extra submission or hold. There is no caller-declared completion, clone,
+send, reset, serialized identity or additional GPU data root.
+
+`MainAdmission::completed_fence` still validates real observed MAIN growth and
+limits. While original pending debt is held, it cannot lower the upper allowance
+on behalf of an unrelated completed consumer. Up to two holds fit the native lane
+bound; admission itself is not lane authentication. Original runtime graph/scope/
+submission/fence validation remains mandatory. Only a successful exact original
+join may release that guard's hold. Release alone never resets telemetry/credit;
+a later checked completed boundary may lower the allowance only with no holds.
+Duplicate/stale/foreign joins fail in the original runtime before ledger release.
+No failed or unexpected-growth observation becomes credit.
+
+An unjoined/failed guard atomically retires its original context/sequence, retaining
+debt without taking admission's mutex. Its completion field drops before its
+retained original client. Existing model close and checked transient cleanup still
+attempt actual drains for retired contexts but cannot claim clean. Successful
+join does not clear prior poison. Existing family/fault/I/O proofs remain required
+before target state/cursor publication; verified emission remains separate.
+
+This resolves the pending target's peer-fence credit prerequisite, **not physical
+independent execution**. Global graph/stream/INFO/recycle waits remain. Any future
+independently pending unrepresented work must own its corresponding retention;
+this guard is not permission for arbitrary peer fences to refund all context work.
+Next retain the original recording's actual access intervals under its existing
+metadata bound, protect full-owner INFO copies, and establish precommit R readiness
+before moving all MTP staging/math/observation to its independent lane.
+
+CPU receipts under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-pending-retirement-final-test-build-20261016.log`: locked selected release
+  test build passes. `strata-pending-retirement-cpu-20261016.log`:152 cases pass
+  across16 nonempty suites (previous113,13 MAIN,25 executor admission,1 pending
+  completion/drop). New checks cover both bounded holds, peer fence and allocation
+  sequences, delayed refund, unexpected growth/poison and monotonic failed Drop.
+  They test actual host accounting helpers, not Vulkan physical completion.
+- `strata-pending-retirement-{core,off}-clippy-20261016.log`: strict selected/off
+  locked release Clippy pass; changed-source format and `git diff --check` pass.
+  Existing duplicate-main-bin manifest warning remains; no Rust/Clippy warning.
+
+No shader/binding layout changed, so the unchanged shader suite was not repeated.
+No new immutable artifact was frozen for this host-accounting block. The latest
+frozen `0bf0b5f` artifact and330 offline variants are historical; it does not include
+this change. Build current source for future protected whole-model execution.
+No GPU/model/sudo/service/API/UI/install/release action. Required Vashti changes:none.
+Whole source audit, arbitrary-input/context/placement substitutions, historical
+core-regression failures and numerical/physical/recovery gates remain open. No
+throughput result; goal stays active for CPU-only work.

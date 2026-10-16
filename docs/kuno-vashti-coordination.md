@@ -6,8 +6,8 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through `0bf0b5f`. Read the latest
-[scoped draft handoff](#active-kuno-engine-handoff--scoped-verified-row-drafting-2026-10-16)
+`codex/strata-rust-port`, engine source through `543bc73`. Read the latest
+[pending retirement handoff](#active-kuno-engine-handoff--pending-retirement-accounting-2026-10-16)
 and [completion gate](kuno-strata-rewrite-completion.md). Direct target/MTP
 submission, accepted-prefix state publication and retained commit graph are connected
 in source. Original pending submissions/joins and scoped next-draft consumption are connected;
@@ -6430,3 +6430,28 @@ remaining substitutions. No GPU/model/sudo/service operation or installation/
 release. Public API/connector/UI unchanged; required Vashti changes:none.
 Goal stays active for CPU-only work; historical Oct15 recovery is not current
 physical health evidence.
+
+
+### Active Kuno engine handoff — pending retirement accounting (2026-10-16)
+
+Source `543bc73` binds each original pending multirow target commit to its shared
+MAIN retirement hold. The scoped original MTP consumer cannot reclaim its peer's
+pending allocation allowance. Real telemetry still checks limits/unexpected growth.
+Only the guard's original runtime join can release the hold, and release alone
+cannot refund MAIN: a later real checked completion boundary remains required.
+Count1 has no additional commit/hold. The guard is private, not cloneable/sendable,
+and grants no completed model state or erasure. Unknown Drop atomically retires
+original context/sequence before releasing its retained client, without taking
+admission's mutex or releasing debt. Existing close still attempts actual drains.
+
+152 focused CPU cases and selected/off strict Clippy pass; formatting/whitespace
+pass. Exact logs/limitations are in completion guide **Original pending commit
+retirement**. No new shader/GPU owner and no fresh immutable release artifact;
+latest frozen `0bf0b5f` predates this block. Build current source before physical
+execution. Source/fence/numerical acceptance and whole rewrite remain incomplete.
+Next is original recording access inventory and whole INFO-copy hazards, R
+readiness before commit and all MTP preparation on its independent lane. Shared
+I/O recycle still globally flushes. Do not remove waits based on this hold alone.
+
+Goal stays active for CPU-only work. No GPU/model/sudo/service/install/release or
+public API/connector/UI change. Required Vashti changes:none.

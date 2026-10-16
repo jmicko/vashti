@@ -1,19 +1,48 @@
-<!-- Current resume: 2026-10-16, source 0bf0b5f, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source 543bc73, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, engine source through `0bf0b5f`. The user authorized
+branch `codex/strata-rust-port`, engine source through `543bc73`. The user authorized
 continuing CPU-only work; the goal controller is active for that scope.
 GPU/model/service/sudo work still needs renewed user authorization. Last physical recovery evidence
 is historical 06:07:22Z on Oct15; no subsequent GPU run or live health claim.
 
-Read the latest [scoped draft receipt](kuno-strata-rewrite-completion.md#scoped-verified-row-draft-consumer-2026-10-16)
+Read the latest [pending retirement receipt](kuno-strata-rewrite-completion.md#original-pending-commit-retirement-2026-10-16)
 and coordination handoff. Earlier CJK source `cd703bc` was integrated as `0bfbea8`;
 **do not cherry-pick it again**. Its original106299-row Q6 head, inverse-ID sampler
 and target/MTP INT8 caches remain connected.
 
-**Latest scoped draft consumer:** `1f46f76` adds a second limited phase to the
+**Latest pending retirement:** `543bc73` couples the original runtime submission
+with its shared MAIN debt hold in `PendingNativeCommit`. Each actual multirow
+prefix submission acquires the hold before invoking the scoped drafter. Peer
+observations still check real growth/limits but cannot lower the retained upper
+bound. The guard's consuming join uses its original client and exact original
+runtime token, then releases only its hold; a later real checked boundary must
+still validate telemetry before reclaiming MAIN credit. Count1 adds no submission
+or hold. No metadata-only completion, reset, clone, send or erasure API is added.
+
+Unknown/failing guards atomically retire the original context/sequence without
+locking admission or releasing debt. Their completion field drops before the
+retained client. Original close still attempts its best-effort actual drain and
+cannot claim clean after retirement. CPU cases exercise retained credit across
+peer fences/additional allocations, both bounded holds, duplicate/unbalanced
+transitions, unexpected growth/poison and monotonic failed-drop flags. Original
+backend flight/export validation remains the actual join authority.
+
+152 focused CPU cases and selected/off strict Clippy pass. This block changes no
+shader, GPU root or public API. No new immutable release artifact was frozen;
+the latest frozen `0bf0b5f` artifact predates this accounting change. Build current
+source before future protected execution. Existing330 shader receipts are
+historical, not a new physical validation. No GPU/model/service/sudo work ran.
+
+The global waits remain. Next retain the actual original recording access ranges
+under the existing metadata budget, use whole-owner INFO-copy hazards (rather than
+invented record slices), and establish R readiness before commit with all MTP
+preparation on its own lane. Shared I/O recycle still flushes the whole context;
+this hold alone is not permission to remove those waits or claim physical overlap.
+
+**Earlier scoped draft consumer:** `1f46f76` adds a second limited phase to the
 original prefix observer. After actual provisional row/fault observation and
 release of its host lease, the target submits its original commit, then lends
 verified R to the actual MTP consumer before explicit commit acknowledgement.
@@ -47,12 +76,10 @@ on its independent lane. MTP observation is still synchronous and global drains
 can still join the pending target before independent execution starts. Preserve
 original source borrows, target/final joins and error ownership when changing that.
 
-Coupled backend work also includes full-owner INFO-copy hazards and shared MAIN
-retirement. `Ledger::Shared::completed_fence` currently credits the whole context,
-which is valid under global joins but must not credit an unrelated pending lane
-when those guards change. `shared_observation_checkpoint` uses request I/O recycle
-(which itself flushes), so it is not an independent-lane observation today. Do not
-remove global waits while retaining that completion/credit assumption.
+At source `0bf0b5f`, shared MAIN completion still credited the whole context.
+The pending target hold above supersedes that behavior for its actual interval.
+Full-owner INFO hazards and shared I/O recycle remain open: the latter still
+flushes the context and is not an independent-lane observation today.
 
 113 focused CPU cases and selected/off strict Clippy pass. Exact immutable/offline
 receipts are in the completion guide. No GPU/numerical/visibility/speed/recovery
