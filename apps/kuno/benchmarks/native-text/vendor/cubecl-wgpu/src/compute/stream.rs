@@ -899,7 +899,20 @@ impl WgpuStream {
             ignore: false,
             flush: true,
         })?;
-        self.transient_io.as_mut().unwrap().recycle_reuse(nonce)
+        if let Some(graph) = self.strata_graph.as_mut() {
+            graph.join_all_io_sources()?;
+            // SAFETY: the original serialized stream just joined ALL graph,
+            // copy/INFO and readiness/handoff consumers, with no queued nodes.
+            // This is an all-owner boundary, not independent scoped reuse yet.
+            unsafe {
+                self.transient_io
+                    .as_mut()
+                    .unwrap()
+                    .recycle_native_after_all_joined(nonce)
+            }
+        } else {
+            self.transient_io.as_mut().unwrap().recycle_reuse(nonce)
+        }
     }
 
     pub(crate) fn accept_transient_io_reuse(&mut self, nonce: u64) -> Result<(), ServerError> {

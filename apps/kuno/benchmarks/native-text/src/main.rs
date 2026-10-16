@@ -39,6 +39,8 @@ mod strata_flight_tests;
 #[path = "../vendor/cubecl-wgpu/src/compute/strata_info_transfer.rs"]
 mod strata_info_transfer;
 mod strata_intel_core;
+#[cfg(test)]
+mod strata_io_owner_tests;
 mod strata_matrix;
 mod strata_mtp_front;
 mod strata_mtp_moe;
@@ -59,6 +61,10 @@ mod strata_queue_tests;
 #[allow(dead_code)] // Validate original native readback bounds without creating a device.
 #[path = "../vendor/cubecl-wgpu/src/compute/strata_readback.rs"]
 mod strata_readback_tests;
+#[cfg(test)]
+#[allow(dead_code)] // Original native upload lifecycle/writer checks create no device.
+#[path = "../vendor/cubecl-wgpu/src/compute/strata_upload.rs"]
+mod strata_upload_tests;
 #[cfg(test)]
 use strata_queue_tests as strata_schedule; // Original sibling namespace for INFO/planner tests.
 #[cfg(test)]

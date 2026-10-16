@@ -1193,6 +1193,16 @@ impl Graph {
         }
         Ok(())
     }
+    /// All-owner I/O reuse remains a joint boundary until selective original
+    /// cohorts are connected. Verify unsubmitted work too: pending flight count
+    /// or an empty primary encoder alone cannot authorize CPU remapping.
+    pub(crate) fn join_all_io_sources(&mut self) -> Result<(), ServerError> {
+        self.complete_submission()?;
+        if !self.nodes.is_empty() || self.flights.any() || self.info_uploads.pending() {
+            return Err(fault("native all-owner I/O reuse has outstanding work"));
+        }
+        Ok(())
+    }
     pub(crate) fn clear_completed_recordings(&mut self) -> Result<(), ServerError> {
         if self.flights.any() || self.pending() || self.info_uploads.pending() {
             return Err(fault("native graph cleanup while pending"));

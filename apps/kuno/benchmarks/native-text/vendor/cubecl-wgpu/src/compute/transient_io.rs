@@ -27,6 +27,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
+use super::strata_upload::{self, State as UploadState};
 use crate::WgpuResource;
 use cubecl_common::backtrace::BackTrace;
 use cubecl_common::bytes::{AllocationController, AllocationProperty, Bytes};
@@ -288,6 +289,7 @@ struct InfoPlan {
 struct InfoSlab {
     buffer: wgpu::Buffer,
     source: Option<wgpu::Buffer>,
+    source_index: usize,
     owner_index: usize,
     cursor: u64,
     epoch: u64,
@@ -304,6 +306,7 @@ impl Drop for InfoSlab {
         // SAFETY: exclusively owned fields, with no references surviving Drop.
         unsafe {
             core::ptr::addr_of_mut!(self.owner_index).write_volatile(0);
+            core::ptr::addr_of_mut!(self.source_index).write_volatile(0);
             core::ptr::addr_of_mut!(self.cursor).write_volatile(0);
             core::ptr::addr_of_mut!(self.epoch).write_volatile(0);
         }
@@ -956,7 +959,72 @@ struct Tracked<B = wgpu::Buffer> {
     info_pinned: bool,
     // Includes unused remaps retained across checkpoints. This obligation
     // survives selection and partial producers until the actual unmap succeeds.
-    upload_mapped: bool,
+    upload: UploadState,
+}
+/// A producer sees write operations only, preserving Wgpu's write-only map
+/// contract. The original native grant is consumed before any fallible operation.
+fn write_upload<T>(
+    device: &wgpu::Device,
+    owner: &mut Tracked,
+    buffer: &wgpu::Buffer,
+    clear: bool,
+    render: impl FnOnce(&mut dyn FnMut(usize, &[u8])) -> Result<T, ServerError>,
+) -> Result<T, ServerError> {
+    if owner.kind != Kind::Upload || owner.buffer != *buffer || owner.reuse_ready {
+        return Err(fault("private upload original write owner"));
+    }
+    if owner.upload == UploadState::WgpuMapped {
+        let mut mapped = buffer.get_mapped_range_mut(..);
+        if clear {
+            mapped.slice(..).fill(0);
+        }
+        strata_upload::render_bounded(
+            buffer.size() as usize,
+            |at, data| {
+                mapped.slice(at..at + data.len()).copy_from_slice(data);
+            },
+            render,
+            fault,
+        )
+    } else {
+        owner.upload.begin_native_write().map_err(fault)?;
+        // SAFETY: only original completed reuse grants NativeReady. An append
+        // retains its same not-yet-submitted NativeWritten source. No raw/read
+        // view escapes, and native flush/unmap must succeed before staging.
+        let result = unsafe { strata_upload::write_joined(device, buffer, clear, render, fault) };
+        if result.is_ok() {
+            owner.upload.finish_native_write().map_err(fault)?;
+        }
+        result
+    }
+}
+/// Actual original caller has joined all readers. Preflight the entire
+/// cohort before publishing ANY native writer; generic only for CPU owner tests.
+fn prepare_native_upload_reuse<B>(owners: &mut [Tracked<B>]) -> Result<(), ServerError> {
+    for owner in owners.iter() {
+        if owner.kind == Kind::Upload {
+            let mut next = owner.upload;
+            next.after_joined().map_err(fault)?;
+        }
+    }
+    for owner in owners {
+        if owner.kind == Kind::Upload {
+            owner.upload.after_joined().map_err(fault)?;
+        }
+    }
+    Ok(())
+}
+fn seal_upload(owner: &mut Tracked, buffer: &wgpu::Buffer) -> Result<(), ServerError> {
+    if owner.buffer != *buffer || owner.kind != Kind::Upload || !owner.upload.staged() {
+        return Err(fault("private upload mapping obligation missing"));
+    }
+    if owner.upload == UploadState::WgpuMapped {
+        buffer.unmap();
+    }
+    // The original native writer already flushed/unmapped successfully. Both
+    // paths revoke CPU permission before any subsequent actual GPU copy.
+    owner.upload = UploadState::Idle;
+    Ok(())
 }
 const REUSE_METADATA_MAX: usize = 256 * 1024;
 const LARGE_REUSE_METADATA_MAX: usize = 4 * 1024 * 1024;
@@ -1240,7 +1308,7 @@ impl ReuseIndex {
             if owner.info_pinned && owner.kind != Kind::Uniform {
                 return Err(fault("private INFO pin owner mismatch"));
             }
-            if owner.kind == Kind::Upload && !owner.upload_mapped {
+            if owner.kind == Kind::Upload && !owner.upload.reusable() {
                 return Err(fault("private reuse upload remap incomplete"));
             }
         }
@@ -1277,7 +1345,7 @@ impl ReuseIndex {
             || owner.info_pinned
             || owner.kind != kind
             || size(&owner.buffer) != bytes
-            || kind == Kind::Upload && !owner.upload_mapped
+            || kind == Kind::Upload && !owner.upload.reusable()
         {
             return Err(fault("private reuse index owner mismatch"));
         }
@@ -2626,12 +2694,7 @@ impl TransientIo {
             .buffers
             .get_mut(index)
             .ok_or_else(|| fault("private upload owner missing"))?;
-        if owner.buffer != *buffer || owner.kind != Kind::Upload || !owner.upload_mapped {
-            return Err(fault("private upload mapping obligation missing"));
-        }
-        buffer.unmap();
-        owner.upload_mapped = false;
-        Ok(())
+        seal_upload(owner, buffer)
     }
     fn additional_charge(&self, kind: Kind, bytes: u64) -> Result<u64, ServerError> {
         if bytes == 0
@@ -2795,6 +2858,51 @@ impl TransientIo {
         // No remapping, readiness/index mutation, destination clear or ledger
         // credit. Already-ready unused owners retain their prior permission.
     }
+    /// # Safety
+    /// Serialized original native stream has submitted and joined ALL actual
+    /// graph lanes, transfer/INFO readers and readiness/handoff work. No peer
+    /// fence or metadata state is sufficient. Future selective reuse must carry
+    /// original per-owner exclusion, rather than reusing this all-owner grant.
+    pub(crate) unsafe fn recycle_native_after_all_joined(
+        &mut self,
+        nonce: u64,
+    ) -> Result<(), ServerError> {
+        let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.active()?;
+            self.check_reuse(nonce)?;
+            if !super::strata_graph::enabled()
+                || !self.info_batch
+                || self.gpu_upload_clear
+                || self.leases() != 0
+                || !self.pending_info.is_empty()
+                || self.info_slab.is_some()
+            {
+                return Err(fault("native reuse original joined cohort unavailable"));
+            }
+            self.drain_accept_errors()?;
+            self.reuse_scope.free.reset();
+            for owner in &mut self.buffers {
+                owner.reuse_ready = false;
+            }
+            prepare_native_upload_reuse(&mut self.buffers)?;
+            // No WG map callback or primary transition/clear is needed: every
+            // native upload is flush/unmap guarded; every native readback is
+            // full-owner filled and HOST_READ released before its next real map.
+            // Original INFO pins and all ledger/terminal erase duties remain.
+            self.drain_accept_errors()?;
+            self.reuse_scope
+                .free
+                .rebuild(&mut self.buffers, wgpu::Buffer::size)?;
+            Ok(())
+        }));
+        match attempted {
+            Ok(Ok(())) => Ok(()),
+            _ => {
+                self.leases.retire_with(Failure::CleanupRejected);
+                Err(fault(self.leases.reason(Failure::CleanupRejected)))
+            }
+        }
+    }
     pub(crate) fn recycle_reuse(&mut self, nonce: u64) -> Result<(), ServerError> {
         let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.active()?;
@@ -2817,7 +2925,7 @@ impl TransientIo {
                     let mut count = 0;
                     while begin < self.buffers.len() && count < UPLOAD_MAP_GROUP {
                         let owner = &self.buffers[begin];
-                        if owner.kind == Kind::Upload && !owner.upload_mapped {
+                        if owner.kind == Kind::Upload && owner.upload != UploadState::WgpuMapped {
                             ids[count] = begin;
                             group[count] = Some(&owner.buffer);
                             count += 1;
@@ -2835,7 +2943,7 @@ impl TransientIo {
                             .ok_or_else(|| fault("private reuse map missing"))?;
                         // Install the enduring unmap duty BEFORE disarming the
                         // local guard. The owner remains fully charged/tracked.
-                        self.buffers[ids[i]].upload_mapped = true;
+                        self.buffers[ids[i]].upload = UploadState::WgpuMapped;
                         map.requested = false;
                     }
                 }
@@ -2997,12 +3105,14 @@ impl TransientIo {
                 target,
                 source_index,
             });
-            let mut mapped = source.get_mapped_range_mut(..);
-            mapped.slice(..).fill(0);
-            self.branch_parameters
-                .write_replay_page(index, bytes as usize, |at, data| {
-                    mapped.slice(at..at + data.len()).copy_from_slice(data);
-                })?;
+            let parameters = &self.branch_parameters;
+            write_upload(
+                &self.device,
+                &mut self.buffers[source_index],
+                &source,
+                true,
+                |put| parameters.write_replay_page(index, bytes as usize, put),
+            )?;
         }
         self.check_branch_metadata()
     }
@@ -3180,15 +3290,14 @@ impl TransientIo {
             if entry.source.size() != entry.target.size()
                 || owner.buffer != entry.source
                 || owner.kind != Kind::Upload
-                || !owner.upload_mapped
+                || !owner.upload.staged()
             {
                 return Err(fault("native INFO original mapped owner mismatch"));
             }
         }
         self.info_slab = None;
         for entry in &self.pending_info {
-            entry.source.unmap();
-            self.buffers[entry.source_index].upload_mapped = false;
+            seal_upload(&mut self.buffers[entry.source_index], &entry.source)?;
             copies.push(super::strata_info_transfer::Copy {
                 source: WgpuResource {
                     buffer: entry.source.clone(),
@@ -3232,11 +3341,7 @@ impl TransientIo {
                 .buffers
                 .get_mut(entry.source_index)
                 .ok_or_else(|| fault("private INFO source owner missing"))?;
-            if owner.buffer != entry.source || owner.kind != Kind::Upload || !owner.upload_mapped {
-                return Err(fault("private INFO source mapping obligation missing"));
-            }
-            entry.source.unmap();
-            owner.upload_mapped = false;
+            seal_upload(owner, &entry.source)?;
             encoder.copy_buffer_to_buffer(&entry.source, 0, &entry.target, 0, entry.source.size());
         }
         self.pending_info.clear();
@@ -3418,10 +3523,13 @@ impl TransientIo {
             }
 
             let (source, source_index) = self.allocate_indexed(Kind::Upload, source_charge)?;
-            {
-                let mut map = source.get_mapped_range_mut(..);
-                map.slice(..).fill(0);
-            }
+            write_upload(
+                &self.device,
+                &mut self.buffers[source_index],
+                &source,
+                true,
+                |_| Ok(()),
+            )?;
             self.pending_info.push(PendingInfo {
                 source: source.clone(),
                 target: target.clone(),
@@ -3430,46 +3538,47 @@ impl TransientIo {
             self.info_slab = Some(InfoSlab {
                 buffer: target,
                 source: Some(source),
+                source_index,
                 owner_index: target_index,
                 cursor: 0,
                 epoch: self.ledger.epoch,
             });
         }
-        let page = self
-            .info_slab
-            .as_mut()
-            .ok_or_else(|| fault("batched INFO current page missing"))?;
-        copy_bounds(plan.logical, plan.offset, page.buffer.size(), data.len())?;
-        // Reserve append interval before filling; failures cannot authorize a
-        // subsequent overwrite. Mapped views never outlive this synchronous call.
-        page.cursor = plan.next_cursor;
-        {
-            let source = page
-                .source
-                .as_ref()
-                .ok_or_else(|| fault("batched INFO current source missing"))?;
-            let mut map = source.get_mapped_range_mut(..);
-            map.slice(plan.offset as usize..plan.offset as usize + data.len())
-                .copy_from_slice(data);
-        }
-        if branch {
-            self.branch_parameters
-                .bind_current(page.owner_index, plan.offset)?;
-            let source = page
-                .source
-                .as_ref()
-                .ok_or_else(|| fault("native INFO source missing"))?;
-            let mut mapped = source.get_mapped_range_mut(..);
-            // Preserve WGPU's write-only mapping contract: the renderer emits
-            // bounded writes and never obtains a readable mapped byte slice.
-            self.branch_parameters
-                .write_current(data.len(), |at, bytes| {
-                    let at = plan.offset as usize + at;
-                    mapped.slice(at..at + bytes.len()).copy_from_slice(bytes);
+        let (source, source_index, owner_index, target) = {
+            let page = self
+                .info_slab
+                .as_mut()
+                .ok_or_else(|| fault("batched INFO current page missing"))?;
+            copy_bounds(plan.logical, plan.offset, page.buffer.size(), data.len())?;
+            // Reserve append interval before any fallible render/map.
+            page.cursor = plan.next_cursor;
+            (
+                page.source
+                    .as_ref()
+                    .ok_or_else(|| fault("batched INFO current source missing"))?
+                    .clone(),
+                page.source_index,
+                page.owner_index,
+                page.buffer.clone(),
+            )
+        };
+        let owner = self
+            .buffers
+            .get_mut(source_index)
+            .ok_or_else(|| fault("batched INFO original source index"))?;
+        let parameters = &mut self.branch_parameters;
+        write_upload(&self.device, owner, &source, false, |put| {
+            put(plan.offset as usize, data);
+            if branch {
+                parameters.bind_current(owner_index, plan.offset)?;
+                parameters.write_current(data.len(), |at, bytes| {
+                    put(plan.offset as usize + at, bytes)
                 })?;
-        }
+            }
+            Ok(())
+        })?;
         let resource = WgpuResource {
-            buffer: page.buffer.clone(),
+            buffer: target,
             offset: plan.offset,
             size: plan.logical,
         };
@@ -3478,7 +3587,7 @@ impl TransientIo {
             if cache.has_room(data) {
                 let owner = self
                     .buffers
-                    .get_mut(page.owner_index)
+                    .get_mut(owner_index)
                     .ok_or_else(|| fault("private INFO cache target missing"))?;
                 if owner.kind != Kind::Uniform
                     || owner.buffer != resource.buffer
@@ -3493,7 +3602,7 @@ impl TransientIo {
                 if !cache.insert(
                     data,
                     hash,
-                    page.owner_index,
+                    owner_index,
                     WgpuResource {
                         buffer: resource.buffer.clone(),
                         offset: resource.offset,
@@ -3631,7 +3740,7 @@ impl TransientIo {
                 reuse_ready: false,
                 next_free: NO_REUSE_INDEX,
                 info_pinned: false,
-                upload_mapped: false,
+                upload: UploadState::Idle,
                 buffer: buffer.clone(),
                 kind,
             });
@@ -3653,7 +3762,11 @@ impl TransientIo {
             reuse_ready: false,
             next_free: NO_REUSE_INDEX,
             info_pinned: false,
-            upload_mapped: kind == Kind::Upload,
+            upload: if kind == Kind::Upload {
+                UploadState::WgpuMapped
+            } else {
+                UploadState::Idle
+            },
             buffer: buffer.clone(),
             kind,
         });
@@ -3676,12 +3789,17 @@ impl TransientIo {
         let mut copies = Vec::with_capacity(2);
         if transfer.prefix != 0 {
             let (stage, index) = self.allocate_indexed(Kind::Upload, transfer.prefix)?;
-            {
-                let mut view = stage.get_mapped_range_mut(..);
-                view.slice(..).fill(0);
-                let len = data.len().min(transfer.prefix as usize);
-                view.slice(..len).copy_from_slice(&data[..len]);
-            }
+            write_upload(
+                &self.device,
+                &mut self.buffers[index],
+                &stage,
+                true,
+                |put| {
+                    let len = data.len().min(transfer.prefix as usize);
+                    put(0, &data[..len]);
+                    Ok(())
+                },
+            )?;
             self.unmap_upload(index, &stage)?;
             copies.push((
                 Some(WgpuResource {
@@ -3725,15 +3843,17 @@ impl TransientIo {
         let prefix = transfer.prefix;
         if prefix != 0 {
             let (stage, stage_index) = self.allocate_indexed(Kind::Upload, prefix)?;
-            {
-                let mut view = stage.get_mapped_range_mut(..);
-                // Initialize the FULL tracked mapped span, not just the prefix.
-                // Keep the original guarded host input; no shortened host copy.
-                view.slice(..).fill(0);
-                let source_len = data.len().min(prefix as usize);
-                view.slice(..source_len)
-                    .copy_from_slice(&data[..source_len]);
-            }
+            write_upload(
+                &self.device,
+                &mut self.buffers[stage_index],
+                &stage,
+                true,
+                |put| {
+                    let source_len = data.len().min(prefix as usize);
+                    put(0, &data[..source_len]);
+                    Ok(())
+                },
+            )?;
             self.unmap_upload(stage_index, &stage)?;
             encoder.copy_buffer_to_buffer(&stage, 0, &resource.buffer, resource.offset, prefix);
         }
@@ -3816,6 +3936,7 @@ impl TransientIo {
                 self.info_slab = Some(InfoSlab {
                     buffer: buffer.clone(),
                     source: None,
+                    source_index: NO_REUSE_INDEX,
                     owner_index,
                     cursor: 0,
                     epoch: self.ledger.epoch,
@@ -4065,9 +4186,13 @@ impl TransientIo {
         for tracked in &mut self.buffers {
             tracked.reuse_ready = false;
             tracked.info_pinned = false;
-            if tracked.kind == Kind::Upload && tracked.upload_mapped {
-                tracked.buffer.unmap();
-                tracked.upload_mapped = false;
+            if tracked.kind == Kind::Upload {
+                if tracked.upload == UploadState::WgpuMapped {
+                    tracked.buffer.unmap();
+                }
+                // Native mappings are synchronous/guarded and never survive a
+                // write call. Original eraser still performs real map/wipe/flush.
+                tracked.upload = UploadState::Idle;
             }
         }
         self.info_slab = None;
@@ -4950,7 +5075,7 @@ mod tests {
                 reuse_ready: false,
                 next_free: NO_REUSE_INDEX,
                 info_pinned: false,
-                upload_mapped: false,
+                upload: UploadState::Idle,
                 // Include sentinel-filled tails beyond19 logical bytes. The shared
                 // full-span erasure policy must clear those tails before release.
                 kind,
@@ -5097,7 +5222,7 @@ mod tests {
                     reuse_ready: false,
                     next_free: NO_REUSE_INDEX,
                     info_pinned: false,
-                    upload_mapped: false,
+                    upload: UploadState::Idle,
                     buffer: stage,
                     kind: Kind::Readback,
                 });
@@ -5599,7 +5724,7 @@ mod tests {
                 reuse_ready: false,
                 next_free: NO_REUSE_INDEX,
                 info_pinned: false,
-                upload_mapped: false,
+                upload: UploadState::Idle,
                 kind: Kind::Upload,
                 buffer: FakeBuffer {
                     kind: Kind::Upload,
@@ -5607,6 +5732,36 @@ mod tests {
                 },
             })
             .collect()
+    }
+    #[test]
+    fn native_reuse_preflights_all_writers_without_mapping_or_changing_other_owners() {
+        for invalid in [UploadState::NativeWriting, UploadState::NativeWritten] {
+            let mut buffers = fake_uploads(2);
+            buffers[1].upload = invalid;
+            assert!(prepare_native_upload_reuse(&mut buffers).is_err());
+            assert_eq!(buffers[0].upload, UploadState::Idle);
+            assert_eq!(buffers[1].upload, invalid);
+            assert!(buffers.iter().all(|b| !b.reuse_ready));
+        }
+        let mut buffers = fake_buffers();
+        prepare_native_upload_reuse(&mut buffers).unwrap(); // Synthetic joined cohort.
+        assert_eq!(buffers[0].upload, UploadState::NativeReady);
+        assert!(buffers[1..].iter().all(|b| b.upload == UploadState::Idle));
+        let size = |b: &FakeBuffer| b.words.borrow().len() as u64;
+        let mut index = ReuseIndex::default();
+        index.rebuild(&mut buffers, size).unwrap();
+        assert_eq!(
+            index
+                .take(&mut buffers, Kind::Upload, MIN_BYTES, size)
+                .unwrap(),
+            Some(0)
+        );
+        assert!(!buffers[0].reuse_ready);
+        assert_eq!(buffers[0].upload, UploadState::NativeReady);
+        buffers[0].upload.begin_native_write().unwrap();
+        assert!(index.rebuild(&mut buffers, size).is_err());
+        assert!(prepare_native_upload_reuse(&mut buffers).is_err());
+        assert_eq!(buffers[0].upload, UploadState::NativeWriting);
     }
     #[test]
     fn request_reuse_nonce_rejects_held_dirty_concurrent_foreign_and_stale_owners() {
@@ -5634,7 +5789,7 @@ mod tests {
         let mut scope = ReuseScope::default();
         let nonce = scope.begin(true, 0).unwrap();
         let mut buffers = fake_buffers();
-        buffers[0].upload_mapped = true;
+        buffers[0].upload = UploadState::WgpuMapped;
         let size = |b: &FakeBuffer| b.words.borrow().len() as u64;
         scope.free.rebuild(&mut buffers, size).unwrap();
         scope
@@ -5662,7 +5817,7 @@ mod tests {
                     .iter()
                     .all(|b| b.buffer.words.borrow().iter().all(|byte| *byte == 0xa7))
             );
-            assert!(buffers[0].upload_mapped);
+            assert_eq!(buffers[0].upload, UploadState::WgpuMapped);
             assert!(!buffers[2].reuse_ready);
         }
         assert_eq!(drains.get(), 3);
@@ -5737,7 +5892,7 @@ mod tests {
         let size = |b: &FakeBuffer| b.words.borrow().len() as u64;
         assert!(free.rebuild(&mut buffers, size).is_err());
         assert!(buffers.iter().all(|b| !b.reuse_ready));
-        buffers[0].upload_mapped = true;
+        buffers[0].upload = UploadState::WgpuMapped;
         for _ in 0..16 {
             free.rebuild(&mut buffers, size).unwrap();
             for kind in [Kind::Upload, Kind::Uniform, Kind::Readback] {
@@ -5866,10 +6021,10 @@ mod tests {
             );
         }
         let mut buffers = fake_uploads(1);
-        buffers[0].upload_mapped = true;
+        buffers[0].upload = UploadState::WgpuMapped;
         let mut free = ReuseIndex::default();
         free.rebuild(&mut buffers, size).unwrap();
-        buffers[0].upload_mapped = false;
+        buffers[0].upload = UploadState::Idle;
         assert!(
             free.take(&mut buffers, Kind::Upload, MIN_BYTES, size)
                 .is_err()
@@ -6051,7 +6206,7 @@ mod tests {
     #[test]
     fn info_pins_exclude_full_uniform_owner_from_recycling_until_audit_reset() {
         let mut buffers = fake_buffers();
-        buffers[0].upload_mapped = true;
+        buffers[0].upload = UploadState::WgpuMapped;
         buffers[1].info_pinned = true;
         let size = |b: &FakeBuffer| b.words.borrow().len() as u64;
         let mut free = ReuseIndex::default();
@@ -6370,7 +6525,7 @@ mod tests {
                 reuse_ready: false,
                 next_free: NO_REUSE_INDEX,
                 info_pinned: false,
-                upload_mapped: false,
+                upload: UploadState::Idle,
                 kind: Kind::Readback,
                 buffer: FakeBuffer {
                     kind: Kind::Readback,

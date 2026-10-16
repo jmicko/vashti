@@ -13,6 +13,7 @@ mod strata_parameters;
 mod strata_physical;
 mod strata_readback;
 mod strata_schedule;
+mod strata_upload;
 pub use strata_graph::{
     native_strata_graph_execution_stats, native_strata_graph_stats, native_strata_operator_profile,
     set_native_strata_profile_active,
