@@ -283,10 +283,8 @@ impl<'a, 'm, 'f> LatestTargetRound<'a, 'm, 'f> {
     ) -> Result<Option<NativeTargetRows>> {
         let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let output = self.finish_inner(accepted_inputs, cancel)?;
-            if crate::strata_intel_core::enabled() {
-                self.model
-                    .adapt_global_after_window(self.executor, cancel)?;
-            }
+            // Diagnostic checkpoint replay does not train the native cache.
+            // The selected controller's real verified windows own adaptation.
             Ok(output)
         }));
         match attempt {

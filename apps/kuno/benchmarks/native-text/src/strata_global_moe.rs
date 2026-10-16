@@ -124,6 +124,10 @@ fn info(words: &[u32]) -> MetadataBindingInfo {
     )
     .with_native_parameter(2, cubecl_runtime::server::NativeStrataValue::RouteEpoch)
 }
+pub(crate) struct Adaptation {
+    proposal: crate::strata_global_adapt::Proposal,
+    flight: Option<crate::public_host_expert_mirror::strata_global::exchange::Flight>,
+}
 pub(crate) struct Workspace {
     binding: GraphBindingId,
     geometries: [g::Geometry; 48],
@@ -653,33 +657,55 @@ impl Workspace {
         self.active = None;
         Ok(())
     }
-    /// Whole model/family acceptance and commit precede all cache mutations.
-    /// The private routing map is published only after paired original weights
-    /// and both metadata uploads have joined. Failure retires the source owner.
-    pub(crate) fn adapt_after_finished(
+    /// Real target rows/INFO are observed; no next target reader exists. Start
+    /// original copies BEFORE commit submission/next MTP drafting. Acceptance
+    /// remains independent and all maps stay unpublished until finish below.
+    pub(crate) fn begin_adaptation_after_verified(
         &mut self,
         graph: BoundGraph<'_, '_>,
         arena: &PrivateArena,
         admission: &crate::executor::ResidentAdmission,
         sources: &mut Sources,
         cancel: &AtomicBool,
-    ) -> Result<()> {
-        self.validate_idle()?;
+    ) -> Result<Option<Adaptation>> {
+        if !self.verify_usage {
+            return Ok(None);
+        }
+        if self.layer_pending || self.active.as_ref().is_none_or(|s| s[1] != 48 || s[2] != 0) {
+            return Err(reject());
+        }
         u::cancel(cancel)?;
         if self.adaptive.is_none() {
             self.adaptive = Some(crate::strata_global_adapt::Cache::new(sources.plan())?);
         }
         let cache = self.adaptive.as_mut().ok_or_else(reject)?;
         if !cache.tick()? {
-            return Ok(());
+            return Ok(None);
         }
         let usage =
             admission.readback_audited(cancel, || u::read_prefix_f32(arena, self.ids[9], 24576))?;
         let proposal = cache.propose(&usage)?;
         u::cancel(cancel)?;
-        sources.exchange(graph, &proposal.swaps)?;
-        // Full private owners are retained through their write/fence. Padding
-        // is zero and moved upload allocations receive the runtime wipe guard.
+        let raw = self.prompt_stages.ok_or_else(reject)?[2];
+        let flight = sources.submit_exchange(graph, &proposal.swaps, arena, raw)?;
+        Ok(Some(Adaptation { proposal, flight }))
+    }
+    /// Original target/MTP commit/draft consumers have completed. Join the exact
+    /// copy flight and its actual copy->MAIN semaphore dependency, then publish
+    /// all three physical roles and the private map/usage before target reuse.
+    pub(crate) fn finish_adaptation(
+        &mut self,
+        arena: &PrivateArena,
+        sources: &mut Sources,
+        adaptation: Option<Adaptation>,
+    ) -> Result<()> {
+        self.validate_idle()?;
+        let Some(Adaptation { proposal, flight }) = adaptation else {
+            return Ok(());
+        };
+        if let Some(flight) = flight {
+            flight.finish()?;
+        }
         let mut mapping = crate::strata_global_adapt::encode_route_map(&proposal.mapping)?;
         let mut counts = Zeroizing::new(vec![0u8; 131072]);
         for (i, &score) in proposal.usage.iter().enumerate() {
@@ -698,8 +724,8 @@ impl Workspace {
                 std::mem::take(&mut *counts),
             )
             .map_err(u::fault)?;
-        sources.finish_publication(|| cache.commit(proposal))?;
-        Ok(())
+        let cache = self.adaptive.as_mut().ok_or_else(reject)?;
+        sources.finish_publication(|| cache.commit(proposal))
     }
     pub(crate) fn validate_idle(&self) -> Result<()> {
         if self.active.is_some() || self.layer_pending {

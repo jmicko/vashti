@@ -407,14 +407,8 @@ pub(super) fn run<'m, 'f>(
     sampling.use_device_residuals()?;
     sampling.stage_target(plan.prefix(), &request.prompt[plan.prefix()..])?;
     phase("last_prompt_input");
-    let mut output =
-        target.prefill_chunk_with_carry(executor, &request.prompt[plan.prefix()..], cancel)?;
-    if output.start() != plan.prefix() || output.count() != 1 {
-        return Err("global final prompt decode identity rejected".into());
-    }
-    let mut confirmed = output.greedy(0)?;
-    let initial_device = output.take_device_carry()?;
-    drop(output);
+    let (mut confirmed, initial_device) =
+        target.prefill_first_native_window(executor, &request.prompt[plan.prefix()..], cancel)?;
     if target.completed_target_rows_cursor(executor)? != request.prompt.len() {
         return Err("global final prompt decode cursor rejected".into());
     }
@@ -659,7 +653,6 @@ pub(super) fn run<'m, 'f>(
         if delivered_prefix != n || history.len() != previous_total + emit_count {
             return Err("global delivered prefix accounting rejected".into());
         }
-        target.adapt_global_after_window(executor, cancel)?;
         repairs += u64::from(n < count);
         if target.completed_target_rows_cursor(executor)? != position + n {
             return Err("global accepted target cursor rejected".into());

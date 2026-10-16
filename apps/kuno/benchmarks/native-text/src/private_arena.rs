@@ -603,6 +603,7 @@ pub struct PrivateArena {
     // Registered roots remain charged to their persistent cache owner. Ledger
     // charge here is private coverage, never a new physical allocation credit.
     borrowed_roots: bool,
+    external_flight: crate::strata_external_flight::Block,
     // CubeCL default stream depends on the current thread. Pin all arena
     // construction, commands, cleanup and Drop to the same worker thread.
     _same_thread: PhantomData<Rc<()>>,
@@ -630,6 +631,7 @@ impl PrivateArena {
             zero_audit_counts: OwnedZeroAudit::default(),
             closed_clean: false,
             borrowed_roots: false,
+            external_flight: crate::strata_external_flight::Block::new(),
             _same_thread: PhantomData,
         })
     }
@@ -975,7 +977,27 @@ impl PrivateArena {
             Err(_) => Err(ArenaError::Cleanup),
         }
     }
+    pub(crate) fn begin_external_root_flight(
+        &self,
+        id: BufferId,
+    ) -> Result<crate::strata_external_flight::Flight> {
+        self.active()?;
+        let root = self.handle(id)?;
+        if root.offset_start.unwrap_or(0) != 0
+            || root.size_in_used() != self.layout(id)?.owned_bytes as u64
+        {
+            return Err(ArenaError::InvalidLayout);
+        }
+        self.external_flight
+            .begin(self.retired.clone())
+            .map_err(|_| ArenaError::Cleanup)
+    }
     fn erase_and_drain(&self) -> Result<()> {
+        // Native adaptive copies can read the original dormant prompt root
+        // beside disjoint target/MTP work. Unknown completion forbids ALL clears.
+        if self.external_flight.pending() {
+            return Err(ArenaError::Cleanup);
+        }
         if self.io_policy == IoPolicy::OwnedTransient {
             struct Native<'a>(&'a PrivateArena);
             impl TransientCleanup for Native<'_> {

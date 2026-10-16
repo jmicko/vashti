@@ -536,11 +536,13 @@ impl Sources {
     /// Consumer boundaries have completed. Verify exact initial physical cells,
     /// then execute all role exchanges as one joined owning transaction. The
     /// static tables never change; subsequent consumers await PRIVATE remap.
-    pub(crate) fn exchange(
+    pub(crate) fn submit_exchange(
         &mut self,
         graph: BoundGraph<'_, '_>,
         swaps: &[crate::strata_global_adapt::Swap],
-    ) -> Result<()> {
+        arena: &crate::private_arena::PrivateArena,
+        scratch_id: crate::private_arena::BufferId,
+    ) -> Result<Option<crate::public_host_expert_mirror::strata_global::exchange::Flight>> {
         if self.unavailable()
             || self.mutation_pending
             || self.loan_pending
@@ -555,7 +557,7 @@ impl Sources {
         if swaps.is_empty() {
             self.pending_placement = Some(next_placement);
             self.mutation_pending = true;
-            return Ok(());
+            return Ok(None);
         }
         cubecl_common::future::block_on(self.client.sync()).map_err(crate::resident_util::fault)?;
         // The same attached prompt raw root is dormant during committed decode.
@@ -563,6 +565,15 @@ impl Sources {
         // remains a private arena owner, so request reset erases ALL its bytes.
         let scratch_owner = self.prompt_stage.as_ref().ok_or_else(reject)?;
         if scratch_owner.size_in_used() < crate::strata_prompt::allocation::RAW_RING_BYTES {
+            return Err(reject());
+        }
+        let private_root = arena
+            .handle(scratch_id)
+            .map_err(crate::resident_util::fault)?;
+        if private_root.clone().binding().memory.allocation_id()
+            != scratch_owner.clone().binding().memory.allocation_id()
+            || private_root.size_in_used() != scratch_owner.size_in_used()
+        {
             return Err(reject());
         }
         let scratch_resources = self
@@ -633,16 +644,18 @@ impl Sources {
         // cannot resume inference. close can still attempt ordinary joined erase.
         self.mutation_pending = true;
         self.pending_placement = Some(next_placement);
+        let guard = arena
+            .begin_external_root_flight(scratch_id)
+            .map_err(crate::resident_util::fault)?;
         // SAFETY: immutable capabilities above authenticate all owning cells,
         // this exclusive source owner joined every prior CubeCL/BDA reader.
         unsafe {
-            self.host.as_mut().ok_or_else(reject)?.exchange(
-                self.queue.as_ref().ok_or_else(reject)?,
-                &pairs,
-                scratch,
-            )?;
+            self.host
+                .as_mut()
+                .ok_or_else(reject)?
+                .submit_exchange(&pairs, scratch, guard)
+                .map(Some)
         }
-        Ok(())
     }
     /// Join PRIVATE remap/usage writes before admitting another source reader.
     pub(crate) fn finish_publication(&mut self, commit: impl FnOnce() -> Result<()>) -> Result<()> {

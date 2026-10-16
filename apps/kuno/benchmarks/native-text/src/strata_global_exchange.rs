@@ -1,6 +1,9 @@
 //! Owning original-weight exchange for variable global cells. Request-derived
 //! offsets never enter a log or a public pointer table. Whole joined transaction.
 use super::*;
+#[path = "strata_adapt_transfer.rs"]
+mod flight;
+pub(crate) use flight::Flight;
 
 pub(crate) struct Pair {
     pub gpu: WgpuResource,
@@ -62,12 +65,12 @@ impl Host {
     /// Same actual owning device/queue. All source consumers have completed,
     /// no CPU map or new consumer overlaps, and Sources authenticated every GPU
     /// cell. All three roles of each proposed pair must be published together.
-    pub(crate) unsafe fn exchange(
+    pub(crate) unsafe fn submit_exchange(
         &mut self,
-        queue: &wgpu::Queue,
         pairs: &[Pair],
         scratch: &WgpuResource,
-    ) -> KResult<()> {
+        guard: crate::strata_external_flight::Flight,
+    ) -> KResult<Flight> {
         if self.closed
             || pairs.is_empty()
             || pairs.len() > crate::strata_global_adapt::MAX_SWAPS * 3
@@ -157,56 +160,15 @@ impl Host {
         // Swap only original model weights while registry readers are revoked.
         let token =
             unsafe { self.client.begin_public_external_rebase(bindings) }.map_err(|_| fail())?;
-        let oom = self.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
-        let validation = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let result = (|| -> KResult<()> {
-            let mut encoder = self
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("OriginalGlobalCellTransfer"),
-                });
-            for copy in &copies {
-                let pair = &pairs[copy.pair];
-                let region = |which| match which {
-                    Endpoint::Gpu => &pair.gpu,
-                    Endpoint::Host => &pair.host,
-                    Endpoint::Scratch => scratch,
-                };
-                let source = region(copy.from);
-                let target = region(copy.to);
-                // Copy order is deliberate: preserve incoming HOST bytes before
-                // evicting the original GPU cell to that SAME HOST location.
-                // Wgpu records transfer RAW/WAR/WAW barriers on original roots.
-                encoder.copy_buffer_to_buffer(
-                    &source.buffer,
-                    source.offset,
-                    &target.buffer,
-                    target.offset,
-                    copy.bytes,
-                );
-            }
-            // SAFETY: all original transfer writes queued, original HOST roots retained;
-            // checked fence completion precedes all CPU mappings/invalidations.
-            unsafe {
-                encoder.as_hal_mut::<wgpu::hal::api::Vulkan, _, _>(|encoder| {
-                    encoder
-                        .ok_or_else(fail)?
-                        .kuno_public_host_transfer_read_barrier()
-                        .map_err(Error::InvalidFormat)
-                })?;
-            }
-            queue.submit([encoder.finish()]);
-            join(&self.device).map_err(Error::InvalidFormat)
-        })();
-        let invalid = cubecl_common::future::block_on(validation.pop()).is_some();
-        let out_of_memory = cubecl_common::future::block_on(oom.pop()).is_some();
-        if invalid || out_of_memory {
-            return Err(fail());
-        }
-        result?;
-        // Actual raw GPU model-only exchange and cache barrier joined above;
-        // only complete success permits the registered source to become active.
-        unsafe { self.client.finish_public_external_rebase(token) }.map_err(|_| fail())
+        Flight::submit(
+            &self.device,
+            &self.client,
+            pairs,
+            scratch,
+            &copies,
+            token,
+            guard,
+        )
     }
 }
 

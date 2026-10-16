@@ -2935,34 +2935,6 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         }
     }
 
-    pub(crate) fn adapt_global_after_window(
-        &mut self,
-        executor: &mut GpuExecutor<'f>,
-        cancel: &AtomicBool,
-    ) -> Result<()> {
-        self.completed_native_projection_boundary(executor)?;
-        self.native_batch
-            .as_ref()
-            .ok_or(error())?
-            .validate_global_scope(executor, &self.admission)?;
-        self.native_batch
-            .as_mut()
-            .ok_or(error())?
-            .global_moe
-            .as_mut()
-            .ok_or(error())?
-            .adapt_after_finished(
-                self.graph,
-                &self.arena,
-                &self.admission,
-                executor
-                    .strata_global_sources
-                    .as_mut()
-                    .and_then(std::sync::Arc::get_mut)
-                    .ok_or(error())?,
-                cancel,
-            )
-    }
     /// Select once after the first prefill; subsequent requests preserve the
     /// same actual family policies, counters, bindings and resident owners.
     pub(crate) fn ensure_native_generation_policies(
@@ -5013,6 +4985,46 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             },
         )
     }
+    /// Actual native first window, with the same observed-row lifetime and
+    /// adaptive accounting as every later verified window. Only its final
+    /// prompt input runs here; earlier prompt matrix rows never train usage.
+    pub(crate) fn prefill_first_native_window(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+        tokens: &[u32],
+        cancel: &AtomicBool,
+    ) -> Result<(u32, target_rows::DeviceCarryReceipt)> {
+        if !crate::strata_intel_core::enabled()
+            || crate::strata_prompt::active()
+            || tokens.len() != 1
+        {
+            return Err(error());
+        }
+        let expected = self.position;
+        let mut result = None;
+        self.execute_native_chunk(
+            executor,
+            tokens,
+            Purpose::AllRowsWithCarry,
+            Some(&mut |phase| match phase {
+                PrefixPhase::Verified(rows) => {
+                    if result.is_some() || rows.start() != expected || rows.count() != 1 {
+                        return Err(error());
+                    }
+                    result = Some((rows.greedy(0)?, rows.take_device_carry()?));
+                    Ok(1)
+                }
+                PrefixPhase::Pending { accepted: 1, .. } => Ok(1),
+                _ => Err(error()),
+            }),
+            cancel,
+            |output| match output {
+                ChunkOutput::AcceptedPrefix(1) => Ok(()),
+                _ => Err(error()),
+            },
+        )?;
+        result.ok_or(error())
+    }
     /// The selected native controller observes provisional verified rows while
     /// ALL original state transactions remain open. Only the chosen prefix is
     /// published. The observer cannot access the model or executor, and its
@@ -5090,8 +5102,18 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             accepted: false,
         };
         let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let selecting = select.is_some();
-            if selecting {
+            // The final normal prompt input is the first actual target window,
+            // just as upstream's first_window=T1. Batched prompt rows do not
+            // train the adaptive tier. Later verified windows share this path.
+            let tracking = select.is_some();
+            if tracking
+                && (!crate::strata_intel_core::enabled()
+                    || crate::strata_prompt::active()
+                    || purpose != Purpose::AllRowsWithCarry)
+            {
+                return Err(error());
+            }
+            if tracking {
                 native
                     .global_moe
                     .as_mut()
@@ -5099,7 +5121,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                     .set_verify_usage(true)?;
             }
             let output = native.run(self, executor, tokens, purpose, select, cancel)?;
-            if selecting {
+            if tracking {
                 native
                     .global_moe
                     .as_mut()
@@ -5801,6 +5823,10 @@ impl Workspace {
             batch_io::read_fault(&m.arena, &m.admission, m.b.fault, cancel)?;
             ChunkOutput::Legacy(Zeroizing::new(Vec::new()))
         };
+        // The flight is acquired only after the scoped host-row observer has
+        // released its real output lease. It survives commit/draft/family work
+        // and joins on unwind BEFORE any original private arena cleanup.
+        let mut adaptation = None;
         let selected_prefix = if let Some(select) = select {
             let keep = match output {
                 ChunkOutput::TargetRows(rows) => {
@@ -5812,6 +5838,20 @@ impl Workspace {
                 .as_ref()
                 .ok_or(error())?
                 .check_no_live_output()?;
+            adaptation = self
+                .global_moe
+                .as_mut()
+                .ok_or(error())?
+                .begin_adaptation_after_verified(
+                    m.graph,
+                    &m.arena,
+                    &m.admission,
+                    e.strata_global_sources
+                        .as_mut()
+                        .and_then(std::sync::Arc::get_mut)
+                        .ok_or(error())?,
+                    cancel,
+                )?;
             // Pin the ACTUAL original observed R owner and enqueue its real
             // MAIN->draft visibility BEFORE any accepted-prefix commit. The
             // scope cannot publish target state or erase/reuse that source.
@@ -6028,6 +6068,16 @@ impl Workspace {
         self.four_rows_completed_chunks = four_rows_completed_chunks;
         self.grouped_ple_completed_chunks = grouped_ple_completed_chunks;
         self.grouped_status_completed = grouped_status_completed;
+        if adaptation.is_some() {
+            self.global_moe.as_mut().ok_or(error())?.finish_adaptation(
+                &m.arena,
+                e.strata_global_sources
+                    .as_mut()
+                    .and_then(std::sync::Arc::get_mut)
+                    .ok_or(error())?,
+                adaptation,
+            )?;
+        }
         m.position = *start + selected_prefix.unwrap_or(*count);
         Ok(output)
     }
