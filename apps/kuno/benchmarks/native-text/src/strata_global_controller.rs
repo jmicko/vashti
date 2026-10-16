@@ -3,6 +3,7 @@
 //! No legacy bank receipts, fabricated dispatches, operator profiles or speed
 //! reports. Prompt/carries/drafts/history are bounded, transient and wiped.
 use super::*;
+use kuno_text::Error;
 
 fn public_phase(phase: &'static str) {
     if std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1") {
@@ -461,26 +462,29 @@ pub(super) fn run<'m, 'f>(
             return Err("global draft window bound rejected".into());
         }
         sampling.stage_target(position, &inputs)?;
-        let mut round = LatestTargetRound::begin(target, executor, &inputs, cancel)?;
-        let mut rows = round.verify(cancel)?;
-        if rows.start() != position || rows.count() != count {
-            return Err("global verification identity rejected".into());
-        }
-        let mut predicted = Zeroizing::new(Vec::with_capacity(count));
-        for row in 0..count {
-            if rows.position(row)? != position + row {
-                return Err("global target row stamp rejected".into());
+        let mut selected = None;
+        let n = target.verify_native_prefix(executor, &inputs, cancel, &mut |rows| {
+            if rows.start() != position || rows.count() != count {
+                return Err(Error::InvalidFormat(
+                    "global verification identity rejected",
+                ));
             }
-            predicted.push(rows.greedy(row)?);
-        }
-        let n = accepted(&inputs, &predicted)?;
-        let device = rows.take_device_carry()?;
-        drop(rows);
-        // The core repairs only real recurrent/KV/history state. Cache routes
-        // count the original verified window once; repair does not count twice.
-        if round.finish(n, cancel)?.is_some() {
-            return Err("global state-only repair contract rejected".into());
-        }
+            let mut predicted = Zeroizing::new(Vec::with_capacity(count));
+            for row in 0..count {
+                if rows.position(row)? != position + row {
+                    return Err(Error::InvalidFormat("global target row stamp rejected"));
+                }
+                predicted.push(rows.greedy(row)?);
+            }
+            let n = accepted(&inputs, &predicted)
+                .map_err(|_| Error::InvalidFormat("global accepted prefix rejected"))?;
+            let device = rows.take_device_carry()?;
+            selected = Some((predicted, device));
+            Ok(n)
+        })?;
+        let (mut predicted, device) =
+            selected.ok_or("global verified prefix observation missing")?;
+        target.adapt_global_after_window(executor, cancel)?;
         sampling.commit_target(n)?;
         repairs += u64::from(n < count);
         if target.completed_target_rows_cursor(executor)? != position + n {

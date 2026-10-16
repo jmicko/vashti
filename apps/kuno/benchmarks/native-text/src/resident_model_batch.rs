@@ -100,6 +100,15 @@ const NATIVE_GDN_RUNTIME_INFO: u64 = if cfg!(feature = "strata-intel-core") {
 } else {
     0
 };
+// A native prefix is formed before the request I/O checkpoint, so its
+// runtime records coexist with the original verification window. Reserve the
+// actual36 Conv/Replay/fault folds,12 suffix clear/folds and1 PLE History,
+// conservatively retaining both audited copies of each2048-byte record.
+const NATIVE_PREFIX_RUNTIME_INFO: u64 = if cfg!(feature = "strata-intel-core") {
+    2 * (36 * 3 + 12 * 2 + 1) * 2048
+} else {
+    0
+};
 const TOTAL_MAIN: u64 = OLD_MAIN + NEW_MAIN;
 const NATIVE_GR_MAIN: u64 = if cfg!(feature = "strata-intel-core") {
     crate::strata_gr::PRIVATE_INCREMENT
@@ -1759,6 +1768,7 @@ fn runtime_bytes(head_tiles: u64) -> Result<u64> {
                 + gdn::strata_replay::PROMPT_INFO_BYTES
                 + crate::strata_qsa::prompt::INFO_BYTES
                 + NATIVE_GDN_RUNTIME_INFO
+                + NATIVE_PREFIX_RUNTIME_INFO
         } else {
             0
         };
@@ -1781,7 +1791,9 @@ pub(crate) enum Purpose {
     LastLogits,
     AllRowsWithCarry,
 }
+type PrefixSelection<'a> = Option<&'a mut dyn FnMut(&mut NativeTargetRows) -> Result<usize>>;
 enum ChunkOutput {
+    AcceptedPrefix(usize),
     Legacy(Zeroizing<Vec<f32>>),
     #[allow(dead_code)] // Read by the additive parent-registered result method.
     TargetRows(NativeTargetRows),
@@ -4878,10 +4890,17 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 line!()
             )));
         }
-        self.execute_native_chunk(executor, tokens, purpose, cancel, |output| match output {
-            ChunkOutput::Legacy(logits) => Ok(logits),
-            ChunkOutput::TargetRows(_) => Err(error()),
-        })
+        self.execute_native_chunk(
+            executor,
+            tokens,
+            purpose,
+            None,
+            cancel,
+            |output| match output {
+                ChunkOutput::Legacy(logits) => Ok(logits),
+                ChunkOutput::TargetRows(_) | ChunkOutput::AcceptedPrefix(_) => Err(error()),
+            },
+        )
     }
     /// Additive fixed-public target-output foundation. It commits every
     /// supplied row; this is not accepted-prefix or speculative execution.
@@ -4896,10 +4915,43 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             executor,
             tokens,
             Purpose::AllRowsWithCarry,
+            None,
             cancel,
             |output| match output {
                 ChunkOutput::TargetRows(rows) => Ok(rows),
-                ChunkOutput::Legacy(_) => Err(error()),
+                ChunkOutput::Legacy(_) | ChunkOutput::AcceptedPrefix(_) => Err(error()),
+            },
+        )
+    }
+    /// The selected native controller observes provisional verified rows while
+    /// ALL original state transactions remain open. Only the chosen prefix is
+    /// published. The observer cannot access the model or executor, and its
+    /// host-row lease is dropped before candidate state consumers run.
+    pub(crate) fn verify_native_prefix(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+        tokens: &[u32],
+        cancel: &AtomicBool,
+        select: &mut dyn FnMut(&mut NativeTargetRows) -> Result<usize>,
+    ) -> Result<usize> {
+        if !crate::strata_intel_core::enabled() {
+            return Err(error());
+        }
+        self.validate_native_request_boundary(executor)?;
+        self.native_batch
+            .as_ref()
+            .ok_or(error())?
+            .validate_target_decode_policy(executor, &self.admission)?;
+        executor.check_target_rows_policy()?;
+        self.execute_native_chunk(
+            executor,
+            tokens,
+            Purpose::AllRowsWithCarry,
+            Some(select),
+            cancel,
+            |output| match output {
+                ChunkOutput::AcceptedPrefix(n) => Ok(n),
+                _ => Err(error()),
             },
         )
     }
@@ -4924,11 +4976,13 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             body(self, executor)
         })
     }
+    #[allow(clippy::too_many_arguments)] // Same transaction with an optional scoped prefix observer.
     fn execute_native_chunk<T>(
         &mut self,
         executor: &mut GpuExecutor<'f>,
         tokens: &[u32],
         purpose: Purpose,
+        select: PrefixSelection<'_>,
         cancel: &AtomicBool,
         accept: impl FnOnce(ChunkOutput) -> Result<T>,
     ) -> Result<T> {
@@ -4944,9 +4998,23 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             accepted: false,
         };
         let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            native
-                .run(self, executor, tokens, purpose, cancel)
-                .and_then(accept)
+            let selecting = select.is_some();
+            if selecting {
+                native
+                    .global_moe
+                    .as_mut()
+                    .ok_or(error())?
+                    .set_verify_usage(true)?;
+            }
+            let output = native.run(self, executor, tokens, purpose, select, cancel)?;
+            if selecting {
+                native
+                    .global_moe
+                    .as_mut()
+                    .ok_or(error())?
+                    .set_verify_usage(false)?;
+            }
+            accept(output)
         }));
         match attempt {
             Ok(Ok(logits)) => {
@@ -5013,6 +5081,23 @@ fn drive_layers(cancel: &AtomicBool, mut layer: impl FnMut(usize) -> Result<()>)
     }
     u::cancel(cancel)
 }
+/// The observer receives only provisional rows, never model state access.
+/// Dropping the original row lease precedes every accepted-prefix consumer.
+fn select_verified_rows<R>(
+    mut rows: R,
+    count: usize,
+    select: impl FnOnce(&mut R) -> Result<usize>,
+) -> Result<usize> {
+    if !(1..=MAX_BATCH).contains(&count) {
+        return Err(error());
+    }
+    let keep = select(&mut rows)?;
+    if !(1..=count).contains(&keep) {
+        return Err(error());
+    }
+    Ok(keep)
+}
+
 /// Both actual completed proofs surround PLE's real owning diagnostic maps.
 /// No guarded output/PLE permit escapes if a map, audit or second proof fails.
 fn completed_proof<O, P>(
@@ -5037,14 +5122,19 @@ fn prepared_shared_overlap(
 }
 
 impl Workspace {
+    #[allow(clippy::too_many_arguments)] // Original execution owners plus scoped prefix selection.
     fn run_global(
         &mut self,
         m: &mut ResidentModel<'_, '_>,
         e: &mut GpuExecutor<'_>,
         tokens: &[u32],
         purpose: Purpose,
+        select: PrefixSelection<'_>,
         cancel: &AtomicBool,
     ) -> Result<ChunkOutput> {
+        if select.is_some() && purpose != Purpose::AllRowsWithCarry {
+            return Err(error());
+        }
         self.prove_outer(m)?;
         if !crate::strata_intel_core::enabled()
             || e.strata_global_sources.is_none()
@@ -5069,7 +5159,7 @@ impl Workspace {
         let (grouped_status_folds, grouped_status_before) = self.grouped_status_state()?;
         let start = Zeroizing::new(m.position);
         let count = Zeroizing::new(tokens.len());
-        let (ids, positions, end) = packet(*start, m.context, tokens)?;
+        let (ids, positions, _end) = packet(*start, m.context, tokens)?;
         let mut pending = Pending::new()?;
         self.gr.validate_all_consumers_queued()?;
         self.shared.validate_all_consumers_queued()?;
@@ -5591,36 +5681,77 @@ impl Workspace {
                 .map_err(u::fault)?;
         }
         let final_proof_start = Instant::now();
+        let mut output = if purpose == Purpose::LastLogits {
+            ChunkOutput::Legacy(batch_io::read_last_logits(
+                m.graph,
+                &m.arena,
+                &m.admission,
+                m.b.logits,
+                m.b.logit_packet,
+                m.b.fault,
+                cancel,
+            )?)
+        } else if purpose == Purpose::AllRowsWithCarry {
+            ChunkOutput::TargetRows(self.target_rows.as_ref().ok_or(error())?.read(
+                m.graph,
+                &m.arena,
+                &m.admission,
+                self.outer.residual[*current],
+                m.b.fault,
+                *count,
+                *start,
+                cancel,
+            )?)
+        } else {
+            batch_io::read_fault(&m.arena, &m.admission, m.b.fault, cancel)?;
+            ChunkOutput::Legacy(Zeroizing::new(Vec::new()))
+        };
+        let selected_prefix = if let Some(select) = select {
+            let keep = match output {
+                ChunkOutput::TargetRows(rows) => select_verified_rows(rows, *count, select)?,
+                _ => return Err(error()),
+            };
+            self.target_rows
+                .as_ref()
+                .ok_or(error())?
+                .check_no_live_output()?;
+            // Original candidate roots remain unpublished. GDN replays from
+            // prewindow OLD into NEXT, QSA removes only the rejected suffix,
+            // and PLE derives accepted NEXT from original normalized rows.
+            for (layer, stage) in m.layers.iter().enumerate() {
+                match stage {
+                    Layer::Gdn(stage, public) => self.gdn.enqueue_pending_prefix(
+                        stage,
+                        public,
+                        pending.gdn[layer].as_ref().ok_or(error())?,
+                        &m.arena,
+                        keep,
+                        cancel,
+                    )?,
+                    Layer::Qsa(stage, _) => self.qsa.enqueue_pending_prefix(
+                        stage,
+                        pending.qsa[layer].as_ref().ok_or(error())?,
+                        &m.arena,
+                        keep,
+                        cancel,
+                    )?,
+                }
+            }
+            self.ple.enqueue_pending_prefix(
+                m,
+                pending.ple.as_ref().ok_or(error())?,
+                keep,
+                cancel,
+            )?;
+            output = ChunkOutput::AcceptedPrefix(keep);
+            Some(keep)
+        } else {
+            None
+        };
         let (output, ple) = completed_proof(
+            || Ok(output),
             || {
-                Ok(if purpose == Purpose::LastLogits {
-                    ChunkOutput::Legacy(batch_io::read_last_logits(
-                        m.graph,
-                        &m.arena,
-                        &m.admission,
-                        m.b.logits,
-                        m.b.logit_packet,
-                        m.b.fault,
-                        cancel,
-                    )?)
-                } else if purpose == Purpose::AllRowsWithCarry {
-                    ChunkOutput::TargetRows(self.target_rows.as_ref().ok_or(error())?.read(
-                        m.graph,
-                        &m.arena,
-                        &m.admission,
-                        self.outer.residual[*current],
-                        m.b.fault,
-                        *count,
-                        *start,
-                        cancel,
-                    )?)
-                } else {
-                    batch_io::read_fault(&m.arena, &m.admission, m.b.fault, cancel)?;
-                    ChunkOutput::Legacy(Zeroizing::new(Vec::new()))
-                })
-            },
-            || {
-                self.ple.prepare_split_after_whole_model_fence(
+                self.ple.prepare_device_prefix_after_whole_model_fence(
                     ple_batch::Preparation {
                         graph: m.graph,
                         arena: &m.arena,
@@ -5637,6 +5768,7 @@ impl Workspace {
                         scalar_ids: [m.b.ple_emb, m.b.ple_key, m.b.ple_value],
                     },
                     pending.ple.take().ok_or(error())?,
+                    selected_prefix.unwrap_or(*count),
                     cancel,
                 )
             },
@@ -5695,6 +5827,10 @@ impl Workspace {
             self.qsa
                 .accept_after_whole_model_chunk_acceptance(&m.arena, &refs, cancel)?
         };
+        if let Some(keep) = selected_prefix {
+            ga.select_prefix(keep)?;
+            qa.select_prefix(keep)?;
+        }
         self.global_moe
             .as_mut()
             .ok_or(error())?
@@ -5782,19 +5918,24 @@ impl Workspace {
         self.four_rows_completed_chunks = four_rows_completed_chunks;
         self.grouped_ple_completed_chunks = grouped_ple_completed_chunks;
         self.grouped_status_completed = grouped_status_completed;
-        m.position = *end;
+        m.position = *start + selected_prefix.unwrap_or(*count);
         Ok(output)
     }
+    #[allow(clippy::too_many_arguments)] // Original execution owners plus scoped prefix selection.
     fn run(
         &mut self,
         m: &mut ResidentModel<'_, '_>,
         e: &mut GpuExecutor<'_>,
         tokens: &[u32],
         purpose: Purpose,
+        select: PrefixSelection<'_>,
         cancel: &AtomicBool,
     ) -> Result<ChunkOutput> {
         if crate::strata_intel_core::enabled() {
-            return self.run_global(m, e, tokens, purpose, cancel);
+            return self.run_global(m, e, tokens, purpose, select, cancel);
+        }
+        if select.is_some() {
+            return Err(error());
         }
         self.prove_outer(m)?;
         let _core_stage_scope = crate::strata_stage::Scope::new(&m.arena, self.core_stages)?;
@@ -6781,6 +6922,31 @@ impl Workspace {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn scoped_verified_rows_release_original_lease_before_prefix_consumers() {
+        use super::{MAX_BATCH, error, select_verified_rows};
+        use std::cell::Cell;
+        struct Rows<'a>(&'a Cell<bool>);
+        impl Drop for Rows<'_> {
+            fn drop(&mut self) {
+                self.0.set(true);
+            }
+        }
+        for count in 1..=MAX_BATCH {
+            for keep in 0..=count + 1 {
+                let dropped = Cell::new(false);
+                let result = select_verified_rows(Rows(&dropped), count, |_| {
+                    assert!(!dropped.get());
+                    Ok(keep)
+                });
+                assert!(dropped.get());
+                assert_eq!(result.ok(), (1..=count).contains(&keep).then_some(keep));
+            }
+        }
+        let dropped = Cell::new(false);
+        assert!(select_verified_rows(Rows(&dropped), 3, |_| Err(error())).is_err());
+        assert!(dropped.get());
+    }
     #[test]
     fn q6_verifier_activation_keeps_original_prefill_and_request_boundary() {
         use super::{NativeDecodeKernels as K, q6_verify_head_selection_allowed};

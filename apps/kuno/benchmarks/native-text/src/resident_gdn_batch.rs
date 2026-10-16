@@ -675,6 +675,7 @@ impl GdnBatchWorkspace {
         attempted?;
         Ok(GdnBatchAcceptance {
             workspace: self,
+            accepted_prefix: None,
             armed: true,
         })
     }
@@ -691,9 +692,23 @@ impl Drop for GdnBatchWorkspace {
 }
 pub(crate) struct GdnBatchAcceptance<'a> {
     workspace: &'a mut GdnBatchWorkspace,
+    accepted_prefix: Option<usize>,
     armed: bool,
 }
 impl GdnBatchAcceptance<'_> {
+    /// Selection follows the real verified rows and precedes any state commit.
+    /// This changes only the host cursor extent; the caller must enqueue the
+    /// original accepted-prefix device consumers and join their fault proof.
+    pub(crate) fn select_prefix(&mut self, accepted: usize) -> Result<()> {
+        if !crate::strata_intel_core::enabled()
+            || self.accepted_prefix.is_some()
+            || !(1..=*self.workspace.policy.count).contains(&accepted)
+        {
+            return Err(fault("native accepted prefix permit extent"));
+        }
+        self.accepted_prefix = Some(accepted);
+        Ok(())
+    }
     pub(crate) fn finish(mut self, arena: &PrivateArena, cancel: &AtomicBool) -> Result<()> {
         self.workspace.healthy(arena, cancel)?;
         self.workspace.policy.finish()?;
@@ -784,11 +799,14 @@ impl Lifecycle {
         Ok(())
     }
     fn commit_batch(&mut self, start: u64, count: usize) -> Result<()> {
-        if self.phase != Phase::UncommittedBatch(start, count) {
+        self.commit_batch_prefix(start, count, count)
+    }
+    fn commit_batch_prefix(&mut self, start: u64, count: usize, accepted: usize) -> Result<()> {
+        if self.phase != Phase::UncommittedBatch(start, count) || !(1..=count).contains(&accepted) {
             self.poison();
             return Err(fault("native GDN batch stale state commit"));
         }
-        self.phase = Phase::Ready(checked_count(start, count, self.max_context)?);
+        self.phase = Phase::Ready(checked_count(start, accepted, self.max_context)?);
         Ok(())
     }
 }
@@ -1608,7 +1626,11 @@ impl ResidentGdn<'_> {
             // All fallible receipt/extent checks precede the actual swap.
             checked_count(stamp.start, stamp.count, self.layout.max_context)?;
             acceptance.workspace.policy.commit(stamp)?;
-            self.lifecycle.commit_batch(stamp.start, stamp.count)?;
+            self.lifecycle.commit_batch_prefix(
+                stamp.start,
+                stamp.count,
+                acceptance.accepted_prefix.unwrap_or(stamp.count),
+            )?;
             self.buffers.recurrent.swap(0, 1);
             self.buffers.raw_conv.swap(0, 1);
             self.batch_pending = None;
@@ -2094,6 +2116,30 @@ fn validate_page(offset: u64, size: u64, physical: u64, owned: u64, bound: u64) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn original_pending_batch_publishes_only_selected_prefix_without_full_cursor() {
+        for count in 1..=MAX_BATCH {
+            for keep in 1..=count {
+                let mut lifecycle = Lifecycle::new(4096);
+                lifecycle.begin_batch(0, count).unwrap();
+                lifecycle.commit_batch_prefix(0, count, keep).unwrap();
+                assert!(lifecycle.phase == Phase::Ready(keep as u64));
+                lifecycle.begin_batch(keep as u64, 1).unwrap();
+                lifecycle.commit_batch(keep as u64, 1).unwrap();
+                assert!(lifecycle.phase == Phase::Ready(keep as u64 + 1));
+            }
+            for keep in [0, count + 1] {
+                let mut lifecycle = Lifecycle::new(4096);
+                lifecycle.begin_batch(0, count).unwrap();
+                assert!(lifecycle.commit_batch_prefix(0, count, keep).is_err());
+                assert!(lifecycle.phase == Phase::Poisoned);
+            }
+            let mut lifecycle = Lifecycle::new(4096);
+            lifecycle.begin_batch(0, count).unwrap();
+            assert!(lifecycle.commit_batch_prefix(0, count + 1, 1).is_err());
+            assert!(lifecycle.phase == Phase::Poisoned);
+        }
+    }
     fn latest() -> LatestGdnMetadata {
         LatestGdnMetadata {
             workspace: 7,

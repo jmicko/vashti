@@ -624,6 +624,7 @@ impl QsaBatchWorkspace {
         attempted?;
         Ok(QsaBatchAcceptance {
             workspace: self,
+            accepted_prefix: None,
             armed: true,
         })
     }
@@ -640,9 +641,23 @@ impl Drop for QsaBatchWorkspace {
 }
 pub(crate) struct QsaBatchAcceptance<'a> {
     workspace: &'a mut QsaBatchWorkspace,
+    accepted_prefix: Option<usize>,
     armed: bool,
 }
 impl QsaBatchAcceptance<'_> {
+    /// Selection follows the real verified rows and precedes any state commit.
+    /// This changes only the host cursor extent; the caller must enqueue the
+    /// original accepted-prefix device consumers and join their fault proof.
+    pub(crate) fn select_prefix(&mut self, accepted: usize) -> Result<()> {
+        if !crate::strata_intel_core::enabled()
+            || self.accepted_prefix.is_some()
+            || !(1..=*self.workspace.policy.count).contains(&accepted)
+        {
+            return Err(fault("native accepted prefix permit extent"));
+        }
+        self.accepted_prefix = Some(accepted);
+        Ok(())
+    }
     pub(crate) fn finish(mut self, arena: &PrivateArena, cancel: &AtomicBool) -> Result<()> {
         self.workspace.healthy(arena, cancel)?;
         self.workspace.policy.finish()?;
@@ -673,11 +688,14 @@ impl Lifecycle {
         Ok(())
     }
     fn commit_batch(&mut self, start: u64, count: usize) -> Result<()> {
-        if self.phase != Phase::PendingBatch(start, count) {
+        self.commit_batch_prefix(start, count, count)
+    }
+    fn commit_batch_prefix(&mut self, start: u64, count: usize, accepted: usize) -> Result<()> {
+        if self.phase != Phase::PendingBatch(start, count) || !(1..=count).contains(&accepted) {
             self.phase = Phase::Poisoned;
             return Err(fault("native QSA stale chunk cursor"));
         }
-        self.phase = Phase::Ready(checked_count(start, count, self.max)?);
+        self.phase = Phase::Ready(checked_count(start, accepted, self.max)?);
         Ok(())
     }
 }
@@ -2328,7 +2346,11 @@ impl ResidentQsa<'_> {
             let stamp = receipt.metadata.stamp;
             checked_count(stamp.start, stamp.count, self.layout.max_context)?;
             acceptance.workspace.policy.commit(stamp)?;
-            self.lifecycle.commit_batch(stamp.start, stamp.count)?;
+            self.lifecycle.commit_batch_prefix(
+                stamp.start,
+                stamp.count,
+                acceptance.accepted_prefix.unwrap_or(stamp.count),
+            )?;
             self.batch_pending = None;
             receipt.armed = false;
             cancelled(cancel)
@@ -2672,33 +2694,13 @@ impl<'a, 'f> LatestQsaRestore<'a, 'f> {
         {
             return Err(fault("native latest QSA clear fault owner"));
         }
-        let words =
-            (self.checkpoint.metadata.count - self.accepted) * crate::strata_qsa::cache_words();
-        clear_latest_suffix::launch::<WgpuRuntime>(
-            arena.client().map_err(arena_fault)?,
-            u::grid(words)?,
-            CubeDim::new_1d(64),
-            u::arg(arena, ids[0])?,
-            u::arg(arena, ids[1])?,
-            u::arg(arena, ids[2])?,
+        enqueue_suffix_clear(
+            arena,
+            ids,
+            fault_id,
             self.checkpoint.metadata.start as usize + self.accepted,
             self.checkpoint.metadata.count - self.accepted,
-            crate::strata_qsa::cache_words(),
-            crate::strata_intel_core::enabled(),
-        );
-        verify_latest_cleared::launch::<WgpuRuntime>(
-            arena.client().map_err(arena_fault)?,
-            u::grid(words)?,
-            CubeDim::new_1d(64),
-            u::arg(arena, ids[0])?,
-            u::arg(arena, ids[1])?,
-            u::arg(arena, ids[2])?,
-            u::arg(arena, fault_id)?,
-            self.checkpoint.metadata.start as usize + self.accepted,
-            self.checkpoint.metadata.count - self.accepted,
-            crate::strata_qsa::cache_words(),
-            crate::strata_intel_core::enabled(),
-        );
+        )?;
         cancelled(cancel)?;
         Ok(LatestQsaCleared {
             checkpoint: self.checkpoint,
@@ -2706,6 +2708,69 @@ impl<'a, 'f> LatestQsaRestore<'a, 'f> {
             accepted: self.accepted,
         })
     }
+}
+impl QsaBatchWorkspace {
+    pub(crate) fn enqueue_pending_prefix(
+        &self,
+        stage: &ResidentQsa<'_>,
+        receipt: &PendingQsaBatch,
+        arena: &PrivateArena,
+        accepted: usize,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        self.healthy(arena, cancel)?;
+        self.check_receipt(stage, receipt, arena)?;
+        let m = &receipt.metadata;
+        if !crate::strata_intel_core::enabled() || !(1..=m.stamp.count).contains(&accepted) {
+            return Err(fault("native original QSA prefix extent"));
+        }
+        enqueue_suffix_clear(
+            arena,
+            m.owners,
+            m.fault,
+            m.stamp.start as usize + accepted,
+            m.stamp.count - accepted,
+        )?;
+        cancelled(cancel)
+    }
+}
+fn enqueue_suffix_clear(
+    arena: &PrivateArena,
+    ids: [BufferId; 3],
+    fault_id: BufferId,
+    start: usize,
+    count: usize,
+) -> Result<()> {
+    if count == 0 {
+        return Ok(());
+    }
+    let words = count * crate::strata_qsa::cache_words();
+    clear_latest_suffix::launch::<WgpuRuntime>(
+        arena.client().map_err(arena_fault)?,
+        u::grid(words)?,
+        CubeDim::new_1d(64),
+        u::arg(arena, ids[0])?,
+        u::arg(arena, ids[1])?,
+        u::arg(arena, ids[2])?,
+        start,
+        count,
+        crate::strata_qsa::cache_words(),
+        crate::strata_intel_core::enabled(),
+    );
+    verify_latest_cleared::launch::<WgpuRuntime>(
+        arena.client().map_err(arena_fault)?,
+        u::grid(words)?,
+        CubeDim::new_1d(64),
+        u::arg(arena, ids[0])?,
+        u::arg(arena, ids[1])?,
+        u::arg(arena, ids[2])?,
+        u::arg(arena, fault_id)?,
+        start,
+        count,
+        crate::strata_qsa::cache_words(),
+        crate::strata_intel_core::enabled(),
+    );
+    Ok(())
 }
 impl LatestQsaCleared<'_, '_> {
     /// External completed original fault/audit proof is required first. All
@@ -2836,6 +2901,30 @@ fn verify_latest_cleared(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn original_pending_batch_publishes_only_selected_prefix_without_full_cursor() {
+        for count in 1..=MAX_BATCH {
+            for keep in 1..=count {
+                let mut lifecycle = Lifecycle::new(4096);
+                lifecycle.begin_batch(0, count).unwrap();
+                lifecycle.commit_batch_prefix(0, count, keep).unwrap();
+                assert!(lifecycle.phase == Phase::Ready(keep as u64));
+                lifecycle.begin_batch(keep as u64, 1).unwrap();
+                lifecycle.commit_batch(keep as u64, 1).unwrap();
+                assert!(lifecycle.phase == Phase::Ready(keep as u64 + 1));
+            }
+            for keep in [0, count + 1] {
+                let mut lifecycle = Lifecycle::new(4096);
+                lifecycle.begin_batch(0, count).unwrap();
+                assert!(lifecycle.commit_batch_prefix(0, count, keep).is_err());
+                assert!(lifecycle.phase == Phase::Poisoned);
+            }
+            let mut lifecycle = Lifecycle::new(4096);
+            lifecycle.begin_batch(0, count).unwrap();
+            assert!(lifecycle.commit_batch_prefix(0, count + 1, 1).is_err());
+            assert!(lifecycle.phase == Phase::Poisoned);
+        }
+    }
     #[test]
     fn latest_checkpoint_uses_pinned_fault_after_original_candidate_pointer_erasure() {
         let pinned = BufferId::metadata_fixture(31, 38, 2);

@@ -1406,6 +1406,7 @@ impl PleBatchWorkspace {
                 arena: c.arena,
                 retired: c.retired,
                 transition: Some(device_history::Commit::Legacy(transition)),
+                accepted_count: receipt.metadata.count,
                 receipt,
                 armed: true,
                 public_grouped_read,
@@ -1447,6 +1448,7 @@ pub(crate) struct PleBatchAcceptance<'a> {
     receipt: PendingPleBatch,
     armed: bool,
     public_grouped_read: bool,
+    accepted_count: usize,
 }
 impl PleBatchAcceptance<'_> {
     /// Actual selected read_full_three execution, after full diagnostics and
@@ -1462,6 +1464,7 @@ impl PleBatchAcceptance<'_> {
                 || self.retired.load(Ordering::Acquire)
                 || !self.armed
                 || self.public_grouped_read != self.workspace.public_grouped_reads
+                || !(1..=self.receipt.metadata.count).contains(&self.accepted_count)
             {
                 return Err(error());
             }
@@ -1481,7 +1484,7 @@ impl PleBatchAcceptance<'_> {
                 self.workspace.ids.swap(OLD, NEXT);
             }
         }
-        self.workspace.next = self.receipt.metadata.start + self.receipt.metadata.count;
+        self.workspace.next = self.receipt.metadata.start + self.accepted_count;
         self.workspace.pending = false;
         if let Some(anchor) = self.anchor.as_mut() {
             anchor.armed = false;

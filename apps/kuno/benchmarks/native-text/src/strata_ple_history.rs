@@ -97,8 +97,52 @@ impl PleBatchWorkspace {
         receipt: PendingPleBatch,
         cancel: &AtomicBool,
     ) -> Result<PleBatchAcceptance<'a>> {
+        let accepted = receipt.metadata.count;
+        self.prepare_device_prefix_after_whole_model_fence(c, receipt, accepted, cancel)
+    }
+    pub(crate) fn enqueue_pending_prefix(
+        &self,
+        model: &ResidentModel<'_, '_>,
+        receipt: &PendingPleBatch,
+        accepted: usize,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        self.receipt(model, receipt, cancel)?;
+        if !crate::strata_intel_core::enabled() || !(1..=receipt.metadata.count).contains(&accepted)
+        {
+            return Err(error());
+        }
+        if receipt.metadata.count > 1 {
+            let mut info = [0; 12];
+            info[0] = accepted as u32;
+            crate::strata_ple::launch(
+                &model.arena,
+                crate::strata_ple::Kernel::PromptHistory,
+                [CHANNELS / 256, 1, 1],
+                vec![
+                    u::handle(&model.arena, self.ids[OLD])?,
+                    u::handle(&model.arena, self.ids[NORMALIZED])?,
+                    u::handle(&model.arena, self.ids[NEXT])?,
+                    u::handle(&model.arena, model.b.fault)?,
+                ],
+                info,
+            )?;
+        }
+        u::cancel(cancel)
+    }
+    pub(crate) fn prepare_device_prefix_after_whole_model_fence<'a>(
+        &'a mut self,
+        c: Preparation<'a, '_, '_>,
+        receipt: PendingPleBatch,
+        accepted: usize,
+        cancel: &AtomicBool,
+    ) -> Result<PleBatchAcceptance<'a>> {
         let poison = self.poison.clone();
         let diagnostic = guarded(&poison, || {
+            if !(1..=receipt.metadata.count).contains(&accepted) {
+                return Err(error());
+            }
+
             self.receipt_parts(&c, &receipt, cancel)?;
             // Explicit legacy numeric diagnostics may still observe the real
             // three GPU owners. The native default neither reads nor uploads
@@ -132,7 +176,7 @@ impl PleBatchWorkspace {
             c.history,
             c.graph.ple_hash(),
             m.old_tokens,
-            &m.tokens[..m.count],
+            &m.tokens[..accepted],
             cancel,
         )
         .map_err(u::fault);
@@ -143,6 +187,7 @@ impl PleBatchWorkspace {
                 arena: c.arena,
                 retired: c.retired,
                 transition: Some(Commit::Device(p)),
+                accepted_count: accepted,
                 receipt,
                 armed: true,
                 public_grouped_read,
