@@ -139,25 +139,38 @@ impl ResidentMtp<'_, '_> {
         // scalar-token owner is scratch during whole-prefix teacher forcing.
         p::stage_private_view(&self.arena, self.id(B::Token), token_view.clone(), &upload)?;
         let info = [count as u32, start as u32, 0, 0, 0, 0, EPS.to_bits(), 0];
-        let pages = self.public()?.pages(EMBEDDING.name)?.len();
-        for page in self.public()?.pages(EMBEDDING.name)? {
-            let mut q = info;
-            q[2] = k::VOCAB as u32;
-            q[3] = page.rows as u32;
-            q[4] = page.first as u32;
-            f::launch_prompt(
+        let pages = if let Some(shared) = &self.shared_target_weights {
+            shared.gather_queued(
                 &self.arena,
-                f::Kernel::Embed,
-                [40, count, 1],
-                vec![
-                    page.handle.clone(),
-                    token_view.clone(),
-                    embedding.clone(),
-                    fault.clone(),
-                ],
-                q,
+                token_view.clone(),
+                embedding.clone(),
+                fault.clone(),
+                count,
+                start,
             )?;
-        }
+            1
+        } else {
+            let pages = self.public()?.pages(EMBEDDING.name)?.len();
+            for page in self.public()?.pages(EMBEDDING.name)? {
+                let mut q = info;
+                q[2] = k::VOCAB as u32;
+                q[3] = page.rows as u32;
+                q[4] = page.first as u32;
+                f::launch_prompt(
+                    &self.arena,
+                    f::Kernel::Embed,
+                    [40, count, 1],
+                    vec![
+                        page.handle.clone(),
+                        token_view.clone(),
+                        embedding.clone(),
+                        fault.clone(),
+                    ],
+                    q,
+                )?;
+            }
+            pages
+        };
         self.tick(pages)?;
         for (input, output, gamma, columns) in [
             (embedding, en.clone(), "blk.48.nextn.enorm.weight", k::D),

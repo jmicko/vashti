@@ -153,6 +153,7 @@ pub(crate) struct Weights {
     retired: Arc<AtomicBool>,
     embedding: crate::public_host_expert_mirror::strata_global::Embedding,
     head: Vec<Page>,
+    embedding_table: Handle,
 }
 impl Weights {
     pub(crate) fn validate_graph(graph: BoundGraph<'_, '_>) -> Result<()> {
@@ -185,6 +186,7 @@ impl Weights {
             binding: graph.binding_id(),
             retired: admission.retired_context(),
             embedding: sources.embedding(graph, client)?,
+            embedding_table: sources.embedding_table(graph, client)?,
             head: Vec::new(),
         };
         for tensor in [Tensor::Head] {
@@ -259,6 +261,94 @@ impl Weights {
 }
 
 impl Weights {
+    /// Original device token rows, for target AND MTP. The real native graph
+    /// retains all mapped pages as physical read dependencies; table0 is shared.
+    pub(crate) fn gather_queued(
+        &self,
+        arena: &crate::private_arena::PrivateArena,
+        tokens: Handle,
+        output: Handle,
+        fault: Handle,
+        count: usize,
+        start: usize,
+    ) -> Result<()> {
+        let client = arena.client().map_err(u::fault)?;
+        self.check(client, self.binding)?;
+        let prompt = crate::strata_prompt::active();
+        let cap = if prompt {
+            crate::strata_prompt::groups::CAPACITY
+        } else {
+            8
+        };
+        if count == 0
+            || count > cap
+            || tokens.size_in_used() < (count * 4) as u64
+            || output.size_in_used() < (count * COLUMNS * 4) as u64
+            || fault.size_in_used() != 4
+        {
+            return Err(rejected());
+        }
+        let private = |h: &Handle| {
+            arena
+                .contains_private_view(h)
+                .map_err(u::fault)?
+                .then_some(())
+                .or_else(|| {
+                    if prompt && crate::strata_prompt::validate_output(h).is_ok() {
+                        Some(())
+                    } else {
+                        None
+                    }
+                })
+                .ok_or_else(rejected)
+        };
+        private(&tokens)?;
+        private(&output)?;
+        private(&fault)?;
+        let private_views = [&tokens, &output, &fault];
+        for (i, a) in private_views.iter().enumerate() {
+            for b in &private_views[..i] {
+                if (**a).clone().binding().memory.allocation_id()
+                    == (**b).clone().binding().memory.allocation_id()
+                {
+                    let range = |h: &Handle| {
+                        h.offset_start.unwrap_or(0)..h.size() - h.offset_end.unwrap_or(0)
+                    };
+                    let x = range(a);
+                    let y = range(b);
+                    if x.start < y.end && y.start < x.end {
+                        return Err(rejected());
+                    }
+                }
+            }
+        }
+        let first = self.embedding.pages.first().ok_or_else(rejected)?;
+        crate::strata_mtp_front::launch_mapped_embedding(
+            arena,
+            vec![
+                first.handle.clone(),
+                tokens,
+                output,
+                fault,
+                self.embedding_table.clone(),
+            ],
+            self.embedding
+                .pages
+                .iter()
+                .map(|p| p.handle.clone())
+                .collect(),
+            [
+                count as u32,
+                u32::try_from(start).map_err(u::fault)?,
+                ROWS as u32,
+                TILE_ROWS as u32,
+                (crate::strata_shared_embedding::WORD_FIRST / 4) as u32,
+                crate::strata_shared_embedding::PAGE_COUNT as u32,
+                0,
+                0,
+            ],
+        )
+    }
     /// Gather once into D, then broadcast to the four HC streams. All request
     /// bytes live in original, fully erased private owners. No new root/view
     /// acquires erasure authority, and no token-dependent shader key is used.
@@ -342,28 +432,14 @@ impl Weights {
                 crate::strata_mtp_front::launch(arena, kernel, grid, bindings, info)
             }
         };
-        for page in &self.embedding.pages {
-            launch(
-                crate::strata_mtp_front::Kernel::Embed,
-                [COLUMNS.div_ceil(64), tokens.len(), 1],
-                vec![
-                    page.handle.clone(),
-                    source.clone(),
-                    embedding.clone(),
-                    fault.clone(),
-                ],
-                [
-                    tokens.len() as u32,
-                    0,
-                    ROWS as u32,
-                    page.tile.rows as u32,
-                    page.tile.first as u32,
-                    0,
-                    0,
-                    0,
-                ],
-            )?;
-        }
+        self.gather_queued(
+            arena,
+            source,
+            embedding.clone(),
+            fault.clone(),
+            tokens.len(),
+            0,
+        )?;
         launch(
             crate::strata_mtp_front::Kernel::TargetBroadcast,
             [(COLUMNS * 4).div_ceil(64), tokens.len(), 1],

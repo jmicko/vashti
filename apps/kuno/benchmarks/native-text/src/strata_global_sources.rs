@@ -134,6 +134,20 @@ impl Sources {
         }
         self.host.as_ref().ok_or_else(reject)?.embedding()
     }
+    pub(crate) fn embedding_table(
+        &self,
+        graph: BoundGraph<'_, '_>,
+        client: &ComputeClient<WgpuRuntime>,
+    ) -> Result<Handle> {
+        self.plan.check_binding(graph)?;
+        if !std::ptr::eq(client.info(), self.client.info())
+            || self.unavailable()
+            || self.tables.len() != LAYERS
+        {
+            return Err(reject());
+        }
+        self.tables.first().cloned().ok_or_else(reject)
+    }
     fn build_tables(&mut self, graph: BoundGraph<'_, '_>, device: &wgpu::Device) -> Result<()> {
         let gpu = self.gpu.as_ref().ok_or_else(reject)?;
         let host = self.host.as_ref().ok_or_else(reject)?;
@@ -220,6 +234,16 @@ impl Sources {
                         reads.push(root.clone());
                     }
                 }
+            }
+            if layer == 0 {
+                let embedding = host.embedding()?;
+                let mut pages = Vec::with_capacity(embedding.pages.len());
+                for page in &embedding.pages {
+                    let id = page.handle.clone().binding().memory.allocation_id();
+                    let &(base, size, _) = roots.get(&id).ok_or_else(reject)?;
+                    pages.push((base, size));
+                }
+                crate::strata_shared_embedding::encode(&mut words, &pages)?;
             }
             let bytes = words.into_iter().flat_map(u32::to_le_bytes).collect();
             let table = if let Some(table) = self.tables.get(layer) {

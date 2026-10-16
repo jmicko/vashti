@@ -24,6 +24,45 @@ fn main(@builtin(global_invocation_id) id:vec3<u32>) {
     let value=scale*f32(signed);output[t*2560u+d]=select(0.0,value,finite(value));if !finite(value) {atomicOr(&fault[0],1u);}
 }
 // EMBED_END
+// EMBED_MAPPED_BEGIN
+// STRATA_PHYSICAL_EXPERTS: native_head.cpp / iq_kernels.dp.cpp::dq_iq4_xs.
+// One32-lane group per original256-value block; each lane owns two float4 runs.
+@group(0) @binding(0) var<storage,read> gate0:array<u32>;
+@group(0) @binding(1) var<storage,read> tokens:array<u32>;
+@group(0) @binding(2) var<storage,read_write> output:array<vec4<f32>>;
+@group(0) @binding(3) var<storage,read_write> fault:array<atomic<u32>>;
+@group(0) @binding(4) var<storage,read> addresses:array<vec4<u32>>;
+@group(0) @binding(5) var<uniform> p:Params;
+var<private> strata_gate_address:vec2<u32>;
+fn mapped_byte(at:u32)->u32 {return (gate0[at/4u]>>((at%4u)*8u))&255u;}
+fn iq_value(code:u32)->f32 {
+    let table=array<u32,4>(0xbfad9881u,0xf6eaddcfu,0x26190d01u,0x71594535u);
+    let v=(table[code/4u]>>((code%4u)*8u))&255u;
+    return f32(i32(v)-select(0,256,v>=128u));
+}
+@compute @workgroup_size(32)
+fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(local_invocation_index) lane:u32) {
+    let t=g.y;if t>=p.count || g.x>=10u {return;}
+    if p.columns!=248320u || p.rows!=16384u || p.first!=1536u || p.stride!=16u || arrayLength(&addresses)!=2048u
+        || arrayLength(&tokens)<p.count || arrayLength(&output)<p.count*640u || arrayLength(&fault)!=1u {return;}
+    let token=tokens[t];if token>=p.columns {atomicOr(&fault[0],1u);return;}
+    let page=token/p.rows;let row=token%p.rows;let src=addresses[p.first+page];
+    if all(src.xy==vec2<u32>(0u)) || src.x%16u!=0u || row>=src.w || src.w>p.rows || src.z!=src.w*340u {atomicOr(&fault[0],1u);return;}
+    strata_gate_address=src.xy;
+    let b=row*1360u+g.x*136u;let il=lane/8u;let ib=lane%8u;
+    let low=(mapped_byte(b+4u+ib/2u)>>((ib%2u)*4u))&15u;
+    let high=((mapped_byte(b+2u)|(mapped_byte(b+3u)<<8u))>>(ib*2u))&3u;
+    let scale=unpack2x16float(mapped_byte(b)|(mapped_byte(b+1u)<<8u)).x*f32(i32(low|(high<<4u))-32);
+    let q4=gate0[(b+8u+ib*16u+il*4u)/4u];
+    let codes=(vec4<u32>(q4)>>vec4<u32>(0u,8u,16u,24u))&vec4<u32>(255u);
+    let lo=scale*vec4<f32>(iq_value(codes.x&15u),iq_value(codes.y&15u),iq_value(codes.z&15u),iq_value(codes.w&15u));
+    let hi=scale*vec4<f32>(iq_value(codes.x>>4u),iq_value(codes.y>>4u),iq_value(codes.z>>4u),iq_value(codes.w>>4u));
+    let at=t*640u+g.x*64u+ib*8u+il;
+    let lok=abs(lo)<=vec4<f32>(3.4028234663852886e38);let hik=abs(hi)<=vec4<f32>(3.4028234663852886e38);
+    output[at]=select(vec4<f32>(0.0),lo,lok);output[at+4u]=select(vec4<f32>(0.0),hi,hik);
+    if !all(lok) || !all(hik) {atomicOr(&fault[0],1u);}
+}
+// EMBED_MAPPED_END
 // NORM_BEGIN
 @group(0) @binding(0) var<storage,read> input:array<f32>;
 @group(0) @binding(1) var<storage,read> gamma:array<f32>;

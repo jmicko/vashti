@@ -21,6 +21,7 @@ use kuno_text::{Error, Result};
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub(crate) enum Kernel {
     Embed,
+    EmbedMapped,
     Norm,
     Broadcast,
     TargetBroadcast,
@@ -36,6 +37,7 @@ impl Kernel {
         match self {
             Self::Norm => 1024,
             Self::Append => 128,
+            Self::EmbedMapped => 32,
             _ => 64,
         }
     }
@@ -57,6 +59,7 @@ impl Kernel {
         source.push_str(section("COMMON"));
         source.push_str(section(match self {
             Self::Embed => "EMBED",
+            Self::EmbedMapped => "EMBED_MAPPED",
             Self::Norm => "NORM",
             Self::Broadcast => "BROADCAST",
             Self::TargetBroadcast => "TARGET_BROADCAST",
@@ -74,6 +77,7 @@ impl KernelMetadata for Kernel {
     fn name(&self) -> &'static str {
         match self {
             Self::Embed => "StrataMtpFrontEmbedding",
+            Self::EmbedMapped => "StrataOriginalMappedEmbedding",
             Self::Norm => "StrataMtpFrontNorm",
             Self::Broadcast => "StrataMtpFrontBroadcast",
             Self::TargetBroadcast => "StrataTargetEmbeddingBroadcast",
@@ -129,12 +133,14 @@ pub(crate) fn launch(
         info,
         8,
         position_field(kernel),
+        Vec::new(),
     )
 }
 fn position_field(kernel: Kernel) -> Option<NativeStrataParameter> {
     matches!(
         kernel,
         Kernel::Embed
+            | Kernel::EmbedMapped
             | Kernel::Norm
             | Kernel::Broadcast
             | Kernel::Positions
@@ -169,6 +175,7 @@ pub(crate) fn guard(
         [1, position as u32, 0, 0, 0, 0, 0, 0],
         8,
         field,
+        Vec::new(),
     )
 }
 pub(crate) fn launch_prompt(
@@ -199,6 +206,7 @@ pub(crate) fn launch_prompt(
         info,
         crate::strata_prompt::groups::CAPACITY as u32,
         position_field(kernel),
+        Vec::new(),
     )
 }
 fn dispatch_grid(kernel: Kernel, grid: [usize; 3]) -> Result<[usize; 3]> {
@@ -217,6 +225,32 @@ fn dispatch_grid(kernel: Kernel, grid: [usize; 3]) -> Result<[usize; 3]> {
     }
     Ok(grid)
 }
+pub(crate) fn launch_mapped_embedding(
+    arena: &PrivateArena,
+    handles: Vec<Handle>,
+    reads: Vec<Handle>,
+    info: [u32; 8],
+) -> Result<()> {
+    if handles.len() != 5 || reads.len() != crate::strata_shared_embedding::PAGE_COUNT {
+        return Err(Error::InvalidBufferLength);
+    }
+    let cap = if crate::strata_prompt::active() {
+        crate::strata_prompt::groups::CAPACITY
+    } else {
+        8
+    };
+    launch_impl(
+        arena,
+        Kernel::EmbedMapped,
+        [10, info[0] as usize, 1],
+        handles,
+        info,
+        cap as u32,
+        position_field(Kernel::EmbedMapped),
+        reads,
+    )
+}
+#[allow(clippy::too_many_arguments)] // Actual descriptors, physical-source dependencies and invocation controls.
 fn launch_impl(
     arena: &PrivateArena,
     kernel: Kernel,
@@ -225,6 +259,7 @@ fn launch_impl(
     info: [u32; 8],
     capacity: u32,
     native: Option<NativeStrataParameter>,
+    reads: Vec<Handle>,
 ) -> Result<()> {
     let grid = dispatch_grid(kernel, grid)?;
     let client = arena.client().map_err(u::fault)?;
@@ -232,7 +267,10 @@ fn launch_impl(
         || !(1..=capacity).contains(&info[0])
         || grid.contains(&0)
         || handles.is_empty()
-        || handles.iter().any(|h| h.stream != handles[0].stream)
+        || handles
+            .iter()
+            .chain(&reads)
+            .any(|h| h.stream != handles[0].stream)
         || kernel.lanes() > client.properties().hardware.max_units_per_cube
     {
         return Err(Error::InvalidBufferLength);
@@ -249,7 +287,9 @@ fn launch_impl(
     if let Some(field) = native {
         metadata = metadata.with_native_parameter(field.word, field.value);
     }
-    args = args.with_info(metadata);
+    args = args
+        .with_read_dependencies(reads.into_iter().map(Handle::binding).collect())
+        .with_info(metadata);
     // SAFETY: admitted MAX8 front owner validates complete geometry and retains
     // original public weights/private roots through publication and erasure.
     unsafe {
@@ -264,6 +304,7 @@ fn launch_impl(
 pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
     [
         Kernel::Embed,
+        Kernel::EmbedMapped,
         Kernel::Norm,
         Kernel::Broadcast,
         Kernel::TargetBroadcast,
@@ -389,6 +430,78 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "strata-intel-core")]
+    #[test]
+    fn actual_mapped_embedding_shader_lowers_original_addresses_with_contiguous_descriptors() {
+        let source = Kernel::EmbedMapped.source();
+        let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
+        let mut bindings = module
+            .global_variables
+            .iter()
+            .filter_map(|(_, g)| g.binding.as_ref().map(|b| b.binding))
+            .collect::<Vec<_>>();
+        bindings.sort_unstable();
+        assert_eq!(bindings, [0, 1, 2, 3, 4, 5]);
+        assert_eq!(module.entry_points[0].workgroup_size, [32, 1, 1]);
+        let roots = module
+            .global_variables
+            .iter()
+            .filter(|(_, g)| g.name.as_deref() == Some("gate0"))
+            .collect::<Vec<_>>();
+        assert_eq!(roots.len(), 1);
+        assert_eq!(
+            roots[0].1.space,
+            wgpu::naga::AddressSpace::Storage {
+                access: wgpu::naga::StorageAccess::LOAD
+            }
+        );
+        assert_eq!(crate::strata_shared_embedding::WORD_FIRST / 4, 1536);
+        assert_eq!(crate::strata_shared_embedding::PAGE_COUNT, 16);
+        assert!(position_field(Kernel::EmbedMapped).is_some());
+        let words = cubecl::wgpu::native_expert_shader_words(&source).unwrap();
+        assert_eq!(words[0], 0x07230203);
+        assert!(words.len() > 128);
+    }
+    #[test]
+    fn mapped_embedding_native_lanes_match_original_decoder_and_cover_float4_runs_once() {
+        for salt in 0..8 {
+            let mut packed = [0u8; 136];
+            packed[..2].copy_from_slice(&half::f16::from_f32(0.03125).to_bits().to_le_bytes());
+            for (i, b) in packed[2..].iter_mut().enumerate() {
+                *b = (i * 29 + salt * 11) as u8;
+            }
+            let mut expected = [0f32; 256];
+            kuno_text::TensorType::Iq4Xs
+                .decode(&packed, &mut expected)
+                .unwrap();
+            let values = [
+                -127f32, -104., -83., -65., -49., -35., -22., -10., 1., 13., 25., 38., 53., 69.,
+                89., 113.,
+            ];
+            let mut seen = [false; 256];
+            for lane in 0..32 {
+                let il = lane / 8;
+                let ib = lane % 8;
+                let low = (packed[4 + ib / 2] >> ((ib % 2) * 4)) & 15;
+                let high = (u16::from_le_bytes(packed[2..4].try_into().unwrap()) >> (ib * 2)) & 3;
+                let scale = 0.03125 * ((low as i32 | ((high as i32) << 4)) - 32) as f32;
+                for j in 0..4 {
+                    let byte = packed[8 + 16 * ib + 4 * il + j];
+                    for half in 0..2 {
+                        let at = 32 * ib + 4 * il + j + half * 16;
+                        assert!(!seen[at]);
+                        seen[at] = true;
+                        let code = (byte >> (4 * half)) & 15;
+                        assert_eq!(
+                            (scale * values[code as usize]).to_bits(),
+                            expected[at].to_bits()
+                        );
+                    }
+                }
+            }
+            assert!(seen.into_iter().all(|b| b));
+        }
+    }
     #[test]
     fn native_grouped_round_front_shaders_lower_without_device_or_new_owners() {
         use wgpu::naga as n;
@@ -510,7 +623,12 @@ mod tests {
         // workspace; these are host proofs, not physical-device acceptance.
         assert_eq!(WORDS[PART], 80 * 8 * 324);
         if crate::strata_intel_core::enabled() {
-            assert!(Workspace::bytes().unwrap() < 8 * 1024 * 1024);
+            // Fixed batch scratch stays bounded independently of the original
+            // full-context attention owner, which the constructor also charges.
+            let context = crate::private_arena::BufferLayout::new(WORDS[STATUS])
+                .unwrap()
+                .owned_bytes as u64;
+            assert!(Workspace::bytes().unwrap().checked_sub(context).unwrap() < 8 * 1024 * 1024);
         } else {
             assert_eq!(Workspace::bytes().unwrap(), 0);
         }

@@ -4908,25 +4908,38 @@ impl ResidentMtp<'_, '_> {
         let fault_id = self.id(B::Fault);
         let h = |i| u::handle(&self.arena, ids[i]);
         let info = [count as u32, start as u32, 0, 0, 0, 0, EPS.to_bits(), 0];
-        let embedding_pages = self.public()?.pages(EMBEDDING.name)?.len();
-        for page in self.public()?.pages(EMBEDDING.name)? {
-            let mut p = info;
-            p[2] = k::VOCAB as u32;
-            p[3] = page.rows as u32;
-            p[4] = page.first as u32;
-            f::launch(
+        let embedding_pages = if let Some(shared) = &self.shared_target_weights {
+            shared.gather_queued(
                 &self.arena,
-                f::Kernel::Embed,
-                [40, count, 1],
-                vec![
-                    page.handle.clone(),
-                    h(f::TOKEN)?,
-                    h(f::EMBED)?,
-                    u::handle(&self.arena, fault_id)?,
-                ],
-                p,
+                h(f::TOKEN)?,
+                h(f::EMBED)?,
+                u::handle(&self.arena, fault_id)?,
+                count,
+                start,
             )?;
-        }
+            1
+        } else {
+            let pages = self.public()?.pages(EMBEDDING.name)?.len();
+            for page in self.public()?.pages(EMBEDDING.name)? {
+                let mut p = info;
+                p[2] = k::VOCAB as u32;
+                p[3] = page.rows as u32;
+                p[4] = page.first as u32;
+                f::launch(
+                    &self.arena,
+                    f::Kernel::Embed,
+                    [40, count, 1],
+                    vec![
+                        page.handle.clone(),
+                        h(f::TOKEN)?,
+                        h(f::EMBED)?,
+                        u::handle(&self.arena, fault_id)?,
+                    ],
+                    p,
+                )?;
+            }
+            pages
+        };
         for (input, out, gamma, columns) in [
             (f::EMBED, f::EN, "blk.48.nextn.enorm.weight", k::D),
             (f::CARRY, f::HN, "blk.48.nextn.hnorm.weight", k::WIDE),

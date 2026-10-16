@@ -82,6 +82,7 @@ use strata_queue_tests as strata_schedule; // Original sibling namespace for INF
 #[path = "../vendor/cubecl-wgpu/src/backend/vulkan/strata_queues.rs"]
 mod strata_queue_topology_tests;
 mod strata_sampler;
+mod strata_shared_embedding;
 mod strata_shared_weights;
 mod strata_speculation;
 mod strata_stage;
