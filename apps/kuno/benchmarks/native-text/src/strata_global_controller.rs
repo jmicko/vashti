@@ -164,34 +164,8 @@ impl PolicyObservation {
     }
 }
 
-/// One accepted verifier prefix retained only until the next round's grouped
-/// front. These are actual target predictions plus their original device-source
-/// receipt, never rejected proposals or a host residual mirror.
-struct AcceptedRound {
-    coordinates: Zeroizing<[usize; 2]>, // original target start, complete old MTP cursor
-    binding: Zeroizing<u64>,
-    predicted: Zeroizing<Vec<u32>>,
-    device: crate::resident_model::batch::target_rows::DeviceCarryReceipt,
-}
-impl AcceptedRound {
-    fn validate_entry(
-        &self,
-        position: usize,
-        confirmed: u32,
-        draft_position: usize,
-        binding: u64,
-    ) -> Result<()> {
-        validate_round_entry(
-            &self.coordinates,
-            *self.binding,
-            &self.predicted,
-            position,
-            confirmed,
-            draft_position,
-            binding,
-        )
-    }
-}
+/// Validate the first final-prompt handoff against the original loaded MTP
+/// cursor/binding. Later windows use the same scoped original source contract.
 fn validate_round_entry(
     coordinates: &[usize; 2],
     original_binding: u64,
@@ -408,20 +382,122 @@ pub(super) fn run<'m, 'f>(
     };
     sampling.use_device_residuals()?;
     sampling.stage_target(plan.prefix(), &request.prompt[plan.prefix()..])?;
-    phase("last_prompt_input");
-    let (mut confirmed, initial_device) =
-        target.prefill_first_native_window(executor, &request.prompt[plan.prefix()..], cancel)?;
-    if target.completed_target_rows_cursor(executor)? != request.prompt.len() {
-        return Err("global final prompt decode cursor rejected".into());
-    }
-    if draft
+    // Capture actual original MTP identity BEFORE the target window. Its
+    // completed front is produced inside the same Pending observer used by
+    // every later window, never by an outer post-adaptation fallback.
+    let initial_draft = draft
         .as_ref()
-        .is_some_and(|d| d.position() != request.prompt.len() - 1)
+        .map(|d| (Zeroizing::new(d.position()), Zeroizing::new(d.binding())));
+    if initial_draft
+        .as_ref()
+        .is_some_and(|(position, _)| **position != plan.prefix())
     {
         return Err("global teacher MTP alignment rejected".into());
     }
-    sampling.commit_target(1)?;
-    // Shared state owners are activated with actual global source authority.
+    let mut initial_result = None;
+    let mut initial_delivered = false;
+    let mut delivery_error = None;
+    let mut prepared: Option<PreparedDraft> = None;
+    phase("last_prompt_input");
+    let initial = target.prefill_first_native_window(
+        executor,
+        &request.prompt[plan.prefix()..],
+        cancel,
+        &mut |phase| {
+            use crate::resident_model::batch::PrefixPhase;
+            match phase {
+                PrefixPhase::Verified(rows) => {
+                    if initial_result.is_some()
+                        || rows.start() != plan.prefix()
+                        || rows.count() != 1
+                    {
+                        return Err(Error::InvalidFormat("global initial target row rejected"));
+                    }
+                    initial_result =
+                        Some((Zeroizing::new(rows.greedy(0)?), rows.take_device_carry()?));
+                    Ok(1)
+                }
+                PrefixPhase::Pending {
+                    source,
+                    accepted: 1,
+                } => {
+                    let (prediction, device) = initial_result.as_ref().ok_or(
+                        Error::InvalidFormat("global initial target prediction missing"),
+                    )?;
+                    if initial_delivered {
+                        return Err(Error::InvalidFormat("global duplicate initial delivery"));
+                    }
+                    sampling.commit_target(1)?;
+                    // Original count1 target state is not yet published. As in
+                    // later windows, delivery precedes the scoped next draft;
+                    // a late fault still retires the complete original session.
+                    if let Err(error) = emit(**prediction) {
+                        delivery_error = Some(error);
+                        return Err(Error::InvalidFormat("global token delivery failed"));
+                    }
+                    initial_delivered = true;
+                    if let Some(d) = draft
+                        .as_deref_mut()
+                        .filter(|_| request.max_outputs > 1 && **prediction != request.eos)
+                    {
+                        let (old_position, binding) = initial_draft.as_ref().ok_or(
+                            Error::InvalidFormat("global initial draft identity missing"),
+                        )?;
+                        validate_round_entry(
+                            &[plan.prefix(), **old_position],
+                            **binding,
+                            std::slice::from_ref(&**prediction),
+                            request.prompt.len(),
+                            **prediction,
+                            d.position(),
+                            d.binding(),
+                        )
+                        .map_err(|_| {
+                            Error::InvalidFormat("global initial draft identity rejected")
+                        })?;
+                        sampling.begin_round(request.prompt.len(), **prediction)?;
+                        let grant = source.borrow(device, 1)?;
+                        prepared = Some(prepare_next_draft(
+                            d,
+                            plan.prefix(),
+                            std::slice::from_ref(&**prediction),
+                            &grant,
+                            DraftPlan {
+                                position: request.prompt.len(),
+                                maximum: request.speculation.mtp_window,
+                                minimum: request.draft_min_probability,
+                            },
+                            cancel,
+                        )?);
+                    }
+                    Ok(1)
+                }
+                _ => Err(Error::InvalidFormat(
+                    "global initial target prefix rejected",
+                )),
+            }
+        },
+    );
+    if let Some(error) = delivery_error {
+        return Err(error);
+    }
+    initial?;
+    let (prediction, initial_device) = initial_result
+        .take()
+        .ok_or("global initial target prediction missing")?;
+    let mut confirmed = *prediction;
+    drop(initial_device);
+    drop(prediction);
+    drop(initial_draft);
+    if !initial_delivered
+        || prepared.is_some()
+            != (draft.is_some() && request.max_outputs > 1 && confirmed != request.eos)
+        || target.completed_target_rows_cursor(executor)? != request.prompt.len()
+    {
+        return Err("global final prompt decode completion rejected".into());
+    }
+    // Select original target family policies only at the completed boundary.
+    // The count1 draft has already finished its scoped R borrow and queue work.
     target.ensure_native_generation_policies(executor, cancel)?;
     if !executor.public_q6_integer_verify_head()?.0 {
         return Err("global native head changed after prefill".into());
@@ -430,7 +506,6 @@ pub(super) fn run<'m, 'f>(
     let request_scope = target.current_native_language_scope()?;
     let mut history = Zeroizing::new(Vec::with_capacity(request.max_outputs));
     history.push(confirmed);
-    emit(confirmed)?;
     let mut policy = crate::strata_speculation::Policy::take_retained(
         retained_policy,
         request.speculation.window,
@@ -441,18 +516,6 @@ pub(super) fn run<'m, 'f>(
     suffix_index.append(&history)?;
     let mut observation: Option<PolicyObservation> = None;
     let mut committed_cursor = request.prompt.len();
-    let mut pending: Option<AcceptedRound> = if request.max_outputs > 1 && confirmed != request.eos
-    {
-        draft.as_ref().map(|d| AcceptedRound {
-            coordinates: Zeroizing::new([plan.prefix(), d.position()]),
-            binding: Zeroizing::new(d.binding()),
-            predicted: Zeroizing::new(vec![confirmed]),
-            device: initial_device,
-        })
-    } else {
-        None
-    };
-    let mut prepared: Option<PreparedDraft> = None;
     let mut rounds = 0u64;
     let mut repairs = 0u64;
     while history.len() < request.max_outputs && confirmed != request.eos {
@@ -463,40 +526,13 @@ pub(super) fn run<'m, 'f>(
         }
         let remaining = request.max_outputs - history.len();
         let ready = if let Some(d) = draft.as_deref_mut() {
-            if let Some(ready) = prepared.take() {
-                if pending.is_some() {
-                    return Err("global duplicate draft producers".into());
-                }
-                ready.validate_entry(position, confirmed, d.position(), d.binding())?;
-                ready
-            } else {
-                // Only the initial prompt row uses the already committed model
-                // boundary. Later rows are consumed inside the scoped observer.
-                let accepted = pending
-                    .take()
-                    .ok_or("global initial device front source missing")?;
-                accepted.validate_entry(position, confirmed, d.position(), d.binding())?;
-                sampling.begin_round(position, confirmed)?;
-                let source = target.borrow_target_carry(
-                    executor,
-                    &accepted.device,
-                    accepted.predicted.len(),
-                )?;
-                prepare_next_draft(
-                    d,
-                    accepted.coordinates[0],
-                    &accepted.predicted,
-                    &source,
-                    DraftPlan {
-                        position,
-                        maximum: request.speculation.mtp_window,
-                        minimum: request.draft_min_probability,
-                    },
-                    cancel,
-                )?
-            }
+            let ready = prepared
+                .take()
+                .ok_or("global scoped draft producer missing")?;
+            ready.validate_entry(position, confirmed, d.position(), d.binding())?;
+            ready
         } else {
-            if pending.is_some() || prepared.is_some() {
+            if prepared.is_some() {
                 return Err("global accepted-round owner missing".into());
             }
             sampling.begin_round(position, confirmed)?;
@@ -557,7 +593,6 @@ pub(super) fn run<'m, 'f>(
         }
         if inputs.len() != count
             || count > request.speculation.window
-            || pending.is_some()
             || position
                 .checked_add(count)
                 .is_none_or(|end| end > crate::qsa_gpu::MAX_CONTEXT)
@@ -687,8 +722,7 @@ pub(super) fn run<'m, 'f>(
         }
         rounds += 1;
     }
-    if pending.is_some()
-        || prepared.is_some()
+    if prepared.is_some()
         || observation.is_some()
         || target.completed_target_rows_cursor(executor)? != committed_cursor
     {

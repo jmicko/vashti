@@ -83,6 +83,7 @@ pub(super) fn check_runtime(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
     Prefill,
+    InitialWindow, // real short runtime nonce; not long generation authority
     Active,
     Closed,
 }
@@ -115,11 +116,11 @@ impl Authority {
         })
     }
     fn active(&self, actual: bool) -> Result<bool> {
-        if actual != (self.phase == Phase::Active)
-            || self
-                .base_scopes
-                .checked_add(u64::from(self.phase != Phase::Prefill))
-                != Some(self.scopes)
+        if actual != matches!(self.phase, Phase::InitialWindow | Phase::Active)
+            || self.base_scopes.checked_add(u64::from(matches!(
+                self.phase,
+                Phase::Active | Phase::Closed
+            ))) != Some(self.scopes)
         {
             return Err(rejected());
         }
@@ -127,6 +128,13 @@ impl Authority {
     }
     fn run(&self, start: usize, count: usize, actual: bool) -> Result<()> {
         self.active(actual)?;
+        if self.phase == Phase::InitialWindow {
+            return if start.checked_add(1) == Some(self.geometry.prompt) && count == 1 {
+                Ok(())
+            } else {
+                Err(rejected())
+            };
+        }
         if !(1..=if self.four_rows && self.phase == Phase::Active {
             crate::strata_port::verify_capacity()
         } else {
@@ -214,6 +222,46 @@ impl Authority {
         }
         Ok(())
     }
+    fn current_scope(&self, actual: bool) -> Result<u64> {
+        if self.phase != Phase::Active || !self.active(actual)? {
+            return Err(rejected());
+        }
+        Ok(self.scopes)
+    }
+    fn validate_initial_begin(&self, position: usize, actual: bool) -> Result<()> {
+        self.active(actual)?;
+        if !crate::strata_intel_core::enabled()
+            || self.phase != Phase::Prefill
+            || actual
+            || position.checked_add(1) != Some(self.geometry.prompt)
+        {
+            return Err(rejected());
+        }
+        Ok(())
+    }
+    fn begin_initial(&mut self, position: usize, actual: bool) -> Result<()> {
+        self.validate_initial_begin(position, false)?;
+        if !actual {
+            return Err(rejected());
+        }
+        self.phase = Phase::InitialWindow;
+        self.active(actual).map(|_| ())
+    }
+    fn validate_initial_end(&self, position: usize, actual: bool) -> Result<()> {
+        self.active(actual)?;
+        if self.phase != Phase::InitialWindow || position != self.geometry.prompt {
+            return Err(rejected());
+        }
+        Ok(())
+    }
+    fn end_initial(&mut self, position: usize, actual: bool) -> Result<()> {
+        self.validate_initial_end(position, true)?;
+        if actual {
+            return Err(rejected());
+        }
+        self.phase = Phase::Prefill;
+        self.active(false).map(|_| ())
+    }
     fn validate_begin(&self, position: usize, actual: bool) -> Result<()> {
         self.active(actual)?;
         if self.phase != Phase::Prefill
@@ -236,6 +284,7 @@ impl Authority {
     }
     fn validate_end(&self, position: usize, actual: bool) -> Result<()> {
         if !self.active(actual)?
+            || self.phase != Phase::Active
             || !(self.geometry.prompt..=self.geometry.final_cursor()).contains(&position)
         {
             return Err(rejected());
@@ -296,10 +345,7 @@ impl Permit {
         self.authority.starting_after_erasure(scope)
     }
     pub(super) fn current_scope(&self, actual: bool) -> Result<u64> {
-        if !self.authority.active(actual)? {
-            return Err(rejected());
-        }
-        Ok(self.authority.scopes)
+        self.authority.current_scope(actual)
     }
     pub(super) fn validate_geometry(&self, prompt: usize, outputs: usize) -> Result<()> {
         if self.authority.phase != Phase::Prefill
@@ -310,7 +356,9 @@ impl Permit {
         Ok(())
     }
     pub(super) fn enable_four_rows(&mut self) -> Result<()> {
-        if self.authority.phase == Phase::Active || self.authority.four_rows {
+        if matches!(self.authority.phase, Phase::InitialWindow | Phase::Active)
+            || self.authority.four_rows
+        {
             return Err(rejected());
         }
         self.authority.four_rows = true;
@@ -366,6 +414,18 @@ impl Permit {
     }
     pub(super) fn active(&self, actual: bool) -> Result<bool> {
         self.authority.active(actual)
+    }
+    pub(super) fn validate_initial_begin(&self, position: usize, actual: bool) -> Result<()> {
+        self.authority.validate_initial_begin(position, actual)
+    }
+    pub(super) fn begin_initial(&mut self, position: usize, actual: bool) -> Result<()> {
+        self.authority.begin_initial(position, actual)
+    }
+    pub(super) fn validate_initial_end(&self, position: usize, actual: bool) -> Result<()> {
+        self.authority.validate_initial_end(position, actual)
+    }
+    pub(super) fn end_initial(&mut self, position: usize, actual: bool) -> Result<()> {
+        self.authority.end_initial(position, actual)
     }
     pub(super) fn validate_begin(&self, position: usize, actual: bool) -> Result<()> {
         self.authority.validate_begin(position, actual)
@@ -723,6 +783,82 @@ mod tests {
                 )
                 .is_err()
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod initial_window_tests {
+    use super::*;
+    #[test]
+    fn initial_window_has_real_runtime_scope_but_no_generated_cursor_authority() {
+        if !crate::strata_intel_core::enabled() {
+            return;
+        }
+        for prompt in [1, 35, 4096, 32767] {
+            let geometry = Geometry::new(prompt, 1).unwrap();
+            let mut a = Authority::new(geometry, geometry.context(), false).unwrap();
+            let prefix = prompt - 1;
+            assert!(a.begin_initial(prefix, false).is_err());
+            assert!(a.validate_initial_begin(prompt, false).is_err());
+            assert!(a.validate_initial_begin(prefix, true).is_err());
+            a.validate_initial_begin(prefix, false).unwrap();
+            a.begin_initial(prefix, true).unwrap();
+            a.run(prefix, 1, true).unwrap();
+            assert!(a.current_scope(true).is_err());
+            assert!(a.validate_end(prompt, true).is_err());
+            assert!(a.run(prefix, 1, false).is_err());
+            assert!(a.run(prefix, 2, true).is_err());
+            assert!(a.run(prompt, 1, true).is_err());
+            assert!(a.prompt_chunk(0, 1, true).is_err());
+            assert!(a.validate_begin(prompt, false).is_err());
+            assert!(a.begin_initial(prefix, true).is_err());
+            assert!(a.validate_initial_end(prefix, true).is_err());
+            assert!(a.end_initial(prompt, true).is_err());
+            assert!(a.end_initial(prefix, false).is_err());
+            a.validate_initial_end(prompt, true).unwrap();
+            a.end_initial(prompt, false).unwrap();
+            assert_eq!(a.phase, Phase::Prefill);
+            assert_eq!(a.scopes, 0);
+            a.validate_begin(prompt, false).unwrap();
+            a.begin(prompt, true).unwrap();
+            assert_eq!(a.scopes, 1);
+            assert_eq!(a.current_scope(true).unwrap(), 1);
+            a.end(prompt, false).unwrap();
+            a.validate_completed_native(prompt, false).unwrap();
+        }
+    }
+    #[test]
+    fn initial_nonce_cannot_rearm_close_or_credit_a_different_request() {
+        if !crate::strata_intel_core::enabled() {
+            return;
+        }
+        let capacity = crate::qsa_gpu::MAX_CONTEXT;
+        let mut a = Authority::new(Geometry::new(1, 1).unwrap(), capacity, false).unwrap();
+        for (index, prompt) in [1, 23, 2].into_iter().enumerate() {
+            if index > 0 {
+                a.rearm_native(
+                    Geometry::new(prompt, 1).unwrap(),
+                    capacity,
+                    index as u64,
+                    false,
+                )
+                .unwrap();
+            }
+            assert!(a.end_initial(prompt, false).is_err());
+            a.begin_initial(prompt - 1, true).unwrap();
+            assert!(a.retained_native_scope().is_err());
+            assert!(a.validate_completed_native(prompt, false).is_err());
+            assert!(a.end(prompt, false).is_err());
+            assert!(
+                a.rearm_native(Geometry::new(1, 1).unwrap(), capacity, index as u64, false)
+                    .is_err()
+            );
+            a.end_initial(prompt, false).unwrap();
+            assert_eq!(a.scopes, index as u64);
+            a.begin(prompt, true).unwrap();
+            a.end(prompt, false).unwrap();
+            assert_eq!(a.retained_native_scope().unwrap(), index as u64 + 1);
         }
     }
 }

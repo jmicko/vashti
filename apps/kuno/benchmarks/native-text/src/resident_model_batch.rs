@@ -4985,46 +4985,82 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             },
         )
     }
-    /// Actual native first window, with the same observed-row lifetime and
-    /// adaptive accounting as every later verified window. Only its final
-    /// prompt input runs here; earlier prompt matrix rows never train usage.
+    /// Actual final-prompt count1 window. The SAME scoped Verified/Pending
+    /// observer as later windows consumes its original R before adaptation is
+    /// joined. Earlier prompt matrix rows never train usage or draft here.
     pub(crate) fn prefill_first_native_window(
         &mut self,
         executor: &mut GpuExecutor<'f>,
         tokens: &[u32],
         cancel: &AtomicBool,
-    ) -> Result<(u32, target_rows::DeviceCarryReceipt)> {
+        select: &mut dyn for<'rows> FnMut(PrefixPhase<'rows>) -> Result<usize>,
+    ) -> Result<()> {
         if !crate::strata_intel_core::enabled()
             || crate::strata_prompt::active()
             || tokens.len() != 1
         {
             return Err(error());
         }
-        let expected = self.position;
-        let mut result = None;
-        self.execute_native_chunk(
-            executor,
-            tokens,
-            Purpose::AllRowsWithCarry,
-            Some(&mut |phase| match phase {
-                PrefixPhase::Verified(rows) => {
-                    if result.is_some() || rows.start() != expected || rows.count() != 1 {
-                        return Err(error());
-                    }
-                    result = Some((rows.greedy(0)?, rows.take_device_carry()?));
-                    Ok(1)
-                }
-                PrefixPhase::Pending { accepted: 1, .. } => Ok(1),
-                _ => Err(error()),
-            }),
-            cancel,
-            |output| match output {
-                ChunkOutput::AcceptedPrefix(1) => Ok(()),
-                _ => Err(error()),
-            },
-        )?;
-        result.ok_or(error())
+        self.validate_native_request_boundary(executor)?;
+        let permit = self
+            .native_batch
+            .as_ref()
+            .ok_or(error())?
+            .public_language_request_io
+            .as_ref()
+            .ok_or(error())?;
+        permit.identity(self.graph.binding_id(), self.context)?;
+        permit.validate_initial_begin(self.position, self.admission.request_io_reuse_active())?;
+        // The original scoped graph consumer requires a REAL backend nonce.
+        // Keep this short scope distinct from immutable decode-policy selection
+        // and the following long generation scope. Both close actual full I/O.
+        self.lab_oracle_attempt(executor, |model, executor| {
+            model.admission.begin_public_target_request_io_reuse()?;
+            model
+                .native_batch
+                .as_mut()
+                .ok_or(error())?
+                .public_language_request_io
+                .as_mut()
+                .ok_or(error())?
+                .begin_initial(model.position, model.admission.request_io_reuse_active())?;
+            model.execute_native_chunk(
+                executor,
+                tokens,
+                Purpose::AllRowsWithCarry,
+                Some(select),
+                cancel,
+                |output| match output {
+                    ChunkOutput::AcceptedPrefix(1) => Ok(()),
+                    _ => Err(error()),
+                },
+            )?;
+            // No caller-declared completion: original chunk/family acceptance,
+            // original fault and owning runtime closing audit all precede end.
+            model.completed_native_projection_boundary(executor)?;
+            model
+                .native_batch
+                .as_ref()
+                .ok_or(error())?
+                .public_language_request_io
+                .as_ref()
+                .ok_or(error())?
+                .validate_initial_end(model.position, model.admission.request_io_reuse_active())?;
+            batch_io::read_fault(&model.arena, &model.admission, model.b.fault, cancel)?;
+            model.admission.end_request_io_reuse()?;
+            public_language_request_io::check_runtime(model.arena.client().map_err(u::fault)?)?;
+            model
+                .native_batch
+                .as_mut()
+                .ok_or(error())?
+                .public_language_request_io
+                .as_mut()
+                .ok_or(error())?
+                .end_initial(model.position, model.admission.request_io_reuse_active())?;
+            u::cancel(cancel)
+        })
     }
+
     /// The selected native controller observes provisional verified rows while
     /// ALL original state transactions remain open. Only the chosen prefix is
     /// published. The observer cannot access the model or executor, and its
