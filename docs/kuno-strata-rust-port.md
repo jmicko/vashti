@@ -1,18 +1,21 @@
 # Strata Rust whole-model port experiment
 
-**Current CPU-only resume (2026-10-16):** source `ba0cc6a815c8f4aa562b7bb386342817e8a0ee30`.
-Read the [exact-page receipt](kuno-strata-rewrite-completion.md#exact-exclusive-pages-and-shared-prompt-inventory-2026-10-16)
-and [checkpoint](kuno-native-text-checkpoint.md). Actual allocator, shared prompt
-inventory, admission and target/MTP/source pricing now connect exact aligned pages
-and native large2MiB granules. Prompt roots total1430MiB; target private source
-plan2,778,038,272B is842MiB lower. No observed VRAM or speed claim.504 distinct
-selected CPU cases /61 suites,54 ordinary cases /4 suites, strict core/off lint
-and changed format pass. Normal artifact `strata-exact-pages-ordinary-20261016/`, SHA256
-`794438e1b0b4f8bbb54752fd46e03f1c0c126b1e1a020e528f14468c6685e88f`; source-clean/stable build,
-independent hash/mode0500 and334 offline variants pass (122 physical checks).
-No device initialized. Remaining final queue/scheduling/substitution and full
-physical/numerical/state/failure/recovery gates stay open. Full rewrite incomplete;
-no live speed trials. Required Vashti changes:none.
+**Current CPU-only resume (2026-10-16):** source `8bd6edff399f531565642a66472dfd6afbba0ea1`.
+Read the [cell-transfer receipt](kuno-strata-rewrite-completion.md#original-cell-transfer-copy-path-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). Actual global adaptive exchange
+now uses original transfer copies with its dormant attached prompt raw root,
+matching HOST import flags, original rebase and joined map publication. No new
+buffer, model duplication, private memory quote or API change.508 distinct CPU
+cases /62 suites and strict core/off lint pass. Normal source-clean/stable artifact `strata-cell-transfer-ordinary-20261016/`
+(`strata-cell-transfer-ordinary-20261016.out`) has SHA256
+`b85b758107e6a34db4e97d053ffa5e98c654fca1842a41bfe22892d9b33abc59`.
+Independent source/hash/mode0500 checks pass. Offline
+`strata-cell-transfer-shaders-20261016.log` exits0 with334 variants and122
+physical-pointer checks. This command returns before adapter/device creation.
+Still synchronous after commit/draft; upstream overlap remains an explicit
+unfinished dependency. Final scheduling/substitution, physical pricing and full
+numerical/state/hot-request/failure/recovery gates remain open. Whole rewrite
+incomplete; no speed trials. No GPU/service/frontend action or Vashti changes.
 
 ## Active direction — finish the complete Rust port before speed testing (2026-10-14)
 

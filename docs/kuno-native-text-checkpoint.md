@@ -1,37 +1,50 @@
-<!-- Current resume: 2026-10-16, source ba0cc6a815c8f4aa562b7bb386342817e8a0ee30, codex/strata-rust-port.
-CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
+<!-- Current resume: 2026-10-16, source 8bd6edff399f531565642a66472dfd6afbba0ea1, codex/strata-rust-port.
+CPU-only continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, source `ba0cc6a815c8f4aa562b7bb386342817e8a0ee30`. Goal active CPU-only.
-Read the [exact-page receipt](kuno-strata-rewrite-completion.md#exact-exclusive-pages-and-shared-prompt-inventory-2026-10-16)
-and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--exact-native-pages-2026-10-16).
-Actual selected allocator now owns exact aligned pages and only reuses equal-
-sized pages. Native large private spans use2MiB granules; small slabs and ordinary
-builds preserve original rules. The same live inventory drives prompt carving
-and owning root quote:756MiB,642MiB,32MiB,1430MiB total. Admission and all model/
-source constructors use matching charges. QSA32K state shrinks192MiB; total
-target private plan2,778,038,272B is842MiB below the preceding source. MTP complete
-private plan62,586,880B remains within its128MiB upper grant. Runtime Q2 public
-plan is independently computed; do not substitute a legacy profile constant.
-No model source, expert identity, kernel math, context/row geometry or API change.
+branch `codex/strata-rust-port`, source `8bd6edff399f531565642a66472dfd6afbba0ea1`. Goal active CPU-only.
+Read the [cell-transfer receipt](kuno-strata-rewrite-completion.md#original-cell-transfer-copy-path-2026-10-16)
+and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--original-cell-transfers-2026-10-16).
+Actual global adaptive exchange now records original HOST/scratch/GPU copies
+instead of per-word swap compute. It uses the already-attached complete dormant
+32MiB prompt raw owner; no new buffer or source duplication. Three-role original
+ownership, registered rebase, physical placement and joined private map/usage
+publication remain coupled. Actual HOST import flags and HAL transfer-to-HOST
+availability were updated together. No model geometry/kernel math or API change.
 
-504 distinct selected CPU cases /61 suites and54 ordinary cases /4 suites pass;
-final locked builds, strict core/off lint and changed format pass. Exact logs,
-profile corrections and metadata-only real-allocator test limits are linked above.
-Normal artifact `strata-exact-pages-ordinary-20261016/`, SHA256
-`794438e1b0b4f8bbb54752fd46e03f1c0c126b1e1a020e528f14468c6685e88f`; source-clean/stable build,
-independent hash/mode0500 and334 offline variants pass (122 physical checks). No GPU/adapter
-initialized; no numerical/model, physical residency/refund or performance claim.
+508 distinct selected CPU cases /62 suites and strict core/off Clippy pass.
+The [detailed receipt](kuno-strata-rewrite-completion.md#original-cell-transfer-copy-path-2026-10-16) records runner
+correction, actual test scope and artifact. Physical GPU behavior is untested.
+Normal source-clean/stable artifact `strata-cell-transfer-ordinary-20261016/`
+(`strata-cell-transfer-ordinary-20261016.out`) has SHA256
+`b85b758107e6a34db4e97d053ffa5e98c654fca1842a41bfe22892d9b33abc59`.
+Independent source/hash/mode0500 checks pass. Offline
+`strata-cell-transfer-shaders-20261016.log` exits0 with334 variants and122
+physical-pointer checks. This command returns before adapter/device creation.
 
-**Next:** final pinned-source queue/scheduling/substitution audit, whole-device
-physical/runtime/HOST pricing acceptance, numerical/state/full-context/hot-request/
-failure/recovery gates under renewed GPU authorization. Protected private input
-remains independent; current CLI compiled-public/one-request. Whole rewrite
-incomplete, speed gate closed. No GPU/model/service/install/release/API/frontend
-action; required Vashti changes:none. Root not needed; last shared-shell sudo
-refresh unconfirmed. Physical recovery stays historicalOct15. Preserve canonical
-application work and inherited untracked files.
+**Next:** implement the remaining connected async adaptation boundary. Current
+adaptation still starts after target commit and next MTP draft finish; the copy
+path retains its whole-client/rebase joins. Upstream overlaps these and joins the
+actual pending copies before next target residency publication. Prepare actual
+usage/proposals, preserve original reader/scratch/recording lifetimes, submit an
+admitted transfer flight, and join/publish all maps before target reuse together.
+Audit suspected first last-prompt/count1 usage/tick accounting; do not declare it
+a proven bug yet. Then finish whole-device physical/runtime/HOST pricing and the
+full numerical/state/hot-request/failure/recovery gates. Private executable input
+remains independently gated; current CLI compiled-public/one-request. Whole
+rewrite incomplete, speed gate closed. No GPU/model/service/install/release/API/
+frontend action; required Vashti changes:none. Root not needed; latest shared
+shell sudo refresh still required a password. Recovery historicalOct15.
+
+**Previous exact-page block (`ba0cc6a`):** actual exact allocator, shared prompt
+inventory and matching model/admission charges connect. Prompt roots756/642/32MiB
+(1430MiB total); target private source plan2,778,038,272B is842MiB lower. QSA32K
+state saves192MiB. MTP complete private plan62,586,880B stays within128MiB grant.
+The current copy path adds no allocation.504 selected CPU cases and54 ordinary
+cases passed then; prior frozen artifact/hash and offline334/122 acceptance remain
+in the [historical receipt](kuno-strata-rewrite-completion.md#exact-exclusive-pages-and-shared-prompt-inventory-2026-10-16).
+No physical pricing/residency or speed conclusion.
 
 **Previous sole-R block (`81ff964`):** all prompt GR/PLE halves update original
 R in place, with single writable descriptors, packed mixed-image reuse and a

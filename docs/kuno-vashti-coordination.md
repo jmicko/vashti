@@ -6,17 +6,18 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, source `ba0cc6a815c8f4aa562b7bb386342817e8a0ee30`. Read the
-[exact-page handoff](#active-kuno-engine-handoff--exact-native-pages-2026-10-16)
-and [completion gate](kuno-strata-rewrite-completion.md). Exact allocator, shared
-prompt inventory, admission and model pricing now connect.504 selected CPU cases,
-54 ordinary cases and strict lint pass. Full rewrite incomplete; physical/
-numerical/pricing and final scheduling/substitution gates remain open.
+`codex/strata-rust-port`, source `8bd6edff399f531565642a66472dfd6afbba0ea1`. Read the
+[cell-transfer handoff](#active-kuno-engine-handoff--original-cell-transfers-2026-10-16)
+and [completion gate](kuno-strata-rewrite-completion.md). Actual global adaptive
+exchange uses original buffer copies and the dormant attached prompt raw root;
+no extra allocation.508 selected CPU cases and strict core/off lint pass.
+Async overlap with commit/draft remains incomplete. Full rewrite/speed gate stay
+closed pending final source and physical/numerical/state/recovery acceptance.
 
-User continuation remains CPU-only; goal active. No GPU/model/service/install/
-release/API/frontend action. Root not needed; last sudo refresh unconfirmed.
-Physical recovery stays historicalOct15; no current-health claim. Preserve
-canonical application work/inherited untracked files. Required Vashti changes:none.
+Continuation CPU-only; goal active. No GPU/model/service/install/release/API/
+frontend action. Root not needed; latest shared-shell refresh still required a
+sudo password. Physical recovery historicalOct15; no current-health claim.
+Preserve canonical application work/inherited files. Required Vashti changes:none.
 
 ## Ownership
 
@@ -7139,3 +7140,40 @@ numerical/state/full-context/hot-request/failure/recovery gates. Private input
 remains independently gated; current CLI compiled-public/one-request. Root not
 needed; last sudo refresh unconfirmed. Recovery historicalOct15. Preserve
 canonical application work and inherited untracked files.
+
+## Active Kuno engine handoff — original cell transfers (2026-10-16)
+
+Source `8bd6edff399f531565642a66472dfd6afbba0ea1`, isolated `codex/strata-rust-port`.
+Read the [source/acceptance receipt](kuno-strata-rewrite-completion.md#original-cell-transfer-copy-path-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). Actual global adaptive exchange
+now records original HOST-to-scratch, GPU-to-HOST, scratch-to-GPU transfers for
+all three roles instead of the global swap shader. Actual original HOST imports
+support these copies; the registered source predicate and HAL producer barrier
+change together. Scratch is the already-attached complete32MiB dormant prompt
+raw owner, retained through the actual join and fully erased on reset/close.
+No additional buffer or duplicate model/HOST complement; original role/placement/
+rebase and private route-map/usage publication remain coupled.
+
+508 distinct CPU cases /62 suites, selected release build and strict core/off
+Clippy pass. Detailed receipt records exact scope and the duplicate-filter runner
+correction. Normal source-clean/stable artifact `strata-cell-transfer-ordinary-20261016/`
+(`strata-cell-transfer-ordinary-20261016.out`) has SHA256
+`b85b758107e6a34db4e97d053ffa5e98c654fca1842a41bfe22892d9b33abc59`.
+Independent source/hash/mode0500 checks pass. Offline
+`strata-cell-transfer-shaders-20261016.log` exits0 with334 variants and122
+physical-pointer checks. This command returns before adapter/device creation.
+
+**Open source dependency:** adaptation still runs after target commit and MTP
+next drafting, with original whole-client/rebase joins. Upstream serves with
+independent copy submission during those operations, then joins pending copies
+before next target residency publication. Implement the connected original
+usage/transfer/reader lifetime/publication boundary together; removing waits or
+adding a queue alone is insufficient. Audit suspected first count1 usage/tick
+accounting, final source substitutions and full physical/pricing/numerical/state/
+hot-request/failure/recovery gates. Full rewrite incomplete, speed gate closed.
+
+No API/protocol/config/consumer change; required Vashti changes:none. No GPU,
+adapter, model, inference, service, install or release action. No current physical
+recovery or speed claim. Goal active CPU-only; root not needed. Latest shared
+shell sudo refresh required a password. Canonical application/inherited files
+preserved. This handoff does not authorize integration, deployment or release.

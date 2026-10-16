@@ -6,13 +6,14 @@ checklist is a source-to-source audit, not a sequence of throughput experiments.
 Each row needs its connected consumer, real ownership/placement and state contract;
 adding an unused helper or optional switch does not complete a row.
 
-**Current CPU-only source:** `ba0cc6a815c8f4aa562b7bb386342817e8a0ee30`. Read the
-[exact-page receipt](#exact-exclusive-pages-and-shared-prompt-inventory-2026-10-16) and
-[checkpoint](kuno-native-text-checkpoint.md). Original allocator, shared prompt
-inventory, private allocation, admission and model/source pricing now connect
-exact native large pages.504 selected CPU cases and54 ordinary cases pass.
-Target private source plan is842MiB lower; physical/runtime/HOST pricing and
-numerical/device acceptance remain open. Full rewrite incomplete; no speed trials.
+**Current CPU-only source:** `8bd6edff399f531565642a66472dfd6afbba0ea1`. Read the
+[cell-transfer receipt](#original-cell-transfer-copy-path-2026-10-16) and
+[checkpoint](kuno-native-text-checkpoint.md). The selected global adaptive path
+now uses original buffer transfers instead of its old per-word swap shader,
+reusing the dormant attached prompt raw owner without another allocation.
+508 distinct CPU cases /62 suites and strict core/off lint pass. This remains a
+joined transaction after commit/draft: asynchronous adaptation scheduling is an
+explicit unfinished dependency. Whole rewrite incomplete; no live speed trials.
 
 ## Reference and execution scope
 
@@ -8169,3 +8170,113 @@ scheduling/substitution audit, numerical/state/full-context/hot-request/failure/
 recovery gates. Protected private executable input stays independently gated;
 current CLI compiled-public/one-request. Goal active CPU-only; root not needed.
 Preserve canonical application work and inherited untracked files.
+
+## Original cell transfer copy path (2026-10-16)
+
+Source `8bd6edff399f531565642a66472dfd6afbba0ea1`, isolated `codex/strata-rust-port`. This supersedes the
+selected global adaptive exchange's shader mechanism, not the complete source
+placement or acceptance contract. Preserve the complete branch; do not select
+this leaf separately from its original owners, exact allocator or queue work.
+
+### Connected implementation
+
+- `strata_global_sources.rs::Sources::exchange` remains the actual consumer of
+  every `Cache` proposal. It rejects prompt scopes, outstanding prompt loans,
+  prior mutations and pending publication. It authenticates all original
+  gate/up/DOWN cells against the bound global source plan and original physical
+  placement before mutation. The previous client join remains.
+- Actual `strata_global_exchange.rs::Host::exchange` now records the same checked
+  copy plan tested on CPU: for each original role, HOST to scratch, GPU to the
+  SAME HOST location, scratch to GPU. All original bytes survive without
+  dequantization/repacking or substituted experts. All three roles complete
+  before logical placement/private route-map publication. Bounds, disjoint spans,
+  registered HOST capabilities and the original rebase token remain required.
+- Scratch is the already-attached complete32MiB prompt raw root. No extra model,
+  scratch buffer, duplicate HOST complement, source registration or private root
+  is allocated. Actual retained resource metadata keeps that original root alive
+  through transfer completion. Whole private-arena reset/close still erases the
+  complete root. The bounded copy-plan metadata is below128KiB within the
+  existing2MiB adaptive HOST allowance; no residency credit is added or refunded.
+- The actual global HOST constructor (`strata_prompt_shadow.rs`) now creates and
+  imports STORAGE/COPY_SRC/COPY_DST buffers and matching Vulkan transfer flags.
+  The actual public-source registration uses the shared exact usage predicate.
+  This adds no mapping permission and grants no write authority by itself:
+  original exclusive rebase is still mandatory. Legacy uniform HOST exchange
+  and its shader remain separate and unchanged.
+- Wgpu records transfer RAW/WAR/WAW ordering on the actual buffers. The actual
+  HAL encoder adds TRANSFER/TRANSFER_WRITE to HOST/HOST_READ availability before
+  its checked submitted fence; CPU mappings still require their existing cache
+  invalidation. Native subsequent consumers retain their existing original
+  ALL_COMMANDS memory boundaries and cross-queue timeline dependencies. These
+  source contracts do not establish physical driver execution.
+- Failed transfer/barrier/fence/error scope cannot publish the proposed map.
+  `mutation_pending` keeps target sources unavailable; success still requires
+  joined private map/usage writes and `Cache::commit`. No failure is treated as
+  permission to infer with partially exchanged weights.
+
+### Source audit: remaining adaptation schedule
+
+Pinned MIT upstream remains `fb58e0dbc8399662c0e47c76578c6e878b14f6cf`.
+`sycl/src/program/generate.cpp` serving code around7673/7707 and11080, and its
+corresponding generate path around12004/12040/12305, submit adaptive copies on an
+independent stream while target commit and MTP drafting proceed. The next
+verifier joins actual pending-copy completion before admitting changed residency
+(default pending lag1); CPU RAM exchanges and residency publication occur only
+when those original copies land. Optional alternate async jobs/lag policies are
+not established requirements of the selected single-device configuration.
+
+Current Rust still calls `adapt_global_after_window` AFTER
+`verify_native_prefix` returns. That latter method already ran the original
+pending target commit and scoped next-MTP observer and joined both. The new copy
+mechanism remains on the original Wgpu queue with original whole-client/rebase
+joins. **It does not yet overlap adaptation with commit/drafting.** Do not mark
+that row complete, call this a complete Strata scheduling port, or open the speed
+gate based on CPU tests.
+
+Next connected work must prepare actual usage/proposals at the observed verified
+boundary, retain original sources/scratch through an admitted transfer flight,
+allow independent commit/draft work, and await the exact original completion and
+publish all physical/private maps before the next target reader. Existing public
+rebase begins/finishes with whole-client joins; replacing them requires actual
+reader/recording lifetime proof, not merely removing waits or creating a second
+queue. Only selected expert HOST roots are revoked; the shared embedding root is
+independent. Audit the first last-prompt/count1 window's usage/adaptation tick
+alongside this change: the current later-window tick alone is not evidence of
+matching upstream first-window accounting. That suspected gap is unproven here.
+
+### CPU acceptance and limits
+
+Evidence base `/media/jmicko/faststore/kuno-development`:
+
+- `strata-cell-transfer-checked-build-20261016.log`: locked selected release test
+  build completed successfully.
+- `strata-cell-transfer-cpu-20261016.log` and its retained
+  `strata-cell-transfer-cpu-run-20261016.py`: **508 distinct CPU cases /62 nonempty
+  suites, zero failed**. Original parent global suite includes the three new
+  copy tests. One duplicate explicit child filter was removed from the runner;
+  its rejected duplicate was not a production/test failure or credited coverage.
+- Actual copy plan preserves arbitrary exact byte patterns for3/6/9/288 original
+  roles with reused scratch. Empty/partial/excess role groups, bad byte geometry
+  and scratch overrun are rejected. Actual shared HOST usage and HAL producer
+  masks are checked without a device. The fourth new case checks the exact
+  descriptor predicate used by actual public-source registration.
+- `strata-cell-transfer-{core,off}-clippy-20261016.log`: both strict locked release
+  configurations completed successfully. Ordinary54-case receipt is historical
+  from the preceding exact-page block; it was not rerun here.
+- Changed source format/whitespace checks pass. Two unrelated rustfmt-only panic
+  layouts in vendored HAL were restored to preserve the original source lines.
+
+Normal source-clean/stable artifact `strata-cell-transfer-ordinary-20261016/`
+(`strata-cell-transfer-ordinary-20261016.out`) has SHA256
+`b85b758107e6a34db4e97d053ffa5e98c654fca1842a41bfe22892d9b33abc59`.
+Independent source/hash/mode0500 checks pass. Offline
+`strata-cell-transfer-shaders-20261016.log` exits0 with334 variants and122
+physical-pointer checks. This command returns before adapter/device creation.
+
+No GPU, adapter, model, inference, service, installation, release, API or frontend
+action. These checks prove source/CPU transactions and offline validity only,
+not physical transfer ordering, source residency/refund, numerical/model
+correctness, hot reuse, recovery or performance. Full rewrite remains incomplete;
+speed gate closed. No required Vashti changes. Goal active CPU-only. Root not
+needed; latest shared-shell noninteractive sudo refresh still reported that a
+password is required. Canonical application work and inherited files preserved.
