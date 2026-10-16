@@ -80,6 +80,10 @@ pub struct NativeStrataBranch {
     state_role: u8,
 }
 impl NativeStrataBranch {
+    /// Static target geometry only; no request controls or access authority.
+    pub fn target_geometry(self) -> Option<(u8, u16, u8)> {
+        (self.family == 1).then_some((self.rows, self.context_capacity, self.state_role))
+    }
     /// The admitted MAX8 target shape at the maximum 4096-cell context.
     pub fn target_window(rows: u8) -> Result<Self, &'static str> {
         Self::target_window_for_context(rows, 4096)
@@ -147,6 +151,8 @@ pub enum NativeStrataValue {
     },
     /// Current expert-routing stamp, supplied outside the branch identity.
     RouteEpoch,
+    /// Whether this target window contributes to the original expert-usage map.
+    RouteUsage,
 }
 /// Typed location in one original INFO record; contains no invocation values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -162,16 +168,26 @@ pub struct NativeStrataParameter {
 pub struct NativeStrataInvocation {
     position: u32,
     route_epoch: u32,
+    route_usage: u32,
 }
 impl NativeStrataInvocation {
     /// Validate fresh target controls before opening the retained shape.
     pub fn target(position: u32, route_epoch: u32) -> Result<Self, &'static str> {
+        Self::target_with_usage(position, route_epoch, false)
+    }
+    /// Fresh target controls, including the actual verification usage policy.
+    pub fn target_with_usage(
+        position: u32,
+        route_epoch: u32,
+        route_usage: bool,
+    ) -> Result<Self, &'static str> {
         if position >= 4096 || route_epoch == 0 {
             return Err("native target invocation bounds");
         }
         Ok(Self {
             position,
             route_epoch,
+            route_usage: u32::from(route_usage),
         })
     }
     /// Check that the current window fits this immutable target shape.
@@ -198,6 +214,7 @@ impl NativeStrataInvocation {
                 Ok(value as u32)
             }
             NativeStrataValue::RouteEpoch => Ok(self.route_epoch),
+            NativeStrataValue::RouteUsage => Ok(self.route_usage),
         }
     }
     /// Clear the active retained control copy at close or retirement.
@@ -207,6 +224,7 @@ impl NativeStrataInvocation {
         unsafe {
             core::ptr::write_volatile(&mut self.position, 0);
             core::ptr::write_volatile(&mut self.route_epoch, 0);
+            core::ptr::write_volatile(&mut self.route_usage, 0);
         }
         core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
     }
@@ -888,6 +906,18 @@ where
             backtrace: BackTrace::capture(),
         }
         .into())
+    }
+    /// Submit a previously sealed typed branch on the current request stream.
+    /// False means no supported recording exists, before any replay mutation.
+    /// True is returned only after fresh controls and the actual native fence
+    /// complete. Neither result authorizes numerical acceptance or erasure.
+    fn replay_native_strata_branch(
+        &mut self,
+        _stream_id: StreamId,
+        _key: NativeStrataBranch,
+        _invocation: NativeStrataInvocation,
+    ) -> Result<bool, ServerError> {
+        Ok(false)
     }
     /// Complete and seal that exact shape; this is not an erasure receipt.
     fn end_native_strata_branch(

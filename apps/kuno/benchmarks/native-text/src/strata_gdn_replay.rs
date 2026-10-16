@@ -44,6 +44,33 @@ pub(crate) fn allocation_words(layout: StageLayout) -> Vec<usize> {
     .to_vec()
 }
 impl InputCache {
+    /// The original retained graph contains the five full-owner copies queued
+    /// by retain(). Update only their CPU stamp after its real completion;
+    /// accepted-prefix replay still requires the original family checkpoint.
+    pub(super) fn record_native_replay(
+        &mut self,
+        arena: &PrivateArena,
+        source: [BufferId; 5],
+        start: u64,
+        count: usize,
+        chunk: u64,
+    ) -> Result<()> {
+        if !(1..=MAX_BATCH).contains(&count) {
+            return Err(fault("Strata GDN replay cache count"));
+        }
+        for (&from, &to) in source.iter().zip(&self.ids) {
+            if from == to
+                || arena.layout(from).map_err(arena_fault)?
+                    != arena.layout(to).map_err(arena_fault)?
+            {
+                return Err(fault("Strata GDN replay cache extent"));
+            }
+        }
+        self.start = start;
+        self.count = count;
+        self.chunk = chunk;
+        Ok(())
+    }
     pub(crate) fn allocate(arena: &mut PrivateArena, layout: StageLayout) -> Result<Option<Self>> {
         if !crate::strata_port::enabled() {
             return Ok(None);

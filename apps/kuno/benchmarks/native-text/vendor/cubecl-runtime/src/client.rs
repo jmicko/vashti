@@ -1340,6 +1340,21 @@ impl<R: Runtime> ComputeClient<R> {
             })
             .unwrap()
     }
+    /// Execute an existing request-owned typed recording and join its fence.
+    /// A miss leaves the ordinary capture path available; an error is terminal
+    /// to the owning inference request and must never be retried as a miss.
+    pub fn replay_native_strata_branch(
+        &self,
+        key: crate::server::NativeStrataBranch,
+        invocation: crate::server::NativeStrataInvocation,
+    ) -> Result<bool, ServerError> {
+        let stream_id = self.stream_id();
+        self.device
+            .submit_blocking(move |server| {
+                server.replay_native_strata_branch(stream_id, key, invocation)
+            })
+            .unwrap()
+    }
     /// Join and seal the original branch. Private owners remain charged.
     pub fn end_native_strata_branch(
         &self,

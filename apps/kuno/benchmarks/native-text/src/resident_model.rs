@@ -32,6 +32,9 @@ pub(crate) mod ple_batch;
 #[path = "resident_model_batch.rs"]
 pub(crate) mod batch;
 
+#[path = "strata_target_replay.rs"]
+pub(crate) mod target_replay;
+
 #[path = "resident_batch_io.rs"]
 pub(crate) mod batch_io;
 

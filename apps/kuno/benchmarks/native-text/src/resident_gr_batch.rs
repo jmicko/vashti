@@ -299,6 +299,27 @@ impl Workspace {
         self.validate_all_consumers_queued()?;
         Ok(self.ids[MIXED])
     }
+    /// A captured window starts/ends with this workspace idle. Its read/write
+    /// pairs and final pending write actually ran in the retained recording.
+    /// Validate that boundary, rather than fabricating per-layer read permits.
+    pub(crate) fn complete_native_replay(
+        &self,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+        residual: BufferId,
+        fault: BufferId,
+        completed: &crate::resident_model::target_replay::Completed,
+    ) -> Result<()> {
+        self.validate_all_consumers_queued()?;
+        completed.check_fault_owner(arena, fault)?;
+        if !crate::strata_intel_core::enabled()
+            || self.binding != graph.binding_id()
+            || self.public_grouped_status.state().0
+        {
+            return Err(Error::InvalidFormat("GR native replay boundary"));
+        }
+        self.prove(arena, residual, fault, &[], None)
+    }
 
     pub(crate) fn public_grouped_status_folds(&self) -> (bool, u64) {
         self.public_grouped_status.state()

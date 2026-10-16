@@ -1,5 +1,5 @@
-//! Request-owned native branch layouts. Only shapes and original owner indices
-//! live here; parameter bytes stay in the transient I/O owners and their audit.
+//! Request-owned native branch layouts and static INFO templates. Dynamic
+//! fields are zeroed here; actual bytes use the original transient I/O audit.
 //! First execution seals a branch's submission sequence. Re-execution must use
 //! the same record lengths, page assignments and segment count before replay.
 use super::transient_io::fault;
@@ -71,6 +71,144 @@ pub(crate) struct Parameters {
     active: Option<Active>,
 }
 impl Parameters {
+    /// Only a fully sealed, typed, single-submission branch can bypass enqueue.
+    /// Multiple segments may have host observations between them; they must not
+    /// be flattened into a speculative submission by this path.
+    pub(crate) fn replay_key(
+        &self,
+        key: NativeStrataBranch,
+        nonce: u64,
+    ) -> Result<Option<RecordingKey>, ServerError> {
+        if self.active.is_some() || nonce == 0 {
+            return Err(fault("native replay requires idle request"));
+        }
+        let Some(b) = self
+            .branches
+            .iter()
+            .find(|b| b.key == key && b.nonce == nonce)
+        else {
+            return Ok(None);
+        };
+        if !b.sealed || !b.typed || b.segments.len() != 1 {
+            return Ok(None);
+        }
+        let s = &b.segments[0];
+        if !s.sealed || s.records.is_empty() || s.pages.is_empty() {
+            return Err(fault("native replay incomplete program"));
+        }
+        for (i, &page) in s.pages.iter().enumerate() {
+            if s.pages[..i].contains(&page) || !s.records.iter().any(|r| r.owner as usize == page) {
+                return Err(fault("native replay page inventory"));
+            }
+        }
+        for r in &s.records {
+            if r.template == NONE
+                || r.owner == NONE
+                || !s.pages.contains(&(r.owner as usize))
+                || (r.template as usize)
+                    .checked_add(r.bytes as usize)
+                    .is_none_or(|end| end > s.template.0.len())
+                || (r.first_field as usize)
+                    .checked_add(r.fields as usize)
+                    .is_none_or(|end| end > s.fields.len())
+            {
+                return Err(fault("native replay record inventory"));
+            }
+        }
+        Ok(Some(RecordingKey {
+            branch: key,
+            nonce,
+            segment: 0,
+        }))
+    }
+    pub(crate) fn begin_replay(
+        &mut self,
+        key: RecordingKey,
+        invocation: NativeStrataInvocation,
+    ) -> Result<(), ServerError> {
+        invocation.validate_for(key.branch).map_err(fault)?;
+        if self.replay_key(key.branch, key.nonce)? != Some(key) {
+            return Err(fault("native replay program unavailable"));
+        }
+        let branch = self
+            .branches
+            .iter()
+            .position(|b| b.key == key.branch && b.nonce == key.nonce)
+            .ok_or_else(|| fault("native replay branch missing"))?;
+        let s = &self.branches[branch].segments[0];
+        // Validate every symbolic expression before any upload owner is mapped.
+        for f in &s.fields {
+            invocation.value(f.value).map_err(fault)?;
+        }
+        self.active = Some(Active {
+            branch,
+            segment: 0,
+            records: s.records.len(),
+            pages: s.pages.len(),
+            invocation: Some(invocation),
+        });
+        Ok(())
+    }
+    pub(crate) fn replay_pages(&self) -> Result<usize, ServerError> {
+        let a = self.active.ok_or_else(|| fault("native replay inactive"))?;
+        Ok(self.branches[a.branch].segments[a.segment].pages.len())
+    }
+    pub(crate) fn replay_page(&self, index: usize) -> Result<usize, ServerError> {
+        let a = self.active.ok_or_else(|| fault("native replay inactive"))?;
+        self.branches[a.branch].segments[a.segment]
+            .pages
+            .get(index)
+            .copied()
+            .ok_or_else(|| fault("native replay page missing"))
+    }
+    /// Render all records of one original page into its full, already-zeroed
+    /// mapped upload owner. This never builds a new kernel or node inventory.
+    pub(crate) fn write_replay_page(
+        &self,
+        owner: usize,
+        output_len: usize,
+        mut write: impl FnMut(usize, &[u8]),
+    ) -> Result<(), ServerError> {
+        let a = self.active.ok_or_else(|| fault("native replay inactive"))?;
+        let invocation = a.invocation.ok_or_else(|| fault("native replay untyped"))?;
+        let s = &self.branches[a.branch].segments[a.segment];
+        if !s.sealed
+            || a.records != s.records.len()
+            || a.pages != s.pages.len()
+            || !s.pages.contains(&owner)
+        {
+            return Err(fault("native replay unsealed page"));
+        }
+        let mut previous_end = 0;
+        // Preflight intervals and expressions before emitting the first byte.
+        for r in s.records.iter().filter(|r| r.owner as usize == owner) {
+            let start = r.offset as usize;
+            let end = start
+                .checked_add(r.bytes as usize)
+                .ok_or_else(|| fault("native replay page extent"))?;
+            if r.template == NONE || start < previous_end || end > output_len {
+                return Err(fault("native replay page extent"));
+            }
+            for f in &s.fields[r.first_field as usize..(r.first_field + r.fields) as usize] {
+                invocation.value(f.value).map_err(fault)?;
+            }
+            previous_end = end;
+        }
+        for r in s.records.iter().filter(|r| r.owner as usize == owner) {
+            let start = r.offset as usize;
+            write(
+                start,
+                &s.template.0[r.template as usize..r.template as usize + r.bytes as usize],
+            );
+            for f in &s.fields[r.first_field as usize..(r.first_field + r.fields) as usize] {
+                write(
+                    start + f.word as usize * 4,
+                    &invocation.value(f.value).map_err(fault)?.to_le_bytes(),
+                );
+            }
+        }
+        Ok(())
+    }
     pub(crate) fn active(&self) -> bool {
         self.active.is_some()
     }
@@ -452,6 +590,187 @@ impl Parameters {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn direct_replay_refreshes_verification_usage_policy_in_the_same_branch() {
+        let key = NativeStrataBranch::target_window(4).unwrap();
+        let mut p = Parameters::default();
+        let schema = [
+            fields()[0],
+            fields()[1],
+            NativeStrataParameter {
+                word: 3,
+                value: cubecl_runtime::server::NativeStrataValue::RouteUsage,
+            },
+        ];
+        p.begin_invocation(
+            key,
+            5,
+            Some(NativeStrataInvocation::target_with_usage(11, 7, true).unwrap()),
+        )
+        .unwrap();
+        p.record_info(&payload(11, 7, 1), &schema).unwrap();
+        p.use_page(17).unwrap();
+        p.bind_current(17, 0).unwrap();
+        let recorded = p.recording().unwrap().unwrap();
+        p.submitted().unwrap();
+        p.end(key, 5).unwrap();
+        for (position, epoch, usage) in [(31, 8, false), (240, 9, true)] {
+            p.begin_replay(
+                recorded,
+                NativeStrataInvocation::target_with_usage(position, epoch, usage).unwrap(),
+            )
+            .unwrap();
+            let mut output = [0u8; 16];
+            p.write_replay_page(17, output.len(), |at, bytes| {
+                output[at..at + bytes.len()].copy_from_slice(bytes);
+            })
+            .unwrap();
+            assert_eq!(&output[..], &payload(position, epoch, u32::from(usage)));
+            p.submitted().unwrap();
+            p.end(key, 5).unwrap();
+        }
+        assert_eq!(&p.branches[0].segments[0].template.0[4..], &[0; 12]);
+        assert!(p.active.is_none());
+    }
+    #[test]
+    fn direct_replay_requires_complete_typed_single_segment_and_exact_request() {
+        let key = NativeStrataBranch::target_window(4).unwrap();
+        let invocation = NativeStrataInvocation::target(11, 7).unwrap();
+        let mut p = Parameters::default();
+        assert!(p.replay_key(key, 5).unwrap().is_none());
+        p.begin_invocation(key, 5, Some(invocation)).unwrap();
+        let recorded = typed_segment(&mut p, &payload(11, 7, 123));
+        assert!(p.replay_key(key, 5).is_err());
+        p.end(key, 5).unwrap();
+        assert_eq!(p.replay_key(key, 5).unwrap(), Some(recorded));
+        assert!(p.replay_key(key, 6).unwrap().is_none());
+        assert!(
+            p.replay_key(NativeStrataBranch::target_window(3).unwrap(), 5)
+                .unwrap()
+                .is_none()
+        );
+        // Sealed layout alone has no actual GPU submission authority. The
+        // stream separately requires its original ready graph recording.
+        p.begin_replay(recorded, NativeStrataInvocation::target(31, 8).unwrap())
+            .unwrap();
+        assert_eq!(p.recording().unwrap(), Some(recorded));
+        p.submitted().unwrap();
+        p.end(key, 5).unwrap();
+        assert!(p.active.is_none());
+        p.clear();
+        assert!(p.replay_key(key, 5).unwrap().is_none());
+
+        p.begin_invocation(key, 5, Some(invocation)).unwrap();
+        typed_segment(&mut p, &payload(11, 7, 123));
+        typed_segment(&mut p, &payload(11, 7, 456));
+        p.end(key, 5).unwrap();
+        assert!(p.replay_key(key, 5).unwrap().is_none());
+        p.clear();
+        p.begin(key, 5).unwrap();
+        segment(&mut p, 17);
+        p.end(key, 5).unwrap();
+        assert!(p.replay_key(key, 5).unwrap().is_none());
+    }
+    #[test]
+    fn direct_replay_bulk_renders_original_pages_with_fresh_controls_and_padding() {
+        let key = NativeStrataBranch::target_window_for_context(4, 256).unwrap();
+        let mut p = Parameters::default();
+        p.begin_invocation(key, 5, Some(NativeStrataInvocation::target(11, 7).unwrap()))
+            .unwrap();
+        for (page, offset, constant) in [(17, 32, 123), (17, 64, 456), (31, 16, 789)] {
+            p.record_info(&payload(11, 7, constant), &fields()).unwrap();
+            if offset != 64 {
+                p.use_page(page).unwrap();
+            }
+            p.bind_current(page, offset).unwrap();
+        }
+        let recorded = p.recording().unwrap().unwrap();
+        p.submitted().unwrap();
+        p.end(key, 5).unwrap();
+        let capacity = p.metadata_bytes();
+        for (position, epoch) in [(31, 8), (240, 999)] {
+            p.begin_replay(
+                recorded,
+                NativeStrataInvocation::target(position, epoch).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(p.replay_pages().unwrap(), 2);
+            assert_eq!(p.replay_page(0).unwrap(), 17);
+            assert_eq!(p.replay_page(1).unwrap(), 31);
+            assert!(p.replay_page(2).is_err());
+            for owner in [17, 31] {
+                let mut mapped = [0u8; 128];
+                p.write_replay_page(owner, mapped.len(), |at, bytes| {
+                    mapped[at..at + bytes.len()].copy_from_slice(bytes);
+                })
+                .unwrap();
+                let mut expected = [0u8; 128];
+                for (page, offset, constant) in [(17, 32, 123), (17, 64, 456), (31, 16, 789)] {
+                    if page == owner {
+                        expected[offset..offset + 16]
+                            .copy_from_slice(&payload(position, epoch, constant));
+                    }
+                }
+                assert_eq!(mapped, expected);
+            }
+            assert_eq!(p.metadata_bytes(), capacity);
+            assert_eq!(p.recording().unwrap(), Some(recorded));
+            p.submitted().unwrap();
+            p.end(key, 5).unwrap();
+        }
+    }
+    #[test]
+    fn direct_replay_rejects_bad_page_or_extent_before_emitting_bytes() {
+        let key = NativeStrataBranch::target_window(4).unwrap();
+        let mut p = Parameters::default();
+        p.begin_invocation(key, 5, Some(NativeStrataInvocation::target(11, 7).unwrap()))
+            .unwrap();
+        let recorded = typed_segment(&mut p, &payload(11, 7, 123));
+        p.end(key, 5).unwrap();
+        p.begin_replay(recorded, NativeStrataInvocation::target(31, 8).unwrap())
+            .unwrap();
+        let mut writes = 0;
+        assert!(p.write_replay_page(19, 128, |_, _| writes += 1).is_err());
+        assert!(p.write_replay_page(17, 47, |_, _| writes += 1).is_err());
+        assert_eq!(writes, 0);
+        p.submitted().unwrap();
+        p.end(key, 5).unwrap();
+        let s = &mut p.branches[0].segments[0];
+        s.records[0].owner = 999;
+        assert!(p.replay_key(key, 5).is_err());
+        p.clear();
+    }
+    #[test]
+    fn direct_replay_preflights_all_position_expressions_before_activation() {
+        use cubecl_runtime::server::NativeStrataValue;
+        let key = NativeStrataBranch::target_window(4).unwrap();
+        let mut p = Parameters::default();
+        p.begin_invocation(key, 5, Some(NativeStrataInvocation::target(11, 7).unwrap()))
+            .unwrap();
+        p.record_info(
+            &9u32.to_le_bytes(),
+            &[NativeStrataParameter {
+                word: 0,
+                value: NativeStrataValue::Position { offset: -2 },
+            }],
+        )
+        .unwrap();
+        p.use_page(17).unwrap();
+        p.bind_current(17, 0).unwrap();
+        let recorded = p.recording().unwrap().unwrap();
+        p.submitted().unwrap();
+        p.end(key, 5).unwrap();
+        assert!(
+            p.begin_replay(recorded, NativeStrataInvocation::target(1, 8).unwrap())
+                .is_err()
+        );
+        assert!(p.active.is_none());
+        assert!(
+            p.begin_replay(recorded, NativeStrataInvocation::target(4095, 8).unwrap())
+                .is_err()
+        );
+        assert!(p.active.is_none());
+    }
     fn payload(position: u32, epoch: u32, constant: u32) -> Vec<u8> {
         [4u32, position, epoch, constant]
             .into_iter()

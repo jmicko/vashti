@@ -95,11 +95,18 @@ fn launch(
     for h in owners {
         args = args.with_buffer(h.binding());
     }
-    args = args.with_info(MetadataBindingInfo::custom(
+    let mut metadata = MetadataBindingInfo::custom(
         p.chunks_exact(2)
             .map(|v| v[0] as u64 | ((v[1] as u64) << 32))
             .collect(),
-    ));
+    );
+    if op != Op::Dead {
+        metadata = metadata.with_native_parameter(
+            1,
+            cubecl_runtime::server::NativeStrataValue::Position { offset: 0 },
+        );
+    }
+    args = args.with_info(metadata);
     // SAFETY: same-client private parent owners and exact active spans have
     // been checked before this entry. Selection's barriers are query-uniform.
     unsafe {

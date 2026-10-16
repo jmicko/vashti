@@ -122,6 +122,17 @@ pub(crate) struct Workspace {
     active: Option<Zeroizing<[usize; 3]>>, // active count, next layer, accepted flag
 }
 impl Workspace {
+    pub(crate) fn invocation_controls(
+        &self,
+        position: usize,
+    ) -> Result<cubecl_runtime::server::NativeStrataInvocation> {
+        cubecl_runtime::server::NativeStrataInvocation::target_with_usage(
+            u32::try_from(position).map_err(u::fault)?,
+            self.invocation_epoch()?,
+            self.verify_usage,
+        )
+        .map_err(u::fault)
+    }
     pub(crate) fn invocation_epoch(&self) -> Result<u32> {
         if self.epoch == 0
             || self.layer_pending
@@ -130,6 +141,33 @@ impl Workspace {
             return Err(reject());
         }
         Ok(self.epoch)
+    }
+    /// All48 native routed reductions ran in the retained graph. Preserve the
+    /// normal epoch-stamp readback in accept(); this changes only queue-state
+    /// bookkeeping and cannot mark the window accepted.
+    pub(crate) fn complete_native_replay(
+        &mut self,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+        fault: BufferId,
+        position: u64,
+        completed: &crate::resident_model::target_replay::Completed,
+    ) -> Result<()> {
+        let active = self.active.as_mut().ok_or_else(reject)?;
+        completed.check(fault, position, active[0])?;
+        completed.check_fault_owner(arena, fault)?;
+        if self.binding != graph.binding_id()
+            || self.layer_pending
+            || active[1] != 0
+            || active[2] != 0
+            || self.epoch != completed.route_epoch()
+            || self.verify_usage != completed.route_usage()
+            || crate::strata_prompt::active()
+        {
+            return Err(reject());
+        }
+        active[1] = 48;
+        Ok(())
     }
     pub(crate) fn sampler_ids(&self) -> [BufferId; 7] {
         self.sampler
@@ -409,12 +447,15 @@ impl Workspace {
             .with_buffer(owners[4].clone().binding())
             .with_buffer(full(fault)?.binding())
             .with_buffer(full(self.ids[9])?.binding())
-            .with_info(info(&[
-                count as u32,
-                layer as u32,
-                self.epoch,
-                u32::from(self.verify_usage),
-            ]));
+            .with_info(
+                info(&[
+                    count as u32,
+                    layer as u32,
+                    self.epoch,
+                    u32::from(self.verify_usage),
+                ])
+                .with_native_parameter(3, cubecl_runtime::server::NativeStrataValue::RouteUsage),
+            );
         // SAFETY: exact private routing/remap roots; no host readback or cache
         // transfer can bypass the owning graph's dependencies.
         unsafe {

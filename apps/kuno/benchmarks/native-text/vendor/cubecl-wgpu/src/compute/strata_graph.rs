@@ -431,6 +431,7 @@ struct Submitted {
 struct Recording {
     key: Option<super::strata_parameters::RecordingKey>,
     ready: bool,
+    compute_count: usize,
     work: strata_schedule::Commands,
     profile: Option<OperatorProfile>,
     device: ash::Device,
@@ -886,6 +887,53 @@ impl Graph {
     pub(crate) fn pending(&self) -> bool {
         !self.nodes.is_empty()
     }
+    pub(crate) fn has_recording(&self, key: super::strata_parameters::RecordingKey) -> bool {
+        !profile_active()
+            && self
+                .recordings
+                .iter()
+                .any(|r| r.ready && r.key == Some(key))
+    }
+    /// Submit the original retained commands/resources without building nodes,
+    /// pipeline descriptors or a signature again. Only the owning stream may
+    /// call this, after its fresh INFO uploads have actually completed.
+    pub(crate) fn replay_recording(
+        &mut self,
+        key: super::strata_parameters::RecordingKey,
+        wait: bool,
+    ) -> Result<(), ServerError> {
+        self.complete_submission()?;
+        if self.pending() || !self.has_recording(key) {
+            return Err(fault("native direct replay recording unavailable"));
+        }
+        let hit = self
+            .recordings
+            .iter()
+            .position(|r| r.ready && r.key == Some(key))
+            .ok_or_else(|| fault("native direct replay recording missing"))?;
+        let recording = self.recordings.remove(hit);
+        let compute_count = recording.compute_count;
+        self.recordings.push(recording);
+        unsafe { self.device.reset_fences(&[self.fence]) }
+            .map_err(|_| fault("native graph reset fence"))?;
+        // Set before queue submission: an error can leave partial GPU work.
+        self.submitted = true;
+        self.recordings
+            .last_mut()
+            .unwrap()
+            .work
+            .submit([self.queue, self.copy_queue], self.fence)
+            .map_err(fault)?;
+        self.flight = Some(Submitted {
+            compute_count,
+            replay: true,
+            profiling: false,
+        });
+        if wait {
+            self.complete_submission()?;
+        }
+        Ok(())
+    }
     pub(crate) fn complete_submission(&mut self) -> Result<(), ServerError> {
         if !self.submitted {
             return Ok(());
@@ -1170,6 +1218,7 @@ impl Graph {
         let recording = Recording {
             key,
             ready: false,
+            compute_count,
             work,
             profile,
             device: self.device.clone(),

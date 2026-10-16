@@ -196,6 +196,28 @@ pub struct Workspace {
     prepared: Option<PreparedStamp>,
 }
 impl Workspace {
+    /// The complete captured prepare/finish pairs leave the original scratch
+    /// idle. Only a joined native target invocation may use this boundary.
+    pub(crate) fn complete_native_replay(
+        &self,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+        fault: BufferId,
+        completed: &crate::resident_model::target_replay::Completed,
+    ) -> Result<()> {
+        self.validate_all_consumers_queued()?;
+        completed.check_fault_owner(arena, fault)?;
+        if !crate::strata_intel_core::enabled()
+            || self.binding != graph.binding_id()
+            || self.prepared.is_some()
+        {
+            return Err(Error::InvalidFormat("shared native replay boundary"));
+        }
+        for id in self.ids {
+            u::words(arena, id)?;
+        }
+        Ok(())
+    }
     pub fn allocation_requests(graph: BoundGraph<'_, '_>) -> Result<[u64; N]> {
         let g = graph.geometry();
         Layout::new(g.residual.width, g.expert_hidden)?.requests()

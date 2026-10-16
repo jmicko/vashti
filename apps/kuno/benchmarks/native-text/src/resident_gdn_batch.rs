@@ -246,8 +246,8 @@ fn anchor_matches(expected: &Metadata, received: &Metadata) -> bool {
 }
 
 /// Original armed transaction before any math is queued. Only the matching
-/// enqueue path can turn this into a pending receipt; abandonment poisons the
-/// original workspace and wipes its metadata just like an uncommitted batch.
+/// enqueue or joined native replay turns it into a pending receipt; abandonment
+/// poisons the workspace and wipes metadata just like an uncommitted batch.
 pub(crate) struct PreparedGdnBatch {
     receipt: PendingGdnBatch,
 }
@@ -1130,6 +1130,56 @@ impl ResidentGdn<'_> {
             self.enqueue_prepared_checked(
                 graph, arena, public, projector, workspace, input, output, spans, prepared, cancel,
             )
+        });
+        if attempted.is_err() {
+            self.poison();
+        }
+        attempted
+    }
+    /// Consume the same armed transaction after the original retained target
+    /// graph completed. State acceptance/commit remains the unchanged path.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn complete_prepared_replay(
+        &mut self,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+        public: &PublicGdnParameters,
+        workspace: &mut GdnBatchWorkspace,
+        prepared: PreparedGdnBatch,
+        completed: &crate::resident_model::target_replay::Completed,
+        cancel: &AtomicBool,
+    ) -> Result<PendingGdnBatch> {
+        let attempted = guarded(&workspace.poison.clone(), || {
+            let receipt = prepared.receipt;
+            workspace.healthy(arena, cancel)?;
+            graph.verify_unchanged()?;
+            workspace.check_receipt(self, &receipt, arena)?;
+            let m = &*receipt.metadata;
+            completed.check(m.fault, m.stamp.start, m.stamp.count)?;
+            completed.check_fault_owner(arena, m.fault)?;
+            if !crate::strata_intel_core::enabled()
+                || crate::strata_prompt::active()
+                || graph.binding_id() != self.binding
+                || public.binding != self.binding
+                || public.layer != self.layer
+                || public.identity != self.public_identity
+                || self.native_capture_state_role()? != completed.state_role()
+                || workspace.public_grouped_status.state().0
+            {
+                return Err(fault("native GDN replay invocation changed"));
+            }
+            let ids = &workspace.ids;
+            self.strata_inputs
+                .as_mut()
+                .ok_or_else(|| fault("native GDN replay cache missing"))?
+                .record_native_replay(
+                    arena,
+                    [ids[QKV], ids[Q], ids[K], ids[V], ids[CONTROL]],
+                    m.stamp.start,
+                    m.stamp.count,
+                    m.stamp.chunk,
+                )?;
+            Ok(receipt)
         });
         if attempted.is_err() {
             self.poison();

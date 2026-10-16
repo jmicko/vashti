@@ -5163,316 +5163,400 @@ impl Workspace {
         // and target-row consumers are invariant for this count/context pair.
         // Input gather/clears and original PLE uploads precede capture. Any
         // remaining required internal submission has its own retained segment.
-        let branch =
-            if purpose == Purpose::AllRowsWithCarry && m.admission.request_io_reuse_active() {
-                let mut state_role = None;
-                for layer in &m.layers {
-                    if let Layer::Gdn(stage, _) = layer {
-                        let role = stage.native_capture_state_role()?;
-                        if state_role.is_some_and(|previous| previous != role) {
-                            return Err(Error::InvalidFormat("native GDN capture role alignment"));
-                        }
-                        state_role = Some(role);
+        let branch = if purpose == Purpose::AllRowsWithCarry
+            && *start != 0
+            && m.admission.request_io_reuse_active()
+        {
+            let mut state_role = None;
+            for layer in &m.layers {
+                if let Layer::Gdn(stage, _) = layer {
+                    let role = stage.native_capture_state_role()?;
+                    if state_role.is_some_and(|previous| previous != role) {
+                        return Err(Error::InvalidFormat("native GDN capture role alignment"));
                     }
+                    state_role = Some(role);
                 }
-                Some(
-                    cubecl_runtime::server::NativeStrataBranch::target_window_with_state(
-                        u8::try_from(*count).map_err(u::fault)?,
-                        u16::try_from(m.context).map_err(u::fault)?,
-                        state_role.ok_or(error())?,
-                    )
-                    .map_err(u::fault)?,
+            }
+            Some(
+                cubecl_runtime::server::NativeStrataBranch::target_window_with_state(
+                    u8::try_from(*count).map_err(u::fault)?,
+                    u16::try_from(m.context).map_err(u::fault)?,
+                    state_role.ok_or(error())?,
                 )
+                .map_err(u::fault)?,
+            )
+        } else {
+            None
+        };
+        // The optional laboratory observation/injection paths deliberately keep
+        // their actual per-layer boundaries. Normal native inference replays a
+        // sealed whole window with fresh controls and its real queue fence.
+        let replay = if let Some(key) = branch {
+            if !grouped_status_folds
+                && !crate::status_fold_batch::selected()
+                && m.numeric_boundary.is_unarmed()
+                && m.lifecycle_hooks.is_unarmed()
+                && m.cancel_after_attention.is_none()
+            {
+                // Retained pointer consumers still require the original
+                // source publication/loan boundary, even without enqueue_data.
+                e.strata_global_sources
+                    .as_ref()
+                    .ok_or(error())?
+                    .validate_graph_ready(m.graph)?;
+                super::target_replay::try_submit(
+                    &m.arena,
+                    key,
+                    self.global_moe
+                        .as_ref()
+                        .ok_or(error())?
+                        .invocation_controls(*start)?,
+                    m.b.fault,
+                )?
             } else {
                 None
-            };
-        if let Some(key) = branch {
+            }
+        } else {
+            None
+        };
+        if let Some(key) = branch.filter(|_| replay.is_none()) {
             m.arena
                 .client()
                 .map_err(u::fault)?
                 .begin_native_strata_invocation(
                     key,
-                    cubecl_runtime::server::NativeStrataInvocation::target(
-                        u32::try_from(*start).map_err(u::fault)?,
-                        self.global_moe
-                            .as_ref()
-                            .ok_or(error())?
-                            .invocation_epoch()?,
-                    )
-                    .map_err(u::fault)?,
+                    self.global_moe
+                        .as_ref()
+                        .ok_or(error())?
+                        .invocation_controls(*start)?,
                 )
                 .map_err(u::fault)?;
         }
-        let mut current = Zeroizing::new(0usize);
-        drive_layers(cancel, |layer| {
-            let attention_start = Instant::now();
-            let dense_q8 = if crate::strata_intel_core::enabled() && (1..=8).contains(&*count) {
-                self.core_stages.map(|ids| ids[0])
-            } else {
-                None
-            };
-            if layer == 1 {
-                // PLE consumes the residual directly, so complete the pending
-                // FFN write before its observation/projection/history work.
-                self.gr.flush_pending(&m.arena, m.b.fault, cancel)?;
-                m.numeric_boundary.observe(
-                    numeric_boundaries::Boundary::Input,
-                    &m.arena,
-                    &m.admission,
-                    self.outer.residual[*current],
-                    m.b.fault,
-                    RESIDUAL_WORDS,
-                    *start,
-                    *count,
-                    cancel,
-                )?;
+        // Layer0 has two swaps; layer1 adds the sole PLE swap; all remaining
+        // attention/FFN pairs have even parity. The retained final owner is1.
+        let mut current = Zeroizing::new(if replay.is_some() { 1usize } else { 0 });
+        if let Some(completed) = &replay {
+            u::cancel(cancel)?;
+            self.gr.complete_native_replay(
+                m.graph,
+                &m.arena,
+                self.outer.residual[*current],
+                m.b.fault,
+                completed,
+            )?;
+            self.shared
+                .complete_native_replay(m.graph, &m.arena, m.b.fault, completed)?;
+            pending.ple = Some(self.ple.complete_prepared_replay(
+                m,
+                ple_invocation.take().ok_or(error())?,
+                completed,
+                cancel,
+            )?);
+            for (layer, stage) in m.layers.iter_mut().enumerate() {
+                u::cancel(cancel)?;
+                match stage {
+                    Layer::Gdn(stage, public) => {
+                        pending.gdn[layer] = Some(stage.complete_prepared_replay(
+                            m.graph,
+                            &m.arena,
+                            public,
+                            &mut self.gdn,
+                            attention_invocations.gdn[layer].take().ok_or(error())?,
+                            completed,
+                            cancel,
+                        )?);
+                    }
+                    Layer::Qsa(stage, public) => {
+                        let mut selector =
+                            qsa::BatchSelector::new(&m.admission, self.public_gpu_qsa_selector);
+                        pending.qsa[layer] = Some(stage.complete_prepared_replay(
+                            m.graph,
+                            &m.arena,
+                            public,
+                            &mut selector,
+                            &mut self.qsa,
+                            attention_invocations.qsa[layer].take().ok_or(error())?,
+                            completed,
+                            cancel,
+                        )?);
+                    }
+                }
+            }
+            self.global_moe
+                .as_mut()
+                .ok_or(error())?
+                .complete_native_replay(m.graph, &m.arena, m.b.fault, *start as u64, completed)?;
+        } else {
+            drive_layers(cancel, |layer| {
+                let attention_start = Instant::now();
+                let dense_q8 = if crate::strata_intel_core::enabled() && (1..=8).contains(&*count) {
+                    self.core_stages.map(|ids| ids[0])
+                } else {
+                    None
+                };
+                if layer == 1 {
+                    // PLE consumes the residual directly, so complete the pending
+                    // FFN write before its observation/projection/history work.
+                    self.gr.flush_pending(&m.arena, m.b.fault, cancel)?;
+                    m.numeric_boundary.observe(
+                        numeric_boundaries::Boundary::Input,
+                        &m.arena,
+                        &m.admission,
+                        self.outer.residual[*current],
+                        m.b.fault,
+                        RESIDUAL_WORDS,
+                        *start,
+                        *count,
+                        cancel,
+                    )?;
+                    let mut projector = ResidentBatchProjection {
+                        executor: e,
+                        fault: m.b.fault,
+                        dense_q8,
+                    };
+                    let spans = BatchSpans::new(*count, 0, 0, HC * D, 0, HC * D);
+                    pending.ple = Some(self.ple.enqueue_prepared(
+                        m,
+                        &mut projector,
+                        self.outer.residual[*current],
+                        self.outer.residual[1 - *current],
+                        &spans,
+                        ple_invocation.take().ok_or(error())?,
+                        cancel,
+                    )?);
+                    m.numeric_boundary.observe(
+                        numeric_boundaries::Boundary::Injected,
+                        &m.arena,
+                        &m.admission,
+                        self.outer.residual[1 - *current],
+                        m.b.fault,
+                        RESIDUAL_WORDS,
+                        *start,
+                        *count,
+                        cancel,
+                    )?;
+                    *current = 1 - *current;
+                }
                 let mut projector = ResidentBatchProjection {
                     executor: e,
                     fault: m.b.fault,
                     dense_q8,
                 };
-                let spans = BatchSpans::new(*count, 0, 0, HC * D, 0, HC * D);
-                pending.ple = Some(self.ple.enqueue_prepared(
-                    m,
-                    &mut projector,
-                    self.outer.residual[*current],
-                    self.outer.residual[1 - *current],
-                    &spans,
-                    ple_invocation.take().ok_or(error())?,
-                    cancel,
-                )?);
-                m.numeric_boundary.observe(
-                    numeric_boundaries::Boundary::Injected,
+                let prepared = self.gr.read(
+                    m.graph,
                     &m.arena,
-                    &m.admission,
-                    self.outer.residual[1 - *current],
-                    m.b.fault,
-                    RESIDUAL_WORDS,
-                    *start,
+                    &mut m.public,
+                    &mut projector,
+                    gr::Kind::Attention(layer),
+                    self.outer.residual[*current],
                     *count,
+                    m.b.fault,
                     cancel,
                 )?;
+                let spans = BatchSpans::new(*count, 0, 0, D, 0, D);
+                match &mut m.layers[layer] {
+                    Layer::Gdn(stage, public) => {
+                        pending.gdn[layer] = Some(stage.enqueue_prepared(
+                            m.graph,
+                            &m.arena,
+                            public,
+                            &mut projector,
+                            &mut self.gdn,
+                            prepared.mixed(),
+                            self.outer.block[0],
+                            &spans,
+                            attention_invocations.gdn[layer].take().ok_or(error())?,
+                            cancel,
+                        )?)
+                    }
+                    Layer::Qsa(stage, public) => {
+                        let mut selector =
+                            qsa::BatchSelector::new(&m.admission, self.public_gpu_qsa_selector);
+                        pending.qsa[layer] = Some(stage.enqueue_prepared(
+                            m.graph,
+                            &m.arena,
+                            public,
+                            &mut projector,
+                            &mut selector,
+                            &mut self.qsa,
+                            prepared.mixed(),
+                            self.outer.block[0],
+                            &spans,
+                            attention_invocations.qsa[layer].take().ok_or(error())?,
+                            cancel,
+                        )?);
+                    }
+                }
+                prepared.combine(self.outer.block[0], self.outer.residual[1 - *current])?;
                 *current = 1 - *current;
-            }
-            let mut projector = ResidentBatchProjection {
-                executor: e,
-                fault: m.b.fault,
-                dense_q8,
-            };
-            let prepared = self.gr.read(
-                m.graph,
-                &m.arena,
-                &mut m.public,
-                &mut projector,
-                gr::Kind::Attention(layer),
-                self.outer.residual[*current],
-                *count,
-                m.b.fault,
-                cancel,
-            )?;
-            let spans = BatchSpans::new(*count, 0, 0, D, 0, D);
-            match &mut m.layers[layer] {
-                Layer::Gdn(stage, public) => {
-                    pending.gdn[layer] = Some(stage.enqueue_prepared(
-                        m.graph,
-                        &m.arena,
-                        public,
-                        &mut projector,
-                        &mut self.gdn,
-                        prepared.mixed(),
-                        self.outer.block[0],
-                        &spans,
-                        attention_invocations.gdn[layer].take().ok_or(error())?,
-                        cancel,
-                    )?)
+                // Public laboratory aggregates only. These wall-clock enqueue
+                // intervals include any internal dependency waits; they are not
+                // isolated GPU kernel times or additional completion proofs.
+                *m.phase_ns
+                    .entry("native_attention_and_gr_enqueue")
+                    .or_default() += attention_start.elapsed().as_nanos();
+                if m.cancel_after_attention == Some(layer) {
+                    m.cancel_after_attention = None;
+                    cancel.store(true, Ordering::Release);
+                    u::cancel(cancel)?;
                 }
-                Layer::Qsa(stage, public) => {
-                    let mut selector =
-                        qsa::BatchSelector::new(&m.admission, self.public_gpu_qsa_selector);
-                    pending.qsa[layer] = Some(stage.enqueue_prepared(
-                        m.graph,
-                        &m.arena,
-                        public,
-                        &mut projector,
-                        &mut selector,
-                        &mut self.qsa,
-                        prepared.mixed(),
-                        self.outer.block[0],
-                        &spans,
-                        attention_invocations.qsa[layer].take().ok_or(error())?,
-                        cancel,
-                    )?);
-                }
-            }
-            prepared.combine(self.outer.block[0], self.outer.residual[1 - *current])?;
-            *current = 1 - *current;
-            // Public laboratory aggregates only. These wall-clock enqueue
-            // intervals include any internal dependency waits; they are not
-            // isolated GPU kernel times or additional completion proofs.
-            *m.phase_ns
-                .entry("native_attention_and_gr_enqueue")
-                .or_default() += attention_start.elapsed().as_nanos();
-            if m.cancel_after_attention == Some(layer) {
-                m.cancel_after_attention = None;
-                cancel.store(true, Ordering::Release);
-                u::cancel(cancel)?;
-            }
-            let router_enqueue_start = Instant::now();
+                let router_enqueue_start = Instant::now();
 
-            let prepared = self.gr.read(
-                m.graph,
-                &m.arena,
-                &mut m.public,
-                &mut projector,
-                gr::Kind::Ffn(layer),
-                self.outer.residual[*current],
-                *count,
-                m.b.fault,
-                cancel,
-            )?;
-            u::zero_many(&m.arena, &[self.outer.router, self.outer.packet])?;
-            let tensor = m
-                .graph
-                .tensor(&format!("blk.{layer}.ffn_gate_inp.weight"))?;
-            let matrix = Matrix::new(tensor)?;
-            if matrix.inputs() != D || matrix.outputs() != ROUTER || matrix.experts() != 1 {
-                return Err(Error::InvalidFormat(concat!(
-                    "native model chunk rejected at source line ",
-                    line!()
-                )));
-            }
-            projector.enqueue_batch(
-                BoundProjection { tensor, matrix },
-                &m.arena,
-                prepared.mixed(),
-                self.outer.router,
-                &BatchSpans::new(*count, 0, 0, D, 0, ROUTER),
-                cancel,
-            )?;
-            *m.phase_ns
-                .entry("native_ffn_gr_and_router_enqueue")
-                .or_default() += router_enqueue_start.elapsed().as_nanos();
-            let sources = e.strata_global_sources.as_ref().ok_or(error())?.clone();
-            self.global_moe.as_mut().ok_or(error())?.enqueue(
-                m.graph,
-                &m.arena,
-                &sources,
-                &m.admission,
-                layer,
-                prepared.mixed(),
-                self.outer.block[0],
-                self.outer.router,
-                m.b.fault,
-                cancel,
-            )?;
-            let shared_start = Instant::now();
-            let mut projector = ResidentBatchProjection {
-                executor: e,
-                fault: m.b.fault,
-                dense_q8,
-            };
-            self.shared.prepare(
-                m.graph,
-                layer,
-                &m.arena,
-                &mut m.public,
-                &mut projector,
-                prepared.mixed(),
-                self.outer.block[0],
-                self.outer.block[1],
-                m.b.fault,
-                *count,
-                cancel,
-            )?;
-            // Intel's selected NO_HOST branch has no CPU jobs to join. Leave
-            // all routed/shared work in the owning window's queued graph;
-            // its normal completion/fault boundary observes the real results.
-            self.global_moe.as_mut().ok_or(error())?.finish_layer(
-                &m.arena,
-                layer,
-                self.outer.block[0],
-                m.b.fault,
-            )?;
-            self.shared.finish_prepared(
-                m.graph,
-                layer,
-                &m.arena,
-                &mut m.public,
-                prepared.mixed(),
-                self.outer.block[0],
-                self.outer.block[1],
-                m.b.fault,
-                *count,
-                cancel,
-            )?;
-            *m.phase_ns
-                .entry("native_shared_and_no_host_enqueue")
-                .or_default() += shared_start.elapsed().as_nanos();
-            prepared.combine(self.outer.block[1], self.outer.residual[1 - *current])?;
-            *current = 1 - *current;
-            *m.phase_ns
-                .entry("native_shared_and_ffn_combine_enqueue")
-                .or_default() += shared_start.elapsed().as_nanos();
-            // Fixed-public lab hook: actual routed/shared consumers and HC
-            // combine are already queued; no family has published its state.
-            m.lifecycle_hooks.late_combine(layer)?;
-            Ok(())
-        })?;
-        let final_head_start = Instant::now();
-        if purpose == Purpose::LastLogits {
-            let mut projector = ResidentBatchProjection {
-                executor: e,
-                fault: m.b.fault,
-                dense_q8: None,
-            };
-            self.gr
-                .read(
+                let prepared = self.gr.read(
                     m.graph,
                     &m.arena,
                     &mut m.public,
                     &mut projector,
-                    gr::Kind::Final,
+                    gr::Kind::Ffn(layer),
                     self.outer.residual[*current],
                     *count,
                     m.b.fault,
                     cancel,
-                )?
-                .enqueue_final_head(m.graph, &mut projector, m.b.logits)?;
-        } else if purpose == Purpose::AllRowsWithCarry {
-            let rows = self.target_rows.as_ref().ok_or(error())?;
-            let mut projector = ResidentBatchProjection {
-                executor: e,
-                fault: m.b.fault,
-                dense_q8: None,
-            };
-            self.gr
-                .read(
-                    m.graph,
-                    &m.arena,
-                    &mut m.public,
-                    &mut projector,
-                    if *count >= 4 {
-                        gr::Kind::FinalFourRows
-                    } else {
-                        gr::Kind::FinalAllRows
-                    },
-                    self.outer.residual[*current],
-                    *count,
-                    m.b.fault,
-                    cancel,
-                )?
-                .enqueue_final_head_with_target_capacity(
-                    m.graph,
-                    &mut projector,
-                    rows.logits(),
-                    rows.four_rows_reserved(),
                 )?;
+                u::zero_many(&m.arena, &[self.outer.router, self.outer.packet])?;
+                let tensor = m
+                    .graph
+                    .tensor(&format!("blk.{layer}.ffn_gate_inp.weight"))?;
+                let matrix = Matrix::new(tensor)?;
+                if matrix.inputs() != D || matrix.outputs() != ROUTER || matrix.experts() != 1 {
+                    return Err(Error::InvalidFormat(concat!(
+                        "native model chunk rejected at source line ",
+                        line!()
+                    )));
+                }
+                projector.enqueue_batch(
+                    BoundProjection { tensor, matrix },
+                    &m.arena,
+                    prepared.mixed(),
+                    self.outer.router,
+                    &BatchSpans::new(*count, 0, 0, D, 0, ROUTER),
+                    cancel,
+                )?;
+                *m.phase_ns
+                    .entry("native_ffn_gr_and_router_enqueue")
+                    .or_default() += router_enqueue_start.elapsed().as_nanos();
+                let sources = e.strata_global_sources.as_ref().ok_or(error())?.clone();
+                self.global_moe.as_mut().ok_or(error())?.enqueue(
+                    m.graph,
+                    &m.arena,
+                    &sources,
+                    &m.admission,
+                    layer,
+                    prepared.mixed(),
+                    self.outer.block[0],
+                    self.outer.router,
+                    m.b.fault,
+                    cancel,
+                )?;
+                let shared_start = Instant::now();
+                let mut projector = ResidentBatchProjection {
+                    executor: e,
+                    fault: m.b.fault,
+                    dense_q8,
+                };
+                self.shared.prepare(
+                    m.graph,
+                    layer,
+                    &m.arena,
+                    &mut m.public,
+                    &mut projector,
+                    prepared.mixed(),
+                    self.outer.block[0],
+                    self.outer.block[1],
+                    m.b.fault,
+                    *count,
+                    cancel,
+                )?;
+                // Intel's selected NO_HOST branch has no CPU jobs to join. Leave
+                // all routed/shared work in the owning window's queued graph;
+                // its normal completion/fault boundary observes the real results.
+                self.global_moe.as_mut().ok_or(error())?.finish_layer(
+                    &m.arena,
+                    layer,
+                    self.outer.block[0],
+                    m.b.fault,
+                )?;
+                self.shared.finish_prepared(
+                    m.graph,
+                    layer,
+                    &m.arena,
+                    &mut m.public,
+                    prepared.mixed(),
+                    self.outer.block[0],
+                    self.outer.block[1],
+                    m.b.fault,
+                    *count,
+                    cancel,
+                )?;
+                *m.phase_ns
+                    .entry("native_shared_and_no_host_enqueue")
+                    .or_default() += shared_start.elapsed().as_nanos();
+                prepared.combine(self.outer.block[1], self.outer.residual[1 - *current])?;
+                *current = 1 - *current;
+                *m.phase_ns
+                    .entry("native_shared_and_ffn_combine_enqueue")
+                    .or_default() += shared_start.elapsed().as_nanos();
+                // Fixed-public lab hook: actual routed/shared consumers and HC
+                // combine are already queued; no family has published its state.
+                m.lifecycle_hooks.late_combine(layer)?;
+                Ok(())
+            })?;
+            let final_head_start = Instant::now();
+            if purpose == Purpose::LastLogits {
+                let mut projector = ResidentBatchProjection {
+                    executor: e,
+                    fault: m.b.fault,
+                    dense_q8: None,
+                };
+                self.gr
+                    .read(
+                        m.graph,
+                        &m.arena,
+                        &mut m.public,
+                        &mut projector,
+                        gr::Kind::Final,
+                        self.outer.residual[*current],
+                        *count,
+                        m.b.fault,
+                        cancel,
+                    )?
+                    .enqueue_final_head(m.graph, &mut projector, m.b.logits)?;
+            } else if purpose == Purpose::AllRowsWithCarry {
+                let rows = self.target_rows.as_ref().ok_or(error())?;
+                let mut projector = ResidentBatchProjection {
+                    executor: e,
+                    fault: m.b.fault,
+                    dense_q8: None,
+                };
+                self.gr
+                    .read(
+                        m.graph,
+                        &m.arena,
+                        &mut m.public,
+                        &mut projector,
+                        if *count >= 4 {
+                            gr::Kind::FinalFourRows
+                        } else {
+                            gr::Kind::FinalAllRows
+                        },
+                        self.outer.residual[*current],
+                        *count,
+                        m.b.fault,
+                        cancel,
+                    )?
+                    .enqueue_final_head_with_target_capacity(
+                        m.graph,
+                        &mut projector,
+                        rows.logits(),
+                        rows.four_rows_reserved(),
+                    )?;
+            }
+            *m.phase_ns.entry("native_final_head_enqueue").or_default() +=
+                final_head_start.elapsed().as_nanos();
+            self.gr.flush_pending(&m.arena, m.b.fault, cancel)?;
+            self.gr.validate_all_consumers_queued()?;
+            self.shared.validate_all_consumers_queued()?;
         }
-        *m.phase_ns.entry("native_final_head_enqueue").or_default() +=
-            final_head_start.elapsed().as_nanos();
-        self.gr.flush_pending(&m.arena, m.b.fault, cancel)?;
-        self.gr.validate_all_consumers_queued()?;
-        self.shared.validate_all_consumers_queued()?;
         // Capture real queued counters before PLE/family permits borrow their
         // disjoint workspaces. Completion and publication remain below.
         let mut grouped_status_expected = [1u64, 0, 0]; // FinalAllRows GR.
@@ -5496,7 +5580,7 @@ impl Workspace {
             )));
         }
         attention_invocations.consumed()?;
-        if let Some(key) = branch {
+        if let Some(key) = branch.filter(|_| replay.is_none()) {
             // Join/seal the real native recording before any logical output or
             // state proof is published. This grants no fault/erasure credit;
             // completed_proof below retains both original observations.

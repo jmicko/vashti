@@ -2888,6 +2888,70 @@ impl TransientIo {
             .begin_invocation(key, nonce, invocation)?;
         self.check_branch_metadata()
     }
+    pub(crate) fn native_replay_key(
+        &self,
+        key: cubecl_runtime::server::NativeStrataBranch,
+    ) -> Result<Option<super::strata_parameters::RecordingKey>, ServerError> {
+        self.active()?;
+        if !self.info_batch || !self.pending_info.is_empty() || self.info_slab.is_some() {
+            return Err(fault("native replay requires drained parameter staging"));
+        }
+        let nonce = self
+            .reuse_scope
+            .nonce
+            .ok_or_else(|| fault("native replay requires request reuse"))?;
+        self.branch_parameters.replay_key(key, nonce)
+    }
+    /// Bulk-stage fresh controls into the *original* recorded uniform roots.
+    /// Full upload sources follow the same ledger, zero-padding and terminal
+    /// wipe obligations as the ordinary per-record INFO path.
+    pub(crate) fn stage_native_replay(
+        &mut self,
+        key: super::strata_parameters::RecordingKey,
+        invocation: cubecl_runtime::server::NativeStrataInvocation,
+    ) -> Result<(), ServerError> {
+        if self.native_replay_key(key.branch)? != Some(key) {
+            return Err(fault("native replay request changed"));
+        }
+        self.branch_parameters.begin_replay(key, invocation)?;
+        let pages = self.branch_parameters.replay_pages()?;
+        self.check_reuse_metadata(
+            self.buffers.capacity(),
+            self.pending_info.len() + pages,
+            self.info_cache_bytes(),
+        )?;
+        self.pending_info
+            .try_reserve_exact(pages)
+            .map_err(|_| fault("native replay upload metadata allocation"))?;
+        self.check_branch_metadata()?;
+        for page in 0..pages {
+            let index = self.branch_parameters.replay_page(page)?;
+            let owner = self
+                .buffers
+                .get(index)
+                .ok_or_else(|| fault("native replay uniform owner missing"))?;
+            if owner.kind != Kind::Uniform || !owner.info_pinned || owner.reuse_ready {
+                return Err(fault("native replay uniform owner mismatch"));
+            }
+            let target = owner.buffer.clone();
+            let bytes = target.size();
+            let (source, source_index) = self.allocate_indexed(Kind::Upload, bytes)?;
+            // Record before rendering; a failed render still leaves its full
+            // mapped source owned by the original failure/cleanup ledger.
+            self.pending_info.push(PendingInfo {
+                source: source.clone(),
+                target,
+                source_index,
+            });
+            let mut mapped = source.get_mapped_range_mut(..);
+            mapped.slice(..).fill(0);
+            self.branch_parameters
+                .write_replay_page(index, bytes as usize, |at, data| {
+                    mapped.slice(at..at + data.len()).copy_from_slice(data);
+                })?;
+        }
+        self.check_branch_metadata()
+    }
     pub(crate) fn end_native_branch(
         &mut self,
         key: cubecl_runtime::server::NativeStrataBranch,

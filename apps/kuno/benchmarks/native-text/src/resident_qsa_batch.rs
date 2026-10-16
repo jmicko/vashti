@@ -238,7 +238,8 @@ impl Zeroize for Metadata {
 }
 pub(super) struct StageAnchor(Zeroizing<Metadata>);
 /// Original armed transaction before any math is queued. Only the matching
-/// enqueue path can turn this into a pending receipt; abandonment poisons the
+/// enqueue or joined native replay turns it into a pending receipt; abandonment
+/// poisons the
 /// original workspace and wipes its metadata just like an uncommitted batch.
 pub(crate) struct PreparedQsaBatch {
     receipt: PendingQsaBatch,
@@ -1798,6 +1799,46 @@ impl ResidentQsa<'_> {
                 graph, arena, public, projector, selector, workspace, input, output, spans,
                 prepared, cancel,
             )
+        });
+        if attempted.is_err() {
+            self.poison();
+        }
+        attempted
+    }
+    /// A joined original graph consumes the pre-armed cache transaction; it
+    /// does not publish positions or accepted cache/state on its own.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn complete_prepared_replay(
+        &mut self,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+        public: &PublicQsaParameters,
+        selector: &mut impl QsaBatchSelector,
+        workspace: &mut QsaBatchWorkspace,
+        prepared: PreparedQsaBatch,
+        completed: &crate::resident_model::target_replay::Completed,
+        cancel: &AtomicBool,
+    ) -> Result<PendingQsaBatch> {
+        let attempted = guarded(&workspace.poison.clone(), || {
+            let receipt = prepared.receipt;
+            workspace.healthy(arena, cancel)?;
+            graph.verify_unchanged()?;
+            workspace.check_receipt(self, &receipt, arena)?;
+            let m = &*receipt.metadata;
+            completed.check(m.fault, m.stamp.start, m.stamp.count)?;
+            completed.check_fault_owner(arena, m.fault)?;
+            selector.validate_owner(arena, &workspace.poison)?;
+            if !crate::strata_intel_core::enabled()
+                || crate::strata_prompt::active()
+                || graph.binding_id() != self.binding
+                || public.binding != self.binding
+                || public.layer != self.layer
+                || public.identity != self.public_identity
+                || workspace.public_grouped_status.state().0
+            {
+                return Err(fault("native QSA replay invocation changed"));
+            }
+            Ok(receipt)
         });
         if attempted.is_err() {
             self.poison();

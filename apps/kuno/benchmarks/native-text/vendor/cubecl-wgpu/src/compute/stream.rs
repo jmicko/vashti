@@ -1324,6 +1324,79 @@ impl WgpuStream {
         })?;
         self.transient_io.as_mut().unwrap().end_native_branch(key)
     }
+    pub(crate) fn replay_native_strata_branch(
+        &mut self,
+        key: cubecl_runtime::server::NativeStrataBranch,
+        invocation: cubecl_runtime::server::NativeStrataInvocation,
+    ) -> Result<bool, ServerError> {
+        self.private_io_active()?;
+        invocation
+            .validate_for(key)
+            .map_err(super::transient_io::fault)?;
+        if self.strata_graph.is_none() {
+            return Ok(false);
+        }
+        // Input gathers, clears and prepared PLE uploads precede the retained
+        // recording. Join them before touching its original INFO pages.
+        self.flush(StreamErrorMode {
+            ignore: false,
+            flush: true,
+        })?;
+        let Some(recording) = self.transient_io.as_ref().unwrap().native_replay_key(key)? else {
+            return Ok(false);
+        };
+        if !self.strata_graph.as_ref().unwrap().has_recording(recording) {
+            return Ok(false);
+        }
+        let mutation = self.private_mutation_guard();
+        let scopes = super::transient_io::IoScopes::new(&self.device);
+        let result = (|| {
+            let io = self.transient_io.as_mut().unwrap();
+            io.stage_native_replay(recording, invocation)?;
+            if io.native_branch_recording()? != Some(recording) {
+                return Err(super::transient_io::fault(
+                    "native replay parameter identity",
+                ));
+            }
+            let parameters = io.prepare_batched_info()?.ok_or_else(|| {
+                super::transient_io::fault("native replay parameter upload missing")
+            })?;
+            let index = self.queue.submit([parameters]);
+            self.device
+                .poll(wgpu::PollType::Wait {
+                    submission_index: Some(index.clone()),
+                    timeout: Some(std::time::Duration::from_secs(120)),
+                })
+                .map_err(|_| super::transient_io::fault("native replay upload completion"))?;
+            self.strata_graph
+                .as_mut()
+                .unwrap()
+                .replay_recording(recording, true)?;
+            let io = self.transient_io.as_mut().unwrap();
+            io.native_branch_submitted()?;
+            io.end_native_branch(key)?;
+            self.cleanup_boundary.ordinary_regulation(|| {
+                self.submission_load.regulate(&self.device, 0, index);
+            });
+            self.mem_manage.memory_cleanup(false);
+            self.mem_manage.release_uniforms();
+            self.flush_errors(StreamErrorMode {
+                ignore: false,
+                flush: true,
+            })?;
+            Ok(true)
+        })();
+        scopes.finish(self.transient_io.as_mut().unwrap());
+        if result.is_err() {
+            self.transient_io
+                .as_mut()
+                .unwrap()
+                .observe_public_submission_failure();
+        } else if let Some(mutation) = mutation {
+            mutation.accept();
+        }
+        result
+    }
     pub(crate) fn submit_native_strata_experts(&mut self) -> Result<(), ServerError> {
         self.private_io_active()?;
         if self.strata_graph.is_none() {

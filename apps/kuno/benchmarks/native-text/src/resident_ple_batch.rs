@@ -1011,6 +1011,28 @@ impl PleBatchWorkspace {
             },
         })
     }
+    pub(crate) fn complete_prepared_replay(
+        &mut self,
+        model: &ResidentModel<'_, '_>,
+        prepared: PreparedPleBatch,
+        completed: &crate::resident_model::target_replay::Completed,
+        cancel: &AtomicBool,
+    ) -> Result<PendingPleBatch> {
+        // Receipt Drop remains armed on every failure, poisoning its original
+        // sequence. OLD/EMB were freshly uploaded before the graph submission.
+        let receipt = prepared.receipt;
+        self.receipt(model, &receipt, cancel)?;
+        completed.check(
+            model.b.fault,
+            receipt.metadata.start as u64,
+            receipt.metadata.count,
+        )?;
+        completed.check_fault_owner(&model.arena, model.b.fault)?;
+        if !crate::strata_intel_core::enabled() || crate::strata_prompt::active() {
+            return Err(error());
+        }
+        Ok(receipt)
+    }
     #[allow(clippy::too_many_arguments)]
     fn enqueue_prepared_checked(
         &mut self,

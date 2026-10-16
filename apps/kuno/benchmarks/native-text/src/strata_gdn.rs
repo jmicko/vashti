@@ -132,11 +132,20 @@ pub(crate) fn launch(
     for h in handles {
         args = args.with_buffer(h.binding());
     }
-    args = args.with_info(MetadataBindingInfo::custom(
+    let mut metadata = MetadataBindingInfo::custom(
         info.chunks_exact(2)
             .map(|p| p[0] as u64 | ((p[1] as u64) << 32))
             .collect(),
-    ));
+    );
+    // AB's closing status packet uses zero in this word. Conv/step/replay
+    // packets carry the actual position even where one entry does not read it.
+    if kernel != Kernel::AbJoin {
+        metadata = metadata.with_native_parameter(
+            1,
+            cubecl_runtime::server::NativeStrataValue::Position { offset: 0 },
+        );
+    }
+    args = args.with_info(metadata);
     // SAFETY: authenticated GDN parent validates fixed widths and complete private
     // owners before enqueue; kernels additionally bound runtime active intervals.
     unsafe {
