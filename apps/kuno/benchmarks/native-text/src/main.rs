@@ -78,6 +78,7 @@ mod strata_source_usage_tests;
 mod strata_upload_tests;
 #[cfg(test)]
 use strata_queue_tests as strata_schedule; // Original sibling namespace for INFO/planner tests.
+mod strata_head;
 #[cfg(test)]
 #[path = "../vendor/cubecl-wgpu/src/backend/vulkan/strata_queues.rs"]
 mod strata_queue_topology_tests;

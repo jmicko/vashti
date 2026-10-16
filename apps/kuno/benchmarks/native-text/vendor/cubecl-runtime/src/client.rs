@@ -335,6 +335,25 @@ impl<R: Runtime> ComputeClient<R> {
             })?
     }
 
+    /// Original full same-stream model roots only. This is address/extent
+    /// metadata, not a permission to release, mutate, map or log source bytes.
+    pub fn native_strata_source_addresses(
+        &self,
+        handles: Vec<Handle>,
+    ) -> Result<Vec<[u64; 2]>, ServerError> {
+        let stream_id = self.stream_id();
+        let bindings = handles.into_iter().map(Handle::binding).collect::<Vec<_>>();
+        crate::transient::retained_metadata_bindings(&bindings, stream_id)?;
+        self.device
+            .submit_blocking(move |server| {
+                server.native_strata_source_addresses(bindings, stream_id)
+            })
+            .map_err(|_| ServerError::Generic {
+                reason: "native original address channel unavailable".into(),
+                backtrace: BackTrace::capture(),
+            })?
+    }
+
     /// Inspect only already initialized, retained FULL same-stream allocations.
     /// Channel ordering completes prior initialization calls; queued consumers
     /// need not run for immutable allocation identity/extent to be inspected.

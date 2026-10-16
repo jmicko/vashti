@@ -96,6 +96,45 @@ impl Kernel {
     }
 }
 
+/// Same native aligned wide math across bounded original whole-head pages.
+pub(crate) fn whole_head_source(rows: usize, members: usize) -> String {
+    let mut s = Kernel {
+        dtype: 14,
+        rows,
+        columns: 2560,
+        row_bytes: 2100,
+        members,
+        indexed: false,
+    }
+    .source();
+    s=s.replace("@group(0) @binding(4) var<uniform> p:Params;","@group(0) @binding(4) var<storage,read> addresses:array<vec4<u32>>;\n@group(0) @binding(5) var<uniform> p:Params;\nvar<private> strata_gate_address:vec2<u32>;");
+    s = s
+        .replace("weight:array<vec4<u32>>", "gate0:array<vec4<u32>>")
+        .replace("weight[", "gate0[");
+    s = s.replace(
+        "arrayLength(&weight)*16u<ROWS*ROW_BYTES",
+        "arrayLength(&addresses)!=2048u",
+    );
+    s = s.replace(
+        "    let row=group.x*4u+sg;",
+        r#"    let row=group.x*4u+sg;
+    var valid_row=row<ROWS;
+    if valid_row {
+        let page=row/16384u;let src=addresses[page];
+        let expected=min(16384u,ROWS-page*16384u);
+        if src.w!=expected || src.z!=expected*525u || all(src.xy==vec2<u32>(0u)) || src.x%16u!=0u {
+            valid_row=false;if lane==0u {atomicOr(&fault[0],8u);}
+        }
+        strata_gate_address=src.xy;
+    }"#,
+    );
+    s = s.replace("if row<ROWS", "if valid_row").replace(
+        "let b=row*ROW_BYTES+block*210u;",
+        "let b=(row%16384u)*ROW_BYTES+block*210u;",
+    );
+    format!("// STRATA_PHYSICAL_EXPERTS: original whole-head page addresses.\n{s}")
+}
+
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 struct PrepareKernel(usize);
 impl PrepareKernel {
@@ -496,6 +535,10 @@ static CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0
 pub(crate) fn calls() -> u64 {
     CALLS.load(std::sync::atomic::Ordering::Relaxed)
 }
+pub(crate) fn record_projection_call() {
+    CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn project(
     client: &ComputeClient<WgpuRuntime>,
@@ -575,7 +618,7 @@ pub(crate) fn project(
             args,
         );
     }
-    CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    record_projection_call();
     Ok(())
 }
 pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
@@ -734,6 +777,6 @@ pub(crate) fn project_indexed(
             args,
         );
     }
-    CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    record_projection_call();
     Ok(())
 }

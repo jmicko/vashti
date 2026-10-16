@@ -4176,6 +4176,32 @@ impl<'a> GpuExecutor<'a> {
         if row_bytes == 0 || row_bytes > TILE_BYTES {
             return Err(Error::InvalidBufferLength);
         }
+        if dtype == quant_matvec::Q6_K && tensor.info().name() == "output.weight" {
+            if cancel.load(Ordering::Acquire) {
+                return Err(Error::InvalidFormat("resident batch cancelled"));
+            }
+            if matrix.inputs() != crate::strata_head::COLUMNS
+                || matrix.outputs() != crate::strata_shared_weights::ROWS
+                || matrix.experts() != 1
+            {
+                return Err(Error::InvalidBufferLength);
+            }
+            let shared = self
+                .resident_admission
+                .as_ref()
+                .ok_or(Error::InvalidBufferLength)?
+                .shared_target_weights()?;
+            shared.project_head(
+                &self.client,
+                planes.clone(),
+                output.clone(),
+                fault.clone(),
+                spans.output_first(),
+                spans.output_stride(),
+                spans.count(),
+            )?;
+            return Ok(());
+        }
         let per_tile = (TILE_BYTES / row_bytes).min(16384);
         for first in (0..matrix.outputs()).step_by(per_tile) {
             if cancel.load(Ordering::Acquire) {
@@ -4684,9 +4710,11 @@ impl<'a> GpuExecutor<'a> {
         Ok(())
     }
 
-    /// Fixed-public all-row verifier head only, using the unchanged sixteen tiles. The sealed GR caller
-    /// lends its dead full NORM page; no owner, cache format/key or allocation
-    /// changes. This explicitly changes activation/reduction arithmetic.
+    /// Fixed-public all-row verifier head over the unchanged sixteen source pages.
+    /// The native core prepares once and projects the whole head once; its legacy
+    /// tile counter counts original source pages, not native dispatches. The
+    /// sealed GR caller lends its dead full NORM page. Other modes retain their
+    /// original tile schedule and activation/reduction selection.
     /// # Safety
     /// x/planes/y/fault are distinct complete same-stream private arena owners,
     /// frozen through all queued tiles and the original whole-model proof.

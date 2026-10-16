@@ -72,7 +72,8 @@ pub(crate) fn public_bytes() -> u64 {
     tiles(Tensor::Head)
         .into_iter()
         .map(|t| t.owned as u64)
-        .sum()
+        .sum::<u64>()
+        + crate::strata_head::TABLE_BYTES as u64
 }
 pub(crate) fn embedding_bytes() -> u64 {
     tiles(Tensor::Embedding)
@@ -154,6 +155,7 @@ pub(crate) struct Weights {
     embedding: crate::public_host_expert_mirror::strata_global::Embedding,
     head: Vec<Page>,
     embedding_table: Handle,
+    whole_head: Option<crate::strata_head::Head>,
 }
 impl Weights {
     pub(crate) fn validate_graph(graph: BoundGraph<'_, '_>) -> Result<()> {
@@ -188,6 +190,7 @@ impl Weights {
             embedding: sources.embedding(graph, client)?,
             embedding_table: sources.embedding_table(graph, client)?,
             head: Vec::new(),
+            whole_head: None,
         };
         for tensor in [Tensor::Head] {
             for tile in tiles(tensor) {
@@ -230,6 +233,32 @@ impl Weights {
                 admission.shared_observation_checkpoint()?;
             }
         }
+        let pages = owner
+            .head
+            .iter()
+            .map(|p| crate::strata_head::Page {
+                handle: p.handle.clone(),
+                first: p.tile.first,
+                rows: p.tile.rows,
+                logical: p.tile.logical,
+                owned: p.tile.owned,
+            })
+            .collect::<Vec<_>>();
+        let data = crate::strata_head::metadata(client, ROWS, &pages)?;
+        let size = crate::strata_head::TABLE_BYTES as u64;
+        let table = admission.allocate_public_roots(&[size, size], || {
+            crate::expert_banks::exact_persistent::persistent_scope(
+                |mode| {
+                    unsafe { client.allocation_mode(mode) };
+                    Ok(())
+                },
+                &owner.retired,
+                || Ok(client.create_public_owned(data)),
+            )
+        })?;
+        cubecl::future::block_on(client.sync()).map_err(u::fault)?;
+        admission.shared_observation_checkpoint()?;
+        owner.whole_head = Some(crate::strata_head::Head::new(client, ROWS, pages, table)?);
         graph.verify_unchanged()?;
         Ok(Arc::new(owner))
     }
@@ -245,6 +274,23 @@ impl Weights {
             return Err(rejected());
         }
         Ok(())
+    }
+    #[allow(clippy::too_many_arguments)] // Same original private/output geometry as the owning head bridge.
+    pub(crate) fn project_head(
+        &self,
+        client: &ComputeClient<WgpuRuntime>,
+        planes: Handle,
+        output: Handle,
+        fault: Handle,
+        first: usize,
+        stride: usize,
+        count: usize,
+    ) -> Result<()> {
+        self.check(client, self.binding)?;
+        self.whole_head
+            .as_ref()
+            .ok_or_else(rejected)?
+            .project(client, planes, output, fault, first, stride, count)
     }
     pub(crate) fn pages(&self, tensor: Tensor) -> &[Page] {
         match tensor {
@@ -486,9 +532,15 @@ mod tests {
         assert_eq!(Tensor::Embedding.row_bytes(), 1360);
         assert_eq!(Tensor::Head.row_bytes(), 2100);
         assert_eq!(addressable_bytes(), 859_189_248);
-        assert_eq!(public_bytes() + embedding_bytes(), addressable_bytes());
+        assert_eq!(
+            public_bytes() + embedding_bytes(),
+            addressable_bytes() + crate::strata_head::TABLE_BYTES as u64
+        );
         assert_eq!(embedding_bytes(), 337_715_200);
-        assert_eq!(public_bytes(), 521_474_048);
+        assert_eq!(
+            public_bytes(),
+            521_474_048 + crate::strata_head::TABLE_BYTES as u64
+        );
         for role in [Tensor::Embedding, Tensor::Head] {
             let all = tiles(role);
             assert_eq!(all.len(), 16);

@@ -1025,6 +1025,12 @@ fn public_guard(
             if logical_bytes != k::VOCAB * 4 || (word != u32::MAX && word >= cjk::ROWS as u32) {
                 fault[0].fetch_or(1);
             }
+        } else if comptime!(dtype == crate::strata_head::ADDRESS_KIND) {
+            // Original model-owner metadata is authenticated against real
+            // addresses on the host and exact full-byte startup readback.
+            if logical_bytes == 0 || logical_bytes > 16 * 16 || (logical_bytes & 15) != 0 {
+                fault[0].fetch_or(1);
+            }
         } else if comptime!(dtype == quant_matvec::F32) {
             let value = f32::reinterpret(word);
             if !(value >= -3.4028235e38_f32 && value <= 3.4028235e38_f32) {
@@ -5667,6 +5673,12 @@ mod context32768_tests {
         assert_eq!(
             public_plan_for(MtpProfile::StrataQ2).unwrap(),
             public_bytes_for(MtpProfile::StrataQ2)
+        );
+        // Only original Q2 selects the compact CJK head/address table. The
+        // self-contained Q8 public plan above must remain unchanged.
+        assert_eq!(
+            public_plan_for(MtpProfile::StrataQ2).unwrap(),
+            1_946_607_616
         );
         assert_eq!(public_plan().unwrap(), PUBLIC_BYTES);
         assert!(k::validate_position(32767).is_ok());

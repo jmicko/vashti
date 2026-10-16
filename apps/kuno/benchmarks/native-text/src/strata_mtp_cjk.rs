@@ -51,12 +51,15 @@ fn plan() -> Vec<(usize, usize, usize, usize)> {
         .collect()
 }
 pub(crate) fn public_bytes() -> u64 {
-    plan().iter().map(|p| p.3 as u64).sum::<u64>() + (MAP_OWNED + INVERSE_OWNED) as u64
+    plan().iter().map(|p| p.3 as u64).sum::<u64>()
+        + (MAP_OWNED + INVERSE_OWNED + crate::strata_head::TABLE_BYTES) as u64
 }
 pub(crate) struct Head {
     pages: Vec<Page>,
     ids: Page,
     inverse: Page,
+    addresses: Page,
+    whole: crate::strata_head::Head,
 }
 impl Head {
     pub(super) fn load(owner: &mut ResidentMtp<'_, '_>) -> Result<Self> {
@@ -93,6 +96,32 @@ impl Head {
                 quant_matvec::Q6_K,
             )?);
         }
+        let head_pages = pages
+            .iter()
+            .map(|p| crate::strata_head::Page {
+                handle: p.handle.clone(),
+                first: p.first,
+                rows: p.rows,
+                logical: p.logical_bytes,
+                owned: p.owned_bytes,
+            })
+            .collect::<Vec<_>>();
+        let address_bytes = crate::strata_head::metadata(owner.client()?, ROWS, &head_pages)?;
+        let address_expected = address_bytes.clone();
+        let address_page = owner.upload_page(
+            Upload(address_bytes),
+            head_pages.len() * 16,
+            crate::strata_head::TABLE_BYTES,
+            0,
+            head_pages.len(),
+            crate::strata_head::ADDRESS_KIND,
+        )?;
+        let whole = crate::strata_head::Head::new(
+            owner.client()?,
+            ROWS,
+            head_pages,
+            address_page.handle.clone(),
+        )?;
         let mut original = Upload(vec![0; MAP_OWNED]);
         original.0[..MAP_BYTES].copy_from_slice(RAW);
         let ids = owner.upload_page(original, MAP_BYTES, MAP_OWNED, 0, ROWS, MAP_KIND)?;
@@ -108,9 +137,11 @@ impl Head {
             k::VOCAB,
             INVERSE_KIND,
         )?;
-        // Public-only startup readbacks authenticate map bytes, including padding.
+        // Public-only startup readbacks authenticate maps and original source-address
+        // metadata, including complete owner padding.
         for (page, expected) in [
             (&ids, RAW.to_vec()),
+            (&address_page, address_expected),
             (
                 &inverse_page,
                 inverse.iter().flat_map(|v| v.to_le_bytes()).collect(),
@@ -147,18 +178,38 @@ impl Head {
             pages,
             ids,
             inverse: inverse_page,
+            addresses: address_page,
+            whole,
         };
         head.validate()?;
         Ok(head)
     }
     pub(super) fn validate(&self) -> Result<()> {
         let expected = plan();
-        if self.pages.len() != expected.len() {
+        if self.pages.len() != expected.len()
+            || self.whole.table().clone().binding().memory.allocation_id()
+                != self
+                    .addresses
+                    .handle
+                    .clone()
+                    .binding()
+                    .memory
+                    .allocation_id()
+        {
             return Err(reject());
         }
         for (p, (first, rows, logical, owned)) in self.pages.iter().zip(expected).chain([
             (&self.ids, (0, ROWS, MAP_BYTES, MAP_OWNED)),
             (&self.inverse, (0, k::VOCAB, k::VOCAB * 4, INVERSE_OWNED)),
+            (
+                &self.addresses,
+                (
+                    0,
+                    ROWS.div_ceil(TILE_ROWS),
+                    ROWS.div_ceil(TILE_ROWS) * 16,
+                    crate::strata_head::TABLE_BYTES,
+                ),
+            ),
         ]) {
             if (p.first, p.rows, p.logical_bytes, p.owned_bytes) != (first, rows, logical, owned)
                 || p.handle.size() != owned as u64
@@ -174,7 +225,7 @@ impl Head {
     pub(super) fn handles(&self) -> impl Iterator<Item = Handle> + '_ {
         self.pages
             .iter()
-            .chain([&self.ids, &self.inverse])
+            .chain([&self.ids, &self.inverse, &self.addresses])
             .map(|p| p.handle.clone())
     }
     pub(super) fn maps(&self) -> [Handle; 2] {
@@ -197,22 +248,9 @@ impl Head {
             fault.clone(),
             &matmul::BatchSpans::new(1, 0, 0, k::D, 0, ROWS),
         )?;
-        for p in &self.pages {
-            crate::strata_dense::project(
-                client,
-                quant_matvec::Q6_K,
-                p.rows,
-                k::D,
-                p.handle.clone(),
-                planes.clone(),
-                output.clone(),
-                fault.clone(),
-                p.first,
-                ROWS,
-                1,
-            )?;
-        }
-        Ok(self.pages.len() + 1)
+        self.whole
+            .project(client, planes, output, fault, 0, ROWS, 1)?;
+        Ok(2) // Original Q8 prepare plus one whole-head projection.
     }
 }
 #[cfg(test)]
@@ -249,7 +287,7 @@ mod tests {
     #[test]
     fn gathered_q6_page_plan_has_no_missing_rows_or_unpriced_padding() {
         let mut next = 0;
-        let mut bytes = (MAP_OWNED + INVERSE_OWNED) as u64;
+        let mut bytes = (MAP_OWNED + INVERSE_OWNED + crate::strata_head::TABLE_BYTES) as u64;
         for (first, rows, logical, owned) in plan() {
             assert_eq!(first, next);
             assert_eq!(logical, rows * ROW_BYTES);

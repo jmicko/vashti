@@ -1002,6 +1002,7 @@ pub(crate) fn validate_shader_set() -> Result<(), Box<dyn std::error::Error>> {
     shaders.extend(crate::strata_expert_fused::compiled_sources());
     if crate::strata_intel_core::enabled() {
         shaders.extend(crate::strata_dense::sources());
+        shaders.extend(crate::strata_head::sources());
         shaders.extend(crate::strata_stage::sources());
         shaders.extend(crate::strata_gr::sources());
         shaders.extend(crate::strata_mtp_front::sources());

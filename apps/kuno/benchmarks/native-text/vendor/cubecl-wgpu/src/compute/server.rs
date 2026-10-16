@@ -935,6 +935,48 @@ impl ComputeServer for WgpuServer {
         Ok(ManagedResource::new(memory, resource))
     }
 
+    fn native_strata_source_addresses(
+        &mut self,
+        bindings: Vec<Binding>,
+        stream_id: StreamId,
+    ) -> Result<Vec<[u64; 2]>, ServerError> {
+        let fail = || super::transient_io::fault("native original source address metadata");
+        if !super::strata_graph::enabled()
+            || self.backend != wgpu::Backend::Vulkan
+            || bindings.is_empty()
+            || bindings.len() > 64
+        {
+            return Err(fail());
+        }
+        let resources = self.retained_resource_metadata(bindings, stream_id)?;
+        let device = unsafe { self.device.as_hal::<wgpu::hal::api::Vulkan>() }.ok_or_else(fail)?;
+        if !device
+            .enabled_device_extensions()
+            .contains(&ash::khr::buffer_device_address::NAME)
+        {
+            return Err(fail());
+        }
+        let mut addresses = Vec::with_capacity(resources.len());
+        for resource in &resources {
+            let r = resource.resource();
+            if r.offset != 0 || r.size == 0 || r.size != r.buffer.size() {
+                return Err(fail());
+            }
+            let buffer = unsafe { r.buffer.as_hal::<wgpu::hal::api::Vulkan>() }.ok_or_else(fail)?;
+            let address = unsafe {
+                device.raw_device().get_buffer_device_address(
+                    &ash::vk::BufferDeviceAddressInfo::default().buffer(buffer.raw_buffer_handle()),
+                )
+            };
+            if address == 0 || !address.is_multiple_of(16) || address.checked_add(r.size).is_none()
+            {
+                return Err(fail());
+            }
+            addresses.push([address, r.size]);
+        }
+        Ok(addresses)
+    }
+
     fn retained_resource_metadata(
         &mut self,
         bindings: Vec<Binding>,

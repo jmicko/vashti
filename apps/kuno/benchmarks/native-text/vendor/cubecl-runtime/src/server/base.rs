@@ -1030,6 +1030,20 @@ where
         stream_id: StreamId,
     ) -> Result<ManagedResource<<Self::Storage as ComputeStorage>::Resource>, ServerError>;
 
+    /// Original loader metadata on the owning native device. No readback,
+    /// allocation, fence credit or ownership transfer; all source handles must
+    /// remain retained through their actual native consumers.
+    fn native_strata_source_addresses(
+        &mut self,
+        _bindings: Vec<Binding>,
+        _stream_id: StreamId,
+    ) -> Result<Vec<[u64; 2]>, ServerError> {
+        Err(ServerError::Generic {
+            reason: "native original source addresses unsupported".into(),
+            backtrace: BackTrace::capture(),
+        })
+    }
+
     /// Bounded, same-stream FULL retained allocation metadata only. Does not
     /// execute pending tasks, map bytes, synchronize, allocate GPU memory,
     /// clean a pool, or grant completed-fence credit. Unsupported backends
