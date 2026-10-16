@@ -1166,6 +1166,9 @@ impl Graph {
         if self.flights.any() || self.pending() || self.info_uploads.pending() {
             return Err(fault("native graph cleanup while pending"));
         }
+        // Cleanup may follow a failed flush. It must not bypass an unknown
+        // ordinary cross-lane handoff merely because math flights are empty.
+        self.handoff.complete().map_err(fault)?;
         if let Some(ready) = self.draft_readiness.as_mut() {
             ready.complete().map_err(fault)?;
         }
