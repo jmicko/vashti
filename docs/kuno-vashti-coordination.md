@@ -6,8 +6,8 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through `7cb1cbc`. Read the latest
-[native upload/reuse handoff](#active-kuno-engine-handoff--native-upload-and-joined-reuse-2026-10-16)
+`codex/strata-rust-port`, engine source through `7477b66`. Read the latest
+[selective-owner handoff](#active-kuno-engine-handoff--selective-io-owners-2026-10-16)
 and [completion gate](kuno-strata-rewrite-completion.md). Direct target/MTP
 submission, accepted-prefix state publication and retained commit graph are connected
 in source. Original pending submissions/joins and scoped next-draft consumption are connected;
@@ -6570,3 +6570,29 @@ terminal drains, including positive-confidence per-cell checkpoints. No physical
 independence/parity/speed result. No GPU/model/service/protected inference/driver/
 install/release action. Required Vashti changes:none. Sudo refresh succeeded in
 Demons; goal stays active for CPU-only work and the full rewrite remains incomplete.
+
+
+### Active Kuno engine handoff — selective I/O owners (2026-10-16)
+
+Source `7477b66` binds selective native reuse to the same checkpoint's original
+full I/O owners/request/epoch/slots. Graph validates original recording/flight
+ownership and actual scoped-lane/INFO copy/readiness/handoff completion; named
+future replay references AND live anonymous references exclude their actual
+buffers. Only admitted slots gain native writers/index entries; excluded unused
+grants revoke, partial/mapped/staged excluded uploads reject and INFO pins stay.
+No source content, new GPU root, owning release or fake completion/erasure receipt.
+Temporary bounded metadata adds4MiB HOST allowance, no VRAM/model data.
+
+281 focused CPU cases, strict selected/off Clippy and format/whitespace pass.
+Exact logs, metadata bound, CPU-harness limitations and required next dependencies
+are in completion guide **Original selective I/O owners and retained replay pins**
+and **Next connected graph admission and lifetime block**. Current stream/graph
+waits STILL serialize; no physical independence/parity/speed result. Next couple
+current-lane/conflict admission and queued-vs-flight dispatch with real INFO/dirty-
+primary visibility and deferred managed allocator cleanup through joint scope end.
+Keep original exports/MAIN debt/R loan/family proof and final/retired drains.
+
+No shader/layout/frozen ordinary artifact/GPU/model/service/protected driver/
+inference/install/release or public API/connector/UI change. Frozen `0bf0b5f`
+is stale. Required Vashti changes:none. Sudo refresh succeeded in Demons; goal
+stays active for CPU-only work. Full rewrite and physical gates remain incomplete.

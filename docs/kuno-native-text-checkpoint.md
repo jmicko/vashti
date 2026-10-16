@@ -1,18 +1,52 @@
-<!-- Current resume: 2026-10-16, source 7cb1cbc, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source 7477b66, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, engine source through `7cb1cbc`. The user authorized
+branch `codex/strata-rust-port`, engine source through `7477b66`. The user authorized
 continuing CPU-only work; the goal controller is active for that scope.
 GPU/model/service work still needs renewed user authorization. The user has
 authorized keeping sudo refreshed in the shared Demons shell; noninteractive
 validation succeeded. This does not expand the GPU/testing scope. Last physical recovery evidence
 is historical 06:07:22Z on Oct15; no subsequent GPU run or live health claim.
 
-Read the latest [original native upload/joined reuse receipt](kuno-strata-rewrite-completion.md#original-native-upload-and-joined-io-reuse-2026-10-16)
-and original R/packet scope contracts before changing queue/stream behavior.
-Earlier CJK source `cd703bc` was integrated as `0bfbea8`; do not cherry-pick it again.
+Read the latest [original selective-owner receipt](kuno-strata-rewrite-completion.md#original-selective-io-owners-and-retained-replay-pins-2026-10-16)
+and its **Next connected graph admission and lifetime block** before changing
+queue waits. Earlier CJK `cd703bc` was integrated as `0bfbea8`; do not reapply it.
+
+**Latest selective I/O:** `7477b66` lends actual original tracked full I/O buffers
+through an immutable same-frame inventory to Graph. The callback validates
+original request/epoch/slots, partial/foreign recorded/flight ownership and real
+current-lane/INFO copy/readiness/handoff completion. It excludes every actual
+named recording reference needed for FUTURE replay and still-live anonymous
+recording, using original canonical descriptor/physical/indirect/copy buffers.
+Full host overwrites conflict with any view on those dedicated owners. Only
+admitted slots gain native writers/free-index entries; stale excluded grants
+revoke, partial/staged/mapped excluded Uploads reject, INFO pins remain. No source
+contents, new GPU root, storage release or completion/numerical/erasure authority
+is hidden in the bounded cohort bitmap.
+
+Actual I/O metadata ceiling/Tracked size bound131072 owners. The checked temporary
+ID/bitmap allowance adds4MiB HOST to `NATIVE_QUEUE_HOST_BYTES` (130 ->134MiB);
+no VRAM/model data allocation.281 focused CPU cases across23 nonempty suites,
+selected/off strict Clippy and format/whitespace pass; see exact logs/limits.
+The CPU I/O harness still uses disabled activation/generic lab cfg. No shader/
+layout/frozen artifact/GPU/model/service/protected test or speed result; frozen
+`0bf0b5f` remains stale. Sudo refresh succeeded. Required Vashti changes:none.
+
+**Next:** remove global waits through the complete graph admission/allocator-
+lifetime scope described in the completion guide. Current stream flush and
+entry/push/execute/replay STILL join globally before the new selective callback.
+Separate queued nodes from live peers; enter/join intended lane1; admit actual
+cross-flight ranges and retained direct plans; preserve dirty primary/cold init
+and real INFO header/visibility. Defer allocator cleanup/release_uniforms while
+peer/context work may use managed bindings, then reclaim after actual joint
+scope-end/final drain. Re-find recordings by stable ID if another completion
+removes a profiled Vec entry. Preserve exports/MAIN debt/R loans/family proof and
+terminal retired drains; keep ordinary behavior. Include positive-confidence
+per-cell checkpoints, metadata lookups and observation in the final audit.
+Full arbitrary-input/context/embedding-placement/regression/numerical/physical/
+recovery gates remain; live GPU work still needs renewed authorization.
 
 **Latest native uploads/reuse:** `7cb1cbc` connects original data, INFO append and
 direct INFO replay to one bounded write-only renderer and explicit original upload
@@ -38,7 +72,7 @@ failed dependency-test attempts in completion receipt. No shader/layout or froze
 ordinary artifact; `0bf0b5f` is stale. No GPU/model/service/protected test or speed
 result. Sudo refresh succeeded. Required Vashti changes:none.
 
-**Next connected block:** selective original I/O owner inventory, full host-write
+**Earlier next block (selective inventory now implemented by `7477b66` above):** selective original I/O owner inventory, full host-write
 reuse conflicts against original flight/INFO-copy ownership and exclusion from
 native grants/free-index publication, coupled with current-lane/conflicting graph
 admission for entry/push/execute/replay/flush. Preserve original source/descriptor
