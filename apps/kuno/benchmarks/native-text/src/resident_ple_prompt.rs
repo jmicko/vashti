@@ -1,5 +1,6 @@
 //! Native large prompt PLE. Intermediates overlay attention scratch; only the
-//! final nine normalized rows survive for exact host-owner history acceptance.
+//! final nine normalized rows remain in the original GPU history. Explicit
+//! diagnostics may read them; native publication advances only CPU token IDs.
 use super::*;
 use crate::executor::GpuExecutor;
 pub(crate) struct HistoryReadback {
@@ -234,14 +235,19 @@ impl PleBatchWorkspace {
             ],
             info(0, 0, 0, 0.),
         )?;
-        let keep = count.min(HISTORY);
-        crate::strata_prompt::copy_handles(
-            client,
-            v[7].clone(),
-            crate::strata_prompt::outer_workspace()?[12].clone(),
-            (count - keep) * CHANNELS,
-            keep * CHANNELS,
-        )?;
+        // The accepted GPU NEXT history already contains the complete tail.
+        // This extra copy exists solely for the legacy CPU oracle or explicit
+        // grouped-read diagnostics; native publication needs only token IDs.
+        if !crate::strata_intel_core::enabled() || self.public_grouped_reads() {
+            let keep = count.min(HISTORY);
+            crate::strata_prompt::copy_handles(
+                client,
+                v[7].clone(),
+                crate::strata_prompt::outer_workspace()?[12].clone(),
+                (count - keep) * CHANNELS,
+                keep * CHANNELS,
+            )?;
+        }
         u::cancel(cancel)?;
         Ok(pending)
     }
@@ -314,11 +320,22 @@ impl PleBatchWorkspace {
         &self,
         model: &'a mut ResidentModel<'_, '_>,
         p: &Pending,
-        tail: &[f32],
-        next: &[f32],
+        diagnostic: Option<&HistoryReadback>,
         cancel: &AtomicBool,
-    ) -> Result<core::PleChunkCommit<'a>> {
+    ) -> Result<device_history::Commit<'a>> {
         self.validate_prompt_full(model, p, p.stamp[1], p.stamp[2])?;
+        if crate::strata_intel_core::enabled() {
+            return core::prepare_device_history_tokens(
+                &mut model.ple_history,
+                model.graph.ple_hash(),
+                *p.old_tokens,
+                &p.tokens,
+                cancel,
+            )
+            .map(device_history::Commit::Device)
+            .map_err(u::fault);
+        }
+        let HistoryReadback { tail, next } = diagnostic.ok_or(error())?;
         let old = Zeroizing::new(model.ple_conv.history().to_vec());
         core::prepare_prompt(
             &mut model.ple_conv,
@@ -332,6 +349,7 @@ impl PleBatchWorkspace {
             2 * 1024 * 1024,
             cancel,
         )
+        .map(device_history::Commit::Legacy)
         .map_err(u::fault)
     }
     pub(crate) fn commit_prompt_full(&mut self, mut p: Pending) {

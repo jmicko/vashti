@@ -466,7 +466,11 @@ impl Workspace {
         batch_io::read_fault(&m.arena, &m.admission, m.b.fault, cancel)?;
         let ple = ple.ok_or_else(error)?;
         self.ple.validate_prompt_full(m, &ple, start, count)?;
-        let history = self.ple.prompt_readback(m, &ple, cancel)?;
+        let history = if !crate::strata_intel_core::enabled() || self.ple.public_grouped_reads() {
+            Some(self.ple.prompt_readback(m, &ple, cancel)?)
+        } else {
+            None
+        };
         batch_io::read_fault(&m.arena, &m.admission, m.b.fault, cancel)?;
         if stages.len() != m.layers.len() {
             return Err(error());
@@ -506,8 +510,8 @@ impl Workspace {
             .prepare_prompt_boundary(&m.arena, &completed, cancel)?;
         let host = self
             .ple
-            .prepare_prompt_host(m, &ple, &history.tail, &history.next, cancel)?;
-        host.preflight(cancel).map_err(u::fault)?;
+            .prepare_prompt_host(m, &ple, history.as_ref(), cancel)?;
+        host.preflight(cancel)?;
         // Global finish is still fallible, so execute it before publishing any
         // family. All subsequent state operations are infallible and exclusive.
         self.global_moe.as_mut().ok_or_else(error)?.finish()?;

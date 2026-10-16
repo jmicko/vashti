@@ -405,6 +405,36 @@ mod tests {
         assert_eq!(conv.history, before);
     }
     #[test]
+    fn device_history_accepts_prompt_decode_and_short_prompt_continuations() {
+        let (conv, mut history, config) = state();
+        let (_, mut reference, _) = state();
+        let before = conv.history.clone();
+        let cancel = AtomicBool::new(false);
+        // Compare real token-history evolution across both caller geometries,
+        // including boundary tokens and a prompt shorter than the GPU tail.
+        for count in [2048, MAX_BATCH, 2, 1, 2048] {
+            let mut tokens: Vec<_> = (0..count).map(|i| (i % 31) as u32).collect();
+            tokens[count / 2] = config.boundary_token as u32;
+            let old = [history.tokens[0], history.tokens[1]];
+            for &token in &tokens {
+                config
+                    .rows_and_advance(token as i32, &mut reference)
+                    .unwrap();
+            }
+            let p = prepare_device_history_tokens(&mut history, &config, old, &tokens, &cancel)
+                .unwrap();
+            p.preflight(&cancel).unwrap();
+            p.commit();
+            assert_eq!(history.tokens(), reference.tokens());
+            assert_eq!(conv.history, before);
+        }
+        let old = [history.tokens[0], history.tokens[1]];
+        assert!(
+            prepare_device_history_tokens(&mut history, &config, old, &[1; 2049], &cancel).is_err()
+        );
+        assert_eq!(history.tokens(), old);
+    }
+    #[test]
     fn device_token_checkpoint_replays_every_real_prefix_and_rejects_another_owner() {
         let (_, mut history, config) = state();
         let old = [history.tokens[0], history.tokens[1]];

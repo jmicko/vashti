@@ -2,7 +2,7 @@
 //! CPU publication. Legacy paths retain their independent CPU float oracle.
 use super::*;
 
-pub(super) enum Commit<'a> {
+pub(crate) enum Commit<'a> {
     Legacy(core::PleChunkCommit<'a>),
     Device(core::DeviceHistoryTokens<'a>),
 }
@@ -10,14 +10,14 @@ impl Commit<'_> {
     pub(super) fn device(&self) -> bool {
         matches!(self, Self::Device(_))
     }
-    pub(super) fn preflight(&self, cancel: &AtomicBool) -> Result<()> {
+    pub(crate) fn preflight(&self, cancel: &AtomicBool) -> Result<()> {
         match self {
             Self::Legacy(p) => p.preflight(cancel),
             Self::Device(p) => p.preflight(cancel),
         }
         .map_err(u::fault)
     }
-    pub(super) fn commit(self) {
+    pub(crate) fn commit(self) {
         match self {
             Self::Legacy(p) => p.commit(),
             Self::Device(p) => p.commit(),
