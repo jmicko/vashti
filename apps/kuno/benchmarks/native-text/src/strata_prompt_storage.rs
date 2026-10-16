@@ -12,7 +12,7 @@ pub(super) const WORKING_BYTES: u64 = (allocation::DEFAULT_ROWS * 4 * 2560 * 2) 
 pub(crate) struct Storage {
     working: [Handle; 3],
     moe: groups::Views,
-    gr: [Handle; 4],     // normalized, down, low, up
+    gr: [Handle; 5],     // packed BF16 norm, down, packed BF16 low, up, row scales
     outer: [Handle; 13], // R/mixed/blocks/injection/router/shared/embedding, retained PLE tail
     ple: [Handle; 12],
     gdn: [Handle; 7],  // QKV, Z, H, readout, AB raw/controls/closing
@@ -63,14 +63,15 @@ impl Storage {
             Ok(views)
         };
         let mut persistent_words = [
-            10240, 320, 320, 10240, 10240, 10240, 2560, 2560, 2560, 4, 512, 640, 640, 2560, 1, 2560,
+            5120, 320, 160, 10240, 4, 10240, 10240, 2560, 2560, 2560, 4, 512, 640, 640, 2560, 1,
+            2560,
         ]
         .map(|w| w * capacity)
         .to_vec();
         persistent_words.push(9 * 10240);
         let persistent = carve(&roots[0], &persistent_words)?;
-        let gr: [Handle; 4] = std::array::from_fn(|i| persistent[i].clone());
-        let outer: [Handle; 13] = std::array::from_fn(|i| persistent[i + 4].clone());
+        let gr: [Handle; 5] = std::array::from_fn(|i| persistent[i].clone());
+        let outer: [Handle; 13] = std::array::from_fn(|i| persistent[i + 5].clone());
         let ple: [Handle; 12] = carve(
             &roots[1],
             &[2560, 10240, 2560, 10240, 10240, 4, 10240, 10240, 4, 4, 4, 4].map(|w| w * capacity),
@@ -166,8 +167,15 @@ impl Storage {
     pub(crate) fn working(&self) -> [Handle; 3] {
         self.working.clone()
     }
-    pub(crate) fn gr(&self) -> [Handle; 4] {
+    pub(crate) fn gr(&self) -> [Handle; 5] {
         self.gr.clone()
+    }
+    pub(crate) fn gr_input(&self, h: &Handle, columns: usize) -> bool {
+        match columns {
+            10240 => same_view(h, &self.gr[0]),
+            320 => same_view(h, &self.gr[2]),
+            _ => false,
+        }
     }
     pub(crate) fn outer(&self) -> [Handle; 13] {
         self.outer.clone()
@@ -447,5 +455,54 @@ mod overlay_tests {
         assert_eq!(seg(3).wait, seg(2).signal);
         assert_ne!(p.node_segments[2], p.node_segments[4]);
         assert_eq!(p.node_segments[4], p.node_segments[6]); // original compute order retains the phase switch
+    }
+}
+
+#[cfg(test)]
+mod packed_gr_layout_tests {
+    use super::*;
+    use cubecl_common::stream_id::StreamId;
+    #[test]
+    fn original_gr_images_scales_and_outputs_have_disjoint_exact_native_extents() {
+        let stream = StreamId { value: 919 };
+        let roots = allocation::ROOT_SIZES.map(|n| Handle::new(stream, n));
+        let s = Storage::new(roots).unwrap();
+        let lengths = [5120, 320, 160, 10240, 4];
+        for (h, words) in s.gr.iter().zip(lengths) {
+            assert_eq!(
+                h.size_in_used(),
+                (words * allocation::DEFAULT_ROWS * 4) as u64
+            );
+        }
+        let old_words = 10240 + 320 + 320 + 10240;
+        assert_eq!(
+            (old_words - lengths.iter().sum::<usize>()) * allocation::DEFAULT_ROWS * 4,
+            86_441_984
+        );
+        assert!(s.gr_input(&s.gr[0], 10240));
+        assert!(s.gr_input(&s.gr[2], 320));
+        for h in
+            s.gr.iter()
+                .chain(&s.outer)
+                .chain(&s.ple)
+                .chain(&s.gdn)
+                .chain(&s.qsa)
+        {
+            assert_eq!(s.gr_input(h, 10240), same_view(h, &s.gr[0]));
+            assert_eq!(s.gr_input(h, 320), same_view(h, &s.gr[2]));
+            assert!(!s.gr_input(h, 2560));
+        }
+        assert!(!s.gr_input(&s.gr[0].clone().offset_end(256), 10240));
+        assert!(!s.gr_input(&Handle::new(stream, s.gr[0].size_in_used()), 10240));
+        for count in [1, 2, 7, 8, 9, 255, 256, 257, 4095, 4096] {
+            assert!(count * 10240 * 2 <= s.gr[0].size_in_used() as usize);
+            assert!(count * 320 * 2 <= s.gr[2].size_in_used() as usize);
+            assert!(count * 4 * 4 <= s.gr[4].size_in_used() as usize);
+        }
+        for (i, h) in s.gr.iter().enumerate() {
+            for prior in s.gr[..i].iter().chain(&s.outer) {
+                assert!(!overlaps(h, prior).unwrap());
+            }
+        }
     }
 }

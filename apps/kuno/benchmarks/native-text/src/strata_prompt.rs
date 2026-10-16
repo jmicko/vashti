@@ -90,7 +90,7 @@ fn stages() -> Result<[Handle; 3]> {
             .ok_or(Error::InvalidBufferLength)
     })
 }
-fn gr_workspace() -> Result<[Handle; 4]> {
+fn gr_workspace() -> Result<[Handle; 5]> {
     STAGES.with(|s| {
         s.borrow()
             .as_ref()
@@ -765,9 +765,9 @@ pub(crate) fn write_handles(
     )
 }
 /// Full prompt GR entry point: owns no allocation and does not use MAX8 buffer
-/// geometry. Its four mutable intermediates are authenticated carved views.
+/// geometry. Packed norm/low images, gates and row scales use authentic carved views.
 pub(crate) fn gr_handles(q: GrHandles<'_>, weights: [Handle; 3]) -> Result<()> {
-    let [normalized, down, low, up] = gr_workspace()?;
+    let [normalized, down, low, up, scales] = gr_workspace()?;
     let extent = |h: &Handle, n: usize| {
         n.checked_mul(4)
             .is_some_and(|bytes| h.size_in_used() >= bytes as u64)
@@ -789,7 +789,7 @@ pub(crate) fn gr_handles(q: GrHandles<'_>, weights: [Handle; 3]) -> Result<()> {
         return Err(crate::strata_prompt::invalid_buffer_length());
     }
     let external = [&q.residual, &q.injection, &q.mixed, &q.fault, &q.gamma];
-    for h in [&normalized, &down, &low, &up] {
+    for h in [&normalized, &down, &low, &up, &scales] {
         if external
             .iter()
             .any(|v| storage::overlaps(h, v).unwrap_or(true))
@@ -800,7 +800,7 @@ pub(crate) fn gr_handles(q: GrHandles<'_>, weights: [Handle; 3]) -> Result<()> {
     if let Some((source, block)) = &q.previous
         && (!extent(source, q.first + q.count * 10240)
             || !extent(block, q.count * 2560)
-            || [&normalized, &down, &low, &up].iter().any(|h| {
+            || [&normalized, &down, &low, &up, &scales].iter().any(|h| {
                 storage::overlaps(h, source).unwrap_or(true)
                     || storage::overlaps(h, block).unwrap_or(true)
             }))
@@ -836,56 +836,41 @@ pub(crate) fn gr_handles(q: GrHandles<'_>, weights: [Handle; 3]) -> Result<()> {
             previous,
             block,
             q.injection.clone(),
-            q.gamma,
+            q.gamma.clone(),
             q.residual.clone(),
             normalized.clone(),
+            scales.clone(),
             q.fault.clone(),
         ],
         info,
     )?;
     let client = q.client;
-    project(
+    packed_gr_projection(
         client,
-        30,
-        10240,
-        320,
-        20480,
-        weights[0].clone(),
-        normalized.clone(),
-        down.clone(),
-        q.fault.clone(),
+        &normalized,
+        &weights[0],
+        &down,
+        &q.fault,
         q.count,
-        0,
         10240,
-        0,
         320,
-        false,
-        false,
     )?;
     if q.inject {
-        project(
+        packed_gr_projection(
             client,
-            30,
-            10240,
-            4,
-            20480,
-            weights[2].clone(),
-            normalized.clone(),
-            q.injection.clone(),
-            q.fault.clone(),
+            &normalized,
+            &weights[2],
+            &q.injection,
+            &q.fault,
             q.count,
-            0,
             10240,
-            0,
             4,
-            false,
-            false,
         )?;
     }
     launch(
         client,
         Kernel::GrLow,
-        [(q.count * 320).div_ceil(256), 1, 1],
+        [(q.count * 160).div_ceil(256), 1, 1],
         vec![
             down.clone(),
             low.clone(),
@@ -894,30 +879,24 @@ pub(crate) fn gr_handles(q: GrHandles<'_>, weights: [Handle; 3]) -> Result<()> {
         ],
         info,
     )?;
-    project(
+    packed_gr_projection(
         client,
-        30,
-        320,
-        10240,
-        640,
-        weights[1].clone(),
-        low.clone(),
-        up.clone(),
-        q.fault.clone(),
+        &low,
+        &weights[1],
+        &up,
+        &q.fault,
         q.count,
-        0,
         320,
-        0,
         10240,
-        false,
-        false,
     )?;
     launch(
         client,
         Kernel::GrMix,
         [(q.count * 2560).div_ceil(256), 1, 1],
         vec![
-            normalized.clone(),
+            q.residual.clone(),
+            scales,
+            q.gamma,
             up.clone(),
             q.mixed.clone(),
             q.fault.clone(),
@@ -925,6 +904,56 @@ pub(crate) fn gr_handles(q: GrHandles<'_>, weights: [Handle; 3]) -> Result<()> {
         info,
     )
 }
+/// Only original GR images enter this consumer: fixed BF16 projection geometry,
+/// no general prepacked override or borrowed working-stage assumption.
+#[allow(clippy::too_many_arguments)]
+fn packed_gr_projection(
+    client: &ComputeClient<WgpuRuntime>,
+    input: &Handle,
+    weight: &Handle,
+    output: &Handle,
+    fault: &Handle,
+    count: usize,
+    columns: usize,
+    rows: usize,
+) -> Result<()> {
+    if !(1..=groups::CAPACITY).contains(&count)
+        || !matches!((columns, rows), (10240, 320 | 4) | (320, 10240))
+        || input.size_in_used() < (count * columns * 2) as u64
+        || weight.size_in_used() != (rows * columns * 2) as u64
+        || output.size_in_used() < (count * rows * 4) as u64
+        || fault.size_in_used() != 4
+        || [input, weight, fault]
+            .iter()
+            .any(|h| storage::overlaps(h, output).unwrap_or(true))
+    {
+        return Err(invalid_buffer_length());
+    }
+    STAGES.with(|s| {
+        if s.borrow()
+            .as_ref()
+            .is_some_and(|s| s.gr_input(input, columns))
+        {
+            Ok(())
+        } else {
+            Err(invalid_buffer_length())
+        }
+    })?;
+    // External injection is already validated by the authentic arena/full-prompt
+    // caller; unlike the two internal GEMM results it need not be a carved view.
+    crate::strata_matrix::dense(
+        client,
+        [input.clone(), weight.clone(), output.clone(), fault.clone()],
+        count,
+        columns,
+        rows,
+        0,
+        0,
+        rows,
+        true,
+    )
+}
+
 pub(crate) fn ab(q: crate::strata_gdn::Ab<'_>, weights: [Handle; 2]) -> Result<()> {
     if q.columns != 2560
         || !(1..=8).contains(&q.count)

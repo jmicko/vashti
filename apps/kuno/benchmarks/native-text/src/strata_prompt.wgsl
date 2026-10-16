@@ -112,9 +112,10 @@ fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(local_invocation_index) tid:
 @group(0) @binding(2) var<storage,read> injection:array<f32>;
 @group(0) @binding(3) var<storage,read> gamma:array<f32>;
 @group(0) @binding(4) var<storage,read_write> residual:array<f32>;
-@group(0) @binding(5) var<storage,read_write> normalized:array<f32>;
-@group(0) @binding(6) var<storage,read_write> fault:array<atomic<u32>>;
-@group(0) @binding(7) var<uniform> p:Params;
+@group(0) @binding(5) var<storage,read_write> normalized:array<u32>;
+@group(0) @binding(6) var<storage,read_write> scales:array<f32>;
+@group(0) @binding(7) var<storage,read_write> fault:array<atomic<u32>>;
+@group(0) @binding(8) var<uniform> p:Params;
 var<workgroup> sums:array<f32,8>;
 @compute @workgroup_size(256)
 fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(local_invocation_index) tid:u32,
@@ -123,29 +124,50 @@ fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(local_invocation_index) tid:
     for(var col=tid;col<2560u;col+=256u) {var r=residual[base+col];if p.apply!=0u {r=fma(block[t*2560u+col],injection[t*4u+h],previous[base+col]);residual[base+col]=r;}sum+=r*r;}
     for(var d=16u;d>0u;d/=2u) {sum+=subgroupShuffleXor(sum,d);}if lane==0u {sums[sg]=sum;}workgroupBarrier();sum=0.0;if lane<8u {sum=sums[lane];}
     for(var d=16u;d>0u;d/=2u){sum+=subgroupShuffleXor(sum,d);}let rs=inverseSqrt(sum/2560.0+p.epsilon);
-    for(var col=tid;col<2560u;col+=256u) {let x=(residual[base+col]*rs)*gamma[h*2560u+col];normalized[t*10240u+h*2560u+col]=select(0.0,x,finite_value(x));if !finite_value(x){atomicOr(&fault[0],1u);}}
+    if tid==0u {scales[t*4u+h]=rs;}
+    for(var pair=tid;pair<1280u;pair+=256u) {
+        let col=pair*2u;
+        let a=(residual[base+col]*rs)*gamma[h*2560u+col];
+        let b=(residual[base+col+1u]*rs)*gamma[h*2560u+col+1u];
+        let bits=image(a,b,1u);
+        let good=finite_value(a)&&finite_value(b)&&finite_value(restored(bits,false,1u))&&finite_value(restored(bits,true,1u));
+        normalized[t*5120u+h*1280u+pair]=select(0u,bits,good);
+        if !good {atomicOr(&fault[0],1u);}
+    }
 }
 // GR_NORM_END
 // GR_LOW_BEGIN
 @group(0) @binding(0) var<storage,read> down:array<f32>;
-@group(0) @binding(1) var<storage,read_write> low:array<f32>;
+@group(0) @binding(1) var<storage,read_write> low:array<u32>;
 @group(0) @binding(2) var<storage,read_write> injection:array<f32>;
 @group(0) @binding(3) var<storage,read_write> fault:array<atomic<u32>>;
 @group(0) @binding(4) var<uniform> p:Params;
 @compute @workgroup_size(256)
-fn main(@builtin(global_invocation_id) id:vec3<u32>) {let i=id.x;if i<p.count*320u {let x=down[i]/4.0;let v=x/(1.0+exp(-x));low[i]=select(0.0,v,finite_value(v));if !finite_value(v){atomicOr(&fault[0],1u);}}
+fn main(@builtin(global_invocation_id) id:vec3<u32>) {
+    let i=id.x;
+    if i<p.count*160u {
+        let a=down[i*2u]/4.0;let b=down[i*2u+1u]/4.0;
+        let x=a/(1.0+exp(-a));let y=b/(1.0+exp(-b));let bits=image(x,y,1u);
+        let good=finite_value(x)&&finite_value(y)&&finite_value(restored(bits,false,1u))&&finite_value(restored(bits,true,1u));
+        low[i]=select(0u,bits,good);if !good {atomicOr(&fault[0],1u);}
+    }
     if p.inject!=0u&&i<p.count*4u {let x=injection[i]/4.0;let v=2.0/(1.0+exp(-x));injection[i]=select(0.0,v,finite_value(v));if !finite_value(v){atomicOr(&fault[0],1u);}}
 }
 // GR_LOW_END
 // GR_MIX_BEGIN
-@group(0) @binding(0) var<storage,read> normalized:array<f32>;
-@group(0) @binding(1) var<storage,read> up:array<f32>;
-@group(0) @binding(2) var<storage,read_write> mixed:array<f32>;
-@group(0) @binding(3) var<storage,read_write> fault:array<atomic<u32>>;
-@group(0) @binding(4) var<uniform> p:Params;
+@group(0) @binding(0) var<storage,read> residual:array<f32>;
+@group(0) @binding(1) var<storage,read> scales:array<f32>;
+@group(0) @binding(2) var<storage,read> gamma:array<f32>;
+@group(0) @binding(3) var<storage,read> up:array<f32>;
+@group(0) @binding(4) var<storage,read_write> mixed:array<f32>;
+@group(0) @binding(5) var<storage,read_write> fault:array<atomic<u32>>;
+@group(0) @binding(6) var<uniform> p:Params;
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) id:vec3<u32>) {let i=id.x;if i>=p.count*2560u {return;}let t=i/2560u;let col=i%2560u;var sum=0.0;
-    for(var h=0u;h<4u;h++) {let at=t*10240u+h*2560u+col;sum=fma(normalized[at],1.0/(1.0+exp(-up[at])),sum);}let y=sum/4.0;mixed[i]=select(0.0,y,finite_value(y));if !finite_value(y){atomicOr(&fault[0],1u);}}
+    for(var h=0u;h<4u;h++) {let at=t*10240u+h*2560u+col;
+        let x=(residual[p.ib+at]*scales[t*4u+h])*gamma[h*2560u+col];
+        sum=fma(x,1.0/(1.0+exp(-up[at])),sum);
+    }let y=sum/4.0;mixed[i]=select(0.0,y,finite_value(y));if !finite_value(y){atomicOr(&fault[0],1u);}}
 // GR_MIX_END
 // AB_CONTROLS_BEGIN
 @group(0) @binding(0) var<storage,read> raw:array<f32>;
