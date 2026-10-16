@@ -122,7 +122,7 @@ fn launch(
 /// Dead occupies the extra128 words after all completed-block slots and is
 /// immutable once cell zero is accepted, including speculative suffix repair.
 pub(crate) fn initialize(arena: &PrivateArena, owners: [Handle; 4], capacity: usize) -> Result<()> {
-    if !(4..=4096).contains(&capacity) || !capacity.is_multiple_of(4) {
+    if !(4..=crate::qsa_gpu::MAX_CONTEXT).contains(&capacity) || !capacity.is_multiple_of(4) {
         return Err(Error::InvalidBufferLength);
     }
     let dead = (capacity / 4) * 128;
@@ -154,11 +154,11 @@ pub(crate) fn select(
     };
     if !crate::strata_intel_core::enabled()
         || !(1..=maximum).contains(&count)
-        || !(1..=1024).contains(&blocks)
+        || !(1..=crate::qsa_gpu::MAX_CONTEXT / 4).contains(&blocks)
         || stride != 2051
         || start
             .checked_add(count)
-            .is_none_or(|end| end > 4096 || end > blocks * 4)
+            .is_none_or(|end| end > crate::qsa_gpu::MAX_CONTEXT || end > blocks * 4)
     {
         return Err(Error::InvalidBufferLength);
     }

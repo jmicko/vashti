@@ -26,10 +26,13 @@ pub struct PublicVectors {
     prewarmed: bool,
 }
 
-const PUBLIC_SIN_NAME: &str = "kuno_public_qsa_rope_sin32_theta1e7_positions4096";
-const PUBLIC_COS_NAME: &str = "kuno_public_qsa_rope_cos32_theta1e7_positions4096";
+const PUBLIC_SIN_NAME: &str = crate::qsa_gpu::PUBLIC_SIN_NAME;
+const PUBLIC_COS_NAME: &str = crate::qsa_gpu::PUBLIC_COS_NAME;
 fn public_request_bytes(values: &[f32]) -> Result<u64> {
-    if values.is_empty() || values.len() > 131072 || values.iter().any(|x| !x.is_finite()) {
+    if values.is_empty()
+        || values.len() > crate::qsa_gpu::ROPE_TABLE_WORDS.max(131072)
+        || values.iter().any(|x| !x.is_finite())
+    {
         return Err(Error::InvalidBufferLength);
     }
     (values.len() as u64)

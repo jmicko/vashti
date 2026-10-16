@@ -41,7 +41,7 @@ impl Request<'_> {
                 .prompt
                 .len()
                 .checked_add(self.max_outputs)
-                .is_none_or(|n| n > 4096)
+                .is_none_or(|n| n > crate::qsa_gpu::MAX_CONTEXT)
         {
             return Err("global request geometry rejected".into());
         }
@@ -55,7 +55,7 @@ impl Request<'_> {
 struct PromptPlan(Zeroizing<[usize; 2]>);
 impl PromptPlan {
     fn new(prompt: usize) -> Result<Self> {
-        if !(1..=4096).contains(&prompt) {
+        if !(1..=crate::qsa_gpu::MAX_CONTEXT).contains(&prompt) {
             return Err("global prompt plan geometry".into());
         }
         let prefix = prompt - 1;
@@ -549,7 +549,9 @@ pub(super) fn run<'m, 'f>(
         if inputs.len() != count
             || count > request.speculation.window
             || pending.is_some()
-            || position.checked_add(count).is_none_or(|end| end > 4096)
+            || position
+                .checked_add(count)
+                .is_none_or(|end| end > crate::qsa_gpu::MAX_CONTEXT)
         {
             return Err("global draft window bound rejected".into());
         }
@@ -770,7 +772,21 @@ mod tests {
     #[test]
     fn native_prompt_prefix_and_teacher_exclude_exactly_one_normal_decode_input() {
         for n in [
-            1, 2, 30, 35, 255, 256, 257, 258, 2048, 2049, 2050, 3073, 4095, 4096,
+            1,
+            2,
+            30,
+            35,
+            255,
+            256,
+            257,
+            258,
+            2048,
+            2049,
+            2050,
+            3073,
+            4095,
+            4096,
+            crate::qsa_gpu::MAX_CONTEXT,
         ] {
             let prompt: Vec<u32> = (0..n as u32).collect();
             let plan = PromptPlan::new(n).unwrap();
@@ -800,7 +816,7 @@ mod tests {
             assert_eq!(&prompt[plan.prefix()..], &[(n - 1) as u32]);
         }
         assert!(PromptPlan::new(0).is_err());
-        assert!(PromptPlan::new(4097).is_err());
+        assert!(PromptPlan::new(crate::qsa_gpu::MAX_CONTEXT + 1).is_err());
         let plan = PromptPlan::new(35).unwrap();
         let prompt = vec![0; 35];
         for bad in [0..0, 1..34, 0..35, 0..33] {

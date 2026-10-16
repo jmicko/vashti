@@ -307,7 +307,7 @@ pub(crate) fn enqueue_count1_router_input(
     guarded(admission, || {
         active(arena, admission, cancel)?;
         shape(graph)?;
-        if count != 1 || layer >= 48 || start >= 4096 {
+        if count != 1 || layer >= 48 || start >= crate::qsa_gpu::MAX_CONTEXT as u64 {
             return Err(error());
         }
         let iv = Zeroizing::new(input_view);
@@ -389,7 +389,7 @@ impl ResidentRouterAudit {
 
 fn decode_resident_router_audit(bytes: &[u8], start: u64) -> Result<Vec<ResidentRouterAudit>> {
     if bytes.len() != RESIDENT_AUDIT_BYTES
-        || start >= 4096
+        || start >= crate::qsa_gpu::MAX_CONTEXT as u64
         || bytes[RESIDENT_AUDIT_WORDS * 4..].iter().any(|&v| v != 0)
     {
         return Err(error());

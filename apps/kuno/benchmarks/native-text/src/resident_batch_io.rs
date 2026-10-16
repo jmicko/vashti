@@ -110,7 +110,7 @@ fn packet(
     positions: &[u32; MAX_BATCH],
 ) -> Result<()> {
     if !(1..=MAX_BATCH).contains(&count)
-        || context > 4096
+        || context > crate::qsa_gpu::MAX_CONTEXT
         || start.checked_add(count).is_none_or(|n| n > context)
         || (0..count)
             .any(|t| tokens[t] as usize >= VOCABULARY || positions[t] as usize != start + t)

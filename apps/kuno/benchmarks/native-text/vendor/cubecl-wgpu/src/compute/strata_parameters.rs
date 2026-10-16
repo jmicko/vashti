@@ -727,7 +727,7 @@ mod tests {
         assert!(NativeStrataBranch::target_commit(1, 4096, 0).is_err());
         assert!(NativeStrataInvocation::commit(0, 0).is_err());
         assert!(NativeStrataInvocation::commit(0, 9).is_err());
-        assert!(NativeStrataInvocation::commit(4096, 1).is_err());
+        assert!(NativeStrataInvocation::commit(32768, 1).is_err());
         assert!(
             NativeStrataInvocation::commit(0, 1)
                 .unwrap()
@@ -922,7 +922,7 @@ mod tests {
     }
     #[test]
     fn native_phase_family_and_extent_errors_do_not_arm_or_retain_programs() {
-        let draft = NativeStrataInvocation::mtp(4095).unwrap();
+        let draft = NativeStrataInvocation::mtp(32767).unwrap();
         assert!(draft.value(NativeStrataValue::RouteEpoch).is_err());
         assert!(draft.value(NativeStrataValue::RouteUsage).is_err());
         assert!(
@@ -934,7 +934,7 @@ mod tests {
             draft
                 .value(NativeStrataValue::Boundary { offset: 1 })
                 .unwrap(),
-            4096
+            32768
         );
         assert!(
             draft
@@ -1238,7 +1238,7 @@ mod tests {
     fn typed_invocation_bounds_and_schema_fail_before_parameter_retention() {
         use cubecl_runtime::server::NativeStrataValue;
         assert!(NativeStrataInvocation::target(0, 0).is_err());
-        assert!(NativeStrataInvocation::target(4096, 1).is_err());
+        assert!(NativeStrataInvocation::target(32768, 1).is_err());
         let value = NativeStrataInvocation::target(1, 1).unwrap();
         assert!(
             value

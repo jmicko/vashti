@@ -77,11 +77,20 @@ pub(crate) const TARGET_ROWS_PREPARED_VERIFY3_MAIN: u64 =
 
 // The native INT8 QSA cache owns8MiB instead of32MiB per layer;
 // retaining one extra pooled-key row raises its full owner from512KiB to1MiB.
+// The selected32K runtime then expands cache, positions and both pooled roots.
 // All12 QSA layers change together. Match the actual selected full roots,
 // including padding and the separate unchanged GDN replay input owners.
 pub(super) const OLD_MAIN: u64 = 785_186_816 + gdn::strata_replay::MAIN_BYTES
     - if cfg!(feature = "strata-intel-core") {
         12 * (24 * 1024 * 1024 - 512 * 1024)
+    } else {
+        0
+    }
+    + if crate::strata_intel_core::enabled() {
+        12 * ((64 - 8) * 1024 * 1024
+            + (128 - 32) * 1024
+            + (4 * 1024 - 512) * 1024
+            + (8 - 1) * 1024 * 1024)
     } else {
         0
     };
@@ -91,10 +100,17 @@ pub(super) const OLD_MAIN: u64 = 785_186_816 + gdn::strata_replay::MAIN_BYTES
 const NATIVE_QSA_BATCH_MAIN: u64 = if cfg!(feature = "strata-intel-core") {
     // Original MAX8 KV candidate page shrinks; split attention's partial and
     // statistics planes replace the two full-score softmax pages together.
-    22_052_864 - 17_825_792
+    //32K additionally grows both pooled pages and four block score/flag pages.
+    22_052_864 - 17_825_792 + 2 * (32 - 4) * 1024 * 1024 + 4 * (256 - 32) * 1024
 } else {
     0
 };
+const QSA_RUNTIME: u64 = 7_864_320
+    + if crate::strata_intel_core::enabled() {
+        12 * 2 * 2 * (256 - 32) * 1024
+    } else {
+        0
+    };
 const NEW_MAIN: u64 = 33_062_912 + NATIVE_GR_MAIN + NATIVE_QSA_BATCH_MAIN;
 const NATIVE_GDN_RUNTIME_INFO: u64 = if cfg!(feature = "strata-intel-core") {
     // runtime_info_reservation(..., true) retains both audited copies.
@@ -117,7 +133,13 @@ const NATIVE_GR_MAIN: u64 = if cfg!(feature = "strata-intel-core") {
 } else {
     0
 };
-const PUBLIC_MAIN: u64 = 25_165_824;
+const PUBLIC_MAIN: u64 = 25_165_824
+    + if crate::strata_intel_core::enabled() {
+        // Two shared RoPE tables, one full4MiB owner each instead of512KiB.
+        7 * 1024 * 1024
+    } else {
+        0
+    };
 const CORE_CACHE_HOST: usize = if cfg!(feature = "strata-intel-core") {
     crate::strata_global_adapt::HOST_BYTES
         + crate::strata_sampler::request::HOST_BYTES
@@ -1304,13 +1326,13 @@ impl Plan {
             )));
         }
         executor.check_original_bank_metadata(LAYERS, ORIGINAL_BANK_HOST)?;
-        let g = graph.geometry();
+        let g = crate::strata_intel_core::runtime_geometry(graph);
         if g.layers != LAYERS
             || g.residual.width != D
             || g.residual.streams != HC
             || g.experts != ROUTER
             || g.experts_used != 10
-            || g.max_context != 4096
+            || g.max_context != crate::qsa_gpu::MAX_CONTEXT
         {
             return Err(Error::InvalidFormat(concat!(
                 "native model chunk rejected at source line ",
@@ -1726,7 +1748,7 @@ impl Plan {
         // All component/API-visible reservations remain independent of MAIN.
         if gdn::GdnBatchWorkspace::runtime_info_reservation(graph, true)?
             != 4_718_592 + NATIVE_GDN_RUNTIME_INFO
-            || qsa::QsaBatchWorkspace::runtime_io_reservation(graph, true)? != 7_864_320
+            || qsa::QsaBatchWorkspace::runtime_io_reservation(graph, true)? != QSA_RUNTIME
             || batch_moe::Workspace::runtime_io_increment() != 524288
             || ops::GUARDED_ROUTER_CAPACITY_BYTES > 8192
         {
@@ -1772,6 +1794,7 @@ impl Plan {
     }
 }
 fn runtime_bytes(head_tiles: u64) -> Result<u64> {
+    let context_io_increment = QSA_RUNTIME - 7_864_320;
     // Audited all-stage envelope, counting source+target+inspection separately.
     // Real forced router/interior-MoE fences drain before another source window.
     // Keep the helper's conservative embedding eight-record INFO envelope.
@@ -1798,7 +1821,8 @@ fn runtime_bytes(head_tiles: u64) -> Result<u64> {
         .and_then(|n| n.checked_add(2 * 1024 * 1024 + 65536))
         .ok_or(Error::ArithmeticOverflow)?;
     WITHOUT_HEAD
-        .checked_add(head)
+        .checked_add(context_io_increment)
+        .and_then(|n| n.checked_add(head))
         .ok_or(Error::ArithmeticOverflow)
 }
 
@@ -5076,7 +5100,10 @@ type TokenPacket = (
     Zeroizing<usize>,
 );
 fn packet(start: usize, context: usize, tokens: &[u32]) -> Result<TokenPacket> {
-    if !(1..=MAX_BATCH).contains(&tokens.len()) || context == 0 || context > 4096 {
+    if !(1..=MAX_BATCH).contains(&tokens.len())
+        || context == 0
+        || context > crate::qsa_gpu::MAX_CONTEXT
+    {
         return Err(Error::InvalidFormat(concat!(
             "native model chunk rejected at source line ",
             line!()
@@ -8044,5 +8071,41 @@ mod frozen_source_configuration_tests {
                 .is_err()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod context32768_tests {
+    use super::*;
+    #[test]
+    fn context_packets_and_actual_combined_runtime_quotes_reach_end_without_bypassing_admission() {
+        if !crate::strata_intel_core::enabled() {
+            return;
+        }
+        for count in 1..=8 {
+            let start = crate::qsa_gpu::MAX_CONTEXT - count;
+            let input = vec![1; count];
+            assert!(packet(start, crate::qsa_gpu::MAX_CONTEXT, &input).is_ok());
+            assert!(packet(start + 1, crate::qsa_gpu::MAX_CONTEXT, &input).is_err());
+        }
+        assert_eq!(QSA_RUNTIME, 18_874_368);
+        assert_eq!(
+            NEW_MAIN - NATIVE_GR_MAIN,
+            33_062_912 + 81_690_624 - 17_825_792
+        );
+        assert_eq!(PUBLIC_MAIN, 32_505_856);
+        let target = runtime_bytes(16).unwrap()
+            + target_rows::RUNTIME_INCREMENT
+            + latest_checkpoint::RUNTIME_INCREMENT
+            + HYBRID_RUNTIME;
+        let full = target + crate::resident_mtp::RUNTIME_BYTES;
+        assert!(
+            full <= public_language_request_io::RUNTIME_BYTES,
+            "combined original runtime quote {full}"
+        );
+        assert_eq!(
+            target_rows::RUNTIME_LIMIT,
+            public_language_request_io::RUNTIME_BYTES
+        );
     }
 }

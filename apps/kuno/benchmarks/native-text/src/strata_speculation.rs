@@ -1,11 +1,16 @@
 //! MIT Strata fb58e0 src/spec/{suffix_drafter,draft_policy}.cpp.
 //! Native request-local lookup index and cost policy. Never persisted/logged.
-//! Bounds are deliberate Kuno substitutions: fixed4096 context,8192 history
-//! capacity, MAX8 verification; rejected overcapacity does not grow silently.
+//! Bounds are deliberate Kuno substitutions: native history covers the admitted
+//! context, ordinary history remains8192, verification stays MAX8. Overcapacity
+//! rejects rather than allocating an uncharged request-dependent extension.
 use kuno_text::{Error, Result};
 use zeroize::{Zeroize, Zeroizing};
 
-const HISTORY: usize = 8192;
+const HISTORY: usize = if crate::strata_intel_core::enabled() {
+    crate::strata_intel_core::CONTEXT
+} else {
+    8192
+};
 const SLOTS: usize = HISTORY * 2;
 const MAX_T: usize = 8;
 // The actual fixed owners, plus bounded proposal/scratch copies, fit inside
@@ -523,5 +528,24 @@ mod tests {
         assert_eq!(q.chain(8, 1., &proposal(3, 40)), 0);
         assert!(q.observe(false, 4, 4, 0, 1).is_err());
         assert!(q.observe_chain(4, 5, 0, 0, 1).is_err());
+    }
+}
+
+#[cfg(test)]
+mod context32768_tests {
+    use super::*;
+    #[test]
+    fn actual_suffix_owner_covers_complete_context_and_remains_in_original_host_quote() {
+        if !crate::strata_intel_core::enabled() {
+            return;
+        }
+        assert_eq!(HISTORY, 32768);
+        assert!(HOST_BYTES + 512 * 4 + 64 * 1024 <= 4 * 1024 * 1024);
+        let tokens: Vec<_> = (0..HISTORY as u32).collect();
+        let mut owner = Suffix::new(3).unwrap();
+        owner.append(&tokens).unwrap();
+        assert_eq!(owner.history.len(), HISTORY);
+        assert!(owner.append(&[1]).is_err());
+        assert_eq!(owner.history.len(), HISTORY);
     }
 }

@@ -681,7 +681,10 @@ impl Bridge {
             .split_once("// END")
             .unwrap()
             .0
-            .to_owned();
+            .replace(
+                "CONTEXT_CAPACITY",
+                &format!("{}u", crate::mtp_resident_kernels::CONTEXT),
+            );
         match self {
             Self::PrepareCjk=>source
                 .replace("@compute @workgroup_size(256)","@group(0) @binding(9) var<storage,read> inverse:array<u32>;\n@compute @workgroup_size(256)")

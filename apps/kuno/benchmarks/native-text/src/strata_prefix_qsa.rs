@@ -83,7 +83,9 @@ pub(crate) fn launch(
     if !crate::strata_intel_core::enabled()
         || !(2..=8).contains(&proposed)
         || !(1..=proposed).contains(&accepted)
-        || start.checked_add(proposed).is_none_or(|end| end > 4096)
+        || start
+            .checked_add(proposed)
+            .is_none_or(|end| end > crate::qsa_gpu::MAX_CONTEXT)
         || handles.len() != 4
         || handles.iter().any(|h| h.stream != handles[0].stream)
     {

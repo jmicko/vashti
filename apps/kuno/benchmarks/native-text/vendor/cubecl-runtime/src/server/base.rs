@@ -81,6 +81,9 @@ pub struct NativeStrataBranch {
     verify_capacity: u8,
     state_role: u8,
 }
+/// Maximum immutable capacity of the selected Intel target/draft ABI.
+/// Default branch constructors retain their original4096-cell geometry.
+pub const NATIVE_STRATA_MAX_CONTEXT: u16 = 32768;
 impl NativeStrataBranch {
     /// Separate original coupled-sampler and greedy/argmax command inventories.
     pub fn with_coupled_sampling(mut self, coupled: bool) -> Self {
@@ -133,7 +136,10 @@ impl NativeStrataBranch {
         context: u16,
         state_role: u8,
     ) -> Result<Self, &'static str> {
-        if !(1..=8).contains(&rows) || !(1..=4096).contains(&context) || state_role > 3 {
+        if !(1..=8).contains(&rows)
+            || !(1..=NATIVE_STRATA_MAX_CONTEXT).contains(&context)
+            || state_role > 3
+        {
             return Err("native target branch shape");
         }
         Ok(Self {
@@ -163,6 +169,17 @@ impl NativeStrataBranch {
     }
     /// One accepted-prefix round, optionally followed by a zero-threshold chain.
     pub fn mtp_round(rows: u8, proposals: u8) -> Result<Self, &'static str> {
+        Self::mtp_round_for_context(rows, proposals, 4096)
+    }
+    /// Immutable cache capacity, independent of current request position.
+    pub fn mtp_round_for_context(
+        rows: u8,
+        proposals: u8,
+        context: u16,
+    ) -> Result<Self, &'static str> {
+        if !(1..=NATIVE_STRATA_MAX_CONTEXT).contains(&context) {
+            return Err("native MTP context shape");
+        }
         if !(1..=8).contains(&rows) || !(1..=7).contains(&proposals) {
             return Err("native MTP round branch shape");
         }
@@ -172,13 +189,20 @@ impl NativeStrataBranch {
             family: 2,
             rows,
             proposals,
-            context_capacity: 4096,
+            context_capacity: context,
             verify_capacity: 8,
             state_role: 0,
         })
     }
     /// A subsequent confidence-observed draft cell (indices one through six).
     pub fn mtp_step(step: u8) -> Result<Self, &'static str> {
+        Self::mtp_step_for_context(step, 4096)
+    }
+    /// Immutable cache capacity, independent of current request position.
+    pub fn mtp_step_for_context(step: u8, context: u16) -> Result<Self, &'static str> {
+        if !(1..=NATIVE_STRATA_MAX_CONTEXT).contains(&context) {
+            return Err("native MTP context shape");
+        }
         if !(1..=6).contains(&step) {
             return Err("native MTP step branch shape");
         }
@@ -188,7 +212,7 @@ impl NativeStrataBranch {
             family: 3,
             rows: 1,
             proposals: step,
-            context_capacity: 4096,
+            context_capacity: context,
             verify_capacity: 8,
             state_role: 0,
         })
@@ -204,7 +228,7 @@ pub enum NativeStrataValue {
         /// Constant displacement encoded by the kernel's fixed graph shape.
         offset: i16,
     },
-    /// Window boundary, which may equal context end4096.
+    /// Window boundary, which may equal the admitted context end.
     Boundary {
         /// Constant displacement from the invocation origin.
         offset: i16,
@@ -318,7 +342,7 @@ impl NativeStrataInvocation {
         route_epoch: u32,
         route_usage: bool,
     ) -> Result<Self, &'static str> {
-        if position >= 4096 || route_epoch == 0 {
+        if position >= u32::from(NATIVE_STRATA_MAX_CONTEXT) || route_epoch == 0 {
             return Err("native target invocation bounds");
         }
         Ok(Self {
@@ -332,7 +356,7 @@ impl NativeStrataInvocation {
     /// Fresh MTP cell origin: accepted-front start for a round, current cell
     /// for an independently observed step. Geometry comes from its branch key.
     pub fn mtp(position: u32) -> Result<Self, &'static str> {
-        if position >= 4096 {
+        if position >= u32::from(NATIVE_STRATA_MAX_CONTEXT) {
             return Err("native MTP invocation bounds");
         }
         Ok(Self {
@@ -346,7 +370,7 @@ impl NativeStrataInvocation {
     /// Fresh target commit controls. The matching original transaction and
     /// device/fault authority stay with the engine, not this parameter packet.
     pub fn commit(position: u32, accepted: u32) -> Result<Self, &'static str> {
-        if position >= 4096 || !(1..=8).contains(&accepted) {
+        if position >= u32::from(NATIVE_STRATA_MAX_CONTEXT) || !(1..=8).contains(&accepted) {
             return Err("native commit invocation bounds");
         }
         Ok(Self {
@@ -380,14 +404,14 @@ impl NativeStrataInvocation {
         match source {
             NativeStrataValue::Position { offset } => {
                 let value = self.position as i64 + offset as i64;
-                if !(0..4096).contains(&value) {
+                if !(0..i64::from(NATIVE_STRATA_MAX_CONTEXT)).contains(&value) {
                     return Err("native position expression bounds");
                 }
                 Ok(value as u32)
             }
             NativeStrataValue::Boundary { offset } => {
                 let value = self.position as i64 + offset as i64;
-                if !(0..=4096).contains(&value) {
+                if !(0..=i64::from(NATIVE_STRATA_MAX_CONTEXT)).contains(&value) {
                     return Err("native boundary expression bounds");
                 }
                 Ok(value as u32)

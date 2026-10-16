@@ -49,7 +49,12 @@ impl Kernel {
                 .unwrap()
                 .0
         };
-        let mut source = section("COMMON").to_owned();
+        let mut source = format!(
+            "const CONTEXT_CAPACITY:u32={}u;const CACHE_STORAGE_WORDS:u32={}u;\n",
+            crate::mtp_resident_kernels::CONTEXT,
+            crate::mtp_resident_kernels::CACHE_STORAGE_WORDS
+        );
+        source.push_str(section("COMMON"));
         source.push_str(section(match self {
             Self::Embed => "EMBED",
             Self::Norm => "NORM",
@@ -141,7 +146,7 @@ fn position_field(kernel: Kernel) -> Option<NativeStrataParameter> {
         value: NativeStrataValue::PhasePosition { offset: 0 },
     })
 }
-/// Packed-cache boundary is distinct from a readable token cell and may4096.
+/// Packed-cache boundary is distinct from a readable token cell and may equal context end.
 pub(crate) fn guard(
     arena: &PrivateArena,
     grid: [usize; 3],
@@ -149,7 +154,7 @@ pub(crate) fn guard(
     position: usize,
     phase_offset: Option<i16>,
 ) -> Result<()> {
-    if position > 4096 {
+    if position > crate::mtp_resident_kernels::CONTEXT {
         return Err(Error::InvalidBufferLength);
     }
     let field = phase_offset.map(|offset| NativeStrataParameter {
@@ -196,6 +201,22 @@ pub(crate) fn launch_prompt(
         position_field(kernel),
     )
 }
+fn dispatch_grid(kernel: Kernel, grid: [usize; 3]) -> Result<[usize; 3]> {
+    const LIMIT: usize = 65535;
+    if grid.contains(&0) {
+        return Err(Error::InvalidBufferLength);
+    }
+    if matches!(kernel, Kernel::Guard | Kernel::Rewind) && grid[1..] == [1, 1] && grid[0] > LIMIT {
+        let rows = grid[0].div_ceil(LIMIT);
+        if rows <= LIMIT {
+            return Ok([LIMIT, rows, 1]);
+        }
+    }
+    if grid.iter().any(|&n| n > LIMIT) {
+        return Err(Error::InvalidBufferLength);
+    }
+    Ok(grid)
+}
 fn launch_impl(
     arena: &PrivateArena,
     kernel: Kernel,
@@ -205,6 +226,7 @@ fn launch_impl(
     capacity: u32,
     native: Option<NativeStrataParameter>,
 ) -> Result<()> {
+    let grid = dispatch_grid(kernel, grid)?;
     let client = arena.client().map_err(u::fault)?;
     if !crate::strata_intel_core::enabled()
         || !(1..=capacity).contains(&info[0])
@@ -291,8 +313,31 @@ pub(crate) const EXPERT_INPUT: usize = 22;
 pub(crate) const EXPERT_GU: usize = 23;
 pub(crate) const EXPERT_HIDDEN: usize = 24;
 pub(crate) const WORDS: [usize; 25] = [
-    8, 81920, 20480, 20480, 81920, 20480, 81920, 81920, 64, 207360, 2560, 2560, 32, 20480, 4096,
-    4096, 4096, 32768, 4096, 98304, 81920, 20480, 800, 12800, 2000,
+    8,
+    81920,
+    20480,
+    20480,
+    81920,
+    20480,
+    81920,
+    81920,
+    64,
+    207360,
+    2560,
+    2560,
+    32,
+    20480,
+    4096,
+    4096,
+    4096,
+    32768,
+    crate::mtp_resident_kernels::CONTEXT,
+    crate::mtp_resident_kernels::ATTENTION_WORDS,
+    81920,
+    20480,
+    800,
+    12800,
+    2000,
 ];
 pub(crate) struct Workspace {
     pub ids: zeroize::Zeroizing<[BufferId; 25]>,
@@ -468,6 +513,51 @@ mod tests {
             assert!(Workspace::bytes().unwrap() < 8 * 1024 * 1024);
         } else {
             assert_eq!(Workspace::bytes().unwrap(), 0);
+        }
+    }
+}
+
+#[cfg(test)]
+mod context32768_tests {
+    use super::*;
+    #[test]
+    fn packed_full_sweep_covers_last_context_word_with_portable_two_dimensional_grid() {
+        let words = crate::mtp_resident_kernels::CACHE_STORAGE_WORDS;
+        for kernel in [Kernel::Guard, Kernel::Rewind] {
+            let grid = dispatch_grid(kernel, [words.div_ceil(64), 1, 1]).unwrap();
+            assert!(grid.iter().all(|&n| n <= 65535));
+            let mut next = 0;
+            for y in 0..grid[1] {
+                for x in 0..grid[0] * 64 {
+                    let i = x + y * grid[0] * 64;
+                    if i < words {
+                        assert_eq!(i, next);
+                        next += 1;
+                    }
+                }
+            }
+            assert_eq!(next, words);
+            assert!(kernel.source().contains("id.x+id.y*groups.x*64u"));
+        }
+        assert!(dispatch_grid(Kernel::Positions, [65536, 1, 1]).is_err());
+        assert!(dispatch_grid(Kernel::Guard, [65536, 2, 1]).is_err());
+        assert!(dispatch_grid(Kernel::Guard, [1, 0, 1]).is_err());
+    }
+    #[test]
+    fn front_positions_and_closing_owner_cover_context_without_expanding_batch_math() {
+        let context = crate::mtp_resident_kernels::CONTEXT;
+        assert_eq!(WORDS[POS], context);
+        assert_eq!(WORDS[STATUS], context * 24);
+        assert_eq!(WORDS[KEY], 8 * 512);
+        assert_eq!(WORDS[VALUE], 8 * 512);
+        assert_eq!(WORDS[ROTATED], 8 * 512);
+        let token = context - 1;
+        for head in 0..2 {
+            for word in 0..66 {
+                let row = ((token / 4) * 2 + head) * 4 + token % 4;
+                assert!(row * 66 + word < crate::mtp_resident_kernels::CACHE_STORAGE_WORDS);
+                assert_eq!((row / 8) * 4 + row % 4, token);
+            }
         }
     }
 }

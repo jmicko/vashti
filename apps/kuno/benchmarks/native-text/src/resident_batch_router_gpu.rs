@@ -74,7 +74,8 @@ impl Addressing {
         }
     }
     fn shader(self) -> String {
-        let original = include_str!("resident_batch_router_gpu.wgsl");
+        let original = include_str!("resident_batch_router_gpu.wgsl")
+            .replace("4096u", &format!("{}u", crate::qsa_gpu::MAX_CONTEXT));
         match self {
             Self::Resident144 => original.replace(
                 "const SOURCE_CAPACITY:u32=144u;",
@@ -142,7 +143,9 @@ impl CubeTask<AutoCompiler> for Kernel {
 fn coordinates(layer: usize, start: u64, count: usize) -> Result<()> {
     if layer >= LAYERS
         || !(1..=MAX_COUNT).contains(&count)
-        || start.checked_add(count as u64).is_none_or(|end| end > 4096)
+        || start
+            .checked_add(count as u64)
+            .is_none_or(|end| end > crate::qsa_gpu::MAX_CONTEXT as u64)
     {
         return Err(Error::InvalidFormat("batch device router coordinates"));
     }

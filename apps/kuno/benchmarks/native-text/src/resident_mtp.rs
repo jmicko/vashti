@@ -42,15 +42,20 @@ use std::{
 };
 use zeroize::{Zeroize, Zeroizing};
 
-pub const PUBLIC_BYTES: u64 = 5_011_668_992;
+const ROPE_CONTEXT_INCREMENT: u64 = if crate::strata_intel_core::enabled() {
+    7 * 1024 * 1024
+} else {
+    0
+};
+pub const PUBLIC_BYTES: u64 = 5_011_668_992 + ROPE_CONTEXT_INCREMENT;
 pub const ENGLISH_VOCAB_OWNED_BYTES: u64 = english::ENGLISH_OWNED_BYTES as u64;
 pub const ENGLISH_PUBLIC_BYTES: u64 = PUBLIC_BYTES + ENGLISH_VOCAB_OWNED_BYTES;
 // Original GGUF dense BF16 +borrowed IQ4_XS embedding/Q6_K full head. Exact
 // independent startup page geometry is checked before any device allocation.
-pub const STRATA_PUBLIC_BYTES: u64 = 2_539_257_856;
+pub const STRATA_PUBLIC_BYTES: u64 = 2_539_257_856 + ROPE_CONTEXT_INCREMENT;
 pub const MAIN_BYTES: u64 = 6 * 1024 * 1024 * 1024;
 pub const PRIVATE_BYTES: usize = if crate::strata_intel_core::enabled() {
-    64
+    128
 } else {
     16
 } * 1024
@@ -505,19 +510,19 @@ const WORDS: [usize; N] = [
     k::CACHE_STORAGE_WORDS,
     k::CACHE_STORAGE_WORDS,
     if crate::strata_intel_core::enabled() {
-        24 * 64 * 256
+        24 * k::CONTEXT.div_ceil(64) * 256
     } else {
         k::ATTENTION_WORDS
     },
     if crate::strata_intel_core::enabled() {
-        24 * 64 * 2
+        24 * k::CONTEXT.div_ceil(64) * 2
     } else {
         k::ATTENTION_WORDS
     },
     k::QUERY,
     k::D,
     k::EXPERTS,
-    8192,
+    if k::CONTEXT > 8192 { k::CONTEXT } else { 8192 },
     k::ACTIVATION_WORDS,
     k::PARTIAL_WORDS,
     k::READINESS_WORDS,
@@ -3585,7 +3590,7 @@ impl ResidentMtp<'_, '_> {
             vec![u::handle(&self.arena, self.id(B::Packet))?],
             [1, self.position as u32, 0, 0, 0, 0, 0, 0],
         )?;
-        info[5] = 98304;
+        info[5] = k::ATTENTION_WORDS as u32;
         q::launch(
             &self.arena,
             q::Kernel::MtpAttention,
@@ -5607,5 +5612,44 @@ mod native_confidence_tests {
             AcceptedCacheRepair::new(32, 32, true, &[1, 2, 3], &preceding, &vec![0.; 3 * k::WIDE])
                 .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod context32768_tests {
+    use super::*;
+    #[test]
+    fn target_shared_and_draft_owned_pages_are_admitted_at_selected_context() {
+        if !crate::strata_intel_core::enabled() {
+            return;
+        }
+        assert_eq!(k::CONTEXT, 32768);
+        assert_eq!(
+            BufferLayout::new(WORDS[B::Keys as usize])
+                .unwrap()
+                .owned_bytes,
+            32 * 1024 * 1024
+        );
+        assert_eq!(
+            BufferLayout::new(WORDS[B::Values as usize])
+                .unwrap()
+                .owned_bytes,
+            32 * 1024 * 1024
+        );
+        assert_eq!(
+            BufferLayout::new(WORDS[B::Attention as usize])
+                .unwrap()
+                .owned_bytes,
+            16 * 1024 * 1024
+        );
+        assert!(WORDS[B::Packet as usize] >= k::CONTEXT);
+        assert!(private_plan().unwrap() <= PRIVATE_BYTES as u64);
+        assert_eq!(
+            public_plan_for(MtpProfile::StrataQ2).unwrap(),
+            public_bytes_for(MtpProfile::StrataQ2)
+        );
+        assert_eq!(public_plan().unwrap(), PUBLIC_BYTES);
+        assert!(k::validate_position(32767).is_ok());
+        assert!(k::validate_position(32768).is_err());
     }
 }

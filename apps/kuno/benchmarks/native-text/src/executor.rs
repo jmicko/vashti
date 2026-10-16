@@ -2849,7 +2849,7 @@ impl<'a> GpuExecutor<'a> {
         public_pages: u64,
         context: usize,
     ) -> Result<ResidentAdmission> {
-        if context == 0 || context > graph.geometry().max_context {
+        if context == 0 || context > crate::strata_intel_core::runtime_geometry(graph).max_context {
             return Err(Error::LimitExceeded("resident admission context"));
         }
         // Existing exact constructor shapes are expressed in default owned

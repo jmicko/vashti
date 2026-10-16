@@ -57,7 +57,7 @@ impl<B: Copy + PartialEq> Packet<B> {
     ) -> Result<Self> {
         target_rows::coordinates_selected(tokens.len(), start, four)?;
         if context == 0
-            || context > 4096
+            || context > crate::qsa_gpu::MAX_CONTEXT
             || start
                 .checked_add(tokens.len())
                 .is_none_or(|end| end > context)

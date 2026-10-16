@@ -223,7 +223,7 @@ impl StageLayout {
         if graph.layer_kind(layer)? != AttentionKind::Gdn {
             return Err(fault("resident GDN requires admitted GDN layer"));
         }
-        Self::from_geometry(graph.geometry())
+        Self::from_geometry(crate::strata_intel_core::runtime_geometry(graph))
     }
     fn from_geometry(geometry: GraphGeometry) -> Result<Self> {
         let pointwise = PointwiseLayout::new(geometry.gdn).map_err(fault)?;

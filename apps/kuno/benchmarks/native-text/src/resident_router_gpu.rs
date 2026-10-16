@@ -75,7 +75,8 @@ impl CubeTask<AutoCompiler> for Kernel {
         Ok(CompiledKernel {
             entrypoint_name: "main".into(),
             debug_name: None,
-            source: include_str!("resident_router_gpu.wgsl").into(),
+            source: include_str!("resident_router_gpu.wgsl")
+                .replace("4096u", &format!("{}u", crate::qsa_gpu::MAX_CONTEXT)),
             repr: None,
             cube_dim: CubeDim::new_1d(64),
             debug_info: None,
@@ -104,7 +105,8 @@ impl CubeTask<AutoCompiler> for PreflightKernel {
         Ok(CompiledKernel {
             entrypoint_name: "main".into(),
             debug_name: None,
-            source: include_str!("resident_router_gpu_preflight.wgsl").into(),
+            source: include_str!("resident_router_gpu_preflight.wgsl")
+                .replace("4096u", &format!("{}u", crate::qsa_gpu::MAX_CONTEXT)),
             repr: None,
             cube_dim: CubeDim::new_1d(256),
             debug_info: None,
@@ -113,7 +115,7 @@ impl CubeTask<AutoCompiler> for PreflightKernel {
 }
 
 fn validate(owners: &[Handle; 7], layer: usize, start: u64) -> Result<()> {
-    if layer >= 48 || start >= 4096 {
+    if layer >= 48 || start >= crate::qsa_gpu::MAX_CONTEXT as u64 {
         return Err(Error::InvalidFormat("resident router map coordinates"));
     }
     for (owner, bytes) in owners.iter().zip(OWNED_BYTES) {

@@ -504,10 +504,14 @@ impl ResidentMtp<'_, '_> {
                 let mut whole_branch = branch_rows
                     .filter(|_| minimum == 0.)
                     .map(|rows| {
-                        cubecl_runtime::server::NativeStrataBranch::mtp_round(rows, count as u8)
-                            .and_then(|key| key.with_model_owner(self.binding))
-                            .map(|key| key.with_coupled_sampling(coupled))
-                            .map_err(error)
+                        cubecl_runtime::server::NativeStrataBranch::mtp_round_for_context(
+                            rows,
+                            count as u8,
+                            crate::mtp_resident_kernels::CONTEXT as u16,
+                        )
+                        .and_then(|key| key.with_model_owner(self.binding))
+                        .map(|key| key.with_coupled_sampling(coupled))
+                        .map_err(error)
                     })
                     .transpose()?;
                 let mut whole_capture = None;
@@ -545,9 +549,16 @@ impl ResidentMtp<'_, '_> {
                         .filter(|_| minimum > 0.)
                         .map(|rows| {
                             if member == 0 {
-                                cubecl_runtime::server::NativeStrataBranch::mtp_round(rows, 1)
+                                cubecl_runtime::server::NativeStrataBranch::mtp_round_for_context(
+                                    rows,
+                                    1,
+                                    crate::mtp_resident_kernels::CONTEXT as u16,
+                                )
                             } else {
-                                cubecl_runtime::server::NativeStrataBranch::mtp_step(member as u8)
+                                cubecl_runtime::server::NativeStrataBranch::mtp_step_for_context(
+                                    member as u8,
+                                    crate::mtp_resident_kernels::CONTEXT as u16,
+                                )
                             }
                             .and_then(|key| key.with_model_owner(self.binding))
                             .map(|key| key.with_coupled_sampling(coupled))

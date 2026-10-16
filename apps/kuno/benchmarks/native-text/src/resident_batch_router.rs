@@ -32,7 +32,7 @@ fn reject() -> Error {
     err("public warm batch router rejected")
 }
 fn valid_window(context: usize, start: u64, count: usize) -> bool {
-    (1..=4096).contains(&context)
+    (1..=crate::qsa_gpu::MAX_CONTEXT).contains(&context)
         && (1..=3).contains(&count)
         && start
             .checked_add(count as u64)
@@ -85,7 +85,7 @@ impl Workspace {
         context: usize,
         four_reserved: bool,
     ) -> Result<()> {
-        if !(1..=4096).contains(&context) {
+        if !(1..=crate::qsa_gpu::MAX_CONTEXT).contains(&context) {
             return Err(reject());
         }
         self.reserve_batch_router_policy(arena, allocation, Some(context), four_reserved)
@@ -221,7 +221,7 @@ impl Workspace {
             || !e.target_frozen_host_router_reserved
             || !e.resident_banks_frozen
             || e.target_frozen_host_source_identity != Some(sources.plan_identity())
-            || context > graph.geometry().max_context
+            || context > crate::strata_intel_core::runtime_geometry(graph).max_context
             || e.packed_profile != expert_banks::OriginalPackedProfile::DaslabIq3
             || e.batch_moe.is_some()
             || !arena.public_owned_zero_audit_enabled()
@@ -334,7 +334,7 @@ impl Workspace {
         if !(valid_window(context, start, count)
             || four
                 && (4..=crate::strata_port::verify_capacity()).contains(&count)
-                && (1..=4096).contains(&context)
+                && (1..=crate::qsa_gpu::MAX_CONTEXT).contains(&context)
                 && start
                     .checked_add(count as u64)
                     .is_some_and(|end| end <= context as u64))
@@ -485,7 +485,7 @@ impl Workspace {
                     || e.target_frozen_host_source_identity != Some(identity)
                     || !e.target_frozen_host_router_reserved
                     || !e.resident_banks_frozen
-                    || context > graph.geometry().max_context
+                    || context > crate::strata_intel_core::runtime_geometry(graph).max_context
                 {
                     return Err(reject());
                 }

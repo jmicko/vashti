@@ -37,7 +37,9 @@ impl RoundState {
     }
     fn new_selected(start: usize, count: usize, four: bool) -> Result<Self> {
         if !(1..=if four { MAX_ROWS } else { 3 }).contains(&count)
-            || start.checked_add(count).is_none_or(|end| end > 4096)
+            || start
+                .checked_add(count)
+                .is_none_or(|end| end > crate::qsa_gpu::MAX_CONTEXT)
         {
             return Err(error());
         }

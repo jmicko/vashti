@@ -120,6 +120,7 @@ pub(crate) fn shader() -> String {
 }
 fn configure(source: &str) -> String {
     source
+        .replace("4096u", &format!("{}u", crate::qsa_gpu::MAX_CONTEXT))
         .replace(
             "VERIFY_ROWS",
             &crate::strata_port::verify_capacity().to_string(),

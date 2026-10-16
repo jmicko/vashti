@@ -52,7 +52,7 @@ pub(crate) const RUNTIME_INCREMENT: u64 = if cfg!(feature = "strata-intel-core")
 } + 2 * (OWNER_BYTES as u64 - 1024 * 1024)
     + 2 * 2048;
 pub(crate) const RUNTIME_LIMIT: u64 = if cfg!(feature = "strata-intel-core") {
-    256
+    512
 } else {
     128
 } * 1024
@@ -79,13 +79,21 @@ pub(super) fn check_public_audit(reserved: bool, public_zero_audit: bool) -> Res
 }
 pub(super) fn coordinates_selected(count: usize, start: usize, four: bool) -> Result<()> {
     let maximum = if four { FOUR_ROWS } else { MAX_ROWS };
-    if !(1..=maximum).contains(&count) || start.checked_add(count).is_none_or(|end| end > 4096) {
+    if !(1..=maximum).contains(&count)
+        || start
+            .checked_add(count)
+            .is_none_or(|end| end > crate::qsa_gpu::MAX_CONTEXT)
+    {
         return Err(rejected!());
     }
     Ok(())
 }
 pub(crate) fn coordinates(count: usize, start: usize) -> Result<()> {
-    if !(1..=MAX_ROWS).contains(&count) || start.checked_add(count).is_none_or(|end| end > 4096) {
+    if !(1..=MAX_ROWS).contains(&count)
+        || start
+            .checked_add(count)
+            .is_none_or(|end| end > crate::qsa_gpu::MAX_CONTEXT)
+    {
         return Err(rejected!());
     }
     Ok(())

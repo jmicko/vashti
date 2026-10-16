@@ -161,7 +161,7 @@ fn launch(
     if !crate::strata_prompt::active()
         || !(1..=4096).contains(&p[0])
         || p[1].checked_add(p[0]).is_none_or(|end| end > p[2])
-        || p[2] > 4096
+        || p[2] > crate::qsa_gpu::MAX_CONTEXT as u32
         || grid.contains(&0)
         || grid.iter().any(|&v| v > 65535)
         || handles.is_empty()

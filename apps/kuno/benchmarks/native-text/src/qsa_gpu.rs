@@ -12,7 +12,7 @@
 //! distinct 1152-float candidate. No full-history copy is needed. Position and
 //! visible/selected counts are runtime parameters. Static gamma is supplied
 //! already converted/folded; do not add one or requantize it. Public sin/cos
-//! tables cover all4096positions/32pairs and use the core's Rust f32 angle and
+//! tables cover the admitted context/32pairs and use the core's Rust f32 angle and
 //! sin_cos; shader trig approximations must not change large-angle RoPE.
 //!
 //! Dispatch 64 lanes. Split/pack/output use ceil(elements/64) cubes; RMS/pool/
@@ -42,7 +42,21 @@ pub const INDEX_QUERY: usize = IH * ID;
 pub const TOKEN: usize = KV * 2 + ID;
 pub const BLOCK: usize = 4;
 pub const BUDGET: usize = 2048;
-pub const MAX_CONTEXT: usize = 4096;
+pub const MAX_CONTEXT: usize = if crate::strata_intel_core::enabled() {
+    crate::strata_intel_core::CONTEXT
+} else {
+    4096
+};
+pub(crate) const PUBLIC_SIN_NAME: &str = if crate::strata_intel_core::enabled() {
+    "kuno_public_qsa_rope_sin32_theta1e7_positions32768"
+} else {
+    "kuno_public_qsa_rope_sin32_theta1e7_positions4096"
+};
+pub(crate) const PUBLIC_COS_NAME: &str = if crate::strata_intel_core::enabled() {
+    "kuno_public_qsa_rope_cos32_theta1e7_positions32768"
+} else {
+    "kuno_public_qsa_rope_cos32_theta1e7_positions4096"
+};
 pub const MAX_POSITION: u32 = (MAX_CONTEXT - 1) as u32;
 pub const ROPE_PAIRS: usize = 32;
 pub const ROPE_TABLE_WORDS: usize = MAX_CONTEXT * ROPE_PAIRS;
@@ -61,7 +75,7 @@ pub struct QsaLayout {
 impl QsaLayout {
     pub fn new(visible: usize) -> Result<Self, &'static str> {
         if !(1..=MAX_CONTEXT).contains(&visible) {
-            return Err("QSA visible outside1..4096");
+            return Err("QSA visible outside admitted context");
         }
         let complete = visible / BLOCK;
         let selected = complete.min(BUDGET / BLOCK) * BLOCK + visible % BLOCK;
@@ -1251,7 +1265,7 @@ mod tests {
     fn contracts_reject_bad_lengths_positions_selection_and_any_stage_failure() {
         let l = QsaLayout::new(5).unwrap();
         assert!(QsaLayout::new(0).is_err());
-        assert!(QsaLayout::new(4097).is_err());
+        assert!(QsaLayout::new(MAX_CONTEXT + 1).is_err());
         validate_positions(l, &[0, 1, 4, 9, 16]).unwrap();
         for p in [[0, 1, 1, 9, 16], [0, 1, 4, 9, MAX_POSITION + 1]] {
             assert!(validate_positions(l, &p).is_err());
@@ -1363,8 +1377,8 @@ mod tests {
         let (sin, cos) = rope_tables();
         let (same_sin, same_cos) = rope_tables();
         assert!(std::ptr::eq(sin, same_sin) && std::ptr::eq(cos, same_cos));
-        assert_eq!(sin.len(), 131072);
-        assert_eq!(cos.len(), 131072);
+        assert_eq!(sin.len(), ROPE_TABLE_WORDS);
+        assert_eq!(cos.len(), ROPE_TABLE_WORDS);
         for position in 0..MAX_CONTEXT {
             for pair in 0..ROPE_PAIRS {
                 // Independent direct core formula, including its f32 angle.
@@ -1387,7 +1401,7 @@ mod tests {
                 QH,
                 HD,
                 false,
-                4096,
+                MAX_CONTEXT as u32,
                 EPSILON
             )
             .is_err()
@@ -1614,7 +1628,7 @@ mod tests {
                         "RoPE must only index public tables"
                     );
                     assert!(
-                        wgsl.contains("u32(4095)"),
+                        wgsl.contains(&format!("u32({MAX_POSITION})")),
                         "runtime position must be bounded before table loads"
                     );
                     assert!(

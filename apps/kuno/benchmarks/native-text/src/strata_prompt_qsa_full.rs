@@ -15,7 +15,7 @@ pub(crate) fn run(
     let start = p[1] as usize;
     let capacity = p[2] as usize;
     if !(1..=crate::strata_prompt::groups::CAPACITY).contains(&count)
-        || !(4..=4096).contains(&capacity)
+        || !(4..=crate::qsa_gpu::MAX_CONTEXT).contains(&capacity)
         || !capacity.is_multiple_of(4)
         || start.checked_add(count).is_none_or(|end| end > capacity)
         || p[11] != 0

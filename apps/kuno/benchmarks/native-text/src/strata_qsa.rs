@@ -94,7 +94,11 @@ impl Kernel {
                 .unwrap()
                 .0
         };
-        let mut s = section("COMMON").to_owned();
+        let mut s = format!(
+            "const CONTEXT_CAPACITY:u32={}u;\n",
+            crate::qsa_gpu::MAX_CONTEXT
+        );
+        s.push_str(section("COMMON"));
         if self == Self::Positions {
             s.push_str(&format!(
                 "const TOKEN_STATUS:u32={}u;const POSITION_MAX:u32={}u;\n",
@@ -234,11 +238,13 @@ impl Kernel {
                 "let n=start+token+1u;return min(n,2051u);",
                 "return start+token+1u;",
             );
+            let context = crate::mtp_resident_kernels::CONTEXT;
+            let chunks = context.div_ceil(64);
             s = s
-                .replace("33u", "64u")
-                .replace("202752u", "393216u")
-                .replace("1584u", "3072u")
-                .replace("2051u", "4096u");
+                .replace("33u", &format!("{chunks}u"))
+                .replace("202752u", &format!("{}u", 24 * chunks * 256))
+                .replace("1584u", &format!("{}u", 24 * chunks * 2))
+                .replace("2051u", &format!("{context}u"));
             if matches!(self, Self::MtpAttention) {
                 let a = s.find("fn kv(").unwrap();
                 let z = a + s[a..].find("@compute").unwrap();
@@ -344,7 +350,7 @@ pub(crate) fn launch(
         })
             .contains(&info[0])
         || info[1].checked_add(info[0]).is_none_or(|end| end > info[2])
-        || info[2] > 4096
+        || info[2] > crate::qsa_gpu::MAX_CONTEXT as u32
         || if matches!(
             kernel,
             Kernel::PromptAttention

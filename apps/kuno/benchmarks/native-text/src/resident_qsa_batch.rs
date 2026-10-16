@@ -3661,3 +3661,33 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod context32768_tests {
+    use super::*;
+    #[test]
+    fn actual_shared_layout_and_audited_io_match_all_context_dependent_full_pages() {
+        if !crate::strata_intel_core::enabled() {
+            return;
+        }
+        let layout = Layout::new(StageLayout {
+            input_words: 2560,
+            max_context: qsa::MAX_CONTEXT,
+            epsilon: qsa::EPSILON,
+        })
+        .unwrap();
+        let pages = layout.requests().unwrap();
+        assert_eq!(pages[MEAN], 32 * 1024 * 1024);
+        assert_eq!(pages[POOL], 32 * 1024 * 1024);
+        for i in [SCORE, FLAGS + 5, FLAGS + 6, FLAGS + 7] {
+            assert_eq!(pages[i], 256 * 1024);
+        }
+        assert_eq!(layout.bytes().unwrap(), 81_690_624);
+        assert_eq!(layout.io_bytes(true).unwrap() * 12, 18_874_368);
+        assert_eq!(layout.stage.owned_bytes().unwrap(), 81_494_016);
+        let last = layout.token(7, qsa::MAX_CONTEXT - 8).unwrap();
+        assert_eq!(last.visible, qsa::MAX_CONTEXT);
+        assert_eq!(last.complete, 8192);
+        assert!(layout.token(7, qsa::MAX_CONTEXT - 7).is_err());
+    }
+}

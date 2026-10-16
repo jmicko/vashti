@@ -9,7 +9,7 @@ use kuno_text::model::GraphBindingId;
 pub(crate) const METADATA_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) const BINDING_ENTRIES: usize = 4096;
 pub(crate) const RUNTIME_BYTES: u64 = if cfg!(feature = "strata-intel-core") {
-    256
+    512
 } else {
     128
 } * 1024
@@ -36,7 +36,9 @@ impl Geometry {
         if crate::strata_intel_core::enabled() {
             if prompt == 0
                 || !(1..=MAX_OUTPUTS).contains(&outputs)
-                || prompt.checked_add(outputs).is_none_or(|n| n > 4096)
+                || prompt
+                    .checked_add(outputs)
+                    .is_none_or(|n| n > crate::qsa_gpu::MAX_CONTEXT)
             {
                 return Err(rejected());
             }
@@ -394,7 +396,12 @@ mod tests {
         if !crate::strata_intel_core::enabled() {
             return;
         }
-        for (prompt, outputs) in [(1, 1), (23, 7), (4095, 1), (1024, 512)] {
+        for (prompt, outputs) in [
+            (1, 1),
+            (23, 7),
+            (crate::qsa_gpu::MAX_CONTEXT - 1, 1),
+            (1024, 512),
+        ] {
             let geometry = Geometry::new(prompt, outputs).unwrap();
             assert_eq!(geometry.context(), prompt + outputs);
             let mut authority = Authority::new(geometry, geometry.context(), false).unwrap();
@@ -428,7 +435,13 @@ mod tests {
             authority.end(prompt + outputs - 1, false).unwrap();
             assert!(authority.run(prompt, 1, false).is_err());
         }
-        for (p, o) in [(0, 1), (1, 0), (1, 513), (4096, 1), (usize::MAX, 1)] {
+        for (p, o) in [
+            (0, 1),
+            (1, 0),
+            (1, 513),
+            (crate::qsa_gpu::MAX_CONTEXT, 1),
+            (usize::MAX, 1),
+        ] {
             assert!(Geometry::new(p, o).is_err());
         }
     }
@@ -441,30 +454,46 @@ mod tests {
         authority.run(0, 3, false).unwrap();
         authority.begin(30, true).unwrap();
         authority.run(30, 4, true).unwrap();
-        assert!(authority.run(30, 5, true).is_err());
+        for count in 4..=crate::strata_port::verify_capacity() {
+            authority.run(30, count, true).unwrap();
+        }
+        assert!(
+            authority
+                .run(30, crate::strata_port::verify_capacity() + 1, true)
+                .is_err()
+        );
         assert!(authority.run(29, 4, true).is_err());
         let mut original = Authority::new(geometry, geometry.context(), false).unwrap();
         original.begin(30, true).unwrap();
         assert!(original.run(30, 4, true).is_err());
     }
     #[test]
-    fn exact_compiled_language_geometry_rejects_old_or_arbitrary_contexts() {
+    fn compiled_and_native_language_geometry_keep_distinct_bounded_contracts() {
         for prompt in [30, 35] {
-            let g = Geometry::new(prompt, 200).unwrap();
-            assert_eq!(g.context(), prompt + 200);
-            assert_eq!(g.final_cursor(), prompt + 199);
+            let g = Geometry::new(prompt, MAX_OUTPUTS).unwrap();
+            assert_eq!(g.context(), prompt + MAX_OUTPUTS);
+            assert_eq!(g.final_cursor(), prompt + MAX_OUTPUTS - 1);
             for wrong in [0, 4, 13, 229, 234, 256] {
                 assert!(Authority::new(g, wrong, false).is_err());
             }
             assert!(Authority::new(g, g.context(), true).is_err());
         }
         for prompt in [0, 1, 4, 13, 29, 31, 34, 36] {
-            assert!(Geometry::new(prompt, 200).is_err());
+            assert_eq!(
+                Geometry::new(prompt, MAX_OUTPUTS).is_ok(),
+                crate::strata_intel_core::enabled() && prompt > 0
+            );
         }
-        for outputs in [0, 1, 199, 201, usize::MAX] {
-            assert!(Geometry::new(35, outputs).is_err());
+        for outputs in [0, 1, 199, 201, MAX_OUTPUTS, MAX_OUTPUTS + 1, usize::MAX] {
+            let allowed = if crate::strata_intel_core::enabled() {
+                (1..=MAX_OUTPUTS).contains(&outputs)
+            } else {
+                outputs == MAX_OUTPUTS
+            };
+            assert_eq!(Geometry::new(35, outputs).is_ok(), allowed);
         }
     }
+
     #[test]
     fn original_prefill_then_single_scope_and_early_eos_are_actual() {
         for prompt in [30, 35] {

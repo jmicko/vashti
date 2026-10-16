@@ -6,6 +6,19 @@ use cubecl_runtime::server::{Handle, KernelArguments};
 use kuno_text::{Error, Result};
 use std::cell::RefCell;
 
+/// Runtime capacity of the selected upstream Intel serving configuration.
+/// Artifact geometry/binding and the ordinary/reference context stay unchanged.
+pub(crate) const CONTEXT: usize = cubecl_runtime::server::NATIVE_STRATA_MAX_CONTEXT as usize;
+pub(crate) fn runtime_geometry(
+    graph: kuno_text::model::BoundGraph<'_, '_>,
+) -> kuno_text::model::GraphGeometry {
+    let mut geometry = graph.geometry();
+    if enabled() {
+        geometry.max_context = CONTEXT;
+    }
+    geometry
+}
+
 pub(crate) const PUBLIC_TABLE_BYTES: u64 = 32768;
 const TABLE_WORDS: usize = 8192;
 pub(crate) const ADDRESS_TABLE_BYTES: u64 = 48 * 32768;

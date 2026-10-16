@@ -83,7 +83,7 @@ pub(crate) fn run<T>(
 ) -> Result<T> {
     if !crate::strata_intel_core::enabled()
         || prompt.is_empty()
-        || prompt.len() > 4096
+        || prompt.len() > crate::qsa_gpu::MAX_CONTEXT
         || !(1..=crate::strata_prompt::groups::CAPACITY).contains(&chunk)
         || prompt.iter().any(|&t| t >= 248320)
     {

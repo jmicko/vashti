@@ -118,12 +118,12 @@ impl PublicQsaParameters {
         let (sin_table, cos_table) = qsa::rope_tables();
         vectors.push(cache.upload_public_vector(
             binding,
-            "kuno_public_qsa_rope_sin32_theta1e7_positions4096",
+            crate::qsa_gpu::PUBLIC_SIN_NAME,
             sin_table,
         )?);
         vectors.push(cache.upload_public_vector(
             binding,
-            "kuno_public_qsa_rope_cos32_theta1e7_positions4096",
+            crate::qsa_gpu::PUBLIC_COS_NAME,
             cos_table,
         )?);
         let vectors: [Handle; 6] = vectors
@@ -218,7 +218,7 @@ impl StageLayout {
         if graph.layer_kind(layer)? != AttentionKind::Qsa {
             return Err(fault("resident QSA requires QSA layer"));
         }
-        Self::from_geometry(graph.geometry())
+        Self::from_geometry(crate::strata_intel_core::runtime_geometry(graph))
     }
     fn from_geometry(g: GraphGeometry) -> Result<Self> {
         let s = g.qsa;

@@ -1684,9 +1684,9 @@ impl GpuExecutor<'_> {
                 || self.ordered_public_upload
                 || self.word_down
                 || u::words(arena, fault)? != 1
-                || start
-                    .checked_add(count as u64)
-                    .is_none_or(|n| n > graph.geometry().max_context as u64)
+                || start.checked_add(count as u64).is_none_or(|n| {
+                    n > crate::strata_intel_core::runtime_geometry(graph).max_context as u64
+                })
             {
                 return Err(err("native routed session configuration"));
             }

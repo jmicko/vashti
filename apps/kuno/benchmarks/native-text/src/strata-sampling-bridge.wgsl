@@ -15,7 +15,7 @@ fn main(@builtin(local_invocation_index) lane:u32){
  if lane==0u&&arrayLength(&picks)>0u{picks[0]=vec2<u32>(248320u,0x7fc00000u);}
  if arrayLength(&params)<32u||arrayLength(&history)<4096u||arrayLength(&ring)<4112u||arrayLength(&base)<4160u||arrayLength(&control)<3u||arrayLength(&input_token)<1u||arrayLength(&picks)<1u{atomicOr(&fault[0],0x10000000u);return;}
  let cell=control[0];let j=control[1];let start=control[2];let h=min(base[5],4096u);
- if cell>=4096u||cell>=arrayLength(&positions)||positions[cell]!=cell||j>=7u||cell+1u!=start+j||base[0]!=1u||base[4]!=h||base[7]!=0u{atomicOr(&fault[0],0x10000000u);return;}
+ if cell>=CONTEXT_CAPACITY||cell>=arrayLength(&positions)||positions[cell]!=cell||j>=7u||cell+1u!=start+j||base[0]!=1u||base[4]!=h||base[7]!=0u{atomicOr(&fault[0],0x10000000u);return;}
  if lane<32u&&lane!=16u&&lane!=17u{params[lane]=base[lane];}if lane==0u{params[16]=positions[cell]+1u;params[17]=0u;}
  if j==0u{for(var i=lane;i<4112u;i+=256u){var v=-1;if i<4096u{v=bitcast<i32>(base[64u+i]);}ring[i]=v;}}
  storageBarrier();workgroupBarrier();

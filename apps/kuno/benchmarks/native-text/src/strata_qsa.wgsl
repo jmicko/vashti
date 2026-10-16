@@ -57,7 +57,7 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
     if lane<8u {sum=sums[lane];valid=good[lane];}
     for(var d=16u;d>0u;d/=2u) {sum+=subgroupShuffleXor(sum,d);valid&=subgroupShuffleXor(valid,d);}
     let scale=inverseSqrt(sum/f32(p.width)+p.epsilon);
-    if position>4095u || !finite(scale) || scale<=0.0 {valid=0u;}
+    if position>=CONTEXT_CAPACITY || !finite(scale) || scale<=0.0 {valid=0u;}
     var y=0.0;var mate=0.0;
     if tid<p.width {y=(scale*x)*gamma[tid];}
     if tid<32u {
@@ -214,7 +214,7 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
     let here=min(64u,n-chunk*64u);let slot=kvh*33u+chunk;
     if tid==0u {atomicStore(&broken,0u);}
     for(var i=tid;i<3072u;i+=256u) {sq[i]=query[t*6144u+kvh*3072u+i];}
-    if tid<64u {row[tid]=4096u;if tid<here {let tok=selected[t*2051u+chunk*64u+tid];row[tid]=tok;}}
+    if tid<64u {row[tid]=CONTEXT_CAPACITY;if tid<here {let tok=selected[t*2051u+chunk*64u+tid];row[tid]=tok;}}
     workgroupBarrier();
     for(var c=warp;c<64u;c+=8u) {
         if c>=here {if lane<12u {sp[lane*64u+c]=-3.4028234663852886e38;}continue;}

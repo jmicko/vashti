@@ -86,7 +86,7 @@ fn nearest_even(x:f32)->i32 {let lo=floor(x);let d=x-lo;return i32(lo)+select(0,
 @compute @workgroup_size(128)
 fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(local_invocation_index) tid:u32,@builtin(subgroup_invocation_id) lane:u32,@builtin(subgroup_id) warp:u32,@builtin(subgroup_size) sw:u32) {
     let t=g.y;let group=g.x;if t>=p.count||group>=4u{return;}
-    if sw!=32u||p.start>=4096u||t>=4096u-p.start {if tid==0u{atomicOr(&fault[0],1u);}return;}
+    if sw!=32u||p.start>=CONTEXT_CAPACITY||t>=CONTEXT_CAPACITY-p.start {if tid==0u{atomicOr(&fault[0],1u);}return;}
     let at=t*512u+group*128u+tid;let k=key[at];let v=value[at];
     var ok=select(0u,1u,finite(k)&&finite(v));var ka=abs(select(0.0,k,finite(k)));var va=abs(select(0.0,v,finite(v)));
     for(var d=16u;d>0u;d/=2u){ka=max(ka,subgroupShuffleXor(ka,d));va=max(va,subgroupShuffleXor(va,d));ok&=subgroupShuffleXor(ok,d);}
@@ -110,8 +110,8 @@ fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(local_invocation_index) tid:
 @group(0) @binding(2) var<storage,read_write> fault:array<atomic<u32>>;
 @group(0) @binding(3) var<uniform> p:Params;
 @compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) id:vec3<u32>) {
-    let i=id.x;if i>=540672u {return;}
+fn main(@builtin(global_invocation_id) id:vec3<u32>,@builtin(num_workgroups) groups:vec3<u32>) {
+    let i=id.x+id.y*groups.x*64u;if i>=CACHE_STORAGE_WORDS {return;}
     let k=keys[i];let v=values[i];
     let row=i/66u;let token=(row/8u)*4u+row%4u;
     if token>=p.start {if k!=0u || v!=0u {atomicOr(&fault[0],4u);}}
@@ -125,16 +125,16 @@ fn main(@builtin(global_invocation_id) id:vec3<u32>) {
 @group(0) @binding(2) var<storage,read_write> fault:array<atomic<u32>>;
 @group(0) @binding(3) var<uniform> p:Params;
 @compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) id:vec3<u32>) {
-    let i=id.x;if p.rows>4096u || p.start>p.rows {if i==0u {atomicOr(&fault[0],1u);}return;}
-    if i<540672u {let row=i/66u;let token=(row/8u)*4u+row%4u;if token>=p.start {keys[i]=0u;values[i]=0u;}}
+fn main(@builtin(global_invocation_id) id:vec3<u32>,@builtin(num_workgroups) groups:vec3<u32>) {
+    let i=id.x+id.y*groups.x*64u;if p.rows>CONTEXT_CAPACITY || p.start>p.rows {if i==0u {atomicOr(&fault[0],1u);}return;}
+    if i<CACHE_STORAGE_WORDS {let row=i/66u;let token=(row/8u)*4u+row%4u;if token>=p.start {keys[i]=0u;values[i]=0u;}}
 }
 // REWIND_END
 // IDENTITY_BEGIN
 @group(0) @binding(0) var<storage,read_write> ids:array<u32>;
 @group(0) @binding(1) var<uniform> p:Params;
 @compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) id:vec3<u32>) {let i=id.x;if i<=p.start && i<4096u {ids[i]=i;}}
+fn main(@builtin(global_invocation_id) id:vec3<u32>) {let i=id.x;if i<=p.start && i<CONTEXT_CAPACITY {ids[i]=i;}}
 // IDENTITY_END
 // SELECT_BEGIN
 // capture_round: copy_row_to_first selects R, injection and mixed TOGETHER.

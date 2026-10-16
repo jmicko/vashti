@@ -270,11 +270,15 @@ fn reject() -> Error {
 mod tests {
     use super::*;
     fn key(cells: u8, owner: u64, coupled: bool) -> NativeStrataBranch {
-        NativeStrataBranch::mtp_round(2, cells)
-            .unwrap()
-            .with_model_owner(owner)
-            .unwrap()
-            .with_coupled_sampling(coupled)
+        NativeStrataBranch::mtp_round_for_context(
+            2,
+            cells,
+            crate::mtp_resident_kernels::CONTEXT as u16,
+        )
+        .unwrap()
+        .with_model_owner(owner)
+        .unwrap()
+        .with_coupled_sampling(coupled)
     }
     #[test]
     fn single_frame_reuses_real_math_counts_with_a_different_entry_budget() {
@@ -361,11 +365,15 @@ mod tests {
         for rows in 1..=8 {
             for coupled in [false, true] {
                 for cells in 1..=7 {
-                    let k = NativeStrataBranch::mtp_round(rows, cells)
-                        .unwrap()
-                        .with_model_owner(91)
-                        .unwrap()
-                        .with_coupled_sampling(coupled);
+                    let k = NativeStrataBranch::mtp_round_for_context(
+                        rows,
+                        cells,
+                        crate::mtp_resident_kernels::CONTEXT as u16,
+                    )
+                    .unwrap()
+                    .with_model_owner(91)
+                    .unwrap()
+                    .with_coupled_sampling(coupled);
                     let mut c = Capture::begin(k, Traffic::default(), 0).unwrap();
                     if cells > 1 {
                         c.first_reset(64).unwrap();

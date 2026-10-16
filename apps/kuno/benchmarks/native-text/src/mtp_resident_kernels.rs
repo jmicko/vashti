@@ -33,7 +33,7 @@ pub const HD: usize = 256;
 pub const QUERY: usize = QH * HD;
 pub const KV: usize = KVH * HD;
 pub const CONTEXT: usize = if crate::strata_intel_core::enabled() {
-    4096
+    crate::strata_intel_core::CONTEXT
 } else {
     2048
 };

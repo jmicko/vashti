@@ -1,7 +1,7 @@
 //! Main-pool admission for one exclusively owned, ordered resident context.
 //!
 //! The required allocator has exclusive power-of-two bins, starting at32 KiB.
-//! Its upper bound follows the actual private allocator (512MiB in the native
+//! Its upper bound follows the actual private allocator (1GiB in the native
 //! Intel core, 128MiB in the independent laboratories).
 //! `upper` includes its actual baseline plus every newly admitted page bound
 //! since the last COMPLETED fence. Dropping/evicting handles grants no credit:
