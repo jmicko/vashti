@@ -38,11 +38,22 @@ struct GlobalPage {
     owner: PageOwner,
     authority: Option<PublicExternalHandle>,
 }
+// LAYERS identifies optional prompt shadow pages. The disjoint next tag
+// identifies immutable embedding pages; no expert/loan indexing may alias it.
+const EMBEDDING_LAYER: usize = crate::strata_global_plan::LAYERS + 1;
+pub(crate) struct Embedding {
+    pub(crate) pages: Vec<crate::strata_shared_weights::Page>,
+    _readers: Arc<()>,
+}
+fn embedding_detach_ready(readers: &Arc<()>) -> bool {
+    Arc::strong_count(readers) == 1
+}
 pub(crate) struct Host {
     client: ComputeClient<WgpuRuntime>,
     device: wgpu::Device,
     instance: u64,
     registry_budget: Option<PublicExternalBudget>,
+    embedding_readers: Arc<()>,
     shadow: Option<shadow::Shadow>,
     pages: Vec<GlobalPage>,
     closed: bool,
@@ -146,8 +157,16 @@ impl Host {
                 n.checked_add(envelope(p.logical_bytes)?)
                     .ok_or(Error::ArithmeticOverflow)
             })?;
+        let embedding =
+            crate::strata_shared_weights::tiles(crate::strata_shared_weights::Tensor::Embedding)
+                .iter()
+                .try_fold(0u64, |n, p| {
+                    n.checked_add(envelope(p.owned as u64)?)
+                        .ok_or(Error::ArithmeticOverflow)
+                })?;
         physical
-            .checked_add(METADATA_BYTES as u64)
+            .checked_add(embedding)
+            .and_then(|n| n.checked_add(METADATA_BYTES as u64))
             .and_then(|n| n.checked_add(GLOBAL_METADATA_CAP))
             .and_then(|n| n.checked_add(SETUP_WINDOWS))
             .filter(|&n| n <= HOST_CAP)
@@ -172,7 +191,14 @@ impl Host {
             .iter()
             .flat_map(|l| l.roles.iter().flatten())
             .filter(|p| p.tier == Tier::Host)
-            .count();
+            .count()
+            .checked_add(
+                crate::strata_shared_weights::tiles(
+                    crate::strata_shared_weights::Tensor::Embedding,
+                )
+                .len(),
+            )
+            .ok_or(Error::ArithmeticOverflow)?;
         if count > cubecl_runtime::public_external::MAX_BUFFERS {
             return Err(fail());
         }
@@ -181,6 +207,7 @@ impl Host {
             device: device.clone(),
             instance: plan.instance(),
             registry_budget: None,
+            embedding_readers: Arc::new(()),
             shadow: None,
             pages: Vec::with_capacity(count),
             closed: false,
@@ -264,8 +291,46 @@ impl Host {
                 }
             }
         }
+        let embedding = graph.tensor(crate::strata_shared_weights::Tensor::Embedding.name())?;
+        crate::strata_shared_weights::Weights::validate_graph(graph)?;
+        for (piece, tile) in
+            crate::strata_shared_weights::tiles(crate::strata_shared_weights::Tensor::Embedding)
+                .into_iter()
+                .enumerate()
+        {
+            host.allocate_original_page(
+                shadow::PageSpec {
+                    layer: EMBEDDING_LAYER,
+                    role: 0,
+                    piece,
+                    shard: embedding.info().shard_index(),
+                    logical: tile.owned as u64,
+                    backing_bound: envelope(tile.owned as u64)?,
+                },
+                &mut charges,
+                |mapped| {
+                    let bytes = mapped
+                        .get_mut(..tile.owned)
+                        .ok_or(Error::InvalidBufferLength)?;
+                    embedding.read_range(
+                        (tile.first * crate::strata_shared_weights::Tensor::Embedding.row_bytes())
+                            as u64,
+                        &mut bytes[..tile.logical],
+                    )?;
+                    crate::strata_shared_weights::validate_payload(
+                        crate::strata_shared_weights::Tensor::Embedding,
+                        bytes,
+                        tile,
+                    )
+                },
+            )?;
+        }
         if host.pages.len() != count
-            || host.logical != plan.host_logical_bytes
+            || host.logical
+                != plan
+                    .host_logical_bytes
+                    .checked_add(crate::strata_shared_weights::embedding_bytes())
+                    .ok_or(Error::ArithmeticOverflow)?
             || host.physical > pool_bytes
         {
             return Err(fail());
@@ -355,6 +420,34 @@ impl Host {
             bytes,
         )))
     }
+    pub(crate) fn embedding(&self) -> KResult<Embedding> {
+        if self.closed {
+            return Err(fail());
+        }
+        let mut pages = Vec::new();
+        for (piece, tile) in
+            crate::strata_shared_weights::tiles(crate::strata_shared_weights::Tensor::Embedding)
+                .into_iter()
+                .enumerate()
+        {
+            let page = self
+                .pages
+                .iter()
+                .find(|p| (p.layer, p.role, p.piece) == (EMBEDDING_LAYER, 0, piece))
+                .ok_or_else(fail)?;
+            if page.owner.phase != Phase::Registered || page.owner.logical != tile.owned as u64 {
+                return Err(fail());
+            }
+            pages.push(crate::strata_shared_weights::Page {
+                handle: page.authority.as_ref().ok_or_else(fail)?.handle(),
+                tile,
+            });
+        }
+        Ok(Embedding {
+            pages,
+            _readers: self.embedding_readers.clone(),
+        })
+    }
     pub(crate) fn handles(&self) -> KResult<Vec<cubecl_runtime::server::Handle>> {
         self.pages
             .iter()
@@ -373,6 +466,11 @@ impl Host {
     fn close_inner(&mut self) -> KResult<()> {
         if self.closed {
             return Ok(());
+        }
+        // Shared target/MTP consumers must release the original embedding loan
+        // before any registry detach, buffer destruction or HOST backing free.
+        if !embedding_detach_ready(&self.embedding_readers) {
+            return Err(fail());
         }
         for p in &mut self.pages {
             if p.owner.phase == Phase::Registered {
@@ -599,5 +697,30 @@ mod loan_registry_tests {
         );
         assert_eq!(pool.usage(), before);
         assert_eq!(pool.resolve(&binding).unwrap(), 5);
+    }
+}
+
+#[cfg(test)]
+mod embedding_owner_tests {
+    use super::*;
+    #[test]
+    fn shared_embedding_loan_must_end_before_owning_host_detach() {
+        let owner = Arc::new(());
+        assert!(embedding_detach_ready(&owner));
+        let first = Embedding {
+            pages: Vec::new(),
+            _readers: owner.clone(),
+        };
+        let second = Embedding {
+            pages: Vec::new(),
+            _readers: owner.clone(),
+        };
+        assert!(!embedding_detach_ready(&owner));
+        drop(first);
+        assert!(!embedding_detach_ready(&owner));
+        drop(second);
+        assert!(embedding_detach_ready(&owner));
+        assert_ne!(EMBEDDING_LAYER, crate::strata_global_plan::LAYERS);
+        assert!(EMBEDDING_LAYER > 47); // cannot alias expert or optional shadow tags
     }
 }

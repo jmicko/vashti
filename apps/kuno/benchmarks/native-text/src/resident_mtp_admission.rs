@@ -48,7 +48,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             return Err(Error::InvalidBufferLength);
         }
         public_plan_for(MtpProfile::StrataQ2)?
-            .checked_sub(crate::strata_shared_weights::public_bytes())
+            .checked_sub(crate::strata_shared_weights::addressable_bytes())
             .ok_or(Error::ArithmeticOverflow)?
             .checked_add(PRIVATE_BYTES as u64)
             .and_then(|n| n.checked_add(PUBLIC_SOURCE_BYTES as u64))
@@ -127,7 +127,8 @@ mod shared_weight_tests {
             assert_eq!(actual, expected);
         }
         assert_eq!(
-            ResidentMtp::shared_capacity().unwrap() + crate::strata_shared_weights::public_bytes(),
+            ResidentMtp::shared_capacity().unwrap()
+                + crate::strata_shared_weights::addressable_bytes(),
             public_plan_for(MtpProfile::StrataQ2).unwrap()
                 + PRIVATE_BYTES as u64
                 + PUBLIC_SOURCE_BYTES as u64

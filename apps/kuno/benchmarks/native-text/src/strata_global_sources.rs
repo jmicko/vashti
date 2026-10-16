@@ -127,6 +127,17 @@ impl Sources {
         graph.verify_unchanged()?;
         Ok(sources)
     }
+    pub(crate) fn embedding(
+        &self,
+        graph: BoundGraph<'_, '_>,
+        client: &ComputeClient<WgpuRuntime>,
+    ) -> Result<crate::public_host_expert_mirror::strata_global::Embedding> {
+        self.plan.check_binding(graph)?;
+        if !std::ptr::eq(client.info(), self.client.info()) || self.unavailable() {
+            return Err(reject());
+        }
+        self.host.as_ref().ok_or_else(reject)?.embedding()
+    }
     fn build_tables(&mut self, graph: BoundGraph<'_, '_>, device: &wgpu::Device) -> Result<()> {
         let gpu = self.gpu.as_ref().ok_or_else(reject)?;
         let host = self.host.as_ref().ok_or_else(reject)?;

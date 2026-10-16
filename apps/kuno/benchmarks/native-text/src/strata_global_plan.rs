@@ -717,7 +717,7 @@ mod tests {
         );
     }
     #[test]
-    fn global_host_reservation_charges_only_the_complement_for_empty_partial_and_full_tiers() {
+    fn global_host_reservation_charges_complement_and_embedding_for_all_resident_tiers() {
         let roles = pinned_roles();
         let full = roles.iter().flatten().sum::<u64>() * EXPERTS as u64;
         let mut metadata = None;
@@ -736,8 +736,17 @@ mod tests {
                 .sum::<u64>();
             let reservation =
                 crate::public_host_expert_mirror::strata_global::Host::reservation(&plan).unwrap();
-            let overhead = reservation - backing;
+            let embedding = crate::strata_shared_weights::tiles(
+                crate::strata_shared_weights::Tensor::Embedding,
+            )
+            .iter()
+            .map(|t| (t.owned as u64).div_ceil(1048576) * 1048576)
+            .sum::<u64>();
+            assert!(embedding >= crate::strata_shared_weights::embedding_bytes());
+            assert!(embedding < crate::strata_shared_weights::embedding_bytes() + 16 * 1048576);
+            let overhead = reservation - backing - embedding;
             assert_eq!(*metadata.get_or_insert(overhead), overhead);
+            assert!(overhead >= 32 * 1048576);
             assert!(backing >= plan.host_logical_bytes);
             assert!(backing - plan.host_logical_bytes < 1024 * 1048576);
             assert!(reservation < 64 * 1024 * 1024 * 1024);

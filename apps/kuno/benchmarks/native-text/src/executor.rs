@@ -1800,14 +1800,6 @@ impl<'a> GpuExecutor<'a> {
                 sanitize_resident_io(&self.client)
             }
         })?;
-        if let Some(sources) = &mut self.strata_global_sources {
-            std::sync::Arc::get_mut(sources)
-                .ok_or(Error::InvalidFormat("global source readers still live"))?
-                .close()?;
-        }
-        self.strata_global_sources = None;
-        self.cache.clear();
-        self.cache_bytes = 0;
         if let Some(a) = &self.resident_admission {
             let mut shared = a
                 .shared_target_weights
@@ -1820,6 +1812,14 @@ impl<'a> GpuExecutor<'a> {
             shared.take();
             self.native_shared_public_live = false;
         }
+        if let Some(sources) = &mut self.strata_global_sources {
+            std::sync::Arc::get_mut(sources)
+                .ok_or(Error::InvalidFormat("global source readers still live"))?
+                .close()?;
+        }
+        self.strata_global_sources = None;
+        self.cache.clear();
+        self.cache_bytes = 0;
         self.banks.clear();
         self.resident_banks_frozen = false;
         self.target_frozen_host_source_identity = None;
@@ -3357,7 +3357,14 @@ impl<'a> GpuExecutor<'a> {
                 "native shared target weight rebinding",
             ));
         }
-        let weights = crate::strata_shared_weights::Weights::load(graph, &self.client, admission)?;
+        let sources = self
+            .strata_global_sources
+            .as_ref()
+            .ok_or(Error::InvalidFormat(
+                "native mapped embedding source missing",
+            ))?;
+        let weights =
+            crate::strata_shared_weights::Weights::load(graph, &self.client, admission, sources)?;
         *admission
             .shared_target_weights
             .lock()

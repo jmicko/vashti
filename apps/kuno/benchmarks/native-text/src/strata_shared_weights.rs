@@ -69,6 +69,20 @@ pub(crate) fn tiles(tensor: Tensor) -> Vec<Tile> {
         .collect()
 }
 pub(crate) fn public_bytes() -> u64 {
+    tiles(Tensor::Head)
+        .into_iter()
+        .map(|t| t.owned as u64)
+        .sum()
+}
+pub(crate) fn embedding_bytes() -> u64 {
+    tiles(Tensor::Embedding)
+        .into_iter()
+        .map(|t| t.owned as u64)
+        .sum()
+}
+/// Both borrowed tensors are excluded from MTP's additional GPU allocation.
+/// Only the head belongs to MAIN; the embedding belongs to the HOST envelope.
+pub(crate) fn addressable_bytes() -> u64 {
     [Tensor::Embedding, Tensor::Head]
         .into_iter()
         .flat_map(tiles)
@@ -78,7 +92,7 @@ pub(crate) fn public_bytes() -> u64 {
 fn rejected() -> Error {
     Error::InvalidFormat("native shared target weights")
 }
-fn validate_payload(tensor: Tensor, bytes: &[u8], tile: Tile) -> Result<()> {
+pub(crate) fn validate_payload(tensor: Tensor, bytes: &[u8], tile: Tile) -> Result<()> {
     let (block, scale) = match tensor {
         Tensor::Embedding => (136, 0),
         Tensor::Head => (210, 208),
@@ -137,7 +151,7 @@ pub(crate) struct Weights {
     client: ComputeClient<WgpuRuntime>,
     binding: GraphBindingId,
     retired: Arc<AtomicBool>,
-    embedding: Vec<Page>,
+    embedding: crate::public_host_expert_mirror::strata_global::Embedding,
     head: Vec<Page>,
 }
 impl Weights {
@@ -158,6 +172,7 @@ impl Weights {
         graph: BoundGraph<'_, '_>,
         client: &ComputeClient<WgpuRuntime>,
         admission: &ResidentAdmission,
+        sources: &crate::strata_global_sources::Sources,
     ) -> Result<Arc<Self>> {
         Self::validate_graph(graph)?;
         admission.check_client(client)?;
@@ -169,10 +184,10 @@ impl Weights {
             client: client.clone(),
             binding: graph.binding_id(),
             retired: admission.retired_context(),
-            embedding: Vec::new(),
+            embedding: sources.embedding(graph, client)?,
             head: Vec::new(),
         };
-        for tensor in [Tensor::Embedding, Tensor::Head] {
+        for tensor in [Tensor::Head] {
             for tile in tiles(tensor) {
                 graph.verify_unchanged()?;
                 let mut data = vec![0; tile.owned];
@@ -208,11 +223,7 @@ impl Weights {
                 {
                     return Err(rejected());
                 }
-                match tensor {
-                    Tensor::Embedding => &mut owner.embedding,
-                    Tensor::Head => &mut owner.head,
-                }
-                .push(Page { handle, tile });
+                owner.head.push(Page { handle, tile });
                 cubecl::future::block_on(client.sync()).map_err(u::fault)?;
                 admission.shared_observation_checkpoint()?;
             }
@@ -235,7 +246,7 @@ impl Weights {
     }
     pub(crate) fn pages(&self, tensor: Tensor) -> &[Page] {
         match tensor {
-            Tensor::Embedding => &self.embedding,
+            Tensor::Embedding => &self.embedding.pages,
             Tensor::Head => &self.head,
         }
     }
@@ -331,7 +342,7 @@ impl Weights {
                 crate::strata_mtp_front::launch(arena, kernel, grid, bindings, info)
             }
         };
-        for page in &self.embedding {
+        for page in &self.embedding.pages {
             launch(
                 crate::strata_mtp_front::Kernel::Embed,
                 [COLUMNS.div_ceil(64), tokens.len(), 1],
@@ -398,7 +409,10 @@ mod tests {
     fn native_shared_weights_original_tiles_cover_every_row_once_with_exact_roots() {
         assert_eq!(Tensor::Embedding.row_bytes(), 1360);
         assert_eq!(Tensor::Head.row_bytes(), 2100);
-        assert_eq!(public_bytes(), 859_189_248);
+        assert_eq!(addressable_bytes(), 859_189_248);
+        assert_eq!(public_bytes() + embedding_bytes(), addressable_bytes());
+        assert_eq!(embedding_bytes(), 337_715_200);
+        assert_eq!(public_bytes(), 521_474_048);
         for role in [Tensor::Embedding, Tensor::Head] {
             let all = tiles(role);
             assert_eq!(all.len(), 16);

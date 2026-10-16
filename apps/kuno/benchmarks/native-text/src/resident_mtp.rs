@@ -1643,7 +1643,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
                 Self::shared_capacity()?,
                 &[
                     public_bytes
-                        .checked_sub(crate::strata_shared_weights::public_bytes())
+                        .checked_sub(crate::strata_shared_weights::addressable_bytes())
                         .ok_or(Error::ArithmeticOverflow)?,
                     PRIVATE_BYTES as u64,
                     PUBLIC_SOURCE_BYTES as u64,

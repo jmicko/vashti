@@ -1294,6 +1294,19 @@ pub(crate) fn run(
             true,
         )?;
         if crate::strata_intel_core::enabled() {
+            eprintln!("native_public_construct phase=global_sources");
+            // SAFETY: this protected original-artifact probe retains the full
+            // parent hash evidence/RAM envelope and exact target device.
+            unsafe {
+                target.prepare_global_sources_before_prefill(
+                    &mut executor,
+                    host_device.ok_or("global target device missing")?,
+                    host_queue.ok_or("global target queue missing")?,
+                    0, // compiled4096-row fixture: owned prompt, no loan HOST grant
+                )?;
+            }
+        }
+        if crate::strata_intel_core::enabled() {
             eprintln!("native_public_construct phase=shared_target_weights");
             executor.prepare_native_shared_target_weights(graph.bound_graph())?;
         }
@@ -1318,19 +1331,6 @@ pub(crate) fn run(
                 serde_json::json!({"device":"intel","shared_target_runtime":true,
                 "distinct_vulkan_device":false,"independent_runtime":false,"main_account":"shared"}),
             );
-        }
-        if crate::strata_intel_core::enabled() {
-            eprintln!("native_public_construct phase=global_sources");
-            // SAFETY: this protected original-artifact probe retains the full
-            // parent hash evidence/RAM envelope and exact target device.
-            unsafe {
-                target.prepare_global_sources_before_prefill(
-                    &mut executor,
-                    host_device.ok_or("global target device missing")?,
-                    host_queue.ok_or("global target queue missing")?,
-                    0, // compiled4096-row fixture: owned prompt, no loan HOST grant
-                )?;
-            }
         }
         let runs = (|| -> Result<serde_json::Value> {
             if crate::strata_intel_core::enabled() {
@@ -2683,12 +2683,14 @@ pub(crate) fn run(
         let draft_addressable = draft_close.as_ref().map_or(0, |r| r.public_bytes);
         let draft_additional = if draft_close.is_some() {
             draft_addressable
-                .checked_sub(crate::strata_shared_weights::public_bytes())
+                .checked_sub(crate::strata_shared_weights::addressable_bytes())
                 .ok_or("native shared public quote")?
         } else {
             0
         };
         let value = serde_json::json!({"shared_target_public_bytes":crate::strata_shared_weights::public_bytes(),
+            "shared_target_host_embedding_bytes":crate::strata_shared_weights::embedding_bytes(),
+            "shared_target_addressable_bytes":crate::strata_shared_weights::addressable_bytes(),
             "draft_public_addressable_bytes":draft_addressable,"draft_public_additional_bytes":draft_additional,
             "scope":"strata-global-connected-execution-check",
             "benchmark":false,"whole_rewrite_accepted":false,"record":record,
