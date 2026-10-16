@@ -6,15 +6,15 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, source `0d9e3a527041c36b2a395cda5c1070a88288684d` including policy `3d6a0390`.
-Read the [selected-policy/router handoff](#active-kuno-engine-handoff--selected-policy-and-router-2026-10-16)
-and [completion gate](kuno-strata-rewrite-completion.md). Selected NO_HOST now keeps
-zero callback counters with a real bounded empty host job. Native decode uses
-selected per-token router blocks and separate128-thread parallel group planning.
-Prior GPU-counter/copy worker stays explicit beyond-reference; full branch retained.
-549 CPU cases/72 suites and strict core/off binary lint pass. No GPU/speed result.
-Final branch audit and protected whole-model acceptance remain; speed gate closed.
-Goal active CPU-only, rewrite incomplete. Required Vashti changes: none.
+`codex/strata-rust-port`, source `c5fcc20bc44e8dce900ac3bc4d1865477854f2fc`. Read the
+[context/scope and shared-expert handoff](#active-kuno-engine-handoff--context-scope-and-shared-expert-gap-2026-10-16)
+and [completion gate](kuno-strata-rewrite-completion.md). Native admission and
+original run/close/rebind guards now keep reference speculative headroom and full
+accepted state independent of output delivery clipping. 551 CPU cases/72 suites and strict core/off binary lint pass.
+No GPU/speed result. Next required connected block is selected shared-expert
+math and fork/join, including scratch/fault/INFO/queue ownership; currently still
+missing. Whole rewrite incomplete, speed gate closed, goal active CPU-only.
+Required Vashti changes: none. Latest frozen artifact remains older source`0d9e3a52`.
 
 ## Ownership
 
@@ -7538,3 +7538,33 @@ speed. CLI compiled-public/one-request; private process caller independently gat
 No API/consumer/frontend change; required Vashti changes: none. Goal active CPU-only.
 No GPU/model/inference/service/install/release action, no root operation. Canonical/
 inherited files preserved. No deployment authority or new physical recovery claim.
+
+## Active Kuno engine handoff — context scope and shared expert gap (2026-10-16)
+
+Runtime source `c5fcc20bc44e8dce900ac3bc4d1865477854f2fc`, isolated `codex/strata-rust-port`. Read the
+[exact boundary correction, receipts and next coupled implementation plan](kuno-strata-rewrite-completion.md#native-context-headroom-and-full-window-scope-audit-2026-10-16).
+Keep the FULL branch. Native Request/reader/controller and original Geometry /
+Authority constructor/rearm now reserve eight cells as pinned serving does.
+Selected active run and original close/reset bounds accept a full committed
+prefix beyond clipped output delivery, while no next window may start at or
+past the final delivery origin. Actual family/state/fault/I/O/erase proof is still
+required; scope shape does not grant completion. Old non-native guards retained.
+
+551 CPU cases/72 suites and strict core/off binary lint pass. Exact initial failures/final receipts are in the linked
+primary audit. No shader change or new frozen normal artifact for this audit block;
+latest frozen source`0d9e3a52` cannot test the new context/scope behavior.
+
+**Concrete required next block:** source selected Intel shared-expert fork/join
+and native scalar-gate/scale/fused SwiGLU->Q8 path. Rust currently serializes shared
+prepare/finish on MAIN, uses a generic64-lane scalar gate and has only compute/
+copy segments inside a target graph. Independent MTP lane does not complete this.
+The linked plan covers selected master-switch defaults, actual source call sites,
+independent quantized scratch and fault fold, possible reuse of existing second
+compute queue, exact recorded/replay dependencies, INFO/fences/failure retention
+and pricing. Implement these together; do not evaluate a half fork for speed.
+
+Whole rewrite incomplete, speed gate closed. Final source review and protected
+whole-model numerical/state/context/hot-reuse/failure/resource-recovery remain.
+No public API/consumer/frontend change; Vashti changes: none. Goal active CPU-only.
+No root/GPU/model/inference/service/install/release action; canonical/inherited
+files preserved. No deployment authority or new performance/recovery claim.

@@ -1,32 +1,27 @@
-<!-- Current resume: 2026-10-16, source 0d9e3a527041c36b2a395cda5c1070a88288684d, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source c5fcc20bc44e8dce900ac3bc4d1865477854f2fc, codex/strata-rust-port.
 CPU-only continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 Working checkout: `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`.
 
-**Current CPU-only source:** `0d9e3a527041c36b2a395cda5c1070a88288684d`, branch
-`codex/strata-rust-port`, including NO_HOST policy source `3d6a0390`. Read the
-[selected-policy/router receipt](kuno-strata-rewrite-completion.md#selected-no_host-policy-and-native-routerplan-schedule-2026-10-16)
-and [checkpoint](kuno-native-text-checkpoint.md). Reference mode now keeps the
-pinned callback-free zero counters and actual bounded empty host job. Decode
-uses one256-thread router block per token, one active32-lane subgroup, then the
-original128-thread parallel resident-plan scan. Original VRAM/HOST expert sources,
-role consumers, graph ownership, first draft and retained policy stay connected.
-Prior GPU-counter promotions/copy worker remain an explicit beyond-reference
-build option; they were not removed based on timing.
+**Current CPU-only source:** `c5fcc20bc44e8dce900ac3bc4d1865477854f2fc`, branch
+`codex/strata-rust-port`. Read the [context/scope audit and next shared-expert block](kuno-strata-rewrite-completion.md#native-context-headroom-and-full-window-scope-audit-2026-10-16).
+Native admission reserves the reference eight-cell headroom; active and closed
+scope bounds preserve a full accepted target prefix independently of delivery
+clipping. Original model/family completion and erasure proofs remain required.
 
-549 CPU cases / 72 suites and strict core/off **binary** lint pass.
-Normal stable-source frozen build passes, SHA256
-`2d60cec93970727aeea74a1d7ad3f362cd98dc2ea300e56e62f1a79d94c39a8c`. Offline-only validation passes 361 shader
-variants, 139 physical-pointer checks and 32 matrix configurations; source/original
-hash, mode0500 and exact default features independently match. See receipt below.
-No adapter/model/inference/GPU/speed execution or new physical recovery claim.
-**Whole rewrite remains incomplete; speed gate closed.** Next finish the whole-
-branch ownership/placement/queue/pricing/substitution audit, then protected
-numerical/state/context/hot-request/failure/recovery acceptance. Private process
-caller remains independently gated; CLI compiled-public/one-request. Goal active
-CPU-only. No service/install/release/frontend/API change; Vashti changes: none.
-Canonical/inherited files preserved. Root was not used.
+551 CPU cases/72 suites and strict core/off binary lint pass. No new normal frozen artifact or shader claim: latest
+frozen source remains `0d9e3a52`, with its361 offline variants/139 physical checks/
+32 matrix configurations. These three changed Rust files do not alter shaders.
+Do not run the older artifact to test the new request/scope behavior.
+
+**Whole rewrite incomplete; speed gate closed.** The audit confirmed a concrete
+remaining source dependency: selected Intel shared-expert fork/join and native
+shared scalar-gate/scale path. Port its queue scheduling, scratch/fault separation,
+math and final consumer together, then finish branch audit and protected whole-
+model numerical/state/hot-reuse/recovery acceptance. No new throughput claim.
+Goal active CPU-only. No GPU/model/inference/root/service/install/release/API/UI
+work. Required Vashti changes: none. Canonical/inherited files preserved.
 
 **Previous coupled-sampler block (`8a4ee5b`):** actual full and CJK MTP paths
 mutate penalties once, build fixed 64 lists and merge with request K. Source
