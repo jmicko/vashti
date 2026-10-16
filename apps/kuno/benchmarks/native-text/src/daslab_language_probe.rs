@@ -686,17 +686,22 @@ fn tokenize(
     fixture: Fixture,
     eos: u32,
 ) -> Result<(Qwen35Tokenizer, Zeroizing<Vec<u32>>)> {
-    let limits = TokenizerLimits {
-        max_vocabulary: VOCAB,
-        max_input_bytes: 1024,
-        max_output_tokens: 64,
-        max_piece_bytes: 1024,
-        max_merge_steps: 8192,
-        max_decoded_bytes: 4096,
-        max_decode_chunk_bytes: 16384,
-        max_allocation_bytes: TOKENIZER_HOST_BYTES,
-        ..TokenizerLimits::default()
+    let limits = if crate::strata_intel_core::enabled() {
+        crate::strata_engine::input::tokenizer_limits(TOKENIZER_HOST_BYTES)
+    } else {
+        TokenizerLimits {
+            max_vocabulary: VOCAB,
+            max_input_bytes: 1024,
+            max_output_tokens: 64,
+            max_piece_bytes: 1024,
+            max_merge_steps: 8192,
+            max_decoded_bytes: 4096,
+            max_decode_chunk_bytes: 16384,
+            max_allocation_bytes: TOKENIZER_HOST_BYTES,
+            ..TokenizerLimits::default()
+        }
     };
+    let token_capacity = limits.max_output_tokens;
     let tokenizer = Qwen35Tokenizer::from_gguf(file, limits)?;
     if tokenizer.vocabulary_len() != VOCAB || tokenizer.eos_token_id() != eos {
         return Err("language original tokenizer identity rejected".into());
@@ -705,7 +710,7 @@ fn tokenize(
     let ids = Zeroizing::new(tokenizer.encode(&rendered, true)?);
     let decoded = Zeroizing::new(tokenizer.decode(&ids)?);
     if ids.len() != fixture.prompt_tokens()
-        || ids.capacity() > 64
+        || ids.capacity() > token_capacity
         || decoded.as_str() != rendered.as_str()
         || ids.iter().any(|&t| t >= VOCAB as u32)
     {
@@ -1097,18 +1102,30 @@ pub(crate) fn run(
         })
         .transpose()?;
     if crate::strata_intel_core::enabled() {
-        let request = crate::strata_engine::Request::new(
-            prompt,
-            MAX_OUTPUTS,
-            graph.eos_token(),
-            crate::strata_sampler::Params {
-                greedy: true,
-                temperature: 0.,
-                ..Default::default()
+        // The compiled-public fixture exercises the same bounded reader and
+        // Rust tokenizer intended for a separately protected arbitrary caller.
+        // It still accepts NO private stdin or public-receipt content override.
+        drop(prompt);
+        let rendered = input.fixture.rendered();
+        let request = crate::strata_engine::input::request(
+            &mut std::io::Cursor::new(rendered.as_bytes()),
+            &tokenizer,
+            crate::strata_engine::input::Controls {
+                outputs: MAX_OUTPUTS,
+                eos: graph.eos_token(),
+                sampling: crate::strata_sampler::Params {
+                    greedy: true,
+                    temperature: 0.,
+                    ..Default::default()
+                },
+                speculation: crate::strata_speculation::Config::native(4),
+                minimum: 0.5,
             },
-            crate::strata_speculation::Config::native(4),
-            0.5,
         )?;
+        drop(rendered);
+        if request.geometry()?.0 != input.fixture.prompt_tokens() {
+            return Err("native fixture input geometry rejected".into());
+        }
         let mut emitted = Zeroizing::new(Vec::with_capacity(MAX_OUTPUTS));
         // SAFETY: the protected original-source launcher owns full authentication,
         // memory/driver admission, swap/core protection and a redacted panic hook.

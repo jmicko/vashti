@@ -22,6 +22,8 @@ use zeroize::Zeroizing;
 
 #[path = "strata_global_controller.rs"]
 pub(crate) mod controller;
+#[path = "strata_input.rs"]
+pub(crate) mod input;
 pub(crate) const VOCAB: usize = 248320;
 pub(crate) const MAX_OUTPUTS: usize = crate::strata_intel_core::CONTEXT - 1;
 pub(crate) const REQUEST_HOST_BYTES: usize = 4 * 1024 * 1024;
