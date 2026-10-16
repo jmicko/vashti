@@ -6,8 +6,8 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through `dcd783b`. Read the latest
-[original draft-scope handoff](#active-kuno-engine-handoff--original-r-readiness-and-draft-scope-2026-10-16)
+`codex/strata-rust-port`, engine source through `7ad47ca`. Read the latest
+[native packet handoff](#active-kuno-engine-handoff--native-packet-readback-2026-10-16)
 and [completion gate](kuno-strata-rewrite-completion.md). Direct target/MTP
 submission, accepted-prefix state publication and retained commit graph are connected
 in source. Original pending submissions/joins and scoped next-draft consumption are connected;
@@ -6515,3 +6515,29 @@ execution. No GPU/model/service/protected inference/driver/install/release or
 public API/connector/UI change. Required Vashti changes:none. Sudo timestamp
 refresh succeeded in Demons. Goal remains active for CPU-only work; historical
 Oct15 recovery is not new physical health evidence.
+
+
+### Active Kuno engine handoff — native packet readback (2026-10-16)
+
+Source `7ad47ca` connects selected native private packet observations to actual
+full-owner fill/copy recordings, original selected compute/copy plan and final
+fence, explicit HOST_READ availability and guarded original Vulkan HAL mapping.
+Full-range non-coherent invalidation, one batch deadline, original I/O ledger/
+lease and wiping logical-byte controller remain required. No Wgpu primary packet
+copy/map callback/poll is requested; ordinary and terminal cleanup paths remain.
+Packet I/O is unnamed and cannot replace a named math shape. Actual cold source
+initialization is preserved; no new persistent content or GPU data owner.
+
+165 focused CPU cases, selected/off strict Clippy and format/whitespace pass.
+See completion guide **Original native packet readback** for exact source/logs,
+internal ownership flow and still-unverified Vulkan map/barrier/failure/erasure.
+Current graph/scope/flush global waits and shared I/O reuse still serialize.
+Next connect current-lane/conflicting-flight admission and selective original
+source reuse/remap authority together, including positive-confidence per-cell
+checkpoints. Preserve original readiness, INFO epochs, exports, MAIN debt and
+terminal drains. This is not physical overlap, parity or a speed result.
+
+No new shader/layout or immutable ordinary artifact; frozen `0bf0b5f` is stale.
+No GPU/model/service/protected inference/driver/install/release or public API/
+connector/UI change. Required Vashti changes:none. Sudo refresh alone succeeded
+in Demons. Goal remains active for CPU-only work; full rewrite gates remain open.

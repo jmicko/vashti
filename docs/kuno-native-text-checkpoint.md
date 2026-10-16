@@ -1,18 +1,48 @@
-<!-- Current resume: 2026-10-16, source dcd783b, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source 7ad47ca, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, engine source through `dcd783b`. The user authorized
+branch `codex/strata-rust-port`, engine source through `7ad47ca`. The user authorized
 continuing CPU-only work; the goal controller is active for that scope.
 GPU/model/service work still needs renewed user authorization. The user has
 authorized keeping sudo refreshed in the shared Demons shell; noninteractive
 validation succeeded. This does not expand the GPU/testing scope. Last physical recovery evidence
 is historical 06:07:22Z on Oct15; no subsequent GPU run or live health claim.
 
-Read the latest [original R readiness/draft scope receipt](kuno-strata-rewrite-completion.md#original-precommit-r-readiness-and-draft-lane-scope-2026-10-16)
-and its remaining connected scope requirements before changing queue behavior.
+Read the latest [original native packet readback receipt](kuno-strata-rewrite-completion.md#original-native-packet-readback-2026-10-16)
+and the original R scope/dependency contract before changing queue/stream behavior.
 Earlier CJK source `cd703bc` was integrated as `0bfbea8`; do not cherry-pick it again.
+
+**Latest native packet path:** `7ad47ca` connects real fill/copy-only unnamed
+recordings and their original selected-lane/copy timeline final fence, explicit
+TRANSFER_WRITE -> HOST_READ availability and checked synchronous Vulkan HAL host
+mapping. Both readback owner and original lease remain in the same I/O ledger.
+Full clear initializes all owned padding; complete original copies stay intact;
+only logical bytes go to the existing wiping host controller. Non-coherent maps
+invalidate the full actual range. Native unmap is local/guarded; no pointer or HAL
+borrow crosses async return. Original lease remains held through returned Bytes.
+Error/panic/late map retires, with one 30-second batch map deadline. Actual cold
+source initialization remains mandatory. Original packet I/O cannot overwrite a
+named math recording/key. Ordinary and terminal cleanup readback keep Wgpu.
+
+165 focused CPU cases across 20 nonempty suites, strict selected/off Clippy and
+format/whitespace pass. No shader/layout or immutable artifact change; frozen
+`0bf0b5f` is stale. No GPU/model/service/protected tests or speed result. Sudo
+refresh succeeded. No API/connector/UI change; required Vashti changes:none.
+
+**Next connected block:** graph current-lane/conflicting-flight admission plus
+selective original I/O reuse/source-remap completion authority. Current scope
+entry/push/execute/flush still drain globally; `recycle_reuse` still maps uploads
+via Wgpu and submits primary transitions/readback clears. Native packet copying/
+mapping itself no longer submits a primary copy or requests a map callback.
+Do not fake its legacy Wgpu callback counter. Preserve cold initialization,
+INFO full-source/destination copies and exact header epochs, original commit
+exports, MAIN debt and terminal failure drains. Positive-confidence per-cell
+observations need their surrounding checkpoint fixed too. No physical overlap
+claim until that whole scope is connected and verified. All other completion/
+arbitrary-input/context/embedding-placement/regression/numerical/recovery gates
+remain open; live GPU work still needs renewed authorization.
 
 **Latest original draft scope:** `d2d3228` connects a real MAIN->draft readiness
 signal/wait BEFORE accepted-prefix commit, retaining the actual current R resource
@@ -40,7 +70,7 @@ pass. See completion receipt for exact logs. No shader change, new immutable
 artifact, GPU/model/service/protected test or speed result. Frozen `0bf0b5f` is
 stale for current source. Sudo refresh succeeded; no system change was made.
 
-**Next:** complete independent execution and I/O as one connected scope. Current
+**Earlier next step (packet readback partly resolved by `7ad47ca` above):** complete independent execution and I/O as one connected scope. Current
 entry/push/execute/replay/flush/metadata/readback/recycle globally join; entry can
 physically join target even before verified delivery. Do not claim overlap. Move
 current-lane/conflicting-flight admission, INFO source remap authorization,
