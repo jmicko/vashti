@@ -10,6 +10,50 @@ pub(super) struct Copy {
     pub source: WgpuResource,
     pub target: WgpuResource,
 }
+/// Resolve the same complete original Vulkan owners used by cmd_copy_buffer.
+/// Record offsets inside an INFO page do not narrow this operation's writes.
+pub(super) fn accesses(
+    copies: &[Copy],
+) -> Result<Vec<super::strata_schedule::Access>, &'static str> {
+    if copies.is_empty() || copies.len() > MAX_COPIES {
+        return Err("native INFO copy capacity");
+    }
+    let mut spans = Vec::new();
+    spans
+        .try_reserve_exact(copies.len())
+        .map_err(|_| "native INFO span allocation")?;
+    for c in copies {
+        spans.push(copy_span(c)?);
+    }
+    span_accesses(&spans)
+}
+fn span_accesses(spans: &[Span]) -> Result<Vec<super::strata_schedule::Access>, &'static str> {
+    validate(spans)?;
+    let mut accesses = Vec::new();
+    accesses
+        .try_reserve_exact(spans.len() * 2)
+        .map_err(|_| "native INFO access allocation")?;
+    if accesses.capacity() * size_of::<super::strata_schedule::Access>() > HOST_BYTES / 2 {
+        return Err("native INFO access capacity");
+    }
+    for s in spans {
+        accesses.extend([
+            super::strata_schedule::Access {
+                buffer: s.source,
+                first: 0,
+                bytes: s.bytes,
+                write: false,
+            },
+            super::strata_schedule::Access {
+                buffer: s.target,
+                first: 0,
+                bytes: s.bytes,
+                write: true,
+            },
+        ]);
+    }
+    Ok(accesses)
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Wait {
     pub semaphore: vk::Semaphore,
@@ -52,6 +96,27 @@ fn raw(r: &WgpuResource) -> Result<vk::Buffer, &'static str> {
     let hal = unsafe { r.buffer.as_hal::<wgpu::hal::api::Vulkan>() }
         .ok_or("native INFO Vulkan owner required")?;
     Ok(unsafe { hal.raw_buffer_handle() })
+}
+fn copy_span(c: &Copy) -> Result<Span, &'static str> {
+    if c.source.size != c.target.size
+        || !c
+            .source
+            .buffer
+            .usage()
+            .contains(wgpu::BufferUsages::COPY_SRC)
+        || !c
+            .target
+            .buffer
+            .usage()
+            .contains(wgpu::BufferUsages::COPY_DST)
+    {
+        return Err("native INFO copy usage or span");
+    }
+    Ok(Span {
+        source: raw(&c.source)?.as_raw(),
+        target: raw(&c.target)?.as_raw(),
+        bytes: c.source.size,
+    })
 }
 pub(super) struct Uploads {
     device: ash::Device,
@@ -146,25 +211,7 @@ impl Uploads {
             .try_reserve_exact(copies.len())
             .map_err(|_| "native INFO span allocation")?;
         for c in &copies {
-            if c.source.size != c.target.size
-                || !c
-                    .source
-                    .buffer
-                    .usage()
-                    .contains(wgpu::BufferUsages::COPY_SRC)
-                || !c
-                    .target
-                    .buffer
-                    .usage()
-                    .contains(wgpu::BufferUsages::COPY_DST)
-            {
-                return Err("native INFO copy usage or span");
-            }
-            spans.push(Span {
-                source: raw(&c.source)?.as_raw(),
-                target: raw(&c.target)?.as_raw(),
-                bytes: c.source.size,
-            });
+            spans.push(copy_span(c)?);
         }
         validate(&spans)?;
         self.epoch = self
@@ -232,8 +279,14 @@ impl Drop for Uploads {
         }
     }
 }
-const _: () =
-    assert!(MAX_COPIES * (2 * size_of::<Copy>() + 2 * size_of::<Span>() + 128) <= HOST_BYTES);
+const _: () = assert!(
+    MAX_COPIES
+        * (2 * size_of::<Copy>()
+            + 2 * size_of::<Span>()
+            + 2 * size_of::<super::strata_schedule::Access>()
+            + 128)
+        <= HOST_BYTES
+);
 
 fn record_joined(joined: &mut u64, latest: u64, epoch: u64) -> Result<(), &'static str> {
     if epoch > latest {
@@ -246,6 +299,49 @@ fn record_joined(joined: &mut u64, latest: u64, epoch: u64) -> Result<(), &'stat
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn whole_info_writes_conflict_even_when_recorded_uniform_views_are_disjoint() {
+        use super::super::strata_schedule::{Access, NodeAccess, Planner};
+        let incoming = span_accesses(&[Span {
+            source: 1,
+            target: 9,
+            bytes: 4096,
+        }])
+        .unwrap();
+        for (buffer, first, write, expected) in [
+            (9, 0, false, true),
+            (9, 3584, false, true),
+            (9, 1024, true, true),
+            (1, 1024, false, false),
+            (1, 1024, true, true),
+            (3, 1024, true, false),
+        ] {
+            let mut planner = Planner::new(1, false).unwrap();
+            planner
+                .push(&NodeAccess {
+                    copy: false,
+                    release_after: false,
+                    accesses: vec![Access {
+                        buffer,
+                        first,
+                        bytes: 64,
+                        write,
+                    }],
+                })
+                .unwrap();
+            assert_eq!(
+                planner.finish().unwrap().conflicts(&incoming).unwrap(),
+                expected
+            );
+        }
+        assert_eq!(incoming.len(), 2);
+        assert_eq!(incoming[0].first, 0);
+        assert_eq!(incoming[0].bytes, 4096);
+        assert!(!incoming[0].write);
+        assert_eq!(incoming[1].first, 0);
+        assert_eq!(incoming[1].bytes, 4096);
+        assert!(incoming[1].write);
+    }
     #[test]
     fn joined_math_credits_only_its_original_info_wait_not_a_newer_copy() {
         let mut seen = 0;

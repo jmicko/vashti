@@ -995,13 +995,50 @@ impl Graph {
         &mut self,
         copies: Vec<super::strata_info_transfer::Copy>,
     ) -> Result<(), ServerError> {
-        self.complete_submission()?;
         if copies.is_empty() {
             return Ok(());
         }
+        let accesses = super::strata_info_transfer::accesses(&copies).map_err(fault)?;
+        self.join_conflicting_accesses(&accesses)?;
+        // Reuse only the INFO command pool's original completed copy. Its old
+        // math consumers retain their own complete resources and header epochs.
+        // Drop temporary ranges before allocating submit's validation metadata.
+        drop(accesses);
+        self.info_uploads.complete().map_err(fault)?;
         self.info_uploads
             .submit(self.copy_queue, copies)
             .map_err(fault)
+    }
+    fn join_conflicting_accesses(
+        &mut self,
+        incoming: &[strata_schedule::Access],
+    ) -> Result<(), ServerError> {
+        let mut joins = [false; 2];
+        // Preflight BOTH original flights before waiting on or crediting any.
+        // Unknown/partial work never authorizes an independent upload.
+        for (lane, needed) in joins.iter_mut().enumerate() {
+            let Some(flight) = self.flights.peek(lane).map_err(fault)? else {
+                continue;
+            };
+            if !flight.submitted {
+                return Err(fault("native partial pending access owner"));
+            }
+            let recording = self
+                .recordings
+                .iter()
+                .find(|r| r.id == flight.recording)
+                .ok_or_else(|| fault("native pending access recording missing"))?;
+            if recording.family != self.compute_queues[lane].family {
+                return Err(fault("native pending access original family"));
+            }
+            *needed = recording.work.plan.conflicts(incoming).map_err(fault)?;
+        }
+        for (lane, needed) in joins.into_iter().enumerate() {
+            if needed {
+                self.complete_lane_submission(lane)?;
+            }
+        }
+        Ok(())
     }
     pub(crate) fn clear_completed_recordings(&mut self) -> Result<(), ServerError> {
         if self.flights.any() || self.pending() || self.info_uploads.pending() {
@@ -1129,8 +1166,12 @@ impl Graph {
         self.flights.acknowledge(submission, scope).map_err(fault)
     }
     pub(crate) fn complete_submission(&mut self) -> Result<(), ServerError> {
-        let info_only = !self.flights.any() && self.info_uploads.needs_visibility();
         self.complete_math_submission()?;
+        // An older math flight may have coexisted with a newer disjoint INFO
+        // copy. Only its actual header epoch was consumed, so decide AFTER
+        // joining the original flights whether any newer copy still lacks a
+        // completed consumer. Merely having had math is not visibility proof.
+        let info_only = self.info_uploads.needs_visibility();
         self.info_uploads.complete().map_err(fault)?;
         if info_only {
             // Without a math header no GPU consumer has waited on the upload

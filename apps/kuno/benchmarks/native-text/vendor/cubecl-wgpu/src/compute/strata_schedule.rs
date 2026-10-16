@@ -23,6 +23,39 @@ pub(crate) struct Plan {
     pub segments: Vec<Segment>,
     pub node_segments: Vec<usize>,
     pub last_copy: u64,
+    // Original descriptor/copy intervals, canonicalized without filling gaps.
+    // Retained with the actual recording, not rebuilt from caller declarations.
+    accesses: Vec<Access>,
+}
+impl Plan {
+    pub fn conflicts(&self, incoming: &[Access]) -> Result<bool, &'static str> {
+        let mut conflict = false;
+        for access in incoming {
+            let end = access
+                .first
+                .checked_add(access.bytes)
+                .filter(|_| access.buffer != 0 && access.bytes != 0)
+                .ok_or("native pending access extent")?;
+            if conflict {
+                continue; // Still validate every later extent before joining.
+            }
+            // Original ranges are sorted and disjoint within each buffer.
+            let first = self.accesses.partition_point(|old| {
+                old.buffer < access.buffer
+                    || old.buffer == access.buffer && old.first + old.bytes <= access.first
+            });
+            for old in &self.accesses[first..] {
+                if old.buffer != access.buffer || old.first >= end {
+                    break;
+                }
+                if old.write || access.write {
+                    conflict = true;
+                    break;
+                }
+            }
+        }
+        Ok(conflict)
+    }
 }
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 struct Hazard {
@@ -159,6 +192,7 @@ impl Planner {
                 segments,
                 node_segments: Vec::with_capacity(capacity),
                 last_copy: 0,
+                accesses: Vec::new(),
             },
             hazards: HashMap::new(),
             regions: 0,
@@ -238,6 +272,49 @@ impl Planner {
                 }
             }
         }
+        let mut accesses: Vec<Access> = Vec::new();
+        accesses
+            .try_reserve_exact(self.regions)
+            .map_err(|_| "native retained access allocation")?;
+        if accesses.capacity() > MAX_REGIONS * 2 {
+            return Err("native retained access reserved capacity");
+        }
+        for (buffer, regions) in &self.hazards {
+            for region in regions {
+                let write = region.hazard.writers != [0; 2];
+                if !write && region.hazard.readers == [0; 2] {
+                    return Err("native retained empty access history");
+                }
+                accesses.push(Access {
+                    buffer: *buffer,
+                    first: region.first,
+                    bytes: region.end - region.first,
+                    write,
+                });
+            }
+        }
+        accesses.sort_unstable_by_key(|a| (a.buffer, a.first));
+        let mut keep = 0;
+        for read in 0..accesses.len() {
+            if keep > 0
+                && accesses[keep - 1].buffer == accesses[read].buffer
+                && accesses[keep - 1].write == accesses[read].write
+                && accesses[keep - 1].first + accesses[keep - 1].bytes == accesses[read].first
+            {
+                let extension = accesses[read].bytes;
+                accesses[keep - 1].bytes += extension;
+            } else {
+                accesses.swap(keep, read);
+                keep += 1;
+            }
+        }
+        accesses.truncate(keep);
+        // Capacity remains bounded even when many old segment distinctions
+        // compress to a tiny union. This is charged by Commands::metadata_bytes.
+        if accesses.capacity() > accesses.len().saturating_mul(2) {
+            accesses.shrink_to_fit();
+        }
+        self.result.accesses = accesses;
         Ok(self.result)
     }
 }
@@ -347,6 +424,7 @@ impl Commands {
         self.plan.segments.capacity() * std::mem::size_of::<Segment>()
             + self.plan.node_segments.capacity() * std::mem::size_of::<usize>()
             + self.commands.capacity() * std::mem::size_of::<vk::CommandBuffer>()
+            + self.plan.accesses.capacity() * std::mem::size_of::<Access>()
             + std::mem::size_of::<Self>()
     }
     pub fn submit(
@@ -427,6 +505,135 @@ impl Drop for Commands {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn retained_inventory_preserves_readers_writes_boundaries_and_real_gaps() {
+        let nodes: Vec<_> = [(0, 4, false), (8, 4, false), (16, 8, true), (16, 8, false)]
+            .into_iter()
+            .map(|(first, bytes, write)| NodeAccess {
+                copy: false,
+                release_after: true,
+                accesses: vec![Access {
+                    buffer: 7,
+                    first,
+                    bytes,
+                    write,
+                }],
+            })
+            .collect();
+        let p = plan(&nodes, false).unwrap();
+        for (buffer, first, bytes, write, expected) in [
+            (7, 4, 4, true, false),  // Unused hole, not an invented union extent.
+            (7, 0, 4, false, false), // Independent reader of a read-only span.
+            (7, 0, 4, true, true),
+            (7, 3, 2, true, true),
+            (7, 12, 4, true, false),
+            (7, 16, 8, false, true), // A later reader must not erase prior writes.
+            (7, 24, 4, true, false),
+            (8, 16, 8, true, false),
+        ] {
+            assert_eq!(
+                p.conflicts(&[Access {
+                    buffer,
+                    first,
+                    bytes,
+                    write
+                }])
+                .unwrap(),
+                expected
+            );
+        }
+        for bad in [
+            Access {
+                buffer: 0,
+                first: 0,
+                bytes: 4,
+                write: true,
+            },
+            Access {
+                buffer: 7,
+                first: 0,
+                bytes: 0,
+                write: true,
+            },
+            Access {
+                buffer: 7,
+                first: u64::MAX,
+                bytes: 4,
+                write: true,
+            },
+        ] {
+            assert!(
+                p.conflicts(&[
+                    Access {
+                        buffer: 7,
+                        first: 16,
+                        bytes: 4,
+                        write: false
+                    },
+                    bad
+                ])
+                .is_err()
+            ); // Malformed tail is not hidden by an earlier conflict.
+        }
+    }
+    #[test]
+    fn retained_union_matches_original_descriptor_accesses_across_both_queues() {
+        let mut state = 31u64;
+        let mut next = || {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+            state
+        };
+        let nodes: Vec<_> = (0..256)
+            .map(|_| NodeAccess {
+                copy: next() & 1 != 0,
+                release_after: next() & 1 != 0,
+                accesses: (0..3)
+                    .map(|_| Access {
+                        buffer: 1 + next() % 11,
+                        first: next() % 512,
+                        bytes: 1 + next() % 32,
+                        write: next() & 4 != 0,
+                    })
+                    .collect(),
+            })
+            .collect();
+        let p = plan(&nodes, false).unwrap();
+        for _ in 0..4096 {
+            let incoming = Access {
+                buffer: 1 + next() % 13,
+                first: next() % 640,
+                bytes: 1 + next() % 32,
+                write: next() & 2 != 0,
+            };
+            let direct = nodes.iter().flat_map(|n| &n.accesses).any(|old| {
+                old.buffer == incoming.buffer
+                    && old.first < incoming.first + incoming.bytes
+                    && incoming.first < old.first + old.bytes
+                    && (old.write || incoming.write)
+            });
+            assert_eq!(p.conflicts(&[incoming]).unwrap(), direct);
+        }
+    }
+    #[test]
+    fn retained_adjacent_readers_compress_without_unbounded_reserved_capacity() {
+        let nodes: Vec<_> = (0..2048)
+            .map(|first| NodeAccess {
+                copy: false,
+                release_after: true,
+                accesses: vec![Access {
+                    buffer: 7,
+                    first,
+                    bytes: 1,
+                    write: false,
+                }],
+            })
+            .collect();
+        let p = plan(&nodes, false).unwrap();
+        assert_eq!(p.accesses.len(), 1);
+        assert!(p.accesses.capacity() <= 2);
+        assert_eq!(p.accesses[0].first, 0);
+        assert_eq!(p.accesses[0].bytes, 2048);
+    }
     fn node(copy: bool, buffer: u64, write: bool) -> NodeAccess {
         NodeAccess {
             copy,

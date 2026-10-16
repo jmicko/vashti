@@ -52,6 +52,8 @@ mod strata_qsa;
 #[path = "../vendor/cubecl-wgpu/src/compute/strata_schedule.rs"]
 mod strata_queue_tests;
 #[cfg(test)]
+use strata_queue_tests as strata_schedule; // Original sibling namespace for INFO/planner tests.
+#[cfg(test)]
 #[path = "../vendor/cubecl-wgpu/src/backend/vulkan/strata_queues.rs"]
 mod strata_queue_topology_tests;
 mod strata_sampler;
