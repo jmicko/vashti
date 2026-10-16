@@ -466,8 +466,8 @@ fn native_cjk_subset_keeps_original_tie_order_and_penalty_ids() {
         assert_eq!(inverse[original as usize], compact as i32);
         assert_eq!(probability, 1. / 20.);
     }
-    assert_ne!(Kernel::CjkPart.id(), Kernel::Part.id());
-    assert_ne!(Kernel::CjkMerge.id(), Kernel::Merge.id());
+    assert_ne!(Kernel::CoupledPart { cjk: true }.id(), Kernel::Part.id());
+    assert_ne!(Kernel::CoupledMerge { cjk: true }.id(), Kernel::Merge.id());
 }
 
 #[test]
@@ -510,4 +510,143 @@ fn long_request_context_keeps_only_the_native_penalty_window_in_target_and_draft
     }
     assert!(penalty_rows(&vec![1; CONTEXT_MAX + 1], &[2], 1).is_err());
     assert!(penalty_rows(&[1], &[2], HISTORY_MAX + 1).is_err());
+}
+
+#[test]
+fn original_coupled_penalty_writes_and_fixed64_shortlists_match_independent_full_sort() {
+    // Public synthetic oracle: full-sort penalties and selection do not use the
+    // shader's bitmap winner or fixed64 per-warp/per-block merge architecture.
+    for vocabulary in [VOCAB, crate::resident_mtp::cjk::ROWS] {
+        let logits = (0..vocabulary)
+            .map(|i| ((i * 65537 % 997) as f32 - 498.) / 113.)
+            .collect::<Vec<_>>();
+        let history = (0..3073)
+            .map(|i| match i % 7 {
+                0 => -1,
+                1 => 0,
+                2 => 1,
+                3 => (vocabulary - 1) as i32,
+                _ => ((i * 37) % vocabulary) as i32,
+            })
+            .collect::<Vec<_>>();
+        let p = Params {
+            top_k: 20,
+            top_p: 0.83,
+            min_p: 0.02,
+            temperature: 0.7,
+            penalty_last_n: 2049,
+            penalty_repeat: 1.13,
+            penalty_freq: 0.8,
+            penalty_present: 0.3,
+            seed: 5713,
+            ..Default::default()
+        };
+        let expected = ordered(&logits, &history, &p);
+        for permutation in [0, 1, 2] {
+            let mut mutated = logits.clone();
+            let mut seen = vec![false; vocabulary];
+            let h = &history[history.len() - p.penalty_last_n..];
+            for thread in 0..1024 {
+                let lane = match permutation {
+                    0 => thread,
+                    1 => 1023 - thread,
+                    _ => thread * 37 % 1024,
+                };
+                for at in (lane..h.len()).step_by(1024) {
+                    let id = h[at];
+                    if id < 0 || id as usize >= vocabulary {
+                        continue;
+                    }
+                    let id = id as usize;
+                    if std::mem::replace(&mut seen[id], true) {
+                        continue;
+                    }
+                    let count = h.iter().filter(|&&v| v == id as i32).count();
+                    let x = mutated[id];
+                    mutated[id] = if x <= 0. {
+                        x * p.penalty_repeat
+                    } else {
+                        x / p.penalty_repeat
+                    } - (count as f32 * p.penalty_freq + p.penalty_present);
+                }
+            }
+            let sorted = ordered(&mutated, &[], &p);
+            assert_eq!(sorted, expected);
+            // Actual coupled source always produces64 entries per part, even
+            // when only1/20 survive the request's final top-k selection.
+            let fixed = split(&sorted, KMAX);
+            assert_eq!(fixed, expected[..KMAX]);
+            for k in [1, 20, 64] {
+                let q = Params {
+                    top_k: k,
+                    top_p: p.top_p,
+                    min_p: p.min_p,
+                    temperature: p.temperature,
+                    seed: p.seed,
+                    ..Default::default()
+                };
+                for counter in [1, 4096, u32::MAX as u64 + 1] {
+                    assert_eq!(pick(&fixed, &q, counter), pick(&expected, &q, counter));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn actual_coupled_schedule_preserves_logits_write_fixed64_reads_and_mutable_tail_k() {
+    use wgpu::naga as n;
+    for cjk in [false, true] {
+        let schedule = coupled_kernels(cjk);
+        assert_eq!(
+            schedule,
+            [
+                Kernel::CoupledPenalize { cjk },
+                Kernel::CoupledPart { cjk },
+                Kernel::CoupledMerge { cjk }
+            ]
+        );
+        assert_eq!(schedule.map(Kernel::threads), [1024, 128, 32]);
+        for (index, kernel) in schedule.into_iter().enumerate() {
+            let source = kernel.source();
+            assert!(source.contains("return p.dims.x==1u&&p.hist.w==0u"));
+            let module = n::front::wgsl::parse_str(&source).unwrap();
+            let logits = module
+                .global_variables
+                .iter()
+                .find(|(_, g)| g.name.as_deref() == Some("logits"))
+                .unwrap()
+                .1;
+            assert_eq!(
+                logits.space,
+                n::AddressSpace::Storage {
+                    access: if index == 0 {
+                        n::StorageAccess::LOAD | n::StorageAccess::STORE
+                    } else {
+                        n::StorageAccess::LOAD
+                    }
+                }
+            );
+            if index == 0 {
+                assert!(source.contains("logits[v]=value"));
+                assert!(source.contains("atomicOr(&seen[v>>5u],bit)"));
+            } else if index == 1 {
+                assert!(source.contains("let h=0u;"));
+                assert!(source.contains("for(var r=0u;r<KM;r++)"));
+                assert!(source.contains("candidates[(row*NB+group.x)*KM+r]"));
+            } else {
+                assert!(source.contains("let k=p.dims.z;"));
+                assert!(source.contains("i<NB*KM"));
+                assert!(source.contains("lists[list*KM]"));
+                assert!(source.contains("cursor[m]<KM"));
+                assert!(source.contains("for(var r=0u;r<k;r++)"));
+            }
+        }
+        assert_ne!(Kernel::CoupledPart { cjk }.id(), Kernel::Part.id());
+        assert_ne!(Kernel::CoupledMerge { cjk }.id(), Kernel::Merge.id());
+    }
+    // Target sampler still uses its own request-sized, read-only logits path.
+    let part = Kernel::Part.source();
+    assert!(part.contains("let h=min(p.hist.x,p.hist.y);"));
+    assert!(part.contains("candidates[(row*NB+group.x)*p.dims.z+r]"));
 }

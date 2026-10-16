@@ -632,11 +632,7 @@ pub(crate) fn draft_pick(
         // SAFETY: bridge publishes the same parameter/history domain as the
         // selected shader. Public map owners remain retained by the MTP model.
         unsafe {
-            if cjk.is_some() {
-                super::launch_cjk(client, owners, &s.params, h)?;
-            } else {
-                super::launch(client, owners, &s.params, 1, h, 0, 2)?;
-            }
+            super::launch_coupled(client, owners, &s.params, h, cjk.is_some())?;
         }
         let mut publish = vec![
             s.roots[OUT].clone(),

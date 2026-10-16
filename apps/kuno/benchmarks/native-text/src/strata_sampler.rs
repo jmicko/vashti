@@ -176,42 +176,78 @@ pub(crate) enum Kernel {
     Greedy { penalties: bool },
     Part,
     Merge,
-    CjkPart,
-    CjkMerge,
+    CoupledPenalize { cjk: bool },
+    CoupledPart { cjk: bool },
+    CoupledMerge { cjk: bool },
 }
 impl Kernel {
+    fn coupled(self) -> bool {
+        matches!(
+            self,
+            Self::CoupledPenalize { .. } | Self::CoupledPart { .. } | Self::CoupledMerge { .. }
+        )
+    }
+    fn cjk(self) -> bool {
+        matches!(
+            self,
+            Self::CoupledPenalize { cjk: true }
+                | Self::CoupledPart { cjk: true }
+                | Self::CoupledMerge { cjk: true }
+        )
+    }
     pub(crate) fn source(self) -> String {
-        format!(
-            "{}\n{}",
-            include_str!("strata-sampler-common.wgsl"),
-            match self {
-                Self::Greedy { .. } => include_str!("strata-sampler-greedy.wgsl"),
-                Self::Part | Self::CjkPart => include_str!("strata-sampler-part.wgsl"),
-                Self::Merge | Self::CjkMerge => include_str!("strata-sampler-merge.wgsl"),
+        let mut common = include_str!("strata-sampler-common.wgsl").to_owned();
+        let body = match self {
+            Self::Greedy { .. } => include_str!("strata-sampler-greedy.wgsl").to_owned(),
+            Self::Part => include_str!("strata-sampler-part.wgsl").to_owned(),
+            Self::Merge => include_str!("strata-sampler-merge.wgsl").to_owned(),
+            Self::CoupledPenalize { .. } => {
+                // Same actual original logits owner: penalty write precedes
+                // fixed64 candidate reads in the retained native graph.
+                common =
+                    common.replace("var<storage,read> logits", "var<storage,read_write> logits");
+                include_str!("strata-sampler-coupled-penalize.wgsl").to_owned()
             }
-        )
-        .replace(
-            "const NV:u32=248320u;const NB:u32=61u;",
-            if matches!(self, Self::CjkPart | Self::CjkMerge) {
-                "const NV:u32=106299u;const NB:u32=26u;"
-            } else {
-                "const NV:u32=248320u;const NB:u32=61u;"
-            },
-        )
-        .replace(
-            "BITMAP_WORDS",
-            if matches!(self, Self::Greedy { penalties: false }) {
-                "1"
-            } else {
-                "7760"
-            },
-        )
+            Self::CoupledPart { .. } => include_str!("strata-sampler-part.wgsl")
+                .replace("let h=min(p.hist.x,p.hist.y);", "let h=0u;")
+                .replace("p.dims.z", "KM"),
+            Self::CoupledMerge { .. } => include_str!("strata-sampler-merge.wgsl")
+                .replace("i<NB*k", "i<NB*KM")
+                .replace("row*NB*k+i", "row*NB*KM+i")
+                .replace("lists[list*k]", "lists[list*KM]")
+                .replace("cursor[m]<k", "cursor[m]<KM")
+                .replace("(lane+32u*m)*k+cursor[m]", "(lane+32u*m)*KM+cursor[m]"),
+        };
+        if self.coupled() {
+            // Coupled graphs always cover one actual draft row. The request's
+            // K remains mutable in Params; only candidate LIST stride is64.
+            common = common.replace("return p.dims.x>0u", "return p.dims.x==1u&&p.hist.w==0u");
+        }
+        format!("{common}\n{body}")
+            .replace(
+                "const NV:u32=248320u;const NB:u32=61u;",
+                if self.cjk() {
+                    "const NV:u32=106299u;const NB:u32=26u;"
+                } else {
+                    "const NV:u32=248320u;const NB:u32=61u;"
+                },
+            )
+            .replace(
+                "BITMAP_WORDS",
+                if matches!(self, Self::Greedy { penalties: false }) {
+                    "1"
+                } else if self.cjk() {
+                    "3322"
+                } else {
+                    "7760"
+                },
+            )
     }
     fn threads(self) -> u32 {
         match self {
-            Self::Greedy { .. } => 1024,
-            Self::Part | Self::CjkPart => 128,
-            Self::Merge | Self::CjkMerge => 32,
+            Self::Greedy { .. } | Self::CoupledPenalize { .. } => 1024,
+            Self::Part | Self::CoupledPart { .. } => 128,
+            Self::Merge | Self::CoupledMerge { .. } => 32,
         }
     }
 }
@@ -222,8 +258,12 @@ impl KernelMetadata for Kernel {
             Self::Greedy { penalties: false } => "StrataNativeSamplerGreedy",
             Self::Part => "StrataNativeSamplerSplitPart",
             Self::Merge => "StrataNativeSamplerSplitMerge",
-            Self::CjkPart => "StrataNativeCjkSamplerSplitPart",
-            Self::CjkMerge => "StrataNativeCjkSamplerSplitMerge",
+            Self::CoupledPenalize { cjk: false } => "StrataNativeCoupledPenalize",
+            Self::CoupledPenalize { cjk: true } => "StrataNativeCjkCoupledPenalize",
+            Self::CoupledPart { cjk: false } => "StrataNativeCoupledSplitPart64",
+            Self::CoupledPart { cjk: true } => "StrataNativeCjkCoupledSplitPart64",
+            Self::CoupledMerge { cjk: false } => "StrataNativeCoupledSplitMerge64",
+            Self::CoupledMerge { cjk: true } => "StrataNativeCjkCoupledSplitMerge64",
         }
     }
     fn id(&self) -> KernelId {
@@ -259,8 +299,12 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
         Kernel::Greedy { penalties: true },
         Kernel::Part,
         Kernel::Merge,
-        Kernel::CjkPart,
-        Kernel::CjkMerge,
+        Kernel::CoupledPenalize { cjk: false },
+        Kernel::CoupledPart { cjk: false },
+        Kernel::CoupledMerge { cjk: false },
+        Kernel::CoupledPenalize { cjk: true },
+        Kernel::CoupledPart { cjk: true },
+        Kernel::CoupledMerge { cjk: true },
     ]
     .into_iter()
     .map(|k| CompiledKernel {
@@ -278,6 +322,13 @@ pub(crate) fn scratch_bytes(rows: usize) -> Result<u64> {
         return Err(reject());
     }
     Ok((rows * BLOCKS * KMAX * 8) as u64)
+}
+fn coupled_kernels(cjk: bool) -> [Kernel; 3] {
+    [
+        Kernel::CoupledPenalize { cjk },
+        Kernel::CoupledPart { cjk },
+        Kernel::CoupledMerge { cjk },
+    ]
 }
 /// Original device inputs/outputs. No CPU fallback or implicit GPU allocation.
 /// # Safety
@@ -301,24 +352,30 @@ pub(crate) unsafe fn launch(
     stride: usize,
 ) -> Result<()> {
     // SAFETY: identical full-vocabulary owner contract forwarded unchanged.
-    unsafe { launch_domain(client, owners, params, rows, history, first, stride, false) }
+    unsafe {
+        launch_domain(
+            client, owners, params, rows, history, first, stride, false, false,
+        )
+    }
 }
-/// Compact CJK logits use compact penalty-history IDs. The owner maps the
-/// selected result back to original IDs before publishing to the draft ring.
+/// Original coupled sampler: mutate penalties once, build fixed64 lists, then
+/// use the mutable request K at merge. Compact history was mapped by the original
+/// inverse-ID bridge; publication maps the chosen index to the original token.
 /// # Safety
-/// Same retained private owner contract as launch; the caller publishes device
-/// parameters with vocabulary106299/blocks26 and original-order subset history.
-#[allow(clippy::too_many_arguments)]
-pub(crate) unsafe fn launch_cjk(
+/// Same retained private ownership as launch. Logits is also writable, all prior
+/// readers are joined, and it remains live through the three ordered stages.
+/// Params contains the actual selected full/CJK vocabulary and block count.
+pub(crate) unsafe fn launch_coupled(
     client: &ComputeClient<WgpuRuntime>,
     owners: [Handle; 6],
     params: &Params,
     history: usize,
+    cjk: bool,
 ) -> Result<()> {
     if params.greedy() {
         return Err(reject());
     }
-    unsafe { launch_domain(client, owners, params, 1, history, 0, 2, true) }
+    unsafe { launch_domain(client, owners, params, 1, history, 0, 2, cjk, true) }
 }
 #[allow(clippy::too_many_arguments)]
 unsafe fn launch_domain(
@@ -330,8 +387,12 @@ unsafe fn launch_domain(
     first: usize,
     stride: usize,
     cjk: bool,
+    coupled: bool,
 ) -> Result<()> {
-    if !crate::strata_intel_core::enabled() || (cjk && (rows != 1 || params.greedy())) {
+    if !crate::strata_intel_core::enabled()
+        || coupled && (rows != 1 || params.greedy())
+        || cjk && !coupled
+    {
         return Err(reject());
     }
     let _checked_words = params.words(rows, history, first, stride)?;
@@ -384,13 +445,14 @@ unsafe fn launch_domain(
             }
         }
     }
+    let coupled_kernels = coupled_kernels(cjk);
     let greedy = [Kernel::Greedy {
         penalties: params.penalty_last_n > 0 && history > 0,
     }];
     for kernel in if params.greedy() {
         &greedy[..]
-    } else if cjk {
-        &[Kernel::CjkPart, Kernel::CjkMerge][..]
+    } else if coupled {
+        &coupled_kernels[..]
     } else {
         &[Kernel::Part, Kernel::Merge][..]
     } {
@@ -398,7 +460,7 @@ unsafe fn launch_domain(
         for h in &owners {
             args = args.with_buffer(h.clone().binding());
         }
-        let grid = if matches!(*kernel, Kernel::Part | Kernel::CjkPart) {
+        let grid = if matches!(*kernel, Kernel::Part | Kernel::CoupledPart { .. }) {
             [blocks as u32, rows as u32, 1]
         } else {
             [rows as u32, 1, 1]
