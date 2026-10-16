@@ -1,7 +1,8 @@
 # Strata Rust whole-model port experiment
 
-**Current CPU-only resume (2026-10-16):** source `4ceb86f`, connected retained
-request erasure before terminal model close. Read the [completion receipt and lifetime next steps](kuno-strata-rewrite-completion.md#connected-retained-targetmtp-request-erasure-2026-10-16)
+**Current CPU-only resume (2026-10-16):** source `1f4b195560e5b8e7a83361f19c844a7104d11cbf`, connected retained
+loaded sessions and original-receipt request rearming. Physical hot reuse remains
+unverified. Read the [completion receipt and next gates](kuno-strata-rewrite-completion.md#connected-retained-loaded-session-lifecycle-2026-10-16)
 and [checkpoint](kuno-native-text-checkpoint.md) first. Historical timing/next-step
 notes below do not authorize new speed trials. Full rewrite remains incomplete.
 

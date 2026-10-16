@@ -1,32 +1,52 @@
-<!-- Current resume: 2026-10-16, source 4ceb86f, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source 1f4b195560e5b8e7a83361f19c844a7104d11cbf, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, source `4ceb86f`. Goal active CPU-only. Last sudo refresh
-reported password required in Demons; CPU work does not need root. No GPU/model/service/install/release work or current
-health claim. Last physical recovery evidence remains historical Oct15.
+branch `codex/strata-rust-port`, source `1f4b195560e5b8e7a83361f19c844a7104d11cbf`. Goal active CPU-only.
+Last sudo refresh still reported password required in Demons after the user's
+renewal; CPU work does not need root. No GPU/model/service/install/release work
+or current health claim. Last physical recovery remains historicalOct15.
 
-Read [retained request erasure and exact lifetime next steps](kuno-strata-rewrite-completion.md#connected-retained-targetmtp-request-erasure-2026-10-16)
-and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--retained-request-erasure-2026-10-16).
+Read [retained loaded-session receipt](kuno-strata-rewrite-completion.md#connected-retained-loaded-session-lifecycle-2026-10-16)
+and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--retained-loaded-sessions-2026-10-16).
 Controller tests live under `strata_engine::controller`. Earlier CJK `cd703bc` was
 integrated as `0bfbea8`; do not reapply it.
 
-**Latest connected block:** `4ceb86f` connects completed target/MTP retained-state
-erasure in the actual request entry, with real fault/I/O/whole-owner checks and
-opaque original-owner receipts.13-only replay stays separate. PLE initial sentinels,
-all physical private padding and original scope/epoch ownership remain checked;
-final close independently audits owners (source totals remain cumulative). Dedicated
-64MiB inspection HOST pricing leaves normal MTP packets unchanged.402 distinct
-CPU cases/50 nonempty suites and both strict lint configurations pass. No new
-normal frozen artifact or shader change; no GPU/numerical/performance acceptance.
+**Latest connected block:** actual `Session::load/run/close` owns the original
+runtime/tables/executor/target/MTP and immutable public weights. The one-shot
+wrapper uses that same lifecycle, with explicit checked cleanup for preflight
+rejections and original all-attempt terminal/physical recovery ordering. Session
+is thread-bound. Full32K model capacity is separate from actual bounded request
+geometry. Repeated requests consume original non-cloneable erasure receipts,
+rearm monotonic language scopes and use a distinct retained-ready gate instead of
+impersonating generation0 PLE. Selected FourGdn/grouped PLE/status policies and
+all owner/epoch/counter/retirement state are preserved. Controller checks its
+actual newly issued scope at exit. Successful requests clear/check private owners
+before publishing Ready; terminal close independently audits original owners.
 
-The wrapper still closes after each request: hot reuse is NOT implemented. Next
-retain loaded owners, bind bounded request geometry with monotonic scopes from
-real erasure receipts, distinguish retained-ready from generation0/unstarted PLE,
-reuse selected policies and clear retained private HOST/control values. Do not
-reset owner IDs/epochs/counters/poison gates or loosen13-only diagnostics. Read the
-exact linked lifetime checklist before editing. Full rewrite remains incomplete.
+404 distinct CPU cases/50 nonempty suites, final locked test build, both strict
+lint configurations and formatting/whitespace pass. Exact logs in the receipt.
+No shader/generator/arithmetic change or new normal frozen artifact.12a60bf is
+stale; build current source before any newly authorized physical acceptance.
+No source/component is selected or dropped by throughput; speed gate stays closed.
+
+**Hot repeated model execution is not physically validated.** The current public
+executable still uses the one-request wrapper; the internal reusable session is
+connected in source. Existing request-end sanitization clears recordings/parameter
+and binding/header caches, retaining pipelines/weights. Finish the retained HOST/
+control audit and a protected arbitrary-input/tokenization caller. Remaining
+packed/in-place scratch/substitution and whole-device pricing, pinned source/
+scheduling audit, old regression and physical/numerical/failure/recovery gates
+remain. Full rewrite incomplete; no private/general-service or throughput claim.
+No API/config/connector/UI change; required Vashti changes:none. Preserve canonical
+application work and inherited untracked files.
+
+**Previous connected block:** `4ceb86f` introduced completed target/MTP retained
+private-state erasure, original-owner receipts and dedicated64MiB inspection HOST
+pricing before the then-one-shot terminal close.402 distinct CPU cases/50 suites
+and both strict lint configurations passed. The loaded-session block above now
+connects bounded rearming and preserved-policy reuse without loosening13-only replay.
 
 **Previous connected block:** `cbf4381`/`910cb58` price/preload/seal all784 original
 dense projections before expert-source attachment. The actual256-byte dense roots
@@ -39,7 +59,7 @@ all projection names/formats/shapes and separation from norms/experts/tables.
 387 distinct CPU cases/44 nonempty suites and both strict lint configurations pass.
 No shader/arithmetic change. No new normal frozen artifact: the12a60bf binary is
 stale; freeze current source before any newly authorized execution check. No
-current device/residency/performance claim. The engine remains request-scoped;
+current device/residency/performance claim. That earlier entry was request-scoped;
 protected arbitrary input and hot public-model/request reuse are still open.
 
 **Previous connected block:** native mutually exclusive PLE/GDN/QSA/MoE phase

@@ -60,7 +60,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Sourcea26adc2 ports the native bounded trigram index, longest/recent suffix choice, cost priors, probing/stale rules and optional lookup-chain accounting into the selected controller. Configured MTP/target windows no longer shrink at the output cap; state commit and emission are separate. Coupled sampling and physical state acceptance still need end-to-end validation. |
 | Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Source `131d29c` connects real provisional rows to accepted GDN/QSA/PLE candidates while original full-window transactions remain open, then publishes only n after real fault/I/O proof. Count1 uses its candidate and all-accept multirow runs original state replay. Old diagnostic full-window repair is not selected by the native controller. Source `4083258` connects the retained multirow commit graph with explicit dynamic accepted-count/position fields, original family preflight and count1 skip. Source `91e1f9e` connects original pending commit export/join; `1f46f76` connects a scoped original next-draft consumer before explicit commit acknowledgement. Source `0bf0b5f` emits real verified predictions before next drafting, matching the source delivery order. Source `f9d1e06` connects scoped admission/allocator lifetimes and INFO visibility; physical independent execution, full source substitution audit and independent numerical oracle remain open. |
 | Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; Source `d40442c` connects direct retained target submission with typed control uploads and original family receipts; source `d0670b0` connects direct MTP invocation with original actual packet observations and sampler/actor handback. Source `b6732c8` adopts independent MTP compute and concurrent buffer families with semaphore handoffs. Source `414e2c3` connects actual current INFO copies on the native transfer timeline and avoids empty primary submissions; source `86f4c35` replaces the global single fence/last-recording assumption with actual lane fences and stable original recording flights. Source `131d29c` connects synchronous original accepted-prefix publication; source `4083258` connects the retained commit graph. Source `91e1f9e` connects original pending submission identities and exact joins; `1f46f76` connects scoped original MTP consumption before explicit commit acknowledgement. Real independent readiness/INFO/draft execution remain open; source `543bc73` couples original pending commits to retained shared MAIN debt; source `a8e538f` retains actual recording ranges and preflights whole INFO-copy conflicts; source `d2d3228` pins original verified R, submits its real readiness dependency before commit and scopes all unkeyed/named draft lane selection. Source `7ad47ca` connects original native packet fill/copy, real HOST_READ availability, final fence and checked HAL host map without primary Wgpu readback copies/callbacks. Source `7cb1cbc` connects native upload state/render/flush/unmap and all-owner joined I/O reuse without Wgpu remaps or primary reuse clears. Source `7477b66` connects original per-owner selective reuse, current INFO copy completion and named/future/live recording exclusions. Source `f9d1e06` connects scoped graph/stream current-lane/conflict admission, original allocator pins and copy-vs-math INFO visibility. Required ordinary/cold/final global drains remain. Physical independent execution and full draft/event fidelity remain unverified. Physical ring overlap, scratch lifetimes and full execution acceptance remain open. Measured serving lazily captures branches; eager all-branch warmup is not a prerequisite; a sequence of independent Wgpu launches is not equivalent. |
-| Request lifecycle and arbitrary input | upstream CLI/session/inference entry points | Source `dc7ace7` connects an owned raw-token request entry, original target/MTP construction, callback delivery and full checked cleanup; public diagnostics consume that actual path. Source `4ceb86f` connects completed target/MTP retained-state erasure with original-owner receipts before the current terminal close. This does not yet retain a model across requests or rearm the closed request permit. The current executable caller is still compiled-public. Protected arbitrary-input/tokenization, verified hot request reuse and full device/failure/recovery acceptance remain required; no private/general service claim. No gateway/UI work required. |
+| Request lifecycle and arbitrary input | upstream CLI/session/inference entry points | Source `dc7ace7` connects an owned raw-token request entry, original target/MTP construction, callback delivery and full checked cleanup; public diagnostics consume that actual path. Source `4ceb86f` connects completed target/MTP retained-state erasure with original-owner receipts before the current terminal close. Source `1f4b195560e5b8e7a83361f19c844a7104d11cbf` connects retained `Session::load/run/close`, bounded rearming from original erasure receipts, retained-ready owners and preserved policy/scope state; see the loaded-session receipt below. Hardware hot-reuse acceptance remains open. The current executable caller is still compiled-public. Protected arbitrary-input/tokenization, verified hot request reuse and full device/failure/recovery acceptance remain required; no private/general service claim. No gateway/UI work required. |
 
 ## Validation and the speed gate
 
@@ -7306,3 +7306,76 @@ historical evidence only.
    scheduling audits, old regressions and full numerical/device/failure/recovery
    acceptance with fresh authorization/artifacts. No speed trials before the full
    connected rewrite gate passes.
+
+
+## Connected retained loaded-session lifecycle (2026-10-16)
+
+Source `1f4b195560e5b8e7a83361f19c844a7104d11cbf` supersedes the first three next-lifetime steps in
+`4ceb86f` above. The actual `strata_engine::execute` delegates to the same original
+`Session::load`, `run` and `close`. Construction populates the long-lived optional
+owners phase by phase; initialization/inference failures and explicit close retain
+all-attempt draft-before-target, target-drop-before-executor/source-detach, tables,
+shared-root physical audit and final draft-drop ordering. Failed configuration
+never grants access to a preexisting runtime. A terminal close is attempted once;
+Drop is only a best-effort backstop. The one-shot wrapper explicitly closes even
+on a nonmutating run preflight rejection so a cleanup failure cannot be hidden
+behind `Rejected`. The session cannot move to another thread because native table
+and recording scopes are thread-bound.
+
+The loaded model owns32768 context capacity, separately from each bounded request's
+actual prompt/output geometry. Language scopes increase monotonically. The next
+request consumes the original non-cloneable target reset receipt and validates
+the corresponding original MTP receipt; a stale scope, active I/O, different owner,
+capacity mismatch or exhausted scope cannot rearm. A distinct retained-ready
+capability checks original fault/graph/context, healthy original admission/owners,
+erased PLE sentinel/cursor and preserved generation/policies. It never impersonates
+a generation0 constructor or resets epochs, family counters or retirement flags.
+Initial source construction remains restricted to the genuinely unused model.
+
+Cold prefill selects FourGdn, grouped PLE and all three grouped-status policies
+once. Subsequent prefills validate and reuse those actual selected policies.
+The real request controller captures the newly issued language scope and checks
+that exact scope at exit instead of assuming1. Successful generation erases and
+checks actual target/MTP private owners, drops request-local wiping values, then
+publishes Ready with original receipts. A subsequent run uses those loaded owners;
+no weights/source copies or new GPU arena are introduced. Terminal close still
+independently compares actual erasure receipts, with cumulative source coverage.
+
+This connects reusable ownership in source, **not device-verified hot inference**.
+The current public executable still intentionally uses the one-request wrapper.
+No arbitrary private input/tokenization caller or installed gateway is selected.
+The existing request-end sanitizer drains original graph/I/O owners, destroys
+completed recordings, clears parameter templates and binding/header caches, and
+wipes actual original GPU I/O. Compiled pipelines and public model weights remain;
+this block does not retain whole recording programs across different requests.
+A complete retained HOST/control-value audit and physical repeated-request
+numerical/failure/recovery checks remain required. Do not infer whole-process
+forensic erasure or performance from a CPU lifecycle test.
+
+CPU evidence under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-retained-session-checked-build-20261016.log`: final locked release
+  test build, observed terminal exit0 before the following CPU run. Earlier
+  `build`/`final-build` logs precede later source edits and are intermediate.
+- `strata-retained-session-cpu-final-20261016.log`:404 distinct CPU cases in50
+  nonempty suites. Includes repeated varying request/capacity scope transitions,
+  stale/duplicate/active/exhausted-scope rejection, matching session erasure state,
+  terminal non-reopening and all previous original erasure/owner/source coverage.
+  These are CPU state/contract cases; they do not run a repeated physical model.
+- `strata-retained-session-{core,off}-clippy-20261016.log`: both strict locked
+  release lint configurations pass. Changed Rust formatting and whitespace pass.
+
+No shader/generator/arithmetic change and no
+new normal frozen artifact. The old12a60bf artifact remains stale. No GPU/model/
+service/install/API/config/connector/UI/release changes; required Vashti changes:
+none. Canonical application checkout and inherited untracked files are preserved.
+Sudo refresh still reports password required in the existing Demons shell; this
+CPU work needs no root. Goal remains active CPU-only; full rewrite incomplete,
+speed gate closed and historicalOct15 recovery is not current device evidence.
+
+Next finish the retained HOST/control audit and connect a protected arbitrary-input
+caller/tokenizer, then the remaining packed/in-place scratch/substitution/whole-
+device pricing and final pinned-source scheduling review. Preserve the unresolved
+legacy regression and numerical/physical/failure/recovery gates. A fresh normal
+artifact and renewed GPU authorization are required before device acceptance;
+no speed trials before the complete connected rewrite gate passes.

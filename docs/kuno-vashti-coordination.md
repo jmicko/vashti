@@ -6,8 +6,8 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through `4ceb86f`. Read the latest
-[retained-erasure handoff](#active-kuno-engine-handoff--retained-request-erasure-2026-10-16)
+`codex/strata-rust-port`, engine source through `1f4b195560e5b8e7a83361f19c844a7104d11cbf`. Read the latest
+[retained-session handoff](#active-kuno-engine-handoff--retained-loaded-sessions-2026-10-16)
 and [completion gate](kuno-strata-rewrite-completion.md). Direct target/MTP
 submission, accepted-prefix state publication and retained commit graph are connected
 in source. Original pending submissions/joins and scoped next-draft consumption are connected;
@@ -6829,3 +6829,34 @@ capacity/monotonic request rearming from original receipts, reuse of selected
 policies, and private HOST/control clearing; preserve every original owner/epoch/
 retirement gate and terminal close order. The linked receipt details these exact
 constraints plus remaining whole-rewrite gates. Preserve canonical application work.
+
+
+## Active Kuno engine handoff — retained loaded sessions (2026-10-16)
+
+Isolated `codex/strata-rust-port`, source `1f4b195560e5b8e7a83361f19c844a7104d11cbf`.
+Read the [loaded-session receipt](kuno-strata-rewrite-completion.md#connected-retained-loaded-session-lifecycle-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). Actual native entry now uses
+`Session::load/run/close`, with original public weights/target/MTP/runtime owners
+and checked all-attempt terminal cleanup.32K capacity, bounded request geometry,
+monotonic scope rearming from original erasure receipts, distinct retained-ready
+PLE and immutable FourGdn/grouped policy reuse are connected in source. The real
+controller verifies its issued request scope, preserving owner IDs/epochs/counters
+and retirement. Session stays on its native calling thread. No new GPU roots.
+
+404 distinct CPU cases/50 nonempty suites, final locked release test build, both
+strict lint configurations and formatting/whitespace pass. Exact logs/limitations
+in the linked receipt. Earlier builds in this block are intermediate; final CPU
+run follows the checked build's terminal success. No shader/arithmetic change or
+new frozen ordinary artifact;12a60bf is stale for current source.
+
+This is NOT device-verified hot reuse. Executable public diagnostics still use
+the one-request wrapper; protected arbitrary-input/tokenization and the complete
+retained HOST/control audit remain. Existing end-of-request I/O sanitization
+clears recordings, parameter templates and binding/header caches while retaining
+compiled pipelines/public weights. Full source/scheduling/substitution/pricing,
+old regression and numerical/device/failure/recovery gates remain. Whole rewrite
+incomplete; no speed trials. Goal stays active CPU-only. Sudo validation still
+reports password required in Demons; root is not needed for this work. Historical
+Oct15 recovery does not establish current health. No GPU/model/service/install/
+release/API/config/frontend change. Required Vashti changes:none. Preserve the
+canonical application checkout and inherited untracked files.
