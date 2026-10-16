@@ -1014,10 +1014,141 @@ impl WgpuStream {
         Ok(bytes)
     }
 
+    /// Selected native graph's real packet copy and synchronous HAL host map.
+    /// Keep original I/O leases and wiping output controllers; no Wgpu primary
+    /// copy/map callback/poll may serialize this observation behind MAIN work.
+    /// Conservative graph/flush/reuse joins still remain until scoped admission
+    /// is complete; this is not by itself an independent-execution claim.
+    fn read_native_private_resources(
+        &mut self,
+        descriptors: Vec<(WgpuResource, Shape, usize)>,
+    ) -> DynFut<Result<Vec<Bytes>, ServerError>> {
+        let scoped = self.transient_io.as_ref().unwrap().reuse_active();
+        let mut setup_timer = super::transient_io::ScopedReadTimer::new(scoped, 0);
+        let mutation = self.transient_io.as_ref().unwrap().mutation_guard();
+        self.compute_pass = None;
+        let scopes = super::transient_io::IoScopes::new(&self.device);
+        let mut pending = Vec::new();
+        let setup = (|| {
+            self.private_io_active()?;
+            // Preserve Wgpu's real cold source initialization before raw
+            // native copies. Actual inference roots are STORAGE/COPY_SRC;
+            // external/private I/O staging owners are not exposed as sources.
+            // Original verified R is already initialized before its scope pins
+            // it, so this cannot clear a protected live source behind its back.
+            for (source, _, _) in &descriptors {
+                if source.size != 0 {
+                    if !source
+                        .buffer
+                        .usage()
+                        .contains(wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC)
+                    {
+                        return Err(super::transient_io::fault(
+                            "native readback original inference source usage",
+                        ));
+                    }
+                    self.initialize_native_storage_root(source)?;
+                }
+            }
+            // This is the existing conservative join, not a completion minted
+            // from an empty encoder, timer, metadata query or pending token.
+            self.flush(StreamErrorMode {
+                ignore: false,
+                flush: true,
+            })?;
+            pending
+                .try_reserve_exact(descriptors.len())
+                .map_err(|_| super::transient_io::fault("native readback metadata allocation"))?;
+            for (resource, shape, elem_size) in descriptors {
+                let logical = shape
+                    .iter()
+                    .try_fold(elem_size, |n, s| n.checked_mul(*s))
+                    .ok_or_else(|| super::transient_io::fault("native readback shape overflow"))?;
+                if resource.size == 0 {
+                    if logical != 0 {
+                        return Err(super::transient_io::fault("native empty readback mismatch"));
+                    }
+                    pending.push(None);
+                    continue;
+                }
+                let (entry, transfers) = self
+                    .transient_io
+                    .as_mut()
+                    .unwrap()
+                    .native_readback(&resource, logical)?;
+                // Retain the original lease BEFORE either enqueue can fail.
+                pending.push(Some(entry));
+                for (source, target) in transfers {
+                    self.strata_graph
+                        .as_mut()
+                        .unwrap()
+                        .push_transfer(source, target)?;
+                    self.tasks_count += 1;
+                }
+            }
+            setup_timer.finish();
+            let _flush_timer = super::transient_io::ScopedReadTimer::new(scoped, 1);
+            if self.encoder_dirty
+                || self.pending_write_count != 0
+                || self.transient_io.as_ref().unwrap().has_pending_info()
+            {
+                return Err(super::transient_io::fault(
+                    "native readback has unstaged primary/INFO work",
+                ));
+            }
+            self.strata_graph.as_mut().unwrap().execute_readback()?;
+            self.tasks_count = 0;
+            self.mem_manage.memory_cleanup(false);
+            self.mem_manage.release_uniforms();
+            self.flush_errors(StreamErrorMode {
+                ignore: false,
+                flush: true,
+            })?;
+            Ok(())
+        })();
+        scopes.finish(self.transient_io.as_mut().unwrap());
+        if let Err(error) = setup {
+            self.transient_io.as_ref().unwrap().retire();
+            return Box::pin(async move { Err(error) });
+        }
+        let mut map_timer = super::transient_io::ScopedReadTimer::new(scoped, 2);
+        let scopes = super::transient_io::IoScopes::new(&self.device);
+        // One deadline for the whole original host-map batch, never one fresh
+        // window per packet. The actual GPU fence completed in flush above.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let mapped = (|| {
+            let mut result = Vec::new();
+            result
+                .try_reserve_exact(pending.len())
+                .map_err(|_| super::transient_io::fault("native readback result allocation"))?;
+            for entry in pending {
+                result.push(match entry {
+                    // SAFETY: the exact original fill/copy commands, including
+                    // all transfer segments, joined on Graph's real lane fence.
+                    // Full initialization/HOST_READ barriers are recorded there;
+                    // the original lease prevents reuse or erase during mapping.
+                    Some(entry) => unsafe { entry.into_joined_bytes(&self.device, deadline)? },
+                    None => Bytes::from_bytes_vec(Vec::new()),
+                });
+            }
+            Ok(result)
+        })();
+        scopes.finish(self.transient_io.as_mut().unwrap());
+        map_timer.finish();
+        if mapped.is_err() {
+            self.transient_io.as_ref().unwrap().retire();
+        } else {
+            mutation.accept();
+        }
+        Box::pin(async move { mapped })
+    }
     fn read_private_resources(
         &mut self,
         descriptors: Vec<(WgpuResource, Shape, usize)>,
     ) -> DynFut<Result<Vec<Bytes>, ServerError>> {
+        if self.strata_graph.is_some() {
+            return self.read_native_private_resources(descriptors);
+        }
         let scoped = self.transient_io.as_ref().unwrap().reuse_active();
         let mut setup_timer = super::transient_io::ScopedReadTimer::new(scoped, 0);
         let mutation = self.transient_io.as_ref().unwrap().mutation_guard();

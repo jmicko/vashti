@@ -869,6 +869,45 @@ pub(crate) struct PendingReadback {
     lease: ReadbackLease,
     logical: usize,
 }
+/// Distinct native owner prevents accidental Wgpu callback/map access. It
+/// keeps the same original ledger allocation and lease through returned Bytes.
+pub(crate) struct PendingNativeReadback {
+    original: PendingReadback,
+    plan: super::strata_readback::Plan,
+}
+impl PendingNativeReadback {
+    /// # Safety
+    /// The exact original native fill/copy and every transfer segment must have
+    /// completed on its actual final graph fence. No enqueue/telemetry receipt.
+    pub(crate) unsafe fn into_joined_bytes(
+        self,
+        device: &wgpu::Device,
+        deadline: Instant,
+    ) -> Result<Bytes, ServerError> {
+        let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+            super::strata_readback::read_joined(device, &self.original.buffer, &self.plan, deadline)
+        }));
+        let data = match attempted {
+            Ok(Ok(data)) => data,
+            Ok(Err(reason)) => {
+                self.original.fail();
+                return Err(fault(reason));
+            }
+            Err(_) => {
+                self.original.fail();
+                return Err(fault("native private readback map panic"));
+            }
+        };
+        let len = self.original.logical;
+        let controller = Box::new(ReadbackController {
+            data,
+            _lease: self.original.lease,
+        });
+        // SAFETY: the original wiping controller owns all initialized logical
+        // bytes. The native map was unmapped; its original lease remains held.
+        Ok(unsafe { Bytes::from_controller(controller, len) })
+    }
+}
 impl PendingReadback {
     pub fn fail(&self) {
         self.lease.retire();
@@ -3800,6 +3839,68 @@ impl TransientIo {
         };
         self.upload(encoder, &resource, data)?;
         Ok(resource)
+    }
+    /// Native owned packet copy. The complete original owner is cleared first,
+    /// including padding, because Wgpu initialization is deliberately bypassed.
+    /// The caller enqueues BOTH actual transfers and joins their final fence
+    /// before mapping. Full-copy traffic and terminal audit remain unchanged.
+    pub(crate) fn native_readback(
+        &mut self,
+        source: &WgpuResource,
+        logical: usize,
+    ) -> Result<
+        (
+            PendingNativeReadback,
+            [(Option<WgpuResource>, WgpuResource); 2],
+        ),
+        ServerError,
+    > {
+        self.active()?;
+        let copy = copy_bounds(source.size, source.offset, source.buffer.size(), logical)?;
+        let buffer = self.allocate(Kind::Readback, copy)?;
+        let plan =
+            super::strata_readback::Plan::new(copy, buffer.size(), logical).map_err(fault)?;
+        // Retain the original lease BEFORE enqueue/copy/map may fail. Native HAL
+        // mapping has its own synchronous guard, so never call Wgpu unmap here.
+        let ticket = LeaseTicket::new(self.leases.clone())?;
+        let lease = ReadbackLease {
+            buffer: buffer.clone(),
+            ticket,
+            unmap: false,
+        };
+        let transfers = [
+            (
+                None,
+                WgpuResource {
+                    buffer: buffer.clone(),
+                    offset: 0,
+                    size: plan.owned,
+                },
+            ),
+            (
+                Some(WgpuResource {
+                    buffer: source.buffer.clone(),
+                    offset: source.offset,
+                    size: plan.copy,
+                }),
+                WgpuResource {
+                    buffer: buffer.clone(),
+                    offset: 0,
+                    size: plan.copy,
+                },
+            ),
+        ];
+        Ok((
+            PendingNativeReadback {
+                original: PendingReadback {
+                    buffer,
+                    lease,
+                    logical,
+                },
+                plan,
+            },
+            transfers,
+        ))
     }
     pub fn readback(
         &mut self,

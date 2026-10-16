@@ -504,6 +504,37 @@ fn native_memory_boundary(device: &ash::Device, command: vk::CommandBuffer) {
         );
     }
 }
+/// Explicit device-to-host availability for original owned readback spans.
+/// A host fence alone is not the buffer memory dependency. Native readback
+/// never relies on Wgpu to infer/insert this barrier or initialize the owner.
+fn native_host_read_boundary(
+    device: &ash::Device,
+    command: vk::CommandBuffer,
+    target: &WgpuResource,
+) -> Result<(), ServerError> {
+    if target.buffer.usage().contains(wgpu::BufferUsages::MAP_READ) {
+        let barrier = vk::BufferMemoryBarrier::default()
+            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .dst_access_mask(vk::AccessFlags::HOST_READ)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .buffer(raw_buffer(target)?)
+            .offset(target.offset)
+            .size(target.size);
+        unsafe {
+            device.cmd_pipeline_barrier(
+                command,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::HOST,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[barrier],
+                &[],
+            );
+        }
+    }
+    Ok(())
+}
 fn end_native_command(device: &ash::Device, command: vk::CommandBuffer) -> Result<(), ServerError> {
     native_memory_boundary(device, command);
     unsafe { device.end_command_buffer(command) }.map_err(|_| fault("native queue end command"))
@@ -1439,6 +1470,19 @@ impl Graph {
         credit(completed.compute_count, completed.replay);
         Ok(())
     }
+    /// Packet I/O is an unnamed original recording, even if a caller still
+    /// owns an open named math branch. Never replace its retained shape/key
+    /// with a fill/copy-only signature or credit I/O as another math invocation.
+    pub(crate) fn execute_readback(&mut self) -> Result<(), ServerError> {
+        if self
+            .nodes
+            .iter()
+            .any(|n| !matches!(n.dispatch, Dispatch::Copy | Dispatch::Fill))
+        {
+            return Err(fault("native readback has unsubmitted math"));
+        }
+        self.execute(true, None, false)
+    }
     pub(crate) fn execute(
         &mut self,
         wait: bool,
@@ -1807,6 +1851,7 @@ impl Graph {
                             }],
                         );
                     }
+                    native_host_read_boundary(&self.device, self.command, target)?;
                     if let Some(profile) = profile {
                         profile.stamp(self.command, index, true);
                     }
@@ -1823,6 +1868,7 @@ impl Graph {
                             0,
                         );
                     }
+                    native_host_read_boundary(&self.device, self.command, target)?;
                     if let Some(profile) = profile {
                         profile.stamp(self.command, index, true);
                     }

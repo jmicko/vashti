@@ -11,6 +11,7 @@ mod strata_handoff;
 mod strata_info_transfer;
 mod strata_parameters;
 mod strata_physical;
+mod strata_readback;
 mod strata_schedule;
 pub use strata_graph::{
     native_strata_graph_execution_stats, native_strata_graph_stats, native_strata_operator_profile,
