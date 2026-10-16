@@ -555,7 +555,10 @@ pub(super) fn run<'m, 'f>(
         }
         sampling.stage_target(position, &inputs)?;
         let mut selected = None;
-        let n = target.verify_native_prefix(executor, &inputs, cancel, &mut |phase| {
+        let previous_total = history.len();
+        let mut delivered = None;
+        let mut delivery_error = None;
+        let verification = target.verify_native_prefix(executor, &inputs, cancel, &mut |phase| {
             use crate::resident_model::batch::PrefixPhase;
             match phase {
                 PrefixPhase::Verified(rows) => {
@@ -584,15 +587,33 @@ pub(super) fn run<'m, 'f>(
                     let (predicted, device) = selected
                         .as_ref()
                         .ok_or(Error::InvalidFormat("global verified prefix missing"))?;
+                    if delivered.is_some() {
+                        return Err(Error::InvalidFormat("global duplicate prefix delivery"));
+                    }
                     sampling.commit_target(n)?;
                     let emit_count = emitted(&predicted[..n], remaining, request.eos);
                     let continuing = predicted[emit_count - 1] != request.eos
-                        && history.len() + emit_count < request.max_outputs;
+                        && previous_total + emit_count < request.max_outputs;
                     if continuing && emit_count != n {
                         return Err(Error::InvalidFormat(
                             "global continuing committed prefix rejected",
                         ));
                     }
+                    // Pinned serving emits real verified predictions after
+                    // commit submission and BEFORE next drafting. Output does
+                    // not publish target state or claim that commit succeeded.
+                    confirmed = predicted[emit_count - 1];
+                    suffix_index
+                        .append(&predicted[..emit_count])
+                        .map_err(|_| Error::InvalidFormat("global suffix delivery rejected"))?;
+                    for &token in &predicted[..emit_count] {
+                        history.push(token);
+                        if let Err(error) = emit(token) {
+                            delivery_error = Some(error);
+                            return Err(Error::InvalidFormat("global token delivery failed"));
+                        }
+                    }
+                    delivered = Some((n, emit_count, continuing));
                     if let Some(d) = draft.as_deref_mut().filter(|_| continuing) {
                         let next_position = position + n;
                         sampling.begin_round(next_position, predicted[n - 1])?;
@@ -613,8 +634,19 @@ pub(super) fn run<'m, 'f>(
                     Ok(n)
                 }
             }
-        })?;
-        let (predicted, _device) = selected.ok_or("global verified prefix observation missing")?;
+        });
+        // The original model already ran its terminal failure cleanup. Preserve
+        // the original delivery error rather than replacing its typed cause.
+        if let Some(error) = delivery_error {
+            return Err(error);
+        }
+        let n = verification?;
+        let (_predicted, _device) = selected.ok_or("global verified prefix observation missing")?;
+        let (delivered_prefix, emit_count, continuing) =
+            delivered.ok_or("global verified prefix delivery missing")?;
+        if delivered_prefix != n || history.len() != previous_total + emit_count {
+            return Err("global delivered prefix accounting rejected".into());
+        }
         target.adapt_global_after_window(executor, cancel)?;
         repairs += u64::from(n < count);
         if target.completed_target_rows_cursor(executor)? != position + n {
@@ -624,21 +656,8 @@ pub(super) fn run<'m, 'f>(
         // its confirmed next input in ONE batch. Do not eagerly repair n-1
         // rows here and then run a separate count1 front at the next entry.
         committed_cursor = position + n;
-        let emit_count = emitted(&predicted[..n], remaining, request.eos);
-        let next_total = history.len() + emit_count;
-        let continuing =
-            predicted[emit_count - 1] != request.eos && next_total < request.max_outputs;
-        if continuing && emit_count != n {
-            return Err("global continuing committed prefix rejected".into());
-        }
         if prepared.is_some() != (draft.is_some() && continuing) {
             return Err("global prepared next draft lifecycle rejected".into());
-        }
-        confirmed = predicted[emit_count - 1];
-        suffix_index.append(&predicted[..emit_count])?;
-        for &token in &predicted[..emit_count] {
-            history.push(token);
-            emit(token)?;
         }
         // Native DraftPolicy consumes ACCEPTED DRAFTS (n-1), not emitted
         // rows or output clipping. EOS exits without another policy/draft pass.
