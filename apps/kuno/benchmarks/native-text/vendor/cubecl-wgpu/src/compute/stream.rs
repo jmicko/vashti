@@ -57,6 +57,7 @@ pub struct WgpuStream {
     tasks_max: usize,
     queue: wgpu::Queue,
     encoder: wgpu::CommandEncoder,
+    encoder_dirty: bool,
     poll: WgpuPoll,
     submission_load: SubmissionLoad,
     /// Number of consecutive `write_buffer` calls without a `queue.submit()`.
@@ -118,6 +119,7 @@ impl WgpuStream {
                 None
             },
             native_init_pipeline: None,
+            encoder_dirty: false,
             device,
             queue,
             tasks_count: 0,
@@ -241,6 +243,7 @@ impl WgpuStream {
                         }
                     }
                     self.compute_pass = None;
+                    self.encoder_dirty = true;
                     let result = self.private_io_active().and_then(|()| {
                         self.transient_io.as_mut().unwrap().upload(
                             &mut self.encoder,
@@ -336,6 +339,7 @@ impl WgpuStream {
                 }),
             }],
         });
+        self.encoder_dirty = true;
         let mut pass = self
             .encoder
             .begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -397,6 +401,7 @@ impl WgpuStream {
             let (staging, binding) = self.mem_manage.reserve_staging(aligned_len).unwrap();
 
             self.tasks_count += 1;
+            self.encoder_dirty = true;
             self.encoder.copy_buffer_to_buffer(
                 &resource.buffer,
                 resource.offset,
@@ -526,6 +531,7 @@ impl WgpuStream {
                 self.compute_pass = None;
 
                 // Submit commands needed for profiling.
+                self.encoder_dirty = true;
                 let buffer = {
                     let Timings::Device(timing) = &mut self.timings else {
                         return Err(ProfileError::Unknown {
@@ -762,6 +768,7 @@ impl WgpuStream {
                     .push_transfer(None, r.clone())?;
             } else {
                 self.complete_native_before_readback()?;
+                self.encoder_dirty = true;
                 self.encoder.clear_buffer(&r.buffer, r.offset, Some(r.size));
             }
             self.tasks_count += 1;
@@ -835,6 +842,7 @@ impl WgpuStream {
                 };
                 graph.push_transfer(Some(source), target)?;
             } else {
+                self.encoder_dirty = true;
                 self.encoder
                     .copy_buffer_to_buffer(&s.buffer, *sfirst, &t.buffer, *tfirst, *bytes);
             }
@@ -958,6 +966,7 @@ impl WgpuStream {
             self.complete_native_before_readback()?;
             let logical = usize::try_from(resource.size)
                 .map_err(|_| super::transient_io::fault("private cleanup read span overflow"))?;
+            self.encoder_dirty = true;
             let entry = self.transient_io.as_mut().unwrap().readback(
                 &mut self.encoder,
                 &resource,
@@ -1029,6 +1038,7 @@ impl WgpuStream {
                     pending.push(None);
                     continue;
                 }
+                self.encoder_dirty = true;
                 let entry = self.transient_io.as_mut().unwrap().readback(
                     &mut self.encoder,
                     &resource,
@@ -1183,6 +1193,7 @@ impl WgpuStream {
                     .batched_uniform(data, native);
             }
             self.compute_pass = None;
+            self.encoder_dirty = true;
             let resource = self
                 .transient_io
                 .as_mut()
@@ -1381,20 +1392,20 @@ impl WgpuStream {
                     "native replay parameter identity",
                 ));
             }
-            let parameters = io.prepare_batched_info()?.ok_or_else(|| {
-                super::transient_io::fault("native replay parameter upload missing")
-            })?;
-            let index = self.queue.submit([parameters]);
-            self.device
-                .poll(wgpu::PollType::Wait {
-                    submission_index: Some(index.clone()),
-                    timeout: Some(std::time::Duration::from_secs(120)),
-                })
-                .map_err(|_| super::transient_io::fault("native replay upload completion"))?;
+            let parameters = io.prepare_native_info()?;
+            if parameters.is_empty() {
+                return Err(super::transient_io::fault(
+                    "native replay parameter upload missing",
+                ));
+            }
             self.strata_graph
                 .as_mut()
                 .unwrap()
-                .replay_recording(recording, true)?;
+                .upload_parameters(parameters)?;
+            self.strata_graph
+                .as_mut()
+                .unwrap()
+                .replay_recording(recording, true, false)?;
             let io = self.transient_io.as_mut().unwrap();
             io.native_branch_submitted()?;
             io.end_native_branch(key)?;
@@ -1402,9 +1413,6 @@ impl WgpuStream {
                 .as_mut()
                 .unwrap()
                 .select_branch_queue(None)?;
-            self.cleanup_boundary.ordinary_regulation(|| {
-                self.submission_load.regulate(&self.device, 0, index);
-            });
             self.mem_manage.memory_cleanup(false);
             self.mem_manage.release_uniforms();
             self.flush_errors(StreamErrorMode {
@@ -1472,6 +1480,8 @@ impl WgpuStream {
             graph.complete_submission()?;
         }
         if self.tasks_count == 0
+            && !self.encoder_dirty
+            && self.pending_write_count == 0
             && !self
                 .transient_io
                 .as_ref()
@@ -1483,45 +1493,64 @@ impl WgpuStream {
         // End the current compute pass.
         self.compute_pass = None;
 
-        // Submit the pending actions to the queue. This will _first_ submit the
-        // pending uniforms copy operations, then the main tasks.
-        let tasks_encoder = {
-            std::mem::replace(&mut self.encoder, {
-                self.device
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("CubeCL Tasks Encoder"),
-                    })
-            })
+        let native = self.strata_graph.is_some();
+        let native_info = if native {
+            self.transient_io
+                .as_mut()
+                .map(|io| io.prepare_native_info())
+                .transpose()?
+        } else {
+            None
         };
-
-        // This will _first_ fire off all pending write_buffer work.
-        let parameters = self
-            .transient_io
-            .as_mut()
-            .map(|io| io.prepare_batched_info())
-            .transpose()?
-            .flatten();
-        let index = self.queue.submit(
-            parameters
-                .into_iter()
-                .chain(std::iter::once(tasks_encoder.finish())),
-        );
-
-        if self.strata_graph.as_ref().is_some_and(|g| g.pending()) {
+        let parameters = if native {
+            None
+        } else {
+            self.transient_io
+                .as_mut()
+                .map(|io| io.prepare_batched_info())
+                .transpose()?
+                .flatten()
+        };
+        let primary =
+            !native || self.encoder_dirty || self.pending_write_count != 0 || parameters.is_some();
+        // Native-only math/INFO must not queue an empty primary submission:
+        // its completion could sit behind an unrelated pending target commit.
+        let index = if primary {
+            let mut commands = Vec::with_capacity(2);
+            commands.extend(parameters);
+            if self.encoder_dirty || !native {
+                let encoder = std::mem::replace(
+                    &mut self.encoder,
+                    self.device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("CubeCL Tasks Encoder"),
+                        }),
+                );
+                commands.push(encoder.finish());
+                self.encoder_dirty = false;
+            }
+            Some(self.queue.submit(commands))
+        } else {
+            None
+        };
+        let pending_native = self.strata_graph.as_ref().is_some_and(|g| g.pending());
+        if (pending_native || native_info.as_ref().is_some_and(|p| !p.is_empty()))
+            && let Some(index) = &index
+        {
             self.device
                 .poll(wgpu::PollType::Wait {
                     submission_index: Some(index.clone()),
                     timeout: Some(std::time::Duration::from_secs(120)),
                 })
-                .map_err(|error| {
-                    if std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1") {
-                        match error {
-                            wgpu::PollError::Timeout => eprintln!("native_public_upload_poll_fault class=timeout"),
-                            wgpu::PollError::WrongSubmissionIndex(requested, completed) => eprintln!("native_public_upload_poll_fault class=wrong_submission_index requested={requested} successful={completed}"),
-                        }
-                    }
-                    super::transient_io::fault("native graph upload completion")
-                })?;
+                .map_err(|_| super::transient_io::fault("native graph primary work completion"))?;
+        }
+        if let Some(copies) = native_info {
+            self.strata_graph
+                .as_mut()
+                .unwrap()
+                .upload_parameters(copies)?;
+        }
+        if pending_native {
             let branch = self
                 .transient_io
                 .as_mut()
@@ -1531,16 +1560,22 @@ impl WgpuStream {
             self.strata_graph
                 .as_mut()
                 .unwrap()
-                .execute(wait_native, branch)?;
+                .execute(wait_native, branch, index.is_some())?;
             if let Some(io) = self.transient_io.as_mut() {
                 io.native_branch_submitted()?;
             }
         }
         if wait_native {
-            self.cleanup_boundary.ordinary_regulation(|| {
-                self.submission_load
-                    .regulate(&self.device, self.tasks_count, index);
-            });
+            // Also join an INFO-only transfer if no math was queued.
+            if let Some(graph) = self.strata_graph.as_mut() {
+                graph.complete_submission()?;
+            }
+            if let Some(index) = index {
+                self.cleanup_boundary.ordinary_regulation(|| {
+                    self.submission_load
+                        .regulate(&self.device, self.tasks_count, index);
+                });
+            }
             self.mem_manage.memory_cleanup(false);
             self.mem_manage.release_uniforms();
         }
@@ -1662,6 +1697,7 @@ impl WgpuStream {
         // Start a new compute pass if needed. The forget_lifetime allows
         // to store this with a 'static lifetime, but the compute pass must
         // be dropped before the encoder. This isn't unsafe - it's still checked at runtime.
+        self.encoder_dirty = true;
         let pass = self.compute_pass.get_or_insert_with(|| {
             let writes = if let Timings::Device(query_time) = &mut self.timings {
                 query_time

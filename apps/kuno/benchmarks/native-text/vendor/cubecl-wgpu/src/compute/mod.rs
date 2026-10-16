@@ -6,6 +6,7 @@ mod storage;
 
 pub(crate) mod strata_graph;
 mod strata_handoff;
+mod strata_info_transfer;
 mod strata_parameters;
 mod strata_physical;
 mod strata_schedule;

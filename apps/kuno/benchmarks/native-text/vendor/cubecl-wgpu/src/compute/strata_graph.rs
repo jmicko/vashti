@@ -410,6 +410,7 @@ pub(crate) struct Graph {
     compute_queues: [ComputeQueue; 2],
     compute_lane: usize,
     handoff: super::strata_handoff::Handoff,
+    info_uploads: super::strata_info_transfer::Uploads,
     device: ash::Device,
     family: u32,
     queue: vk::Queue,
@@ -638,6 +639,17 @@ impl Graph {
                 return Err(fault(e));
             }
         };
+        let info_uploads = match super::strata_info_transfer::Uploads::new(&d, copy_family) {
+            Ok(v) => v,
+            Err(e) => {
+                unsafe {
+                    d.destroy_fence(fence, None);
+                    d.destroy_descriptor_pool(descriptors, None);
+                    d.destroy_command_pool(pool, None);
+                }
+                return Err(fault(e));
+            }
+        };
         Ok(Self {
             timestamp_period,
             timestamp_bits,
@@ -655,6 +667,7 @@ impl Graph {
             ],
             compute_lane: 0,
             handoff,
+            info_uploads,
             device: d,
             family: h.queue_family_index(),
             queue,
@@ -959,8 +972,20 @@ impl Graph {
         self.compute_lane = lane;
         Ok(())
     }
+    pub(super) fn upload_parameters(
+        &mut self,
+        copies: Vec<super::strata_info_transfer::Copy>,
+    ) -> Result<(), ServerError> {
+        self.complete_submission()?;
+        if copies.is_empty() {
+            return Ok(());
+        }
+        self.info_uploads
+            .submit(self.copy_queue, copies)
+            .map_err(fault)
+    }
     pub(crate) fn clear_completed_recordings(&mut self) -> Result<(), ServerError> {
-        if self.submitted || self.pending() {
+        if self.submitted || self.pending() || self.info_uploads.pending() {
             return Err(fault("native graph cleanup while pending"));
         }
         self.recordings.clear();
@@ -979,13 +1004,15 @@ impl Graph {
     }
     /// Submit the original retained commands/resources without building nodes,
     /// pipeline descriptors or a signature again. Only the owning stream may
-    /// call this, after its fresh INFO uploads have actually completed.
+    /// call this, after submitting its actual current INFO copies. The original
+    /// header waits on their real transfer timeline before any math consumes it.
     pub(crate) fn replay_recording(
         &mut self,
         key: super::strata_parameters::RecordingKey,
         wait: bool,
+        primary_writes: bool,
     ) -> Result<(), ServerError> {
-        self.complete_submission()?;
+        self.complete_math_submission()?;
         if self.pending() || !self.has_recording(key) {
             return Err(fault("native direct replay recording unavailable"));
         }
@@ -997,7 +1024,7 @@ impl Graph {
         let recording = self.recordings.remove(hit);
         let compute_count = recording.compute_count;
         self.recordings.push(recording);
-        if self.compute_lane != 0 {
+        if self.compute_lane != 0 && primary_writes {
             self.handoff
                 .transfer(self.compute_queues[0].queue, self.queue)
                 .map_err(fault)?;
@@ -1010,7 +1037,11 @@ impl Graph {
             .last_mut()
             .unwrap()
             .work
-            .submit([self.queue, self.copy_queue], self.fence)
+            .submit(
+                [self.queue, self.copy_queue],
+                self.fence,
+                self.info_uploads.wait(),
+            )
             .map_err(fault)?;
         self.flight = Some(Submitted {
             compute_count,
@@ -1023,6 +1054,27 @@ impl Graph {
         Ok(())
     }
     pub(crate) fn complete_submission(&mut self) -> Result<(), ServerError> {
+        let info_only = !self.submitted && self.info_uploads.pending();
+        self.complete_math_submission()?;
+        self.info_uploads.complete().map_err(fault)?;
+        if info_only {
+            // Without a math header no GPU consumer has waited on the upload
+            // timeline. An explicit INFO-only drain must establish visibility
+            // for both its selected native lane and later Wgpu read/cleanup.
+            self.handoff
+                .transfer(self.copy_queue, self.queue)
+                .map_err(fault)?;
+            self.handoff.complete().map_err(fault)?;
+            if self.compute_lane != 0 {
+                self.handoff
+                    .transfer(self.queue, self.compute_queues[0].queue)
+                    .map_err(fault)?;
+                self.handoff.complete().map_err(fault)?;
+            }
+        }
+        Ok(())
+    }
+    fn complete_math_submission(&mut self) -> Result<(), ServerError> {
         self.handoff.complete().map_err(fault)?;
         if !self.submitted {
             return Ok(());
@@ -1058,21 +1110,24 @@ impl Graph {
         credit(flight.compute_count, flight.replay);
         self.nodes.clear();
         self.submitted = false;
+        self.info_uploads.complete().map_err(fault)?;
         Ok(())
     }
     pub(crate) fn execute(
         &mut self,
         wait: bool,
         key: Option<super::strata_parameters::RecordingKey>,
+        primary_writes: bool,
     ) -> Result<(), ServerError> {
-        self.complete_submission()?;
+        self.complete_math_submission()?;
         if self.nodes.is_empty() {
             return Ok(());
         }
         let capture_start = std::time::Instant::now();
-        // The caller drains Wgpu parameter/upload commands BEFORE entering.
-        // Every owning buffer remains retained until our actual completion fence.
-        if self.compute_lane != 0 {
+        // The caller joins real primary-queue initialization/readback work.
+        // INFO copies carry their own actual native transfer dependency. Every
+        // original owner stays retained through the real completion fence.
+        if self.compute_lane != 0 && primary_writes {
             self.handoff
                 .transfer(self.compute_queues[0].queue, self.queue)
                 .map_err(fault)?;
@@ -1132,7 +1187,11 @@ impl Graph {
                 .last_mut()
                 .unwrap()
                 .work
-                .submit([self.queue, self.copy_queue], self.fence)
+                .submit(
+                    [self.queue, self.copy_queue],
+                    self.fence,
+                    self.info_uploads.wait(),
+                )
                 .map_err(fault)?;
             self.flight = Some(Submitted {
                 compute_count,
@@ -1537,7 +1596,11 @@ impl Graph {
             .last_mut()
             .unwrap()
             .work
-            .submit([self.queue, self.copy_queue], self.fence)
+            .submit(
+                [self.queue, self.copy_queue],
+                self.fence,
+                self.info_uploads.wait(),
+            )
             .map_err(fault)?;
         // Protected public lab only. Bound to prevent a wedged device leaving
         // native descriptor/buffer lifetimes unowned. Never reset the GPU.
@@ -1556,6 +1619,7 @@ impl Drop for Graph {
     fn drop(&mut self) {
         unsafe {
             if self.handoff.complete().is_err()
+                || self.info_uploads.complete().is_err()
                 || (self.submitted
                     && self
                         .device

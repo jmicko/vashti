@@ -25,6 +25,12 @@ mod strata_gr;
 #[allow(dead_code)] // The host test exercises epochs without creating any device.
 #[path = "../vendor/cubecl-wgpu/src/compute/strata_handoff.rs"]
 mod strata_handoff_tests;
+#[cfg(test)]
+use cubecl::wgpu::WgpuResource;
+#[cfg(test)]
+#[allow(dead_code)] // Production copy layout checks run without creating a device.
+#[path = "../vendor/cubecl-wgpu/src/compute/strata_info_transfer.rs"]
+mod strata_info_transfer;
 mod strata_intel_core;
 mod strata_matrix;
 mod strata_mtp_front;

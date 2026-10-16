@@ -3110,6 +3110,55 @@ impl TransientIo {
     /// full source/target remains in the original ledger through erase/audit.
     /// Returning this encoder before the task encoder proves copy-before-use;
     /// no pending source is remapped or reused after this submission boundary.
+    /// Preserve each actual current Upload/Uniform pair, including complete
+    /// spans, original mapped-source and ledger obligations. The native copy
+    /// submission retains these exact owners; replay sources need not equal a
+    /// previous invocation's Upload allocation.
+    pub(crate) fn prepare_native_info(
+        &mut self,
+    ) -> Result<Vec<super::strata_info_transfer::Copy>, ServerError> {
+        self.active()?;
+        if self.pending_info.len() > super::strata_info_transfer::MAX_COPIES {
+            return Err(fault("native INFO copy capacity"));
+        }
+        let mut copies = Vec::new();
+        copies
+            .try_reserve_exact(self.pending_info.len())
+            .map_err(|_| fault("native INFO owner metadata allocation"))?;
+        for entry in &self.pending_info {
+            let owner = self
+                .buffers
+                .get(entry.source_index)
+                .ok_or_else(|| fault("native INFO source owner missing"))?;
+            if entry.source.size() != entry.target.size()
+                || owner.buffer != entry.source
+                || owner.kind != Kind::Upload
+                || !owner.upload_mapped
+            {
+                return Err(fault("native INFO original mapped owner mismatch"));
+            }
+        }
+        self.info_slab = None;
+        for entry in &self.pending_info {
+            entry.source.unmap();
+            self.buffers[entry.source_index].upload_mapped = false;
+            copies.push(super::strata_info_transfer::Copy {
+                source: WgpuResource {
+                    buffer: entry.source.clone(),
+                    offset: 0,
+                    size: entry.source.size(),
+                },
+                target: WgpuResource {
+                    buffer: entry.target.clone(),
+                    offset: 0,
+                    size: entry.target.size(),
+                },
+            });
+        }
+        self.pending_info.clear();
+        self.core_info_cursor = 0;
+        Ok(copies)
+    }
     pub(crate) fn prepare_batched_info(
         &mut self,
     ) -> Result<Option<wgpu::CommandBuffer>, ServerError> {

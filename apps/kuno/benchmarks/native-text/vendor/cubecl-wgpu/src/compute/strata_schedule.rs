@@ -38,7 +38,8 @@ struct Region {
 const MAX_REGIONS: usize = 262144;
 /// Actual descriptor/copy intervals, not invented narrower declarations.
 /// Segment0 releases Wgpu initialization before either queue's native work.
-pub const NATIVE_QUEUE_HOST_BYTES: usize = 128 * 1024 * 1024;
+pub const NATIVE_QUEUE_HOST_BYTES: usize =
+    128 * 1024 * 1024 + super::strata_info_transfer::HOST_BYTES;
 
 fn insert_region(
     regions: &mut Vec<Region>,
@@ -257,6 +258,25 @@ fn reserve_epoch(next: &mut u64, segments: usize) -> Result<u64, &'static str> {
     Ok(base)
 }
 
+/// The actual submission uses this dependency, preserving the upload wait at
+/// the original compute header and the plan's later compute/copy release edges.
+fn incoming_dependency(
+    index: usize,
+    segment: &Segment,
+    timelines: [vk::Semaphore; 2],
+    base: u64,
+    uploads: Option<super::strata_info_transfer::Wait>,
+) -> Option<super::strata_info_transfer::Wait> {
+    if index == 0 {
+        uploads
+    } else {
+        (segment.wait != 0).then_some(super::strata_info_transfer::Wait {
+            semaphore: timelines[1 - usize::from(segment.copy)],
+            value: base + segment.wait,
+        })
+    }
+}
+
 /// Recording owns all copy pools and timeline semaphores through the joined
 /// fence. Main command buffers belong to its existing compute pool.
 pub(crate) struct Commands {
@@ -329,23 +349,40 @@ impl Commands {
             + self.commands.capacity() * std::mem::size_of::<vk::CommandBuffer>()
             + std::mem::size_of::<Self>()
     }
-    pub fn submit(&mut self, queues: [vk::Queue; 2], fence: vk::Fence) -> Result<(), &'static str> {
+    pub fn submit(
+        &mut self,
+        queues: [vk::Queue; 2],
+        fence: vk::Fence,
+        uploads: Option<super::strata_info_transfer::Wait>,
+    ) -> Result<(), &'static str> {
         // Reserve before any submission; even a partial failure never reuses a
         // timeline value. The caller retains this entire recording on failure.
         let base = reserve_epoch(&mut self.next_base, self.plan.segments.len())?;
-        for (segment, command) in self.plan.segments.iter().zip(&self.commands) {
+        if self
+            .plan
+            .segments
+            .first()
+            .is_none_or(|s| s.copy || s.wait != 0)
+        {
+            return Err("native upload dependency requires original compute header");
+        }
+        for (index, (segment, command)) in self.plan.segments.iter().zip(&self.commands).enumerate()
+        {
             let own = usize::from(segment.copy);
             let signals = [self.timelines[own]];
             let signal_values = [base + segment.signal];
-            let waits = [self.timelines[1 - own]];
-            let wait_values = [base + segment.wait];
+            // Actual INFO transfer completion precedes the original header;
+            // its timeline release carries that dependency to every segment.
+            let dependency = incoming_dependency(index, segment, self.timelines, base, uploads);
+            let waits = [dependency.map_or(vk::Semaphore::null(), |d| d.semaphore)];
+            let wait_values = [dependency.map_or(0, |d| d.value)];
             let stages = [vk::PipelineStageFlags::ALL_COMMANDS];
             let mut timeline =
                 vk::TimelineSemaphoreSubmitInfo::default().signal_semaphore_values(&signal_values);
             let mut submit = vk::SubmitInfo::default()
                 .command_buffers(std::slice::from_ref(command))
                 .signal_semaphores(&signals);
-            if segment.wait != 0 {
+            if dependency.is_some() {
                 timeline = timeline.wait_semaphore_values(&wait_values);
                 submit = submit.wait_semaphores(&waits).wait_dst_stage_mask(&stages);
             }
@@ -636,5 +673,67 @@ mod tests {
         }
         assert!(plan(&[], false).is_err());
         assert!(plan(&[node(false, 0, false)], false).is_err());
+    }
+}
+
+#[cfg(test)]
+mod info_dependency_tests {
+    use super::*;
+    use ash::vk::Handle;
+    #[test]
+    fn actual_upload_wait_reaches_compute_copy_and_later_math_via_original_release_edges() {
+        let c = vk::Semaphore::from_raw(11);
+        let t = vk::Semaphore::from_raw(12);
+        let upload = super::super::strata_info_transfer::Wait {
+            semaphore: vk::Semaphore::from_raw(99),
+            value: 77,
+        };
+        // Same real plan as native submissions: header releases copy; copy
+        // completion releases its compute consumer. No fabricated completion.
+        let nodes = [
+            NodeAccess {
+                copy: true,
+                release_after: false,
+                accesses: vec![Access {
+                    buffer: 1,
+                    first: 0,
+                    bytes: 4096,
+                    write: true,
+                }],
+            },
+            NodeAccess {
+                copy: false,
+                release_after: false,
+                accesses: vec![Access {
+                    buffer: 1,
+                    first: 0,
+                    bytes: 4096,
+                    write: false,
+                }],
+            },
+        ];
+        let p = plan(&nodes, false).unwrap();
+        assert_eq!(
+            incoming_dependency(0, &p.segments[0], [c, t], 100, Some(upload)),
+            Some(upload)
+        );
+        assert_eq!(
+            incoming_dependency(0, &p.segments[0], [c, t], 100, None),
+            None
+        );
+        assert_eq!(
+            incoming_dependency(1, &p.segments[1], [c, t], 100, Some(upload)),
+            Some(super::super::strata_info_transfer::Wait {
+                semaphore: c,
+                value: 101
+            })
+        );
+        assert_eq!(
+            incoming_dependency(2, &p.segments[2], [c, t], 100, Some(upload)),
+            Some(super::super::strata_info_transfer::Wait {
+                semaphore: t,
+                value: 102
+            })
+        );
     }
 }
