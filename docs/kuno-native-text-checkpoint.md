@@ -1,18 +1,53 @@
-<!-- Current resume: 2026-10-16, source a8e538f, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source dcd783b, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, engine source through `a8e538f`. The user authorized
+branch `codex/strata-rust-port`, engine source through `dcd783b`. The user authorized
 continuing CPU-only work; the goal controller is active for that scope.
 GPU/model/service work still needs renewed user authorization. The user has
 authorized keeping sudo refreshed in the shared Demons shell; noninteractive
 validation succeeded. This does not expand the GPU/testing scope. Last physical recovery evidence
 is historical 06:07:22Z on Oct15; no subsequent GPU run or live health claim.
 
-Read the latest [recording/INFO ownership receipt](kuno-strata-rewrite-completion.md#original-recording-access-and-info-copy-ownership-2026-10-16)
-and its next scoped-execution design before changing queue/stream behavior.
+Read the latest [original R readiness/draft scope receipt](kuno-strata-rewrite-completion.md#original-precommit-r-readiness-and-draft-lane-scope-2026-10-16)
+and its remaining connected scope requirements before changing queue behavior.
 Earlier CJK source `cd703bc` was integrated as `0bfbea8`; do not cherry-pick it again.
+
+**Latest original draft scope:** `d2d3228` connects a real MAIN->draft readiness
+signal/wait BEFORE accepted-prefix commit, retaining the actual current R resource
+and allocator binding. The private original graph/request/generation identity
+must match preparation, entry and actual completed end; a token alone cannot
+create readiness. Scope entry precedes the Pending observer, including sampler
+controls, scratch/token/R-copy/front preparation and every named MTP branch.
+Unkeyed queue selection stays on the draft lane; target branches inside it and
+premature/repeated/stale entry reject. Actual source ranges remain read-only from
+preparation through completion, including partial dependencies. Cold nodes,
+physical/copy/INFO accesses and original direct replay plans enforce that pin.
+The existing independent carry-generation/window receipt remains mandatory.
+Follow-up `dcd783b` also requires the original ordinary cross-lane handoff to
+complete at terminal cleanup; failed flush plus empty math is not release proof.
+
+Actual completed scope end restores MAIN visibility before releasing the source.
+Unknown/failing private guard Drop retires original flags before its retained
+client, without locks or release. Owning terminal drains retain the actual source,
+allocator and readiness objects; unknown Graph Drop retains them through process/
+device teardown. Target exported acknowledgement, MAIN debt and all numerical/
+family/PLE/I/O/erasure obligations remain distinct and required.
+
+163 focused CPU tests across19 nonempty suites and selected/off strict Clippy
+pass. See completion receipt for exact logs. No shader change, new immutable
+artifact, GPU/model/service/protected test or speed result. Frozen `0bf0b5f` is
+stale for current source. Sudo refresh succeeded; no system change was made.
+
+**Next:** complete independent execution and I/O as one connected scope. Current
+entry/push/execute/replay/flush/metadata/readback/recycle globally join; entry can
+physically join target even before verified delivery. Do not claim overlap. Move
+current-lane/conflicting-flight admission, INFO source remap authorization,
+confidence packet copy/map and upload/readback reuse together. Distinguish queued
+nodes from submitted flights; preserve fresh Wgpu initialization visibility and
+positive-confidence per-cell observation. Full completion/arbitrary-input/
+context/embedding-placement/regression/numerical/physical/recovery gates remain.
 
 **Latest recording/INFO ownership:** `a8e538f` retains the actual descriptor,
 physical read-dependency, copy/fill and indirect intervals in each original plan.
@@ -36,7 +71,7 @@ new immutable artifact, GPU/model/service run or speed result. Latest frozen
 source before any protected execution. Only requested sudo timestamp validations
 ran in Demons. Required Vashti changes:none.
 
-**Next:** connect the complete independent MTP scope, not only named branch math.
+**Prior next step (partly implemented by `d2d3228` above):** connect the complete independent MTP scope, not only named branch math.
 The completion guide records the coupled design and actual source findings:
 private uploads already use mapped sources/native copies; generic core INFO pages
 are distinct from named branch pages. Keep those owners. Signal verified-R

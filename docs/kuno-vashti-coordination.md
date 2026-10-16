@@ -6,8 +6,8 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through `a8e538f`. Read the latest
-[recording/INFO handoff](#active-kuno-engine-handoff--recordinginfo-ownership-2026-10-16)
+`codex/strata-rust-port`, engine source through `dcd783b`. Read the latest
+[original draft-scope handoff](#active-kuno-engine-handoff--original-r-readiness-and-draft-scope-2026-10-16)
 and [completion gate](kuno-strata-rewrite-completion.md). Direct target/MTP
 submission, accepted-prefix state publication and retained commit graph are connected
 in source. Original pending submissions/joins and scoped next-draft consumption are connected;
@@ -6481,3 +6481,37 @@ Public APIs/connector/UI unchanged; required Vashti changes:none. Goal remains
 active for CPU-only work. User requested keeping sudo refreshed; noninteractive
 validation succeeded in the shared Demons shell. No GPU/model/service/install/
 release or protected inference/driver operation ran.
+
+
+### Active Kuno engine handoff — original R readiness and draft scope (2026-10-16)
+
+Sources `d2d3228` and terminal-drain follow-up `dcd783b` connect real precommit
+MAIN->draft readiness and an original request-owned scope around the entire
+Pending observer. The actual current R
+resource AND allocator binding stay pinned/read-only through completion, including
+partial dependencies. The original graph/request/monotonic generation validates
+prepare/entry/end; the existing carry-generation/window/graph receipt remains
+mandatory. Sampler controls, scratch/token/R-copy/front and named MTP branches
+keep one draft lane, including unkeyed intervals. Original recorded/copy/INFO
+ranges and direct replay plans reject writes to the held source. No new data root
+or content persistence. Actual completed end restores MAIN visibility, then
+releases the source. Unknown guard/Graph destruction retains or retires original
+owners, never declares them joined/ready/clean. Original target exported join,
+shared MAIN retention and family/fault/PLE/I/O/erasure proofs stay authoritative.
+
+This is NOT physical independent execution: entry and push/execute/replay/flush/
+metadata/readback/reuse still globally/primarily serialize, potentially joining
+target before verified delivery. Next connect exact current-lane/conflicting-flight
+admission, original INFO SOURCE remap authority, confidence packet copy/map and
+selective upload/readback reuse together. Preserve queued-versus-submitted work,
+fresh Wgpu initialization and positive-confidence per-cell observations. See the
+completion guide **Original precommit R readiness and draft lane scope** for
+internal method names, exact source/logs and remaining scope/full rewrite gates.
+
+163 focused CPU cases across19 nonempty suites, selected/off strict Clippy and
+format/whitespace pass. No shader/layout change or new immutable ordinary
+artifact. Frozen `0bf0b5f` is stale for current source; rebuild before protected
+execution. No GPU/model/service/protected inference/driver/install/release or
+public API/connector/UI change. Required Vashti changes:none. Sudo timestamp
+refresh succeeded in Demons. Goal remains active for CPU-only work; historical
+Oct15 recovery is not new physical health evidence.
