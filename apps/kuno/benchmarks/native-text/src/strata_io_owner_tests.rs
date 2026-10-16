@@ -3,7 +3,7 @@
 //! claimed: the actual I/O/index/eraser/parameter/cache sources run CPU tests.
 #![allow(dead_code, unexpected_cfgs)]
 use crate::{
-    strata_info_transfer, strata_readback_tests as strata_readback,
+    strata_info_transfer, strata_io_reuse, strata_readback_tests as strata_readback,
     strata_upload_tests as strata_upload,
 };
 mod strata_graph {

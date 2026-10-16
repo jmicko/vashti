@@ -41,6 +41,9 @@ mod strata_info_transfer;
 mod strata_intel_core;
 #[cfg(test)]
 mod strata_io_owner_tests;
+#[cfg(test)]
+#[path = "../vendor/cubecl-wgpu/src/compute/strata_io_reuse.rs"]
+mod strata_io_reuse;
 mod strata_matrix;
 mod strata_mtp_front;
 mod strata_mtp_moe;

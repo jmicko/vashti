@@ -33,6 +33,21 @@ impl State {
         *self = Self::NativeWritten;
         Ok(())
     }
+    /// A blocked owner gets no new writer. Revoke an unused native grant;
+    /// an unexpected WG map or partial/staged writer on a blocked buffer fails.
+    pub fn after_selected_join(&mut self, admitted: bool) -> Result<(), &'static str> {
+        if admitted {
+            self.after_joined()
+        } else {
+            match self {
+                Self::Idle | Self::NativeReady => {
+                    *self = Self::Idle;
+                    Ok(())
+                }
+                _ => Err("native excluded upload has a mapped or unsubmitted writer"),
+            }
+        }
+    }
     /// Actual original GPU readers/copies have joined; never call on enqueue,
     /// a peer fence, retained metadata or merely an empty Wgpu encoder.
     pub fn after_joined(&mut self) -> Result<(), &'static str> {

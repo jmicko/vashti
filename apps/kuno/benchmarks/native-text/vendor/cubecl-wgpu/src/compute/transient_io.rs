@@ -27,6 +27,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
+use super::strata_io_reuse::Cohort;
 use super::strata_upload::{self, State as UploadState};
 use crate::WgpuResource;
 use cubecl_common::backtrace::BackTrace;
@@ -961,6 +962,28 @@ struct Tracked<B = wgpu::Buffer> {
     // survives selection and partial producers until the actual unmap succeeds.
     upload: UploadState,
 }
+/// Immutable original inventory, lent only during the same serialized I/O
+/// checkpoint. Graph cannot change, allocate, reorder or erase these owners.
+/// Every entry is a complete dedicated buffer, never an arena subview.
+pub(crate) struct NativeIoOwners<'a> {
+    request: u64,
+    epoch: u64,
+    buffers: &'a [Tracked],
+}
+impl NativeIoOwners<'_> {
+    pub(crate) fn request(&self) -> u64 {
+        self.request
+    }
+    pub(crate) fn epoch(&self) -> u64 {
+        self.epoch
+    }
+    pub(crate) fn len(&self) -> usize {
+        self.buffers.len()
+    }
+    pub(crate) fn owners(&self) -> impl Iterator<Item = (&wgpu::Buffer, bool)> {
+        self.buffers.iter().map(|b| (&b.buffer, b.info_pinned))
+    }
+}
 /// A producer sees write operations only, preserving Wgpu's write-only map
 /// contract. The original native grant is consumed before any fallible operation.
 fn write_upload<T>(
@@ -998,18 +1021,25 @@ fn write_upload<T>(
         result
     }
 }
-/// Actual original caller has joined all readers. Preflight the entire
-/// cohort before publishing ANY native writer; generic only for CPU owner tests.
-fn prepare_native_upload_reuse<B>(owners: &mut [Tracked<B>]) -> Result<(), ServerError> {
-    for owner in owners.iter() {
+/// Original caller certified each admitted owner; excluded owners gain no
+/// writer. Preflight the entire cohort before any grant/revocation is published.
+/// Generic only for CPU owner tests, never an alternate completion authority.
+fn prepare_native_upload_reuse<B>(
+    owners: &mut [Tracked<B>],
+    admitted: impl Fn(usize) -> bool,
+) -> Result<(), ServerError> {
+    for (index, owner) in owners.iter().enumerate() {
         if owner.kind == Kind::Upload {
             let mut next = owner.upload;
-            next.after_joined().map_err(fault)?;
+            next.after_selected_join(admitted(index)).map_err(fault)?;
         }
     }
-    for owner in owners {
+    for (index, owner) in owners.iter_mut().enumerate() {
         if owner.kind == Kind::Upload {
-            owner.upload.after_joined().map_err(fault)?;
+            owner
+                .upload
+                .after_selected_join(admitted(index))
+                .map_err(fault)?;
         }
     }
     Ok(())
@@ -1301,20 +1331,32 @@ impl ReuseIndex {
         buffers: &mut [Tracked<B>],
         size: impl Fn(&B) -> u64,
     ) -> Result<(), ServerError> {
+        self.rebuild_selected(buffers, size, |_| true)
+    }
+    fn rebuild_selected<B>(
+        &mut self,
+        buffers: &mut [Tracked<B>],
+        size: impl Fn(&B) -> u64,
+        admitted: impl Fn(usize) -> bool,
+    ) -> Result<(), ServerError> {
         self.reset();
         // Validate the entire cohort before publishing any reusable owner.
-        for owner in buffers.iter() {
+        for (index, owner) in buffers.iter().enumerate() {
             Self::bucket(size(&owner.buffer))?;
             if owner.info_pinned && owner.kind != Kind::Uniform {
                 return Err(fault("private INFO pin owner mismatch"));
             }
-            if owner.kind == Kind::Upload && !owner.upload.reusable() {
+            if admitted(index)
+                && !owner.info_pinned
+                && owner.kind == Kind::Upload
+                && !owner.upload.reusable()
+            {
                 return Err(fault("private reuse upload remap incomplete"));
             }
         }
         // Reverse insertion preserves the former first-owner allocation order.
         for (index, owner) in buffers.iter_mut().enumerate().rev() {
-            if owner.info_pinned {
+            if owner.info_pinned || !admitted(index) {
                 owner.next_free = NO_REUSE_INDEX;
                 owner.reuse_ready = false;
                 continue;
@@ -2859,13 +2901,14 @@ impl TransientIo {
         // credit. Already-ready unused owners retain their prior permission.
     }
     /// # Safety
-    /// Serialized original native stream has submitted and joined ALL actual
-    /// graph lanes, transfer/INFO readers and readiness/handoff work. No peer
-    /// fence or metadata state is sufficient. Future selective reuse must carry
-    /// original per-owner exclusion, rather than reusing this all-owner grant.
-    pub(crate) unsafe fn recycle_native_after_all_joined(
+    /// Same original serialized stream must call Graph's real selective proof
+    /// while this immutable owner inventory is lent. The callback may not
+    /// substitute metadata, a peer fence, or another graph/stream's completion.
+    /// No enqueues or owner mutations may interleave before applying the cohort.
+    pub(crate) unsafe fn recycle_native_selected(
         &mut self,
         nonce: u64,
+        certify: impl FnOnce(NativeIoOwners<'_>) -> Result<Cohort, ServerError>,
     ) -> Result<(), ServerError> {
         let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.active()?;
@@ -2877,22 +2920,38 @@ impl TransientIo {
                 || !self.pending_info.is_empty()
                 || self.info_slab.is_some()
             {
-                return Err(fault("native reuse original joined cohort unavailable"));
+                return Err(fault("native reuse original owner inventory unavailable"));
+            }
+            // Original metadata ceiling proves Cohort's owner count bound. The
+            // separate bounded inventory/bitmap is charged in native HOST_BYTES.
+            if size_of::<Tracked>() < 32
+                || self.reuse_scope.metadata_limit > LARGE_REUSE_METADATA_MAX
+            {
+                return Err(fault("native reuse original metadata envelope"));
             }
             self.drain_accept_errors()?;
+            let cohort = certify(NativeIoOwners {
+                request: nonce,
+                epoch: self.ledger.epoch,
+                buffers: &self.buffers,
+            })?;
+            cohort
+                .validate(nonce, self.ledger.epoch, self.buffers.len())
+                .map_err(fault)?;
+            self.active()?;
             self.reuse_scope.free.reset();
             for owner in &mut self.buffers {
                 owner.reuse_ready = false;
             }
-            prepare_native_upload_reuse(&mut self.buffers)?;
-            // No WG map callback or primary transition/clear is needed: every
-            // native upload is flush/unmap guarded; every native readback is
-            // full-owner filled and HOST_READ released before its next real map.
-            // Original INFO pins and all ledger/terminal erase duties remain.
+            prepare_native_upload_reuse(&mut self.buffers, |i| cohort.admitted(i))?;
             self.drain_accept_errors()?;
             self.reuse_scope
                 .free
-                .rebuild(&mut self.buffers, wgpu::Buffer::size)?;
+                .rebuild_selected(&mut self.buffers, wgpu::Buffer::size, |i| {
+                    cohort.admitted(i)
+                })?;
+            // Original owners, INFO pins, MAIN debt and complete terminal erase
+            // remain retained. No unselected slot becomes writable/reusable.
             Ok(())
         }));
         match attempted {
@@ -5738,13 +5797,13 @@ mod tests {
         for invalid in [UploadState::NativeWriting, UploadState::NativeWritten] {
             let mut buffers = fake_uploads(2);
             buffers[1].upload = invalid;
-            assert!(prepare_native_upload_reuse(&mut buffers).is_err());
+            assert!(prepare_native_upload_reuse(&mut buffers, |_| true).is_err());
             assert_eq!(buffers[0].upload, UploadState::Idle);
             assert_eq!(buffers[1].upload, invalid);
             assert!(buffers.iter().all(|b| !b.reuse_ready));
         }
         let mut buffers = fake_buffers();
-        prepare_native_upload_reuse(&mut buffers).unwrap(); // Synthetic joined cohort.
+        prepare_native_upload_reuse(&mut buffers, |_| true).unwrap(); // Synthetic joined cohort.
         assert_eq!(buffers[0].upload, UploadState::NativeReady);
         assert!(buffers[1..].iter().all(|b| b.upload == UploadState::Idle));
         let size = |b: &FakeBuffer| b.words.borrow().len() as u64;
@@ -5760,8 +5819,60 @@ mod tests {
         assert_eq!(buffers[0].upload, UploadState::NativeReady);
         buffers[0].upload.begin_native_write().unwrap();
         assert!(index.rebuild(&mut buffers, size).is_err());
-        assert!(prepare_native_upload_reuse(&mut buffers).is_err());
+        assert!(prepare_native_upload_reuse(&mut buffers, |_| true).is_err());
         assert_eq!(buffers[0].upload, UploadState::NativeWriting);
+    }
+    #[test]
+    fn selective_reuse_revokes_excluded_writers_and_publishes_only_original_admitted_slots() {
+        let mut buffers = fake_buffers();
+        buffers[0].upload = UploadState::NativeReady; // Original unused old grant.
+        buffers[1].info_pinned = true;
+        prepare_native_upload_reuse(&mut buffers, |i| i == 2).unwrap();
+        assert_eq!(buffers[0].upload, UploadState::Idle);
+        let size = |b: &FakeBuffer| b.words.borrow().len() as u64;
+        let mut index = ReuseIndex::default();
+        index
+            .rebuild_selected(&mut buffers, size, |i| i == 2)
+            .unwrap();
+        assert_eq!(
+            index
+                .take(&mut buffers, Kind::Upload, MIN_BYTES, size)
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            index
+                .take(&mut buffers, Kind::Uniform, MIN_BYTES, size)
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            index
+                .take(&mut buffers, Kind::Readback, MIN_BYTES, size)
+                .unwrap(),
+            Some(2)
+        );
+        assert!(!buffers[0].reuse_ready && !buffers[1].reuse_ready);
+        assert!(buffers[1].info_pinned);
+        for invalid in [
+            UploadState::WgpuMapped,
+            UploadState::NativeWriting,
+            UploadState::NativeWritten,
+        ] {
+            let mut buffers = fake_uploads(2);
+            buffers[1].upload = invalid;
+            assert!(prepare_native_upload_reuse(&mut buffers, |_| false).is_err());
+            assert_eq!(buffers[0].upload, UploadState::Idle);
+            assert_eq!(buffers[1].upload, invalid);
+        }
+    }
+    #[test]
+    fn native_cohort_envelope_covers_the_original_maximum_io_metadata_owner_count() {
+        let bytes = size_of::<Tracked<wgpu::Buffer>>();
+        assert!(bytes >= 32);
+        let count = LARGE_REUSE_METADATA_MAX / bytes;
+        assert!(count <= super::super::strata_io_reuse::MAX_OWNERS);
+        super::super::strata_io_reuse::Cohort::new(1, 1, count).unwrap();
     }
     #[test]
     fn request_reuse_nonce_rejects_held_dirty_concurrent_foreign_and_stale_owners() {

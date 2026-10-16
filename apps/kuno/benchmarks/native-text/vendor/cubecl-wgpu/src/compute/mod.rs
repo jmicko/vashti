@@ -9,6 +9,7 @@ mod strata_flights;
 pub(crate) mod strata_graph;
 mod strata_handoff;
 mod strata_info_transfer;
+mod strata_io_reuse;
 mod strata_parameters;
 mod strata_physical;
 mod strata_readback;

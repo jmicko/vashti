@@ -28,6 +28,14 @@ pub(crate) struct Plan {
     accesses: Vec<Access>,
 }
 impl Plan {
+    /// Original canonical recorded descriptor/physical/indirect/copy owners.
+    /// A whole dedicated I/O overwrite conflicts with ANY range on that buffer.
+    /// No new allocation, caller-declared interval or data read is involved.
+    pub fn buffer_ids(&self) -> impl Iterator<Item = u64> + '_ {
+        self.accesses.iter().enumerate().filter_map(|(i, a)| {
+            (i == 0 || self.accesses[i - 1].buffer != a.buffer).then_some(a.buffer)
+        })
+    }
     pub fn conflicts(&self, incoming: &[Access]) -> Result<bool, &'static str> {
         let mut conflict = false;
         for access in incoming {
@@ -71,8 +79,9 @@ struct Region {
 const MAX_REGIONS: usize = 262144;
 /// Actual descriptor/copy intervals, not invented narrower declarations.
 /// Segment0 releases Wgpu initialization before either queue's native work.
-pub const NATIVE_QUEUE_HOST_BYTES: usize =
-    128 * 1024 * 1024 + super::strata_info_transfer::HOST_BYTES;
+pub const NATIVE_QUEUE_HOST_BYTES: usize = 128 * 1024 * 1024
+    + super::strata_info_transfer::HOST_BYTES
+    + super::strata_io_reuse::HOST_BYTES;
 
 fn insert_region(
     regions: &mut Vec<Region>,

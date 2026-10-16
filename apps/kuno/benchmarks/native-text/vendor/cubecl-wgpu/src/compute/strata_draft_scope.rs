@@ -89,6 +89,12 @@ impl Book {
             Ok(named.unwrap_or(0))
         }
     }
+    pub fn active_request(&self) -> Option<u64> {
+        self.live
+            .as_ref()
+            .filter(|s| s.active)
+            .map(|s| s.identity.request)
+    }
     /// Exact original owner interval, not an assumed whole VkBuffer. Shared
     /// readers and disjoint writes are legal; source writes/reset are forbidden
     /// from preparation through actual scope completion/terminal drain.
@@ -157,12 +163,15 @@ mod tests {
             assert!(b.dependency_submitted(foreign).is_err());
             assert!(b.enter(foreign).is_err());
         }
+        assert_eq!(b.active_request(), None);
         b.dependency_submitted(id).unwrap(); // Synthetic host outcome only.
         assert!(b.dependency_submitted(id).is_err());
         b.enter(id).unwrap();
+        assert_eq!(b.active_request(), Some(9));
         assert!(b.enter(id).is_err());
         b.check_active(id).unwrap();
         b.finish_joined(id).unwrap(); // Production must perform actual joins.
+        assert_eq!(b.active_request(), None);
         assert!(b.finish_joined(id).is_err());
         let next = b.prepare(9, source()).unwrap();
         assert!(next.generation > id.generation);

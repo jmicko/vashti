@@ -1193,15 +1193,72 @@ impl Graph {
         }
         Ok(())
     }
-    /// All-owner I/O reuse remains a joint boundary until selective original
-    /// cohorts are connected. Verify unsubmitted work too: pending flight count
-    /// or an empty primary encoder alone cannot authorize CPU remapping.
-    pub(crate) fn join_all_io_sources(&mut self) -> Result<(), ServerError> {
-        self.complete_submission()?;
-        if !self.nodes.is_empty() || self.flights.any() || self.info_uploads.pending() {
-            return Err(fault("native all-owner I/O reuse has outstanding work"));
+    /// Actual selective checkpoint for the same serialized stream's immutable
+    /// full I/O owners. No new work/owner mutation may interleave before apply.
+    /// Original named plans stay pinned for FUTURE direct replay, not just while
+    /// a matching flight happens to be running.
+    pub(super) fn certify_io_reuse(
+        &mut self,
+        owners: super::transient_io::NativeIoOwners<'_>,
+    ) -> Result<super::strata_io_reuse::Cohort, ServerError> {
+        if !self.nodes.is_empty() {
+            return Err(fault("native I/O reuse has unsubmitted original work"));
         }
-        Ok(())
+        // Preflight every original owner before joining/crediting any flight.
+        for recording in &self.recordings {
+            if !recording.ready || recording.key.is_some_and(|k| k.nonce != owners.request()) {
+                return Err(fault("native I/O reuse partial/foreign retained recording"));
+            }
+        }
+        for lane in 0..2 {
+            if let Some(flight) = self.flights.peek(lane).map_err(fault)? {
+                let original = self
+                    .recordings
+                    .iter()
+                    .find(|r| r.id == flight.recording)
+                    .ok_or_else(|| fault("native I/O original flight recording missing"))?;
+                if !flight.submitted || original.family != self.compute_queues[lane].family {
+                    return Err(fault("native I/O original flight family/submission"));
+                }
+            }
+        }
+        if let Some(request) = self.draft_scope.active_request() {
+            if request != owners.request() || self.compute_lane != 1 {
+                return Err(fault("native I/O reuse foreign original draft scope"));
+            }
+            self.complete_lane_submission(1)?;
+            self.handoff.complete().map_err(fault)?;
+            if let Some(ready) = self.draft_readiness.as_mut() {
+                ready.complete().map_err(fault)?;
+            }
+            // Source CPU reuse needs the REAL copy fence, not target math's
+            // completion. Do not credit an unrelated INFO header/visibility.
+            self.info_uploads.complete().map_err(fault)?;
+        } else {
+            self.complete_submission()?;
+        }
+        let mut cohort =
+            super::strata_io_reuse::Cohort::new(owners.request(), owners.epoch(), owners.len())
+                .map_err(fault)?;
+        for (buffer, pinned) in owners.owners() {
+            if buffer.size() < 256 || !buffer.size().is_power_of_two() {
+                return Err(fault("native I/O original dedicated full owner"));
+            }
+            let raw = unsafe { buffer.as_hal::<wgpu::hal::api::Vulkan>() }
+                .ok_or_else(|| fault("native I/O original Vulkan allocation"))?;
+            cohort
+                .owner(unsafe { raw.raw_buffer_handle() }.as_raw(), pinned)
+                .map_err(fault)?;
+        }
+        cohort.seal_inventory().map_err(fault)?;
+        for recording in &self.recordings {
+            if recording.key.is_some() || self.flights.live(recording.id) {
+                for buffer in recording.work.plan.buffer_ids() {
+                    cohort.exclude_buffer(buffer).map_err(fault)?;
+                }
+            }
+        }
+        Ok(cohort)
     }
     pub(crate) fn clear_completed_recordings(&mut self) -> Result<(), ServerError> {
         if self.flights.any() || self.pending() || self.info_uploads.pending() {

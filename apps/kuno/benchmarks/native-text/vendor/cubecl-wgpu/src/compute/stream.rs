@@ -900,15 +900,15 @@ impl WgpuStream {
             flush: true,
         })?;
         if let Some(graph) = self.strata_graph.as_mut() {
-            graph.join_all_io_sources()?;
-            // SAFETY: the original serialized stream just joined ALL graph,
-            // copy/INFO and readiness/handoff consumers, with no queued nodes.
-            // This is an all-owner boundary, not independent scoped reuse yet.
+            // SAFETY: original immutable owners are lent directly to this
+            // stream's real Graph proof, then applied without enqueue/mutation
+            // interleaving. The cohort excludes every retained named/live use;
+            // only its actually admitted source may receive a native writer.
             unsafe {
                 self.transient_io
                     .as_mut()
                     .unwrap()
-                    .recycle_native_after_all_joined(nonce)
+                    .recycle_native_selected(nonce, |owners| graph.certify_io_reuse(owners))
             }
         } else {
             self.transient_io.as_mut().unwrap().recycle_reuse(nonce)
