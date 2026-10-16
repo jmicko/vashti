@@ -418,7 +418,7 @@ pub(crate) struct Graph {
     compute_queues: [ComputeQueue; 2],
     compute_lane: usize,
     handoff: super::strata_handoff::Handoff,
-    info_uploads: super::strata_info_transfer::Uploads,
+    info_uploads: [super::strata_info_transfer::Uploads; 2],
     device: ash::Device,
     family: u32,
     queue: vk::Queue,
@@ -699,7 +699,12 @@ impl Graph {
                 return Err(fault(e));
             }
         };
-        let info_uploads = match super::strata_info_transfer::Uploads::new(&d, copy_family) {
+        let info_uploads = match (|| {
+            Ok::<_, &'static str>([
+                super::strata_info_transfer::Uploads::new(&d, h.queue_family_index())?,
+                super::strata_info_transfer::Uploads::new(&d, draft_family)?,
+            ])
+        })() {
             Ok(v) => v,
             Err(e) => {
                 unsafe {
@@ -1150,6 +1155,9 @@ impl Graph {
         self.compute_lane = lane;
         Ok(())
     }
+    fn info_queue(&self, lane: usize) -> vk::Queue {
+        self.compute_queues[lane].queue
+    }
     pub(super) fn upload_parameters(
         &mut self,
         copies: Vec<super::strata_info_transfer::Copy>,
@@ -1159,15 +1167,15 @@ impl Graph {
         }
         let accesses = super::strata_info_transfer::accesses(&copies).map_err(fault)?;
         self.draft_scope.check_accesses(&accesses).map_err(fault)?;
-        self.admit_accesses(&accesses, self.copy_queue)?;
+        let lane = self.compute_lane;
+        let queue = self.info_queue(lane);
+        self.admit_accesses(&accesses, queue)?;
         // Reuse only the INFO command pool's original completed copy. Its old
         // math consumers retain their own complete resources and header epochs.
         // Drop temporary ranges before allocating submit's validation metadata.
         drop(accesses);
-        self.info_uploads.complete().map_err(fault)?;
-        self.info_uploads
-            .submit(self.copy_queue, copies)
-            .map_err(fault)
+        self.info_uploads[lane].complete().map_err(fault)?;
+        self.info_uploads[lane].submit(queue, copies).map_err(fault)
     }
     /// Preflight BOTH original lanes before granting any completion credit.
     fn preflight_flights(&self) -> Result<(), ServerError> {
@@ -1258,7 +1266,7 @@ impl Graph {
         }
         // CPU reuse of an INFO source requires the real transfer fence, but
         // does not consume the timeline visibility owed to future math.
-        self.info_uploads.complete().map_err(fault)
+        self.info_uploads[1].complete().map_err(fault)
     }
     /// Real Wgpu work needs all old native users and MAIN visibility. Cold root
     /// initialization must not be silently skipped to manufacture overlap.
@@ -1315,7 +1323,7 @@ impl Graph {
             }
             // Source CPU reuse needs the REAL copy fence, not target math's
             // completion. Do not credit an unrelated INFO header/visibility.
-            self.info_uploads.complete().map_err(fault)?;
+            self.info_uploads[1].complete().map_err(fault)?;
         } else {
             self.complete_submission()?;
         }
@@ -1333,6 +1341,13 @@ impl Graph {
                 .map_err(fault)?;
         }
         cohort.seal_inventory().map_err(fault)?;
+        // A scoped MTP join does not join MAIN's original INFO copy. Its
+        // source staging must not be reused/erased while that copy can read it.
+        for uploads in &self.info_uploads {
+            for access in uploads.pending_accesses().map_err(fault)? {
+                cohort.exclude_buffer(access.buffer).map_err(fault)?;
+            }
+        }
         for recording in &self.recordings {
             if recording.key.is_some() || self.flights.live(recording.id) {
                 for buffer in recording.work.plan.buffer_ids() {
@@ -1343,7 +1358,7 @@ impl Graph {
         Ok(cohort)
     }
     pub(crate) fn clear_completed_recordings(&mut self) -> Result<(), ServerError> {
-        if self.flights.any() || self.pending() || self.info_uploads.pending() {
+        if self.flights.any() || self.pending() || self.info_uploads.iter().any(|u| u.pending()) {
             return Err(fault("native graph cleanup while pending"));
         }
         // Cleanup may follow a failed flush. It must not bypass an unknown
@@ -1496,25 +1511,29 @@ impl Graph {
         // copy. Only its actual header epoch was consumed, so decide AFTER
         // joining the original flights whether any newer copy still lacks a
         // completed consumer. Merely having had math is not visibility proof.
-        let info_only = self.info_uploads.wait();
-        self.info_uploads.complete().map_err(fault)?;
-        if let Some(info_only) = info_only {
-            // Without a math header no GPU consumer has waited on the upload
-            // timeline. An explicit INFO-only drain must establish visibility
-            // for both its selected native lane and later Wgpu read/cleanup.
-            self.handoff
-                .transfer(self.copy_queue, self.queue)
-                .map_err(fault)?;
-            self.handoff.complete().map_err(fault)?;
-            if self.compute_lane != 0 {
-                self.handoff
-                    .transfer(self.queue, self.compute_queues[0].queue)
-                    .map_err(fault)?;
+        for lane in 0..2 {
+            let info_only = self.info_uploads[lane].wait();
+            self.info_uploads[lane].complete().map_err(fault)?;
+            if let Some(info_only) = info_only {
+                // Every debt keeps its original lane/epoch. A completed copy
+                // alone never credits visibility to math or later Wgpu cleanup.
+                let source = self.info_queue(lane);
+                let native = self.compute_queues[lane].queue;
+                // Even a same-queue INFO-only drain needs an ACTUAL GPU
+                // dependency. A host copy fence alone does not make writes
+                // visible to future native/Wgpu commands on this queue.
+                self.handoff.visibility(source, native).map_err(fault)?;
                 self.handoff.complete().map_err(fault)?;
+                if native != self.compute_queues[0].queue {
+                    self.handoff
+                        .transfer(native, self.compute_queues[0].queue)
+                        .map_err(fault)?;
+                    self.handoff.complete().map_err(fault)?;
+                }
+                self.info_uploads[lane]
+                    .math_fence_joined(info_only.value)
+                    .map_err(fault)?;
             }
-            self.info_uploads
-                .math_fence_joined(info_only.value)
-                .map_err(fault)?;
         }
         Ok(())
     }
@@ -1559,7 +1578,7 @@ impl Graph {
         self.flights
             .begin(self.compute_lane, id, compute_count, replay, profiling)
             .map_err(fault)?;
-        let info_wait = self.info_uploads.wait();
+        let info_wait = self.info_uploads[self.compute_lane].wait();
         if let Some(wait) = info_wait {
             self.flights
                 .header_wait(self.compute_lane, id, wait.value)
@@ -1624,7 +1643,7 @@ impl Graph {
                 .ok_or_else(|| fault("native sampled original flight owner"))?
                 .collect()?;
         }
-        self.info_uploads
+        self.info_uploads[lane]
             .math_fence_joined(flight.info_epoch)
             .map_err(fault)?;
         // Only the actual matching fence above authorizes bookkeeping.
@@ -1792,10 +1811,11 @@ impl Graph {
             }
             .map_err(|_| fault("native graph replay command"))?[0];
         }
-        let timestamp_bits = if self
-            .nodes
-            .iter()
-            .any(|n| matches!(n.dispatch, Dispatch::Copy | Dispatch::Fill))
+        let timestamp_bits = if self.compute_lane == 0
+            && self
+                .nodes
+                .iter()
+                .any(|n| matches!(n.dispatch, Dispatch::Copy | Dispatch::Fill))
         {
             self.timestamp_bits.min(self.copy_timestamp_bits)
         } else {
@@ -1843,7 +1863,8 @@ impl Graph {
             None
         };
         let mut planner =
-            strata_schedule::Planner::new(self.nodes.len(), profiling).map_err(fault)?;
+            strata_schedule::Planner::for_lane(self.nodes.len(), profiling, self.compute_lane)
+                .map_err(fault)?;
         for node in &self.nodes {
             let accesses = self.node_ranges(node)?;
             planner

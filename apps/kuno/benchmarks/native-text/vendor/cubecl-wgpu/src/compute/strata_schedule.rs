@@ -83,7 +83,7 @@ const MAX_REGIONS: usize = 262144;
 /// Actual descriptor/copy intervals, not invented narrower declarations.
 /// Segment0 releases Wgpu initialization before either queue's native work.
 pub const NATIVE_QUEUE_HOST_BYTES: usize = 128 * 1024 * 1024
-    + super::strata_info_transfer::HOST_BYTES
+    + 2 * super::strata_info_transfer::HOST_BYTES
     + super::strata_io_reuse::HOST_BYTES
     + super::strata_allocator_scope::HOST_BYTES;
 
@@ -187,6 +187,7 @@ pub(crate) struct Planner {
     region_capacity: usize,
     capacity: usize,
     serialize: bool,
+    inline_copies: bool,
     release_next: bool,
 }
 impl Planner {
@@ -212,23 +213,38 @@ impl Planner {
             region_capacity: 0,
             capacity,
             serialize,
+            inline_copies: false,
             release_next: false,
         })
     }
+    /// Actual original lane policy. MTP has its own compute queue, which also
+    /// supports transfer commands; keep its copies ordered there, independently
+    /// of expert adaptation. Main/prompt retains streamed dual-queue execution.
+    pub fn for_lane(capacity: usize, serialize: bool, lane: usize) -> Result<Self, &'static str> {
+        if lane > 1 {
+            return Err("native queue plan lane");
+        }
+        let mut planner = Self::new(capacity, serialize)?;
+        planner.inline_copies = lane == 1;
+        Ok(planner)
+    }
     pub fn push(&mut self, node: &NodeAccess) -> Result<(), &'static str> {
+        // This selects only the queue. The original node still carries its
+        // COPY/FILL dispatch and TRANSFER accesses in Graph's actual encoder.
+        let copy = node.copy && !self.inline_copies;
         let result = &mut self.result;
         let index = result.node_segments.len();
         if index >= self.capacity {
             return Err("native queue plan node capacity");
         }
-        if index == 0 || self.release_next || result.segments.last().unwrap().copy != node.copy {
+        if index == 0 || self.release_next || result.segments.last().unwrap().copy != copy {
             let signal = result.segments.len() as u64 + 1;
             result.segments.push(Segment {
-                copy: node.copy,
-                wait: u64::from(node.copy),
+                copy,
+                wait: u64::from(copy),
                 signal,
             });
-            if node.copy {
+            if copy {
                 result.last_copy = signal;
             }
         }
@@ -236,7 +252,7 @@ impl Planner {
         let s = result.segments.len() - 1;
         result.node_segments.push(s);
         let segment = &mut result.segments[s];
-        let own = usize::from(node.copy);
+        let own = usize::from(copy);
         for access in &node.accesses {
             if access.buffer == 0 {
                 return Err("native queue plan null buffer");
@@ -955,5 +971,154 @@ mod info_dependency_tests {
                 value: 102
             })
         );
+    }
+}
+
+#[cfg(test)]
+mod draft_lane_tests {
+    use super::*;
+    fn nodes() -> Vec<NodeAccess> {
+        vec![
+            NodeAccess {
+                copy: true,
+                release_after: false,
+                accesses: vec![
+                    Access {
+                        buffer: 11,
+                        first: 0,
+                        bytes: 4096,
+                        write: false,
+                    },
+                    Access {
+                        buffer: 12,
+                        first: 0,
+                        bytes: 4096,
+                        write: true,
+                    },
+                ],
+            },
+            NodeAccess {
+                copy: false,
+                release_after: true,
+                accesses: vec![
+                    Access {
+                        buffer: 12,
+                        first: 0,
+                        bytes: 4096,
+                        write: false,
+                    },
+                    Access {
+                        buffer: 13,
+                        first: 0,
+                        bytes: 4096,
+                        write: true,
+                    },
+                ],
+            },
+            NodeAccess {
+                copy: true,
+                release_after: false,
+                accesses: vec![
+                    Access {
+                        buffer: 13,
+                        first: 0,
+                        bytes: 4096,
+                        write: false,
+                    },
+                    Access {
+                        buffer: 14,
+                        first: 0,
+                        bytes: 4096,
+                        write: true,
+                    },
+                ],
+            },
+            NodeAccess {
+                copy: true,
+                release_after: false,
+                accesses: vec![Access {
+                    buffer: 12,
+                    first: 8192,
+                    bytes: 4096,
+                    write: true,
+                }],
+            },
+        ]
+    }
+    #[test]
+    fn actual_mtp_lane_uses_compute_queue_for_copies_without_losing_original_access_inventory() {
+        let nodes = nodes();
+        let build = |lane| {
+            let mut p = Planner::for_lane(nodes.len(), false, lane).unwrap();
+            for node in &nodes {
+                p.push(node).unwrap();
+            }
+            p.finish().unwrap()
+        };
+        let main = build(0);
+        let draft = build(1);
+        assert!(main.segments.iter().any(|s| s.copy));
+        assert!(main.last_copy > 0);
+        assert!(draft.segments.iter().all(|s| !s.copy && s.wait == 0));
+        assert_eq!(draft.last_copy, 0);
+        assert_eq!(draft.node_segments.len(), nodes.len());
+        assert_eq!(draft.node_segments, [1, 1, 2, 2]); // Original release-after still divides recordings.
+        assert_eq!(
+            nodes.iter().map(|n| n.copy).collect::<Vec<_>>(),
+            [true, false, true, true]
+        );
+        let inventory = |p: &Plan| {
+            p.accesses()
+                .iter()
+                .map(|a| (a.buffer, a.first, a.bytes, a.write))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(inventory(&draft), inventory(&main));
+        assert_eq!(
+            inventory(&draft),
+            [
+                (11, 0, 4096, false),
+                (12, 0, 4096, true),
+                (12, 8192, 4096, true),
+                (13, 0, 4096, true),
+                (14, 0, 4096, true)
+            ]
+        );
+        assert!(
+            draft
+                .conflicts(&[Access {
+                    buffer: 11,
+                    first: 0,
+                    bytes: 4096,
+                    write: true
+                }])
+                .unwrap()
+        );
+        assert!(
+            !draft
+                .conflicts(&[Access {
+                    buffer: 12,
+                    first: 4096,
+                    bytes: 4096,
+                    write: true
+                }])
+                .unwrap()
+        );
+    }
+    #[test]
+    fn original_mtp_lane_selection_never_accepts_a_missing_queue_or_mints_copy_timeline_credit() {
+        assert!(Planner::for_lane(0, false, 1).is_err());
+        assert!(Planner::for_lane(1, false, 2).is_err());
+        for profile in [false, true] {
+            let nodes = nodes();
+            let mut p = Planner::for_lane(nodes.len(), profile, 1).unwrap();
+            for node in &nodes {
+                p.push(node).unwrap();
+            }
+            let p = p.finish().unwrap();
+            assert_eq!(p.last_copy, 0);
+            assert!(p.segments.iter().all(|s| !s.copy && s.wait == 0));
+            assert!(p.node_segments.windows(2).all(|s| s[0] <= s[1]));
+        }
     }
 }

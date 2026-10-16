@@ -52,7 +52,21 @@ impl Handoff {
     /// Serialized owning stream only. Both queues belong to this exact device.
     /// Original work/owners remain pinned by Graph through its actual fence.
     pub fn transfer(&mut self, from: vk::Queue, to: vk::Queue) -> Result<(), &'static str> {
-        if from == to {
+        self.submit(from, to, false)
+    }
+    /// INFO-only drains require real semaphore signal/wait visibility even
+    /// within one queue. Both submissions are queued in signal-before-wait
+    /// order; the original actual fence remains the only completion authority.
+    pub fn visibility(&mut self, from: vk::Queue, to: vk::Queue) -> Result<(), &'static str> {
+        self.submit(from, to, true)
+    }
+    fn submit(
+        &mut self,
+        from: vk::Queue,
+        to: vk::Queue,
+        same_queue: bool,
+    ) -> Result<(), &'static str> {
+        if from == to && !same_queue {
             return Ok(());
         }
         self.complete()?;

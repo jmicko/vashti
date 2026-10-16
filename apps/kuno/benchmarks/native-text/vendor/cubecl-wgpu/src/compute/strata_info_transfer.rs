@@ -1,4 +1,4 @@
-//! Actual current INFO owners copied on the adopted transfer queue. No model
+//! Actual current INFO owners copied on their original lane queue. No model
 //! content is cached here; retained handles remain under the original I/O ledger.
 use crate::WgpuResource;
 use ash::{vk, vk::Handle};
@@ -176,6 +176,16 @@ impl Uploads {
     }
     pub fn pending(&self) -> bool {
         self.pending
+    }
+    /// A different lane may be joined while this source copy is still live.
+    /// Retain/exclude its genuine complete source and destination roots until
+    /// THIS original copy fence completes; no peer completion grants credit.
+    pub fn pending_accesses(&self) -> Result<Vec<super::strata_schedule::Access>, &'static str> {
+        if self.pending {
+            accesses(&self.copies)
+        } else {
+            Ok(Vec::new())
+        }
     }
     pub fn wait(&self) -> Option<Wait> {
         self.needs_visibility().then_some(Wait {
@@ -424,5 +434,43 @@ mod tests {
         });
         assert!(validate(&s).is_err());
         assert!(validate(&[]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod peer_lane_tests {
+    use super::*;
+    #[test]
+    fn unjoined_peer_info_source_and_destination_are_excluded_without_peer_fence_credit() {
+        let latest = [3, 8];
+        let mut joined = [0, 0];
+        // The actual per-lane math-fence operation only advances its own epoch.
+        record_joined(&mut joined[1], latest[1], 8).unwrap();
+        assert!(visibility_pending(latest[0], joined[0]));
+        assert!(!visibility_pending(latest[1], joined[1]));
+        let mut cohort = super::super::strata_io_reuse::Cohort::new(9, 7, 5).unwrap();
+        for buffer in 1..=5 {
+            cohort.owner(buffer, false).unwrap();
+        }
+        cohort.seal_inventory().unwrap();
+        // Same original complete-range inventory used by Uploads::pending_accesses.
+        let accesses = span_accesses(&[Span {
+            source: 1,
+            target: 2,
+            bytes: 4096,
+        }])
+        .unwrap();
+        for a in accesses {
+            cohort.exclude_buffer(a.buffer).unwrap();
+        }
+        assert!(!cohort.admitted(0));
+        assert!(!cohort.admitted(1));
+        for i in 2..5 {
+            assert!(cohort.admitted(i));
+        }
+        assert_eq!(joined, [0, 8]); // Inventory inspection is not completion.
+        record_joined(&mut joined[0], latest[0], 3).unwrap();
+        assert!(!visibility_pending(latest[0], joined[0]));
+        assert_eq!(joined, [3, 8]);
     }
 }
