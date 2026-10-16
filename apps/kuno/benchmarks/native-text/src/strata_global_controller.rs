@@ -211,6 +211,104 @@ fn validate_round_entry(
     Ok(())
 }
 
+/// A completed original MTP producer retained for the NEXT target window.
+/// This owns small wiping token/control metadata, never a target-ready receipt.
+struct PreparedDraft {
+    coordinates: Zeroizing<[usize; 2]>, // next target origin, actual completed MTP cursor
+    binding: Zeroizing<u64>,
+    inputs: Zeroizing<Vec<u32>>,
+    first: Option<Zeroizing<u32>>,
+    joint: Zeroizing<f64>,
+}
+impl PreparedDraft {
+    fn validate_entry(
+        &self,
+        position: usize,
+        confirmed: u32,
+        draft_position: usize,
+        draft_binding: u64,
+    ) -> Result<()> {
+        if self.coordinates[0] != position
+            || self.coordinates[1] != draft_position
+            || *self.binding != draft_binding
+            || self.inputs.first() != Some(&confirmed)
+            || !(1..=crate::strata_port::verify_capacity()).contains(&self.inputs.len())
+            || self.inputs.iter().any(|&t| t >= VOCAB as u32)
+            || self.first.as_ref().is_some_and(|t| **t >= VOCAB as u32)
+            || (self.inputs.len() > 1
+                && self.first.as_ref().map(|t| **t) != self.inputs.get(1).copied())
+            || !self.joint.is_finite()
+            || !(0. ..=1.).contains(&*self.joint)
+        {
+            return Err("global prepared draft identity rejected".into());
+        }
+        Ok(())
+    }
+}
+struct DraftPlan {
+    position: usize,
+    maximum: usize,
+    minimum: f32,
+}
+fn prepare_next_draft(
+    draft: &mut resident_mtp::ResidentMtp<'_, '_>,
+    start: usize,
+    tokens: &[u32],
+    source: &crate::resident_model::batch::target_rows::DeviceCarry<'_>,
+    plan: DraftPlan,
+    cancel: &AtomicBool,
+) -> kuno_text::Result<PreparedDraft> {
+    if plan.position == 0
+        || start.checked_add(tokens.len()) != Some(plan.position)
+        || tokens.is_empty()
+        || !(1..=crate::strata_port::verify_capacity()).contains(&plan.maximum)
+    {
+        return Err(Error::InvalidFormat("global next draft source extent"));
+    }
+    let mut inputs = Zeroizing::new(Vec::with_capacity(crate::strata_port::verify_capacity()));
+    inputs.push(*tokens.last().ok_or(Error::InvalidBufferLength)?);
+    let mut first = None;
+    let mut joint = 1.;
+    if plan.maximum > 1 {
+        let output = draft.draft_accepted_device_window(
+            start,
+            tokens,
+            source,
+            plan.maximum - 1,
+            plan.minimum,
+            cancel,
+        )?;
+        if output.start != plan.position - 1
+            || output.binding != draft.binding()
+            || output.tokens().is_empty()
+            || output.tokens().len() > plan.maximum - 1
+            || draft.position() != plan.position - 1 + output.tokens().len()
+        {
+            return Err(Error::InvalidFormat(
+                "global confidence draft identity rejected",
+            ));
+        }
+        let count = output.usable_window(plan.minimum, plan.maximum)?;
+        first = output.tokens().first().copied().map(Zeroizing::new);
+        joint = output.joint_probability(count - 1)?;
+        inputs.extend_from_slice(&output.tokens()[..count - 1]);
+    } else {
+        draft.append_device_front(start, tokens, source, cancel)?;
+        if draft.position() != plan.position {
+            return Err(Error::InvalidFormat(
+                "global count1 MTP front cursor rejected",
+            ));
+        }
+    }
+    Ok(PreparedDraft {
+        coordinates: Zeroizing::new([plan.position, draft.position()]),
+        binding: Zeroizing::new(draft.binding()),
+        inputs,
+        first,
+        joint: Zeroizing::new(joint),
+    })
+}
+
 /// The model's charged request geometry must match this request. The caller
 /// controls accepted-token delivery; this module never persists text or tokens.
 pub(super) fn run<'m, 'f>(
@@ -345,6 +443,7 @@ pub(super) fn run<'m, 'f>(
     } else {
         None
     };
+    let mut prepared: Option<PreparedDraft> = None;
     let mut rounds = 0u64;
     let mut repairs = 0u64;
     while history.len() < request.max_outputs && confirmed != request.eos {
@@ -353,64 +452,57 @@ pub(super) fn run<'m, 'f>(
         if position != request.prompt.len() + history.len() - 1 {
             return Err("global target entry alignment rejected".into());
         }
-        if let Some(d) = draft.as_ref() {
-            if let Some(accepted) = &pending {
-                accepted.validate_entry(position, confirmed, d.position(), d.binding())?;
-            } else if d.position() != position - 1 {
-                return Err("global draft entry alignment rejected".into());
-            }
-        } else if pending.is_some() {
-            return Err("global accepted-round owner missing".into());
-        }
-        sampling.begin_round(position, confirmed)?;
         let remaining = request.max_outputs - history.len();
-        let mut count = if draft.is_some() {
-            request.speculation.mtp_window
-        } else {
-            1
-        };
-        let mut inputs = Zeroizing::new(Vec::with_capacity(crate::strata_port::verify_capacity()));
-        inputs.push(confirmed);
-        let mut joint_probability = 1.;
-        let mut first_draft = None;
-        if let Some(draft) = draft.as_deref_mut() {
-            let accepted = pending.take().ok_or("global device front source missing")?;
-            let source =
-                target.borrow_target_carry(executor, &accepted.device, accepted.predicted.len())?;
-            if count > 1 {
-                let maximum = count;
-                let output = draft.draft_accepted_device_window(
-                    accepted.coordinates[0],
-                    &accepted.predicted,
-                    &source,
-                    maximum - 1,
-                    request.draft_min_probability,
-                    cancel,
-                )?;
-                if output.start != position - 1
-                    || output.binding != draft.binding()
-                    || output.tokens().is_empty()
-                    || output.tokens().len() > maximum - 1
-                    || draft.position() != position - 1 + output.tokens().len()
-                {
-                    return Err("global confidence draft identity rejected".into());
+        let ready = if let Some(d) = draft.as_deref_mut() {
+            if let Some(ready) = prepared.take() {
+                if pending.is_some() {
+                    return Err("global duplicate draft producers".into());
                 }
-                count = output.usable_window(request.draft_min_probability, maximum)?;
-                first_draft = output.tokens().first().copied();
-                joint_probability = output.joint_probability(count - 1)?;
-                inputs.extend_from_slice(&output.tokens()[..count - 1]);
+                ready.validate_entry(position, confirmed, d.position(), d.binding())?;
+                ready
             } else {
-                draft.append_device_front(
+                // Only the initial prompt row uses the already committed model
+                // boundary. Later rows are consumed inside the scoped observer.
+                let accepted = pending
+                    .take()
+                    .ok_or("global initial device front source missing")?;
+                accepted.validate_entry(position, confirmed, d.position(), d.binding())?;
+                sampling.begin_round(position, confirmed)?;
+                let source = target.borrow_target_carry(
+                    executor,
+                    &accepted.device,
+                    accepted.predicted.len(),
+                )?;
+                prepare_next_draft(
+                    d,
                     accepted.coordinates[0],
                     &accepted.predicted,
                     &source,
+                    DraftPlan {
+                        position,
+                        maximum: request.speculation.mtp_window,
+                        minimum: request.draft_min_probability,
+                    },
                     cancel,
-                )?;
-                if draft.position() != position {
-                    return Err("global count1 MTP front cursor rejected".into());
-                }
+                )?
             }
-        }
+        } else {
+            if pending.is_some() || prepared.is_some() {
+                return Err("global accepted-round owner missing".into());
+            }
+            sampling.begin_round(position, confirmed)?;
+            PreparedDraft {
+                coordinates: Zeroizing::new([position, 0]),
+                binding: Zeroizing::new(0),
+                inputs: Zeroizing::new(vec![confirmed]),
+                first: None,
+                joint: Zeroizing::new(1.),
+            }
+        };
+        let mut count = ready.inputs.len();
+        let mut inputs = ready.inputs;
+        let first_draft = ready.first.as_ref().map(|x| **x);
+        let joint_probability = *ready.joint;
         // The preceding round's native cost includes the draft just joined.
         // Finish it BEFORE choosing the current lookup/chain policy.
         if let Some(previous) = observation.take() {
@@ -463,29 +555,67 @@ pub(super) fn run<'m, 'f>(
         }
         sampling.stage_target(position, &inputs)?;
         let mut selected = None;
-        let n = target.verify_native_prefix(executor, &inputs, cancel, &mut |rows| {
-            if rows.start() != position || rows.count() != count {
-                return Err(Error::InvalidFormat(
-                    "global verification identity rejected",
-                ));
-            }
-            let mut predicted = Zeroizing::new(Vec::with_capacity(count));
-            for row in 0..count {
-                if rows.position(row)? != position + row {
-                    return Err(Error::InvalidFormat("global target row stamp rejected"));
+        let n = target.verify_native_prefix(executor, &inputs, cancel, &mut |phase| {
+            use crate::resident_model::batch::PrefixPhase;
+            match phase {
+                PrefixPhase::Verified(rows) => {
+                    if rows.start() != position || rows.count() != count {
+                        return Err(Error::InvalidFormat(
+                            "global verification identity rejected",
+                        ));
+                    }
+                    let mut predicted = Zeroizing::new(Vec::with_capacity(count));
+                    for row in 0..count {
+                        if rows.position(row)? != position + row {
+                            return Err(Error::InvalidFormat("global target row stamp rejected"));
+                        }
+                        predicted.push(rows.greedy(row)?);
+                    }
+                    let n = accepted(&inputs, &predicted)
+                        .map_err(|_| Error::InvalidFormat("global accepted prefix rejected"))?;
+                    let device = rows.take_device_carry()?;
+                    selected = Some((predicted, device));
+                    Ok(n)
                 }
-                predicted.push(rows.greedy(row)?);
+                PrefixPhase::Pending {
+                    source,
+                    accepted: n,
+                } => {
+                    let (predicted, device) = selected
+                        .as_ref()
+                        .ok_or(Error::InvalidFormat("global verified prefix missing"))?;
+                    sampling.commit_target(n)?;
+                    let emit_count = emitted(&predicted[..n], remaining, request.eos);
+                    let continuing = predicted[emit_count - 1] != request.eos
+                        && history.len() + emit_count < request.max_outputs;
+                    if continuing && emit_count != n {
+                        return Err(Error::InvalidFormat(
+                            "global continuing committed prefix rejected",
+                        ));
+                    }
+                    if let Some(d) = draft.as_deref_mut().filter(|_| continuing) {
+                        let next_position = position + n;
+                        sampling.begin_round(next_position, predicted[n - 1])?;
+                        let grant = source.borrow(device, n)?;
+                        prepared = Some(prepare_next_draft(
+                            d,
+                            position,
+                            &predicted[..n],
+                            &grant,
+                            DraftPlan {
+                                position: next_position,
+                                maximum: request.speculation.mtp_window,
+                                minimum: request.draft_min_probability,
+                            },
+                            cancel,
+                        )?);
+                    }
+                    Ok(n)
+                }
             }
-            let n = accepted(&inputs, &predicted)
-                .map_err(|_| Error::InvalidFormat("global accepted prefix rejected"))?;
-            let device = rows.take_device_carry()?;
-            selected = Some((predicted, device));
-            Ok(n)
         })?;
-        let (mut predicted, device) =
-            selected.ok_or("global verified prefix observation missing")?;
+        let (predicted, _device) = selected.ok_or("global verified prefix observation missing")?;
         target.adapt_global_after_window(executor, cancel)?;
-        sampling.commit_target(n)?;
         repairs += u64::from(n < count);
         if target.completed_target_rows_cursor(executor)? != position + n {
             return Err("global accepted target cursor rejected".into());
@@ -501,24 +631,14 @@ pub(super) fn run<'m, 'f>(
         if continuing && emit_count != n {
             return Err("global continuing committed prefix rejected".into());
         }
-        let defer_front = draft.is_some() && continuing;
+        if prepared.is_some() != (draft.is_some() && continuing) {
+            return Err("global prepared next draft lifecycle rejected".into());
+        }
         confirmed = predicted[emit_count - 1];
         suffix_index.append(&predicted[..emit_count])?;
         for &token in &predicted[..emit_count] {
             history.push(token);
             emit(token)?;
-        }
-        if defer_front {
-            let d = draft
-                .as_ref()
-                .ok_or("global accepted-round draft owner missing")?;
-            predicted.truncate(n);
-            pending = Some(AcceptedRound {
-                coordinates: Zeroizing::new([position, d.position()]),
-                binding: Zeroizing::new(d.binding()),
-                predicted,
-                device,
-            });
         }
         // Native DraftPolicy consumes ACCEPTED DRAFTS (n-1), not emitted
         // rows or output clipping. EOS exits without another policy/draft pass.
@@ -539,6 +659,7 @@ pub(super) fn run<'m, 'f>(
         rounds += 1;
     }
     if pending.is_some()
+        || prepared.is_some()
         || observation.is_some()
         || target.completed_target_rows_cursor(executor)? != committed_cursor
     {
@@ -567,6 +688,53 @@ pub(super) fn run<'m, 'f>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn prepared_next_draft_requires_its_original_completed_producer_and_tokens() {
+        let ready = |inputs: Vec<u32>, first: Option<u32>, joint| PreparedDraft {
+            coordinates: Zeroizing::new([23, 25]),
+            binding: Zeroizing::new(99),
+            inputs: Zeroizing::new(inputs),
+            first: first.map(Zeroizing::new),
+            joint: Zeroizing::new(joint),
+        };
+        // Confidence may reduce the usable window without rewinding the actual
+        // producer cursor or losing its first candidate for suffix comparison.
+        for inputs in [vec![10], vec![10, 11], vec![10, 11, 12]] {
+            let p = ready(inputs, Some(11), 0.8);
+            p.validate_entry(23, 10, 25, 99).unwrap();
+            for (position, confirmed, cursor, binding) in [
+                (24, 10, 25, 99),
+                (23, 11, 25, 99),
+                (23, 10, 24, 99),
+                (23, 10, 25, 98),
+            ] {
+                assert!(
+                    p.validate_entry(position, confirmed, cursor, binding)
+                        .is_err()
+                );
+            }
+        }
+        for p in [
+            ready(vec![], None, 1.),
+            ready(vec![10, 11], Some(12), 0.8),
+            ready(vec![10, 11], None, 0.8),
+            ready(vec![10, VOCAB as u32], Some(VOCAB as u32), 0.8),
+            ready(vec![10], Some(VOCAB as u32), 0.8),
+            ready(vec![10], None, f64::NAN),
+            ready(vec![10], None, -0.1),
+            ready(vec![10], None, 1.1),
+            ready(
+                vec![10; crate::strata_port::verify_capacity() + 1],
+                None,
+                1.,
+            ),
+        ] {
+            assert!(p.validate_entry(23, 10, 25, 99).is_err());
+        }
+        ready(vec![10], None, 1.)
+            .validate_entry(23, 10, 25, 99)
+            .unwrap();
+    }
     #[test]
     fn native_grouped_round_entry_is_bound_to_accepted_prefix_and_original_model() {
         for n in 1..=crate::strata_port::verify_capacity() {

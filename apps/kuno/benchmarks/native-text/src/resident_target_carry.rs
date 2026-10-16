@@ -1,6 +1,7 @@
-//! Borrow the actual completed verifier R owner for a joined MTP round.
+//! Borrow the actual observed verifier R owner for an original MTP consumer.
 //! A receipt is not a raw handle or erase authority. Its source is authenticated
-//! again under an immutable parent-model borrow before any GPU command.
+//! again under an immutable owner borrow before any GPU command. Verified rows
+//! can precede target state publication; the grant never asserts a ready cursor.
 use super::*;
 use std::cell::Cell;
 
@@ -19,6 +20,26 @@ struct CarryIdentity<B = GraphBindingId> {
     geometry: Zeroizing<[usize; 2]>,
 }
 impl<B: PartialEq> CarryIdentity<B> {
+    fn validate_verified_window(
+        &self,
+        generation: u64,
+        binding: B,
+        start: usize,
+        proposed: usize,
+        accepted: usize,
+        predictions: usize,
+    ) -> Result<()> {
+        if *self.generation != generation
+            || self.binding != binding
+            || *self.geometry != [start, proposed]
+            || predictions != proposed
+            || !(1..=FOUR_ROWS).contains(&proposed)
+            || !(1..=proposed).contains(&accepted)
+        {
+            return Err(rejected!());
+        }
+        Ok(())
+    }
     fn validate(
         &self,
         generation: u64,
@@ -88,6 +109,74 @@ pub(crate) struct DeviceCarry<'a> {
     receipt: &'a DeviceCarryReceipt,
     accepted: usize,
     completion: CopyCompletion<'a>,
+}
+/// Limited verified-window R factory. It cannot expose target state, a ready
+/// cursor, reset, or erasure authority. An original opaque result receipt and
+/// current original row generation are still required to borrow any source.
+pub(crate) struct VerifiedCarryContext<'a> {
+    arena: &'a PrivateArena,
+    owner: &'a Owners,
+    retired: &'a AtomicBool,
+    binding: GraphBindingId,
+    sources: &'a [BufferId; 2],
+    window: [usize; 2],
+}
+impl Owners {
+    /// Caller has observed the actual original whole-model row/fault packet.
+    /// No host row lease or intervening chunk may survive this scoped factory.
+    pub(crate) fn verified_carry_context<'a>(
+        &'a self,
+        arena: &'a PrivateArena,
+        retired: &'a AtomicBool,
+        binding: GraphBindingId,
+        sources: &'a [BufferId; 2],
+        window: [usize; 2],
+    ) -> Result<VerifiedCarryContext<'a>> {
+        self.check_no_live_output()?;
+        coordinates_selected(window[1], window[0], window[1] > MAX_ROWS)?;
+        if retired.load(Ordering::Acquire) {
+            return Err(rejected!());
+        }
+        Ok(VerifiedCarryContext {
+            arena,
+            owner: self,
+            retired,
+            binding,
+            sources,
+            window,
+        })
+    }
+}
+impl VerifiedCarryContext<'_> {
+    pub(crate) fn borrow<'a>(
+        &'a self,
+        receipt: &'a DeviceCarryReceipt,
+        accepted: usize,
+    ) -> Result<DeviceCarry<'a>> {
+        self.owner.check_no_live_output()?;
+        receipt.identity.validate_verified_window(
+            self.owner.carry_generation.get(),
+            self.binding,
+            self.window[0],
+            self.window[1],
+            accepted,
+            receipt.predictions.len(),
+        )?;
+        if self.retired.load(Ordering::Acquire) || !self.sources.contains(&*receipt.source) {
+            return Err(rejected!());
+        }
+        let source = gr::full_private(self.arena, *receipt.source, MAX_BATCH * HC_WIDTH)?;
+        gr::physical(self.arena, &[source])?;
+        Ok(DeviceCarry {
+            arena: self.arena,
+            receipt,
+            accepted,
+            completion: CopyCompletion {
+                retired: self.retired,
+                in_flight: Cell::new(false),
+            },
+        })
+    }
 }
 impl DeviceCarry<'_> {
     pub(crate) fn validate_predictions(&self, start: usize, tokens: &[u32]) -> Result<()> {
@@ -224,6 +313,46 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn verified_window_carry_does_not_require_or_forge_committed_target_state() {
+        for proposed in 1..=FOUR_ROWS {
+            let id = CarryIdentity {
+                binding: 91u64,
+                generation: Zeroizing::new(7),
+                geometry: Zeroizing::new([20, proposed]),
+            };
+            for accepted in 1..=proposed {
+                // Original verified rows are ready while target state is still
+                // at20. The distinct committed-state API must continue rejecting.
+                id.validate_verified_window(7, 91, 20, proposed, accepted, proposed)
+                    .unwrap();
+                assert!(id.validate(7, 91, 20, accepted, proposed).is_err());
+                id.validate(7, 91, 20 + accepted, accepted, proposed)
+                    .unwrap();
+                for (generation, binding, start, span, keep, predictions) in [
+                    (6, 91, 20, proposed, accepted, proposed),
+                    (7, 90, 20, proposed, accepted, proposed),
+                    (7, 91, 21, proposed, accepted, proposed),
+                    (7, 91, 20, proposed + 1, accepted, proposed),
+                    (7, 91, 20, proposed, 0, proposed),
+                    (7, 91, 20, proposed, proposed + 1, proposed),
+                    (7, 91, 20, proposed, accepted, proposed + 1),
+                ] {
+                    assert!(
+                        id.validate_verified_window(
+                            generation,
+                            binding,
+                            start,
+                            span,
+                            keep,
+                            predictions
+                        )
+                        .is_err()
+                    );
+                }
+            }
+        }
+    }
     #[test]
     fn native_device_carry_identity_authenticates_every_accepted_prefix_and_epoch() {
         for n in 1..=FOUR_ROWS {

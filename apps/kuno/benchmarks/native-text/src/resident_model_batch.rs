@@ -1793,7 +1793,16 @@ pub(crate) enum Purpose {
     LastLogits,
     AllRowsWithCarry,
 }
-type PrefixSelection<'a> = Option<&'a mut dyn FnMut(&mut NativeTargetRows) -> Result<usize>>;
+pub(crate) enum PrefixPhase<'a> {
+    Verified(&'a mut NativeTargetRows),
+    /// Original verified R only; target candidate state is not yet published.
+    Pending {
+        source: target_rows::VerifiedCarryContext<'a>,
+        accepted: usize,
+    },
+}
+type PrefixSelection<'a> =
+    Option<&'a mut dyn for<'rows> FnMut(PrefixPhase<'rows>) -> Result<usize>>;
 enum ChunkOutput {
     AcceptedPrefix(usize),
     Legacy(Zeroizing<Vec<f32>>),
@@ -4928,13 +4937,15 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
     /// The selected native controller observes provisional verified rows while
     /// ALL original state transactions remain open. Only the chosen prefix is
     /// published. The observer cannot access the model or executor, and its
-    /// host-row lease is dropped before candidate state consumers run.
+    /// host-row lease is dropped before candidate state consumers run. A second
+    /// scoped phase grants verified R to the drafter while the original commit
+    /// receipt remains owned; neither phase grants target state readiness.
     pub(crate) fn verify_native_prefix(
         &mut self,
         executor: &mut GpuExecutor<'f>,
         tokens: &[u32],
         cancel: &AtomicBool,
-        select: &mut dyn FnMut(&mut NativeTargetRows) -> Result<usize>,
+        select: &mut dyn for<'rows> FnMut(PrefixPhase<'rows>) -> Result<usize>,
     ) -> Result<usize> {
         if !crate::strata_intel_core::enabled() {
             return Err(error());
@@ -5710,7 +5721,9 @@ impl Workspace {
         };
         let selected_prefix = if let Some(select) = select {
             let keep = match output {
-                ChunkOutput::TargetRows(rows) => select_verified_rows(rows, *count, select)?,
+                ChunkOutput::TargetRows(rows) => {
+                    select_verified_rows(rows, *count, |rows| select(PrefixPhase::Verified(rows)))?
+                }
                 _ => return Err(error()),
             };
             self.target_rows
@@ -5718,11 +5731,29 @@ impl Workspace {
                 .ok_or(error())?
                 .check_no_live_output()?;
             // Real retained commit uses original candidate roots and typed n.
-            // Its joined recording still needs the original fault/family proof.
+            // Its original recording still needs the real join/fault/family proof.
             let commit = self.submit_native_prefix_commit(m, &pending, *count, keep, cancel)?;
+            let source = self
+                .target_rows
+                .as_ref()
+                .ok_or(error())?
+                .verified_carry_context(
+                    &m.arena,
+                    &m.retired,
+                    m.graph.binding_id(),
+                    &self.outer.residual,
+                    [*start, *count],
+                )?;
+            if select(PrefixPhase::Pending {
+                source,
+                accepted: keep,
+            })? != keep
+            {
+                return Err(error());
+            }
             if let Some(commit) = commit {
-                // Until independent draft preparation/INFO dependencies are
-                // connected, explicitly join the exported original submission.
+                // The observer may run the original drafter, but may not
+                // publish target state. Join its exact original submission.
                 m.arena
                     .client()
                     .map_err(u::fault)?
