@@ -5732,7 +5732,10 @@ impl Workspace {
                 .check_no_live_output()?;
             // Real retained commit uses original candidate roots and typed n.
             // Its original recording still needs the real join/fault/family proof.
-            let commit = self.submit_native_prefix_commit(m, &pending, *count, keep, cancel)?;
+            let commit = self
+                .submit_native_prefix_commit(m, &pending, *count, keep, cancel)?
+                .map(|submission| m.admission.retain_native_commit(submission))
+                .transpose()?;
             let source = self
                 .target_rows
                 .as_ref()
@@ -5754,11 +5757,7 @@ impl Workspace {
             if let Some(commit) = commit {
                 // The observer may run the original drafter, but may not
                 // publish target state. Join its exact original submission.
-                m.arena
-                    .client()
-                    .map_err(u::fault)?
-                    .join_native_strata_submission(commit)
-                    .map_err(u::fault)?;
+                commit.join()?;
             }
             output = ChunkOutput::AcceptedPrefix(keep);
             Some(keep)

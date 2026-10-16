@@ -86,6 +86,7 @@ pub struct MainAdmission {
     limit: u64,
     upper: u64,
     poisoned: bool,
+    pending_retirements: u8,
 }
 impl MainAdmission {
     pub fn new(limit: u64, actual_main_baseline: u64) -> Result<Self> {
@@ -96,6 +97,7 @@ impl MainAdmission {
             limit,
             upper: actual_main_baseline,
             poisoned: false,
+            pending_retirements: 0,
         })
     }
     pub fn upper_bytes(&self) -> u64 {
@@ -184,12 +186,36 @@ impl MainAdmission {
         }
         Ok(())
     }
-    /// Only the owner may call this AFTER a successful existing router/QSA/
-    /// final readback or sync completes ALL earlier work on this context.
+    /// Retain the current upper bound across a real independently pending math
+    /// submission. Each of the two native lanes can own one unresolved hold.
+    /// The owning runtime join, not a peer fence/sample, releases the hold.
+    pub(crate) fn begin_pending_retirement(&mut self) -> Result<()> {
+        self.active()?;
+        if self.pending_retirements >= 2 {
+            return Err(AdmissionError::InvalidAllocation);
+        }
+        self.pending_retirements += 1;
+        Ok(())
+    }
+    pub(crate) fn join_pending_retirement(&mut self) -> Result<()> {
+        self.active()?;
+        if self.pending_retirements == 0 {
+            return Err(AdmissionError::InvalidAllocation);
+        }
+        self.pending_retirements -= 1;
+        // Joining does not sample or reclaim MAIN. A later real completed
+        // boundary must still validate telemetry before reducing the bound.
+        Ok(())
+    }
+    /// The owner supplies successful original router/QSA/output/sync completion.
+    /// A peer boundary cannot reclaim debt held by another pending submission.
+    /// Without pending holds, callers still require ALL earlier context work.
     /// Failed telemetry/fence must call poison(), never reset or retry.
     pub fn completed_fence(&mut self, actual_main: u64) -> Result<()> {
         self.observe_after(actual_main)?;
-        self.upper = actual_main;
+        if self.pending_retirements == 0 {
+            self.upper = actual_main;
+        }
         Ok(())
     }
 }
@@ -197,6 +223,80 @@ impl MainAdmission {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pending_math_retains_debt_across_peer_fences_and_further_allocations() {
+        let page = MIN_PAGE_BYTES;
+        let mut ledger = MainAdmission::new(4 * page, page).unwrap();
+        ledger.precharge(&[1, 1]).unwrap();
+        ledger.begin_pending_retirement().unwrap();
+        ledger.completed_fence(page).unwrap();
+        assert_eq!(ledger.upper_bytes(), 3 * page);
+        ledger.precharge(&[1]).unwrap();
+        ledger.completed_fence(0).unwrap();
+        assert_eq!(ledger.upper_bytes(), 4 * page);
+        assert_eq!(ledger.precharge(&[1]), Err(AdmissionError::LimitExceeded));
+        ledger.join_pending_retirement().unwrap();
+        assert_eq!(ledger.upper_bytes(), 4 * page); // Join alone is no refund.
+        ledger.completed_fence(page).unwrap();
+        assert_eq!(ledger.upper_bytes(), page);
+    }
+    #[test]
+    fn both_pending_lanes_must_join_before_a_boundary_can_reclaim_debt() {
+        let page = MIN_PAGE_BYTES;
+        let mut ledger = MainAdmission::new(4 * page, page).unwrap();
+        ledger.precharge(&[1, 1]).unwrap();
+        assert_eq!(
+            ledger.join_pending_retirement(),
+            Err(AdmissionError::InvalidAllocation)
+        );
+        ledger.begin_pending_retirement().unwrap();
+        ledger.begin_pending_retirement().unwrap();
+        assert_eq!(
+            ledger.begin_pending_retirement(),
+            Err(AdmissionError::InvalidAllocation)
+        );
+        ledger.join_pending_retirement().unwrap();
+        ledger.completed_fence(page).unwrap();
+        assert_eq!(ledger.upper_bytes(), 3 * page);
+        ledger.join_pending_retirement().unwrap();
+        assert_eq!(ledger.upper_bytes(), 3 * page);
+        ledger.completed_fence(page).unwrap();
+        assert_eq!(ledger.upper_bytes(), page);
+        assert_eq!(
+            ledger.join_pending_retirement(),
+            Err(AdmissionError::InvalidAllocation)
+        );
+    }
+    #[test]
+    fn pending_retirement_never_relaxes_growth_checks_or_unpoisons_failed_fences() {
+        for (limit, observed, expected) in [
+            (
+                4 * MIN_PAGE_BYTES,
+                MIN_PAGE_BYTES + 1,
+                AdmissionError::UnaccountedGrowth,
+            ),
+            (
+                MIN_PAGE_BYTES,
+                MIN_PAGE_BYTES + 1,
+                AdmissionError::LimitExceeded,
+            ),
+        ] {
+            let mut ledger = MainAdmission::new(limit, MIN_PAGE_BYTES).unwrap();
+            ledger.begin_pending_retirement().unwrap();
+            assert_eq!(ledger.completed_fence(observed), Err(expected));
+            assert!(ledger.is_poisoned());
+            assert_eq!(
+                ledger.join_pending_retirement(),
+                Err(AdmissionError::Poisoned)
+            );
+            assert_eq!(
+                ledger.begin_pending_retirement(),
+                Err(AdmissionError::Poisoned)
+            );
+            assert_eq!(ledger.completed_fence(0), Err(AdmissionError::Poisoned));
+            assert_eq!(ledger.upper_bytes(), MIN_PAGE_BYTES);
+        }
+    }
     #[test]
     fn native_shared_prompt_roots_use_the_actual_allocator_limit() {
         assert_eq!(MAX_PAGE_BYTES, crate::private_arena::MAX_SPAN_BYTES as u64);

@@ -617,6 +617,71 @@ pub(crate) struct ResidentAdmission {
     target_verify3_fused: bool,
     target_four_rows_reserved: bool,
 }
+/// Own the ORIGINAL pending commit and its shared MAIN retirement hold together.
+/// An unrelated completed drafter cannot refund its outstanding allocation debt.
+/// No metadata constructor, clone, reset, or caller-declared completion exists.
+pub(crate) struct PendingNativeCommit {
+    // Retire first on Drop, before releasing the retained original client.
+    completion: PendingRetirementCompletion,
+    admission: ResidentAdmission,
+    submission: cubecl_runtime::server::NativeStrataSubmission,
+    _not_send: std::marker::PhantomData<Rc<()>>,
+}
+struct PendingRetirementCompletion {
+    joined: bool,
+    retired: Arc<AtomicBool>,
+    sequence_poison: Arc<AtomicBool>,
+}
+impl Drop for PendingRetirementCompletion {
+    fn drop(&mut self) {
+        if !self.joined {
+            // Drop can run while an admission operation unwinds. Never acquire
+            // its mutex here or clear/refund an unknown outstanding hold.
+            self.sequence_poison.store(true, Ordering::Release);
+            self.retired.store(true, Ordering::Release);
+        }
+    }
+}
+impl PendingNativeCommit {
+    pub(crate) fn join(mut self) -> Result<()> {
+        self.admission
+            .client
+            .join_native_strata_submission(self.submission)
+            .map_err(|_| Error::InvalidFormat("native original commit join failed"))?;
+        self.admission.active()?;
+        self.admission
+            .with_ledger(|ledger| ledger.join_pending_retirement().map_err(admission_error))?;
+        // The backend validated this exact graph/scope/submission and joined
+        // its real original fence (or retained its actual prior completion).
+        self.completion.joined = true;
+        Ok(())
+    }
+}
+#[cfg(test)]
+mod pending_retirement_tests {
+    use super::*;
+    #[test]
+    fn unjoined_retirement_retires_original_context_without_clearing_prior_poison() {
+        for joined in [false, true] {
+            for prior_retired in [false, true] {
+                for prior_poison in [false, true] {
+                    let retired = Arc::new(AtomicBool::new(prior_retired));
+                    let poison = Arc::new(AtomicBool::new(prior_poison));
+                    // Synthetic host outcome only: production sets joined ONLY
+                    // after exact backend completion and original ledger release.
+                    drop(PendingRetirementCompletion {
+                        joined,
+                        retired: retired.clone(),
+                        sequence_poison: poison.clone(),
+                    });
+                    assert_eq!(retired.load(Ordering::Acquire), prior_retired || !joined);
+                    assert_eq!(poison.load(Ordering::Acquire), prior_poison || !joined);
+                }
+            }
+        }
+        assert!(std::mem::size_of::<PendingNativeCommit>() < 1024);
+    }
+}
 /// One pre-device peer reservation, consumed once by original Q2 construction.
 /// No caller can manufacture this token from a client, byte count or sample.
 pub(crate) struct NativeMtpAdmission {
@@ -676,6 +741,23 @@ fn checked_construction_origin<T>(
 }
 
 impl ResidentAdmission {
+    pub(crate) fn retain_native_commit(
+        &self,
+        submission: cubecl_runtime::server::NativeStrataSubmission,
+    ) -> Result<PendingNativeCommit> {
+        self.active()?;
+        self.with_ledger(|ledger| ledger.begin_pending_retirement().map_err(admission_error))?;
+        Ok(PendingNativeCommit {
+            admission: self.clone(),
+            submission,
+            _not_send: std::marker::PhantomData,
+            completion: PendingRetirementCompletion {
+                joined: false,
+                retired: self.retired.clone(),
+                sequence_poison: self.sequence_poison.clone(),
+            },
+        })
+    }
     pub(crate) fn shared_target_weights(
         &self,
     ) -> Result<Arc<crate::strata_shared_weights::Weights>> {
