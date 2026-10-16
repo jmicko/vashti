@@ -1,19 +1,64 @@
-<!-- Current resume: 2026-10-16, source 91e1f9e, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source 0bf0b5f, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, engine source through `91e1f9e`. The user authorized
+branch `codex/strata-rust-port`, engine source through `0bf0b5f`. The user authorized
 continuing CPU-only work; the goal controller is active for that scope.
 GPU/model/service/sudo work still needs renewed user authorization. Last physical recovery evidence
 is historical 06:07:22Z on Oct15; no subsequent GPU run or live health claim.
 
-Read the latest [pending commit receipt](kuno-strata-rewrite-completion.md#original-pending-commit-submissions-and-exact-joins-2026-10-16)
+Read the latest [scoped draft receipt](kuno-strata-rewrite-completion.md#scoped-verified-row-draft-consumer-2026-10-16)
 and coordination handoff. Earlier CJK source `cd703bc` was integrated as `0bfbea8`;
-**do not cherry-pick it again**. Its original 106299-row Q6 head, inverse-ID sampler
+**do not cherry-pick it again**. Its original106299-row Q6 head, inverse-ID sampler
 and target/MTP INT8 caches remain connected.
 
-**Latest pending commit receipt block:** `91e1f9e` connects separate pending
+**Latest scoped draft consumer:** `1f46f76` adds a second limited phase to the
+original prefix observer. After actual provisional row/fault observation and
+release of its host lease, the target submits its original commit, then lends
+verified R to the actual MTP consumer before explicit commit acknowledgement.
+This grant authenticates original graph, arena root, generation, full proposed
+window and accepted prefix. It cannot expose target state, a ready cursor or
+reset/erase authority. The existing copy-completion guard remains sticky on any
+unjoined consumer. Original target fault/I/O/family proof still precedes cursor
+publication. Verified-token delivery is described separately below.
+
+The selected controller now retains a completed next draft, not an unconsumed
+prior R between rounds. Original prompt R seeds the first draft; later drafts
+run inside the scoped pending phase. Request-local sampler history consumes only
+the accepted input prefix before coupled next-draft controls. Confidence trimming
+retains the actual producer cursor and first candidate; EOS/output-cap stop skips
+the next producer without shrinking state acceptance. Entries authenticate that
+same completed MTP instance/cursor before use. Token/control buffers remain
+bounded and wiping, with no new GPU data root or persisted request content.
+
+**Physical overlap is not yet established.** Global graph/stream guards still
+drain math. Delivery source `0bf0b5f` aligns the source order: after real
+whole-target row/fault observation and commit submission, emit the clipped verified
+predictions, then run next drafting, then join/prove target state before publishing
+its cursor. This is target-output delivery, not completed state or request success.
+A later draft/commit failure terminates the stream with partial verified output,
+retains normal poison/cleanup, and never publishes a ready target. Original token-
+delivery errors survive terminal cleanup. Pinned `generate.cpp:11089..11140` has
+this emit-before-draft order; its final wait is at11169.
+
+Next establish source readiness before target commit and put ALL MTP preparation
+on its independent lane. MTP observation is still synchronous and global drains
+can still join the pending target before independent execution starts. Preserve
+original source borrows, target/final joins and error ownership when changing that.
+
+Coupled backend work also includes full-owner INFO-copy hazards and shared MAIN
+retirement. `Ledger::Shared::completed_fence` currently credits the whole context,
+which is valid under global joins but must not credit an unrelated pending lane
+when those guards change. `shared_observation_checkpoint` uses request I/O recycle
+(which itself flushes), so it is not an independent-lane observation today. Do not
+remove global waits while retaining that completion/credit assumption.
+
+113 focused CPU cases and selected/off strict Clippy pass. Exact immutable/offline
+receipts are in the completion guide. No GPU/numerical/visibility/speed/recovery
+acceptance, model/service changes or API/UI changes. Required Vashti changes:none.
+
+**Earlier pending commit receipt block:** `91e1f9e` connects separate pending
 cold/replay APIs to the selected prefix path. They return original graph/scope/
 submission identity after actual queue submission, without joining its math
 fence. The original joined bool API still waits before returning true. Every

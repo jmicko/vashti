@@ -6,12 +6,12 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through `91e1f9e`. Read the latest
-[pending commit handoff](#active-kuno-engine-handoff--pending-commit-ownership-2026-10-16)
+`codex/strata-rust-port`, engine source through `0bf0b5f`. Read the latest
+[scoped draft handoff](#active-kuno-engine-handoff--scoped-verified-row-drafting-2026-10-16)
 and [completion gate](kuno-strata-rewrite-completion.md). Direct target/MTP
 submission, accepted-prefix state publication and retained commit graph are connected
-in source. Original pending submissions/joins are connected; independent draft/event
-fidelity and full GPU/numerical acceptance remain incomplete.
+in source. Original pending submissions/joins and scoped next-draft consumption are connected;
+independent execution/event fidelity and full GPU/numerical acceptance remain incomplete.
 No new speed result.
 
 The user authorized **CPU-only continuation**; the goal controller is active.
@@ -6398,3 +6398,35 @@ No public HTTP/connector/UI contract changed; required Vashti changes:none.
 Goal remains active for CPU-only work. No GPU/model/sudo/service operation,
 installation, deployment or release. Last physical recovery evidence remains
 historical Oct15; installed services/runtime/models were untouched.
+
+
+### Active Kuno engine handoff — scoped verified-row drafting (2026-10-16)
+
+Engine source `1f46f76`, followed by delivery source `0bf0b5f`, connects the next actual MTP producer inside the original
+pending-prefix interval. Its limited immutable R grant authenticates original
+row generation, graph/arena root and full proposed/accepted extents. It cannot
+publish target state or grant erasure. Real copy/consumer completion remains
+mandatory. The controller carries the completed original next producer forward,
+including actual cursor and confidence/first-candidate metadata. The prompt-only
+initial seed keeps its original committed borrow. EOS/cap skips next drafting;
+request-local sampling commits accepted inputs exactly once before coupled
+next-round controls. Original target join/fault/I/O/family proof still precedes
+state publication. Delivery source `0bf0b5f` emits genuine verified predictions
+after commit submission and before next drafting, matching pinned serving. A later
+draft/commit failure terminates the stream without granting state readiness or
+request success; original delivery errors survive terminal cleanup.
+
+This is connected source progress, **not physical overlap or parity**. Global
+waits still serialize execution. Verified delivery now precedes next drafting. Next:
+establish original R readiness before commit,
+move all MTP staging to the independent lane, and resolve whole INFO-copy hazards,
+shared MAIN completion/retirement credit and final/failure joins together.
+Keep the whole rewrite incomplete until the source and physical gates pass.
+
+113 focused CPU cases, selected/off strict Clippy, immutable final source
+`0bf0b5f` and330 offline shader variants pass. See completion guide
+**Scoped verified-row draft consumer** for exact hashes/logs and
+remaining substitutions. No GPU/model/sudo/service operation or installation/
+release. Public API/connector/UI unchanged; required Vashti changes:none.
+Goal stays active for CPU-only work; historical Oct15 recovery is not current
+physical health evidence.
