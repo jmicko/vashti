@@ -44,7 +44,16 @@ impl Kernel {
             include_str!("strata_dense.wgsl")
         );
         if self.dtype == 14 && !self.indexed {
-            let prefix = source.split_once("@compute").unwrap().0;
+            // Native A2 loads are real aligned16-byte buffer reads. Keep the
+            // same original padded owner; only this selected Q6 descriptor is
+            // vectorized. The byte/half helpers still address original bytes.
+            let prefix = source
+                .split_once("@compute")
+                .unwrap()
+                .0
+                .replace("weight:array<u32>", "weight:array<vec4<u32>>")
+                .replace("weight[at/4u]", "weight[at/16u][(at/4u)%4u]")
+                .replace("weight[at/4u+1u]", "weight[(at/4u+1u)/4u][(at/4u+1u)%4u]");
             return format!("{prefix}{}", include_str!("strata_native_q6.wgsl"));
         }
         // Match upstream native_mmvq's compile-time packed dot expansion. Keep
@@ -317,6 +326,142 @@ mod native_q6_tests {
         }
     }
     #[test]
+    fn actual_wide_q6_specializations_use_aligned_vector_storage_for_every_rhs_and_tail() {
+        use super::*;
+        use wgpu::naga as n;
+        for rows in [32, 16384, crate::resident_mtp::cjk::ROWS % 16384] {
+            for members in 1..=8 {
+                let k = Kernel {
+                    dtype: 14,
+                    rows,
+                    columns: 2560,
+                    row_bytes: 2100,
+                    members,
+                    indexed: false,
+                };
+                let source = k.source();
+                let module = n::front::wgsl::parse_str(&source).unwrap();
+                let info = n::valid::Validator::new(
+                    n::valid::ValidationFlags::all(),
+                    n::valid::Capabilities::all(),
+                )
+                .validate(&module)
+                .unwrap();
+                let weight = module
+                    .global_variables
+                    .iter()
+                    .find(|(_, g)| g.name.as_deref() == Some("weight"))
+                    .unwrap()
+                    .1;
+                let n::TypeInner::Array {
+                    base, stride: 16, ..
+                } = module.types[weight.ty].inner
+                else {
+                    panic!("original Q6 aligned vector owner");
+                };
+                assert!(matches!(
+                    module.types[base].inner,
+                    n::TypeInner::Vector {
+                        size: n::VectorSize::Quad,
+                        scalar: n::Scalar {
+                            kind: n::ScalarKind::Uint,
+                            width: 4
+                        }
+                    }
+                ));
+                assert_eq!(module.entry_points[0].workgroup_size, [128, 1, 1]);
+                assert_eq!(
+                    module
+                        .global_variables
+                        .iter()
+                        .filter(|(_, g)| g.binding.is_some())
+                        .count(),
+                    5
+                );
+                assert!(
+                    module
+                        .functions
+                        .iter()
+                        .any(|(_, f)| f.name.as_deref() == Some("load16_a2"))
+                );
+                let words = n::back::spv::write_vec(
+                    &module,
+                    &info,
+                    &Default::default(),
+                    Some(&n::back::spv::PipelineOptions {
+                        shader_stage: n::ShaderStage::Compute,
+                        entry_point: "main".into(),
+                    }),
+                )
+                .unwrap();
+                assert!(!words.is_empty());
+            }
+        }
+    }
+    #[test]
+    fn wide_q6_block_sharing_and_signed_scales_match_independent_gguf_decode() {
+        // Canonical GGUF decoding is the value oracle. This checks original
+        // field/column ownership for the native8-lane mapping and all partial
+        // four-block iterations; no device execution is claimed.
+        for blocks in [1, 2, 3, 4, 5, 10, 64] {
+            let mut packed = vec![0u8; blocks * 210];
+            for (block, b) in packed.chunks_exact_mut(210).enumerate() {
+                for (i, v) in b[..192].iter_mut().enumerate() {
+                    *v = (i * 73 + block * 29 + 11) as u8;
+                }
+                for (i, v) in b[192..208].iter_mut().enumerate() {
+                    *v = ((i as i32 * 3 + block as i32) % 16 - 8) as i8 as u8;
+                }
+                b[208..].copy_from_slice(&half::f16::from_f32(0.25).to_bits().to_le_bytes());
+            }
+            let mut canonical = vec![0f32; blocks * 256];
+            kuno_text::TensorType::Q6K
+                .decode(&packed, &mut canonical)
+                .unwrap();
+            let mut visits = vec![0u8; blocks * 256];
+            for lane in 0..32 {
+                let g = lane & 7;
+                let sub = lane >> 3;
+                for block in (sub..blocks).step_by(4) {
+                    let b = &packed[block * 210..(block + 1) * 210];
+                    let qh = 2 * (g >> 2) + (g & 1);
+                    let sc = 8 * (g >> 2) + (g & 3);
+                    let q8 = 4 * (g >> 2) + ((g & 3) >> 1);
+                    let half = g & 1;
+                    for word in 0..4 {
+                        let low = u32::from_le_bytes(
+                            b[16 * g + word * 4..16 * g + word * 4 + 4]
+                                .try_into()
+                                .unwrap(),
+                        );
+                        let at = 128 + 16 * qh + word * 4;
+                        let high = u32::from_le_bytes(b[at..at + 4].try_into().unwrap())
+                            >> (2 * ((g & 3) >> 1));
+                        for part in 0..2 {
+                            let code = ((low >> (4 * part)) & 0x0f0f0f0f)
+                                | (((high >> (4 * part)) << 4) & 0x30303030);
+                            let scale = b[192 + sc + 4 * part] as i8 as f32;
+                            for byte in 0..4 {
+                                let column = block * 256
+                                    + (q8 + 2 * part) * 32
+                                    + half * 16
+                                    + word * 4
+                                    + byte;
+                                let value = ((code >> (8 * byte)) & 255) as i32 - 32;
+                                assert_eq!(
+                                    (0.25 * scale * value as f32).to_bits(),
+                                    canonical[column].to_bits()
+                                );
+                                visits[column] += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            assert!(visits.into_iter().all(|n| n == 1));
+        }
+    }
+    #[test]
     fn native_eight_dense_scratch_covers_all_real_rhs_without_overcommit() {
         use super::{INPUT_BYTES, INPUT_WORDS};
         if !crate::strata_intel_core::enabled() {
@@ -329,7 +474,7 @@ mod native_q6_tests {
                 .owned_bytes as u64,
             INPUT_BYTES
         );
-        for columns in [640, 2560, 6144, 10240, 16384] {
+        for columns in [2560, 6144, 10240, 16384] {
             for count in 1..=8 {
                 let bytes = (count * (columns / 2 + columns / 16) * 4) as u64;
                 for dtype in [8, 12, 13, 14, 20, 23] {
@@ -338,6 +483,10 @@ mod native_q6_tests {
                     assert!(!super::supports_count(dtype, columns, bytes - 1, count));
                 }
             }
+        }
+        //640 is the legal Q8 shared-expert input, not a whole Q*_K/IQ4_XS row.
+        for dtype in [12, 13, 14, 23] {
+            assert!(!super::supports_count(dtype, 640, INPUT_BYTES, 1));
         }
         assert!(!super::supports_count(14, 2560, 1 << 20, 0));
         assert!(!super::supports_count(14, 2560, 1 << 20, 9));
@@ -372,6 +521,9 @@ pub(crate) fn project(
         || rows > 16384
         || fault.size_in_used() != 4
         || weight.size_in_used() < layout.total_bytes as u64
+        || dtype == 14
+            && (!weight.size_in_used().is_multiple_of(16)
+                || !weight.offset_start.unwrap_or(0).is_multiple_of(16))
         || ![&weight, &planes, &output, &fault]
             .iter()
             .all(|h| h.stream == planes.stream)
@@ -408,7 +560,9 @@ pub(crate) fn project(
                 rows,
                 columns,
                 row_bytes: layout.row_bytes,
-                members: if count == 1 {
+                members: if dtype == 14 {
+                    count
+                } else if count == 1 {
                     1
                 } else if count <= 4 {
                     4
@@ -425,11 +579,11 @@ pub(crate) fn project(
     Ok(())
 }
 pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
-    let mut result = [1, 4, 8]
-        .into_iter()
+    let mut result = (1..=8)
         .flat_map(|members| {
             [8, 12, 13, 14, 20, 23]
                 .into_iter()
+                .filter(move |&dtype| dtype == 14 || [1, 4, 8].contains(&members))
                 .map(move |dtype| (members, dtype))
         })
         .map(|(members, dtype)| {
