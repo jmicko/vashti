@@ -1,5 +1,10 @@
 # Strata Rust whole-model port experiment
 
+**Current CPU-only resume (2026-10-16):** source `12a60bf`, connected prompt
+phase overlay and256-query selection. Read the [completion receipt](kuno-strata-rewrite-completion.md#connected-prompt-phase-overlay-and-256-query-selection-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md) first. Historical timing/next-step
+notes below do not authorize new speed trials. Full rewrite remains incomplete.
+
 ## Active direction — finish the complete Rust port before speed testing (2026-10-14)
 
 The user replaced the old performance goal with an explicit **complete connected

@@ -1,18 +1,31 @@
-<!-- Current resume: 2026-10-16, source dc7ace7, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source 12a60bf, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, source `dc7ace7`. Goal active CPU-only. Sudo refresh
-succeeds in Demons. No GPU/model/service/install/release work or current health
-claim. Last physical recovery evidence remains historical Oct15.
+branch `codex/strata-rust-port`, source `12a60bf`. Goal active CPU-only. Sudo refresh
+currently reports password required in Demons; CPU work does not need root. No GPU/model/service/install/release work or current
+health claim. Last physical recovery evidence remains historical Oct15.
 
-Read [native request owner](kuno-strata-rewrite-completion.md#connected-transient-native-request-owner-2026-10-16)
-and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--transient-native-request-owner-2026-10-16).
-Controller tests now live under `strata_engine::controller`, not the old probe
-namespace. Earlier CJK `cd703bc` was integrated as `0bfbea8`; do not reapply it.
+Read [prompt phase overlay](kuno-strata-rewrite-completion.md#connected-prompt-phase-overlay-and-256-query-selection-2026-10-16)
+and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--prompt-phase-overlay-and-selection-batches-2026-10-16).
+Controller tests live under `strata_engine::controller`. Earlier CJK `cd703bc` was
+integrated as `0bfbea8`; do not reapply it.
 
-**Latest request owner:** `dc7ace7` adds `strata_engine::Request/execute`. The public
+**Latest connected block:** native mutually exclusive PLE/GDN/QSA/MoE phase
+scratch, with persistent GR/residual and independent eight-slot raw ring retained.
+Actual roots `[1GiB,1GiB,32MiB]` total2080MiB,992MiB below the previous3GiB.
+Working images80MiB, GU20MiB and routed partials400MiB; real256-byte view gaps and
+all source/erase/allocator/copy bounds remain.256-query score/selection batches
+reuse8MiB scores and8MiB flags, retain the full2051-stride selection owner and
+feed existing32-query attention. Query views stay aligned; selected logical row
+bias avoids unaligned descriptors. Extra INFO records are priced together.
+378 distinct CPU cases/42 nonempty suites and both strict lint configs pass;
+frozen artifact/offline shader receipt is linked above. No GPU or throughput claim.
+Power-of-two private roots and distinct F32/ping-pong scratch remain documented
+substitutions; full pricing/lifetime/source acceptance is not closed by this block.
+
+**Previous request owner:** `dc7ace7` adds `strata_engine::Request/execute`. The public
 fixture calls that actual source path before its legacy constructor/receipt code.
 Raw token buffers and sampler controls have wiping owners, arbitrary bounded
 prompt/output partitions reach32K, and tokens are delivered through the caller's
@@ -41,7 +54,7 @@ are not GPU/numerical/model acceptance. An earlier EXTRA old frozen-down test
 still fails at its unchanged16K-vs-core32K scratch expectation before its runtime
 assertion; full regressions remain open. No new speed result. No consumer/API change.
 
-**Previous capacity:** `bcc30dd`/`669437d` connect4096-row prompt owners/ABI, three
+**Historical capacity (allocation superseded by12a60bf above):** `bcc30dd`/`669437d` connect4096-row prompt owners/ABI, three
 owned1GiB roots (3GiB MAIN),128MiB working views, route/group planes, HOST/runtime,
 full coverage and actual1GiB buffer/binding plus65535-grid inventory guards. The32K
 QSA views still fit those original admitted roots; no optional cache loan enabled.

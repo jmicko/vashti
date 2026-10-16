@@ -54,7 +54,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp`, `prefill/kernels.dp.cpp` | Core connects native BF16 alpha/beta, controls, recurrence/norm and accepted-prefix replay. Prompt scope selects contiguous H, causal convolution/history/L2, CB32 recurrence and directly consumed FP16 output. Source 9a7a23b connects prompt-capacity whole-chunk math without per-element status/replay owners, carved AB staging, and native row/value-head recurrent state shared by prompt/decode/repair. The large chunk caller/acceptance is connected in the latest controller receipt; physical execution and final numerical/queue audit remain open. Split verifier mode is an optional upstream path, not selected by the measured server. |
 | QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects INT8 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. The measured server explicitly selects INT8 for target and MTP; source2a3d1ad ports both together and the combined CPU shader/layout checks now pass. Numerical/GPU acceptance is pending. Earlier generic-default FP16 scope claims below are superseded. Numerical/state acceptance remains required. |
 | PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Core connects native BF16 MAX8 projections, normalization/gate/conv/history, deduplicated positional reads and accepted-prefix ownership. Prompt calls now consume a bounded, joined double-buffered source prefetch. The latest controller receipt connects native large chunk geometry, joined uploads, retained tail and exact history acceptance. Sources `595393e` and `57147a8` make actual decode and prompt history GPU-authoritative in existing OLD/NEXT roots, with checked CPU token-only publication, GPU accepted-prefix history and independent PLE capture roles. Default prompt/decode float readbacks and prompt diagnostic tail copies are removed; explicit diagnostics and the legacy CPU oracle remain. Source `131d29c` selects the native scoped accepted-prefix consumer before state/cursor publication; the diagnostic checkpoint path keeps the older schedule. Pending event/graph fidelity and numerical/device acceptance remain open. Prompt loans are disabled in the measured32768-context configuration and are not a completion prerequisite. Never persist request n-grams. |
-| Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. The bounded prompt path now uses logical-ID expert order, checked native transfer nodes, an eight-slot raw ring and two paired dequantization slots. The latest owned-consumer receipt connects full2048-row owners, non-overlapping raw/grouped route packets, causal math/state scopes, the unbatched final prompt input uses normal count1 decode for the first head, and full device MTP teaching covers the preceding prefix (up to8192 matrix rows). Independent transfer/compute queues and real release boundaries are connected. The measured server uses4096 prompt rows and32768 context. Source `bcc30dd` connects4096-row prompt owners/ABI; source `8d301b1` subsequently connects32768 runtime context; full-prefix/device acceptance is open. Conservative3GiB prompt storage requires final Alloc::carve/pricing review. Its no-borrow selection and nonresident fraction select the existing eight-slot/two-dequant-ring path; alternative loans/ring sizes are not prerequisites. Physical whole-model acceptance remains open. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
+| Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. The bounded prompt path now uses logical-ID expert order, checked native transfer nodes, an eight-slot raw ring and two paired dequantization slots. The latest owned-consumer receipt connects full2048-row owners, non-overlapping raw/grouped route packets, causal math/state scopes, the unbatched final prompt input uses normal count1 decode for the first head, and full device MTP teaching covers the preceding prefix (up to8192 matrix rows). Independent transfer/compute queues and real release boundaries are connected. The measured server uses4096 prompt rows and32768 context. Source `bcc30dd` connects4096-row prompt owners/ABI; source `8d301b1` subsequently connects32768 runtime context; full-prefix/device acceptance is open. Source `12a60bf` connects native phase overlays, actual2080MiB admitted roots and256-query score/selection reuse; see the latest prompt-overlay receipt. Remaining packed/in-place scratch and allocator-granularity substitutions, dense pricing and physical lifetimes still require final review. Its no-borrow selection and nonresident fraction select the existing eight-slot/two-dequant-ring path; alternative loans/ring sizes are not prerequisites. Physical whole-model acceptance remains open. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
 | Prompt dense/expert matrix backend | Intel oneMKL rounded BF16/FP16 GEMMs | Connected Rust cooperative8x16x16/F32 kernels now consume the actual rounded dense and grouped GU/DOWN images, with enabled device features, SPIR-V native registration and required16 subgroup in both pipeline paths. See the cooperative-matrix receipt; physical numerical/model acceptance remains open. |
 | MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native INT8 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Positive-threshold chains now keep hidden carries on device and observe the same token/probability/fault packet as zero-threshold chains; mapped/event scheduling remains open. First/grouped device-source and ids-only target result consumers now exist; the shared-context constructor receipt below supersedes the separate-client blocker. Core construction now selects the actual target client and one combined account. Source9de7fef pins the original target embedding/head once, shares them with MTP and gathers target embeddings on GPU. Actual device/state acceptance is pending. Source0bfbea8 connects the original-order CJK106299-row Q6 draft head, inverse-ID history mapping, compact confidence and coupled sampling; source2a3d1ad connects INT8 caches. Combined CPU checks pass, with full numerical/GPU execution still pending. Source `862f5fa` separates first-front staging and actual observation from capture, and prestages all coupled draft controls once per round. Source `8262367` connects typed MTP phases/4096 boundaries and original model-instance graph namespaces; source `d0670b0` connects direct original MTP replay and capture-derived host/sampler handback. Physical acceptance, commit/event fidelity, numerical/state acceptance and runtime policy remain required. See the latest device-end receipt. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Sourcea26adc2 ports the native bounded trigram index, longest/recent suffix choice, cost priors, probing/stale rules and optional lookup-chain accounting into the selected controller. Configured MTP/target windows no longer shrink at the output cap; state commit and emission are separate. Coupled sampling and physical state acceptance still need end-to-end validation. |
@@ -7070,3 +7070,65 @@ physical acceptance; CPU checks do not prove them. Exact dense/prompt Alloc::car
 pricing, final scheduling/lifetime/substitution audit and old regressions remain.
 Full rewrite incomplete; no speed trials until the whole gate passes. No installed
 Kuno/API/config/connector/UI change, and required Vashti changes:none.
+
+## Connected prompt phase overlay and 256-query selection (2026-10-16)
+
+Runtime source `12a60bf0615e303409467bccffc7723ddece1395`. The selected Intel prompt path now carves mutually
+exclusive PLE/GDN/QSA and MoE views in one original phase root, following pinned
+`sycl/src/prefill/prefill.cpp:803-826,1128-1224`. Persistent GR/residual/carry
+stay in the first root; the actual eight-slot asynchronous raw DMA ring stays in
+an independent root. Two dequantized images remain in separate working space,
+with real dequant release before raw-slot reuse. No live phase is allowed to
+alias these independent lifetimes. Pending family acceptance retains original
+state/fault owners, not overwritten phase temporaries. The original native
+interval planner and compute barriers see the shared physical parent/ranges.
+
+The three actual admitted MAIN roots are now `[1GiB,1GiB,32MiB]`, totaling2080MiB,
+992MiB below the earlier3GiB. Views use the actual80MiB largest rounded working
+image,20MiB GU and400MiB routed partials, with native256-byte gaps/alignment.
+All original whole-root ownership, erase, parent-span and attachment checks stay
+required. MAIN requests, actual allocator bins, descriptor spans, runtime shader
+ABI, source attachment, raw-copy bounds and whole-model pricing change together.
+No content is placed in INFO/MAP as a substitute or saved to disk.
+
+Pinned `Prefill::Impl::sel_batch=256` and its2986-3000 score/selection loop now
+have a connected consumer. Scores and closing flags each reuse an8MiB view,
+rather than a full4096-query plane; complete4096x2051 selections remain live for
+subsequent32-query attention tiles. Only2048-byte query rows are rebased. The
+selected2051-word stride stays on its actual aligned full owner and uses an
+explicit logical destination row in the shader. Decode supplies zero and keeps
+its original MAX8 addressing. Extra score/validate/select parameter records are
+priced together: QSA prompt INFO6,782,976 ->7,888,896 bytes for all12 layers.
+
+CPU evidence under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-prompt-overlay-build-final-20261016.log`: locked release test build.
+- `strata-prompt-overlay-cpu-final-20261016.log`:378 distinct CPU cases in42
+  nonempty suites, no failures. Includes actual carved alias/disjoint intervals
+  through the original queue planner, raw-copy roles on the actual32MiB parent,
+  all full-prompt boundary/tail batches, descriptor offset/parent retention and
+  complete INFO record pricing. No test constructs a physical device.
+- `strata-prompt-overlay-{core,off}-clippy-20261016.log`: both strict locked
+  release lint configurations pass; formatting/whitespace pass.
+- Normal immutable release: `strata-prompt-overlay-ordinary-20261016/`, source
+  `12a60bf0615e303409467bccffc7723ddece1395`, SHA256
+  `b80113f0c7d2f0e4afc1d055200105aa2b81f4457386add05e41dd803b0e3040`.
+  Builder source-clean/stable-HEAD checks pass; independent hash and mode0500
+  checks pass. Build summary: `strata-prompt-overlay-ordinary-20261016.out`.
+- `strata-prompt-overlay-shaders-20261016.log`:330 offline shader variants pass,
+  including the actual new selection addressing and changed prompt ABI. Uses
+  matrix-aware spirv-tools. Only frozen `--validate-port-shaders` ran; it returns
+  before adapter/device setup. This supersedes the dc7ace7 frozen artifact.
+
+This is a connected source/lifetime reduction, not GPU or throughput evidence.
+No model/adapter/inference/service/install/API/frontend change occurred; required
+Vashti changes:none. Sudo refresh currently fails noninteractively in Demons;
+CPU work needs no root. Last physical recovery evidence remains historicalOct15.
+
+Remaining Alloc substitutions: private root bins still round to powers of two,
+not native2MiB granular allocations; GR/PLE retain distinct F32/ping-pong scratch
+rather than identical native packed/in-place storage. The whole prompt/dense
+pricing and final scheduling/substitution audit remain open. Protected arbitrary
+input/tokenization, verified hot public-weight/runtime reuse, old regression
+reconciliation and full numerical/device/failure/recovery acceptance also remain.
+Whole rewrite incomplete; speed gate closed, goal active CPU-only.

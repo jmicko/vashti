@@ -6,8 +6,8 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through `dc7ace7`. Read the latest
-[request-owner handoff](#active-kuno-engine-handoff--transient-native-request-owner-2026-10-16)
+`codex/strata-rust-port`, engine source through `12a60bf`. Read the latest
+[prompt-overlay handoff](#active-kuno-engine-handoff--prompt-phase-overlay-and-selection-batches-2026-10-16)
 and [completion gate](kuno-strata-rewrite-completion.md). Direct target/MTP
 submission, accepted-prefix state publication and retained commit graph are connected
 in source. Original pending submissions/joins and scoped next-draft consumption are connected;
@@ -6756,3 +6756,28 @@ those are not waived by its tests. Full numerical/physical/failure/recovery chec
 exact pricing, final source audit and legacy regressions remain. No speed tests
 until the whole rewrite gate passes. No API/config/connector/UI change; required
 Vashti changes:none. Preserve the original shared checkout and coordination edits.
+
+## Active Kuno engine handoff — prompt phase overlay and selection batches (2026-10-16)
+
+Isolated `codex/strata-rust-port`, source `12a60bf0615e303409467bccffc7723ddece1395`.
+Read [prompt-overlay receipt](kuno-strata-rewrite-completion.md#connected-prompt-phase-overlay-and-256-query-selection-2026-10-16)
+and the [checkpoint](kuno-native-text-checkpoint.md). The connected prompt path
+now follows native mutually exclusive attention/MoE scratch lifetimes and256-query
+scoring/selection with32-query attention. Persistent residual/GR, paired matrix
+images and the raw transfer ring retain their independent lifetimes. Complete
+selected rows keep actual aligned parent descriptors and logical row offsets.
+
+Actual prompt MAIN roots `[1GiB,1GiB,32MiB]` total2080MiB,992MiB below the prior
+3GiB. Real allocation, source attachment, copy/view bounds, shader ABI and pricing
+change together; QSA INFO records are separately increased to7,888,896 bytes.
+378 distinct CPU cases/42 nonempty suites and both strict lint configurations
+pass. See the receipt for frozen artifact and offline shader checks.
+
+No GPU/model/service/install/API/frontend/release change; required Vashti changes:
+none. Noninteractive sudo refresh currently reports password required in Demons;
+this does not block CPU-only continuation. HistoricalOct15 recovery is not current
+health evidence. Full rewrite incomplete; goal active CPU-only and speed gate
+closed. Exact native packed/in-place storage and allocator-granularity/dense
+pricing, protected arbitrary-input/tokenization, verified hot request reuse,
+final scheduling/substitution/source audit, old regressions and physical/numerical/
+failure/recovery acceptance remain open. Preserve canonical application work.
