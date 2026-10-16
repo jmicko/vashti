@@ -1,17 +1,30 @@
-<!-- Current resume: 2026-10-16, source 8d301b1, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source dc7ace7, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, source `8d301b1`. Goal active CPU-only. Sudo refresh
+branch `codex/strata-rust-port`, source `dc7ace7`. Goal active CPU-only. Sudo refresh
 succeeds in Demons. No GPU/model/service/install/release work or current health
 claim. Last physical recovery evidence remains historical Oct15.
 
-Read [32K context receipt](kuno-strata-rewrite-completion.md#connected-32768-cell-context-capacity-2026-10-16)
-and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--32768-cell-context-capacity-2026-10-16).
-Earlier CJK `cd703bc` was integrated as `0bfbea8`; do not reapply it.
+Read [native request owner](kuno-strata-rewrite-completion.md#connected-transient-native-request-owner-2026-10-16)
+and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--transient-native-request-owner-2026-10-16).
+Controller tests now live under `strata_engine::controller`, not the old probe
+namespace. Earlier CJK `cd703bc` was integrated as `0bfbea8`; do not reapply it.
 
-**Latest connected block:**32768 runtime context, while reference graph geometry
+**Latest request owner:** `dc7ace7` adds `strata_engine::Request/execute`. The public
+fixture calls that actual source path before its legacy constructor/receipt code.
+Raw token buffers and sampler controls have wiping owners, arbitrary bounded
+prompt/output partitions reach32K, and tokens are delivered through the caller's
+callback. Original shared target/MTP construction and ordered cleanup/actual root
+recovery remain coupled. No engine file output or receipt/preview logging; the
+public harness owns its synthetic diagnostics separately.374 distinct CPU cases/
+41 nonempty suites and both strict lint configs pass. Normal freeze/offline shader
+receipt is documented. No GPU or model execution, private-input or throughput
+acceptance. The executable caller remains compiled-public; protected arbitrary
+input/tokenization and verified hot public-weight/runtime reuse remain open.
+
+**Previous connected block:** 32768 runtime context, while reference graph geometry
 stays unchanged. Actual target/GDN/QSA and MTP constructors, KV/positions/RoPE,
 8192 pooled blocks, selection, prompt traversal, request/result/router guards and
 typed graph controls agree. Sparse QSA retains2051 selection stride/33 chunks;
@@ -22,7 +35,7 @@ runtime envelopes256 ->512MiB; actual per-owner charges remain tracked. Suffix
 history covers32768 and fits its original4MiB HOST envelope. Sampler sliding
 history remains4096. Ordinary engine context/default geometry remain unchanged.
 
-Final371 distinct CPU cases/40 nonempty suites and both strict lint configurations
+Previous 32K receipt:371 distinct CPU cases/40 nonempty suites and both strict lint configurations
 pass. Normal release freeze/offline shaders are detailed in the receipt. These
 are not GPU/numerical/model acceptance. An earlier EXTRA old frozen-down test
 still fails at its unchanged16K-vs-core32K scratch expectation before its runtime
@@ -42,7 +55,8 @@ preserves INFO visibility after copy completion and pins original allocator
 bindings through scope end. Ordinary/cold/final drains and original pending
 submission/MAIN debt/R loan/family/numerical/I/O/state proofs remain separate.
 
-**Next:** arbitrary transient request entry, exact dense/prompt ownership pricing,
+**Next:** protected arbitrary-input/tokenization caller, verified request reuse,
+exact dense/prompt ownership pricing,
 source scheduling/lifetime/substitution audit and legacy regression reconciliation.
 Then full numerical, physical and actual recovery acceptance with renewed GPU
 authority. No speed trials until the complete connected rewrite gate passes.

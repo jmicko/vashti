@@ -60,7 +60,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Sourcea26adc2 ports the native bounded trigram index, longest/recent suffix choice, cost priors, probing/stale rules and optional lookup-chain accounting into the selected controller. Configured MTP/target windows no longer shrink at the output cap; state commit and emission are separate. Coupled sampling and physical state acceptance still need end-to-end validation. |
 | Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Source `131d29c` connects real provisional rows to accepted GDN/QSA/PLE candidates while original full-window transactions remain open, then publishes only n after real fault/I/O proof. Count1 uses its candidate and all-accept multirow runs original state replay. Old diagnostic full-window repair is not selected by the native controller. Source `4083258` connects the retained multirow commit graph with explicit dynamic accepted-count/position fields, original family preflight and count1 skip. Source `91e1f9e` connects original pending commit export/join; `1f46f76` connects a scoped original next-draft consumer before explicit commit acknowledgement. Source `0bf0b5f` emits real verified predictions before next drafting, matching the source delivery order. Source `f9d1e06` connects scoped admission/allocator lifetimes and INFO visibility; physical independent execution, full source substitution audit and independent numerical oracle remain open. |
 | Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; Source `d40442c` connects direct retained target submission with typed control uploads and original family receipts; source `d0670b0` connects direct MTP invocation with original actual packet observations and sampler/actor handback. Source `b6732c8` adopts independent MTP compute and concurrent buffer families with semaphore handoffs. Source `414e2c3` connects actual current INFO copies on the native transfer timeline and avoids empty primary submissions; source `86f4c35` replaces the global single fence/last-recording assumption with actual lane fences and stable original recording flights. Source `131d29c` connects synchronous original accepted-prefix publication; source `4083258` connects the retained commit graph. Source `91e1f9e` connects original pending submission identities and exact joins; `1f46f76` connects scoped original MTP consumption before explicit commit acknowledgement. Real independent readiness/INFO/draft execution remain open; source `543bc73` couples original pending commits to retained shared MAIN debt; source `a8e538f` retains actual recording ranges and preflights whole INFO-copy conflicts; source `d2d3228` pins original verified R, submits its real readiness dependency before commit and scopes all unkeyed/named draft lane selection. Source `7ad47ca` connects original native packet fill/copy, real HOST_READ availability, final fence and checked HAL host map without primary Wgpu readback copies/callbacks. Source `7cb1cbc` connects native upload state/render/flush/unmap and all-owner joined I/O reuse without Wgpu remaps or primary reuse clears. Source `7477b66` connects original per-owner selective reuse, current INFO copy completion and named/future/live recording exclusions. Source `f9d1e06` connects scoped graph/stream current-lane/conflict admission, original allocator pins and copy-vs-math INFO visibility. Required ordinary/cold/final global drains remain. Physical independent execution and full draft/event fidelity remain unverified. Physical ring overlap, scratch lifetimes and full execution acceptance remain open. Measured serving lazily captures branches; eager all-branch warmup is not a prerequisite; a sequence of independent Wgpu launches is not equivalent. |
-| Request lifecycle and arbitrary input | upstream CLI/session/inference entry points | Current Rust public-fixture gate is not a general engine. Connect bounded arbitrary prompts and request-local sampling/history, with no persistent content, protected memory and orderly erase/close. No gateway/UI work required. |
+| Request lifecycle and arbitrary input | upstream CLI/session/inference entry points | Source `dc7ace7` connects an owned raw-token request entry, original target/MTP construction, callback delivery and full checked cleanup; public diagnostics consume that actual path. The current executable caller is still compiled-public. Protected arbitrary-input/tokenization, verified hot request reuse and full device/failure/recovery acceptance remain required; no private/general service claim. No gateway/UI work required. |
 
 ## Validation and the speed gate
 
@@ -6984,3 +6984,89 @@ Arbitrary/private request entry, exact dense/prompt Alloc::carve pricing, origin
 queue/lifetime/substitution audit, legacy regressions and full numerical/device/
 recovery acceptance remain open. No speed trial is permitted until the whole
 completion gate passes. Required Vashti changes:none. Goal remains active CPU-only.
+
+## Connected transient native request owner (2026-10-16)
+
+Source `dc7ace7823c860b7237535cfb159f3bca2dab687` connects the selected Intel
+constructor, request/controller and cleanup path in `strata_engine.rs`. The
+compiled public diagnostic now calls this actual entry before its legacy path;
+this is not an unused request helper. The controller's new authoritative module
+is `strata_engine::controller` (same `strata_global_controller.rs` source file).
+It no longer imports the diagnostic's fixture constants or returns serialized
+receipts. Its generation, routing, draft/verification and accepted-prefix
+algorithm remain the same connected implementation.
+
+`Request::new` takes an owned `Zeroizing<Vec<u32>>` and request-local sampler,
+speculation and confidence controls. Tokens, capacities, EOS, sampling values,
+confidence and total prompt/output extent are bounded before construction. Native
+output budgets can use the remaining 32768-cell context instead of inheriting the
+public fixture's512-output cap. The same expanded budget reaches the original
+request-I/O geometry/authority. Full prompt/output/suffix HOST accounting stays
+inside4MiB. All sampling values and token allocations have wiping owners; neither
+request nor completion has content serialization or Debug output.
+
+`execute` takes already authenticated/bound mapped sources and the exact admitted
+client/device/queue/limits. Its unsafe contract explicitly retains the original
+full-artifact authentication, same target-file identity, protected swap/core-dump
+policy, redacted panic hook and exclusive MAIN/HOST/driver obligations. These are
+caller obligations, not proofs manufactured by request metadata. The public
+caller retains its existing real Intel memory preflight before entering this
+function. The engine preserves the original constructor reservations for source,
+router and integer planes; global activation still rejects legacy bank execution.
+The caller-selected immutable backlog policy is configured and checked after
+cleanup. No fallback changes the selected native path.
+
+Every constructor phase is retained outside the fallible inference closure. Body
+errors/unwinds go through checked draft close, target close/audit/drop, executor
+close/drop (last shared-weight reader before source detach), shared-table drop,
+actual shared-root physical cleanup and final draft drop. Original MTP profile
+close validation, source-change checks and complete target/source zero audits are
+still required. Failures use fixed categories with no backend/request payload;
+cleanup failure is recovery-required, never healthy completion. Failed runtime
+configuration grants no ownership or cleanup authority over a preexisting peer
+runtime. Destructor failures do not suppress attempts to close later owners.
+The callback's actual successful token count is checked against the controller's
+completion count. Completion is returned only after cleanup, with content-free
+counts and erasure receipts; tokens leave only through the caller's callback.
+
+The engine writes no files, receipts, stdout previews or request logs. The public
+harness separately owns its explicitly synthetic token output, preview and
+content-free receipt; the existing protected runner displays the public preview
+without persisting it. It retains the512-output fixture cap. This separation does
+not turn the benchmark CLI into a private production worker.
+
+CPU evidence under `/media/jmicko/faststore/kuno-development/`:
+
+- `strata-request-owner-build-final-20261016.log`: locked release test build.
+- `strata-request-owner-cpu-20261016.log`:374 distinct cases in41 nonempty suites,
+  no failures; includes all preceding focused coverage, relocated controller
+  coverage, varying-token/full-context request partitions, invalid parameters,
+  bounded heap ownership and the checked unwind/error boundary.
+- `strata-request-owner-{core,off}-clippy-20261016.log`: both strict locked release
+  lint configurations pass; changed Rust formatting/whitespace pass.
+- Intermediate first/checked build/test logs are not the final receipt. The old
+  extra frozen-down16K-vs-core32K scratch expectation remains unresolved; this is
+  not a full legacy regression pass.
+
+Normal immutable build: `strata-request-owner-ordinary-20261016/`, source
+`dc7ace7823c860b7237535cfb159f3bca2dab687`, frozen SHA256
+`57ee3ae618eddc40960dfb317f4fd6a69b49cb206117d9e49ab6c945609bbd28`.
+The locked ordinary builder checked clean source paths/stable HEAD; the frozen
+read/execute-only artifact hash was independently verified.
+`strata-request-owner-shaders-20261016.log` ends with330 accepted offline shader
+variants under the matrix-aware spirv-tools PATH. Only frozen
+`--validate-port-shaders` was executed; it returns before adapter/device setup.
+This supersedes the8d301b1 artifact for the request-owner entry. No adapter, model,
+service, driver or inference was run during these checks. Sudo refresh succeeded.
+
+**Remaining gates:** the internal Rust entry accepts arbitrary tokenized inputs,
+but its current executable caller still uses compiled public fixtures. Connect a
+protected, non-persisting arbitrary-input caller/tokenization path before claiming
+private request support. The entry owns one full request, including model teardown;
+verified public-weight/runtime reuse across requests is not established. Do not
+claim a hot multi-request engine from this extraction. Constructor failure,
+callback failure, numerical/state and actual shared-device recovery still need
+physical acceptance; CPU checks do not prove them. Exact dense/prompt Alloc::carve
+pricing, final scheduling/lifetime/substitution audit and old regressions remain.
+Full rewrite incomplete; no speed trials until the whole gate passes. No installed
+Kuno/API/config/connector/UI change, and required Vashti changes:none.

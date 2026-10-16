@@ -6,8 +6,8 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through `8d301b1`. Read the latest
-[32K context handoff](#active-kuno-engine-handoff--32768-cell-context-capacity-2026-10-16)
+`codex/strata-rust-port`, engine source through `dc7ace7`. Read the latest
+[request-owner handoff](#active-kuno-engine-handoff--transient-native-request-owner-2026-10-16)
 and [completion gate](kuno-strata-rewrite-completion.md). Direct target/MTP
 submission, accepted-prefix state publication and retained commit graph are connected
 in source. Original pending submissions/joins and scoped next-draft consumption are connected;
@@ -6723,3 +6723,36 @@ entry, exact dense/prompt pricing and the source scheduling/lifetime/substitutio
 review; GPU/numerical/actual recovery work needs renewed authority. No speed trial
 until the whole gate passes. No API/config/connector/UI change; required Vashti
 changes:none. Preserve the original shared checkout and its coordination edits.
+
+
+## Active Kuno engine handoff — transient native request owner (2026-10-16)
+
+Isolated `codex/strata-rust-port`, source `dc7ace7823c860b7237535cfb159f3bca2dab687`.
+Read [request-owner receipt](kuno-strata-rewrite-completion.md#connected-transient-native-request-owner-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). The public native diagnostic now
+calls the actual `strata_engine::execute`; old Intel-specific branches after that
+early return are not its selected path. The controller test namespace moved from
+`daslab_language_probe::global_controller` to `strata_engine::controller`; never
+count an old filter returning zero cases as a pass.
+
+Owned raw-token requests carry bounded sampler/speculation controls and can use
+the remaining32K context. The same original target/MTP constructor, shared source
+ownership, request I/O and ordered close/recovery consumers are connected. The
+engine does not serialize/log/persist inputs or outputs; the caller receives
+output tokens via a callback and content-free completion after checked cleanup.
+Public fixture preview/receipt handling stays in the diagnostic, with its existing
+memory preflight, protected process/source obligations and512-output budget.
+
+374 distinct CPU cases/41 nonempty suites, both strict lint configurations,
+format/whitespace pass; frozen artifact/offline shader evidence is in the receipt.
+No GPU/model/service/install/release work. Sudo refresh succeeds. Goal active
+CPU-only; no current device-health or performance claim.
+
+The current executable caller is still compiled-public. A protected arbitrary
+prompt/tokenization caller and verified public-weight/runtime reuse across requests
+remain required before general/private or hot multi-request support is claimed.
+The unsafe internal entry relies on real caller authentication/protection/admission;
+those are not waived by its tests. Full numerical/physical/failure/recovery checks,
+exact pricing, final source audit and legacy regressions remain. No speed tests
+until the whole rewrite gate passes. No API/config/connector/UI change; required
+Vashti changes:none. Preserve the original shared checkout and coordination edits.
