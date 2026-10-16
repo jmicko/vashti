@@ -398,9 +398,18 @@ pub(crate) enum Dispatch {
     Copy,
     Fill,
 }
+#[derive(Clone, Copy)]
+struct ComputeQueue {
+    family: u32,
+    queue: vk::Queue,
+    timestamp_bits: u32,
+}
 pub(crate) struct Graph {
     timestamp_period: f64,
     timestamp_bits: u32,
+    compute_queues: [ComputeQueue; 2],
+    compute_lane: usize,
+    handoff: super::strata_handoff::Handoff,
     device: ash::Device,
     family: u32,
     queue: vk::Queue,
@@ -429,6 +438,7 @@ struct Submitted {
     profiling: bool,
 }
 struct Recording {
+    family: u32,
     key: Option<super::strata_parameters::RecordingKey>,
     ready: bool,
     compute_count: usize,
@@ -535,6 +545,19 @@ impl Graph {
         let (copy_family, copy_queue) = h
             .kuno_transfer_queue()
             .ok_or_else(|| fault("native graph needs the actually adopted copy queue"))?;
+        let (draft_family, draft_queue) = h
+            .kuno_compute_queue()
+            .ok_or_else(|| fault("native graph needs the actually adopted draft queue"))?;
+        if draft_family == h.queue_family_index() || draft_family == copy_family {
+            return Err(fault("native draft queue family alias"));
+        }
+        let draft_timestamp_bits = unsafe {
+            h.shared_instance()
+                .raw_instance()
+                .get_physical_device_queue_family_properties(h.raw_physical_device())
+        }
+        .get(draft_family as usize)
+        .map_or(0, |q| q.timestamp_valid_bits);
         let copy_timestamp_bits = unsafe {
             h.shared_instance()
                 .raw_instance()
@@ -604,9 +627,34 @@ impl Graph {
                 return Err(fault("native graph fence"));
             }
         };
+        let handoff = match super::strata_handoff::Handoff::new(&d) {
+            Ok(v) => v,
+            Err(e) => {
+                unsafe {
+                    d.destroy_fence(fence, None);
+                    d.destroy_descriptor_pool(descriptors, None);
+                    d.destroy_command_pool(pool, None);
+                }
+                return Err(fault(e));
+            }
+        };
         Ok(Self {
             timestamp_period,
             timestamp_bits,
+            compute_queues: [
+                ComputeQueue {
+                    family: h.queue_family_index(),
+                    queue,
+                    timestamp_bits,
+                },
+                ComputeQueue {
+                    family: draft_family,
+                    queue: draft_queue,
+                    timestamp_bits: draft_timestamp_bits,
+                },
+            ],
+            compute_lane: 0,
+            handoff,
             device: d,
             family: h.queue_family_index(),
             queue,
@@ -876,6 +924,41 @@ impl Graph {
             })
             .collect()
     }
+    /// A joined branch changes the real compute family/queue and its command
+    /// pool together. Initialization and retained buffer owners stay shared.
+    /// Pending commit overlap is a separate owner/fence contract, not implied
+    /// by choosing an independent hardware queue here.
+    pub(crate) fn select_branch_queue(
+        &mut self,
+        branch: Option<cubecl_runtime::server::NativeStrataBranch>,
+    ) -> Result<(), ServerError> {
+        self.complete_submission()?;
+        if self.pending() {
+            return Err(fault("native queue switch has unsubmitted nodes"));
+        }
+        let lane = usize::from(branch.is_some_and(|b| b.mtp_geometry().is_some()));
+        if lane == self.compute_lane {
+            return Ok(());
+        }
+        // An unused scratch pool may still exist before the first capture.
+        // Completed recordings own all pools they actually consumed.
+        unsafe {
+            self.device.destroy_descriptor_pool(self.descriptors, None);
+            self.device.destroy_command_pool(self.pool, None);
+        }
+        self.descriptors = vk::DescriptorPool::null();
+        self.pool = vk::CommandPool::null();
+        self.command = vk::CommandBuffer::null();
+        let selected = self.compute_queues[lane];
+        self.handoff
+            .transfer(self.queue, selected.queue)
+            .map_err(fault)?;
+        self.family = selected.family;
+        self.queue = selected.queue;
+        self.timestamp_bits = selected.timestamp_bits;
+        self.compute_lane = lane;
+        Ok(())
+    }
     pub(crate) fn clear_completed_recordings(&mut self) -> Result<(), ServerError> {
         if self.submitted || self.pending() {
             return Err(fault("native graph cleanup while pending"));
@@ -892,7 +975,7 @@ impl Graph {
             && self
                 .recordings
                 .iter()
-                .any(|r| r.ready && r.key == Some(key))
+                .any(|r| r.ready && r.key == Some(key) && r.family == self.family)
     }
     /// Submit the original retained commands/resources without building nodes,
     /// pipeline descriptors or a signature again. Only the owning stream may
@@ -909,11 +992,16 @@ impl Graph {
         let hit = self
             .recordings
             .iter()
-            .position(|r| r.ready && r.key == Some(key))
+            .position(|r| r.ready && r.key == Some(key) && r.family == self.family)
             .ok_or_else(|| fault("native direct replay recording missing"))?;
         let recording = self.recordings.remove(hit);
         let compute_count = recording.compute_count;
         self.recordings.push(recording);
+        if self.compute_lane != 0 {
+            self.handoff
+                .transfer(self.compute_queues[0].queue, self.queue)
+                .map_err(fault)?;
+        }
         unsafe { self.device.reset_fences(&[self.fence]) }
             .map_err(|_| fault("native graph reset fence"))?;
         // Set before queue submission: an error can leave partial GPU work.
@@ -935,6 +1023,7 @@ impl Graph {
         Ok(())
     }
     pub(crate) fn complete_submission(&mut self) -> Result<(), ServerError> {
+        self.handoff.complete().map_err(fault)?;
         if !self.submitted {
             return Ok(());
         }
@@ -983,6 +1072,11 @@ impl Graph {
         let capture_start = std::time::Instant::now();
         // The caller drains Wgpu parameter/upload commands BEFORE entering.
         // Every owning buffer remains retained until our actual completion fence.
+        if self.compute_lane != 0 {
+            self.handoff
+                .transfer(self.compute_queues[0].queue, self.queue)
+                .map_err(fault)?;
+        }
         unsafe { self.device.reset_fences(&[self.fence]) }
             .map_err(|_| fault("native graph reset fence"))?;
         let mut signature = Vec::new();
@@ -1013,7 +1107,10 @@ impl Graph {
         let profiling = profile_active() && compute_count >= 2048;
         if let Some(key) = key {
             if let Some(previous) = self.recordings.iter().find(|r| r.key == Some(key)) {
-                if !previous.ready || previous.signature != signature {
+                if !previous.ready
+                    || previous.signature != signature
+                    || previous.family != self.family
+                {
                     return Err(fault("native named branch recording changed"));
                 }
             }
@@ -1021,7 +1118,9 @@ impl Graph {
         if let Some(hit) = self
             .recordings
             .iter()
-            .position(|r| r.ready && r.key == key && r.signature == signature)
+            .position(|r| {
+                r.ready && r.key == key && r.family == self.family && r.signature == signature
+            })
             .filter(|_| !profiling)
         {
             let recording = self.recordings.remove(hit);
@@ -1216,6 +1315,7 @@ impl Graph {
             return Err(fault("native queue retained metadata capacity"));
         }
         let recording = Recording {
+            family: self.family,
             key,
             ready: false,
             compute_count,
@@ -1455,11 +1555,12 @@ impl Graph {
 impl Drop for Graph {
     fn drop(&mut self) {
         unsafe {
-            if self.submitted
-                && self
-                    .device
-                    .wait_for_fences(&[self.fence], true, 120_000_000_000)
-                    .is_err()
+            if self.handoff.complete().is_err()
+                || (self.submitted
+                    && self
+                        .device
+                        .wait_for_fences(&[self.fence], true, 120_000_000_000)
+                        .is_err())
             {
                 // Do not free resources referenced by unknown in-flight execution.
                 // Protected lab process teardown is the terminal device boundary.

@@ -1308,6 +1308,10 @@ impl WgpuStream {
             ignore: false,
             flush: true,
         })?;
+        self.strata_graph
+            .as_mut()
+            .unwrap()
+            .select_branch_queue(Some(key))?;
         self.transient_io
             .as_mut()
             .unwrap()
@@ -1322,7 +1326,11 @@ impl WgpuStream {
             ignore: false,
             flush: true,
         })?;
-        self.transient_io.as_mut().unwrap().end_native_branch(key)
+        self.transient_io.as_mut().unwrap().end_native_branch(key)?;
+        self.strata_graph
+            .as_mut()
+            .unwrap()
+            .select_branch_queue(None)
     }
     pub(crate) fn set_native_strata_phase(
         &mut self,
@@ -1352,7 +1360,15 @@ impl WgpuStream {
         let Some(recording) = self.transient_io.as_ref().unwrap().native_replay_key(key)? else {
             return Ok(false);
         };
+        self.strata_graph
+            .as_mut()
+            .unwrap()
+            .select_branch_queue(Some(key))?;
         if !self.strata_graph.as_ref().unwrap().has_recording(recording) {
+            self.strata_graph
+                .as_mut()
+                .unwrap()
+                .select_branch_queue(None)?;
             return Ok(false);
         }
         let mutation = self.private_mutation_guard();
@@ -1382,6 +1398,10 @@ impl WgpuStream {
             let io = self.transient_io.as_mut().unwrap();
             io.native_branch_submitted()?;
             io.end_native_branch(key)?;
+            self.strata_graph
+                .as_mut()
+                .unwrap()
+                .select_branch_queue(None)?;
             self.cleanup_boundary.ordinary_regulation(|| {
                 self.submission_load.regulate(&self.device, 0, index);
             });

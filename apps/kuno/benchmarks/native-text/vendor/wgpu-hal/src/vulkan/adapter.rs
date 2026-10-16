@@ -4,7 +4,7 @@ use core::{ffi::CStr, marker::PhantomData};
 use ash::{ext, google, khr, vk};
 use parking_lot::Mutex;
 
-use crate::{vulkan::semaphore_list::SemaphoreList, AllocationSizes};
+use crate::{AllocationSizes, vulkan::semaphore_list::SemaphoreList};
 
 use super::semaphore_list::SemaphoreListMode;
 
@@ -1319,7 +1319,7 @@ impl PhysicalDeviceProperties {
 
         // Kuno's serialized native inference path uses physical storage pointers
         // without enabling ray tracing. Require the actual supported extension.
-        if std::env::var("KUNO_STRATA_INTEL_CORE").as_deref()==Ok("public") {
+        if std::env::var("KUNO_STRATA_INTEL_CORE").as_deref() == Ok("public") {
             if self.supports_extension(khr::buffer_device_address::NAME) {
                 extensions.push(khr::buffer_device_address::NAME);
             }
@@ -2756,6 +2756,7 @@ impl super::Adapter {
             raw: raw_device,
             family_index,
             kuno_transfer_family: core::sync::atomic::AtomicU32::new(u32::MAX),
+            kuno_compute_family: core::sync::atomic::AtomicU32::new(u32::MAX),
             queue_index,
             raw_queue,
             drop_guard,

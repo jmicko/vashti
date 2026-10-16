@@ -24,6 +24,7 @@ use wgpu::{
 use crate::{AutoCompiler, WgpuServer};
 
 mod features;
+mod strata_queues;
 
 pub type VkSpirvCompiler = SpirvCompiler<GLCompute>;
 
@@ -126,23 +127,10 @@ fn request_device(
         ash.raw_instance()
             .get_physical_device_queue_family_properties(adapter.raw_physical_device())
     };
-    let transfer_family = if preserve_limits {
-        // A different queue family is real independent engine capacity; the
-        // B70 exposes only one queue in family0, so queue1 would be invalid.
-        let family = queue_properties
-            .iter()
-            .enumerate()
-            .filter(|(index, q)| {
-                *index != family_index as usize
-                    && q.queue_count > 0
-                    && q.queue_flags.contains(ash::vk::QueueFlags::TRANSFER)
-            })
-            .min_by_key(|(_, q)| {
-                q.queue_flags
-                    .intersects(ash::vk::QueueFlags::COMPUTE | ash::vk::QueueFlags::GRAPHICS)
-            })
-            .map(|(index, _)| index as u32)?;
-        Some(family)
+    let native_families = if preserve_limits {
+        // Real separate compute and transfer families, each queue0 requested
+        // below. B70 family0 has one queue; requesting queue1 would be invalid.
+        Some(strata_queues::families(&queue_properties, family_index)?)
     } else {
         None
     };
@@ -150,12 +138,14 @@ fn request_device(
         .queue_family_index(family_index)
         .queue_priorities(&[1.0]);
     let mut family_infos = vec![family_info];
-    if let Some(family) = transfer_family {
-        family_infos.push(
-            DeviceQueueCreateInfo::default()
-                .queue_family_index(family)
-                .queue_priorities(&[1.0]),
-        );
+    if let Some((draft, copy)) = native_families {
+        for family in [draft, copy] {
+            family_infos.push(
+                DeviceQueueCreateInfo::default()
+                    .queue_family_index(family)
+                    .queue_priorities(&[1.0]),
+            );
+        }
     }
 
     // Retain the exact enabled list before the pNext chain borrows the feature
@@ -200,10 +190,12 @@ fn request_device(
             )
             .expect("Failed to create HAL device")
     };
-    if let Some(family) = transfer_family {
-        // SAFETY: queue0 in this family is in the exact VkDeviceCreateInfo
-        // above; the device has not been exposed and owns no buffers yet.
-        if !unsafe { device.device.kuno_adopt_transfer_family(family) } {
+    if let Some((draft, copy)) = native_families {
+        // SAFETY: both distinct families' queue0 are requested above, their
+        // actual capabilities were checked, and no buffer/device is exposed.
+        if !unsafe { device.device.kuno_adopt_transfer_family(copy) }
+            || !unsafe { device.device.kuno_adopt_compute_family(draft) }
+        {
             return None;
         }
     }

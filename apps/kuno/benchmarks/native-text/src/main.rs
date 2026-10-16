@@ -21,6 +21,10 @@ mod strata_global_plan;
 #[allow(dead_code)] // Owning source set; coordinator connection follows.
 mod strata_global_sources;
 mod strata_gr;
+#[cfg(test)]
+#[allow(dead_code)] // The host test exercises epochs without creating any device.
+#[path = "../vendor/cubecl-wgpu/src/compute/strata_handoff.rs"]
+mod strata_handoff_tests;
 mod strata_intel_core;
 mod strata_matrix;
 mod strata_mtp_front;
@@ -37,6 +41,9 @@ mod strata_qsa;
 #[allow(dead_code)] // Host planner tests do not construct native Vulkan queues.
 #[path = "../vendor/cubecl-wgpu/src/compute/strata_schedule.rs"]
 mod strata_queue_tests;
+#[cfg(test)]
+#[path = "../vendor/cubecl-wgpu/src/backend/vulkan/strata_queues.rs"]
+mod strata_queue_topology_tests;
 mod strata_sampler;
 mod strata_shared_weights;
 mod strata_speculation;

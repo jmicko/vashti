@@ -936,22 +936,70 @@ impl super::Device {
             .is_ok()
     }
 
-    /// Actual adopted compute/copy families for concurrent buffer creation.
-    pub fn kuno_buffer_queue_families(&self) -> Option<[u32; 2]> {
-        let family = self
+    /// Adopt queue0 of a distinct COMPUTE family actually requested by Kuno.
+    /// Call before exposing the device or creating any buffer.
+    ///
+    /// # Safety
+    /// The family must have COMPUTE capability and queue0 must be in the exact
+    /// VkDeviceCreateInfo. Only the owning serialized native stream submits it.
+    pub unsafe fn kuno_adopt_compute_family(&self, family: u32) -> bool {
+        let copy = self
             .shared
             .kuno_transfer_family
             .load(core::sync::atomic::Ordering::Acquire);
-        (family != u32::MAX).then_some([self.shared.family_index, family])
+        if family == self.shared.family_index
+            || family == copy
+            || family == u32::MAX
+            || copy == u32::MAX
+            || !self.shared.private_caps.timeline_semaphores
+        {
+            return false;
+        }
+        self.shared
+            .kuno_compute_family
+            .compare_exchange(
+                u32::MAX,
+                family,
+                core::sync::atomic::Ordering::AcqRel,
+                core::sync::atomic::Ordering::Acquire,
+            )
+            .is_ok()
     }
 
-    /// Borrow the additional queue, which the builder actually created.
-    /// Its submissions are serialized by the same native graph stream.
+    /// Actual adopted families, without allocating during buffer creation.
+    /// Only the returned prefix contains distinct, valid family indices.
+    pub fn kuno_buffer_queue_families(&self) -> Option<([u32; 3], usize)> {
+        use core::sync::atomic::Ordering::Acquire;
+        let copy = self.shared.kuno_transfer_family.load(Acquire);
+        if copy == u32::MAX {
+            return None;
+        }
+        let draft = self.shared.kuno_compute_family.load(Acquire);
+        Some((
+            [self.shared.family_index, copy, draft],
+            if draft == u32::MAX { 2 } else { 3 },
+        ))
+    }
+
+    /// Borrow queue0 of the additional transfer family actually created.
     pub fn kuno_transfer_queue(&self) -> Option<(u32, vk::Queue)> {
-        let families = self.kuno_buffer_queue_families()?;
+        let (families, _) = self.kuno_buffer_queue_families()?;
         Some((families[1], unsafe {
             self.shared.raw.get_device_queue(families[1], 0)
         }))
+    }
+
+    /// Borrow queue0 of the additional compute family actually created.
+    pub fn kuno_compute_queue(&self) -> Option<(u32, vk::Queue)> {
+        let family = self
+            .shared
+            .kuno_compute_family
+            .load(core::sync::atomic::Ordering::Acquire);
+        (family != u32::MAX).then(|| {
+            (family, unsafe {
+                self.shared.raw.get_device_queue(family, 0)
+            })
+        })
     }
 
     pub fn enabled_device_extensions(&self) -> &[&'static CStr] {
@@ -1074,10 +1122,10 @@ impl crate::Device for super::Device {
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
         let families = self.kuno_buffer_queue_families();
-        if let Some(families) = &families {
+        if let Some((families, count)) = &families {
             vk_info = vk_info
                 .sharing_mode(vk::SharingMode::CONCURRENT)
-                .queue_family_indices(families);
+                .queue_family_indices(&families[..*count]);
         }
 
         let raw = unsafe {

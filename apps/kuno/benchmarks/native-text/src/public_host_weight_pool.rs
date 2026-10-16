@@ -271,10 +271,16 @@ impl PublicHostWeightPool {
                 .raw_instance()
                 .get_physical_device_memory_properties(hal.raw_physical_device())
         };
-        let buffer_info = vk::BufferCreateInfo::default()
+        let queue_families = hal.kuno_buffer_queue_families();
+        let mut buffer_info = vk::BufferCreateInfo::default()
             .size(BUFFER_BYTES)
             .usage(vk::BufferUsageFlags::STORAGE_BUFFER)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
+        if let Some((families, count)) = &queue_families {
+            buffer_info = buffer_info
+                .sharing_mode(vk::SharingMode::CONCURRENT)
+                .queue_family_indices(&families[..*count]);
+        }
         let vk_buffer = unsafe { raw.create_buffer(&buffer_info, None) }
             .map_err(|_| "public host weight native buffer creation failed")?;
         let mut backing = Backing {

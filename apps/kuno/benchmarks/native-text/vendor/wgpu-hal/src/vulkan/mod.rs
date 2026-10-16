@@ -475,6 +475,7 @@ struct DeviceShared {
     // Configured once, before allocation, only for a device that actually
     // requested this additional queue. No process-global queue inference.
     kuno_transfer_family: core::sync::atomic::AtomicU32,
+    kuno_compute_family: core::sync::atomic::AtomicU32,
     queue_index: u32,
     raw_queue: vk::Queue,
     instance: Arc<InstanceShared>,

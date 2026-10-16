@@ -699,12 +699,13 @@ impl<'plan, 'model, 'file> Mirror<'plan, 'model, 'file> {
                 .raw_instance()
                 .get_physical_device_memory_properties(hal.raw_physical_device())
         };
+        let queue_families = hal.kuno_buffer_queue_families();
         drop(hal);
         for layer in 0..plan::LAYERS {
             for role in ROLES {
                 for p in 0..3 {
                     let page = plan.page(layer, role, p).map_err(|_| rejected())?;
-                    let descriptor = vk::BufferCreateInfo::default()
+                    let mut descriptor = vk::BufferCreateInfo::default()
                         .size(page.logical_bytes())
                         .usage(
                             vk::BufferUsageFlags::STORAGE_BUFFER
@@ -715,6 +716,11 @@ impl<'plan, 'model, 'file> Mirror<'plan, 'model, 'file> {
                                 },
                         )
                         .sharing_mode(vk::SharingMode::EXCLUSIVE);
+                    if let Some((families, count)) = &queue_families {
+                        descriptor = descriptor
+                            .sharing_mode(vk::SharingMode::CONCURRENT)
+                            .queue_family_indices(&families[..*count]);
+                    }
                     let buffer = unsafe { raw.create_buffer(&descriptor, None) }
                         .map_err(|_| "public host expert native buffer creation failed")?;
                     let mut backing = Backing {
