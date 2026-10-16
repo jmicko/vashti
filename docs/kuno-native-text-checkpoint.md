@@ -1,19 +1,42 @@
-<!-- Current resume: 2026-10-16, source b6732c8, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source 414e2c3, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, engine source through `b6732c8`. The user authorized
+branch `codex/strata-rust-port`, engine source through `414e2c3`. The user authorized
 continuing CPU-only work; the goal controller is active for that scope.
 GPU/model/service/sudo work still needs renewed user authorization. Last physical recovery evidence
 is historical 06:07:22Z on Oct15; no subsequent GPU run or live health claim.
 
-Read the latest [dedicated MTP queue receipt](kuno-strata-rewrite-completion.md#dedicated-native-mtp-compute-queue-and-memory-handoffs-2026-10-16)
+Read the latest [native INFO receipt](kuno-strata-rewrite-completion.md#native-info-transfer-with-actual-current-owners-2026-10-16)
 and coordination handoff. Earlier CJK source `cd703bc` was integrated as `0bfbea8`;
 **do not cherry-pick it again**. Its original 106299-row Q6 head, inverse-ID sampler
 and target/MTP INT8 caches remain connected.
 
-**Latest queue block:** `b6732c8` connects MTP native branch capture/replay to an
+**Latest native INFO block:** `414e2c3` moves actual current Upload-to-Uniform
+copies onto the adopted native transfer queue for cold capture and direct replay.
+A reused transfer command buffer retains the actual complete source/target handles
+through its fence; the math recording's original header waits on its real timeline.
+Upload allocations may change across invocations, so no stale source is baked into
+retained math. Original mapping, zero-padding, typed/schema/page and wiping ledger
+obligations remain. INFO-only drains establish device visibility for later native
+and Wgpu consumers even without a math-header wait.
+
+Native-only flush/replay no longer submits/polls an empty primary command buffer.
+Actual primary encoder mutations (initialization/readback/clear/generic compute/
+legacy upload/profiling) are tracked, and real work still submits/joins. Feature-off
+flush retains its original unconditional policy. The bounded4096-copy metadata
+adds2MiB to `NATIVE_QUEUE_HOST_BYTES`, consumed by the original host admission quote.
+Mapped Upload owners already have MAP_WRITE and unmap flushes noncoherent writes;
+they do not use Wgpu's unmappable initialization staging-copy path.
+
+43 focused CPU checks, selected/off strict Clippy and formatting pass. Immutable release
+and327 offline shader variants pass; exact hash/logs are in the completion guide. No GPU/model execution,
+numerical/speed/recovery or installed-service claim. **Pending target commit is
+still joined globally; the rewrite remains incomplete.** This source completes
+native INFO transfer, not asynchronous accepted-prefix publication.
+
+**Earlier queue block:** `b6732c8` connects MTP native branch capture/replay to an
 actually requested independent compute family. The saved Oct14 B70 properties have
 one main0 queue, compute-only1 and transfer-only2. Production selects by real flags/
 counts on device creation, not those numeric IDs. Missing independent compute or
@@ -158,32 +181,28 @@ fault read or mark a CPU cursor complete early. Preserve all original roots unti
 completion, target queue order and draft carry ownership; final/cleanup consumers
 must join outstanding commits. Review all-accept and one-token self-commit too.
 
-The backend now adopts a second compute queue and routes actual MTP branch
-recordings to it (`b6732c8`), with family-correct pools/concurrent buffers and real
-memory handoffs. It still has one in-flight graph fence and joins it before
-switching/next work. **Next prerequisite:** native INFO staging and retained copy
-nodes, together with pending-commit flights. `TransientIo::prepare_batched_info`
-still unmaps tracked Uploads then copies to original Uniform owners through a Wgpu
-primary-queue encoder. `Stream::flush_inner/replay_native_strata_branch` submits and
-polls that encoder before native work. Leaving this path unchanged could wait for
-an asynchronous target commit on that same queue and serialize the draft again.
+The backend now adopts real target/draft/copy queues (`b6732c8`) and actual INFO
+transfer (`414e2c3`). **Next block: separately owned pending commits plus accepted-
+prefix state publication.** Preserve the new actual current-source INFO submission
+and timeline wait; do not redo it or bake variable Upload handles into math graphs.
 
-Move the actual full-owner INFO copies onto native transfer scheduling while
-preserving mapping obligations, original page assignments, typed template/schema
-checks and source/target retention. The cold recording must retain the actual
-copies, and direct replay must use the exact same originals with freshly rendered
-bytes; never omit upload nodes or pretend an unsubmitted copy completed. The
-actual copy-to-draft semaphore dependency must remain. **Important original-source
-issue:** `stage_native_replay` currently allocates/reuses an Upload owner afresh for
-each pinned Uniform page. Do not capture a copy from yesterday's source handle and
-then render new bytes into another source. Pair/pin the actual tracked source with
-its original page, or submit separately retained real copy nodes whose actual
-current source/target identities are checked. Maintain full capacity/mapping/wipe
-accounting; no untracked host staging. `Graph` then needs separately
-owned pending commit work/fences and original family permits/cursors; final/cleanup
-consumers must join them. Do not reuse live INFO sources/pages or discard pending
-recording resources. Unkeyed MTP prefill/preparation needs original queue ownership
-auditing too. No speed tests until the whole connected gate passes.
+`Graph` still has one in-flight fence/last-recording flight. `complete_submission`,
+`select_branch_queue`, `push/push_transfer` and stream flush join prior native math;
+queue-switch handoffs can also signal behind all primary work. These must change
+together for a genuine pending target commit and independent draft. Original
+request/model identity, recording resources and INFO pages must stay retained until
+their own actual completion. Do not use the existing completed-replay bool as a
+submission receipt. Provide a separately owned pending commit/event contract and
+join it at the next dependent target/session/final/cleanup consumer.
+
+The controller currently verifies/commits the full proposed window then synchronously
+repairs the accepted prefix. Replace that schedule coherently: original family
+permits/stamps, accepted-prefix kernels, fault proof, cursor publication, carried
+rows and MTP borrow lifetime. Holding pending `&mut` target owners must still allow
+only the exact original verified carry rows into drafting; do not mint a new
+completed target receipt before pending work joins. Audit all-accept and native
+count1 self-commit with rejection, output cap/EOS and failure cleanup. Unkeyed MTP
+prompt/preparation scheduling and full numerical/physical acceptance remain open.
 
 Other open work: HOST embedding placement;4096/2048 context/prefill versus source
 32768/4096; GDN pair swap versus fixed-copy scheduling; packed-cache physical layout;

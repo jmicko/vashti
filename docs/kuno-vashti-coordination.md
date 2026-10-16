@@ -6,8 +6,8 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through `b6732c8`. Read the latest
-[dedicated queue handoff](#active-kuno-engine-handoff--dedicated-mtp-compute-queue-2026-10-16)
+`codex/strata-rust-port`, engine source through `414e2c3`. Read the latest
+[native INFO handoff](#active-kuno-engine-handoff--native-info-transfers-2026-10-16)
 and [completion gate](kuno-strata-rewrite-completion.md). Direct target and MTP submission
 are now connected in source; accepted-prefix commit/event fidelity and full
 GPU/numerical acceptance remain incomplete. No new speed result.
@@ -6227,3 +6227,30 @@ queue work. No live speed testing before the whole connected gate passes.
 
 No installed-service/model/sudo action, public API/connector/UI change, deployment
 or release. Goal remains active for CPU-only work. Required Vashti changes:none.
+
+
+### Active Kuno engine handoff — native INFO transfers (2026-10-16)
+
+Source `414e2c3` connects actual current full Upload-to-Uniform copies to the native
+transfer timeline for cold execution and retained math replay. Current source
+handles are retained and checked, rather than assuming previous Upload allocations.
+The original compute header waits on real copy completion; INFO-only drain preserves
+later native/Wgpu visibility. Original mapping, ledger, page/schema and terminal
+wipe obligations remain. Native-only flush/replay avoids an empty primary-queue
+submission/poll; actual encoder mutations/real primary work are still tracked and
+joined. Additional bounded copy metadata is charged2MiB through the original host
+admission quote. No inference content is persisted.
+
+43 focused CPU cases, final selected/off strict Clippy, immutable release build and
+327 offline shader variants pass; exact artifact/hash/logs are in completion guide **Native INFO
+transfer with actual current owners**. Helper tests do not prove physical GPU copy,
+visibility, numerical or speed acceptance.
+
+Next is the actual pending accepted-prefix commit/family-state and per-flight queue
+ownership block. The graph still joins previous math globally; no commit/draft
+overlap is claimed. Preserve completed-replay authority, real INFO-copy timeline
+edges and exact verified carry ownership while changing that schedule coherently.
+Current checkpoint records original source/consumer entry points and other gaps.
+
+Goal remains active for CPU-only work. No GPU/model/service/sudo operation, public
+API/connector/UI change, installation or release. Required Vashti changes:none.
