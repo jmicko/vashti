@@ -5719,7 +5719,16 @@ impl Workspace {
                 .check_no_live_output()?;
             // Real retained commit uses original candidate roots and typed n.
             // Its joined recording still needs the original fault/family proof.
-            self.run_native_prefix_commit(m, &pending, *count, keep, cancel)?;
+            let commit = self.submit_native_prefix_commit(m, &pending, *count, keep, cancel)?;
+            if let Some(commit) = commit {
+                // Until independent draft preparation/INFO dependencies are
+                // connected, explicitly join the exported original submission.
+                m.arena
+                    .client()
+                    .map_err(u::fault)?
+                    .join_native_strata_submission(commit)
+                    .map_err(u::fault)?;
+            }
             output = ChunkOutput::AcceptedPrefix(keep);
             Some(keep)
         } else {

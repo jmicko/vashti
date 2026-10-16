@@ -20,6 +20,12 @@ use cubecl_runtime::{
 use std::{future::Future, num::NonZero, pin::Pin, sync::Arc};
 use wgpu::ComputePipeline;
 
+enum NativeReplay {
+    Missing,
+    Joined,
+    Pending(cubecl_runtime::server::NativeStrataSubmission),
+}
+
 static SUBMISSION_WAIT_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static SUBMISSION_WAITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -1355,12 +1361,50 @@ impl WgpuStream {
         key: cubecl_runtime::server::NativeStrataBranch,
         invocation: cubecl_runtime::server::NativeStrataInvocation,
     ) -> Result<bool, ServerError> {
+        match self.replay_native_mode(key, invocation, true)? {
+            NativeReplay::Missing => Ok(false),
+            NativeReplay::Joined => Ok(true),
+            NativeReplay::Pending(_) => {
+                Err(super::transient_io::fault("joined replay returned pending"))
+            }
+        }
+    }
+    pub(crate) fn replay_native_strata_commit_pending(
+        &mut self,
+        key: cubecl_runtime::server::NativeStrataBranch,
+        invocation: cubecl_runtime::server::NativeStrataInvocation,
+    ) -> Result<Option<cubecl_runtime::server::NativeStrataSubmission>, ServerError> {
+        if key.commit_geometry().is_none() {
+            return Err(super::transient_io::fault(
+                "pending replay requires target commit",
+            ));
+        }
+        match self.replay_native_mode(key, invocation, false)? {
+            NativeReplay::Missing => Ok(None),
+            NativeReplay::Pending(token) => Ok(Some(token)),
+            NativeReplay::Joined => {
+                Err(super::transient_io::fault("pending replay returned joined"))
+            }
+        }
+    }
+    fn replay_native_mode(
+        &mut self,
+        key: cubecl_runtime::server::NativeStrataBranch,
+        invocation: cubecl_runtime::server::NativeStrataInvocation,
+        wait: bool,
+    ) -> Result<NativeReplay, ServerError> {
         self.private_io_active()?;
         invocation
             .validate_for(key)
             .map_err(super::transient_io::fault)?;
         if self.strata_graph.is_none() {
-            return Ok(false);
+            return Ok(NativeReplay::Missing);
+        }
+        if !wait {
+            self.strata_graph
+                .as_ref()
+                .unwrap()
+                .preflight_pending_commit(key)?;
         }
         // Input gathers, clears and prepared PLE uploads precede the retained
         // recording. Join them before touching its original INFO pages.
@@ -1369,7 +1413,7 @@ impl WgpuStream {
             flush: true,
         })?;
         let Some(recording) = self.transient_io.as_ref().unwrap().native_replay_key(key)? else {
-            return Ok(false);
+            return Ok(NativeReplay::Missing);
         };
         self.strata_graph
             .as_mut()
@@ -1380,7 +1424,7 @@ impl WgpuStream {
                 .as_mut()
                 .unwrap()
                 .select_branch_queue(None)?;
-            return Ok(false);
+            return Ok(NativeReplay::Missing);
         }
         let mutation = self.private_mutation_guard();
         let scopes = super::transient_io::IoScopes::new(&self.device);
@@ -1405,21 +1449,35 @@ impl WgpuStream {
             self.strata_graph
                 .as_mut()
                 .unwrap()
-                .replay_recording(recording, true, false)?;
+                .replay_recording(recording, wait, false)?;
             let io = self.transient_io.as_mut().unwrap();
             io.native_branch_submitted()?;
             io.end_native_branch(key)?;
-            self.strata_graph
-                .as_mut()
-                .unwrap()
-                .select_branch_queue(None)?;
-            self.mem_manage.memory_cleanup(false);
-            self.mem_manage.release_uniforms();
-            self.flush_errors(StreamErrorMode {
-                ignore: false,
-                flush: true,
-            })?;
-            Ok(true)
+            if wait {
+                self.strata_graph
+                    .as_mut()
+                    .unwrap()
+                    .select_branch_queue(None)?;
+                self.mem_manage.memory_cleanup(false);
+                self.mem_manage.release_uniforms();
+                self.flush_errors(StreamErrorMode {
+                    ignore: false,
+                    flush: true,
+                })?;
+                Ok(NativeReplay::Joined)
+            } else {
+                let scope = self
+                    .transient_io
+                    .as_ref()
+                    .unwrap()
+                    .native_submission_scope()?;
+                let token = self
+                    .strata_graph
+                    .as_mut()
+                    .unwrap()
+                    .export_pending_commit(key, scope)?;
+                Ok(NativeReplay::Pending(token))
+            }
         })();
         scopes.finish(self.transient_io.as_mut().unwrap());
         if result.is_err() {
@@ -1431,6 +1489,56 @@ impl WgpuStream {
             mutation.accept();
         }
         result
+    }
+    pub(crate) fn end_native_strata_commit_pending(
+        &mut self,
+        key: cubecl_runtime::server::NativeStrataBranch,
+    ) -> Result<cubecl_runtime::server::NativeStrataSubmission, ServerError> {
+        self.private_io_active()?;
+        if key.commit_geometry().is_none() || self.strata_graph.is_none() {
+            return Err(super::transient_io::fault(
+                "pending capture requires native target commit",
+            ));
+        }
+        self.strata_graph
+            .as_ref()
+            .unwrap()
+            .preflight_pending_commit(key)?;
+        self.flush_native_mode(
+            StreamErrorMode {
+                ignore: false,
+                flush: true,
+            },
+            false,
+        )?;
+        let io = self.transient_io.as_mut().unwrap();
+        io.end_native_branch(key)?;
+        let scope = io.native_submission_scope()?;
+        self.strata_graph
+            .as_mut()
+            .unwrap()
+            .export_pending_commit(key, scope)
+    }
+    pub(crate) fn join_native_strata_submission(
+        &mut self,
+        token: cubecl_runtime::server::NativeStrataSubmission,
+    ) -> Result<(), ServerError> {
+        self.private_io_active()?;
+        let scope = self
+            .transient_io
+            .as_ref()
+            .unwrap()
+            .native_submission_scope()?;
+        self.strata_graph
+            .as_mut()
+            .ok_or_else(|| super::transient_io::fault("pending original graph missing"))?
+            .join_exported(token, scope)?;
+        // Do not release unrelated live INFO/recording resources. The original
+        // request's fault/readback/cleanup consumers retain those obligations.
+        self.flush_errors(StreamErrorMode {
+            ignore: false,
+            flush: true,
+        })
     }
     pub(crate) fn submit_native_strata_experts(&mut self) -> Result<(), ServerError> {
         self.private_io_active()?;

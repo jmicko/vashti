@@ -2871,6 +2871,14 @@ impl TransientIo {
         self.reuse_scope.free.reset();
         Ok(())
     }
+    /// Original active request scope for backend-only pending identity checks.
+    /// Never expose this nonce through diagnostics or application endpoints.
+    pub(crate) fn native_submission_scope(&self) -> Result<u64, ServerError> {
+        self.active()?;
+        self.reuse_scope
+            .nonce
+            .ok_or_else(|| fault("native submission requires original request reuse"))
+    }
     pub(crate) fn begin_native_branch(
         &mut self,
         key: cubecl_runtime::server::NativeStrataBranch,

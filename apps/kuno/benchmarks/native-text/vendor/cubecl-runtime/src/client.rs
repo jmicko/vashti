@@ -1376,6 +1376,44 @@ impl<R: Runtime> ComputeClient<R> {
             .unwrap()
     }
 
+    /// Submit a retained target commit; returned identity is pending, not a
+    /// completion/fault/model-ready receipt. Ordinary joined APIs are unchanged.
+    pub fn replay_native_strata_commit_pending(
+        &self,
+        key: crate::server::NativeStrataBranch,
+        invocation: crate::server::NativeStrataInvocation,
+    ) -> Result<Option<crate::server::NativeStrataSubmission>, ServerError> {
+        let stream_id = self.stream_id();
+        self.device
+            .submit_blocking(move |server| {
+                server.replay_native_strata_commit_pending(stream_id, key, invocation)
+            })
+            .unwrap()
+    }
+    /// Seal/submit the actual cold commit without waiting on its math fence.
+    pub fn end_native_strata_commit_pending(
+        &self,
+        key: crate::server::NativeStrataBranch,
+    ) -> Result<crate::server::NativeStrataSubmission, ServerError> {
+        let stream_id = self.stream_id();
+        self.device
+            .submit_blocking(move |server| server.end_native_strata_commit_pending(stream_id, key))
+            .unwrap()
+    }
+    /// Join the exact original pending submission; caller still owns real
+    /// numerical, state-publication and erasure proofs after this returns.
+    pub fn join_native_strata_submission(
+        &self,
+        submission: crate::server::NativeStrataSubmission,
+    ) -> Result<(), ServerError> {
+        let stream_id = self.stream_id();
+        self.device
+            .submit_blocking(move |server| {
+                server.join_native_strata_submission(stream_id, submission)
+            })
+            .unwrap()
+    }
+
     /// Wait for the completion of every task in the server.
     pub fn sync(&self) -> DynFut<Result<(), ServerError>> {
         let stream_id = self.stream_id();

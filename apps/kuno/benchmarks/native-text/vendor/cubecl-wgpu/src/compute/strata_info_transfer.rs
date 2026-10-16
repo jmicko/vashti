@@ -60,6 +60,7 @@ pub(super) struct Uploads {
     timeline: vk::Semaphore,
     fence: vk::Fence,
     epoch: u64,
+    joined_epoch: u64,
     pending: bool,
     copies: Vec<Copy>,
 }
@@ -72,6 +73,7 @@ impl Uploads {
             timeline: vk::Semaphore::null(),
             fence: vk::Fence::null(),
             epoch: 0,
+            joined_epoch: 0,
             pending: false,
             copies: Vec::new(),
         };
@@ -115,6 +117,13 @@ impl Uploads {
             semaphore: self.timeline,
             value: self.epoch,
         })
+    }
+    /// Only the actual original math-fence owner may credit this dependency.
+    pub fn math_fence_joined(&mut self, epoch: u64) -> Result<(), &'static str> {
+        record_joined(&mut self.joined_epoch, self.epoch, epoch)
+    }
+    pub fn needs_visibility(&self) -> bool {
+        self.pending && self.joined_epoch < self.epoch
     }
     pub fn complete(&mut self) -> Result<(), &'static str> {
         if self.pending {
@@ -226,9 +235,30 @@ impl Drop for Uploads {
 const _: () =
     assert!(MAX_COPIES * (2 * size_of::<Copy>() + 2 * size_of::<Span>() + 128) <= HOST_BYTES);
 
+fn record_joined(joined: &mut u64, latest: u64, epoch: u64) -> Result<(), &'static str> {
+    if epoch > latest {
+        return Err("native joined INFO epoch not submitted");
+    }
+    *joined = (*joined).max(epoch);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn joined_math_credits_only_its_original_info_wait_not_a_newer_copy() {
+        let mut seen = 0;
+        record_joined(&mut seen, 2, 1).unwrap();
+        assert_eq!(seen, 1); // newer copy still requires visibility/completion
+        record_joined(&mut seen, 2, 0).unwrap();
+        assert_eq!(seen, 1);
+        assert!(record_joined(&mut seen, 2, 3).is_err());
+        assert_eq!(seen, 1);
+        record_joined(&mut seen, 2, 2).unwrap();
+        record_joined(&mut seen, 2, 1).unwrap();
+        assert_eq!(seen, 2); // another lane cannot regress the accepted epoch
+    }
     #[test]
     fn actual_current_info_copy_inventory_requires_distinct_complete_roots() {
         let s = [

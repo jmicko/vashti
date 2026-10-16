@@ -405,6 +405,7 @@ struct ComputeQueue {
     timestamp_bits: u32,
 }
 pub(crate) struct Graph {
+    identity: u64,
     timestamp_period: f64,
     timestamp_bits: u32,
     compute_queues: [ComputeQueue; 2],
@@ -562,6 +563,14 @@ impl Graph {
         }
         .get(copy_family as usize)
         .map_or(0, |q| q.timestamp_valid_bits);
+        static NEXT_GRAPH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let identity = NEXT_GRAPH
+            .fetch_update(
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+                |n| n.checked_add(1),
+            )
+            .map_err(|_| fault("native graph identity exhausted"))?;
         let d = h.raw_device().clone();
         let queue = h.raw_queue();
         let pool = unsafe {
@@ -660,6 +669,7 @@ impl Graph {
             }
         };
         Ok(Self {
+            identity,
             timestamp_period,
             timestamp_bits,
             compute_queues: [
@@ -997,6 +1007,7 @@ impl Graph {
         if self.flights.any() || self.pending() || self.info_uploads.pending() {
             return Err(fault("native graph cleanup while pending"));
         }
+        self.flights.clear_joined_exports().map_err(fault)?;
         self.recordings.clear();
         self.initialized.clear();
         Ok(())
@@ -1045,8 +1056,80 @@ impl Graph {
         }
         Ok(())
     }
+    pub(crate) fn preflight_pending_commit(
+        &self,
+        key: cubecl_runtime::server::NativeStrataBranch,
+    ) -> Result<(), ServerError> {
+        if profile_active()
+            || key.commit_geometry().is_none()
+            || !self.flights.export_available(0).map_err(fault)?
+        {
+            return Err(fault(
+                "native pending commit already exported or foreign family",
+            ));
+        }
+        Ok(())
+    }
+    /// Export only the exact original submitted target-commit recording.
+    pub(crate) fn export_pending_commit(
+        &mut self,
+        key: cubecl_runtime::server::NativeStrataBranch,
+        scope: u64,
+    ) -> Result<cubecl_runtime::server::NativeStrataSubmission, ServerError> {
+        if self.compute_lane != 0 || key.commit_geometry().is_none() {
+            return Err(fault("native pending commit family"));
+        }
+        let flight = self
+            .flights
+            .peek(0)
+            .map_err(fault)?
+            .ok_or_else(|| fault("native pending original flight missing"))?;
+        let original = self
+            .recordings
+            .iter()
+            .find(|r| r.id == flight.recording)
+            .ok_or_else(|| fault("native pending original recording missing"))?;
+        let recording = original
+            .key
+            .ok_or_else(|| fault("native pending commit recording unkeyed"))?;
+        if recording.branch != key
+            || recording.nonce != scope
+            || !flight.submitted
+            || original.family != self.compute_queues[0].family
+        {
+            return Err(fault("native pending original scope/recording mismatch"));
+        }
+        let submission = self.flights.expose(0, scope).map_err(fault)?;
+        cubecl_runtime::server::NativeStrataSubmission::from_queue(self.identity, submission, scope)
+            .map_err(fault)
+    }
+    /// A dependent drain may have already waited on this fence. Keep its exact
+    /// exported completion until acknowledged; never match merely the LRU tail.
+    pub(crate) fn join_exported(
+        &mut self,
+        token: cubecl_runtime::server::NativeStrataSubmission,
+        scope: u64,
+    ) -> Result<(), ServerError> {
+        let (graph, submission, original_scope) = token.original_identity();
+        if graph != self.identity || original_scope != scope {
+            return Err(fault("native pending foreign graph/scope"));
+        }
+        let (lane, export) = self.flights.exported(submission, scope).map_err(fault)?;
+        if !export.joined {
+            let flight = self
+                .flights
+                .peek(lane)
+                .map_err(fault)?
+                .ok_or_else(|| fault("native pending original flight missing"))?;
+            if flight.submission != submission || flight.recording != export.recording {
+                return Err(fault("native pending original flight replaced"));
+            }
+            self.complete_lane_submission(lane)?;
+        }
+        self.flights.acknowledge(submission, scope).map_err(fault)
+    }
     pub(crate) fn complete_submission(&mut self) -> Result<(), ServerError> {
-        let info_only = !self.flights.any() && self.info_uploads.pending();
+        let info_only = !self.flights.any() && self.info_uploads.needs_visibility();
         self.complete_math_submission()?;
         self.info_uploads.complete().map_err(fault)?;
         if info_only {
@@ -1089,6 +1172,12 @@ impl Graph {
         self.flights
             .begin(self.compute_lane, id, compute_count, replay, profiling)
             .map_err(fault)?;
+        let info_wait = self.info_uploads.wait();
+        if let Some(wait) = info_wait {
+            self.flights
+                .header_wait(self.compute_lane, id, wait.value)
+                .map_err(fault)?;
+        }
         // Reserve first: never reset a lane fence while its previous owner is
         // still live. A reset failure leaves conservative terminal retention.
         unsafe { self.device.reset_fences(&[fence]) }
@@ -1097,11 +1186,7 @@ impl Graph {
             .last_mut()
             .unwrap()
             .work
-            .submit(
-                [self.queue, self.copy_queue],
-                fence,
-                self.info_uploads.wait(),
-            )
+            .submit([self.queue, self.copy_queue], fence, info_wait)
             .map_err(fault)?;
         self.flights
             .submitted(self.compute_lane, id)
@@ -1152,6 +1237,9 @@ impl Graph {
                 .ok_or_else(|| fault("native sampled original flight owner"))?
                 .collect()?;
         }
+        self.info_uploads
+            .math_fence_joined(flight.info_epoch)
+            .map_err(fault)?;
         // Only the actual matching fence above authorizes bookkeeping.
         let completed = self
             .flights

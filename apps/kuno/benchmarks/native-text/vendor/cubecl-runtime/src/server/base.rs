@@ -246,6 +246,32 @@ pub struct NativeStrataParameter {
     /// Symbolic control source; never the actual request value.
     pub value: NativeStrataValue,
 }
+/// Pending native submission identity. No Debug/Serialize, completion or
+/// numerical/state authority. Only the original backend may acknowledge it.
+#[derive(Clone, Copy)]
+pub struct NativeStrataSubmission {
+    graph: u64,
+    submission: u64,
+    scope: u64,
+}
+impl NativeStrataSubmission {
+    /// Backend metadata constructor, not proof of submission/completion. The
+    /// joining backend must validate the original retained scope/flight/fence.
+    pub fn from_queue(graph: u64, submission: u64, scope: u64) -> Result<Self, &'static str> {
+        if graph == 0 || submission == 0 || scope == 0 {
+            return Err("native pending identity bounds");
+        }
+        Ok(Self {
+            graph,
+            submission,
+            scope,
+        })
+    }
+    /// For original backend validation only. Do not log private scope identities.
+    pub fn original_identity(self) -> (u64, u64, u64) {
+        (self.graph, self.submission, self.scope)
+    }
+}
 /// Current request's control values. Deliberately no Debug, Hash or Serialize.
 /// The branch key and retained template contain no copy of these values.
 #[derive(Clone, Copy)]
@@ -1068,6 +1094,40 @@ where
         &mut self,
         _stream_id: StreamId,
         _key: NativeStrataBranch,
+    ) -> Result<(), ServerError> {
+        Err(IoError::UnsupportedIoOperation {
+            backtrace: BackTrace::capture(),
+        }
+        .into())
+    }
+
+    /// Submit a retained target commit without joining. None is a cache miss;
+    /// Some names original queued owners, never numerical/state acceptance.
+    fn replay_native_strata_commit_pending(
+        &mut self,
+        _stream_id: StreamId,
+        _key: NativeStrataBranch,
+        _invocation: NativeStrataInvocation,
+    ) -> Result<Option<NativeStrataSubmission>, ServerError> {
+        Ok(None)
+    }
+    /// Submit/seal the original cold commit, retaining its actual pending fence.
+    fn end_native_strata_commit_pending(
+        &mut self,
+        _stream_id: StreamId,
+        _key: NativeStrataBranch,
+    ) -> Result<NativeStrataSubmission, ServerError> {
+        Err(IoError::UnsupportedIoOperation {
+            backtrace: BackTrace::capture(),
+        }
+        .into())
+    }
+    /// Join exactly the original exported submission. This does not accept its
+    /// global numerical fault, model state or owning erasure obligations.
+    fn join_native_strata_submission(
+        &mut self,
+        _stream_id: StreamId,
+        _submission: NativeStrataSubmission,
     ) -> Result<(), ServerError> {
         Err(IoError::UnsupportedIoOperation {
             backtrace: BackTrace::capture(),

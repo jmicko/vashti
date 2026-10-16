@@ -4,14 +4,14 @@ use super::*;
 use cubecl_runtime::server::{NativeStrataBranch, NativeStrataInvocation};
 
 impl Workspace {
-    pub(super) fn run_native_prefix_commit(
+    pub(super) fn submit_native_prefix_commit(
         &self,
         model: &ResidentModel<'_, '_>,
         pending: &Pending,
         proposed: usize,
         accepted: usize,
         cancel: &AtomicBool,
-    ) -> Result<()> {
+    ) -> Result<Option<cubecl_runtime::server::NativeStrataSubmission>> {
         if !crate::strata_intel_core::enabled()
             || !(1..=8).contains(&proposed)
             || !(1..=proposed).contains(&accepted)
@@ -67,7 +67,7 @@ impl Workspace {
         model.graph.verify_unchanged()?;
         u::cancel(cancel)?;
         if proposed == 1 {
-            return Ok(());
+            return Ok(None);
         } // Native verified one-row candidates self-commit.
         let role = role.ok_or(error())? | (self.ple.native_capture_history_role()? << 1);
         let key = NativeStrataBranch::target_commit(proposed as u8, model.context as u16, role)
@@ -76,13 +76,12 @@ impl Workspace {
         let invocation = NativeStrataInvocation::commit(model.position as u32, accepted as u32)
             .map_err(u::fault)?;
         let client = model.arena.client().map_err(u::fault)?;
-        // The current API guarantees an actual joined submission on a hit.
-        // This is not fault/state acceptance and cannot publish a model cursor.
-        if client
-            .replay_native_strata_branch(key, invocation)
+        // The original backend owns pending execution; this identity names it.
+        if let Some(token) = client
+            .replay_native_strata_commit_pending(key, invocation)
             .map_err(u::fault)?
         {
-            return Ok(());
+            return Ok(Some(token));
         }
         client
             .begin_native_strata_invocation(key, invocation)
@@ -112,7 +111,10 @@ impl Workspace {
             accepted,
             cancel,
         )?;
-        client.end_native_strata_branch(key).map_err(u::fault)?;
-        u::cancel(cancel)
+        let token = client
+            .end_native_strata_commit_pending(key)
+            .map_err(u::fault)?;
+        u::cancel(cancel)?;
+        Ok(Some(token))
     }
 }

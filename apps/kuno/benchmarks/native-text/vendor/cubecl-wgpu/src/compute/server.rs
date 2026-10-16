@@ -1182,6 +1182,61 @@ impl ComputeServer for WgpuServer {
         }
         result
     }
+    fn replay_native_strata_commit_pending(
+        &mut self,
+        stream_id: StreamId,
+        key: cubecl_runtime::server::NativeStrataBranch,
+        invocation: cubecl_runtime::server::NativeStrataInvocation,
+    ) -> Result<Option<cubecl_runtime::server::NativeStrataSubmission>, ServerError> {
+        let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
+        self.scheduler.execute_streams(vec![stream_id]);
+        let result = self
+            .scheduler
+            .stream(&stream_id)
+            .replay_native_strata_commit_pending(key, invocation);
+        if result.is_ok()
+            && let Some(mutation) = mutation
+        {
+            mutation.accept();
+        }
+        result
+    }
+    fn end_native_strata_commit_pending(
+        &mut self,
+        stream_id: StreamId,
+        key: cubecl_runtime::server::NativeStrataBranch,
+    ) -> Result<cubecl_runtime::server::NativeStrataSubmission, ServerError> {
+        let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
+        self.scheduler.execute_streams(vec![stream_id]);
+        let result = self
+            .scheduler
+            .stream(&stream_id)
+            .end_native_strata_commit_pending(key);
+        if result.is_ok()
+            && let Some(mutation) = mutation
+        {
+            mutation.accept();
+        }
+        result
+    }
+    fn join_native_strata_submission(
+        &mut self,
+        stream_id: StreamId,
+        submission: cubecl_runtime::server::NativeStrataSubmission,
+    ) -> Result<(), ServerError> {
+        let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
+        self.scheduler.execute_streams(vec![stream_id]);
+        let result = self
+            .scheduler
+            .stream(&stream_id)
+            .join_native_strata_submission(submission);
+        if result.is_ok()
+            && let Some(mutation) = mutation
+        {
+            mutation.accept();
+        }
+        result
+    }
     fn submit_native_strata_experts(&mut self, stream_id: StreamId) -> Result<(), ServerError> {
         let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
         self.scheduler.execute_streams(vec![stream_id]);
