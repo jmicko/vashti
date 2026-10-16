@@ -25,7 +25,17 @@ pub(crate) mod controller;
 #[path = "strata_input.rs"]
 pub(crate) mod input;
 pub(crate) const VOCAB: usize = 248320;
-pub(crate) const MAX_OUTPUTS: usize = crate::strata_intel_core::CONTEXT - 1;
+// Pinned selected serve preflight (generate.cpp:9406) reserves eight cells
+// beyond prompt+requested output. Target windows and the next MTP front remain
+// full width even when delivery stops early at the cap; do not shrink them.
+pub(crate) const CONTEXT_HEADROOM: usize = 8;
+pub(crate) const MAX_OUTPUTS: usize = crate::strata_intel_core::CONTEXT - CONTEXT_HEADROOM - 1;
+pub(crate) fn request_end(prompt: usize, outputs: usize) -> Option<usize> {
+    prompt.checked_add(outputs).filter(|&end| {
+        end.checked_add(CONTEXT_HEADROOM)
+            .is_some_and(|reserved| reserved <= crate::strata_intel_core::CONTEXT)
+    })
+}
 pub(crate) const REQUEST_HOST_BYTES: usize = 4 * 1024 * 1024;
 
 /// Owned, transient request. No Debug/Serialize; the token allocation and all
@@ -54,10 +64,7 @@ impl Request {
             || !(1..=MAX_OUTPUTS).contains(&outputs)
             || eos as usize >= VOCAB
             || prompt.iter().any(|&v| v as usize >= VOCAB)
-            || prompt
-                .len()
-                .checked_add(outputs)
-                .is_none_or(|n| n > crate::strata_intel_core::CONTEXT)
+            || request_end(prompt.len(), outputs).is_none()
             || !minimum.is_finite()
             || !(0.0..=1.0).contains(&minimum)
             || prompt
@@ -82,10 +89,8 @@ impl Request {
         Ok((
             self.prompt.len(),
             *self.outputs,
-            self.prompt
-                .len()
-                .checked_add(*self.outputs)
-                .ok_or(kuno_text::Error::ArithmeticOverflow)?,
+            request_end(self.prompt.len(), *self.outputs)
+                .ok_or(kuno_text::Error::InvalidFormat("native request headroom"))?,
         ))
     }
 }
@@ -746,13 +751,16 @@ mod tests {
         if !crate::strata_intel_core::enabled() {
             return;
         }
-        for prompt in [1, 17, 1024, 4096, 8193, 16384, 32767] {
-            let outputs = crate::strata_intel_core::CONTEXT - prompt;
+        for prompt in [1, 17, 1024, 4096, 8193, 16384, MAX_OUTPUTS] {
+            let outputs = crate::strata_intel_core::CONTEXT - CONTEXT_HEADROOM - prompt;
             let tokens = (0..prompt)
                 .map(|i| (i * 13 % VOCAB) as u32)
                 .collect::<Vec<_>>();
             let r = request(tokens, outputs).unwrap();
-            assert_eq!(r.geometry().unwrap(), (prompt, outputs, 32768));
+            assert_eq!(
+                r.geometry().unwrap(),
+                (prompt, outputs, 32768 - CONTEXT_HEADROOM)
+            );
             assert_eq!(r.prompt[prompt - 1], ((prompt - 1) * 13 % VOCAB) as u32);
         }
         for (tokens, outputs) in [
@@ -767,6 +775,39 @@ mod tests {
         let mut bloated = Vec::with_capacity(32769);
         bloated.push(1);
         assert!(request(bloated, 1).is_err());
+    }
+    #[test]
+    fn selected_serve_headroom_rejects_short_reservations_and_keeps_full_windows_in_bounds() {
+        if !crate::strata_intel_core::enabled() {
+            return;
+        }
+        let context = crate::strata_intel_core::CONTEXT;
+        // Literal pinned serving preflight oracle, independent from request_end.
+        for prompt in [1, 17, 4096, 16384, context - 10, context - 9] {
+            for slack in 0..=12 {
+                let Some(outputs) = context.checked_sub(prompt + slack).filter(|&n| n > 0) else {
+                    continue;
+                };
+                let expected = prompt + outputs + 8 <= context;
+                assert_eq!(request_end(prompt, outputs).is_some(), expected);
+                assert_eq!(request(vec![0; prompt], outputs).is_ok(), expected);
+                if expected {
+                    // The latest continuing round can feed its entire target
+                    // window and next MTP producer, even with only one output
+                    // left to deliver. Do not clip either at the delivery cap.
+                    let latest_input = prompt + outputs - 2;
+                    for width in 1..=crate::strata_port::verify_capacity() {
+                        assert!(latest_input + width <= context);
+                        let accepted_next = latest_input + 1;
+                        assert!(accepted_next + width - 1 <= context);
+                    }
+                }
+            }
+        }
+        assert!(request_end(usize::MAX, 1).is_none());
+        assert!(request_end(1, usize::MAX).is_none());
+        assert!(request_end(usize::MAX - 9, 2).is_none());
+        assert_eq!(MAX_OUTPUTS + 1 + CONTEXT_HEADROOM, context);
     }
     #[test]
     fn request_rejects_invalid_sampler_and_draft_parameters_before_construction() {

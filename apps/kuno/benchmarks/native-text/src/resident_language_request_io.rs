@@ -38,9 +38,7 @@ impl Geometry {
         if crate::strata_intel_core::enabled() {
             if prompt == 0
                 || !(1..=MAX_OUTPUTS).contains(&outputs)
-                || prompt
-                    .checked_add(outputs)
-                    .is_none_or(|n| n > crate::qsa_gpu::MAX_CONTEXT)
+                || crate::strata_engine::request_end(prompt, outputs).is_none()
             {
                 return Err(rejected());
             }
@@ -59,6 +57,14 @@ impl Geometry {
     }
     pub(crate) fn final_cursor(self) -> usize {
         self.context() - 1
+    }
+    fn reserved_context(self) -> usize {
+        self.context()
+            + if crate::strata_intel_core::enabled() {
+                crate::strata_engine::CONTEXT_HEADROOM
+            } else {
+                0
+            }
     }
 }
 
@@ -99,7 +105,7 @@ impl Authority {
     fn new(geometry: Geometry, context: usize, actual: bool) -> Result<Self> {
         Geometry::new(geometry.prompt, geometry.outputs)?;
         let valid = if crate::strata_intel_core::enabled() {
-            geometry.context() <= context && context <= crate::qsa_gpu::MAX_CONTEXT
+            geometry.reserved_context() <= context && context <= crate::qsa_gpu::MAX_CONTEXT
         } else {
             context == geometry.context()
         };
@@ -114,6 +120,19 @@ impl Authority {
             scopes: 0,
             base_scopes: 0,
         })
+    }
+    /// Native target commit consumes the complete matching INPUT prefix even
+    /// when output delivery ends earlier. The last continuing origin precedes
+    /// final_cursor, and its full window can commit at most MAXT-1 cells beyond
+    /// it. This bound is not a completion receipt; original model/family owners
+    /// still supply and validate the actual committed cursor on close/reset.
+    fn maximum_cursor(&self) -> usize {
+        self.geometry.final_cursor()
+            + if crate::strata_intel_core::enabled() && self.four_rows {
+                crate::strata_port::verify_capacity() - 1
+            } else {
+                0
+            }
     }
     fn active(&self, actual: bool) -> Result<bool> {
         if actual != matches!(self.phase, Phase::InitialWindow | Phase::Active)
@@ -148,7 +167,10 @@ impl Authority {
         match self.phase {
             Phase::Prefill if end <= self.geometry.prompt => Ok(()),
             Phase::Active
-                if start >= self.geometry.prompt && end <= self.geometry.final_cursor() =>
+                if start >= self.geometry.prompt
+                    && start < self.geometry.final_cursor()
+                    && end <= self.maximum_cursor()
+                    && end <= self.capacity =>
             {
                 Ok(())
             }
@@ -171,7 +193,7 @@ impl Authority {
     }
     fn validate_completed_native(&self, position: usize, actual: bool) -> Result<()> {
         self.retained_native_scope()?;
-        if actual || !(self.geometry.prompt..=self.geometry.final_cursor()).contains(&position) {
+        if actual || !(self.geometry.prompt..=self.maximum_cursor()).contains(&position) {
             return Err(rejected());
         }
         self.active(false)?;
@@ -197,7 +219,7 @@ impl Authority {
         if self.retained_native_scope()? != erased_scope
             || actual
             || capacity != self.capacity
-            || geometry.context() > capacity
+            || geometry.reserved_context() > capacity
             || self.scopes.checked_add(1).is_none()
         {
             return Err(rejected());
@@ -285,7 +307,7 @@ impl Authority {
     fn validate_end(&self, position: usize, actual: bool) -> Result<()> {
         if !self.active(actual)?
             || self.phase != Phase::Active
-            || !(self.geometry.prompt..=self.geometry.final_cursor()).contains(&position)
+            || !(self.geometry.prompt..=self.maximum_cursor()).contains(&position)
         {
             return Err(rejected());
         }
@@ -573,15 +595,57 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
 mod tests {
     use super::*;
     #[test]
+    fn actual_native_scope_allows_full_target_commit_beyond_delivery_cap_with_reserved_headroom() {
+        if !crate::strata_intel_core::enabled() {
+            return;
+        }
+        for outputs in 2..=9 {
+            let g = Geometry::new(17, outputs).unwrap();
+            for remaining in 1..outputs {
+                let start = g.final_cursor() - remaining;
+                for width in 1..=crate::strata_port::verify_capacity() {
+                    for keep in 1..=width {
+                        let mut a = Authority::new(g, g.reserved_context(), false).unwrap();
+                        a.four_rows = true;
+                        a.begin(g.prompt(), true).unwrap();
+                        // This models the same full-window controller/commit
+                        // boundary, not a clipped delivery-sized verification.
+                        a.run(start, width, true).unwrap();
+                        let committed = start + keep;
+                        a.validate_end(committed, true).unwrap();
+                        assert!(a.run(g.final_cursor(), 1, true).is_err());
+                        assert!(a.run(g.final_cursor() + 1, 1, true).is_err());
+                        assert!(a.validate_end(a.maximum_cursor() + 1, true).is_err());
+                        a.end(committed, false).unwrap();
+                        a.validate_completed_native(committed, false).unwrap();
+                    }
+                }
+            }
+            for missing in 1..=crate::strata_engine::CONTEXT_HEADROOM {
+                assert!(Authority::new(g, g.reserved_context() - missing, false).is_err());
+            }
+        }
+        let context = crate::qsa_gpu::MAX_CONTEXT;
+        for missing in 0..crate::strata_engine::CONTEXT_HEADROOM {
+            assert!(Geometry::new(17, context - 17 - missing).is_err());
+        }
+    }
+    #[test]
     fn retained_native_requests_share_capacity_with_monotonic_single_use_scopes() {
         if !crate::strata_intel_core::enabled() {
             return;
         }
         let capacity = crate::qsa_gpu::MAX_CONTEXT;
         let mut a = Authority::new(Geometry::new(1, 1).unwrap(), capacity, false).unwrap();
-        for (index, (prompt, outputs)) in [(1, 1), (13, 16), (4096, 8192), (32767, 1), (1, 32767)]
-            .into_iter()
-            .enumerate()
+        for (index, (prompt, outputs)) in [
+            (1, 1),
+            (13, 16),
+            (4096, 8192),
+            (MAX_OUTPUTS, 1),
+            (1, MAX_OUTPUTS),
+        ]
+        .into_iter()
+        .enumerate()
         {
             let g = Geometry::new(prompt, outputs).unwrap();
             if index != 0 {
@@ -615,7 +679,7 @@ mod tests {
         }
         for prompt in [1, 13, 4096] {
             let g = Geometry::new(prompt, 16).unwrap();
-            let mut a = Authority::new(g, g.context(), false).unwrap();
+            let mut a = Authority::new(g, g.reserved_context(), false).unwrap();
             assert!(a.validate_completed_native(prompt, false).is_err());
             a.begin(prompt, true).unwrap();
             assert!(a.validate_completed_native(prompt, true).is_err());
@@ -638,12 +702,16 @@ mod tests {
         for (prompt, outputs) in [
             (1, 1),
             (23, 7),
-            (crate::qsa_gpu::MAX_CONTEXT - 1, 1),
+            (
+                crate::qsa_gpu::MAX_CONTEXT - crate::strata_engine::CONTEXT_HEADROOM - 1,
+                1,
+            ),
             (1024, 512),
         ] {
             let geometry = Geometry::new(prompt, outputs).unwrap();
             assert_eq!(geometry.context(), prompt + outputs);
-            let mut authority = Authority::new(geometry, geometry.context(), false).unwrap();
+            let mut authority =
+                Authority::new(geometry, geometry.reserved_context(), false).unwrap();
             let prefix = prompt - 1;
             for start in (0..prefix).step_by(crate::strata_prompt::groups::CAPACITY) {
                 authority
@@ -687,7 +755,7 @@ mod tests {
     #[test]
     fn four_language_permission_keeps_prefill_original_and_requires_active_real_cursor() {
         let geometry = Geometry::new(30, MAX_OUTPUTS.min(512)).unwrap();
-        let mut authority = Authority::new(geometry, geometry.context(), false).unwrap();
+        let mut authority = Authority::new(geometry, geometry.reserved_context(), false).unwrap();
         authority.four_rows = true;
         assert!(authority.run(0, 4, false).is_err());
         authority.run(0, 3, false).unwrap();
@@ -702,7 +770,7 @@ mod tests {
                 .is_err()
         );
         assert!(authority.run(29, 4, true).is_err());
-        let mut original = Authority::new(geometry, geometry.context(), false).unwrap();
+        let mut original = Authority::new(geometry, geometry.reserved_context(), false).unwrap();
         original.begin(30, true).unwrap();
         assert!(original.run(30, 4, true).is_err());
     }
@@ -715,7 +783,7 @@ mod tests {
             for wrong in [0, 4, 13, 229, 234, 256] {
                 assert!(Authority::new(g, wrong, false).is_err());
             }
-            assert!(Authority::new(g, g.context(), true).is_err());
+            assert!(Authority::new(g, g.reserved_context(), true).is_err());
         }
         for prompt in [0, 1, 4, 13, 29, 31, 34, 36] {
             assert_eq!(
@@ -728,6 +796,7 @@ mod tests {
                 (1..=MAX_OUTPUTS).contains(&outputs)
                     && outputs
                         .checked_add(35)
+                        .and_then(|n| n.checked_add(crate::strata_engine::CONTEXT_HEADROOM))
                         .is_some_and(|n| n <= crate::qsa_gpu::MAX_CONTEXT)
             } else {
                 outputs == MAX_OUTPUTS
@@ -741,7 +810,7 @@ mod tests {
         for prompt in [30, 35] {
             for end in [prompt, prompt + 1, prompt + 198, prompt + 199] {
                 let g = Geometry::new(prompt, 200).unwrap();
-                let mut a = Authority::new(g, g.context(), false).unwrap();
+                let mut a = Authority::new(g, g.reserved_context(), false).unwrap();
                 assert!(a.run(0, 3, false).is_ok());
                 assert!(a.run(prompt - 1, 2, false).is_err());
                 assert!(a.validate_begin(prompt - 1, false).is_err());
@@ -795,9 +864,9 @@ mod initial_window_tests {
         if !crate::strata_intel_core::enabled() {
             return;
         }
-        for prompt in [1, 35, 4096, 32767] {
+        for prompt in [1, 35, 4096, MAX_OUTPUTS] {
             let geometry = Geometry::new(prompt, 1).unwrap();
-            let mut a = Authority::new(geometry, geometry.context(), false).unwrap();
+            let mut a = Authority::new(geometry, geometry.reserved_context(), false).unwrap();
             let prefix = prompt - 1;
             assert!(a.begin_initial(prefix, false).is_err());
             assert!(a.validate_initial_begin(prompt, false).is_err());

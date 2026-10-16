@@ -38,11 +38,7 @@ impl Request<'_> {
             || !(1..=MAX_OUTPUTS).contains(&self.max_outputs)
             || self.eos >= VOCAB as u32
             || self.speculation.window > crate::strata_port::verify_capacity()
-            || self
-                .prompt
-                .len()
-                .checked_add(self.max_outputs)
-                .is_none_or(|n| n > crate::qsa_gpu::MAX_CONTEXT)
+            || super::request_end(self.prompt.len(), self.max_outputs).is_none()
         {
             return Err("global request geometry rejected".into());
         }
