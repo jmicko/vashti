@@ -6,18 +6,18 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, source `8bd6edff399f531565642a66472dfd6afbba0ea1`. Read the
-[cell-transfer handoff](#active-kuno-engine-handoff--original-cell-transfers-2026-10-16)
-and [completion gate](kuno-strata-rewrite-completion.md). Actual global adaptive
-exchange uses original buffer copies and the dormant attached prompt raw root;
-no extra allocation.508 selected CPU cases and strict core/off lint pass.
-Async overlap with commit/draft remains incomplete. Full rewrite/speed gate stay
-closed pending final source and physical/numerical/state/recovery acceptance.
+`codex/strata-rust-port`, source `53cd14ced31da04c71408e76b266bdec2a2b8c5c`. Read the
+[adaptive-flight handoff](#active-kuno-engine-handoff--adaptive-copy-flight-2026-10-16)
+and [completion gate](kuno-strata-rewrite-completion.md). Actual original copies
+start before target commit/next drafting and join/publish before next target
+reuse. First count1 usage and original scratch cleanup exclusion are connected.
+514 CPU cases and strict core/off lint pass. Physical overlap and final source/
+pricing/numerical/state/recovery acceptance remain open; speed gate closed.
 
 Continuation CPU-only; goal active. No GPU/model/service/install/release/API/
-frontend action. Root not needed; latest shared-shell refresh still required a
-sudo password. Physical recovery historicalOct15; no current-health claim.
-Preserve canonical application work/inherited files. Required Vashti changes:none.
+frontend action. Root not needed; latest shared-shell sudo refresh unsuccessful.
+Physical recovery historicalOct15. Preserve canonical/inherited work. Required
+Vashti changes:none.
 
 ## Ownership
 
@@ -7177,3 +7177,36 @@ adapter, model, inference, service, install or release action. No current physic
 recovery or speed claim. Goal active CPU-only; root not needed. Latest shared
 shell sudo refresh required a password. Canonical application/inherited files
 preserved. This handoff does not authorize integration, deployment or release.
+
+## Active Kuno engine handoff — adaptive copy flight (2026-10-16)
+
+Source `53cd14ced31da04c71408e76b266bdec2a2b8c5c`, isolated `codex/strata-rust-port`. Read the
+[detailed source/acceptance receipt](kuno-strata-rewrite-completion.md#adaptive-copy-flight-across-commit-and-drafting-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). Actual verified windows now
+start original expert-copy flights after their row observer releases its lease
+and before target commit/next MTP drafting. Actual adopted copy queue, original
+buffers/scratch, registered rebase and private-arena cleanup exclusion stay owned
+through actual transfer and copy-to-MAIN semaphore/fence completion. Publication
+of physical placement and private route-map/usage still gates next target reuse.
+The final prompt input/count1 uses this same accounting; no duplicate after-window
+tick. Diagnostic checkpoint replay no longer trains the selected native cache.
+
+514 CPU cases /63 suites, selected test build and strict core/off lint pass.
+Exact tests/limits/build correction are in the linked receipt. Normal source-clean/stable artifact `strata-adapt-flight-ordinary-20261016/`
+(`strata-adapt-flight-ordinary-20261016.out`) has SHA256
+`4fe370cae0c05c30453dd1dd66c1f01933e46017b6ea951016223d09f1deea46`; independent original source/hash/mode0500 checks pass.
+The build exits0 without initializing an adapter/device.
+No changed kernels or new shader acceptance. No GPU/model/inference or physical
+residency/overlap/speed claim. No extra GPU/model root or duplicated complement.
+
+Source substitutions remain explicit: CPU proposal selection is serial before
+commit; adaptation and MTP INFO uploads share the adopted copy queue; first-window
+outer delivery/drafting remains as before. Final source/queue/ownership/pricing
+review and full protected numerical/state/context/hot-request/failure/recovery
+acceptance remain required. Whole rewrite incomplete; speed gate closed. Private
+executable input remains separately gated; current CLI compiled-public/one-request.
+
+No API/protocol/config/consumer change; required Vashti changes:none. No installed
+service, release, frontend or GPU action. Goal active CPU-only; root not needed;
+latest shared-shell sudo refresh unsuccessful. Canonical/inherited work preserved.
+This handoff does not authorize integration/deployment/release.

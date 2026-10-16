@@ -1,20 +1,18 @@
 # Strata Rust whole-model port experiment
 
-**Current CPU-only resume (2026-10-16):** source `8bd6edff399f531565642a66472dfd6afbba0ea1`.
-Read the [cell-transfer receipt](kuno-strata-rewrite-completion.md#original-cell-transfer-copy-path-2026-10-16)
-and [checkpoint](kuno-native-text-checkpoint.md). Actual global adaptive exchange
-now uses original transfer copies with its dormant attached prompt raw root,
-matching HOST import flags, original rebase and joined map publication. No new
-buffer, model duplication, private memory quote or API change.508 distinct CPU
-cases /62 suites and strict core/off lint pass. Normal source-clean/stable artifact `strata-cell-transfer-ordinary-20261016/`
-(`strata-cell-transfer-ordinary-20261016.out`) has SHA256
-`b85b758107e6a34db4e97d053ffa5e98c654fca1842a41bfe22892d9b33abc59`.
-Independent source/hash/mode0500 checks pass. Offline
-`strata-cell-transfer-shaders-20261016.log` exits0 with334 variants and122
-physical-pointer checks. This command returns before adapter/device creation.
-Still synchronous after commit/draft; upstream overlap remains an explicit
-unfinished dependency. Final scheduling/substitution, physical pricing and full
-numerical/state/hot-request/failure/recovery gates remain open. Whole rewrite
+**Current CPU-only resume (2026-10-16):** source `53cd14ced31da04c71408e76b266bdec2a2b8c5c`.
+Read the [adaptive-flight receipt](kuno-strata-rewrite-completion.md#adaptive-copy-flight-across-commit-and-drafting-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). Actual original expert copies
+start after verified-row release and before target commit/next drafting, retaining
+original resources/cleanup exclusion until actual copy/primary visibility joins
+and physical/private map publication. The first final-prompt/count1 window shares
+this accounting.514 CPU cases /63 suites and strict core/off lint pass. Normal source-clean/stable artifact `strata-adapt-flight-ordinary-20261016/`
+(`strata-adapt-flight-ordinary-20261016.out`) has SHA256
+`4fe370cae0c05c30453dd1dd66c1f01933e46017b6ea951016223d09f1deea46`; independent original source/hash/mode0500 checks pass.
+The build exits0 without initializing an adapter/device.
+No new roots, model duplication, kernel math or API change. Serial CPU proposals,
+shared INFO/copy queue and first-window outer drafting remain explicit source
+substitutions; physical overlap/full-model acceptance unproven. Full rewrite
 incomplete; no speed trials. No GPU/service/frontend action or Vashti changes.
 
 ## Active direction — finish the complete Rust port before speed testing (2026-10-14)

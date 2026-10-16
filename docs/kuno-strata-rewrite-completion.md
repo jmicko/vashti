@@ -6,14 +6,15 @@ checklist is a source-to-source audit, not a sequence of throughput experiments.
 Each row needs its connected consumer, real ownership/placement and state contract;
 adding an unused helper or optional switch does not complete a row.
 
-**Current CPU-only source:** `8bd6edff399f531565642a66472dfd6afbba0ea1`. Read the
-[cell-transfer receipt](#original-cell-transfer-copy-path-2026-10-16) and
-[checkpoint](kuno-native-text-checkpoint.md). The selected global adaptive path
-now uses original buffer transfers instead of its old per-word swap shader,
-reusing the dormant attached prompt raw owner without another allocation.
-508 distinct CPU cases /62 suites and strict core/off lint pass. This remains a
-joined transaction after commit/draft: asynchronous adaptation scheduling is an
-explicit unfinished dependency. Whole rewrite incomplete; no live speed trials.
+**Current CPU-only source:** `53cd14ced31da04c71408e76b266bdec2a2b8c5c`. Read the
+[adaptive-flight receipt](#adaptive-copy-flight-across-commit-and-drafting-2026-10-16) and
+[checkpoint](kuno-native-text-checkpoint.md). Actual verified windows now submit
+original expert copies before target commit/next MTP drafting, then join the
+real transfer/primary-visibility fences and publish the private map/usage before
+next target reuse. The first last-prompt/count1 window shares this transaction.
+514 CPU cases /63 suites and strict core/off Clippy pass. Physical overlap,
+final substitutions and whole-model/state/recovery acceptance remain unproven.
+Full rewrite incomplete; no live speed trials.
 
 ## Reference and execution scope
 
@@ -56,7 +57,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | --- | --- | --- |
 | Artifact geometry, packing and tokenizer | `sycl/src/core/weights.cpp`, `src/io`, native expert layout, program model setup | Rust GGUF/tokenizer/binding exist. Audit format-specific load/conversion, chat-template and sampling behavior; original files remain shared/read-only. |
 | Exact dense placement and expert budget | `sycl/src/program/generate.cpp` model/cache setup; `sycl/src/core/expert_cache.cpp::open_sized` | Exact dense roots exist. Native global byte-prefix planning and an owning bounded GPU loader now compile; graph validation consumes the real artifact plan. Experimental core construction now invokes the sole global owner before prefill, and the core48-layer coordinator selects global routing/HOST fetch/role execution. Physical/numerical acceptance remains unfinished. All777 required original float tensors already match the selected native format (484 BF16,292 F32,1 F16); generic conversion is not required for this artifact. Source `89da25f` moves the shared original IQ4_XS embedding into the sole mapped HOST owner and updates constructor/reader/close accounting. Actual physical/numerical acceptance and the unchanged tiled gather substitution remain open. Sources `cbf4381`/`910cb58` replace the blanket5GiB allowance with a complete original dense inventory, preload/seal it before expert allocation, and size the automatic ranked prefix from actual remaining shared MAIN. See the dense-inventory receipt; physical placement and whole-device pricing acceptance remain open. The ordinary feature-off engine retains uniform banks. |
-| Low-RAM host complement and promotion | `generate.cpp` source/adaptive tier; `sycl/src/core/verify.cpp` fetch/rebase | Original host complement, direct exchange and GPU selected fetch exist. Audit full byte ownership and asynchronous safe publication against upstream; do not duplicate the whole model in RAM. Source `a8bbdf0` restores the private route map from canonical physical cells on request rebind, preserving actual swapped weights and monotonic adaptive state; see the retained-controls receipt. |
+| Low-RAM host complement and promotion | `generate.cpp` source/adaptive tier; `sycl/src/core/verify.cpp` fetch/rebase | Original host complement, direct exchange and GPU selected fetch exist. Source53cd14c connects verified-boundary copy flights, original scratch cleanup exclusion and joined physical/private publication; final byte/queue/numerical audit and hardware acceptance remain open. Do not duplicate the whole model in RAM. Source `a8bbdf0` restores the private route map from canonical physical cells on request rebind, preserving actual swapped weights and monotonic adaptive state; see the retained-controls receipt. |
 | GPU route/group planning and original HOST access | `verify.cpp` / `verify_kernels.dp.cpp::resident_plan_kernel`, selected SYCL `DEVICE_PLAN=1,NO_HOST=1` | Native BF16 router and full512-expert normalization exist. Correct selected path reads actual VRAM or mapped HOST aliases directly on the GPU, preserving every selected expert. Source36d13d3 replaces the CPU split/staging consumer with direct authentic source aliases and removes per-layer CPU joins/submissions; protected execution is pending. Generic CPU doorbells/split windows are optional modes, not this B70 completion gate. Physical/numerical acceptance remains required. |
 | Native expert math and grouped rows | `sycl/src/kernels/cuda/iq_kernels.dp.cpp::row_entries`, `native_gu_kernel`, `native_down_kernel` | Packed integer math/BDA roots exist. Separate GU roles, 4/2/1 chunks, activation, intermediate storage and downstream consumers are now selected together in the Intel core; all 158 WGSL/SPIR-V variants validate, including 105 physical-pointer checks; numerical/model execution acceptance remains pending. The global core now uses one per-role launch containing pinned row_entries4/2/1 loops, scalar IQ4_XS, native signed integer finish and XOR reduction; numerical/model execution acceptance remains pending. Historical fixed-chunk kernels are retained separately. |
 | GR write/read/norm/down/up/injection | `sycl/src/kernels/cuda/fused_gr.dp.cpp::fused_gr_read_multi`; `verify.cpp::gr_read_group` | Native pending-write norm, sliced BF16 down/injection, fixed slice reduction and up/mix/commit are now connected and unconditionally selected in the core, including explicit PLE/final boundary writes. Resident original weights and the enlarged private scratch owner are charged together. Structural acceptance passes; numerical/model execution acceptance and final substitution audit remain pending. Source `37dced9` connects default full-prompt F1 row scales, packed BF16 norm/SiLU images, direct original projection consumers and residual-based mix recomputation together; see the packed-GR receipt. Sources `40fe97e` and the latest sole-residual receipt connect mixed images and prompt GR/PLE in-place storage, including actual MTP teacher scratch. Final substitution/numerical/device acceptance remains open. |
@@ -8280,3 +8281,100 @@ correctness, hot reuse, recovery or performance. Full rewrite remains incomplete
 speed gate closed. No required Vashti changes. Goal active CPU-only. Root not
 needed; latest shared-shell noninteractive sudo refresh still reported that a
 password is required. Canonical application work and inherited files preserved.
+
+## Adaptive copy flight across commit and drafting (2026-10-16)
+
+Source `53cd14ced31da04c71408e76b266bdec2a2b8c5c`, isolated `codex/strata-rust-port`. This supersedes the preceding
+receipt's source-level after-window serialization and suspected missing first
+window usage. The full rewrite and physical scheduling acceptance remain open.
+Preserve the complete branch, including original/exact owners and queue work.
+
+- Actual `resident_model_batch.rs::run_global` observes target rows, runs the
+  original `PrefixPhase::Verified` callback, drops its original host-row lease,
+  then starts `Workspace::begin_adaptation_after_verified`. The source cache
+  ticks/proposes from actual GPU usage, with original48-layer completed routing
+  checks. No target state/cursor acceptance is granted by proposing or copying.
+- Nonempty `Sources::submit_exchange` authenticates original three-role cells,
+  original attached raw root AND matching actual private-arena allocation. It
+  retains the existing original reader/rebase join BEFORE target commit starts.
+  `strata_adapt_transfer.rs::Flight` then submits native copies on the actual
+  adopted transfer queue, rather than Wgpu's MAIN queue, and returns without
+  joining those copies. Commit submission and the scoped next-MTP observer follow
+  while this owning flight remains live. All joins are preserved at their real
+  boundaries; this is not a removed-wait shortcut.
+- Original MAIN signals a real semaphore consumed by the copy queue at TRANSFER.
+  The same tested original HOST->scratch, GPU->HOST, scratch->GPU plan is recorded
+  with transfer RAW/WAR/WAW barriers and final transfer->HOST_READ availability.
+  It still uses the existing32MiB dormant prompt raw root; no extra GPU or model
+  root, duplicate RAM complement, new device, queue family or inference library.
+- After original commit/draft and all family proof/commit work, actual
+  `finish_adaptation` joins the original submitted copy fence, submits a real
+  done-semaphore wait to MAIN and joins that original visibility fence. It then
+  finishes the original registered rebase, uploads the private route map/decayed
+  usage and joins publication/`Cache::commit`. Only then may the next target
+  reader enter. Empty proposals still publish decayed usage without a fake flight.
+- Actual raw flight owns complete original buffer references, Vk pool/command,
+  semaphores/fences and the original Wgpu device through completion, including
+  unwind. The same-thread original-arena `strata_external_flight::Block` prevents
+  erasure/reset/close while the scratch reader is unjoined. Unknown completion
+  retires that arena and leaves its existing quarantine path in force; there is
+  no clean-memory/publication credit. Actual completed raw work releases this
+  exclusion even if later logical publication fails. Failed/uncertain submission
+  never earns completion from its attempt or resubmits an already-used fence.
+- The actual first normal final-prompt input now uses a bounded count1
+  `prefill_first_native_window` observer returning its real prediction and device
+  carry receipt after acceptance. This closes the old usage/tick omission while
+  dropping its row lease before adaptation; preceding prompt matrix rows do not
+  train the cache. Existing monotonic loaded-cache state/epochs persist. The
+  controller no longer ticks again after the completed window. Optional legacy
+  diagnostic checkpoint replay no longer trains the selected native cache.
+
+**Explicit substitutions/remaining audit:** Rust computes the small CPU proposal
+serially at the verified boundary; upstream launches that selection on a CPU
+thread alongside commit/drafting. Actual GPU copy submission is asynchronous.
+Vulkan INFO uploads and these adaptive copies use the SAME existing transfer
+queue; subsequent draft INFO copies may therefore wait behind adaptive DMA.
+The saved Oct14 B70 topology has one queue in each of the three selected families;
+this pass does not request nonexistent extra queues, assume independent DMA
+engines or claim device overlap. These queue/proposal/first-window delivery
+substitutions need final source review and physical acceptance. Current first
+count1 returns to the outer controller before its first MTP drafting as before;
+later windows use the existing scoped next-draft observer. Original rebase begin/
+finish remain full client joins, now outside the intended commit/draft interval.
+Model identity, exact quantized math, source complement and private erasure remain
+unchanged. CPU tests cannot establish physical queue visibility or throughput.
+
+CPU evidence under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-adapt-flight-final-test-build-20261016.log`: final locked selected
+  release test build exits0. `strata-adapt-flight-cpu-20261016.log` and retained
+  `strata-adapt-flight-cpu-run-20261016.py`: **514 distinct /63 nonempty suites,
+  zero failed**, retaining previous508 coverage. Four additional cases exercise
+  the actual transfer-fence state used by real submission/waits: original copy
+  completion before visibility, failed/unknown copy attempts, one-shot visibility
+  submission, construction without invented completion. Two cases exercise the
+  actual arena cleanup exclusion, stale-credit rejection and retirement on lost
+  completion. They create no adapter/device.
+- `strata-adapt-flight-{core,off}-clippy-20261016.log`: both strict locked release
+  configurations exit0. Changed-source format/whitespace checks pass.
+- Intermediate `strata-adapt-flight-build-20261016.log` found one remaining legacy
+  after-window caller; it was removed with the diagnostic cache-training behavior
+  described above. Later `checked`/`scoped` builds are intermediate receipts, not
+  the final acceptance/artifact selection.
+
+Normal source-clean/stable artifact `strata-adapt-flight-ordinary-20261016/`
+(`strata-adapt-flight-ordinary-20261016.out`) has SHA256
+`4fe370cae0c05c30453dd1dd66c1f01933e46017b6ea951016223d09f1deea46`; independent original source/hash/mode0500 checks pass.
+The build exits0 without initializing an adapter/device.
+
+No GPU/adapter/model/inference/service/install/release/API/frontend action. No
+kernel source changed, so the preceding334 offline variants/122 physical-pointer
+checks remain historical; no new shader/device acceptance is implied. No timing
+or physical residency/refund claim. Whole rewrite incomplete, speed gate closed.
+Next final pinned-source substitution/queue/ownership/pricing audit, then (under
+renewed GPU authorization and protected execution) full numerical/state/context/
+hot-request/failure/recovery acceptance before speed. The independently protected
+private executable caller remains open; current CLI compiled-public/one-request.
+Required Vashti changes:none. Goal active CPU-only; root not needed. Latest
+shared-shell sudo refresh remains unsuccessful; do not churn on privilege
+workarounds. Canonical application work/inherited untracked files preserved.

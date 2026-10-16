@@ -1,41 +1,43 @@
-<!-- Current resume: 2026-10-16, source 8bd6edff399f531565642a66472dfd6afbba0ea1, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source 53cd14ced31da04c71408e76b266bdec2a2b8c5c, codex/strata-rust-port.
 CPU-only continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, source `8bd6edff399f531565642a66472dfd6afbba0ea1`. Goal active CPU-only.
-Read the [cell-transfer receipt](kuno-strata-rewrite-completion.md#original-cell-transfer-copy-path-2026-10-16)
-and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--original-cell-transfers-2026-10-16).
-Actual global adaptive exchange now records original HOST/scratch/GPU copies
-instead of per-word swap compute. It uses the already-attached complete dormant
-32MiB prompt raw owner; no new buffer or source duplication. Three-role original
-ownership, registered rebase, physical placement and joined private map/usage
-publication remain coupled. Actual HOST import flags and HAL transfer-to-HOST
-availability were updated together. No model geometry/kernel math or API change.
+branch `codex/strata-rust-port`, source `53cd14ced31da04c71408e76b266bdec2a2b8c5c`. Goal active CPU-only.
+Read the [adaptive-flight receipt](kuno-strata-rewrite-completion.md#adaptive-copy-flight-across-commit-and-drafting-2026-10-16)
+and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--adaptive-copy-flight-2026-10-16).
+Actual verified windows submit original expert copies on the adopted transfer
+queue before target commit/next drafting, retain the original scratch/registered
+source/arena exclusion through the actual copy and primary visibility fences,
+then publish all physical/private maps before next target reuse. The first normal
+last-prompt/count1 window now shares observed-row usage/tick accounting. No new
+GPU/model root, duplicate complement, kernel math or API change. Diagnostic
+checkpoint replay no longer trains the native cache. Full source details,
+intermediate build correction and exact CPU coverage are in the linked receipt.
 
-508 distinct selected CPU cases /62 suites and strict core/off Clippy pass.
-The [detailed receipt](kuno-strata-rewrite-completion.md#original-cell-transfer-copy-path-2026-10-16) records runner
-correction, actual test scope and artifact. Physical GPU behavior is untested.
-Normal source-clean/stable artifact `strata-cell-transfer-ordinary-20261016/`
-(`strata-cell-transfer-ordinary-20261016.out`) has SHA256
-`b85b758107e6a34db4e97d053ffa5e98c654fca1842a41bfe22892d9b33abc59`.
-Independent source/hash/mode0500 checks pass. Offline
-`strata-cell-transfer-shaders-20261016.log` exits0 with334 variants and122
-physical-pointer checks. This command returns before adapter/device creation.
+514 distinct CPU cases /63 suites and strict core/off lint pass. Normal source-clean/stable artifact `strata-adapt-flight-ordinary-20261016/`
+(`strata-adapt-flight-ordinary-20261016.out`) has SHA256
+`4fe370cae0c05c30453dd1dd66c1f01933e46017b6ea951016223d09f1deea46`; independent original source/hash/mode0500 checks pass.
+The build exits0 without initializing an adapter/device.
+No GPU/device or new shader check; the preceding334/122 offline receipt remains
+historical. No numerical/model, physical overlap or performance claim.
 
-**Next:** implement the remaining connected async adaptation boundary. Current
-adaptation still starts after target commit and next MTP draft finish; the copy
-path retains its whole-client/rebase joins. Upstream overlaps these and joins the
-actual pending copies before next target residency publication. Prepare actual
-usage/proposals, preserve original reader/scratch/recording lifetimes, submit an
-admitted transfer flight, and join/publish all maps before target reuse together.
-Audit suspected first last-prompt/count1 usage/tick accounting; do not declare it
-a proven bug yet. Then finish whole-device physical/runtime/HOST pricing and the
-full numerical/state/hot-request/failure/recovery gates. Private executable input
-remains independently gated; current CLI compiled-public/one-request. Whole
-rewrite incomplete, speed gate closed. No GPU/model/service/install/release/API/
-frontend action; required Vashti changes:none. Root not needed; latest shared
-shell sudo refresh still required a password. Recovery historicalOct15.
+**Next:** final pinned-source source/queue/ownership/pricing/substitution audit.
+Record/review serial CPU proposals, shared copy queue with MTP INFO uploads, and
+first-window outer delivery/drafting; this code does not prove physical overlap.
+Original rebase joins now bracket the intended commit/draft interval. Then full
+numerical/state/context/hot-request/failure/recovery gates under renewed GPU
+permission and protected execution. Private input remains independently gated;
+current CLI compiled-public/one-request. Whole rewrite incomplete, speed gate
+closed. No GPU/model/service/install/release/API/frontend actions; required Vashti
+changes:none. Root not needed; latest shared-shell sudo refresh unsuccessful.
+Physical recovery historicalOct15. Preserve canonical work/inherited files.
+
+**Previous copy block (`8bd6edf`):** original three-role transfers use dormant
+prompt raw scratch, matching HOST import flags and registered source publication.
+Its synchronous after-window scheduling is superseded above.508 CPU cases and
+334 offline variants/122 physical-pointer checks passed then; exact artifact/hash
+are in the [historical receipt](kuno-strata-rewrite-completion.md#original-cell-transfer-copy-path-2026-10-16).
 
 **Previous exact-page block (`ba0cc6a`):** actual exact allocator, shared prompt
 inventory and matching model/admission charges connect. Prompt roots756/642/32MiB
