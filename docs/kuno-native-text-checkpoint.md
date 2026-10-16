@@ -1,19 +1,41 @@
-<!-- Current resume: 2026-10-16, source 862f5fa, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source 8262367, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, engine source through `862f5fa`. The user authorized
+branch `codex/strata-rust-port`, engine source through `8262367`. The user authorized
 continuing CPU-only work; the goal controller is active for that scope.
 GPU/model/service/sudo work still needs renewed user authorization. Last physical recovery evidence
 is historical 06:07:22Z on Oct15; no subsequent GPU run or live health claim.
 
-Read the latest [MTP staging receipt](kuno-strata-rewrite-completion.md#mtp-input-staging-and-actual-observation-boundaries-2026-10-16)
+Read the latest [typed MTP phase receipt](kuno-strata-rewrite-completion.md#typed-mtp-phases-and-original-model-namespace-2026-10-16)
 and coordination handoff. Earlier CJK source `cd703bc` was integrated as `0bfbea8`;
 **do not cherry-pick it again**. Its original 106299-row Q6 head, inverse-ID sampler
 and target/MTP INT8 caches remain connected.
 
-**Latest MTP block:** `862f5fa` separates first TOKEN/target-residual staging from
+**Latest MTP phase block:** `8262367` connects explicit typed MTP round/step
+controls to actual queued math. A round's front uses origin p; selected rest and
+follow-up drafts use p+rows-1+j. Independently observed steps use their current cell
+origin with the matching original step index. The backend drains preceding scheduled
+kernel metadata before changing the phase, without explicitly flushing/joining the
+GPU. Declared phase fields canonicalize to immutable base displacements before
+capture. No old-value matching or position in shader/cache identities.
+
+Readable positions stop at4095; boundary expressions permit4096. Native front and
+QSA position records use the actual declared phase; **Identity also uses start**
+and is tagged. Select's unrelated zero remains static, Rewind stays outside capture.
+Core fused-sweep cache_position metadata is normalized to zero only after verifying
+the actual packed-cache INTEGER roles, whose predicate never reads it. Separate
+packed-cache guards retain the real explicitly declared current/closing boundary.
+
+MTP graph keys now include its existing immutable nonzero model-instance binding,
+restoring the original per-drafter graph ownership on the shared target/draft stream.
+Typed MTP controls reject target-only route fields.67 focused CPU tests and strict
+selected/off Clippy, immutable release build and327 offline shader variants pass;
+exact artifact hash and receipts are in the completion guide. **MTP still enqueues its math; direct submission is next.**
+No new GPU/private owner, model/service/sudo operation or speed trial this pass.
+
+**Previous MTP staging block:** `862f5fa` separates first TOKEN/target-residual staging from
 native front math. The actual window prepares an opaque original-owner/cursor ticket
 before capture and consumes it in the first front. A dropped ticket leaves an
 owner-local pending flag set, preventing another preparation, observation or full
@@ -31,9 +53,9 @@ until the same final completed observation.
 This pass:26 focused CPU tests, selected/off strict Clippy and formatting pass.
 Frozen release build and327 offline shader variants plus matrix/physical-pointer
 checks pass; exact artifact hash and logs are in the completion guide. No GPU,
-model, numerical, throughput or installed-service test ran. MTP **still enqueues
-math and uses untyped branch parameters**; this is its staging dependency, not a
-claim of completed MTP replay.
+model, numerical, throughput or installed-service test ran. This older block left
+MTP untyped; `8262367` supersedes that limitation. Direct MTP replay is still
+pending.
 
 **Previous connected block:** `d40442c` connects actual direct target graph replay.
 The first eligible verification window captures normally. A repeat with the same
@@ -67,30 +89,29 @@ artifact hash and logs are in the completion guide.
 These are not whole-model/GPU/numerical acceptance. Historical full-core regression
 failures remain untriaged; do not call the complete regression suite green.
 
-**Next block:** MTP round/step typed parameter program and direct submission.
-First source staging and actual observation separation are now done; do not redo
-those phases or reintroduce sampler CONTROL writes inside `draft_pick`.
-Inspect `resident_mtp_window.rs::queued_window_with_minimum`,
-`resident_mtp.rs::enqueue_prepared_native_front`, `native_selected_rest`,
-`guard_private_fused`, `guard_packed_cache`, and sampler request `draft_pick`.
+**Next block:** direct MTP submission and original host bookkeeping. The complete
+typed/canonical INFO program and model namespace are now connected. Do not redo
+first-input/sampler staging or reintroduce CONTROL writes inside math. The existing
+backend single-segment replay can now validate MTP invocation families; the actor
+still deliberately traverses/enqueues its math and does not call it yet.
 
-Round controls need explicit original first-front versus selected-rest phases:
-accepted front starts at p; its selected rest uses p+rows-1; subsequent whole-chain
-cells use p+rows-1+j. Independently observed step branches start at their current
-cell. Declare these shape offsets explicitly; never discover dynamic fields by
-matching old position bytes. Guard boundary positions may equal4096 although cell
-positions stop at4095. Generic core fused-sweep cache_position scalars are unused
-because packed caches have INTEGER roles; any normalization must prove those
-actual roles and preserve separate packed-cache guards. Audit kernel-specific INFO
-semantics: Select/Identity/Rewind do not all use word1 as a cell position.
+Inspect `resident_mtp_window.rs::queued_window_with_minimum`, `Traffic`, `tick`,
+`count_traffic`, `commit_forward`, request sampler `draft_pick`, and original
+`mtp.cpp::capture_round/capture_step`. Reuse actual completed recordings, never a
+synthesized output. Direct replay must consume the same prepared first-front receipt
+only after actual submission/join, advance current position and per-token dispatch/
+traffic bookkeeping exactly, and update the request sampler's CPU counter/proposal
+coordinates consistently with the real GPU bridge. Cache any necessary immutable
+accounting deltas from a successful matching original capture, not guessed kernel
+counts or private request content. Namespace any cache by the original actor/key;
+backend request nonce still independently guards actual recording availability.
 
-Runtime NativeStrataInvocation still accepts targets only. Extend it explicitly
-for MTP before enabling typed MTP scopes. Direct replay must preserve actual first
-preparation consumption, follow copies/clears/guards, position/dispatch/traffic
-bookkeeping, request sampler coordinates/counter, original per-cell probability
-observations and final completed-forward stamp. The GPU bridge still generates
-actual random draws/history from current device positions. A cache key grants no
-numerical/state/erasure credit. Do not flatten arbitrary segments with host reads.
+Keep actual packet/fault/full-padding/source/ledger observations and positive
+per-step stopping, then original final-forward publication. Verify original roots
+and source readiness before replay. Canonical fields permit bulk rendering without
+replaying CPU phase setters. An unavailable/unsupported recording may capture;
+a failed upload/submission/join is terminal, never a cache miss. Do not flatten
+arbitrary multi-segment recordings with host observations.
 
 Commit/event overlap, embedding placement/context/prefill substitutions, arbitrary
 input, final source audit and whole-model/numerical/owning-erasure acceptance remain

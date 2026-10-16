@@ -6,8 +6,8 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through `862f5fa`. Read the latest
-[MTP staging handoff](#active-kuno-engine-handoff--mtp-input-staging-and-observation-2026-10-16)
+`codex/strata-rust-port`, engine source through `8262367`. Read the latest
+[typed MTP phase handoff](#active-kuno-engine-handoff--typed-mtp-phases-and-model-ownership-2026-10-16)
 and [completion gate](kuno-strata-rewrite-completion.md). Direct target submission
 is now connected in source; MTP direct replay and full GPU/numerical acceptance
 remain incomplete. No new speed result.
@@ -6156,3 +6156,22 @@ current checkpoint records the required coupled state/sampler bookkeeping.
 
 Goal remains active for CPU-only work. No GPU/model/service/sudo operations,
 installation or live speed trials. Required Vashti changes:none.
+
+### Active Kuno engine handoff — typed MTP phases and model ownership (2026-10-16)
+
+Source `8262367` connects actual MTP math to typed round/step controls, explicit
+front/rest/follow-up phases, separate4096-capable cache boundaries and original
+model-instance recording keys. Runtime resolves declared phase fields to static
+window offsets before capture; it never guesses fields by comparing old values.
+The original single shared client/model resources and request nonce stay required.
+The existing staging/actual-observation separation in `862f5fa` remains selected.
+
+67 focused CPU cases, strict selected/off Clippy, immutable release build and327
+offline shader variants pass. Exact receipts are in completion guide **Typed MTP phases and original
+model namespace**. **MTP direct submission and original host-accounting handback
+are still missing**; current queued math is preserved. Next source entry points
+and required state/sampler bookkeeping are in the current text checkpoint.
+
+Private CubeCL control declarations only; no public API, connector, UI or auth
+change. No GPU/model/service/sudo action, install or speed trial. Goal remains
+active for CPU-only work. Required Vashti changes:none.
