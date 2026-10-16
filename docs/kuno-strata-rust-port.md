@@ -1,19 +1,22 @@
 # Strata Rust whole-model port experiment
 
-**Current CPU-only resume (2026-10-16):** source `53cd14ced31da04c71408e76b266bdec2a2b8c5c`.
-Read the [adaptive-flight receipt](kuno-strata-rewrite-completion.md#adaptive-copy-flight-across-commit-and-drafting-2026-10-16)
-and [checkpoint](kuno-native-text-checkpoint.md). Actual original expert copies
-start after verified-row release and before target commit/next drafting, retaining
-original resources/cleanup exclusion until actual copy/primary visibility joins
-and physical/private map publication. The first final-prompt/count1 window shares
-this accounting.514 CPU cases /63 suites and strict core/off lint pass. Normal source-clean/stable artifact `strata-adapt-flight-ordinary-20261016/`
-(`strata-adapt-flight-ordinary-20261016.out`) has SHA256
-`4fe370cae0c05c30453dd1dd66c1f01933e46017b6ea951016223d09f1deea46`; independent original source/hash/mode0500 checks pass.
-The build exits0 without initializing an adapter/device.
-No new roots, model duplication, kernel math or API change. Serial CPU proposals,
-shared INFO/copy queue and first-window outer drafting remain explicit source
-substitutions; physical overlap/full-model acceptance unproven. Full rewrite
-incomplete; no speed trials. No GPU/service/frontend action or Vashti changes.
+**Current CPU-only resume (2026-10-16):** source `5b520bb50de8bc39387c42e42166ab24437d6447`.
+Read the [mapped-embedding receipt](kuno-strata-rewrite-completion.md#original-mapped-embedding-gather-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). Target and shared MTP front/
+teaching now gather original mapped HOST embedding rows in one32-lane/block
+launch with native eight-value ownership/two float4 stores, using original source
+table0's unused tail and all actual page read dependencies. No new allocation,
+model copy, format/pricing or API change.522 selected CPU cases /65 suites and
+strict core/off lint pass. Normal source-clean/stable artifact `strata-embedding-gather-ordinary-20261016/`
+(`strata-embedding-gather-ordinary-20261016.out`) has SHA256
+`6f6e8c34069852c1bd7725bae7a417a54d036c38aa4b70d3e623f63dc4578c77`.
+Independent original source/hash/mode0500 checks pass. Offline
+`strata-embedding-gather-shaders-20261016.log` exits0 with335 variants and123
+physical-pointer checks from that exact frozen executable. No adapter/device is
+created by this validator.
+No physical/model/speed conclusion. Final source/head/sampling/queue/ownership/
+pricing/substitution and full numerical/state/hot-request/failure/recovery gates
+remain open. Whole rewrite incomplete; no live speed trials or Vashti changes.
 
 ## Active direction — finish the complete Rust port before speed testing (2026-10-14)
 

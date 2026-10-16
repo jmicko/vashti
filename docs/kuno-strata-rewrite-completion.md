@@ -6,15 +6,15 @@ checklist is a source-to-source audit, not a sequence of throughput experiments.
 Each row needs its connected consumer, real ownership/placement and state contract;
 adding an unused helper or optional switch does not complete a row.
 
-**Current CPU-only source:** `53cd14ced31da04c71408e76b266bdec2a2b8c5c`. Read the
-[adaptive-flight receipt](#adaptive-copy-flight-across-commit-and-drafting-2026-10-16) and
-[checkpoint](kuno-native-text-checkpoint.md). Actual verified windows now submit
-original expert copies before target commit/next MTP drafting, then join the
-real transfer/primary-visibility fences and publish the private map/usage before
-next target reuse. The first last-prompt/count1 window shares this transaction.
-514 CPU cases /63 suites and strict core/off Clippy pass. Physical overlap,
-final substitutions and whole-model/state/recovery acceptance remain unproven.
-Full rewrite incomplete; no live speed trials.
+**Current CPU-only source:** `5b520bb50de8bc39387c42e42166ab24437d6447`. Read the
+[mapped-embedding receipt](#original-mapped-embedding-gather-2026-10-16) and
+[checkpoint](kuno-native-text-checkpoint.md). The actual target and shared MTP
+consumers now gather requested original HOST embedding rows in one32-lane/block
+launch, with native eight-value lane ownership and two float4 stores. The
+existing source table0 tail carries their original addresses; no extra root or
+weight copy.522 selected CPU cases and strict core/off Clippy pass. Final
+source/physical/numerical/state/recovery acceptance stays open. Whole rewrite
+incomplete; no live speed trials.
 
 ## Reference and execution scope
 
@@ -56,7 +56,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | Component | Pinned upstream | Current Rust connection and required completion |
 | --- | --- | --- |
 | Artifact geometry, packing and tokenizer | `sycl/src/core/weights.cpp`, `src/io`, native expert layout, program model setup | Rust GGUF/tokenizer/binding exist. Audit format-specific load/conversion, chat-template and sampling behavior; original files remain shared/read-only. |
-| Exact dense placement and expert budget | `sycl/src/program/generate.cpp` model/cache setup; `sycl/src/core/expert_cache.cpp::open_sized` | Exact dense roots exist. Native global byte-prefix planning and an owning bounded GPU loader now compile; graph validation consumes the real artifact plan. Experimental core construction now invokes the sole global owner before prefill, and the core48-layer coordinator selects global routing/HOST fetch/role execution. Physical/numerical acceptance remains unfinished. All777 required original float tensors already match the selected native format (484 BF16,292 F32,1 F16); generic conversion is not required for this artifact. Source `89da25f` moves the shared original IQ4_XS embedding into the sole mapped HOST owner and updates constructor/reader/close accounting. Actual physical/numerical acceptance and the unchanged tiled gather substitution remain open. Sources `cbf4381`/`910cb58` replace the blanket5GiB allowance with a complete original dense inventory, preload/seal it before expert allocation, and size the automatic ranked prefix from actual remaining shared MAIN. See the dense-inventory receipt; physical placement and whole-device pricing acceptance remain open. The ordinary feature-off engine retains uniform banks. |
+| Exact dense placement and expert budget | `sycl/src/program/generate.cpp` model/cache setup; `sycl/src/core/expert_cache.cpp::open_sized` | Exact dense roots exist. Native global byte-prefix planning and an owning bounded GPU loader now compile; graph validation consumes the real artifact plan. Experimental core construction now invokes the sole global owner before prefill, and the core48-layer coordinator selects global routing/HOST fetch/role execution. Physical/numerical acceptance remains unfinished. All777 required original float tensors already match the selected native format (484 BF16,292 F32,1 F16); generic conversion is not required for this artifact. Source `89da25f` moves the shared original IQ4_XS embedding into the sole mapped HOST owner and updates constructor/reader/close accounting. Source5b520bb replaces the tiled embedding dispatch with original mapped-pointer gather for target and shared MTP, using original32-lane IQ4_XS work sharing. Physical/numerical acceptance and final source audit remain open. Sources `cbf4381`/`910cb58` replace the blanket5GiB allowance with a complete original dense inventory, preload/seal it before expert allocation, and size the automatic ranked prefix from actual remaining shared MAIN. See the dense-inventory receipt; physical placement and whole-device pricing acceptance remain open. The ordinary feature-off engine retains uniform banks. |
 | Low-RAM host complement and promotion | `generate.cpp` source/adaptive tier; `sycl/src/core/verify.cpp` fetch/rebase | Original host complement, direct exchange and GPU selected fetch exist. Source53cd14c connects verified-boundary copy flights, original scratch cleanup exclusion and joined physical/private publication; final byte/queue/numerical audit and hardware acceptance remain open. Do not duplicate the whole model in RAM. Source `a8bbdf0` restores the private route map from canonical physical cells on request rebind, preserving actual swapped weights and monotonic adaptive state; see the retained-controls receipt. |
 | GPU route/group planning and original HOST access | `verify.cpp` / `verify_kernels.dp.cpp::resident_plan_kernel`, selected SYCL `DEVICE_PLAN=1,NO_HOST=1` | Native BF16 router and full512-expert normalization exist. Correct selected path reads actual VRAM or mapped HOST aliases directly on the GPU, preserving every selected expert. Source36d13d3 replaces the CPU split/staging consumer with direct authentic source aliases and removes per-layer CPU joins/submissions; protected execution is pending. Generic CPU doorbells/split windows are optional modes, not this B70 completion gate. Physical/numerical acceptance remains required. |
 | Native expert math and grouped rows | `sycl/src/kernels/cuda/iq_kernels.dp.cpp::row_entries`, `native_gu_kernel`, `native_down_kernel` | Packed integer math/BDA roots exist. Separate GU roles, 4/2/1 chunks, activation, intermediate storage and downstream consumers are now selected together in the Intel core; all 158 WGSL/SPIR-V variants validate, including 105 physical-pointer checks; numerical/model execution acceptance remains pending. The global core now uses one per-role launch containing pinned row_entries4/2/1 loops, scalar IQ4_XS, native signed integer finish and XOR reduction; numerical/model execution acceptance remains pending. Historical fixed-chunk kernels are retained separately. |
@@ -8378,3 +8378,88 @@ private executable caller remains open; current CLI compiled-public/one-request.
 Required Vashti changes:none. Goal active CPU-only; root not needed. Latest
 shared-shell sudo refresh remains unsuccessful; do not churn on privilege
 workarounds. Canonical application work/inherited untracked files preserved.
+
+## Original mapped embedding gather (2026-10-16)
+
+Source `5b520bb50de8bc39387c42e42166ab24437d6447`, isolated `codex/strata-rust-port`. This supersedes the old
+per-page embedding dispatch substitution for the selected shared engine. Keep
+the complete branch and original model/source/allocator/queue owners together.
+
+Pinned MIT upstream `fb58e0dbc8399662c0e47c76578c6e878b14f6cf`:
+`core/verify.cpp` uses `NativeEmbed::gather_dev` then stream broadcast; MTP's
+`core/mtp.cpp` uses the same gather before embedding RMS norm. Actual
+`core/native_head.cpp::NativeEmbed::gather_dev` calls `iq_embed_rows` on the
+original mapped GGUF table. `kernels/cuda/iq_kernels.dp.cpp` lines2530–2549 and
+4320–4360 implement IQ4_XS with32 lanes per256-value block: `il=lane/8`,
+`ib=lane%8`, one scale per lane and two four-value writes. These are the pinned
+Intel/SYCL sources under `sycl/src/`, not an unselected generic packed tensor path.
+
+- Original HOST embedding pages,337,715,200 bytes, remain the same registered
+  owner retained for target/MTP. Existing source table0's unused tail now holds
+  their16 authenticated addresses/lengths/row counts. Expert entries0–1535 are
+  unchanged; embedding entries1536–1551 fit the same32KiB root. No GPU allocation,
+  RAM model copy, private owner, model format or residency quote is added.
+- `Sources::build_tables` encodes actual same-device full-page addresses already
+  authenticated by the original root inventory. `strata_shared_embedding::encode`
+  checks complete geometry/ownership/alignment/overflow. This original table is
+  retained by `Weights`; original HOST loan/detach rules remain. Prompt table
+  rebuilds reconstruct the same embedding tail after their original reader joins.
+- `Kernel::EmbedMapped` is the actual shared gather: tokens select the original
+  mapped page directly, use the existing native physical-pointer lowering, and
+  preserve original IQ4_XS bytes/scales/codebook. One launch has10 groups per
+  token (2560/256),32 lanes per group and two float4 stores per lane. Finite
+  faults still propagate through the original private fault owner.
+- `Weights::gather_queued` checks original client/retirement, private token/output/
+  fault extents and non-overlap, and supplies ALL original mapped pages as actual
+  native read dependencies plus the retained address table. Native recording/
+  replay/handoff retains these actual sources. There is no untracked dummy-page
+  access: the first actual page is the logical descriptor, while the selected
+  native SPIR-V resolves the table address for every actual requested page.
+- Actual target `Weights::gather` still uploads the full wiping token owner and
+  broadcasts D into four HC streams after gather. Both MTP decode/front and
+  whole-prefix teaching use `gather_queued` when borrowing these shared weights,
+  with actual dispatch accounting changed to one gather. Standalone legacy MTP
+  without the shared owner keeps its old tiled consumer; it is not the selected
+  Session target/shared-Q2-MTP path. No gateway/API/UI change.
+
+Evidence base `/media/jmicko/faststore/kuno-development`:
+
+- `strata-embedding-gather-accepted-test-build-20261016.log`: selected locked
+  release test build exits0. `strata-embedding-gather-cpu-20261016.log` and runner
+  `strata-embedding-gather-cpu-run-20261016.py`: **522 distinct CPU cases /65
+  nonempty suites, zero failed**. This retains previous514, adds four new cases
+  and includes four previously unselected front cases. New actual address-encoder
+  tests cover every248320 row, original expert/tail preservation, malformed
+  extents/alignment/overflow. Actual mapped shader schema/native physical lowering
+  passes. Native lane ownership covers all256 values exactly once and matches
+  the independent original IQ4_XS decoder for the synthetic packed fixtures.
+- Expanding the front suite exposed its old total<8MiB assertion, which predated
+  the current32K context attention owner. The test now bounds fixed batch scratch
+  separately from its actual context owner. The source allocation quote remains unchanged:
+  front8.75MiB, of which the context owner is4MiB, all already charged. Initial
+  failure is preserved in `strata-embedding-gather-initial-cpu-20261016.log`.
+- Initial `...-build-20261016.log` caught a Rust reference-clone ownership error;
+  corrected before accepted build. `...-core-clippy-20261016.log` caught an existing
+  allow attribute displaced by method insertion; restored to its actual method.
+  Final `strata-embedding-gather-{core,off}-final-clippy-20261016.log` both exit0.
+  Changed-source formatting and whitespace checks pass.
+
+Normal source-clean/stable artifact `strata-embedding-gather-ordinary-20261016/`
+(`strata-embedding-gather-ordinary-20261016.out`) has SHA256
+`6f6e8c34069852c1bd7725bae7a417a54d036c38aa4b70d3e623f63dc4578c77`.
+Independent original source/hash/mode0500 checks pass. Offline
+`strata-embedding-gather-shaders-20261016.log` exits0 with335 variants and123
+physical-pointer checks from that exact frozen executable. No adapter/device is
+created by this validator.
+
+Source/CPU/offline evidence does not establish physical mapped reads, numerical
+model parity, speed, hot reuse or resource recovery. No GPU/adapter/model/
+inference/service/install/release/frontend action. Full rewrite remains incomplete
+and the live speed gate stays closed. Next: finish pinned-source head/sampling/
+queue/ownership/pricing/substitution audit, then full protected numerical/state/
+context/hot-request/failure/recovery acceptance under renewed GPU authorization.
+Retain explicit adaptive substitutions from the previous receipt (serial small
+CPU proposal, shared INFO/copy queue, first-window outer drafting). Protected
+private executable input remains separately gated; current CLI compiled-public/
+one-request. Goal active CPU-only; root not needed. Required Vashti changes:none.
+Canonical application/inherited files preserved; no privilege workarounds.

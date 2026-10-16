@@ -1,37 +1,48 @@
-<!-- Current resume: 2026-10-16, source 53cd14ced31da04c71408e76b266bdec2a2b8c5c, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source 5b520bb50de8bc39387c42e42166ab24437d6447, codex/strata-rust-port.
 CPU-only continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, source `53cd14ced31da04c71408e76b266bdec2a2b8c5c`. Goal active CPU-only.
-Read the [adaptive-flight receipt](kuno-strata-rewrite-completion.md#adaptive-copy-flight-across-commit-and-drafting-2026-10-16)
-and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--adaptive-copy-flight-2026-10-16).
-Actual verified windows submit original expert copies on the adopted transfer
-queue before target commit/next drafting, retain the original scratch/registered
-source/arena exclusion through the actual copy and primary visibility fences,
-then publish all physical/private maps before next target reuse. The first normal
-last-prompt/count1 window now shares observed-row usage/tick accounting. No new
-GPU/model root, duplicate complement, kernel math or API change. Diagnostic
-checkpoint replay no longer trains the native cache. Full source details,
-intermediate build correction and exact CPU coverage are in the linked receipt.
+branch `codex/strata-rust-port`, source `5b520bb50de8bc39387c42e42166ab24437d6447`. Goal active CPU-only.
+Read the [mapped-embedding receipt](kuno-strata-rewrite-completion.md#original-mapped-embedding-gather-2026-10-16)
+and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--mapped-embedding-gather-2026-10-16).
+Actual target and shared MTP decode/teaching now use one original mapped embedding
+gather launch, preserving Strata's32-lane/256-value block work sharing and two
+float4 stores per lane. Existing source table0's tail holds the16 authenticated
+original page addresses. All pages remain original HOST registrations and native
+read dependencies. No new GPU/model root, weight copy, kernel numerical format,
+residency quote or API change. Standalone legacy MTP without the shared owner
+retains its older consumer; the selected shared Session uses the new path.
 
-514 distinct CPU cases /63 suites and strict core/off lint pass. Normal source-clean/stable artifact `strata-adapt-flight-ordinary-20261016/`
-(`strata-adapt-flight-ordinary-20261016.out`) has SHA256
-`4fe370cae0c05c30453dd1dd66c1f01933e46017b6ea951016223d09f1deea46`; independent original source/hash/mode0500 checks pass.
-The build exits0 without initializing an adapter/device.
-No GPU/device or new shader check; the preceding334/122 offline receipt remains
-historical. No numerical/model, physical overlap or performance claim.
+522 selected CPU cases /65 suites, selected test build and strict core/off lint
+pass. Linked receipt records four new/four newly-included front cases, corrected
+old8MiB context fixture, ownership/lint corrections and physical limits.
+Normal source-clean/stable artifact `strata-embedding-gather-ordinary-20261016/`
+(`strata-embedding-gather-ordinary-20261016.out`) has SHA256
+`6f6e8c34069852c1bd7725bae7a417a54d036c38aa4b70d3e623f63dc4578c77`.
+Independent original source/hash/mode0500 checks pass. Offline
+`strata-embedding-gather-shaders-20261016.log` exits0 with335 variants and123
+physical-pointer checks from that exact frozen executable. No adapter/device is
+created by this validator.
 
-**Next:** final pinned-source source/queue/ownership/pricing/substitution audit.
-Record/review serial CPU proposals, shared copy queue with MTP INFO uploads, and
-first-window outer delivery/drafting; this code does not prove physical overlap.
-Original rebase joins now bracket the intended commit/draft interval. Then full
-numerical/state/context/hot-request/failure/recovery gates under renewed GPU
-permission and protected execution. Private input remains independently gated;
-current CLI compiled-public/one-request. Whole rewrite incomplete, speed gate
-closed. No GPU/model/service/install/release/API/frontend actions; required Vashti
-changes:none. Root not needed; latest shared-shell sudo refresh unsuccessful.
-Physical recovery historicalOct15. Preserve canonical work/inherited files.
+**Next:** finish pinned-source head/sampling/queue/ownership/pricing/substitution
+audit. The embedding tile-dispatch substitution is superseded; the original
+physical page segmentation remains necessary for Vulkan storage bounds. Keep
+adaptive serial-proposal/shared-INFO-copy-queue/first-window substitutions explicit.
+Then full protected numerical/state/context/hot-request/failure/recovery acceptance
+under renewed GPU permission before speed. Private executable input remains
+separately gated; current CLI compiled-public/one-request. Whole rewrite incomplete,
+speed gate closed. No GPU/model/service/install/release/API/frontend action;
+required Vashti changes:none. Root not needed; latest shared-shell sudo refresh
+unsuccessful. Recovery historicalOct15. Preserve canonical/inherited work.
+
+**Previous adaptive block (`53cd14c`):** original expert copies start after
+verified row release, before commit/next MTP drafting, and join original copy/
+primary visibility fences before physical/private publication. Original scratch
+cleanup exclusion and first count1 usage are connected.514 CPU cases, strict
+core/off lint and normal frozen artifact passed then; see the
+[historical receipt](kuno-strata-rewrite-completion.md#adaptive-copy-flight-across-commit-and-drafting-2026-10-16).
+Physical overlap, final substitutions and full-model acceptance remain unproven.
 
 **Previous copy block (`8bd6edf`):** original three-role transfers use dormant
 prompt raw scratch, matching HOST import flags and registered source publication.

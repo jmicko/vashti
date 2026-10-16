@@ -6,18 +6,17 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, source `53cd14ced31da04c71408e76b266bdec2a2b8c5c`. Read the
-[adaptive-flight handoff](#active-kuno-engine-handoff--adaptive-copy-flight-2026-10-16)
-and [completion gate](kuno-strata-rewrite-completion.md). Actual original copies
-start before target commit/next drafting and join/publish before next target
-reuse. First count1 usage and original scratch cleanup exclusion are connected.
-514 CPU cases and strict core/off lint pass. Physical overlap and final source/
-pricing/numerical/state/recovery acceptance remain open; speed gate closed.
+`codex/strata-rust-port`, source `5b520bb50de8bc39387c42e42166ab24437d6447`. Read the
+[mapped-embedding handoff](#active-kuno-engine-handoff--mapped-embedding-gather-2026-10-16)
+and [completion gate](kuno-strata-rewrite-completion.md). Actual target/shared MTP
+consumers gather original mapped embedding rows once, with native32-lane/block
+work sharing and existing address-table space; no new root/model copy.522 CPU
+cases and strict core/off lint pass. Final source/physical/numerical/state/recovery
+acceptance remains open; speed gate closed. No consumer/API change.
 
-Continuation CPU-only; goal active. No GPU/model/service/install/release/API/
-frontend action. Root not needed; latest shared-shell sudo refresh unsuccessful.
-Physical recovery historicalOct15. Preserve canonical/inherited work. Required
-Vashti changes:none.
+Continuation CPU-only; goal active. No GPU/model/service/install/release/frontend
+action. Root not needed; latest shared-shell sudo refresh unsuccessful. Recovery
+historicalOct15. Preserve canonical/inherited work. Required Vashti changes:none.
 
 ## Ownership
 
@@ -7210,3 +7209,33 @@ No API/protocol/config/consumer change; required Vashti changes:none. No install
 service, release, frontend or GPU action. Goal active CPU-only; root not needed;
 latest shared-shell sudo refresh unsuccessful. Canonical/inherited work preserved.
 This handoff does not authorize integration/deployment/release.
+
+## Active Kuno engine handoff — mapped embedding gather (2026-10-16)
+
+Source `5b520bb50de8bc39387c42e42166ab24437d6447`, isolated `codex/strata-rust-port`. Read the
+[source/test receipt](kuno-strata-rewrite-completion.md#original-mapped-embedding-gather-2026-10-16) and
+[checkpoint](kuno-native-text-checkpoint.md). Actual target and shared Q2 MTP
+front/teaching now use one original mapped embedding gather with Strata's32-lane/
+256-value work sharing and two float4 writes per lane. Existing table0's tail
+carries original16 page addresses; all actual HOST page owners and native read
+dependencies remain retained. No new GPU/model root, weight copy, source format,
+residency price or API change. Standalone nonshared diagnostics keep old tiling.
+
+522 selected CPU cases /65 suites and strict core/off lint pass. The linked
+receipt records the independent IQ4_XS lane oracle, actual address/shader checks,
+newly-included front coverage and corrected old context fixture. Normal source-clean/stable artifact `strata-embedding-gather-ordinary-20261016/`
+(`strata-embedding-gather-ordinary-20261016.out`) has SHA256
+`6f6e8c34069852c1bd7725bae7a417a54d036c38aa4b70d3e623f63dc4578c77`.
+Independent original source/hash/mode0500 checks pass. Offline
+`strata-embedding-gather-shaders-20261016.log` exits0 with335 variants and123
+physical-pointer checks from that exact frozen executable. No adapter/device is
+created by this validator.
+
+Whole rewrite incomplete; speed gate closed. Physical numerical/read/residency/
+reuse/recovery behavior is unverified. Next final source/head/sampling/queue/
+ownership/pricing/substitution audit, then full protected device acceptance under
+renewed GPU permission. Preserve earlier adaptive scheduling substitutions and
+the independent protected-private-caller boundary; current CLI compiled-public/
+one-request. No GPU/model/inference/service/install/release/frontend action or
+new physical speed claim. Required Vashti changes:none. Goal active CPU-only;
+root not needed. Canonical/inherited files preserved. No deployment authorization.
