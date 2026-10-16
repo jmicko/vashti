@@ -1,55 +1,51 @@
-<!-- Current resume: 2026-10-16, source 669437d, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source 8d301b1, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, source `669437d`. Goal active for CPU-only work.
-Sudo refresh succeeds in Demons; no GPU/model/service/install/release work or
-current physical-health claim. Last actual recovery remains historical Oct15.
+branch `codex/strata-rust-port`, source `8d301b1`. Goal active CPU-only. Sudo refresh
+succeeds in Demons. No GPU/model/service/install/release work or current health
+claim. Last physical recovery evidence remains historical Oct15.
 
-Read [4096-row prompt receipt](kuno-strata-rewrite-completion.md#connected-4096-row-prompt-capacity-2026-10-16),
-[mapped embedding](kuno-strata-rewrite-completion.md#shared-native-embedding-in-original-host-backing-2026-10-16)
-and [scoped admission](kuno-strata-rewrite-completion.md#scoped-native-admission-and-original-allocation-lifetimes-2026-10-16).
+Read [32K context receipt](kuno-strata-rewrite-completion.md#connected-32768-cell-context-capacity-2026-10-16)
+and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--32768-cell-context-capacity-2026-10-16).
 Earlier CJK `cd703bc` was integrated as `0bfbea8`; do not reapply it.
 
-**Latest connected capacity:** `bcc30dd` expands prompt stages2048 ->4096 rows,
-including real carved owners, full route/logical-ID packets, grouped map/weights,
-GU/PART/status planes, upload/readback bounds and shared host/shader ABI constants.
-Working images64 ->128MiB; three owned roots512 ->1024MiB each. MAIN scratch
-quote1.5 ->3GiB, allocator maximum/pool bins and device inventory move together.
-Exact same admitted roots remain owned/erased; no fabricated spare bytes. Source
-requires actual1GiB buffer AND binding limits before allocation. Follow-up669437d
-also requires the actual65535 X dispatch bound (rather than the old16384 guard),
-with one-below rejection tests. Physical support
-is UNVERIFIED. PLE double-buffer HOST, prompt HOST/runtime and group runtime quotes
-expand too. Residual grid now covers the real three-row Y grid. MAX8 stays separate.
+**Latest connected block:**32768 runtime context, while reference graph geometry
+stays unchanged. Actual target/GDN/QSA and MTP constructors, KV/positions/RoPE,
+8192 pooled blocks, selection, prompt traversal, request/result/router guards and
+typed graph controls agree. Sparse QSA retains2051 selection stride/33 chunks;
+dense MTP uses512 chunks of64 cells. Genuine full cache sweeps require67584 groups,
+so Guard/Rewind alone reshape to65535x2 and consume both coordinates. Full padded
+owners/erase/admission remain required. MTP private quote64 ->128MiB, target/language
+runtime envelopes256 ->512MiB; actual per-owner charges remain tracked. Suffix
+history covers32768 and fits its original4MiB HOST envelope. Sampler sliding
+history remains4096. Ordinary engine context/default geometry remain unchanged.
 
-320 focused CPU cases/33 nonempty suites, both strict lint configs, ordinary
-release build and330 offline shaders pass. One EXTRA legacy runtime-cap test
-fails BEFORE that assertion at an unchanged old16K-vs-core32K scratch expectation;
-see exact failure evidence in receipt. Full regressions remain unresolved, and
-this extra case does NOT prove runtime-cap acceptance. No device/model/speed run.
-Current frozen ordinary source669437d: `strata-prompt4096-grid-ordinary-20261016/`,
-SHA256b6febebaad8e980ce3dfde92ff0094b5beb4bc53c0d0a1da6d64305667c56b0f.
-This supersedes bcc30dd and89da25f artifacts. No API/connector/UI change; Vashti changes:none.
+Final371 distinct CPU cases/40 nonempty suites and both strict lint configurations
+pass. Normal release freeze/offline shaders are detailed in the receipt. These
+are not GPU/numerical/model acceptance. An earlier EXTRA old frozen-down test
+still fails at its unchanged16K-vs-core32K scratch expectation before its runtime
+assertion; full regressions remain open. No new speed result. No consumer/API change.
 
-**Previous coupled blocks:** `89da25f` shares one original mapped HOST embedding
-with target/MTP, head-only MAIN521474048/HOST337715200/addressable859189248 bytes,
-with reader-before-detach lifetime and no duplicate model copy. `f9d1e06` scopes
-native admission/actual conflict joins, preserves INFO visibility after source
-copy completion, and pins original allocator bindings through joint scope end.
-Cold primary, ordinary sync and final/retired drains remain full actual joins.
-Original exports/MAIN debt/R loan/family/numerical/I/O/state proofs remain separate.
+**Previous capacity:** `bcc30dd`/`669437d` connect4096-row prompt owners/ABI, three
+owned1GiB roots (3GiB MAIN),128MiB working views, route/group planes, HOST/runtime,
+full coverage and actual1GiB buffer/binding plus65535-grid inventory guards. The32K
+QSA views still fit those original admitted roots; no optional cache loan enabled.
+Physical device support is UNVERIFIED. Conservative scratch differs from upstream
+Alloc::carve; exact pricing/aliasing needs review.
 
-**Next:**32768 context is STILL unimplemented: core graph max4096, QSA layout/
-position/RoPE/pooled selection and MTP context/owned cache/attention bounds need
-one connected expansion. Current public fixture cannot exercise a full4096-row
-prefix plus generation until context grows. New3GiB conservative prompt storage
-still differs from upstream Alloc::carve; exact aliasing/dense/cache pricing and
-device limits need review. Optional larger-context cache loans are not accepted.
-Complete arbitrary request entry, connected queue/lifetime/substitution audit,
-old regressions and full numerical/physical/recovery gates. No speed trials until
-the complete audit passes. GPU work needs renewed user authority; do CPU work now.
+**Previous coupled blocks:** `89da25f` shares the original mapped HOST embedding
+with target/MTP (head MAIN521474048/HOST337715200/addressable859189248 bytes), with
+reader-before-detach lifetime. `f9d1e06` scopes native graph/conflict admission,
+preserves INFO visibility after copy completion and pins original allocator
+bindings through scope end. Ordinary/cold/final drains and original pending
+submission/MAIN debt/R loan/family/numerical/I/O/state proofs remain separate.
+
+**Next:** arbitrary transient request entry, exact dense/prompt ownership pricing,
+source scheduling/lifetime/substitution audit and legacy regression reconciliation.
+Then full numerical, physical and actual recovery acceptance with renewed GPU
+authority. No speed trials until the complete connected rewrite gate passes.
 
 **Historical native uploads/reuse (superseded by7477b66/f9d1e06 above):** `7cb1cbc` connects original data, INFO append and
 direct INFO replay to one bounded write-only renderer and explicit original upload

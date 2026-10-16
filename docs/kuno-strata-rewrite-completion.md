@@ -54,7 +54,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp`, `prefill/kernels.dp.cpp` | Core connects native BF16 alpha/beta, controls, recurrence/norm and accepted-prefix replay. Prompt scope selects contiguous H, causal convolution/history/L2, CB32 recurrence and directly consumed FP16 output. Source 9a7a23b connects prompt-capacity whole-chunk math without per-element status/replay owners, carved AB staging, and native row/value-head recurrent state shared by prompt/decode/repair. The large chunk caller/acceptance is connected in the latest controller receipt; physical execution and final numerical/queue audit remain open. Split verifier mode is an optional upstream path, not selected by the measured server. |
 | QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects INT8 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. The measured server explicitly selects INT8 for target and MTP; source2a3d1ad ports both together and the combined CPU shader/layout checks now pass. Numerical/GPU acceptance is pending. Earlier generic-default FP16 scope claims below are superseded. Numerical/state acceptance remains required. |
 | PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Core connects native BF16 MAX8 projections, normalization/gate/conv/history, deduplicated positional reads and accepted-prefix ownership. Prompt calls now consume a bounded, joined double-buffered source prefetch. The latest controller receipt connects native large chunk geometry, joined uploads, retained tail and exact history acceptance. Sources `595393e` and `57147a8` make actual decode and prompt history GPU-authoritative in existing OLD/NEXT roots, with checked CPU token-only publication, GPU accepted-prefix history and independent PLE capture roles. Default prompt/decode float readbacks and prompt diagnostic tail copies are removed; explicit diagnostics and the legacy CPU oracle remain. Source `131d29c` selects the native scoped accepted-prefix consumer before state/cursor publication; the diagnostic checkpoint path keeps the older schedule. Pending event/graph fidelity and numerical/device acceptance remain open. Prompt loans are disabled in the measured32768-context configuration and are not a completion prerequisite. Never persist request n-grams. |
-| Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. The bounded prompt path now uses logical-ID expert order, checked native transfer nodes, an eight-slot raw ring and two paired dequantization slots. The latest owned-consumer receipt connects full2048-row owners, non-overlapping raw/grouped route packets, causal math/state scopes, the unbatched final prompt input uses normal count1 decode for the first head, and full device MTP teaching covers the preceding prefix (up to8192 matrix rows). Independent transfer/compute queues and real release boundaries are connected. The measured server uses4096 prompt rows and32768 context. Source `bcc30dd` connects4096-row prompt owners/ABI; context remains4096 and full-prefix/device acceptance is open. Conservative3GiB prompt storage requires final Alloc::carve/pricing review. Its no-borrow selection and nonresident fraction select the existing eight-slot/two-dequant-ring path; alternative loans/ring sizes are not prerequisites. Physical whole-model acceptance remains open. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
+| Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. The bounded prompt path now uses logical-ID expert order, checked native transfer nodes, an eight-slot raw ring and two paired dequantization slots. The latest owned-consumer receipt connects full2048-row owners, non-overlapping raw/grouped route packets, causal math/state scopes, the unbatched final prompt input uses normal count1 decode for the first head, and full device MTP teaching covers the preceding prefix (up to8192 matrix rows). Independent transfer/compute queues and real release boundaries are connected. The measured server uses4096 prompt rows and32768 context. Source `bcc30dd` connects4096-row prompt owners/ABI; source `8d301b1` subsequently connects32768 runtime context; full-prefix/device acceptance is open. Conservative3GiB prompt storage requires final Alloc::carve/pricing review. Its no-borrow selection and nonresident fraction select the existing eight-slot/two-dequant-ring path; alternative loans/ring sizes are not prerequisites. Physical whole-model acceptance remains open. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
 | Prompt dense/expert matrix backend | Intel oneMKL rounded BF16/FP16 GEMMs | Connected Rust cooperative8x16x16/F32 kernels now consume the actual rounded dense and grouped GU/DOWN images, with enabled device features, SPIR-V native registration and required16 subgroup in both pipeline paths. See the cooperative-matrix receipt; physical numerical/model acceptance remains open. |
 | MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native INT8 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Positive-threshold chains now keep hidden carries on device and observe the same token/probability/fault packet as zero-threshold chains; mapped/event scheduling remains open. First/grouped device-source and ids-only target result consumers now exist; the shared-context constructor receipt below supersedes the separate-client blocker. Core construction now selects the actual target client and one combined account. Source9de7fef pins the original target embedding/head once, shares them with MTP and gathers target embeddings on GPU. Actual device/state acceptance is pending. Source0bfbea8 connects the original-order CJK106299-row Q6 draft head, inverse-ID history mapping, compact confidence and coupled sampling; source2a3d1ad connects INT8 caches. Combined CPU checks pass, with full numerical/GPU execution still pending. Source `862f5fa` separates first-front staging and actual observation from capture, and prestages all coupled draft controls once per round. Source `8262367` connects typed MTP phases/4096 boundaries and original model-instance graph namespaces; source `d0670b0` connects direct original MTP replay and capture-derived host/sampler handback. Physical acceptance, commit/event fidelity, numerical/state acceptance and runtime policy remain required. See the latest device-end receipt. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Sourcea26adc2 ports the native bounded trigram index, longest/recent suffix choice, cost priors, probing/stale rules and optional lookup-chain accounting into the selected controller. Configured MTP/target windows no longer shrink at the output cap; state commit and emission are separate. Coupled sampling and physical state acceptance still need end-to-end validation. |
@@ -6903,3 +6903,84 @@ Latest ordinary freeze: `strata-prompt4096-grid-ordinary-20261016.out`, source
 artifact directory `strata-prompt4096-grid-ordinary-20261016/`. Locked normal
 release builds with stable source/HEAD; supersedes the pre-guard bcc30dd artifact.
 No device/model execution or new performance result. CPU-only scope remains.
+
+## Connected 32768-cell context capacity (2026-10-16)
+
+Source `8d301b1c1ec8dea8972dddb05ac62b189bac1ecb`. This supersedes the prior
+4096-context limitation in the 4096-row prompt receipt. It is internal selected
+Intel-core work, not a public API or device-acceptance claim.
+
+The original bound model/reference geometry remains unchanged. The selected
+runtime derives its 32768-cell capacity from the same native retained-control ABI
+constant. Actual resident model/GDN/QSA construction, batch/executor/router bounds,
+result packets, request coordinates and global prompt controller consume that
+runtime geometry. Ordinary/reference context remains4096; default native branch
+constructors retain 4096 and the selected MTP caller uses explicit context keys.
+Target/MTP branch identity still includes immutable capacity, model and state
+roles; positions and request data remain runtime controls. Readable cells end at
+32767 and a boundary may equal32768. Smaller-context keys retain their own window
+validation; increasing the ABI bound does not admit a larger window into them.
+
+Target QSA owns real 32768-row INT8 caches, positions and 8192 pooled blocks. Its
+2048-token budget/2051 selection stride and33 sparse attention chunks are
+unchanged. Public RoPE tables cover all 32768 positions and have distinct stable
+names; both target and draft quote their actual full table pages. Prompt QSA's
+pooled/score/closing views grow within the same three admitted 1GiB roots, with
+4096-row chunks and unchanged nonaliasing/erase checks. Prompt traversal preserves
+all chunks and exactly one final normal decode input. No optional cache loan was
+enabled and no owning bytes were invented.
+
+MTP expands both packed KV roots, dense partial/statistics planes, identity
+selection, positions, status and guard/rewind boundaries together. Dense attention
+uses 512 chunks of 64 cells. Its full cache sweeps require 67584 groups; Guard/Rewind
+alone reshape the true linear sweep into 65535x2 and use both coordinates. Other
+matrix/token grids retain their original interpretation and reject oversize
+coordinates. Full logical cache coverage, inactive suffix, original padded-owner
+erasure and fault checks stay separate. Private MTP reservation rises 64 ->128MiB.
+
+The target constructor still checks every actual request-vector sum. Each QSA
+stage now owns 81,494,016 bytes; its one shared MAX8 workspace owns 81,690,624 bytes.
+The audited12-stage QSA runtime quote is 18,874,368 bytes. Full model/private,
+public-vector, MTP table and I/O quotes expand with the real owners. Target/public
+language runtime envelopes rise 256 ->512MiB to cover the combined prompt,
+verification, checkpoint and MTP reservations; actual I/O remains individually
+tracked and bounded. Suffix history now covers 32768 entries instead of 8192 in the
+core, with its full two-times-size index charged inside the existing 4MiB fixture
+HOST envelope. The sampler's 4096-token sliding history remains intentionally
+separate. The ordinary suffix capacity remains 8192.
+
+Final CPU evidence (all under `/media/jmicko/faststore/kuno-development/`):
+
+- `strata-context32768-test-build-accepted-20261016.log`: locked release test build.
+- `strata-context32768-cpu-distinct-20261016.log`:371 distinct passed cases in40
+  nonempty suites, no failures. The prior un-deduplicated final log records377
+  executions/41 suites (six repeated cases); do not count those as377 unique.
+- `strata-context32768-{core,off}-clippy-20261016.log`: both locked release strict
+  `-D warnings` configurations pass; Rust formatting/whitespace pass.
+- Source/owner checks exercise full context prompt traversal, exact actual target
+  request totals, full QSA stage/shared pages/I/O, MTP private/public plans,
+  complete packed cache grid coverage, last cells, branch/model roles, narrow-key
+  rejection, boundaries and full suffix history. No adapter/model is created.
+
+Earlier exploratory first/checked logs include superseded fixed-size test
+expectations; they are not the final receipt. The prior historical old frozen-down
+16K-vs-core32K scratch test remains unresolved and is not counted as passing.
+Full suite/physical acceptance is still open. Two old language tests were corrected
+to test compiled-vs-native geometry and actual selected4/8-row permission bounds.
+
+Final ordinary artifact: `strata-context32768-ordinary-20261016/`, source
+`8d301b1c1ec8dea8972dddb05ac62b189bac1ecb`, SHA256
+`5b0009325381cfa686ae58e1f095b6ce9446be64c18432bad53ba876d2e7ff7a`.
+The locked normal builder verified clean source paths and stable HEAD, froze the
+executable read/execute-only, and its hash was independently checked. This
+supersedes the earlier669437d artifact for this source path.
+`strata-context32768-shaders-20261016.log` ends with330 accepted shaders, including
+native physical-pointer and cooperative matrix variants, using the matrix-aware
+spirv-tools PATH. Only frozen `--validate-port-shaders` was executed; main returns
+from that branch before any adapter/device creation. This is offline validity,
+not numerical, physical limit, model execution or throughput acceptance.
+No GPU, model inference, service, driver, install or release action occurred.
+Arbitrary/private request entry, exact dense/prompt Alloc::carve pricing, original
+queue/lifetime/substitution audit, legacy regressions and full numerical/device/
+recovery acceptance remain open. No speed trial is permitted until the whole
+completion gate passes. Required Vashti changes:none. Goal remains active CPU-only.

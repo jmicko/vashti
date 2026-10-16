@@ -6,8 +6,8 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through `669437d`. Read the latest
-[4096-row prompt handoff](#active-kuno-engine-handoff--4096-row-prompt-capacity-2026-10-16)
+`codex/strata-rust-port`, engine source through `8d301b1`. Read the latest
+[32K context handoff](#active-kuno-engine-handoff--32768-cell-context-capacity-2026-10-16)
 and [completion gate](kuno-strata-rewrite-completion.md). Direct target/MTP
 submission, accepted-prefix state publication and retained commit graph are connected
 in source. Original pending submissions/joins and scoped next-draft consumption are connected;
@@ -6691,3 +6691,35 @@ Latest normal frozen source669437d builds successfully:
 SHA256b6febebaad8e980ce3dfde92ff0094b5beb4bc53c0d0a1da6d64305667c56b0f.
 Supersedes the pre-guard bcc30dd artifact. No binary device/model execution;
 330 offline validations refer to bcc30dd's identical unchanged shader sources.
+
+
+## Active Kuno engine handoff — 32768-cell context capacity (2026-10-16)
+
+Isolated `codex/strata-rust-port`, source `8d301b1c1ec8dea8972dddb05ac62b189bac1ecb`.
+Read [connected context receipt](kuno-strata-rewrite-completion.md#connected-32768-cell-context-capacity-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). This supersedes the4096-context
+limitation in the earlier prompt handoff; the whole Rust rewrite remains incomplete.
+
+The selected runtime now connects32768 context across actual target/GDN/QSA and
+MTP owners, positions/RoPE, pooled selection, prompt chunks, routing/result guards,
+request coordinates, typed retained graph controls and all full-page quotes.
+Reference geometry stays unchanged; MAX8 and4096-row prompt chunks stay separate.
+MTP cache guard/rewind use genuine65535x2 linear dispatches. Suffix history covers
+the full selected context within the existing4MiB HOST budget. Private MTP64 ->128MiB,
+target/language runtime envelopes256 ->512MiB; actual tracked I/O charges and
+constructor equality/ownership gates remain required.
+
+Final CPU receipt:371 distinct cases/40 nonempty suites, both locked strict lint
+configurations, Rust formatting/whitespace. Normal frozen artifact and offline
+shader receipt are in the completion document. These establish source/CPU checks,
+not GPU correctness, physical limits, throughput or installed behavior. Previous
+old16K-vs-core32K legacy fixture failure is still an outstanding regression; full
+suite/device acceptance is not claimed.
+
+The user authorizes CPU-only continuation and Demons sudo timestamp refresh.
+No GPU/model/service/install/release work occurred. Last actual physical recovery
+evidence remains historical Oct15. Keep working on arbitrary transient request
+entry, exact dense/prompt pricing and the source scheduling/lifetime/substitution
+review; GPU/numerical/actual recovery work needs renewed authority. No speed trial
+until the whole gate passes. No API/config/connector/UI change; required Vashti
+changes:none. Preserve the original shared checkout and its coordination edits.
