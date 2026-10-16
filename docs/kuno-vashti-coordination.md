@@ -6,17 +6,17 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, source `40fe97e6989128189c6046b3b73c64c09288c94a`. Read the
-[mixed-image handoff](#active-kuno-engine-handoff--mixed-input-image-reuse-2026-10-16)
-and [completion gate](kuno-strata-rewrite-completion.md). GR-emitted BF16/FP16
-images now feed their actual attention/router/shared/expert consumers.455 focused
-CPU cases and330 offline shader variants pass. Source/substitution/device/
-numerical/hot-reuse acceptance remains incomplete. No new speed result.
+`codex/strata-rust-port`, source `9d7821a9145be34b190493006e4d6b46c5cc8d03`. Read the
+[PLE region handoff](#active-kuno-engine-handoff--native-ple-region-reuse-2026-10-16)
+and [completion gate](kuno-strata-rewrite-completion.md). Native key in-place norm,
+query/conv reuse and MTP teacher scratch changes connect together.457 focused CPU
+cases pass. Explicit32 subgroup selection for plain PLE shaders is a newly found
+source gap; fix next before hardware acceptance. Full rewrite incomplete.
 
-The user authorized **CPU-only continuation**; goal controller active. No GPU/
-model/service/install/release action or current-health claim. Root not needed;
-last actual sudo renewal failed. Historical physical recovery stays Oct15.
-Canonical work and inherited untracked files preserved. Required Vashti changes:none.
+User continuation remains CPU-only; goal active. No GPU/model/service/install/
+release/API/frontend action or current-health claim. Root not needed; last actual
+sudo renewal failed. Physical recovery stays historicalOct15. Canonical work and
+inherited untracked files preserved. Required Vashti changes:none.
 
 ## Ownership
 
@@ -7021,3 +7021,35 @@ CLI input remains unclosed; existing executable is compiled-public/one-request.
 Goal stays active CPU-only, rewrite incomplete, speed gate closed. No GPU/model/
 service/install/release/API/config/frontend action. Root not needed. Last physical
 recovery historicalOct15; preserve canonical application work/untracked files.
+
+
+## Active Kuno engine handoff — native PLE region reuse (2026-10-16)
+
+Isolated `codex/strata-rust-port`, source `9d7821a9145be34b190493006e4d6b46c5cc8d03`. Read the
+[implementation/validation receipt](kuno-strata-rewrite-completion.md#native-ple-key-normalization-and-query-region-reuse-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). Actual selected PLE normalizes
+key in place with one writable binding and reuses the query region for conv norm
+only after gate queues its last reader. Gated/original residual/history remain
+live. Ten unique regions replace twelve; logical phase payload shrinks320MiB
+inside unchanged2080MiB owning roots. Actual MTP teacher uses idle views8/9;
+removed view10 has no remaining caller. No physical memory or speed claim.
+
+457 distinct CPU cases /57 nonempty suites, locked checked release test build,
+strict core/off lint and format/whitespace pass. Linked receipt records exact
+normal frozen artifact `strata-ple-reuse-ordinary-20261016/`, SHA256
+`dc1628984b186162f56fe926e2d93e2b2f8536c2059acfe447c67d8abbe9d4b4`;
+331 offline shader variants pass (122 physical checks). Source-clean/stable
+build and independent hash/mode0500 verified; no device initialized. First test closure typing
+error is fixed; final coverage explicitly includes the new shader schema case.
+These checks do not prove in-place numerical/device execution.
+
+**Next source fix:** upstream requires32-lane PLE norm/gate; native plain-WGSL
+registration currently leaves required subgroup unset and allows varying size.
+Audit fixed32 families and preserve their exact requirement in ordinary/native
+pipeline paths; keep cooperative16 separate. This is an identified source gap,
+not an observed hardware fault. Remaining GR/PLE residual in-place, allocator/
+whole-device pricing/source/scheduling and full numerical/state/hot-request/
+failure/recovery gates remain. Private CLI input remains independently gated.
+No API/config/frontend change; required Vashti changes:none. Goal active CPU-only,
+rewrite incomplete, speed gate closed. No GPU/model/service/install/release action.
+Root not needed; last physical recovery historicalOct15. Preserve canonical work.

@@ -1,12 +1,42 @@
-<!-- Current resume: 2026-10-16, source 40fe97e6989128189c6046b3b73c64c09288c94a, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source 9d7821a9145be34b190493006e4d6b46c5cc8d03, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, source `40fe97e6989128189c6046b3b73c64c09288c94a`. Goal active CPU-only.
-No GPU/model/service/install/release action. Root was not needed; last attempted
-shared-shell sudo refresh failed. Last physical recovery stays historicalOct15.
+branch `codex/strata-rust-port`, source `9d7821a9145be34b190493006e4d6b46c5cc8d03`. Goal active CPU-only.
+Read [PLE reuse receipt](kuno-strata-rewrite-completion.md#native-ple-key-normalization-and-query-region-reuse-2026-10-16)
+and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--native-ple-region-reuse-2026-10-16).
+Actual key normalization now uses one original writable binding, and the query
+region is reused after gate for conv normalization/history. Gated and original
+residual stay live. Ten unique PLE regions replace twelve, reducing logical
+phase payload320MiB inside unchanged2080MiB owning prompt roots. Actual MTP
+teacher now uses idle PLE token/status views8/9, preserving four-stream bounds.
+No physical refund, speed or numerical model correctness claim.
 
+457 focused CPU cases /57 nonempty suites, locked checked test build, strict
+core/off lint and formatting pass. Exact normal artifact/offline shader receipt
+is linked above. The first test build's missing closure index type is fixed;
+final CPU suite explicitly includes the new in-place shader schema test.
+Current normal artifact: `strata-ple-reuse-ordinary-20261016/`, SHA256
+`dc1628984b186162f56fe926e2d93e2b2f8536c2059acfe447c67d8abbe9d4b4`;
+clean/stable source build, independent hash/mode0500 and331 offline variants
+(including122 physical checks) verified. No device initialized.
+
+**Fix next:** native registration sets required32 only for expert/packed-dense
+WGSL; cooperative SPIR-V has its own16. Plain PLE programs allow varying subgroup
+size despite upstream's explicit32 and WGSL guard. Audit fixed32 consumers and
+preserve exact subgroup requirements through both pipeline paths, keeping matrix16
+separate. This is a source fidelity gap, not evidence of an observed GPU fault.
+
+Then remaining native GR/PLE residual in-place, allocator/whole-device/source/
+scheduling substitutions and numerical/state/prompt/hot-request/failure/recovery
+acceptance remain. Private executable input still needs independently verified
+protection/admission; current CLI stays compiled-public/one-request. Full rewrite
+incomplete, speed gate closed. No GPU/model/service/install/release/API/frontend
+action; required Vashti changes:none. Root not needed; last actual sudo renewal
+failed. Last physical recovery historicalOct15. Preserve canonical work/untracked.
+
+**Previous mixed-image block (`40fe97e`):**
 Read [mixed-image receipt](kuno-strata-rewrite-completion.md#connected-native-mixed-input-image-reuse-2026-10-16)
 and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--mixed-input-image-reuse-2026-10-16).
 GR now emits F32 plus native BF16/FP16 pairs in one writer. Matching original
@@ -17,7 +47,7 @@ extra model copy, new GPU root or application API is introduced.
 
 455 distinct focused CPU cases /56 nonempty suites, locked selected test build,
 strict core/off lint, formatting/whitespace and330 offline shader variants pass.
-Normal immutable artifact `strata-mixed-images-ordinary-20261016/`, SHA256
+Frozen artifact for this preceding block `strata-mixed-images-ordinary-20261016/`, SHA256
 `9d1bedf93be55ca5447bfa3ca8d40a29736820b7345335d182c0fac571f3a5d8`;
 clean/stable source build and independent hash/mode0500 verified. No device
 initialized. Linked receipt lists exact logs,122 physical shader checks and

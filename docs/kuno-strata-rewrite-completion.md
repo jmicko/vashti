@@ -6,13 +6,13 @@ checklist is a source-to-source audit, not a sequence of throughput experiments.
 Each row needs its connected consumer, real ownership/placement and state contract;
 adding an unused helper or optional switch does not complete a row.
 
-**Current CPU-only source:** `40fe97e6989128189c6046b3b73c64c09288c94a`. Start at the
-[mixed-image reuse receipt](#connected-native-mixed-input-image-reuse-2026-10-16) and
-[checkpoint](kuno-native-text-checkpoint.md). Native GR emits original BF16/FP16
-mixed images consumed across attention/router/shared/routed experts without
-repacking F32. Source/CPU and offline acceptance pass. Remaining in-place,
-allocator/source/scheduling/physical/numerical gates stay open. Whole rewrite
-incomplete; no new speed trials.
+**Current CPU-only source:** `9d7821a9145be34b190493006e4d6b46c5cc8d03`. Start at the
+[PLE reuse receipt](#native-ple-key-normalization-and-query-region-reuse-2026-10-16) and
+[checkpoint](kuno-native-text-checkpoint.md). Native key in-place normalization,
+query/conv region reuse and the actual MTP teacher consumer are connected.
+457 focused CPU cases pass. An explicit fixed32-subgroup selection gap was found;
+fix it next before hardware acceptance. Full rewrite remains incomplete; no speed
+trials. Offline source checks do not establish device correctness.
 
 ## Reference and execution scope
 
@@ -7817,3 +7817,95 @@ under renewed GPU authorization. Private executable input still needs independen
 actual protections/admission before reading content; current CLI remains compiled-
 public/one-request. Preserve canonical application work and inherited untracked
 files. Do not drop a coupled component based on partial performance results.
+
+
+## Native PLE key normalization and query-region reuse (2026-10-16)
+
+Source `9d7821a9145be34b190493006e4d6b46c5cc8d03` on the complete preceding `codex/strata-rust-port` engine.
+Pinned MIT upstream remains `fb58e0dbc8399662c0e47c76578c6e878b14f6cf`:
+`sycl/src/kernels/cuda/native_ple_postops.dp.cpp::native_ple_postops_batch`.
+That actual batched path normalizes projected key IN PLACE, normalizes the
+original hidden residual into `query_norm`, consumes it for the gate, broadcasts
+value/gate into a separate unnormalized `gated`, then normalizes gated into the
+SAME query region for convolution/history. Hidden and gated must remain live
+through convolution; they cannot be normalized destructively.
+
+Actual `resident_ple_prompt::enqueue_prompt_full` now selects a distinct
+`PromptNormInPlace` for key and uses one shared query/conv-normalization view.
+The in-place kernel is generated from the original weighted-RMS implementation,
+retaining 1024-thread/XOR reduction, gamma row order and finite/status checks.
+It has ONE writable values binding plus gamma/status/parameters, not duplicate
+read-only/writable bindings to the same buffer. Actual launch rejects mismatched
+input/output offsets and non-native strides before enqueue. Reduction finishes
+its full input-read phase before per-thread disjoint element writes.
+
+Actual carved PLE inventory shrinks 12 -> 10 unique views: embedding 2560, key 10240,
+value 2560, shared query/conv 10240, gate 4, unnormalized gated 10240 and four separate
+4-word status views, all per token. The current original key projection owner is
+the gate's normalized-key reader. Gate queues its last query reader before conv
+normalization overwrites that same exact view. Convolution, NEXT GPU history and
+explicit diagnostic tail copy all read the reused conv-normalization view.
+Retained history publication, root erasure and original failure/poison ownership
+remain unchanged. No duplicate alias entries are added to the owner table.
+
+The other actual consumer, `resident_mtp_prompt::queue_prompt_device`, is updated
+in the SAME block. It still borrows a full four-stream hidden plane after target
+completion, and now borrows idle PLE views 8/9 for disjoint token/status staging.
+It no longer indexes the removed view 10. Test coverage verifies full 4096-row
+teacher extents and disjoint original view identities. Target carry ownership and
+original MTP/target synchronization are unchanged.
+
+Logical PLE phase payload shrinks 335,544,320 bytes (320 MiB), plus two fewer
+alignment gaps. Fixed owning prompt roots remain `[1GiB,1GiB,32MiB]` (2080MiB).
+There is no root refund, observed available-memory, residency or speed claim.
+Existing layout HOST/runtime envelopes stay conservative and unchanged. Native
+GR/residual and final PLE residual output are still separate/ping-pong in Rust;
+this block does not claim their full in-place port is complete.
+
+CPU evidence in `/media/jmicko/faststore/kuno-development`:
+
+- `strata-ple-reuse-checked-build-20261016.log`: final locked selected release
+  test build, terminal exit0 before the CPU run. The first `build` log reports a
+  missing test closure index type; corrected to usize before this checked build.
+- `strata-ple-reuse-cpu-20261016.log`: 457 distinct cases / 57 nonempty suites;
+  runner `strata-ple-reuse-cpu-run-20261016.py` explicitly includes the new
+  `strata_ple::inplace_prompt_tests` module. The earlier 456-case pass omitted that
+  module and is superseded. Actual shader schema/Naga validation verifies the
+  single read/write values binding and original 1024-thread geometry; layout tests
+  verify ten unique regions, gate-read/conv-write queue conflicts, independently
+  live gated values, and original MTP teacher bounds. Previous focused coverage
+  stays included. This is not numerical/device execution of in-place writes.
+- `strata-ple-reuse-{core,off}-clippy-20261016.log`: both strict locked release
+  lint configurations pass. Changed Rust format/whitespace pass.
+
+- Normal immutable artifact: `strata-ple-reuse-ordinary-20261016/`, source
+  `9d7821a9145be34b190493006e4d6b46c5cc8d03`, SHA256
+  `dc1628984b186162f56fe926e2d93e2b2f8536c2059acfe447c67d8abbe9d4b4`. Builder
+  clean-source/stable-HEAD checks pass; independent hash/mode0500 verified.
+  Summary: `strata-ple-reuse-ordinary-20261016.out`.
+- `strata-ple-reuse-shaders-20261016.log`: all 331 offline variants pass,
+  including the new in-place norm interface and 122 physical-pointer checks.
+  Matrix-aware spirv-tools was used. Only frozen `--validate-port-shaders` ran;
+  it returns before vendor/adapter/device setup. The 40fe97e artifact remains
+  historical, not current source acceptance.
+
+
+**New explicit source-audit gap; fix next before hardware acceptance:** pinned
+PLE norm/gate require `reqd_sub_group_size(32)`. Their WGSL checks 32 but the native
+`vendor/cubecl-wgpu/src/compute/strata_graph.rs` registration currently sets a
+required 32 only for physical-expert/packed-dense sources (cooperative SPIR-V has
+its own 16). For a plain PLE program `required_subgroup` is None, and pipeline
+creation sets ALLOW_VARYING_SUBGROUP_SIZE. This does not prove a crash or wrong
+size on this B70, but does NOT reproduce the explicit upstream requirement.
+Audit all fixed 32 consumers and make both ordinary/native pipeline selection
+preserve their exact requirement, keeping cooperative 16 separate. Do not infer
+hardware correctness from a source `sw==32` guard or offline shader success.
+
+No GPU/model/inference/service/install/release/API/config/frontend action.
+Required Vashti changes:none. Root not needed; last actual sudo renewal failed.
+Last physical recovery stays historical Oct15. Goal active CPU-only, full rewrite
+incomplete and speed gate closed. Next fixed subgroup fidelity, remaining GR/PLE
+residual in-place consumers, allocator/whole-device/source/scheduling substitutions
+and numerical/state/hot-request/failure/recovery acceptance remain required.
+Protected private executable input remains an independent unclosed boundary;
+current CLI is compiled-public/one-request. Preserve canonical work/untracked files.

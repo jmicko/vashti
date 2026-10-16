@@ -1,16 +1,16 @@
 # Strata Rust whole-model port experiment
 
-**Current CPU-only resume (2026-10-16):** source `40fe97e6989128189c6046b3b73c64c09288c94a` connects
-native GR-emitted BF16/FP16 mixed images to actual GDN/QSA/indexer/router/shared
-projections and routed-expert gather.455 focused CPU cases, strict lints,
-format/whitespace and330 offline shader variants pass. Read the
-[current receipt](kuno-strata-rewrite-completion.md#connected-native-mixed-input-image-reuse-2026-10-16)
-and [checkpoint](kuno-native-text-checkpoint.md) for exact logs and gates. Normal
-artifact `strata-mixed-images-ordinary-20261016/` has SHA256
-`9d1bedf93be55ca5447bfa3ca8d40a29736820b7345335d182c0fac571f3a5d8`.
-No new GPU root or physical/numerical/speed claim. Native in-place GR/PLE,
-allocator/whole-device pricing and final scheduling/source substitutions remain.
-Whole rewrite incomplete; no live speed trials. Older notes are historical.
+**Current CPU-only resume (2026-10-16):** source `9d7821a9145be34b190493006e4d6b46c5cc8d03` connects native
+PLE in-place key normalization and query/conv region reuse, including original
+MTP teacher scratch consumers.457 focused CPU cases, strict lint and format pass.
+Read the [current receipt](kuno-strata-rewrite-completion.md#native-ple-key-normalization-and-query-region-reuse-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md) for exact artifact/shader logs,
+source substitutions and next gates. Explicit32 subgroup selection for plain
+PLE shaders is a newly identified source gap; fix before hardware acceptance.
+Current normal artifact `strata-ple-reuse-ordinary-20261016/`, SHA256
+`dc1628984b186162f56fe926e2d93e2b2f8536c2059acfe447c67d8abbe9d4b4`;
+331 offline shader variants pass, with no device initialization. Full rewrite
+incomplete; no live speed tests or device correctness claim.
 
 ## Active direction — finish the complete Rust port before speed testing (2026-10-14)
 
