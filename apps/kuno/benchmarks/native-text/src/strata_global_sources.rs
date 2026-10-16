@@ -505,6 +505,18 @@ impl Sources {
         self.validate_attached()?;
         self.plan.check_binding(graph)
     }
+    pub(crate) fn retained_route_map(
+        &self,
+        graph: BoundGraph<'_, '_>,
+        client: &ComputeClient<WgpuRuntime>,
+    ) -> Result<zeroize::Zeroizing<Vec<u16>>> {
+        // Full attachment rejects partial publication, loans and retirement.
+        self.validate_graph_ready(graph)?;
+        if !std::ptr::eq(client.info(), self.client.info()) {
+            return Err(reject());
+        }
+        self.placement.route_map()
+    }
     pub(crate) fn borrow_cpu(
         &self,
         graph: BoundGraph<'_, '_>,

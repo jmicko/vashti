@@ -23,6 +23,9 @@ impl Drop for Prepared {
     }
 }
 thread_local! {static INPUT:RefCell<Option<mpsc::Receiver<Result<Prepared>>>>=const{RefCell::new(None)};}
+pub(crate) fn active() -> bool {
+    INPUT.with(|input| input.borrow().is_some())
+}
 struct InputGuard;
 impl InputGuard {
     fn new(rx: mpsc::Receiver<Result<Prepared>>) -> Result<Self> {

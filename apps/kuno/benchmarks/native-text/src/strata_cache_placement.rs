@@ -27,6 +27,26 @@ impl Placement {
             .map(usize::from)
             .ok_or_else(reject)
     }
+    /// Invert the actual physical-cell identities. Initial profile placement
+    /// cannot reconstruct this after adaptive exchanges have moved weights.
+    pub(crate) fn route_map(&self) -> Result<Zeroizing<Vec<u16>>> {
+        if self.0.len() != LAYERS * EXPERTS {
+            return Err(reject());
+        }
+        let mut inverse = Zeroizing::new(vec![0u16; LAYERS * EXPERTS]);
+        for layer in 0..LAYERS {
+            let mut seen = Zeroizing::new([false; EXPERTS]);
+            for cell in 0..EXPERTS {
+                let expert = self.original_at(layer, cell)?;
+                if expert >= EXPERTS || seen[expert] {
+                    return Err(reject());
+                }
+                seen[expert] = true;
+                inverse[layer * EXPERTS + expert] = cell as u16;
+            }
+        }
+        Ok(inverse)
+    }
     fn swap_checked(
         &mut self,
         layer: usize,
@@ -58,6 +78,29 @@ impl Placement {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn retained_route_map_is_the_inverse_of_actual_cells_and_rejects_corrupt_placement() {
+        let mut p = Placement::identity();
+        for (incoming, outgoing, gpu, host) in [(99, 7, 7, 99), (81, 99, 7, 81), (6, 81, 7, 6)] {
+            p.swap_checked(3, incoming, outgoing, gpu, host).unwrap();
+            let route = p.route_map().unwrap();
+            for layer in 0..LAYERS {
+                for expert in 0..EXPERTS {
+                    assert_eq!(
+                        p.original_at(layer, route[layer * EXPERTS + expert] as usize)
+                            .unwrap(),
+                        expert
+                    );
+                }
+            }
+        }
+        p.0[0] = p.0[1];
+        assert!(p.route_map().is_err());
+        p.0[0] = EXPERTS as u16;
+        assert!(p.route_map().is_err());
+        p.0.pop();
+        assert!(p.route_map().is_err());
+    }
     #[test]
     fn physical_to_original_survives_repeated_swaps_without_resetting_to_profile() {
         let old = Placement::identity();

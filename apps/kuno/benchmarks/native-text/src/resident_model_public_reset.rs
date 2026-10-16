@@ -202,6 +202,9 @@ fn commit_after_reset_fence<T>(
 impl ResidentModel<'_, '_> {
     fn validate_retained_native_cursor(&self) -> Result<()> {
         if self.position != 0
+            || crate::strata_sampler::request::active()
+            || crate::strata_prompt::active()
+            || ple_batch::prompt_source::active()
             || self.admission.request_io_reuse_active()
             || self.ple_history.tokens().iter().any(|&t| t != -1)
             || self.ple_conv.history().iter().any(|&v| v != 0.)
@@ -227,6 +230,22 @@ impl ResidentModel<'_, '_> {
         receipt.check_original(self)?;
         self.validate_native_projection_owners(executor)?;
         self.validate_retained_native_cursor()?;
+        // MAIN erasure also cleared the route map. Restore from the SAME
+        // physical weights before granting next-request prefill authority.
+        self.native_batch
+            .as_ref()
+            .ok_or(rejected())?
+            .global_moe
+            .as_ref()
+            .ok_or(rejected())?
+            .restore_retained_route_map(
+                self.graph,
+                &self.arena,
+                &self.admission,
+                executor.strata_global_sources.as_ref().ok_or(rejected())?,
+                cancel,
+            )?;
+        batch_io::read_fault(&self.arena, &self.admission, self.b.fault, cancel)?;
         let native = self.native_batch.as_mut().ok_or(rejected())?;
         native
             .public_language_request_io
@@ -350,6 +369,9 @@ impl ResidentModel<'_, '_> {
             || self.layers.len() != LAYERS
             || self.moe_layers.len() != LAYERS
             || executor.ordered_source_pending_bytes() != 0
+            || crate::strata_sampler::request::active()
+            || crate::strata_prompt::active()
+            || ple_batch::prompt_source::active()
         {
             return Err(rejected());
         }

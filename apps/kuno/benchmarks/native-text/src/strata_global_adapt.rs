@@ -1,11 +1,23 @@
 //! MIT Strata generate.cpp:12040 blocking adaptive selection and publication.
-//! Original physical cells stay fixed. Logical remap and usage are request-only.
+//! Original physical cells stay fixed. Logical remap remains transient with the loaded weight cells; usage resets per request.
 use crate::strata_global_plan::{EXPERTS, LAYERS, Plan};
 use kuno_text::{Error, Result};
 use zeroize::{Zeroize, Zeroizing};
 pub(crate) const EVERY: u64 = 4;
 pub(crate) const MAX_SWAPS: usize = 96;
 pub(crate) const HOST_BYTES: usize = 2 * 1024 * 1024;
+pub(crate) const ROUTE_MAP_BYTES: usize = 131072;
+/// Original full private owner, including its unused zero padding. The caller
+/// transfers the wiping allocation directly into the actual tracked upload.
+pub(crate) fn encode_route_map(mapping: &[u16]) -> Result<Zeroizing<Vec<u8>>> {
+    validate_mapping(mapping)?;
+    let mut bytes = Zeroizing::new(vec![0u8; ROUTE_MAP_BYTES]);
+    for (word, &cell) in bytes.chunks_exact_mut(4).zip(mapping) {
+        word.copy_from_slice(&u32::from(cell).to_le_bytes());
+    }
+    Ok(bytes)
+}
+
 fn reject() -> Error {
     Error::InvalidFormat("Strata global adaptive cache")
 }
@@ -59,6 +71,13 @@ impl Cache {
             resident,
             rounds: 0,
         })
+    }
+    pub(crate) fn check_retained_route_map(&self, mapping: &[u16]) -> Result<()> {
+        validate_mapping(mapping)?;
+        if &*self.mapping != mapping {
+            return Err(reject());
+        }
+        Ok(())
     }
     pub(crate) fn tick(&mut self) -> Result<bool> {
         self.rounds = self
@@ -204,6 +223,50 @@ mod tests {
             resident,
             rounds: 4,
         }
+    }
+    #[test]
+    fn retained_route_packet_tracks_real_exchanges_instead_of_resetting_to_identity() {
+        let resident = (0..LAYERS * EXPERTS)
+            .map(|i| (i % EXPERTS) % 3 == 0)
+            .collect();
+        let mut c = cache(resident);
+        let mut physical = crate::strata_global_sources::Placement::identity();
+        let cold = physical.route_map().unwrap();
+        c.check_retained_route_map(&cold).unwrap();
+        for round in 0..12 {
+            let usage = (0..LAYERS * EXPERTS)
+                .map(|i| ((i * 17 + round * 71) % 131) as f32)
+                .collect::<Vec<_>>();
+            let p = c.propose(&usage).unwrap();
+            assert!(!p.swaps.is_empty());
+            physical = physical.propose(&p.swaps).unwrap();
+            c.commit(p).unwrap();
+            let restored = physical.route_map().unwrap();
+            c.check_retained_route_map(&restored).unwrap();
+            assert!(c.check_retained_route_map(&cold).is_err());
+            let bytes = encode_route_map(&restored).unwrap();
+            assert_eq!(bytes.len(), ROUTE_MAP_BYTES);
+            for (i, word) in bytes.chunks_exact(4).enumerate() {
+                let cell = u32::from_le_bytes(word.try_into().unwrap());
+                if i < LAYERS * EXPERTS {
+                    assert_eq!(
+                        physical.original_at(i / EXPERTS, cell as usize).unwrap(),
+                        i % EXPERTS
+                    );
+                } else {
+                    assert_eq!(cell, 0);
+                }
+            }
+            for _ in 0..EVERY {
+                c.tick().unwrap();
+            }
+        }
+        let mut invalid = cold.to_vec();
+        invalid[0] = invalid[1];
+        assert!(encode_route_map(&invalid).is_err());
+        invalid[0] = EXPERTS as u16;
+        assert!(encode_route_map(&invalid).is_err());
+        assert!(encode_route_map(&invalid[..invalid.len() - 1]).is_err());
     }
     #[test]
     fn reference_gain_rule_is_global_96_with_unequal_and_nonprefix_residency() {

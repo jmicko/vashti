@@ -27,7 +27,17 @@ use std::sync::atomic::AtomicBool;
 use zeroize::Zeroizing;
 
 const ROOT_BYTES: [u64; 11] = [
-    32768, 262144, 1048576, 32768, 32768, 65536, 131072, 131072, 32768, 131072, 1048576,
+    32768,
+    262144,
+    1048576,
+    32768,
+    32768,
+    65536,
+    131072,
+    crate::strata_global_adapt::ROUTE_MAP_BYTES as u64,
+    32768,
+    131072,
+    1048576,
 ];
 pub(crate) const MAIN_BYTES: u64 = crate::strata_sampler::request::MAIN_BYTES
     + 32768
@@ -680,15 +690,9 @@ impl Workspace {
         sources.exchange(graph, &proposal.swaps)?;
         // Full private owners are retained through their write/fence. Padding
         // is zero and moved upload allocations receive the runtime wipe guard.
-        let mut mapping = Zeroizing::new(vec![0u8; 131072]);
+        let mut mapping = crate::strata_global_adapt::encode_route_map(&proposal.mapping)?;
         let mut counts = Zeroizing::new(vec![0u8; 131072]);
-        for (i, (&cell, &score)) in proposal
-            .mapping
-            .iter()
-            .zip(proposal.usage.iter())
-            .enumerate()
-        {
-            mapping[i * 4..i * 4 + 4].copy_from_slice(&u32::from(cell).to_le_bytes());
+        for (i, &score) in proposal.usage.iter().enumerate() {
             counts[i * 4..i * 4 + 4].copy_from_slice(&score.to_le_bytes());
         }
         let client = arena.client().map_err(u::fault)?;
@@ -713,6 +717,71 @@ impl Workspace {
         } else {
             Ok(())
         }
+    }
+    /// Restore only control data erased with the private arena. The original
+    /// physical source placement is authoritative; no profile reset or expert
+    /// transfer occurs. Original weights, epochs and adaptive rounds survive.
+    pub(crate) fn restore_retained_route_map(
+        &self,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+        admission: &crate::executor::ResidentAdmission,
+        sources: &Sources,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        self.validate_idle()?;
+        u::cancel(cancel)?;
+        if self.binding != graph.binding_id()
+            || self.verify_usage
+            || admission.request_io_reuse_active()
+        {
+            return Err(reject());
+        }
+        let client = arena.client().map_err(u::fault)?;
+        admission.check_client(client)?;
+        let mapping = sources.retained_route_map(graph, client)?;
+        if let Some(cache) = &self.adaptive {
+            cache.check_retained_route_map(&mapping)?;
+        } else if mapping
+            .iter()
+            .enumerate()
+            .any(|(i, &cell)| usize::from(cell) != i % crate::strata_global_plan::EXPERTS)
+        {
+            return Err(reject());
+        }
+        let mut payload = crate::strata_global_adapt::encode_route_map(&mapping)?;
+        let root = arena.handle(self.ids[7]).map_err(u::fault)?.clone();
+        if arena.layout(self.ids[7]).map_err(u::fault)?
+            != crate::private_arena::BufferLayout::new(
+                crate::strata_global_adapt::ROUTE_MAP_BYTES / 4,
+            )
+            .map_err(u::fault)?
+            || root.size_in_used() != crate::strata_global_adapt::ROUTE_MAP_BYTES as u64
+            || root.offset_start.unwrap_or(0) != 0
+            || root.offset_end.unwrap_or(0) != 0
+        {
+            return Err(reject());
+        }
+        admission.readback_audited(cancel, || {
+            client
+                .write_private(root, std::mem::take(&mut *payload))
+                .map_err(u::fault)?;
+            let actual = u::read_prefix_u32(
+                arena,
+                self.ids[7],
+                crate::strata_global_adapt::ROUTE_MAP_BYTES / 4,
+            )?;
+            if actual.len() != crate::strata_global_adapt::ROUTE_MAP_BYTES / 4
+                || actual
+                    .iter()
+                    .enumerate()
+                    .any(|(i, &cell)| cell != mapping.get(i).map_or(0, |&v| u32::from(v)))
+            {
+                return Err(reject());
+            }
+            sources.validate_graph_ready(graph)?;
+            u::cancel(cancel)
+        })
     }
     pub(crate) fn set_verify_usage(&mut self, enabled: bool) -> Result<()> {
         self.validate_idle()?;
