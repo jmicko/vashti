@@ -1,6 +1,7 @@
 //! Main-pool admission for one exclusively owned, ordered resident context.
 //!
-//! The required allocator has exclusive power-of-two bins, starting at32 KiB.
+//! The required allocator uses complete exclusive pages, starting at32 KiB.
+//! Native large owners use2MiB granules; ordinary builds retain power-of-two bins.
 //! Its upper bound follows the actual private allocator (1GiB in the native
 //! Intel core, 128MiB in the independent laboratories).
 //! `upper` includes its actual baseline plus every newly admitted page bound
@@ -16,6 +17,7 @@
 //! second time. Charge actual allocations, not that separate capacity plan.
 //! Uniform/readback/driver pools are not part of CubeCL main-pool telemetry.
 
+#[cfg(test)]
 pub const MIN_PAGE_BYTES: u64 = 32 * 1024;
 pub const MAX_PAGE_BYTES: u64 = crate::private_arena::MAX_SPAN_BYTES as u64;
 
@@ -41,15 +43,15 @@ impl std::fmt::Display for AdmissionError {
 impl std::error::Error for AdmissionError {}
 pub type Result<T> = std::result::Result<T, AdmissionError>;
 
-/// Enclosing exclusive bin, not payload bytes or Handle::size_in_used().
+/// Complete private page bound from the SAME layout policy as actual allocation.
+/// Public exact-source roots use their separately aligned persistent admission.
 pub fn page_bytes(requested: u64) -> Result<u64> {
     if requested == 0 || requested > MAX_PAGE_BYTES {
         return Err(AdmissionError::InvalidAllocation);
     }
-    requested
-        .max(MIN_PAGE_BYTES)
-        .checked_next_power_of_two()
-        .ok_or(AdmissionError::ArithmeticOverflow)
+    crate::private_arena::BufferLayout::new((requested as usize).div_ceil(4))
+        .map(|l| l.owned_bytes as u64)
+        .map_err(|_| AdmissionError::ArithmeticOverflow)
 }
 
 /// Pure startup capacity plan. Components must already be full page bounds;

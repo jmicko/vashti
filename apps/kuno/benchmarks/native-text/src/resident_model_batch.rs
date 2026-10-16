@@ -78,6 +78,8 @@ pub(crate) const TARGET_ROWS_PREPARED_VERIFY3_MAIN: u64 =
 // The native INT8 QSA cache owns8MiB instead of32MiB per layer;
 // retaining one extra pooled-key row raises its full owner from512KiB to1MiB.
 // The selected32K runtime then expands cache, positions and both pooled roots.
+// Native2MiB page granules make the32K packed cache50MiB and its retained
+// pooled key6MiB instead of the former64/8MiB power-of-two pages.
 // All12 QSA layers change together. Match the actual selected full roots,
 // including padding and the separate unchanged GDN replay input owners.
 pub(super) const OLD_MAIN: u64 = 785_186_816 + gdn::strata_replay::MAIN_BYTES
@@ -87,10 +89,10 @@ pub(super) const OLD_MAIN: u64 = 785_186_816 + gdn::strata_replay::MAIN_BYTES
         0
     }
     + if crate::strata_intel_core::enabled() {
-        12 * ((64 - 8) * 1024 * 1024
+        12 * ((50 - 8) * 1024 * 1024
             + (128 - 32) * 1024
             + (4 * 1024 - 512) * 1024
-            + (8 - 1) * 1024 * 1024)
+            + (6 - 1) * 1024 * 1024)
     } else {
         0
     };
@@ -7034,7 +7036,7 @@ mod tests {
     // cache/position/pooled roots, native GR and large selection planes together.
     fn expected_original_main() -> u64 {
         if crate::strata_intel_core::enabled() {
-            1_459_093_504
+            1_257_766_912
         } else if crate::strata_port::enabled() {
             852_459_520
         } else {
@@ -7053,7 +7055,7 @@ mod tests {
     }
     fn expected_target_main() -> u64 {
         if crate::strata_intel_core::enabled() {
-            3_660_939_264
+            2_778_038_272
         } else {
             expected_original_main()
                 + if crate::strata_port::eight_rows() {

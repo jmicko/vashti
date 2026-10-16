@@ -21,6 +21,7 @@ pub struct ExclusiveMemoryPool {
     last_dealloc_check: u64,
     max_alloc_size: u64,
     cur_avg_size: f64,
+    exact_pages: bool,
     location_base: MemoryLocation,
 }
 
@@ -74,17 +75,37 @@ impl ExclusiveMemoryPool {
             last_dealloc_check: 0,
             max_alloc_size,
             cur_avg_size: max_alloc_size as f64 / 2.0,
+            exact_pages: false,
             location_base: MemoryLocation::new(pool_pos, 0, 0),
         }
+    }
+
+    pub(crate) fn new_exact(
+        max_alloc_size: u64,
+        alignment: u64,
+        dealloc_period: u64,
+        pool_pos: u8,
+    ) -> Self {
+        let mut pool = Self::new(max_alloc_size, alignment, dealloc_period, pool_pos);
+        pool.exact_pages = true;
+        pool
     }
 
     /// Finds a free page that can contain the given size
     /// Returns a slice on that page if successful.
     fn get_free_page(&mut self, size: u64) -> Option<&mut MemoryPage> {
-        // Return the smallest free page that fits.
+        let exact = self.exact_pages;
+        let aligned = size.next_multiple_of(self.alignment);
+        // Exact mode never turns a larger cached page into a hidden-tail view.
         self.pages
             .iter_mut()
-            .filter(|page| page.alloc_size >= size && page.slice.is_free())
+            .filter(|page| {
+                (if exact {
+                    page.alloc_size == aligned
+                } else {
+                    page.alloc_size >= size
+                }) && page.slice.is_free()
+            })
             .min_by_key(|page| page.free_count)
     }
 
@@ -93,9 +114,20 @@ impl ExclusiveMemoryPool {
         storage: &mut Storage,
         size: u64,
     ) -> Result<(usize, &mut MemoryPage), IoError> {
-        let alloc_size = (self.cur_avg_size as u64)
-            .max(size)
-            .next_multiple_of(self.alignment);
+        // MemoryLocation stores a16-bit page index. Reject before creating
+        // storage; never truncate a live descriptor into another page.
+        if self.pages.len() > u16::MAX as usize {
+            return Err(IoError::Unknown {
+                description: "exclusive pool descriptor capacity".into(),
+                backtrace: BackTrace::capture(),
+            });
+        }
+        let alloc_size = if self.exact_pages {
+            size
+        } else {
+            (self.cur_avg_size as u64).max(size)
+        }
+        .next_multiple_of(self.alignment);
 
         let storage = storage.alloc(alloc_size)?;
 
@@ -213,7 +245,10 @@ impl MemoryPool for ExclusiveMemoryPool {
                     }
                 }
                 if page.slice.handle.descriptor().page() != page_index {
-                    page.slice.handle.descriptor().update_page(page_index as u16);
+                    page.slice
+                        .handle
+                        .descriptor()
+                        .update_page(page_index as u16);
                 }
                 page_index += 1;
                 true

@@ -1,7 +1,9 @@
 //! Small laboratory owner for transient resident-graph GPU buffers.
 //!
-//! Every allocation is a complete power-of-two 32-bit span, at least 32 KiB
-//! (the required custom pool's minimum bucket). Logical lengths are separate from owned
+//! Every allocation is a complete owning 32-bit span, at least 32 KiB. The
+//! selected Intel core uses2MiB granules above2MiB and exact exclusive pages;
+//! ordinary builds retain power-of-two spans.
+//! Logical lengths are separate from owned
 //! spans; initialization and erasure cover EVERY owned word, including padding.
 //! The checked budget charges owned spans, not logical payloads. Public model
 //! weights do not belong in this arena.
@@ -13,7 +15,7 @@
 //! This owner is deliberately !Send/!Sync and not a production execution API.
 //! The client MUST have been initialized with required_memory_configuration().
 //! Default CubeCL pools may own larger hidden pages than Handle::size(); merely
-//! requesting power-of-two spans does not prove erasure of those hidden tails.
+//! requesting aligned spans does not prove erasure of those hidden tails.
 //!
 //! close/reset drain earlier work, enqueue erasure of complete tracked spans,
 //! synchronize erasure, then release handles. Drop attempts the same cleanup.
@@ -58,21 +60,34 @@ static NEXT_ARENA_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Required allocator configuration at Wgpu init_device, BEFORE constructing
 /// a client or any public/private allocations on that context. Requests that
-/// exactly equal a bin maximum cannot acquire a larger hidden page: CubeCL
-/// exclusive pools allocate max(request, rolling_mean)<=this bin maximum.
+/// exactly equal an ordinary bin maximum cannot acquire a larger hidden page.
+/// The native exact-exclusive factory instead owns the aligned request itself
+/// and only reuses equal-sized pages; it never uses rolling-mean enlargement.
 /// This constructor cannot inspect an existing client's allocator config.
 pub fn required_memory_configuration() -> cubecl::MemoryConfiguration {
-    cubecl::MemoryConfiguration::Custom {
-        pool_options: (15..=MAX_SPAN_BYTES.ilog2())
+    let pool_options = if cfg!(feature = "strata-intel-core") {
+        vec![MemoryPoolOptions {
+            pool_type: PoolType::ExactExclusivePages {
+                max_alloc_size: MAX_SPAN_BYTES as u64,
+            },
+            dealloc_period: Some(1),
+        }]
+    } else {
+        (15..=MAX_SPAN_BYTES.ilog2())
             .map(|power| MemoryPoolOptions {
                 pool_type: PoolType::ExclusivePages {
                     max_alloc_size: 1u64 << power,
                 },
                 dealloc_period: Some(1),
             })
-            .collect(),
-    }
+            .collect()
+    };
+    cubecl::MemoryConfiguration::Custom { pool_options }
 }
+/// Native owned allocations are counted in2MiB granules. Keep original small
+/// slabs to avoid giving every32KiB status/uniform a separate2MiB device root.
+/// The selected exact-exclusive pool makes both policies own their full pages.
+pub(crate) const NATIVE_GRANULE: usize = 2 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ArenaError {
@@ -185,10 +200,15 @@ impl BufferLayout {
         let logical_bytes = logical_words
             .checked_mul(4)
             .ok_or(ArenaError::InvalidLayout)?;
-        let owned_bytes = logical_bytes
-            .max(MIN_SPAN_BYTES)
-            .checked_next_power_of_two()
-            .ok_or(ArenaError::InvalidLayout)?;
+        let owned_bytes = if cfg!(feature = "strata-intel-core") && logical_bytes >= NATIVE_GRANULE
+        {
+            logical_bytes.checked_next_multiple_of(NATIVE_GRANULE)
+        } else {
+            logical_bytes
+                .max(MIN_SPAN_BYTES)
+                .checked_next_power_of_two()
+        }
+        .ok_or(ArenaError::InvalidLayout)?;
         if owned_bytes > MAX_SPAN_BYTES {
             return Err(ArenaError::InvalidLayout);
         }
@@ -1684,14 +1704,15 @@ mod tests {
         else {
             panic!("expected explicit private allocator contract");
         };
-        assert_eq!(
-            pool_options.len(),
-            if cfg!(feature = "strata-intel-core") {
-                16
-            } else {
-                13
-            }
-        );
+        if cfg!(feature = "strata-intel-core") {
+            assert_eq!(pool_options.len(), 1);
+            assert_eq!(pool_options[0].dealloc_period, Some(1));
+            assert!(
+                matches!(pool_options[0].pool_type,PoolType::ExactExclusivePages{max_alloc_size} if max_alloc_size==MAX_SPAN_BYTES as u64)
+            );
+            return;
+        }
+        assert_eq!(pool_options.len(), 13);
         for (i, pool) in pool_options.iter().enumerate() {
             assert_eq!(pool.dealloc_period, Some(1));
             let PoolType::ExclusivePages { max_alloc_size } = pool.pool_type else {
@@ -1730,7 +1751,12 @@ mod tests {
             MAX_SPAN_BYTES / 4,
         ] {
             let l = BufferLayout::new(words).unwrap();
-            assert!(l.owned_bytes.is_power_of_two());
+            if cfg!(feature = "strata-intel-core") && words * 4 >= NATIVE_GRANULE {
+                assert!(l.owned_bytes.is_multiple_of(NATIVE_GRANULE));
+                assert!(l.owned_bytes - words * 4 < NATIVE_GRANULE);
+            } else {
+                assert!(l.owned_bytes.is_power_of_two());
+            }
             assert!(l.owned_bytes >= MIN_SPAN_BYTES);
             assert!(l.owned_words >= words);
             assert_eq!(l.owned_words * 4, l.owned_bytes);
@@ -1841,5 +1867,92 @@ mod tests {
         let source = shader.to_string();
         assert!(source.contains("fn erase_full_span"));
         assert!(!source.contains("enable f16"));
+    }
+}
+
+#[cfg(test)]
+mod exact_page_runtime_tests {
+    use super::*;
+    use cubecl_runtime::{
+        logging::ServerLogger,
+        memory_management::{MemoryAllocationMode, MemoryManagement, MemoryManagementOptions},
+        server::IoError,
+        storage::{ComputeStorage, StorageHandle, StorageId, StorageUtilization},
+    };
+    #[derive(Default)]
+    struct CountStorage {
+        roots: Vec<(StorageId, u64)>,
+        created: usize,
+    }
+    impl ComputeStorage for CountStorage {
+        type Resource = (StorageId, u64, u64);
+        fn alignment(&self) -> usize {
+            256
+        }
+        fn get(&mut self, h: &StorageHandle) -> Self::Resource {
+            let bytes = self.roots.iter().find(|r| r.0 == h.id).unwrap().1;
+            assert!(h.offset() + h.size() <= bytes);
+            (h.id, bytes, h.size())
+        }
+        fn alloc(&mut self, size: u64) -> std::result::Result<StorageHandle, IoError> {
+            assert!(size.is_multiple_of(256));
+            let id = StorageId::new();
+            self.roots.push((id, size));
+            self.created += 1;
+            Ok(StorageHandle {
+                id,
+                utilization: StorageUtilization { offset: 0, size },
+            })
+        }
+        fn dealloc(&mut self, id: StorageId) {
+            let i = self.roots.iter().position(|r| r.0 == id).unwrap();
+            self.roots.remove(i);
+        }
+        fn flush(&mut self) {}
+    }
+    #[test]
+    fn actual_exact_exclusive_pool_never_hides_average_growth_or_larger_cached_page_tails() {
+        let mut m = MemoryManagement::from_configuration(
+            CountStorage::default(),
+            &cubecl::ir::MemoryDeviceProperties {
+                max_page_size: 1024 * 1024 * 1024,
+                alignment: 256,
+            },
+            cubecl::MemoryConfiguration::Custom {
+                pool_options: vec![MemoryPoolOptions {
+                    pool_type: PoolType::ExactExclusivePages {
+                        max_alloc_size: 1024 * 1024 * 1024,
+                    },
+                    dealloc_period: None,
+                }],
+            },
+            Arc::new(ServerLogger::default()),
+            MemoryManagementOptions::new("content-free-exact-pool-test")
+                .mode(MemoryAllocationMode::Auto),
+        );
+        let large = m.reserve(12 * 1024 * 1024).unwrap();
+        let first = m.get_resource(large.clone().binding(), None, None).unwrap();
+        assert_eq!((first.1, first.2), (12 * 1024 * 1024, 12 * 1024 * 1024));
+        drop(large);
+        let small = m.reserve(2 * 1024 * 1024).unwrap();
+        let second = m.get_resource(small.clone().binding(), None, None).unwrap();
+        assert_ne!(first.0, second.0);
+        assert_eq!((second.1, second.2), (2 * 1024 * 1024, 2 * 1024 * 1024));
+        assert_eq!(m.storage().created, 2);
+        drop(small);
+        let same = m.reserve(2 * 1024 * 1024).unwrap();
+        assert_eq!(
+            m.get_resource(same.clone().binding(), None, None).unwrap(),
+            second
+        );
+        assert_eq!(m.storage().created, 2);
+        let odd = m.reserve(257).unwrap();
+        let odd = m.get_resource(odd.binding(), None, None).unwrap();
+        assert_eq!((odd.1, odd.2), (512, 257)); // actual aligned tail is visible to storage
+        for bytes in crate::strata_prompt::allocation::ROOT_SIZES {
+            let root = m.reserve(bytes).unwrap();
+            let actual = m.get_resource(root.binding(), None, None).unwrap();
+            assert_eq!((actual.1, actual.2), (bytes, bytes));
+        }
     }
 }

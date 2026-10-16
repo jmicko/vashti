@@ -9,7 +9,7 @@ pub(crate) const DEFAULT_ROWS: usize = 4096;
 pub(crate) const ROOT_BYTES: u64 = 1024 * 1024 * 1024;
 /// The asynchronous raw transfer ring is not part of the phase overlay.
 pub(crate) const RAW_RING_BYTES: u64 = 32 * 1024 * 1024;
-pub(crate) const ROOT_SIZES: [u64; 3] = [ROOT_BYTES, ROOT_BYTES, RAW_RING_BYTES];
+pub(crate) const ROOT_SIZES: [u64; 3] = super::layout::root_sizes();
 pub(crate) const MAIN_BYTES: u64 = ROOT_SIZES[0] + ROOT_SIZES[1] + ROOT_SIZES[2];
 /// Structural whole-root envelope, shared by private Scope, raw ring and source
 /// attachment. Physical ownership still needs the arena/cache owner's backend
@@ -109,7 +109,7 @@ mod tests {
                 .sum::<u64>(),
             crate::strata_global_moe::MAIN_BYTES
         );
-        let layout = crate::private_arena::BufferLayout::new(ROOT_BYTES as usize / 4);
+        let layout = crate::private_arena::BufferLayout::new(ROOT_SIZES[0] as usize / 4);
         if cfg!(feature = "strata-intel-core") {
             assert_eq!(layout.unwrap().owned_bytes as u64, ROOT_SIZES[0]);
             let actual = ROOT_SIZES.map(|bytes| {
@@ -119,7 +119,7 @@ mod tests {
             });
             assert_eq!(actual, ROOT_SIZES);
             assert_eq!(actual.iter().sum::<u64>(), MAIN_BYTES);
-            assert_eq!(3 * ROOT_BYTES - MAIN_BYTES, 992 * 1024 * 1024);
+            assert_eq!(3 * ROOT_BYTES - MAIN_BYTES, 1642 * 1024 * 1024);
         } else {
             assert!(layout.is_err());
         }

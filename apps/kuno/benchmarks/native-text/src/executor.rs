@@ -5808,7 +5808,14 @@ mod admission_tests {
             .iter()
             .map(|&n| main_admission::page_bytes(n).unwrap())
             .sum::<u64>();
-        assert_eq!(charge, 384 * MIB);
+        assert_eq!(
+            charge,
+            if cfg!(feature = "strata-intel-core") {
+                338
+            } else {
+                384
+            } * MIB
+        );
         let created = Cell::new(0);
         let mut short = MainAdmission::new(PAGE + charge - 1, PAGE).unwrap();
         assert!(

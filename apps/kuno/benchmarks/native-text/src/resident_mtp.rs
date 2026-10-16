@@ -47,7 +47,13 @@ const ROPE_CONTEXT_INCREMENT: u64 = if crate::strata_intel_core::enabled() {
 } else {
     0
 };
-pub const PUBLIC_BYTES: u64 = 5_011_668_992 + ROPE_CONTEXT_INCREMENT;
+// Same original Q8 tensors/shards, priced with selected exact2MiB pages.
+// The runtime Q2 profile below is independently computed from its own inventory.
+pub const PUBLIC_BYTES: u64 = if crate::strata_intel_core::enabled() {
+    4_195_876_864
+} else {
+    5_011_668_992
+} + ROPE_CONTEXT_INCREMENT;
 pub const ENGLISH_VOCAB_OWNED_BYTES: u64 = english::ENGLISH_OWNED_BYTES as u64;
 pub const ENGLISH_PUBLIC_BYTES: u64 = PUBLIC_BYTES + ENGLISH_VOCAB_OWNED_BYTES;
 // Original GGUF dense BF16 +borrowed IQ4_XS embedding/Q6_K full head. Exact
@@ -5629,19 +5635,19 @@ mod context32768_tests {
             BufferLayout::new(WORDS[B::Keys as usize])
                 .unwrap()
                 .owned_bytes,
-            32 * 1024 * 1024
+            18 * 1024 * 1024
         );
         assert_eq!(
             BufferLayout::new(WORDS[B::Values as usize])
                 .unwrap()
                 .owned_bytes,
-            32 * 1024 * 1024
+            18 * 1024 * 1024
         );
         assert_eq!(
             BufferLayout::new(WORDS[B::Attention as usize])
                 .unwrap()
                 .owned_bytes,
-            16 * 1024 * 1024
+            12 * 1024 * 1024
         );
         assert!(WORDS[B::Packet as usize] >= k::CONTEXT);
         assert!(private_plan().unwrap() <= PRIVATE_BYTES as u64);

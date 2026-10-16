@@ -1281,14 +1281,14 @@ mod admission_tests {
         let native = crate::strata_intel_core::enabled();
         assert_eq!(
             total,
-            if native { 1_327_431_680 } else { 785_186_816 }
+            if native { 1_126_105_088 } else { 785_186_816 }
                 + crate::resident_gdn::batch::strata_replay::MAIN_BYTES
         );
         assert_eq!(total, batch::OLD_MAIN);
         // Full cache owners include padding, never just logical packed bytes.
         assert_eq!(
             requests.iter().copied().max(),
-            Some(if native { 64 } else { 32 } * 1024 * 1024)
+            Some(if native { 50 } else { 32 } * 1024 * 1024)
         );
         assert_eq!(
             requests.len(),
@@ -1299,7 +1299,12 @@ mod admission_tests {
                 + 16
                 + crate::resident_gdn::batch::strata_replay::EXTRA_BUFFERS as usize
         );
-        assert!(requests.iter().all(|&n| n >= 32768 && n.is_power_of_two()));
+        assert!(requests.iter().all(|&n| n >= 32768
+            && if native && n >= 2 * 1024 * 1024 {
+                n.is_multiple_of(2 * 1024 * 1024)
+            } else {
+                n.is_power_of_two()
+            }));
         let mut ledger = crate::main_admission::MainAdmission::new(total, 0).unwrap();
         assert_eq!(ledger.precharge(&requests).unwrap(), total);
         assert_eq!(ledger.upper_bytes(), total);

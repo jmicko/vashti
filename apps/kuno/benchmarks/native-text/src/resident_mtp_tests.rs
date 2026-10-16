@@ -1,8 +1,31 @@
 use super::*;
+// The native32K packed-cache profile is distinct from the original2K FP16
+// fixture. Synthetic legacy limits do not claim physical-device acceptance.
+fn expected_private_plan() -> u64 {
+    if crate::strata_intel_core::enabled() {
+        62_586_880
+    } else {
+        // The non-native Strata port also owns its original32KiB draft window.
+        11_698_176 + u64::from(crate::strata_port::enabled()) * 32768
+    }
+}
+fn expected_public_plan() -> u64 {
+    if crate::strata_intel_core::enabled() {
+        4_203_216_896
+    } else {
+        5_011_668_992
+    }
+}
+fn legacy_fixture_limits() -> wgpu::Limits {
+    wgpu::Limits {
+        max_compute_workgroups_per_dimension: 65535.max((k::QH * k::CONTEXT) as u32),
+        ..Default::default()
+    }
+}
 
 #[test]
 fn predevice_limits_cover_complete_public_pages_and_seven_bindings() {
-    let limits = wgpu::Limits::default();
+    let limits = legacy_fixture_limits();
     assert!(validate_limits(&limits).is_ok());
     let mut short = limits.clone();
     short.max_compute_workgroups_per_dimension = 65534;
@@ -17,7 +40,7 @@ fn predevice_limits_cover_complete_public_pages_and_seven_bindings() {
 
 #[test]
 fn fused_sweep_admission_counts_all_owners_plus_info_before_device_creation() {
-    let limits = wgpu::Limits::default();
+    let limits = legacy_fixture_limits();
     assert!(validate_fused_sweep_limits(&limits).is_ok());
     let mut short = limits;
     short.max_storage_buffers_per_shader_stage = 7;
@@ -78,7 +101,7 @@ fn fused_sweeps_cover_every_original_role_once_without_padding_alias_or_input_cl
     }
     assert_eq!(2 * 42 + 40 - (2 * 8 + 6), 102);
     assert_eq!(2 * 42 + 37 - (2 * 8 + 6), 99);
-    assert_eq!(private_plan().unwrap(), 11_698_176);
+    assert_eq!(private_plan().unwrap(), expected_private_plan());
     assert_eq!(MAX_TOKEN_DISPATCHES, 512);
 }
 
@@ -97,7 +120,11 @@ fn complete_sweep_fixture_includes_integer_headers_float_and_every_kv_tail_bound
     ];
     for (index, &logical) in WORDS.iter().enumerate() {
         let expected = if [B::Keys, B::Values].iter().any(|b| *b as usize == index) {
-            sweeps::CACHE
+            if crate::strata_intel_core::enabled() {
+                sweeps::INTEGER
+            } else {
+                sweeps::CACHE
+            }
         } else if integer.iter().any(|b| *b as usize == index) {
             sweeps::INTEGER
         } else {
@@ -105,9 +132,14 @@ fn complete_sweep_fixture_includes_integer_headers_float_and_every_kv_tail_bound
         };
         assert_eq!(sweep_role(index), expected);
         let layout = BufferLayout::new(logical).unwrap();
-        for position in [0, 1, 2047, 2048] {
-            let live = if expected == sweeps::CACHE {
-                position * 512
+        for position in [0, 1, k::CONTEXT - 1, k::CONTEXT] {
+            let live = if [B::Keys, B::Values].iter().any(|b| *b as usize == index) {
+                position
+                    * if crate::strata_intel_core::enabled() {
+                        132
+                    } else {
+                        512
+                    }
             } else if index == B::Fault as usize {
                 0
             } else {
@@ -410,7 +442,13 @@ fn exact_original_tensor_registry_and_full_page_plan() {
             assert_eq!(first % 16384, 0);
             assert_eq!(logical, rows * row_bytes);
             assert!(logical <= owned && owned <= PUBLIC_SOURCE_BYTES);
-            assert!(owned.is_power_of_two() && owned >= 32768);
+            assert!(owned >= 32768);
+            if cfg!(feature = "strata-intel-core") && logical >= 2 * 1024 * 1024 {
+                assert!(owned.is_multiple_of(2 * 1024 * 1024));
+                assert!(owned - logical < 2 * 1024 * 1024);
+            } else {
+                assert!(owned.is_power_of_two());
+            }
         }
     }
     for name in EXPERT_NAMES {
@@ -428,24 +466,39 @@ fn exact_original_tensor_registry_and_full_page_plan() {
             .count(),
         1
     );
-    assert_eq!(public_plan().unwrap(), 5_011_668_992);
+    assert_eq!(public_plan().unwrap(), expected_public_plan());
     // Independent subplans from inspected original shapes and allocator bins.
-    let embeddings = 15 * 64 * 1024 * 1024 + 8 * 1024 * 1024;
-    let dense = 1_126_301_696;
-    let banks = 3 * (7 * 128 * 1024 * 1024 + 16 * 1024 * 1024);
+    let embeddings =
+        15 * if crate::strata_intel_core::enabled() {
+            44
+        } else {
+            64
+        } * 1024
+            * 1024
+            + 8 * 1024 * 1024;
+    let dense = if crate::strata_intel_core::enabled() {
+        807_534_592
+    } else {
+        1_126_301_696
+    };
+    let banks = 3 * if crate::strata_intel_core::enabled() {
+        7 * 120 * 1024 * 1024 + 14 * 1024 * 1024
+    } else {
+        7 * 128 * 1024 * 1024 + 16 * 1024 * 1024
+    };
     let vectors = 4 * 65536 + 4 * 32768;
     assert_eq!(
         public_plan().unwrap(),
-        embeddings + dense + banks + vectors + 2 * 524288
+        embeddings + dense + banks + vectors + 2 * 524288 + ROPE_CONTEXT_INCREMENT
     );
 }
 
 #[test]
 fn private_plan_owns_complete_two_kv_caches_and_separate_work_roles() {
     assert_eq!(N, 42);
-    assert_eq!(private_plan().unwrap(), 11_698_176);
+    assert_eq!(private_plan().unwrap(), expected_private_plan());
     let cache_words = if crate::strata_intel_core::enabled() {
-        4096 * 132
+        k::CONTEXT * 132
     } else {
         2048 * 2 * 256
     };
@@ -455,7 +508,12 @@ fn private_plan_owns_complete_two_kv_caches_and_separate_work_roles() {
         BufferLayout::new(WORDS[B::Keys as usize])
             .unwrap()
             .owned_bytes,
-        4 * 1024 * 1024
+        if crate::strata_intel_core::enabled() {
+            18
+        } else {
+            4
+        } * 1024
+            * 1024
     );
     assert_eq!(
         BufferLayout::new(WORDS[B::Logits as usize])
@@ -479,14 +537,31 @@ fn private_plan_owns_complete_two_kv_caches_and_separate_work_roles() {
     const {
         assert!(INFO_BYTES + 3 * 4 * 1024 * 1024 <= RUNTIME_BYTES);
     }
-    // Actual full-span read conversion, retained full output/carry and mapped
-    // lease are precharged independently of logical lengths.
-    for n in WORDS {
+    // Only these original output/fault/packet owners are read on the CPU.
+    // Native KV/attention are guarded on device; read_words_id deliberately
+    // rejects a full copy beyond this unchanged transient HOST envelope.
+    let readable = [
+        B::Fault,
+        B::Logits,
+        B::Residual2,
+        B::Greedy,
+        B::RawQuery,
+        B::Packet,
+    ];
+    for (i, n) in WORDS.into_iter().enumerate() {
         let layout = BufferLayout::new(n).unwrap();
-        assert!(
-            2 * layout.owned_bytes + MAX_LIVE_OUTPUTS * OUTPUT_HOST_BYTES + 2 * 1024 * 1024
-                <= HOST_BYTES
-        );
+        let fits = 2 * layout.owned_bytes + MAX_LIVE_OUTPUTS * OUTPUT_HOST_BYTES + 2 * 1024 * 1024
+            <= HOST_BYTES;
+        if !crate::strata_intel_core::enabled() || readable.iter().any(|b| *b as usize == i) {
+            assert!(fits);
+        }
+        if crate::strata_intel_core::enabled()
+            && [B::Keys, B::Values, B::Attention]
+                .iter()
+                .any(|b| *b as usize == i)
+        {
+            assert!(!fits);
+        }
     }
     assert!(BufferLayout::new(k::CONDITION_WORDS).unwrap().owned_words >= 4 * 5120);
 }
@@ -704,8 +779,8 @@ fn minimal_packet_and_followup_use_existing_complete_owners_without_new_main() {
         BufferLayout::new(WORDS[B::Greedy as usize]).unwrap(),
         BufferLayout::new(WORDS[B::Token as usize]).unwrap()
     );
-    assert_eq!(private_plan().unwrap(), 11_698_176);
-    assert_eq!(public_plan().unwrap(), 5_011_668_992);
+    assert_eq!(private_plan().unwrap(), expected_private_plan());
+    assert_eq!(public_plan().unwrap(), expected_public_plan());
     let full_read_bytes: usize = [B::Fault, B::Logits, B::Residual2, B::Greedy]
         .into_iter()
         .map(|b| BufferLayout::new(WORDS[b as usize]).unwrap().owned_bytes)
@@ -883,4 +958,22 @@ fn native_shared_mtp_limits_follow_actual_split_attention_not_legacy_flat_grid()
     short = limits;
     short.max_storage_buffer_binding_size = 128 * 1024 * 1024 - 1;
     assert!(validate_native_strata_limits(&short).is_err());
+}
+
+#[test]
+fn physical_native_profile_quotes_cover_the_actual_original_public_and_private_roots() {
+    eprintln!(
+        "allocator_profile_public={} strata_public={} private={} target_private={} global_private={}",
+        public_plan().unwrap(),
+        public_plan_for(MtpProfile::StrataQ2).unwrap(),
+        private_plan().unwrap(),
+        crate::resident_model::batch::TARGET_ROWS_PRIVATE_MAIN,
+        crate::strata_global_moe::MAIN_BYTES
+    );
+    assert_eq!(public_plan().unwrap(), PUBLIC_BYTES);
+    assert_eq!(
+        public_plan_for(MtpProfile::StrataQ2).unwrap(),
+        public_bytes_for(MtpProfile::StrataQ2)
+    );
+    assert!(private_plan().unwrap() <= PRIVATE_BYTES as u64);
 }

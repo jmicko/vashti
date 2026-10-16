@@ -3713,7 +3713,7 @@ mod context32768_tests {
         }
         assert_eq!(layout.bytes().unwrap(), 81_690_624);
         assert_eq!(layout.io_bytes(true).unwrap() * 12, 18_874_368);
-        assert_eq!(layout.stage.owned_bytes().unwrap(), 81_494_016);
+        assert_eq!(layout.stage.owned_bytes().unwrap(), 64_716_800);
         let last = layout.token(7, qsa::MAX_CONTEXT - 8).unwrap();
         assert_eq!(last.visible, qsa::MAX_CONTEXT);
         assert_eq!(last.complete, 8192);

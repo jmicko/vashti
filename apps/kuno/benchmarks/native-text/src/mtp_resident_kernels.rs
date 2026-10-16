@@ -98,8 +98,9 @@ impl Shard {
     }
 }
 
-/// Exact full512 expert owners: three original families, seven72-expert128MiB
-/// pages and one8-expert16MiB page each. No dynamic cache or expert substitution.
+/// Exact full512 expert owners: three original families, seven72-expert
+/// pages and one8-expert tail each. Ordinary pages are128/16MiB; native
+/// exact2MiB-granule pages are120/14MiB. No expert is removed or substituted.
 pub fn expert_owned_bytes() -> Result<u64> {
     (0..SHARDS).try_fold(0_u64, |sum, index| {
         sum.checked_add(3 * Shard::new(index)?.owned_bytes()?)

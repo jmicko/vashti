@@ -24,6 +24,8 @@ pub(crate) mod allocation;
 pub(crate) mod experts;
 #[path = "strata_prompt_groups.rs"]
 pub(crate) mod groups;
+#[path = "strata_prompt_layout.rs"]
+pub(crate) mod layout;
 #[path = "strata_prompt_storage.rs"]
 pub(crate) mod storage;
 thread_local! {static STAGES:RefCell<Option<storage::Storage>>=const{RefCell::new(None)};}

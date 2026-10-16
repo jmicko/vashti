@@ -8,7 +8,7 @@ use super::*;
 pub(crate) const HOST_BYTES: usize = 32 * 1024;
 // Actual largest rounded input is4096 four-stream rows of2560 values; the
 // largest converted head tile is16384x2560. Both need exactly80MiB, not128.
-pub(super) const WORKING_BYTES: u64 = (allocation::DEFAULT_ROWS * 4 * 2560 * 2) as u64;
+pub(super) const WORKING_BYTES: u64 = layout::WORKING_BYTES;
 pub(crate) struct Storage {
     working: [Handle; 3],
     moe: groups::Views,
@@ -64,56 +64,19 @@ impl Storage {
             }
             Ok(views)
         };
-        let mut persistent_words = [
-            5120, 320, 160, 10240, 4, 1280, 1280, 10240, 2560, 2560, 2560, 4, 512, 640, 640, 2560,
-            1, 2560,
-        ]
-        .map(|w| w * capacity)
-        .to_vec();
-        persistent_words.push(9 * 10240);
-        let persistent = carve(&roots[0], &persistent_words)?;
+        let persistent = carve(&roots[0], &layout::persistent(capacity))?;
         let gr: [Handle; 5] = std::array::from_fn(|i| persistent[i].clone());
         let mixed_images = std::array::from_fn(|i| persistent[i + 5].clone());
         let outer: [Handle; 12] = std::array::from_fn(|i| persistent[i + 7].clone());
-        let ple: [Handle; 10] = carve(
-            &roots[1],
-            &[2560, 10240, 2560, 10240, 4, 10240, 4, 4, 4, 4].map(|w| w * capacity),
-        )?
-        .try_into()
-        .map_err(|_| Error::InvalidBufferLength)?;
-        let gdn: [Handle; 7] = carve(
-            &roots[1],
-            &[10240, 6144, 10240, 6144, 96, 96, 48].map(|w| w * capacity),
-        )?
-        .try_into()
-        .map_err(|_| Error::InvalidBufferLength)?;
-        let qsa: [Handle; 20] = carve(
-            &roots[1],
-            &[
-                12288 * capacity,
-                512 * capacity,
-                512 * capacity,
-                512 * capacity,
-                128 * capacity,
-                6144 * capacity,
-                512 * capacity,
-                512 * capacity,
-                crate::strata_qsa::CACHE_WORDS * capacity,
-                6144 * capacity,
-                crate::strata_qsa::PARTIAL_WORDS * 32,
-                crate::strata_qsa::STATS_WORDS * 32,
-                (crate::qsa_gpu::MAX_CONTEXT / 4) * 128,
-                crate::qsa_gpu::MAX_CONTEXT / 4,
-                24 * capacity,
-                2 * capacity,
-                4 * capacity,
-                (crate::qsa_gpu::MAX_CONTEXT / 4) * crate::strata_qsa::prompt::SELECT_BATCH,
-                (crate::qsa_gpu::MAX_CONTEXT / 4) * crate::strata_qsa::prompt::SELECT_BATCH,
-                2051 * capacity,
-            ],
-        )?
-        .try_into()
-        .map_err(|_| Error::InvalidBufferLength)?;
+        let ple: [Handle; 10] = carve(&roots[1], &layout::PLE.map(|w| w * capacity))?
+            .try_into()
+            .map_err(|_| Error::InvalidBufferLength)?;
+        let gdn: [Handle; 7] = carve(&roots[1], &layout::GDN.map(|w| w * capacity))?
+            .try_into()
+            .map_err(|_| Error::InvalidBufferLength)?;
+        let qsa: [Handle; 20] = carve(&roots[1], &layout::qsa(capacity))?
+            .try_into()
+            .map_err(|_| Error::InvalidBufferLength)?;
         let working = [
             roots[0].clone().offset_end(sizes[0] - WORKING_BYTES),
             roots[1].clone().offset_end(sizes[1] - WORKING_BYTES),
@@ -391,7 +354,7 @@ mod overlay_tests {
             roots.iter().map(Handle::size_in_used).sum::<u64>(),
             allocation::MAIN_BYTES
         );
-        assert_eq!(allocation::MAIN_BYTES, 2080 * 1024 * 1024);
+        assert_eq!(allocation::MAIN_BYTES, 1430 * 1024 * 1024);
         assert_eq!(roots[2].size_in_used(), 32 * 1024 * 1024);
         assert_eq!(WORKING_BYTES, 80 * 1024 * 1024);
         assert_eq!(groups::GU_BYTES, 20 * 1024 * 1024);
@@ -604,11 +567,11 @@ mod mixed_image_tests {
         }
     }
     #[test]
-    fn mixed_images_are_retained_disjoint_native_views_inside_the_unchanged_admitted_parent() {
+    fn mixed_images_are_retained_disjoint_native_views_inside_the_priced_original_parent() {
         let s = storage();
         assert_eq!(
             allocation::ROOT_SIZES,
-            [1024 * 1024 * 1024, 1024 * 1024 * 1024, 32 * 1024 * 1024]
+            [756 * 1024 * 1024, 642 * 1024 * 1024, 32 * 1024 * 1024]
         );
         assert_eq!(
             s.mixed_images.iter().map(Handle::size_in_used).sum::<u64>(),
@@ -771,5 +734,55 @@ mod residual_owner_tests {
         let p = p.finish().unwrap();
         assert!(p.conflicts(&[access(carry, 1, true)]).unwrap());
         assert!(!p.conflicts(&[access(residual, 2, true)]).unwrap());
+    }
+}
+
+#[cfg(test)]
+mod allocation_inventory_tests {
+    use super::*;
+    use cubecl_common::stream_id::StreamId;
+    #[test]
+    fn physical_prompt_quote_comes_from_actual_persistent_and_largest_overlaid_live_views() {
+        let s =
+            Storage::new(allocation::ROOT_SIZES.map(|n| Handle::new(StreamId { value: 929 }, n)))
+                .unwrap();
+        let end = |h: &Handle| (h.offset_start.unwrap_or(0) + h.size_in_used() + 511) & !255;
+        let actual = [
+            s.gr.iter()
+                .chain(&s.mixed_images)
+                .chain(&s.outer)
+                .map(end)
+                .max()
+                .unwrap(),
+            s.ple
+                .iter()
+                .chain(&s.gdn)
+                .chain(&s.qsa)
+                .chain(s.moe.handles())
+                .map(end)
+                .max()
+                .unwrap(),
+            allocation::RAW_RING_BYTES,
+        ];
+        assert_eq!(actual, layout::unrounded_roots());
+        let quantum = 2 * 1024 * 1024;
+        assert_eq!(
+            actual.map(|n| n.div_ceil(quantum) * quantum),
+            allocation::ROOT_SIZES
+        );
+        assert_eq!(
+            allocation::ROOT_SIZES,
+            [756 * 1024 * 1024, 642 * 1024 * 1024, 32 * 1024 * 1024]
+        );
+        if cfg!(feature = "strata-intel-core") {
+            for bytes in allocation::ROOT_SIZES {
+                assert_eq!(
+                    crate::private_arena::BufferLayout::new(bytes as usize / 4)
+                        .unwrap()
+                        .owned_bytes as u64,
+                    bytes
+                );
+            }
+        }
     }
 }

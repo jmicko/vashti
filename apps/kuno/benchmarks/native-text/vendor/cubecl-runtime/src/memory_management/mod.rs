@@ -21,6 +21,12 @@ pub enum PoolType {
         /// The minimum number of bytes to allocate in this pool.
         max_alloc_size: u64,
     },
+    /// One aligned allocation per page, reusing only an exactly equal-sized
+    /// page. No rolling-mean growth or larger-page subview can hide a tail.
+    ExactExclusivePages {
+        /// Largest supported request in bytes.
+        max_alloc_size: u64,
+    },
     /// Use a memory where each allocation is a slice of a bigger allocation.
     SlicedPages {
         /// The page size to allocate.

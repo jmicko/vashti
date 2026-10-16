@@ -317,6 +317,14 @@ impl<Storage: ComputeStorage> MemoryManagement<Storage> {
                         properties.alignment,
                         pool_pos,
                     )),
+                    PoolType::ExactExclusivePages { max_alloc_size } => {
+                        DynamicPool::Exclusive(ExclusiveMemoryPool::new_exact(
+                            max_alloc_size,
+                            properties.alignment,
+                            options.dealloc_period.unwrap_or(u64::MAX),
+                            pool_pos,
+                        ))
+                    }
                     PoolType::ExclusivePages { max_alloc_size } => {
                         DynamicPool::Exclusive(ExclusiveMemoryPool::new(
                             max_alloc_size,
