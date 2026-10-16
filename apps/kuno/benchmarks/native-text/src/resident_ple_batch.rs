@@ -878,6 +878,27 @@ impl PleBatchWorkspace {
         }
         Ok(())
     }
+    pub(super) fn validate_retained_request_boundary(
+        &self,
+        model: &ResidentModel<'_, '_>,
+    ) -> Result<()> {
+        self.healthy(model, &AtomicBool::new(false))?;
+        if self.next != 0 || model.position != 0 || self.generation == 0 || self.pending {
+            return Err(error());
+        }
+        self.validate_native_selected_policies()
+    }
+    pub(super) fn validate_native_selected_policies(&self) -> Result<()> {
+        if !crate::strata_intel_core::enabled()
+            || !self.public_four_rows
+            || !self.public_grouped_reads
+            || self.pending
+            || self.poison.load(Ordering::Acquire)
+        {
+            return Err(error());
+        }
+        Ok(())
+    }
     /// PLE advances this cursor only in the all-family accepted commit. Scalar
     /// continuation leaves it behind and therefore cannot change native policy.
     pub(super) fn validate_completed_projection_boundary(

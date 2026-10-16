@@ -2068,6 +2068,7 @@ pub(super) struct Workspace {
     public_warm_replay: Option<public_warm_replay::Permit>,
     public_target_request_io: Option<public_target_request_io::Permit>,
     public_language_request_io: Option<public_language_request_io::Permit>,
+    retained_ready: Option<public_warm_replay::RetainedReady>,
     public_gpu_qsa_selector: bool,
     public_frozen_host_sources: bool,
     public_frozen_host_router: bool,
@@ -2507,6 +2508,7 @@ impl Workspace {
             public_warm_replay,
             public_target_request_io,
             public_language_request_io,
+            retained_ready: None,
             public_gpu_qsa_selector: config.public_gpu_qsa_selector,
             public_frozen_host_sources: config.public_frozen_host_sources,
             public_frozen_host_router: config.public_frozen_host_router,
@@ -2927,7 +2929,11 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
     // No completed-policy token escapes this initial-or-committed request gate.
     fn validate_native_request_boundary(&self, executor: &GpuExecutor<'f>) -> Result<()> {
         if crate::strata_intel_core::enabled() && self.position == 0 {
-            self.validate_unstarted_native_boundary(executor)
+            if let Some(ready) = &self.native_batch.as_ref().ok_or(error())?.retained_ready {
+                ready.check(self, executor)
+            } else {
+                self.validate_unstarted_native_boundary(executor)
+            }
         } else {
             self.completed_native_projection_boundary(executor)
                 .map(|_| ())
@@ -2961,6 +2967,40 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                     .ok_or(error())?,
                 cancel,
             )
+    }
+    /// Select once after the first prefill; subsequent requests preserve the
+    /// same actual family policies, counters, bindings and resident owners.
+    pub(crate) fn ensure_native_generation_policies(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        u::cancel(cancel)?;
+        self.completed_native_projection_boundary(executor)?;
+        if !crate::strata_intel_core::enabled() {
+            return Err(error());
+        }
+        match self.native_decode_kernels()? {
+            NativeDecodeKernels::Chunk if !executor.target_four_rows_active => {
+                self.set_public_four_rows(executor, cancel)?;
+                self.set_public_grouped_ple_reads(executor, true, cancel)?;
+                self.set_public_grouped_status_folds(executor, true, cancel)
+            }
+            NativeDecodeKernels::FourGdn if executor.target_four_rows_active => {
+                let native = self.native_batch.as_ref().ok_or(error())?;
+                native.validate_global_scope(executor, &self.admission)?;
+                native.ple.validate_native_selected_policies()?;
+                if !native.grouped_status_state()?.0 || self.admission.request_io_reuse_active() {
+                    return Err(error());
+                }
+                native
+                    .public_language_request_io
+                    .as_ref()
+                    .ok_or(error())?
+                    .validate_begin(self.position, false)
+            }
+            _ => Err(error()),
+        }
     }
     pub(crate) fn validate_global_request_geometry(
         &self,

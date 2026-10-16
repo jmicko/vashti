@@ -426,13 +426,12 @@ pub(super) fn run<'m, 'f>(
     }
     sampling.commit_target(1)?;
     // Shared state owners are activated with actual global source authority.
-    target.set_public_four_rows(executor, cancel)?;
-    target.set_public_grouped_ple_reads(executor, true, cancel)?;
-    target.set_public_grouped_status_folds(executor, true, cancel)?;
+    target.ensure_native_generation_policies(executor, cancel)?;
     if !executor.public_q6_integer_verify_head()?.0 {
         return Err("global native head changed after prefill".into());
     }
     target.begin_public_language_request_io(executor, cancel)?;
+    let request_scope = target.current_native_language_scope()?;
     let mut history = Zeroizing::new(Vec::with_capacity(request.max_outputs));
     history.push(confirmed);
     emit(confirmed)?;
@@ -704,7 +703,7 @@ pub(super) fn run<'m, 'f>(
     let closed = target.end_public_language_request_io(executor, cancel)?;
     if !closed.full_io_audit
         || !closed.scope_closed
-        || closed.scope != 1
+        || closed.scope != request_scope
         || target.public_language_request_io_active()?
     {
         return Err("global request erasure rejected".into());

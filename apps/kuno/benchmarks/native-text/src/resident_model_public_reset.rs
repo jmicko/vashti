@@ -154,6 +154,38 @@ impl NativeRequestResetReceipt {
         Ok(())
     }
 }
+/// Non-cloneable original erasure provenance for a bound next request. This
+/// does not pretend the used PLE owner is a generation-zero constructor.
+pub(super) struct RetainedReady {
+    fault: BufferId,
+    binding: GraphBindingId,
+    context: usize,
+    scope: u64,
+}
+impl RetainedReady {
+    pub(super) fn check(
+        &self,
+        model: &ResidentModel<'_, '_>,
+        executor: &GpuExecutor<'_>,
+    ) -> Result<()> {
+        model.validate_native_projection_owners(executor)?;
+        if self.fault != model.b.fault
+            || self.binding != model.graph.binding_id()
+            || self.context != model.context
+        {
+            return Err(rejected());
+        }
+        model.validate_retained_native_cursor()?;
+        model
+            .native_batch
+            .as_ref()
+            .ok_or(rejected())?
+            .public_language_request_io
+            .as_ref()
+            .ok_or(rejected())?
+            .starting_after_erasure(self.scope)
+    }
+}
 /// Only this coordinator can mint the all-arena/source/fault/final-cancel
 /// capability. Family permits cannot publish merely from a Ready cursor.
 pub(crate) struct CompletedReset(());
@@ -168,6 +200,53 @@ fn commit_after_reset_fence<T>(
 }
 
 impl ResidentModel<'_, '_> {
+    fn validate_retained_native_cursor(&self) -> Result<()> {
+        if self.position != 0
+            || self.admission.request_io_reuse_active()
+            || self.ple_history.tokens().iter().any(|&t| t != -1)
+            || self.ple_conv.history().iter().any(|&v| v != 0.)
+        {
+            return Err(rejected());
+        }
+        self.native_batch
+            .as_ref()
+            .ok_or(rejected())?
+            .ple
+            .validate_retained_request_boundary(self)
+    }
+    pub(crate) fn bind_completed_native_request(
+        &mut self,
+        executor: &GpuExecutor<'_>,
+        receipt: NativeRequestResetReceipt,
+        prompt: usize,
+        outputs: usize,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        u::cancel(cancel)?;
+        let geometry = super::public_language_request_io::Geometry::new(prompt, outputs)?;
+        receipt.check_original(self)?;
+        self.validate_native_projection_owners(executor)?;
+        self.validate_retained_native_cursor()?;
+        let native = self.native_batch.as_mut().ok_or(rejected())?;
+        native
+            .public_language_request_io
+            .as_mut()
+            .ok_or(rejected())?
+            .rearm_native(
+                self.graph.binding_id(),
+                self.context,
+                geometry,
+                receipt.scope,
+                self.admission.request_io_reuse_active(),
+            )?;
+        native.retained_ready = Some(RetainedReady {
+            fault: receipt.fault,
+            binding: receipt.binding,
+            context: receipt.context,
+            scope: receipt.scope,
+        });
+        Ok(())
+    }
     pub(crate) fn reset_public_warm_replay(
         &mut self,
         executor: &mut GpuExecutor<'_>,

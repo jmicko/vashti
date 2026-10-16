@@ -1,4 +1,4 @@
-//! Request-scoped Rust owner of the selected Strata Intel inference path.
+//! Loaded-session Rust owner of the selected Strata Intel inference path.
 //! No transport, file output, prompt logging, receipt serialization or device
 //! discovery lives here. The caller owns authenticated mapped artifacts and a
 //! protected, exclusively admitted runtime; this function owns every inference
@@ -168,35 +168,185 @@ pub(crate) unsafe fn execute<'m, 'f>(
     emit: &mut dyn FnMut(u32) -> kuno_text::Result<()>,
     phase: &mut dyn FnMut(&'static str),
 ) -> Result<Completion, Failure> {
-    if !crate::strata_intel_core::enabled()
-        || device.adapter_info().vendor != 0x8086
-        || cancel.load(Ordering::Acquire)
-        || crate::strata_port::profile_target()
-        || crate::strata_port::profile_native_target()
-        || graph.verify_unchanged().is_err()
-        || draft_graph.is_some_and(|d| {
-            d.target_binding_id() != Some(graph.binding_id()) || d.verify_unchanged().is_err()
-        })
-    {
-        return Err(Failure::Rejected);
+    let mut session = unsafe {
+        Session::load(
+            file,
+            graph,
+            draft_graph,
+            client,
+            limits,
+            device,
+            queue,
+            backlog,
+            &request,
+            cancel,
+            phase,
+        )?
+    };
+    let generation = match session.run(request, cancel, emit, phase) {
+        Ok(done) => done,
+        Err(failure) => {
+            // A preflight rejection may deliberately leave a reusable session
+            // untouched. This one-shot wrapper still owes an explicit checked
+            // close, so Drop cannot hide a recovery failure behind Rejected.
+            if !session.close_attempted {
+                session.close()?;
+            }
+            return Err(failure);
+        }
+    };
+    let closed = session.close()?;
+    let (target_main, target_sources) = closed.target.ok_or(Failure::RecoveryRequired)?;
+    Ok(Completion {
+        generation,
+        target_main,
+        target_sources,
+        draft_public_bytes: closed.draft_public_bytes,
+        backlog,
+    })
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum State {
+    Loading,
+    Cold,
+    Running,
+    Ready,
+    Closed,
+    Broken,
+}
+impl State {
+    fn start(&mut self, erased: bool) -> Result<(), Failure> {
+        if !matches!((*self, erased), (Self::Cold, false) | (Self::Ready, true)) {
+            return Err(Failure::Rejected);
+        }
+        *self = Self::Running;
+        Ok(())
     }
-    let (prompt, outputs, context) = request.geometry().map_err(|_| Failure::Rejected)?;
-    let retired = Arc::new(AtomicBool::new(false));
-    let mut runtime_owned = false;
-    let mut tables = None;
-    let mut executor = None;
-    let mut target = None;
-    let mut draft = None;
-    let mut request_erasure = None;
-    let attempted = checked(|| {
+    fn completed(&mut self) -> Result<(), Failure> {
+        if *self != Self::Running {
+            return Err(Failure::RecoveryRequired);
+        }
+        *self = Self::Ready;
+        Ok(())
+    }
+}
+pub(crate) struct Closed {
+    target: Option<(
+        crate::private_arena::OwnedZeroAudit,
+        crate::private_arena::OwnedZeroAudit,
+    )>,
+    draft_public_bytes: Option<u64>,
+}
+
+/// Original shared runtime, weights and request owners. No detached receipt can
+/// reopen a closed/failed session. This internal owner is not a public transport.
+/// Caller protection/exclusivity in `execute` must hold for its whole lifetime.
+pub(crate) struct Session<'m, 'f, 'd, 'df> {
+    // Native tables/recording scopes are bound to this calling thread.
+    _thread: std::marker::PhantomData<std::rc::Rc<()>>,
+    file: &'f GgufFile,
+    graph: BoundGraph<'m, 'f>,
+    draft_graph: Option<&'d MtpGraph<'df>>,
+    client: ComputeClient<WgpuRuntime>,
+    backlog: cubecl_runtime::server::PublicTargetSubmissionBacklog,
+    retired: Arc<AtomicBool>,
+    runtime_owned: bool,
+    close_attempted: bool,
+    state: State,
+    tables: Option<crate::strata_intel_core::Tables>,
+    executor: Option<GpuExecutor<'f>>,
+    target: Option<ResidentModel<'m, 'f>>,
+    draft: Option<ResidentMtp<'d, 'df>>,
+    request_erasure: Option<(
+        crate::resident_model::batch::public_warm_replay::NativeRequestResetReceipt,
+        Option<crate::resident_mtp::NativeRequestResetReceipt>,
+    )>,
+}
+impl<'m, 'f, 'd, 'df> Session<'m, 'f, 'd, 'df> {
+    /// # Safety
+    /// The authenticated backing, exact client/device/queue, exclusive MAIN/
+    /// HOST/driver grants, no-swap/core protection and redacted panic hook from
+    /// `execute` must remain valid on this thread until this session closes.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) unsafe fn load(
+        file: &'f GgufFile,
+        graph: BoundGraph<'m, 'f>,
+        draft_graph: Option<&'d MtpGraph<'df>>,
+        client: &ComputeClient<WgpuRuntime>,
+        limits: &wgpu::Limits,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        backlog: cubecl_runtime::server::PublicTargetSubmissionBacklog,
+        first: &Request,
+        cancel: &AtomicBool,
+        phase: &mut dyn FnMut(&'static str),
+    ) -> Result<Self, Failure> {
+        if !crate::strata_intel_core::enabled()
+            || device.adapter_info().vendor != 0x8086
+            || cancel.load(Ordering::Acquire)
+            || crate::strata_port::profile_target()
+            || crate::strata_port::profile_native_target()
+            || graph.verify_unchanged().is_err()
+            || draft_graph.is_some_and(|d| {
+                d.target_binding_id() != Some(graph.binding_id()) || d.verify_unchanged().is_err()
+            })
+        {
+            return Err(Failure::Rejected);
+        }
+        let (prompt, outputs, _) = first.geometry().map_err(|_| Failure::Rejected)?;
+        let mut session = Self {
+            _thread: std::marker::PhantomData,
+            file,
+            graph,
+            draft_graph,
+            client: client.clone(),
+            backlog,
+            retired: Arc::new(AtomicBool::new(false)),
+            runtime_owned: false,
+            close_attempted: false,
+            state: State::Loading,
+            tables: None,
+            executor: None,
+            target: None,
+            draft: None,
+            request_erasure: None,
+        };
+        let attempted = checked(|| unsafe {
+            session.load_inner(limits, device, queue, prompt, outputs, phase)
+        });
+        if let Err(failure) = attempted {
+            if session.runtime_owned {
+                session.close()?;
+            }
+            return Err(failure);
+        }
+        session.state = State::Cold;
+        Ok(session)
+    }
+    #[allow(clippy::too_many_arguments)]
+    unsafe fn load_inner(
+        &mut self,
+        limits: &wgpu::Limits,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        prompt: usize,
+        outputs: usize,
+        phase: &mut dyn FnMut(&'static str),
+    ) -> Result<(), Failure> {
+        let file = self.file;
+        let graph = self.graph;
+        let draft_graph = self.draft_graph;
+        let client = &self.client;
+        let backlog = self.backlog;
         crate::target_lab_build::validate_runtime(true).map_err(|_| Failure::Rejected)?;
         crate::resident_util::select_retained_metadata(true);
         crate::resident_util::select_compute_scratch_clear(true);
         client
             .configure_public_target_request_io_with_backlog(backlog)
             .map_err(|_| Failure::Rejected)?;
-        runtime_owned = true;
-        tables = crate::strata_intel_core::Tables::new(client, Some(device))
+        self.runtime_owned = true;
+        self.tables = crate::strata_intel_core::Tables::new(client, Some(device))
             .map_err(|_| Failure::Inference)?;
         let mut e = GpuExecutor::new_with_profile(
             file,
@@ -223,14 +373,14 @@ pub(crate) unsafe fn execute<'m, 'f>(
         e.token_io_checkpoint = true;
         e.reserve_public_four_rows()
             .map_err(|_| Failure::Inference)?;
-        e.enable_transient_resident(retired.clone())
+        e.enable_transient_resident(self.retired.clone())
             .map_err(|_| Failure::Inference)?;
         e.fast_dense = true;
         e.fast_dense_fault = true;
         e.shared_kernels = true;
         e.shared_gdn = true;
-        executor = Some(e);
-        let e = executor.as_mut().ok_or(Failure::Inference)?;
+        self.executor = Some(e);
+        let e = self.executor.as_mut().ok_or(Failure::Inference)?;
         let config = Config::new(client, limits, 8)
             .and_then(Config::reserve_target_rows)
             .and_then(Config::reserve_latest_target_checkpoint)
@@ -245,11 +395,18 @@ pub(crate) unsafe fn execute<'m, 'f>(
             .and_then(Config::reserve_public_four_rows)
             .map_err(|_| Failure::Inference)?;
         phase("target");
-        target = Some(
-            ResidentModel::new_with_native_batch(graph, client.clone(), context, e, config, true)
-                .map_err(|_| Failure::Inference)?,
+        self.target = Some(
+            ResidentModel::new_with_native_batch(
+                graph,
+                client.clone(),
+                crate::strata_intel_core::CONTEXT,
+                e,
+                config,
+                true,
+            )
+            .map_err(|_| Failure::Inference)?,
         );
-        let t = target.as_mut().ok_or(Failure::Inference)?;
+        let t = self.target.as_mut().ok_or(Failure::Inference)?;
         phase("global_sources");
         // SAFETY: same authenticated/protected/exclusive context required above;
         // no source loan is used in the selected32768-context serving mode.
@@ -263,179 +420,240 @@ pub(crate) unsafe fn execute<'m, 'f>(
         if let Some(g) = draft_graph {
             phase("shared_draft");
             let permit = e.shared_mtp_admission().map_err(|_| Failure::Inference)?;
-            draft = Some(
+            self.draft = Some(
                 ResidentMtp::new_shared_strata_q2(g, client.clone(), limits, permit)
                     .map_err(|_| Failure::Inference)?,
             );
         }
-        let Request {
-            prompt,
-            outputs,
-            eos,
-            minimum,
-            speculation,
-            sampling,
-        } = request;
-        let mut delivered = Zeroizing::new(0usize);
-        let done = controller::run(
-            t,
-            e,
-            draft.as_mut(),
-            controller::Request {
-                prompt: &prompt,
-                max_outputs: *outputs,
-                eos: *eos,
-                speculation,
-                draft_min_probability: *minimum,
-                sampling,
-            },
-            cancel,
-            &mut |token| {
-                if *delivered >= *outputs || token as usize >= VOCAB {
-                    return Err("native output delivery bound".into());
+        Ok(())
+    }
+    pub(crate) fn run(
+        &mut self,
+        request: Request,
+        cancel: &AtomicBool,
+        emit: &mut dyn FnMut(u32) -> kuno_text::Result<()>,
+        phase: &mut dyn FnMut(&'static str),
+    ) -> Result<controller::Completion, Failure> {
+        let (prompt_count, output_count, _) = request.geometry().map_err(|_| Failure::Rejected)?;
+        if cancel.load(Ordering::Acquire) {
+            return Err(Failure::Rejected);
+        }
+        self.state.start(self.request_erasure.is_some())?;
+        let attempted = checked(|| {
+            let t = self.target.as_mut().ok_or(Failure::Inference)?;
+            let e = self.executor.as_mut().ok_or(Failure::Inference)?;
+            if let Some((erased, draft_erased)) = self.request_erasure.take() {
+                match (draft_erased, self.draft.as_ref()) {
+                    (Some(proof), Some(draft)) => proof
+                        .check_original(draft)
+                        .map_err(|_| Failure::RecoveryRequired)?,
+                    (None, None) => (),
+                    _ => return Err(Failure::RecoveryRequired),
                 }
-                emit(token)?;
-                *delivered += 1;
-                Ok(())
-            },
-            phase,
-        )
-        .map_err(|_| Failure::Inference)?;
-        if done.outputs != *delivered {
-            return Err(Failure::Inference);
+                t.bind_completed_native_request(e, erased, prompt_count, output_count, cancel)
+                    .map_err(|_| Failure::RecoveryRequired)?;
+            }
+            let Request {
+                prompt,
+                outputs,
+                eos,
+                minimum,
+                speculation,
+                sampling,
+            } = request;
+            let mut delivered = Zeroizing::new(0usize);
+            let done = controller::run(
+                t,
+                e,
+                self.draft.as_mut(),
+                controller::Request {
+                    prompt: &prompt,
+                    max_outputs: *outputs,
+                    eos: *eos,
+                    speculation,
+                    draft_min_probability: *minimum,
+                    sampling,
+                },
+                cancel,
+                &mut |token| {
+                    if *delivered >= *outputs || token as usize >= VOCAB {
+                        return Err("native output delivery bound".into());
+                    }
+                    emit(token)?;
+                    *delivered += 1;
+                    Ok(())
+                },
+                phase,
+            )
+            .map_err(|_| Failure::Inference)?;
+            if done.outputs != *delivered {
+                return Err(Failure::Inference);
+            }
+            // Retain the actual model owners while erasing completed request
+            // state. A subsequent run must consume these original receipts to
+            // bind its new geometry before prefill; public weights stay owned.
+            phase("request_private_erasure");
+            let draft_erasure = self
+                .draft
+                .as_mut()
+                .map(|d| -> kuno_text::Result<_> {
+                    let receipt = d.reset_completed_native_request(cancel)?;
+                    receipt.check_original(d)?;
+                    Ok(receipt)
+                })
+                .transpose()
+                .map_err(|_| Failure::RecoveryRequired)?;
+            let target_erasure = t
+                .reset_completed_native_request(e, cancel)
+                .map_err(|_| Failure::RecoveryRequired)?;
+            // Original retained ownership is distinct from a never-used PLE
+            // generation0 constructor. Do not manufacture fresh-model authority.
+            target_erasure
+                .check_original(t)
+                .map_err(|_| Failure::RecoveryRequired)?;
+            self.request_erasure = Some((target_erasure, draft_erasure));
+            Ok(done)
+        });
+        match attempted {
+            Ok(done) => {
+                self.state.completed()?;
+                Ok(done)
+            }
+            Err(failure) => {
+                self.state = State::Broken;
+                self.close()?;
+                Err(failure)
+            }
         }
-        // Retain the actual model owners while erasing completed request
-        // state, before the existing terminal close. This connected boundary
-        // is required for later multi-request ownership; it grants no reuse
-        // of the still-closed request permit and never unloads public weights.
-        phase("request_private_erasure");
-        let draft_erasure = draft
-            .as_mut()
-            .map(|d| -> kuno_text::Result<_> {
-                let receipt = d.reset_completed_native_request(cancel)?;
-                receipt.check_original(d)?;
-                Ok(receipt)
-            })
-            .transpose()
-            .map_err(|_| Failure::RecoveryRequired)?;
-        let target_erasure = t
-            .reset_completed_native_request(e, cancel)
-            .map_err(|_| Failure::RecoveryRequired)?;
-        // Original retained ownership is distinct from a never-used PLE
-        // generation0 constructor. Do not manufacture fresh-model authority.
-        target_erasure
-            .check_original(t)
-            .map_err(|_| Failure::RecoveryRequired)?;
-        request_erasure = Some((target_erasure, draft_erasure));
-        Ok(done)
-    });
-    if !runtime_owned {
-        // Failed configuration never grants ownership of a peer/preexisting runtime.
-        return Err(attempted.err().unwrap_or(Failure::RecoveryRequired));
     }
-    // Never short-circuit peer cleanup after an inference/constructor failure.
-    let mut draft_close = checked(|| {
-        draft
-            .as_mut()
-            .map(|d| d.close())
-            .transpose()
-            .map_err(|_| Failure::RecoveryRequired)
-    });
-    let target_close = checked(|| {
-        target
-            .as_mut()
-            .map(|t| t.close())
-            .transpose()
-            .map_err(|_| Failure::RecoveryRequired)
-    });
-    let target_audit = target
-        .as_ref()
-        .and_then(ResidentModel::public_owned_zero_audit_receipt);
-    let target_drop = checked(|| {
-        drop(target.take());
-        Ok(())
-    });
-    let executor_close = checked(|| {
-        executor
-            .as_mut()
-            .map(|e| e.close_transient_resident())
-            .transpose()
-            .map_err(|_| Failure::RecoveryRequired)
-    });
-    let executor_drop = checked(|| {
-        drop(executor.take());
-        Ok(())
-    });
-    let tables_drop = checked(|| {
-        drop(tables.take());
-        Ok(())
-    });
-    let physical = checked(|| {
-        if let Some(d) = draft.as_ref() {
-            let receipt = draft_close
-                .as_mut()
-                .map_err(|_| Failure::RecoveryRequired)?
-                .as_mut()
-                .ok_or(Failure::RecoveryRequired)?;
-            d.finish_shared_root(receipt)
-                .map_err(|_| Failure::RecoveryRequired)?;
-            crate::mtp_lab_profile::Profile::StrataQ2
-                .validate_close_with_english(receipt, false)
-                .map_err(|_| Failure::RecoveryRequired)?;
-            Ok(Some(receipt.public_bytes))
+    pub(crate) fn close(&mut self) -> Result<Closed, Failure> {
+        if !self.runtime_owned || self.close_attempted {
+            return Err(Failure::RecoveryRequired);
+        }
+        self.close_attempted = true;
+        let result = checked(|| self.close_inner());
+        self.state = if result.is_ok() {
+            State::Closed
         } else {
-            executor::audit_native_context_recovery(client, &retired)
-                .map_err(|_| Failure::RecoveryRequired)?;
-            Ok(None)
+            State::Broken
+        };
+        if result.is_err() {
+            self.retired.store(true, Ordering::Release);
         }
-    });
-    let draft_drop = checked(|| {
-        drop(draft.take());
-        Ok(())
-    });
-    if draft_close.is_err()
-        || target_close.is_err()
-        || executor_close.is_err()
-        || physical.is_err()
-        || target_drop.is_err()
-        || executor_drop.is_err()
-        || tables_drop.is_err()
-        || draft_drop.is_err()
-        || retired.load(Ordering::Acquire)
-        || file.verify_file_unchanged().is_err()
-        || graph.verify_unchanged().is_err()
-        || draft_graph.is_some_and(|d| d.verify_unchanged().is_err())
-        || client.public_target_request_io_configured().ok() != Some(true)
-        || client.public_target_submission_backlog().ok() != Some(backlog)
-    {
-        retired.store(true, Ordering::Release);
-        return Err(Failure::RecoveryRequired);
+        result
     }
-    let generation = attempted?;
-    let (target_main, target_sources) = target_audit.ok_or(Failure::RecoveryRequired)?;
-    let (retained, draft_erasure) = request_erasure.ok_or(Failure::RecoveryRequired)?;
-    // Retained erasure is not a close/refund receipt. Final close independently
-    // audits the SAME target owners; source close counts include earlier resets.
-    let final_draft = draft_close
-        .as_ref()
-        .map_err(|_| Failure::RecoveryRequired)?
-        .as_ref()
-        .map(|r| r.private);
-    if !retained_erasure_agrees_with_close(
-        (retained.main, retained.source),
-        (target_main, target_sources),
-        (draft_erasure.as_ref().map(|r| r.private), final_draft),
-    ) {
-        retired.store(true, Ordering::Release);
-        return Err(Failure::RecoveryRequired);
+    fn close_inner(&mut self) -> Result<Closed, Failure> {
+        // Never short-circuit peer cleanup after an inference/constructor failure.
+        let mut draft_close = checked(|| {
+            self.draft
+                .as_mut()
+                .map(|d| d.close())
+                .transpose()
+                .map_err(|_| Failure::RecoveryRequired)
+        });
+        let target_close = checked(|| {
+            self.target
+                .as_mut()
+                .map(|t| t.close())
+                .transpose()
+                .map_err(|_| Failure::RecoveryRequired)
+        });
+        let target_audit = self
+            .target
+            .as_ref()
+            .and_then(ResidentModel::public_owned_zero_audit_receipt);
+        let target_drop = checked(|| {
+            drop(self.target.take());
+            Ok(())
+        });
+        let executor_close = checked(|| {
+            self.executor
+                .as_mut()
+                .map(|e| e.close_transient_resident())
+                .transpose()
+                .map_err(|_| Failure::RecoveryRequired)
+        });
+        let executor_drop = checked(|| {
+            drop(self.executor.take());
+            Ok(())
+        });
+        let tables_drop = checked(|| {
+            drop(self.tables.take());
+            Ok(())
+        });
+        let physical = checked(|| {
+            if let Some(d) = self.draft.as_ref() {
+                let receipt = draft_close
+                    .as_mut()
+                    .map_err(|_| Failure::RecoveryRequired)?
+                    .as_mut()
+                    .ok_or(Failure::RecoveryRequired)?;
+                d.finish_shared_root(receipt)
+                    .map_err(|_| Failure::RecoveryRequired)?;
+                crate::mtp_lab_profile::Profile::StrataQ2
+                    .validate_close_with_english(receipt, false)
+                    .map_err(|_| Failure::RecoveryRequired)?;
+                Ok(Some(receipt.public_bytes))
+            } else {
+                executor::audit_native_context_recovery(&self.client, &self.retired)
+                    .map_err(|_| Failure::RecoveryRequired)?;
+                Ok(None)
+            }
+        });
+        let draft_drop = checked(|| {
+            drop(self.draft.take());
+            Ok(())
+        });
+        if draft_close.is_err()
+            || target_close.is_err()
+            || executor_close.is_err()
+            || physical.is_err()
+            || target_drop.is_err()
+            || executor_drop.is_err()
+            || tables_drop.is_err()
+            || draft_drop.is_err()
+            || self.retired.load(Ordering::Acquire)
+            || self.file.verify_file_unchanged().is_err()
+            || self.graph.verify_unchanged().is_err()
+            || self
+                .draft_graph
+                .is_some_and(|d| d.verify_unchanged().is_err())
+            || self.client.public_target_request_io_configured().ok() != Some(true)
+            || self.client.public_target_submission_backlog().ok() != Some(self.backlog)
+        {
+            self.retired.store(true, Ordering::Release);
+            return Err(Failure::RecoveryRequired);
+        }
+        if let Some((retained, draft_erasure)) = self.request_erasure.take() {
+            let (target_main, target_sources) = target_audit.ok_or(Failure::RecoveryRequired)?;
+            // Retained erasure is not a close/refund receipt. Final close independently
+            // audits the SAME target owners; source close counts include earlier resets.
+            let final_draft = draft_close
+                .as_ref()
+                .map_err(|_| Failure::RecoveryRequired)?
+                .as_ref()
+                .map(|r| r.private);
+            if !retained_erasure_agrees_with_close(
+                (retained.main, retained.source),
+                (target_main, target_sources),
+                (draft_erasure.as_ref().map(|r| r.private), final_draft),
+            ) {
+                self.retired.store(true, Ordering::Release);
+                return Err(Failure::RecoveryRequired);
+            }
+        }
+        Ok(Closed {
+            target: target_audit,
+            draft_public_bytes: physical?,
+        })
     }
-    Ok(Completion {
-        generation,
-        target_main,
-        target_sources,
-        draft_public_bytes: physical?,
-        backlog,
-    })
+}
+impl Drop for Session<'_, '_, '_, '_> {
+    fn drop(&mut self) {
+        if self.runtime_owned && !self.close_attempted {
+            let _ = checked(|| self.close());
+        }
+    }
 }
 
 #[cfg(test)]
@@ -450,6 +668,26 @@ mod tests {
             crate::strata_speculation::Config::native(4),
             0.5,
         )
+    }
+    #[test]
+    fn loaded_session_requires_matching_erasure_state_and_never_reopens_terminal_states() {
+        let mut state = State::Cold;
+        assert!(state.start(true).is_err());
+        state.start(false).unwrap();
+        assert!(state.start(false).is_err());
+        assert!(state.start(true).is_err());
+        state.completed().unwrap();
+        for _ in 0..32 {
+            assert!(state.start(false).is_err());
+            state.start(true).unwrap();
+            assert!(state.start(true).is_err());
+            state.completed().unwrap();
+        }
+        for mut terminal in [State::Loading, State::Closed, State::Broken] {
+            assert!(terminal.start(false).is_err());
+            assert!(terminal.start(true).is_err());
+            assert!(terminal.completed().is_err());
+        }
     }
     #[test]
     fn retained_audit_counts_do_not_replace_independent_close_or_cumulative_source_accounting() {

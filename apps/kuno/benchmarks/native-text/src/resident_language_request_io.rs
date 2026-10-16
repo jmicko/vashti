@@ -1,4 +1,4 @@
-//! A separate, single PUBLIC language request capability. The historical
+//! Native request capacity and monotonic scope capability. The historical
 //! target4/target13 permit is unchanged. It authenticates owner/lifecycle and
 //! compiled fixture geometry; the language harness binds actual prompt bytes.
 #![allow(dead_code)] // Parent owns constructor integration and physical acceptance.
@@ -88,26 +88,38 @@ enum Phase {
 }
 struct Authority {
     geometry: Geometry,
+    capacity: usize,
     phase: Phase,
     scopes: u64,
+    base_scopes: u64,
     four_rows: bool,
 }
 impl Authority {
     fn new(geometry: Geometry, context: usize, actual: bool) -> Result<Self> {
         Geometry::new(geometry.prompt, geometry.outputs)?;
-        if context != geometry.context() || actual {
+        let valid = if crate::strata_intel_core::enabled() {
+            geometry.context() <= context && context <= crate::qsa_gpu::MAX_CONTEXT
+        } else {
+            context == geometry.context()
+        };
+        if !valid || actual {
             return Err(rejected());
         }
         Ok(Self {
             four_rows: false,
             geometry,
+            capacity: context,
             phase: Phase::Prefill,
             scopes: 0,
+            base_scopes: 0,
         })
     }
     fn active(&self, actual: bool) -> Result<bool> {
         if actual != (self.phase == Phase::Active)
-            || self.scopes != u64::from(self.phase != Phase::Prefill)
+            || self
+                .base_scopes
+                .checked_add(u64::from(self.phase != Phase::Prefill))
+                != Some(self.scopes)
         {
             return Err(rejected());
         }
@@ -158,14 +170,57 @@ impl Authority {
         Ok(())
     }
     fn retained_native_scope(&self) -> Result<u64> {
-        if !crate::strata_intel_core::enabled() || self.phase != Phase::Closed || self.scopes != 1 {
+        if !crate::strata_intel_core::enabled()
+            || self.phase != Phase::Closed
+            || self.base_scopes.checked_add(1) != Some(self.scopes)
+        {
             return Err(rejected());
         }
         Ok(self.scopes)
     }
+    fn rearm_native(
+        &mut self,
+        geometry: Geometry,
+        capacity: usize,
+        erased_scope: u64,
+        actual: bool,
+    ) -> Result<()> {
+        Geometry::new(geometry.prompt, geometry.outputs)?;
+        if self.retained_native_scope()? != erased_scope
+            || actual
+            || capacity != self.capacity
+            || geometry.context() > capacity
+            || self.scopes.checked_add(1).is_none()
+        {
+            return Err(rejected());
+        }
+        self.active(false)?;
+        self.geometry.prompt.zeroize();
+        self.geometry.outputs.zeroize();
+        self.geometry = geometry;
+        self.base_scopes = self.scopes;
+        self.phase = Phase::Prefill;
+        Ok(())
+    }
+    fn starting_after_erasure(&self, scope: u64) -> Result<()> {
+        self.active(false)?;
+        if !crate::strata_intel_core::enabled()
+            || scope == 0
+            || self.phase != Phase::Prefill
+            || self.base_scopes != scope
+            || self.scopes != scope
+        {
+            return Err(rejected());
+        }
+        Ok(())
+    }
     fn validate_begin(&self, position: usize, actual: bool) -> Result<()> {
         self.active(actual)?;
-        if self.phase != Phase::Prefill || position != self.geometry.prompt || actual {
+        if self.phase != Phase::Prefill
+            || position != self.geometry.prompt
+            || actual
+            || self.scopes.checked_add(1).is_none()
+        {
             return Err(rejected());
         }
         Ok(())
@@ -176,7 +231,7 @@ impl Authority {
             return Err(rejected());
         }
         self.phase = Phase::Active;
-        self.scopes = 1;
+        self.scopes = self.scopes.checked_add(1).ok_or(rejected())?;
         Ok(())
     }
     fn validate_end(&self, position: usize, actual: bool) -> Result<()> {
@@ -201,6 +256,8 @@ impl Drop for Authority {
         self.geometry.prompt.zeroize();
         self.geometry.outputs.zeroize();
         self.scopes.zeroize();
+        self.base_scopes.zeroize();
+        self.capacity.zeroize();
         self.phase = Phase::Closed;
     }
 }
@@ -222,6 +279,27 @@ impl Permit {
     }
     pub(super) fn retained_native_scope(&self) -> Result<u64> {
         self.authority.retained_native_scope()
+    }
+    pub(super) fn rearm_native(
+        &mut self,
+        binding: GraphBindingId,
+        capacity: usize,
+        geometry: Geometry,
+        scope: u64,
+        actual: bool,
+    ) -> Result<()> {
+        self.identity(binding, capacity)?;
+        self.authority
+            .rearm_native(geometry, capacity, scope, actual)
+    }
+    pub(super) fn starting_after_erasure(&self, scope: u64) -> Result<()> {
+        self.authority.starting_after_erasure(scope)
+    }
+    pub(super) fn current_scope(&self, actual: bool) -> Result<u64> {
+        if !self.authority.active(actual)? {
+            return Err(rejected());
+        }
+        Ok(self.authority.scopes)
     }
     pub(super) fn validate_geometry(&self, prompt: usize, outputs: usize) -> Result<()> {
         if self.authority.phase != Phase::Prefill
@@ -259,7 +337,7 @@ impl Permit {
         })
     }
     pub(super) fn identity(&self, binding: GraphBindingId, context: usize) -> Result<()> {
-        if self.binding != Some(binding) || context != self.authority.geometry.context() {
+        if self.binding != Some(binding) || context != self.authority.capacity {
             return Err(rejected());
         }
         Ok(())
@@ -366,6 +444,20 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             permit.begin(model.position, actual)
         })
     }
+    pub(crate) fn current_native_language_scope(&self) -> Result<u64> {
+        if self.poisoned || self.retired.load(Ordering::Acquire) {
+            return Err(rejected());
+        }
+        let permit = self
+            .native_batch
+            .as_ref()
+            .ok_or(rejected())?
+            .public_language_request_io
+            .as_ref()
+            .ok_or(rejected())?;
+        permit.identity(self.graph.binding_id(), self.context)?;
+        permit.current_scope(self.admission.request_io_reuse_active())
+    }
     pub(crate) fn public_language_request_io_active(&self) -> Result<bool> {
         if self.poisoned || self.retired.load(Ordering::Acquire) {
             return Err(rejected());
@@ -420,6 +512,42 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn retained_native_requests_share_capacity_with_monotonic_single_use_scopes() {
+        if !crate::strata_intel_core::enabled() {
+            return;
+        }
+        let capacity = crate::qsa_gpu::MAX_CONTEXT;
+        let mut a = Authority::new(Geometry::new(1, 1).unwrap(), capacity, false).unwrap();
+        for (index, (prompt, outputs)) in [(1, 1), (13, 16), (4096, 8192), (32767, 1), (1, 32767)]
+            .into_iter()
+            .enumerate()
+        {
+            let g = Geometry::new(prompt, outputs).unwrap();
+            if index != 0 {
+                assert!(
+                    a.rearm_native(g, capacity, index as u64 - 1, false)
+                        .is_err()
+                );
+                assert!(a.rearm_native(g, capacity, index as u64, true).is_err());
+                a.rearm_native(g, capacity, index as u64, false).unwrap();
+                a.starting_after_erasure(index as u64).unwrap();
+                assert!(a.rearm_native(g, capacity, index as u64, false).is_err());
+            }
+            assert_eq!(a.scopes, index as u64);
+            a.begin(prompt, true).unwrap();
+            assert_eq!(a.scopes, index as u64 + 1);
+            assert!(a.rearm_native(g, capacity, a.scopes, false).is_err());
+            a.end(prompt, false).unwrap();
+            a.validate_completed_native(prompt, false).unwrap();
+        }
+        a.scopes = u64::MAX;
+        a.base_scopes = u64::MAX - 1;
+        assert!(
+            a.rearm_native(Geometry::new(1, 1).unwrap(), capacity, u64::MAX, false)
+                .is_err()
+        );
+    }
     #[test]
     fn retained_native_reset_requires_the_closed_original_scope_and_actual_cursor() {
         if !crate::strata_intel_core::enabled() {

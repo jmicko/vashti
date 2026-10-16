@@ -859,6 +859,7 @@ impl DraftOutput {
 
 #[path = "resident_mtp_device.rs"]
 mod device_cache;
+pub(crate) use device_cache::NativeRequestResetReceipt;
 #[path = "resident_mtp_admission.rs"]
 mod shared_admission;
 use shared_admission::Ledger;
