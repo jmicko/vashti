@@ -407,12 +407,11 @@ pub(crate) fn draft_pick(
             d.copy_from_slice(&w.to_le_bytes());
         }
         s.write(CONTROL, control)?;
-        if let Some(maps) = &cjk {
-            if maps[0].size_in_used() < crate::resident_mtp::cjk::MAP_BYTES as u64
-                || maps[1].size_in_used() < (VOCAB * 4) as u64
-            {
-                return Err(reject());
-            }
+        if let Some(maps) = &cjk
+            && (maps[0].size_in_used() < crate::resident_mtp::cjk::MAP_BYTES as u64
+                || maps[1].size_in_used() < (VOCAB * 4) as u64)
+        {
+            return Err(reject());
         }
         let mut prepare = vec![
             s.roots[P].clone(),
