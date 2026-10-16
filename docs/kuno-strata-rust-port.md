@@ -1,16 +1,18 @@
 # Strata Rust whole-model port experiment
 
-**Current CPU-only resume (2026-10-16):** source `81ff9640afcaf9c520e1915ea668cd49bdef60dc`.
-Read the [sole residual receipt](kuno-strata-rewrite-completion.md#sole-prompt-residual-and-coupled-teacher-scratch-2026-10-16)
-and [checkpoint](kuno-native-text-checkpoint.md). Actual GR/PLE prompt execution
-now keeps one target R with single writable descriptors; MTP teacher uses idle
-PLE scratch and preserves target carry.467 distinct focused CPU cases /58 suites,
-strict core/off lint and formatting pass. Normal artifact `strata-single-residual-ordinary-20261016/`, SHA256
-`215dc87b810702baa372bb7fd4709a2929695371508c7b0d6ef7728de0616d2c`; source-clean/stable build,
-independent hash/mode0500 and334 offline variants pass (122 physical checks). No device initialized. Second-R removal saves160MiB logical
-payload, while owning2080MiB roots remain unchanged. Remaining allocator/whole-
-device pricing/source/scheduling and numerical/hardware gates stay open. Whole
-rewrite incomplete, no live speed tests. Required Vashti changes:none.
+**Current CPU-only resume (2026-10-16):** source `ba0cc6a815c8f4aa562b7bb386342817e8a0ee30`.
+Read the [exact-page receipt](kuno-strata-rewrite-completion.md#exact-exclusive-pages-and-shared-prompt-inventory-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). Actual allocator, shared prompt
+inventory, admission and target/MTP/source pricing now connect exact aligned pages
+and native large2MiB granules. Prompt roots total1430MiB; target private source
+plan2,778,038,272B is842MiB lower. No observed VRAM or speed claim.504 distinct
+selected CPU cases /61 suites,54 ordinary cases /4 suites, strict core/off lint
+and changed format pass. Normal artifact `strata-exact-pages-ordinary-20261016/`, SHA256
+`794438e1b0b4f8bbb54752fd46e03f1c0c126b1e1a020e528f14468c6685e88f`; source-clean/stable build,
+independent hash/mode0500 and334 offline variants pass (122 physical checks).
+No device initialized. Remaining final queue/scheduling/substitution and full
+physical/numerical/state/failure/recovery gates stay open. Full rewrite incomplete;
+no live speed trials. Required Vashti changes:none.
 
 ## Active direction — finish the complete Rust port before speed testing (2026-10-14)
 

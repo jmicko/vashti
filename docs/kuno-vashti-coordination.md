@@ -6,16 +6,17 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, source `81ff9640afcaf9c520e1915ea668cd49bdef60dc`. Read the
-[sole residual handoff](#active-kuno-engine-handoff--sole-prompt-residual-2026-10-16)
-and [completion gate](kuno-strata-rewrite-completion.md). GR/PLE and actual MTP
-teacher now connect one target R plus idle teacher scratch.467 focused CPU cases
-pass. Full rewrite incomplete; physical/numerical/pricing gates remain open.
+`codex/strata-rust-port`, source `ba0cc6a815c8f4aa562b7bb386342817e8a0ee30`. Read the
+[exact-page handoff](#active-kuno-engine-handoff--exact-native-pages-2026-10-16)
+and [completion gate](kuno-strata-rewrite-completion.md). Exact allocator, shared
+prompt inventory, admission and model pricing now connect.504 selected CPU cases,
+54 ordinary cases and strict lint pass. Full rewrite incomplete; physical/
+numerical/pricing and final scheduling/substitution gates remain open.
 
 User continuation remains CPU-only; goal active. No GPU/model/service/install/
-release/API/frontend action. Root not needed; shared-shell sudo refresh unconfirmed.
-Physical recovery stays historicalOct15; no current-health claim. Canonical work/
-inherited untracked files preserved. Required Vashti changes:none.
+release/API/frontend action. Root not needed; last sudo refresh unconfirmed.
+Physical recovery stays historicalOct15; no current-health claim. Preserve
+canonical application work/inherited untracked files. Required Vashti changes:none.
 
 ## Ownership
 
@@ -7110,3 +7111,31 @@ rewrite incomplete, speed gate closed. No GPU/model/service/install/release/API/
 frontend action; required Vashti changes:none. Sudo refresh in the shared shell
 unconfirmed; no root needed. Physical recovery historicalOct15. Preserve canonical
 application work and inherited untracked files.
+
+
+## Active Kuno engine handoff — exact native pages (2026-10-16)
+
+Source `ba0cc6a815c8f4aa562b7bb386342817e8a0ee30`, isolated `codex/strata-rust-port`.
+Read the [complete source/validation receipt](kuno-strata-rewrite-completion.md#exact-exclusive-pages-and-shared-prompt-inventory-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). Selected original allocator
+owns exact aligned pages, reuses only equal sizes and checks descriptor capacity.
+Shared live inventory drives prompt carving and allocation;2MiB private granules,
+admission and target/MTP/public-source bounds move together. Prompt requests are
+756/642/32MiB; target private plan2,778,038,272B is842MiB lower. Ordinary allocation
+policy stays unchanged. No original expert/model/kernel math or API changes.
+
+504 distinct selected CPU cases /61 nonempty suites,54 ordinary cases /4 suites,
+final locked release test builds, strict core/off lint and changed format pass.
+Real allocator tests use metadata-only counting CPU storage, not a GPU. Linked
+receipt records corrected profile fixtures/admission quotes and source limits.
+Normal artifact `strata-exact-pages-ordinary-20261016/`, SHA256
+`794438e1b0b4f8bbb54752fd46e03f1c0c126b1e1a020e528f14468c6685e88f`; source-clean/stable build,
+independent hash/mode0500 and334 offline variants pass (122 physical checks). No device,
+model, inference, service, install, release or frontend action. Required Vashti
+changes:none. No physical memory/refund/residency or speed claim. Goal active
+CPU-only, whole rewrite incomplete, live speed gate closed. Next final source
+queue/scheduling/substitution and whole-device physical/runtime/HOST pricing,
+numerical/state/full-context/hot-request/failure/recovery gates. Private input
+remains independently gated; current CLI compiled-public/one-request. Root not
+needed; last sudo refresh unconfirmed. Recovery historicalOct15. Preserve
+canonical application work and inherited untracked files.

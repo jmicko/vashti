@@ -1,37 +1,44 @@
-<!-- Current resume: 2026-10-16, source 81ff9640afcaf9c520e1915ea668cd49bdef60dc, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source ba0cc6a815c8f4aa562b7bb386342817e8a0ee30, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, source `81ff9640afcaf9c520e1915ea668cd49bdef60dc`. Goal active CPU-only.
-Read the [sole residual receipt](kuno-strata-rewrite-completion.md#sole-prompt-residual-and-coupled-teacher-scratch-2026-10-16)
-and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--sole-prompt-residual-2026-10-16).
-All prompt GR/PLE halves now update original `outer[0]` in place. Exact view
-identity selects one writable descriptor; partial aliases fail. MTP teacher
-preserves the target carry and uses idle PLE `phase[1]` as its residual, with
-separate normalized hidden and token/status. Dynamic shared-expert indices,
-mixed-image identity, final carry and PLE diagnostic tail move together. The
-packed GR producer now has an explicit storage-memory barrier before other-lane
-reads. Fixed32/cooperative16 selection remains connected.
+branch `codex/strata-rust-port`, source `ba0cc6a815c8f4aa562b7bb386342817e8a0ee30`. Goal active CPU-only.
+Read the [exact-page receipt](kuno-strata-rewrite-completion.md#exact-exclusive-pages-and-shared-prompt-inventory-2026-10-16)
+and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--exact-native-pages-2026-10-16).
+Actual selected allocator now owns exact aligned pages and only reuses equal-
+sized pages. Native large private spans use2MiB granules; small slabs and ordinary
+builds preserve original rules. The same live inventory drives prompt carving
+and owning root quote:756MiB,642MiB,32MiB,1430MiB total. Admission and all model/
+source constructors use matching charges. QSA32K state shrinks192MiB; total
+target private plan2,778,038,272B is842MiB below the preceding source. MTP complete
+private plan62,586,880B remains within its128MiB upper grant. Runtime Q2 public
+plan is independently computed; do not substitute a legacy profile constant.
+No model source, expert identity, kernel math, context/row geometry or API change.
 
-467 distinct focused CPU cases /58 suites, final locked selected release test
-build, strict core/off lint and changed formatting pass. Linked receipt records
-exact logs, fixed test-import/null-ID fixture failures and source limits.
-Normal frozen artifact `strata-single-residual-ordinary-20261016/`, SHA256
-`215dc87b810702baa372bb7fd4709a2929695371508c7b0d6ef7728de0616d2c`; source-clean/stable build,
-independent hash/mode0500 and334 offline variants (122 physical checks) pass. No GPU/adapter
-initialized, numerical/model acceptance or performance claim. Removing the second
-R removes160MiB logical scratch inside unchanged2080MiB registered prompt roots;
-no physical memory refund.
+504 distinct selected CPU cases /61 suites and54 ordinary cases /4 suites pass;
+final locked builds, strict core/off lint and changed format pass. Exact logs,
+profile corrections and metadata-only real-allocator test limits are linked above.
+Normal artifact `strata-exact-pages-ordinary-20261016/`, SHA256
+`794438e1b0b4f8bbb54752fd46e03f1c0c126b1e1a020e528f14468c6685e88f`; source-clean/stable build,
+independent hash/mode0500 and334 offline variants pass (122 physical checks). No GPU/adapter
+initialized; no numerical/model, physical residency/refund or performance claim.
 
-**Next:** allocator granularity/whole-device pricing and final source/scheduling/
-substitution audit, then numerical/state/full-context/hot-request/failure/recovery
-acceptance under renewed GPU authorization. Protected private executable input
-remains an independent gate; current CLI compiled-public/one-request. Whole
-rewrite incomplete, speed gate closed. No GPU/model/service/install/release/API/
-frontend action; required Vashti changes:none. Root not needed; shared-shell sudo
-refresh is unconfirmed. Last physical recovery stays historicalOct15. Preserve
-canonical application work and inherited untracked files.
+**Next:** final pinned-source queue/scheduling/substitution audit, whole-device
+physical/runtime/HOST pricing acceptance, numerical/state/full-context/hot-request/
+failure/recovery gates under renewed GPU authorization. Protected private input
+remains independent; current CLI compiled-public/one-request. Whole rewrite
+incomplete, speed gate closed. No GPU/model/service/install/release/API/frontend
+action; required Vashti changes:none. Root not needed; last shared-shell sudo
+refresh unconfirmed. Physical recovery stays historicalOct15. Preserve canonical
+application work and inherited untracked files.
+
+**Previous sole-R block (`81ff964`):** all prompt GR/PLE halves update original
+R in place, with single writable descriptors, packed mixed-image reuse and a
+storage barrier before other-lane packed GR reads. Actual MTP teacher preserves
+target carry using idle PLE key scratch.467 CPU cases and334 offline variants
+passed. Its160MiB logical reduction is now reflected by the new owning inventory;
+its old2080MiB physical-root quote is superseded by the source above.
 
 **Previous subgroup block (`5d668c3`):**463 CPU cases,331 offline variants
 (122 physical checks), strict core/off lint and normal frozen artifact pass.
