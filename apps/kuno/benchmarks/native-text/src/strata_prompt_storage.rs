@@ -1,12 +1,12 @@
 //! Carved prompt owners, borrowed from the three real admitted stage roots.
 //! MIT Strata fb58e0 prefill.cpp::carve keeps GR/residual lifetime outside the
 //! overlaid attention/MoE region. Here the working images are bounded to the
-//! lower64 MiB and the connected GR intermediates occupy distinct upper views.
+//! lower128 MiB and the connected GR intermediates occupy distinct upper views.
 use super::*;
 // Persistent view tables, construction vectors and the largest live QSA
 // argument bundle are charged together; all GPU bytes remain in old roots.
 pub(crate) const HOST_BYTES: usize = 32 * 1024;
-const HALF: u64 = 64 * 1024 * 1024;
+pub(super) const WORKING_BYTES: u64 = 128 * 1024 * 1024;
 pub(crate) struct Storage {
     working: [Handle; 3],
     moe: groups::Views,
@@ -41,7 +41,7 @@ impl Storage {
         }
         let carve = |root: &Handle, words: &[usize]| -> Result<Vec<Handle>> {
             let root_bytes = allocation::whole_root_bytes(root)?;
-            let mut cursor = HALF;
+            let mut cursor = WORKING_BYTES;
             let mut views = Vec::with_capacity(words.len());
             for &n in words {
                 // Native Alloc::take leaves256 bytes and aligns each cell to256.
@@ -109,8 +109,8 @@ impl Storage {
         .try_into()
         .map_err(|_| Error::InvalidBufferLength)?;
         let working = [
-            roots[0].clone().offset_end(sizes[0] - HALF),
-            roots[1].clone().offset_end(sizes[1] - HALF),
+            roots[0].clone().offset_end(sizes[0] - WORKING_BYTES),
+            roots[1].clone().offset_end(sizes[1] - WORKING_BYTES),
             roots[2].clone(),
         ];
         for (i, a) in persistent.iter().enumerate() {
@@ -309,8 +309,8 @@ mod owned_layout_tests {
             for h in layout.moe.handles() {
                 assert!(layout.output(h));
             }
-            assert_eq!(layout.working[0].size_in_used(), 64 * 1024 * 1024);
-            assert_eq!(layout.working[1].size_in_used(), 64 * 1024 * 1024);
+            assert_eq!(layout.working[0].size_in_used(), WORKING_BYTES);
+            assert_eq!(layout.working[1].size_in_used(), WORKING_BYTES);
         }
     }
 }

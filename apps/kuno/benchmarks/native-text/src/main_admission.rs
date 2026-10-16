@@ -309,7 +309,10 @@ mod tests {
                 ledger.precharge(&roots),
                 Ok(crate::strata_prompt::allocation::MAIN_BYTES)
             );
-            assert_eq!(ledger.upper_bytes(), 3 * 512 * 1024 * 1024);
+            assert_eq!(
+                ledger.upper_bytes(),
+                crate::strata_prompt::allocation::MAIN_BYTES
+            );
         } else {
             assert_eq!(MAX_PAGE_BYTES, 128 * 1024 * 1024);
             assert_eq!(

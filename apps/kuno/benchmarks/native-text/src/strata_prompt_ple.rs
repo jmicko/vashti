@@ -4,11 +4,11 @@
 use super::*;
 use std::{cell::RefCell, sync::mpsc};
 
-// At2048 rows, current and prefetched20MiB embeddings, runtime upload copy,
-// <=3.44MiB original packed rows, wiping read plans and finite worker stacks
-// coexist. Reserve64MiB; target embedding/other model copies are separately
-// charged in resident_model_prompt. No stack-sized2048-row metadata arrays.
-pub(crate) const HOST_BYTES: usize = 64 * 1024 * 1024;
+// At4096 rows, current and prefetched40MiB embeddings, runtime upload copy,
+// <=6.88MiB original packed rows, wiping read plans and finite worker stacks
+// coexist. Reserve128MiB; target embedding/other model copies are separately
+// charged in resident_model_prompt. No stack-sized4096-row metadata arrays.
+pub(crate) const HOST_BYTES: usize = 128 * 1024 * 1024;
 struct Prepared {
     binding: GraphBindingId,
     start: usize,

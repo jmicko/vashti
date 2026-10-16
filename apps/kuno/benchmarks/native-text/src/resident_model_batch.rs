@@ -1152,8 +1152,18 @@ fn validate_limits(l: &wgpu::Limits, tile: usize) -> Result<()> {
         || l.max_storage_buffers_per_shader_stage < 11
         || l.max_bindings_per_bind_group < 12
         || l.max_uniform_buffer_binding_size < 512
-        || l.max_storage_buffer_binding_size < 128 * 1024 * 1024
-        || l.max_buffer_size < 128 * 1024 * 1024
+        || l.max_storage_buffer_binding_size
+            < if crate::strata_intel_core::enabled() {
+                crate::strata_prompt::allocation::ROOT_BYTES
+            } else {
+                128 * 1024 * 1024
+            }
+        || l.max_buffer_size
+            < if crate::strata_intel_core::enabled() {
+                crate::strata_prompt::allocation::ROOT_BYTES
+            } else {
+                128 * 1024 * 1024
+            }
         || l.min_storage_buffer_offset_alignment == 0
         || l.min_uniform_buffer_offset_alignment == 0
         || l.min_storage_buffer_offset_alignment > 512
@@ -7838,15 +7848,23 @@ mod tests {
             max_storage_buffers_per_shader_stage: 11,
             max_bindings_per_bind_group: 12,
             max_compute_workgroup_storage_size: 8192,
-            max_storage_buffer_binding_size: 128 * 1024 * 1024,
-            max_buffer_size: 128 * 1024 * 1024,
+            max_storage_buffer_binding_size: if crate::strata_intel_core::enabled() {
+                crate::strata_prompt::allocation::ROOT_BYTES
+            } else {
+                128 * 1024 * 1024
+            },
+            max_buffer_size: if crate::strata_intel_core::enabled() {
+                crate::strata_prompt::allocation::ROOT_BYTES
+            } else {
+                128 * 1024 * 1024
+            },
             ..Default::default()
         };
         for tile in [4, 8] {
             validate_limits(&limits, tile).unwrap();
         }
         assert!(validate_limits(&limits, 16).is_err());
-        for kind in 0..6 {
+        for kind in 0..8 {
             let mut malformed = limits.clone();
             match kind {
                 0 => malformed.max_compute_workgroups_per_dimension = 4096,
@@ -7854,7 +7872,9 @@ mod tests {
                 2 => malformed.max_bindings_per_bind_group = 11,
                 3 => malformed.max_compute_workgroup_storage_size = 8191,
                 4 => malformed.min_storage_buffer_offset_alignment = 1024,
-                _ => malformed.min_uniform_buffer_offset_alignment = 0,
+                5 => malformed.min_uniform_buffer_offset_alignment = 0,
+                6 => malformed.max_storage_buffer_binding_size -= 1,
+                _ => malformed.max_buffer_size -= 1,
             }
             assert!(validate_limits(&malformed, 8).is_err());
         }

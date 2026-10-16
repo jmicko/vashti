@@ -5,8 +5,8 @@ use crate::{
     resident_util as u,
 };
 use kuno_text::Result;
-pub(crate) const DEFAULT_ROWS: usize = 2048;
-pub(crate) const ROOT_BYTES: u64 = 512 * 1024 * 1024;
+pub(crate) const DEFAULT_ROWS: usize = 4096;
+pub(crate) const ROOT_BYTES: u64 = 1024 * 1024 * 1024;
 pub(crate) const MAIN_BYTES: u64 = 3 * ROOT_BYTES;
 /// Structural whole-root envelope, shared by private Scope, raw ring and source
 /// attachment. Physical ownership still needs the arena/cache owner's backend
@@ -77,7 +77,7 @@ mod tests {
         for context in [1, 13, 4096, 32768] {
             let p = Plan::new(context).unwrap();
             assert_eq!(p.mode, Mode::Owned);
-            assert_eq!(p.rows, 2048);
+            assert_eq!(p.rows, DEFAULT_ROWS);
         }
         let loan = Plan::new(32769).unwrap();
         assert_eq!(loan.mode, Mode::CacheLoan);

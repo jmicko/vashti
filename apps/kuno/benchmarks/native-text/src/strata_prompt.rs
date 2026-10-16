@@ -1068,7 +1068,7 @@ mod tests {
         assert!(requested > 65535);
         for kernel in [Kernel::Copy, Kernel::Embedding, Kernel::GrWrite] {
             let grid = dispatch_grid(kernel, [requested, 1, 1]).unwrap();
-            assert_eq!(grid, [65535, 2, 1]);
+            assert_eq!(grid, [65535, requested.div_ceil(65535), 1]);
             let mut covered = 0;
             for y in 0..grid[1] {
                 for x in 0..grid[0] {

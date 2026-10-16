@@ -45,7 +45,7 @@ use zeroize::Zeroize;
 
 pub const MIN_SPAN_BYTES: usize = 32 * 1024;
 pub const MAX_SPAN_BYTES: usize = if cfg!(feature = "strata-intel-core") {
-    512 * 1024 * 1024
+    1024 * 1024 * 1024
 } else {
     128 * 1024 * 1024
 };
@@ -1684,7 +1684,7 @@ mod tests {
         assert_eq!(
             pool_options.len(),
             if cfg!(feature = "strata-intel-core") {
-                15
+                16
             } else {
                 13
             }

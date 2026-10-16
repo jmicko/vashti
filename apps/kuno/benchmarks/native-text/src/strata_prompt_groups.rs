@@ -3,20 +3,29 @@
 use super::*;
 use zeroize::Zeroizing;
 // Raw packet/readback lease, grouped map/upload and validation scratch peak
-// below1MiB at2048 rows; actual arena bytes are carved from priced owners.
-pub(crate) const HOST_BYTES: usize = 1024 * 1024;
-pub(crate) const RUNTIME_BYTES: u64 = 8 * 1024 * 1024;
+// below2MiB at4096 rows; actual arena bytes are carved from priced owners.
+pub(crate) const HOST_BYTES: usize = 2 * 1024 * 1024;
+pub(crate) const RUNTIME_BYTES: u64 = 16 * 1024 * 1024;
 pub(crate) const CAPACITY: usize = allocation::DEFAULT_ROWS;
 // Separate prompt geometry from MAX8 verifier/decode and hardware workgroups.
 pub(crate) const ROUTE_CAPACITY: usize = allocation::DEFAULT_ROWS;
 pub(crate) const ROUTES: usize = ROUTE_CAPACITY * 10;
-pub(crate) const LOGICAL: usize = 32768;
-pub(crate) const RAW_WORDS: usize = 65536;
-pub(crate) const MAP_WORDS: usize = 32768;
-pub(crate) const PROB_WORDS: usize = 32768;
-pub(crate) const STATUS_WORDS: usize = 65536;
-pub(crate) const GU_BYTES: u64 = 16 * 1024 * 1024;
-pub(crate) const PART_BYTES: u64 = 256 * 1024 * 1024;
+pub(crate) const LOGICAL: usize = 65536;
+pub(crate) const RAW_WORDS: usize = 131072;
+pub(crate) const MAP_WORDS: usize = 65536;
+pub(crate) const PROB_WORDS: usize = 65536;
+pub(crate) const STATUS_WORDS: usize = 131072;
+pub(crate) const GU_BYTES: u64 = 32 * 1024 * 1024;
+pub(crate) const PART_BYTES: u64 = 512 * 1024 * 1024;
+/// One compiled prompt ABI for actual Rust views and every native shader.
+/// Decode/MAX8 packet dimensions and expert address-table sizes stay separate.
+pub(crate) fn shader_prefix() -> String {
+    format!(
+        "const PROMPT_MAX_ROWS:u32={CAPACITY}u;const PROMPT_ROUTES:u32={ROUTES}u;const PROMPT_LOGICAL:u32={LOGICAL}u;const PROMPT_RAW_WORDS:u32={RAW_WORDS}u;const PROMPT_MAP_WORDS:u32={MAP_WORDS}u;const PROMPT_PROB_WORDS:u32={PROB_WORDS}u;const PROMPT_STATUS_WORDS:u32={STATUS_WORDS}u;const PROMPT_PART_WORDS:u32={}u;const PROMPT_WORKING_WORDS:u32={}u;\n",
+        PART_BYTES / 4,
+        storage::WORKING_BYTES / 4
+    )
+}
 const MEMBERS: usize = 1540;
 const LENGTHS: usize = 516;
 const OFFSETS: usize = 1028;

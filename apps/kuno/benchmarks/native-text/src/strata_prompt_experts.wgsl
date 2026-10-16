@@ -5,8 +5,8 @@ struct Params {count:u32,columns:u32,rows:u32,row_bytes:u32,group:u32,role:u32,r
 fn finite(x:f32)->bool {return abs(x)<=3.4028234663852886e38;}
 fn signed_byte(x:u32)->f32 {return f32(i32(x)-select(0,256,x>=128u));}
 fn valid()->bool {
-    return p.count>=1u&&p.count<=2048u&&p.role<=2u&&p.group<p.count*10u
-        && arrayLength(&map)==32768u&&map[0]==p.count&&map[1]==0u&&map[2]==p.count
+    return p.count>=1u&&p.count<=PROMPT_MAX_ROWS&&p.role<=2u&&p.group<p.count*10u
+        && arrayLength(&map)==PROMPT_MAP_WORDS&&map[0]==p.count&&map[1]==0u&&map[2]==p.count
         && map[3]>=1u&&map[3]<=512u&&map[3]<=p.count*10u&&p.group<map[3]
         && map[4u+p.group]<512u&&map[516u+p.group]>=1u&&map[516u+p.group]<=p.count&&map[1028u+p.group]+map[516u+p.group]<=p.count*10u;
 }
@@ -40,7 +40,7 @@ fn main(@builtin(global_invocation_id) id:vec3<u32>) {
     if arrayLength(&addresses)!=2048u||arrayLength(&strata_grid)!=8192u
         || arrayLength(&raw)!=p.r5||p.r5>2097152u||p.r0!=0u||p.r1==0u||p.r1>p.r5
         || p.r2!=2u*p.r1||p.r2>=p.r5||p.role!=select(0u,2u,DOWN_IMAGE)
-        || arrayLength(&packed)!=16777216u {atomicOr(&fault[0],128u);return;}
+        || arrayLength(&packed)!=PROMPT_WORKING_WORDS {atomicOr(&fault[0],128u);return;}
     let src=addresses[p.role*512u+map[4u+p.group]];
     let original_rows=select(p.rows/2u,p.rows,p.role==2u);let bytes=original_rows*p.row_bytes;
     let expected=select(p.r1,p.r5-p.r2,DOWN_IMAGE);
@@ -79,7 +79,7 @@ fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(local_invocation_index) tid:
         let route=map[1540u+map[1028u+p.group]+member];if route>=p.count*10u {atomicOr(&fault[0],128u);return;}
         let base=select(member*1280u,route*2560u,p.role==2u);let good=finite(sum);
         partial[base+row]=select(0.0,sum,good);if !good {atomicOr(&fault[0],128u);}
-        if p.role==2u&&row==0u {status[20480u+route]=select(0u,1u,good&&status[route]==1u);}
+        if p.role==2u&&row==0u {status[PROMPT_ROUTES+route]=select(0u,1u,good&&status[route]==1u);}
     }
 }
 // GEMM_END

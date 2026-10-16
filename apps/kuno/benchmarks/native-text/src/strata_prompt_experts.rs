@@ -27,7 +27,7 @@ impl Op {
                 .unwrap()
                 .0
         };
-        let mut s = section("COMMON").to_owned();
+        let mut s = groups::shader_prefix() + section("COMMON");
         if let Self::Dequant { dtype, down } = self {
             let helpers = include_str!("iq_moe_integer.wgsl")
                 .split_once("fn iq4_byte")

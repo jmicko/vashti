@@ -58,8 +58,14 @@ impl Kernel {
         match self {
             Self::Route => include_str!("strata_global_route.wgsl").into(),
             Self::Reduce => include_str!("strata_global_reduce.wgsl").into(),
-            Self::PromptRoute => include_str!("strata_prompt_route.wgsl").into(),
-            Self::PromptReduce => include_str!("strata_prompt_reduce.wgsl").into(),
+            Self::PromptRoute => {
+                crate::strata_prompt::groups::shader_prefix()
+                    + include_str!("strata_prompt_route.wgsl")
+            }
+            Self::PromptReduce => {
+                crate::strata_prompt::groups::shader_prefix()
+                    + include_str!("strata_prompt_reduce.wgsl")
+            }
         }
     }
 }

@@ -15,10 +15,10 @@ fn finite(x:f32)->bool { return abs(x)<=bitcast<f32>(0x7f7fffffu); }
 fn main(@builtin(local_invocation_index) local:u32,@builtin(subgroup_id) sg:u32,
         @builtin(subgroup_invocation_id) lane:u32,@builtin(subgroup_size) width:u32,
         @builtin(num_subgroups) nsg:u32) {
-    if p.count<1u || p.count>2048u || p.layer>=48u || p.epoch==0u || p.r0>3u
+    if p.count<1u || p.count>PROMPT_MAX_ROWS || p.layer>=48u || p.epoch==0u || p.r0>3u
         || width!=32u || nsg!=8u || arrayLength(&logits)<p.count*512u
-        || arrayLength(&remap)!=32768u || arrayLength(&map)!=65536u
-        || arrayLength(&probability)!=32768u || arrayLength(&usage)!=32768u || arrayLength(&fault)<1u {return;}
+        || arrayLength(&remap)!=32768u || arrayLength(&map)!=PROMPT_RAW_WORDS
+        || arrayLength(&probability)!=PROMPT_PROB_WORDS || arrayLength(&usage)!=32768u || arrayLength(&fault)<1u {return;}
     if local==0u {atomicStore(&bad,0u);}
     workgroupBarrier();
     for(var first=0u;first<p.count;first+=8u) {
@@ -54,7 +54,7 @@ fn main(@builtin(local_invocation_index) local:u32,@builtin(subgroup_id) sg:u32,
             if selected>=512u {atomicOr(&bad,2u);map[1540u+token*10u+rank]=512u;}
             let cell=remap[p.layer*512u+min(selected,511u)];
             if cell>=512u {atomicOr(&bad,2u);}
-            map[1540u+token*10u+rank]=cell;map[32768u+token*10u+rank]=selected;
+            map[1540u+token*10u+rank]=cell;map[PROMPT_LOGICAL+token*10u+rank]=selected;
         }
     }
     for(var d=16u;d>0u;d/=2u) {winning_lane_sum+=subgroupShuffleXor(winning_lane_sum,d);}
@@ -67,7 +67,7 @@ fn main(@builtin(local_invocation_index) local:u32,@builtin(subgroup_id) sg:u32,
     workgroupBarrier();
     if local==0u {
         if atomicLoad(&bad)!=0u {atomicOr(&fault[0],128u);return;}
-        if (p.r0&1u)!=0u {for(var route=0u;route<p.count*10u;route++) {usage[p.layer*512u+map[32768u+route]]+=1.0;}}
+        if (p.r0&1u)!=0u {for(var route=0u;route<p.count*10u;route++) {usage[p.layer*512u+map[PROMPT_LOGICAL+route]]+=1.0;}}
         map[0]=p.count;map[1]=0u;map[2]=p.count;map[3]=0u;
     }
 }
