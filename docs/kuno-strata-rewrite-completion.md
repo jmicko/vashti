@@ -4841,3 +4841,76 @@ Formatting of changed Rust files and git whitespace checks pass. Main checkout
 is committed except the preserved inherited Python __pycache__ directory.
 All compile/validation subprocesses have finished; goal remains active for CPU
 source work. No hardware claim, installation or consumer API change.
+
+## Attention invocation transactions before capture (2026-10-16)
+
+Source`f965f63` connects preparation of every actual GDN/QSA transaction before
+target graph capture. This follows the selected Intel control separation in
+`verify.cpp::capture/run`: retain the window graph, stage the current invocation
+inputs/metadata, then execute it and separately commit verified state. It is a
+prerequisite of direct graph invocation, not the finished direct-launch path.
+
+Each family now has an opaque PreparedGdnBatch/PreparedQsaBatch containing the
+original armed receipt. Preparation authenticates graph/stage/public identities,
+full private/public owners, ranges, shared-workspace/poison identity, context and
+ordered per-stage generation; it starts the original lifecycle and stage anchor.
+It queues no math, transfer or status kernels. The real core caller prepares all
+48 attention stages before capture, using the original GR MIXED scratch identity.
+The GR getter conveys only that identity at an idle workspace boundary, not a
+produced value or completed-read authority.
+
+Each actual layer's math enqueue consumes exactly its prepared transaction,
+rechecks the original anchor/generation/state owners and matching input/output/
+spans/public/fault identities, and returns the existing pending receipt. Kernel
+math, arguments, original replay-cache chunk ID, status folds and final output/
+fault/acceptance checks are unchanged. No prepared transaction can be passed to
+commit: its inner receipt is private to the owning family. Abandonment retains
+the existing sticky poison and full metadata zeroization. All preparation slots
+must be consumed before the target branch seals. Legacy enqueue entry points
+compose the same two phases, preserving their ordinary math schedule.
+
+The fixed additional two48-entry option arrays are explicitly included in host
+metadata admission; no GPU state, scratch or model roots are added. A focused
+metadata-cap test covers the selected aggregate separately from older feature-off
+hard-coded GPU totals. New prepared-ticket Drop tests exercise real armed receipt
+abandonment in both families. Existing generation, alias, lifecycle, all-stage
+preflight and commit tests remain the acceptance contract.
+
+Initial CPU check caught a moved-local `chunk` reference in GDN replay retention;
+it now comes from the authenticated original stamp, preserving its generation.
+Strict selected-core release Clippy passes. Final CPU test build/results and
+feature-off Clippy are pending at this receipt's creation. No GPU, service, sudo,
+model mutation, image/private-content test or throughput trial ran.
+
+Remaining direct-replay dependencies: typed invocation position/epoch staging,
+retained native graph launch, and the original GR/shared/expert end-of-window
+bookkeeping without rebuilding math. Prepared GDN/QSA/PLE tickets cannot replace
+actual graph submission/completion, and an old graph must not run with stale INFO
+positions. Commit/event overlap, placement/configuration substitutions and full
+source/numerical/owning-erasure audits remain required. Required Vashti changes:none.
+
+### Attention preparation CPU receipts
+
+Exact sourcef965f63: locked release test build passes
+(`strata-native-attention-invocation-final-test-build-20261016.log`). Focused
+`strata-native-attention-invocation-cpu-tests-20261016.log` passes38cases:18GDN
+batch,16QSA batch,1selected metadata-cap/inventory,3native branch-layout. Both
+new prepared-ticket Drop cases execute. Existing generation/order, alias/epoch,
+all-stage preflight-before-commit, cursor, queue/status, cancellation/poison,
+owned-layout and shader-build cases pass within these named modules. Full native
+core suite remains unaccepted outside this scope; no hardware execution implied.
+
+Strict locked release core and feature-off Clippy pass atf965f63:
+`strata-native-attention-invocation-{core,off}-clippy-20261016.log`. Formatting
+and whitespace checks pass. Kernel shader sources/math were not changed; the
+previous326-shader receipt is unchanged-source evidence, not a new live shader
+execution. All checks are CPU-only and all processes have completed.
+
+Next direct-invocation implementation must also preserve GDN replay-cache
+metadata (start/count/original chunk), actual GR/shared consumer bookkeeping and
+MoE stage epochs, not only CPU family anchors. Captured uniform pages need typed
+position/epoch publications; patching bytes by comparing an old position is not
+a valid parameter contract. Retained graph submission must own its original
+resources and real queue completion. Only the existing whole-model proofs may
+commit these new invocation receipts. No speed test is authorized by this source
+progress; continue the full completion gate.

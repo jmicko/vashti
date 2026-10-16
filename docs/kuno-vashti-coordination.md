@@ -6,8 +6,8 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through`ed6373d`. Read the latest
-[combined CPU integration](#active-kuno-engine-handoff--combined-cjkint8-cpu-integration-2026-10-16)
+`codex/strata-rust-port`, engine source through`f965f63`. Read the latest
+[attention-transaction handoff](#active-kuno-engine-handoff--attention-transactions-before-graph-capture-2026-10-16)
 and [completion gate](kuno-strata-rewrite-completion.md). CJK draft head is now
 integrated with INT8 caches.25 focused CPU tests,326 offline shader variants and
 release build pass. Direct graph invocation and full numerical/GPU acceptance
@@ -6063,3 +6063,25 @@ No GPU/service/sudo operations this pass. Last recovered runtime snapshot is
 Oct15historical evidence, not a current live check. Renew GPU authorization before
 protected completion/numerical tests; only then consider the speed gate after
 all source requirements pass.
+
+
+### Active Kuno engine handoff — attention transactions before graph capture (2026-10-16)
+
+Source`f965f63` connects original GDN/QSA armed-transaction preparation before
+capture for all48 core attention stages. At each layer, real math enqueue consumes
+its exact prepared ticket and returns the original pending receipt. Existing
+anchors/generations, full owner/span/fault identities, cancellation/Drop poison
+and whole-model acceptance checks remain. No new GPU roots. Additional fixed
+metadata arrays are explicitly priced under the admitted host cap. Old enqueue
+entry points compose these phases; no ordinary math schedule is replaced.
+
+38focused CPU tests pass across GDN/QSA state policies, prepared Drop, selected
+metadata capacity and native branch layout. Strict locked release core/off
+Clippy, formatting and whitespace pass. See completion guide Attention preparation
+CPU receipts for exact logs and limits. No GPU/service/sudo work occurred; old
+physical recovery snapshot remains historical. Required Vashti changes:none.
+
+Continue typed invocation parameters and direct retained graph launch, preserving
+actual GR/shared/MoE/replay metadata and original completion/commit proofs. This
+is connected preparation, not complete no-enqueue execution. Numerical/hardware
+and speed acceptance remain pending. Goal active, CPU-only.

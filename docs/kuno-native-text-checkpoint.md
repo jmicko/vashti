@@ -1,9 +1,9 @@
-<!-- Current resume: 2026-10-16, sourceed6373d, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, sourcef965f63, codex/strata-rust-port.
 Goal active; CPU-only continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-09
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch`codex/strata-rust-port`, engine source through`ed6373d`. The active goal
+branch`codex/strata-rust-port`, engine source through`f965f63`. The active goal
 resumed CPU-only work. GPU/model/service/sudo work still requires renewed user
 authorization. Last physical recovery evidence is historical06:07:22Z onOct15;
 no subsequent GPU run, service query or live health claim was made this pass.
@@ -21,13 +21,20 @@ pass; locked release build passes. Strict core and feature-off Clippy checks are
 recorded in the completion receipt. Full core regression and numerical/GPU/state/
 owning-erasure acceptance remain incomplete. No new generation or speed result.
 
-**Next substantial block:** separate GDN/QSA transaction preparation from math
-queue construction, publish typed invocation parameters, then launch retained
-native graphs without rebuilding kernel calls. PLE staging is already separate.
-Preserve original armed receipts, actual state roles, real missing-expert sources
-and completed fences; directly submitting an old graph would use stale positions.
-Commit/event overlap, source/configuration differences and final whole-port audit
-also remain open. No gateway/UI work required. Required Vashti changes:none.
+**Latest connected block:** source`f965f63` prepares all48 GDN/QSA original
+armed transactions before graph capture, then each real layer's enqueue consumes
+its exact invocation. PLE staging was already separate. No GPU owners are added;
+extra fixed metadata is charged under the existing cap. Legacy callers compose
+the same phases.38 focused CPU tests and strict core/off release Clippy pass;
+see the completion guide's Attention preparation CPU receipts.
+
+**Next substantial block:** typed position/epoch parameter publication and real
+retained graph submission, preserving GR/shared/MoE bookkeeping and GDN replay
+metadata without rebuilding kernel calls. Only existing whole-model fault/output/
+acceptance proofs can commit state. Current source still enqueues math normally;
+full numerical/GPU/owning-erasure/speed acceptance is pending. No GPU/service/sudo
+work is authorized. Commit/event overlap, placement/configuration substitutions
+and final whole-port audit also remain open. Required Vashti changes:none.
 
 All older checkpoints below are historical.
 
