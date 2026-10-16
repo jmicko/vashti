@@ -1324,6 +1324,13 @@ impl WgpuStream {
         })?;
         self.transient_io.as_mut().unwrap().end_native_branch(key)
     }
+    pub(crate) fn set_native_strata_phase(
+        &mut self,
+        phase: cubecl_runtime::server::NativeStrataPhase,
+    ) -> Result<(), ServerError> {
+        self.private_io_active()?;
+        self.transient_io.as_mut().unwrap().set_native_phase(phase)
+    }
     pub(crate) fn replay_native_strata_branch(
         &mut self,
         key: cubecl_runtime::server::NativeStrataBranch,

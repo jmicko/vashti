@@ -2226,12 +2226,31 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         })
     }
     fn guard_private(&mut self, cache_position: usize) -> Result<()> {
+        self.guard_private_with_phase(cache_position, None)
+    }
+    /// Explicit current-cell or after-forward boundary for captured math. The
+    /// displacement is caller-declared, never guessed from an observed value.
+    fn guard_private_at_native(&mut self, offset: i16) -> Result<()> {
+        if !matches!(offset, 0 | 1) {
+            return Err(Error::InvalidBufferLength);
+        }
+        let position = self
+            .position
+            .checked_add(offset as usize)
+            .ok_or(Error::ArithmeticOverflow)?;
+        self.guard_private_with_phase(position, Some(offset))
+    }
+    fn guard_private_with_phase(
+        &mut self,
+        cache_position: usize,
+        phase: Option<i16>,
+    ) -> Result<()> {
         if cache_position > k::CONTEXT {
             return Err(Error::OutOfBounds);
         }
         if self.fused_sweeps {
             self.guard_private_fused(cache_position)?;
-            return self.guard_packed_cache(cache_position);
+            return self.guard_packed_cache(cache_position, phase);
         }
         for (index, &logical) in WORDS.iter().enumerate() {
             let b = self.ids[index];
@@ -2262,22 +2281,22 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             );
         }
         self.tick(N)?;
-        self.guard_packed_cache(cache_position)
+        self.guard_packed_cache(cache_position, phase)
     }
-    fn guard_packed_cache(&mut self, position: usize) -> Result<()> {
+    fn guard_packed_cache(&mut self, position: usize, phase: Option<i16>) -> Result<()> {
         if !crate::strata_intel_core::enabled() {
             return Ok(());
         }
-        crate::strata_mtp_front::launch(
+        crate::strata_mtp_front::guard(
             &self.arena,
-            crate::strata_mtp_front::Kernel::Guard,
             [k::CACHE_STORAGE_WORDS.div_ceil(64), 1, 1],
             vec![
                 u::handle(&self.arena, self.id(B::Keys))?,
                 u::handle(&self.arena, self.id(B::Values))?,
                 u::handle(&self.arena, self.id(B::Fault))?,
             ],
-            [1, position as u32, 0, 0, 0, 0, 0, 0],
+            position,
+            phase,
         )?;
         self.tick(1)
     }
@@ -2350,6 +2369,19 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         grid(words)
     }
     fn guard_private_fused(&mut self, cache_position: usize) -> Result<()> {
+        // Packed native caches have INTEGER roles; no fused-sweep predicate
+        // reads this scalar. Keep its unused metadata constant. The separate
+        // packed guard below still checks the actual current/closing boundary.
+        let cache_position = if crate::strata_intel_core::enabled() {
+            if sweep_role(B::Keys as usize) != sweeps::INTEGER
+                || sweep_role(B::Values as usize) != sweeps::INTEGER
+            {
+                return Err(Error::InvalidFormat("MTP packed cache sweep roles changed"));
+            }
+            0
+        } else {
+            cache_position
+        };
         // Fault is last in the original42-role registry. It gets a dedicated
         // atomic full scan AFTER these41 role guards, without u32/atomic alias.
         let roles: [usize; 41] = std::array::from_fn(|i| i);
@@ -4019,7 +4051,7 @@ impl ResidentMtp<'_, '_> {
             )? {
                 self.tick(4)?;
                 self.physical()?;
-                self.guard_private(self.position + 1)?;
+                self.guard_private_at_native(1)?;
                 return Ok(());
             }
         }
@@ -4062,7 +4094,7 @@ impl ResidentMtp<'_, '_> {
                 self.tick(1)?;
             }
             self.physical()?;
-            self.guard_private(self.position + 1)?;
+            self.guard_private_at_native(1)?;
             return Ok(());
         }
         if self.public_english_vocab.is_some() {
@@ -4112,7 +4144,7 @@ impl ResidentMtp<'_, '_> {
         }
         self.tick(1)?;
         self.physical()?;
-        self.guard_private(self.position + 1)?;
+        self.guard_private_at_native(1)?;
         Ok(())
     }
     fn native_confidence_supported(&self) -> bool {

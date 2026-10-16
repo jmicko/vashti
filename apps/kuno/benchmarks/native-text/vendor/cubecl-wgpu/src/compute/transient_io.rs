@@ -2888,6 +2888,13 @@ impl TransientIo {
             .begin_invocation(key, nonce, invocation)?;
         self.check_branch_metadata()
     }
+    pub(crate) fn set_native_phase(
+        &mut self,
+        phase: cubecl_runtime::server::NativeStrataPhase,
+    ) -> Result<(), ServerError> {
+        self.active()?;
+        self.branch_parameters.set_phase(phase)
+    }
     pub(crate) fn native_replay_key(
         &self,
         key: cubecl_runtime::server::NativeStrataBranch,

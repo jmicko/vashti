@@ -378,6 +378,7 @@ impl ResidentMtp<'_, '_> {
         &mut self,
         source: &WindowStart<'_>,
         prepared: Option<PreparedNativeFront>,
+        captured: bool,
         cancel: &AtomicBool,
     ) -> Result<()> {
         match source {
@@ -387,6 +388,13 @@ impl ResidentMtp<'_, '_> {
                     prepared.ok_or(Error::InvalidFormat("MTP first front not prepared"))?,
                     cancel,
                 )?;
+                if captured {
+                    self.client()?
+                        .set_native_strata_phase(cubecl_runtime::server::NativeStrataPhase::Draft {
+                            index: 0,
+                        })
+                        .map_err(error)?;
+                }
                 self.native_selected_rest(tokens.len())
             }
             _ => Err(Error::InvalidFormat("MTP first front preparation source")),
@@ -485,16 +493,27 @@ impl ResidentMtp<'_, '_> {
                 } else {
                     None
                 };
+                let front_origin = match source {
+                    WindowStart::Device { start, .. } => *start,
+                    _ => 0, // Unkeyed legacy paths never consume this origin.
+                };
                 let mut whole_branch = branch_rows
                     .filter(|_| minimum == 0.)
                     .map(|rows| {
                         cubecl_runtime::server::NativeStrataBranch::mtp_round(rows, count as u8)
+                            .and_then(|key| key.with_model_owner(self.binding))
                             .map_err(error)
                     })
                     .transpose()?;
                 if let Some(key) = whole_branch {
                     self.client()?
-                        .begin_native_strata_branch(key)
+                        .begin_native_strata_invocation(
+                            key,
+                            cubecl_runtime::server::NativeStrataInvocation::mtp(
+                                u32::try_from(front_origin).map_err(error)?,
+                            )
+                            .map_err(error)?,
+                        )
                         .map_err(error)?;
                 }
                 for member in 0..count {
@@ -506,17 +525,43 @@ impl ResidentMtp<'_, '_> {
                             } else {
                                 cubecl_runtime::server::NativeStrataBranch::mtp_step(member as u8)
                             }
+                            .and_then(|key| key.with_model_owner(self.binding))
                             .map_err(error)
                         })
                         .transpose()?;
                     if let Some(key) = step_branch {
                         self.client()?
-                            .begin_native_strata_branch(key)
+                            .begin_native_strata_invocation(
+                                key,
+                                cubecl_runtime::server::NativeStrataInvocation::mtp(
+                                    u32::try_from(if member == 0 {
+                                        front_origin
+                                    } else {
+                                        self.position
+                                    })
+                                    .map_err(error)?,
+                                )
+                                .map_err(error)?,
+                            )
                             .map_err(error)?;
+                        if member != 0 {
+                            self.client()?
+                                .set_native_strata_phase(
+                                    cubecl_runtime::server::NativeStrataPhase::Draft {
+                                        index: member as u8,
+                                    },
+                                )
+                                .map_err(error)?;
+                        }
                     }
                     let clock = Instant::now();
                     if member == 0 {
-                        self.forward_window_first(source, first_front.take(), cancel)?;
+                        self.forward_window_first(
+                            source,
+                            first_front.take(),
+                            step_branch.is_some() || whole_branch.is_some(),
+                            cancel,
+                        )?;
                     } else {
                         self.forward()?;
                     }
@@ -576,8 +621,17 @@ impl ResidentMtp<'_, '_> {
                         })?;
                         self.position += 1;
                         self.dispatches = 0;
+                        if whole_branch.is_some() {
+                            self.client()?
+                                .set_native_strata_phase(
+                                    cubecl_runtime::server::NativeStrataPhase::Draft {
+                                        index: (member + 1) as u8,
+                                    },
+                                )
+                                .map_err(error)?;
+                        }
                         self.clear_scratch_preserving_inputs(true)?;
-                        self.guard_private(self.position)?;
+                        self.guard_private_at_native(0)?;
                     }
                 }
                 if whole_branch.is_some() || first_front.is_some() {

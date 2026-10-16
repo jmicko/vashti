@@ -67,11 +67,12 @@ impl PublicTargetSubmissionBacklog {
     }
 }
 
-/// Content-free shape of a selected native Intel request branch. Buffer/context
-/// identities are checked again by the backend's exact recorded signature.
+/// Content-free shape/model namespace of a selected native Intel branch. The
+/// first recording authenticates and retains its exact buffer inventory.
 /// Positions, tokens, probabilities and sampling seeds are never keys.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct NativeStrataBranch {
+    model_owner: u64,
     family: u8,
     rows: u8,
     proposals: u8,
@@ -80,6 +81,26 @@ pub struct NativeStrataBranch {
     state_role: u8,
 }
 impl NativeStrataBranch {
+    /// Namespace recordings by the immutable model-instance identity. This is
+    /// content-free and restores per-drafter graph ownership on a shared stream.
+    pub fn with_model_owner(mut self, owner: u64) -> Result<Self, &'static str> {
+        if owner == 0 {
+            return Err("native model recording owner missing");
+        }
+        self.model_owner = owner;
+        Ok(self)
+    }
+    /// Resolve a declared math phase from immutable branch geometry only.
+    pub fn phase_offset(self, phase: NativeStrataPhase) -> Result<i16, &'static str> {
+        match (self.family, phase) {
+            (1 | 2, NativeStrataPhase::Front) => Ok(0),
+            (2, NativeStrataPhase::Draft { index }) if index < self.proposals => {
+                Ok(i16::from(self.rows - 1) + i16::from(index))
+            }
+            (3, NativeStrataPhase::Draft { index }) if index == self.proposals => Ok(0),
+            _ => Err("native branch phase shape"),
+        }
+    }
     /// Static target geometry only; no request controls or access authority.
     pub fn target_geometry(self) -> Option<(u8, u16, u8)> {
         (self.family == 1).then_some((self.rows, self.context_capacity, self.state_role))
@@ -102,6 +123,7 @@ impl NativeStrataBranch {
             return Err("native target branch shape");
         }
         Ok(Self {
+            model_owner: 0,
             family: 1,
             rows,
             proposals: 0,
@@ -116,6 +138,7 @@ impl NativeStrataBranch {
             return Err("native MTP round branch shape");
         }
         Ok(Self {
+            model_owner: 0,
             family: 2,
             rows,
             proposals,
@@ -130,6 +153,7 @@ impl NativeStrataBranch {
             return Err("native MTP step branch shape");
         }
         Ok(Self {
+            model_owner: 0,
             family: 3,
             rows: 1,
             proposals: step,
@@ -149,10 +173,37 @@ pub enum NativeStrataValue {
         /// Constant displacement encoded by the kernel's fixed graph shape.
         offset: i16,
     },
+    /// Window boundary, which may equal context end4096.
+    Boundary {
+        /// Constant displacement from the invocation origin.
+        offset: i16,
+    },
+    /// Declared current math phase; resolved to a static window displacement
+    /// before template capture. It never stores the actual current position.
+    PhasePosition {
+        /// Constant displacement from the shape-defined current phase.
+        offset: i16,
+    },
+    /// Phase-relative boundary rather than a readable token cell.
+    PhaseBoundary {
+        /// Constant displacement from the shape-defined current phase.
+        offset: i16,
+    },
     /// Current expert-routing stamp, supplied outside the branch identity.
     RouteEpoch,
     /// Whether this target window contributes to the original expert-usage map.
     RouteUsage,
+}
+/// Static native math phase, not a request value or an access/completion grant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NativeStrataPhase {
+    /// Accepted-prefix front; also the sole target phase.
+    Front,
+    /// Selected rest or follow-up draft, with the original proposal index.
+    Draft {
+        /// Original proposal index, bounded by this branch's fixed geometry.
+        index: u8,
+    },
 }
 /// Typed location in one original INFO record; contains no invocation values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -166,6 +217,7 @@ pub struct NativeStrataParameter {
 /// The branch key and retained template contain no copy of these values.
 #[derive(Clone, Copy)]
 pub struct NativeStrataInvocation {
+    kind: u32,
     position: u32,
     route_epoch: u32,
     route_usage: u32,
@@ -185,21 +237,39 @@ impl NativeStrataInvocation {
             return Err("native target invocation bounds");
         }
         Ok(Self {
+            kind: 1,
             position,
             route_epoch,
             route_usage: u32::from(route_usage),
         })
     }
-    /// Check that the current window fits this immutable target shape.
+    /// Fresh MTP cell origin: accepted-front start for a round, current cell
+    /// for an independently observed step. Geometry comes from its branch key.
+    pub fn mtp(position: u32) -> Result<Self, &'static str> {
+        if position >= 4096 {
+            return Err("native MTP invocation bounds");
+        }
+        Ok(Self {
+            kind: 2,
+            position,
+            route_epoch: 0,
+            route_usage: 0,
+        })
+    }
+    /// Check that the current target/draft window fits its immutable shape.
     pub fn validate_for(self, key: NativeStrataBranch) -> Result<(), &'static str> {
-        if key.family != 1
-            || self.route_epoch == 0
-            || self
-                .position
-                .checked_add(key.rows as u32)
-                .is_none_or(|end| end > key.context_capacity as u32)
+        let span = match (self.kind, key.family) {
+            (1, 1) if self.route_epoch != 0 => u32::from(key.rows),
+            (2, 2) => u32::from(key.rows) + u32::from(key.proposals) - 1,
+            (2, 3) => 1,
+            _ => return Err("native invocation family shape"),
+        };
+        if self
+            .position
+            .checked_add(span)
+            .is_none_or(|end| end > u32::from(key.context_capacity))
         {
-            return Err("native target invocation shape");
+            return Err("native invocation context extent");
         }
         Ok(())
     }
@@ -213,8 +283,16 @@ impl NativeStrataInvocation {
                 }
                 Ok(value as u32)
             }
-            NativeStrataValue::RouteEpoch => Ok(self.route_epoch),
-            NativeStrataValue::RouteUsage => Ok(self.route_usage),
+            NativeStrataValue::Boundary { offset } => {
+                let value = self.position as i64 + offset as i64;
+                if !(0..=4096).contains(&value) {
+                    return Err("native boundary expression bounds");
+                }
+                Ok(value as u32)
+            }
+            NativeStrataValue::RouteEpoch if self.kind == 1 => Ok(self.route_epoch),
+            NativeStrataValue::RouteUsage if self.kind == 1 => Ok(self.route_usage),
+            _ => Err("native control expression requires declared phase or target"),
         }
     }
     /// Clear the active retained control copy at close or retirement.
@@ -222,6 +300,7 @@ impl NativeStrataInvocation {
         // Control copies are short-lived stack values. The retained active copy
         // is cleared explicitly at branch close/retirement, not cached as a key.
         unsafe {
+            core::ptr::write_volatile(&mut self.kind, 0);
             core::ptr::write_volatile(&mut self.position, 0);
             core::ptr::write_volatile(&mut self.route_epoch, 0);
             core::ptr::write_volatile(&mut self.route_usage, 0);
@@ -901,6 +980,18 @@ where
         _stream_id: StreamId,
         _key: NativeStrataBranch,
         _invocation: Option<NativeStrataInvocation>,
+    ) -> Result<(), ServerError> {
+        Err(IoError::UnsupportedIoOperation {
+            backtrace: BackTrace::capture(),
+        }
+        .into())
+    }
+    /// Change the static math phase after enqueuing all preceding work on this
+    /// stream. This changes no GPU data and grants no completion authority.
+    fn set_native_strata_phase(
+        &mut self,
+        _stream_id: StreamId,
+        _phase: NativeStrataPhase,
     ) -> Result<(), ServerError> {
         Err(IoError::UnsupportedIoOperation {
             backtrace: BackTrace::capture(),

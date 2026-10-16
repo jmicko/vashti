@@ -9,6 +9,7 @@ use cubecl::{
     prelude::{CubeCount, CubeDim},
     wgpu::AutoCompiler,
 };
+use cubecl_runtime::server::{NativeStrataParameter, NativeStrataValue};
 use cubecl_runtime::{
     compiler::{CompilationError, CubeTask},
     id::KernelId,
@@ -115,7 +116,55 @@ pub(crate) fn launch(
     handles: Vec<Handle>,
     info: [u32; 8],
 ) -> Result<()> {
-    launch_impl(arena, kernel, grid, handles, info, 8)
+    launch_impl(
+        arena,
+        kernel,
+        grid,
+        handles,
+        info,
+        8,
+        position_field(kernel),
+    )
+}
+fn position_field(kernel: Kernel) -> Option<NativeStrataParameter> {
+    matches!(
+        kernel,
+        Kernel::Embed
+            | Kernel::Norm
+            | Kernel::Broadcast
+            | Kernel::Positions
+            | Kernel::Append
+            | Kernel::Identity
+    )
+    .then_some(NativeStrataParameter {
+        word: 1,
+        value: NativeStrataValue::PhasePosition { offset: 0 },
+    })
+}
+/// Packed-cache boundary is distinct from a readable token cell and may4096.
+pub(crate) fn guard(
+    arena: &PrivateArena,
+    grid: [usize; 3],
+    handles: Vec<Handle>,
+    position: usize,
+    phase_offset: Option<i16>,
+) -> Result<()> {
+    if position > 4096 {
+        return Err(Error::InvalidBufferLength);
+    }
+    let field = phase_offset.map(|offset| NativeStrataParameter {
+        word: 1,
+        value: NativeStrataValue::PhaseBoundary { offset },
+    });
+    launch_impl(
+        arena,
+        Kernel::Guard,
+        grid,
+        handles,
+        [1, position as u32, 0, 0, 0, 0, 0, 0],
+        8,
+        field,
+    )
 }
 pub(crate) fn launch_prompt(
     arena: &PrivateArena,
@@ -144,6 +193,7 @@ pub(crate) fn launch_prompt(
         handles,
         info,
         crate::strata_prompt::groups::CAPACITY as u32,
+        position_field(kernel),
     )
 }
 fn launch_impl(
@@ -153,6 +203,7 @@ fn launch_impl(
     handles: Vec<Handle>,
     info: [u32; 8],
     capacity: u32,
+    native: Option<NativeStrataParameter>,
 ) -> Result<()> {
     let client = arena.client().map_err(u::fault)?;
     if !crate::strata_intel_core::enabled()
@@ -168,11 +219,15 @@ fn launch_impl(
     for h in handles {
         args = args.with_buffer(h.binding());
     }
-    args = args.with_info(MetadataBindingInfo::custom(
+    let mut metadata = MetadataBindingInfo::custom(
         info.chunks_exact(2)
             .map(|p| p[0] as u64 | ((p[1] as u64) << 32))
             .collect(),
-    ));
+    );
+    if let Some(field) = native {
+        metadata = metadata.with_native_parameter(field.word, field.value);
+    }
+    args = args.with_info(metadata);
     // SAFETY: admitted MAX8 front owner validates complete geometry and retains
     // original public weights/private roots through publication and erasure.
     unsafe {

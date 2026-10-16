@@ -1125,6 +1125,26 @@ impl ComputeServer for WgpuServer {
         }
         result
     }
+    fn set_native_strata_phase(
+        &mut self,
+        stream_id: StreamId,
+        phase: cubecl_runtime::server::NativeStrataPhase,
+    ) -> Result<(), ServerError> {
+        let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
+        // Canonicalize preceding kernel INFO with its old phase before changing
+        // the next phase. Execute scheduling, not a GPU flush or queue join.
+        self.scheduler.execute_streams(vec![stream_id]);
+        let result = self
+            .scheduler
+            .stream(&stream_id)
+            .set_native_strata_phase(phase);
+        if result.is_ok()
+            && let Some(mutation) = mutation
+        {
+            mutation.accept();
+        }
+        result
+    }
     fn replay_native_strata_branch(
         &mut self,
         stream_id: StreamId,

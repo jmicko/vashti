@@ -4,7 +4,8 @@
 //! the same record lengths, page assignments and segment count before replay.
 use super::transient_io::fault;
 use cubecl_runtime::server::{
-    NativeStrataBranch, NativeStrataInvocation, NativeStrataParameter, ServerError,
+    NativeStrataBranch, NativeStrataInvocation, NativeStrataParameter, NativeStrataPhase,
+    NativeStrataValue, ServerError,
 };
 
 const MAX_BRANCHES: usize = 128;
@@ -64,6 +65,7 @@ struct Active {
     records: usize,
     pages: usize,
     invocation: Option<NativeStrataInvocation>,
+    phase: NativeStrataPhase,
 }
 #[derive(Default)]
 pub(crate) struct Parameters {
@@ -146,6 +148,7 @@ impl Parameters {
             records: s.records.len(),
             pages: s.pages.len(),
             invocation: Some(invocation),
+            phase: NativeStrataPhase::Front,
         });
         Ok(())
     }
@@ -278,7 +281,22 @@ impl Parameters {
             records: 0,
             pages: 0,
             invocation,
+            phase: NativeStrataPhase::Front,
         });
+        Ok(())
+    }
+    pub(crate) fn set_phase(&mut self, phase: NativeStrataPhase) -> Result<(), ServerError> {
+        let a = self
+            .active
+            .ok_or_else(|| fault("native phase outside branch"))?;
+        if a.invocation.is_none() {
+            return Err(fault("native phase requires typed invocation"));
+        }
+        self.branches[a.branch]
+            .key
+            .phase_offset(phase)
+            .map_err(fault)?;
+        self.active.as_mut().unwrap().phase = phase;
         Ok(())
     }
     fn segment(&mut self) -> Result<(&mut Segment, Active), ServerError> {
@@ -341,6 +359,35 @@ impl Parameters {
         let Some(invocation) = active.invocation else {
             return self.record(data.len() as u64);
         };
+        // The launcher declares which fields are phase-relative. Resolve the
+        // controller's static phase from shape, never by matching INFO values.
+        let mut resolved = [NativeStrataParameter {
+            word: 0,
+            value: NativeStrataValue::Position { offset: 0 },
+        }; 8];
+        for (out, field) in resolved.iter_mut().zip(fields) {
+            *out = *field;
+            out.value = match field.value {
+                NativeStrataValue::PhasePosition { offset } => NativeStrataValue::Position {
+                    offset: self.branches[active.branch]
+                        .key
+                        .phase_offset(active.phase)
+                        .map_err(fault)?
+                        .checked_add(offset)
+                        .ok_or_else(|| fault("native phase position overflow"))?,
+                },
+                NativeStrataValue::PhaseBoundary { offset } => NativeStrataValue::Boundary {
+                    offset: self.branches[active.branch]
+                        .key
+                        .phase_offset(active.phase)
+                        .map_err(fault)?
+                        .checked_add(offset)
+                        .ok_or_else(|| fault("native phase boundary overflow"))?,
+                },
+                value => value,
+            };
+        }
+        let fields = &resolved[..fields.len()];
         for field in fields {
             let at = field.word as usize * 4;
             let observed = u32::from_le_bytes(data[at..at + 4].try_into().unwrap());
@@ -590,6 +637,205 @@ impl Parameters {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn original_mtp_instances_do_not_share_recordings_on_the_same_request_stream() {
+        let shape = NativeStrataBranch::mtp_step(1).unwrap();
+        assert!(shape.with_model_owner(0).is_err());
+        let a = shape.with_model_owner(91).unwrap();
+        let b = shape.with_model_owner(92).unwrap();
+        let mut p = Parameters::default();
+        p.begin_invocation(a, 5, Some(NativeStrataInvocation::mtp(63).unwrap()))
+            .unwrap();
+        p.set_phase(NativeStrataPhase::Draft { index: 1 }).unwrap();
+        p.record_info(&phase_payload(1, 63, 123), &phase_fields())
+            .unwrap();
+        p.use_page(17).unwrap();
+        p.bind_current(17, 0).unwrap();
+        let original = p.recording().unwrap().unwrap();
+        p.submitted().unwrap();
+        p.end(a, 5).unwrap();
+        assert_eq!(p.replay_key(a, 5).unwrap(), Some(original));
+        assert!(p.replay_key(b, 5).unwrap().is_none());
+        assert!(p.replay_key(a, 6).unwrap().is_none());
+    }
+    fn phase_fields() -> [NativeStrataParameter; 2] {
+        [
+            NativeStrataParameter {
+                word: 1,
+                value: NativeStrataValue::PhasePosition { offset: 0 },
+            },
+            NativeStrataParameter {
+                word: 2,
+                value: NativeStrataValue::PhaseBoundary { offset: 1 },
+            },
+        ]
+    }
+    fn phase_payload(count: u32, position: u32, phase: u32) -> Vec<u8> {
+        [count, position, position + 1, phase]
+            .into_iter()
+            .flat_map(u32::to_le_bytes)
+            .collect()
+    }
+    #[test]
+    fn mtp_round_phases_resolve_static_offsets_and_bulk_replay_at_new_origins() {
+        for rows in 1u8..=8 {
+            for proposals in 1u8..=7 {
+                let key = NativeStrataBranch::mtp_round(rows, proposals).unwrap();
+                let mut p = Parameters::default();
+                let mut recorded = None;
+                for origin in [0u32, 31, 4096 - u32::from(rows + proposals - 1)] {
+                    p.begin_invocation(key, 5, Some(NativeStrataInvocation::mtp(origin).unwrap()))
+                        .unwrap();
+                    for index in 0..=proposals {
+                        let (phase, cell, count) = if index == 0 {
+                            (NativeStrataPhase::Front, origin, u32::from(rows))
+                        } else {
+                            (
+                                NativeStrataPhase::Draft { index: index - 1 },
+                                origin + u32::from(rows + index - 2),
+                                1,
+                            )
+                        };
+                        p.set_phase(phase).unwrap();
+                        let data = phase_payload(count, cell, u32::from(index));
+                        p.record_info(&data, &phase_fields()).unwrap();
+                        if index == 0 {
+                            p.use_page(17).unwrap();
+                        }
+                        p.bind_current(17, u64::from(index) * 32).unwrap();
+                        let mut rendered = [0u8; 16];
+                        p.write_current(rendered.len(), |at, bytes| {
+                            rendered[at..at + bytes.len()].copy_from_slice(bytes)
+                        })
+                        .unwrap();
+                        assert_eq!(&rendered[..], &data);
+                    }
+                    let r = p.recording().unwrap().unwrap();
+                    assert!(recorded.is_none_or(|old| old == r));
+                    recorded = Some(r);
+                    p.submitted().unwrap();
+                    p.end(key, 5).unwrap();
+                }
+                let capacity = p.metadata_bytes();
+                p.begin_replay(recorded.unwrap(), NativeStrataInvocation::mtp(127).unwrap())
+                    .unwrap();
+                let mut page = [0u8; 4096];
+                p.write_replay_page(17, page.len(), |at, bytes| {
+                    page[at..at + bytes.len()].copy_from_slice(bytes)
+                })
+                .unwrap();
+                for index in 0..=proposals {
+                    let (count, cell) = if index == 0 {
+                        (u32::from(rows), 127)
+                    } else {
+                        (1, 127 + u32::from(rows + index - 2))
+                    };
+                    let at = index as usize * 32;
+                    assert_eq!(
+                        &page[at..at + 16],
+                        &phase_payload(count, cell, u32::from(index))
+                    );
+                    assert_eq!(&page[at + 16..at + 32], &[0; 16]);
+                }
+                assert_eq!(p.metadata_bytes(), capacity);
+                p.submitted().unwrap();
+                p.end(key, 5).unwrap();
+                // Captured schemas contain canonical displacements only, never
+                // unresolved phase expressions or a copy of the old origin.
+                assert!(p.branches[0].segments[0].fields.iter().all(|f| matches!(
+                    f.value,
+                    NativeStrataValue::Position { .. } | NativeStrataValue::Boundary { .. }
+                )));
+            }
+        }
+    }
+    #[test]
+    fn mtp_step_phase_requires_the_original_index_and_context_end_boundary() {
+        for step in 1..=6 {
+            let key = NativeStrataBranch::mtp_step(step).unwrap();
+            let mut p = Parameters::default();
+            p.begin_invocation(key, 5, Some(NativeStrataInvocation::mtp(4095).unwrap()))
+                .unwrap();
+            assert!(p.set_phase(NativeStrataPhase::Front).is_err());
+            assert!(p.set_phase(NativeStrataPhase::Draft { index: 0 }).is_err());
+            assert!(
+                p.record_info(&phase_payload(1, 4095, 123), &phase_fields())
+                    .is_err()
+            );
+            assert!(p.branches[0].segments.is_empty());
+            p.set_phase(NativeStrataPhase::Draft { index: step })
+                .unwrap();
+            p.record_info(&phase_payload(1, 4095, 123), &phase_fields())
+                .unwrap();
+            p.use_page(17).unwrap();
+            p.bind_current(17, 0).unwrap();
+            let r = p.recording().unwrap().unwrap();
+            p.submitted().unwrap();
+            p.end(key, 5).unwrap();
+            p.begin_replay(r, NativeStrataInvocation::mtp(63).unwrap())
+                .unwrap();
+            let mut result = [0u8; 16];
+            p.write_replay_page(17, result.len(), |at, bytes| {
+                result[at..at + bytes.len()].copy_from_slice(bytes)
+            })
+            .unwrap();
+            assert_eq!(&result[..], &phase_payload(1, 63, 123));
+            p.submitted().unwrap();
+            p.end(key, 5).unwrap();
+        }
+    }
+    #[test]
+    fn native_phase_family_and_extent_errors_do_not_arm_or_retain_programs() {
+        let draft = NativeStrataInvocation::mtp(4095).unwrap();
+        assert!(draft.value(NativeStrataValue::RouteEpoch).is_err());
+        assert!(draft.value(NativeStrataValue::RouteUsage).is_err());
+        assert!(
+            draft
+                .value(NativeStrataValue::PhasePosition { offset: 0 })
+                .is_err()
+        );
+        assert_eq!(
+            draft
+                .value(NativeStrataValue::Boundary { offset: 1 })
+                .unwrap(),
+            4096
+        );
+        assert!(
+            draft
+                .value(NativeStrataValue::Position { offset: 1 })
+                .is_err()
+        );
+        let mut p = Parameters::default();
+        assert!(p.set_phase(NativeStrataPhase::Front).is_err());
+        assert!(
+            p.begin_invocation(
+                NativeStrataBranch::target_window(1).unwrap(),
+                5,
+                Some(draft)
+            )
+            .is_err()
+        );
+        assert!(
+            p.begin_invocation(NativeStrataBranch::mtp_round(2, 1).unwrap(), 5, Some(draft))
+                .is_err()
+        );
+        assert!(
+            p.begin_invocation(NativeStrataBranch::mtp_round(1, 2).unwrap(), 5, Some(draft))
+                .is_err()
+        );
+        assert!(p.branches.is_empty());
+        assert!(p.active.is_none());
+        p.begin_invocation(NativeStrataBranch::mtp_round(1, 1).unwrap(), 5, None)
+            .unwrap();
+        assert!(p.set_phase(NativeStrataPhase::Draft { index: 0 }).is_err());
+        p.clear();
+        let key = NativeStrataBranch::target_window(1).unwrap();
+        p.begin_invocation(key, 5, Some(NativeStrataInvocation::target(1, 1).unwrap()))
+            .unwrap();
+        assert!(p.set_phase(NativeStrataPhase::Draft { index: 0 }).is_err());
+        p.set_phase(NativeStrataPhase::Front).unwrap();
+        p.clear();
+    }
     #[test]
     fn direct_replay_refreshes_verification_usage_policy_in_the_same_branch() {
         let key = NativeStrataBranch::target_window(4).unwrap();

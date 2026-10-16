@@ -1355,6 +1355,16 @@ impl<R: Runtime> ComputeClient<R> {
             })
             .unwrap()
     }
+    /// Declare the next shape-defined math phase on the same serialized stream.
+    pub fn set_native_strata_phase(
+        &self,
+        phase: crate::server::NativeStrataPhase,
+    ) -> Result<(), ServerError> {
+        let stream_id = self.stream_id();
+        self.device
+            .submit_blocking(move |server| server.set_native_strata_phase(stream_id, phase))
+            .unwrap()
+    }
     /// Join and seal the original branch. Private owners remain charged.
     pub fn end_native_strata_branch(
         &self,

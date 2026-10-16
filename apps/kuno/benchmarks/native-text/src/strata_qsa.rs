@@ -377,7 +377,7 @@ pub(crate) fn launch(
         )
         .with_native_parameter(
             1,
-            cubecl_runtime::server::NativeStrataValue::Position { offset: 0 },
+            cubecl_runtime::server::NativeStrataValue::PhasePosition { offset: 0 },
         ),
     );
     // SAFETY: authenticated QSA parent validates fixed widths and complete private
