@@ -12,6 +12,25 @@ fn scale_pair_valid(bits:u32)->bool {let s=unpack2x16float(bits);return finite(s
 fn q8_value(code:u32,scales:u32,element:u32)->f32 {let s=unpack2x16float(scales);return f32(signed_code(code,element))*select(s.x,s.y,((element/64u)&1u)!=0u);}
 fn nearest_even(x:f32)->i32 {let lo=floor(x);let d=x-lo;return i32(lo)+select(0,1,d>0.5||(d==0.5&&(i32(lo)&1)!=0));}
 // COMMON_END
+// POSITIONS_BEGIN
+@group(0) @binding(0) var<storage,read_write> positions:array<u32>;
+@group(0) @binding(1) var<storage,read_write> status:array<u32>;
+@group(0) @binding(2) var<uniform> p:Params;
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) id:vec3<u32>) {
+    let t=id.x;if t>=p.count {return;}
+    // Original positions_batch contract: clear TOKEN status, then stamp the
+    // bounded original contiguous position. Subsequent append/fault folds own
+    // acceptance; this is not a commit or completion marker.
+    let flag=t*p.status_stride+TOKEN_STATUS;
+    status[flag]=0u;
+    let position=p.start+t;
+    if position<p.capacity && position<=POSITION_MAX {
+        positions[position]=position;
+        status[flag]=1u;
+    }
+}
+// POSITIONS_END
 // NORM_BEGIN
 @group(0) @binding(0) var<storage,read> input:array<f32>;
 @group(0) @binding(1) var<storage,read> gamma:array<f32>;

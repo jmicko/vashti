@@ -1110,13 +1110,14 @@ impl ComputeServer for WgpuServer {
         &mut self,
         stream_id: StreamId,
         key: cubecl_runtime::server::NativeStrataBranch,
+        invocation: Option<cubecl_runtime::server::NativeStrataInvocation>,
     ) -> Result<(), ServerError> {
         let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
         self.scheduler.execute_streams(vec![stream_id]);
         let result = self
             .scheduler
             .stream(&stream_id)
-            .begin_native_strata_branch(key);
+            .begin_native_strata_branch(key, invocation);
         if result.is_ok()
             && let Some(mutation) = mutation
         {

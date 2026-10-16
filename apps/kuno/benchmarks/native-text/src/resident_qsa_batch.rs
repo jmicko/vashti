@@ -1328,6 +1328,16 @@ impl ResidentQsa<'_> {
             }
         }
         match op {
+            Operation::Positions => {
+                info[5] = l.widths[APPEND] as u32;
+                native::launch(
+                    arena,
+                    Kernel::Positions,
+                    [1, 1, 1],
+                    vec![h(self.ids[POSITIONS])?, h(ids[APPEND])?],
+                    info,
+                )?;
+            }
             Operation::Split if crate::strata_prompt::active() => {
                 native::prompt::split(arena, info, [view(0)?, view(5)?, h(ids[FLAGS])?])?;
             }

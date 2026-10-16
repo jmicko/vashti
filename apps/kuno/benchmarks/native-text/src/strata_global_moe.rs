@@ -106,6 +106,7 @@ fn info(words: &[u32]) -> MetadataBindingInfo {
             .map(|w| w[0] as u64 | ((w[1] as u64) << 32))
             .collect(),
     )
+    .with_native_parameter(2, cubecl_runtime::server::NativeStrataValue::RouteEpoch)
 }
 pub(crate) struct Workspace {
     binding: GraphBindingId,
@@ -121,6 +122,15 @@ pub(crate) struct Workspace {
     active: Option<Zeroizing<[usize; 3]>>, // active count, next layer, accepted flag
 }
 impl Workspace {
+    pub(crate) fn invocation_epoch(&self) -> Result<u32> {
+        if self.epoch == 0
+            || self.layer_pending
+            || self.active.as_ref().is_none_or(|a| a[1] != 0 || a[2] != 0)
+        {
+            return Err(reject());
+        }
+        Ok(self.epoch)
+    }
     pub(crate) fn sampler_ids(&self) -> [BufferId; 7] {
         self.sampler
     }

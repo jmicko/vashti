@@ -1169,10 +1169,18 @@ impl WgpuStream {
         self.errors.push(error);
     }
 
-    pub(crate) fn create_uniform(&mut self, data: &[u8]) -> Result<WgpuResource, ServerError> {
+    pub(crate) fn create_uniform(
+        &mut self,
+        data: &[u8],
+        native: &[cubecl_runtime::server::NativeStrataParameter],
+    ) -> Result<WgpuResource, ServerError> {
         if self.transient_io.is_some() {
             if self.transient_io.as_ref().unwrap().batches_info() {
-                return self.transient_io.as_mut().unwrap().batched_uniform(data);
+                return self
+                    .transient_io
+                    .as_mut()
+                    .unwrap()
+                    .batched_uniform(data, native);
             }
             self.compute_pass = None;
             let resource = self
@@ -1287,6 +1295,7 @@ impl WgpuStream {
     pub(crate) fn begin_native_strata_branch(
         &mut self,
         key: cubecl_runtime::server::NativeStrataBranch,
+        invocation: Option<cubecl_runtime::server::NativeStrataInvocation>,
     ) -> Result<(), ServerError> {
         self.private_io_active()?;
         if self.strata_graph.is_none() {
@@ -1299,7 +1308,10 @@ impl WgpuStream {
             ignore: false,
             flush: true,
         })?;
-        self.transient_io.as_mut().unwrap().begin_native_branch(key)
+        self.transient_io
+            .as_mut()
+            .unwrap()
+            .begin_native_branch(key, invocation)
     }
     pub(crate) fn end_native_strata_branch(
         &mut self,

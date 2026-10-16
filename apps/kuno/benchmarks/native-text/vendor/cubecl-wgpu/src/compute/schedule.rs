@@ -143,8 +143,14 @@ impl BindingsResource {
             }
         }
         let data = MetadataGuard(core::mem::take(&mut self.info.data));
+        if data.0.is_empty() && !self.info.native_parameters.is_empty() {
+            return Err(super::transient_io::fault(
+                "native INFO schema without data",
+            ));
+        }
         if !data.0.is_empty() {
-            let info = stream.create_uniform(bytemuck::cast_slice(&data.0))?;
+            let info = stream
+                .create_uniform(bytemuck::cast_slice(&data.0), &self.info.native_parameters)?;
             self.resources.push(info);
         }
         Ok((self.resources, self.read_dependencies))

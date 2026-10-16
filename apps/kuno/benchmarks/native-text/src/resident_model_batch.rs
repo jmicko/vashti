@@ -5190,7 +5190,17 @@ impl Workspace {
             m.arena
                 .client()
                 .map_err(u::fault)?
-                .begin_native_strata_branch(key)
+                .begin_native_strata_invocation(
+                    key,
+                    cubecl_runtime::server::NativeStrataInvocation::target(
+                        u32::try_from(*start).map_err(u::fault)?,
+                        self.global_moe
+                            .as_ref()
+                            .ok_or(error())?
+                            .invocation_epoch()?,
+                    )
+                    .map_err(u::fault)?,
+                )
                 .map_err(u::fault)?;
         }
         let mut current = Zeroizing::new(0usize);

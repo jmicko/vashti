@@ -1324,7 +1324,20 @@ impl<R: Runtime> ComputeClient<R> {
     ) -> Result<(), ServerError> {
         let stream_id = self.stream_id();
         self.device
-            .submit_blocking(move |server| server.begin_native_strata_branch(stream_id, key))
+            .submit_blocking(move |server| server.begin_native_strata_branch(stream_id, key, None))
+            .unwrap()
+    }
+    /// Begin a shape with fresh typed control values on the same request stream.
+    pub fn begin_native_strata_invocation(
+        &self,
+        key: crate::server::NativeStrataBranch,
+        invocation: crate::server::NativeStrataInvocation,
+    ) -> Result<(), ServerError> {
+        let stream_id = self.stream_id();
+        self.device
+            .submit_blocking(move |server| {
+                server.begin_native_strata_branch(stream_id, key, Some(invocation))
+            })
             .unwrap()
     }
     /// Join and seal the original branch. Private owners remain charged.

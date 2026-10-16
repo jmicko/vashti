@@ -2874,6 +2874,7 @@ impl TransientIo {
     pub(crate) fn begin_native_branch(
         &mut self,
         key: cubecl_runtime::server::NativeStrataBranch,
+        invocation: Option<cubecl_runtime::server::NativeStrataInvocation>,
     ) -> Result<(), ServerError> {
         self.active()?;
         if !self.info_batch || !self.pending_info.is_empty() || self.info_slab.is_some() {
@@ -2883,7 +2884,8 @@ impl TransientIo {
             .reuse_scope
             .nonce
             .ok_or_else(|| fault("native branch requires request reuse"))?;
-        self.branch_parameters.begin(key, nonce)?;
+        self.branch_parameters
+            .begin_invocation(key, nonce, invocation)?;
         self.check_branch_metadata()
     }
     pub(crate) fn end_native_branch(
@@ -3075,7 +3077,11 @@ impl TransientIo {
         Ok(Some(encoder.finish()))
     }
 
-    pub(crate) fn batched_uniform(&mut self, data: &[u8]) -> Result<WgpuResource, ServerError> {
+    pub(crate) fn batched_uniform(
+        &mut self,
+        data: &[u8],
+        native: &[cubecl_runtime::server::NativeStrataParameter],
+    ) -> Result<WgpuResource, ServerError> {
         self.active()?;
         if !self.info_batch {
             return Err(fault("batched INFO not selected"));
@@ -3105,7 +3111,7 @@ impl TransientIo {
         let core = super::strata_graph::enabled() && self.reuse_active();
         let branch = core && self.branch_parameters.active();
         if branch {
-            self.branch_parameters.record(logical)?;
+            self.branch_parameters.record_info(data, native)?;
             self.check_branch_metadata()?;
         }
         let cache_hash = if self.reuse_active() && !core {
@@ -3278,6 +3284,22 @@ impl TransientIo {
             let mut map = source.get_mapped_range_mut(..);
             map.slice(plan.offset as usize..plan.offset as usize + data.len())
                 .copy_from_slice(data);
+        }
+        if branch {
+            self.branch_parameters
+                .bind_current(page.owner_index, plan.offset)?;
+            let source = page
+                .source
+                .as_ref()
+                .ok_or_else(|| fault("native INFO source missing"))?;
+            let mut mapped = source.get_mapped_range_mut(..);
+            // Preserve WGPU's write-only mapping contract: the renderer emits
+            // bounded writes and never obtains a readable mapped byte slice.
+            self.branch_parameters
+                .write_current(data.len(), |at, bytes| {
+                    let at = plan.offset as usize + at;
+                    mapped.slice(at..at + bytes.len()).copy_from_slice(bytes);
+                })?;
         }
         let resource = WgpuResource {
             buffer: page.buffer.clone(),

@@ -136,6 +136,82 @@ impl NativeStrataBranch {
     }
 }
 
+/// Symbolic source of one native INFO u32. Offsets are immutable graph shape,
+/// never inferred by comparing request values or included in kernel identities.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NativeStrataValue {
+    /// Current window's position plus a shape-defined displacement.
+    Position {
+        /// Constant displacement encoded by the kernel's fixed graph shape.
+        offset: i16,
+    },
+    /// Current expert-routing stamp, supplied outside the branch identity.
+    RouteEpoch,
+}
+/// Typed location in one original INFO record; contains no invocation values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NativeStrataParameter {
+    /// Little-endian u32 index within the original INFO record.
+    pub word: u16,
+    /// Symbolic control source; never the actual request value.
+    pub value: NativeStrataValue,
+}
+/// Current request's control values. Deliberately no Debug, Hash or Serialize.
+/// The branch key and retained template contain no copy of these values.
+#[derive(Clone, Copy)]
+pub struct NativeStrataInvocation {
+    position: u32,
+    route_epoch: u32,
+}
+impl NativeStrataInvocation {
+    /// Validate fresh target controls before opening the retained shape.
+    pub fn target(position: u32, route_epoch: u32) -> Result<Self, &'static str> {
+        if position >= 4096 || route_epoch == 0 {
+            return Err("native target invocation bounds");
+        }
+        Ok(Self {
+            position,
+            route_epoch,
+        })
+    }
+    /// Check that the current window fits this immutable target shape.
+    pub fn validate_for(self, key: NativeStrataBranch) -> Result<(), &'static str> {
+        if key.family != 1
+            || self.route_epoch == 0
+            || self
+                .position
+                .checked_add(key.rows as u32)
+                .is_none_or(|end| end > key.context_capacity as u32)
+        {
+            return Err("native target invocation shape");
+        }
+        Ok(())
+    }
+    /// Evaluate a declared INFO source with checked position arithmetic.
+    pub fn value(self, source: NativeStrataValue) -> Result<u32, &'static str> {
+        match source {
+            NativeStrataValue::Position { offset } => {
+                let value = self.position as i64 + offset as i64;
+                if !(0..4096).contains(&value) {
+                    return Err("native position expression bounds");
+                }
+                Ok(value as u32)
+            }
+            NativeStrataValue::RouteEpoch => Ok(self.route_epoch),
+        }
+    }
+    /// Clear the active retained control copy at close or retirement.
+    pub fn wipe_private(&mut self) {
+        // Control copies are short-lived stack values. The retained active copy
+        // is cleared explicitly at branch close/retirement, not cached as a key.
+        unsafe {
+            core::ptr::write_volatile(&mut self.position, 0);
+            core::ptr::write_volatile(&mut self.route_epoch, 0);
+        }
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 #[derive(Error, Clone)]
 #[cfg_attr(std_io, derive(serde::Serialize, serde::Deserialize))]
 /// An error during profiling.
@@ -806,6 +882,7 @@ where
         &mut self,
         _stream_id: StreamId,
         _key: NativeStrataBranch,
+        _invocation: Option<NativeStrataInvocation>,
     ) -> Result<(), ServerError> {
         Err(IoError::UnsupportedIoOperation {
             backtrace: BackTrace::capture(),
@@ -1258,12 +1335,14 @@ impl KernelArguments {
 ///
 /// The [`ComputeServer`] is responsible to convert those info into actual [`Binding`] when launching
 /// kernels.
-#[derive(new, Default)]
+#[derive(Default)]
 pub struct MetadataBindingInfo {
     /// Scalar and metadata values
     pub data: Vec<u64>,
     /// Start of the dynamically sized portion of the metadata, relative to the entire info buffer
     pub dynamic_metadata_offset: usize,
+    /// Optional native INFO schema. These are symbolic locations only.
+    pub native_parameters: Vec<NativeStrataParameter>,
 }
 
 impl core::fmt::Debug for MetadataBindingInfo {
@@ -1293,6 +1372,20 @@ impl MetadataBindingInfo {
 }
 
 impl MetadataBindingInfo {
+    /// Preserve the original constructor used by generic CubeCL metadata.
+    pub fn new(data: Vec<u64>, dynamic_metadata_offset: usize) -> Self {
+        Self {
+            data,
+            dynamic_metadata_offset,
+            native_parameters: Vec::new(),
+        }
+    }
+    /// Declare one u32 invocation field without storing its value in a key.
+    pub fn with_native_parameter(mut self, word: u16, value: NativeStrataValue) -> Self {
+        self.native_parameters
+            .push(NativeStrataParameter { word, value });
+        self
+    }
     /// Create a new binding info for custom data, for externally compiled kernels.
     pub fn custom(data: Vec<u64>) -> Self {
         Self::new(data, 0)

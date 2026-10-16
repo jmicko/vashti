@@ -39,6 +39,7 @@ pub(crate) const fn cache_words() -> usize {
 }
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub(crate) enum Kernel {
+    Positions,
     Norm,
     PromptNorm,
     Pack,
@@ -94,7 +95,15 @@ impl Kernel {
                 .0
         };
         let mut s = section("COMMON").to_owned();
+        if self == Self::Positions {
+            s.push_str(&format!(
+                "const TOKEN_STATUS:u32={}u;const POSITION_MAX:u32={}u;\n",
+                crate::qsa_gpu::TOKEN,
+                crate::qsa_gpu::MAX_POSITION,
+            ));
+        }
         s.push_str(section(match self {
+            Self::Positions => "POSITIONS",
             Self::Norm | Self::PromptNorm => "NORM",
             Self::Pack | Self::PromptPack | Self::PromptPackFault => "PACK",
             Self::Pool => "POOL",
@@ -242,6 +251,7 @@ impl Kernel {
 impl KernelMetadata for Kernel {
     fn name(&self) -> &'static str {
         match self {
+            Self::Positions => "StrataQsaNativePositions",
             Self::Norm => "StrataQsaNormRope",
             Self::PromptNorm => "StrataQsaPromptMtpNormRope",
             Self::Pack => "StrataQsaPackInt8",
@@ -359,11 +369,17 @@ pub(crate) fn launch(
     for h in handles {
         args = args.with_buffer(h.binding());
     }
-    args = args.with_info(MetadataBindingInfo::custom(
-        info.chunks_exact(2)
-            .map(|p| p[0] as u64 | ((p[1] as u64) << 32))
-            .collect(),
-    ));
+    args = args.with_info(
+        MetadataBindingInfo::custom(
+            info.chunks_exact(2)
+                .map(|p| p[0] as u64 | ((p[1] as u64) << 32))
+                .collect(),
+        )
+        .with_native_parameter(
+            1,
+            cubecl_runtime::server::NativeStrataValue::Position { offset: 0 },
+        ),
+    );
     // SAFETY: authenticated QSA parent validates fixed widths and complete private
     // owners before enqueue; kernels additionally bound runtime active intervals.
     unsafe {
@@ -380,6 +396,7 @@ pub(crate) fn handles(arena: &PrivateArena, ids: &[BufferId]) -> Result<Vec<Hand
 }
 pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
     [
+        Kernel::Positions,
         Kernel::Norm,
         Kernel::PromptNorm,
         Kernel::Pack,
