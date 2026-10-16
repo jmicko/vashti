@@ -1,17 +1,43 @@
-<!-- Current resume: 2026-10-16, source 8262367, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source d0670b0, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, engine source through `8262367`. The user authorized
+branch `codex/strata-rust-port`, engine source through `d0670b0`. The user authorized
 continuing CPU-only work; the goal controller is active for that scope.
 GPU/model/service/sudo work still needs renewed user authorization. Last physical recovery evidence
 is historical 06:07:22Z on Oct15; no subsequent GPU run or live health claim.
 
-Read the latest [typed MTP phase receipt](kuno-strata-rewrite-completion.md#typed-mtp-phases-and-original-model-namespace-2026-10-16)
+Read the latest [direct MTP replay receipt](kuno-strata-rewrite-completion.md#direct-native-mtp-submission-and-original-host-handback-2026-10-16)
 and coordination handoff. Earlier CJK source `cd703bc` was integrated as `0bfbea8`;
 **do not cherry-pick it again**. Its original 106299-row Q6 head, inverse-ID sampler
 and target/MTP INT8 caches remain connected.
+
+**Latest direct MTP block:** `d0670b0` connects actual retained native submission
+for whole zero-threshold chains and independently observed positive-threshold steps.
+Cold/unsupported recordings still enqueue original math. A hit bulk-renders the
+actual typed parameters and submits/joins original retained commands, skipping the
+per-kernel loop. Upload/submission/join errors remain terminal. Real proposal,
+probability, padding, fault, source and ledger checks still run before the same
+completed-forward publication; no cached output is accepted.
+
+The owner caches at most128 shape/accounting entries (32KiB conservative two-copy
+metadata cap within the existing host margin). Entries come from actual captured
+traffic only after a successful packet observation. They retain only static keys,
+operation counts and per-token budget behavior, never origins, prompts or tokens.
+Whole-chain replay preserves first-token budget, intermediate resets and final
+counter. CPU sampler handback reproduces original proposal/counter advancement only
+after actual completion; the recorded GPU bridge remains the draw/history/token
+producer. Existing model identity/request nonce plus new coupled-versus-greedy
+key separation preserve original graph inventories. Original roots and source are
+validated; first-front tickets are consumed only after real submission completes.
+
+73 focused CPU checks, selected/off strict Clippy and formatting pass. Immutable
+release build and327 offline shader variants also pass; exact receipts/hash are
+in the completion guide.
+No GPU, inference, numerical, throughput or installed-service test ran. The source
+connection is implemented, **not physically accepted**. The earlier typed-only
+blocks below are historical on the direct-MTP limitation.
 
 **Latest MTP phase block:** `8262367` connects explicit typed MTP round/step
 controls to actual queued math. A round's front uses origin p; selected rest and
@@ -32,7 +58,7 @@ MTP graph keys now include its existing immutable nonzero model-instance binding
 restoring the original per-drafter graph ownership on the shared target/draft stream.
 Typed MTP controls reject target-only route fields.67 focused CPU tests and strict
 selected/off Clippy, immutable release build and327 offline shader variants pass;
-exact artifact hash and receipts are in the completion guide. **MTP still enqueues its math; direct submission is next.**
+exact artifact hash and receipts are in the completion guide. **Superseded by `d0670b0` above: this older block still enqueued math.**
 No new GPU/private owner, model/service/sudo operation or speed trial this pass.
 
 **Previous MTP staging block:** `862f5fa` separates first TOKEN/target-residual staging from
@@ -89,34 +115,41 @@ artifact hash and logs are in the completion guide.
 These are not whole-model/GPU/numerical acceptance. Historical full-core regression
 failures remain untriaged; do not call the complete regression suite green.
 
-**Next block:** direct MTP submission and original host bookkeeping. The complete
-typed/canonical INFO program and model namespace are now connected. Do not redo
-first-input/sampler staging or reintroduce CONTROL writes inside math. The existing
-backend single-segment replay can now validate MTP invocation families; the actor
-still deliberately traverses/enqueues its math and does not call it yet.
+**Next block: accepted-prefix commit and queue/event fidelity.** Direct target/MTP
+submission is connected; do not repeat typed/staging work or benchmark incomplete
+source. Pinned Intel `generate.cpp:3115` enables asynchronous single-device commits;
+`verify.cpp:2364–2483` queues its original commit graph, records `commit_done_`, and
+joins only for an explicit session consumer/final request boundary. The next target
+uses the same queue; the independent drafter reads only original window rows and
+its own K/V. Serving calls commit at11089 and drafting at11140, with final wait11169.
 
-Inspect `resident_mtp_window.rs::queued_window_with_minimum`, `Traffic`, `tick`,
-`count_traffic`, `commit_forward`, request sampler `draft_pick`, and original
-`mtp.cpp::capture_round/capture_step`. Reuse actual completed recordings, never a
-synthesized output. Direct replay must consume the same prepared first-front receipt
-only after actual submission/join, advance current position and per-token dispatch/
-traffic bookkeeping exactly, and update the request sampler's CPU counter/proposal
-coordinates consistently with the real GPU bridge. Cache any necessary immutable
-accounting deltas from a successful matching original capture, not guessed kernel
-counts or private request content. Namespace any cache by the original actor/key;
-backend request nonce still independently guards actual recording availability.
+Rust `strata_global_controller.rs` verifies the original window, calls
+`LatestTargetRound::finish(n)`, then retains original accepted carry rows for the
+next draft. `resident_target_round.rs::replay_prefix` currently enqueues GDN replay
+and rejected-QSA clearing, reads fault synchronously, then commits all family
+permits/cursor. Rust verification currently commits the full proposed
+window before the accepted-prefix repair. This is a real schedule/ownership
+substitution, not equivalent async source fidelity. Port the accepted-prefix and
+pending-commit owner/event contract as a coherent block; do not merely remove the
+fault read or mark a CPU cursor complete early. Preserve all original roots until
+completion, target queue order and draft carry ownership; final/cleanup consumers
+must join outstanding commits. Review all-accept and one-token self-commit too.
 
-Keep actual packet/fault/full-padding/source/ledger observations and positive
-per-step stopping, then original final-forward publication. Verify original roots
-and source readiness before replay. Canonical fields permit bulk rendering without
-replaying CPU phase setters. An unavailable/unsupported recording may capture;
-a failed upload/submission/join is terminal, never a cache miss. Do not flatten
-arbitrary multi-segment recordings with host observations.
+The existing native backend has one compute queue plus the actual adopted transfer
+queue. `strata_graph.rs::replay_recording` and `execute` join the prior submission
+before starting another; they share one in-flight fence. Merely passing wait=false
+would still serialize the next draft and cannot reproduce independent target/draft
+queue overlap. Any pending-commit port must connect the original disjoint state
+consumer to a genuine second compute lane (or document a proven equivalent), with
+actual completion dependencies and retained resources, rather than a fake completed
+receipt or removal of the fault barrier. Do not use the copy queue for compute.
 
-Commit/event overlap, embedding placement/context/prefill substitutions, arbitrary
-input, final source audit and whole-model/numerical/owning-erasure acceptance remain
-open. No live speed trials before the whole-port gate passes. No installation,
-service, configuration or model changes this pass. Required Vashti changes:none.
+Other open work: HOST embedding placement;4096/2048 context/prefill versus source
+32768/4096; GDN pair swap versus fixed-copy scheduling; packed-cache physical layout;
+startup CJK gather; arbitrary prompt entry; full regression triage; final source,
+numerical, owning-erasure and physical recovery acceptance. No live speed trials
+before the whole-port gate passes. No installation, service, configuration or model
+changes this pass. Required Vashti changes:none.
 
 All older checkpoints below are historical.
 

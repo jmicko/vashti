@@ -6,11 +6,11 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through `8262367`. Read the latest
-[typed MTP phase handoff](#active-kuno-engine-handoff--typed-mtp-phases-and-model-ownership-2026-10-16)
-and [completion gate](kuno-strata-rewrite-completion.md). Direct target submission
-is now connected in source; MTP direct replay and full GPU/numerical acceptance
-remain incomplete. No new speed result.
+`codex/strata-rust-port`, engine source through `d0670b0`. Read the latest
+[direct MTP handoff](#active-kuno-engine-handoff--direct-native-mtp-submission-2026-10-16)
+and [completion gate](kuno-strata-rewrite-completion.md). Direct target and MTP submission
+are now connected in source; accepted-prefix commit/event fidelity and full
+GPU/numerical acceptance remain incomplete. No new speed result.
 
 The user authorized **CPU-only continuation**; the goal controller is active.
 No GPU/model/service/sudo work is authorized by this continuation. Last physical
@@ -6175,3 +6175,30 @@ and required state/sampler bookkeeping are in the current text checkpoint.
 Private CubeCL control declarations only; no public API, connector, UI or auth
 change. No GPU/model/service/sudo action, install or speed trial. Goal remains
 active for CPU-only work. Required Vashti changes:none.
+
+
+### Active Kuno engine handoff — direct native MTP submission (2026-10-16)
+
+Source `d0670b0` connects retained native MTP replay for whole chains and independent
+confidence-stopped steps. Capture-derived bounded accounting and sampler CPU
+handback occur only after actual submitted/joined work; original proposal/fault/
+padding/source/ledger observation and final forward publication remain required.
+Coupled/greedy inventories have separate shape/model keys and original request
+nonce enforcement. No tokens, prompts or other inference content enter the
+accounting cache. Cold/unsupported recordings retain original enqueue/capture;
+failed submission/join is terminal.
+
+73 focused CPU checks, strict selected/off release Clippy, immutable release build
+and327 offline shader variants pass. Exact source/artifact hash, limitations and
+logs are in completion guide **Direct native MTP submission and original host
+handback**. No physical/model/numerical/speed acceptance claim.
+
+Next coupled source block is accepted-prefix asynchronous commit and real independent
+compute queues. The current backend joins the previous submission before another;
+wait=false alone cannot reproduce upstream target-commit/MTP overlap. Current
+checkpoint records the actual source calls, original owner/queue requirements and
+remaining embedding/context/prefill/prompt/final-acceptance substitutions. Do not
+benchmark or undo connected components based on incidental timings.
+
+Goal is active for CPU-only work. No GPU/model/service/sudo changes, installation,
+release or public API changes this pass. Required Vashti changes:none.
