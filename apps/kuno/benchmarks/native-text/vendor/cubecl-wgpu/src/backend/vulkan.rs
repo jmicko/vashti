@@ -62,7 +62,40 @@ pub fn request_strata_device(
     }
     unsafe {
         let hal = adapter.as_hal::<hal::api::Vulkan>()?;
-        request_device(adapter, &hal, features, limits, true)
+        let instance = hal.shared_instance();
+        if instance.instance_api_version() < API_VERSION_1_1 {
+            return None;
+        }
+        let mut subgroup = ash::vk::PhysicalDeviceSubgroupSizeControlProperties::default();
+        let mut properties = ash::vk::PhysicalDeviceProperties2::default().push_next(&mut subgroup);
+        instance
+            .raw_instance()
+            .get_physical_device_properties2(hal.raw_physical_device(), &mut properties);
+        let mut subgroup_features = ash::vk::PhysicalDeviceSubgroupSizeControlFeatures::default();
+        let mut actual_features =
+            ash::vk::PhysicalDeviceFeatures2::default().push_next(&mut subgroup_features);
+        instance
+            .raw_instance()
+            .get_physical_device_features2(hal.raw_physical_device(), &mut actual_features);
+        if subgroup_features.subgroup_size_control != ash::vk::TRUE
+            || subgroup.min_subgroup_size > 16
+            || subgroup.max_subgroup_size < 32
+            || subgroup.max_compute_workgroup_subgroups < 32
+            || !subgroup
+                .required_subgroup_size_stages
+                .contains(ash::vk::ShaderStageFlags::COMPUTE)
+        {
+            return None;
+        }
+        let (device, queue) = request_device(adapter, &hal, features, limits, true)?;
+        // This original admitted device has not created any shader/pipeline.
+        // Its HAL factory latches32 into WGSL modules, including delayed Naga
+        // modules. Cooperative SPIR-V keeps its separate matrix16 requirement.
+        {
+            let raw = device.as_hal::<hal::api::Vulkan>()?;
+            raw.kuno_require_wgsl_subgroup32().ok()?;
+        }
+        Some((device, queue))
     }
 }
 

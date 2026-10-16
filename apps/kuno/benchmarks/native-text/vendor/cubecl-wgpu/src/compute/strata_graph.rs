@@ -164,6 +164,7 @@ fn registry() -> &'static Mutex<Registry> {
     R.get_or_init(Mutex::default)
 }
 pub(crate) fn register_module(
+    device: &wgpu::Device,
     module: &wgpu::ShaderModule,
     source: &str,
     entry: &str,
@@ -248,12 +249,18 @@ pub(crate) fn register_module(
     if source.contains("STRATA_PHYSICAL_EXPERTS") {
         words = super::strata_physical::native_expert_shader_words(source)?;
     }
+    // Retained replay consumes the SAME requirement as the original ordinary
+    // Vulkan device/factory. Reject an unmarked device rather than infer it from
+    // a shader name/comment or permit varying-size execution of fixed32 math.
+    let required_subgroup = unsafe { device.as_hal::<wgpu::hal::api::Vulkan>() }
+        .and_then(|d| d.kuno_wgsl_subgroup_size());
+    if required_subgroup != Some(32) {
+        return Err(fault("native WGSL subgroup owner requirement"));
+    }
     let p = Arc::new(Program {
         name: "UnlabelledNativeOperator",
         words,
-        required_subgroup: (source.contains("STRATA_PHYSICAL_EXPERTS")
-            || source.contains("STRATA_DENSE_PACKED"))
-        .then_some(32),
+        required_subgroup,
         physical_reads: source.contains("STRATA_PHYSICAL_EXPERTS"),
         release_after: false,
         accesses: bindings.iter().map(|b| b.2).collect(),
@@ -819,19 +826,16 @@ impl Graph {
                     return Err(fault("native graph pipeline layout"));
                 }
             };
-            let mut required = vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo::default()
-                .required_subgroup_size(p.required_subgroup.unwrap_or(32));
+            let (flags, mut required) =
+                wgpu::hal::vulkan::kuno_subgroup_stage_options(p.required_subgroup, true);
             let mut stage = vk::PipelineShaderStageCreateInfo::default()
+                .flags(flags)
                 .stage(vk::ShaderStageFlags::COMPUTE)
                 .module(shader)
                 .name(&p.entry);
-            // The pinned SYCL expert dispatch uses reqd_sub_group_size(32),
-            // with four independent eight-lane rows inside that subgroup.
-            if p.required_subgroup.is_some() {
-                stage = stage.push_next(&mut required);
-            } else {
-                stage =
-                    stage.flags(vk::PipelineShaderStageCreateFlags::ALLOW_VARYING_SUBGROUP_SIZE);
+            // SAME exact width/flags/lifetime rule as ordinary Wgpu pipelines.
+            if let Some(info) = required.as_mut() {
+                stage = stage.push_next(&mut **info);
             }
             let pipeline_native = match unsafe {
                 self.device.create_compute_pipelines(

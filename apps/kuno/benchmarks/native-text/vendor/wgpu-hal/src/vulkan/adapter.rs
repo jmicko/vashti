@@ -2820,6 +2820,7 @@ impl super::Adapter {
         );
 
         let device = super::Device {
+            kuno_wgsl_subgroup: Default::default(),
             shared,
             mem_allocator: Mutex::new(mem_allocator),
             desc_allocator: Mutex::new(desc_allocator),

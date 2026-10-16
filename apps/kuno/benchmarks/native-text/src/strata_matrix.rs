@@ -681,4 +681,54 @@ mod tests {
         assert_eq!(subgroup(&module(&[&size16])), None);
         assert_eq!(subgroup(&module(&[&matrix, &size16, &[0]])), None);
     }
+
+    #[test]
+    fn original_shader_requirement_metadata_preserves_default_fixed32_and_cooperative16() {
+        use wgpu::hal::vulkan::{KunoSubgroupRequirement, ShaderModule};
+        let requirement = KunoSubgroupRequirement::default();
+        assert_eq!(requirement.required(), None);
+        requirement.require32().unwrap();
+        requirement.require32().unwrap();
+        assert_eq!(requirement.required(), Some(32));
+        assert_eq!(KunoSubgroupRequirement::default().required(), None);
+        // Metadata-only fixtures: no device/module creation or unsafe attach.
+        // These selectors are the actual methods used by both pipeline paths;
+        // a null raw handle grants no ownership or physical execution proof.
+        let raw = ShaderModule::Raw(ash::vk::ShaderModule::null(), requirement.required());
+        assert_eq!(raw.kuno_required_subgroup_size(), Some(32));
+        let ordinary = ShaderModule::Raw(ash::vk::ShaderModule::null(), Default::default());
+        assert_eq!(ordinary.kuno_required_subgroup_size(), None);
+        let late = KunoSubgroupRequirement::default();
+        late.require32().unwrap();
+        let intermediate = ShaderModule::Intermediate {
+            naga_shader: Default::default(),
+            runtime_checks: Default::default(),
+            required_subgroup: late.required(),
+        };
+        assert_eq!(intermediate.kuno_required_subgroup_size(), Some(32));
+        let matrix = ShaderModule::RawSubgroup16(ash::vk::ShaderModule::null());
+        assert_eq!(matrix.kuno_required_subgroup_size(), Some(16));
+        // The actual ordinary AND retained pipeline builders consume this
+        // selector; fixed width must clear varying flags and own stable pNext.
+        use wgpu::hal::vulkan::kuno_subgroup_stage_options as options;
+        for module in [&ordinary, &raw, &intermediate, &matrix] {
+            for supported in [false, true] {
+                let width = module.kuno_required_subgroup_size();
+                let (flags, info) = options(width, supported);
+                assert_eq!(
+                    flags.contains(
+                        ash::vk::PipelineShaderStageCreateFlags::ALLOW_VARYING_SUBGROUP_SIZE
+                    ),
+                    width.is_none() && supported
+                );
+                assert_eq!(info.as_ref().map(|v| v.required_subgroup_size), width);
+                if let Some(info) = info {
+                    assert!(info.p_next.is_null());
+                    assert_eq!(info.s_type,ash::vk::StructureType::PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO);
+                }
+            }
+        }
+        requirement.require32().unwrap();
+        assert_eq!(matrix.kuno_required_subgroup_size(), Some(16));
+    }
 }

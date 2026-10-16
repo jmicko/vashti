@@ -523,6 +523,7 @@ impl Drop for DeviceShared {
 }
 
 pub struct Device {
+    kuno_wgsl_subgroup: KunoSubgroupRequirement,
     mem_allocator: Mutex<gpu_allocator::vulkan::Allocator>,
     desc_allocator:
         Mutex<gpu_descriptor::DescriptorAllocator<vk::DescriptorPool, vk::DescriptorSet>>,
@@ -1061,15 +1062,75 @@ pub struct CommandBuffer {
 
 impl crate::DynCommandBuffer for CommandBuffer {}
 
+/// Shared ordinary/retained Vulkan stage options. The returned owner keeps the
+/// pNext structure at a stable address until synchronous pipeline creation ends.
+pub fn kuno_subgroup_stage_options(
+    required: Option<u32>,
+    varying_supported: bool,
+) -> (
+    vk::PipelineShaderStageCreateFlags,
+    Option<Box<vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo<'static>>>,
+) {
+    let flags = if required.is_none() && varying_supported {
+        vk::PipelineShaderStageCreateFlags::ALLOW_VARYING_SUBGROUP_SIZE
+    } else {
+        vk::PipelineShaderStageCreateFlags::empty()
+    };
+    let info = required.map(|size| {
+        Box::new(
+            vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo::default()
+                .required_subgroup_size(size),
+        )
+    });
+    (flags, info)
+}
+
+/// Compiler-owned execution-width metadata, with no device or memory authority.
+/// The selected non-matrix Strata path has exactly one legal fixed width.
+#[derive(Debug, Default)]
+pub struct KunoSubgroupRequirement(core::sync::atomic::AtomicU32);
+impl KunoSubgroupRequirement {
+    pub fn required(&self) -> Option<u32> {
+        let size = self.0.load(core::sync::atomic::Ordering::Acquire);
+        (size != 0).then_some(size)
+    }
+    pub fn require32(&self) -> Result<(), &'static str> {
+        use core::sync::atomic::Ordering;
+        match self
+            .0
+            .compare_exchange(0, 32, Ordering::AcqRel, Ordering::Acquire)
+        {
+            Ok(_) | Err(32) => Ok(()),
+            Err(_) => Err("shader subgroup requirement cannot change"),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum ShaderModule {
-    Raw(vk::ShaderModule),
+    Raw(vk::ShaderModule, Option<u32>),
     /// A cooperative shader whose whole workgroup is one16-lane subgroup.
     RawSubgroup16(vk::ShaderModule),
     Intermediate {
         naga_shader: crate::NagaShader,
         runtime_checks: wgt::ShaderRuntimeChecks,
+        required_subgroup: Option<u32>,
     },
+}
+
+impl ShaderModule {
+    /// Exact compiler requirement attached to THIS shader owner, independent of
+    /// debug labels, source comments and pipeline-cache lookup.
+    pub fn kuno_required_subgroup_size(&self) -> Option<u32> {
+        match self {
+            Self::Raw(_, size)
+            | Self::Intermediate {
+                required_subgroup: size,
+                ..
+            } => *size,
+            Self::RawSubgroup16(_) => Some(16),
+        }
+    }
 }
 
 impl crate::DynShaderModule for ShaderModule {}

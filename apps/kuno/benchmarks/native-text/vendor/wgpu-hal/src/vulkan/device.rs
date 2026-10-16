@@ -513,6 +513,18 @@ struct CompiledStage {
 }
 
 impl super::Device {
+    /// Exact policy copied into every WGSL module created on this device.
+    pub fn kuno_wgsl_subgroup_size(&self) -> Option<u32> {
+        self.kuno_wgsl_subgroup.required()
+    }
+    /// Select Strata's fixed32 non-matrix execution. Cooperative SPIR-V keeps16.
+    ///
+    /// # Safety
+    /// Caller must enable subgroup-size control with compute32 support and call
+    /// this before creating ANY shader module or pipeline on this device.
+    pub unsafe fn kuno_require_wgsl_subgroup32(&self) -> Result<(), &'static str> {
+        self.kuno_wgsl_subgroup.require32()
+    }
     /// # Safety
     ///
     /// - `vk_image` must be created respecting `desc`
@@ -768,10 +780,11 @@ impl super::Device {
     ) -> Result<CompiledStage, crate::PipelineError> {
         let stage_flags = crate::auxil::map_naga_stage(naga_stage);
         let vk_module = match *stage.module {
-            super::ShaderModule::Raw(raw) | super::ShaderModule::RawSubgroup16(raw) => raw,
+            super::ShaderModule::Raw(raw, _) | super::ShaderModule::RawSubgroup16(raw) => raw,
             super::ShaderModule::Intermediate {
                 ref naga_shader,
                 runtime_checks,
+                ..
             } => {
                 let pipeline_options = naga::back::spv::PipelineOptions {
                     entry_point: stage.entry_point.to_owned(),
@@ -848,10 +861,10 @@ impl super::Device {
             }
         };
 
-        let mut flags = vk::PipelineShaderStageCreateFlags::empty();
-        if self.shared.features.contains(wgt::Features::SUBGROUP) {
-            flags |= vk::PipelineShaderStageCreateFlags::ALLOW_VARYING_SUBGROUP_SIZE
-        }
+        let (flags, required_subgroup) = super::kuno_subgroup_stage_options(
+            stage.module.kuno_required_subgroup_size(),
+            self.shared.features.contains(wgt::Features::SUBGROUP),
+        );
 
         let entry_point = CString::new(stage.entry_point).unwrap();
         let mut create_info = vk::PipelineShaderStageCreateInfo::default()
@@ -859,16 +872,7 @@ impl super::Device {
             .stage(conv::map_shader_stage(stage_flags))
             .module(vk_module);
 
-        let required_subgroup = if matches!(stage.module, super::ShaderModule::RawSubgroup16(_)) {
-            Some(Box::new(
-                vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo::default()
-                    .required_subgroup_size(16),
-            ))
-        } else {
-            None
-        };
         if let Some(required) = &required_subgroup {
-            create_info.flags &= !vk::PipelineShaderStageCreateFlags::ALLOW_VARYING_SUBGROUP_SIZE;
             let address: *const vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo<'_> =
                 &**required;
             create_info.p_next = address.cast();
@@ -881,7 +885,7 @@ impl super::Device {
             _entry_point: entry_point,
             _required_subgroup: required_subgroup,
             temp_raw_module: match *stage.module {
-                super::ShaderModule::Raw(_) | super::ShaderModule::RawSubgroup16(_) => None,
+                super::ShaderModule::Raw(..) | super::ShaderModule::RawSubgroup16(_) => None,
                 super::ShaderModule::Intermediate { .. } => Some(vk_module),
             },
         })
@@ -1986,6 +1990,7 @@ impl crate::Device for super::Device {
                 super::ShaderModule::Intermediate {
                     naga_shader,
                     runtime_checks: desc.runtime_checks,
+                    required_subgroup: self.kuno_wgsl_subgroup_size(),
                 }
             }
             crate::ShaderInput::Naga(naga_shader) => {
@@ -2014,14 +2019,17 @@ impl crate::Device for super::Device {
                     None,
                 )
                 .map_err(|e| crate::ShaderError::Compilation(format!("{e}")))?;
-                super::ShaderModule::Raw(self.create_shader_module_impl(&spv, &desc.label)?)
+                super::ShaderModule::Raw(
+                    self.create_shader_module_impl(&spv, &desc.label)?,
+                    self.kuno_wgsl_subgroup_size(),
+                )
             }
             crate::ShaderInput::SpirV(data) => {
                 let raw = self.create_shader_module_impl(data, &desc.label)?;
                 if kuno_cooperative_subgroup(data) == Some(16) {
                     super::ShaderModule::RawSubgroup16(raw)
                 } else {
-                    super::ShaderModule::Raw(raw)
+                    super::ShaderModule::Raw(raw, None)
                 }
             }
             crate::ShaderInput::MetalLib { .. }
@@ -2038,7 +2046,7 @@ impl crate::Device for super::Device {
 
     unsafe fn destroy_shader_module(&self, module: super::ShaderModule) {
         match module {
-            super::ShaderModule::Raw(raw) | super::ShaderModule::RawSubgroup16(raw) => {
+            super::ShaderModule::Raw(raw, _) | super::ShaderModule::RawSubgroup16(raw) => {
                 unsafe { self.shared.raw.destroy_shader_module(raw, None) };
             }
             super::ShaderModule::Intermediate { .. } => {}
