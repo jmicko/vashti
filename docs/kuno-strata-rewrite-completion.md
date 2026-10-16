@@ -47,7 +47,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | --- | --- | --- |
 | Artifact geometry, packing and tokenizer | `sycl/src/core/weights.cpp`, `src/io`, native expert layout, program model setup | Rust GGUF/tokenizer/binding exist. Audit format-specific load/conversion, chat-template and sampling behavior; original files remain shared/read-only. |
 | Exact dense placement and expert budget | `sycl/src/program/generate.cpp` model/cache setup; `sycl/src/core/expert_cache.cpp::open_sized` | Exact dense roots exist. Native global byte-prefix planning and an owning bounded GPU loader now compile; graph validation consumes the real artifact plan. Experimental core construction now invokes the sole global owner before prefill, and the core48-layer coordinator selects global routing/HOST fetch/role execution. Physical/numerical acceptance remains unfinished. All777 required original float tensors already match the selected native format (484 BF16,292 F32,1 F16); generic conversion is not required for this artifact. Source `89da25f` moves the shared original IQ4_XS embedding into the sole mapped HOST owner and updates constructor/reader/close accounting. Actual physical/numerical acceptance and the unchanged tiled gather substitution remain open. Sources `cbf4381`/`910cb58` replace the blanket5GiB allowance with a complete original dense inventory, preload/seal it before expert allocation, and size the automatic ranked prefix from actual remaining shared MAIN. See the dense-inventory receipt; physical placement and whole-device pricing acceptance remain open. The ordinary feature-off engine retains uniform banks. |
-| Low-RAM host complement and promotion | `generate.cpp` source/adaptive tier; `sycl/src/core/verify.cpp` fetch/rebase | Original host complement, direct exchange and GPU selected fetch exist. Audit full byte ownership and asynchronous safe publication against upstream; do not duplicate the whole model in RAM. |
+| Low-RAM host complement and promotion | `generate.cpp` source/adaptive tier; `sycl/src/core/verify.cpp` fetch/rebase | Original host complement, direct exchange and GPU selected fetch exist. Audit full byte ownership and asynchronous safe publication against upstream; do not duplicate the whole model in RAM. Source `a8bbdf0` restores the private route map from canonical physical cells on request rebind, preserving actual swapped weights and monotonic adaptive state; see the retained-controls receipt. |
 | GPU route/group planning and original HOST access | `verify.cpp` / `verify_kernels.dp.cpp::resident_plan_kernel`, selected SYCL `DEVICE_PLAN=1,NO_HOST=1` | Native BF16 router and full512-expert normalization exist. Correct selected path reads actual VRAM or mapped HOST aliases directly on the GPU, preserving every selected expert. Source36d13d3 replaces the CPU split/staging consumer with direct authentic source aliases and removes per-layer CPU joins/submissions; protected execution is pending. Generic CPU doorbells/split windows are optional modes, not this B70 completion gate. Physical/numerical acceptance remains required. |
 | Native expert math and grouped rows | `sycl/src/kernels/cuda/iq_kernels.dp.cpp::row_entries`, `native_gu_kernel`, `native_down_kernel` | Packed integer math/BDA roots exist. Separate GU roles, 4/2/1 chunks, activation, intermediate storage and downstream consumers are now selected together in the Intel core; all 158 WGSL/SPIR-V variants validate, including 105 physical-pointer checks; numerical/model execution acceptance remains pending. The global core now uses one per-role launch containing pinned row_entries4/2/1 loops, scalar IQ4_XS, native signed integer finish and XOR reduction; numerical/model execution acceptance remains pending. Historical fixed-chunk kernels are retained separately. |
 | GR write/read/norm/down/up/injection | `sycl/src/kernels/cuda/fused_gr.dp.cpp::fused_gr_read_multi`; `verify.cpp::gr_read_group` | Native pending-write norm, sliced BF16 down/injection, fixed slice reduction and up/mix/commit are now connected and unconditionally selected in the core, including explicit PLE/final boundary writes. Resident original weights and the enlarged private scratch owner are charged together. Structural acceptance passes; numerical/model execution acceptance and final substitution audit remain pending. |
@@ -60,7 +60,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Sourcea26adc2 ports the native bounded trigram index, longest/recent suffix choice, cost priors, probing/stale rules and optional lookup-chain accounting into the selected controller. Configured MTP/target windows no longer shrink at the output cap; state commit and emission are separate. Coupled sampling and physical state acceptance still need end-to-end validation. |
 | Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Source `131d29c` connects real provisional rows to accepted GDN/QSA/PLE candidates while original full-window transactions remain open, then publishes only n after real fault/I/O proof. Count1 uses its candidate and all-accept multirow runs original state replay. Old diagnostic full-window repair is not selected by the native controller. Source `4083258` connects the retained multirow commit graph with explicit dynamic accepted-count/position fields, original family preflight and count1 skip. Source `91e1f9e` connects original pending commit export/join; `1f46f76` connects a scoped original next-draft consumer before explicit commit acknowledgement. Source `0bf0b5f` emits real verified predictions before next drafting, matching the source delivery order. Source `f9d1e06` connects scoped admission/allocator lifetimes and INFO visibility; physical independent execution, full source substitution audit and independent numerical oracle remain open. |
 | Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; Source `d40442c` connects direct retained target submission with typed control uploads and original family receipts; source `d0670b0` connects direct MTP invocation with original actual packet observations and sampler/actor handback. Source `b6732c8` adopts independent MTP compute and concurrent buffer families with semaphore handoffs. Source `414e2c3` connects actual current INFO copies on the native transfer timeline and avoids empty primary submissions; source `86f4c35` replaces the global single fence/last-recording assumption with actual lane fences and stable original recording flights. Source `131d29c` connects synchronous original accepted-prefix publication; source `4083258` connects the retained commit graph. Source `91e1f9e` connects original pending submission identities and exact joins; `1f46f76` connects scoped original MTP consumption before explicit commit acknowledgement. Real independent readiness/INFO/draft execution remain open; source `543bc73` couples original pending commits to retained shared MAIN debt; source `a8e538f` retains actual recording ranges and preflights whole INFO-copy conflicts; source `d2d3228` pins original verified R, submits its real readiness dependency before commit and scopes all unkeyed/named draft lane selection. Source `7ad47ca` connects original native packet fill/copy, real HOST_READ availability, final fence and checked HAL host map without primary Wgpu readback copies/callbacks. Source `7cb1cbc` connects native upload state/render/flush/unmap and all-owner joined I/O reuse without Wgpu remaps or primary reuse clears. Source `7477b66` connects original per-owner selective reuse, current INFO copy completion and named/future/live recording exclusions. Source `f9d1e06` connects scoped graph/stream current-lane/conflict admission, original allocator pins and copy-vs-math INFO visibility. Required ordinary/cold/final global drains remain. Physical independent execution and full draft/event fidelity remain unverified. Physical ring overlap, scratch lifetimes and full execution acceptance remain open. Measured serving lazily captures branches; eager all-branch warmup is not a prerequisite; a sequence of independent Wgpu launches is not equivalent. |
-| Request lifecycle and arbitrary input | upstream CLI/session/inference entry points | Source `dc7ace7` connects an owned raw-token request entry, original target/MTP construction, callback delivery and full checked cleanup; public diagnostics consume that actual path. Source `4ceb86f` connects completed target/MTP retained-state erasure with original-owner receipts before the current terminal close. Source `1f4b195560e5b8e7a83361f19c844a7104d11cbf` connects retained `Session::load/run/close`, bounded rearming from original erasure receipts, retained-ready owners and preserved policy/scope state; see the loaded-session receipt below. Hardware hot-reuse acceptance remains open. The current executable caller is still compiled-public. Protected arbitrary-input/tokenization, verified hot request reuse and full device/failure/recovery acceptance remain required; no private/general service claim. No gateway/UI work required. |
+| Request lifecycle and arbitrary input | upstream CLI/session/inference entry points | Source `dc7ace7` connects an owned raw-token request entry, original target/MTP construction, callback delivery and full checked cleanup; public diagnostics consume that actual path. Source `4ceb86f` connects completed target/MTP retained-state erasure with original-owner receipts before the current terminal close. Source `1f4b195560e5b8e7a83361f19c844a7104d11cbf` connects retained `Session::load/run/close`, bounded rearming from original erasure receipts, retained-ready owners and preserved policy/scope state; see the loaded-session receipt below. Sources `a8bbdf0`/`f1dd77f6a5a5cf98253488edec1fb761c1e9a0a4` connect original physical route-map restoration, live HOST-scope exclusion and full32K sampler request coordinates (4096 penalty ring unchanged). Hardware hot-reuse acceptance remains open. The current executable caller is still compiled-public. Protected arbitrary-input/tokenization, verified hot request reuse and full device/failure/recovery acceptance remain required; no private/general service claim. No gateway/UI work required. |
 
 ## Validation and the speed gate
 
@@ -7373,9 +7373,94 @@ Sudo refresh still reports password required in the existing Demons shell; this
 CPU work needs no root. Goal remains active CPU-only; full rewrite incomplete,
 speed gate closed and historicalOct15 recovery is not current device evidence.
 
-Next finish the retained HOST/control audit and connect a protected arbitrary-input
+Next use the retained HOST/control inventory below and connect a protected arbitrary-input
 caller/tokenizer, then the remaining packed/in-place scratch/substitution/whole-
 device pricing and final pinned-source scheduling review. Preserve the unresolved
 legacy regression and numerical/physical/failure/recovery gates. A fresh normal
 artifact and renewed GPU authorization are required before device acceptance;
 no speed trials before the complete connected rewrite gate passes.
+
+
+## Retained source controls and full-context sampler (2026-10-16)
+
+Source `a8bbdf0` plus `f1dd77f6a5a5cf98253488edec1fb761c1e9a0a4`. The retained-owner audit found
+an actual correctness dependency: full MAIN erasure also clears the GPU's expert
+routing map, while paired GPU/HOST weights and their canonical physical placement
+remain swapped. Reusing zeros or the initial profile's identity map would select
+wrong original experts. Native next-request binding now reconstructs the inverse
+from the SAME source owner's committed physical placement. It rejects incomplete
+source attachment, pending exchange/loan, foreign graph/client or corrupt duplicate
+cells and checks agreement with the existing adaptive cache. It writes the original
+full128KiB route owner (including zero padding), independently reads/checks it under
+the actual audited I/O boundary, checks the real fault, then rearms the request.
+No weights move, and no epoch, adaptive round or ownership counter resets. Usage
+scores remain erased for the new request; transient physical placement must remain
+with the actual weights. Initial loading and ordinary mode are unchanged.
+
+The same full-owner route-map encoder is used by ordinary native adaptive
+publication and retained restoration. CPU cases apply twelve real proposal/commit
+sequences to the original placement/cache consumers, invert every cell, and check
+full packed roots/padding and corrupt/stale mapping rejection. These are structural
+CPU consumers, not proof of hardware exchange or numerical outputs. Temporary
+inverse49,152B, packet131,072B and original inspected readback fit the existing2MiB
+adaptive HOST budget; actual I/O remains under the original runtime admission.
+No additional GPU owner/model source or broad whole-device pricing credit is added.
+
+Pinned upstream `sycl/src/program/generate.cpp:6835` fixes only the repetition
+penalty ring at4096; request history and positions use the configured context.
+The Rust sampler had reused its4096 constant for prefix admission, consumed-token
+capacity, speculative handback, controls and accepted-input limits. This silently
+prevented the preceding32K request entry from actually reaching sampling. The
+selected core now distinguishes32K request context from the unchanged4096 penalty
+window. Target/draft penalty histories still take only the last bounded window,
+with actual request coordinates/verified-prefix commits checked through32K.
+Ordinary sampler bookkeeping keeps its prior4096 bound. BASE/RING offsets, seven full root sizes,
+sampler algorithm/shaders, source templates and kernel identities are unchanged.
+The existing2MiB HOST quote now explicitly checks full32K consumed-token capacity.
+
+### Retained HOST/control source inventory
+
+| Owner | Request-derived data and actual exit behavior | Intentionally retained |
+| --- | --- | --- |
+| `strata_engine::Request` and actual controller locals | Prompt IDs, output history, sampler/speculation values, drafts, suffix hashes/history and proposals have wiping owners; they leave scope before Session publishes Ready. | Fixed completion counts only; callback owns delivery. |
+| `strata_sampler::request::State` | Thread-local sampling state is taken on normal close; consumed/window/coordinates and Params wipe. Actual seven GPU owners are cleared/inspected. Failure drops state and retires. | No per-request sampling state. |
+| `strata_prompt_ple::run` | Prepared packed rows/embeddings and predecessor IDs wipe; bounded producer disconnects and joins before return. Active-scope check now participates in erasure/rearming. | Public GGUF table only. |
+| Model/GDN/QSA/PLE and target-row owners | Full original private arenas, caches, padding, PLE token/conv histories clear under the existing actual reset coordinator; output leases and pending stages must be absent. | Original handles, graph identity, generations, selected policies and content-free counters. |
+| MTP output/front/private owners | Owned logits/hidden/picks wipe, last forward/front are taken, original private arenas including padding clear and I/O audits run. | Public sidecar/borrowed weights and shape-only replay operation accounting. |
+| Native I/O/graph runtime | Existing request-end sanitizer drains original recordings/INFO/flight ownership; drops completed recordings, guarded binding/INFO keys, templates and mutable invocation values; inspects full actual I/O roots. | Compiled public pipelines/IQ/address tables; no tokens, logits or sampler seed in cache keys. |
+| Global source/adaptive state | GPU route usage is erased; new request explicitly reconstructs its route map from actual canonical cells. Mapping buffers/proposals have wiping owners on drop. | Transient model/expert placement plus content-free adaptive rounds; no serialization/log/history export. |
+
+Native reset/rearm now also rejects live sampler, prompt scratch or PLE source
+scopes rather than merely assuming their HOST/control guards have closed. This
+source inventory is not a whole-process memory-forensics or driver/cache erasure
+claim. Physical live request/reuse/failure/recovery acceptance remains required.
+The protected arbitrary-input/tokenizer caller is still the next connected task;
+current executable diagnostics remain compiled-public and one-request.
+
+CPU evidence under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-retained-controls-checked-build-20261016.log` and
+  `strata-retained-controls-cpu-final-20261016.log`: source `a8bbdf0` builds and409
+  distinct cases/51 nonempty suites pass. The preceding `controls-build` attempt
+  found a sibling visibility error for the new PLE scope query; fixed to crate
+  visibility before this checked build/run.
+- `strata-retained-controls-sampler-checked-build-20261016.log`: final locked
+  selected release test build. `strata-retained-controls-sampler-cpu-final-20261016.log`:
+  419 distinct cases/52 nonempty suites pass. This run follows terminal build completion. Includes
+  actual placement/cache inverse restoration, long request position/accepted-prefix
+  boundaries, unchanged penalty-window target/draft histories and all previous
+  original-owner lifecycle coverage. Source/offline sampler Naga/SPIR-V cases use
+  no device. New adapter and parent sampler suites are explicit nonempty filters.
+- `strata-retained-controls-sampler-{core,off}-final-clippy-20261016.log`: both
+  strict locked release lint configurations pass. Intermediate core lint found an
+  unnecessary reference in the map equality check; fixed to a slice comparison.
+  Earlier context-sampler419-case log predates that lint-only fix. Changed Rust
+  formatting and whitespace pass.
+
+No new shader/generator/arithmetic or frozen
+normal artifact;12a60bf remains stale. No GPU/model/service/install/API/config/
+connector/UI/release work. Required Vashti changes:none. Canonical checkout and
+inherited untracked files preserved. Goal remains active CPU-only, full rewrite
+incomplete and speed gate closed. Sudo is not needed for this block. Preserve the
+remaining packed/in-place/private allocator/whole-device substitutions and final
+pinned-source scheduling audit, legacy regression and physical/numerical gates.

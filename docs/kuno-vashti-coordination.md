@@ -6,8 +6,8 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through `1f4b195560e5b8e7a83361f19c844a7104d11cbf`. Read the latest
-[retained-session handoff](#active-kuno-engine-handoff--retained-loaded-sessions-2026-10-16)
+`codex/strata-rust-port`, engine source through `f1dd77f6a5a5cf98253488edec1fb761c1e9a0a4`. Read the latest
+[retained-controls handoff](#active-kuno-engine-handoff--retained-controls-and-sampler-2026-10-16)
 and [completion gate](kuno-strata-rewrite-completion.md). Direct target/MTP
 submission, accepted-prefix state publication and retained commit graph are connected
 in source. Original pending submissions/joins and scoped next-draft consumption are connected;
@@ -6860,3 +6860,42 @@ reports password required in Demons; root is not needed for this work. Historica
 Oct15 recovery does not establish current health. No GPU/model/service/install/
 release/API/config/frontend change. Required Vashti changes:none. Preserve the
 canonical application checkout and inherited untracked files.
+
+
+## Active Kuno engine handoff — retained controls and sampler (2026-10-16)
+
+Isolated `codex/strata-rust-port`, source `a8bbdf0` plus `f1dd77f6a5a5cf98253488edec1fb761c1e9a0a4`.
+Read the [controls/sampler receipt and HOST inventory](kuno-strata-rewrite-completion.md#retained-source-controls-and-full-context-sampler-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). The preceding retained Session
+exposed two real correctness dependencies, now connected in source:
+
+- MAIN erasure cleared the route map while actual expert weights stayed swapped.
+  Next-request bind now inverts the SAME canonical physical placement, checks the
+  existing adaptive map, writes/independently verifies the original full128KiB
+  owner with zero padding under real audited I/O and fault before rearming. Never
+  reconstruct from the initial profile or reset epochs/rounds. Existing weight
+  sources and usage erasure remain; no added model/GPU owner.
+- Sampler request positions/consumed history/control/verified-prefix bounds were
+  incorrectly tied to the4096 penalty ring. Selected core bookkeeping now reaches
+  the actual32K context. The native penalty window, BASE/RING/shader ABI and seven
+  root sizes stay unchanged, matching pinned generate.cpp's separate cap.
+
+Live sampler/prompt/PLE source scopes reject retained reset/rearm. The receipt
+records actual wiping/local/public/canonical-placement owner classifications,
+existing I/O cache/template clearing and exact CPU/source limitations. Source is
+not whole-process forensic erasure or device-verified hot inference. Current
+executable remains compiled-public/one-request; protected arbitrary input and
+physical repeated-request/numerical/failure/recovery checks are next gates.
+
+419 distinct CPU cases/52 nonempty suites, final locked release test build, both
+strict lint configurations and formatting/whitespace pass. Final CPU run follows
+verified checked-build completion. Exact logs, visibility/lint corrections and
+intermediate-vs-final receipts are in the linked completion document. No new
+shader/generator/arithmetic or frozen normal artifact;12a60bf remains stale.
+
+No GPU/model/service/install/release/API/config/connector/UI change; required
+Vashti changes:none. Goal active CPU-only; full rewrite incomplete and speed gate
+closed. Remaining packed/in-place/private allocator/whole-device substitutions,
+final pinned source/scheduling audit, old regression and device gates remain.
+Last sudo refresh failed; this block needed no root. HistoricalOct15 recovery is
+not current health evidence. Preserve canonical application work/untracked files.

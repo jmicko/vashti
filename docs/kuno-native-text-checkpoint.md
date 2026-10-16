@@ -1,19 +1,42 @@
-<!-- Current resume: 2026-10-16, source 1f4b195560e5b8e7a83361f19c844a7104d11cbf, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source f1dd77f6a5a5cf98253488edec1fb761c1e9a0a4, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, source `1f4b195560e5b8e7a83361f19c844a7104d11cbf`. Goal active CPU-only.
+branch `codex/strata-rust-port`, source `f1dd77f6a5a5cf98253488edec1fb761c1e9a0a4`. Goal active CPU-only.
 Last sudo refresh still reported password required in Demons after the user's
 renewal; CPU work does not need root. No GPU/model/service/install/release work
 or current health claim. Last physical recovery remains historicalOct15.
 
-Read [retained loaded-session receipt](kuno-strata-rewrite-completion.md#connected-retained-loaded-session-lifecycle-2026-10-16)
-and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--retained-loaded-sessions-2026-10-16).
+Read [retained controls and sampler receipt](kuno-strata-rewrite-completion.md#retained-source-controls-and-full-context-sampler-2026-10-16)
+and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--retained-controls-and-sampler-2026-10-16).
 Controller tests live under `strata_engine::controller`. Earlier CJK `cd703bc` was
 integrated as `0bfbea8`; do not reapply it.
 
-**Latest connected block:** actual `Session::load/run/close` owns the original
+**Latest connected block:** source `a8bbdf0` plus `f1dd77f6a5a5cf98253488edec1fb761c1e9a0a4` fixes two
+real dependencies found in the retained-state audit. Next-request binding restores
+the actual private GPU route map from the original committed physical placement,
+checks its adaptive-cache agreement and full original root/readback/padding/fault
+under actual I/O admission before rearming. Swapped weights, owner epochs and
+rounds stay intact; usage resets. Live sampler/prompt/PLE HOST scopes now reject
+reset/rearm. No profile identity reset or extra weight/GPU source is introduced.
+
+Native sampler request positions, consumed history, handback/controls and verified
+prefix admission now reach32K, independently from upstream's unchanged4096-slot
+penalty window/BASE/RING/shader ABI. Ordinary sampler bookkeeping remains4096.
+419 distinct CPU cases/52 nonempty suites, final locked release test build, both
+strict lint configurations and format/whitespace pass. Exact logs and retained
+HOST/control inventory are in the linked receipt. No GPU/numerical/speed claim.
+
+Next connect the protected arbitrary-input/tokenization caller. Repeated physical
+requests still need actual device/numerical/failure/recovery acceptance; the public
+executable remains compiled-public and one-request. Finish the remaining packed/
+in-place storage/allocator/whole-device pricing and final pinned scheduling/source
+substitution audit, preserving the old regression. No new shader/generator or
+normal frozen artifact;12a60bf is stale. Goal active CPU-only; no service/model/
+GPU/install/release change or required Vashti change.
+
+**Previous connected block:** actual `Session::load/run/close` owns the original
 runtime/tables/executor/target/MTP and immutable public weights. The one-shot
 wrapper uses that same lifecycle, with explicit checked cleanup for preflight
 rejections and original all-attempt terminal/physical recovery ordering. Session
@@ -34,8 +57,8 @@ No source/component is selected or dropped by throughput; speed gate stays close
 **Hot repeated model execution is not physically validated.** The current public
 executable still uses the one-request wrapper; the internal reusable session is
 connected in source. Existing request-end sanitization clears recordings/parameter
-and binding/header caches, retaining pipelines/weights. Finish the retained HOST/
-control audit and a protected arbitrary-input/tokenization caller. Remaining
+and binding/header caches, retaining pipelines/weights. The new retained HOST/control source inventory is above; connect a protected
+arbitrary-input/tokenization caller. Remaining
 packed/in-place scratch/substitution and whole-device pricing, pinned source/
 scheduling audit, old regression and physical/numerical/failure/recovery gates
 remain. Full rewrite incomplete; no private/general-service or throughput claim.
