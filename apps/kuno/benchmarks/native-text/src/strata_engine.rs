@@ -119,6 +119,28 @@ fn checked<T>(f: impl FnOnce() -> Result<T, Failure>) -> Result<T, Failure> {
     catch_unwind(AssertUnwindSafe(f)).map_err(|_| Failure::Inference)?
 }
 
+// Counts are checked only AFTER real original-owner reset and final close.
+// This comparison never grants a fence, release/refund or erasure capability.
+fn retained_erasure_agrees_with_close(
+    retained: (
+        crate::private_arena::OwnedZeroAudit,
+        crate::private_arena::OwnedZeroAudit,
+    ),
+    closed: (
+        crate::private_arena::OwnedZeroAudit,
+        crate::private_arena::OwnedZeroAudit,
+    ),
+    draft: (
+        Option<crate::private_arena::OwnedZeroAudit>,
+        Option<crate::private_arena::OwnedZeroAudit>,
+    ),
+) -> bool {
+    retained.0 == closed.0
+        && retained.1.bytes <= closed.1.bytes
+        && retained.1.buffers <= closed.1.buffers
+        && draft.0 == draft.1
+}
+
 /// Actual selected source ownership: every constructor phase is held outside
 /// the fallible inference closure so failures can close draft before target,
 /// drop target before source detach, then audit the final shared physical root.
@@ -165,6 +187,7 @@ pub(crate) unsafe fn execute<'m, 'f>(
     let mut executor = None;
     let mut target = None;
     let mut draft = None;
+    let mut request_erasure = None;
     let attempted = checked(|| {
         crate::target_lab_build::validate_runtime(true).map_err(|_| Failure::Rejected)?;
         crate::resident_util::select_retained_metadata(true);
@@ -281,6 +304,29 @@ pub(crate) unsafe fn execute<'m, 'f>(
         if done.outputs != *delivered {
             return Err(Failure::Inference);
         }
+        // Retain the actual model owners while erasing completed request
+        // state, before the existing terminal close. This connected boundary
+        // is required for later multi-request ownership; it grants no reuse
+        // of the still-closed request permit and never unloads public weights.
+        phase("request_private_erasure");
+        let draft_erasure = draft
+            .as_mut()
+            .map(|d| -> kuno_text::Result<_> {
+                let receipt = d.reset_completed_native_request(cancel)?;
+                receipt.check_original(d)?;
+                Ok(receipt)
+            })
+            .transpose()
+            .map_err(|_| Failure::RecoveryRequired)?;
+        let target_erasure = t
+            .reset_completed_native_request(e, cancel)
+            .map_err(|_| Failure::RecoveryRequired)?;
+        // Original retained ownership is distinct from a never-used PLE
+        // generation0 constructor. Do not manufacture fresh-model authority.
+        target_erasure
+            .check_original(t)
+            .map_err(|_| Failure::RecoveryRequired)?;
+        request_erasure = Some((target_erasure, draft_erasure));
         Ok(done)
     });
     if !runtime_owned {
@@ -367,6 +413,22 @@ pub(crate) unsafe fn execute<'m, 'f>(
     }
     let generation = attempted?;
     let (target_main, target_sources) = target_audit.ok_or(Failure::RecoveryRequired)?;
+    let (retained, draft_erasure) = request_erasure.ok_or(Failure::RecoveryRequired)?;
+    // Retained erasure is not a close/refund receipt. Final close independently
+    // audits the SAME target owners; source close counts include earlier resets.
+    let final_draft = draft_close
+        .as_ref()
+        .map_err(|_| Failure::RecoveryRequired)?
+        .as_ref()
+        .map(|r| r.private);
+    if !retained_erasure_agrees_with_close(
+        (retained.main, retained.source),
+        (target_main, target_sources),
+        (draft_erasure.as_ref().map(|r| r.private), final_draft),
+    ) {
+        retired.store(true, Ordering::Release);
+        return Err(Failure::RecoveryRequired);
+    }
     Ok(Completion {
         generation,
         target_main,
@@ -388,6 +450,52 @@ mod tests {
             crate::strata_speculation::Config::native(4),
             0.5,
         )
+    }
+    #[test]
+    fn retained_audit_counts_do_not_replace_independent_close_or_cumulative_source_accounting() {
+        use crate::private_arena::OwnedZeroAudit;
+        let main = OwnedZeroAudit {
+            bytes: 65536,
+            buffers: 2,
+        };
+        let source = OwnedZeroAudit {
+            bytes: 32768,
+            buffers: 1,
+        };
+        let cumulative = OwnedZeroAudit {
+            bytes: 98304,
+            buffers: 3,
+        };
+        assert!(retained_erasure_agrees_with_close(
+            (main, source),
+            (main, cumulative),
+            (Some(source), Some(source))
+        ));
+        assert!(retained_erasure_agrees_with_close(
+            (main, source),
+            (main, source),
+            (None, None)
+        ));
+        assert!(!retained_erasure_agrees_with_close(
+            (main, source),
+            (source, cumulative),
+            (None, None)
+        ));
+        assert!(!retained_erasure_agrees_with_close(
+            (main, cumulative),
+            (main, source),
+            (None, None)
+        ));
+        assert!(!retained_erasure_agrees_with_close(
+            (main, source),
+            (main, source),
+            (Some(source), None)
+        ));
+        assert!(!retained_erasure_agrees_with_close(
+            (main, source),
+            (main, source),
+            (Some(source), Some(main))
+        ));
     }
     #[test]
     fn owned_requests_accept_actual_varying_tokens_and_all_context_partitions() {

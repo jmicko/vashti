@@ -149,6 +149,20 @@ impl Authority {
         }
         Ok(())
     }
+    fn validate_completed_native(&self, position: usize, actual: bool) -> Result<()> {
+        self.retained_native_scope()?;
+        if actual || !(self.geometry.prompt..=self.geometry.final_cursor()).contains(&position) {
+            return Err(rejected());
+        }
+        self.active(false)?;
+        Ok(())
+    }
+    fn retained_native_scope(&self) -> Result<u64> {
+        if !crate::strata_intel_core::enabled() || self.phase != Phase::Closed || self.scopes != 1 {
+            return Err(rejected());
+        }
+        Ok(self.scopes)
+    }
     fn validate_begin(&self, position: usize, actual: bool) -> Result<()> {
         self.active(actual)?;
         if self.phase != Phase::Prefill || position != self.geometry.prompt || actual {
@@ -196,6 +210,19 @@ pub(super) struct Permit {
     authority: Authority,
 }
 impl Permit {
+    pub(super) fn validate_completed_native_request(
+        &self,
+        binding: GraphBindingId,
+        context: usize,
+        position: usize,
+        actual: bool,
+    ) -> Result<()> {
+        self.identity(binding, context)?;
+        self.authority.validate_completed_native(position, actual)
+    }
+    pub(super) fn retained_native_scope(&self) -> Result<u64> {
+        self.authority.retained_native_scope()
+    }
     pub(super) fn validate_geometry(&self, prompt: usize, outputs: usize) -> Result<()> {
         if self.authority.phase != Phase::Prefill
             || self.authority.geometry != Geometry::new(prompt, outputs)?
@@ -393,6 +420,28 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn retained_native_reset_requires_the_closed_original_scope_and_actual_cursor() {
+        if !crate::strata_intel_core::enabled() {
+            return;
+        }
+        for prompt in [1, 13, 4096] {
+            let g = Geometry::new(prompt, 16).unwrap();
+            let mut a = Authority::new(g, g.context(), false).unwrap();
+            assert!(a.validate_completed_native(prompt, false).is_err());
+            a.begin(prompt, true).unwrap();
+            assert!(a.validate_completed_native(prompt, true).is_err());
+            a.end(prompt, false).unwrap();
+            assert_eq!(a.retained_native_scope().unwrap(), 1);
+            assert!(a.validate_completed_native(prompt, false).is_ok());
+            assert!(a.validate_completed_native(g.final_cursor(), false).is_ok());
+            assert!(a.validate_completed_native(prompt - 1, false).is_err());
+            assert!(a.validate_completed_native(g.context(), false).is_err());
+            assert!(a.validate_completed_native(prompt, true).is_err());
+            a.scopes = 2;
+            assert!(a.validate_completed_native(prompt, false).is_err());
+        }
+    }
     #[test]
     fn core_geometry_charges_arbitrary_bounded_request_and_checks_lifecycle() {
         if !crate::strata_intel_core::enabled() {

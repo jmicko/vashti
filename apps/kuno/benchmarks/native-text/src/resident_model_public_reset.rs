@@ -1,4 +1,5 @@
-//! One construction-fixed, successful thirteen-row PUBLIC warm replay only.
+//! Healthy retained-state erasure. The original13-row PUBLIC entry keeps its
+//! one-shot permit; native completed requests have a separate closed scope.
 //! Model weights/banks and every actual admission/epoch/counter remain owned.
 //! This is not a recovery API or a generic snapshot/cursor rewind. Failed
 //! erasure is terminal; no poisoned flag or physical retirement is cleared.
@@ -7,6 +8,22 @@ use super::*;
 use crate::{expert_banks::OriginalPackedProfile, private_arena::OwnedZeroAudit};
 use kuno_text::model::GraphBindingId;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Scope {
+    Public13,
+    NativeRequest,
+}
+fn native_geometry(context: usize, position: usize) -> Result<()> {
+    if !crate::strata_intel_core::enabled()
+        || context == 0
+        || context > crate::qsa_gpu::MAX_CONTEXT
+        || position == 0
+        || position > context
+    {
+        return Err(rejected());
+    }
+    Ok(())
+}
 const END: usize = 13;
 const _: () = assert!(8192 < latest_checkpoint::HOST_INCREMENT);
 fn rejected() -> Error {
@@ -103,6 +120,40 @@ pub(crate) struct PublicWarmResetReceipt {
     pub(crate) main: OwnedZeroAudit,
     pub(crate) source: OwnedZeroAudit,
 }
+/// Original retained model/epoch and completed request scope. Counts alone
+/// cannot construct this non-cloneable receipt or authorize a fresh request.
+pub(crate) struct NativeRequestResetReceipt {
+    pub(crate) main: OwnedZeroAudit,
+    pub(crate) source: OwnedZeroAudit,
+    fault: BufferId,
+    binding: GraphBindingId,
+    context: usize,
+    scope: u64,
+}
+impl NativeRequestResetReceipt {
+    pub(crate) fn check_original(&self, model: &ResidentModel<'_, '_>) -> Result<()> {
+        model.graph.verify_unchanged()?;
+        let actual = model
+            .native_batch
+            .as_ref()
+            .ok_or(rejected())?
+            .public_language_request_io
+            .as_ref()
+            .ok_or(rejected())?
+            .retained_native_scope()?;
+        if self.fault != model.b.fault
+            || self.binding != model.graph.binding_id()
+            || self.context != model.context
+            || self.scope != actual
+            || model.position != 0
+            || model.poisoned
+            || model.retired.load(Ordering::Acquire)
+        {
+            return Err(rejected());
+        }
+        Ok(())
+    }
+}
 /// Only this coordinator can mint the all-arena/source/fault/final-cancel
 /// capability. Family permits cannot publish merely from a Ready cursor.
 pub(crate) struct CompletedReset(());
@@ -133,7 +184,7 @@ impl ResidentModel<'_, '_> {
             .validate(self.graph.binding_id(), self.context, self.position)?;
         let mut erase_started = false;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.reset_public_warm_checked(executor, cancel, &mut erase_started)
+            self.reset_retained_checked(executor, cancel, &mut erase_started, Scope::Public13)
         }));
         match result {
             Ok(Ok(receipt)) => Ok(receipt),
@@ -156,14 +207,63 @@ impl ResidentModel<'_, '_> {
         }
     }
 
-    fn reset_public_warm_checked(
+    /// Only a completed native request may retain weights while erasing all
+    /// original private owners. Engine cleanup owns terminal failure ordering.
+    pub(crate) fn reset_completed_native_request(
+        &mut self,
+        executor: &mut GpuExecutor<'_>,
+        cancel: &AtomicBool,
+    ) -> Result<NativeRequestResetReceipt> {
+        native_geometry(self.context, self.position)?;
+        // Capture the original closed scope before any mutation. A rejection
+        // here grants no erasure or recovery credit; successful publication
+        // below performs no new fallible metadata lookup.
+        let scope = self
+            .native_batch
+            .as_ref()
+            .ok_or(rejected())?
+            .public_language_request_io
+            .as_ref()
+            .ok_or(rejected())?
+            .retained_native_scope()?;
+        let mut started = false;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.reset_retained_checked(executor, cancel, &mut started, Scope::NativeRequest)
+        }));
+        match result {
+            Ok(Ok(receipt)) => Ok(NativeRequestResetReceipt {
+                main: receipt.main,
+                source: receipt.source,
+                fault: self.b.fault,
+                binding: self.graph.binding_id(),
+                context: self.context,
+                scope,
+            }),
+            other => {
+                self.poisoned = true;
+                self.retired.store(true, Ordering::Release);
+                executor.poison_resident();
+                match other {
+                    Ok(Err(e)) => Err(e),
+                    _ => Err(rejected()),
+                }
+            }
+        }
+    }
+    fn reset_retained_checked(
         &mut self,
         executor: &mut GpuExecutor<'_>,
         cancel: &AtomicBool,
         erase_started: &mut bool,
+        scope: Scope,
     ) -> Result<PublicWarmResetReceipt> {
         self.completed_native_projection_boundary(executor)?;
-        if self.native_decode_kernels()? != NativeDecodeKernels::Chunk
+        let expected = if scope == Scope::NativeRequest {
+            NativeDecodeKernels::FourGdn
+        } else {
+            NativeDecodeKernels::Chunk
+        };
+        if self.native_decode_kernels()? != expected
             || executor.packed_profile != OriginalPackedProfile::DaslabIq3
             || self.cancel_after_attention.is_some()
             || !self.lifecycle_hooks.is_unarmed()
@@ -175,6 +275,22 @@ impl ResidentModel<'_, '_> {
             return Err(rejected());
         }
         let native = self.native_batch.as_ref().ok_or(rejected())?;
+        if scope == Scope::NativeRequest {
+            native_geometry(self.context, self.position)?;
+            if !executor.global_target_scope()? {
+                return Err(rejected());
+            }
+            native
+                .public_language_request_io
+                .as_ref()
+                .ok_or(rejected())?
+                .validate_completed_native_request(
+                    self.graph.binding_id(),
+                    self.context,
+                    self.position,
+                    self.admission.request_io_reuse_active(),
+                )?;
+        }
         if !native.latest_target_checkpoint_reserved {
             return Err(rejected());
         }
@@ -207,50 +323,75 @@ impl ResidentModel<'_, '_> {
         for (layer, owner) in self.layers.iter_mut().enumerate() {
             match owner {
                 Layer::Gdn(stage, _) if layer % 4 != 3 => {
-                    gdn_permits[layer] = Some(native.gdn.prepare_public_warm_reset(
-                        stage,
-                        &self.arena,
-                        END as u64,
-                        cancel,
-                    )?);
+                    gdn_permits[layer] = Some(if scope == Scope::NativeRequest {
+                        native.gdn.prepare_native_request_reset(
+                            stage,
+                            &self.arena,
+                            self.position as u64,
+                            cancel,
+                        )?
+                    } else {
+                        native.gdn.prepare_public_warm_reset(
+                            stage,
+                            &self.arena,
+                            END as u64,
+                            cancel,
+                        )?
+                    });
                 }
                 Layer::Qsa(stage, _) if layer % 4 == 3 => {
-                    qsa_permits[layer] = Some(native.qsa.prepare_public_warm_reset(
-                        stage,
-                        &self.arena,
-                        self.b.fault,
-                        END as u64,
-                        cancel,
-                    )?);
+                    qsa_permits[layer] = Some(if scope == Scope::NativeRequest {
+                        native.qsa.prepare_native_request_reset(
+                            stage,
+                            &self.arena,
+                            self.b.fault,
+                            self.position as u64,
+                            cancel,
+                        )?
+                    } else {
+                        native.qsa.prepare_public_warm_reset(
+                            stage,
+                            &self.arena,
+                            self.b.fault,
+                            END as u64,
+                            cancel,
+                        )?
+                    });
                 }
                 _ => return Err(rejected()),
             }
         }
-        let mut ple_permit = native.ple.prepare_public_warm_reset(
-            ple_batch::Preparation {
-                graph: self.graph,
-                arena: &self.arena,
-                admission: &self.admission,
-                retired: &self.retired,
-                context: self.context,
-                position: self.position,
-                owner_poisoned: &mut self.poisoned,
-                sequence_poison: &self.ple_batch_poison,
-                conv: &mut self.ple_conv,
-                history: &mut self.ple_history,
-                anchor: &mut self.ple_batch_pending,
-                fault: self.b.fault,
-                scalar_ids: [self.b.ple_emb, self.b.ple_key, self.b.ple_value],
-            },
-            cancel,
-        )?;
+        let ple_context = ple_batch::Preparation {
+            graph: self.graph,
+            arena: &self.arena,
+            admission: &self.admission,
+            retired: &self.retired,
+            context: self.context,
+            position: self.position,
+            owner_poisoned: &mut self.poisoned,
+            sequence_poison: &self.ple_batch_poison,
+            conv: &mut self.ple_conv,
+            history: &mut self.ple_history,
+            anchor: &mut self.ple_batch_pending,
+            fault: self.b.fault,
+            scalar_ids: [self.b.ple_emb, self.b.ple_key, self.b.ple_value],
+        };
+        let mut ple_permit = if scope == Scope::NativeRequest {
+            native
+                .ple
+                .prepare_native_request_reset(ple_context, cancel)?
+        } else {
+            native.ple.prepare_public_warm_reset(ple_context, cancel)?
+        };
         u::cancel(cancel)?;
-        native
-            .public_warm_replay
-            .as_mut()
-            .ok_or(rejected())?
-            .authority
-            .consume(self.context, self.position)?;
+        if scope == Scope::Public13 {
+            native
+                .public_warm_replay
+                .as_mut()
+                .ok_or(rejected())?
+                .authority
+                .consume(self.context, self.position)?;
+        }
         for permit in gdn_permits.iter_mut().flatten() {
             permit.arm();
         }
@@ -398,6 +539,39 @@ mod tests {
                         .all(|&p| p == if result.is_ok() { 0 } else { 13 })
                 );
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod native_request_tests {
+    use super::*;
+    #[test]
+    fn retained_reset_permits_and_original_owner_receipt_fit_the_existing_stack_quote() {
+        let bytes = LAYERS
+            * (std::mem::size_of::<Option<gdn::PublicWarmGdnReset<'static, 'static>>>()
+                + std::mem::size_of::<Option<qsa::PublicWarmQsaReset<'static, 'static>>>())
+            + std::mem::size_of::<ple_batch::PublicWarmPleReset<'static>>()
+            + std::mem::size_of::<NativeRequestResetReceipt>()
+            + std::mem::size_of::<PublicWarmResetReceipt>()
+            + 512;
+        assert!(bytes <= 8192 && bytes < latest_checkpoint::HOST_INCREMENT);
+    }
+    #[test]
+    fn native_reset_has_full_context_bounds_without_relaxing_public13_authority() {
+        if !crate::strata_intel_core::enabled() {
+            assert!(native_geometry(13, 13).is_err());
+            return;
+        }
+        for context in [1, 13, 35, 4096, 32768] {
+            for position in [1, context] {
+                assert!(native_geometry(context, position).is_ok());
+            }
+            let a = Authority::default();
+            assert_eq!(a.validate(context, context).is_ok(), context == 13);
+        }
+        for (context, position) in [(0, 0), (1, 0), (13, 14), (32769, 1), (usize::MAX, 1)] {
+            assert!(native_geometry(context, position).is_err());
         }
     }
 }

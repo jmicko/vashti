@@ -1935,10 +1935,36 @@ impl GdnBatchWorkspace {
         position: u64,
         cancel: &AtomicBool,
     ) -> Result<PublicWarmGdnReset<'a, 'f>> {
+        if position != 13 {
+            return Err(fault("native public warm reset geometry"));
+        }
+        self.prepare_retained_reset(stage, arena, position, cancel)
+    }
+    pub(crate) fn prepare_native_request_reset<'a, 'f>(
+        &self,
+        stage: &'a mut ResidentGdn<'f>,
+        arena: &PrivateArena,
+        position: u64,
+        cancel: &AtomicBool,
+    ) -> Result<PublicWarmGdnReset<'a, 'f>> {
+        if !crate::strata_intel_core::enabled()
+            || position == 0
+            || position > crate::qsa_gpu::MAX_CONTEXT as u64
+        {
+            return Err(fault("native completed request reset geometry"));
+        }
+        self.prepare_retained_reset(stage, arena, position, cancel)
+    }
+    fn prepare_retained_reset<'a, 'f>(
+        &self,
+        stage: &'a mut ResidentGdn<'f>,
+        arena: &PrivateArena,
+        position: u64,
+        cancel: &AtomicBool,
+    ) -> Result<PublicWarmGdnReset<'a, 'f>> {
         self.healthy(arena, cancel)?;
         self.policy.completed_boundary()?;
-        if position != 13
-            || *self.policy.start != 0
+        if *self.policy.start != 0
             || *self.policy.count != 0
             || self.policy.generations.iter().any(|&v| v != 0)
             || self.policy.stage_ids.iter().any(|&v| v != 0)

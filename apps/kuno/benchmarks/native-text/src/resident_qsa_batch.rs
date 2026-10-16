@@ -2827,9 +2827,37 @@ impl QsaBatchWorkspace {
         position: u64,
         cancel: &AtomicBool,
     ) -> Result<PublicWarmQsaReset<'a, 'f>> {
+        if position != 13 {
+            return Err(fault("native public warm reset geometry"));
+        }
+        self.prepare_retained_reset(stage, arena, fault_id, position, cancel)
+    }
+    pub(crate) fn prepare_native_request_reset<'a, 'f>(
+        &self,
+        stage: &'a mut ResidentQsa<'f>,
+        arena: &PrivateArena,
+        fault_id: BufferId,
+        position: u64,
+        cancel: &AtomicBool,
+    ) -> Result<PublicWarmQsaReset<'a, 'f>> {
+        if !crate::strata_intel_core::enabled()
+            || position == 0
+            || position > crate::qsa_gpu::MAX_CONTEXT as u64
+        {
+            return Err(fault("native completed request reset geometry"));
+        }
+        self.prepare_retained_reset(stage, arena, fault_id, position, cancel)
+    }
+    fn prepare_retained_reset<'a, 'f>(
+        &self,
+        stage: &'a mut ResidentQsa<'f>,
+        arena: &PrivateArena,
+        fault_id: BufferId,
+        position: u64,
+        cancel: &AtomicBool,
+    ) -> Result<PublicWarmQsaReset<'a, 'f>> {
         self.healthy(arena, cancel)?;
-        if position != 13
-            || self.policy.phase != ChunkPhase::Idle
+        if self.policy.phase != ChunkPhase::Idle
             || *self.policy.chunk == 0
             || *self.policy.issued != 0
             || *self.policy.committed != 0

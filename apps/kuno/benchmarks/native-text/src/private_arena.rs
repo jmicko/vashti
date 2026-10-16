@@ -49,7 +49,10 @@ pub const MAX_SPAN_BYTES: usize = if cfg!(feature = "strata-intel-core") {
 } else {
     128 * 1024 * 1024
 };
-const ZERO_AUDIT_WINDOW: usize = 32 * 1024 * 1024;
+pub(crate) const ZERO_AUDIT_WINDOW: usize = 32 * 1024 * 1024;
+/// One bounded cleanup map plus its guarded host copy. A retained inference
+/// owner must price this independently of normal token/output read limits.
+pub(crate) const OWNED_ZERO_AUDIT_HOST_BYTES: usize = 2 * ZERO_AUDIT_WINDOW;
 const LANES: usize = 64;
 static NEXT_ARENA_ID: AtomicU64 = AtomicU64::new(1);
 

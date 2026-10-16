@@ -614,6 +614,18 @@ impl<'a> LatestPleRestore<'a> {
     }
 }
 
+fn native_reset_history(position: usize, tokens: &[i32]) -> bool {
+    tokens.len() == 2
+        && position > 0
+        && tokens.iter().enumerate().all(|(i, &t)| {
+            if position == 1 && i == 0 {
+                t == -1
+            } else {
+                (0..248320).contains(&t)
+            }
+        })
+}
+
 pub(crate) struct PublicWarmPleReset<'a> {
     workspace: &'a mut PleBatchWorkspace,
     conv: &'a mut CausalConvState,
@@ -628,14 +640,37 @@ impl PleBatchWorkspace {
         c: Preparation<'a, '_, '_>,
         cancel: &AtomicBool,
     ) -> Result<PublicWarmPleReset<'a>> {
+        if c.position != 13 || c.context != 13 {
+            return Err(error());
+        }
+        self.prepare_retained_reset(c, cancel, false)
+    }
+    pub(crate) fn prepare_native_request_reset<'a>(
+        &'a mut self,
+        c: Preparation<'a, '_, '_>,
+        cancel: &AtomicBool,
+    ) -> Result<PublicWarmPleReset<'a>> {
+        if !crate::strata_intel_core::enabled()
+            || c.position == 0
+            || c.position > c.context
+            || c.context > crate::qsa_gpu::MAX_CONTEXT
+        {
+            return Err(error());
+        }
+        self.prepare_retained_reset(c, cancel, true)
+    }
+    fn prepare_retained_reset<'a>(
+        &'a mut self,
+        c: Preparation<'a, '_, '_>,
+        cancel: &AtomicBool,
+        native: bool,
+    ) -> Result<PublicWarmPleReset<'a>> {
         u::cancel(cancel)?;
         graph_preflight(c.graph)?;
         self.validate_ids(c.arena)?;
         c.admission
             .check_client(c.arena.client().map_err(u::fault)?)?;
-        if c.position != 13
-            || c.context != 13
-            || self.next != c.position
+        if self.next != c.position
             || self.generation == 0
             || self.pending
             || c.anchor.is_some()
@@ -649,10 +684,14 @@ impl PleBatchWorkspace {
             || c.conv.history().len() != CHANNELS * 9
             || c.conv.history().iter().any(|x| !x.is_finite())
             || c.history.tokens().len() != 2
-            || c.history
-                .tokens()
-                .iter()
-                .any(|&t| !(0..248320).contains(&t))
+            || if native {
+                !native_reset_history(c.position, c.history.tokens())
+            } else {
+                c.history
+                    .tokens()
+                    .iter()
+                    .any(|&t| !(0..248320).contains(&t))
+            }
         {
             return Err(error());
         }
@@ -2766,5 +2805,27 @@ mod tests {
             armed: true,
         });
         assert!(poison.load(Ordering::Acquire));
+    }
+}
+
+#[cfg(test)]
+mod native_request_reset_tests {
+    use super::*;
+    #[test]
+    fn native_completed_history_preserves_initial_sentinel_for_short_requests() {
+        assert!(native_reset_history(1, &[-1, 7]));
+        for pos in [2, 13, 4096, 32768] {
+            assert!(native_reset_history(pos, &[0, 248319]));
+        }
+        for (pos, tokens) in [
+            (0, vec![-1, -1]),
+            (1, vec![0, 7]),
+            (1, vec![-1, -1]),
+            (2, vec![-1, 7]),
+            (2, vec![7, 248320]),
+            (2, vec![7]),
+        ] {
+            assert!(!native_reset_history(pos, &tokens));
+        }
     }
 }
