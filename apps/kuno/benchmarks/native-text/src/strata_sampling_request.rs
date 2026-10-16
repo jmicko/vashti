@@ -1,6 +1,6 @@
 //! Connected request owner for the pinned Intel sampler and coupled MTP chain.
 //! No global content cache: TLS is an exclusive, wiping, stack-scoped request.
-use super::{HISTORY_MAX, Params, VOCAB, coupled_base, coupled_counter, penalty_rows};
+use super::{CONTEXT_MAX, HISTORY_MAX, Params, VOCAB, coupled_base, coupled_counter, penalty_rows};
 use crate::{
     private_arena::{BufferId, BufferLayout, PrivateArena},
     resident_util as u,
@@ -60,13 +60,13 @@ fn draft_control_range(index: usize) -> Result<std::ops::Range<u64>> {
     Ok(start..end)
 }
 fn draft_controls(position: usize) -> Result<Zeroizing<Vec<u8>>> {
-    if !(1..=HISTORY_MAX).contains(&position) {
+    if !(1..=CONTEXT_MAX).contains(&position) {
         return Err(reject());
     }
     let mut bytes = Zeroizing::new(vec![0u8; ROOT_BYTES[CONTROL] as usize]);
     for j in 0..crate::strata_port::verify_capacity() - 1 {
         let counter = position.checked_add(j).ok_or_else(reject)?;
-        if counter > HISTORY_MAX {
+        if counter > CONTEXT_MAX {
             break;
         }
         let row = draft_control_range(j)?;
@@ -129,7 +129,7 @@ pub(crate) fn prepare_draft_replay(
             .is_none_or(|end| end >= crate::strata_port::verify_capacity())
         || cell
             .checked_add(count - 1)
-            .is_none_or(|last| last >= HISTORY_MAX)
+            .is_none_or(|last| last >= CONTEXT_MAX)
     {
         return Err(reject());
     }
@@ -165,7 +165,7 @@ fn replay_controls(
             .is_none_or(|end| end >= crate::strata_port::verify_capacity())
         || cell
             .checked_add(count - 1)
-            .is_none_or(|last| last >= HISTORY_MAX)
+            .is_none_or(|last| last >= CONTEXT_MAX)
     {
         return Err(reject());
     }
@@ -199,7 +199,7 @@ fn complete_replay_controls(
     if coordinates.map(|v| v as u64) != c[..4]
         || *counter != c[4]
         || c[0] != 3
-        || c[5] > HISTORY_MAX as u64
+        || c[5] > CONTEXT_MAX as u64
         || c[6] >= crate::strata_port::verify_capacity() as u64
     {
         return Err(reject());
@@ -274,7 +274,7 @@ impl Scope {
         if !crate::strata_intel_core::enabled()
             || !arena.public_owned_zero_audit_enabled()
             || retired.load(Ordering::Acquire)
-            || prefix.len() > HISTORY_MAX
+            || prefix.len() > CONTEXT_MAX
             || prefix.iter().any(|&id| id >= VOCAB as u32)
         {
             return Err(reject());
@@ -311,7 +311,7 @@ impl Scope {
         {
             return Err(reject());
         }
-        let mut consumed = Zeroizing::new(Vec::with_capacity(HISTORY_MAX));
+        let mut consumed = Zeroizing::new(Vec::with_capacity(CONTEXT_MAX));
         consumed.extend_from_slice(prefix);
         let state = State {
             client: arena.client().map_err(u::fault)?.clone(),
@@ -585,7 +585,7 @@ pub(crate) fn draft_pick(
             || s.coordinates[0] != 3
             || j != s.coordinates[3]
             || j >= crate::strata_port::verify_capacity() - 1
-            || cell >= HISTORY_MAX
+            || cell >= CONTEXT_MAX
         {
             return Err(reject());
         }
@@ -803,7 +803,7 @@ fn stage_window(
         || inputs.len() > crate::strata_port::verify_capacity()
         || position
             .checked_add(inputs.len())
-            .is_none_or(|n| n > HISTORY_MAX)
+            .is_none_or(|n| n > CONTEXT_MAX)
         || inputs.iter().any(|&id| id >= VOCAB as u32)
     {
         return Err(reject());
@@ -827,7 +827,7 @@ fn commit_window(
         || consumed
             .len()
             .checked_add(n)
-            .is_none_or(|v| v > HISTORY_MAX)
+            .is_none_or(|v| v > CONTEXT_MAX)
     {
         return Err(reject());
     }
@@ -842,7 +842,7 @@ mod tests {
     #[test]
     fn joined_sampler_handback_matches_original_per_cell_counter_progression() {
         let maximum = crate::strata_port::verify_capacity() - 1;
-        for base in [1, 63, 2048, HISTORY_MAX] {
+        for base in [1, 63, 2048, HISTORY_MAX, CONTEXT_MAX] {
             for index in 0..maximum {
                 for count in 1..=maximum - index {
                     let cell = base + index - 1;
@@ -852,7 +852,7 @@ mod tests {
                     } else {
                         (base + index - 1) as u64
                     };
-                    if cell + count > HISTORY_MAX {
+                    if cell + count > CONTEXT_MAX {
                         assert!(replay_controls(coords, counter, cell, count, index).is_err());
                         continue;
                     }
@@ -895,7 +895,7 @@ mod tests {
         for (cell, count, index) in [
             (62, 0, 0),
             (62, 1, 1),
-            (HISTORY_MAX, 1, 0),
+            (CONTEXT_MAX, 1, 0),
             (62, usize::MAX, 0),
         ] {
             assert!(replay_controls(coords, counter, cell, count, index).is_err());
@@ -907,7 +907,14 @@ mod tests {
     #[test]
     fn all_coupled_draft_controls_are_staged_once_in_disjoint_original_rows() {
         let count = crate::strata_port::verify_capacity() - 1;
-        for position in [1, 63, 2048, HISTORY_MAX - count + 1, HISTORY_MAX] {
+        for position in [
+            1,
+            63,
+            2048,
+            HISTORY_MAX,
+            CONTEXT_MAX - count + 1,
+            CONTEXT_MAX,
+        ] {
             let bytes = draft_controls(position).unwrap();
             assert_eq!(bytes.len(), ROOT_BYTES[CONTROL] as usize);
             let mut expected = vec![0u8; bytes.len()];
@@ -920,7 +927,7 @@ mod tests {
                 assert!(row.end <= ROOT_BYTES[CONTROL]);
                 end = row.end;
                 let counter = position + j;
-                if counter <= HISTORY_MAX {
+                if counter <= CONTEXT_MAX {
                     let words: Vec<_> = bytes[row.start as usize..row.start as usize + 12]
                         .chunks_exact(4)
                         .map(|w| u32::from_le_bytes(w.try_into().unwrap()))
@@ -936,7 +943,7 @@ mod tests {
             }
             assert_eq!(&*bytes, &expected);
         }
-        for invalid in [0, HISTORY_MAX + 1, usize::MAX] {
+        for invalid in [0, CONTEXT_MAX + 1, usize::MAX] {
             assert!(draft_controls(invalid).is_err());
         }
         for invalid in [count, usize::MAX] {
@@ -962,6 +969,43 @@ mod tests {
                 let len = consumed.len();
                 stage_window(&consumed, &mut window, &mut c, len, &[99]).unwrap();
                 assert_eq!(&*window, &[99]);
+            }
+        }
+    }
+    #[test]
+    fn full_context_positions_commit_only_verified_prefixes_beyond_the_penalty_ring() {
+        let maximum = crate::strata_port::verify_capacity();
+        for start in [HISTORY_MAX - 1, HISTORY_MAX, 8192, CONTEXT_MAX - maximum] {
+            if start + maximum > CONTEXT_MAX {
+                continue;
+            }
+            for accepted in 1..=maximum {
+                let mut consumed = Zeroizing::new(
+                    (0..start)
+                        .map(|i| (i * 31 % VOCAB) as u32)
+                        .collect::<Vec<_>>(),
+                );
+                let mut window = Zeroizing::new(Vec::new());
+                let input = (0..maximum).map(|i| (100 + i) as u32).collect::<Vec<_>>();
+                let mut coordinates = [0; 4];
+                stage_window(&consumed, &mut window, &mut coordinates, start, &input).unwrap();
+                coordinates[0] = 2;
+                commit_window(&mut consumed, &mut window, &mut coordinates, accepted).unwrap();
+                assert_eq!(consumed.len(), start + accepted);
+                assert_eq!(&consumed[start..], &input[..accepted]);
+                assert!(window.is_empty());
+                assert!(
+                    commit_window(&mut consumed, &mut window, &mut coordinates, accepted).is_err()
+                );
+                if consumed.len() == CONTEXT_MAX {
+                    let before = coordinates;
+                    assert!(
+                        stage_window(&consumed, &mut window, &mut coordinates, CONTEXT_MAX, &[7])
+                            .is_err()
+                    );
+                    assert_eq!(coordinates, before);
+                    assert!(window.is_empty());
+                }
             }
         }
     }
@@ -998,7 +1042,7 @@ mod tests {
         assert!(RUNTIME_BYTES >= 4 * MAIN_BYTES + 4 * ROOT_BYTES[HIST]);
         assert!(
             HOST_BYTES
-                >= 2 * ROOT_BYTES[CAND] as usize + 4 * ROOT_BYTES[HIST] as usize + HISTORY_MAX * 4
+                >= 2 * ROOT_BYTES[CAND] as usize + 4 * ROOT_BYTES[HIST] as usize + CONTEXT_MAX * 4
         );
     }
     #[test]

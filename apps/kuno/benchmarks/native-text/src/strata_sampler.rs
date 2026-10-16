@@ -23,7 +23,13 @@ pub(crate) const VOCAB: usize = 248320;
 pub(crate) const BLOCK: usize = 4096;
 pub(crate) const BLOCKS: usize = VOCAB.div_ceil(BLOCK);
 pub(crate) const KMAX: usize = 64;
+/// Upstream repetition-penalty ring capacity, independent of model positions.
 pub(crate) const HISTORY_MAX: usize = 4096;
+pub(crate) const CONTEXT_MAX: usize = if crate::strata_intel_core::enabled() {
+    crate::strata_intel_core::CONTEXT
+} else {
+    HISTORY_MAX
+};
 /// Request values only: no Debug/serialization or kernel-cache identity.
 pub(crate) struct Params {
     pub top_k: i32,
@@ -423,7 +429,7 @@ pub(crate) fn penalty_rows(
     if window.is_empty()
         || window.len() > crate::strata_port::verify_capacity()
         || width > HISTORY_MAX
-        || tail.len() > HISTORY_MAX
+        || tail.len() > CONTEXT_MAX
         || tail.iter().chain(window).any(|&id| id >= VOCAB as u32)
     {
         return Err(reject());

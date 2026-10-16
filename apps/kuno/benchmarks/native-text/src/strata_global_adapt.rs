@@ -74,7 +74,7 @@ impl Cache {
     }
     pub(crate) fn check_retained_route_map(&self, mapping: &[u16]) -> Result<()> {
         validate_mapping(mapping)?;
-        if &*self.mapping != mapping {
+        if self.mapping.as_slice() != mapping {
             return Err(reject());
         }
         Ok(())

@@ -469,3 +469,45 @@ fn native_cjk_subset_keeps_original_tie_order_and_penalty_ids() {
     assert_ne!(Kernel::CjkPart.id(), Kernel::Part.id());
     assert_ne!(Kernel::CjkMerge.id(), Kernel::Merge.id());
 }
+
+#[test]
+fn long_request_context_keeps_only_the_native_penalty_window_in_target_and_draft_histories() {
+    for start in [HISTORY_MAX - 1, HISTORY_MAX, 8192, CONTEXT_MAX - 1] {
+        if start > CONTEXT_MAX {
+            continue;
+        }
+        let tail = (0..start)
+            .map(|i| ((i * 31 + 7) % VOCAB) as u32)
+            .collect::<Vec<_>>();
+        let window = [17, 29, 41, 53];
+        for width in [0, 1, 7, HISTORY_MAX] {
+            let actual = penalty_rows(&tail, &window, width).unwrap();
+            assert_eq!(
+                &actual[..width.max(1)],
+                &*coupled_base(&tail, window[0], width).unwrap()
+            );
+            if width == 0 {
+                assert_eq!(&*actual, &[-1]);
+                continue;
+            }
+            for row in 0..window.len() {
+                let full = tail
+                    .iter()
+                    .chain(&window[..=row])
+                    .copied()
+                    .collect::<Vec<_>>();
+                let mut expected = vec![-1i32; width];
+                let n = width.min(full.len());
+                for (out, &token) in expected[width - n..]
+                    .iter_mut()
+                    .zip(&full[full.len() - n..])
+                {
+                    *out = token as i32;
+                }
+                assert_eq!(&actual[row * width..(row + 1) * width], &expected);
+            }
+        }
+    }
+    assert!(penalty_rows(&vec![1; CONTEXT_MAX + 1], &[2], 1).is_err());
+    assert!(penalty_rows(&[1], &[2], HISTORY_MAX + 1).is_err());
+}
