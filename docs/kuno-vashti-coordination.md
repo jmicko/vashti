@@ -6,19 +6,15 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, source `7c35203653d0405e8291bff0307f9438b8376f13`. Read the
-[compute-local handoff](#active-kuno-engine-handoff--compute-local-uploads-2026-10-16)
-and [completion gate](kuno-strata-rewrite-completion.md). Actual target/MTP control
-uploads use their own compute queues; MTP copy/math nodes stay on MTP compute.
-Independent INFO fences/epochs and pending-peer reuse exclusions remain owned.
-537 selected CPU cases, strict core/off binary lint and 360 offline
-variants/139 physical checks pass. Full rewrite incomplete, speed gate closed.
-Next source gaps: adaptive host thread, unscoped first draft on retained requests,
-and retained adaptive usage/learned-policy fidelity; see the detailed receipt.
-
-Goal active CPU-only. No GPU/model/inference/service/install/release/frontend/API
-action; required Vashti changes: none. No root used or physical acceptance claimed.
-Preserve canonical/inherited files. Recovery historical Oct 15.
+`codex/strata-rust-port`, source `39c59c1fc90dc71b94e7f671677fae9c1626be89`. Read the
+[retained-telemetry handoff](#active-kuno-engine-handoff--retained-model-telemetry-2026-10-16)
+and [completion gate](kuno-strata-rewrite-completion.md). Loaded-model usage/policy
+now survive successful fully erased requests, without request content retention.
+540 selected CPU cases, strict core/off binary lint and 360 offline variants/
+139 physical checks pass. Whole rewrite incomplete; speed gate closed. Remaining
+source gaps: adaptive host scheduling and unscoped first draft; then final source
+and protected numerical/state/context/hot-request/failure/recovery acceptance.
+Goal active CPU-only. No GPU/service/API/frontend/root action; Vashti changes: none.
 
 ## Ownership
 
@@ -7381,3 +7377,39 @@ No API/protocol/configuration/consumer change; Vashti changes: none. Goal active
 CPU-only. No GPU/model/inference/service/install/release/frontend action. No root
 used; canonical/inherited files preserved. No deployment authority or new physical
 recovery/performance/residency claim.
+
+## Active Kuno engine handoff — retained model telemetry (2026-10-16)
+
+Source `39c59c1fc90dc71b94e7f671677fae9c1626be89`, isolated `codex/strata-rust-port`.
+Read the [complete receipt](kuno-strata-rewrite-completion.md#loaded-model-usage-and-draft-policy-across-erased-requests-2026-10-16) and
+[checkpoint](kuno-native-text-checkpoint.md). Supersedes the previous handoff's
+usage/policy gap only; keep its connected compute-local queues/INFO, coupled
+sampler and all preceding owners.
+
+Actual successful closed requests snapshot bounded aggregate expert counters,
+then erase/inspect FULL original private arenas. The next request consumes
+original erasure receipts before restoring actual physical routing/aggregate
+usage, with exact complete bit/padding readback. Loaded Session retains only
+fixed scalar learned-policy bins. Tokens/suffix/history/seed/KV remain separate
+and wipe. Model close/unload wipes Cache/Policy; no logging/serialization/export
+or durable content store is added. Existing HOST allowance covers metadata;
+no GPU buffer, public contract or quote changes.
+
+540 CPU cases / 71 suites, locked release test build, strict core/off **binary**
+lint and changed formatting pass. Normal frozen artifact
+`strata-model-telemetry-ordinary-20261016/` has SHA256
+`47eb2abef25a3d65e6501b353b27e4f7dc756ee0dcfe7cb51f347b1d030fb823`; independent source/original hash/
+mode0500 checks and offline 360 shader variants/139 physical checks pass. No GPU,
+hot-request, numerical, overlap, privacy-forensics or performance acceptance claim.
+Initial synthetic erase fixture failure/correction is preserved in the receipt.
+
+Remaining source work: serial adaptive host ranking/submission and first count1
+MTP drafting outside the scoped observer on retained requests. Final source/
+ownership/placement/queue/substitution audit and protected whole-model numerical/
+state/context/hot-request/failure/recovery acceptance remain, then speed trials.
+Complete rewrite still incomplete; CLI compiled-public/one-request, private process
+caller independently gated. No API/protocol/configuration/consumer/frontend change;
+required Vashti changes: none. No GPU/model/inference/service/install/release/root
+action. Goal active CPU-only. Sudo refresh was attempted but not confirmed; root
+was not needed. Canonical/inherited files preserved. No deployment authority or
+new physical recovery/residency/performance claim.
