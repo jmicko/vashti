@@ -6,32 +6,29 @@ checklist is a source-to-source audit, not a sequence of throughput experiments.
 Each row needs its connected consumer, real ownership/placement and state contract;
 adding an unused helper or optional switch does not complete a row.
 
-**Current CPU-only source:** `f9c7471f498e877be1a9c733aa1a3db3ccdfb154`, branch
-`codex/strata-rust-port`. Read the [adaptive-host-job receipt](kuno-strata-rewrite-completion.md#adaptive-host-job-and-owned-transfer-submission-authority-2026-10-16)
-and [checkpoint](kuno-native-text-checkpoint.md). The actual selected adaptive tick
-now starts a bounded host worker for unchanged ranking, original-role recording
-and copy submission beside commit/MTP. Original client/registry/private-arena
-capabilities and MAIN queue stay on the engine thread. Native graph and adaptive
-copies share an owning same-device transfer-queue submission authority. Actual
-worker/copy/visibility joins precede original control/physical publication.
-Retained usage/policy, scoped first draft and compute-local INFO stay connected.
+**Current CPU-only source:** `0d9e3a527041c36b2a395cda5c1070a88288684d`, branch
+`codex/strata-rust-port`, including NO_HOST policy source `3d6a0390`. Read the
+[selected-policy/router receipt](kuno-strata-rewrite-completion.md#selected-no_host-policy-and-native-routerplan-schedule-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). Reference mode now keeps the
+pinned callback-free zero counters and actual bounded empty host job. Decode
+uses one256-thread router block per token, one active32-lane subgroup, then the
+original128-thread parallel resident-plan scan. Original VRAM/HOST expert sources,
+role consumers, graph ownership, first draft and retained policy stay connected.
+Prior GPU-counter promotions/copy worker remain an explicit beyond-reference
+build option; they were not removed based on timing.
 
-545 selected CPU cases / 71 suites, strict core/off **binary** lint, changed
-formatting/whitespace and normal stable-source build pass. Frozen artifact
-`strata-adaptive-host-worker-ordinary-20261016/` has SHA256
-`d4cfebbb5a28d645b296c20aaa4dea09239b961f1cea4456ab8299ed2e17e7e5`; source/original hash/mode0500
-independently match. No frozen execution or GPU/numerical/overlap/speed acceptance.
-Shader arithmetic/inventory unchanged; prior `39c59c1` offline 360 variants/139
-physical-pointer checks are still the latest shader receipt, not rerun here.
-
-The three concrete host/first-draft/retained-telemetry gaps identified in the
-compute-local audit are now connected in source. **Whole rewrite still incomplete:**
-next perform the final whole-branch source/ownership/placement/queue/pricing/
-substitution audit, then protected whole-model numerical/state/context/hot-request/
-failure/recovery acceptance. Speed gate stays closed. Private caller independently
-gated; CLI compiled-public/one-request. Goal active CPU-only; no GPU/model/inference,
-service/install/release/frontend/API/root action. Vashti changes: none. Canonical/
-inherited files preserved. Physical recovery remains historical Oct 15.
+549 CPU cases / 72 suites and strict core/off **binary** lint pass.
+Normal stable-source frozen build passes, SHA256
+`2d60cec93970727aeea74a1d7ad3f362cd98dc2ea300e56e62f1a79d94c39a8c`. Offline-only validation passes 361 shader
+variants, 139 physical-pointer checks and 32 matrix configurations; source/original
+hash, mode0500 and exact default features independently match. See receipt below.
+No adapter/model/inference/GPU/speed execution or new physical recovery claim.
+**Whole rewrite remains incomplete; speed gate closed.** Next finish the whole-
+branch ownership/placement/queue/pricing/substitution audit, then protected
+numerical/state/context/hot-request/failure/recovery acceptance. Private process
+caller remains independently gated; CLI compiled-public/one-request. Goal active
+CPU-only. No service/install/release/frontend/API change; Vashti changes: none.
+Canonical/inherited files preserved. Root was not used.
 
 ## Reference and execution scope
 
@@ -54,6 +51,10 @@ For the B70/Xe port, reproduce this mode with complete original source ownership
 CPU expert splitting/doorbell servicing and `--spec-split` A/B windows are optional
 upstream modes, not missing prerequisites of this selected path. Earlier notes
 below requiring those modes before completion are superseded on that point.
+The final audit also corrects usage accounting: NO_HOST skips the only callback
+that increments expert usage. Reference counters remain zero, so the every4-window
+host job proposes no promotions. GPU-derived usage is an explicit extension,
+not a prerequisite of the selected measured path. See the latest receipt below.
 Whole-window graph/parameter reuse, target/MTP state, prompt behavior and correct
 source placement remain required. Do not replace missing experts with other IDs
 or remove the system-RAM source complement.
@@ -74,8 +75,8 @@ all need a final audit of actual connected dispatches, not just file names.
 | --- | --- | --- |
 | Artifact geometry, packing and tokenizer | `sycl/src/core/weights.cpp`, `src/io`, native expert layout, program model setup | Rust GGUF/tokenizer/binding exist. Audit format-specific load/conversion, chat-template and sampling behavior; original files remain shared/read-only. |
 | Exact dense placement and expert budget | `sycl/src/program/generate.cpp` model/cache setup; `sycl/src/core/expert_cache.cpp::open_sized` | Exact dense roots exist. Native global byte-prefix planning and an owning bounded GPU loader now compile; graph validation consumes the real artifact plan. Experimental core construction now invokes the sole global owner before prefill, and the core48-layer coordinator selects global routing/HOST fetch/role execution. Physical/numerical acceptance remains unfinished. All777 required original float tensors already match the selected native format (484 BF16,292 F32,1 F16); generic conversion is not required for this artifact. Source `89da25f` moves the shared original IQ4_XS embedding into the sole mapped HOST owner and updates constructor/reader/close accounting. Source5b520bb replaces the tiled embedding dispatch with original mapped-pointer gather for target and shared MTP, using original32-lane IQ4_XS work sharing. Physical/numerical acceptance and final source audit remain open. Sources `cbf4381`/`910cb58` replace the blanket5GiB allowance with a complete original dense inventory, preload/seal it before expert allocation, and size the automatic ranked prefix from actual remaining shared MAIN. See the dense-inventory receipt; physical placement and whole-device pricing acceptance remain open. The ordinary feature-off engine retains uniform banks. |
-| Low-RAM host complement and promotion | `generate.cpp` source/adaptive tier; `sycl/src/core/verify.cpp` fetch/rebase | Original host complement, direct exchange and GPU selected fetch exist. Source53cd14c connects verified-boundary copy flights, original scratch cleanup exclusion and joined physical/private publication; final byte/queue/numerical audit and hardware acceptance remain open. Do not duplicate the whole model in RAM. Source `a8bbdf0` restores the private route map from canonical physical cells on request rebind, preserving actual swapped weights and monotonic adaptive state; see the retained-controls receipt. Source `f9c7471f` connects a real bounded rank/record/copy host worker beside commit/MTP with original client-thread registry/root holds, owned copy-queue submissions and actual joined publication. Source scheduling gap superseded; physical behavior remains open. |
-| GPU route/group planning and original HOST access | `verify.cpp` / `verify_kernels.dp.cpp::resident_plan_kernel`, selected SYCL `DEVICE_PLAN=1,NO_HOST=1` | Native BF16 router and full512-expert normalization exist. Correct selected path reads actual VRAM or mapped HOST aliases directly on the GPU, preserving every selected expert. Source36d13d3 replaces the CPU split/staging consumer with direct authentic source aliases and removes per-layer CPU joins/submissions; protected execution is pending. Generic CPU doorbells/split windows are optional modes, not this B70 completion gate. Physical/numerical acceptance remains required. |
+| Low-RAM host complement and promotion | `generate.cpp` source/adaptive tier; `expert_source.cpp` callback; `verify.cpp` NO_HOST | Original HOST complement, source ownership and joined physical publication remain connected. Source `3d6a0390` corrects selected NO_HOST to zero callback-derived counters and an actual bounded empty host job beside commit/MTP. No unused GPU counter readback, physical copy, registry revocation or unchanged-map upload is added at that tick. Prior `f9c7471f` authenticated promotion/copy worker remains explicit `strata-gpu-adaptive-usage`; ordinary selected mode uses4MiB adaptive HOST allowance versus12MiB for the extension. Original full request erase/rebind audits remain. Physical/numerical acceptance and final pricing audit remain open; do not duplicate the entire model in RAM. |
+| GPU route/group planning and original HOST access | `native_router.dp.cpp::route<512>` / `verify_kernels.dp.cpp::resident_plan_kernel`, selected SYCL `DEVICE_PLAN=1,NO_HOST=1` | Source `0d9e3a52` replaces fused eight-token/serial planning with selected one256-thread block per token (one active32-lane subgroup) and a separate128-thread packed parallel plan scan. Both use the SAME original private map root and native graph dependency tracking. Stable top10, winning-lane normalization, first-occurrence groups and original member order remain connected to direct authentic VRAM/HOST role consumers. Cell-ID/fixed8 plan layout and Vulkan math are explicit backend substitutions, not bit-parity proof. No CPU expert callback or guessed expert IDs. CPU/compiler acceptance passes; protected numerical/whole-model acceptance remains required. |
 | Native expert math and grouped rows | `sycl/src/kernels/cuda/iq_kernels.dp.cpp::row_entries`, `native_gu_kernel`, `native_down_kernel` | Packed integer math/BDA roots exist. Separate GU roles, 4/2/1 chunks, activation, intermediate storage and downstream consumers are now selected together in the Intel core; all 158 WGSL/SPIR-V variants validate, including 105 physical-pointer checks; numerical/model execution acceptance remains pending. The global core now uses one per-role launch containing pinned row_entries4/2/1 loops, scalar IQ4_XS, native signed integer finish and XOR reduction; numerical/model execution acceptance remains pending. Historical fixed-chunk kernels are retained separately. |
 | GR write/read/norm/down/up/injection | `sycl/src/kernels/cuda/fused_gr.dp.cpp::fused_gr_read_multi`; `verify.cpp::gr_read_group` | Native pending-write norm, sliced BF16 down/injection, fixed slice reduction and up/mix/commit are now connected and unconditionally selected in the core, including explicit PLE/final boundary writes. Resident original weights and the enlarged private scratch owner are charged together. Structural acceptance passes; numerical/model execution acceptance and final substitution audit remain pending. Source `37dced9` connects default full-prompt F1 row scales, packed BF16 norm/SiLU images, direct original projection consumers and residual-based mix recomputation together; see the packed-GR receipt. Sources `40fe97e` and the latest sole-residual receipt connect mixed images and prompt GR/PLE in-place storage, including actual MTP teacher scratch. Final substitution/numerical/device acceptance remains open. |
 | GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp`, `prefill/kernels.dp.cpp` | Core connects native BF16 alpha/beta, controls, recurrence/norm and accepted-prefix replay. Prompt scope selects contiguous H, causal convolution/history/L2, CB32 recurrence and directly consumed FP16 output. Source 9a7a23b connects prompt-capacity whole-chunk math without per-element status/replay owners, carved AB staging, and native row/value-head recurrent state shared by prompt/decode/repair. The large chunk caller/acceptance is connected in the latest controller receipt; physical execution and final numerical/queue audit remain open. Split verifier mode is an optional upstream path, not selected by the measured server. |
@@ -9062,6 +9063,11 @@ Canonical/inherited files preserved. No new physical recovery/performance claim.
 
 ## Adaptive host job and owned transfer submission authority (2026-10-16)
 
+**Historical extension receipt:** its GPU-derived selected usage and universal12MiB
+allowance are superseded by the selected NO_HOST policy receipt below. The actual
+promotion/copy worker remains available explicitly; its ownership evidence stays
+valid for that extension, not as a claim that pinned NO_HOST promotes experts.
+
 Source `f9c7471f498e877be1a9c733aa1a3db3ccdfb154`, isolated `codex/strata-rust-port`.
 Keep the full coupled branch. This supersedes the serial host-job gap; first
 count1 scoping (`01291fe0`) and model-local usage/policy (`39c59c1`) remain selected.
@@ -9182,3 +9188,120 @@ then live speed tests. Private/general caller independently gated. Goal active
 CPU-only. No GPU/model/inference/service/install/release/frontend/API/root action;
 Vashti changes: none. Canonical/inherited files preserved. No sudo needed/used.
 No new physical recovery, GPU overlap, model correctness or throughput claim.
+
+## Selected NO_HOST policy and native router/plan schedule (2026-10-16)
+
+Runtime sources `3d6a0390815e0ac116f98d765c398e5b74b1cec9` (policy) and
+`0d9e3a527041c36b2a395cda5c1070a88288684d` (selected router/planner), isolated
+`codex/strata-rust-port`. This is final source-audit correction, not a speed-based
+reversal or full rewrite acceptance. Keep the whole coupled branch.
+
+Pinned reference `fb58e0dbc8399662c0e47c76578c6e878b14f6cf` is still verified.
+The selected launcher `sycl/serve/strata-sycl.sh:22..25` defaults DEVICE_PLAN=1,
+NO_HOST=1. `expert_source.cpp:2578..2580` increments usage only in the expert
+callback, and `verify.cpp:1956..` skips that callback loop in NO_HOST. Therefore
+selected counters remain zero. `generate.cpp:11086..11159` still starts/joins the
+adaptive host job every4 windows beside commit/MTP; zero counters yield no swaps.
+
+Actual Rust policy connection:
+
+- `verified_window` controls logical tick/job tracking independently from actual
+  GPU collection. The shared policy helper supplies BOTH cold/captured INFO word3
+  and retained native replay RouteUsage; original completion guard checks that
+  same value. Reference mode sets zero everywhere, including the final-prompt
+  count1. Actual resident and diagnostic callers use the renamed window setter.
+- A real bounded `SelectionFlight` owns SAME Cache/wiping zero counters, runs the
+  unchanged proposal on the2MiB host stack, and joins before publication (also on
+  Drop). It validates no swaps, zero stats and unchanged map, then commits decay.
+  It owns no client, registry/arena/scratch capability, GPU buffer or copy command.
+  No GPU counter readback, copy fence, registry revocation or unchanged-map upload
+  is invented at an empty tick. Request-end full stats audit, full arena erase and
+  original route/usage-root rebind audit remain; retained policy remains loaded-
+  model-only and request tokens/suffix/KV still wipe.
+- Prior authenticated inventory / actual rank-record-copy worker is preserved in
+  `strata-gpu-adaptive-usage`, which implies Intel core. Builder requires explicit
+  `--intel-core --gpu-adaptive-usage`. Normal `--intel-core` excludes that feature.
+  Default does not allocate its unused8MiB inventory. Adaptive HOST allowance is
+  4MiB reference (2 control+2 stack),12MiB extension (+8 inventory). This is faithful
+  mode selection, not a disabled upstream dependency based on a slow trial.
+
+Selected router/planner connection:
+
+- `native_router.dp.cpp:70..166,269..286` actually uses one32x8 block PER token,
+  only row zero active. Rust decode now launches count256-thread blocks and keeps
+  one active32-lane subgroup each, with no divergent workgroup barrier. All16
+  logits/lane, XOR16/8/4/2/1 normalization/top10 reduction, stable ID ties,
+  winning-expert-lane sums and2^-14 clamp follow that source. It writes logical
+  IDs in the last80 words of the SAME8192-word private map root and original
+  probabilities. Non-finite input still classifies a terminal fault.
+- `verify_kernels.dp.cpp:2062..2217,2361..2382` uses128 entries/4 subgroups and a
+  packed `(entries<<16)|groups` prefix scan. New `strata_global_plan.wgsl` ports
+  that scan, first-occurrence group order and member rank. A separate selected
+  native graph node reads the original logical IDs/remap, writes the original
+  fixed8 member planes, and preserves all genuine expert selections. Both nodes
+  bind the SAME map/fault roots; reflected read/write accesses create original
+  capture/replay RAW/WAW dependencies before actual source-table role consumers.
+  Both carry genuine epoch/usage INFO fields. Kernel metadata is256/128 as the
+  WGSL declares. Prompt's separate large-chunk route/group path is unchanged.
+- Vulkan substitution remains explicit: authenticated physical cell IDs and the
+  original role address tables replace raw pointer pairs in the plan, and the
+  existing fixed8 group member layout replaces packed offsets. Full original
+  source partition validation happens before decode. No expert weight mirror,
+  additional private GPU root, CPU expert fallback or approximate route is added.
+  Native INFO adds one16-byte record per routed layer within existing bounded
+  template/page owners; runtime capacity and physical pricing still need whole-
+  model acceptance. WGSL exp and compiler arithmetic are not a bit-parity claim.
+- Earlier preliminary concern about a different per-token reduction was corrected
+  by reading the active subgroup: BOTH versions used one subgroup/token. The
+  actual remaining schedule difference was fusion and serial group construction;
+  this block ports the selected separate launch/parallel scan, not invented math.
+
+Reference configuration evidence: saved public comparison options select spec4,
+context32768, prefill4096. Current native request already selects `Config::native(4)`;
+MAX8 is capacity. Both original public expert profile and Rust included fixture
+have SHA256 `8f59b4aa8873209dff11c11e37bcda9529a1335b724a1afeea37bf6388975baf`.
+No request content or credentials are copied into these notes.
+
+Acceptance receipts in `/media/jmicko/faststore/kuno-development`:
+
+- Policy source: `strata-final-audit-usage-{test-build,cpu,core-clippy,off-clippy}-20261016.log`:
+  547 cases/71 suites, zero failed; strict locked release binary lint in core/off.
+  `strata-final-audit-usage-optin-cpu-20261016.log`:6 actual focused CPU cases pass
+  under extension compilation. Initial missed diagnostic setter callers and
+  large-enum lint were fixed (original copy Flight boxed); initial receipts stay
+  explicitly intermediate. Builder AST selector checks pass. Normal frozen source
+  `3d6a0390`, artifact directory `strata-final-audit-usage-ordinary-20261016/`, SHA256
+  `51633435b109c09f120319edc190adeab990ca7ac752bf7eccd96f19e5240e2e`; independent
+  source/original hash/mode0500 and exact default features pass. Not executed.
+- Router source: `strata-router-plan-{check,targeted-cpu,cpu,core-clippy,off-clippy}-20261016.log`:
+  549 distinct CPU cases/72 suites, zero failed, retaining all547. New cases compile
+  actual route/plan WGSL through Naga/SPIR-V and check metadata/descriptors/root
+  bounds; an independent stable-group oracle checks the packed parallel scan,
+  duplicate-free output writes,1..8 windows, four expert patterns and three full
+  physical permutations, including the7/8-token tail and all subgroup boundaries.
+  Strict locked release binary core/off lint and changed formatting/whitespace pass.
+  CPU/compiler checks do not establish GPU arithmetic or actual driver scheduling.
+  `strata-router-plan-optin-cpu-20261016.log` additionally passes the six retained
+  usage/host-job cases and both router/planner cases under the actual explicit
+  `strata-gpu-adaptive-usage` feature on this same source (8 cases, no GPU).
+- Normal builder artifact `strata-router-plan-ordinary-20261016/`, receipt
+  `strata-router-plan-ordinary-20261016.out`, source `0d9e3a52`, SHA256
+  `2d60cec93970727aeea74a1d7ad3f362cd98dc2ea300e56e62f1a79d94c39a8c`. Independent original/frozen hashes, mode0500,
+  source and exact features `[strata-rust-port,strata-intel-core]` match. Only frozen
+  `--validate-port-shaders` ran (returns before adapter/device initialization).
+  `strata-router-plan-shaders-20261016.log` passes361 WGSL/SPIR-V variants,
+  139 physical-pointer checks and32 matrix configurations. Matrix-aware validator
+  PATH is `spirv-tools-matrix-20261014/build/tools` under the receipt directory,
+  pinned tool source `fbe4f3ad913c44fe8700545f8ffe35d1382b7093`. The initial system
+  validator lacked BF16 capability5118; its failure is preserved as
+  `strata-router-plan-system-validator-initial-20261016.log`. Corrected PATH passes
+  without engine/source changes. No adapter, model or inference run.
+
+Full rewrite remains incomplete. Finish the complete branch's source/ownership/
+placement/queue/pricing/substitution review, then protected whole-model numerical,
+state/prefix acceptance/rejection, context, hot-request, failure and actual resource
+recovery acceptance. Private process caller remains separately gated. Only then
+open the speed gate. No live GPU/speed/model/service/install/release/frontend/API
+work here; required Vashti changes: none. Goal active CPU-only. Canonical checkout
+and inherited untracked cache preserved. Sudo refresh was attempted noninteractively
+but no usable credential was confirmed; no root operation was performed.

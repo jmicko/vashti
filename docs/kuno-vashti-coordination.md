@@ -6,15 +6,15 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, source `f9c7471f498e877be1a9c733aa1a3db3ccdfb154`. Read the
-[adaptive-host-job handoff](#active-kuno-engine-handoff--adaptive-host-job-2026-10-16)
-and [completion gate](kuno-strata-rewrite-completion.md). Actual bounded adaptive
-host job now ranks/records/submits original copies beside commit/MTP. Client/
-registry/arena and MAIN stay on the engine thread; graph and worker share actual
-owned transfer submissions. 545 CPU cases/71 suites, strict binary lint and frozen
-normal build pass. No GPU/device/speed result. Three named source gaps connected;
-next full branch completeness audit and protected correctness/recovery acceptance.
-Goal active CPU-only; whole rewrite incomplete; speed gate closed. Vashti changes: none.
+`codex/strata-rust-port`, source `0d9e3a527041c36b2a395cda5c1070a88288684d` including policy `3d6a0390`.
+Read the [selected-policy/router handoff](#active-kuno-engine-handoff--selected-policy-and-router-2026-10-16)
+and [completion gate](kuno-strata-rewrite-completion.md). Selected NO_HOST now keeps
+zero callback counters with a real bounded empty host job. Native decode uses
+selected per-token router blocks and separate128-thread parallel group planning.
+Prior GPU-counter/copy worker stays explicit beyond-reference; full branch retained.
+549 CPU cases/72 suites and strict core/off binary lint pass. No GPU/speed result.
+Final branch audit and protected whole-model acceptance remain; speed gate closed.
+Goal active CPU-only, rewrite incomplete. Required Vashti changes: none.
 
 ## Ownership
 
@@ -7459,6 +7459,11 @@ recovery/performance claim. No sudo credential was needed or used.
 
 ## Active Kuno engine handoff — adaptive host job (2026-10-16)
 
+**Historical extension handoff:** selected counter policy and universal12MiB
+allowance are superseded by the selected-policy/router handoff below. Preserve
+the real copy worker for explicit GPU-derived usage; do not assume NO_HOST
+reference mode promotes experts.
+
 Source `f9c7471f498e877be1a9c733aa1a3db3ccdfb154`, isolated `codex/strata-rust-port`.
 Read the [complete source/ownership/bounds receipt](kuno-strata-rewrite-completion.md#adaptive-host-job-and-owned-transfer-submission-authority-2026-10-16)
 and [checkpoint](kuno-native-text-checkpoint.md). Keep the FULL coupled branch,
@@ -7496,3 +7501,40 @@ public/one-request; private process caller separate. No API/configuration/consum
 frontend change; required Vashti changes: none. Goal active CPU-only. No GPU/model/
 inference/service/install/release/root action; canonical/inherited files preserved.
 No sudo needed/used, deployment authority or new physical recovery claim.
+
+## Active Kuno engine handoff — selected policy and router (2026-10-16)
+
+Runtime source `0d9e3a527041c36b2a395cda5c1070a88288684d`, including policy
+`3d6a0390815e0ac116f98d765c398e5b74b1cec9`, isolated `codex/strata-rust-port`.
+Read the [exact source, ownership, bounds and validation receipt](kuno-strata-rewrite-completion.md#selected-no_host-policy-and-native-routerplan-schedule-2026-10-16).
+Keep the complete coupled branch. This corrects selected pinned behavior, with
+no throughput-driven rollback.
+
+Reference DEVICE_PLAN/NO_HOST skips the only expert-usage callback. Default now
+keeps zero counters and actual every4-window bounded empty host job beside commit/
+MTP. Cold/capture/replay flags share one policy; no empty-tick GPU readback,
+copy/revocation or unchanged-control upload. Original full erasure/rebind audits
+remain. Explicit `--intel-core --gpu-adaptive-usage` preserves prior promotion
+inventory/worker/owned queue path. Adaptive HOST4MiB default/12MiB extension.
+
+Selected decode now uses per-token256-thread router blocks (one active32-lane
+subgroup) and original128-thread packed parallel plan scan. SAME original private
+map/fault/INFO owners connect native RAW/WAW dependencies to actual VRAM/HOST role
+consumers. Existing fixed8 member planes and physical-cell/address-table layout
+are recorded Vulkan substitutions. No new GPU root, missing expert or CPU expert
+callback. Prompt's large-chunk grouping is unchanged.
+
+549 CPU cases/72 suites, strict core/off binary lint and formatting pass.
+Eight focused usage/worker/router cases also pass in the explicit extension build.
+Normal stable-source frozen build SHA256
+`2d60cec93970727aeea74a1d7ad3f362cd98dc2ea300e56e62f1a79d94c39a8c`, independent source/original hash/mode0500/
+features pass. Offline-only361 shader variants/139 physical checks/32 matrix
+configurations pass with the pinned matrix-aware validator (initial old-system-
+validator failure retained). Exact artifact/logs and substitutions are in the
+linked primary receipt.
+No actual GPU numerical/driver/overlap/whole-model/throughput acceptance. Full
+branch final audit and protected correctness/state/hot-reuse/recovery remain before
+speed. CLI compiled-public/one-request; private process caller independently gated.
+No API/consumer/frontend change; required Vashti changes: none. Goal active CPU-only.
+No GPU/model/inference/service/install/release action, no root operation. Canonical/
+inherited files preserved. No deployment authority or new physical recovery claim.

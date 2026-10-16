@@ -1,35 +1,32 @@
-<!-- Current resume: 2026-10-16, source f9c7471f498e877be1a9c733aa1a3db3ccdfb154, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source 0d9e3a527041c36b2a395cda5c1070a88288684d, codex/strata-rust-port.
 CPU-only continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 Working checkout: `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`.
 
-**Current CPU-only source:** `f9c7471f498e877be1a9c733aa1a3db3ccdfb154`, branch
-`codex/strata-rust-port`. Read the [adaptive-host-job receipt](kuno-strata-rewrite-completion.md#adaptive-host-job-and-owned-transfer-submission-authority-2026-10-16)
-and [checkpoint](kuno-native-text-checkpoint.md). The actual selected adaptive tick
-now starts a bounded host worker for unchanged ranking, original-role recording
-and copy submission beside commit/MTP. Original client/registry/private-arena
-capabilities and MAIN queue stay on the engine thread. Native graph and adaptive
-copies share an owning same-device transfer-queue submission authority. Actual
-worker/copy/visibility joins precede original control/physical publication.
-Retained usage/policy, scoped first draft and compute-local INFO stay connected.
+**Current CPU-only source:** `0d9e3a527041c36b2a395cda5c1070a88288684d`, branch
+`codex/strata-rust-port`, including NO_HOST policy source `3d6a0390`. Read the
+[selected-policy/router receipt](kuno-strata-rewrite-completion.md#selected-no_host-policy-and-native-routerplan-schedule-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). Reference mode now keeps the
+pinned callback-free zero counters and actual bounded empty host job. Decode
+uses one256-thread router block per token, one active32-lane subgroup, then the
+original128-thread parallel resident-plan scan. Original VRAM/HOST expert sources,
+role consumers, graph ownership, first draft and retained policy stay connected.
+Prior GPU-counter promotions/copy worker remain an explicit beyond-reference
+build option; they were not removed based on timing.
 
-545 selected CPU cases / 71 suites, strict core/off **binary** lint, changed
-formatting/whitespace and normal stable-source build pass. Frozen artifact
-`strata-adaptive-host-worker-ordinary-20261016/` has SHA256
-`d4cfebbb5a28d645b296c20aaa4dea09239b961f1cea4456ab8299ed2e17e7e5`; source/original hash/mode0500
-independently match. No frozen execution or GPU/numerical/overlap/speed acceptance.
-Shader arithmetic/inventory unchanged; prior `39c59c1` offline 360 variants/139
-physical-pointer checks are still the latest shader receipt, not rerun here.
-
-The three concrete host/first-draft/retained-telemetry gaps identified in the
-compute-local audit are now connected in source. **Whole rewrite still incomplete:**
-next perform the final whole-branch source/ownership/placement/queue/pricing/
-substitution audit, then protected whole-model numerical/state/context/hot-request/
-failure/recovery acceptance. Speed gate stays closed. Private caller independently
-gated; CLI compiled-public/one-request. Goal active CPU-only; no GPU/model/inference,
-service/install/release/frontend/API/root action. Vashti changes: none. Canonical/
-inherited files preserved. Physical recovery remains historical Oct 15.
+549 CPU cases / 72 suites and strict core/off **binary** lint pass.
+Normal stable-source frozen build passes, SHA256
+`2d60cec93970727aeea74a1d7ad3f362cd98dc2ea300e56e62f1a79d94c39a8c`. Offline-only validation passes 361 shader
+variants, 139 physical-pointer checks and 32 matrix configurations; source/original
+hash, mode0500 and exact default features independently match. See receipt below.
+No adapter/model/inference/GPU/speed execution or new physical recovery claim.
+**Whole rewrite remains incomplete; speed gate closed.** Next finish the whole-
+branch ownership/placement/queue/pricing/substitution audit, then protected
+numerical/state/context/hot-request/failure/recovery acceptance. Private process
+caller remains independently gated; CLI compiled-public/one-request. Goal active
+CPU-only. No service/install/release/frontend/API change; Vashti changes: none.
+Canonical/inherited files preserved. Root was not used.
 
 **Previous coupled-sampler block (`8a4ee5b`):** actual full and CJK MTP paths
 mutate penalties once, build fixed 64 lists and merge with request K. Source
