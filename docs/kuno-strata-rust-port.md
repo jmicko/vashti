@@ -1,9 +1,10 @@
 # Strata Rust whole-model port experiment
 
-**Current CPU-only resume (2026-10-16):** source `f1dd77f6a5a5cf98253488edec1fb761c1e9a0a4`, connected retained
-loaded sessions, original physical-route restoration and full32K sampler request
-coordinates with the4096 penalty window preserved. Physical hot reuse remains
-unverified. Read the [completion receipt and next gates](kuno-strata-rewrite-completion.md#retained-source-controls-and-full-context-sampler-2026-10-16)
+**Current CPU-only resume (2026-10-16):** source `e1458410b20f956586033b359c57186922d7ad8f`, connected retained
+loaded sessions, restored original physical routes/full32K sampler context, and
+bounded wiping rendered-text conversion in the actual compiled-public entry.
+Private process input remains gated. Physical hot reuse remains
+unverified. Read the [completion receipt and next gates](kuno-strata-rewrite-completion.md#connected-bounded-rendered-text-input-2026-10-16)
 and [checkpoint](kuno-native-text-checkpoint.md) first. Historical timing/next-step
 notes below do not authorize new speed trials. Full rewrite remains incomplete.
 

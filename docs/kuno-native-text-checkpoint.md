@@ -1,19 +1,46 @@
-<!-- Current resume: 2026-10-16, source f1dd77f6a5a5cf98253488edec1fb761c1e9a0a4, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source e1458410b20f956586033b359c57186922d7ad8f, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, source `f1dd77f6a5a5cf98253488edec1fb761c1e9a0a4`. Goal active CPU-only.
+branch `codex/strata-rust-port`, source `e1458410b20f956586033b359c57186922d7ad8f`. Goal active CPU-only.
 Last sudo refresh still reported password required in Demons after the user's
 renewal; CPU work does not need root. No GPU/model/service/install/release work
 or current health claim. Last physical recovery remains historicalOct15.
 
-Read [retained controls and sampler receipt](kuno-strata-rewrite-completion.md#retained-source-controls-and-full-context-sampler-2026-10-16)
-and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--retained-controls-and-sampler-2026-10-16).
+Read [bounded rendered-text input receipt](kuno-strata-rewrite-completion.md#connected-bounded-rendered-text-input-2026-10-16)
+and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--bounded-rendered-text-input-2026-10-16).
 Controller tests live under `strata_engine::controller`. Earlier CJK `cd703bc` was
 integrated as `0bfbea8`; do not reapply it.
 
-**Latest connected block:** source `a8bbdf0` plus `f1dd77f6a5a5cf98253488edec1fb761c1e9a0a4` fixes two
+**Latest connected block:** `e1458410b20f956586033b359c57186922d7ad8f` connects an already-rendered
+UTF-8 reader/Rust-tokenizer consumer to the actual native Request entry. One wiping
+buffer has1MiB text plus a single overflow sentinel; controls/vocabulary/EOS,
+UTF-8 and actual token/context bounds reject with fixed errors. Text/scratch drop
+before generation; no args/files/log/receipt/template rewrite is added. Native
+public fixtures now use this exact converter after their unchanged compiled
+round-trip/token-count checks. Native tokenizer capacity expands beyond old64-ID/
+1KiB fixture limits; ordinary tokenizer behavior stays unchanged.
+
+Original native HOST/component/metadata quotes add a separate64MiB text/BPE/regex
+phase allowance; the existing192MiB tokenizer model/cache and4MiB generation/suffix
+owners remain separate. No GPU root/model copy. Full physical HOST pricing is
+still a gate.421 focused CPU cases/53 nonempty suites, final locked test build,
+both strict lint configurations and formatting/whitespace pass; exact receipts
+are linked above. No new shader/generator/arithmetic or frozen normal artifact.
+
+This is NOT a private CLI launcher. Executable input remains compiled-public and
+one-request; it does not accept arbitrary stdin or private preview/receipt content.
+Next independently verify real no-swap/core protection, source authentication and
+exclusive full HOST/GPU admission BEFORE reading private bytes, connect retained
+Session multi-request output/checked close, and keep the public recorder separate.
+Do not manufacture protection from request metadata or widen the public allowlist.
+Raw-token and rendered-text Request consumers are available for that caller.
+Goal active CPU-only; no model/GPU/service/install/release/API/frontend action.
+Full rewrite/scheduling/substitution/pricing/legacy/device/numerical/recovery gates
+remain; no speed trials. Old12a60bf artifact is stale. Preserve canonical work.
+
+**Previous connected block:** source `a8bbdf0` plus `f1dd77f6a5a5cf98253488edec1fb761c1e9a0a4` fixes two
 real dependencies found in the retained-state audit. Next-request binding restores
 the actual private GPU route map from the original committed physical placement,
 checks its adaptive-cache agreement and full original root/readback/padding/fault

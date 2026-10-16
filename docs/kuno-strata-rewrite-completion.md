@@ -60,7 +60,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Sourcea26adc2 ports the native bounded trigram index, longest/recent suffix choice, cost priors, probing/stale rules and optional lookup-chain accounting into the selected controller. Configured MTP/target windows no longer shrink at the output cap; state commit and emission are separate. Coupled sampling and physical state acceptance still need end-to-end validation. |
 | Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Source `131d29c` connects real provisional rows to accepted GDN/QSA/PLE candidates while original full-window transactions remain open, then publishes only n after real fault/I/O proof. Count1 uses its candidate and all-accept multirow runs original state replay. Old diagnostic full-window repair is not selected by the native controller. Source `4083258` connects the retained multirow commit graph with explicit dynamic accepted-count/position fields, original family preflight and count1 skip. Source `91e1f9e` connects original pending commit export/join; `1f46f76` connects a scoped original next-draft consumer before explicit commit acknowledgement. Source `0bf0b5f` emits real verified predictions before next drafting, matching the source delivery order. Source `f9d1e06` connects scoped admission/allocator lifetimes and INFO visibility; physical independent execution, full source substitution audit and independent numerical oracle remain open. |
 | Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; Source `d40442c` connects direct retained target submission with typed control uploads and original family receipts; source `d0670b0` connects direct MTP invocation with original actual packet observations and sampler/actor handback. Source `b6732c8` adopts independent MTP compute and concurrent buffer families with semaphore handoffs. Source `414e2c3` connects actual current INFO copies on the native transfer timeline and avoids empty primary submissions; source `86f4c35` replaces the global single fence/last-recording assumption with actual lane fences and stable original recording flights. Source `131d29c` connects synchronous original accepted-prefix publication; source `4083258` connects the retained commit graph. Source `91e1f9e` connects original pending submission identities and exact joins; `1f46f76` connects scoped original MTP consumption before explicit commit acknowledgement. Real independent readiness/INFO/draft execution remain open; source `543bc73` couples original pending commits to retained shared MAIN debt; source `a8e538f` retains actual recording ranges and preflights whole INFO-copy conflicts; source `d2d3228` pins original verified R, submits its real readiness dependency before commit and scopes all unkeyed/named draft lane selection. Source `7ad47ca` connects original native packet fill/copy, real HOST_READ availability, final fence and checked HAL host map without primary Wgpu readback copies/callbacks. Source `7cb1cbc` connects native upload state/render/flush/unmap and all-owner joined I/O reuse without Wgpu remaps or primary reuse clears. Source `7477b66` connects original per-owner selective reuse, current INFO copy completion and named/future/live recording exclusions. Source `f9d1e06` connects scoped graph/stream current-lane/conflict admission, original allocator pins and copy-vs-math INFO visibility. Required ordinary/cold/final global drains remain. Physical independent execution and full draft/event fidelity remain unverified. Physical ring overlap, scratch lifetimes and full execution acceptance remain open. Measured serving lazily captures branches; eager all-branch warmup is not a prerequisite; a sequence of independent Wgpu launches is not equivalent. |
-| Request lifecycle and arbitrary input | upstream CLI/session/inference entry points | Source `dc7ace7` connects an owned raw-token request entry, original target/MTP construction, callback delivery and full checked cleanup; public diagnostics consume that actual path. Source `4ceb86f` connects completed target/MTP retained-state erasure with original-owner receipts before the current terminal close. Source `1f4b195560e5b8e7a83361f19c844a7104d11cbf` connects retained `Session::load/run/close`, bounded rearming from original erasure receipts, retained-ready owners and preserved policy/scope state; see the loaded-session receipt below. Sources `a8bbdf0`/`f1dd77f6a5a5cf98253488edec1fb761c1e9a0a4` connect original physical route-map restoration, live HOST-scope exclusion and full32K sampler request coordinates (4096 penalty ring unchanged). Hardware hot-reuse acceptance remains open. The current executable caller is still compiled-public. Protected arbitrary-input/tokenization, verified hot request reuse and full device/failure/recovery acceptance remain required; no private/general service claim. No gateway/UI work required. |
+| Request lifecycle and arbitrary input | upstream CLI/session/inference entry points | Source `dc7ace7` connects an owned raw-token request entry, original target/MTP construction, callback delivery and full checked cleanup; public diagnostics consume that actual path. Source `4ceb86f` connects completed target/MTP retained-state erasure with original-owner receipts before the current terminal close. Source `1f4b195560e5b8e7a83361f19c844a7104d11cbf` connects retained `Session::load/run/close`, bounded rearming from original erasure receipts, retained-ready owners and preserved policy/scope state; see the loaded-session receipt below. Sources `a8bbdf0`/`f1dd77f6a5a5cf98253488edec1fb761c1e9a0a4` connect original physical route-map restoration, live HOST-scope exclusion and full32K sampler request coordinates (4096 penalty ring unchanged). Hardware hot-reuse acceptance remains open. Source `e1458410b20f956586033b359c57186922d7ad8f` connects a bounded wiping reader/Rust-tokenizer consumer in the actual public entry. The executable is still compiled-public: an independently protected private process caller and verified hot request reuse and full device/failure/recovery acceptance remain required; no private/general service claim. No gateway/UI work required. |
 
 ## Validation and the speed gate
 
@@ -7464,3 +7464,67 @@ inherited untracked files preserved. Goal remains active CPU-only, full rewrite
 incomplete and speed gate closed. Sudo is not needed for this block. Preserve the
 remaining packed/in-place/private allocator/whole-device substitutions and final
 pinned-source scheduling audit, legacy regression and physical/numerical gates.
+
+
+## Connected bounded rendered-text input (2026-10-16)
+
+Source `e1458410b20f956586033b359c57186922d7ad8f`. `strata_engine::input::request` reads an already
+rendered UTF-8 prompt from a caller-owned `Read` into one wiping allocation, with
+an independent1MiB input limit and one overflow sentinel. It preserves control
+literals/newlines/whitespace, retries interrupted reads, rejects empty/invalid UTF-8,
+oversize and I/O failures with fixed error categories, and catches unwinds under
+the enclosing redacted-hook obligation. Reader errors are never formatted/logged.
+No command arguments, files, receipts, implicit BOS, normalization or chat-template
+rewrite are introduced. The same model's Rust Qwen tokenizer creates wiping IDs
+which pass the actual bounded native `Request::new` before inference.
+
+The actual core branch in `daslab_language_probe::run` now supplies its compiled
+rendered fixture through this reader/tokenizer consumer and into the original
+`strata_engine::execute`. Original exact fixture round-trip/token-count checks
+remain; duplicate public fixture IDs drop before the bounded conversion. Native
+tokenizer limits now allow1MiB text and up to32767 input tokens, bounded64KiB
+pretoken pieces and4M merge steps. Remaining request context/output reservation
+is still enforced by Request; overbudget rejects instead of truncation. Native
+decode previews have a separate1MiB bound. Ordinary fixture/tokenizer limits stay
+unchanged. Original tokenizer model/cache HOST budget remains192MiB.
+
+A separate64MiB transient text/BPE/regex staging allowance is now included in the
+original native `CORE_CACHE_HOST`, component and metadata caps. This is separate
+from the existing4MiB live generation/suffix request ownership: the input buffer
+and tokenizer scratch leave scope before generation. No GPU root or model weight
+copy is added. Full physical HOST/cgroup pricing acceptance remains open; this
+source quote is not an observed available-memory or allocator refund receipt.
+
+**Boundary still pending:** this is a connected arbitrary rendered-text engine
+consumer, not a standalone private process launcher. The executable remains
+strictly compiled-public and does not read private stdin or permit overriding a
+public fixture/receipt with arbitrary content. `input::request` cannot establish
+swap/core protection, model authentication, exclusive GPU admission or a HOST
+grant. A separate caller must VERIFY those actual protections before receiving
+private bytes, retain the original model tokenizer/source identity, use the
+existing retained Session across requests, deliver private output only to the
+requesting caller and perform checked terminal cleanup. Do not reuse the public
+preview/receipt output branch for private inference. Raw-token Request remains
+available for an already-tokenized protected caller.
+
+CPU evidence under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-rendered-input-checked-build-20261016.log`: final locked selected
+  release test build, observed terminal exit0 before the CPU run.
+- `strata-rendered-input-cpu-final-20261016.log`:421 distinct CPU cases in53
+  nonempty suites, including the two new bounded-reader cases and all prior
+  original route-map/context/sampler/owner/lifecycle coverage.
+- `strata-rendered-input-{core,off}-clippy-20261016.log`: both strict locked
+  release lint configurations pass. Changed Rust formatting/whitespace pass.
+
+Reader CPU cases cover split multibyte input,
+control/newline preservation, interrupted reads, exact limit, one-byte overflow,
+empty/invalid UTF-8 and fixed I/O errors. They do not initialize a GPU, tokenize
+the original model or establish private live inference. Whole-model/long/private/
+repeated-request numerical/physical/recovery acceptance remains required. No new
+shader/generator/arithmetic or frozen normal artifact. Old12a60bf stays stale.
+No GPU/model/service/install/release/API/config/connector/UI action; required
+Vashti changes:none. Canonical checkout and inherited untracked files preserved.
+Goal active CPU-only, full rewrite incomplete, speed gate closed. Root is not
+needed for these source/CPU checks. Next connect the independently protected caller
+and continue the remaining full pinned-source/pricing/substitution/device gates.

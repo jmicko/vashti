@@ -6,8 +6,8 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through `f1dd77f6a5a5cf98253488edec1fb761c1e9a0a4`. Read the latest
-[retained-controls handoff](#active-kuno-engine-handoff--retained-controls-and-sampler-2026-10-16)
+`codex/strata-rust-port`, engine source through `e1458410b20f956586033b359c57186922d7ad8f`. Read the latest
+[rendered-input handoff](#active-kuno-engine-handoff--bounded-rendered-text-input-2026-10-16)
 and [completion gate](kuno-strata-rewrite-completion.md). Direct target/MTP
 submission, accepted-prefix state publication and retained commit graph are connected
 in source. Original pending submissions/joins and scoped next-draft consumption are connected;
@@ -6899,3 +6899,36 @@ closed. Remaining packed/in-place/private allocator/whole-device substitutions,
 final pinned source/scheduling audit, old regression and device gates remain.
 Last sudo refresh failed; this block needed no root. HistoricalOct15 recovery is
 not current health evidence. Preserve canonical application work/untracked files.
+
+
+## Active Kuno engine handoff — bounded rendered-text input (2026-10-16)
+
+Isolated `codex/strata-rust-port`, source `e1458410b20f956586033b359c57186922d7ad8f`.
+Read the [rendered-input receipt](kuno-strata-rewrite-completion.md#connected-bounded-rendered-text-input-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). The actual public native entry
+now supplies its compiled rendered fixture through the same bounded wiping UTF-8
+reader/Rust-tokenizer consumer into the original Request/engine.1MiB text plus
+one overflow sentinel, interrupted/invalid/oversize/I/O bounds and fixed failure
+categories; no args/files/logging/receipt/template override. Native tokenizer
+capacity now covers general bounded text/context instead of old1KiB/64-token
+fixture limits. Ordinary tokenizer limits and compiled public checks remain.
+
+Native original HOST/component/metadata quotes add64MiB transient text/BPE/regex
+staging; tokenizer model/cache192MiB and generation/suffix4MiB remain separately
+owned. Text/scratch leave scope before generation; no GPU root or weight copy.
+421 distinct CPU cases/53 nonempty suites, final locked selected test build,
+strict selected/off Clippy and format/whitespace pass. Exact logs and source/CPU
+limitations are in the receipt. No new shader/generator/arithmetic or normal
+frozen artifact.12a60bf remains stale.
+
+Executable input stays compiled-public/one-request. This is NOT a standalone
+private launcher: actual process no-swap/core protection, immutable original
+model/tokenizer identity and full exclusive HOST/GPU admission must be verified
+BEFORE reading any private bytes. Next connect that independently protected caller
+to retained Session runs/output/checked close. Do not widen the public fixture/
+receipt allowlist or route private output through public preview/recording.
+Remaining full source/scheduling/substitution/pricing/legacy/numerical/device/
+recovery gates remain. No GPU/model/service/install/release/API/connector/UI work;
+required Vashti changes:none. Goal active CPU-only, full rewrite incomplete and
+speed gate closed. Root not needed for this block. Preserve canonical work and
+inherited untracked files; last physical recovery stays historicalOct15.
