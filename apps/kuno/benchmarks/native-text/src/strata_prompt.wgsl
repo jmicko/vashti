@@ -160,14 +160,25 @@ fn main(@builtin(global_invocation_id) id:vec3<u32>) {
 @group(0) @binding(2) var<storage,read> gamma:array<f32>;
 @group(0) @binding(3) var<storage,read> up:array<f32>;
 @group(0) @binding(4) var<storage,read_write> mixed:array<f32>;
-@group(0) @binding(5) var<storage,read_write> fault:array<atomic<u32>>;
-@group(0) @binding(6) var<uniform> p:Params;
+@group(0) @binding(5) var<storage,read_write> mixed_bf:array<u32>;
+@group(0) @binding(6) var<storage,read_write> mixed_h:array<u32>;
+@group(0) @binding(7) var<storage,read_write> fault:array<atomic<u32>>;
+@group(0) @binding(8) var<uniform> p:Params;
 @compute @workgroup_size(256)
-fn main(@builtin(global_invocation_id) id:vec3<u32>) {let i=id.x;if i>=p.count*2560u {return;}let t=i/2560u;let col=i%2560u;var sum=0.0;
-    for(var h=0u;h<4u;h++) {let at=t*10240u+h*2560u+col;
-        let x=(residual[p.ib+at]*scales[t*4u+h])*gamma[h*2560u+col];
-        sum=fma(x,1.0/(1.0+exp(-up[at])),sum);
-    }let y=sum/4.0;mixed[i]=select(0.0,y,finite_value(y));if !finite_value(y){atomicOr(&fault[0],1u);}}
+fn main(@builtin(global_invocation_id) id:vec3<u32>) {
+    let i=id.x;if i>=p.count*1280u {return;}let t=i/1280u;let col=(i%1280u)*2u;var sum=vec2<f32>(0.0);
+    for(var h=0u;h<4u;h++) {
+        let at=t*10240u+h*2560u+col;let scale=scales[t*4u+h];
+        let a=(residual[p.ib+at]*scale)*gamma[h*2560u+col];
+        let b=(residual[p.ib+at+1u]*scale)*gamma[h*2560u+col+1u];
+        sum.x=fma(a,1.0/(1.0+exp(-up[at])),sum.x);
+        sum.y=fma(b,1.0/(1.0+exp(-up[at+1u])),sum.y);
+    }
+    let y=sum/4.0;let bf=image(y.x,y.y,1u);let hf=image(y.x,y.y,0u);
+    let good=finite_value(y.x)&&finite_value(y.y)&&finite_value(restored(bf,false,1u))&&finite_value(restored(bf,true,1u))&&finite_value(restored(hf,false,0u))&&finite_value(restored(hf,true,0u));
+    mixed[t*2560u+col]=select(0.0,y.x,finite_value(y.x));mixed[t*2560u+col+1u]=select(0.0,y.y,finite_value(y.y));
+    mixed_bf[i]=select(0u,bf,good);mixed_h[i]=select(0u,hf,good);if !good {atomicOr(&fault[0],1u);}
+}
 // GR_MIX_END
 // AB_CONTROLS_BEGIN
 @group(0) @binding(0) var<storage,read> raw:array<f32>;

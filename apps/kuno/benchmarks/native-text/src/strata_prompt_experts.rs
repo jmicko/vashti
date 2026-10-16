@@ -234,6 +234,8 @@ pub(crate) fn enqueue(
     {
         return Err(crate::strata_prompt::invalid_buffer_length());
     }
+    let mixed_image = super::mixed_input_image(&owners[1], count, 0, 2560, false);
+    let gather_input = mixed_image.as_ref().unwrap_or(&owners[1]);
     let projections = geometry.projections();
     for (role, p) in projections.iter().enumerate() {
         if p.experts() != 512
@@ -285,14 +287,14 @@ pub(crate) fn enqueue(
             dq as u32,
             (dq + GU_WORDS) as u32,
             (raw_stride / 4) as u32,
-            0,
+            mixed_image.is_some() as u32,
             0,
             0,
             0,
         ];
         let args = KernelArguments::new().with_buffers(vec![
             owners[0].clone().binding(),
-            owners[1].clone().binding(),
+            gather_input.clone().binding(),
             stage[0].clone().binding(),
             fault.clone().binding(),
         ]);

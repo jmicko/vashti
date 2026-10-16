@@ -13,19 +13,28 @@ fn valid()->bool {
 // COMMON_END
 // GATHER_BEGIN
 @group(0) @binding(0) var<storage,read> map:array<u32>;
-@group(0) @binding(1) var<storage,read> input:array<f32>;
+@group(0) @binding(1) var<storage,read> input:array<u32>;
 @group(0) @binding(2) var<storage,read_write> packed:array<u32>;
 @group(0) @binding(3) var<storage,read_write> fault:array<atomic<u32>>;
 @group(0) @binding(4) var<uniform> p:Params;
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) id:vec3<u32>) {
-    if !valid() {return;}let i=id.x;let length=map[516u+p.group];
+    if !valid() || p.r6>1u {return;}let i=id.x;let length=map[516u+p.group];
     if i>=length*p.columns/2u {return;}let member=i/(p.columns/2u);let col=(i%(p.columns/2u))*2u;
     let route=map[1540u+map[1028u+p.group]+member];if route>=p.count*10u {atomicOr(&fault[0],128u);return;}
     let at=(route/10u)*2560u+col;
-    if at+1u>=arrayLength(&input)||i>=arrayLength(&packed) {atomicOr(&fault[0],128u);return;}
-    let a=input[at];let b=input[at+1u];let bits=pack2x16float(vec2<f32>(a,b));let v=unpack2x16float(bits);
-    let good=finite(a)&&finite(b)&&finite(v.x)&&finite(v.y);packed[i]=select(0u,bits,good);if !good {atomicOr(&fault[0],128u);}
+    if i>=arrayLength(&packed) {atomicOr(&fault[0],128u);return;}
+    var bits=0u;var good=false;
+    if p.r6==1u {
+        if at/2u>=arrayLength(&input) {atomicOr(&fault[0],128u);return;}
+        bits=input[at/2u];let v=unpack2x16float(bits);good=finite(v.x)&&finite(v.y);
+    } else {
+        if at+1u>=arrayLength(&input) {atomicOr(&fault[0],128u);return;}
+        let a=bitcast<f32>(input[at]);let b=bitcast<f32>(input[at+1u]);
+        bits=pack2x16float(vec2<f32>(a,b));let v=unpack2x16float(bits);
+        good=finite(a)&&finite(b)&&finite(v.x)&&finite(v.y);
+    }
+    packed[i]=select(0u,bits,good);if !good {atomicOr(&fault[0],128u);}
 }
 // GATHER_END
 // DEQUANT_BEGIN

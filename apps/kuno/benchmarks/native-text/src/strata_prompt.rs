@@ -150,6 +150,21 @@ pub(crate) fn validate_output(handle: &Handle) -> Result<()> {
 pub(crate) fn activation_stage() -> Result<Handle> {
     Ok(stages()?[0].clone())
 }
+/// Exact original F32 source/count determines its matching emitted image.
+/// No caller-provided ready flag or tensor metadata can publish these images.
+pub(crate) fn mixed_input_image(
+    input: &Handle,
+    count: usize,
+    first: usize,
+    stride: usize,
+    bfloat: bool,
+) -> Option<Handle> {
+    STAGES.with(|s| {
+        s.borrow()
+            .as_ref()?
+            .mixed_input(input, count, first, stride, bfloat)
+    })
+}
 /// Move host data into an authorized carved prompt view without weakening
 /// write_private's full-owner contract. A separately owned scratch packet is
 /// uploaded whole; ordered GPU copies preserve every neighboring live region.
@@ -530,6 +545,11 @@ pub(crate) fn project(
     prepacked: bool,
 ) -> Result<()> {
     let stage = stages()?;
+    let mixed_image = if !prepacked && columns == 2560 {
+        mixed_input_image(&input, count, first, stride, dtype == 30)
+    } else {
+        None
+    };
     if !supports(dtype, columns)
         || stage[..2]
             .iter()
@@ -541,6 +561,9 @@ pub(crate) fn project(
         || stride < columns
         || out_stride < rows
         || fault.size_in_used() != 4
+        || mixed_image
+            .as_ref()
+            .is_some_and(|h| storage::overlaps(h, &output).unwrap_or(true))
         || prepacked
             && (dtype == 30
                 || first != 0
@@ -587,7 +610,7 @@ pub(crate) fn project(
         0,
         0,
     ];
-    if !prepacked {
+    if !prepacked && mixed_image.is_none() {
         launch(
             client,
             Kernel::Pack,
@@ -610,7 +633,12 @@ pub(crate) fn project(
     };
     crate::strata_matrix::dense(
         client,
-        [stage[0].clone(), weights, output, fault],
+        [
+            mixed_image.unwrap_or_else(|| stage[0].clone()),
+            weights,
+            output,
+            fault,
+        ],
         count,
         columns,
         rows,
@@ -768,6 +796,12 @@ pub(crate) fn write_handles(
 /// geometry. Packed norm/low images, gates and row scales use authentic carved views.
 pub(crate) fn gr_handles(q: GrHandles<'_>, weights: [Handle; 3]) -> Result<()> {
     let [normalized, down, low, up, scales] = gr_workspace()?;
+    let mixed_images = STAGES.with(|s| {
+        s.borrow_mut()
+            .as_mut()
+            .map(storage::Storage::begin_gr)
+            .ok_or_else(invalid_buffer_length)
+    })?;
     let extent = |h: &Handle, n: usize| {
         n.checked_mul(4)
             .is_some_and(|bytes| h.size_in_used() >= bytes as u64)
@@ -789,7 +823,10 @@ pub(crate) fn gr_handles(q: GrHandles<'_>, weights: [Handle; 3]) -> Result<()> {
         return Err(crate::strata_prompt::invalid_buffer_length());
     }
     let external = [&q.residual, &q.injection, &q.mixed, &q.fault, &q.gamma];
-    for h in [&normalized, &down, &low, &up, &scales] {
+    for h in [&normalized, &down, &low, &up, &scales]
+        .into_iter()
+        .chain(&mixed_images)
+    {
         if external
             .iter()
             .any(|v| storage::overlaps(h, v).unwrap_or(true))
@@ -800,10 +837,13 @@ pub(crate) fn gr_handles(q: GrHandles<'_>, weights: [Handle; 3]) -> Result<()> {
     if let Some((source, block)) = &q.previous
         && (!extent(source, q.first + q.count * 10240)
             || !extent(block, q.count * 2560)
-            || [&normalized, &down, &low, &up, &scales].iter().any(|h| {
-                storage::overlaps(h, source).unwrap_or(true)
-                    || storage::overlaps(h, block).unwrap_or(true)
-            }))
+            || [&normalized, &down, &low, &up, &scales]
+                .into_iter()
+                .chain(&mixed_images)
+                .any(|h| {
+                    storage::overlaps(h, source).unwrap_or(true)
+                        || storage::overlaps(h, block).unwrap_or(true)
+                }))
     {
         return Err(crate::strata_prompt::invalid_buffer_length());
     }
@@ -892,17 +932,26 @@ pub(crate) fn gr_handles(q: GrHandles<'_>, weights: [Handle; 3]) -> Result<()> {
     launch(
         client,
         Kernel::GrMix,
-        [(q.count * 2560).div_ceil(256), 1, 1],
+        [(q.count * 1280).div_ceil(256), 1, 1],
         vec![
             q.residual.clone(),
             scales,
             q.gamma,
             up.clone(),
             q.mixed.clone(),
+            mixed_images[0].clone(),
+            mixed_images[1].clone(),
             q.fault.clone(),
         ],
         info,
-    )
+    )?;
+    STAGES.with(|s| {
+        s.borrow_mut()
+            .as_mut()
+            .ok_or_else(invalid_buffer_length)?
+            .publish_mixed(&q.mixed, q.count);
+        Ok(())
+    })
 }
 /// Only original GR images enter this consumer: fixed BF16 projection geometry,
 /// no general prepacked override or borrowed working-stage assumption.

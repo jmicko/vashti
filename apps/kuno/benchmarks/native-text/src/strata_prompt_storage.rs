@@ -12,7 +12,9 @@ pub(super) const WORKING_BYTES: u64 = (allocation::DEFAULT_ROWS * 4 * 2560 * 2) 
 pub(crate) struct Storage {
     working: [Handle; 3],
     moe: groups::Views,
-    gr: [Handle; 5],     // packed BF16 norm, down, packed BF16 low, up, row scales
+    gr: [Handle; 5], // packed BF16 norm, down, packed BF16 low, up, row scales
+    mixed_images: [Handle; 2], // native BF16 and FP16 input images, persistent across each half
+    mixed_rows: Option<usize>, // published only by the actual queued GR writer
     outer: [Handle; 13], // R/mixed/blocks/injection/router/shared/embedding, retained PLE tail
     ple: [Handle; 12],
     gdn: [Handle; 7],  // QKV, Z, H, readout, AB raw/controls/closing
@@ -63,15 +65,16 @@ impl Storage {
             Ok(views)
         };
         let mut persistent_words = [
-            5120, 320, 160, 10240, 4, 10240, 10240, 2560, 2560, 2560, 4, 512, 640, 640, 2560, 1,
-            2560,
+            5120, 320, 160, 10240, 4, 1280, 1280, 10240, 10240, 2560, 2560, 2560, 4, 512, 640, 640,
+            2560, 1, 2560,
         ]
         .map(|w| w * capacity)
         .to_vec();
         persistent_words.push(9 * 10240);
         let persistent = carve(&roots[0], &persistent_words)?;
         let gr: [Handle; 5] = std::array::from_fn(|i| persistent[i].clone());
-        let outer: [Handle; 13] = std::array::from_fn(|i| persistent[i + 5].clone());
+        let mixed_images = std::array::from_fn(|i| persistent[i + 5].clone());
+        let outer: [Handle; 13] = std::array::from_fn(|i| persistent[i + 7].clone());
         let ple: [Handle; 12] = carve(
             &roots[1],
             &[2560, 10240, 2560, 10240, 10240, 4, 10240, 10240, 4, 4, 4, 4].map(|w| w * capacity),
@@ -155,6 +158,8 @@ impl Storage {
             working,
             moe,
             gr,
+            mixed_images,
+            mixed_rows: None,
             outer,
             ple,
             gdn,
@@ -169,6 +174,31 @@ impl Storage {
     }
     pub(crate) fn gr(&self) -> [Handle; 5] {
         self.gr.clone()
+    }
+    pub(crate) fn begin_gr(&mut self) -> [Handle; 2] {
+        self.mixed_rows = None;
+        self.mixed_images.clone()
+    }
+    pub(crate) fn publish_mixed(&mut self, source: &Handle, count: usize) {
+        // Only the original full-prompt mixed view gets automatic reuse. Small
+        // arena callers keep their existing explicit F32 conversion path.
+        self.mixed_rows = (same_view(source, &self.outer[2])
+            && (1..=allocation::DEFAULT_ROWS).contains(&count))
+        .then_some(count);
+    }
+    pub(crate) fn mixed_input(
+        &self,
+        source: &Handle,
+        count: usize,
+        first: usize,
+        stride: usize,
+        bfloat: bool,
+    ) -> Option<Handle> {
+        (self.mixed_rows == Some(count)
+            && first == 0
+            && stride == 2560
+            && same_view(source, &self.outer[2]))
+        .then(|| self.mixed_images[usize::from(!bfloat)].clone())
     }
     pub(crate) fn gr_input(&self, h: &Handle, columns: usize) -> bool {
         match columns {
@@ -195,6 +225,7 @@ impl Storage {
     pub(crate) fn output(&self, h: &Handle) -> bool {
         self.gr
             .iter()
+            .chain(self.mixed_images.iter())
             .chain(self.outer.iter())
             .chain(self.ple.iter())
             .chain(self.gdn.iter())
@@ -503,6 +534,107 @@ mod packed_gr_layout_tests {
             for prior in s.gr[..i].iter().chain(&s.outer) {
                 assert!(!overlaps(h, prior).unwrap());
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod mixed_image_tests {
+    use super::*;
+    use cubecl_common::stream_id::StreamId;
+    fn storage() -> Storage {
+        Storage::new(allocation::ROOT_SIZES.map(|n| Handle::new(StreamId { value: 921 }, n)))
+            .unwrap()
+    }
+    #[test]
+    fn mixed_image_selection_requires_the_original_source_and_current_writer_geometry() {
+        let mut s = storage();
+        let source = s.outer[2].clone();
+        assert!(s.mixed_input(&source, 4096, 0, 2560, true).is_none());
+        let images = s.begin_gr();
+        assert!(s.mixed_input(&source, 4096, 0, 2560, false).is_none());
+        s.publish_mixed(&source, 4096);
+        for (kind, image) in [(true, &images[0]), (false, &images[1])] {
+            assert!(same_view(
+                &s.mixed_input(&source, 4096, 0, 2560, kind).unwrap(),
+                image
+            ));
+            for (count, first, stride) in [
+                (0, 0, 2560),
+                (1, 0, 2560),
+                (4095, 0, 2560),
+                (4096, 1, 2560),
+                (4096, 0, 2561),
+                (4097, 0, 2560),
+            ] {
+                assert!(s.mixed_input(&source, count, first, stride, kind).is_none());
+            }
+            for h in [
+                &s.outer[0],
+                &s.gr[0],
+                &images[0],
+                &images[1],
+                &source.clone().offset_end(256),
+                &Handle::new(source.stream, source.size_in_used()),
+            ] {
+                assert!(s.mixed_input(h, 4096, 0, 2560, kind).is_none());
+            }
+        }
+        s.begin_gr();
+        assert!(s.mixed_input(&source, 4096, 0, 2560, true).is_none());
+        s.publish_mixed(&source, 1);
+        assert!(s.mixed_input(&source, 1, 0, 2560, true).is_some());
+        assert!(s.mixed_input(&source, 4096, 0, 2560, true).is_none());
+        s.publish_mixed(&s.outer[0].clone(), 1);
+        assert!(s.mixed_input(&source, 1, 0, 2560, true).is_none());
+        for count in [0, allocation::DEFAULT_ROWS + 1] {
+            s.publish_mixed(&source, count);
+            assert!(s.mixed_input(&source, count, 0, 2560, true).is_none());
+        }
+    }
+    #[test]
+    fn mixed_images_are_retained_disjoint_native_views_inside_the_unchanged_admitted_parent() {
+        let s = storage();
+        assert_eq!(
+            allocation::ROOT_SIZES,
+            [1024 * 1024 * 1024, 1024 * 1024 * 1024, 32 * 1024 * 1024]
+        );
+        assert_eq!(
+            s.mixed_images.iter().map(Handle::size_in_used).sum::<u64>(),
+            40 * 1024 * 1024
+        );
+        for (i, image) in s.mixed_images.iter().enumerate() {
+            assert!(s.output(image));
+            assert_eq!(
+                image.size_in_used(),
+                (allocation::DEFAULT_ROWS * 2560 * 2) as u64
+            );
+            for other in
+                s.gr.iter()
+                    .chain(&s.outer)
+                    .chain(&s.mixed_images[..i])
+                    .chain(&s.working)
+            {
+                assert!(!overlaps(image, other).unwrap());
+            }
+            let access = |h: &Handle, write| crate::strata_queue_tests::Access {
+                buffer: 1,
+                first: h.offset_start.unwrap_or(0),
+                bytes: h.size_in_used(),
+                write,
+            };
+            let mut reader = crate::strata_queue_tests::Planner::new(1, false).unwrap();
+            reader
+                .push(&crate::strata_queue_tests::NodeAccess {
+                    copy: false,
+                    release_after: false,
+                    accesses: vec![access(image, false)],
+                })
+                .unwrap();
+            let reader = reader.finish().unwrap();
+            assert!(reader.conflicts(&[access(image, true)]).unwrap());
+            assert!(!reader.conflicts(&[access(&s.outer[2], true)]).unwrap());
+            assert!(!reader.conflicts(&[access(&s.gr[0], true)]).unwrap());
         }
     }
 }
