@@ -440,6 +440,30 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
             .unwrap()
         })
         .collect::<Vec<_>>();
+    // The gathered native draft head ends in a partial four-row workgroup.
+    // Validate its actual full-page and tail specializations as well as the
+    // representative format kernels above; compact rows must stay bounded.
+    if crate::strata_intel_core::enabled() {
+        for rows in [16384, crate::resident_mtp::cjk::ROWS % 16384] {
+            result.push(
+                Kernel {
+                    dtype: crate::quant_matvec::Q6_K,
+                    rows,
+                    columns: 2560,
+                    row_bytes: 2100,
+                    members: 1,
+                    indexed: false,
+                }
+                .compile(
+                    &mut AutoCompiler::Wgsl(Default::default()),
+                    &Default::default(),
+                    ExecutionMode::Unchecked,
+                    StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+                )
+                .unwrap(),
+            );
+        }
+    }
     for columns in [2560, 16384] {
         result.push(
             PrepareKernel(columns)

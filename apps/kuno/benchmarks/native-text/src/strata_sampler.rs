@@ -336,8 +336,10 @@ unsafe fn launch_domain(
         (rows * history * 4).max(4) as u64,
         if params.greedy() {
             4
-        } else {
+        } else if cjk {
             (rows * blocks * KMAX * 8) as u64
+        } else {
+            scratch_bytes(rows)?
         },
         first
             .checked_add(
