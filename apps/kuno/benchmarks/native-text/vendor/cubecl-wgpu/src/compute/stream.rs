@@ -1540,6 +1540,76 @@ impl WgpuStream {
             flush: true,
         })
     }
+    pub(crate) fn prepare_native_strata_draft_scope(
+        &mut self,
+        source: cubecl_runtime::storage::ManagedResource<WgpuResource>,
+    ) -> Result<cubecl_runtime::server::NativeStrataDraftScope, ServerError> {
+        self.private_io_active()?;
+        if self
+            .transient_io
+            .as_mut()
+            .unwrap()
+            .native_branch_recording()?
+            .is_some()
+        {
+            return Err(super::transient_io::fault(
+                "draft preparation inside named branch",
+            ));
+        }
+        // Actual verified rows/fault have already been observed by the owner.
+        // Drain original staged work before establishing the precommit signal.
+        self.flush(StreamErrorMode {
+            ignore: false,
+            flush: true,
+        })?;
+        let request = self
+            .transient_io
+            .as_mut()
+            .unwrap()
+            .native_submission_scope()?;
+        self.strata_graph
+            .as_mut()
+            .ok_or_else(|| super::transient_io::fault("draft requires original native graph"))?
+            .prepare_draft_scope(request, source)
+    }
+    pub(crate) fn enter_native_strata_draft_scope(
+        &mut self,
+        scope: cubecl_runtime::server::NativeStrataDraftScope,
+    ) -> Result<(), ServerError> {
+        self.private_io_active()?;
+        let io = self.transient_io.as_mut().unwrap();
+        if io.native_branch_recording()?.is_some() || io.has_pending_info() {
+            return Err(super::transient_io::fault(
+                "draft entry has unsealed parameters",
+            ));
+        }
+        let request = io.native_submission_scope()?;
+        self.strata_graph
+            .as_mut()
+            .ok_or_else(|| super::transient_io::fault("draft original graph missing"))?
+            .enter_draft_scope(scope, request)
+    }
+    pub(crate) fn end_native_strata_draft_scope(
+        &mut self,
+        scope: cubecl_runtime::server::NativeStrataDraftScope,
+    ) -> Result<(), ServerError> {
+        self.private_io_active()?;
+        let io = self.transient_io.as_mut().unwrap();
+        if io.native_branch_recording()?.is_some() {
+            return Err(super::transient_io::fault(
+                "draft end inside unsealed branch",
+            ));
+        }
+        let request = io.native_submission_scope()?;
+        self.flush(StreamErrorMode {
+            ignore: false,
+            flush: true,
+        })?;
+        self.strata_graph
+            .as_mut()
+            .ok_or_else(|| super::transient_io::fault("draft original graph missing"))?
+            .end_draft_scope(scope, request)
+    }
     pub(crate) fn submit_native_strata_experts(&mut self) -> Result<(), ServerError> {
         self.private_io_active()?;
         if self.strata_graph.is_none() {

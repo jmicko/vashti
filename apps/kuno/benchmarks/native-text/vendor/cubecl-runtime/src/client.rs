@@ -1414,6 +1414,39 @@ impl<R: Runtime> ComputeClient<R> {
             .unwrap()
     }
 
+    /// Bind the full original verified-R owner before accepted-prefix commit.
+    pub fn prepare_native_strata_draft_scope(
+        &self,
+        source: Handle,
+    ) -> Result<crate::server::NativeStrataDraftScope, ServerError> {
+        let stream_id = self.stream_id();
+        self.device
+            .submit_blocking(move |server| {
+                server.prepare_native_strata_draft_scope(stream_id, source.binding())
+            })
+            .unwrap()
+    }
+    /// Enter before sampler controls, scratch clears, front work and math.
+    pub fn enter_native_strata_draft_scope(
+        &self,
+        scope: crate::server::NativeStrataDraftScope,
+    ) -> Result<(), ServerError> {
+        let stream_id = self.stream_id();
+        self.device
+            .submit_blocking(move |server| server.enter_native_strata_draft_scope(stream_id, scope))
+            .unwrap()
+    }
+    /// Release only after the original scope's actual consumer completion.
+    pub fn end_native_strata_draft_scope(
+        &self,
+        scope: crate::server::NativeStrataDraftScope,
+    ) -> Result<(), ServerError> {
+        let stream_id = self.stream_id();
+        self.device
+            .submit_blocking(move |server| server.end_native_strata_draft_scope(stream_id, scope))
+            .unwrap()
+    }
+
     /// Wait for the completion of every task in the server.
     pub fn sync(&self) -> DynFut<Result<(), ServerError>> {
         let stream_id = self.stream_id();

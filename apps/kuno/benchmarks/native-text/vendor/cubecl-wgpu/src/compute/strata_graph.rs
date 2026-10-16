@@ -425,6 +425,11 @@ pub(crate) struct Graph {
     pipelines: HashMap<wgpu::ComputePipeline, Pipeline>,
     nodes: Vec<Node>,
     flights: super::strata_flights::Book,
+    draft_scope: super::strata_draft_scope::Book,
+    // Keep allocator binding as well as VkBuffer alive: a resource clone alone
+    // does not prevent allocator reuse of the original verified-R allocation.
+    draft_source: Option<cubecl_runtime::storage::ManagedResource<WgpuResource>>,
+    draft_readiness: Option<super::strata_handoff::Handoff>,
     next_recording: u64,
     pub submissions: u64,
     pub dispatches: u64,
@@ -700,6 +705,9 @@ impl Graph {
             pipelines: HashMap::new(),
             nodes: Vec::new(),
             flights: super::strata_flights::Book::default(),
+            draft_scope: super::strata_draft_scope::Book::default(),
+            draft_source: None,
+            draft_readiness: None,
             next_recording: 0,
             submissions: 0,
             dispatches: 0,
@@ -847,12 +855,16 @@ impl Graph {
                 return Err(fault("native graph actual buffer extent"));
             }
         }
-        self.nodes.push(Node {
+        let node = Node {
             pipeline: Some(pipeline.clone()),
             resources,
             read_dependencies,
             dispatch,
-        });
+        };
+        self.draft_scope
+            .check_accesses(&self.node_ranges(&node)?)
+            .map_err(fault)?;
+        self.nodes.push(node);
         Ok(())
     }
     /// Upload staging remains tracked by TransientIo. Transfers execute at
@@ -888,12 +900,16 @@ impl Graph {
         } else {
             (vec![target], Dispatch::Fill)
         };
-        self.nodes.push(Node {
+        let node = Node {
             pipeline: None,
             resources,
             read_dependencies: Vec::new(),
             dispatch,
-        });
+        };
+        self.draft_scope
+            .check_accesses(&self.node_ranges(&node)?)
+            .map_err(fault)?;
+        self.nodes.push(node);
         Ok(())
     }
     fn node_bindings<'a>(
@@ -956,24 +972,127 @@ impl Graph {
             })
             .collect()
     }
-    /// A joined branch changes the real compute family/queue and its command
-    /// pool together. Initialization and retained buffer owners stay shared.
-    /// Pending commit overlap is a separate owner/fence contract, not implied
-    /// by choosing an independent hardware queue here.
+    /// Prepare the actual original verified R BEFORE accepted-prefix commit.
+    /// Retain both the allocator binding and original signal/wait through scope
+    /// completion, including partial failures. This never publishes model state.
+    pub(crate) fn prepare_draft_scope(
+        &mut self,
+        request: u64,
+        source: cubecl_runtime::storage::ManagedResource<WgpuResource>,
+    ) -> Result<cubecl_runtime::server::NativeStrataDraftScope, ServerError> {
+        if self.compute_lane != 0 || self.pending() || self.draft_source.is_some() {
+            return Err(fault(
+                "native draft preparation requires original joined MAIN",
+            ));
+        }
+        let r = source.resource();
+        if !self.initialized.contains(&r.buffer)
+            || !r
+                .buffer
+                .usage()
+                .contains(wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC)
+            || r.offset % 4 != 0
+            || r.size % 4 != 0
+            || r.offset
+                .checked_add(r.size)
+                .is_none_or(|end| end > r.buffer.size())
+        {
+            return Err(fault("native draft original initialized R owner"));
+        }
+        let id = self
+            .draft_scope
+            .prepare(
+                request,
+                strata_schedule::Access {
+                    buffer: raw_buffer(r)?.as_raw(),
+                    first: r.offset,
+                    bytes: r.size,
+                    write: false,
+                },
+            )
+            .map_err(fault)?;
+        self.draft_source = Some(source); // BEFORE any fallible native submission.
+        if self.draft_readiness.is_none() {
+            self.draft_readiness =
+                Some(super::strata_handoff::Handoff::new(&self.device).map_err(fault)?);
+        }
+        // Both commands are queued now, before commit. Switching to the draft
+        // lane later MUST NOT queue a fresh MAIN signal behind that commit.
+        self.draft_readiness
+            .as_mut()
+            .unwrap()
+            .transfer(self.compute_queues[0].queue, self.compute_queues[1].queue)
+            .map_err(fault)?;
+        self.draft_scope.dependency_submitted(id).map_err(fault)?;
+        cubecl_runtime::server::NativeStrataDraftScope::from_queue(
+            self.identity,
+            id.generation,
+            request,
+        )
+        .map_err(fault)
+    }
+    fn draft_identity(
+        &self,
+        token: cubecl_runtime::server::NativeStrataDraftScope,
+        request: u64,
+    ) -> Result<super::strata_draft_scope::Identity, ServerError> {
+        let (graph, generation, original) = token.original_identity();
+        if graph != self.identity || original != request {
+            return Err(fault("native draft foreign graph/request"));
+        }
+        Ok(super::strata_draft_scope::Identity {
+            generation,
+            request,
+        })
+    }
+    pub(crate) fn enter_draft_scope(
+        &mut self,
+        token: cubecl_runtime::server::NativeStrataDraftScope,
+        request: u64,
+    ) -> Result<(), ServerError> {
+        let id = self.draft_identity(token, request)?;
+        self.draft_scope.enter(id).map_err(fault)?;
+        self.select_branch_queue(None)
+    }
+    pub(crate) fn end_draft_scope(
+        &mut self,
+        token: cubecl_runtime::server::NativeStrataDraftScope,
+        request: u64,
+    ) -> Result<(), ServerError> {
+        let id = self.draft_identity(token, request)?;
+        self.draft_scope.check_active(id).map_err(fault)?;
+        self.complete_submission()?;
+        if !self.nodes.is_empty() {
+            return Err(fault("native draft end has unsubmitted consumers"));
+        }
+        self.switch_to_lane(0, true)?;
+        self.handoff.complete().map_err(fault)?;
+        self.draft_scope.finish_joined(id).map_err(fault)?;
+        self.draft_source = None;
+        Ok(())
+    }
+    /// Every unkeyed producer and named MTP branch stays inside the original
+    /// active scope. Conservative global joins remain until observation/reuse
+    /// and all exact cross-lane hazards are connected as one execution scope.
     pub(crate) fn select_branch_queue(
         &mut self,
         branch: Option<cubecl_runtime::server::NativeStrataBranch>,
     ) -> Result<(), ServerError> {
+        let named = branch.map(|b| usize::from(b.mtp_geometry().is_some()));
+        let lane = self.draft_scope.lane(named).map_err(fault)?;
         self.complete_submission()?;
-        if self.pending() {
+        if !self.nodes.is_empty() {
             return Err(fault("native queue switch has unsubmitted nodes"));
         }
-        let lane = usize::from(branch.is_some_and(|b| b.mtp_geometry().is_some()));
+        let prepared_dependency = lane == 1 && self.draft_source.is_some();
+        self.switch_to_lane(lane, !prepared_dependency)
+    }
+    fn switch_to_lane(&mut self, lane: usize, transfer: bool) -> Result<(), ServerError> {
         if lane == self.compute_lane {
             return Ok(());
         }
-        // An unused scratch pool may still exist before the first capture.
-        // Completed recordings own all pools they actually consumed.
+        // Only scratch pools are here. Original recording pools and resources
+        // stay pinned by their own recording/flight inventories.
         unsafe {
             self.device.destroy_descriptor_pool(self.descriptors, None);
             self.device.destroy_command_pool(self.pool, None);
@@ -982,9 +1101,11 @@ impl Graph {
         self.pool = vk::CommandPool::null();
         self.command = vk::CommandBuffer::null();
         let selected = self.compute_queues[lane];
-        self.handoff
-            .transfer(self.queue, selected.queue)
-            .map_err(fault)?;
+        if transfer {
+            self.handoff
+                .transfer(self.queue, selected.queue)
+                .map_err(fault)?;
+        }
         self.family = selected.family;
         self.queue = selected.queue;
         self.timestamp_bits = selected.timestamp_bits;
@@ -999,6 +1120,7 @@ impl Graph {
             return Ok(());
         }
         let accesses = super::strata_info_transfer::accesses(&copies).map_err(fault)?;
+        self.draft_scope.check_accesses(&accesses).map_err(fault)?;
         self.join_conflicting_accesses(&accesses)?;
         // Reuse only the INFO command pool's original completed copy. Its old
         // math consumers retain their own complete resources and header epochs.
@@ -1044,6 +1166,11 @@ impl Graph {
         if self.flights.any() || self.pending() || self.info_uploads.pending() {
             return Err(fault("native graph cleanup while pending"));
         }
+        if let Some(ready) = self.draft_readiness.as_mut() {
+            ready.complete().map_err(fault)?;
+        }
+        self.draft_scope.discard_after_drain();
+        self.draft_source = None;
         self.flights.clear_joined_exports().map_err(fault)?;
         self.recordings.clear();
         self.initialized.clear();
@@ -1167,6 +1294,9 @@ impl Graph {
     }
     pub(crate) fn complete_submission(&mut self) -> Result<(), ServerError> {
         self.complete_math_submission()?;
+        if let Some(ready) = self.draft_readiness.as_mut() {
+            ready.complete().map_err(fault)?;
+        }
         // An older math flight may have coexisted with a newer disjoint INFO
         // copy. Only its actual header epoch was consumed, so decide AFTER
         // joining the original flights whether any newer copy still lacks a
@@ -1207,6 +1337,17 @@ impl Graph {
             || recording.compute_count != compute_count
         {
             return Err(fault("native submission original recording family"));
+        }
+        if let Some(source) = self.draft_scope.protected()
+            && recording
+                .work
+                .plan
+                .conflicts(std::slice::from_ref(source))
+                .map_err(fault)?
+        {
+            return Err(fault(
+                "native recorded writer aliases verified draft source",
+            ));
         }
         let id = recording.id;
         let fence = self.fences[self.compute_lane];
@@ -1786,6 +1927,8 @@ impl Drop for Graph {
                 std::mem::forget(std::mem::take(&mut self.nodes));
                 std::mem::forget(std::mem::take(&mut self.recordings));
                 std::mem::forget(std::mem::take(&mut self.initialized));
+                std::mem::forget(self.draft_source.take());
+                std::mem::forget(self.draft_readiness.take());
                 return;
             }
             self.nodes.clear();

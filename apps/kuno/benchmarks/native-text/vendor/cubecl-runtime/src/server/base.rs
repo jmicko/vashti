@@ -272,6 +272,31 @@ impl NativeStrataSubmission {
         (self.graph, self.submission, self.scope)
     }
 }
+/// Original verified-R dependency/scope identity. No content, completion,
+/// model-ready or erasure authority; the original backend validates every use.
+#[derive(Clone, Copy)]
+pub struct NativeStrataDraftScope {
+    graph: u64,
+    generation: u64,
+    request: u64,
+}
+impl NativeStrataDraftScope {
+    /// Backend metadata only. A fabricated token cannot create a live scope.
+    pub fn from_queue(graph: u64, generation: u64, request: u64) -> Result<Self, &'static str> {
+        if graph == 0 || generation == 0 || request == 0 {
+            return Err("native draft identity bounds");
+        }
+        Ok(Self {
+            graph,
+            generation,
+            request,
+        })
+    }
+    /// Original backend validation only; do not log private identities.
+    pub fn original_identity(self) -> (u64, u64, u64) {
+        (self.graph, self.generation, self.request)
+    }
+}
 /// Current request's control values. Deliberately no Debug, Hash or Serialize.
 /// The branch key and retained template contain no copy of these values.
 #[derive(Clone, Copy)]
@@ -1128,6 +1153,42 @@ where
         &mut self,
         _stream_id: StreamId,
         _submission: NativeStrataSubmission,
+    ) -> Result<(), ServerError> {
+        Err(IoError::UnsupportedIoOperation {
+            backtrace: BackTrace::capture(),
+        }
+        .into())
+    }
+
+    /// Pin the full original verified-R allocation and submit its real
+    /// main-to-draft dependency BEFORE any accepted-prefix commit is queued.
+    fn prepare_native_strata_draft_scope(
+        &mut self,
+        _stream_id: StreamId,
+        _source: Binding,
+    ) -> Result<NativeStrataDraftScope, ServerError> {
+        Err(IoError::UnsupportedIoOperation {
+            backtrace: BackTrace::capture(),
+        }
+        .into())
+    }
+    /// Enter the original dependency scope before ALL MTP staging/control work.
+    fn enter_native_strata_draft_scope(
+        &mut self,
+        _stream_id: StreamId,
+        _scope: NativeStrataDraftScope,
+    ) -> Result<(), ServerError> {
+        Err(IoError::UnsupportedIoOperation {
+            backtrace: BackTrace::capture(),
+        }
+        .into())
+    }
+    /// Join original scope consumers before releasing source/returning to MAIN.
+    /// This is not target state, fault or owning erasure acceptance.
+    fn end_native_strata_draft_scope(
+        &mut self,
+        _stream_id: StreamId,
+        _scope: NativeStrataDraftScope,
     ) -> Result<(), ServerError> {
         Err(IoError::UnsupportedIoOperation {
             backtrace: BackTrace::capture(),

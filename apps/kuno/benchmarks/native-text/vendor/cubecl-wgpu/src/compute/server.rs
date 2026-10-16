@@ -1237,6 +1237,73 @@ impl ComputeServer for WgpuServer {
         }
         result
     }
+    fn prepare_native_strata_draft_scope(
+        &mut self,
+        stream_id: StreamId,
+        source: Binding,
+    ) -> Result<cubecl_runtime::server::NativeStrataDraftScope, ServerError> {
+        cubecl_runtime::transient::retained_metadata_bindings(
+            std::slice::from_ref(&source),
+            stream_id,
+        )?;
+        let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
+        self.scheduler.execute_streams(vec![stream_id]);
+        let stream = self.scheduler.stream(&stream_id);
+        let result = (|| {
+            stream.private_io_active()?;
+            let size = source.size;
+            let memory = source.memory.clone();
+            let resource = stream.mem_manage.get_resource(source)?;
+            if resource.size != size {
+                return Err(super::transient_io::fault(
+                    "draft source original full allocation",
+                ));
+            }
+            stream.prepare_native_strata_draft_scope(ManagedResource::new(memory, resource))
+        })();
+        if result.is_ok()
+            && let Some(mutation) = mutation
+        {
+            mutation.accept();
+        }
+        result
+    }
+    fn enter_native_strata_draft_scope(
+        &mut self,
+        stream_id: StreamId,
+        scope: cubecl_runtime::server::NativeStrataDraftScope,
+    ) -> Result<(), ServerError> {
+        let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
+        self.scheduler.execute_streams(vec![stream_id]);
+        let result = self
+            .scheduler
+            .stream(&stream_id)
+            .enter_native_strata_draft_scope(scope);
+        if result.is_ok()
+            && let Some(mutation) = mutation
+        {
+            mutation.accept();
+        }
+        result
+    }
+    fn end_native_strata_draft_scope(
+        &mut self,
+        stream_id: StreamId,
+        scope: cubecl_runtime::server::NativeStrataDraftScope,
+    ) -> Result<(), ServerError> {
+        let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
+        self.scheduler.execute_streams(vec![stream_id]);
+        let result = self
+            .scheduler
+            .stream(&stream_id)
+            .end_native_strata_draft_scope(scope);
+        if result.is_ok()
+            && let Some(mutation) = mutation
+        {
+            mutation.accept();
+        }
+        result
+    }
     fn submit_native_strata_experts(&mut self, stream_id: StreamId) -> Result<(), ServerError> {
         let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
         self.scheduler.execute_streams(vec![stream_id]);

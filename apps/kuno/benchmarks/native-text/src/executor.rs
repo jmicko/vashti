@@ -627,6 +627,33 @@ pub(crate) struct PendingNativeCommit {
     submission: cubecl_runtime::server::NativeStrataSubmission,
     _not_send: std::marker::PhantomData<Rc<()>>,
 }
+/// Own the original immutable-R backend scope. Unknown/failing completion
+/// retires before releasing the retained original client. No caller can declare
+/// the scope joined or release its backend's actual source allocation.
+pub(crate) struct NativeDraftScope {
+    completion: PendingRetirementCompletion,
+    admission: ResidentAdmission,
+    scope: cubecl_runtime::server::NativeStrataDraftScope,
+    _not_send: std::marker::PhantomData<Rc<()>>,
+}
+impl NativeDraftScope {
+    pub(crate) fn enter(&self) -> Result<()> {
+        self.admission.active()?;
+        self.admission
+            .client
+            .enter_native_strata_draft_scope(self.scope)
+            .map_err(|_| Error::InvalidFormat("native original draft entry failed"))
+    }
+    pub(crate) fn finish(mut self) -> Result<()> {
+        self.admission
+            .client
+            .end_native_strata_draft_scope(self.scope)
+            .map_err(|_| Error::InvalidFormat("native original draft completion failed"))?;
+        self.admission.active()?;
+        self.completion.joined = true;
+        Ok(())
+    }
+}
 struct PendingRetirementCompletion {
     joined: bool,
     retired: Arc<AtomicBool>,
@@ -741,6 +768,25 @@ fn checked_construction_origin<T>(
 }
 
 impl ResidentAdmission {
+    pub(crate) fn prepare_native_draft_scope(&self, source: Handle) -> Result<NativeDraftScope> {
+        self.active()?;
+        // Construct the sticky guard BEFORE the backend can submit anything.
+        let completion = PendingRetirementCompletion {
+            joined: false,
+            retired: self.retired.clone(),
+            sequence_poison: self.sequence_poison.clone(),
+        };
+        let scope = self
+            .client
+            .prepare_native_strata_draft_scope(source)
+            .map_err(|_| Error::InvalidFormat("native original draft preparation failed"))?;
+        Ok(NativeDraftScope {
+            completion,
+            admission: self.clone(),
+            scope,
+            _not_send: std::marker::PhantomData,
+        })
+    }
     pub(crate) fn retain_native_commit(
         &self,
         submission: cubecl_runtime::server::NativeStrataSubmission,

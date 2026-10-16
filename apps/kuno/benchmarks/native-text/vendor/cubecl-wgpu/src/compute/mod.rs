@@ -4,6 +4,7 @@ pub(crate) mod controller;
 mod public_external;
 mod storage;
 
+mod strata_draft_scope;
 mod strata_flights;
 pub(crate) mod strata_graph;
 mod strata_handoff;

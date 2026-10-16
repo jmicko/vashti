@@ -5730,12 +5730,23 @@ impl Workspace {
                 .as_ref()
                 .ok_or(error())?
                 .check_no_live_output()?;
+            // Pin the ACTUAL original observed R owner and enqueue its real
+            // MAIN->draft visibility BEFORE any accepted-prefix commit. The
+            // scope cannot publish target state or erase/reuse that source.
+            let draft_scope = m.admission.prepare_native_draft_scope(gr::full_private(
+                &m.arena,
+                self.outer.residual[*current],
+                MAX_BATCH * target_rows::HC_WIDTH,
+            )?)?;
             // Real retained commit uses original candidate roots and typed n.
             // Its original recording still needs the real join/fault/family proof.
             let commit = self
                 .submit_native_prefix_commit(m, &pending, *count, keep, cancel)?
                 .map(|submission| m.admission.retain_native_commit(submission))
                 .transpose()?;
+            // Scope entry precedes the entire observer: sampling controls,
+            // scratch/token preparation, R copy, front and every MTP branch.
+            draft_scope.enter()?;
             let source = self
                 .target_rows
                 .as_ref()
@@ -5754,6 +5765,7 @@ impl Workspace {
             {
                 return Err(error());
             }
+            draft_scope.finish()?;
             if let Some(commit) = commit {
                 // The observer may run the original drafter, but may not
                 // publish target state. Join its exact original submission.
