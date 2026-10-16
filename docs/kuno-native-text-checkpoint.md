@@ -1,17 +1,40 @@
-<!-- Current resume: 2026-10-16, source d0670b0, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source b6732c8, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, engine source through `d0670b0`. The user authorized
+branch `codex/strata-rust-port`, engine source through `b6732c8`. The user authorized
 continuing CPU-only work; the goal controller is active for that scope.
 GPU/model/service/sudo work still needs renewed user authorization. Last physical recovery evidence
 is historical 06:07:22Z on Oct15; no subsequent GPU run or live health claim.
 
-Read the latest [direct MTP replay receipt](kuno-strata-rewrite-completion.md#direct-native-mtp-submission-and-original-host-handback-2026-10-16)
+Read the latest [dedicated MTP queue receipt](kuno-strata-rewrite-completion.md#dedicated-native-mtp-compute-queue-and-memory-handoffs-2026-10-16)
 and coordination handoff. Earlier CJK source `cd703bc` was integrated as `0bfbea8`;
 **do not cherry-pick it again**. Its original 106299-row Q6 head, inverse-ID sampler
 and target/MTP INT8 caches remain connected.
+
+**Latest queue block:** `b6732c8` connects MTP native branch capture/replay to an
+actually requested independent compute family. The saved Oct14 B70 properties have
+one main0 queue, compute-only1 and transfer-only2. Production selects by real flags/
+counts on device creation, not those numeric IDs. Missing independent compute or
+dedicated transfer capability rejects this experimental native device, without
+silently aliasing queues. Ordinary device constructors and installed Kuno are unchanged.
+
+Native pools/recordings are family-bound; uniform/storage buffers plus raw host
+mirror/prompt-shadow aliases share the actual adopted families concurrently.
+The graph retains one shared initialization/resource inventory. Each joined branch
+switch and fresh primary-queue upload uses actual timeline semaphore signal/wait
+handoffs; a CPU fence alone cannot supply Vulkan cross-queue memory visibility.
+The monotonic handoff/fence objects remain owned across partial failure and are
+not freed if completion is unknown. Original output/fault/erasure acceptance stays.
+
+40 focused CPU checks, selected/off strict Clippy and formatting pass. Immutable
+release and327 offline shader variants pass; exact hash/logs are in the completion
+guide. **This
+connects the second queue; it does not yet overlap target commit and drafting.**
+There is still one in-flight native graph fence, synchronous accepted-prefix repair,
+and primary-queue Wgpu INFO upload/readback scheduling. Unkeyed MTP prompt/preparation
+work also remains on the main queue. No GPU/model/service/sudo operation ran.
 
 **Latest direct MTP block:** `d0670b0` connects actual retained native submission
 for whole zero-threshold chains and independently observed positive-threshold steps.
@@ -135,14 +158,32 @@ fault read or mark a CPU cursor complete early. Preserve all original roots unti
 completion, target queue order and draft carry ownership; final/cleanup consumers
 must join outstanding commits. Review all-accept and one-token self-commit too.
 
-The existing native backend has one compute queue plus the actual adopted transfer
-queue. `strata_graph.rs::replay_recording` and `execute` join the prior submission
-before starting another; they share one in-flight fence. Merely passing wait=false
-would still serialize the next draft and cannot reproduce independent target/draft
-queue overlap. Any pending-commit port must connect the original disjoint state
-consumer to a genuine second compute lane (or document a proven equivalent), with
-actual completion dependencies and retained resources, rather than a fake completed
-receipt or removal of the fault barrier. Do not use the copy queue for compute.
+The backend now adopts a second compute queue and routes actual MTP branch
+recordings to it (`b6732c8`), with family-correct pools/concurrent buffers and real
+memory handoffs. It still has one in-flight graph fence and joins it before
+switching/next work. **Next prerequisite:** native INFO staging and retained copy
+nodes, together with pending-commit flights. `TransientIo::prepare_batched_info`
+still unmaps tracked Uploads then copies to original Uniform owners through a Wgpu
+primary-queue encoder. `Stream::flush_inner/replay_native_strata_branch` submits and
+polls that encoder before native work. Leaving this path unchanged could wait for
+an asynchronous target commit on that same queue and serialize the draft again.
+
+Move the actual full-owner INFO copies onto native transfer scheduling while
+preserving mapping obligations, original page assignments, typed template/schema
+checks and source/target retention. The cold recording must retain the actual
+copies, and direct replay must use the exact same originals with freshly rendered
+bytes; never omit upload nodes or pretend an unsubmitted copy completed. The
+actual copy-to-draft semaphore dependency must remain. **Important original-source
+issue:** `stage_native_replay` currently allocates/reuses an Upload owner afresh for
+each pinned Uniform page. Do not capture a copy from yesterday's source handle and
+then render new bytes into another source. Pair/pin the actual tracked source with
+its original page, or submit separately retained real copy nodes whose actual
+current source/target identities are checked. Maintain full capacity/mapping/wipe
+accounting; no untracked host staging. `Graph` then needs separately
+owned pending commit work/fences and original family permits/cursors; final/cleanup
+consumers must join them. Do not reuse live INFO sources/pages or discard pending
+recording resources. Unkeyed MTP prefill/preparation needs original queue ownership
+auditing too. No speed tests until the whole connected gate passes.
 
 Other open work: HOST embedding placement;4096/2048 context/prefill versus source
 32768/4096; GDN pair swap versus fixed-copy scheduling; packed-cache physical layout;

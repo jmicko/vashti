@@ -59,7 +59,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native INT8 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Positive-threshold chains now keep hidden carries on device and observe the same token/probability/fault packet as zero-threshold chains; mapped/event scheduling remains open. First/grouped device-source and ids-only target result consumers now exist; the shared-context constructor receipt below supersedes the separate-client blocker. Core construction now selects the actual target client and one combined account. Source9de7fef pins the original target embedding/head once, shares them with MTP and gathers target embeddings on GPU. Actual device/state acceptance is pending. Source0bfbea8 connects the original-order CJK106299-row Q6 draft head, inverse-ID history mapping, compact confidence and coupled sampling; source2a3d1ad connects INT8 caches. Combined CPU checks pass, with full numerical/GPU execution still pending. Source `862f5fa` separates first-front staging and actual observation from capture, and prestages all coupled draft controls once per round. Source `8262367` connects typed MTP phases/4096 boundaries and original model-instance graph namespaces; source `d0670b0` connects direct original MTP replay and capture-derived host/sampler handback. Physical acceptance, commit/event fidelity, numerical/state acceptance and runtime policy remain required. See the latest device-end receipt. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Sourcea26adc2 ports the native bounded trigram index, longest/recent suffix choice, cost priors, probing/stale rules and optional lookup-chain accounting into the selected controller. Configured MTP/target windows no longer shrink at the output cap; state commit and emission are separate. Coupled sampling and physical state acceptance still need end-to-end validation. |
 | Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Real greedy verification/state-only repair exists. Audit all active windows and acceptance cases against GDN/QSA/PLE/positions; independent correctness oracle remains missing. |
-| Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; Source `d40442c` connects direct retained target submission with typed control uploads and original family receipts; source `d0670b0` connects direct MTP invocation with original actual packet observations and sampler/actor handback. Accepted-prefix commit/event scheduling remains incomplete. Physical ring overlap, scratch lifetimes and full execution acceptance remain open. Measured serving lazily captures branches; eager all-branch warmup is not a prerequisite; a sequence of independent Wgpu launches is not equivalent. |
+| Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; Source `d40442c` connects direct retained target submission with typed control uploads and original family receipts; source `d0670b0` connects direct MTP invocation with original actual packet observations and sampler/actor handback. Source `b6732c8` adopts independent MTP compute and concurrent buffer families with semaphore handoffs. Accepted-prefix commit/event scheduling and per-flight ownership remain incomplete. Physical ring overlap, scratch lifetimes and full execution acceptance remain open. Measured serving lazily captures branches; eager all-branch warmup is not a prerequisite; a sequence of independent Wgpu launches is not equivalent. |
 | Request lifecycle and arbitrary input | upstream CLI/session/inference entry points | Current Rust public-fixture gate is not a general engine. Connect bounded arbitrary prompts and request-local sampling/history, with no persistent content, protected memory and orderly erase/close. No gateway/UI work required. |
 
 ## Validation and the speed gate
@@ -5312,3 +5312,106 @@ compute or forge completion to bypass original fault/source/erasure checks.
 Other source substitutions in the checklist remain open; no speed benchmarks until
 the complete connected source and correctness/owning-erasure gates pass. The goal
 remains active for CPU-only work, not GPU or service permission.
+
+
+## Dedicated native MTP compute queue and memory handoffs (2026-10-16)
+
+Source `b6732c860cf6c5aaac050aecbd718af171bc07fb` connects an independent compute
+queue to the actual native MTP branch capture/replay consumers. It does not remove
+completion/observation checks or claim asynchronous commit overlap yet.
+
+Historical physical source: `strata-matrix-capabilities-20261014.log` under
+`/media/jmicko/faststore/kuno-development`, Intel BMG G31 at2374, family properties
+3245–3282. Main family0 has one queue, family1 is compute/transfer and family2
+transfer-only, one queue each. Those are saved Oct14 capabilities, not a live
+query this pass. The production `backend/vulkan/strata_queues.rs::families` helper
+examines actual properties on the future device creation: main must have compute,
+another nonzero-count compute family is selected independently, and a distinct
+transfer-only family is required. It prefers compute without graphics and does
+not assume family IDs or request nonexistent queue1 of family0. Missing topology
+rejects the selected experimental native device, rather than aliasing its queues.
+Ordinary feature-off device requests do not request/adopt these extra queues.
+
+The exact native `VkDeviceCreateInfo` requests queue0 of both selected families.
+HAL records them once before allocation/exposure; getters borrow only actually
+requested queues. Its buffer family list now carries an allocation-free valid
+prefix of up to3 distinct families. All ordinary Wgpu buffers (including INFO
+Uniforms and private storage), original host expert mirror, raw host weight pool
+and prompt-shadow aliases use actual concurrent family sharing when adopted.
+Generic nonnative imports keep their original exclusive behavior. No extra copy
+of any model tensor or new private data root is allocated.
+
+`WgpuStream::begin_native_strata_branch` flushes original work then selects the
+actual branch queue. MTP round/step keys select the adopted compute-only queue;
+target/unkeyed work selects the original queue. The graph switches command-pool
+family, queue and timestamp capability together after real completion. Recording
+identity/reuse now also requires its original family. Existing pipeline, full-buffer
+initialization and retained-resource ownership remain shared, avoiding a second
+initialization inventory that could invalidate another family's original roots.
+Original copy nodes still use the actual independent transfer queue and its real
+interval-dependent timeline edges. Direct replay selects the correct family,
+submits the same retained work, then returns to the main queue after completion;
+a missing recording safely returns to the original queue before normal capture.
+
+Vulkan cross-queue visibility is explicit: `strata_handoff::Handoff` owns a timeline
+semaphore and completion fence, reserves strictly increasing epochs before any
+submission, signals the original source queue and waits at ALL_COMMANDS on the
+actual destination. Branch switches carry original writes between compute queues;
+fresh Wgpu primary-queue INFO uploads also hand off before the native draft graph.
+A host fence wait alone is not used as a substitute for device memory visibility.
+Partial failures retain synchronization handles until completion is proven; unknown
+completion leaves them for terminal protected-process/device teardown. No driver
+reset, process-external control or invented output/erasure proof is introduced.
+
+Current scope/limitations:
+
+- Only actual named MTP math branches switch to the independent queue. Unkeyed
+  MTP prompt/preparation remains on the main queue and needs a source-scheduling audit.
+- There is still one in-flight native graph fence; branch switches/actual packet
+  observation still join it. This change does not claim simultaneous target commit
+  and draft execution, nor any speed gain.
+- Accepted-prefix repair still joins its original fault proof before returning.
+  `TransientIo::prepare_batched_info` still uses Wgpu primary-queue copies/polling.
+  Those are coupled remaining dependencies: a pending primary-queue target commit
+  could serialize the next draft's INFO upload even with a second compute queue.
+- Full physical numerical/state/recovery acceptance remains required. A build or
+  a capability fixture is not proof that the current driver executes this path.
+
+CPU-only receipts under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-draft-queue-test-build-20261016.log`: locked selected-core release test
+  build passes. `strata-draft-queue-cpu-20261016.log`:40 focused cases pass:3 actual
+  production queue-selection helper cases,1 actual epoch helper case,11 actual
+  compute/copy interval planner cases,15 actual parameter-program cases,4 MTP
+  replay accounting and6 request sampler cases. Selection tests cover saved B70
+  shape, reordered/nonzero main families, flags/counts, missing or zero-count
+  capabilities, and no silent queue alias. Epoch exhaustion never wraps/mutates.
+  No queue/device is constructed by these tests.
+- `strata-draft-queue-{core,off}-clippy-20261016.log`: strict locked selected/off
+  release Clippy pass. Changed-source formatting and `git diff --check` pass.
+- `strata-draft-queue-build-20261016.out`: immutable release source above,
+  SHA256 `49ce70a6097ac50aa9b97541b7709fcc7d34a89be15b2652fa812e2fa91687be`.
+- `strata-draft-queue-shaders-20261016.log`:327 generated shader variants plus
+  native matrix and physical expert-pointer validation pass. This CLI returns
+  before any vendor/adapter/device creation; the check is GPU-free.
+
+### Next coupled block
+
+Move actual full-owner INFO source-to-Uniform copies to native transfer scheduling,
+with original mapping/ledger/schema/page ownership and exact semaphore dependencies.
+`stage_native_replay` currently allocates/reuses a fresh Upload for each pinned
+Uniform page: never retain a copy from one source handle while rendering new bytes
+into another. Pair/pin the real tracked source with its page, or retain/validate
+separate actual upload commands per invocation. Keep complete root/capacity wipe
+and outstanding-use obligations. Direct replay must include the real current
+copies, not just math that assumes unseen uploads completed.
+
+Then connect original pending accepted-prefix work/fences, family permits/cursor
+publication, target queue order, independent draft carry access and final/cleanup
+joins as one coherent block. Remove full-proposed-window-before-prefix scheduling
+only with its actual replacement. Do not simply remove fault reads, fake committed
+cursors or treat a second queue as evidence of overlap. Other source substitutions
+and the final whole-model/numerical/owning-erasure gate remain open.
+
+No GPU/model/inference/sudo/service operation, installation, frontend/API change or
+speed trial ran. The goal remains active for CPU-only work. Required Vashti changes:none.

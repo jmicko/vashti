@@ -6,8 +6,8 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through `d0670b0`. Read the latest
-[direct MTP handoff](#active-kuno-engine-handoff--direct-native-mtp-submission-2026-10-16)
+`codex/strata-rust-port`, engine source through `b6732c8`. Read the latest
+[dedicated queue handoff](#active-kuno-engine-handoff--dedicated-mtp-compute-queue-2026-10-16)
 and [completion gate](kuno-strata-rewrite-completion.md). Direct target and MTP submission
 are now connected in source; accepted-prefix commit/event fidelity and full
 GPU/numerical acceptance remain incomplete. No new speed result.
@@ -6202,3 +6202,28 @@ benchmark or undo connected components based on incidental timings.
 
 Goal is active for CPU-only work. No GPU/model/service/sudo changes, installation,
 release or public API changes this pass. Required Vashti changes:none.
+
+
+### Active Kuno engine handoff — dedicated MTP compute queue (2026-10-16)
+
+Source `b6732c8` requests/adopts an actual independent compute family and routes
+native MTP branch capture/replay to it, with family-correct command pools/recording
+reuse, concurrent original buffers/raw host aliases and real cross-queue timeline
+memory handoffs. Device creation selects by actual capabilities/counts; it never
+assumes queue1 exists in the main family. Saved B70 Oct14 properties establish a
+compatible topology, not current physical execution acceptance.
+
+40 focused CPU cases, strict selected/off Clippy, immutable release build and327
+offline shader variants pass; exact hash/logs are in completion guide **Dedicated native
+MTP compute queue and memory handoffs**. No GPU/numerical/speed/recovery claim.
+
+The current graph still has one in-flight fence and joins before switching. Next
+coupled dependencies are native INFO copy/owner scheduling plus pending accepted-
+prefix commit/events and original consumer/final joins. In particular, fresh
+Upload owners may differ from the Uniform's previous source: a retained copy must
+not silently point at stale data. Current checkpoint records actual next entry
+points and remaining substitutions. Unkeyed MTP preparation/prefill is still main-
+queue work. No live speed testing before the whole connected gate passes.
+
+No installed-service/model/sudo action, public API/connector/UI change, deployment
+or release. Goal remains active for CPU-only work. Required Vashti changes:none.
