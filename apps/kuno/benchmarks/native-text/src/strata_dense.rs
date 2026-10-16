@@ -14,6 +14,11 @@ use cubecl_runtime::{
     server::{ExecutionMode, Handle, KernelArguments, MetadataBindingInfo},
 };
 use kuno_text::{Error, Result};
+// One full private owner for the largest supported target input:8 members,
+// 16384 columns, original single Q8_1 planes (9/16 words per value). The arena
+// rounds294912 logical bytes to512KiB; no expert-fetch buffers are borrowed.
+pub(crate) const INPUT_WORDS: usize = 8 * (16384 / 2 + 16384 / 16);
+pub(crate) const INPUT_BYTES: u64 = 512 * 1024;
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 struct Kernel {
     dtype: u32,
@@ -313,14 +318,22 @@ mod native_q6_tests {
     }
     #[test]
     fn native_eight_dense_scratch_covers_all_real_rhs_without_overcommit() {
+        use super::{INPUT_BYTES, INPUT_WORDS};
         if !crate::strata_intel_core::enabled() {
             return;
         }
         assert_eq!(crate::strata_port::verify_capacity(), 8);
-        for columns in [2560, 10240, 16384] {
+        assert_eq!(
+            crate::private_arena::BufferLayout::new(INPUT_WORDS)
+                .unwrap()
+                .owned_bytes as u64,
+            INPUT_BYTES
+        );
+        for columns in [640, 2560, 6144, 10240, 16384] {
             for count in 1..=8 {
                 let bytes = (count * (columns / 2 + columns / 16) * 4) as u64;
                 for dtype in [8, 12, 13, 14, 20, 23] {
+                    assert!(super::supports_count(dtype, columns, INPUT_BYTES, count));
                     assert!(super::supports_count(dtype, columns, bytes, count));
                     assert!(!super::supports_count(dtype, columns, bytes - 1, count));
                 }

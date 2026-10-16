@@ -2059,7 +2059,7 @@ pub(super) struct Workspace {
     ple: ple_batch::PleBatchWorkspace,
     shared: shared_batch::Workspace,
     outer: Zeroizing<Outer>,
-    core_stages: Option<[BufferId; 3]>,
+    core_dense_input: Option<BufferId>,
     core_prompt_stages: Option<[BufferId; 3]>,
     global_moe: Option<crate::strata_global_moe::Workspace>,
     poison: Arc<AtomicBool>,
@@ -2467,7 +2467,7 @@ impl Workspace {
         } else {
             None
         };
-        let core_stages = global_moe.as_ref().map(|m| m.stage_ids());
+        let core_dense_input = global_moe.as_ref().map(|m| m.dense_input_id());
         let core_prompt_stages = global_moe.as_ref().and_then(|m| m.prompt_stage_ids());
         let mut alloc = |n| model.arena.allocate_zeroed(n).map_err(u::fault);
         let outer = Zeroizing::new(Outer {
@@ -2499,7 +2499,7 @@ impl Workspace {
             ple,
             shared,
             outer,
-            core_stages,
+            core_dense_input,
             core_prompt_stages,
             global_moe,
             poison,
@@ -2814,14 +2814,6 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             client.properties().memory.alignment.max(256),
         )?;
         let reserved = crate::public_host_expert_mirror::strata_global::Host::reservation(&plan)?;
-        let stages = self
-            .native_batch
-            .as_ref()
-            .ok_or(error())?
-            .global_moe
-            .as_ref()
-            .ok_or(error())?
-            .stage_handles(&self.arena)?;
         let prompt_stages = self
             .native_batch
             .as_ref()
@@ -2838,7 +2830,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .as_mut()
             .and_then(std::sync::Arc::get_mut)
             .ok_or(error())?
-            .attach_stages(device, queue, stages)?;
+            .attach_execution_queue(device, queue)?;
         let sources = executor
             .strata_global_sources
             .as_mut()
@@ -5481,7 +5473,7 @@ impl Workspace {
             drive_layers(cancel, |layer| {
                 let attention_start = Instant::now();
                 let dense_q8 = if crate::strata_intel_core::enabled() && (1..=8).contains(&*count) {
-                    self.core_stages.map(|ids| ids[0])
+                    self.core_dense_input
                 } else {
                     None
                 };
@@ -6054,7 +6046,6 @@ impl Workspace {
             return Err(error());
         }
         self.prove_outer(m)?;
-        let _core_stage_scope = crate::strata_stage::Scope::new(&m.arena, self.core_stages)?;
         // Immutable for this exclusive transaction; capture before real PLE
         // acceptance retains its disjoint mutable workspace borrow.
         let decode_policy = self.decode_kernels()?;
@@ -6247,7 +6238,7 @@ impl Workspace {
                 && e.target_four_rows_active
                 && *count == 4
             {
-                self.core_stages.map(|ids| ids[0])
+                self.core_dense_input
             } else {
                 None
             };
@@ -7038,6 +7029,51 @@ impl Workspace {
 
 #[cfg(test)]
 mod tests {
+    // Independently pinned quote fixtures: original4K state818249728B;
+    // Strata replay adds36*(512+64+64+256+32)KiB. Native32K changes12 QSA
+    // cache/position/pooled roots, native GR and large selection planes together.
+    fn expected_original_main() -> u64 {
+        if crate::strata_intel_core::enabled() {
+            1_459_093_504
+        } else if crate::strata_port::enabled() {
+            852_459_520
+        } else {
+            818_249_728
+        }
+    }
+    fn expected_runtime(head_tiles: u64) -> u64 {
+        // Original64MB includes16 head tiles; each additional tile owns2 INFO
+        // records. Native adds prompt/GDN/QSA/prefix records and audited copies.
+        let base = if crate::strata_intel_core::enabled() {
+            234_807_296
+        } else {
+            64_000_000
+        };
+        base + (head_tiles - 16) * 4096
+    }
+    fn expected_target_main() -> u64 {
+        if crate::strata_intel_core::enabled() {
+            3_660_939_264
+        } else {
+            expected_original_main()
+                + if crate::strata_port::eight_rows() {
+                    16
+                } else {
+                    8
+                } * 1024
+                    * 1024
+        }
+    }
+    fn expected_host_slack(hybrid: bool) -> usize {
+        // The240-slot reference profile needs64KiB more bank metadata than
+        // the original profile. New separate native allowances add to BOTH
+        // sides, leaving the same fixed slack; no fabricated memory credit.
+        (if cfg!(feature = "strata-resident-240") {
+            1_048_576
+        } else {
+            1_114_112
+        }) - if hybrid { 1024 * 1024 } else { 0 }
+    }
     #[test]
     fn scoped_verified_rows_release_original_lease_before_prefix_consumers() {
         use super::{MAX_BATCH, error, select_verified_rows};
@@ -7131,12 +7167,12 @@ mod tests {
             Purpose::AllRowsWithCarry,
             true
         ));
-        assert!(!grouped_ple_run_allowed_selected(
-            true,
-            5,
-            Purpose::AllRowsWithCarry,
-            true
-        ));
+        for count in 5..=9 {
+            assert_eq!(
+                grouped_ple_run_allowed_selected(true, count, Purpose::AllRowsWithCarry, true),
+                count <= crate::strata_port::verify_capacity()
+            );
+        }
     }
     #[test]
     fn grouped_status_actual_workspace_states_reject_partial_selection() {
@@ -7432,15 +7468,36 @@ mod tests {
     fn frozen_down_integer_exact_owner_and_independent_gu_down_budget_increments() {
         use crate::quant_matvec::frozen_down_integer as i;
         let full = BufferLayout::new(i::SCRATCH_WORDS).unwrap();
-        assert_eq!(full.logical_words, 16384);
-        assert_eq!(full.owned_bytes, 65536);
+        // The same allocated owner now supports a native8-row frame while
+        // original count1..3 arithmetic/logical footprint remains unchanged.
+        let expected_bytes = if crate::strata_port::eight_rows() {
+            131072
+        } else {
+            65536
+        };
+        let maximum_routes = if crate::strata_port::eight_rows() {
+            80
+        } else {
+            30
+        };
+        let frame = BufferLayout::new(64 + maximum_routes * 360).unwrap();
+        assert_eq!(frame.owned_bytes, expected_bytes);
+        assert_eq!(full.logical_words, expected_bytes / 4);
+        assert_eq!(full.owned_bytes, expected_bytes);
         assert_eq!(
             full.owned_bytes as u64,
             batch_moe::FROZEN_DOWN_INTEGER_MAIN_BYTES
         );
-        assert_eq!(batch_moe::FROZEN_DOWN_INTEGER_HOST_BYTES, 65536);
+        assert_eq!(batch_moe::FROZEN_DOWN_INTEGER_HOST_BYTES, expected_bytes);
         assert_eq!(batch_moe::FROZEN_DOWN_INTEGER_INFO_BYTES, 196608);
-        assert_eq!(batch_moe::FROZEN_DOWN_INTEGER_RUNTIME_BYTES, 462848);
+        assert_eq!(
+            batch_moe::FROZEN_DOWN_INTEGER_RUNTIME_BYTES,
+            if crate::strata_port::eight_rows() {
+                724992
+            } else {
+                462848
+            }
+        );
         assert_eq!(
             BufferLayout::new(i::LOGICAL_WORDS).unwrap().owned_bytes,
             65536
@@ -7449,7 +7506,10 @@ mod tests {
             for down in [false, true] {
                 let increments = u64::from(gu) * batch_moe::FROZEN_GU_INTEGER_MAIN_BYTES
                     + u64::from(down) * batch_moe::FROZEN_DOWN_INTEGER_MAIN_BYTES;
-                assert_eq!(increments, u64::from(gu as u8 + down as u8) * 65536);
+                assert_eq!(
+                    increments,
+                    u64::from(gu) * 65536 + u64::from(down) * expected_bytes as u64
+                );
                 let runtime = runtime_bytes(38).unwrap()
                     + u64::from(gu) * batch_moe::FROZEN_GU_INTEGER_RUNTIME_BYTES
                     + u64::from(down) * batch_moe::FROZEN_DOWN_INTEGER_RUNTIME_BYTES;
@@ -7500,7 +7560,7 @@ mod tests {
             TARGET_ROWS_PRIVATE_MAIN
                 + batch_moe::frozen_sources::ROUTER_MAIN_BYTES
                 + batch_moe::FROZEN_GU_INTEGER_MAIN_BYTES,
-            828932096
+            expected_target_main() + 2_228_224 + 65_536
         );
     }
     #[test]
@@ -7530,28 +7590,43 @@ mod tests {
     use super::*;
     #[test]
     fn target_rows_charge_two_full_owners_and_independent_larger_io_and_host_caps() {
-        assert_eq!(TARGET_ROWS_PRIVATE_MAIN, 826_638_336);
+        assert_eq!(TARGET_ROWS_PRIVATE_MAIN, expected_target_main());
         assert_eq!(
             target_rows::Owners::allocation_requests().unwrap(),
-            [4_194_304; 2]
+            [if crate::strata_port::eight_rows() {
+                8_388_608
+            } else {
+                4_194_304
+            }; 2]
         );
         assert_eq!(1286 + 90 + 2, 1378);
         for (tiles, expected) in [(16, 70_295_552), (38, 70_385_664)] {
             let selected = runtime_bytes(tiles).unwrap() + target_rows::RUNTIME_INCREMENT;
-            assert_eq!(selected, expected);
+            let extra = expected_runtime(tiles) - if tiles == 16 { 64_000_000 } else { 64_090_112 };
+            let output_extra = target_rows::RUNTIME_INCREMENT - 6_295_552;
+            assert_eq!(selected, expected + extra + output_extra);
             assert!(selected > crate::executor::RESIDENT_RUNTIME_IO_MAX);
             assert!(selected < TARGET_ROWS_RUNTIME_LIMIT);
         }
         for reuse in [DEFAULT_REUSE_METADATA, 1048576, 4194304] {
             let (reserved, limit) =
                 host_reservation_with_outputs(false, reuse, false, true).unwrap();
-            assert_eq!(reserved, HOST_COMPONENTS + reuse + 6 * 1024 * 1024);
-            assert_eq!(limit, 18 * 1024 * 1024 + reuse - DEFAULT_REUSE_METADATA);
-            assert_eq!(limit - reserved, 1_114_112);
+            assert_eq!(
+                reserved,
+                HOST_COMPONENTS + reuse + target_rows::HOST_INCREMENT
+            );
+            assert_eq!(
+                limit,
+                HOST_CAP + target_rows::HOST_INCREMENT + reuse - DEFAULT_REUSE_METADATA
+            );
+            assert_eq!(limit - reserved, expected_host_slack(false));
         }
         assert_eq!(
             host_reservation(false, DEFAULT_REUSE_METADATA).unwrap(),
-            (11_468_800, 12_582_912)
+            (
+                HOST_COMPONENTS + DEFAULT_REUSE_METADATA,
+                HOST_COMPONENTS + DEFAULT_REUSE_METADATA + expected_host_slack(false)
+            )
         );
         assert!(host_reservation_with_outputs(true, DEFAULT_REUSE_METADATA, false, true).is_err());
         assert!(host_reservation_with_outputs(false, DEFAULT_REUSE_METADATA, true, true).is_err());
@@ -7590,7 +7665,10 @@ mod tests {
         assert!(host_reservation_with_router(false, DEFAULT_REUSE_METADATA, true).is_err());
         for head in [16, 38] {
             let old = runtime_bytes(head).unwrap() + HYBRID_RUNTIME;
-            assert!(old <= crate::executor::RESIDENT_RUNTIME_IO_MAX);
+            assert_eq!(
+                old <= crate::executor::RESIDENT_RUNTIME_IO_MAX,
+                !crate::strata_intel_core::enabled()
+            );
             for prepared in [false, true] {
                 let selected = batch_moe::resident_router_runtime(prepared);
                 assert_eq!(
@@ -7604,7 +7682,12 @@ mod tests {
                 );
                 let new = old + selected;
                 assert!(new > crate::executor::RESIDENT_RUNTIME_IO_MAX);
-                assert!(new < batch_moe::RESIDENT_ROUTER_RUNTIME_LIMIT);
+                if crate::strata_intel_core::enabled() {
+                    assert!(new > batch_moe::RESIDENT_ROUTER_RUNTIME_LIMIT);
+                    assert!(new < TARGET_ROWS_RUNTIME_LIMIT);
+                } else {
+                    assert!(new < batch_moe::RESIDENT_ROUTER_RUNTIME_LIMIT);
+                }
             }
         }
     }
@@ -7615,7 +7698,7 @@ mod tests {
             let (reserved, limit) = host_reservation(true, bytes).unwrap();
             assert_eq!(reserved, HOST_COMPONENTS + HYBRID_HOST + bytes);
             assert_eq!(limit, HOST_CAP + bytes - DEFAULT_REUSE_METADATA);
-            assert_eq!(limit - reserved, 65536);
+            assert_eq!(limit - reserved, expected_host_slack(true));
         }
         assert!(host_reservation(false, DEFAULT_REUSE_METADATA).is_ok());
         for bytes in [0, 262145, 1048577, 4194305, usize::MAX] {
@@ -7691,17 +7774,34 @@ mod tests {
     }
     #[test]
     fn aggregate_plan_counts_original_owners_once_and_independent_runtime_head_tiles() {
-        assert_eq!(TOTAL_MAIN, 818249728);
+        assert_eq!(TOTAL_MAIN, expected_original_main());
         assert_eq!(
             NEW_MAIN + PUBLIC_MAIN + 2 * 67108864 + 41943040 + OLD_MAIN,
-            1019576320
+            expected_original_main()
+                + if crate::strata_intel_core::enabled() {
+                    32_505_856
+                } else {
+                    25_165_824
+                }
+                + 2 * 67_108_864
+                + 41_943_040
         );
-        assert_eq!(runtime_bytes(16).unwrap(), 64000000);
-        assert_eq!(runtime_bytes(38).unwrap(), 64090112);
+        assert_eq!(runtime_bytes(16).unwrap(), expected_runtime(16));
+        assert_eq!(runtime_bytes(38).unwrap(), expected_runtime(38));
         assert!(runtime_bytes(u64::MAX).is_err());
         assert!(runtime_bytes(4096).unwrap() > crate::executor::RESIDENT_RUNTIME_IO_MAX);
         assert!(metadata_bytes() <= META_CAP);
-        assert_eq!(HOST_COMPONENTS, 11206656);
+        assert_eq!(
+            HOST_COMPONENTS,
+            11_206_656
+                + if cfg!(feature = "strata-resident-240") {
+                    65_536
+                } else {
+                    0
+                }
+                + CORE_CACHE_HOST
+                + PROMPT_SOURCE_HOST
+        );
         const { assert!(HOST_COMPONENTS <= HOST_CAP) };
     }
     #[test]
@@ -7710,18 +7810,37 @@ mod tests {
             batch_moe::Workspace::count1_hybrid_allocation_requests().unwrap(),
             [131072, 32768]
         );
-        assert_eq!(TOTAL_MAIN + HYBRID_MAIN, 818413568);
+        assert_eq!(TOTAL_MAIN + HYBRID_MAIN, expected_original_main() + 163_840);
         assert_eq!(1286 + 90 + 2, 1378);
-        assert_eq!(HOST_CAP - (HOST_COMPONENTS + HYBRID_HOST), 327680);
+        assert_eq!(
+            HOST_CAP - (HOST_COMPONENTS + HYBRID_HOST),
+            DEFAULT_REUSE_METADATA + expected_host_slack(true)
+        );
         assert_eq!(HYBRID_PREPARE_INFO, 96 * 2048);
         assert_eq!(HYBRID_PREPARE_INFO, 196608);
-        assert_eq!(HYBRID_RUNTIME, 1245184);
-        assert_eq!(runtime_bytes(16).unwrap() + HYBRID_RUNTIME, 65245184);
-        assert_eq!(runtime_bytes(38).unwrap() + HYBRID_RUNTIME, 65335296);
-        assert_eq!(HYBRID_IO_DERIVED, 1212416);
+        let role_info = if crate::strata_intel_core::enabled() {
+            786_432
+        } else {
+            0
+        };
+        assert_eq!(HYBRID_RUNTIME, 1245184 + role_info);
+        assert_eq!(
+            runtime_bytes(16).unwrap() + HYBRID_RUNTIME,
+            expected_runtime(16) + 1245184 + role_info
+        );
+        assert_eq!(
+            runtime_bytes(38).unwrap() + HYBRID_RUNTIME,
+            expected_runtime(38) + 1245184 + role_info
+        );
+        assert_eq!(HYBRID_IO_DERIVED, 1212416 + role_info);
         assert_eq!(HYBRID_RUNTIME - HYBRID_IO_DERIVED, 32768);
         assert!(
-            runtime_bytes(38).unwrap() + HYBRID_RUNTIME <= crate::executor::RESIDENT_RUNTIME_IO_MAX
+            runtime_bytes(38).unwrap() + HYBRID_RUNTIME
+                <= if crate::strata_intel_core::enabled() {
+                    TARGET_ROWS_RUNTIME_LIMIT
+                } else {
+                    crate::executor::RESIDENT_RUNTIME_IO_MAX
+                }
         );
         assert_eq!(
             BufferLayout::new(MAX_BATCH * ROUTER + 1)
@@ -7758,7 +7877,7 @@ mod tests {
             (4096, 4096, vec![1]),
             (usize::MAX, 4096, vec![1]),
             (0, 4096, vec![248320]),
-            (0, 4097, vec![1]),
+            (0, crate::qsa_gpu::MAX_CONTEXT + 1, vec![1]),
         ] {
             assert!(packet(start, context, &ids).is_err());
         }

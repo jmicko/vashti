@@ -147,10 +147,6 @@ fn role_source(role: u8, dtype: u32, row_bytes: usize) -> String {
     ));
     index += 1;
     descriptors.push_str(&format!(
-        "@group(0) @binding({index}) var<storage,read> stage_addresses:array<vec4<u32>>;\n"
-    ));
-    index += 1;
-    descriptors.push_str(&format!(
         "@group(0) @binding({index}) var<uniform> p:Params;\nvar<private> strata_first:u32;\n"
     ));
     for name in names {
@@ -163,7 +159,7 @@ fn role_source(role: u8, dtype: u32, row_bytes: usize) -> String {
         "    if arrayLength(&gate)!=p.c*640u*(ROW_BYTES/4u) || arrayLength(&up)!=arrayLength(&gate) {return false;}"
     };
     assert!(base.contains(old));
-    base=base.replace(old,"    if arrayLength(&addresses)!=2048u || arrayLength(&stage_addresses)!=2048u {return false;}");
+    base = base.replace(old, "    if arrayLength(&addresses)!=2048u {return false;}");
     let old = "let slot=map[p.a+4u+group];if slot<p.b || slot-p.b>=p.c {return false;}";
     assert!(base.contains(old));
     let mut choose = String::from(
@@ -469,4 +465,33 @@ pub(crate) fn compiled_sources() -> Vec<CompiledKernel<AutoCompiler>> {
             .unwrap()
         })
         .collect()
+}
+
+#[cfg(all(test, feature = "strata-intel-core"))]
+mod direct_source_tests {
+    use super::*;
+    #[test]
+    fn actual_role_and_explicit_fetch_schemas_bind_original_addresses_without_a_dummy_stage_table()
+    {
+        let sources = compiled_sources();
+        assert_eq!(sources.len(), 14);
+        for compiled in sources {
+            assert!(!compiled.source.contains("stage_addresses"));
+            let module = wgpu::naga::front::wgsl::parse_str(&compiled.source).unwrap();
+            let addresses = module
+                .global_variables
+                .iter()
+                .filter(|(_, g)| g.name.as_deref() == Some("addresses"))
+                .collect::<Vec<_>>();
+            let physical = compiled.source.contains("STRATA_PHYSICAL_EXPERTS");
+            assert_eq!(addresses.len(), usize::from(physical));
+            let mut bindings = module
+                .global_variables
+                .iter()
+                .filter_map(|(_, g)| g.binding.as_ref().map(|b| b.binding))
+                .collect::<Vec<_>>();
+            bindings.sort_unstable();
+            assert_eq!(bindings, (0..bindings.len() as u32).collect::<Vec<_>>());
+        }
+    }
 }

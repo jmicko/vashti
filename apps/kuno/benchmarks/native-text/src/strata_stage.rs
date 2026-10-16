@@ -15,13 +15,17 @@ use cubecl_runtime::{
 };
 use kuno_text::{Error, Result};
 use std::cell::RefCell;
-pub(crate) const OWNER_BYTES: u64 = 64 * 1024 * 1024;
+#[allow(dead_code)] // Explicit staging diagnostics only; selected core has no fetch stages.
+pub(crate) const OWNER_BYTES: u64 = 128 * 1024 * 1024;
+#[allow(dead_code)]
 pub(crate) const MAIN_BYTES: u64 = 3 * OWNER_BYTES;
 thread_local! {static STAGES:RefCell<Option<[Handle;3]>>=const {RefCell::new(None)};}
 fn reject() -> Error {
     Error::InvalidFormat("native Strata stage owner")
 }
+#[allow(dead_code)] // Original optional staging family; native global scope is direct.
 pub(crate) struct Scope;
+#[allow(dead_code)]
 impl Scope {
     pub(crate) fn new(arena: &PrivateArena, ids: Option<[BufferId; 3]>) -> Result<Option<Self>> {
         if !crate::strata_intel_core::enabled() {

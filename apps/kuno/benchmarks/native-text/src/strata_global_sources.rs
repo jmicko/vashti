@@ -18,7 +18,7 @@ pub(crate) use placement::Placement;
 pub(crate) use prompt_loan::BorrowedPrompt;
 pub(crate) const PLACEMENT_HOST_BYTES: u64 = placement::HOST_BYTES;
 pub(crate) const TABLE_BYTES: u64 = 32768;
-pub(crate) const OWNED_TABLE_BYTES: u64 = TABLE_BYTES * (LAYERS as u64 + 1);
+pub(crate) const OWNED_TABLE_BYTES: u64 = TABLE_BYTES * LAYERS as u64;
 fn reject() -> Error {
     Error::InvalidFormat("Strata global source owner")
 }
@@ -50,8 +50,6 @@ pub(crate) struct Sources {
     gpu: Option<Cache>,
     host: Option<Host>,
     tables: Vec<Handle>,
-    stage_table: Option<Handle>,
-    stages: Option<[Handle; 3]>,
     prompt_stage: Option<Handle>,
     reads: Vec<Vec<Handle>>,
     closed: bool,
@@ -73,7 +71,7 @@ impl Sources {
 
     pub(crate) fn gpu_requests(plan: &Plan) -> Vec<u64> {
         let mut requests = Cache::requests(plan);
-        requests.extend([TABLE_BYTES; LAYERS + 1]);
+        requests.extend([TABLE_BYTES; LAYERS]);
         requests
     }
     /// # Safety
@@ -104,8 +102,6 @@ impl Sources {
             gpu: None,
             host: None,
             tables: Vec::with_capacity(LAYERS),
-            stage_table: Some(client.create_public_owned(vec![0; TABLE_BYTES as usize])),
-            stages: None,
             prompt_stage: None,
             reads: Vec::with_capacity(LAYERS),
             closed: false,
@@ -295,62 +291,32 @@ impl Sources {
         self.validate_prompt_ready(graph)?;
         Ok(self.effective_role(graph, layer, 0, role)?.0)
     }
-    pub(crate) fn attach_stages(
+    /// The selected NO_HOST decode needs immutable source cells and the
+    /// actual execution queue, not dormant per-role fetch stages/address tables.
+    /// Caller uses the same authenticated device/queue/client as source load.
+    pub(crate) fn attach_execution_queue(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        stages: [Handle; 3],
     ) -> Result<()> {
-        if self.closed || self.closing_failed || self.stages.is_some() {
+        if self.unavailable()
+            || self.queue.is_some()
+            || self.mutation_pending
+            || self.loan_pending
+            || self.gpu.is_none()
+            || self.host.is_none()
+            || self.tables.len() != LAYERS
+            || self.reads.len() != LAYERS
+            || self.reads.iter().any(Vec::is_empty)
+        {
             return Err(reject());
         }
-        let resources = self
-            .client
-            .retained_resource_metadata(stages.to_vec())
-            .map_err(crate::resident_util::fault)?;
-        let dev = unsafe { device.as_hal::<wgpu::hal::api::Vulkan>() }.ok_or_else(reject)?;
-        let mut words = vec![0u32; TABLE_BYTES as usize / 4];
-        if resources.len() != 3 {
+        let actual = unsafe { device.as_hal::<wgpu::hal::api::Vulkan>() }.ok_or_else(reject)?;
+        let original =
+            unsafe { self.device.as_hal::<wgpu::hal::api::Vulkan>() }.ok_or_else(reject)?;
+        if actual.raw_device().handle() != original.raw_device().handle() {
             return Err(reject());
         }
-        for (role, r) in resources.iter().enumerate() {
-            let r = r.resource();
-            if resources[..role]
-                .iter()
-                .any(|other| other.resource().buffer == r.buffer)
-            {
-                return Err(reject());
-            }
-            if r.offset != 0
-                || r.size != r.buffer.size()
-                || r.size != crate::strata_global_experts::STAGE_BYTES
-            {
-                return Err(reject());
-            }
-            let raw = unsafe { r.buffer.as_hal::<wgpu::hal::api::Vulkan>() }.ok_or_else(reject)?;
-            let address = unsafe {
-                dev.raw_device().get_buffer_device_address(
-                    &ash::vk::BufferDeviceAddressInfo::default().buffer(raw.raw_buffer_handle()),
-                )
-            };
-            if address == 0 || !address.is_multiple_of(16) {
-                return Err(reject());
-            }
-            words[role * 4..role * 4 + 4].copy_from_slice(&[
-                address as u32,
-                (address >> 32) as u32,
-                (r.size / 4) as u32,
-                0,
-            ]);
-        }
-        let bytes = words.into_iter().flat_map(u32::to_le_bytes).collect();
-        self.client
-            .write_public_owned_batch(vec![(
-                self.stage_table.as_ref().ok_or_else(reject)?.clone(),
-                bytes,
-            )])
-            .map_err(crate::resident_util::fault)?;
-        self.stages = Some(stages);
         self.queue = Some(queue.clone());
         Ok(())
     }
@@ -358,11 +324,11 @@ impl Sources {
         &self.plan
     }
     /// Attach the real separately priced native-owned prompt raw root. This
-    /// does not replace decode's fetch-stage address table or its dependencies.
+    /// retains its actual raw-root dependency independently of direct decode.
     pub(crate) fn attach_prompt_stage(&mut self, root: Handle) -> Result<()> {
         self.validate_attached()?;
         if self.prompt_stage.is_some()
-            || root.stream != self.stages.as_ref().ok_or_else(reject)?[2].stream
+            || root.stream != self.tables.first().ok_or_else(reject)?.stream
             || root.offset_start.unwrap_or(0) != 0
             || root.offset_end.unwrap_or(0) != 0
         {
@@ -461,8 +427,6 @@ impl Sources {
             || self.gpu.is_none()
             || self.host.is_none()
             || self.queue.is_none()
-            || self.stages.is_none()
-            || self.stage_table.is_none()
             || self.tables.len() != LAYERS
             || self.reads.len() != LAYERS
             || self.reads.iter().any(Vec::is_empty)
@@ -487,8 +451,6 @@ impl Sources {
             || self.gpu.is_none()
             || self.host.is_none()
             || self.queue.is_none()
-            || self.stages.is_none()
-            || self.stage_table.is_none()
         {
             return Err(reject());
         }
@@ -531,37 +493,21 @@ impl Sources {
             .ok_or_else(reject)?
             .borrow_cpu(graph, &self.plan, layer, cells)
     }
-    /// Retains the actual immutable roots in native recording/fence tracking.
-    /// Adds only static physical-cell/stage address descriptors. Private
-    /// logical remaps stay in the family arena and never enter these tables.
+    /// Bind actual immutable cell addresses and every original indirect read.
+    /// Private logical remaps and dense input planes have their own real owners.
     pub(crate) fn bind(&self, layer: usize, args: KernelArguments) -> Result<KernelArguments> {
         if self.unavailable() || self.mutation_pending || self.loan_pending {
             return Err(reject());
         }
         let table = self.tables.get(layer).ok_or_else(reject)?;
         let reads = self.reads.get(layer).ok_or_else(reject)?;
-        let stages = self.stages.as_ref().ok_or_else(reject)?;
         Ok(args
             .with_buffer(table.clone().binding())
-            .with_buffer(
-                self.stage_table
-                    .as_ref()
-                    .ok_or_else(reject)?
-                    .clone()
-                    .binding(),
-            )
-            .with_read_dependencies(
-                reads
-                    .iter()
-                    .chain(stages)
-                    .cloned()
-                    .map(Handle::binding)
-                    .collect(),
-            ))
+            .with_read_dependencies(reads.iter().cloned().map(Handle::binding).collect()))
     }
     /// Prompt-image dequantization has no fetch-stage pointer table or pointer
     /// reads. Its real raw-slot descriptor is tracked separately. This binder
-    /// is only for that closed shader family, whose interface omits stage_table.
+    /// is only for that closed shader family, whose interface tracks its actual raw-ring owner.
     pub(crate) fn bind_prompt_image(
         &self,
         layer: usize,
@@ -727,9 +673,7 @@ impl Sources {
         // registered buffers before granting the HOST owner zero/free authority.
         self.tables.clear();
         self.reads.clear();
-        self.stages = None;
         self.prompt_stage = None;
-        self.stage_table = None;
         if let Some(host) = self.host.take() {
             host.close()?;
         }
@@ -747,12 +691,6 @@ impl Drop for Sources {
             std::mem::forget(std::mem::take(&mut self.reads));
             if let Some(root) = self.prompt_stage.take() {
                 std::mem::forget(root);
-            }
-            if let Some(stages) = self.stages.take() {
-                std::mem::forget(stages);
-            }
-            if let Some(table) = self.stage_table.take() {
-                std::mem::forget(table);
             }
             if let Some(gpu) = self.gpu.take() {
                 std::mem::forget(gpu);
@@ -774,8 +712,8 @@ mod native_shared_table_tests {
             let requests = Sources::gpu_requests(&plan);
             let gpu = Cache::requests(&plan);
             assert_eq!(&requests[..gpu.len()], &gpu);
-            assert_eq!(&requests[gpu.len()..], &[TABLE_BYTES; LAYERS + 1]);
-            assert_eq!(OWNED_TABLE_BYTES, 49 * 32768);
+            assert_eq!(&requests[gpu.len()..], &[TABLE_BYTES; LAYERS]);
+            assert_eq!(OWNED_TABLE_BYTES, 48 * 32768);
             assert!(gpu.iter().sum::<u64>() <= budget);
             assert!(requests.iter().sum::<u64>() <= budget + OWNED_TABLE_BYTES);
             // Tables get their own fixed charge; they cannot consume space

@@ -51,7 +51,7 @@ pub(crate) const MAIN_BYTES: u64 = crate::strata_sampler::request::MAIN_BYTES
     + 32768
     + 131072
     + 1048576
-    + 3 * crate::strata_global_experts::STAGE_BYTES
+    + crate::strata_dense::INPUT_BYTES
     + crate::strata_prompt::allocation::MAIN_BYTES;
 fn reject() -> Error {
     Error::InvalidFormat("Strata global routed family")
@@ -131,7 +131,7 @@ pub(crate) struct Workspace {
     sampler: [BufferId; 7],
     layer_pending: bool,
     adaptive: Option<crate::strata_global_adapt::Cache>,
-    stages: [BufferId; 3],
+    dense_input: BufferId,
     prompt_stages: Option<[BufferId; 3]>,
     epoch: u32,
     verify_usage: bool,
@@ -195,7 +195,7 @@ impl Workspace {
         Ok(ROOT_BYTES
             .into_iter()
             .chain(crate::strata_sampler::request::ROOT_BYTES)
-            .chain([crate::strata_global_experts::STAGE_BYTES; 3])
+            .chain([crate::strata_dense::INPUT_BYTES])
             .chain(crate::strata_prompt::allocation::Plan::new(context)?.requests())
             .collect())
     }
@@ -265,12 +265,9 @@ impl Workspace {
             .collect::<Result<Vec<_>>>()?
             .try_into()
             .map_err(|_| reject())?;
-        let stage_words = (crate::strata_global_experts::STAGE_BYTES / 4) as usize;
-        let stages = [
-            arena.allocate_zeroed(stage_words).map_err(u::fault)?,
-            arena.allocate_zeroed(stage_words).map_err(u::fault)?,
-            arena.allocate_zeroed(stage_words).map_err(u::fault)?,
-        ];
+        let dense_input = arena
+            .allocate_zeroed(crate::strata_dense::INPUT_WORDS)
+            .map_err(u::fault)?;
         let prompt_stages =
             crate::strata_prompt::allocation::Plan::new(context)?.allocate(arena)?;
         graph.verify_unchanged()?;
@@ -279,7 +276,7 @@ impl Workspace {
             layer_pending: false,
             geometries: geometries.try_into().map_err(|_| reject())?,
             ids: ids.try_into().map_err(|_| reject())?,
-            stages,
+            dense_input,
             sampler,
             prompt_stages,
             epoch: 0,
@@ -301,15 +298,8 @@ impl Workspace {
             u::handle(arena, ids[2])?,
         ]))
     }
-    pub(crate) fn stage_ids(&self) -> [BufferId; 3] {
-        self.stages
-    }
-    pub(crate) fn stage_handles(&self, arena: &PrivateArena) -> Result<[Handle; 3]> {
-        Ok([
-            arena.handle(self.stages[0]).map_err(u::fault)?.clone(),
-            arena.handle(self.stages[1]).map_err(u::fault)?.clone(),
-            arena.handle(self.stages[2]).map_err(u::fault)?.clone(),
-        ])
+    pub(crate) fn dense_input_id(&self) -> BufferId {
+        self.dense_input
     }
     pub(crate) fn begin(
         &mut self,
@@ -810,4 +800,26 @@ pub(crate) fn compiled_sources() -> Vec<CompiledKernel<AutoCompiler>> {
         .unwrap()
     })
     .collect()
+}
+
+#[cfg(all(test, feature = "strata-intel-core"))]
+mod direct_quote_tests {
+    use super::*;
+    #[test]
+    fn direct_source_plan_prices_dense_planes_and_prompt_roots_without_decode_fetch_stages() {
+        let requests = Workspace::requests_for_context(32768).unwrap();
+        assert_eq!(requests.len(), 22);
+        assert_eq!(requests[18], 512 * 1024);
+        assert_eq!(
+            &requests[19..],
+            &[1024 * 1024 * 1024, 1024 * 1024 * 1024, 32 * 1024 * 1024]
+        );
+        assert!(!requests.contains(&(128 * 1024 * 1024)));
+        assert_eq!(requests.iter().sum::<u64>(), 2_185_068_544);
+        assert_eq!(MAIN_BYTES, 2_185_068_544);
+        assert_eq!(
+            3 * 128 * 1024 * 1024 - crate::strata_dense::INPUT_BYTES,
+            402_128_896
+        );
+    }
 }
