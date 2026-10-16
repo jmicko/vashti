@@ -28,6 +28,9 @@ mod strata_handoff_tests;
 #[cfg(test)]
 use cubecl::wgpu::WgpuResource;
 #[cfg(test)]
+#[path = "../vendor/cubecl-wgpu/src/compute/strata_flights.rs"]
+mod strata_flight_tests;
+#[cfg(test)]
 #[allow(dead_code)] // Production copy layout checks run without creating a device.
 #[path = "../vendor/cubecl-wgpu/src/compute/strata_info_transfer.rs"]
 mod strata_info_transfer;

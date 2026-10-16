@@ -420,11 +420,11 @@ pub(crate) struct Graph {
     pool: vk::CommandPool,
     descriptors: vk::DescriptorPool,
     command: vk::CommandBuffer,
-    fence: vk::Fence,
+    fences: [vk::Fence; 2],
     pipelines: HashMap<wgpu::ComputePipeline, Pipeline>,
     nodes: Vec<Node>,
-    submitted: bool,
-    flight: Option<Submitted>,
+    flights: super::strata_flights::Book,
+    next_recording: u64,
     pub submissions: u64,
     pub dispatches: u64,
     recordings: Vec<Recording>,
@@ -433,12 +433,8 @@ pub(crate) struct Graph {
 }
 // No completion credit is minted by submission. The original recording and
 // complete node inventory remain retained until the actual final queue fence.
-struct Submitted {
-    compute_count: usize,
-    replay: bool,
-    profiling: bool,
-}
 struct Recording {
+    id: u64,
     family: u32,
     key: Option<super::strata_parameters::RecordingKey>,
     ready: bool,
@@ -628,11 +624,23 @@ impl Graph {
                 return Err(fault("native graph fence"));
             }
         };
+        let draft_fence = match unsafe { d.create_fence(&vk::FenceCreateInfo::default(), None) } {
+            Ok(v) => v,
+            Err(_) => {
+                unsafe {
+                    d.destroy_fence(fence, None);
+                    d.destroy_descriptor_pool(descriptors, None);
+                    d.destroy_command_pool(pool, None);
+                }
+                return Err(fault("native draft flight fence"));
+            }
+        };
         let handoff = match super::strata_handoff::Handoff::new(&d) {
             Ok(v) => v,
             Err(e) => {
                 unsafe {
                     d.destroy_fence(fence, None);
+                    d.destroy_fence(draft_fence, None);
                     d.destroy_descriptor_pool(descriptors, None);
                     d.destroy_command_pool(pool, None);
                 }
@@ -644,6 +652,7 @@ impl Graph {
             Err(e) => {
                 unsafe {
                     d.destroy_fence(fence, None);
+                    d.destroy_fence(draft_fence, None);
                     d.destroy_descriptor_pool(descriptors, None);
                     d.destroy_command_pool(pool, None);
                 }
@@ -677,11 +686,11 @@ impl Graph {
             pool,
             descriptors,
             command,
-            fence,
+            fences: [fence, draft_fence],
             pipelines: HashMap::new(),
             nodes: Vec::new(),
-            submitted: false,
-            flight: None,
+            flights: super::strata_flights::Book::default(),
+            next_recording: 0,
             submissions: 0,
             dispatches: 0,
             recordings: Vec::new(),
@@ -985,7 +994,7 @@ impl Graph {
             .map_err(fault)
     }
     pub(crate) fn clear_completed_recordings(&mut self) -> Result<(), ServerError> {
-        if self.submitted || self.pending() || self.info_uploads.pending() {
+        if self.flights.any() || self.pending() || self.info_uploads.pending() {
             return Err(fault("native graph cleanup while pending"));
         }
         self.recordings.clear();
@@ -993,14 +1002,13 @@ impl Graph {
         Ok(())
     }
     pub(crate) fn pending(&self) -> bool {
-        !self.nodes.is_empty()
+        !self.nodes.is_empty() || self.flights.any()
     }
     pub(crate) fn has_recording(&self, key: super::strata_parameters::RecordingKey) -> bool {
         !profile_active()
-            && self
-                .recordings
-                .iter()
-                .any(|r| r.ready && r.key == Some(key) && r.family == self.family)
+            && self.recordings.iter().any(|r| {
+                r.ready && r.key == Some(key) && r.family == self.family && !self.flights.live(r.id)
+            })
     }
     /// Submit the original retained commands/resources without building nodes,
     /// pipeline descriptors or a signature again. Only the owning stream may
@@ -1019,7 +1027,9 @@ impl Graph {
         let hit = self
             .recordings
             .iter()
-            .position(|r| r.ready && r.key == Some(key) && r.family == self.family)
+            .position(|r| {
+                r.ready && r.key == Some(key) && r.family == self.family && !self.flights.live(r.id)
+            })
             .ok_or_else(|| fault("native direct replay recording missing"))?;
         let recording = self.recordings.remove(hit);
         let compute_count = recording.compute_count;
@@ -1029,32 +1039,14 @@ impl Graph {
                 .transfer(self.compute_queues[0].queue, self.queue)
                 .map_err(fault)?;
         }
-        unsafe { self.device.reset_fences(&[self.fence]) }
-            .map_err(|_| fault("native graph reset fence"))?;
-        // Set before queue submission: an error can leave partial GPU work.
-        self.submitted = true;
-        self.recordings
-            .last_mut()
-            .unwrap()
-            .work
-            .submit(
-                [self.queue, self.copy_queue],
-                self.fence,
-                self.info_uploads.wait(),
-            )
-            .map_err(fault)?;
-        self.flight = Some(Submitted {
-            compute_count,
-            replay: true,
-            profiling: false,
-        });
+        self.submit_last_recording(compute_count, true, false)?;
         if wait {
             self.complete_submission()?;
         }
         Ok(())
     }
     pub(crate) fn complete_submission(&mut self) -> Result<(), ServerError> {
-        let info_only = !self.submitted && self.info_uploads.pending();
+        let info_only = !self.flights.any() && self.info_uploads.pending();
         self.complete_math_submission()?;
         self.info_uploads.complete().map_err(fault)?;
         if info_only {
@@ -1074,43 +1066,104 @@ impl Graph {
         }
         Ok(())
     }
+    /// Attach the actual retained recording to its own lane fence before
+    /// submitting anything. Partial failures remain owned and never complete.
+    fn submit_last_recording(
+        &mut self,
+        compute_count: usize,
+        replay: bool,
+        profiling: bool,
+    ) -> Result<(), ServerError> {
+        let recording = self
+            .recordings
+            .last()
+            .ok_or_else(|| fault("native submission recording missing"))?;
+        if !recording.ready
+            || recording.family != self.family
+            || recording.compute_count != compute_count
+        {
+            return Err(fault("native submission original recording family"));
+        }
+        let id = recording.id;
+        let fence = self.fences[self.compute_lane];
+        self.flights
+            .begin(self.compute_lane, id, compute_count, replay, profiling)
+            .map_err(fault)?;
+        // Reserve first: never reset a lane fence while its previous owner is
+        // still live. A reset failure leaves conservative terminal retention.
+        unsafe { self.device.reset_fences(&[fence]) }
+            .map_err(|_| fault("native lane fence reset"))?;
+        self.recordings
+            .last_mut()
+            .unwrap()
+            .work
+            .submit(
+                [self.queue, self.copy_queue],
+                fence,
+                self.info_uploads.wait(),
+            )
+            .map_err(fault)?;
+        self.flights
+            .submitted(self.compute_lane, id)
+            .map_err(fault)?;
+        // The recording owns every original resource. Drop only duplicate
+        // enqueue metadata so another lane can build its own subsequent work.
+        self.nodes.clear();
+        Ok(())
+    }
     fn complete_math_submission(&mut self) -> Result<(), ServerError> {
         self.handoff.complete().map_err(fault)?;
-        if !self.submitted {
-            return Ok(());
+        for lane in 0..2 {
+            self.complete_lane_submission(lane)?;
         }
-        let flight = self
-            .flight
-            .as_ref()
-            .ok_or_else(|| fault("native partial submission has no completed join"))?;
+        // A newly staged INFO upload has no math flight yet: retain its real
+        // timeline dependency until execute/replay consumes it.
+        Ok(())
+    }
+    fn complete_lane_submission(&mut self, lane: usize) -> Result<(), ServerError> {
+        let Some(flight) = self.flights.peek(lane).map_err(fault)? else {
+            return Ok(());
+        };
+        if !flight.submitted {
+            return Err(fault("native partial submission has no completed join"));
+        }
+        let at = self
+            .recordings
+            .iter()
+            .position(|r| r.id == flight.recording)
+            .ok_or_else(|| fault("native original in-flight recording missing"))?;
+        if self.recordings[at].family != self.compute_queues[lane].family {
+            return Err(fault("native flight original queue family mismatch"));
+        }
         let wait_start = std::time::Instant::now();
         unsafe {
             self.device
-                .wait_for_fences(&[self.fence], true, 120_000_000_000)
+                .wait_for_fences(&[self.fences[lane]], true, 120_000_000_000)
         }
-        .map_err(|_| fault("native graph completion"))?;
+        .map_err(|_| fault("native lane completion"))?;
         WAIT_NS.fetch_add(
             wait_start.elapsed().as_nanos().min(u64::MAX as u128) as u64,
             std::sync::atomic::Ordering::Relaxed,
         );
         if flight.profiling {
-            self.recordings
-                .last()
-                .and_then(|r| r.profile.as_ref())
-                .ok_or_else(|| fault("native sampled submission owner"))?
+            self.recordings[at]
+                .profile
+                .as_ref()
+                .ok_or_else(|| fault("native sampled original flight owner"))?
                 .collect()?;
         }
-        let flight = self.flight.take().unwrap();
-        if flight.profiling {
-            self.recordings.pop();
+        // Only the actual matching fence above authorizes bookkeeping.
+        let completed = self
+            .flights
+            .finish_joined(lane, flight.recording)
+            .map_err(fault)?;
+        if completed.profiling {
+            self.recordings.remove(at);
         }
         self.submissions += 1;
-        self.replays += u64::from(flight.replay);
-        self.dispatches += flight.compute_count as u64;
-        credit(flight.compute_count, flight.replay);
-        self.nodes.clear();
-        self.submitted = false;
-        self.info_uploads.complete().map_err(fault)?;
+        self.replays += u64::from(completed.replay);
+        self.dispatches += completed.compute_count as u64;
+        credit(completed.compute_count, completed.replay);
         Ok(())
     }
     pub(crate) fn execute(
@@ -1132,8 +1185,6 @@ impl Graph {
                 .transfer(self.compute_queues[0].queue, self.queue)
                 .map_err(fault)?;
         }
-        unsafe { self.device.reset_fences(&[self.fence]) }
-            .map_err(|_| fault("native graph reset fence"))?;
         let mut signature = Vec::new();
         for n in &self.nodes {
             signature.push(
@@ -1174,30 +1225,17 @@ impl Graph {
             .recordings
             .iter()
             .position(|r| {
-                r.ready && r.key == key && r.family == self.family && r.signature == signature
+                r.ready
+                    && r.key == key
+                    && r.family == self.family
+                    && r.signature == signature
+                    && !self.flights.live(r.id)
             })
             .filter(|_| !profiling)
         {
             let recording = self.recordings.remove(hit);
             self.recordings.push(recording);
-            // Set before the first queue submission: partial failure can leave
-            // either queue in flight even if the final join was never issued.
-            self.submitted = true;
-            self.recordings
-                .last_mut()
-                .unwrap()
-                .work
-                .submit(
-                    [self.queue, self.copy_queue],
-                    self.fence,
-                    self.info_uploads.wait(),
-                )
-                .map_err(fault)?;
-            self.flight = Some(Submitted {
-                compute_count,
-                replay: true,
-                profiling: false,
-            });
+            self.submit_last_recording(compute_count, true, false)?;
             if wait {
                 self.complete_submission()?;
             }
@@ -1208,10 +1246,17 @@ impl Graph {
         // Profiling may re-record an identical named shape after its real fence.
         if let Some(key) = key {
             if let Some(i) = self.recordings.iter().position(|r| r.key == Some(key)) {
+                if self.flights.live(self.recordings[i].id) {
+                    return Err(fault("native named recording still in flight"));
+                }
                 self.recordings.remove(i);
             }
         } else if self.recordings.iter().filter(|r| r.key.is_none()).count() >= 16 {
-            if let Some(i) = self.recordings.iter().position(|r| r.key.is_none()) {
+            if let Some(i) = self
+                .recordings
+                .iter()
+                .position(|r| r.key.is_none() && !self.flights.live(r.id))
+            {
                 self.recordings.remove(i);
             }
         }
@@ -1373,7 +1418,12 @@ impl Graph {
         if metadata > 64 * 1024 * 1024 {
             return Err(fault("native queue retained metadata capacity"));
         }
+        self.next_recording = self
+            .next_recording
+            .checked_add(1)
+            .ok_or_else(|| fault("native recording identity exhausted"))?;
         let recording = Recording {
+            id: self.next_recording,
             family: self.family,
             key,
             ready: false,
@@ -1591,24 +1641,7 @@ impl Graph {
             capture_start.elapsed().as_nanos().min(u64::MAX as u128) as u64,
             std::sync::atomic::Ordering::Relaxed,
         );
-        self.submitted = true;
-        self.recordings
-            .last_mut()
-            .unwrap()
-            .work
-            .submit(
-                [self.queue, self.copy_queue],
-                self.fence,
-                self.info_uploads.wait(),
-            )
-            .map_err(fault)?;
-        // Protected public lab only. Bound to prevent a wedged device leaving
-        // native descriptor/buffer lifetimes unowned. Never reset the GPU.
-        self.flight = Some(Submitted {
-            compute_count,
-            replay: false,
-            profiling,
-        });
+        self.submit_last_recording(compute_count, false, profiling)?;
         if wait {
             self.complete_submission()?;
         }
@@ -1618,20 +1651,12 @@ impl Graph {
 impl Drop for Graph {
     fn drop(&mut self) {
         unsafe {
-            if self.handoff.complete().is_err()
-                || self.info_uploads.complete().is_err()
-                || (self.submitted
-                    && self
-                        .device
-                        .wait_for_fences(&[self.fence], true, 120_000_000_000)
-                        .is_err())
-            {
-                // Do not free resources referenced by unknown in-flight execution.
-                // Protected lab process teardown is the terminal device boundary.
-                let nodes = std::mem::take(&mut self.nodes);
-                std::mem::forget(nodes);
-                let recordings = std::mem::take(&mut self.recordings);
-                std::mem::forget(recordings);
+            if self.complete_submission().is_err() {
+                // Unknown partial work owns its original command/resource
+                // inventories until protected-process/device teardown.
+                std::mem::forget(std::mem::take(&mut self.nodes));
+                std::mem::forget(std::mem::take(&mut self.recordings));
+                std::mem::forget(std::mem::take(&mut self.initialized));
                 return;
             }
             self.nodes.clear();
@@ -1643,7 +1668,9 @@ impl Drop for Graph {
                     .destroy_descriptor_set_layout(p.set_layout, None);
                 self.device.destroy_shader_module(p.shader, None);
             }
-            self.device.destroy_fence(self.fence, None);
+            for fence in self.fences {
+                self.device.destroy_fence(fence, None);
+            }
             self.device.destroy_descriptor_pool(self.descriptors, None);
             self.device.destroy_command_pool(self.pool, None);
         }
