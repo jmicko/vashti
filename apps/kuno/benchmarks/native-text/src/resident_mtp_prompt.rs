@@ -117,7 +117,9 @@ impl ResidentMtp<'_, '_> {
         let e2 = v[3].clone();
         let hn = phase[3].clone();
         let residual = v[0].clone();
-        let token_view = phase[10].clone();
+        // PLE gate/conv flags are idle during teaching. Preserve disjoint
+        // four-words-per-row token/status views after PLE's native reuse.
+        let token_view = phase[8].clone();
         let status = phase[9].clone();
         let key = v[6].clone();
         let value = v[11].clone();

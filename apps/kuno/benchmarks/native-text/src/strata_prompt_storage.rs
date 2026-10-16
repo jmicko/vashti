@@ -16,7 +16,7 @@ pub(crate) struct Storage {
     mixed_images: [Handle; 2], // native BF16 and FP16 input images, persistent across each half
     mixed_rows: Option<usize>, // published only by the actual queued GR writer
     outer: [Handle; 13], // R/mixed/blocks/injection/router/shared/embedding, retained PLE tail
-    ple: [Handle; 12],
+    ple: [Handle; 10],
     gdn: [Handle; 7],  // QKV, Z, H, readout, AB raw/controls/closing
     qsa: [Handle; 20], // projections/data, partials, pooled, compact norm/score flags and selections
 }
@@ -75,9 +75,9 @@ impl Storage {
         let gr: [Handle; 5] = std::array::from_fn(|i| persistent[i].clone());
         let mixed_images = std::array::from_fn(|i| persistent[i + 5].clone());
         let outer: [Handle; 13] = std::array::from_fn(|i| persistent[i + 7].clone());
-        let ple: [Handle; 12] = carve(
+        let ple: [Handle; 10] = carve(
             &roots[1],
-            &[2560, 10240, 2560, 10240, 10240, 4, 10240, 10240, 4, 4, 4, 4].map(|w| w * capacity),
+            &[2560, 10240, 2560, 10240, 4, 10240, 4, 4, 4, 4].map(|w| w * capacity),
         )?
         .try_into()
         .map_err(|_| Error::InvalidBufferLength)?;
@@ -210,7 +210,7 @@ impl Storage {
     pub(crate) fn outer(&self) -> [Handle; 13] {
         self.outer.clone()
     }
-    pub(crate) fn ple(&self) -> [Handle; 12] {
+    pub(crate) fn ple(&self) -> [Handle; 10] {
         self.ple.clone()
     }
     pub(crate) fn gdn(&self) -> [Handle; 4] {
@@ -635,6 +635,62 @@ mod mixed_image_tests {
             assert!(reader.conflicts(&[access(image, true)]).unwrap());
             assert!(!reader.conflicts(&[access(&s.outer[2], true)]).unwrap());
             assert!(!reader.conflicts(&[access(&s.gr[0], true)]).unwrap());
+        }
+    }
+}
+
+#[cfg(test)]
+mod native_ple_reuse_tests {
+    use super::*;
+    use cubecl_common::stream_id::StreamId;
+    #[test]
+    fn native_ple_unique_regions_reuse_query_after_gate_and_preserve_teacher_extents() {
+        let s =
+            Storage::new(allocation::ROOT_SIZES.map(|n| Handle::new(StreamId { value: 923 }, n)))
+                .unwrap();
+        assert_eq!(s.ple.len(), 10);
+        for (h, words) in s
+            .ple
+            .iter()
+            .zip([2560, 10240, 2560, 10240, 4, 10240, 4, 4, 4, 4])
+        {
+            assert_eq!(
+                h.size_in_used(),
+                (words * allocation::DEFAULT_ROWS * 4) as u64
+            );
+        }
+        assert_eq!(2 * 10240 * allocation::DEFAULT_ROWS * 4, 320 * 1024 * 1024);
+        for (i, a) in s.ple.iter().enumerate() {
+            assert!(s.output(a));
+            for b in &s.ple[..i] {
+                assert!(!overlaps(a, b).unwrap());
+            }
+        }
+        // The same query region is read by the gate then written by conv norm.
+        // It must not conflict with the separately retained unnormalized gate.
+        let access = |i: usize, write| crate::strata_queue_tests::Access {
+            buffer: 1,
+            first: s.ple[i].offset_start.unwrap_or(0),
+            bytes: s.ple[i].size_in_used(),
+            write,
+        };
+        let mut p = crate::strata_queue_tests::Planner::new(1, false).unwrap();
+        p.push(&crate::strata_queue_tests::NodeAccess {
+            copy: false,
+            release_after: false,
+            accesses: vec![access(1, false), access(3, false)],
+        })
+        .unwrap();
+        let p = p.finish().unwrap();
+        assert!(p.conflicts(&[access(1, true)]).unwrap());
+        assert!(p.conflicts(&[access(3, true)]).unwrap());
+        assert!(!p.conflicts(&[access(5, true)]).unwrap());
+        for count in [1, 8, 9, 256, 4095, 4096] {
+            // MTP teacher borrows these SAME original idle PLE views after the
+            // target finishes. Four stream rows plus disjoint token/status data.
+            assert!(count * 4 * 2560 * 4 <= s.ple[3].size_in_used() as usize);
+            assert!(count * 4 <= s.ple[8].size_in_used() as usize);
+            assert!(count * 4 * 4 <= s.ple[9].size_in_used() as usize);
         }
     }
 }

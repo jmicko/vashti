@@ -165,59 +165,69 @@ impl PleBatchWorkspace {
                 0,
             ]
         };
-        for (source, target, flag, gamma) in [(v[1].clone(), 3, 8, 0), (input.clone(), 4, 9, 1)] {
-            n::launch(
-                &model.arena,
-                n::Kernel::PromptNorm,
-                [4, count, 1],
-                vec![
-                    source,
-                    self.public.gamma[gamma].clone(),
-                    v[target].clone(),
-                    v[flag].clone(),
-                ],
-                info(CHANNELS, CHANNELS, 4, 1e-6),
-            )?;
-            crate::strata_prompt::head_flags(client, v[flag].clone(), fault.clone(), count, 4)?;
-        }
+        // Upstream normalizes key in place. The single writable descriptor
+        // retains that exact original projection owner through its gate reader.
         n::launch(
             &model.arena,
-            n::Kernel::PromptGate,
+            n::Kernel::PromptNormInPlace,
             [4, count, 1],
-            vec![v[3].clone(), v[4].clone(), v[5].clone(), v[10].clone()],
-            info(CHANNELS, 4, 4, (WIDTH as f32).sqrt().recip()),
+            vec![v[1].clone(), self.public.gamma[0].clone(), v[6].clone()],
+            info(CHANNELS, CHANNELS, 4, 1e-6),
         )?;
-        crate::strata_prompt::head_flags(client, v[10].clone(), fault.clone(), count, 4)?;
-        n::launch(
-            &model.arena,
-            n::Kernel::PromptBroadcast,
-            [40, count, 1],
-            vec![v[2].clone(), v[5].clone(), v[6].clone(), fault.clone()],
-            info(0, 0, 0, 0.),
-        )?;
+        crate::strata_prompt::head_flags(client, v[6].clone(), fault.clone(), count, 4)?;
         n::launch(
             &model.arena,
             n::Kernel::PromptNorm,
             [4, count, 1],
             vec![
-                v[6].clone(),
-                self.public.gamma[2].clone(),
+                input.clone(),
+                self.public.gamma[1].clone(),
+                v[3].clone(),
                 v[7].clone(),
-                v[11].clone(),
             ],
             info(CHANNELS, CHANNELS, 4, 1e-6),
         )?;
-        crate::strata_prompt::head_flags(client, v[11].clone(), fault.clone(), count, 4)?;
+        crate::strata_prompt::head_flags(client, v[7].clone(), fault.clone(), count, 4)?;
+        n::launch(
+            &model.arena,
+            n::Kernel::PromptGate,
+            [4, count, 1],
+            vec![v[1].clone(), v[3].clone(), v[4].clone(), v[8].clone()],
+            info(CHANNELS, 4, 4, (WIDTH as f32).sqrt().recip()),
+        )?;
+        crate::strata_prompt::head_flags(client, v[8].clone(), fault.clone(), count, 4)?;
+        n::launch(
+            &model.arena,
+            n::Kernel::PromptBroadcast,
+            [40, count, 1],
+            vec![v[2].clone(), v[4].clone(), v[5].clone(), fault.clone()],
+            info(0, 0, 0, 0.),
+        )?;
+        // The gate has queued its final query reader. Reuse that exact region
+        // for normalized convolution rows; keep unnormalized gated and R live.
+        n::launch(
+            &model.arena,
+            n::Kernel::PromptNorm,
+            [4, count, 1],
+            vec![
+                v[5].clone(),
+                self.public.gamma[2].clone(),
+                v[3].clone(),
+                v[9].clone(),
+            ],
+            info(CHANNELS, CHANNELS, 4, 1e-6),
+        )?;
+        crate::strata_prompt::head_flags(client, v[9].clone(), fault.clone(), count, 4)?;
         n::launch(
             &model.arena,
             n::Kernel::PromptConv,
             [40, count, 1],
             vec![
                 u::handle(&model.arena, roots[0])?,
-                v[7].clone(),
+                v[3].clone(),
                 self.public.conv.clone(),
                 input,
-                v[6].clone(),
+                v[5].clone(),
                 output,
                 fault.clone(),
             ],
@@ -229,20 +239,17 @@ impl PleBatchWorkspace {
             [40, 1, 1],
             vec![
                 u::handle(&model.arena, roots[0])?,
-                v[7].clone(),
+                v[3].clone(),
                 u::handle(&model.arena, roots[1])?,
                 fault,
             ],
             info(0, 0, 0, 0.),
         )?;
-        // The accepted GPU NEXT history already contains the complete tail.
-        // This extra copy exists solely for the legacy CPU oracle or explicit
-        // grouped-read diagnostics; native publication needs only token IDs.
         if !crate::strata_intel_core::enabled() || self.public_grouped_reads() {
             let keep = count.min(HISTORY);
             crate::strata_prompt::copy_handles(
                 client,
-                v[7].clone(),
+                v[3].clone(),
                 crate::strata_prompt::outer_workspace()?[12].clone(),
                 (count - keep) * CHANNELS,
                 keep * CHANNELS,

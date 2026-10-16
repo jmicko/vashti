@@ -23,6 +23,7 @@ pub(crate) enum Kernel {
     History,
     Projection,
     PromptNorm,
+    PromptNormInPlace,
     PromptGate,
     PromptBroadcast,
     PromptConv,
@@ -31,7 +32,7 @@ pub(crate) enum Kernel {
 impl Kernel {
     fn lanes(self) -> u32 {
         match self {
-            Self::Norm | Self::PromptNorm => 1024,
+            Self::Norm | Self::PromptNorm | Self::PromptNormInPlace => 1024,
             Self::Gate | Self::PromptGate => 512,
             _ => 256,
         }
@@ -48,7 +49,7 @@ impl Kernel {
         };
         let mut s = section("COMMON").to_owned();
         s.push_str(section(match self {
-            Self::Norm | Self::PromptNorm => "NORM",
+            Self::Norm | Self::PromptNorm | Self::PromptNormInPlace => "NORM",
             Self::Gate | Self::PromptGate => "GATE",
             Self::Broadcast | Self::PromptBroadcast => "BROADCAST",
             Self::Conv | Self::PromptConv => "CONV",
@@ -56,7 +57,7 @@ impl Kernel {
             Self::Projection => "PROJECTION",
         }));
         let edits: &[(&str, &str)] = match self {
-            Self::PromptNorm => &[(
+            Self::PromptNorm | Self::PromptNormInPlace => &[(
                 "if sw!=32u || t>=p.count || h>=4u {return;}",
                 "if sw!=32u{if tid==0u&&t<p.count&&h<4u{status[t*p.ss+h]=0u;}return;}if t>=p.count||h>=4u{return;}",
             )],
@@ -117,6 +118,30 @@ impl Kernel {
             assert!(s.contains(old), "prompt PLE source drift");
             s = s.replace(old, new);
         }
+        if self == Self::PromptNormInPlace {
+            // The original key is both source and destination. Use ONE writable
+            // descriptor; do not bind a read-only alias of that same interval.
+            for (old, new) in [
+                (
+                    "@binding(0) var<storage,read> input:array<f32>;",
+                    "@binding(0) var<storage,read_write> values:array<f32>;",
+                ),
+                (
+                    "@group(0) @binding(2) var<storage,read_write> output:array<f32>;\n",
+                    "",
+                ),
+                (
+                    "@binding(3) var<storage,read_write> status:",
+                    "@binding(2) var<storage,read_write> status:",
+                ),
+                ("@binding(4) var<uniform>", "@binding(3) var<uniform>"),
+                ("input[base+col]", "values[base+col]"),
+                ("output[p.ob+t*p.os+h*2560u+col]", "values[base+col]"),
+            ] {
+                assert!(s.contains(old), "in-place PLE source drift");
+                s = s.replace(old, new);
+            }
+        }
         s
     }
 }
@@ -130,6 +155,7 @@ impl KernelMetadata for Kernel {
             Self::History => "StrataPleNativeHistory",
             Self::Projection => "StrataNativeBf16Multi",
             Self::PromptNorm => "StrataPromptPleNorm",
+            Self::PromptNormInPlace => "StrataPromptPleNormInPlace",
             Self::PromptGate => "StrataPromptPleGate",
             Self::PromptBroadcast => "StrataPromptPleBroadcast",
             Self::PromptConv => "StrataPromptPleConv",
@@ -213,6 +239,7 @@ fn launch_impl(
         || !(1..=if matches!(
             kernel,
             Kernel::PromptNorm
+                | Kernel::PromptNormInPlace
                 | Kernel::PromptGate
                 | Kernel::PromptBroadcast
                 | Kernel::PromptConv
@@ -224,6 +251,8 @@ fn launch_impl(
             8
         })
             .contains(&(info[0] as usize))
+        || kernel == Kernel::PromptNormInPlace
+            && (info[1] != info[3] || info[2] != 10240 || info[4] != 10240)
         || grid.contains(&0)
         || grid.iter().any(|&g| g > 65535)
         || handles.is_empty()
@@ -266,6 +295,7 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
         Kernel::History,
         Kernel::Projection,
         Kernel::PromptNorm,
+        Kernel::PromptNormInPlace,
         Kernel::PromptGate,
         Kernel::PromptBroadcast,
         Kernel::PromptConv,
@@ -538,5 +568,55 @@ mod tests {
                 assert_eq!(ids, (0..10).collect::<Vec<_>>());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod inplace_prompt_tests {
+    use super::*;
+    #[test]
+    fn actual_inplace_key_norm_has_one_writable_value_binding_and_original_reduction_shape() {
+        let kernel = Kernel::PromptNormInPlace;
+        assert_eq!(kernel.lanes(), 1024);
+        let source = kernel.source();
+        let m = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        )
+        .validate(&m)
+        .unwrap();
+        let mut bindings = m
+            .global_variables
+            .iter()
+            .filter_map(|(_, v)| {
+                v.binding
+                    .as_ref()
+                    .map(|b| (b.binding, v.name.as_deref().unwrap(), v.space))
+            })
+            .collect::<Vec<_>>();
+        bindings.sort_by_key(|v| v.0);
+        assert_eq!(
+            bindings.iter().map(|v| (v.0, v.1)).collect::<Vec<_>>(),
+            vec![(0, "values"), (1, "gamma"), (2, "status"), (3, "p")]
+        );
+        assert_eq!(
+            bindings[0].2,
+            wgpu::naga::AddressSpace::Storage {
+                access: wgpu::naga::StorageAccess::LOAD | wgpu::naga::StorageAccess::STORE
+            }
+        );
+        assert_eq!(m.entry_points[0].workgroup_size, [1024, 1, 1]);
+        // The ordinary out-of-place query/conv normalization remains a distinct
+        // interface; no same-buffer duplicate binding is accepted for the key.
+        let out = Kernel::PromptNorm.source();
+        let m = wgpu::naga::front::wgsl::parse_str(&out).unwrap();
+        assert_eq!(
+            m.global_variables
+                .iter()
+                .filter(|(_, v)| v.binding.is_some())
+                .count(),
+            5
+        );
     }
 }

@@ -106,7 +106,7 @@ pub(crate) fn outer_workspace() -> Result<[Handle; 13]> {
             .ok_or(Error::InvalidBufferLength)
     })
 }
-pub(crate) fn ple_workspace() -> Result<[Handle; 12]> {
+pub(crate) fn ple_workspace() -> Result<[Handle; 10]> {
     STAGES.with(|s| {
         s.borrow()
             .as_ref()
