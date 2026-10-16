@@ -39,11 +39,7 @@ impl Host {
         drop(hal);
         let descriptor = vk::BufferCreateInfo::default()
             .size(spec.logical)
-            .usage(
-                vk::BufferUsageFlags::STORAGE_BUFFER
-                    | vk::BufferUsageFlags::TRANSFER_SRC
-                    | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
-            )
+            .usage(exchange::host_vk_usage())
             .sharing_mode(vk::SharingMode::CONCURRENT)
             .queue_family_indices(&queue_families[..family_count]);
         let buffer = unsafe { raw.create_buffer(&descriptor, None) }.map_err(|_| fail())?;
@@ -120,7 +116,7 @@ impl Host {
                 &wgpu::BufferDescriptor {
                     label: Some("original-global-host-expert-piece"),
                     size: spec.logical,
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                    usage: exchange::HOST_USAGE,
                     mapped_at_creation: false,
                 },
             )

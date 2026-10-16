@@ -543,6 +543,9 @@ impl Sources {
     ) -> Result<()> {
         if self.unavailable()
             || self.mutation_pending
+            || self.loan_pending
+            || crate::strata_prompt::active()
+            || self.pending_placement.is_some()
             || swaps.len() > crate::strata_global_adapt::MAX_SWAPS
         {
             return Err(reject());
@@ -555,6 +558,27 @@ impl Sources {
             return Ok(());
         }
         cubecl_common::future::block_on(self.client.sync()).map_err(crate::resident_util::fault)?;
+        // The same attached prompt raw root is dormant during committed decode.
+        // Retain its actual complete resource through the joined transfer. It
+        // remains a private arena owner, so request reset erases ALL its bytes.
+        let scratch_owner = self.prompt_stage.as_ref().ok_or_else(reject)?;
+        if scratch_owner.size_in_used() < crate::strata_prompt::allocation::RAW_RING_BYTES {
+            return Err(reject());
+        }
+        let scratch_resources = self
+            .client
+            .retained_resource_metadata(vec![scratch_owner.clone()])
+            .map_err(crate::resident_util::fault)?;
+        if scratch_resources.len() != 1 {
+            return Err(reject());
+        }
+        let scratch = scratch_resources[0].resource();
+        if scratch.offset != 0
+            || scratch.size != scratch_owner.size_in_used()
+            || scratch.buffer.size() != scratch.size
+        {
+            return Err(reject());
+        }
         let mut pairs = Vec::with_capacity(swaps.len() * 3);
         for swap in swaps {
             for role in 0..3 {
@@ -612,10 +636,11 @@ impl Sources {
         // SAFETY: immutable capabilities above authenticate all owning cells,
         // this exclusive source owner joined every prior CubeCL/BDA reader.
         unsafe {
-            self.host
-                .as_mut()
-                .ok_or_else(reject)?
-                .exchange(self.queue.as_ref().ok_or_else(reject)?, &pairs)?;
+            self.host.as_mut().ok_or_else(reject)?.exchange(
+                self.queue.as_ref().ok_or_else(reject)?,
+                &pairs,
+                scratch,
+            )?;
         }
         Ok(())
     }

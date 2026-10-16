@@ -59,7 +59,6 @@ pub(crate) struct Host {
     closed: bool,
     logical: u64,
     physical: u64,
-    exchange_runtime: Option<exchange::Runtime>,
     cpu_borrow: std::sync::atomic::AtomicBool,
 }
 impl Host {
@@ -213,7 +212,6 @@ impl Host {
             closed: false,
             logical: 0,
             physical: 0,
-            exchange_runtime: None,
             cpu_borrow: std::sync::atomic::AtomicBool::new(false),
         };
         if count == 0 {

@@ -69,6 +69,9 @@ mod strata_queue_tests;
 #[path = "../vendor/cubecl-wgpu/src/compute/strata_readback.rs"]
 mod strata_readback_tests;
 #[cfg(test)]
+#[path = "../vendor/cubecl-wgpu/src/compute/strata_source_usage.rs"]
+mod strata_source_usage_tests;
+#[cfg(test)]
 #[allow(dead_code)] // Original native upload lifecycle/writer checks create no device.
 #[path = "../vendor/cubecl-wgpu/src/compute/strata_upload.rs"]
 mod strata_upload_tests;

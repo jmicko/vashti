@@ -49,16 +49,47 @@ impl super::CommandEncoder {
     /// retains the written HOST_VISIBLE public source allocations through the
     /// submitted fence, cache invalidation and all joined CPU readers.
     pub unsafe fn kuno_public_host_read_barrier(&mut self) -> Result<(), &'static str> {
+        unsafe {
+            self.kuno_public_host_barrier(
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::AccessFlags::SHADER_WRITE,
+            )
+        }
+    }
+    /// Exact producer masks for native model-copy writes, separate from shader
+    /// writes. Usable on transfer queues without requiring compute capability.
+    pub fn kuno_public_host_transfer_read_dependency() -> (vk::PipelineStageFlags, vk::AccessFlags)
+    {
+        (
+            vk::PipelineStageFlags::TRANSFER,
+            vk::AccessFlags::TRANSFER_WRITE,
+        )
+    }
+    /// Make completed original model transfer writes available to scoped HOST
+    /// readers. The same ownership/fence/cache obligations as the shader form.
+    ///
+    /// # Safety
+    /// Active encoder outside a pass, original HOST roots retained until fence
+    /// completion, CPU cache invalidation and every joined CPU reader.
+    pub unsafe fn kuno_public_host_transfer_read_barrier(&mut self) -> Result<(), &'static str> {
+        let (stage, access) = Self::kuno_public_host_transfer_read_dependency();
+        unsafe { self.kuno_public_host_barrier(stage, access) }
+    }
+    unsafe fn kuno_public_host_barrier(
+        &mut self,
+        stage: vk::PipelineStageFlags,
+        access: vk::AccessFlags,
+    ) -> Result<(), &'static str> {
         if self.active == vk::CommandBuffer::null() {
             return Err("public HOST barrier has no active command buffer");
         }
         let barrier = vk::MemoryBarrier::default()
-            .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+            .src_access_mask(access)
             .dst_access_mask(vk::AccessFlags::HOST_READ);
         unsafe {
             self.device.raw.cmd_pipeline_barrier(
                 self.active,
-                vk::PipelineStageFlags::COMPUTE_SHADER,
+                stage,
                 vk::PipelineStageFlags::HOST,
                 vk::DependencyFlags::empty(),
                 &[barrier],

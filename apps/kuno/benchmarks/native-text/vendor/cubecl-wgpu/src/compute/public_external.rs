@@ -1,4 +1,6 @@
 //! PUBLIC-only external-buffer registration checks and readonly lowering.
+#[path = "strata_source_usage.rs"]
+mod source_usage;
 use super::storage::WgpuResource;
 use crate::{AutoCompiler, AutoRepresentation};
 use cubecl_common::stream_id::StreamId;
@@ -66,8 +68,7 @@ pub(super) fn check_source(
     if resource.offset != 0
         || resource.size != source.bytes()
         || resource.buffer.size() != source.bytes()
-        || (usage != wgpu::BufferUsages::STORAGE
-            && usage != (wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC))
+        || !source_usage::allowed(usage)
         || source.bytes() > device.limits().max_storage_buffer_binding_size
     {
         return Err("public external exact immutable descriptor");
