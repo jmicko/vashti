@@ -1,11 +1,18 @@
 # Native CJK draft-head source checkpoint
 
-Status: connected source implementation, **uncompiled and unexecuted**. This is
-isolated on `codex/strata-native-cjk`, based on integration commit `19aa565`.
-Do not claim GPU correctness, performance, full rewrite completion, or release
-readiness from this checkpoint. Parent explicitly stopped work before a new
-integration/build loop. No GPU, service, sudo, build, or test commands ran here.
-`rustfmt` and `git diff --check` passed. Existing main task changes remain intact.
+Status: **integrated into `codex/strata-rust-port` as `0bfbea8`**, followed
+by `83035de` for exact compact-head shader coverage and checked sampler sizing.
+The original isolated source commit was `cd703bc`, based on `19aa565`; preserve
+it as provenance, but do not cherry-pick it again. The integration preserves
+INT8 Append dispatch and capture/PLE work from the intervening commits.
+
+CPU integration checks now pass: selected-core release check/build,25 focused
+CPU tests, and326 offline shader variants plus cooperative-matrix lowering.
+These include original-order fixture/inverse validation, compact penalty/sample
+mapping, confidence variants, INT8 cache layouts and rewind, branch layouts,
+and PLE preparation. Numerical/GPU/full-generation/cleanup acceptance remains
+pending. No GPU, service or sudo command ran during this integration.
+See the completion guide's **CJK and INT8 combined CPU integration** receipt.
 
 ## Implemented as one connected component
 
@@ -53,15 +60,14 @@ existing private arena scrub/retirement paths remain active.
 
 ## Deferred validation and integration
 
-1. Cherry-pick this source checkpoint only when ready for a new build. Other
-   agent changes in `resident_mtp.rs` are distinct: draft INT8 KV Append dispatch
-   and target semantic capture/role buffers. Resolve by retaining both.
+1. Integration is complete at0bfbea8. Keep the INT8 Append and target capture/role
+   changes; the original isolated branch is provenance, not another patch to apply.
 2. Run CPU compile/check on the parent feature set (`strata-intel-core`), then
    relevant unit filters: CJK fixture/order/page plan, native compact confidence,
    native sampler mapping, and native bridge shader lowering. All five native
    confidence variants, six sampler variants, and four bridge variants are
-   included in the existing Naga/SPIR-V offline source checks. Tests were added
-   but not executed here; no passing result is implied.
+   included in the existing Naga/SPIR-V offline source checks. The focused CPU tests and combined offline shader set passed in the parent
+   integration; this is not a GPU arithmetic result.
 3. Exercise protected whole-model startup and actual MTP greedy/coupled paths.
    Verify new public-byte ledger and source readback budgets, original-ID ring,
    compact confidence, sticky faults, complete owner cleanup and capture reuse.

@@ -5,19 +5,18 @@ This is the shared handoff between the **Build Kuno inference helper** task
 Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
-**Current native-engine resume pointer (2026-10-15):** isolated
-`codex/strata-rust-port`, source through `4bf3ed9`. Read the
-[selected-Intel handoff](#active-kuno-engine-handoff--selected-intel-path-and-cpu-only-continuation-2026-10-15)
-and selected-serving-mode audit in [the completion gate](kuno-strata-rewrite-completion.md).
-Prompt prefix and MTP teaching now complete. Final count1 head view correction
-is built, hardware validation pending. Actual NO_HOST expert access and stable
-branch ownership are connected; INT8 source is integrated but not hardware validated. True direct graph replay
-and CJK integration remain incomplete. No numerical/speed/owning-erasure acceptance claim.
+**Current native-engine resume pointer (2026-10-16):** isolated
+`codex/strata-rust-port`, engine source through`ed6373d`. Read the latest
+[combined CPU integration](#active-kuno-engine-handoff--combined-cjkint8-cpu-integration-2026-10-16)
+and [completion gate](kuno-strata-rewrite-completion.md). CJK draft head is now
+integrated with INT8 caches.25 focused CPU tests,326 offline shader variants and
+release build pass. Direct graph invocation and full numerical/GPU acceptance
+remain incomplete; no new speed result.
 
-**Stopped at the user's request after usage reset; goal paused.** No more
-GPU/model/service work until reauthorized. Last run ended with normal admission, all three HTTP200,
-Intel50,688,000 bytes, no NVIDIA compute and fault counts unchanged0. Installed
-system and application API unchanged; required Vashti changes:none.
+Goal is active for **CPU-only work**. No GPU/model/service/sudo work is authorized
+by this continuation. Last physical recovery evidence remains historicalOct15;
+this pass touched no installed services, runtime configuration or model files.
+No application API change; required Vashti changes:none.
 
 ## Ownership
 
@@ -6036,3 +6035,31 @@ and no private roots. **Not cherry-picked into main engine yet.** Next resume
 review/cherry-pick onlycd703bc, preserve the distinct INT8 Append changes, then
 compile and validate all compact-head/sampler variants. The two other peer
 worktrees are clean and their completed source is already integrated.
+
+
+### Active Kuno engine handoff — combined CJK/INT8 CPU integration (2026-10-16)
+
+Goal resumed CPU-only. Source0bfbea8 integrates the isolated original-order CJK
+head componentcd703bc, preserving intervening INT8/cache/capture/PLE source.
+Do not reapply the isolated commit. Source83035de adds exact full/tail Q6 shader
+coverage and checked sampler scratch sizing; ed6373d is equivalent map-guard
+style cleanup. Target vocabulary staysfull248320; only draft head/sampling uses
+original106299subset rows and maps back to original IDs.
+
+25focused CPU tests pass.326offline shader variants validate/lower, including
+newINT8 kernels and CJK argmax/probability/map/sampler/bridge variants. Release
+artifact source83035de and hash are in the completion receipt. These CPU checks
+do not prove native startup, full numerical output/state, complete erasure or
+performance. Whole rewrite remains incomplete; no speed trials.
+
+Next: GDN/QSA armed transaction preparation separate from math enqueue, typed
+invocation positions/epoch controls, then direct graph launch retaining actual
+resources/fences and original final proofs. Existing graph reuse still rebuilds
+enqueue calls. PLE source/history staging already precedes target capture.
+Keep the explicit memory-placement/configuration and commit/event differences
+visible during the final source audit. Required Vashti changes:none.
+
+No GPU/service/sudo operations this pass. Last recovered runtime snapshot is
+Oct15historical evidence, not a current live check. Renew GPU authorization before
+protected completion/numerical tests; only then consider the speed gate after
+all source requirements pass.

@@ -1,38 +1,33 @@
-<!-- Current resume: 2026-10-15, source4bf3ed9, codex/strata-rust-port.
-Read coordination active selected-Intel handoff and completion guide.
-Whole rewrite incomplete; no speed trials. User-requested stop; goal paused. -->
+<!-- Current resume: 2026-10-16, sourceed6373d, codex/strata-rust-port.
+Goal active; CPU-only continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-09
 
-**Current native-engine resume pointer (2026-10-15):** isolated
-`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
-`codex/strata-rust-port`, source through `4bf3ed9`. Read the
-[active selected-Intel handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--selected-intel-path-and-cpu-only-continuation-2026-10-15)
-and latest selected-serving-mode audit in
-[the completion gate](kuno-strata-rewrite-completion.md).
+**Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
+branch`codex/strata-rust-port`, engine source through`ed6373d`. The active goal
+resumed CPU-only work. GPU/model/service/sudo work still requires renewed user
+authorization. Last physical recovery evidence is historical06:07:22Z onOct15;
+no subsequent GPU run, service query or live health claim was made this pass.
 
-**Current authority: stopped; goal paused.** After the CPU-only continuation,
-the user requested finishing the current task and stopping after usage reset. Do not start
-models, GPU tests, service changes or privileged runtime work until authorized.
-Last protected run has ended: normal admission, Kuno/Ollama/Vashti HTTP200,
-Intel50,688,000 bytes, no NVIDIA compute, all classified GPU faults unchanged0.
-Exact evidence: external `strata-native-no-host-check-20261015/host-after.json`
-at2026-10-15T06:07:22Z. Installed system unchanged.
+Read the [combined CPU integration receipt](kuno-strata-rewrite-completion.md#cjk-and-int8-combined-cpu-integration-2026-10-16)
+and latest coordination handoff. CJK isolated sourcecd703bc is now integrated as
+`0bfbea8`; **do not cherry-pick it again**. Original-order106299-row Q6 head,
+compact confidence and inverse-ID coupled sampler are connected with INT8 caches.
+Source`83035de` adds actual compact-head full/tail shader validation and preserves
+checked full-vocabulary sampler sizing. Source`ed6373d` collapses an equivalent
+map guard for strict Clippy.
 
-The complete prompt prefix, including original MTP teaching, now executes.
-Final count1 prompt token failed a proven full-fault-owner/logical-view mismatch;
-source`8c239bc` corrects it, hardware validation pending. Source`36d13d3` selects
-the actual measured Intel NO_HOST path: GPU reads real VRAM or mapped HOST
-experts directly, with no CPU expert jobs/per-layer joins. Source`19aa565` pins
-branch parameter owners and actual MTP recordings; `7aa574f` adds target-window
-capture. Release build through19aa and strict core Clippy through7aa pass.
+CPU checks:25 focused cases pass;326 offline shader variants plus matrix lowering
+pass; locked release build passes. Strict core and feature-off Clippy checks are
+recorded in the completion receipt. Full core regression and numerical/GPU/state/
+owning-erasure acceptance remain incomplete. No new generation or speed result.
 
-INT8 target/MTP KV is integrated as2a3d1ad; final strict core Clippy at4bf3ed9
-passes. INT8 shader/numerical/hardware validation remains pending. True no-enqueue
-graph invocation is unfinished. Original CJK draft-head source is isolated;
-inspect saved`cd703bc` and`docs/kuno-strata-cjk-checkpoint.md` in the
-`strata-resident-first` worktree before integrating. All peer worktrees are clean. They are not yet accepted whole-model behavior.
-Full numerical/state/owning-erasure and speed acceptance remain incomplete.
-No API/UI/release changes; required Vashti changes:none.
+**Next substantial block:** separate GDN/QSA transaction preparation from math
+queue construction, publish typed invocation parameters, then launch retained
+native graphs without rebuilding kernel calls. PLE staging is already separate.
+Preserve original armed receipts, actual state roles, real missing-expert sources
+and completed fences; directly submitting an old graph would use stale positions.
+Commit/event overlap, source/configuration differences and final whole-port audit
+also remain open. No gateway/UI work required. Required Vashti changes:none.
 
 All older checkpoints below are historical.
 
