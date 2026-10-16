@@ -238,7 +238,7 @@ impl<'a, 'm, 'f> LatestTargetRound<'a, 'm, 'f> {
                 .global_moe
                 .as_mut()
             {
-                global.set_verify_usage(true)?;
+                global.set_verified_window(true)?;
             }
             let output =
                 self.model
@@ -251,7 +251,7 @@ impl<'a, 'm, 'f> LatestTargetRound<'a, 'm, 'f> {
                 .global_moe
                 .as_mut()
             {
-                global.set_verify_usage(false)?;
+                global.set_verified_window(false)?;
             }
             let cursor = self.model.completed_target_rows_cursor(self.executor)?;
             self.packet

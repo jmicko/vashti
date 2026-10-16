@@ -124,7 +124,9 @@ impl Sources {
         sources.host =
             Some(unsafe { Host::load(&sources.plan, graph, client, device, host_reserved)? });
         sources.build_tables(graph, device)?;
-        sources.prepare_exchange_inventory(graph)?;
+        if crate::strata_global_adapt::collect_gpu_route_usage(true) {
+            sources.prepare_exchange_inventory(graph)?;
+        }
         graph.verify_unchanged()?;
         Ok(sources)
     }

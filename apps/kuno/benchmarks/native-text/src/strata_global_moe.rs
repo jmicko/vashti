@@ -124,8 +124,9 @@ fn info(words: &[u32]) -> MetadataBindingInfo {
     )
     .with_native_parameter(2, cubecl_runtime::server::NativeStrataValue::RouteEpoch)
 }
-pub(crate) struct Adaptation {
-    flight: crate::public_host_expert_mirror::strata_global::exchange::Flight,
+pub(crate) enum Adaptation {
+    NoHost(crate::strata_global_adapt::SelectionFlight),
+    GpuCounters(Box<crate::public_host_expert_mirror::strata_global::exchange::Flight>),
 }
 pub(crate) struct Workspace {
     binding: GraphBindingId,
@@ -137,7 +138,7 @@ pub(crate) struct Workspace {
     dense_input: BufferId,
     prompt_stages: Option<[BufferId; 3]>,
     epoch: u32,
-    verify_usage: bool,
+    verified_window: bool, // window/job accounting, independent of GPU counter policy
     active: Option<Zeroizing<[usize; 3]>>, // active count, next layer, accepted flag
 }
 impl Workspace {
@@ -148,7 +149,7 @@ impl Workspace {
         cubecl_runtime::server::NativeStrataInvocation::target_with_usage(
             u32::try_from(position).map_err(u::fault)?,
             self.invocation_epoch()?,
-            self.verify_usage,
+            crate::strata_global_adapt::collect_gpu_route_usage(self.verified_window),
         )
         .map_err(u::fault)
     }
@@ -180,7 +181,8 @@ impl Workspace {
             || active[1] != 0
             || active[2] != 0
             || self.epoch != completed.route_epoch()
-            || self.verify_usage != completed.route_usage()
+            || crate::strata_global_adapt::collect_gpu_route_usage(self.verified_window)
+                != completed.route_usage()
             || crate::strata_prompt::active()
         {
             return Err(reject());
@@ -283,7 +285,7 @@ impl Workspace {
             sampler,
             prompt_stages,
             epoch: 0,
-            verify_usage: false,
+            verified_window: false,
             active: None,
             adaptive: None,
         })
@@ -461,7 +463,9 @@ impl Workspace {
                     count as u32,
                     layer as u32,
                     self.epoch,
-                    u32::from(self.verify_usage),
+                    u32::from(crate::strata_global_adapt::collect_gpu_route_usage(
+                        self.verified_window,
+                    )),
                 ])
                 .with_native_parameter(3, cubecl_runtime::server::NativeStrataValue::RouteUsage),
             );
@@ -667,7 +671,7 @@ impl Workspace {
         sources: &mut Sources,
         cancel: &AtomicBool,
     ) -> Result<Option<Adaptation>> {
-        if !self.verify_usage {
+        if !self.verified_window {
             return Ok(None);
         }
         if self.layer_pending || self.active.as_ref().is_none_or(|s| s[1] != 48 || s[2] != 0) {
@@ -681,13 +685,26 @@ impl Workspace {
         if !cache.tick()? {
             return Ok(None);
         }
-        let usage =
-            admission.readback_audited(cancel, || u::read_prefix_f32(arena, self.ids[9], 24576))?;
+        let usage = if crate::strata_global_adapt::collect_gpu_route_usage(true) {
+            admission.readback_audited(cancel, || u::read_prefix_f32(arena, self.ids[9], 24576))?
+        } else {
+            // The pinned callback-free path owns CPU zero counters. No unused
+            // GPU counter readback is added to its every4-window host job.
+            Zeroizing::new(cache.retained_usage().to_vec())
+        };
         u::cancel(cancel)?;
-        let raw = self.prompt_stages.ok_or_else(reject)?[2];
         let cache = self.adaptive.take().ok_or_else(reject)?;
+        if !crate::strata_global_adapt::collect_gpu_route_usage(true) {
+            cache.check_retained_route_map(
+                &sources.retained_route_map(graph, arena.client().map_err(u::fault)?)?,
+            )?;
+            return Ok(Some(Adaptation::NoHost(
+                crate::strata_global_adapt::SelectionFlight::new(cache, usage)?,
+            )));
+        }
+        let raw = self.prompt_stages.ok_or_else(reject)?[2];
         let flight = sources.submit_exchange(graph, arena, raw, cache, usage)?;
-        Ok(Some(Adaptation { flight }))
+        Ok(Some(Adaptation::GpuCounters(Box::new(flight))))
     }
     /// Original target/MTP commit/draft consumers have completed. Join the exact
     /// copy flight and its actual copy->MAIN semaphore dependency, then publish
@@ -699,12 +716,22 @@ impl Workspace {
         adaptation: Option<Adaptation>,
     ) -> Result<()> {
         self.validate_idle()?;
-        let Some(Adaptation { flight }) = adaptation else {
+        let Some(adaptation) = adaptation else {
             return Ok(());
         };
         if self.adaptive.is_some() {
             return Err(reject());
         }
+        let flight = match adaptation {
+            Adaptation::NoHost(job) => {
+                // Pinned callback-free mode never increments usage. Preserve
+                // its empty host job/decay, without inventing GPU copies,
+                // registry revocation or unchanged map/usage uploads.
+                self.adaptive = Some(job.finish()?);
+                return Ok(());
+            }
+            Adaptation::GpuCounters(flight) => *flight,
+        };
         let (cache, proposal) = sources.complete_exchange(flight)?;
         self.adaptive = Some(cache);
         let mut mapping = crate::strata_global_adapt::encode_route_map(&proposal.mapping)?;
@@ -745,7 +772,7 @@ impl Workspace {
         cancel: &AtomicBool,
     ) -> Result<()> {
         self.validate_idle()?;
-        if self.verify_usage || admission.request_io_reuse_active() {
+        if self.verified_window || admission.request_io_reuse_active() {
             return Err(reject());
         }
         let usage =
@@ -772,7 +799,7 @@ impl Workspace {
         self.validate_idle()?;
         u::cancel(cancel)?;
         if self.binding != graph.binding_id()
-            || self.verify_usage
+            || self.verified_window
             || admission.request_io_reuse_active()
         {
             return Err(reject());
@@ -843,12 +870,12 @@ impl Workspace {
             u::cancel(cancel)
         })
     }
-    pub(crate) fn set_verify_usage(&mut self, enabled: bool) -> Result<()> {
+    pub(crate) fn set_verified_window(&mut self, enabled: bool) -> Result<()> {
         self.validate_idle()?;
-        if self.verify_usage == enabled {
+        if self.verified_window == enabled {
             return Err(reject());
         }
-        self.verify_usage = enabled;
+        self.verified_window = enabled;
         Ok(())
     }
 }

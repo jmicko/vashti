@@ -9,9 +9,19 @@ pub(crate) const MAX_SWAPS: usize = 96;
 pub(crate) const WORKER_STACK_BYTES: usize = 2 * 1024 * 1024;
 pub(crate) const HOST_BYTES: usize = 2 * 1024 * 1024
     + WORKER_STACK_BYTES
-    + crate::public_host_expert_mirror::strata_global::exchange::INVENTORY_HOST_BYTES;
+    + if cfg!(feature = "strata-gpu-adaptive-usage") {
+        crate::public_host_expert_mirror::strata_global::exchange::INVENTORY_HOST_BYTES
+    } else {
+        0
+    };
 pub(crate) const ROUTE_MAP_BYTES: usize = 131072;
 pub(crate) const USAGE_BYTES: usize = 131072;
+/// Pinned SYCL NO_HOST skips the only usage-incrementing callback. Window
+/// accounting and the adaptive host job still run. GPU route collection is an
+/// explicit beyond-reference experiment, immutable for this compiled engine.
+pub(crate) const fn collect_gpu_route_usage(verified_window: bool) -> bool {
+    verified_window && cfg!(feature = "strata-gpu-adaptive-usage")
+}
 /// One bounded host job per adaptive tick, as in pinned serve. Actual jobs
 /// send only numeric inputs and owned copy resources; clients/arenas/registry
 /// tokens stay on the original thread. No unsafe thread opt-in is provided.
@@ -26,6 +36,46 @@ pub(crate) fn spawn_host_job<T: Send + 'static>(
                 .unwrap_or_else(|_| Err(reject()))
         })
         .map_err(|_| reject())
+}
+/// Pinned NO_HOST's real host thread has no eligible routes. Join it even on
+/// unwind; it owns only wiping numeric metadata, with NO GPU/registry/root hold.
+pub(crate) struct SelectionFlight {
+    job: Option<std::thread::JoinHandle<Result<(Cache, Proposal)>>>,
+}
+impl SelectionFlight {
+    pub(crate) fn new(cache: Cache, usage: Zeroizing<Vec<f32>>) -> Result<Self> {
+        validate_usage(&usage)?;
+        if usage.iter().any(|&v| v != 0.) {
+            return Err(reject());
+        }
+        Ok(Self {
+            job: Some(spawn_host_job(move || {
+                let proposal = cache.propose(&usage)?;
+                Ok((cache, proposal))
+            })?),
+        })
+    }
+    pub(crate) fn finish(mut self) -> Result<Cache> {
+        let (mut cache, proposal) = self
+            .job
+            .take()
+            .ok_or_else(reject)?
+            .join()
+            .map_err(|_| reject())??;
+        if !proposal.swaps.is_empty() || proposal.usage.iter().any(|&v| v != 0.) {
+            return Err(reject());
+        }
+        cache.check_retained_route_map(&proposal.mapping)?;
+        cache.commit(proposal)?;
+        Ok(cache)
+    }
+}
+impl Drop for SelectionFlight {
+    fn drop(&mut self) {
+        if let Some(job) = self.job.take() {
+            let _ = job.join();
+        }
+    }
 }
 /// Original full private owner, including its unused zero padding. The caller
 /// transfers the wiping allocation directly into the actual tracked upload.
@@ -458,6 +508,65 @@ mod retained_usage_tests {
         )
     }
     #[test]
+    fn selected_no_host_job_preserves_identity_without_gpu_copy_or_nonzero_scores() {
+        let mut cache = model();
+        for _ in 0..4 {
+            cache.tick().unwrap();
+        }
+        let initial = cache.mapping.to_vec();
+        let cache = SelectionFlight::new(cache, Zeroizing::new(vec![0.; LAYERS * EXPERTS]))
+            .unwrap()
+            .finish()
+            .unwrap();
+        assert_eq!(cache.rounds, 4);
+        cache.check_retained_route_map(&initial).unwrap();
+        assert!(cache.retained_usage().iter().all(|&v| v == 0.));
+        let mut usage = Zeroizing::new(vec![0.; LAYERS * EXPERTS]);
+        usage[0] = 1.;
+        assert!(SelectionFlight::new(cache, usage).is_err());
+    }
+    #[test]
+    fn selected_usage_policy_matches_real_invocation_bits_without_disabling_window_ticks() {
+        use cubecl_runtime::server::{
+            NativeStrataBranch, NativeStrataInvocation, NativeStrataValue,
+        };
+        for position in [0, 1, 4095, 32759] {
+            for count in 1..=8u8 {
+                for verified in [false, true] {
+                    let collecting = collect_gpu_route_usage(verified);
+                    assert_eq!(
+                        collecting,
+                        verified && cfg!(feature = "strata-gpu-adaptive-usage")
+                    );
+                    let invocation =
+                        NativeStrataInvocation::target_with_usage(position, 1, collecting).unwrap();
+                    let key =
+                        NativeStrataBranch::target_window_with_state(count, 32768, 0).unwrap();
+                    invocation.validate_for(key).unwrap();
+                    assert_eq!(
+                        invocation.value(NativeStrataValue::RouteUsage).unwrap(),
+                        u32::from(collecting)
+                    );
+                }
+            }
+        }
+        // Empty callback-derived counts in reference NO_HOST still advance the
+        // original every4 window/job/decay state; zero counters aren't a reason
+        // to omit the connected worker or manufacture a cold cache on reuse.
+        let mut cache = model();
+        let zeros = vec![0.; LAYERS * EXPERTS];
+        let mut jobs = 0;
+        for _ in 0..12 {
+            if cache.tick().unwrap() {
+                let p = cache.propose(&zeros).unwrap();
+                assert!(p.swaps.is_empty());
+                cache.commit(p).unwrap();
+                jobs += 1;
+            }
+        }
+        assert_eq!((cache.rounds, jobs), (12, 3));
+    }
+    #[test]
     fn actual_host_job_runs_beside_foreground_and_returns_the_same_cache_proposal() {
         use std::sync::mpsc;
         let mut cache = model();
@@ -534,7 +643,15 @@ mod retained_usage_tests {
             .unwrap()
             .is_err()
         );
-        assert_eq!(HOST_BYTES, 12 * 1024 * 1024);
+        assert_eq!(
+            HOST_BYTES,
+            (4 + if cfg!(feature = "strata-gpu-adaptive-usage") {
+                8
+            } else {
+                0
+            }) * 1024
+                * 1024
+        );
     }
     #[test]
     fn full_request_erase_and_rebind_preserves_the_same_original_adaptive_sequence() {

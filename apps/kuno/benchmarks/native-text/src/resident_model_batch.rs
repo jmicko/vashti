@@ -5154,7 +5154,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                     .global_moe
                     .as_mut()
                     .ok_or(error())?
-                    .set_verify_usage(true)?;
+                    .set_verified_window(true)?;
             }
             let output = native.run(self, executor, tokens, purpose, select, cancel)?;
             if tracking {
@@ -5162,7 +5162,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                     .global_moe
                     .as_mut()
                     .ok_or(error())?
-                    .set_verify_usage(false)?;
+                    .set_verified_window(false)?;
             }
             accept(output)
         }));
