@@ -6,18 +6,19 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, source `8a4ee5b820ad3508b6d7f60d4d58e5efd81bd408`. Read the
-[coupled-sampler handoff](#active-kuno-engine-handoff--coupled-draft-sampling-2026-10-16)
-and [completion gate](kuno-strata-rewrite-completion.md). Both draft domains now
-use original in-place penalties, fixed 64 candidate lists and request-K merge
-before the original output/ring publication. Target/greedy sampling stays separate.
-534 selected CPU cases, strict binary core/off lint and 360 offline
-variants/139 physical checks pass. Whole rewrite incomplete; no live speed
-trial or numerical/device acceptance. No API/consumer change; Vashti changes: none.
+`codex/strata-rust-port`, source `7c35203653d0405e8291bff0307f9438b8376f13`. Read the
+[compute-local handoff](#active-kuno-engine-handoff--compute-local-uploads-2026-10-16)
+and [completion gate](kuno-strata-rewrite-completion.md). Actual target/MTP control
+uploads use their own compute queues; MTP copy/math nodes stay on MTP compute.
+Independent INFO fences/epochs and pending-peer reuse exclusions remain owned.
+537 selected CPU cases, strict core/off binary lint and 360 offline
+variants/139 physical checks pass. Full rewrite incomplete, speed gate closed.
+Next source gaps: adaptive host thread, unscoped first draft on retained requests,
+and retained adaptive usage/learned-policy fidelity; see the detailed receipt.
 
-Goal active CPU-only. No GPU/model/service/install/release/frontend action. Root
-not needed; latest shared-shell refresh unsuccessful. Physical recovery remains
-historical Oct 15. Preserve canonical/inherited work.
+Goal active CPU-only. No GPU/model/inference/service/install/release/frontend/API
+action; required Vashti changes: none. No root used or physical acceptance claimed.
+Preserve canonical/inherited files. Recovery historical Oct 15.
 
 ## Ownership
 
@@ -7344,3 +7345,39 @@ one-request). Goal active CPU-only. No GPU/model/inference/service/install/
 release/frontend/API action. Required Vashti changes: none. Root not needed;
 last shared-shell sudo refresh unsuccessful. Physical recovery historical Oct 15.
 Canonical/inherited files preserved. No deployment authority.
+
+## Active Kuno engine handoff — compute-local uploads (2026-10-16)
+
+Source `7c35203653d0405e8291bff0307f9438b8376f13`, isolated `codex/strata-rust-port`. Read the
+[complete source/validation receipt](kuno-strata-rewrite-completion.md#compute-local-control-uploads-and-mtp-copy-scheduling-2026-10-16) and
+[checkpoint](kuno-native-text-checkpoint.md). Target and MTP INFO uploads now use
+separate actual compute-family owners/epochs/fences. Original MTP copy/fill/math
+nodes use its compute lane, with their actual transfer access flags/barriers.
+Adaptation retains the existing transfer queue; no new hardware queue is required.
+Pending peer INFO source/destination roots are excluded from scoped I/O reuse.
+INFO-only drains retain actual GPU semaphore/fence visibility even on one queue.
+
+Native HOST metadata grows 2 MiB to 140 MiB; parent prompt/controller quote derives
+268 MiB. No model/private/public GPU buffer is added. One extra actual INFO command
+pool/buffer/timeline/fence stays owned; physical pricing/runtime acceptance is open.
+537 CPU cases / 69 suites, locked test build, strict core/off binary lint
+and changed formatting pass. Exact frozen artifact
+`strata-draft-local-uploads-ordinary-20261016/` has SHA256
+`c2e0c7e52e70ba0d0937eec9e1880f270a96ad366a771e874a4754834f7cc6d0`; independent source/original hash/mode0500 and 360 offline variants/139
+physical checks pass before device creation. Kernel arithmetic is unchanged.
+These are CPU/source/compiler receipts, not device execution or overlap proof.
+
+Remaining concrete source gaps in the linked receipt: adaptive host ranking/
+submission is still serial; the first retained-request draft is outside the scoped
+observer and can miss overlap on an adaptive tick; original serve retains usage
+and learned policy while current request reset/local controller do not. Resolve
+these with content-free model telemetry and original request erasure, never
+retained prompts/tokens/suffix/KV or serialized traces. Final source/queue/
+ownership/pricing and protected numerical/state/context/hot-request/failure/
+recovery acceptance remain required. Full rewrite incomplete; no speed trials.
+Protected private caller stays separate; CLI compiled-public/one-request.
+
+No API/protocol/configuration/consumer change; Vashti changes: none. Goal active
+CPU-only. No GPU/model/inference/service/install/release/frontend action. No root
+used; canonical/inherited files preserved. No deployment authority or new physical
+recovery/performance/residency claim.

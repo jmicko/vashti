@@ -1,33 +1,41 @@
-<!-- Current resume: 2026-10-16, source 8a4ee5b820ad3508b6d7f60d4d58e5efd81bd408, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source 7c35203653d0405e8291bff0307f9438b8376f13, codex/strata-rust-port.
 CPU-only continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 Working checkout: `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`.
 
-**Current CPU-only source:** `8a4ee5b820ad3508b6d7f60d4d58e5efd81bd408`, isolated
-`codex/strata-rust-port`. Read the [coupled-sampler receipt](kuno-strata-rewrite-completion.md#coupled-draft-penalty-writes-and-fixed-64-selection-2026-10-16)
-and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--coupled-draft-sampling-2026-10-16). Full-vocabulary and compact-CJK
-MTP now select Strata's complete coupled sequence: once-per-token in-place
-penalties, fixed 64-entry part lists, request-sized merge/tail, then original
-ID/probability/ring publication. Target sampling and greedy MTP remain separate.
-The same private logits/history/candidates/params/output roots are retained;
-no model/public/private allocation or application contract changes.
+**Current CPU-only source:** `7c35203653d0405e8291bff0307f9438b8376f13`, branch
+`codex/strata-rust-port`. Read the [compute-local upload receipt](kuno-strata-rewrite-completion.md#compute-local-control-uploads-and-mtp-copy-scheduling-2026-10-16)
+and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--compute-local-uploads-2026-10-16). Actual target/MTP INFO copies
+now run on their own compute queues. All original MTP-lane copy/fill/math nodes
+stay ordered on its compute queue; target/prompt streamed copies retain the
+transfer queue. Expert adaptation keeps the existing transfer queue. Both INFO
+owners retain independent epochs/fences; peer staging roots are excluded from
+reuse until their own copy completes. INFO-only drains retain real GPU visibility.
 
-534 selected CPU cases / 68 suites and strict core/off **binary** Clippy
-pass. Stable-source frozen artifact `strata-coupled-sampling-ordinary-20261016/`
-has SHA256 `c8ee12ced38eb658a5ebd8082a221dd0e49ea778b429b78d956417021ea295a6`; independent source/original hash and mode0500 checks pass.
-Its offline validator accepts 360 Naga/SPIR-V variants and 139 physical
-checks, before device creation. These do not establish GPU numerical correctness.
+537 selected CPU cases / 69 suites, strict core/off **binary** Clippy,
+changed formatting/whitespace and normal stable-source build pass. Frozen artifact
+`strata-draft-local-uploads-ordinary-20261016/` has SHA256
+`c2e0c7e52e70ba0d0937eec9e1880f270a96ad366a771e874a4754834f7cc6d0`. Independent source/original hash/mode0500 checks pass; offline validation
+accepts 360 shader variants and 139 physical-pointer checks before
+device creation. No GPU numerical, overlap or performance acceptance is claimed.
 
-Whole rewrite remains incomplete; live speed gate closed. Next final connected
-source/queue/ownership/pricing/substitution audit and protected full numerical/
-state/context/hot-request/failure/recovery acceptance under renewed GPU permission.
-Keep existing adaptive serial-proposal/shared-copy-queue/first-window substitutions
-explicit. Protected private caller remains independently gated; CLI is compiled-
-public/one-request. Goal active CPU-only. No GPU/model/inference/service/install/
-release/frontend/API action. Required Vashti changes: none. Root not needed;
-last shared-shell sudo refresh unsuccessful. Physical recovery remains historical
-Oct 15; canonical and inherited files preserved. No deployment authorization.
+Whole rewrite incomplete; speed gate closed. Next actual remaining source work:
+serial adaptive host ranking/submission, the unscoped retained-session first draft,
+and hot-request adaptive-usage/learned-policy fidelity. See the audit findings in
+the linked receipt. Final source/ownership/pricing and protected full numerical/
+state/context/hot-request/failure/recovery gates remain. Protected private caller
+is separately gated; current CLI compiled-public/one-request. Goal active CPU-only.
+No GPU/model/inference/service/install/release/frontend/API action. No root used.
+Required Vashti changes: none. Canonical/inherited files preserved; no deployment
+authority. Physical recovery remains historical Oct 15.
+
+**Previous coupled-sampler block (`8a4ee5b`):** actual full and CJK MTP paths
+mutate penalties once, build fixed 64 lists and merge with request K. Source
+counter/history/tie/F32 contracts were audited. 534 CPU cases, strict binary lint
+and 360 offline variants/139 physical checks passed then; see the
+[historical receipt](kuno-strata-rewrite-completion.md#coupled-draft-penalty-writes-and-fixed-64-selection-2026-10-16).
+Physical numerical/model acceptance remains open.
 
 **Previous whole-head block (`308de40`):** target and compact-CJK MTP each
 project all original bounded Q6 pages in one dispatch, retaining actual physical
