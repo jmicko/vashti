@@ -1,9 +1,9 @@
-<!-- Current resume: 2026-10-16, sourcef965f63, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, sourcee91677a, codex/strata-rust-port.
 Goal active; CPU-only continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-09
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch`codex/strata-rust-port`, engine source through`f965f63`. The active goal
+branch`codex/strata-rust-port`, engine source through`e91677a`. The active goal
 resumed CPU-only work. GPU/model/service/sudo work still requires renewed user
 authorization. Last physical recovery evidence is historical06:07:22Z onOct15;
 no subsequent GPU run, service query or live health claim was made this pass.
@@ -28,13 +28,22 @@ extra fixed metadata is charged under the existing cap. Legacy callers compose
 the same phases.38 focused CPU tests and strict core/off release Clippy pass;
 see the completion guide's Attention preparation CPU receipts.
 
-**Next substantial block:** typed position/epoch parameter publication and real
-retained graph submission, preserving GR/shared/MoE bookkeeping and GDN replay
-metadata without rebuilding kernel calls. Only existing whole-model fault/output/
-acceptance proofs can commit state. Current source still enqueues math normally;
-full numerical/GPU/owning-erasure/speed acceptance is pending. No GPU/service/sudo
-work is authorized. Commit/event overlap, placement/configuration substitutions
-and final whole-port audit also remain open. Required Vashti changes:none.
+**Latest parameter block:** source`e91677a` connects typed current-position and
+routing-epoch fields to actual target INFO uploads. Static templates, schemas and
+original uniform bindings are checked; dynamic template words are zeroed and
+fresh values render through write-only mapped-source callbacks. Native QSA
+positions stamping now uses the same path.28 focused CPU tests,327 offline shader
+variants, locked release build and strict core/off Clippy pass. Read the Typed
+target invocation parameters receipt for exact logs, artifact hash and limits.
+
+**Next substantial block:** direct retained target graph launch with actual
+GR/shared/expert/replay bookkeeping and the original prepared attention/PLE
+receipts. Then implement MTP round/step typed controls and direct replay; MTP is
+still in its earlier untyped mode and target controls explicitly reject it.
+Current source still enqueues math normally. Commit/event overlap, placement/
+configuration substitutions, arbitrary input and whole-port/numerical/erasure
+acceptance remain open. No GPU/model/service/sudo work is authorized; no speed
+trials until the full gate passes. Required Vashti changes:none.
 
 All older checkpoints below are historical.
 

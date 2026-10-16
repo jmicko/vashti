@@ -4914,3 +4914,63 @@ a valid parameter contract. Retained graph submission must own its original
 resources and real queue completion. Only the existing whole-model proofs may
 commit these new invocation receipts. No speed test is authorized by this source
 progress; continue the full completion gate.
+
+## Typed target invocation parameters (2026-10-16)
+
+Source`e91677a` connects typed position/route-epoch controls to the actual target
+branch, preserving its static key and original request nonce. The native QSA INFO
+launcher declares position word1; global route/reduce declare epoch word2. Other
+INFO words must remain exactly the captured constants. Dynamic fields are never
+discovered by comparing bytes to an old position or epoch. The target coordinator
+supplies its real m.position and the active global-MoE epoch after preparation.
+
+The original QSA positions_batch scalar depended on the current position inside
+generic launch metadata. Native `Kernel::Positions` now performs exactly that
+bounded contiguous position/TOKEN-status stamp using the same typed INFO record.
+Its TOKEN and maximum-position constants derive from qsa_gpu's original geometry.
+It conveys no completion/commit credit; subsequent append/fault proofs still gate
+state. Other GDN/GR/PLE scalar offsets are not falsely tagged as positions.
+
+Branch parameter records retain explicit field schemas, immutable template bytes
+with declared dynamic words zeroed, and original uniform owner/offset/length. On
+repeat, stale supplied controls, changed constants/schema/owner/offset or shape
+fail before submission. Actual mapped upload bytes are rendered from the template
+and fresh typed controls through a write-only callback; no readable mapping or
+unsafe cast bypasses WGPU's write-only contract. The first compile caught that
+write-only view distinction and the callback resolves it. No new GPU root exists.
+Templates wipe their full CPU allocation capacity at request cleanup; active
+controls are cleared at branch close/retirement and are never Debug/Hash/Serialize
+or cache keys. Template payload is bounded to2MiB and included in the existing
+shared4MiB metadata admission, along with record/schema capacities. Uniform roots
+remain pinned in the original transient ledger and follow existing queue joins,
+recording-reference release and full erasure. Template metadata is not an erasure
+or device-completion receipt.
+
+This is a connected target control-rendering path, **not complete direct graph
+launch**. Current target calls still traverse/enqueue kernels and validate their
+exact recording signature. MTP branches deliberately retain their existing
+untagged invocation mode; typed target controls reject an MTP shape. Do not claim
+MTP parameter-program completion or enable no-enqueue execution from this block.
+
+CPU-only receipts in `/media/jmicko/faststore/kuno-development`:
+- `strata-native-typed-invocation-check-final-20261016.log`: release check passes.
+- `strata-native-typed-invocation-test-build-20261016.log` and
+  `strata-native-typed-invocation-cpu-tests-20261016.log`:28cases pass:6branch
+  layout/typed renderer,16QSA batch lifecycle,2QSA layout/math,4MTP front. The new
+  tests check fresh output with identical recording key/original binding, zeroed
+  dynamic template words, stale/static/schema/binding rejection, context/epoch/
+  field/duplicate/budget bounds, and absence of retained payload after rejection.
+- `strata-native-typed-invocation-build-20261016`: locked release artifact at
+  e91677a, SHA256`9896b0212cf332422fa23e2c19e2a3a3915fa5fbebf0c6191a382b5bd6381db1`.
+- `strata-native-typed-invocation-shaders-20261016.log`:327generated variants
+  plus native matrix lowering and physical expert-pointer checks pass with the
+  pinned current spirv-val, including the new position-stamping entry.
+- `strata-native-typed-invocation-{core,off}-clippy-20261016.log`: strict locked
+  release checks pass; changed-file formatting and whitespace checks pass.
+
+No GPU/model/service/sudo work, private-content test, or speed comparison ran.
+Full native numerical/startup/state/owning-erasure acceptance remains pending.
+Next: direct retained target submission with GR/shared/expert/replay bookkeeping
+and original armed receipts, then the MTP round/step control program and direct
+submission. Retain commit/event, placement/configuration, arbitrary-input and
+whole-source audit requirements. Goal active, CPU-only. Required Vashti changes:none.

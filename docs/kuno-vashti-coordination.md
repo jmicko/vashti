@@ -6,8 +6,8 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through`f965f63`. Read the latest
-[attention-transaction handoff](#active-kuno-engine-handoff--attention-transactions-before-graph-capture-2026-10-16)
+`codex/strata-rust-port`, engine source through`e91677a`. Read the latest
+[typed target invocation handoff](#active-kuno-engine-handoff--typed-target-invocation-parameters-2026-10-16)
 and [completion gate](kuno-strata-rewrite-completion.md). CJK draft head is now
 integrated with INT8 caches.25 focused CPU tests,326 offline shader variants and
 release build pass. Direct graph invocation and full numerical/GPU acceptance
@@ -6085,3 +6085,25 @@ Continue typed invocation parameters and direct retained graph launch, preservin
 actual GR/shared/MoE/replay metadata and original completion/commit proofs. This
 is connected preparation, not complete no-enqueue execution. Numerical/hardware
 and speed acceptance remain pending. Goal active, CPU-only.
+
+
+### Active Kuno engine handoff — typed target invocation parameters (2026-10-16)
+
+Source`e91677a` supplies actual target position/global route epoch outside branch
+keys. Native QSA INFO declares its position field; route/reduce declare epoch.
+Retained records bind exact schema/static template/original uniform owner+offset.
+Dynamic words are zeroed in CPU templates and actual upload bytes render from
+fresh controls through write-only mapping. Stale values or changed constants/
+schema/binding fail; no value-search heuristic or mapped-read bypass. The QSA
+positions stamp now uses this native INFO path. No GPU root added.
+
+28focused CPU tests,327offline shader variants, locked release build and strict
+core/off Clippy pass. Full details and immutable artifact hash are in completion
+guide **Typed target invocation parameters**. No GPU/service/sudo operations or
+private input tests ran. No whole-engine numeric/performance/erasure acceptance.
+
+Current calls still enqueue math. Continue direct target graph submission with
+all original logical consumer/replay state and output/fault proofs, then MTP
+round/step typed controls and direct replay. MTP remains in earlier untyped mode;
+target invocation controls reject MTP keys, preventing false completion claims.
+No application API change; required Vashti changes:none. Goal active, CPU-only.
