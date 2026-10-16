@@ -6,17 +6,16 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through`e91677a`. Read the latest
-[typed target invocation handoff](#active-kuno-engine-handoff--typed-target-invocation-parameters-2026-10-16)
-and [completion gate](kuno-strata-rewrite-completion.md). CJK draft head is now
-integrated with INT8 caches.25 focused CPU tests,326 offline shader variants and
-release build pass. Direct graph invocation and full numerical/GPU acceptance
-remain incomplete; no new speed result.
+`codex/strata-rust-port`, engine source through `d40442c`. Read the latest
+[direct target replay handoff](#active-kuno-engine-handoff--direct-target-graph-replay-2026-10-16)
+and [completion gate](kuno-strata-rewrite-completion.md). Direct target submission
+is now connected in source; MTP direct replay and full GPU/numerical acceptance
+remain incomplete. No new speed result.
 
-Goal is active for **CPU-only work**. No GPU/model/service/sudo work is authorized
-by this continuation. Last physical recovery evidence remains historicalOct15;
-this pass touched no installed services, runtime configuration or model files.
-No application API change; required Vashti changes:none.
+The user authorized **CPU-only continuation**; the goal controller is active.
+No GPU/model/service/sudo work is authorized by this continuation. Last physical
+recovery evidence remains historical Oct15. Installed services, runtime settings,
+model files and application APIs were untouched. Required Vashti changes:none.
 
 ## Ownership
 
@@ -6107,3 +6106,31 @@ all original logical consumer/replay state and output/fault proofs, then MTP
 round/step typed controls and direct replay. MTP remains in earlier untyped mode;
 target invocation controls reject MTP keys, preventing false completion claims.
 No application API change; required Vashti changes:none. Goal active, CPU-only.
+
+### Active Kuno engine handoff — direct target graph replay (2026-10-16)
+
+Engine `d40442c`, same isolated checkout. This supersedes the earlier statement
+that every repeated target window must traverse/enqueue all its math. Source now
+bulk-renders the actual typed INFO program and submits the original retained native
+recording after real upload and queue-fence completion. The selected target loop
+uses this automatically for eligible cache hits, consuming the original prepared
+GDN/QSA/PLE transactions and preserving all output/fault/commit/erasure checks.
+
+The private CubeCL runtime contract adds `replay_native_strata_branch`: false only
+for an unavailable/unsupported recording before replay mutation; true only after
+actual completion; errors retire the request rather than falling back. It is not a
+wire API, state acceptance or erasure receipt. Original request nonce, static key,
+state role, resource inventory, INFO owner/offset, accounting and full cleanup stay
+required. The verification usage flag is refreshed alongside position/route epoch.
+No separate image/text authentication, connector or frontend changes.
+
+Limits and exact receipts are in completion guide **Direct retained target graph
+submission**.52 focused CPU tests,327 offline shader variants, immutable release
+build and strict selected/off Clippy pass. No full-model
+or speed claim. MTP is still in its old untyped mode. Its first input staging and
+observation boundaries must be separated before adding equivalent direct replay;
+see the current native text checkpoint for exact entry points and dependencies.
+
+Work and the active goal are CPU-only. No GPU/service/sudo operations or installation.
+Required Vashti changes:none. Existing unrelated files and canonical checkout remain
+untouched. Do not run throughput comparisons until the whole rewrite gate passes.

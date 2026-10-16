@@ -59,7 +59,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native INT8 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Positive-threshold chains now keep hidden carries on device and observe the same token/probability/fault packet as zero-threshold chains; mapped/event scheduling remains open. First/grouped device-source and ids-only target result consumers now exist; the shared-context constructor receipt below supersedes the separate-client blocker. Core construction now selects the actual target client and one combined account. Source9de7fef pins the original target embedding/head once, shares them with MTP and gathers target embeddings on GPU. Actual device/state acceptance is pending. Source0bfbea8 connects the original-order CJK106299-row Q6 draft head, inverse-ID history mapping, compact confidence and coupled sampling; source2a3d1ad connects INT8 caches. Combined CPU checks pass, with full numerical/GPU execution still pending. Queue/branch/capture fidelity, numerical/state acceptance and runtime policy remain required. See the latest device-end receipt. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Sourcea26adc2 ports the native bounded trigram index, longest/recent suffix choice, cost priors, probing/stale rules and optional lookup-chain accounting into the selected controller. Configured MTP/target windows no longer shrink at the output cap; state commit and emission are separate. Coupled sampling and physical state acceptance still need end-to-end validation. |
 | Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Real greedy verification/state-only repair exists. Audit all active windows and acceptance cases against GDN/QSA/PLE/positions; independent correctness oracle remains missing. |
-| Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; physical ring overlap, stable complete branch recordings, scratch lifetimes and full execution acceptance remain open. Measured serving lazily captures branches; eager all-branch warmup is not a prerequisite; a sequence of independent Wgpu launches is not equivalent. |
+| Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; Source `d40442c` connects direct retained target submission with typed control uploads and original family receipts; draft graph invocation remains incomplete. Physical ring overlap, scratch lifetimes and full execution acceptance remain open. Measured serving lazily captures branches; eager all-branch warmup is not a prerequisite; a sequence of independent Wgpu launches is not equivalent. |
 | Request lifecycle and arbitrary input | upstream CLI/session/inference entry points | Current Rust public-fixture gate is not a general engine. Connect bounded arbitrary prompts and request-local sampling/history, with no persistent content, protected memory and orderly erase/close. No gateway/UI work required. |
 
 ## Validation and the speed gate
@@ -4974,3 +4974,82 @@ Next: direct retained target submission with GR/shared/expert/replay bookkeeping
 and original armed receipts, then the MTP round/step control program and direct
 submission. Retain commit/event, placement/configuration, arbitrary-input and
 whole-source audit requirements. Goal active, CPU-only. Required Vashti changes:none.
+
+## Direct retained target graph submission (2026-10-16)
+
+Engine `d40442c` connects a real no-enqueue repeat target path. Pinned Intel
+`verify.cpp::capture` records the window once and `Verifier::run` stages fresh
+controls before launch. The Rust backend now likewise submits the actual retained
+Vulkan command inventory, resource grants and original compute/copy queue plan.
+First execution still constructs the original graph; normal repeats bypass the
+model's math traversal, kernel creation, descriptors, nodes and signature rebuild.
+
+`Parameters::replay_key/begin_replay` require the exact request nonce, target shape,
+typed sealed single segment, complete original pages and bound templates. Fresh
+expressions preflight before mapping. Full original INFO pages get zero padding,
+static template bytes and fresh position/route epoch/verification-usage values via
+write-only callbacks. No per-kernel INFO allocation or per-record kernel enqueue
+occurs on the direct path. Upload sources remain in the original mapped/unmap,
+charge and full-erasure ledger; no new GPU root is added. Original template bounds
+(2MiB) and shared metadata admission (4MiB) remain enforced.
+
+`WgpuStream::replay_native_strata_branch` drains prior gathers/clears/PLE staging,
+checks the real recording, stages/uploads parameters, waits for actual upload
+completion, submits `Graph::replay_recording`, joins the native fence, and closes
+the branch. The recording retains its original resources and compute count; partial
+submission failures preserve the existing conservative in-flight ownership.
+True only means this actual execution completed. False is only a pre-replay miss;
+errors are terminal to the request and never fall back to fabricated execution.
+
+The target coordinator checks original source publication, prepares all original
+attention and PLE transactions before replay, and consumes them only after the real
+submission. GDN input-cache copies are part of the recording; their CPU start/count/
+chunk stamps are updated to exactly the current receipt. GDN original old/next role
+must match. QSA original policy/anchor/caches remain checked. GR and shared workspaces
+start/end idle with all read/combine/prepare/finish consumers present in the original
+recording. Global MoE advances only queue bookkeeping, then still reads and verifies
+all48 actual count/epoch/reduction/layer stamps. The unchanged output and two fault
+proofs, family preflight, accepted-prefix commits and final erasure remain mandatory.
+The new private joined-submission token grants none of those permissions itself.
+
+Source audit caught two previously untagged positions: native GDN INFO word1 and
+QSA radix-selection word1. GDN AB closing status has constant zero instead, so it is
+explicitly not tagged. Route INFO word3 is a separate `RouteUsage` control: target
+verification toggles that flag, and replay must not reuse the captured old value.
+The reduction packet's unrelated constant zero is not tagged. Active controls and
+static CPU templates retain their existing wiping and non-logging behavior.
+
+Scope: nonzero-position AllRowsWithCarry target windows on active request reuse,
+with a complete typed single-segment recording. Position0 initialization is left
+uncaptured. Lab numeric observations/cancel hooks/grouped-status experiments keep
+the existing enqueue path. Unsupported/multiple-segment recordings cannot be
+flattened: there may be host observations between segments. MTP remains untyped;
+its round/step input staging, observation, position and sampler/history bookkeeping
+must be ported together next. Commit/event overlap, source-placement/configuration
+substitutions, arbitrary input and the final whole-source audit remain open.
+
+CPU receipts under `/media/jmicko/faststore/kuno-development`:
+- `strata-direct-target-replay-final-test-build-20261016.log` and
+  `strata-direct-target-replay-final-cpu-tests-20261016.log`:52 tests pass,
+  including11 actual vendor program tests. The five added cases cover sealed/typed/
+  nonce/segment admission, original multi-page rendering and zero padding, invalid
+  owners/extents before writes, complete expression preflight and usage-flag refresh
+  without changing keys or growing metadata. Existing GDN/QSA lifecycle, GDN math,
+  MTP front and admitted metadata cases pass. The final source-publication guard is
+  typechecked by selected/off Clippy and included in the immutable release build;
+  these CPU tests do not exercise device execution.
+- `strata-direct-target-replay-final-{core,off}-clippy-20261016.log`: strict locked
+  selected-core and feature-off release checks pass. Changed-file formatting and
+  whitespace checks pass. The first test script caught a nonexistent metadata-test
+  filter and was corrected; zero-test runs were not counted as acceptance.
+
+- `strata-direct-target-replay-build-20261016.out` and its artifact directory:
+  immutable locked release at `d40442cef7a0536f32fa4f2eb68531165daaa705`,
+  SHA256 `68fc3570ef389f15c2be4bf0619e2f18d8fd36b6486d4032c80493559dad52c9`.
+- `strata-direct-target-replay-shaders-20261016.log`:327 generated variants plus
+  cooperative-matrix lowering and physical expert-pointer checks pass using the
+  pinned current spirv-val. CLI returns before vendor/adapter/device setup.
+
+No GPU model,
+private-content test, numerical/model acceptance, speed trial, install, service or
+sudo action occurred. Full rewrite is still incomplete. Required Vashti changes:none.

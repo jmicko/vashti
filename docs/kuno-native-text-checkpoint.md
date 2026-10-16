@@ -1,49 +1,65 @@
-<!-- Current resume: 2026-10-16, sourcee91677a, codex/strata-rust-port.
-Goal active; CPU-only continuation. Whole rewrite incomplete; no speed trials. -->
-# Native DASLab/Strata checkpoint — 2026-10-09
+<!-- Current resume: 2026-10-16, source d40442c, codex/strata-rust-port.
+CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
+# Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch`codex/strata-rust-port`, engine source through`e91677a`. The active goal
-resumed CPU-only work. GPU/model/service/sudo work still requires renewed user
-authorization. Last physical recovery evidence is historical06:07:22Z onOct15;
-no subsequent GPU run, service query or live health claim was made this pass.
+branch `codex/strata-rust-port`, engine source through `d40442c`. The user authorized
+continuing CPU-only work; the goal controller is active for that scope.
+GPU/model/service/sudo work still needs renewed user authorization. Last physical recovery evidence
+is historical 06:07:22Z on Oct15; no subsequent GPU run or live health claim.
 
-Read the [combined CPU integration receipt](kuno-strata-rewrite-completion.md#cjk-and-int8-combined-cpu-integration-2026-10-16)
-and latest coordination handoff. CJK isolated sourcecd703bc is now integrated as
-`0bfbea8`; **do not cherry-pick it again**. Original-order106299-row Q6 head,
-compact confidence and inverse-ID coupled sampler are connected with INT8 caches.
-Source`83035de` adds actual compact-head full/tail shader validation and preserves
-checked full-vocabulary sampler sizing. Source`ed6373d` collapses an equivalent
-map guard for strict Clippy.
+Read the latest [direct target submission receipt](kuno-strata-rewrite-completion.md#direct-retained-target-graph-submission-2026-10-16)
+and coordination handoff. Earlier CJK source `cd703bc` was integrated as `0bfbea8`;
+**do not cherry-pick it again**. Its original 106299-row Q6 head, inverse-ID sampler
+and target/MTP INT8 caches remain connected.
 
-CPU checks:25 focused cases pass;326 offline shader variants plus matrix lowering
-pass; locked release build passes. Strict core and feature-off Clippy checks are
-recorded in the completion receipt. Full core regression and numerical/GPU/state/
-owning-erasure acceptance remain incomplete. No new generation or speed result.
+**Latest substantial block:** `d40442c` connects actual direct target graph replay.
+The first eligible verification window captures normally. A repeat with the same
+request nonce, static shape and original GDN state role bulk-renders fresh position,
+routing epoch and verification-usage controls into its original INFO roots, joins
+the uploads, and submits the original retained Vulkan commands without rebuilding
+kernels, nodes, descriptors or signatures. The target skips its math enqueue loop.
+Original GDN/QSA/PLE pre-armed transactions then consume the completed submission;
+GR/shared must be idle, GDN replay-cache metadata gets the exact current stamp, and
+MoE queue bookkeeping still requires the unchanged actual48-layer stamp readback.
+Output, fault, accepted-prefix commit and erasure proofs are unchanged.
 
-**Latest connected block:** source`f965f63` prepares all48 GDN/QSA original
-armed transactions before graph capture, then each real layer's enqueue consumes
-its exact invocation. PLE staging was already separate. No GPU owners are added;
-extra fixed metadata is charged under the existing cap. Legacy callers compose
-the same phases.38 focused CPU tests and strict core/off release Clippy pass;
-see the completion guide's Attention preparation CPU receipts.
+Source review also fixed missing position declarations in GDN native packets and
+QSA selection. Only real GDN position packets are tagged; AB closing status uses
+constant zero. Route usage is a separate typed control because target verification
+can toggle it; reduction's unrelated zero is not tagged. A source-ready check runs
+before replay even though per-layer enqueue is skipped.
 
-**Latest parameter block:** source`e91677a` connects typed current-position and
-routing-epoch fields to actual target INFO uploads. Static templates, schemas and
-original uniform bindings are checked; dynamic template words are zeroed and
-fresh values render through write-only mapped-source callbacks. Native QSA
-positions stamping now uses the same path.28 focused CPU tests,327 offline shader
-variants, locked release build and strict core/off Clippy pass. Read the Typed
-target invocation parameters receipt for exact logs, artifact hash and limits.
+**Limits:** only fully sealed typed **single-submission** target recordings qualify.
+Position0 initialization stays outside capture. Cold, unsupported or multi-segment
+shapes use the existing capture/enqueue path; an upload/submission error is terminal,
+never a cache miss. Lab numeric observations, cancellation hooks and grouped-status
+experiments retain their actual boundaries. MTP remains untyped and still enqueues
+its math. No new GPU owner or content persistence was added.
 
-**Next substantial block:** direct retained target graph launch with actual
-GR/shared/expert/replay bookkeeping and the original prepared attention/PLE
-receipts. Then implement MTP round/step typed controls and direct replay; MTP is
-still in its earlier untyped mode and target controls explicitly reject it.
-Current source still enqueues math normally. Commit/event overlap, placement/
-configuration substitutions, arbitrary input and whole-port/numerical/erasure
-acceptance remain open. No GPU/model/service/sudo work is authorized; no speed
-trials until the full gate passes. Required Vashti changes:none.
+CPU receipts:52 focused tests pass (11 actual vendor parameter-program tests,
+18 GDN lifecycle,16 QSA lifecycle,2 GDN math,4 MTP front,1 admitted metadata test).
+Strict selected-core and feature-off release Clippy pass. Immutable release build
+and327 offline shader variants plus matrix/physical-pointer validation pass; exact
+artifact hash and logs are in the completion guide.
+These are not whole-model/GPU/numerical acceptance. Historical full-core regression
+failures remain untriaged; do not call the complete regression suite green.
+
+**Next block:** MTP round/step typed controls and direct submission. Inspect
+`resident_mtp_window.rs::queued_window_with_minimum` and `resident_mtp.rs::queue_native_front`.
+The first front currently uploads TOKEN and copies device carries inside the branch;
+move original staging before capture without releasing the borrowed target carry.
+The observation currently seals/reads inside the branch; separate capture end from
+actual readback so observations are not silently flattened into one recording.
+Positive-threshold chains must still observe each actual proposal. Follow-up copies,
+position increments, guards, scratch clears, RNG/history and final forward stamps
+need their exact coupled consumers; never synthesize completion from a cache key.
+Do not generalize single-segment replay to arbitrary segments with host observations.
+
+Commit/event overlap, embedding placement/context/prefill substitutions, arbitrary
+input, final source audit and whole-model/numerical/owning-erasure acceptance remain
+open. No live speed trials before the whole-port gate passes. No installation,
+service, configuration or model changes this pass. Required Vashti changes:none.
 
 All older checkpoints below are historical.
 
