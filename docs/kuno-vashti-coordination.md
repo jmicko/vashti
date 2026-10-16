@@ -6,8 +6,8 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through `89da25f`. Read the latest
-[mapped embedding handoff](#active-kuno-engine-handoff--mapped-host-embedding-2026-10-16)
+`codex/strata-rust-port`, engine source through `669437d`. Read the latest
+[4096-row prompt handoff](#active-kuno-engine-handoff--4096-row-prompt-capacity-2026-10-16)
 and [completion gate](kuno-strata-rewrite-completion.md). Direct target/MTP
 submission, accepted-prefix state publication and retained commit graph are connected
 in source. Original pending submissions/joins and scoped next-draft consumption are connected;
@@ -6653,3 +6653,41 @@ Frozen ordinary selected release builds at source89da25f in
 SHA2566016128a10833a9ef2448209e25f43afe2dac4e4cfbb7c895fa7f43f44fb840c.
 No binary/device/model execution occurred. Use this current artifact instead of
 stale0bf0b5f when protected correctness work is authorized; no speed trials yet.
+
+
+### Active Kuno engine handoff — 4096-row prompt capacity (2026-10-16)
+
+Source `bcc30dd` connects4096-row prompt capacity to actual full scratch owners,
+router/grouped packets and native shader ABI. Three512MiB roots become three1GiB
+roots;128MiB working images, larger GU/PART/maps/status and matching HOST/runtime
+quotes are priced before allocation. Private allocator cap/pool bins, MAIN page
+admission, actual device-limit checks and complete erasure bounds move together.
+This conservatively adds1.5GiB MAIN scratch, with exact upstream aliasing/pricing
+still open. No observed free-memory credit or speed result. MAX8 is unchanged.
+
+320 focused CPU cases/33 nonempty suites, strict selected/off lints, normal frozen
+build and330 offline shader validations pass. An additional legacy budget test
+fails at an unchanged16K expected/core32K scratch fixture BEFORE its runtime-cap
+assertion. Full regressions and actual runtime-cap/device execution acceptance
+remain open. Exact failure/receipts: completion guide **Connected4096-row prompt
+capacity**. The unchanged4096 context still prevents a full4096 prefix plus decode;
+32768 context and general request entry remain next connected dependencies.
+
+Frozen sourcebcc30dd: `strata-prompt4096-ordinary-20261016/`,
+SHA256d702405db8e7d9d6195af21b115a851194176e12a2bb95c1ef692cfa9560b93d.
+Supersedes89da25f. Shader source changes are internal; no public API/connector/UI
+change, required Vashti changes:none. No GPU/model/service/protected inference/
+install/release action. Sudo refresh succeeds; goal active for CPU-only work.
+
+Follow-up source `669437d` fixes the native dispatch inventory: actual prompt/
+erasure grids require65535 groups along X, so the old16384 guard was insufficient.
+Legacy mode retains its old requirement. Exact-one-below inventory tests, all320
+focused cases and selected/off strict lints pass again. Shader sources/ABI are
+unchanged from bcc30dd's330 offline validations. Use the latest ordinary artifact
+recorded in the completion receipt for future authorized protected work.
+
+Latest normal frozen source669437d builds successfully:
+`strata-prompt4096-grid-ordinary-20261016/`,
+SHA256b6febebaad8e980ce3dfde92ff0094b5beb4bc53c0d0a1da6d64305667c56b0f.
+Supersedes the pre-guard bcc30dd artifact. No binary device/model execution;
+330 offline validations refer to bcc30dd's identical unchanged shader sources.
