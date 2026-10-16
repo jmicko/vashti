@@ -1,22 +1,22 @@
 # Strata Rust whole-model port experiment
 
-**Current CPU-only resume (2026-10-16):** source `5b520bb50de8bc39387c42e42166ab24437d6447`.
-Read the [mapped-embedding receipt](kuno-strata-rewrite-completion.md#original-mapped-embedding-gather-2026-10-16)
-and [checkpoint](kuno-native-text-checkpoint.md). Target and shared MTP front/
-teaching now gather original mapped HOST embedding rows in one32-lane/block
-launch with native eight-value ownership/two float4 stores, using original source
-table0's unused tail and all actual page read dependencies. No new allocation,
-model copy, format/pricing or API change.522 selected CPU cases /65 suites and
-strict core/off lint pass. Normal source-clean/stable artifact `strata-embedding-gather-ordinary-20261016/`
-(`strata-embedding-gather-ordinary-20261016.out`) has SHA256
-`6f6e8c34069852c1bd7725bae7a417a54d036c38aa4b70d3e623f63dc4578c77`.
+**Current CPU-only resume (2026-10-16):** source `ffe7293be448bb62ebc48e0ad9c51e11cc79c7af`.
+Read the [wide-Q6 receipt](kuno-strata-rewrite-completion.md#native-aligned-wide-q6-heads-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). Actual target/compact-CJK MTP
+heads use default aligned wide Q6 A2/RPW1/SG32, original210-byte rows, eight lanes/
+block and four blocks/subgroup, exactly1–8 RHS variants, same existing roots and
+Q8/private scratch.527 selected CPU cases /66 suites and strict core/off lint pass.
+Normal source-clean/stable artifact `strata-wide-q6-ordinary-20261016/`
+(`strata-wide-q6-ordinary-20261016.out`) has SHA256
+`21a58866c2334c3efe54c6db56b4097783b50727b38abdf357b504468989a2dd`.
 Independent original source/hash/mode0500 checks pass. Offline
-`strata-embedding-gather-shaders-20261016.log` exits0 with335 variants and123
-physical-pointer checks from that exact frozen executable. No adapter/device is
-created by this validator.
-No physical/model/speed conclusion. Final source/head/sampling/queue/ownership/
-pricing/substitution and full numerical/state/hot-request/failure/recovery gates
-remain open. Whole rewrite incomplete; no live speed trials or Vashti changes.
+`strata-wide-q6-shaders-20261016.log` exits0 with340 Naga/SPIR-V variants and123
+physical-pointer validation checks from that exact frozen executable. The
+validator returns before adapter/device creation.
+Whole-head page-dispatch remains a concrete implementation gap. Next connect one
+original-root/BDA whole-head launch for both consumers, then final sampling/source/
+ownership/pricing/queue/substitution and protected full-model gates. No physical/
+speed conclusion; whole rewrite incomplete. No API/frontend or Vashti changes.
 
 ## Active direction — finish the complete Rust port before speed testing (2026-10-14)
 

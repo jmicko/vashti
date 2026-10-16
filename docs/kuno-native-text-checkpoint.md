@@ -1,40 +1,47 @@
-<!-- Current resume: 2026-10-16, source 5b520bb50de8bc39387c42e42166ab24437d6447, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source ffe7293be448bb62ebc48e0ad9c51e11cc79c7af, codex/strata-rust-port.
 CPU-only continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, source `5b520bb50de8bc39387c42e42166ab24437d6447`. Goal active CPU-only.
-Read the [mapped-embedding receipt](kuno-strata-rewrite-completion.md#original-mapped-embedding-gather-2026-10-16)
-and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--mapped-embedding-gather-2026-10-16).
-Actual target and shared MTP decode/teaching now use one original mapped embedding
-gather launch, preserving Strata's32-lane/256-value block work sharing and two
-float4 stores per lane. Existing source table0's tail holds the16 authenticated
-original page addresses. All pages remain original HOST registrations and native
-read dependencies. No new GPU/model root, weight copy, kernel numerical format,
-residency quote or API change. Standalone legacy MTP without the shared owner
-retains its older consumer; the selected shared Session uses the new path.
+branch `codex/strata-rust-port`, source `ffe7293be448bb62ebc48e0ad9c51e11cc79c7af`. Goal active CPU-only.
+Read the [wide-Q6 receipt](kuno-strata-rewrite-completion.md#native-aligned-wide-q6-heads-2026-10-16)
+and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--native-wide-q6-heads-2026-10-16).
+Actual target and compact-CJK MTP Q6 heads now select the pinned default aligned
+wide A2/RPW1/SG32 path: real aligned16-byte loads from original210-byte blocks,
+eight lanes/block and four blocks/subgroup, real1–8 RHS specializations and wide
+scale/dot/reduction order. Original weights/Q8 producer/plane/private owners and
+pricing remain; no repack/copy/new root. Other-format/indexed-Q8 paths unchanged.
 
-522 selected CPU cases /65 suites, selected test build and strict core/off lint
-pass. Linked receipt records four new/four newly-included front cases, corrected
-old8MiB context fixture, ownership/lint corrections and physical limits.
-Normal source-clean/stable artifact `strata-embedding-gather-ordinary-20261016/`
-(`strata-embedding-gather-ordinary-20261016.out`) has SHA256
-`6f6e8c34069852c1bd7725bae7a417a54d036c38aa4b70d3e623f63dc4578c77`.
+527 CPU cases /66 suites and strict core/off lint pass. Linked receipt records
+the actual vector-schema/independent GGUF lane tests, newly-included dense cases
+and corrected stale640-column fixture. Normal source-clean/stable artifact `strata-wide-q6-ordinary-20261016/`
+(`strata-wide-q6-ordinary-20261016.out`) has SHA256
+`21a58866c2334c3efe54c6db56b4097783b50727b38abdf357b504468989a2dd`.
 Independent original source/hash/mode0500 checks pass. Offline
-`strata-embedding-gather-shaders-20261016.log` exits0 with335 variants and123
-physical-pointer checks from that exact frozen executable. No adapter/device is
-created by this validator.
+`strata-wide-q6-shaders-20261016.log` exits0 with340 Naga/SPIR-V variants and123
+physical-pointer validation checks from that exact frozen executable. The
+validator returns before adapter/device creation.
 
-**Next:** finish pinned-source head/sampling/queue/ownership/pricing/substitution
-audit. The embedding tile-dispatch substitution is superseded; the original
-physical page segmentation remains necessary for Vulkan storage bounds. Keep
-adaptive serial-proposal/shared-INFO-copy-queue/first-window substitutions explicit.
-Then full protected numerical/state/context/hot-request/failure/recovery acceptance
-under renewed GPU permission before speed. Private executable input remains
-separately gated; current CLI compiled-public/one-request. Whole rewrite incomplete,
-speed gate closed. No GPU/model/service/install/release/API/frontend action;
-required Vashti changes:none. Root not needed; latest shared-shell sudo refresh
-unsuccessful. Recovery historicalOct15. Preserve canonical/inherited work.
+**Next implementation gap:** replace per-page head submissions with one real
+whole-head dispatch for target AND compact-CJK MTP, retaining original roots,
+authenticated BDA metadata/read dependencies and current admission/lifetimes.
+`GpuExecutor::enqueue_strata_dense` and `resident_mtp/cjk::Head::project` still
+loop pages, whereas upstream uses one whole-head MMVQ. Do not confuse a matching
+inner wide kernel with complete head execution. Then final sampling/source/queue/
+ownership/pricing/substitution audit and full protected numerical/state/context/
+hot-request/failure/recovery acceptance under renewed GPU permission. Keep adaptive
+serial-proposal/shared-copy-queue/first-window substitutions explicit. Private
+caller remains separately gated; CLI compiled-public/one-request. Whole rewrite
+incomplete, speed gate closed. No GPU/model/service/install/release/frontend/API
+action; required Vashti changes:none. Root not needed; last sudo refresh
+unsuccessful. Physical recovery historicalOct15. Preserve canonical/inherited work.
+
+**Previous mapped-embedding block (`5b520bb`):** target and shared MTP gather
+original HOST pages once with native32-lane block ownership/two float4 writes,
+using existing source table0 tail and actual read dependencies.522 CPU cases,
+strict core/off lint and335 offline variants/123 physical checks passed then;
+see the [historical receipt](kuno-strata-rewrite-completion.md#original-mapped-embedding-gather-2026-10-16).
+Physical numerical/model behavior and recovery remain unverified.
 
 **Previous adaptive block (`53cd14c`):** original expert copies start after
 verified row release, before commit/next MTP drafting, and join original copy/

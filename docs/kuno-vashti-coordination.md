@@ -6,16 +6,16 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, source `5b520bb50de8bc39387c42e42166ab24437d6447`. Read the
-[mapped-embedding handoff](#active-kuno-engine-handoff--mapped-embedding-gather-2026-10-16)
-and [completion gate](kuno-strata-rewrite-completion.md). Actual target/shared MTP
-consumers gather original mapped embedding rows once, with native32-lane/block
-work sharing and existing address-table space; no new root/model copy.522 CPU
-cases and strict core/off lint pass. Final source/physical/numerical/state/recovery
-acceptance remains open; speed gate closed. No consumer/API change.
+`codex/strata-rust-port`, source `ffe7293be448bb62ebc48e0ad9c51e11cc79c7af`. Read the
+[wide-Q6 handoff](#active-kuno-engine-handoff--native-wide-q6-heads-2026-10-16)
+and [completion gate](kuno-strata-rewrite-completion.md). Actual target/compact-CJK
+MTP heads select native aligned wide Q6 with original roots and exact1–8 RHS
+variants.527 CPU cases and strict core/off lint pass. Whole-head page-dispatch is
+still an implementation gap; final source/physical/numerical/recovery gates stay
+open. Whole rewrite incomplete; no live speed trials or consumer/API change.
 
 Continuation CPU-only; goal active. No GPU/model/service/install/release/frontend
-action. Root not needed; latest shared-shell sudo refresh unsuccessful. Recovery
+action. Root not needed; last shared-shell sudo refresh unsuccessful. Recovery
 historicalOct15. Preserve canonical/inherited work. Required Vashti changes:none.
 
 ## Ownership
@@ -7239,3 +7239,38 @@ the independent protected-private-caller boundary; current CLI compiled-public/
 one-request. No GPU/model/inference/service/install/release/frontend action or
 new physical speed claim. Required Vashti changes:none. Goal active CPU-only;
 root not needed. Canonical/inherited files preserved. No deployment authorization.
+
+## Active Kuno engine handoff — native wide Q6 heads (2026-10-16)
+
+Source `ffe7293be448bb62ebc48e0ad9c51e11cc79c7af`, isolated `codex/strata-rust-port`. Read the
+[source/test receipt](kuno-strata-rewrite-completion.md#native-aligned-wide-q6-heads-2026-10-16) and
+[checkpoint](kuno-native-text-checkpoint.md). Target and compact-CJK MTP Q6
+consumers now select aligned wide A2/RPW1/subgroup32, four blocks per subgroup,
+eight lanes per block and actual1–8 RHS variants. Original210-byte weights,
+Q8 producer/plane, private/public owners and pricing remain; no weight copy or
+new GPU root. Other-format/indexed Q8 consumers are unchanged.
+
+527 CPU cases /66 suites, selected release check/test build and strict core/off
+lint pass. Linked receipt distinguishes actual vector/schema/lane coverage,
+newly-included dense cases and the corrected old640-column test fixture.
+Normal source-clean/stable artifact `strata-wide-q6-ordinary-20261016/`
+(`strata-wide-q6-ordinary-20261016.out`) has SHA256
+`21a58866c2334c3efe54c6db56b4097783b50727b38abdf357b504468989a2dd`.
+Independent original source/hash/mode0500 checks pass. Offline
+`strata-wide-q6-shaders-20261016.log` exits0 with340 Naga/SPIR-V variants and123
+physical-pointer validation checks from that exact frozen executable. The
+validator returns before adapter/device creation.
+
+**Remaining implementation:** whole-head dispatch over original bounded target
+and compact-CJK roots, authenticated BDA metadata/read dependencies and exact
+ownership/admission. Current controllers still loop pages; upstream uses one
+launch. This is not complete because the inner wide kernel matches. Then final
+sampling/source/queue/ownership/pricing/substitution audit and full protected
+numerical/state/context/reuse/failure/recovery acceptance under renewed GPU
+permission. Whole rewrite incomplete; speed gate closed. No physical speed/
+residency or model-parity claim. Keep existing adaptive substitutions and the
+independent protected-private-caller gate (CLI remains compiled-public/one-request).
+
+No API/protocol/config/consumer change; required Vashti changes:none. No GPU,
+model, inference, service/install/release/frontend action. Goal active CPU-only;
+root not needed; canonical/inherited files preserved. No deployment authorization.
