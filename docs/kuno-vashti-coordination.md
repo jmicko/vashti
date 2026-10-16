@@ -6,11 +6,11 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through `131d29c`. Read the latest
-[direct accepted-prefix handoff](#active-kuno-engine-handoff--direct-accepted-prefix-2026-10-16)
+`codex/strata-rust-port`, engine source through `4083258`. Read the latest
+[retained commit graph handoff](#active-kuno-engine-handoff--retained-commit-graph-2026-10-16)
 and [completion gate](kuno-strata-rewrite-completion.md). Direct target/MTP
-submission and accepted-prefix state publication are connected in source. Pending
-commit graph/event fidelity and full GPU/numerical acceptance remain incomplete.
+submission, accepted-prefix state publication and retained commit graph are connected
+in source. Pending event/draft fidelity and full GPU/numerical acceptance remain incomplete.
 No new speed result.
 
 The user authorized **CPU-only continuation**; the goal controller is active.
@@ -6282,7 +6282,7 @@ API/connector/UI change, installation or release. Required Vashti changes:none.
 
 ### Active Kuno engine handoff — GPU PLE history (2026-10-16)
 
-Engine source through `131d29c` (includes `595393e`) keeps native PLE float history
+Engine source through `4083258` (includes `595393e`) keeps native PLE float history
 in the existing original GPU OLD/NEXT owners across prompt, decode and prefix
 repair. Default float readbacks/uploads and the prompt diagnostic tail copy are
 removed together; host publication advances only the two original ngram token IDs.
@@ -6338,3 +6338,33 @@ remain explicit backend substitutions for final review.
 Goal stays active for CPU-only work. Installed services/runtime/models remain
 untouched; last physical recovery evidence is historical Oct15. No sudo, install,
 deployment, release, API/connector/UI changes. Required Vashti changes:none.
+
+
+### Active Kuno engine handoff — retained commit graph (2026-10-16)
+
+Engine source `4083258` connects the actual selected prefix consumer to a retained
+multirow commit graph. Every cold/hit path rechecks original armed family/input
+receipts and exact proposed extents. Model-instance/proposed-T/context/root-role
+keys exclude accepted n and position; those are explicit typed INFO controls.
+The fixed133-command body retains all rejection consumers even when captured
+with all proposals accepted. Count1 uses its original candidate without a graph.
+Actual native finite/zero folds and subsequent original joint fault/I/O/family
+proof remain. No new GPU state root, runtime budget or public API is added.
+
+104 focused CPU cases, strict selected/off Clippy, immutable release and330
+shader variants pass. Exact source/hash/logs are in completion guide **Retained
+native commit graph and explicit accepted count**. These establish source/CPU/
+offline integration, not GPU numerical/visibility acceptance or speed.
+
+The current submission APIs still join. Next is the real pending event and draft
+consumer together with INFO/queue hazards. Global stream drains, copy completion,
+live uniform destinations and queue-switch signals must be handled coherently.
+MTP preparation (output clear, TOKEN/carry staging) precedes named-branch begin;
+it also needs the independent lane and a verified-row dependency established
+before commit, rather than a main signal queued behind commit. Retain original
+family/carry/flight owners through dependent proof and final/cleanup joins.
+Do not claim overlap from wait=false or a host flag.
+
+Goal stays active for CPU-only work. No GPU/model/sudo/service, installation,
+deployment, release or API/connector/UI action. Last physical recovery evidence
+remains historical Oct15. Required Vashti changes:none.

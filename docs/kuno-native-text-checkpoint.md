@@ -1,19 +1,51 @@
-<!-- Current resume: 2026-10-16, source 131d29c, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source 4083258, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, engine source through `131d29c`. The user authorized
+branch `codex/strata-rust-port`, engine source through `4083258`. The user authorized
 continuing CPU-only work; the goal controller is active for that scope.
 GPU/model/service/sudo work still needs renewed user authorization. Last physical recovery evidence
 is historical 06:07:22Z on Oct15; no subsequent GPU run or live health claim.
 
-Read the latest [direct accepted-prefix receipt](kuno-strata-rewrite-completion.md#native-accepted-prefix-before-state-publication-2026-10-16)
+Read the latest [retained commit graph receipt](kuno-strata-rewrite-completion.md#retained-native-commit-graph-and-explicit-accepted-count-2026-10-16)
 and coordination handoff. Earlier CJK source `cd703bc` was integrated as `0bfbea8`;
 **do not cherry-pick it again**. Its original 106299-row Q6 head, inverse-ID sampler
 and target/MTP INT8 caches remain connected.
 
-**Latest direct accepted-prefix block:** `131d29c` connects the selected global
+**Latest retained commit graph:** `4083258` connects original preflight and real
+capture/direct replay in `resident_native_commit.rs`. Multirow commits have their
+own model-instance/proposed-T/context/GDN-PLE-role namespace. Accepted n and current
+position are typed invocation INFO; they are never graph keys or frozen constants.
+Every warm hit rechecks original armed family/input receipts and their exact
+start/proposed extents. Count1 self-commits its existing candidate without a graph.
+
+All133 multirow consumers keep fixed proposed-span geometry:36 native GDN
+Conv/Replay/finite-status fold triplets,12 QSA clear/fold pairs and1 PLE History.
+Accepted n bounds actual work inside those kernels; all-accept QSA is a real
+zero-length no-op within the same graph. This avoids capturing an all-accept body
+that omits the later rejection consumers. Actual cold/hit submissions still join
+through the original runtime API, and the original fault/I/O/family proof still
+precedes state publication. No new GPU state root or I/O budget is added.
+
+104 focused CPU cases and strict selected/off Clippy pass. New actual vendor
+parameter tests replay original pages across every prefix1..T, all4 original
+binding roles and final-context positions, keeping one erased template per shape;
+the one-model122-shape inventory fits the original128-branch bound. These are
+not physical GPU/visibility/numerical acceptance. Immutable/offline shader
+receipts are in the completion guide. **No async overlap is claimed.**
+
+Next is the actual pending event and independent draft consumer. Review the
+single INFO uploader, stream drains, live uniform destinations, queue-switch
+handoffs and MTP preparation *before* its named branch together. The current
+MTP `prepare_window_first` happens before `begin_native_strata_invocation`:
+leaving that work on main behind a pending commit would serialize drafting.
+A dependency on verified-row readiness must be signaled before commit, rather
+than a new main-queue signal placed behind commit. Original resources/permits,
+final proof and failure/cleanup joins must stay owned. Keep the whole rewrite
+incomplete and do not use incidental speed to choose or abandon components.
+
+**Earlier direct accepted-prefix block:** `131d29c` connects the selected global
 controller to `ResidentModel::verify_native_prefix`, using an exclusive scoped
 observer of the real provisional target rows. Every original family transaction
 remains armed with its full proposed-window stamp. The observer chooses n and
@@ -279,11 +311,10 @@ disarmed just because work was submitted. A scoped post-submit draft consumer
 while permits remain on the stack is still one viable design; no model-ready
 cursor receipt may escape before the actual dependent join.
 
-Next actual source block: source `capture_commit`'s dynamic n_keep graph and
-count1 self-commit, target-lane pending event, retained INFO and independently
-scheduled draft, then next-target/session/final/cleanup joins. Current prefix
-kernels are genuinely queued but unkeyed; adding only a wait=false flag is not
-source fidelity. Typed commit count/position fields must be explicit, rather than
+Next actual source block: target-lane pending event, retained INFO and independently
+scheduled draft, then next-target/session/final/cleanup joins. `4083258` connects the
+real dynamic n_keep commit graph and count1 skip; its runtime API still joins.
+Adding only a wait=false flag is not source fidelity. Typed commit count/position fields must be explicit, rather than
 inferred from equal old INFO values. Live uniform targets must not be overwritten
 by an unrelated flight. Review the single INFO uploader and queue-switch handoffs
 together with global stream drains. Already verified carry rows and draft-local
