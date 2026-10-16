@@ -59,14 +59,19 @@ fn reject() -> Error {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Kernel {
     Route,
+    Plan,
     Reduce,
     PromptRoute,
     PromptReduce,
 }
 impl Kernel {
+    fn dim(self) -> CubeDim {
+        CubeDim::new_1d(if self == Self::Plan { 128 } else { 256 })
+    }
     fn source(self) -> String {
         match self {
             Self::Route => include_str!("strata_global_route.wgsl").into(),
+            Self::Plan => include_str!("strata_global_plan.wgsl").into(),
             Self::Reduce => include_str!("strata_global_reduce.wgsl").into(),
             Self::PromptRoute => {
                 crate::strata_prompt::groups::shader_prefix()
@@ -82,16 +87,15 @@ impl Kernel {
 impl KernelMetadata for Kernel {
     fn name(&self) -> &'static str {
         match self {
-            Self::Route => "StrataGlobalRouteAndPlan",
+            Self::Route => "StrataGlobalNativeRoutes",
+            Self::Plan => "StrataGlobalResidentPlan",
             Self::Reduce => "StrataGlobalRouteReduceAndStamp",
             Self::PromptRoute => "StrataPromptNativeRoutes",
             Self::PromptReduce => "StrataPromptRankReduceAndStamp",
         }
     }
     fn id(&self) -> KernelId {
-        KernelId::new::<Self>()
-            .info(*self)
-            .cube_dim(CubeDim::new_1d(256))
+        KernelId::new::<Self>().info(*self).cube_dim(self.dim())
     }
     fn address_type(&self) -> StorageType {
         StorageType::Scalar(ElemType::UInt(UIntKind::U32))
@@ -111,7 +115,7 @@ impl CubeTask<AutoCompiler> for Kernel {
             debug_name: None,
             source: self.source(),
             repr: None,
-            cube_dim: CubeDim::new_1d(256),
+            cube_dim: self.dim(),
         })
     }
 }
@@ -444,31 +448,36 @@ impl Workspace {
                 )
                 .map_err(Error::InvalidFormat)?;
         }
-        let args = KernelArguments::new()
-            .with_buffer(data[2].clone().binding())
-            .with_buffer(full(self.ids[7])?.binding())
-            .with_buffer(
-                if prompt {
-                    crate::strata_prompt::groups::views()?.raw
-                } else {
-                    owners[0].clone()
-                }
-                .binding(),
-            )
-            .with_buffer(owners[4].clone().binding())
-            .with_buffer(full(fault)?.binding())
-            .with_buffer(full(self.ids[9])?.binding())
-            .with_info(
-                info(&[
-                    count as u32,
-                    layer as u32,
-                    self.epoch,
-                    u32::from(crate::strata_global_adapt::collect_gpu_route_usage(
-                        self.verified_window,
-                    )),
-                ])
-                .with_native_parameter(3, cubecl_runtime::server::NativeStrataValue::RouteUsage),
-            );
+        let route_args = || -> Result<KernelArguments> {
+            Ok(KernelArguments::new()
+                .with_buffer(data[2].clone().binding())
+                .with_buffer(full(self.ids[7])?.binding())
+                .with_buffer(
+                    if prompt {
+                        crate::strata_prompt::groups::views()?.raw
+                    } else {
+                        owners[0].clone()
+                    }
+                    .binding(),
+                )
+                .with_buffer(owners[4].clone().binding())
+                .with_buffer(full(fault)?.binding())
+                .with_buffer(full(self.ids[9])?.binding())
+                .with_info(
+                    info(&[
+                        count as u32,
+                        layer as u32,
+                        self.epoch,
+                        u32::from(crate::strata_global_adapt::collect_gpu_route_usage(
+                            self.verified_window,
+                        )),
+                    ])
+                    .with_native_parameter(
+                        3,
+                        cubecl_runtime::server::NativeStrataValue::RouteUsage,
+                    ),
+                ))
+        };
         // SAFETY: exact private routing/remap roots; no host readback or cache
         // transfer can bypass the owning graph's dependencies.
         unsafe {
@@ -478,9 +487,20 @@ impl Workspace {
                 } else {
                     Kernel::Route
                 }),
-                CubeCount::Static(1, 1, 1),
-                args,
+                CubeCount::Static(if prompt { 1 } else { count as u32 }, 1, 1),
+                route_args()?,
             );
+            if !prompt {
+                // Selected Intel schedule: route<512> per token, then the
+                // original128-thread resident-plan scan. Both nodes bind the
+                // SAME private map root, so capture/replay owns the real RAW
+                // dependency before any original source-table expert read.
+                client.launch_unchecked(
+                    Box::new(Kernel::Plan),
+                    CubeCount::Static(1, 1, 1),
+                    route_args()?,
+                );
+            }
         }
         if prompt {
             // Intel prompt grouping is a single bounded router readback. No
@@ -882,6 +902,7 @@ impl Workspace {
 pub(crate) fn compiled_sources() -> Vec<CompiledKernel<AutoCompiler>> {
     [
         Kernel::Route,
+        Kernel::Plan,
         Kernel::Reduce,
         Kernel::PromptRoute,
         Kernel::PromptReduce,
@@ -918,5 +939,144 @@ mod direct_quote_tests {
             3 * 128 * 1024 * 1024 - crate::strata_dense::INPUT_BYTES,
             402_128_896
         );
+    }
+}
+
+#[cfg(test)]
+mod route_plan_tests {
+    use super::*;
+
+    #[test]
+    fn selected_route_and_plan_compile_with_original_intel_launch_geometry() {
+        use wgpu::naga as n;
+        for (kernel, dimension) in [(Kernel::Route, 256), (Kernel::Plan, 128)] {
+            let source = kernel.source();
+            let module = n::front::wgsl::parse_str(&source).unwrap();
+            let validation = n::valid::Validator::new(
+                n::valid::ValidationFlags::all(),
+                n::valid::Capabilities::all(),
+            )
+            .validate(&module)
+            .unwrap();
+            assert_eq!(module.entry_points[0].workgroup_size, [dimension, 1, 1]);
+            assert_eq!(kernel.dim(), CubeDim::new_1d(dimension));
+            let bindings = module
+                .global_variables
+                .iter()
+                .filter_map(|(_, v)| v.binding.as_ref().map(|b| (b.group, b.binding)))
+                .collect::<Vec<_>>();
+            assert_eq!(bindings, (0..7).map(|b| (0, b)).collect::<Vec<_>>());
+            n::back::spv::write_vec(
+                &module,
+                &validation,
+                &n::back::spv::Options::default(),
+                Some(&n::back::spv::PipelineOptions {
+                    shader_stage: n::ShaderStage::Compute,
+                    entry_point: "main".into(),
+                }),
+            )
+            .unwrap();
+        }
+        // The last80 logical route words and the existing fixed8 group planes
+        // share the original full root without a new allocation or overlap.
+        assert_eq!(ROOT_BYTES[0] / 4, 8192);
+        assert!(164 + 80 * 8 <= 8112);
+        assert_eq!(8112 + 80, 8192);
+    }
+
+    #[test]
+    fn packed_parallel_plan_matches_independent_stable_groups_across_all_warp_boundaries() {
+        for count in 1..=8 {
+            for pattern in 0..4 {
+                let logical = (0..count * 10)
+                    .map(|i| match pattern {
+                        0 => i % 10,
+                        1 => i,
+                        2 => ((i / 10) * 7 + (i % 10) * 37) % 512,
+                        _ => 511 - (((i / 10) * 83 + (i % 10) * 13) % 512),
+                    })
+                    .collect::<Vec<_>>();
+                for remapping in 0..3 {
+                    let physical = |id: usize| match remapping {
+                        0 => id,
+                        1 => (id * 13 + 17) % 512,
+                        _ => 511 - id,
+                    };
+                    // Independent scalar oracle: groups by first occurrence,
+                    // members in original route order, no scan or packed sums.
+                    let mut oracle = Vec::<(usize, Vec<usize>)>::new();
+                    for (route, &id) in logical.iter().enumerate() {
+                        if let Some((_, members)) = oracle.iter_mut().find(|(e, _)| *e == id) {
+                            members.push(route);
+                        } else {
+                            oracle.push((id, vec![route]));
+                        }
+                    }
+                    let mut first = [0usize; 128];
+                    let mut ranks = [0usize; 128];
+                    let mut lengths = [0usize; 128];
+                    let mut packed = [0u32; 128];
+                    for i in 0..logical.len() {
+                        first[i] = logical.iter().position(|&e| e == logical[i]).unwrap();
+                        ranks[i] = logical[..i].iter().filter(|&&e| e == logical[i]).count();
+                        lengths[i] = logical.iter().filter(|&&e| e == logical[i]).count();
+                        if first[i] == i {
+                            packed[i] = ((lengths[i] as u32) << 16) | 1;
+                        }
+                    }
+                    let mut exclusive = [0u32; 128];
+                    let mut sums = [0u32; 4];
+                    for warp in 0..4 {
+                        let mut prefix: [u32; 32] =
+                            packed[warp * 32..warp * 32 + 32].try_into().unwrap();
+                        for offset in [1, 2, 4, 8, 16] {
+                            let previous = prefix;
+                            for lane in offset..32 {
+                                prefix[lane] += previous[lane - offset];
+                            }
+                        }
+                        sums[warp] = prefix[31];
+                        for lane in 0..32 {
+                            exclusive[warp * 32 + lane] = prefix[lane] - packed[warp * 32 + lane];
+                        }
+                    }
+                    let mut actual = [0u32; 8192];
+                    let mut writes = [false; 8192];
+                    for (i, &id) in logical.iter().enumerate() {
+                        actual[8112 + i] = id as u32;
+                    }
+                    let mut write = |at: usize, value: usize| {
+                        assert!(!writes[at], "overlapping parallel output write {at}");
+                        writes[at] = true;
+                        actual[at] = value as u32;
+                    };
+                    for i in 0..logical.len() {
+                        let total = exclusive[first[i]] + sums[..first[i] / 32].iter().sum::<u32>();
+                        let group = (total & 65535) as usize;
+                        assert!(ranks[i] < count && group < logical.len());
+                        write(164 + group * 8 + ranks[i], i);
+                        if first[i] == i {
+                            write(4 + group, physical(logical[i]));
+                            write(84 + group, lengths[i]);
+                        }
+                    }
+                    let total = sums.iter().sum::<u32>();
+                    assert_eq!(total >> 16, logical.len() as u32);
+                    assert_eq!((total & 65535) as usize, oracle.len());
+                    for (group, (id, members)) in oracle.iter().enumerate() {
+                        assert_eq!(actual[4 + group], physical(*id) as u32);
+                        assert_eq!(actual[84 + group], members.len() as u32);
+                        for (rank, &route) in members.iter().enumerate() {
+                            assert_eq!(actual[164 + group * 8 + rank], route as u32);
+                        }
+                    }
+                    assert!(writes[164 + 80 * 8..].iter().all(|&v| !v));
+                    assert_eq!(
+                        &actual[8112..8112 + logical.len()],
+                        logical.iter().map(|&v| v as u32).collect::<Vec<_>>()
+                    );
+                }
+            }
+        }
     }
 }
