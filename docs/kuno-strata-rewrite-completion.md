@@ -6,30 +6,31 @@ checklist is a source-to-source audit, not a sequence of throughput experiments.
 Each row needs its connected consumer, real ownership/placement and state contract;
 adding an unused helper or optional switch does not complete a row.
 
-**Current CPU-only source:** `01291fe0052ba7e71454ae009b86033972211cd4`, branch
-`codex/strata-rust-port`. Read the [scoped-first-draft receipt](kuno-strata-rewrite-completion.md#scoped-first-window-mtp-consumer-and-actual-runtime-nonce-2026-10-16)
-and [checkpoint](kuno-native-text-checkpoint.md). The final prompt count1 now uses
-its real Pending observer for sampler commit, delivery and original-R MTP drafting,
-including adaptive ticks on retained requests. The outer first-draft fallback is
-removed. A real bounded initial runtime nonce closes with the full actual I/O
-audit before immutable target-policy selection and the long generation scope.
-This explicit Vulkan ownership substitution remains subject to physical acceptance.
-Retained model usage/policy and compute-local queues remain connected.
+**Current CPU-only source:** `f9c7471f498e877be1a9c733aa1a3db3ccdfb154`, branch
+`codex/strata-rust-port`. Read the [adaptive-host-job receipt](kuno-strata-rewrite-completion.md#adaptive-host-job-and-owned-transfer-submission-authority-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). The actual selected adaptive tick
+now starts a bounded host worker for unchanged ranking, original-role recording
+and copy submission beside commit/MTP. Original client/registry/private-arena
+capabilities and MAIN queue stay on the engine thread. Native graph and adaptive
+copies share an owning same-device transfer-queue submission authority. Actual
+worker/copy/visibility joins precede original control/physical publication.
+Retained usage/policy, scoped first draft and compute-local INFO stay connected.
 
-542 selected CPU cases / 71 suites, strict core/off **binary** lint, changed
+545 selected CPU cases / 71 suites, strict core/off **binary** lint, changed
 formatting/whitespace and normal stable-source build pass. Frozen artifact
-`strata-first-scoped-draft-ordinary-20261016/` has SHA256
-`8ced9ff4099d1a4f2fc3f47e6880af9e92d03696d3e6e0cc6bd4b50e9eb42c42`; source/original hash/mode0500
-independently match. No shader/kernel source changed; previous `39c59c1` artifact's
-360 offline variants/139 physical-pointer checks are the latest shader receipt,
-not rerun here. No new GPU numerical, overlap or performance acceptance.
+`strata-adaptive-host-worker-ordinary-20261016/` has SHA256
+`d4cfebbb5a28d645b296c20aaa4dea09239b961f1cea4456ab8299ed2e17e7e5`; source/original hash/mode0500
+independently match. No frozen execution or GPU/numerical/overlap/speed acceptance.
+Shader arithmetic/inventory unchanged; prior `39c59c1` offline 360 variants/139
+physical-pointer checks are still the latest shader receipt, not rerun here.
 
-Whole rewrite incomplete; speed gate closed. Remaining concrete source work:
-serial adaptive host ranking/submission, then final whole-port source/ownership/
-placement/queue/pricing/substitution audit and protected numerical/state/context/
-hot-request/failure/recovery gates. Protected private caller is separate; current
-CLI compiled-public/one-request. Goal active CPU-only. No GPU/model/inference,
-service/install/release/frontend/API/root action; Vashti changes: none. Canonical/
+The three concrete host/first-draft/retained-telemetry gaps identified in the
+compute-local audit are now connected in source. **Whole rewrite still incomplete:**
+next perform the final whole-branch source/ownership/placement/queue/pricing/
+substitution audit, then protected whole-model numerical/state/context/hot-request/
+failure/recovery acceptance. Speed gate stays closed. Private caller independently
+gated; CLI compiled-public/one-request. Goal active CPU-only; no GPU/model/inference,
+service/install/release/frontend/API/root action. Vashti changes: none. Canonical/
 inherited files preserved. Physical recovery remains historical Oct 15.
 
 ## Reference and execution scope
@@ -73,7 +74,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | --- | --- | --- |
 | Artifact geometry, packing and tokenizer | `sycl/src/core/weights.cpp`, `src/io`, native expert layout, program model setup | Rust GGUF/tokenizer/binding exist. Audit format-specific load/conversion, chat-template and sampling behavior; original files remain shared/read-only. |
 | Exact dense placement and expert budget | `sycl/src/program/generate.cpp` model/cache setup; `sycl/src/core/expert_cache.cpp::open_sized` | Exact dense roots exist. Native global byte-prefix planning and an owning bounded GPU loader now compile; graph validation consumes the real artifact plan. Experimental core construction now invokes the sole global owner before prefill, and the core48-layer coordinator selects global routing/HOST fetch/role execution. Physical/numerical acceptance remains unfinished. All777 required original float tensors already match the selected native format (484 BF16,292 F32,1 F16); generic conversion is not required for this artifact. Source `89da25f` moves the shared original IQ4_XS embedding into the sole mapped HOST owner and updates constructor/reader/close accounting. Source5b520bb replaces the tiled embedding dispatch with original mapped-pointer gather for target and shared MTP, using original32-lane IQ4_XS work sharing. Physical/numerical acceptance and final source audit remain open. Sources `cbf4381`/`910cb58` replace the blanket5GiB allowance with a complete original dense inventory, preload/seal it before expert allocation, and size the automatic ranked prefix from actual remaining shared MAIN. See the dense-inventory receipt; physical placement and whole-device pricing acceptance remain open. The ordinary feature-off engine retains uniform banks. |
-| Low-RAM host complement and promotion | `generate.cpp` source/adaptive tier; `sycl/src/core/verify.cpp` fetch/rebase | Original host complement, direct exchange and GPU selected fetch exist. Source53cd14c connects verified-boundary copy flights, original scratch cleanup exclusion and joined physical/private publication; final byte/queue/numerical audit and hardware acceptance remain open. Do not duplicate the whole model in RAM. Source `a8bbdf0` restores the private route map from canonical physical cells on request rebind, preserving actual swapped weights and monotonic adaptive state; see the retained-controls receipt. |
+| Low-RAM host complement and promotion | `generate.cpp` source/adaptive tier; `sycl/src/core/verify.cpp` fetch/rebase | Original host complement, direct exchange and GPU selected fetch exist. Source53cd14c connects verified-boundary copy flights, original scratch cleanup exclusion and joined physical/private publication; final byte/queue/numerical audit and hardware acceptance remain open. Do not duplicate the whole model in RAM. Source `a8bbdf0` restores the private route map from canonical physical cells on request rebind, preserving actual swapped weights and monotonic adaptive state; see the retained-controls receipt. Source `f9c7471f` connects a real bounded rank/record/copy host worker beside commit/MTP with original client-thread registry/root holds, owned copy-queue submissions and actual joined publication. Source scheduling gap superseded; physical behavior remains open. |
 | GPU route/group planning and original HOST access | `verify.cpp` / `verify_kernels.dp.cpp::resident_plan_kernel`, selected SYCL `DEVICE_PLAN=1,NO_HOST=1` | Native BF16 router and full512-expert normalization exist. Correct selected path reads actual VRAM or mapped HOST aliases directly on the GPU, preserving every selected expert. Source36d13d3 replaces the CPU split/staging consumer with direct authentic source aliases and removes per-layer CPU joins/submissions; protected execution is pending. Generic CPU doorbells/split windows are optional modes, not this B70 completion gate. Physical/numerical acceptance remains required. |
 | Native expert math and grouped rows | `sycl/src/kernels/cuda/iq_kernels.dp.cpp::row_entries`, `native_gu_kernel`, `native_down_kernel` | Packed integer math/BDA roots exist. Separate GU roles, 4/2/1 chunks, activation, intermediate storage and downstream consumers are now selected together in the Intel core; all 158 WGSL/SPIR-V variants validate, including 105 physical-pointer checks; numerical/model execution acceptance remains pending. The global core now uses one per-role launch containing pinned row_entries4/2/1 loops, scalar IQ4_XS, native signed integer finish and XOR reduction; numerical/model execution acceptance remains pending. Historical fixed-chunk kernels are retained separately. |
 | GR write/read/norm/down/up/injection | `sycl/src/kernels/cuda/fused_gr.dp.cpp::fused_gr_read_multi`; `verify.cpp::gr_read_group` | Native pending-write norm, sliced BF16 down/injection, fixed slice reduction and up/mix/commit are now connected and unconditionally selected in the core, including explicit PLE/final boundary writes. Resident original weights and the enlarged private scratch owner are charged together. Structural acceptance passes; numerical/model execution acceptance and final substitution audit remain pending. Source `37dced9` connects default full-prompt F1 row scales, packed BF16 norm/SiLU images, direct original projection consumers and residual-based mix recomputation together; see the packed-GR receipt. Sources `40fe97e` and the latest sole-residual receipt connect mixed images and prompt GR/PLE in-place storage, including actual MTP teacher scratch. Final substitution/numerical/device acceptance remains open. |
@@ -86,7 +87,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | Output heads and sampling | `core/native_head.cpp`, `native_mmvq.dp.cpp`, `core/verify.cpp`, `core/mtp.cpp` | Source `ffe7293` connects original aligned wide Q6 A2/RPW1/SG32 and exact1–8 RHS math. Source `308de40` connects ONE whole-head target and compact-CJK MTP projection over the same original bounded roots, owning authenticated address tables, all physical read dependencies and exact admission. This supersedes the earlier per-page source gap. Final sampling/draw/verification audit and numerical/model acceptance remain open.  Source `8a4ee5b` connects original in-place coupled penalties, fixed 64 lists, request-K merge and original publication for BOTH draft domains; target sampling stays separate. Counter/history source audit below passes; numerical/device acceptance remains open. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Sourcea26adc2 ports the native bounded trigram index, longest/recent suffix choice, cost priors, probing/stale rules and optional lookup-chain accounting into the selected controller. Configured MTP/target windows no longer shrink at the output cap; state commit and emission are separate. Coupled sampling and physical state acceptance still need end-to-end validation. Source `39c59c1` retains only fixed learned-policy bins in the actual loaded Session across completed requests, while suffix/token state still wipes; see retained-telemetry receipt below. |
 | Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Source `131d29c` connects real provisional rows to accepted GDN/QSA/PLE candidates while original full-window transactions remain open, then publishes only n after real fault/I/O proof. Count1 uses its candidate and all-accept multirow runs original state replay. Old diagnostic full-window repair is not selected by the native controller. Source `4083258` connects the retained multirow commit graph with explicit dynamic accepted-count/position fields, original family preflight and count1 skip. Source `91e1f9e` connects original pending commit export/join; `1f46f76` connects a scoped original next-draft consumer before explicit commit acknowledgement. Source `0bf0b5f` emits real verified predictions before next drafting, matching the source delivery order. Source `f9d1e06` connects scoped admission/allocator lifetimes and INFO visibility; physical independent execution, full source substitution audit and independent numerical oracle remain open. Source `01291fe0` connects actual first final-prompt count1 Pending consumption to the MTP producer, before adaptation joins; source/scoped nonce receipt below. Full physical acceptance remains open. |
-| Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; Source `d40442c` connects direct retained target submission with typed control uploads and original family receipts; source `d0670b0` connects direct MTP invocation with original actual packet observations and sampler/actor handback. Source `b6732c8` adopts independent MTP compute and concurrent buffer families with semaphore handoffs. Source `414e2c3` connects actual current INFO copies on the native transfer timeline and avoids empty primary submissions; source `86f4c35` replaces the global single fence/last-recording assumption with actual lane fences and stable original recording flights. Source `131d29c` connects synchronous original accepted-prefix publication; source `4083258` connects the retained commit graph. Source `91e1f9e` connects original pending submission identities and exact joins; `1f46f76` connects scoped original MTP consumption before explicit commit acknowledgement. Real independent readiness/INFO/draft execution remain open; source `543bc73` couples original pending commits to retained shared MAIN debt; source `a8e538f` retains actual recording ranges and preflights whole INFO-copy conflicts; source `d2d3228` pins original verified R, submits its real readiness dependency before commit and scopes all unkeyed/named draft lane selection. Source `7ad47ca` connects original native packet fill/copy, real HOST_READ availability, final fence and checked HAL host map without primary Wgpu readback copies/callbacks. Source `7cb1cbc` connects native upload state/render/flush/unmap and all-owner joined I/O reuse without Wgpu remaps or primary reuse clears. Source `7477b66` connects original per-owner selective reuse, current INFO copy completion and named/future/live recording exclusions. Source `f9d1e06` connects scoped graph/stream current-lane/conflict admission, original allocator pins and copy-vs-math INFO visibility. Required ordinary/cold/final global drains remain. Physical independent execution and full draft/event fidelity remain unverified. Physical ring overlap, scratch lifetimes and full execution acceptance remain open. Measured serving lazily captures branches; eager all-branch warmup is not a prerequisite; a sequence of independent Wgpu launches is not equivalent.  Source `7c35203` moves both actual INFO upload owners to their corresponding compute lanes and all MTP copy/fill nodes onto MTP compute, preserving actual transfer access flags and per-lane fence/epoch debt. Scoped I/O reuse excludes pending peer INFO roots. This supersedes shared-transfer-queue control staging; no extra hardware queue. Host proposal/initial-window/session telemetry gaps and full physical acceptance remain open. |
+| Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; Source `d40442c` connects direct retained target submission with typed control uploads and original family receipts; source `d0670b0` connects direct MTP invocation with original actual packet observations and sampler/actor handback. Source `b6732c8` adopts independent MTP compute and concurrent buffer families with semaphore handoffs. Source `414e2c3` connects actual current INFO copies on the native transfer timeline and avoids empty primary submissions; source `86f4c35` replaces the global single fence/last-recording assumption with actual lane fences and stable original recording flights. Source `131d29c` connects synchronous original accepted-prefix publication; source `4083258` connects the retained commit graph. Source `91e1f9e` connects original pending submission identities and exact joins; `1f46f76` connects scoped original MTP consumption before explicit commit acknowledgement. Real independent readiness/INFO/draft execution remain open; source `543bc73` couples original pending commits to retained shared MAIN debt; source `a8e538f` retains actual recording ranges and preflights whole INFO-copy conflicts; source `d2d3228` pins original verified R, submits its real readiness dependency before commit and scopes all unkeyed/named draft lane selection. Source `7ad47ca` connects original native packet fill/copy, real HOST_READ availability, final fence and checked HAL host map without primary Wgpu readback copies/callbacks. Source `7cb1cbc` connects native upload state/render/flush/unmap and all-owner joined I/O reuse without Wgpu remaps or primary reuse clears. Source `7477b66` connects original per-owner selective reuse, current INFO copy completion and named/future/live recording exclusions. Source `f9d1e06` connects scoped graph/stream current-lane/conflict admission, original allocator pins and copy-vs-math INFO visibility. Required ordinary/cold/final global drains remain. Physical independent execution and full draft/event fidelity remain unverified. Physical ring overlap, scratch lifetimes and full execution acceptance remain open. Measured serving lazily captures branches; eager all-branch warmup is not a prerequisite; a sequence of independent Wgpu launches is not equivalent.  Source `7c35203` moves both actual INFO upload owners to their corresponding compute lanes and all MTP copy/fill nodes onto MTP compute, preserving actual transfer access flags and per-lane fence/epoch debt. Scoped I/O reuse excludes pending peer INFO roots. This supersedes shared-transfer-queue control staging; no extra hardware queue. Host proposal/initial-window/session telemetry gaps and full physical acceptance remain open. Source `f9c7471f` replaces the borrowed transfer handle with one strong-device serialized queue authority used by BOTH actual native graph and adaptive copies. MAIN submits/joins and arena/TLS/registry stay on the sole engine thread. Full physical overlap/driver acceptance remains open. |
 | Request lifecycle and arbitrary input | upstream CLI/session/inference entry points | Source `dc7ace7` connects an owned raw-token request entry, original target/MTP construction, callback delivery and full checked cleanup; public diagnostics consume that actual path. Source `4ceb86f` connects completed target/MTP retained-state erasure with original-owner receipts before the current terminal close. Source `1f4b195560e5b8e7a83361f19c844a7104d11cbf` connects retained `Session::load/run/close`, bounded rearming from original erasure receipts, retained-ready owners and preserved policy/scope state; see the loaded-session receipt below. Sources `a8bbdf0`/`f1dd77f6a5a5cf98253488edec1fb761c1e9a0a4` connect original physical route-map restoration, live HOST-scope exclusion and full32K sampler request coordinates (4096 penalty ring unchanged). Hardware hot-reuse acceptance remains open. Source `e1458410b20f956586033b359c57186922d7ad8f` connects a bounded wiping reader/Rust-tokenizer consumer in the actual public entry. The executable is still compiled-public: an independently protected private process caller and verified hot request reuse and full device/failure/recovery acceptance remain required; no private/general service claim. No gateway/UI work required. Source `39c59c1` connects successful closed-request aggregate usage capture before full erase, exact original receipt-gated route/usage restoration and loaded-session policy wipe on close. Hardware hot reuse remains unverified. Source `01291fe0` adds an actual initial-window runtime nonce/full closing audit, distinct from generated request/reset scope authority; no fabricated nonce or closed-state receipt. |
 
 ## Validation and the speed gate
@@ -7456,7 +7457,7 @@ The existing2MiB HOST quote now explicitly checks full32K consumed-token capacit
 | Model/GDN/QSA/PLE and target-row owners | Full original private arenas, caches, padding, PLE token/conv histories clear under the existing actual reset coordinator; output leases and pending stages must be absent. | Original handles, graph identity, generations, selected policies and content-free counters. |
 | MTP output/front/private owners | Owned logits/hidden/picks wipe, last forward/front are taken, original private arenas including padding clear and I/O audits run. | Public sidecar/borrowed weights and shape-only replay operation accounting. |
 | Native I/O/graph runtime | Existing request-end sanitizer drains original recordings/INFO/flight ownership; drops completed recordings, guarded binding/INFO keys, templates and mutable invocation values; inspects full actual I/O roots. | Compiled public pipelines/IQ/address tables; no tokens, logits or sampler seed in cache keys. |
-| Global source/adaptive state | FULL original GPU route/usage owners are erased and inspected. After completed request scope closure, bounded aggregate usage is captured in a wiping model owner. Rearming first validates original zero receipts, then restores original physical routing and aggregate usage with full bit/padding readback. | Loaded-model placement, adaptive rounds and 24,576 aggregate expert counters only; wiped on model close. No token/suffix/seed/KV, serialization, logs or history export. Source `39c59c1` supersedes the former per-request usage reset. |
+| Global source/adaptive state | FULL original GPU route/usage owners are erased and inspected. After completed request scope closure, bounded aggregate usage is captured in a wiping model owner. Rearming first validates original zero receipts, then restores original physical routing and aggregate usage with full bit/padding readback. | Loaded-model placement, adaptive rounds and 24,576 aggregate expert counters only; wiped on model close. No token/suffix/seed/KV, serialization, logs or history export. Source `39c59c1` supersedes the former per-request usage reset. The live host job temporarily owns Cache/usage; main publishes only after real worker/fence/visibility joins. Immutable full physical-cell aliases retain no request payload, are built once at load and dropped before normal source teardown; unknown completion retains/quarantines owners. |
 | `strata_engine::Session::policy` | Request-local token/suffix/proposal owners still wipe. Only fixed scalar cost/acceptance bins move back to the session after the real controller scope closes; failed requests terminally close the session. | Bounded model-local learned policy, wiped before fallible peer cleanup on close/unload. No request tokens, seed, identifiers, history or export. |
 
 Native reset/rearm now also rejects live sampler, prompt scratch or PLE source
@@ -8812,7 +8813,8 @@ Connected source changes:
 
 Actual static audit findings still requiring follow-up:
 
-1. CPU adaptive ranking/metadata/copy submission still happens serially before
+1. **Superseded by source `f9c7471f` and the adaptive-host-job receipt below.**
+   CPU adaptive ranking/metadata/copy submission previously happened serially before
    commit in `strata_global_moe::begin_adaptation_after_verified`. Pinned serve
    starts `adapt()` on a thread while commit/draft proceeds. Existing code starts
    a GPU copy flight before those consumers; physical overlap and host-schedule
@@ -9057,3 +9059,126 @@ private process caller independently gated. No API/configuration/consumer/fronte
 change; required Vashti changes: none. Goal active CPU-only; no GPU/model/inference,
 service/install/release/root action. No privileged credential was needed or used.
 Canonical/inherited files preserved. No new physical recovery/performance claim.
+
+## Adaptive host job and owned transfer submission authority (2026-10-16)
+
+Source `f9c7471f498e877be1a9c733aa1a3db3ccdfb154`, isolated `codex/strata-rust-port`.
+Keep the full coupled branch. This supersedes the serial host-job gap; first
+count1 scoping (`01291fe0`) and model-local usage/policy (`39c59c1`) remain selected.
+This is source/CPU acceptance, not full rewrite or device/performance acceptance.
+
+Pinned MIT Strata `fb58e0dbc8399662c0e47c76578c6e878b14f6cf`,
+`sycl/src/program/generate.cpp:7707..7883` and `:11079..11159`: adaptive selection
+and copies run on a host thread beside target commit/MTP; the loop joins that job
+before proceeding. Eligibility >=2, gain1.5, decay0.7, every4 and maximum96 swaps
+remain the existing connected Rust Cache rules. No speculative expert substitution
+or speed-driven rollback is introduced.
+
+Actual connected path and ownership:
+
+1. Actual Verified target rows/fault are observed and their host-row lease drops.
+   The selected adaptive tick reads the original bounded GPU usage root, moves
+   the SAME Cache and wiping usage vector into a real host job, and returns a
+   `Flight` before original target commit/MTP proceeds. No model client or arena
+   is moved to the worker. This applies to the scoped final-prompt count1 too.
+2. Sources build an authenticated, immutable 48x512x3 physical-cell inventory ONCE
+   during original model load. It resolves original GPU/HOST handles via the SAME
+   client and plan, checks full resource identity, exact ranges/alignment/copy flags
+   and bounded metadata, and retains Buffer aliases rather than copying weight
+   bytes. Cells are original physical addresses, not current logical expert IDs;
+   the learned permutation still chooses their occupants. Normal source close
+   drops this inventory before releasing original HOST/GPU owners.
+3. On the sole client thread, Source checks Cache/map agreement, joins original
+   readers, verifies the complete attached original32MiB prompt raw scratch,
+   acquires its original same-thread external-flight exclusion and revokes all
+   genuine HOST EXPERT pages before selection. Embedding/shadow pages stay separate
+   so MTP's genuine immutable inputs remain active. Rebase token/client and actual
+   allocator/root/TLS guard stay in the parent !Send Flight. A failure before any
+   scratch work releases only that known-idle root; source mutation stays terminal.
+4. Parent creates the original transfer objects and enqueues the real MAIN-ready
+   signal BEFORE spawning. `spawn_host_job` owns a bounded2MiB stack. The worker
+   uses the SAME unchanged `Cache::propose`, validates original physical pair
+   types, equal role sizes and disjoint spans, records original three-role
+   HOST->scratch / GPU->HOST / scratch->GPU copies and their RAW/WAR/WAW/HOST_READ
+   barriers, and submits only on the actual adopted TRANSFER queue. Worker gets
+   owned Buffer/device/queue aliases plus numeric metadata, NEVER a ComputeClient,
+   registry token, arena, allocator capability or MAIN queue. Its raw command
+   objects cannot be destroyed until the parent has joined the real host thread.
+5. New HAL `KunoTransferQueue` keeps a strong Arc to the SAME actual DeviceShared
+   and that queue's one submission mutex. Both actual native `Commands::submit`
+   copy segments and worker copies use it; old borrowed getter is removed. Native
+   graph validates device/queue identity before submission. Compute/INFO/MAIN
+   remain on the original serialized engine thread. The lock covers only actual
+   `vkQueueSubmit`, NEVER a fence wait or thread join. Natural Rust Send/Sync is
+   compile-checked; no unsafe Send/Sync is added for borrowed queues/arenas.
+6. After original commit/MTP and family consumers, parent joins its real worker.
+   Worker completion/AtomicBool records only ATTEMPTED copy debt. Only actual
+   original ready/copy fence success grants their completion; parent then submits
+   and observes real copy->MAIN semaphore/fence visibility. No worker submits
+   MAIN. Unknown completion retains original buffers/inventory/device and leaves
+   the original root blocked/quarantined. Drop joins before object/arena teardown.
+7. Only successful worker/copy/visibility completion returns the SAME Cache and
+   proposed map. Parent validates next physical placement, writes original full
+   private map/usage controls, performs the existing actual client join, commits
+   Cache and publishes source placement. No next target can see half a swap.
+   Empty-swap/all-resident cases issue no copy and need no invented copy-fence or
+   HOST-rebase completion; missing token cannot authorize a nonempty swap set.
+
+Explicit bounds/substitutions and open physical proof:
+
+- Adaptive HOST allowance grows **2->12MiB**: existing2MiB control/selection
+  temporaries +2MiB worker stack +8MiB bounded full inventory. Existing model/frame
+  HOST pricing derives from this constant; quote/cap tests pass. Original source
+  weights, private/public GPU roots,32MiB raw scratch, driver/queue allowance140MiB
+  and prompt/controller268MiB quote are unchanged. No weight mirror or extra GPU
+  queue is added. Physical whole-device/runtime/HOST pricing remains unverified.
+- Rust/Vulkan uses the already adopted transfer-family queue with shared owning
+  host serialization, not a fourth hardware queue/borrowed raw handle. MAIN-ready
+  submission, authenticated inventory and revocation are prepared on the client
+  thread; ranking/recording/copy submit is the actual concurrent host job.
+  Scheduling opportunities exist in source; independent GPU overlap and cost
+  require protected physical acceptance. An implementation-time speed number
+  would not justify disabling this coupled path.
+- Source privacy is unchanged: no prompt/token/seed/suffix/KV/output value is passed to or read by the
+  host job; Cache/usage/proposal numeric owners wipe, inventory is immutable PUBLIC
+  model geometry, all request arenas still erase in full. No logging, persistence,
+  telemetry export, API route or consumer/configuration change. Current executable
+  is still compiled-public/one-request; private process caller is separate.
+
+Validation under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-adaptive-queue-authority-check-20261016.log`: initial owned-queue release
+  check. Intermediate `strata-adaptive-host-worker-{check,owned-check}-*` found
+  incorrect Option handling of HOST role metadata; fixed before connected check
+  and final acceptance. `strata-adaptive-host-worker-connected-check-20261016.log`
+  compiles the connected job. These are intermediate, not accepted source hashes.
+- Final `strata-adaptive-host-worker-test-build-20261016.log`: locked selected
+  release test build, no source warning. Final `strata-adaptive-host-worker-cpu-20261016.log`
+  and retained runner: **545 distinct CPU cases / 71 suites, zero failed**, keeping
+  all542. New cases use the actual bounded thread launcher and real Cache to prove
+  a live worker can proceed beside foreground work and yields the same proposal,
+  join/classify errors/panic, and prove host completion grants only attempted
+  submission debt, not copy or MAIN visibility completion. Existing role-copy,
+  queue/dependency, private exclusion, placement, scope and retained-state cases
+  remain. Synthetic CPU work is not actual GPU/registry/allocator acceptance.
+  Initial545 run/test build is retained as `initial-*`; final source additionally
+  releases known-idle scratch on pre-worker registry failure and removes the
+  resulting unused-mut warning. No coupled behavior was rolled back for timing.
+- `strata-adaptive-host-worker-{core,off}-clippy-20261016.log`: strict locked
+  release **binary** builds pass Intel/core and ordinary Strata-feature configs.
+  All 11 changed Rust files format; whitespace passes. No all-target/test lint claim.
+- Normal stable-source artifact `strata-adaptive-host-worker-ordinary-20261016/`,
+  receipt `strata-adaptive-host-worker-ordinary-20261016.out`, SHA256
+  `d4cfebbb5a28d645b296c20aaa4dea09239b961f1cea4456ab8299ed2e17e7e5`. Source, original build digest
+  and mode0500 independently match. Frozen binary NOT executed. Shader arithmetic/
+  inventory is unchanged; prior `39c59c1` frozen offline360/139 remains the latest
+  shader receipt, not rerun and not proof of new driver/queue behavior.
+
+The three named concrete gaps from the compute-local audit are connected, but
+**completion remains unproven**. Next do the full branch's final source/placement/
+queue/ownership/pricing/substitution audit against pinned selected Intel serving,
+then protected numerical/state/context/hot-request/failure/recovery acceptance,
+then live speed tests. Private/general caller independently gated. Goal active
+CPU-only. No GPU/model/inference/service/install/release/frontend/API/root action;
+Vashti changes: none. Canonical/inherited files preserved. No sudo needed/used.
+No new physical recovery, GPU overlap, model correctness or throughput claim.

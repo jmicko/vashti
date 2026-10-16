@@ -6,16 +6,15 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, source `01291fe0052ba7e71454ae009b86033972211cd4`. Read the
-[scoped-first-draft handoff](#active-kuno-engine-handoff--scoped-first-draft-2026-10-16)
-and [completion gate](kuno-strata-rewrite-completion.md). Actual first count1 uses
-its Pending observer for sampler/delivery/original-R MTP; outer fallback removed.
-A real short runtime nonce closes with actual full I/O audit before policy
-selection and the long generation nonce. 542 CPU cases/71 suites, strict binary
-lint and normal frozen build pass. No new device execution or speed result.
-Whole rewrite incomplete. Next: serial adaptive host scheduling and final full
-source/substitution audit, then protected numerical/state/context/hot-request/
-failure/recovery acceptance. Goal active CPU-only; Vashti changes: none.
+`codex/strata-rust-port`, source `f9c7471f498e877be1a9c733aa1a3db3ccdfb154`. Read the
+[adaptive-host-job handoff](#active-kuno-engine-handoff--adaptive-host-job-2026-10-16)
+and [completion gate](kuno-strata-rewrite-completion.md). Actual bounded adaptive
+host job now ranks/records/submits original copies beside commit/MTP. Client/
+registry/arena and MAIN stay on the engine thread; graph and worker share actual
+owned transfer submissions. 545 CPU cases/71 suites, strict binary lint and frozen
+normal build pass. No GPU/device/speed result. Three named source gaps connected;
+next full branch completeness audit and protected correctness/recovery acceptance.
+Goal active CPU-only; whole rewrite incomplete; speed gate closed. Vashti changes: none.
 
 ## Ownership
 
@@ -7457,3 +7456,43 @@ gated. No API/configuration/consumer/frontend change; Vashti changes: none. Goal
 active CPU-only. No GPU/model/inference/service/install/release/root action;
 canonical/inherited files preserved. No deployment authority or new physical
 recovery/performance claim. No sudo credential was needed or used.
+
+## Active Kuno engine handoff — adaptive host job (2026-10-16)
+
+Source `f9c7471f498e877be1a9c733aa1a3db3ccdfb154`, isolated `codex/strata-rust-port`.
+Read the [complete source/ownership/bounds receipt](kuno-strata-rewrite-completion.md#adaptive-host-job-and-owned-transfer-submission-authority-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). Keep the FULL coupled branch,
+including original compute-local INFO, scoped first draft and retained usage/policy.
+
+The actual selected adaptive tick moves SAME Cache/wiping usage into a bounded
+host worker before commit/MTP. It does original ranking, validates authenticated
+physical cells, records the three-role exact exchange and submits actual copies.
+Parent retains client/registry token/original scratch exclusion and MAIN queues,
+then joins actual worker/copy/visibility before original private control/physical
+publication. No thread result or attempt bit grants GPU completion. Unknown
+completion retains/quarantines original owners; private arena/TLS never moves.
+
+An immutable48x512x3 physical-cell alias inventory is authenticated once at load;
+no weight mirror. All expert HOST pages are revoked before selection; embedding/
+shadow sources stay distinct. New HAL owned transfer authority retains same device
+and serializes BOTH graph/worker submits, not waits, on the actually adopted
+queue. No unsafe Send/Sync or extra GPU queue. HOST allowance 2->12MiB explicitly
+covers existing temporaries,2MiB worker stack and8MiB inventory cap; no new GPU
+weight/private/scratch root. Real physical/runtime pricing still needs acceptance.
+
+545 CPU cases / 71 suites, locked release test build, strict core/off binary lint,
+changed formatting and normal stable build pass. Frozen artifact
+`strata-adaptive-host-worker-ordinary-20261016/` has SHA256
+`d4cfebbb5a28d645b296c20aaa4dea09239b961f1cea4456ab8299ed2e17e7e5`; independent source/original/hash/
+mode0500 pass. Frozen binary NOT executed. Shader math/inventory unchanged;
+previous `39c59c1` offline360/139 is still the latest shader receipt, not rerun.
+No numerical/GPU/registry/allocator/overlap/performance acceptance is claimed.
+
+All three concrete state/schedule gaps from the compute-local audit are connected
+in source. Full rewrite still incomplete: final whole-branch source/placement/
+queue/ownership/pricing/substitution audit, protected numerical/state/context/
+hot-request/failure/recovery acceptance, then speed trials. CLI remains compiled-
+public/one-request; private process caller separate. No API/configuration/consumer/
+frontend change; required Vashti changes: none. Goal active CPU-only. No GPU/model/
+inference/service/install/release/root action; canonical/inherited files preserved.
+No sudo needed/used, deployment authority or new physical recovery claim.

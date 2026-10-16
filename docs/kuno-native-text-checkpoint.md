@@ -1,33 +1,34 @@
-<!-- Current resume: 2026-10-16, source 01291fe0052ba7e71454ae009b86033972211cd4, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source f9c7471f498e877be1a9c733aa1a3db3ccdfb154, codex/strata-rust-port.
 CPU-only continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 Working checkout: `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`.
 
-**Current CPU-only source:** `01291fe0052ba7e71454ae009b86033972211cd4`, branch
-`codex/strata-rust-port`. Read the [scoped-first-draft receipt](kuno-strata-rewrite-completion.md#scoped-first-window-mtp-consumer-and-actual-runtime-nonce-2026-10-16)
-and [checkpoint](kuno-native-text-checkpoint.md). The final prompt count1 now uses
-its real Pending observer for sampler commit, delivery and original-R MTP drafting,
-including adaptive ticks on retained requests. The outer first-draft fallback is
-removed. A real bounded initial runtime nonce closes with the full actual I/O
-audit before immutable target-policy selection and the long generation scope.
-This explicit Vulkan ownership substitution remains subject to physical acceptance.
-Retained model usage/policy and compute-local queues remain connected.
+**Current CPU-only source:** `f9c7471f498e877be1a9c733aa1a3db3ccdfb154`, branch
+`codex/strata-rust-port`. Read the [adaptive-host-job receipt](kuno-strata-rewrite-completion.md#adaptive-host-job-and-owned-transfer-submission-authority-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). The actual selected adaptive tick
+now starts a bounded host worker for unchanged ranking, original-role recording
+and copy submission beside commit/MTP. Original client/registry/private-arena
+capabilities and MAIN queue stay on the engine thread. Native graph and adaptive
+copies share an owning same-device transfer-queue submission authority. Actual
+worker/copy/visibility joins precede original control/physical publication.
+Retained usage/policy, scoped first draft and compute-local INFO stay connected.
 
-542 selected CPU cases / 71 suites, strict core/off **binary** lint, changed
+545 selected CPU cases / 71 suites, strict core/off **binary** lint, changed
 formatting/whitespace and normal stable-source build pass. Frozen artifact
-`strata-first-scoped-draft-ordinary-20261016/` has SHA256
-`8ced9ff4099d1a4f2fc3f47e6880af9e92d03696d3e6e0cc6bd4b50e9eb42c42`; source/original hash/mode0500
-independently match. No shader/kernel source changed; previous `39c59c1` artifact's
-360 offline variants/139 physical-pointer checks are the latest shader receipt,
-not rerun here. No new GPU numerical, overlap or performance acceptance.
+`strata-adaptive-host-worker-ordinary-20261016/` has SHA256
+`d4cfebbb5a28d645b296c20aaa4dea09239b961f1cea4456ab8299ed2e17e7e5`; source/original hash/mode0500
+independently match. No frozen execution or GPU/numerical/overlap/speed acceptance.
+Shader arithmetic/inventory unchanged; prior `39c59c1` offline 360 variants/139
+physical-pointer checks are still the latest shader receipt, not rerun here.
 
-Whole rewrite incomplete; speed gate closed. Remaining concrete source work:
-serial adaptive host ranking/submission, then final whole-port source/ownership/
-placement/queue/pricing/substitution audit and protected numerical/state/context/
-hot-request/failure/recovery gates. Protected private caller is separate; current
-CLI compiled-public/one-request. Goal active CPU-only. No GPU/model/inference,
-service/install/release/frontend/API/root action; Vashti changes: none. Canonical/
+The three concrete host/first-draft/retained-telemetry gaps identified in the
+compute-local audit are now connected in source. **Whole rewrite still incomplete:**
+next perform the final whole-branch source/ownership/placement/queue/pricing/
+substitution audit, then protected whole-model numerical/state/context/hot-request/
+failure/recovery acceptance. Speed gate stays closed. Private caller independently
+gated; CLI compiled-public/one-request. Goal active CPU-only; no GPU/model/inference,
+service/install/release/frontend/API/root action. Vashti changes: none. Canonical/
 inherited files preserved. Physical recovery remains historical Oct 15.
 
 **Previous coupled-sampler block (`8a4ee5b`):** actual full and CJK MTP paths
