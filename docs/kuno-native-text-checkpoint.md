@@ -1,13 +1,38 @@
-<!-- Current resume: 2026-10-16, source 37dced95f977428b2be4f616a7e04124bca3953c, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source 40fe97e6989128189c6046b3b73c64c09288c94a, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, source `37dced95f977428b2be4f616a7e04124bca3953c`. Goal active CPU-only.
-Root was not needed for this block; last actual shared-shell sudo refresh failed.
-No GPU/model/service/install/release action or current health claim. Historical
-physical recovery remains Oct15.
+branch `codex/strata-rust-port`, source `40fe97e6989128189c6046b3b73c64c09288c94a`. Goal active CPU-only.
+No GPU/model/service/install/release action. Root was not needed; last attempted
+shared-shell sudo refresh failed. Last physical recovery stays historicalOct15.
 
+Read [mixed-image receipt](kuno-strata-rewrite-completion.md#connected-native-mixed-input-image-reuse-2026-10-16)
+and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--mixed-input-image-reuse-2026-10-16).
+GR now emits F32 plus native BF16/FP16 pairs in one writer. Matching original
+source/count/first/stride and actual queued-writer publication select their
+original views for GDN/QSA/indexer/router/shared projections and routed-expert
+packed gather. Next GR invalidates the scope marker. No user-provided readiness,
+extra model copy, new GPU root or application API is introduced.
+
+455 distinct focused CPU cases /56 nonempty suites, locked selected test build,
+strict core/off lint, formatting/whitespace and330 offline shader variants pass.
+Normal immutable artifact `strata-mixed-images-ordinary-20261016/`, SHA256
+`9d1bedf93be55ca5447bfa3ca8d40a29736820b7345335d182c0fac571f3a5d8`;
+clean/stable source build and independent hash/mode0500 verified. No device
+initialized. Linked receipt lists exact logs,122 physical shader checks and
+source/CPU limitations. Images use40MiB inside unchanged2080MiB prompt roots;
+net logical scratch reduction from pre-F1 is42.4375MiB. No physical VRAM refund,
+model numerical correctness or speed claim.
+
+Next complete native in-place GR residual/PLE consumers, allocator/whole-device
+pricing and final source/scheduling/substitution audit, then required numerical/
+state/full-context/hot-request/failure/recovery acceptance under renewed GPU
+authorization. Protected private executable input remains separately gated;
+current CLI is compiled-public/one-request. Whole rewrite incomplete, speed gate
+closed. Required Vashti changes:none. Preserve canonical work/untracked files.
+
+**Previous packed-GR block (`37dced9`):**
 Read [packed prompt GR receipt](kuno-strata-rewrite-completion.md#native-prompt-gr-scales-and-packed-image-consumers-2026-10-16)
 and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--native-packed-prompt-gr-2026-10-16).
 Actual default native prompt GR now keeps four row scales/token and writes BF16
@@ -21,7 +46,7 @@ This is not a physical VRAM refund or speed claim.
 453 focused CPU cases /56 nonempty suites, locked selected test build, strict
 core/off lint and formatting/whitespace pass. Numerical/device acceptance remains
 open. Exact normal artifact/offline shader receipt is in the linked completion
-section. Current frozen artifact is `strata-packed-gr-ordinary-20261016/`, SHA256
+section. Frozen artifact for this preceding block is `strata-packed-gr-ordinary-20261016/`, SHA256
 `fc0d1c655302c774427905e36932797c5c45eb3c02b9b2baf79403be8e198d7b`. Clean/stable build, independent hash/mode0500 and330 offline shader
 variants (122 physical checks) pass. Previous artifact remains historical.
 

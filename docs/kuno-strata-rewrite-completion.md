@@ -6,12 +6,13 @@ checklist is a source-to-source audit, not a sequence of throughput experiments.
 Each row needs its connected consumer, real ownership/placement and state contract;
 adding an unused helper or optional switch does not complete a row.
 
-**Current CPU-only source:** `37dced95f977428b2be4f616a7e04124bca3953c`. Start at the
-[packed GR receipt](#native-prompt-gr-scales-and-packed-image-consumers-2026-10-16) and
-[checkpoint](kuno-native-text-checkpoint.md). Native prompt row scales/packed
-images and direct projection consumers are now connected together. Remaining
-whole-source/substitution/pricing/physical/numerical gates are still open.
-Whole rewrite incomplete; no new speed trials.
+**Current CPU-only source:** `40fe97e6989128189c6046b3b73c64c09288c94a`. Start at the
+[mixed-image reuse receipt](#connected-native-mixed-input-image-reuse-2026-10-16) and
+[checkpoint](kuno-native-text-checkpoint.md). Native GR emits original BF16/FP16
+mixed images consumed across attention/router/shared/routed experts without
+repacking F32. Source/CPU and offline acceptance pass. Remaining in-place,
+allocator/source/scheduling/physical/numerical gates stay open. Whole rewrite
+incomplete; no new speed trials.
 
 ## Reference and execution scope
 
@@ -7649,7 +7650,7 @@ Source `37dced95f977428b2be4f616a7e04124bca3953c`, on the complete preceding
 `sycl/src/prefill/kernels.dp.cpp::gr_norm_rs_kernel/gr_silu_kernel/gr_mix_r_kernel`
 and their default `prefill.cpp` consumers (`STRATA_GR_UNFUSED` absent/false).
 Intel `prompt_f16()` is false; these GR inputs are BF16, not FP16. Optional
-HIP-only upmix and BF16x2 modes are outside the selected Intel path.
+HIP-only upmix and the separate opt-in BF16x2 mode are outside the selected Intel path.
 
 The actual native full-prompt GR read no longer stores a full F32 normalized
 tensor or an F32 activated-low tensor. Its existing persistent arena carves five
@@ -7722,3 +7723,97 @@ required under renewed GPU authorization. The current executable is compiled-
 public/one-request; independently protected private input remains a separate
 unclosed boundary. Do not select or drop this source path based on intermediate
 speed. Preserve canonical application work and inherited untracked files.
+
+
+## Connected native mixed-input image reuse (2026-10-16)
+
+Source `40fe97e6989128189c6046b3b73c64c09288c94a` on the complete preceding `codex/strata-rust-port` engine.
+Pinned MIT upstream stays `fb58e0dbc8399662c0e47c76578c6e878b14f6cf`. This connects
+`gr_mix_r_kernel`'s F32/BF16/FP16 outputs to the actual Intel `prefill.cpp`
+consumers: native GDN/QSA projections use `mixed_h`, alpha/beta/indexer/router
+and shared scalar projections use `mixed_bf`, and routed experts use
+`gather_rows16(m.mixed_h,...)`. Optional `STRATA_PREFILL_BF16X2` remains off as in
+the selected default. It is an upstream opt-in numeric variant, not HIP-only.
+
+Actual `strata_prompt::gr_handles` now queues one pair writer for the F32 result
+and both packed images. Each invocation computes two independent columns using
+the existing per-column residual/scales/gamma/FMA/sigmoid order, then writes two
+F32 values and one complete word per image. There are no overlapping 16-bit
+writes. Finite/fault checks cover F32 and both converted images; a conversion
+overflow cannot silently authorize later products. Residual `first` is preserved.
+The images are disjoint original carved 20 MiB views at 4096 rows, in the SAME
+persistent root; they remain independent of the phase/dequant/raw-ring scratch.
+
+A scoped row-count marker is invalidated before each actual GR read and published
+only after its real mix writer is successfully queued. It recognizes only the
+original full-prompt F32 mixed view, its exact offsets/parent/stream, equal written
+row count, zero input-first and 2560 stride. It is a queued dependency, not GPU
+completion credit. No user-provided ready flag, receipt, configuration or tensor
+name publishes it. New small/tail rows cannot read an old uninitialized image
+prefix: counts must match. Scope drop removes this metadata; original full-root
+request erasure still clears both images and their padding.
+
+Actual `strata_prompt::project` selects BF16 for original BF16 weights and FP16
+for supported quantized matrices when the input matches that queued mixed writer.
+This connects existing GDN QKV/Z and alpha/beta, QSA Q/K/V and indexer, router,
+shared gate/up/scalar callers without replacing their original F32 handle or
+changing weight tiling. The existing native Rust matrix backend directly consumes
+the selected original image; generic Pack is skipped. Nonmatching F32 sources keep
+their existing explicit conversion; this is a distinct source format, not a
+speed-driven fallback. Explicit stage-zero prepacked checks stay unchanged.
+
+Actual `strata_prompt::experts::enqueue` resolves the same original FP16 image
+before its logical-expert loop. Gather uses native route/token order and copies
+those packed words directly into each group's original working image. The existing
+F32 diagnostic source remains supported through an internal checked 0/1 source
+format in the same shader; selected full-prompt execution uses the emitted image.
+Both source bounds, route bounds, output extents and finite/fault checks remain.
+The real descriptors retain these images as readers; new writes and prior readers
+remain visible to the original byte-range queue planner. GR preflight includes
+both images in external/previous-source overlap exclusion.
+
+Both images together consume 40 MiB of previously unused capacity inside existing
+roots. Compared with pre-F1 source, net logical scratch reduction is 44,498,944
+bytes (42.4375 MiB), before the added alignment gaps. Fixed MAIN roots stay
+`[1GiB,1GiB,32MiB]` (2080MiB): no new GPU root, refund, physical resident count or
+speed result. Existing 32 KiB layout HOST allowance and conservative runtime caps
+stay unchanged; full physical pricing/lifetime acceptance remains open.
+
+CPU evidence under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-mixed-images-build-20261016.log`: locked selected release test build,
+  terminal exit0 before the final CPU run.
+- `strata-mixed-images-cpu-20261016.log`: 455 distinct cases / 56 nonempty suites,
+  runner `strata-mixed-images-cpu-run-20261016.py`. New actual storage tests cover
+  unpublished/next-writer invalidation, BF16/FP16 selection, exact count/first/
+  stride/source/parent/slice identity, small-tail reuse, disjoint carved extents
+  and actual queue conflict classification for image readers/next writers.
+  Previous phase/layout/legacy/lifecycle checks remain included. These do not
+  execute the new math or image-copy shader on a GPU.
+- `strata-mixed-images-{core,off}-clippy-20261016.log`: both strict locked release
+  lint configurations pass. Changed Rust formatting/whitespace pass.
+
+- Normal immutable artifact: `strata-mixed-images-ordinary-20261016/`, source
+  `40fe97e6989128189c6046b3b73c64c09288c94a`, SHA256
+  `9d1bedf93be55ca5447bfa3ca8d40a29736820b7345335d182c0fac571f3a5d8`. Builder
+  clean-source/stable-HEAD checks pass; independent hash/mode0500 verified.
+  Summary: `strata-mixed-images-ordinary-20261016.out`.
+- `strata-mixed-images-shaders-20261016.log`: all 330 offline variants pass,
+  including changed mix/Gather interfaces and 122 physical-pointer checks. Uses
+  matrix-aware spirv-tools; only frozen `--validate-port-shaders` ran, returning
+  before vendor/adapter/device setup. The 37dced9 artifact remains historical,
+  not current source acceptance.
+
+No GPU/model/inference/service/install/release action occurred. No application
+API/config/connector/UI change; required Vashti changes:none. CPU work needed no
+root; last actual shared-shell sudo renewal was rejected. Last physical recovery
+remains historical Oct15, not a current health claim. Whole rewrite incomplete,
+goal active CPU-only and live speed gate closed.
+
+Next remaining core gaps are native in-place GR residual/PLE consumers, allocator
+and whole-device pricing/source/scheduling substitutions. Full native numerical/
+state/prompt/context/hot-request/failure/recovery acceptance is still required
+under renewed GPU authorization. Private executable input still needs independent
+actual protections/admission before reading content; current CLI remains compiled-
+public/one-request. Preserve canonical application work and inherited untracked
+files. Do not drop a coupled component based on partial performance results.

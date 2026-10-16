@@ -1,17 +1,16 @@
 # Strata Rust whole-model port experiment
 
-**Current CPU-only resume (2026-10-16):** source `37dced95f977428b2be4f616a7e04124bca3953c` connects
-default native prompt GR row scales, direct BF16 norm/SiLU images and their
-original down/injection/up consumers. Mix recomputes F32 values from residual,
-scale and gamma.453 focused CPU cases /56 nonempty suites, strict lint and
-formatting pass. Read the [current receipt](kuno-strata-rewrite-completion.md#native-prompt-gr-scales-and-packed-image-consumers-2026-10-16)
-and [checkpoint](kuno-native-text-checkpoint.md) for the exact current frozen
-artifact/shader evidence, substitutions and next gates. Normal artifact
-`strata-packed-gr-ordinary-20261016/` has SHA256
-`fc0d1c655302c774427905e36932797c5c45eb3c02b9b2baf79403be8e198d7b`;330 offline shader variants pass. Fixed prompt roots stay
-unchanged; no physical memory/speed or whole-model correctness claim. Whole
-rewrite incomplete; no live speed trials. Historical notes below are superseded
-as current direction.
+**Current CPU-only resume (2026-10-16):** source `40fe97e6989128189c6046b3b73c64c09288c94a` connects
+native GR-emitted BF16/FP16 mixed images to actual GDN/QSA/indexer/router/shared
+projections and routed-expert gather.455 focused CPU cases, strict lints,
+format/whitespace and330 offline shader variants pass. Read the
+[current receipt](kuno-strata-rewrite-completion.md#connected-native-mixed-input-image-reuse-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md) for exact logs and gates. Normal
+artifact `strata-mixed-images-ordinary-20261016/` has SHA256
+`9d1bedf93be55ca5447bfa3ca8d40a29736820b7345335d182c0fac571f3a5d8`.
+No new GPU root or physical/numerical/speed claim. Native in-place GR/PLE,
+allocator/whole-device pricing and final scheduling/source substitutions remain.
+Whole rewrite incomplete; no live speed trials. Older notes are historical.
 
 ## Active direction — finish the complete Rust port before speed testing (2026-10-14)
 

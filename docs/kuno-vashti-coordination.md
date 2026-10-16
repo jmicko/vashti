@@ -6,18 +6,17 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, source `37dced95f977428b2be4f616a7e04124bca3953c`. Read the
-[packed prompt GR handoff](#active-kuno-engine-handoff--native-packed-prompt-gr-2026-10-16)
-and [completion gate](kuno-strata-rewrite-completion.md). Default native prompt
-GR row scales and packed BF16 consumers are connected together;453 focused CPU
-cases pass. Source/substitution/device/numerical/hot-reuse acceptance remains
-incomplete. No new speed result.
+`codex/strata-rust-port`, source `40fe97e6989128189c6046b3b73c64c09288c94a`. Read the
+[mixed-image handoff](#active-kuno-engine-handoff--mixed-input-image-reuse-2026-10-16)
+and [completion gate](kuno-strata-rewrite-completion.md). GR-emitted BF16/FP16
+images now feed their actual attention/router/shared/expert consumers.455 focused
+CPU cases and330 offline shader variants pass. Source/substitution/device/
+numerical/hot-reuse acceptance remains incomplete. No new speed result.
 
-The user authorized **CPU-only continuation**; the goal controller is active.
-Last actual shared-shell sudo refresh required a password; CPU work needs no
-root. No GPU/model/service/install/release action or current-health claim.
-Historical physical recovery remains Oct15. Canonical work and inherited
-untracked files are preserved. Required Vashti changes:none.
+The user authorized **CPU-only continuation**; goal controller active. No GPU/
+model/service/install/release action or current-health claim. Root not needed;
+last actual sudo renewal failed. Historical physical recovery stays Oct15.
+Canonical work and inherited untracked files preserved. Required Vashti changes:none.
 
 ## Ownership
 
@@ -6993,3 +6992,32 @@ No API/config/frontend change; required Vashti changes:none. Goal active CPU-onl
 whole rewrite incomplete, speed gate closed. No GPU/model/service/install/release
 action; last physical recovery is historicalOct15. Root not needed. Preserve
 canonical application work and inherited untracked files.
+
+
+## Active Kuno engine handoff — mixed-input image reuse (2026-10-16)
+
+Isolated `codex/strata-rust-port`, source `40fe97e6989128189c6046b3b73c64c09288c94a`. Read the
+[source/validation receipt](kuno-strata-rewrite-completion.md#connected-native-mixed-input-image-reuse-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). Actual GR mix now emits F32,
+BF16 and FP16 together. Original source/view/count/first/stride and a scoped
+actual queued-writer marker select original packed images for GDN/QSA/indexer,
+router/shared projections and routed-expert gather. Next GR invalidates the
+marker; no external readiness metadata. Native matrix and original route/weight/
+source/queue owners remain. No extra root, new API or required Vashti change.
+
+455 distinct CPU cases /56 nonempty suites, locked release test build, strict
+core/off lint and format/whitespace pass. Normal artifact
+`strata-mixed-images-ordinary-20261016/`, SHA256
+`9d1bedf93be55ca5447bfa3ca8d40a29736820b7345335d182c0fac571f3a5d8`;
+all330 offline shader variants pass, including122 physical-pointer checks.
+Clean/stable source build and independent hash/mode0500 verified. No device
+initialization or numerical model acceptance. Both images use40MiB inside the
+unchanged2080MiB prompt root inventory; no physical refund/residency/speed claim.
+
+Next native in-place GR/PLE consumers, allocator/whole-device pricing and final
+source/scheduling substitutions remain, plus full numerical/state/hot-request/
+failure/recovery acceptance under renewed GPU authorization. Protected private
+CLI input remains unclosed; existing executable is compiled-public/one-request.
+Goal stays active CPU-only, rewrite incomplete, speed gate closed. No GPU/model/
+service/install/release/API/config/frontend action. Root not needed. Last physical
+recovery historicalOct15; preserve canonical application work/untracked files.
