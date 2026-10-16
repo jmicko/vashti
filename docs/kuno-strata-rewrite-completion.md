@@ -46,7 +46,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | Component | Pinned upstream | Current Rust connection and required completion |
 | --- | --- | --- |
 | Artifact geometry, packing and tokenizer | `sycl/src/core/weights.cpp`, `src/io`, native expert layout, program model setup | Rust GGUF/tokenizer/binding exist. Audit format-specific load/conversion, chat-template and sampling behavior; original files remain shared/read-only. |
-| Exact dense placement and expert budget | `sycl/src/program/generate.cpp` model/cache setup; `sycl/src/core/expert_cache.cpp::open_sized` | Exact dense roots exist. Native global byte-prefix planning and an owning bounded GPU loader now compile; graph validation consumes the real artifact plan. Experimental core construction now invokes the sole global owner before prefill, and the core48-layer coordinator selects global routing/HOST fetch/role execution. Physical/numerical acceptance remains unfinished. All777 required original float tensors already match the selected native format (484 BF16,292 F32,1 F16); generic conversion is not required for this artifact. Source `89da25f` moves the shared original IQ4_XS embedding into the sole mapped HOST owner and updates constructor/reader/close accounting. Actual physical/numerical acceptance and the unchanged tiled gather substitution remain open. The5GiB dense cache allowance still requires exact pricing review. The ordinary feature-off engine retains uniform banks. |
+| Exact dense placement and expert budget | `sycl/src/program/generate.cpp` model/cache setup; `sycl/src/core/expert_cache.cpp::open_sized` | Exact dense roots exist. Native global byte-prefix planning and an owning bounded GPU loader now compile; graph validation consumes the real artifact plan. Experimental core construction now invokes the sole global owner before prefill, and the core48-layer coordinator selects global routing/HOST fetch/role execution. Physical/numerical acceptance remains unfinished. All777 required original float tensors already match the selected native format (484 BF16,292 F32,1 F16); generic conversion is not required for this artifact. Source `89da25f` moves the shared original IQ4_XS embedding into the sole mapped HOST owner and updates constructor/reader/close accounting. Actual physical/numerical acceptance and the unchanged tiled gather substitution remain open. Sources `cbf4381`/`910cb58` replace the blanket5GiB allowance with a complete original dense inventory, preload/seal it before expert allocation, and size the automatic ranked prefix from actual remaining shared MAIN. See the dense-inventory receipt; physical placement and whole-device pricing acceptance remain open. The ordinary feature-off engine retains uniform banks. |
 | Low-RAM host complement and promotion | `generate.cpp` source/adaptive tier; `sycl/src/core/verify.cpp` fetch/rebase | Original host complement, direct exchange and GPU selected fetch exist. Audit full byte ownership and asynchronous safe publication against upstream; do not duplicate the whole model in RAM. |
 | GPU route/group planning and original HOST access | `verify.cpp` / `verify_kernels.dp.cpp::resident_plan_kernel`, selected SYCL `DEVICE_PLAN=1,NO_HOST=1` | Native BF16 router and full512-expert normalization exist. Correct selected path reads actual VRAM or mapped HOST aliases directly on the GPU, preserving every selected expert. Source36d13d3 replaces the CPU split/staging consumer with direct authentic source aliases and removes per-layer CPU joins/submissions; protected execution is pending. Generic CPU doorbells/split windows are optional modes, not this B70 completion gate. Physical/numerical acceptance remains required. |
 | Native expert math and grouped rows | `sycl/src/kernels/cuda/iq_kernels.dp.cpp::row_entries`, `native_gu_kernel`, `native_down_kernel` | Packed integer math/BDA roots exist. Separate GU roles, 4/2/1 chunks, activation, intermediate storage and downstream consumers are now selected together in the Intel core; all 158 WGSL/SPIR-V variants validate, including 105 physical-pointer checks; numerical/model execution acceptance remains pending. The global core now uses one per-role launch containing pinned row_entries4/2/1 loops, scalar IQ4_XS, native signed integer finish and XOR reduction; numerical/model execution acceptance remains pending. Historical fixed-chunk kernels are retained separately. |
@@ -7132,3 +7132,86 @@ pricing and final scheduling/substitution audit remain open. Protected arbitrary
 input/tokenization, verified hot public-weight/runtime reuse, old regression
 reconciliation and full numerical/device/failure/recovery acceptance also remain.
 Whole rewrite incomplete; speed gate closed, goal active CPU-only.
+
+## Connected sealed dense inventory and automatic expert capacity (2026-10-16)
+
+Source through `910cb5895a25ff424d2a6f76d8f6e58fa11833da`, comprising `cbf4381`
+plus `910cb58` on the complete preceding rewrite; these are not standalone leaves.
+This supersedes
+older notes that leave the blanket5GiB dense allowance and lazy native LRU in
+place. Pinned upstream is still clean `fb58e0d`; `generate.cpp:2638-2792` loads
+canonical/native dense owners before `4168-4360` sizes the expert cache from the
+remaining memory. Rust retains its existing explicit31GiB shared MAIN ceiling,
+separate physical/driver preflight and complete peer/private/runtime reservations.
+
+`executor::native_static` now enumerates784 original target projections,
+including the48 original BF16 scalar shared gates as one-row matrices. Every
+actual tensor must match the bound graph, original header-derived dtype, exact
+input/output/row geometry and complete byte span. Other matrices cannot fall
+through an exclusion rule. The saved1224-tensor original-shard receipt proves
+coverage of all784; the remaining440 are144 routed tensors, three separately
+owned head/embedding/table sources and293 separately prewarmed norm/control/
+convolution vectors. No new model file or converted weight copy is created.
+
+Before any GPU allocation, `begin_resident` prices this actual dense inventory
+plus the single shared target/MTP head. The native expert request ceiling is now
+all512 original experts/layer, clipped by remaining shared MAIN and original
+ranked/chunk placement, instead of the retired240-slot uniform fixture. The
+ordinary feature-off bank policy/configuration remains unchanged. This does not
+bypass actual source binding, RAM reservation or original physical root admission.
+
+At256-byte alignment the public inventory prices3,644,840,960 dense bytes plus
+521,474,048 shared-head bytes =4,166,315,008 bytes (3.880183GiB), replacing the
+5,368,709,120-byte allowance. Other alignments are computed from the actual client;
+4096-byte cases are also checked. This releases1,202,394,112 bytes of capacity
+allowance, not a measured physical-memory or performance saving. Public vectors,
+private caches, source uploads, driver margin and MTP remain separately priced.
+
+`prepare_global_sources_before_prefill` now preloads all original dense roots
+through the actual admitted executor before attaching the expert source owner.
+Every upload charges its actual aligned immutable root and full source page,
+joins the same original client and obtains the existing real admission checkpoint
+before the next upload. The peak source remains64MiB, already within the separately
+reserved shared public-source allowance. Exact padded owners retain their original
+logical shader views; actual backend root lengths are checked. Allocation guards
+use the original transient retirement flag. Extra bounded plan/iterator metadata
+is charged512KiB in the native HOST/component/metadata envelopes.
+
+Only after every actual upload/checkpoint and complete cache inventory succeeds
+is the cache sealed. Native execution/global source attachment require that seal.
+Cache hits must retain the original logical/owned extent; missing, partial or
+foreign requests fail instead of evicting or lazily changing roots held by graphs.
+Model close retains the existing reader-before-release/source cleanup order and
+clears this public inventory with the executor. This is still one full request
+per `strata_engine::execute`; it does not establish cross-request hot reuse.
+
+CPU receipts under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-static-inventory-receipt-build-20261016.log`: final locked release test build.
+- `strata-static-inventory-cpu-final-20261016.log`:387 distinct CPU cases in44
+  nonempty suites, no failures. Actual header/profile coverage, exact projections,
+  original-format root/source pricing and all preceding scoped owner/queue checks.
+- `strata-static-inventory-geometry-20261016.log`: intermediate `cbf4381` public
+  profile-derived byte calculation. The final suite checks the same totals against
+  original shard headers; no hardware allocation, inference or timing.
+- `strata-static-inventory-final-{core,off}-clippy-20261016.log`: both strict
+  locked release lint configurations pass. Formatting/whitespace pass.
+- The extra initial `strata-static-inventory-profile-20261016.log` found one
+  stale test mixing the144-slot reference with compiled240-slot constants.
+  Its reference now uses explicit144/72 geometry and independently validates
+  the selected layout against original header bytes. All five profile tests
+  pass in the final receipt; no production profile/weights were changed.
+
+Shaders/generators/arithmetic are unchanged in this block; the preceding330
+shader receipt is not a new runtime/GPU acceptance. No new frozen ordinary
+artifact was built; the12a60bf frozen binary is stale for these new constructors.
+Freeze a new current-source artifact before any authorized execution check.
+
+No GPU/model/service/install/API/frontend/release work. Required Vashti changes:
+none. Last sudo refresh failed; root is not needed for CPU continuation. Historical
+Oct15 recovery remains historical. Whole rewrite incomplete, goal active CPU-only,
+speed gate closed. Remaining gates include private prompt allocator/packed/in-place
+substitutions and whole-device pricing, protected arbitrary-input/tokenization,
+verified hot model/request reuse, final scheduling/source audit, unresolved old
+regressions and full numerical/device/failure/recovery acceptance. Do not claim
+actual new resident counts, a larger observed cache, correctness or throughput.

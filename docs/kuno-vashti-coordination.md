@@ -6,8 +6,8 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through `12a60bf`. Read the latest
-[prompt-overlay handoff](#active-kuno-engine-handoff--prompt-phase-overlay-and-selection-batches-2026-10-16)
+`codex/strata-rust-port`, engine source through `910cb58`. Read the latest
+[dense-inventory handoff](#active-kuno-engine-handoff--sealed-dense-inventory-and-automatic-expert-capacity-2026-10-16)
 and [completion gate](kuno-strata-rewrite-completion.md). Direct target/MTP
 submission, accepted-prefix state publication and retained commit graph are connected
 in source. Original pending submissions/joins and scoped next-draft consumption are connected;
@@ -6781,3 +6781,27 @@ closed. Exact native packed/in-place storage and allocator-granularity/dense
 pricing, protected arbitrary-input/tokenization, verified hot request reuse,
 final scheduling/substitution/source audit, old regressions and physical/numerical/
 failure/recovery acceptance remain open. Preserve canonical application work.
+
+## Active Kuno engine handoff — sealed dense inventory and automatic expert capacity (2026-10-16)
+
+Isolated `codex/strata-rust-port`, source through `910cb58` (`cbf4381` plus
+`910cb58`). Read the [dense-inventory receipt](kuno-strata-rewrite-completion.md#connected-sealed-dense-inventory-and-automatic-expert-capacity-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). Native construction now prices,
+preloads and seals every original dense projection before expert-source attachment;
+missing/changed cache entries cannot use the legacy LRU. Actual remaining shared
+MAIN sizes the ranked prefix, without the old uniform240-slot request cap.
+
+The original shard receipt covers all784 projections; actual256-byte root pricing
+is4,166,315,008 bytes including the one shared head, versus the previous5GiB
+allowance. Source/root/peer/private/runtime/HOST budgets stay separately checked.
+387 distinct CPU cases/44 nonempty suites, both strict lint configurations and
+formatting/whitespace pass. See the receipt for the corrected144-vs-selected test.
+No shader changes or new frozen normal artifact;12a60bf is stale for these changes.
+A fresh artifact is required before renewed authorized physical acceptance.
+
+No GPU/model/service/install/API/frontend/release change; required Vashti changes:
+none. Goal active CPU-only, full rewrite incomplete and speed gate closed. Private
+prompt allocator/substitution pricing, arbitrary protected input, hot request reuse,
+final source/scheduling audit, old regressions and numerical/physical/recovery gates
+remain. Last sudo refresh failed; CPU continuation does not need it. Historical
+Oct15 recovery is not current health evidence. Preserve the canonical checkout.

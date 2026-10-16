@@ -1,7 +1,7 @@
 # Strata Rust whole-model port experiment
 
-**Current CPU-only resume (2026-10-16):** source `12a60bf`, connected prompt
-phase overlay and256-query selection. Read the [completion receipt](kuno-strata-rewrite-completion.md#connected-prompt-phase-overlay-and-256-query-selection-2026-10-16)
+**Current CPU-only resume (2026-10-16):** source `910cb58`, connected sealed dense
+inventory and automatic remaining-memory expert capacity. Read the [completion receipt](kuno-strata-rewrite-completion.md#connected-sealed-dense-inventory-and-automatic-expert-capacity-2026-10-16)
 and [checkpoint](kuno-native-text-checkpoint.md) first. Historical timing/next-step
 notes below do not authorize new speed trials. Full rewrite remains incomplete.
 

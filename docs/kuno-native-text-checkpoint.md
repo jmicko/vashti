@@ -1,18 +1,32 @@
-<!-- Current resume: 2026-10-16, source 12a60bf, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source 910cb58, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, source `12a60bf`. Goal active CPU-only. Sudo refresh
-currently reports password required in Demons; CPU work does not need root. No GPU/model/service/install/release work or current
+branch `codex/strata-rust-port`, source `910cb58`. Goal active CPU-only. Last sudo refresh
+reported password required in Demons; CPU work does not need root. No GPU/model/service/install/release work or current
 health claim. Last physical recovery evidence remains historical Oct15.
 
-Read [prompt phase overlay](kuno-strata-rewrite-completion.md#connected-prompt-phase-overlay-and-256-query-selection-2026-10-16)
-and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--prompt-phase-overlay-and-selection-batches-2026-10-16).
+Read [sealed dense inventory](kuno-strata-rewrite-completion.md#connected-sealed-dense-inventory-and-automatic-expert-capacity-2026-10-16)
+and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--sealed-dense-inventory-and-automatic-expert-capacity-2026-10-16).
 Controller tests live under `strata_engine::controller`. Earlier CJK `cd703bc` was
 integrated as `0bfbea8`; do not reapply it.
 
-**Latest connected block:** native mutually exclusive PLE/GDN/QSA/MoE phase
+**Latest connected block:** `cbf4381`/`910cb58` price/preload/seal all784 original
+dense projections before expert-source attachment. The actual256-byte dense roots
+plus shared head quote4,166,315,008 bytes, replacing5GiB. Ranked expert capacity
+uses all remaining shared MAIN, without the uniform240-slot cap. Uploads retain
+real source/root admission, actual joins/checkpoints and precise logical views;
+cache misses/shape changes cannot evict retained native weights.512KiB metadata
+is priced in the original HOST envelope. The original1224-tensor receipt proves
+all projection names/formats/shapes and separation from norms/experts/tables.
+387 distinct CPU cases/44 nonempty suites and both strict lint configurations pass.
+No shader/arithmetic change. No new normal frozen artifact: the12a60bf binary is
+stale; freeze current source before any newly authorized execution check. No
+current device/residency/performance claim. The engine remains request-scoped;
+protected arbitrary input and hot public-model/request reuse are still open.
+
+**Previous connected block:** native mutually exclusive PLE/GDN/QSA/MoE phase
 scratch, with persistent GR/residual and independent eight-slot raw ring retained.
 Actual roots `[1GiB,1GiB,32MiB]` total2080MiB,992MiB below the previous3GiB.
 Working images80MiB, GU20MiB and routed partials400MiB; real256-byte view gaps and
@@ -69,7 +83,7 @@ bindings through scope end. Ordinary/cold/final drains and original pending
 submission/MAIN debt/R loan/family/numerical/I/O/state proofs remain separate.
 
 **Next:** protected arbitrary-input/tokenization caller, verified request reuse,
-exact dense/prompt ownership pricing,
+remaining private prompt/whole-device ownership pricing,
 source scheduling/lifetime/substitution audit and legacy regression reconciliation.
 Then full numerical, physical and actual recovery acceptance with renewed GPU
 authority. No speed trials until the complete connected rewrite gate passes.
