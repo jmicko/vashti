@@ -6,8 +6,8 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through `414e2c3`. Read the latest
-[native INFO handoff](#active-kuno-engine-handoff--native-info-transfers-2026-10-16)
+`codex/strata-rust-port`, engine source through `86f4c35`. Read the latest
+[lane-flight handoff](#active-kuno-engine-handoff--native-lane-flight-ownership-2026-10-16)
 and [completion gate](kuno-strata-rewrite-completion.md). Direct target and MTP submission
 are now connected in source; accepted-prefix commit/event fidelity and full
 GPU/numerical acceptance remain incomplete. No new speed result.
@@ -6253,4 +6253,27 @@ edges and exact verified carry ownership while changing that schedule coherently
 Current checkpoint records original source/consumer entry points and other gaps.
 
 Goal remains active for CPU-only work. No GPU/model/service/sudo operation, public
+API/connector/UI change, installation or release. Required Vashti changes:none.
+
+
+### Active Kuno engine handoff — native lane flight ownership (2026-10-16)
+
+Source `86f4c35` connects all actual capture/hit/direct submissions to separately
+owned target/draft fences and stable original recording identities. Slots reserve
+before reset/submit; partial work never completes. Real matching-fence success is
+required before host completion counters clear. Live recordings cannot be replayed,
+replaced or evicted; actual resources remain retained. Original output/fault/
+family/erasure proof requirements and completed-replay semantics are unchanged.
+
+46 focused CPU cases, final selected/off strict Clippy, immutable release build and
+327 offline shader variants pass; exact hash/logs/scope are in completion guide
+**Native lane fences and original recording flight ownership**. No numerical/GPU/
+parallel execution or throughput acceptance claim.
+
+Global drains still join both lanes. The next coupled block is original accepted-
+prefix family-state/permit publication and exact carry/dependency consumers; merely
+removing the waits would be incorrect. Current checkpoint identifies the borrowed
+GDN/QSA/PLE lifetime constraint, dynamic commit controls and remaining source gaps.
+
+Goal stays active for CPU-only work. No GPU/model/service/sudo operation, public
 API/connector/UI change, installation or release. Required Vashti changes:none.

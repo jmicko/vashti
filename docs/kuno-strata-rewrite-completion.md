@@ -59,7 +59,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native INT8 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Positive-threshold chains now keep hidden carries on device and observe the same token/probability/fault packet as zero-threshold chains; mapped/event scheduling remains open. First/grouped device-source and ids-only target result consumers now exist; the shared-context constructor receipt below supersedes the separate-client blocker. Core construction now selects the actual target client and one combined account. Source9de7fef pins the original target embedding/head once, shares them with MTP and gathers target embeddings on GPU. Actual device/state acceptance is pending. Source0bfbea8 connects the original-order CJK106299-row Q6 draft head, inverse-ID history mapping, compact confidence and coupled sampling; source2a3d1ad connects INT8 caches. Combined CPU checks pass, with full numerical/GPU execution still pending. Source `862f5fa` separates first-front staging and actual observation from capture, and prestages all coupled draft controls once per round. Source `8262367` connects typed MTP phases/4096 boundaries and original model-instance graph namespaces; source `d0670b0` connects direct original MTP replay and capture-derived host/sampler handback. Physical acceptance, commit/event fidelity, numerical/state acceptance and runtime policy remain required. See the latest device-end receipt. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Sourcea26adc2 ports the native bounded trigram index, longest/recent suffix choice, cost priors, probing/stale rules and optional lookup-chain accounting into the selected controller. Configured MTP/target windows no longer shrink at the output cap; state commit and emission are separate. Coupled sampling and physical state acceptance still need end-to-end validation. |
 | Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Real greedy verification/state-only repair exists. Audit all active windows and acceptance cases against GDN/QSA/PLE/positions; independent correctness oracle remains missing. |
-| Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; Source `d40442c` connects direct retained target submission with typed control uploads and original family receipts; source `d0670b0` connects direct MTP invocation with original actual packet observations and sampler/actor handback. Source `b6732c8` adopts independent MTP compute and concurrent buffer families with semaphore handoffs. Source `414e2c3` connects actual current INFO copies on the native transfer timeline and avoids empty primary submissions; accepted-prefix commit/event scheduling and per-flight ownership remain incomplete. Physical ring overlap, scratch lifetimes and full execution acceptance remain open. Measured serving lazily captures branches; eager all-branch warmup is not a prerequisite; a sequence of independent Wgpu launches is not equivalent. |
+| Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; Source `d40442c` connects direct retained target submission with typed control uploads and original family receipts; source `d0670b0` connects direct MTP invocation with original actual packet observations and sampler/actor handback. Source `b6732c8` adopts independent MTP compute and concurrent buffer families with semaphore handoffs. Source `414e2c3` connects actual current INFO copies on the native transfer timeline and avoids empty primary submissions; source `86f4c35` replaces the global single fence/last-recording assumption with actual lane fences and stable original recording flights. Global joins and accepted-prefix commit/event publication remain incomplete. Physical ring overlap, scratch lifetimes and full execution acceptance remain open. Measured serving lazily captures branches; eager all-branch warmup is not a prerequisite; a sequence of independent Wgpu launches is not equivalent. |
 | Request lifecycle and arbitrary input | upstream CLI/session/inference entry points | Current Rust public-fixture gate is not a general engine. Connect bounded arbitrary prompts and request-local sampling/history, with no persistent content, protected memory and orderly erase/close. No gateway/UI work required. |
 
 ## Validation and the speed gate
@@ -5515,3 +5515,84 @@ Goal remains active for CPU-only work. No GPU/model/inference/numerical/throughp
 recovery/sudo/service operation, installation, public API or frontend change ran.
 Full-core regression triage and whole-model numerical/state/owning-erasure/physical
 acceptance remain incomplete. Required Vashti changes:none.
+
+
+## Native lane fences and original recording flight ownership (2026-10-16)
+
+Source `86f4c35d0b3e036a76571f9afc2cbb069d054ccd` replaces the native global
+single-fence/last-recording completion assumption. Cold capture, signature cache
+hits and direct typed replay all call the same actual `submit_last_recording`.
+
+Each actual target/draft lane now owns a separately created fence. Each retained
+recording has a nonzero monotonic identity, never a token/origin/seed. The fixed
+2-slot `strata_flights::Book` stores that original identity, actual compute count,
+replay/profile metadata and partial/submitted status. Before resetting any fence,
+the owner validates the original recording family/count and reserves its free lane;
+another live recording/lane cannot be overwritten or have its fence reset. The
+slot is partial before queue submission and becomes submitted only after the actual
+whole schedule submit returns successfully. Partial failure remains terminally
+owned, never successful completion.
+
+Original recordings retain every actual command/resource inventory. Only duplicate
+enqueue nodes clear after successful submission. `pending()` includes in-flight
+work as well as queued nodes, preserving original readback/cleanup drains. Cache
+lookup/replay excludes live recordings, named replacement rejects a live owner,
+and unnamed LRU eviction excludes live identities. A stable identity survives LRU
+movement and other recording completion/removal; no completion/profile collection
+uses the vector's current tail as authority.
+
+`complete_lane_submission` looks up the actual recorded identity, validates its
+original queue family and waits on that exact lane's fence. Only after real fence
+success and applicable original profile observation does it clear matching host
+bookkeeping and credit actual operation counters. Those counters are not inference
+output/state authority; original fault/packet/ledger/family proof remains required.
+Explicit cleanup drains all actual lanes before releasing recordings. An unknown
+partial/fence failure retains command/resource/initialization inventories for
+terminal protected-process/device teardown. Constructor failure paths and normal
+cleanup own both actual fences. The bounded book's conservative4-copy representation
+fits1KiB; recording IDs stay inside existing bounded metadata. No private tensor or
+content root is added.
+
+**Current limitation:** `complete_math_submission` still joins both lanes, and
+public stream/graph switch/push/flush consumers still call the global drain. The
+single INFO upload owner and queue-switch handoffs remain globally coordinated.
+This source does not yet permit a target accepted-prefix commit to stay pending
+while independent drafting proceeds. Do not remove global waits until its original
+state/carry/INFO consumers have an actual dependency contract. Existing replay
+booleans still mean completed work, never merely submitted work.
+
+CPU-only evidence under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-lane-flights-test-build-20261016.log`, `strata-lane-flights-cpu-20261016.log`:
+  release test build and46 focused cases pass:3 actual flight-book host checks,
+  2 INFO layout/capacity,12 actual interval/upload-dependency planner,15 actual
+  typed parameter,4 MTP replay accounting,6 sampler,3 topology and1 handoff epoch.
+  New cases cover distinct simultaneous metadata slots, transfer-only counts,
+  duplicate/foreign lane/identity/submit rejection without overwrite, partial work
+  never clearing as joined, and exact-slot host bookkeeping. They create no GPU
+  device/fence, mint no output receipt and do not prove physical parallel execution.
+- `strata-lane-flights-final-{core,off}-clippy-20261016.log`: strict locked selected/
+  off release Clippy pass. Formatting and `git diff --check` pass.
+- `strata-lane-flights-build-20261016.out`: immutable locked release at source above,
+  SHA256 `e3d4d1675d27308f8cca64c57242b58bb129c4bf99ced84f650accedcc4e9f68`.
+- `strata-lane-flights-shaders-20261016.log`:327 generated variants plus native
+  matrix/physical expert-pointer validation pass. This path exits before any
+  vendor/adapter/device creation; it is CPU/offline validation.
+
+Next coupled source block: original verified-window family permits and accepted-
+prefix commit/publication, with only actual dependency joins and exact retained
+carry access for drafting. `run_global` currently borrows GDN/QSA/PLE acceptance
+across the final proof/commit. Preserve those policy/drop/poison obligations when
+introducing deferred work; avoid self-referential stored borrows or casually
+"disarming" originals. A scoped verified-prefix consumer while permits remain on
+the stack, or explicit original-owner pause/resume permits, needs source review.
+Upstream `capture_commit` uses dynamic n_keep; audit all-accept multirow replay and
+count1 self-commit together with current full-window-before-repair scheduling.
+Actual commit INFO must declare count/position fields explicitly; live uniform
+targets cannot be overwritten. Normal target/session/final/cleanup consumers must
+join their original pending state before using it.
+
+No GPU/model/inference/numerical/speed/recovery/sudo/service operation, installation
+or API/frontend change ran. Full rewrite, regression triage and physical/owning-
+erasure acceptance remain incomplete. Goal stays active for CPU-only work.
+Required Vashti changes:none.

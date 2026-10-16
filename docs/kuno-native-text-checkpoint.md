@@ -1,19 +1,37 @@
-<!-- Current resume: 2026-10-16, source 414e2c3, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source 86f4c35, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, engine source through `414e2c3`. The user authorized
+branch `codex/strata-rust-port`, engine source through `86f4c35`. The user authorized
 continuing CPU-only work; the goal controller is active for that scope.
 GPU/model/service/sudo work still needs renewed user authorization. Last physical recovery evidence
 is historical 06:07:22Z on Oct15; no subsequent GPU run or live health claim.
 
-Read the latest [native INFO receipt](kuno-strata-rewrite-completion.md#native-info-transfer-with-actual-current-owners-2026-10-16)
+Read the latest [lane-flight receipt](kuno-strata-rewrite-completion.md#native-lane-fences-and-original-recording-flight-ownership-2026-10-16)
 and coordination handoff. Earlier CJK source `cd703bc` was integrated as `0bfbea8`;
 **do not cherry-pick it again**. Its original 106299-row Q6 head, inverse-ID sampler
 and target/MTP INT8 caches remain connected.
 
-**Latest native INFO block:** `414e2c3` moves actual current Upload-to-Uniform
+**Latest lane-flight block:** `86f4c35` replaces the global single math fence and
+last-recording completion assumption with2 actual lane fences and a bounded original-
+recording flight book. All cold/hit/direct submissions use it. Each recording has a
+nonzero monotonic identity; its original family/compute count must match the submit.
+The slot is reserved before fence reset or queue submission. Partial submissions
+remain owned and get no completion credit. Live recordings cannot be replayed,
+replaced or evicted; completion/profile collection resolves the original identity,
+not the current LRU tail. Duplicate enqueue handles drop only after successful
+submission; actual recording resources stay pinned. `pending()` still includes
+in-flight work so original readback/cleanup drains are preserved.
+
+46 focused CPU checks, selected/off strict Clippy and formatting pass. Immutable
+release and327 offline shader variants also pass; exact hash/logs are in the
+completion guide. No GPU/model
+or numerical/speed acceptance. **Global joins remain selected** until the family-
+state/consumer contract is ported; two owned fences do not alone enable overlap.
+No extra private tensor/state owner or public API is added.
+
+**Earlier native INFO block:** `414e2c3` moves actual current Upload-to-Uniform
 copies onto the adopted native transfer queue for cold capture and direct replay.
 A reused transfer command buffer retains the actual complete source/target handles
 through its fence; the math recording's original header waits on its real timeline.
@@ -186,14 +204,18 @@ transfer (`414e2c3`). **Next block: separately owned pending commits plus accept
 prefix state publication.** Preserve the new actual current-source INFO submission
 and timeline wait; do not redo it or bake variable Upload handles into math graphs.
 
-`Graph` still has one in-flight fence/last-recording flight. `complete_submission`,
-`select_branch_queue`, `push/push_transfer` and stream flush join prior native math;
+`Graph` now has separate actual lane fences and stable original recording flights
+(`86f4c35`). `complete_lane_submission` joins the matching lane/recording; existing
+`complete_math_submission/complete_submission`, `select_branch_queue`, push/copy
+and stream flush still deliberately join prior native math globally;
 queue-switch handoffs can also signal behind all primary work. These must change
 together for a genuine pending target commit and independent draft. Original
 request/model identity, recording resources and INFO pages must stay retained until
 their own actual completion. Do not use the existing completed-replay bool as a
 submission receipt. Provide a separately owned pending commit/event contract and
-join it at the next dependent target/session/final/cleanup consumer.
+join it at the next dependent target/session/final/cleanup consumer. Do not redo
+flight identity or INFO ownership work. The remaining coupling is selecting only
+real dependencies, original family-state publication and exact carry consumers.
 
 The controller currently verifies/commits the full proposed window then synchronously
 repairs the accepted prefix. Replace that schedule coherently: original family
@@ -203,6 +225,18 @@ only the exact original verified carry rows into drafting; do not mint a new
 completed target receipt before pending work joins. Audit all-accept and native
 count1 self-commit with rejection, output cap/EOS and failure cleanup. Unkeyed MTP
 prompt/preparation scheduling and full numerical/physical acceptance remain open.
+
+Implementation audit leads (not new product requirements): `run_global` keeps
+GDN/QSA/PLE permits borrowed across the final proof/commit. An owned deferred object
+cannot casually store those self-borrows; consider a scoped verified-prefix/draft
+consumer while original permits stay on the stack, or explicit original-owner
+pause/resume permits. Do not leak/disarm a permit without preserving its policy
+and failure poison. Source `capture_commit` uses dynamic n_keep/max8; audit count1
+self-commit and all-accept multirow replay rather than preserving the current
+full-window commit/repair schedule. Typed commit count/position fields must be
+explicit, never inferred from matching old INFO values. INFO upload targets must
+not overwrite pages referenced by an unrelated live flight. Current global INFO
+uploader/switch handoffs require the same dependent-owner review when reducing joins.
 
 Other open work: HOST embedding placement;4096/2048 context/prefill versus source
 32768/4096; GDN pair swap versus fixed-copy scheduling; packed-cache physical layout;
