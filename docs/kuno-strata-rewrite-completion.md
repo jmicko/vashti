@@ -53,13 +53,13 @@ all need a final audit of actual connected dispatches, not just file names.
 | GR write/read/norm/down/up/injection | `sycl/src/kernels/cuda/fused_gr.dp.cpp::fused_gr_read_multi`; `verify.cpp::gr_read_group` | Native pending-write norm, sliced BF16 down/injection, fixed slice reduction and up/mix/commit are now connected and unconditionally selected in the core, including explicit PLE/final boundary writes. Resident original weights and the enlarged private scratch owner are charged together. Structural acceptance passes; numerical/model execution acceptance and final substitution audit remain pending. |
 | GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp`, `prefill/kernels.dp.cpp` | Core connects native BF16 alpha/beta, controls, recurrence/norm and accepted-prefix replay. Prompt scope selects contiguous H, causal convolution/history/L2, CB32 recurrence and directly consumed FP16 output. Source 9a7a23b connects prompt-capacity whole-chunk math without per-element status/replay owners, carved AB staging, and native row/value-head recurrent state shared by prompt/decode/repair. The large chunk caller/acceptance is connected in the latest controller receipt; physical execution and final numerical/queue audit remain open. Split verifier mode is an optional upstream path, not selected by the measured server. |
 | QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects INT8 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. The measured server explicitly selects INT8 for target and MTP; source2a3d1ad ports both together and the combined CPU shader/layout checks now pass. Numerical/GPU acceptance is pending. Earlier generic-default FP16 scope claims below are superseded. Numerical/state acceptance remains required. |
-| PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Core connects native BF16 MAX8 projections, normalization/gate/conv/history, deduplicated positional reads and accepted-prefix ownership. Prompt calls now consume a bounded, joined double-buffered source prefetch. The latest controller receipt connects native large chunk geometry, joined uploads, retained tail and exact history acceptance. Sources `595393e` and `57147a8` make actual decode and prompt history GPU-authoritative in existing OLD/NEXT roots, with checked CPU token-only publication, GPU accepted-prefix history and independent PLE capture roles. Default prompt/decode float readbacks and prompt diagnostic tail copies are removed; explicit diagnostics and the legacy CPU oracle remain. Full-proposed-window-before-prefix scheduling remains an explicit gap. Numerical/device acceptance remains open. Prompt loans are disabled in the measured32768-context configuration and are not a completion prerequisite. Never persist request n-grams. |
+| PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Core connects native BF16 MAX8 projections, normalization/gate/conv/history, deduplicated positional reads and accepted-prefix ownership. Prompt calls now consume a bounded, joined double-buffered source prefetch. The latest controller receipt connects native large chunk geometry, joined uploads, retained tail and exact history acceptance. Sources `595393e` and `57147a8` make actual decode and prompt history GPU-authoritative in existing OLD/NEXT roots, with checked CPU token-only publication, GPU accepted-prefix history and independent PLE capture roles. Default prompt/decode float readbacks and prompt diagnostic tail copies are removed; explicit diagnostics and the legacy CPU oracle remain. Source `131d29c` selects the native scoped accepted-prefix consumer before state/cursor publication; the diagnostic checkpoint path keeps the older schedule. Pending event/graph fidelity and numerical/device acceptance remain open. Prompt loans are disabled in the measured32768-context configuration and are not a completion prerequisite. Never persist request n-grams. |
 | Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. The bounded prompt path now uses logical-ID expert order, checked native transfer nodes, an eight-slot raw ring and two paired dequantization slots. The latest owned-consumer receipt connects full2048-row owners, non-overlapping raw/grouped route packets, causal math/state scopes, the unbatched final prompt input uses normal count1 decode for the first head, and full device MTP teaching covers the preceding prefix (up to8192 matrix rows). Independent transfer/compute queues and real release boundaries are connected. The measured server uses4096 prompt rows and32768 context, versus current2048/4096. Its no-borrow selection and nonresident fraction select the existing eight-slot/two-dequant-ring path; alternative loans/ring sizes are not prerequisites. Physical whole-model acceptance remains open. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
 | Prompt dense/expert matrix backend | Intel oneMKL rounded BF16/FP16 GEMMs | Connected Rust cooperative8x16x16/F32 kernels now consume the actual rounded dense and grouped GU/DOWN images, with enabled device features, SPIR-V native registration and required16 subgroup in both pipeline paths. See the cooperative-matrix receipt; physical numerical/model acceptance remains open. |
 | MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native INT8 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Positive-threshold chains now keep hidden carries on device and observe the same token/probability/fault packet as zero-threshold chains; mapped/event scheduling remains open. First/grouped device-source and ids-only target result consumers now exist; the shared-context constructor receipt below supersedes the separate-client blocker. Core construction now selects the actual target client and one combined account. Source9de7fef pins the original target embedding/head once, shares them with MTP and gathers target embeddings on GPU. Actual device/state acceptance is pending. Source0bfbea8 connects the original-order CJK106299-row Q6 draft head, inverse-ID history mapping, compact confidence and coupled sampling; source2a3d1ad connects INT8 caches. Combined CPU checks pass, with full numerical/GPU execution still pending. Source `862f5fa` separates first-front staging and actual observation from capture, and prestages all coupled draft controls once per round. Source `8262367` connects typed MTP phases/4096 boundaries and original model-instance graph namespaces; source `d0670b0` connects direct original MTP replay and capture-derived host/sampler handback. Physical acceptance, commit/event fidelity, numerical/state acceptance and runtime policy remain required. See the latest device-end receipt. |
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Sourcea26adc2 ports the native bounded trigram index, longest/recent suffix choice, cost priors, probing/stale rules and optional lookup-chain accounting into the selected controller. Configured MTP/target windows no longer shrink at the output cap; state commit and emission are separate. Coupled sampling and physical state acceptance still need end-to-end validation. |
-| Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Real greedy verification/state-only repair exists. Audit all active windows and acceptance cases against GDN/QSA/PLE/positions; independent correctness oracle remains missing. |
-| Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; Source `d40442c` connects direct retained target submission with typed control uploads and original family receipts; source `d0670b0` connects direct MTP invocation with original actual packet observations and sampler/actor handback. Source `b6732c8` adopts independent MTP compute and concurrent buffer families with semaphore handoffs. Source `414e2c3` connects actual current INFO copies on the native transfer timeline and avoids empty primary submissions; source `86f4c35` replaces the global single fence/last-recording assumption with actual lane fences and stable original recording flights. Global joins and accepted-prefix commit/event publication remain incomplete. Physical ring overlap, scratch lifetimes and full execution acceptance remain open. Measured serving lazily captures branches; eager all-branch warmup is not a prerequisite; a sequence of independent Wgpu launches is not equivalent. |
+| Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Source `131d29c` connects real provisional rows to accepted GDN/QSA/PLE candidates while original full-window transactions remain open, then publishes only n after real fault/I/O proof. Count1 uses its candidate and all-accept multirow runs original state replay. Old diagnostic full-window repair is not selected by the native controller. Asynchronous pending commit/graph fidelity, original storage substitutions and independent GPU/numerical oracle remain open. |
+| Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; Source `d40442c` connects direct retained target submission with typed control uploads and original family receipts; source `d0670b0` connects direct MTP invocation with original actual packet observations and sampler/actor handback. Source `b6732c8` adopts independent MTP compute and concurrent buffer families with semaphore handoffs. Source `414e2c3` connects actual current INFO copies on the native transfer timeline and avoids empty primary submissions; source `86f4c35` replaces the global single fence/last-recording assumption with actual lane fences and stable original recording flights. Source `131d29c` connects synchronous original accepted-prefix publication; global joins and pending commit graph/event fidelity remain incomplete. Physical ring overlap, scratch lifetimes and full execution acceptance remain open. Measured serving lazily captures branches; eager all-branch warmup is not a prerequisite; a sequence of independent Wgpu launches is not equivalent. |
 | Request lifecycle and arbitrary input | upstream CLI/session/inference entry points | Current Rust public-fixture gate is not a general engine. Connect bounded arbitrary prompts and request-local sampling/history, with no persistent content, protected memory and orderly erase/close. No gateway/UI work required. |
 
 ## Validation and the speed gate
@@ -5678,3 +5678,90 @@ No GPU/model/
 inference/numerical/speed/recovery/sudo/service operation, installation, API,
 frontend or release change occurred. Goal remains active for CPU-only work.
 Required Vashti changes:none.
+
+
+## Native accepted-prefix before state publication (2026-10-16)
+
+Source `131d29c7feb02968f21c4694c54b4952c6d37db5` replaces the selected global
+controller's full-window commit followed by checkpoint rewind with an actual
+scoped native prefix consumer. This is connected in `strata_global_controller.rs`,
+not a separate probe or default-off helper. Original prompt/teacher full-row
+calls remain full-row calls; the diagnostic `LatestTargetRound` path still exists
+but is no longer the selected native speculative controller.
+
+Pinned `verify.cpp::capture_commit` retains original GDN inputs, commits n_keep
+using the original recurrence/convolution, maintains QSA index state, and selects
+PLE history. `commit` skips the graph only for count1 self-commit, and runs multirow
+commit even when every proposal survives. `ResidentModel::verify_native_prefix`
+now observes the actual target result while all original full-proposal family
+transactions remain armed. Its scoped observer has provisional rows but cannot
+borrow the model or executor. It derives acceptance from real target picks and
+retains their original device carry. `select_verified_rows` releases the host row
+lease before any prefix consumer; invalid extents/errors publish no cursor.
+
+The real consumers are selected together:
+
+- GDN checks each original pending receipt and its retained-input start/count/chunk,
+  then reuses the actual state-only convolution/recurrence/fault consumers from
+  prewindow OLD into uncommitted NEXT. The old diagnostic repair uses that same
+  implementation with its opposite root roles. Multirow all-accept also replays;
+  count1 already has its accepted candidate and needs no extra state graph.
+- QSA checks the original pending owners and clears/folds only the rejected raw
+  cache, positions and pooled suffix. All-accept queues no suffix clear. Existing
+  packed raw-index storage supplies partial-block continuation; this remains an
+  explicit storage substitution for upstream's index-tail snapshot/reappend.
+- PLE checks the original pending owner and forms accepted NEXT from original OLD
+  plus normalized accepted rows on GPU. Its original history permit then derives
+  only the accepted two CPU ngram token IDs. No stale CPU float owner is used.
+
+Original receipt metadata and policy accounting retain the full proposed count;
+no receipt, generation or anchor is rewritten to imitate a smaller execution.
+GDN/QSA acceptance permits select one bounded prefix; their real lifecycle commit
+checks the original pending extent and publishes only the chosen next position.
+PLE and model cursors publish that same n. Original real fault/I/O proof covers
+prefix consumers before whole-family acceptance and state publication; receipt
+abandonment, poison and terminal model/executor teardown still apply. Usage
+observes the verified route window once and global adaptation remains after the
+actual completed boundary. No new GPU state/carry owner is added.
+
+Prefix INFO now coexists with verification before the request checkpoint. The
+original runtime admission conservatively adds544,768 bytes: two audited copies
+of2048-byte records for36 Conv/Replay/fault-fold triplets,12 QSA clear/fold pairs
+and1 PLE History. The existing metadata/carry budgets retain original owners;
+the selected controller no longer allocates latest-window checkpoint snapshots.
+
+**Remaining source gap:** this block is synchronous. Prefix operations are actual
+unkeyed enqueues, not yet Strata's retained dynamic n_keep commit graph. Original
+fault/I/O proof and stream/queue drains still join; no target-commit/draft overlap
+is established. Port the pending lane event and retained INFO ownership with
+independent verified-row/draft-local consumers, next-target ordering and explicit
+session/final/cleanup joins together. A scoped post-submit draft consumer can
+retain original family permits on the stack; do not store self-referential borrows
+or mint a completed cursor from an enqueue ticket. GDN/PLE role swapping and PLE
+normalized-row reconstruction versus source indexed snapshots remain explicit
+substitutions needing final source/numerical review. Other context, embedding,
+arbitrary-input, regression, owning-erasure and physical gates remain open.
+
+CPU-only evidence under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-direct-prefix-final-test-build-20261016.log`: locked selected release test
+  build passes. `strata-direct-prefix-cpu-20261016.log` records98 nonempty passing
+  cases:19 original GDN family,17 QSA family,1 scoped row-lease lifecycle,15 PLE,
+  16 typed parameters,3 PLE shaders,3 lane flights,2 INFO,12 queue planner,4 MTP
+  replay and6 sampler cases. The first controller filter was empty and is not
+  counted; `strata-direct-prefix-controller-cpu-20261016.log` runs the corrected
+  `daslab_language_probe::global_controller::tests::` filter with4 real passes.
+  Total102, not the full regression suite. New actual lifecycle tests cover every
+  1..8 proposed/accepted extent, direct continuation and invalid/stale rejection;
+  generic row-lease tests prove host drop ordering, not GPU completion authority.
+- `strata-direct-prefix-{core,off}-clippy-20261016.log`: strict locked selected/off
+  release Clippy pass. Changed-source formatting and `git diff --check` pass.
+- `strata-direct-prefix-build-20261016.out`: immutable selected release at source
+  above, SHA256 `b6a9cb0290118c5238db942df05662964c98fb88d154e8287b254e85afce7b72`.
+
+- `strata-direct-prefix-shaders-20261016.log`:327 generated variants plus native
+  cooperative-matrix and physical expert-pointer validation pass for that same
+  frozen artifact. This validator exits before vendor/adapter/device creation.
+No GPU/model/inference/numerical/speed/recovery/sudo/service operation,
+installation, API/frontend or release change occurred. Goal remains active for
+CPU-only work. Required Vashti changes:none.

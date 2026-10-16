@@ -6,11 +6,12 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through `57147a8`. Read the latest
-[GPU PLE history handoff](#active-kuno-engine-handoff--gpu-ple-history-2026-10-16)
-and [completion gate](kuno-strata-rewrite-completion.md). Direct target and MTP submission
-are now connected in source; accepted-prefix commit/event fidelity and full
-GPU/numerical acceptance remain incomplete. No new speed result.
+`codex/strata-rust-port`, engine source through `131d29c`. Read the latest
+[direct accepted-prefix handoff](#active-kuno-engine-handoff--direct-accepted-prefix-2026-10-16)
+and [completion gate](kuno-strata-rewrite-completion.md). Direct target/MTP
+submission and accepted-prefix state publication are connected in source. Pending
+commit graph/event fidelity and full GPU/numerical acceptance remain incomplete.
+No new speed result.
 
 The user authorized **CPU-only continuation**; the goal controller is active.
 No GPU/model/service/sudo work is authorized by this continuation. Last physical
@@ -6281,7 +6282,7 @@ API/connector/UI change, installation or release. Required Vashti changes:none.
 
 ### Active Kuno engine handoff — GPU PLE history (2026-10-16)
 
-Engine source through `57147a8` (includes `595393e`) keeps native PLE float history
+Engine source through `131d29c` (includes `595393e`) keeps native PLE float history
 in the existing original GPU OLD/NEXT owners across prompt, decode and prefix
 repair. Default float readbacks/uploads and the prompt diagnostic tail copy are
 removed together; host publication advances only the two original ngram token IDs.
@@ -6307,3 +6308,33 @@ Do not remove waits or abandon coupled components based on incidental speed.
 
 Goal remains active for CPU-only work. No GPU/model/service/sudo, installation,
 deployment, release or API/connector/UI changes. Required Vashti changes:none.
+
+
+### Active Kuno engine handoff — direct accepted-prefix (2026-10-16)
+
+Engine source `131d29c` connects the selected native controller to real provisional
+target rows while original full-window state transactions remain open. It forms
+accepted GDN/QSA/PLE candidate state, accepts the original fault/I/O proof, then
+publishes only n. The selected controller no longer commits a full proposal before
+rewinding it. Original receipt counts/epochs stay unchanged. Count1 uses its real
+candidate; all-accept multirow replays state as upstream does. Exact device carry
+is retained, the host row lease drops before state work, and adaptation follows
+the completed boundary. Original diagnostic checkpoint/repair paths stay separate.
+No new GPU state owner or public API is added; runtime INFO coexistence is charged
+544,768 extra bytes through original admission.
+
+102 nonempty focused CPU cases, strict selected/off Clippy and formatting pass.
+Exact immutable source/hash, corrected test-filter scope and shader evidence are
+in completion guide **Native accepted-prefix before state publication**. These are
+not whole-model GPU/numerical acceptance. No live speed trial or recovery claim.
+
+Next is actual retained dynamic commit-graph/pending-event fidelity and independent
+draft work. The new path still joins synchronously. Preserve real INFO/resource
+owners, verified carry, family proof/poison obligations, target ordering and
+session/final/cleanup joins together. A wait=false flag alone is insufficient.
+GDN/PLE role swaps, QSA raw-index storage and PLE normalized-row reconstruction
+remain explicit backend substitutions for final review.
+
+Goal stays active for CPU-only work. Installed services/runtime/models remain
+untouched; last physical recovery evidence is historical Oct15. No sudo, install,
+deployment, release, API/connector/UI changes. Required Vashti changes:none.

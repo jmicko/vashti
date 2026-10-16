@@ -1,19 +1,45 @@
-<!-- Current resume: 2026-10-16, source 57147a8, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source 131d29c, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, engine source through `57147a8`. The user authorized
+branch `codex/strata-rust-port`, engine source through `131d29c`. The user authorized
 continuing CPU-only work; the goal controller is active for that scope.
 GPU/model/service/sudo work still needs renewed user authorization. Last physical recovery evidence
 is historical 06:07:22Z on Oct15; no subsequent GPU run or live health claim.
 
-Read the latest [GPU PLE history receipt](kuno-strata-rewrite-completion.md#native-gpu-ple-history-and-real-prefix-consumers-2026-10-16)
+Read the latest [direct accepted-prefix receipt](kuno-strata-rewrite-completion.md#native-accepted-prefix-before-state-publication-2026-10-16)
 and coordination handoff. Earlier CJK source `cd703bc` was integrated as `0bfbea8`;
 **do not cherry-pick it again**. Its original 106299-row Q6 head, inverse-ID sampler
 and target/MTP INT8 caches remain connected.
 
-**Latest GPU PLE history block:** `595393e` plus `57147a8` keep the actual committed PLE float
+**Latest direct accepted-prefix block:** `131d29c` connects the selected global
+controller to `ResidentModel::verify_native_prefix`, using an exclusive scoped
+observer of the real provisional target rows. Every original family transaction
+remains armed with its full proposed-window stamp. The observer chooses n and
+extracts the original device carry; its host-row lease drops before state work.
+Only the accepted prefix is then published. No full-window cursor/state commit
+precedes rejection repair in this selected controller anymore.
+
+Native GDN uses the original retained inputs and prewindow OLD to form accepted
+NEXT, including all-accept multirow replay. Count1 already has its one accepted
+candidate. QSA clears/folds only the rejected raw-cache/pooled suffix, while PLE
+forms accepted NEXT on GPU and prepares only the accepted two-token history.
+The actual second fault/I/O proof covers these real consumers before all-family
+preflight/publication. Original policy accounting still consumes all proposed
+receipts; lifecycle and model/PLE cursors publish only n. There is no edited/fake
+receipt count, generation/poison reset or new GPU state owner. Additional coexisting
+runtime INFO is conservatively charged544,768 bytes in original admission.
+
+102 focused native CPU checks, selected/off strict Clippy and formatting pass;
+immutable build/offline shader receipts are in the completion guide. These are
+source/CPU checks, not GPU/numerical acceptance. The diagnostic `LatestTargetRound`
+path still retains its older completed-window/repair schedule; it is no longer the
+selected native controller. **Commits still join synchronously.** Next is the real
+pending event/commit graph and independent draft consumer, with actual queue/INFO
+hazards and final joins preserved. No live speed trial is authorized yet.
+
+**Earlier GPU PLE history block:** `595393e` plus `57147a8` keep the actual committed PLE float
 history in its existing GPU OLD/NEXT owners. Native preparation neither clears nor
 uploads committed OLD. Real full-window completion swaps their roles; CPU publication
 advances only the original two ngram token IDs with a checked ordered token permit.
@@ -37,7 +63,8 @@ all4 binding inventories are distinct, without putting positions/content in keys
 2048-row prompt/decode/short-prompt continuation and every decode prefix0..8.
 Selected/off strict Clippy and formatting pass. Immutable release/offline shader
 receipts are in the completion guide. **No GPU/numerical/speed acceptance claim.**
-Default window publication still commits the full proposal before prefix repair. GPU role swaps
+That earlier block still committed full proposals before prefix repair; `131d29c`
+supersedes that schedule for the selected native controller. GPU role swaps
 and global joins remain explicit source scheduling substitutions. Do not reupload
 `model.ple_conv.history()` during native decode: that legacy CPU float owner is
 not authoritative after native GPU-history advancement.
@@ -208,7 +235,7 @@ artifact hash and logs are in the completion guide.
 These are not whole-model/GPU/numerical acceptance. Historical full-core regression
 failures remain untriaged; do not call the complete regression suite green.
 
-**Next block: accepted-prefix commit and queue/event fidelity.** Direct target/MTP
+**Next block: pending commit graph and queue/event fidelity.** Direct target/MTP
 submission is connected; do not repeat typed/staging work or benchmark incomplete
 source. Pinned Intel `generate.cpp:3115` enables asynchronous single-device commits;
 `verify.cpp:2364–2483` queues its original commit graph, records `commit_done_`, and
@@ -216,21 +243,19 @@ joins only for an explicit session consumer/final request boundary. The next tar
 uses the same queue; the independent drafter reads only original window rows and
 its own K/V. Serving calls commit at11089 and drafting at11140, with final wait11169.
 
-Rust `strata_global_controller.rs` verifies the original window, calls
-`LatestTargetRound::finish(n)`, then retains original accepted carry rows for the
-next draft. `resident_target_round.rs::replay_prefix` currently enqueues GDN replay
-and rejected-QSA clearing, reads fault synchronously, then commits all family
-permits/cursor. Rust verification currently commits the full proposed
-window before the accepted-prefix repair. This is a real schedule/ownership
-substitution, not equivalent async source fidelity. Port the accepted-prefix and
-pending-commit owner/event contract as a coherent block; do not merely remove the
-fault read or mark a CPU cursor complete early. Preserve all original roots until
+The selected `strata_global_controller.rs` now uses the actual scoped native
+prefix consumer in `run_global` (`131d29c`), preserving real target predictions and
+device carry while original transactions remain open. It forms only accepted
+GDN/QSA/PLE candidate state, joins the original fault/I/O proof, then publishes n.
+`resident_target_round.rs::replay_prefix` remains the older diagnostic path; it
+is no longer selected by this controller. Port pending-commit owner/events next;
+do not merely remove the fault read or mark a CPU cursor complete early. Preserve all original roots until
 completion, target queue order and draft carry ownership; final/cleanup consumers
 must join outstanding commits. Review all-accept and one-token self-commit too.
 
 The backend now adopts real target/draft/copy queues (`b6732c8`) and actual INFO
-transfer (`414e2c3`). **Next block: separately owned pending commits plus accepted-
-prefix state publication.** Preserve the new actual current-source INFO submission
+transfer (`414e2c3`). **Next block: separately owned pending commit events and independent draft
+consumers.** Preserve the new actual current-source INFO submission
 and timeline wait; do not redo it or bake variable Upload handles into math graphs.
 
 `Graph` now has separate actual lane fences and stable original recording flights
@@ -246,32 +271,25 @@ join it at the next dependent target/session/final/cleanup consumer. Do not redo
 flight identity or INFO ownership work. The remaining coupling is selecting only
 real dependencies, original family-state publication and exact carry consumers.
 
-The controller still verifies/commits the full proposed window then synchronously
-repairs the accepted prefix. `595393e` removes PLE's authoritative CPU float-history
-transition from native decode and queues real GPU prefix history, but does not yet
-change this outer publication schedule. Replace that schedule coherently: original family
-permits/stamps, accepted-prefix kernels, fault proof, cursor publication, carried
-rows and MTP borrow lifetime. Holding pending `&mut` target owners must still allow
-only the exact original verified carry rows into drafting; do not mint a new
-completed target receipt before pending work joins. Audit all-accept and native
-count1 self-commit with rejection, output cap/EOS and failure cleanup. Unkeyed MTP
-prompt/preparation scheduling and full numerical/physical acceptance remain open.
+The scoped native prefix consumer resolves full-window-before-repair publication
+and avoids storing self-referential borrowed permits. **It does not resolve async
+commit.** Original family transactions and state/carry/INFO roots must remain
+owned while commit is pending; original proof/poison/drop obligations cannot be
+disarmed just because work was submitted. A scoped post-submit draft consumer
+while permits remain on the stack is still one viable design; no model-ready
+cursor receipt may escape before the actual dependent join.
 
-Implementation audit leads (not new product requirements): `run_global` keeps
-GDN/QSA/PLE permits borrowed across the final proof/commit. Native PLE now retains
-only its checked two-token CPU permit, not a mutable CPU convolution transition;
-its common Preparation signature still shares lifetimes and may need field splitting.
-Native prompt completion now uses that same token-only permit; explicit diagnostic
-readbacks remain separate. An owned deferred object
-cannot casually store those self-borrows; consider a scoped verified-prefix/draft
-consumer while original permits stay on the stack, or explicit original-owner
-pause/resume permits. Do not leak/disarm a permit without preserving its policy
-and failure poison. Source `capture_commit` uses dynamic n_keep/max8; audit count1
-self-commit and all-accept multirow replay rather than preserving the current
-full-window commit/repair schedule. Typed commit count/position fields must be
-explicit, never inferred from matching old INFO values. INFO upload targets must
-not overwrite pages referenced by an unrelated live flight. Current global INFO
-uploader/switch handoffs require the same dependent-owner review when reducing joins.
+Next actual source block: source `capture_commit`'s dynamic n_keep graph and
+count1 self-commit, target-lane pending event, retained INFO and independently
+scheduled draft, then next-target/session/final/cleanup joins. Current prefix
+kernels are genuinely queued but unkeyed; adding only a wait=false flag is not
+source fidelity. Typed commit count/position fields must be explicit, rather than
+inferred from equal old INFO values. Live uniform targets must not be overwritten
+by an unrelated flight. Review the single INFO uploader and queue-switch handoffs
+together with global stream drains. Already verified carry rows and draft-local
+KV can be independent of target state commit, but both data and synchronization
+must establish that independence. Global adaptive-cache publication is currently
+a completed boundary and must remain ordered before its next target consumer.
 
 Other open work: HOST embedding placement;4096/2048 context/prefill versus source
 32768/4096; GDN pair swap versus fixed-copy scheduling; packed-cache physical layout;
