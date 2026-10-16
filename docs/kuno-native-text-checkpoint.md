@@ -1,54 +1,57 @@
-<!-- Current resume: 2026-10-16, source 7477b66, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source f9d1e06, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, engine source through `7477b66`. The user authorized
-continuing CPU-only work; the goal controller is active for that scope.
-GPU/model/service work still needs renewed user authorization. The user has
-authorized keeping sudo refreshed in the shared Demons shell; noninteractive
-validation succeeded. This does not expand the GPU/testing scope. Last physical recovery evidence
-is historical 06:07:22Z on Oct15; no subsequent GPU run or live health claim.
+branch `codex/strata-rust-port`, engine source `f9d1e06`. The goal remains active
+for CPU-only work. The user authorized sudo refresh in the shared Demons shell;
+noninteractive validation succeeded. That does not widen GPU/testing authority.
+No GPU/model/service work, fresh live health claim, install or release. Last
+physical recovery evidence remains historical Oct15 06:07:22Z.
 
-Read the latest [original selective-owner receipt](kuno-strata-rewrite-completion.md#original-selective-io-owners-and-retained-replay-pins-2026-10-16)
-and its **Next connected graph admission and lifetime block** before changing
-queue waits. Earlier CJK `cd703bc` was integrated as `0bfbea8`; do not reapply it.
+Read [scoped admission and allocator receipt](kuno-strata-rewrite-completion.md#scoped-native-admission-and-original-allocation-lifetimes-2026-10-16)
+and its next audit before queue/lifetime changes. Earlier CJK `cd703bc` was
+integrated as `0bfbea8`; do not reapply it.
 
-**Latest selective I/O:** `7477b66` lends actual original tracked full I/O buffers
-through an immutable same-frame inventory to Graph. The callback validates
-original request/epoch/slots, partial/foreign recorded/flight ownership and real
-current-lane/INFO copy/readiness/handoff completion. It excludes every actual
-named recording reference needed for FUTURE replay and still-live anonymous
-recording, using original canonical descriptor/physical/indirect/copy buffers.
-Full host overwrites conflict with any view on those dedicated owners. Only
-admitted slots gain native writers/free-index entries; stale excluded grants
-revoke, partial/staged/mapped excluded Uploads reject, INFO pins remain. No source
-contents, new GPU root, storage release or completion/numerical/erasure authority
-is hidden in the bounded cohort bitmap.
+**Latest connected block:** `f9d1e06` couples scoped graph/stream admission with
+original allocator pins and INFO visibility. Only queued nodes trigger execution;
+a pending peer alone cannot trigger another MTP recording. Active entry waits on
+desired lane1 and uses the original BEFORE-commit R readiness. Incoming actual
+node/full INFO/retained replay intervals preflight both original flights; only
+current-lane/conflicting work joins, with real cross-queue semaphore handoffs.
+Submission rechecks the actual full plan. Direct replay re-finds its stable
+recording ID after a completion can remove a profiled Vec entry.
 
-Actual I/O metadata ceiling/Tracked size bound131072 owners. The checked temporary
-ID/bitmap allowance adds4MiB HOST to `NATIVE_QUEUE_HOST_BYTES` (130 ->134MiB);
-no VRAM/model data allocation.281 focused CPU cases across23 nonempty suites,
-selected/off strict Clippy and format/whitespace pass; see exact logs/limits.
-The CPU I/O harness still uses disabled activation/generic lab cfg. No shader/
-layout/frozen artifact/GPU/model/service/protected test or speed result; frozen
-`0bf0b5f` remains stale. Sudo refresh succeeded. Required Vashti changes:none.
+Warm native-only flush, observation and selective I/O reuse can retain unrelated
+target work. Actual dirty primary/cold initialization, ordinary sync, scope end
+and terminal cleanup still fully drain with real MAIN visibility. A completed
+INFO source fence no longer erases its still-owed math timeline dependency;
+only actual consumer/full handoff completion credits visibility.
 
-**Next:** remove global waits through the complete graph admission/allocator-
-lifetime scope described in the completion guide. Current stream flush and
-entry/push/execute/replay STILL join globally before the new selective callback.
-Separate queued nodes from live peers; enter/join intended lane1; admit actual
-cross-flight ranges and retained direct plans; preserve dirty primary/cold init
-and real INFO header/visibility. Defer allocator cleanup/release_uniforms while
-peer/context work may use managed bindings, then reclaim after actual joint
-scope-end/final drain. Re-find recordings by stable ID if another completion
-removes a profiled Vec entry. Preserve exports/MAIN debt/R loans/family proof and
-terminal retired drains; keep ordinary behavior. Include positive-confidence
-per-cell checkpoints, metadata lookups and observation in the final audit.
-Full arbitrary-input/context/embedding-placement/regression/numerical/physical/
-recovery gates remain; live GPU work still needs renewed authorization.
+Original managed binding pins begin before fallible precommit preparation and
+cover resolved/new allocations through actual joint scope end. They prevent
+allocator slot reuse, not just Wgpu buffer destruction. Cleanup/uniform release
+is deferred centrally while active. Unknown/failure retains the scope; no owner,
+MAIN debt, R loan, numerical/erasure credit or model state is released by metadata.
+Bounded pin bookkeeping adds4MiB HOST allowance (queue HOST134 ->138MiB), no new
+VRAM/model data root. Required Vashti changes:none; public API/UI unchanged.
 
-**Latest native uploads/reuse:** `7cb1cbc` connects original data, INFO append and
+Locked final selected release test build,283 CPU cases across24 nonempty suites,
+strict selected/off Clippy, changed Rust format and whitespace pass. These are
+CPU/source checks, not proof of physical overlap, numerical output, Vulkan
+coherence/ownership, erasure/recovery or throughput. No shader/layout or frozen
+ordinary artifact change. Frozen `0bf0b5f` remains stale; rebuild current source
+before protected execution. See exact logs and remaining limitations in receipt.
+
+**Next:** finish the source-to-source connected scope audit, including all native
+first/continuation/positive-confidence observation paths, metadata/scheduler
+flushes, shared MAIN pending debt, unknown/failure/terminal ownership, cold root
+and actual placement/capacity boundaries. Resolve remaining arbitrary-input,
+context/prompt capacity, mapped HOST embedding and old core regression gaps.
+Full rewrite and physical/numerical/recovery gates remain open; no live speed
+trials until the completion audit passes. GPU work needs renewed authorization.
+
+**Historical native uploads/reuse (superseded by7477b66/f9d1e06 above):** `7cb1cbc` connects original data, INFO append and
 direct INFO replay to one bounded write-only renderer and explicit original upload
 states: Idle, WgpuMapped, NativeReady, NativeWriting, NativeWritten. Native reuse
 consumes a real completed grant BEFORE map/render/flush/unmap; only success stages

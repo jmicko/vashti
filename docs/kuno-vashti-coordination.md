@@ -6,12 +6,13 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through `7477b66`. Read the latest
-[selective-owner handoff](#active-kuno-engine-handoff--selective-io-owners-2026-10-16)
+`codex/strata-rust-port`, engine source through `f9d1e06`. Read the latest
+[scoped admission handoff](#active-kuno-engine-handoff--scoped-admission-and-allocator-lifetimes-2026-10-16)
 and [completion gate](kuno-strata-rewrite-completion.md). Direct target/MTP
 submission, accepted-prefix state publication and retained commit graph are connected
 in source. Original pending submissions/joins and scoped next-draft consumption are connected;
-independent execution/event fidelity and full GPU/numerical acceptance remain incomplete.
+scoped admission/lifetimes are connected in source; event fidelity and full
+physical/GPU/numerical acceptance remain incomplete.
 No new speed result.
 
 The user authorized **CPU-only continuation**; the goal controller is active.
@@ -6596,3 +6597,30 @@ No shader/layout/frozen ordinary artifact/GPU/model/service/protected driver/
 inference/install/release or public API/connector/UI change. Frozen `0bf0b5f`
 is stale. Required Vashti changes:none. Sudo refresh succeeded in Demons; goal
 stays active for CPU-only work. Full rewrite and physical gates remain incomplete.
+
+
+### Active Kuno engine handoff — scoped admission and allocator lifetimes (2026-10-16)
+
+Source `f9d1e06` completes the coupled admission/lifetime block identified in the
+previous handoff: queued nodes vs live peers; desired-lane draft entry using the
+original precommit readiness; actual node/INFO/retained-plan hazards with matched
+flight joins and real queue handoffs; stable recording identity; scoped native
+flush/readback/reuse. Dirty primary/cold initialization, ordinary sync, scope end
+and terminal cleanup preserve actual global drains and MAIN visibility.
+
+Original managed bindings are pinned from before preparation through actual joint
+scope end, covering both new and resolved allocations. Allocator cleanup/uniform
+release defers centrally, including explicit server cleanup. Unknown/failure
+retains pins. INFO source-copy completion preserves the still-owed math timeline
+wait; it is not a visibility/target-ready credit. Original exports, pending MAIN
+debt, R source loan/generation, I/O ledger, fault/family proof and state publication
+remain distinct. Adds4MiB bounded HOST bookkeeping (queue134 ->138MiB), no GPU root.
+
+Final locked selected build,283 focused CPU cases/24 nonempty suites, strict
+selected/off Clippy and format/whitespace pass. Exact logs/limits and next audit:
+completion guide **Scoped native admission and original allocation lifetimes**.
+No device execution, speed result, numerical/physical/recovery acceptance or
+complete-rewrite claim. Ordinary frozen `0bf0b5f` is stale; rebuild current source
+before protected work. No shader/layout/public API/connector/UI change.
+Required Vashti changes:none. No service/model/GPU/install/release action.
+Sudo refresh succeeds in Demons. Goal stays active for CPU-only work.
