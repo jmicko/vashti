@@ -190,7 +190,7 @@ fn raw_slot(root: &Handle, slot: usize, roles: [usize; 3]) -> Result<Handle> {
         || roles.iter().any(|&n| n == 0 || !n.is_multiple_of(256))
         || bytes
             .checked_mul(RAW_SLOTS)
-            .is_none_or(|n| n > 64 * 1024 * 1024)
+            .is_none_or(|n| n as u64 > allocation::RAW_RING_BYTES)
         || root.offset_start.unwrap_or(0) != 0
         || root.offset_end.unwrap_or(0) != 0
     {
@@ -252,7 +252,7 @@ pub(crate) fn enqueue(
     }
     let role_bytes = projections.map(|p| p.expert_bytes());
     let raw_stride = role_bytes.iter().sum::<usize>();
-    if (RAW_SLOTS * raw_stride) as u64 > 64 * 1024 * 1024 {
+    if (RAW_SLOTS * raw_stride) as u64 > allocation::RAW_RING_BYTES {
         return Err(crate::strata_prompt::invalid_buffer_length());
     }
     // Native Intel prefill groups on the host once per layer. This is a bounded
@@ -519,7 +519,7 @@ mod raw_slot_tests {
     }
     #[test]
     fn exact_views_cover_original_gu_up_down_for_every_supported_quant_pair() {
-        let root = Handle::new(StreamId { value: 91 }, allocation::ROOT_BYTES);
+        let root = Handle::new(StreamId { value: 91 }, allocation::RAW_RING_BYTES);
         let mut old_guard_would_exceed_exact_slot = false;
         for gu in [q::IQ2_S, q::IQ3_S, q::IQ3_XXS, q::IQ4_XS] {
             for down in [q::IQ4_NL, q::Q2_0] {
@@ -533,10 +533,10 @@ mod raw_slot_tests {
                 for slot in 0..RAW_SLOTS {
                     let view = raw_slot(&root, slot, [gu_bytes, gu_bytes, down_bytes]).unwrap();
                     let first = view.offset_start.unwrap();
-                    let end = allocation::ROOT_BYTES - view.offset_end.unwrap();
+                    let end = allocation::RAW_RING_BYTES - view.offset_end.unwrap();
                     assert_eq!(first, prior_end);
                     assert_eq!(view.size_in_used(), total as u64);
-                    assert!(end <= 64 * 1024 * 1024);
+                    assert!(end <= allocation::RAW_RING_BYTES);
                     assert!(first.is_multiple_of(256));
                     for (offset, bytes) in [
                         (0, gu_bytes),
@@ -583,8 +583,8 @@ mod raw_slot_tests {
         assert!(ordinary.clone().native_release_boundary(false) == ordinary);
     }
     #[test]
-    fn slot_descriptors_reject_partial_roots_bad_geometry_and_upper_half_use() {
-        let root = Handle::new(StreamId { value: 91 }, allocation::ROOT_BYTES);
+    fn slot_descriptors_reject_partial_roots_bad_geometry_and_raw_ring_overflow() {
+        let root = Handle::new(StreamId { value: 91 }, allocation::RAW_RING_BYTES);
         let roles = [1024, 1024, 2048];
         assert!(raw_slot(&root, RAW_SLOTS, roles).is_err());
         assert!(raw_slot(&root.clone().offset_end(256), 0, roles).is_err());

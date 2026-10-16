@@ -3,6 +3,52 @@
 //! only authoritative cache/positions/pooled and fault come from the stage.
 use super::*;
 
+#[derive(Clone, Copy)]
+struct ScoreBatch {
+    first: usize,
+    rows: usize,
+    start: usize,
+}
+fn score_batches(
+    start: usize,
+    count: usize,
+    context: usize,
+) -> Result<impl Iterator<Item = ScoreBatch>> {
+    if count == 0
+        || count > crate::strata_prompt::groups::CAPACITY
+        || context > crate::qsa_gpu::MAX_CONTEXT
+        || start.checked_add(count).is_none_or(|end| end > context)
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    Ok((0..count)
+        .step_by(super::SELECT_BATCH)
+        .map(move |first| ScoreBatch {
+            first,
+            rows: (count - first).min(super::SELECT_BATCH),
+            start: start + first,
+        }))
+}
+fn score_query_view(root: &Handle, batch: ScoreBatch) -> Result<Handle> {
+    let row = 512 * 4;
+    let end = batch
+        .first
+        .checked_add(batch.rows)
+        .and_then(|n| n.checked_mul(row))
+        .ok_or(Error::ArithmeticOverflow)?;
+    if batch.rows == 0
+        || batch.rows > super::SELECT_BATCH
+        || !batch.first.is_multiple_of(super::SELECT_BATCH)
+        || end as u64 > root.size_in_used()
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    Ok(root
+        .clone()
+        .offset_start((batch.first * row) as u64)
+        .offset_end(root.size_in_used() - end as u64))
+}
+
 /// Four RMS gammas; authoritative cache, positions, pooled/dead, model fault.
 /// This enqueues the full family and packed output, not a state acceptance.
 pub(crate) fn run(
@@ -57,8 +103,8 @@ pub(crate) fn run(
         (14, count * 24),
         (15, count * 2),
         (16, count * 4),
-        (17, count * blocks),
-        (18, count * blocks),
+        (17, super::SELECT_BATCH * blocks),
+        (18, super::SELECT_BATCH * blocks),
         (19, count * 2051),
     ] {
         span(&q[i], n)?;
@@ -175,32 +221,46 @@ pub(crate) fn run(
         1,
         (start + count) / 4 - start / 4,
     )?;
-    let mut sp = p;
-    sp[3] = (blocks * 128) as u32;
-    sp[4] = blocks as u32;
-    sp[5] = blocks as u32;
-    super::super::launch(
-        arena,
-        Kernel::PromptScoreFault,
-        [blocks.div_ceil(8), count, 1],
-        vec![
-            pooled.clone(),
-            q[7].clone(),
-            q[17].clone(),
-            q[18].clone(),
-            pooled,
-            fault.clone(),
-        ],
-        sp,
-    )?;
-    selection::select(
-        arena,
-        [q[17].clone(), q[18].clone(), q[19].clone(), fault.clone()],
-        start,
-        count,
-        blocks,
-        2051,
-    )?;
+    // Exactly the upstream256-query score/selection loop. Only IQ is rebased
+    // (2048-byte row alignment); the2051-word selected stride stays on its full
+    // owner and is addressed by a row index, never an unaligned descriptor.
+    for batch in score_batches(start, count, capacity)? {
+        let ScoreBatch {
+            first,
+            rows,
+            start: query_start,
+        } = batch;
+        let mut sp = p;
+        sp[0] = rows as u32;
+        sp[1] = query_start as u32;
+        sp[3] = (blocks * 128) as u32;
+        sp[4] = blocks as u32;
+        sp[5] = blocks as u32;
+        let iq = score_query_view(&q[7], batch)?;
+        super::super::launch(
+            arena,
+            Kernel::PromptScoreFault,
+            [blocks.div_ceil(8), rows, 1],
+            vec![
+                pooled.clone(),
+                iq,
+                q[17].clone(),
+                q[18].clone(),
+                pooled.clone(),
+                fault.clone(),
+            ],
+            sp,
+        )?;
+        selection::select(
+            arena,
+            [q[17].clone(), q[18].clone(), q[19].clone(), fault.clone()],
+            query_start,
+            rows,
+            blocks,
+            2051,
+            first,
+        )?;
+    }
     for first in (0..count).step_by(32) {
         let rows = (count - first).min(32);
         let mut ap = p;
@@ -290,4 +350,71 @@ pub(crate) fn compatibility(
         vec![fault, status],
         p,
     )
+}
+
+#[cfg(test)]
+mod score_batch_tests {
+    use super::*;
+    use cubecl_common::stream_id::StreamId;
+    #[test]
+    fn actual_query_views_cover_all_rows_and_keep_global_selection_rows_aligned_logically() {
+        let bytes = crate::strata_prompt::groups::CAPACITY * 512 * 4;
+        let parent = Handle::new(StreamId { value: 711 }, bytes as u64 + 8192);
+        let query = parent.clone().offset_start(4096).offset_end(4096);
+        for count in [1, 8, 31, 32, 255, 256, 257, 2049, 4096] {
+            for start in [0, 13, crate::qsa_gpu::MAX_CONTEXT - count] {
+                let mut next = 0;
+                for b in score_batches(start, count, crate::qsa_gpu::MAX_CONTEXT).unwrap() {
+                    assert_eq!(b.first, next);
+                    assert_eq!(b.start, start + next);
+                    let view = score_query_view(&query, b).unwrap();
+                    assert_eq!(view.size(), parent.size());
+                    assert_eq!(
+                        view.offset_start.unwrap(),
+                        4096 + (b.first * 512 * 4) as u64
+                    );
+                    assert_eq!(view.size_in_used(), (b.rows * 512 * 4) as u64);
+                    assert!(view.offset_start.unwrap().is_multiple_of(256));
+                    //2051-word rows stay on the complete selected owner instead
+                    // of rebasing an often unaligned Vulkan descriptor.
+                    assert!(
+                        (b.first + b.rows) * 2051 <= crate::strata_prompt::groups::CAPACITY * 2051
+                    );
+                    next += b.rows;
+                }
+                assert_eq!(next, count);
+            }
+        }
+        assert!(score_batches(0, 0, 32768).is_err());
+        assert!(score_batches(32767, 2, 32768).is_err());
+        assert!(
+            score_query_view(
+                &query,
+                ScoreBatch {
+                    first: 1,
+                    rows: 256,
+                    start: 1
+                }
+            )
+            .is_err()
+        );
+        assert!(
+            score_query_view(
+                &query,
+                ScoreBatch {
+                    first: 4096,
+                    rows: 1,
+                    start: 4096
+                }
+            )
+            .is_err()
+        );
+    }
+    #[test]
+    fn every_score_selection_record_is_priced_at_full_prompt_capacity() {
+        let n = crate::strata_prompt::groups::CAPACITY;
+        let calls = 3 * score_batches(0, n, 32768).unwrap().count() + 2 * n.div_ceil(32) + 17;
+        assert_eq!(super::super::INFO_BYTES, 12 * calls as u64 * 2048);
+        assert_eq!(super::super::INFO_BYTES, 7_888_896);
+    }
 }

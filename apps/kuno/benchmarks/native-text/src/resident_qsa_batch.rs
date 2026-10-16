@@ -1112,6 +1112,7 @@ impl QsaBatchSelector for BatchSelector<'_> {
                 layout.count,
                 layout.blocks,
                 layout.stride,
+                0,
             )?;
         } else {
             chronological_select::launch(arena.client().map_err(arena_fault)?, owners, geometry)?;

@@ -15,8 +15,8 @@ pub(crate) const RAW_WORDS: usize = 131072;
 pub(crate) const MAP_WORDS: usize = 65536;
 pub(crate) const PROB_WORDS: usize = 65536;
 pub(crate) const STATUS_WORDS: usize = 131072;
-pub(crate) const GU_BYTES: u64 = 32 * 1024 * 1024;
-pub(crate) const PART_BYTES: u64 = 512 * 1024 * 1024;
+pub(crate) const GU_BYTES: u64 = (CAPACITY * 1280 * 4) as u64;
+pub(crate) const PART_BYTES: u64 = (ROUTES * 2560 * 4) as u64;
 /// One compiled prompt ABI for actual Rust views and every native shader.
 /// Decode/MAX8 packet dimensions and expert address-table sizes stay separate.
 pub(crate) fn shader_prefix() -> String {
@@ -127,8 +127,8 @@ pub(crate) fn validate(map: &[u32], count: usize) -> Result<usize> {
     }
     Ok(groups)
 }
-/// Real prompt-only views. The raw ring remains below64MiB; GU/PART and
-/// router/control cells occupy disjoint upper ranges of the admitted third root.
+/// Real prompt-only views. The raw DMA ring has an independent whole owner;
+/// GU/PART and routing cells reuse the attention phase above the matrix image.
 /// Decode's MAX8 roots and descriptors are never reinterpreted or enlarged.
 #[derive(Clone)]
 pub(crate) struct Views {
@@ -140,16 +140,22 @@ pub(crate) struct Views {
     pub(crate) partial: Handle,
 }
 impl Views {
+    /// Same phase region as PLE/GDN/QSA, after the live matrix working image.
+    /// Transfer DMA uses a distinct whole raw-ring owner, never this region.
     pub(crate) fn new(root: Handle) -> Result<Self> {
         let root_bytes = allocation::whole_root_bytes(&root)?;
-        let mut cursor: u64 = 64 * 1024 * 1024;
+        let mut cursor = storage::WORKING_BYTES;
         let mut take = |bytes: u64| -> Result<Handle> {
             let first = cursor;
             let end = first.checked_add(bytes).ok_or(Error::ArithmeticOverflow)?;
             if bytes == 0 || !bytes.is_multiple_of(256) || end > root_bytes {
                 return Err(crate::strata_prompt::invalid_buffer_length());
             }
-            cursor = end;
+            // Preserve Alloc::take's aligned256-byte gap between live views.
+            cursor = end.checked_add(256).ok_or(Error::ArithmeticOverflow)?;
+            if cursor > root_bytes {
+                return Err(crate::strata_prompt::invalid_buffer_length());
+            }
             Ok(root
                 .clone()
                 .offset_start(first)
@@ -263,10 +269,12 @@ mod native_route_layout_tests {
     fn actual_moe_descriptors_are_disjoint_from_raw_ring_and_each_other() {
         let root = Handle::new(StreamId { value: 99 }, allocation::ROOT_BYTES);
         let v = Views::new(root.clone()).unwrap();
-        let raw_ring = root.offset_end(allocation::ROOT_BYTES - 64 * 1024 * 1024);
+        let raw_ring = Handle::new(StreamId { value: 99 }, allocation::RAW_RING_BYTES);
+        let working = root.offset_end(allocation::ROOT_BYTES - storage::WORKING_BYTES);
         let views = v.handles();
         for (i, h) in views.iter().enumerate() {
             assert!(!storage::overlaps(h, &raw_ring).unwrap());
+            assert!(!storage::overlaps(h, &working).unwrap());
             for prior in &views[..i] {
                 assert!(!storage::overlaps(h, prior).unwrap());
             }

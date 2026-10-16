@@ -79,7 +79,7 @@ fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(local_invocation_index) tid:
     if sw!=32u {if tid==0u{atomicOr(&fault[0],1u);}return;}
     if tid==0u{enabled=select(0u,1u,atomicLoad(&fault[0])==0u);}
     if workgroupUniformLoad(&enabled)==0u{return;}
-    if n<=width {for(var j=tid;j<n;j+=1024u){selected[t*p.stride+j]=j;}return;}
+    if n<=width {for(var j=tid;j<n;j+=1024u){selected[(t+p.reserved)*p.stride+j]=j;}return;}
     let nb=nbid+1u;let per=(nb+1023u)/1024u;let b0=tid*per;let b1=min(b0+per,nb);
     var keys:array<u32,33>;for(var j=0u;j<per;j++){let b=b0+j;keys[j]=0u;if b<b1&&weight(b,nbid,n)>0u{keys[j]=key(scores[t*p.score_stride+b]);}}
     var prefix=0u;var above=0u;
@@ -113,8 +113,8 @@ fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(local_invocation_index) tid:
     for(var b=b0;b<b1;b++){
         let w=weight(b,nbid,n);if w==0u{continue;}
         let k=keys[b-b0];
-        if k>threshold{for(var c=0u;c<w;c++){selected[t*p.stride+out]=b*4u+c;out++;}}
-        else if k==threshold{for(var c=0u;c<w&&eq_left>0u;c++){selected[t*p.stride+out]=b*4u+c;out++;eq_left--;}}
+        if k>threshold{for(var c=0u;c<w;c++){selected[(t+p.reserved)*p.stride+out]=b*4u+c;out++;}}
+        else if k==threshold{for(var c=0u;c<w&&eq_left>0u;c++){selected[(t+p.reserved)*p.stride+out]=b*4u+c;out++;eq_left--;}}
     }
 }
 // SELECT_END

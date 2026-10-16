@@ -6,10 +6,14 @@ use super::*;
 #[path = "strata_prompt_qsa_full.rs"]
 mod full;
 pub(crate) use full::{compatibility, run};
-// Two attention/merge records per32 rows, initialization and selection passes
-// for12 layers. Workgroup/attention tile32 is separate from prompt capacity.
-pub(crate) const INFO_BYTES: u64 =
-    12 * (2 * crate::strata_prompt::groups::CAPACITY.div_ceil(32) as u64 + 3 + 17) * 2048;
+// Original Prefill::Impl uses256 score/selection queries and32 attention queries.
+// Full selections persist across batches; score/closing pages are reused.
+pub(crate) const SELECT_BATCH: usize = 256;
+pub(crate) const INFO_BYTES: u64 = 12
+    * (2 * crate::strata_prompt::groups::CAPACITY.div_ceil(32) as u64
+        + 3 * crate::strata_prompt::groups::CAPACITY.div_ceil(SELECT_BATCH) as u64
+        + 17)
+    * 2048;
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 enum Op {

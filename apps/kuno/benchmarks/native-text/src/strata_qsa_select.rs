@@ -146,6 +146,7 @@ pub(crate) fn select(
     count: usize,
     blocks: usize,
     stride: usize,
+    first: usize,
 ) -> Result<()> {
     let maximum = if crate::strata_prompt::active() {
         crate::strata_prompt::groups::CAPACITY
@@ -156,6 +157,9 @@ pub(crate) fn select(
         || !(1..=maximum).contains(&count)
         || !(1..=crate::qsa_gpu::MAX_CONTEXT / 4).contains(&blocks)
         || stride != 2051
+        || first.checked_add(count).is_none_or(|end| end > maximum)
+        || first > start
+        || (!crate::strata_prompt::active() && first != 0)
         || start
             .checked_add(count)
             .is_none_or(|end| end > crate::qsa_gpu::MAX_CONTEXT || end > blocks * 4)
@@ -164,7 +168,7 @@ pub(crate) fn select(
     }
     for (h, n) in owners
         .iter()
-        .zip([count * blocks, count * blocks, count * stride, 1])
+        .zip([count * blocks, count * blocks, (first + count) * stride, 1])
     {
         span(h, n)?;
     }
@@ -176,7 +180,7 @@ pub(crate) fn select(
         blocks as u32,
         blocks as u32,
         0,
-        0,
+        first as u32,
     ];
     launch(arena, Op::Validate, count, owners.clone(), p)?;
     launch(arena, Op::Select, count, owners, p)

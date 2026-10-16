@@ -1,12 +1,14 @@
 //! Carved prompt owners, borrowed from the three real admitted stage roots.
 //! MIT Strata fb58e0 prefill.cpp::carve keeps GR/residual lifetime outside the
-//! overlaid attention/MoE region. Here the working images are bounded to the
-//! lower128 MiB and the connected GR intermediates occupy distinct upper views.
+//! overlaid attention/MoE region. Matrix images remain below the shared phase
+//! region; the asynchronous raw DMA ring has its own separately priced root.
 use super::*;
 // Persistent view tables, construction vectors and the largest live QSA
 // argument bundle are charged together; all GPU bytes remain in old roots.
 pub(crate) const HOST_BYTES: usize = 32 * 1024;
-pub(super) const WORKING_BYTES: u64 = 128 * 1024 * 1024;
+// Actual largest rounded input is4096 four-stream rows of2560 values; the
+// largest converted head tile is16384x2560. Both need exactly80MiB, not128.
+pub(super) const WORKING_BYTES: u64 = (allocation::DEFAULT_ROWS * 4 * 2560 * 2) as u64;
 pub(crate) struct Storage {
     working: [Handle; 3],
     moe: groups::Views,
@@ -101,8 +103,8 @@ impl Storage {
                 24 * capacity,
                 2 * capacity,
                 4 * capacity,
-                (crate::qsa_gpu::MAX_CONTEXT / 4) * capacity,
-                (crate::qsa_gpu::MAX_CONTEXT / 4) * capacity,
+                (crate::qsa_gpu::MAX_CONTEXT / 4) * crate::strata_qsa::prompt::SELECT_BATCH,
+                (crate::qsa_gpu::MAX_CONTEXT / 4) * crate::strata_qsa::prompt::SELECT_BATCH,
                 2051 * capacity,
             ],
         )?
@@ -140,7 +142,14 @@ impl Storage {
                 return Err(crate::strata_prompt::invalid_buffer_length());
             }
         }
-        let moe = groups::Views::new(roots[2].clone())?;
+        let moe = groups::Views::new(roots[1].clone())?;
+        // Native Alloc::carve overlays mutually exclusive attention/MoE phases.
+        // Raw ring DMA remains independent of every phase and matrix image.
+        for h in moe.handles() {
+            if overlaps(h, &working[1])? || overlaps(h, &roots[0])? || overlaps(h, &roots[2])? {
+                return Err(crate::strata_prompt::invalid_buffer_length());
+            }
+        }
         Ok(Self {
             working,
             moe,
@@ -232,12 +241,13 @@ mod owned_layout_tests {
                 .iter()
                 .chain(&full.gdn)
                 .chain(&full.qsa)
+                .chain(full.moe.handles())
                 .map(end)
                 .max()
                 .unwrap()
                 + 511)
                 & !255,
-            full.moe.handles().into_iter().map(end).max().unwrap(),
+            allocation::RAW_RING_BYTES,
         ];
         let exact: [Handle; 3] = std::array::from_fn(|i| Handle::new(stream, required[i]));
         let layout = Storage::at_capacity(exact, allocation::DEFAULT_ROWS).unwrap();
@@ -250,8 +260,8 @@ mod owned_layout_tests {
             assert_eq!(h.size(), required[1]);
         }
         for h in layout.moe.handles() {
-            assert!(end(h) <= required[2]);
-            assert_eq!(h.size(), required[2]);
+            assert!(end(h) <= required[1]);
+            assert_eq!(h.size(), required[1]);
         }
         for root in 0..3 {
             let mut short: [Handle; 3] = std::array::from_fn(|i| Handle::new(stream, required[i]));
@@ -262,7 +272,7 @@ mod owned_layout_tests {
     #[test]
     fn private_prompt_layout_rejects_aliases_slices_and_foreign_streams() {
         let stream = StreamId { value: 96 };
-        let make = || std::array::from_fn(|_| Handle::new(stream, allocation::ROOT_BYTES));
+        let make = || allocation::ROOT_SIZES.map(|n| Handle::new(stream, n));
         let mut roots: [Handle; 3] = make();
         roots[1] = roots[0].clone();
         assert!(Storage::new(roots).is_err());
@@ -279,7 +289,7 @@ mod owned_layout_tests {
     #[test]
     fn native_default_persistent_and_overlaid_views_fit_actual_registered_roots() {
         let stream = StreamId { value: 98 };
-        let roots = std::array::from_fn(|_| Handle::new(stream, allocation::ROOT_BYTES));
+        let roots = allocation::ROOT_SIZES.map(|n| Handle::new(stream, n));
         for count in [256, allocation::DEFAULT_ROWS] {
             let layout = Storage::at_capacity(roots.clone(), count).unwrap();
             let mut seen = Vec::new();
@@ -312,5 +322,130 @@ mod owned_layout_tests {
             assert_eq!(layout.working[0].size_in_used(), WORKING_BYTES);
             assert_eq!(layout.working[1].size_in_used(), WORKING_BYTES);
         }
+    }
+}
+
+#[cfg(test)]
+mod overlay_tests {
+    use super::*;
+    use crate::strata_queue_tests::{Access, NodeAccess, Planner};
+    use cubecl_common::stream_id::StreamId;
+    fn roots() -> [Handle; 3] {
+        allocation::ROOT_SIZES.map(|n| Handle::new(StreamId { value: 712 }, n))
+    }
+    #[test]
+    fn actual_phase_overlay_preserves_all_simultaneously_live_ranges_and_prices_real_raw_root() {
+        let roots = roots();
+        let s = Storage::new(roots.clone()).unwrap();
+        assert_eq!(
+            roots.iter().map(Handle::size_in_used).sum::<u64>(),
+            allocation::MAIN_BYTES
+        );
+        assert_eq!(allocation::MAIN_BYTES, 2080 * 1024 * 1024);
+        assert_eq!(roots[2].size_in_used(), 32 * 1024 * 1024);
+        assert_eq!(WORKING_BYTES, 80 * 1024 * 1024);
+        assert_eq!(groups::GU_BYTES, 20 * 1024 * 1024);
+        assert_eq!(groups::PART_BYTES, 400 * 1024 * 1024);
+        assert_eq!(s.qsa[17].size_in_used(), 8 * 1024 * 1024);
+        assert_eq!(s.qsa[18].size_in_used(), 8 * 1024 * 1024);
+        assert!((16384 * 2560 * 2) as u64 <= WORKING_BYTES);
+        for h in s.moe.handles() {
+            assert!(!overlaps(h, &roots[0]).unwrap());
+            assert!(!overlaps(h, &roots[2]).unwrap());
+            assert!(!overlaps(h, &s.working[1]).unwrap());
+            assert!(s.qsa.iter().any(|a| overlaps(h, a).unwrap()));
+        }
+        for phase in [
+            &s.ple[..],
+            &s.gdn[..],
+            &s.qsa[..],
+            &s.moe.handles().map(Clone::clone)[..],
+        ] {
+            for (i, h) in phase.iter().enumerate() {
+                assert!(!overlaps(h, &roots[0]).unwrap());
+                assert!(!overlaps(h, &roots[2]).unwrap());
+                for old in &phase[..i] {
+                    assert!(!overlaps(h, old).unwrap());
+                }
+            }
+        }
+    }
+    #[test]
+    fn original_queue_planner_sees_actual_phase_aliases_and_independent_raw_dma() {
+        let roots = roots();
+        let s = Storage::new(roots.clone()).unwrap();
+        let access = |h: &Handle, write| {
+            let id = h.clone().binding().memory.allocation_id();
+            let buffer = roots
+                .iter()
+                .position(|r| r.clone().binding().memory.allocation_id() == id)
+                .unwrap() as u64
+                + 1;
+            Access {
+                buffer,
+                first: h.offset_start.unwrap_or(0),
+                bytes: h.size_in_used(),
+                write,
+            }
+        };
+        let mut prefix = Planner::new(1, false).unwrap();
+        prefix
+            .push(&NodeAccess {
+                copy: false,
+                release_after: false,
+                accesses: vec![access(&s.qsa[0], true)],
+            })
+            .unwrap();
+        let prefix = prefix.finish().unwrap();
+        assert!(prefix.conflicts(&[access(&s.moe.partial, true)]).unwrap());
+        assert!(!prefix.conflicts(&[access(&roots[2], true)]).unwrap());
+        let nodes = [
+            NodeAccess {
+                copy: false,
+                release_after: false,
+                accesses: vec![access(&s.qsa[0], true)],
+            },
+            NodeAccess {
+                copy: true,
+                release_after: false,
+                accesses: vec![access(&roots[2], true)],
+            },
+            NodeAccess {
+                copy: false,
+                release_after: true,
+                accesses: vec![access(&roots[2], false), access(&s.moe.gu, true)],
+            },
+            NodeAccess {
+                copy: true,
+                release_after: false,
+                accesses: vec![access(&roots[2], true)],
+            },
+            NodeAccess {
+                copy: false,
+                release_after: false,
+                accesses: vec![access(&s.moe.gu, false), access(&s.moe.partial, true)],
+            },
+            NodeAccess {
+                copy: false,
+                release_after: false,
+                accesses: vec![access(&s.moe.partial, false)],
+            },
+            NodeAccess {
+                copy: false,
+                release_after: false,
+                accesses: vec![access(&s.qsa[0], true)],
+            },
+        ];
+        let mut p = Planner::new(nodes.len(), false).unwrap();
+        for n in &nodes {
+            p.push(n).unwrap();
+        }
+        let p = p.finish().unwrap();
+        let seg = |i: usize| &p.segments[p.node_segments[i]];
+        assert!(seg(1).wait < seg(0).signal);
+        assert_eq!(seg(2).wait, seg(1).signal);
+        assert_eq!(seg(3).wait, seg(2).signal);
+        assert_ne!(p.node_segments[2], p.node_segments[4]);
+        assert_eq!(p.node_segments[4], p.node_segments[6]); // original compute order retains the phase switch
     }
 }

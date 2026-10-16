@@ -1,5 +1,5 @@
 //! Native Intel prompt owner policy. Model/cache pricing includes every root
-//! before any payload allocation. The large-row consumer port is separate.
+//! before any payload allocation; all large-row consumers use these same roots.
 use crate::{
     private_arena::{BufferId, PrivateArena},
     resident_util as u,
@@ -7,13 +7,16 @@ use crate::{
 use kuno_text::Result;
 pub(crate) const DEFAULT_ROWS: usize = 4096;
 pub(crate) const ROOT_BYTES: u64 = 1024 * 1024 * 1024;
-pub(crate) const MAIN_BYTES: u64 = 3 * ROOT_BYTES;
+/// The asynchronous raw transfer ring is not part of the phase overlay.
+pub(crate) const RAW_RING_BYTES: u64 = 32 * 1024 * 1024;
+pub(crate) const ROOT_SIZES: [u64; 3] = [ROOT_BYTES, ROOT_BYTES, RAW_RING_BYTES];
+pub(crate) const MAIN_BYTES: u64 = ROOT_SIZES[0] + ROOT_SIZES[1] + ROOT_SIZES[2];
 /// Structural whole-root envelope, shared by private Scope, raw ring and source
 /// attachment. Physical ownership still needs the arena/cache owner's backend
 /// attestation; a Handle size alone is not a lending or erasure capability.
 pub(crate) fn whole_root_bytes(root: &cubecl_runtime::server::Handle) -> Result<u64> {
     let bytes = root.size_in_used();
-    if !(64 * 1024 * 1024..=ROOT_BYTES).contains(&bytes)
+    if !(RAW_RING_BYTES..=ROOT_BYTES).contains(&bytes)
         || !bytes.is_multiple_of(256)
         || root.size() != bytes
         || root.offset_start.unwrap_or(0) != 0
@@ -49,7 +52,7 @@ impl Plan {
     }
     pub(crate) fn requests(self) -> Vec<u64> {
         if self.mode == Mode::Owned {
-            vec![ROOT_BYTES; 3]
+            ROOT_SIZES.to_vec()
         } else {
             Vec::new()
         }
@@ -61,11 +64,16 @@ impl Plan {
         if self.rows != DEFAULT_ROWS {
             return Err(crate::strata_prompt::invalid_buffer_length());
         }
-        let words = ROOT_BYTES as usize / 4;
         Ok(Some([
-            arena.allocate_zeroed(words).map_err(u::fault)?,
-            arena.allocate_zeroed(words).map_err(u::fault)?,
-            arena.allocate_zeroed(words).map_err(u::fault)?,
+            arena
+                .allocate_zeroed(ROOT_SIZES[0] as usize / 4)
+                .map_err(u::fault)?,
+            arena
+                .allocate_zeroed(ROOT_SIZES[1] as usize / 4)
+                .map_err(u::fault)?,
+            arena
+                .allocate_zeroed(ROOT_SIZES[2] as usize / 4)
+                .map_err(u::fault)?,
         ]))
     }
 }
@@ -103,7 +111,15 @@ mod tests {
         );
         let layout = crate::private_arena::BufferLayout::new(ROOT_BYTES as usize / 4);
         if cfg!(feature = "strata-intel-core") {
-            assert_eq!(layout.unwrap().owned_bytes as u64 * 3, MAIN_BYTES);
+            assert_eq!(layout.unwrap().owned_bytes as u64, ROOT_SIZES[0]);
+            let actual = ROOT_SIZES.map(|bytes| {
+                crate::private_arena::BufferLayout::new(bytes as usize / 4)
+                    .unwrap()
+                    .owned_bytes as u64
+            });
+            assert_eq!(actual, ROOT_SIZES);
+            assert_eq!(actual.iter().sum::<u64>(), MAIN_BYTES);
+            assert_eq!(3 * ROOT_BYTES - MAIN_BYTES, 992 * 1024 * 1024);
         } else {
             assert!(layout.is_err());
         }

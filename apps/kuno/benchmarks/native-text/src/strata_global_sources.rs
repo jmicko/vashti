@@ -368,9 +368,12 @@ impl Sources {
         {
             return Err(reject());
         }
-        // The exact parent must fit the actual MoE views, not a fictitious
-        // fixed512MiB descriptor on a shorter cache-backed owner.
-        crate::strata_prompt::groups::Views::new(root.clone())?;
+        // This owner is now the raw DMA ring only. MoE scratch is in the
+        // separate phase overlay; it must not fabricate a larger raw parent.
+        crate::strata_prompt::allocation::whole_root_bytes(&root)?;
+        if root.size_in_used() < crate::strata_prompt::allocation::RAW_RING_BYTES {
+            return Err(reject());
+        }
         let resources = self
             .client
             .retained_resource_metadata(vec![root.clone()])
@@ -417,7 +420,7 @@ impl Sources {
         })?;
         if first
             .checked_add(total)
-            .is_none_or(|end| end > 64 * 1024 * 1024)
+            .is_none_or(|end| end > crate::strata_prompt::allocation::RAW_RING_BYTES as usize)
         {
             return Err(reject());
         }
