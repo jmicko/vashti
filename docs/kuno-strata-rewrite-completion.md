@@ -6,11 +6,12 @@ checklist is a source-to-source audit, not a sequence of throughput experiments.
 Each row needs its connected consumer, real ownership/placement and state contract;
 adding an unused helper or optional switch does not complete a row.
 
-**Current CPU-only source:** `636c9f3543bbb68a188856719beb0262a033a1aa`. Start at the
-[direct-source memory/legacy receipt](#direct-source-memory-owners-and-legacy-regression-reconciliation-2026-10-16) and the
-[checkpoint](kuno-native-text-checkpoint.md). It supersedes older owner quotes and
-those nine reproduced legacy failures, not outstanding physical/numerical/full-
-regression gates. Whole rewrite incomplete; no new speed trials.
+**Current CPU-only source:** `37dced95f977428b2be4f616a7e04124bca3953c`. Start at the
+[packed GR receipt](#native-prompt-gr-scales-and-packed-image-consumers-2026-10-16) and
+[checkpoint](kuno-native-text-checkpoint.md). Native prompt row scales/packed
+images and direct projection consumers are now connected together. Remaining
+whole-source/substitution/pricing/physical/numerical gates are still open.
+Whole rewrite incomplete; no new speed trials.
 
 ## Reference and execution scope
 
@@ -56,7 +57,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | Low-RAM host complement and promotion | `generate.cpp` source/adaptive tier; `sycl/src/core/verify.cpp` fetch/rebase | Original host complement, direct exchange and GPU selected fetch exist. Audit full byte ownership and asynchronous safe publication against upstream; do not duplicate the whole model in RAM. Source `a8bbdf0` restores the private route map from canonical physical cells on request rebind, preserving actual swapped weights and monotonic adaptive state; see the retained-controls receipt. |
 | GPU route/group planning and original HOST access | `verify.cpp` / `verify_kernels.dp.cpp::resident_plan_kernel`, selected SYCL `DEVICE_PLAN=1,NO_HOST=1` | Native BF16 router and full512-expert normalization exist. Correct selected path reads actual VRAM or mapped HOST aliases directly on the GPU, preserving every selected expert. Source36d13d3 replaces the CPU split/staging consumer with direct authentic source aliases and removes per-layer CPU joins/submissions; protected execution is pending. Generic CPU doorbells/split windows are optional modes, not this B70 completion gate. Physical/numerical acceptance remains required. |
 | Native expert math and grouped rows | `sycl/src/kernels/cuda/iq_kernels.dp.cpp::row_entries`, `native_gu_kernel`, `native_down_kernel` | Packed integer math/BDA roots exist. Separate GU roles, 4/2/1 chunks, activation, intermediate storage and downstream consumers are now selected together in the Intel core; all 158 WGSL/SPIR-V variants validate, including 105 physical-pointer checks; numerical/model execution acceptance remains pending. The global core now uses one per-role launch containing pinned row_entries4/2/1 loops, scalar IQ4_XS, native signed integer finish and XOR reduction; numerical/model execution acceptance remains pending. Historical fixed-chunk kernels are retained separately. |
-| GR write/read/norm/down/up/injection | `sycl/src/kernels/cuda/fused_gr.dp.cpp::fused_gr_read_multi`; `verify.cpp::gr_read_group` | Native pending-write norm, sliced BF16 down/injection, fixed slice reduction and up/mix/commit are now connected and unconditionally selected in the core, including explicit PLE/final boundary writes. Resident original weights and the enlarged private scratch owner are charged together. Structural acceptance passes; numerical/model execution acceptance and final substitution audit remain pending. |
+| GR write/read/norm/down/up/injection | `sycl/src/kernels/cuda/fused_gr.dp.cpp::fused_gr_read_multi`; `verify.cpp::gr_read_group` | Native pending-write norm, sliced BF16 down/injection, fixed slice reduction and up/mix/commit are now connected and unconditionally selected in the core, including explicit PLE/final boundary writes. Resident original weights and the enlarged private scratch owner are charged together. Structural acceptance passes; numerical/model execution acceptance and final substitution audit remain pending. Source `37dced9` connects default full-prompt F1 row scales, packed BF16 norm/SiLU images, direct original projection consumers and residual-based mix recomputation together; see the packed-GR receipt. Mixed-image reuse and full in-place storage still require completion. |
 | GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp`, `prefill/kernels.dp.cpp` | Core connects native BF16 alpha/beta, controls, recurrence/norm and accepted-prefix replay. Prompt scope selects contiguous H, causal convolution/history/L2, CB32 recurrence and directly consumed FP16 output. Source 9a7a23b connects prompt-capacity whole-chunk math without per-element status/replay owners, carved AB staging, and native row/value-head recurrent state shared by prompt/decode/repair. The large chunk caller/acceptance is connected in the latest controller receipt; physical execution and final numerical/queue audit remain open. Split verifier mode is an optional upstream path, not selected by the measured server. |
 | QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects INT8 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. The measured server explicitly selects INT8 for target and MTP; source2a3d1ad ports both together and the combined CPU shader/layout checks now pass. Numerical/GPU acceptance is pending. Earlier generic-default FP16 scope claims below are superseded. Numerical/state acceptance remains required. |
 | PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Core connects native BF16 MAX8 projections, normalization/gate/conv/history, deduplicated positional reads and accepted-prefix ownership. Prompt calls now consume a bounded, joined double-buffered source prefetch. The latest controller receipt connects native large chunk geometry, joined uploads, retained tail and exact history acceptance. Sources `595393e` and `57147a8` make actual decode and prompt history GPU-authoritative in existing OLD/NEXT roots, with checked CPU token-only publication, GPU accepted-prefix history and independent PLE capture roles. Default prompt/decode float readbacks and prompt diagnostic tail copies are removed; explicit diagnostics and the legacy CPU oracle remain. Source `131d29c` selects the native scoped accepted-prefix consumer before state/cursor publication; the diagnostic checkpoint path keeps the older schedule. Pending event/graph fidelity and numerical/device acceptance remain open. Prompt loans are disabled in the measured32768-context configuration and are not a completion prerequisite. Never persist request n-grams. |
@@ -7639,3 +7640,85 @@ The current executable remains compiled-public/one-request; retained Session and
 bounded rendered-text consumers exist in source. Preserve canonical application
 work and inherited untracked files. This cleanup does not establish whole-model
 correctness, physical hot reuse or complete upstream equivalence.
+
+
+## Native prompt GR scales and packed-image consumers (2026-10-16)
+
+Source `37dced95f977428b2be4f616a7e04124bca3953c`, on the complete preceding
+`codex/strata-rust-port` engine. This ports pinned MIT upstream `fb58e0dbc8399662c0e47c76578c6e878b14f6cf`
+`sycl/src/prefill/kernels.dp.cpp::gr_norm_rs_kernel/gr_silu_kernel/gr_mix_r_kernel`
+and their default `prefill.cpp` consumers (`STRATA_GR_UNFUSED` absent/false).
+Intel `prompt_f16()` is false; these GR inputs are BF16, not FP16. Optional
+HIP-only upmix and BF16x2 modes are outside the selected Intel path.
+
+The actual native full-prompt GR read no longer stores a full F32 normalized
+tensor or an F32 activated-low tensor. Its existing persistent arena carves five
+views per token: 5120 words of packed BF16 normalized input, 320 F32 down values,
+160 words of packed BF16 SiLU, 10240 F32 gates and four F32 row scales. The same
+norm kernel retains original pending-residual write and 256-thread/XOR sum order,
+writes one scale per stream and uniquely writes complete BF16 pairs. The SiLU
+writer uniquely packs complete pairs. Both keep original finite/fault handling;
+no read-modify-write race between neighboring 16-bit stores is introduced.
+
+The original down, optional injection and up projections now consume these exact
+BF16 images directly through the existing native Rust cooperative-matrix backend.
+They do not call generic Pack or allocate/copy a second image. Only the original
+registered normalized/low views are admitted as GR images, with their full parent,
+offsets and stream identity checked. Output geometry, fixed original weight
+extents, fault extent and read/write disjointness remain checked. External
+injection is still owned and validated by the authentic small-arena/full-prompt
+caller; it is not falsely required to be an internal carved GR result.
+
+Mixing now reads the actual residual plus its matching row scales and gamma,
+reconstructs `(R * rs) * gamma` in the original order and retains the original
+FMA/sigmoid/sum order. It does NOT mix the rounded BF16 projection input. Actual
+residual `first` is used when recomputing. The source binding and real read
+dependencies retain residual/scales/gamma through mixing. The norm interface now
+has eight storage bindings plus parameters; mix has six plus parameters.
+
+For a standard GR read with injection, three former Pack dispatches are removed
+(two when injection is disabled). At 4096 rows, logical carved payload decreases
+86,441,984 bytes (82.4375 MiB); the additional aligned view has its own 256-byte gap.
+The three owning prompt allocations remain `[1GiB,1GiB,32MiB]`; this block claims
+neither a refund of those fixed roots nor a physically larger expert cache. All
+carved views, original phase/raw-ring boundaries and full-root erasure remain.
+The existing 32 KiB layout HOST allowance and fixed conservative runtime caps are
+unchanged; physical pricing/lifetime acceptance remains open.
+
+CPU evidence in `/media/jmicko/faststore/kuno-development`:
+
+- `strata-packed-gr-build-20261016.log`: locked selected release test build,
+  terminal exit0 before the CPU run.
+- `strata-packed-gr-cpu-20261016.log`: 453 distinct CPU cases / 56 nonempty suites;
+  runner `strata-packed-gr-cpu-run-20261016.py`. New actual layout coverage checks
+  exact native image/scale extents, disjoint output regions, identity/slice/foreign
+  root rejection and row boundaries 1..4096. Existing real phase/queue alias and
+  full legacy owner tests still pass. These are structural/CPU checks, not
+  numerical GPU execution of the new kernels.
+- `strata-packed-gr-{core,off}-clippy-20261016.log`: both strict locked release
+  lint configurations pass. Changed Rust formatting and whitespace pass.
+
+- Normal immutable artifact: `strata-packed-gr-ordinary-20261016/`, source
+  `37dced95f977428b2be4f616a7e04124bca3953c`, SHA256
+  `fc0d1c655302c774427905e36932797c5c45eb3c02b9b2baf79403be8e198d7b`. Builder
+  clean-source/stable-HEAD checks pass; independent
+  hash and mode0500 verified. Summary: `strata-packed-gr-ordinary-20261016.out`.
+- `strata-packed-gr-shaders-20261016.log`: all 330 offline shader variants pass,
+  including new norm/low/mix schemas and 122 physical-pointer checks. Uses the
+  matrix-aware spirv-tools build. Only the frozen `--validate-port-shaders` flag
+  ran; it returns before vendor/adapter/device setup. This supersedes 636c9f3's
+  frozen artifact as current source, not its historical evidence.
+
+No GPU/model/inference/service/install/release or API/config/frontend action.
+Required Vashti changes:none. Root not needed; last attempted shared-shell sudo
+renewal failed. Last physical recovery stays historical Oct15, not current health.
+Whole rewrite remains incomplete, goal active CPU-only, speed gate closed.
+
+Remaining coupled differences are explicit: mixed-input BF16/FP16 image reuse in
+attention/MoE, native in-place GR residual/PLE consumers, private allocation
+granularity and full whole-device pricing/source/scheduling audit. Retained
+target/MTP numerical/state/hot-request/failure/recovery acceptance is still
+required under renewed GPU authorization. The current executable is compiled-
+public/one-request; independently protected private input remains a separate
+unclosed boundary. Do not select or drop this source path based on intermediate
+speed. Preserve canonical application work and inherited untracked files.

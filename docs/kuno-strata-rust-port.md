@@ -1,17 +1,17 @@
 # Strata Rust whole-model port experiment
 
-**Current CPU-only resume (2026-10-16):** source `636c9f3543bbb68a188856719beb0262a033a1aa` removes
-obsolete fetch roots/table from the actual selected direct-source Intel path,
-with dedicated512KiB dense input and383.5MiB smaller private allocation quote.
-Real VRAM/HOST sources/read dependencies and prompt raw ring remain.452 focused
-selected CPU cases,31 legacy cases in both noncore/reference builds, strict lints
-and formatting pass. Read the [current receipt](kuno-strata-rewrite-completion.md#direct-source-memory-owners-and-legacy-regression-reconciliation-2026-10-16)
-and [checkpoint](kuno-native-text-checkpoint.md) for the current normal immutable
-`strata-direct-source-ordinary-20261016/` artifact (SHA256
-`c0032c4ed9cc065712384deeb624055a7ec1be40af952ee3216986eb6db7b662`),330 passing
-offline shader variants and remaining gates. Retained Session and bounded rendered input are connected in
-source; private launcher and physical hot reuse remain unverified. Historical
-speed/next-step notes below do not authorize new trials. Whole rewrite incomplete.
+**Current CPU-only resume (2026-10-16):** source `37dced95f977428b2be4f616a7e04124bca3953c` connects
+default native prompt GR row scales, direct BF16 norm/SiLU images and their
+original down/injection/up consumers. Mix recomputes F32 values from residual,
+scale and gamma.453 focused CPU cases /56 nonempty suites, strict lint and
+formatting pass. Read the [current receipt](kuno-strata-rewrite-completion.md#native-prompt-gr-scales-and-packed-image-consumers-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md) for the exact current frozen
+artifact/shader evidence, substitutions and next gates. Normal artifact
+`strata-packed-gr-ordinary-20261016/` has SHA256
+`fc0d1c655302c774427905e36932797c5c45eb3c02b9b2baf79403be8e198d7b`;330 offline shader variants pass. Fixed prompt roots stay
+unchanged; no physical memory/speed or whole-model correctness claim. Whole
+rewrite incomplete; no live speed trials. Historical notes below are superseded
+as current direction.
 
 ## Active direction — finish the complete Rust port before speed testing (2026-10-14)
 

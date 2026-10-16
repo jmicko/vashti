@@ -1,19 +1,37 @@
-<!-- Current resume: 2026-10-16, source 636c9f3543bbb68a188856719beb0262a033a1aa, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source 37dced95f977428b2be4f616a7e04124bca3953c, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, source `636c9f3543bbb68a188856719beb0262a033a1aa`. Goal active CPU-only.
-Actual Demons `sudo -n -v` still requires a password despite the user's renewal;
-CPU work does not need root. No GPU/model/service/install/release work or current
-health claim. Last physical recovery stays historicalOct15.
+branch `codex/strata-rust-port`, source `37dced95f977428b2be4f616a7e04124bca3953c`. Goal active CPU-only.
+Root was not needed for this block; last actual shared-shell sudo refresh failed.
+No GPU/model/service/install/release action or current health claim. Historical
+physical recovery remains Oct15.
 
-Read [direct-source owner receipt](kuno-strata-rewrite-completion.md#direct-source-memory-owners-and-legacy-regression-reconciliation-2026-10-16)
-and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--direct-source-memory-owners-2026-10-16).
-Controller tests live under `strata_engine::controller`. Earlier CJK `cd703bc` was
-integrated as `0bfbea8`; do not reapply it.
+Read [packed prompt GR receipt](kuno-strata-rewrite-completion.md#native-prompt-gr-scales-and-packed-image-consumers-2026-10-16)
+and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--native-packed-prompt-gr-2026-10-16).
+Actual default native prompt GR now keeps four row scales/token and writes BF16
+normalized/SiLU images directly into original carved owners. Down/injection/up
+consume those exact images with the existing Rust cooperative-matrix kernels;
+mix reconstructs F32 values from original R/scales/gamma, never rounded BF16.
+Standard injected reads remove three Pack dispatches (two without injection).
+Logical carved payload shrinks82.4375MiB at4096 rows; fixed prompt roots stay2080MiB.
+This is not a physical VRAM refund or speed claim.
 
-**Latest connected block:** selected Intel direct-source GU/DOWN no longer retain
+453 focused CPU cases /56 nonempty suites, locked selected test build, strict
+core/off lint and formatting/whitespace pass. Numerical/device acceptance remains
+open. Exact normal artifact/offline shader receipt is in the linked completion
+section. Current frozen artifact is `strata-packed-gr-ordinary-20261016/`, SHA256
+`fc0d1c655302c774427905e36932797c5c45eb3c02b9b2baf79403be8e198d7b`. Clean/stable build, independent hash/mode0500 and330 offline shader
+variants (122 physical checks) pass. Previous artifact remains historical.
+
+Next finish mixed BF16/FP16 input reuse, in-place GR/PLE consumers, allocator
+and whole-device pricing/substitution/scheduling audit. Full numerical/physical/
+hot-reuse/failure/recovery acceptance and protected private executable input stay
+open. Whole rewrite incomplete; speed gate closed. Required Vashti changes:none.
+Canonical work and inherited untracked files preserved.
+
+**Previous direct-source block (`636c9f3`):** selected Intel direct-source GU/DOWN no longer retain
 three unused128MiB fetch roots or an unused32KiB public stage-address table. Dense
 Q8_1 preparation has one correctly bounded512KiB original-arena owner instead.
 Actual binding schemas, retained source-read dependencies, constructor/queue
@@ -29,7 +47,7 @@ pass; all31 legacy cases also pass under noncore Strata and original no-feature
 reference. Both strict lint configurations and changed format/whitespace pass.
 This is focused coverage, not a complete broad-core regression or device proof.
 Exact log names and intermediate corrections are in the linked receipt.
-Current normal immutable artifact is `strata-direct-source-ordinary-20261016/`,
+Frozen artifact for the preceding block is `strata-direct-source-ordinary-20261016/`,
 SHA256 `c0032c4ed9cc065712384deeb624055a7ec1be40af952ee3216986eb6db7b662`;
 all330 offline shader variants pass. Clean/stable source build, independent hash
 and mode0500 verified; no device initialization. Old12a60bf artifact is superseded.

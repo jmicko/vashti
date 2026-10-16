@@ -6,19 +6,17 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, source `636c9f3543bbb68a188856719beb0262a033a1aa`. Read the
-[direct-source handoff](#active-kuno-engine-handoff--direct-source-memory-owners-2026-10-16)
-and [completion gate](kuno-strata-rewrite-completion.md). Actual selected direct
-VRAM/HOST execution now removes dormant fetch owners/table and prices dedicated
-dense input.452 focused CPU cases pass; reproduced legacy31 suite also passes in
-noncore/reference builds. Whole rewrite/source-substitution/device/numerical and
-hot-reuse acceptance remain incomplete. No new speed result.
+`codex/strata-rust-port`, source `37dced95f977428b2be4f616a7e04124bca3953c`. Read the
+[packed prompt GR handoff](#active-kuno-engine-handoff--native-packed-prompt-gr-2026-10-16)
+and [completion gate](kuno-strata-rewrite-completion.md). Default native prompt
+GR row scales and packed BF16 consumers are connected together;453 focused CPU
+cases pass. Source/substitution/device/numerical/hot-reuse acceptance remains
+incomplete. No new speed result.
 
 The user authorized **CPU-only continuation**; the goal controller is active.
-Sudo timestamp renewal is separately authorized, but actual shared-shell
-noninteractive validation still required a password. CPU checks need no root.
-No GPU/model/service/install/release action or current-health claim. Historical
-physical recovery remains Oct15. Canonical application work and inherited
+Last actual shared-shell sudo refresh required a password; CPU work needs no
+root. No GPU/model/service/install/release action or current-health claim.
+Historical physical recovery remains Oct15. Canonical work and inherited
 untracked files are preserved. Required Vashti changes:none.
 
 ## Ownership
@@ -6966,3 +6964,32 @@ incomplete, speed gate closed. No GPU/model/service/install/release action;
 last physical recovery stays historicalOct15. Sudo renewal was requested by the
 user but actual noninteractive cache validation failed; this block needed no root.
 Preserve canonical application work and inherited untracked files.
+
+
+## Active Kuno engine handoff — native packed prompt GR (2026-10-16)
+
+Isolated `codex/strata-rust-port`, source `37dced95f977428b2be4f616a7e04124bca3953c`. Read the
+[exact implementation/validation receipt](kuno-strata-rewrite-completion.md#native-prompt-gr-scales-and-packed-image-consumers-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). Pinned Strata's default Intel
+prompt GR now uses original four row scales/token and directly emitted BF16
+normalized/SiLU images. Actual down/injection/up consumers use these original
+views, removing intermediate Pack dispatches. Mix recomputes unrounded F32
+values from the actual residual/scales/gamma with original FMA order.
+
+Logical carved payload shrinks82.4375MiB at4096 rows; the fixed2080MiB root
+allocation is unchanged. No physical memory/refund/speed claim.453 distinct
+focused CPU cases /56 nonempty suites, locked test build, strict core/off lint
+and changed format/whitespace pass. Current normal artifact
+`strata-packed-gr-ordinary-20261016/` has SHA256
+`fc0d1c655302c774427905e36932797c5c45eb3c02b9b2baf79403be8e198d7b`;330 offline shader variants pass (122 physical checks). Source-clean/stable
+build, independent hash/mode0500 verified. No device initialized. These are source/CPU checks, not numerical device
+or whole-model acceptance.
+
+Remaining mixed packed-input reuse, in-place GR/PLE consumers, allocator and
+whole-device pricing/source/scheduling substitutions and numerical/hot-reuse/
+failure/recovery gates remain required. Private executable input is still gated
+on independent protection/admission; current CLI is compiled-public/one-request.
+No API/config/frontend change; required Vashti changes:none. Goal active CPU-only,
+whole rewrite incomplete, speed gate closed. No GPU/model/service/install/release
+action; last physical recovery is historicalOct15. Root not needed. Preserve
+canonical application work and inherited untracked files.
