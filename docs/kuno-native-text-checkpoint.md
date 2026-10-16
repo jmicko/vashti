@@ -1,18 +1,34 @@
-<!-- Current resume: 2026-10-16, source 910cb58, codex/strata-rust-port.
+<!-- Current resume: 2026-10-16, source 4ceb86f, codex/strata-rust-port.
 CPU-only user continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-16
 
 **Current resume:** isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
-branch `codex/strata-rust-port`, source `910cb58`. Goal active CPU-only. Last sudo refresh
+branch `codex/strata-rust-port`, source `4ceb86f`. Goal active CPU-only. Last sudo refresh
 reported password required in Demons; CPU work does not need root. No GPU/model/service/install/release work or current
 health claim. Last physical recovery evidence remains historical Oct15.
 
-Read [sealed dense inventory](kuno-strata-rewrite-completion.md#connected-sealed-dense-inventory-and-automatic-expert-capacity-2026-10-16)
-and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--sealed-dense-inventory-and-automatic-expert-capacity-2026-10-16).
+Read [retained request erasure and exact lifetime next steps](kuno-strata-rewrite-completion.md#connected-retained-targetmtp-request-erasure-2026-10-16)
+and [active handoff](kuno-vashti-coordination.md#active-kuno-engine-handoff--retained-request-erasure-2026-10-16).
 Controller tests live under `strata_engine::controller`. Earlier CJK `cd703bc` was
 integrated as `0bfbea8`; do not reapply it.
 
-**Latest connected block:** `cbf4381`/`910cb58` price/preload/seal all784 original
+**Latest connected block:** `4ceb86f` connects completed target/MTP retained-state
+erasure in the actual request entry, with real fault/I/O/whole-owner checks and
+opaque original-owner receipts.13-only replay stays separate. PLE initial sentinels,
+all physical private padding and original scope/epoch ownership remain checked;
+final close independently audits owners (source totals remain cumulative). Dedicated
+64MiB inspection HOST pricing leaves normal MTP packets unchanged.402 distinct
+CPU cases/50 nonempty suites and both strict lint configurations pass. No new
+normal frozen artifact or shader change; no GPU/numerical/performance acceptance.
+
+The wrapper still closes after each request: hot reuse is NOT implemented. Next
+retain loaded owners, bind bounded request geometry with monotonic scopes from
+real erasure receipts, distinguish retained-ready from generation0/unstarted PLE,
+reuse selected policies and clear retained private HOST/control values. Do not
+reset owner IDs/epochs/counters/poison gates or loosen13-only diagnostics. Read the
+exact linked lifetime checklist before editing. Full rewrite remains incomplete.
+
+**Previous connected block:** `cbf4381`/`910cb58` price/preload/seal all784 original
 dense projections before expert-source attachment. The actual256-byte dense roots
 plus shared head quote4,166,315,008 bytes, replacing5GiB. Ranked expert capacity
 uses all remaining shared MAIN, without the uniform240-slot cap. Uploads retain

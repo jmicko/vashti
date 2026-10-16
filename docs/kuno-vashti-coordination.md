@@ -6,8 +6,8 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, engine source through `910cb58`. Read the latest
-[dense-inventory handoff](#active-kuno-engine-handoff--sealed-dense-inventory-and-automatic-expert-capacity-2026-10-16)
+`codex/strata-rust-port`, engine source through `4ceb86f`. Read the latest
+[retained-erasure handoff](#active-kuno-engine-handoff--retained-request-erasure-2026-10-16)
 and [completion gate](kuno-strata-rewrite-completion.md). Direct target/MTP
 submission, accepted-prefix state publication and retained commit graph are connected
 in source. Original pending submissions/joins and scoped next-draft consumption are connected;
@@ -6805,3 +6805,27 @@ prompt allocator/substitution pricing, arbitrary protected input, hot request re
 final source/scheduling audit, old regressions and numerical/physical/recovery gates
 remain. Last sudo refresh failed; CPU continuation does not need it. Historical
 Oct15 recovery is not current health evidence. Preserve the canonical checkout.
+
+## Active Kuno engine handoff — retained request erasure (2026-10-16)
+
+Isolated `codex/strata-rust-port`, source `4ceb86f104114f9b89293a59641cb5e3cd597e24`.
+Read the [retained-erasure receipt and exact next steps](kuno-strata-rewrite-completion.md#connected-retained-targetmtp-request-erasure-2026-10-16)
+and [checkpoint](kuno-native-text-checkpoint.md). The actual native entry now clears
+completed target/MTP private state while original weights/owners remain loaded,
+validates original-owner receipts, then follows its existing terminal cleanup.
+The13-token diagnostic permission is preserved separately. Native HOST pricing
+adds a dedicated64MiB bounded inspection window; normal MTP packet limits remain.
+
+402 distinct CPU cases/50 nonempty suites, both strict lint configurations and
+format/whitespace pass. No new shader, frozen normal artifact, GPU/model/service/
+install/API/frontend/release work. Required Vashti changes:none. Old12a60bf artifact
+is stale; physical/numerical/recovery acceptance is pending. Goal active CPU-only,
+speed gate closed; last sudo refresh failed and root is not needed for CPU work.
+
+This is NOT cross-request model reuse yet. The wrapper still closes after one
+request, the language permit remains Closed/single-scope, and erased used owners
+must not impersonate generation0/unstarted PLE. Next implement a retained session,
+capacity/monotonic request rearming from original receipts, reuse of selected
+policies, and private HOST/control clearing; preserve every original owner/epoch/
+retirement gate and terminal close order. The linked receipt details these exact
+constraints plus remaining whole-rewrite gates. Preserve canonical application work.

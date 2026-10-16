@@ -60,7 +60,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | Suffix proposal and draft policy | Intel speculation implementation and `DraftPolicy` | Sourcea26adc2 ports the native bounded trigram index, longest/recent suffix choice, cost priors, probing/stale rules and optional lookup-chain accounting into the selected controller. Configured MTP/target windows no longer shrink at the output cap; state commit and emission are separate. Coupled sampling and physical state acceptance still need end-to-end validation. |
 | Target verification and accepted-prefix commit | `sycl/src/core/verify.cpp` checkpoint/commit methods | Source `131d29c` connects real provisional rows to accepted GDN/QSA/PLE candidates while original full-window transactions remain open, then publishes only n after real fault/I/O proof. Count1 uses its candidate and all-accept multirow runs original state replay. Old diagnostic full-window repair is not selected by the native controller. Source `4083258` connects the retained multirow commit graph with explicit dynamic accepted-count/position fields, original family preflight and count1 skip. Source `91e1f9e` connects original pending commit export/join; `1f46f76` connects a scoped original next-draft consumer before explicit commit acknowledgement. Source `0bf0b5f` emits real verified predictions before next drafting, matching the source delivery order. Source `f9d1e06` connects scoped admission/allocator lifetimes and INFO visibility; physical independent execution, full source substitution audit and independent numerical oracle remain open. |
 | Graph capture, queues and synchronization | `verify.cpp`, session/mtp graph construction, Intel queue/event implementation | Native Vulkan owned recording/replay now connects real compute/copy queues, concurrent buffer ownership, RAW/WAR/WAW timeline edges and joined completion. Actual descriptor/copy intervals and dequant-release signals are connected; Source `d40442c` connects direct retained target submission with typed control uploads and original family receipts; source `d0670b0` connects direct MTP invocation with original actual packet observations and sampler/actor handback. Source `b6732c8` adopts independent MTP compute and concurrent buffer families with semaphore handoffs. Source `414e2c3` connects actual current INFO copies on the native transfer timeline and avoids empty primary submissions; source `86f4c35` replaces the global single fence/last-recording assumption with actual lane fences and stable original recording flights. Source `131d29c` connects synchronous original accepted-prefix publication; source `4083258` connects the retained commit graph. Source `91e1f9e` connects original pending submission identities and exact joins; `1f46f76` connects scoped original MTP consumption before explicit commit acknowledgement. Real independent readiness/INFO/draft execution remain open; source `543bc73` couples original pending commits to retained shared MAIN debt; source `a8e538f` retains actual recording ranges and preflights whole INFO-copy conflicts; source `d2d3228` pins original verified R, submits its real readiness dependency before commit and scopes all unkeyed/named draft lane selection. Source `7ad47ca` connects original native packet fill/copy, real HOST_READ availability, final fence and checked HAL host map without primary Wgpu readback copies/callbacks. Source `7cb1cbc` connects native upload state/render/flush/unmap and all-owner joined I/O reuse without Wgpu remaps or primary reuse clears. Source `7477b66` connects original per-owner selective reuse, current INFO copy completion and named/future/live recording exclusions. Source `f9d1e06` connects scoped graph/stream current-lane/conflict admission, original allocator pins and copy-vs-math INFO visibility. Required ordinary/cold/final global drains remain. Physical independent execution and full draft/event fidelity remain unverified. Physical ring overlap, scratch lifetimes and full execution acceptance remain open. Measured serving lazily captures branches; eager all-branch warmup is not a prerequisite; a sequence of independent Wgpu launches is not equivalent. |
-| Request lifecycle and arbitrary input | upstream CLI/session/inference entry points | Source `dc7ace7` connects an owned raw-token request entry, original target/MTP construction, callback delivery and full checked cleanup; public diagnostics consume that actual path. The current executable caller is still compiled-public. Protected arbitrary-input/tokenization, verified hot request reuse and full device/failure/recovery acceptance remain required; no private/general service claim. No gateway/UI work required. |
+| Request lifecycle and arbitrary input | upstream CLI/session/inference entry points | Source `dc7ace7` connects an owned raw-token request entry, original target/MTP construction, callback delivery and full checked cleanup; public diagnostics consume that actual path. Source `4ceb86f` connects completed target/MTP retained-state erasure with original-owner receipts before the current terminal close. This does not yet retain a model across requests or rearm the closed request permit. The current executable caller is still compiled-public. Protected arbitrary-input/tokenization, verified hot request reuse and full device/failure/recovery acceptance remain required; no private/general service claim. No gateway/UI work required. |
 
 ## Validation and the speed gate
 
@@ -7215,3 +7215,94 @@ substitutions and whole-device pricing, protected arbitrary-input/tokenization,
 verified hot model/request reuse, final scheduling/source audit, unresolved old
 regressions and full numerical/device/failure/recovery acceptance. Do not claim
 actual new resident counts, a larger observed cache, correctness or throughput.
+
+## Connected retained target/MTP request erasure (2026-10-16)
+
+Source `4ceb86f104114f9b89293a59641cb5e3cd597e24`. The lifetime audit found that
+the only existing retained target reset was the construction-fixed13-token
+public replay. Its permit and original scope remain unchanged. Native completed
+requests now use a separate scope with actual1..32768 context/cursor bounds,
+global original-source authority and a closed language I/O scope. A metadata
+cursor or a count-only audit cannot authorize this operation.
+
+The shared coordinator prepares real original GDN/QSA/PLE family permits before
+mutating state, checks the original fault before erasure, joins the original I/O
+and source ownership, then erases/inspects every tracked MAIN/source owner including
+padding. Only the completed fault/I/O/final checks allow infallible family cursor
+publication. PLE host convolution/history reset to the actual initial sentinel;
+the genuine one-input `[-1,token]` predecessor history is accepted without relaxing
+the13-token diagnostic. Original buffer IDs, epochs, generations, stamps, policy
+choices, model weights and admission charges remain owned; no failed/retired gate
+is cleared. Native failure returns to the engine's existing ordered terminal
+cleanup rather than independently closing the shared executor under a live MTP.
+
+MTP separately checks its original source/fault, live-output/front state and
+shared admission, rewinds through the existing cache consumer, then erases/audits
+its entire original private arena. Exact current owner counts, source and real I/O
+checks precede a healthy return. Both families issue non-cloneable receipts tied
+to their original fault BufferId/model binding; target also retains original
+context and closed scope. The engine validates those owners, not a fresh-generation
+heuristic. Current generation0/unstarted PLE permission is intentionally unchanged.
+
+The actual `strata_engine::execute` now invokes these consumers after successful
+generation and scope exit, before its existing terminal model close. Final close
+independently audits the same target and optional draft private owners. Source
+close counts remain cumulative across earlier source resets, so the comparison
+requires coverage, not equality with the current retained source inventory.
+Retained erasure does not release owners or issue allocator/refund/close credit.
+Failure never returns a successful generation/cleanup completion.
+
+The32K MTP cache's inspection window exceeds its normal16MiB packet allowance.
+`private_arena::OWNED_ZERO_AUDIT_HOST_BYTES` now prices one cleanup map plus its
+guarded copy (64MiB for the actual32MiB window) separately in native HOST/component/
+metadata admission. Target/MTP scans are sequential; normal MTP read/upload limits
+remain unchanged. The real original cache layouts and scan-window bound are
+checked together. Reset permit/receipt stack metadata fits the existing8KiB
+checkpoint allowance; no new GPU weight, private arena or kernel is added.
+
+CPU evidence under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-native-request-reset-build-receipt-20261016.log`: final locked release
+  test build, including the separately priced inspection window.
+- `strata-native-request-reset-cpu-final-20261016.log`:402 distinct CPU cases in50
+  nonempty suites. Includes original13-only permission/final-fault tests; native
+  completed-scope/cursor bounds; short PLE sentinels; original owner metadata
+  sizing; actual cache/inspection HOST bounds; no-close-credit/padding/late-failure
+  erasure checks; counts-only final-close comparisons and previous connected
+  owner/graph/source coverage. No test creates a physical device.
+- `strata-native-request-reset-final-{core,off}-clippy-20261016.log`: both strict
+  locked release lint configurations pass; changed Rust formatting/whitespace pass.
+- Earlier CPU logs are intermediate: one stopped at an empty old `device` test
+  namespace, corrected to actual `resident_mtp::device_cache`; another overlapped
+  a still-running build and is explicitly retained as `cpu-before-checked-build`.
+  Only the final log above was run after the final build's verified completion.
+
+No shader/generator/arithmetic change, new normal freeze or GPU/model execution.
+The old12a60bf frozen binary is stale for current source. Services, installed
+binaries, model files, API/config/connector/UI and release state are untouched.
+Required Vashti changes:none. Goal remains active CPU-only; speed gate closed.
+Last sudo validation failed; this work needs no root. Oct15 physical recovery is
+historical evidence only.
+
+**Next connected lifetime work (not implemented by this receipt):**
+
+1. Extract a retained loaded-model/session owner from the actual entry. Keep
+   original shared source/target/MTP/runtime ownership and terminal close ordering.
+   The current wrapper STILL closes everything after one request and therefore
+   performs retained erasure plus final close inspection. Do not call this hot reuse.
+2. Add a genuine request-capacity/binding lifecycle. Current geometry/context and
+   `Prefill -> Active -> Closed`, one-scope permission are single-request. Use
+   monotonic request generations and original erasure receipts to rearm; never
+   reset ledger/owner epochs, counters or poison flags to manufacture a fresh model.
+3. Audit every position0 gate. Current unstarted PLE requires generation0 and
+   unselected mode flags; an erased used model is distinct. Preserve selected
+   FourGdn/PLE/grouped policies and validate reuse rather than selecting them twice
+   or clearing flags to impersonate the constructor. Preserve original graph IDs.
+4. Clear request-derived retained HOST/control values before accepting private hot
+   reuse, while retaining public weights and compiled program metadata. Current
+   proofs cover tracked arenas, known PLE histories and I/O, not a whole-process
+   memory-forensics claim. Connect protected arbitrary input/tokenization afterward.
+5. Complete remaining private allocator/substitution/whole-device pricing and source
+   scheduling audits, old regressions and full numerical/device/failure/recovery
+   acceptance with fresh authorization/artifacts. No speed trials before the full
+   connected rewrite gate passes.
