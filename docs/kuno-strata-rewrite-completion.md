@@ -6,33 +6,33 @@ checklist is a source-to-source audit, not a sequence of throughput experiments.
 Each row needs its connected consumer, real ownership/placement and state contract;
 adding an unused helper or optional switch does not complete a row.
 
-**Current CPU-only source:** `35f0990fe3d89635797870d477ab80e321d47a31`, branch
-`codex/strata-rust-port`. Read the [MTP shared fork/join receipt](kuno-strata-rewrite-completion.md#connected-mtp-shared-fork-and-native-combination-2026-10-17),
-plus the preceding original artifact/Q8 conversion audit. The actual MTP path now
-forks shared projection/scaling beside routed experts, retains a distinct fault,
-and joins original rounded shared output into native vec4 ordered-FMA reduction.
-Both authentic target and matching active draft scopes select the opposite
-existing compute queue; original nonce/branch/verified-R/flight guards remain.
-MTP's shared side is ordered after an already submitted MAIN commit on that queue:
-this explicit Vulkan substitution needs physical execution acceptance.
+**Current CPU-only source:** `1a034311407a39d06a714090f82e506b5ef5174a`, branch
+`codex/strata-rust-port`. Read the [native routed Q8/fused producer receipt](kuno-strata-rewrite-completion.md#native-routed-q8-and-fused-swiglu-producers-2026-10-17).
+Actual global routed decode now uses subgroup32 Q8_1 preparation and one fused
+SwiGLU/Q8 DOWN producer over the authentic PART/status/planes. The older serial
+quantizer and stabilized separate activation are no longer selected there.
+Native product rounding is enforced by a shared SPIR-V NoContraction postpass
+on routed, shared and MTP fused producers, preserving explicit FMA and interfaces.
+Frame grouping within padded Rust owners is a reviewed backend substitution;
+identical physical launch behavior and device numerics remain unverified.
 
-565 distinct CPU cases/76 suites and strict core/off binary lint pass. Normal
+568 selected CPU cases/77 suites and strict core/off binary lint pass. Normal
 stable-source frozen artifact SHA256
-`384fcc563a8499e326274555f7fd74a94a290b03bb75cd949a46a9f74a6b8aff`, independently verified source/ordinary/frozen hash,
-mode0500 and default Intel features. Only its pre-adapter offline shader entry
-was executed:366 variants/139 physical checks/32 matrix configurations pass.
-No GPU/model inference or throughput measurement. MTP adds one32KiB private fault
-owner, included in admission/rebind/erasure/full close; no new hardware queue.
+`d3473d8d509d1ed8e92f98192a7a258160a0008c30f8b0bd01b4c0e2d999a25f`, independently verified source/ordinary/frozen hash,
+mode0500 and default Intel features. Only its pre-adapter offline entry ran:
+365 shaders/139 physical-pointer checks/4 rounded-product modules/32 matrix
+configurations pass. The installed target's144 routed role tensors independently
+match all four GU and both DOWN formats. No new private GPU buffer/model copy.
 
 **Whole rewrite incomplete; speed gate closed.** Finish the complete connected
-source/math/prompt/sampling/state/placement/queue/pricing/substitution audit, then
-protected count1/multirow numerical/context/retained/hot-request and failure/
-all-resource recovery acceptance. The earlier nine-matrix Q8 byte equality and
-actual artifact/tokenizer source receipts remain valid; native activation half-away
-rounding now separately follows SYCL round rather than add-before-truncate.
-CLI remains compiled-public/one-request; private caller independently gated.
-Goal active CPU-only. No GPU/model/inference/service/install/release/API/UI action;
-authorized sudo refresh only. Vashti changes none. Canonical/inherited files preserved.
+source/math/prompt/sampling/state/placement/queue/pricing/substitution audit,
+then protected count1/multirow numerical/context/retained/hot-request and failure/
+all-resource recovery acceptance. Earlier original artifact/nine runtime Q8 weight
+matrix/tokenizer/MTP fork receipts remain applicable; no new GPU/model inference
+or performance result. CLI stays compiled-public/one-request; private caller
+independently gated. Goal active CPU-only; authorized sudo refresh only. No
+service/install/release/API/configuration/frontend change. Vashti changes none.
+Canonical/inherited files preserved.
 
 
 ## Reference and execution scope
@@ -83,7 +83,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | Low-RAM host complement and promotion | `generate.cpp` source/adaptive tier; `expert_source.cpp` callback; `verify.cpp` NO_HOST | Original HOST complement, source ownership and joined physical publication remain connected. Source `3d6a0390` corrects selected NO_HOST to zero callback-derived counters and an actual bounded empty host job beside commit/MTP. No unused GPU counter readback, physical copy, registry revocation or unchanged-map upload is added at that tick. Prior `f9c7471f` authenticated promotion/copy worker remains explicit `strata-gpu-adaptive-usage`; ordinary selected mode uses4MiB adaptive HOST allowance versus12MiB for the extension. Original full request erase/rebind audits remain. Physical/numerical acceptance and final pricing audit remain open; do not duplicate the entire model in RAM. |
 | GPU route/group planning and original HOST access | `native_router.dp.cpp::route<512>` / `verify_kernels.dp.cpp::resident_plan_kernel`, selected SYCL `DEVICE_PLAN=1,NO_HOST=1` | Source `0d9e3a52` replaces fused eight-token/serial planning with selected one256-thread block per token (one active32-lane subgroup) and a separate128-thread packed parallel plan scan. Both use the SAME original private map root and native graph dependency tracking. Stable top10, winning-lane normalization, first-occurrence groups and original member order remain connected to direct authentic VRAM/HOST role consumers. Cell-ID/fixed8 plan layout and Vulkan math are explicit backend substitutions, not bit-parity proof. No CPU expert callback or guessed expert IDs. CPU/compiler acceptance passes; protected numerical/whole-model acceptance remains required. |
 | Native shared expert and fork/join | `verify.cpp::sh_stream_on/record_window`, `shared_expert.dp.cpp::shared_expert_multi`, native BF16 projection and `native_moe.dp.cpp` | Source `46e695a7` connects selected target shared compute fork, independent native Q8/fault roots, fused SwiGLU packing, original rank-one BF16 gate, vec4 sigmoid scale, ordered combined reduction and real all-peer target fence in one block. Actual cold/capture/replay Nodes, family pools, INFO edges and admission quotes are connected. CPU scheduling/shader interfaces pass; physical arithmetic/overlap, shared-to-MTP queue reuse and complete device/recovery acceptance remain open. See the connected shared-expert receipt below. |
-| Native expert math and grouped rows | `sycl/src/kernels/cuda/iq_kernels.dp.cpp::row_entries`, `native_gu_kernel`, `native_down_kernel` | Packed integer math/BDA roots exist. Separate GU roles, 4/2/1 chunks, activation, intermediate storage and downstream consumers are now selected together in the Intel core; all 158 WGSL/SPIR-V variants validate, including 105 physical-pointer checks; numerical/model execution acceptance remains pending. The global core now uses one per-role launch containing pinned row_entries4/2/1 loops, scalar IQ4_XS, native signed integer finish and XOR reduction; numerical/model execution acceptance remains pending. Historical fixed-chunk kernels are retained separately. |
+| Native expert math and grouped rows | `sycl/src/kernels/cuda/iq_kernels.dp.cpp::row_entries`, `native_gu_kernel`, `native_down_kernel` | Packed integer math/BDA roots exist. Separate GU roles, 4/2/1 chunks, activation, intermediate storage and downstream consumers are now selected together in the Intel core; all 158 WGSL/SPIR-V variants validate, including 105 physical-pointer checks; numerical/model execution acceptance remains pending. The global core now uses one per-role launch containing pinned row_entries4/2/1 loops, scalar IQ4_XS, native signed integer finish and XOR reduction; numerical/model execution acceptance remains pending. Historical fixed-chunk kernels are retained separately. Source1a034311 connects native subgroup32 Q8_1 GU preparation and fused direct SwiGLU/Q8 DOWN over the same actual private PART/status/planes. Original four GU/two DOWN formats cover all144 installed routed tensors. Actual rounded products are pinned by the shared native NoContraction postpass. See latest source/frame-grouping substitution receipt; device numerics/whole-model acceptance remain open. |
 | GR write/read/norm/down/up/injection | `sycl/src/kernels/cuda/fused_gr.dp.cpp::fused_gr_read_multi`; `verify.cpp::gr_read_group` | Native pending-write norm, sliced BF16 down/injection, fixed slice reduction and up/mix/commit are now connected and unconditionally selected in the core, including explicit PLE/final boundary writes. Resident original weights and the enlarged private scratch owner are charged together. Structural acceptance passes; numerical/model execution acceptance and final substitution audit remain pending. Source `37dced9` connects default full-prompt F1 row scales, packed BF16 norm/SiLU images, direct original projection consumers and residual-based mix recomputation together; see the packed-GR receipt. Sources `40fe97e` and the latest sole-residual receipt connect mixed images and prompt GR/PLE in-place storage, including actual MTP teacher scratch. Final substitution/numerical/device acceptance remains open. |
 | GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp`, `prefill/kernels.dp.cpp` | Core connects native BF16 alpha/beta, controls, recurrence/norm and accepted-prefix replay. Prompt scope selects contiguous H, causal convolution/history/L2, CB32 recurrence and directly consumed FP16 output. Source 9a7a23b connects prompt-capacity whole-chunk math without per-element status/replay owners, carved AB staging, and native row/value-head recurrent state shared by prompt/decode/repair. The large chunk caller/acceptance is connected in the latest controller receipt; physical execution and final numerical/queue audit remain open. Split verifier mode is an optional upstream path, not selected by the measured server. |
 | QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects INT8 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. The measured server explicitly selects INT8 for target and MTP; source2a3d1ad ports both together and the combined CPU shader/layout checks now pass. Numerical/GPU acceptance is pending. Earlier generic-default FP16 scope claims below are superseded. Numerical/state acceptance remains required. |
@@ -9862,3 +9862,129 @@ caller is independently gated. Only after complete audit and execution acceptanc
 may live whole-engine throughput work begin. Goal active CPU-only; authorized
 sudo refresh only. No service/install/release/API/configuration/frontend changes;
 required Vashti changes none. Canonical/inherited files preserved.
+
+
+## Native routed Q8 and fused SwiGLU producers (2026-10-17)
+
+Runtime source `1a034311407a39d06a714090f82e506b5ef5174a`, pinned MIT upstream
+`fb58e0dbc8399662c0e47c76578c6e878b14f6cf`. This replaces another legacy dependency
+inside the actual connected global Intel decode path; it is not an optional
+speed experiment. Preserve the entire coupled target/MTP/shared branch.
+
+### Source comparison and actual connection
+
+Pinned `sycl/src/kernels/cuda/iq_kernels.dp.cpp` supplies `q8_1_store`,
+`native_expert_grouped` and default non-v1 `swiglu_q8_1_entries_kernel`. Q8 blocks
+use32 lanes, native XOR16/8/4/2/1 sum, clamped finite scale/sum, half-away codes
+computed from the unrounded F32 scale, then original F16 d/s storage. Fused
+SwiGLU uses `(g/(1+native_exp(-g)))*up` with product contraction explicitly off
+before the Q8 sum. The Rust selected path still used a legacy serial input block
+loop and stabilized negative SiLU in separate ACT-write/requantization passes.
+Those are now replaced together in `strata_global_moe::Workspace::enqueue`:
+
+- `strata_global_experts::prepare_gu` -> original separate GU roles ->
+  `prepare_down` (fused) -> original DOWN role. The old global `activate` call
+  and serial global GU/DOWN preparation are removed from this selected consumer.
+  Historical feature-off/frozen helpers stay separate; no speed-driven fallback.
+- `strata_expert_q8` emits both actual producers and the layout constants used
+  by real host launch bounds. Each block reads its authentic32 original values,
+  subgroup-reduces max/sum, applies native half-away/clamp and writes original
+  packed bytes/F16 d/s into the existing full-plane owners. Second packed planes
+  remain zero; their former second-scale slots hold native Q8_1 half sums.
+  Native IQ consumers read the same first packed words/half-rounded scales.
+- Fused DOWN consumes both actual GU stamps, reads gate/up from the real PART
+  owner, materializes the F32 product in640-value Workgroup storage, synchronizes,
+  packs Q8 and clears dead gate/up slots. The completed-role header is published
+  only after all blocks; UP stamp clears before the original DOWN writer sets
+  it. Invalid/nonfinite data keeps readiness absent. No synthetic GPU completion.
+  Explicit STORAGE barriers order global zeroing/packing and readiness, alongside
+  Workgroup barriers for fault initialization/product/reduction storage.
+- There is no intermediate ACT device write/read on this selected path. Its
+  original admitted ACT owner remains retained and fully erased, as with the
+  pinned grouped scratch's unused h view in fused mode. No private allocation,
+  model-byte conversion, CPU route readback or new source transfer is added.
+  Actual graph bindings carry PART/status read-write and planes write access;
+  original byte hazards, request nonce, capture/replay and full cleanup remain.
+
+Original `row_entries` arithmetic audit: IQ2_S/3_XXS/3_S use native signed
+integer finish before F32 conversion; IQ4_XS remains scalar per entry (no native
+Multi specialization). IQ4_NL DOWN retains two16-value calls per32 values; Q2_0
+retains original signed codes/scale. Roles keep8 lanes per row, native XOR4/2/1,
+4/2/1 entry chunks where supported, original top10 destinations and actual
+registered VRAM/HOST source pointers. This source review is not device parity.
+
+Independent pinned GGUF header reader verifies all144 installed role tensors:
+48 layers,512 experts, GU dimensions[2560,640,512], DOWN[640,2560,512], paired
+original gate/up types. GU layers:17 IQ3_XXS/20 IQ2_S/10 IQ3_S/one IQ4_XS;
+DOWN:39 IQ4_NL/nine Q2_0. Every format has the selected connected consumer.
+No tensor payload/full-file hash is read/repeated by this header inventory.
+
+### Reviewed backend substitutions
+
+The Rust private ABI has padded per-frame headers/readiness and full-owner
+inactive erasure. A256-thread workgroup owns one active token (GU) or rank row
+(DOWN), iterating independent32-value blocks. Source uses flat block launches;
+this changes concurrency within the producer, not a block's values, arithmetic,
+XOR order, scale, codes or subsequent consumer. Individual frames are disjoint;
+one original frame owner publishes readiness after all its blocks. Frame0 clears
+only inactive/header/tail spans that cannot alias another active frame. Actual
+host launch and emitted constants share checked Layout bounds; source tests
+prove disjoint whole-owner coverage/every column once for counts1..8. This is the
+source-level justification for the adaptation, not identical launch/performance
+or physical execution proof. No cross-workgroup counter or extra global scratch
+is substituted for real completion. WGSL exp remains distinct from SYCL native
+exp; numerical/device acceptance is still required.
+
+The required separately rounded F32 product is also enforced in emitted native
+SPIR-V: `preserve_native_product_rounding` adds NoContraction only to FMul result
+IDs, preserving all instructions, explicit FMA, descriptor interfaces and the
+complete original header/bound. The idempotent postpass is consumed by actual
+`Graph::register_wgsl_module` after checked HAL Workgroup layout normalization,
+and by offline validation. Markers select this routed fused producer, target
+shared fused preparation and both MTP fused quantizers; unrelated arithmetic is
+unchanged. This is shared producer correctness, not a new math mode or API.
+The in-memory program owns the transformed words; no request data enters code.
+
+Native cache source audit found no evidence that old persistent custom WGSL was
+masking changes: compilation.cache defaults None and disk insertion requires
+an actual SpirV representation, while these custom WGSL tasks return repr None.
+This is source evidence, not inspection of arbitrary future caller configuration.
+
+### Validation and next gate
+
+Receipts under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-expert-q8-validate-20261017.py`,
+  `strata-expert-q8-final-test-build-20261017.log`,
+  `strata-expert-q8-full-cpu-20261017.log`:568 distinct CPU cases/77 nonempty
+  suites, zero failures. Includes all565 selected prior cases and actual layout/
+  native producer binding/workgroup/storage barriers, every frame/column and
+  annotation-only product postpass tests. No full repository/device claim.
+- `strata-expert-q8-{core,off}-clippy-20261017.log`: strict binary lint passes;
+  changed Rust formatting/whitespace pass. Earlier `*-pre-product.log` are
+  preliminary; `*-initial-product.log` preserves an incorrect test assumption
+  that NoContraction OpDecorate had4 words (it has3). `*-initial-header.log`
+  exposed rspirv assembly's generator stamp; the final pass restores the full
+  original header and tests unchanged instructions/explicit FMA/idempotence and
+  malformed-module rejection. No failure was hidden or used to roll back a port.
+- `strata-expert-format-audit-20261017.py/.json`: fixed public header inventory
+  through the independently pinned Python GGUF reader,144 tensors/all48 layers.
+- `strata-expert-q8-ordinary-20261017.out` and matching directory: normal stable
+  source1a034311, frozen SHA256 `d3473d8d509d1ed8e92f98192a7a258160a0008c30f8b0bd01b4c0e2d999a25f`;
+  source/ordinary/frozen hashes, mode0500/default Intel features independently
+  verified. Only original pre-adapter `--validate-port-shaders` entry ran.
+  `strata-expert-q8-shaders-20261017.log`:365 variants/139 physical-pointer
+  modules/4 rounded-product modules/32 matrix configurations pass with pinned
+  SPIRV-Tools fbe4f3a. New product modules use the same HAL layout normalization
+  and NoContraction pass as actual native registration, not raw WGSL alone.
+  Global compiled family now has13 variants instead of14 because a separate
+  activation dispatch disappeared; this is not omitted model format coverage.
+
+No GPU/adapter/model inference, throughput ranking, service/install/release or
+API/configuration/frontend action occurred. Sudo refresh only. Original artifact/
+tokenizer/full nine packed MTP-weight receipts remain applicable. Full rewrite
+is incomplete: finish the remaining connected source/math/prompt/sampling/state/
+placement/queue/pricing/substitution audit, then protected whole-model count1/
+multirow/context/retained/hot-request and failure/all-resource recovery before
+speed. CLI stays compiled-public/one-request; private caller independently gated.
+Goal active CPU-only. Required Vashti changes none; canonical/inherited preserved.

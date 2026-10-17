@@ -6,10 +6,10 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-17):** isolated
-`codex/strata-rust-port`, runtime source `35f0990fe3d89635797870d477ab80e321d47a31`. Read the
-[MTP shared fork/join handoff](#active-kuno-engine-handoff--mtp-shared-forkjoin-2026-10-17)
-and [completion gate](kuno-strata-rewrite-completion.md). Complete rewrite remains
-unfinished; speed gate closed and work CPU-only. Required Vashti changes: none.
+`codex/strata-rust-port`, runtime source `1a034311407a39d06a714090f82e506b5ef5174a`. Read the
+[native routed Q8/fused handoff](#active-kuno-engine-handoff--native-routed-q8-and-fused-producers-2026-10-17)
+and [completion gate](kuno-strata-rewrite-completion.md). Rewrite incomplete;
+speed gate closed, work CPU-only. Required Vashti changes: none.
 
 ## Ownership
 
@@ -7701,3 +7701,40 @@ context/retained/hot-request and failure/all-resource recovery before speed.
 Whole rewrite incomplete, goal active CPU-only. CLI compiled-public/one-request;
 private caller independently gated. Authorized sudo refresh only. No service/
 install/release/API/configuration/consumer/UI change; Vashti changes none.
+
+
+## Active Kuno engine handoff — native routed Q8 and fused producers (2026-10-17)
+
+Runtime source `1a034311407a39d06a714090f82e506b5ef5174a`, isolated `codex/strata-rust-port`.
+Read the [full source/ABI/substitution/validation receipt](kuno-strata-rewrite-completion.md#native-routed-q8-and-fused-swiglu-producers-2026-10-17)
+and [checkpoint](kuno-native-text-checkpoint.md). Preserve the complete connected
+branch and inherited cache. Canonical application work and installed services
+are untouched. Earlier artifact/Q8 weight/tokenizer/MTP shared receipts still apply.
+
+Actual routed decode now uses subgroup32 Q8_1 GU preparation and fused native
+SwiGLU/Q8 DOWN over original PART/status/planes. Old serial global quantization
+and separate stabilized ACT transfer are no longer selected. Original role
+stamps, readiness, private owner padding/erase, physical source pointers and
+real graph fences remain. No new private GPU buffer or model copy. Frame-owned
+workgroup grouping is a reviewed backend substitution; physical numeric/launch
+behavior remains unverified. Full installed144-tensor expert inventory matches
+all four GU/two DOWN formats.
+
+Actual native registration and offline compiler share NoContraction annotation
+of fused products, preserving complete header/IDs/instructions/interfaces and
+explicit FMA. This also protects target shared and MTP fused Q8 producers.
+Source/byte model artifacts are unchanged; no prompt/image/seed/token persistence.
+
+568 CPU cases/77 suites, strict core/off binary lint and normal build pass.
+Frozen source1a034311 SHA256 `d3473d8d509d1ed8e92f98192a7a258160a0008c30f8b0bd01b4c0e2d999a25f`
+independently source/original/frozen/mode0500/features verified. Only pre-adapter
+shader validation ran:365 variants/139 physical checks/4 product modules/32
+matrix configurations pass. Exact failure/final receipts and grouping/exp/math
+limitations are in the primary receipt. No GPU/model or speed result.
+
+Next finish the complete connected source/math/prompt/sampling/state/placement/
+queue/pricing/substitution audit, then protected count1/multirow/context/retained/
+hot-request and failure/all-resource recovery acceptance before speed. Rewrite
+incomplete, goal active CPU-only. CLI compiled-public/one-request; private caller
+independently gated. Sudo refresh only; no service/install/release/API/config/UI
+change. Required Vashti changes none. Source readiness does not prove GPU output.

@@ -1,32 +1,32 @@
 # Strata Rust whole-model port experiment
 
-**Current CPU-only source:** `35f0990fe3d89635797870d477ab80e321d47a31`, branch
-`codex/strata-rust-port`. Read the [MTP shared fork/join receipt](kuno-strata-rewrite-completion.md#connected-mtp-shared-fork-and-native-combination-2026-10-17),
-plus the preceding original artifact/Q8 conversion audit. The actual MTP path now
-forks shared projection/scaling beside routed experts, retains a distinct fault,
-and joins original rounded shared output into native vec4 ordered-FMA reduction.
-Both authentic target and matching active draft scopes select the opposite
-existing compute queue; original nonce/branch/verified-R/flight guards remain.
-MTP's shared side is ordered after an already submitted MAIN commit on that queue:
-this explicit Vulkan substitution needs physical execution acceptance.
+**Current CPU-only source:** `1a034311407a39d06a714090f82e506b5ef5174a`, branch
+`codex/strata-rust-port`. Read the [native routed Q8/fused producer receipt](kuno-strata-rewrite-completion.md#native-routed-q8-and-fused-swiglu-producers-2026-10-17).
+Actual global routed decode now uses subgroup32 Q8_1 preparation and one fused
+SwiGLU/Q8 DOWN producer over the authentic PART/status/planes. The older serial
+quantizer and stabilized separate activation are no longer selected there.
+Native product rounding is enforced by a shared SPIR-V NoContraction postpass
+on routed, shared and MTP fused producers, preserving explicit FMA and interfaces.
+Frame grouping within padded Rust owners is a reviewed backend substitution;
+identical physical launch behavior and device numerics remain unverified.
 
-565 distinct CPU cases/76 suites and strict core/off binary lint pass. Normal
+568 selected CPU cases/77 suites and strict core/off binary lint pass. Normal
 stable-source frozen artifact SHA256
-`384fcc563a8499e326274555f7fd74a94a290b03bb75cd949a46a9f74a6b8aff`, independently verified source/ordinary/frozen hash,
-mode0500 and default Intel features. Only its pre-adapter offline shader entry
-was executed:366 variants/139 physical checks/32 matrix configurations pass.
-No GPU/model inference or throughput measurement. MTP adds one32KiB private fault
-owner, included in admission/rebind/erasure/full close; no new hardware queue.
+`d3473d8d509d1ed8e92f98192a7a258160a0008c30f8b0bd01b4c0e2d999a25f`, independently verified source/ordinary/frozen hash,
+mode0500 and default Intel features. Only its pre-adapter offline entry ran:
+365 shaders/139 physical-pointer checks/4 rounded-product modules/32 matrix
+configurations pass. The installed target's144 routed role tensors independently
+match all four GU and both DOWN formats. No new private GPU buffer/model copy.
 
 **Whole rewrite incomplete; speed gate closed.** Finish the complete connected
-source/math/prompt/sampling/state/placement/queue/pricing/substitution audit, then
-protected count1/multirow numerical/context/retained/hot-request and failure/
-all-resource recovery acceptance. The earlier nine-matrix Q8 byte equality and
-actual artifact/tokenizer source receipts remain valid; native activation half-away
-rounding now separately follows SYCL round rather than add-before-truncate.
-CLI remains compiled-public/one-request; private caller independently gated.
-Goal active CPU-only. No GPU/model/inference/service/install/release/API/UI action;
-authorized sudo refresh only. Vashti changes none. Canonical/inherited files preserved.
+source/math/prompt/sampling/state/placement/queue/pricing/substitution audit,
+then protected count1/multirow numerical/context/retained/hot-request and failure/
+all-resource recovery acceptance. Earlier original artifact/nine runtime Q8 weight
+matrix/tokenizer/MTP fork receipts remain applicable; no new GPU/model inference
+or performance result. CLI stays compiled-public/one-request; private caller
+independently gated. Goal active CPU-only; authorized sudo refresh only. No
+service/install/release/API/configuration/frontend change. Vashti changes none.
+Canonical/inherited files preserved.
 
 ## Active direction — finish the complete Rust port before speed testing (2026-10-14)
 
