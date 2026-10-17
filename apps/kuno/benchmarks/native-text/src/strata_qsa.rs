@@ -47,7 +47,10 @@ pub(crate) enum Kernel {
     Pool,
     RetainedPool,
     PublishPool,
+    Indexer,
+    IndexerFlags,
     Score,
+    DirectScore,
     PromptScore,
     Attention,
     PromptAttention,
@@ -79,6 +82,8 @@ impl Kernel {
             | Self::PromptAttentionFault
             | Self::PromptMergeFault
             | Self::Score
+            | Self::DirectScore
+            | Self::Indexer
             | Self::PromptScore => 256,
             Self::PromptScoreFault => 256,
             _ => 64,
@@ -86,8 +91,10 @@ impl Kernel {
     }
     fn source(self) -> String {
         let all = include_str!("strata_qsa.wgsl");
+        let indexer = include_str!("strata_qsa_indexer.wgsl");
         let section = |name: &str| {
             all.split_once(&format!("// {name}_BEGIN\n"))
+                .or_else(|| indexer.split_once(&format!("// {name}_BEGIN\n")))
                 .unwrap()
                 .1
                 .split_once(&format!("// {name}_END"))
@@ -113,7 +120,9 @@ impl Kernel {
             Self::Pool => "POOL",
             Self::RetainedPool => "RETAINED_POOL",
             Self::PublishPool => "PUBLISH_POOL",
-            Self::Score | Self::PromptScore | Self::PromptScoreFault => "SCORE",
+            Self::Indexer => "INDEXER",
+            Self::IndexerFlags => "INDEXER_FLAGS",
+            Self::Score | Self::DirectScore | Self::PromptScore | Self::PromptScoreFault => "SCORE",
             Self::Attention
             | Self::MtpAttention
             | Self::PromptAttention
@@ -122,7 +131,10 @@ impl Kernel {
             Self::Gate => "GATE",
             Self::Append | Self::PromptAppend | Self::PromptAppendFault => "APPEND",
         }));
-        if matches!(self, Self::PromptScore | Self::PromptScoreFault) {
+        if matches!(
+            self,
+            Self::DirectScore | Self::PromptScore | Self::PromptScoreFault
+        ) {
             s = s.replace(
                 "token*p.input_stride+block*128u+lane*4u",
                 "block*128u+lane*4u",
@@ -265,7 +277,10 @@ impl KernelMetadata for Kernel {
             Self::Pool => "StrataQsaRawIndexerPool",
             Self::RetainedPool => "StrataQsaRetainedIndexerPrefix",
             Self::PublishPool => "StrataQsaPublishIndexerBlocks",
+            Self::Indexer => "StrataQsaNativeIndexerAppendSteps",
+            Self::IndexerFlags => "StrataQsaNativeIndexerReceiptFlags",
             Self::Score => "StrataQsaIndexerScore",
+            Self::DirectScore => "StrataQsaDirectIndexerScore",
             Self::PromptScore => "StrataPromptSharedIndexerScore",
             Self::Attention => "StrataQsaChunkAttention",
             Self::PromptAttention => "StrataPromptAttentionBatch32",
@@ -351,6 +366,9 @@ pub(crate) fn launch(
             .contains(&info[0])
         || info[1].checked_add(info[0]).is_none_or(|end| end > info[2])
         || info[2] > crate::qsa_gpu::MAX_CONTEXT as u32
+        || kernel == Kernel::Indexer
+            && (grid != [1, 1, 1] || handles.len() != 5 || !info[2].is_multiple_of(4))
+        || kernel == Kernel::IndexerFlags && (handles.len() != 3 || info[5] != info[2] / 4)
         || if matches!(
             kernel,
             Kernel::PromptAttention
@@ -410,7 +428,10 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
         Kernel::Pool,
         Kernel::RetainedPool,
         Kernel::PublishPool,
+        Kernel::Indexer,
+        Kernel::IndexerFlags,
         Kernel::Score,
+        Kernel::DirectScore,
         Kernel::PromptScore,
         Kernel::Attention,
         Kernel::PromptAttention,
@@ -561,3 +582,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "strata_qsa_indexer_tests.rs"]
+mod native_indexer_tests;

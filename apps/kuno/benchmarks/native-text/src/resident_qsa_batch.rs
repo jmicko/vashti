@@ -1258,6 +1258,14 @@ impl ResidentQsa<'_> {
         use crate::strata_qsa::{self as native, Kernel};
         let h = |id| u::handle(arena, id);
         let prompt = crate::strata_prompt::active();
+        if !prompt
+            && matches!(
+                op,
+                Operation::PoolNorm | Operation::Clear(MEAN) | Operation::Clear(POOL)
+            )
+        {
+            return Ok(true);
+        }
         let carved = if prompt {
             Some(crate::strata_prompt::qsa_workspace()?)
         } else {
@@ -1462,30 +1470,25 @@ impl ResidentQsa<'_> {
                     native::prompt::pool(arena, info, [h(self.ids[CACHE])?, view(8)?])?;
                     return Ok(true);
                 }
-                info[4] = l.widths[MEAN] as u32;
                 info[5] = l.widths[FLAGS + 5] as u32;
                 native::launch(
                     arena,
-                    Kernel::RetainedPool,
-                    [l.widths[POOL].div_ceil(64), count, 1],
+                    Kernel::Indexer,
+                    [1, 1, 1],
                     vec![
+                        h(self.ids[CACHE])?,
+                        h(ids[CAND])?,
+                        public.vectors[3].clone(),
                         h(self.ids[POOLED])?,
-                        h(ids[POOL])?,
-                        h(ids[FLAGS + 5])?,
-                        h(ids[FLAGS + 6])?,
+                        h(fault_id)?,
                     ],
                     info,
                 )?;
                 native::launch(
                     arena,
-                    Kernel::Pool,
-                    [l.widths[SCORE], count, 1],
-                    vec![
-                        h(self.ids[CACHE])?,
-                        if prompt { view(8)? } else { h(ids[CAND])? },
-                        h(ids[MEAN])?,
-                        h(ids[FLAGS + 5])?,
-                    ],
+                    Kernel::IndexerFlags,
+                    [l.widths[FLAGS + 5].div_ceil(64), count, 1],
+                    vec![h(ids[FLAGS + 5])?, h(ids[FLAGS + 6])?, h(fault_id)?],
                     info,
                 )?;
             }
@@ -1535,7 +1538,7 @@ impl ResidentQsa<'_> {
                     if prompt {
                         Kernel::PromptScore
                     } else {
-                        Kernel::Score
+                        Kernel::DirectScore
                     },
                     [l.widths[SCORE].div_ceil(8), count, 1],
                     if prompt {
@@ -1548,7 +1551,7 @@ impl ResidentQsa<'_> {
                         ]
                     } else {
                         vec![
-                            h(ids[POOL])?,
+                            h(self.ids[POOLED])?,
                             h(ids[IQ])?,
                             h(ids[SCORE])?,
                             h(ids[FLAGS + 7])?,
@@ -1939,7 +1942,19 @@ impl ResidentQsa<'_> {
                 Operation::Clear(i) => {
                     if u::grouped_scratch_clear_enabled() {
                         if i == 0 {
-                            u::zero_many(arena, &**ids)?;
+                            if crate::strata_intel_core::enabled()
+                                && !crate::strata_prompt::active()
+                            {
+                                let live = ids
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(i, _)| !matches!(*i, MEAN | POOL))
+                                    .map(|(_, &id)| id)
+                                    .collect::<Vec<_>>();
+                                u::zero_many(arena, &live)?;
+                            } else {
+                                u::zero_many(arena, &**ids)?;
+                            }
                         }
                     } else {
                         u::zero(arena, ids[i])?;
