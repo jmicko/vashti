@@ -1540,7 +1540,11 @@ impl ResidentQsa<'_> {
                     } else {
                         Kernel::DirectScore
                     },
-                    [l.widths[SCORE].div_ceil(8), count, 1],
+                    if prompt {
+                        [l.widths[SCORE].div_ceil(8), count, 1]
+                    } else {
+                        native::WINDOW_SCORE_GRID
+                    },
                     if prompt {
                         vec![
                             h(self.ids[POOLED])?,

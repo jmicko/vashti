@@ -30,6 +30,7 @@ pub(crate) const PACK_GROUPS: usize = 8;
 pub(crate) const CHUNKS: usize = 33; // ceil((2048 + incomplete tail <=3)/64)
 pub(crate) const PARTIAL_WORDS: usize = 24 * CHUNKS * 256;
 pub(crate) const STATS_WORDS: usize = 24 * CHUNKS * 2;
+pub(crate) const WINDOW_SCORE_GRID: [usize; 3] = [256, 1, 1];
 pub(crate) const fn cache_words() -> usize {
     if crate::strata_intel_core::enabled() {
         CACHE_WORDS
@@ -92,9 +93,11 @@ impl Kernel {
     fn source(self) -> String {
         let all = include_str!("strata_qsa.wgsl");
         let indexer = include_str!("strata_qsa_indexer.wgsl");
+        let score = include_str!("strata_qsa_score.wgsl");
         let section = |name: &str| {
             all.split_once(&format!("// {name}_BEGIN\n"))
                 .or_else(|| indexer.split_once(&format!("// {name}_BEGIN\n")))
+                .or_else(|| score.split_once(&format!("// {name}_BEGIN\n")))
                 .unwrap()
                 .1
                 .split_once(&format!("// {name}_END"))
@@ -106,6 +109,12 @@ impl Kernel {
             crate::qsa_gpu::MAX_CONTEXT
         );
         s.push_str(section("COMMON"));
+        if self == Self::DirectScore {
+            s.push_str(&format!(
+                "const SCORE_CTAS:u32={}u;\n",
+                WINDOW_SCORE_GRID[0]
+            ));
+        }
         if self == Self::Positions {
             s.push_str(&format!(
                 "const TOKEN_STATUS:u32={}u;const POSITION_MAX:u32={}u;\n",
@@ -122,7 +131,8 @@ impl Kernel {
             Self::PublishPool => "PUBLISH_POOL",
             Self::Indexer => "INDEXER",
             Self::IndexerFlags => "INDEXER_FLAGS",
-            Self::Score | Self::DirectScore | Self::PromptScore | Self::PromptScoreFault => "SCORE",
+            Self::DirectScore => "SCORE_MULTI",
+            Self::Score | Self::PromptScore | Self::PromptScoreFault => "SCORE",
             Self::Attention
             | Self::MtpAttention
             | Self::PromptAttention
@@ -131,10 +141,7 @@ impl Kernel {
             Self::Gate => "GATE",
             Self::Append | Self::PromptAppend | Self::PromptAppendFault => "APPEND",
         }));
-        if matches!(
-            self,
-            Self::DirectScore | Self::PromptScore | Self::PromptScoreFault
-        ) {
+        if matches!(self, Self::PromptScore | Self::PromptScoreFault) {
             s = s.replace(
                 "token*p.input_stride+block*128u+lane*4u",
                 "block*128u+lane*4u",
@@ -280,7 +287,7 @@ impl KernelMetadata for Kernel {
             Self::Indexer => "StrataQsaNativeIndexerAppendSteps",
             Self::IndexerFlags => "StrataQsaNativeIndexerReceiptFlags",
             Self::Score => "StrataQsaIndexerScore",
-            Self::DirectScore => "StrataQsaDirectIndexerScore",
+            Self::DirectScore => "StrataQsaNativeWindowScore",
             Self::PromptScore => "StrataPromptSharedIndexerScore",
             Self::Attention => "StrataQsaChunkAttention",
             Self::PromptAttention => "StrataPromptAttentionBatch32",
@@ -369,6 +376,11 @@ pub(crate) fn launch(
         || kernel == Kernel::Indexer
             && (grid != [1, 1, 1] || handles.len() != 5 || !info[2].is_multiple_of(4))
         || kernel == Kernel::IndexerFlags && (handles.len() != 3 || info[5] != info[2] / 4)
+        || kernel == Kernel::DirectScore
+            && (grid != WINDOW_SCORE_GRID
+                || handles.len() != 5
+                || info[4] != info[2] / 4
+                || info[5] != info[4])
         || if matches!(
             kernel,
             Kernel::PromptAttention
@@ -586,3 +598,7 @@ mod tests {
 #[cfg(test)]
 #[path = "strata_qsa_indexer_tests.rs"]
 mod native_indexer_tests;
+
+#[cfg(test)]
+#[path = "strata_qsa_score_tests.rs"]
+mod native_score_tests;
