@@ -393,6 +393,8 @@ struct Pipeline {
 }
 #[derive(Debug)]
 struct Node {
+    shared: bool,
+    release_after: bool,
     pipeline: Option<wgpu::ComputePipeline>,
     resources: Vec<WgpuResource>,
     read_dependencies: Vec<WgpuResource>,
@@ -417,6 +419,7 @@ pub(crate) struct Graph {
     timestamp_bits: u32,
     compute_queues: [ComputeQueue; 2],
     compute_lane: usize,
+    shared_request: Option<u64>,
     handoff: super::strata_handoff::Handoff,
     info_uploads: [super::strata_info_transfer::Uploads; 2],
     device: ash::Device,
@@ -734,6 +737,7 @@ impl Graph {
                 },
             ],
             compute_lane: 0,
+            shared_request: None,
             handoff,
             info_uploads,
             device: d,
@@ -896,6 +900,8 @@ impl Graph {
             }
         }
         let node = Node {
+            shared: self.shared_request.is_some(),
+            release_after: false,
             pipeline: Some(pipeline.clone()),
             resources,
             read_dependencies,
@@ -903,7 +909,14 @@ impl Graph {
         };
         let accesses = self.node_ranges(&node)?;
         self.draft_scope.check_accesses(&accesses).map_err(fault)?;
-        self.admit_accesses(&accesses, self.queue)?;
+        self.admit_accesses(
+            &accesses,
+            if node.shared {
+                self.compute_queues[1].queue
+            } else {
+                self.queue
+            },
+        )?;
         self.nodes.push(node);
         Ok(())
     }
@@ -940,6 +953,8 @@ impl Graph {
             (vec![target], Dispatch::Fill)
         };
         let node = Node {
+            shared: self.shared_request.is_some(),
+            release_after: false,
             pipeline: None,
             resources,
             read_dependencies: Vec::new(),
@@ -947,7 +962,14 @@ impl Graph {
         };
         let accesses = self.node_ranges(&node)?;
         self.draft_scope.check_accesses(&accesses).map_err(fault)?;
-        self.admit_accesses(&accesses, self.queue)?;
+        self.admit_accesses(
+            &accesses,
+            if node.shared {
+                self.compute_queues[1].queue
+            } else {
+                self.queue
+            },
+        )?;
         self.nodes.push(node);
         Ok(())
     }
@@ -1011,9 +1033,39 @@ impl Graph {
             })
             .collect()
     }
-    /// Prepare the actual original verified R BEFORE accepted-prefix commit.
-    /// Retain both the allocator binding and original signal/wait through scope
-    /// completion, including partial failures. This never publishes model state.
+    /// Tag genuinely enqueued target nodes; no submission or completion grant.
+    pub(crate) fn shared_boundary(
+        &mut self,
+        boundary: cubecl_runtime::server::NativeStrataSharedBoundary,
+        request: u64,
+    ) -> Result<(), ServerError> {
+        use cubecl_runtime::server::NativeStrataSharedBoundary::*;
+        if request == 0 || self.compute_lane != 0 || self.draft_scope.active_request().is_some() {
+            return Err(fault("shared requires authentic main target scope"));
+        }
+        match boundary {
+            Begin if self.shared_request.is_none() => {
+                self.shared_request = Some(request);
+            }
+            End if self.shared_request == Some(request) => {
+                self.shared_request = None;
+            }
+            ReleaseMain if self.shared_request.is_none() => {
+                let last = self
+                    .nodes
+                    .last_mut()
+                    .ok_or_else(|| fault("shared main release has no original node"))?;
+                if last.shared {
+                    return Err(fault("shared main release on peer"));
+                }
+                last.release_after = true;
+            }
+            _ => return Err(fault("shared queue boundary mismatch")),
+        }
+        Ok(())
+    }
+    /// Pin the actual verified R before accepted-prefix commit. The target
+    /// fence already joins its shared queue before this lane is reused by MTP.
     pub(crate) fn prepare_draft_scope(
         &mut self,
         request: u64,
@@ -1116,6 +1168,9 @@ impl Graph {
         &mut self,
         branch: Option<cubecl_runtime::server::NativeStrataBranch>,
     ) -> Result<(), ServerError> {
+        if self.shared_request.is_some() {
+            return Err(fault("native branch switch inside shared section"));
+        }
         let named = branch.map(|b| usize::from(b.mtp_geometry().is_some()));
         let lane = self.draft_scope.lane(named).map_err(fault)?;
         if self.draft_scope.active_request().is_some() {
@@ -1370,6 +1425,7 @@ impl Graph {
         }
         self.draft_scope.discard_after_drain();
         self.draft_source = None;
+        self.shared_request = None; // Only after the original all-queue drain.
         self.flights.clear_joined_exports().map_err(fault)?;
         self.recordings.clear();
         self.initialized.clear();
@@ -1594,7 +1650,11 @@ impl Graph {
             .unwrap()
             .work
             .submit(
-                [self.queue, self.copy_queue.raw_identity()],
+                [
+                    self.queue,
+                    self.copy_queue.raw_identity(),
+                    self.compute_queues[1].queue,
+                ],
                 &self.copy_queue,
                 fence,
                 info_wait,
@@ -1705,6 +1765,7 @@ impl Graph {
                     .as_ref()
                     .map_or(0, |p| self.pipelines[p].pipeline.as_raw()),
             );
+            signature.extend([u64::from(n.shared), u64::from(n.release_after)]);
             signature.push(n.resources.len() as u64);
             for r in &n.resources {
                 signature.extend([raw_buffer(r)?.as_raw(), r.offset, r.size]);
@@ -1827,6 +1888,11 @@ impl Graph {
         } else {
             self.timestamp_bits
         };
+        let timestamp_bits = if self.nodes.iter().any(|n| n.shared) {
+            timestamp_bits.min(self.compute_queues[1].timestamp_bits)
+        } else {
+            timestamp_bits
+        };
         let profile = if profiling {
             if self.nodes.len() > 16384
                 || timestamp_bits == 0
@@ -1876,10 +1942,12 @@ impl Graph {
             planner
                 .push(&strata_schedule::NodeAccess {
                     copy: matches!(node.dispatch, Dispatch::Copy | Dispatch::Fill),
-                    release_after: node
-                        .pipeline
-                        .as_ref()
-                        .is_some_and(|p| self.pipelines[p].program.release_after),
+                    shared: node.shared,
+                    release_after: node.release_after
+                        || node
+                            .pipeline
+                            .as_ref()
+                            .is_some_and(|p| self.pipelines[p].program.release_after),
                     accesses,
                 })
                 .map_err(fault)?;
@@ -1890,6 +1958,7 @@ impl Graph {
             self.pool,
             self.command,
             self.copy_family,
+            self.compute_queues[1].family,
             plan,
         )
         .map_err(fault)?;
@@ -1968,7 +2037,7 @@ impl Graph {
                 );
             }
         }
-        let mut previous: [HashMap<vk::Buffer, vk::AccessFlags>; 2] = Default::default();
+        let mut previous: [HashMap<vk::Buffer, vk::AccessFlags>; 3] = Default::default();
         let mut segment = 0usize;
         for (index, n) in self.nodes.iter().enumerate() {
             let work = &self.recordings.last().unwrap().work;
@@ -1980,7 +2049,7 @@ impl Graph {
                 begin_native_command(&self.device, self.command)?;
             }
             let copy = work.plan.segments[segment].copy;
-            let previous = &mut previous[usize::from(copy)];
+            let previous = &mut previous[work.plan.segments[segment].queue()];
             let supported_stages = if copy {
                 vk::PipelineStageFlags::TRANSFER
             } else {

@@ -335,6 +335,7 @@ mod tests {
             let mut planner = Planner::new(1, false).unwrap();
             planner
                 .push(&NodeAccess {
+                    shared: false,
                     copy: false,
                     release_after: false,
                     accesses: vec![Access {

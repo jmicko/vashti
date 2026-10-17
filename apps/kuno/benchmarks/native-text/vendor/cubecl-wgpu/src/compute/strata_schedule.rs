@@ -1,4 +1,4 @@
-//! Dependency-complete native compute/copy submissions. No model content.
+//! Dependency-complete native primary/copy/shared submissions. No model content.
 use ash::vk;
 use std::collections::HashMap;
 
@@ -10,19 +10,32 @@ pub(crate) struct Access {
 }
 pub(crate) struct NodeAccess {
     pub copy: bool,
+    pub shared: bool,
     pub release_after: bool,
     pub accesses: Vec<Access>,
 }
 #[derive(Debug)]
 pub(crate) struct Segment {
     pub copy: bool,
+    pub shared: bool,
+    pub waits: [u64; 3],
     pub wait: u64,
     pub signal: u64,
+}
+impl Segment {
+    pub fn queue(&self) -> usize {
+        if self.shared {
+            2
+        } else {
+            usize::from(self.copy)
+        }
+    }
 }
 pub(crate) struct Plan {
     pub segments: Vec<Segment>,
     pub node_segments: Vec<usize>,
     pub last_copy: u64,
+    pub last_shared: u64,
     // Original descriptor/copy intervals, canonicalized without filling gaps.
     // Retained with the actual recording, not rebuilt from caller declarations.
     accesses: Vec<Access>,
@@ -70,8 +83,8 @@ impl Plan {
 }
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 struct Hazard {
-    readers: [u64; 2],
-    writers: [u64; 2],
+    readers: [u64; 3],
+    writers: [u64; 3],
 }
 #[derive(Clone, Copy)]
 struct Region {
@@ -82,7 +95,7 @@ struct Region {
 const MAX_REGIONS: usize = 262144;
 /// Actual descriptor/copy intervals, not invented narrower declarations.
 /// Segment0 releases Wgpu initialization before either queue's native work.
-pub const NATIVE_QUEUE_HOST_BYTES: usize = 128 * 1024 * 1024
+pub const NATIVE_QUEUE_HOST_BYTES: usize = 144 * 1024 * 1024
     + 2 * super::strata_info_transfer::HOST_BYTES
     + super::strata_io_reuse::HOST_BYTES
     + super::strata_allocator_scope::HOST_BYTES;
@@ -123,7 +136,7 @@ fn update_regions(
     own: usize,
     signal: u64,
     total: &mut usize,
-) -> Result<u64, &'static str> {
+) -> Result<[u64; 3], &'static str> {
     let end = access
         .first
         .checked_add(access.bytes)
@@ -133,7 +146,7 @@ fn update_regions(
     split_region(regions, end, total)?;
     let mut i = regions.partition_point(|r| r.end <= access.first);
     let mut cursor = access.first;
-    let mut wait = 0;
+    let mut wait = [0; 3];
     while cursor < end {
         if i == regions.len() || regions[i].first > cursor {
             let last = regions.get(i).map_or(end, |r| end.min(r.first));
@@ -150,9 +163,15 @@ fn update_regions(
         }
         let cell = &mut regions[i];
         let h = &mut cell.hazard;
-        wait = wait.max(h.writers[1 - own]);
+        for peer in 0..3 {
+            if peer != own {
+                wait[peer] = wait[peer].max(h.writers[peer]);
+                if access.write {
+                    wait[peer] = wait[peer].max(h.readers[peer]);
+                }
+            }
+        }
         if access.write {
-            wait = wait.max(h.readers[1 - own]);
             h.writers[own] = signal;
         } else {
             h.readers[own] = signal;
@@ -198,6 +217,8 @@ impl Planner {
         let mut segments = Vec::with_capacity(capacity + 1);
         segments.push(Segment {
             copy: false,
+            shared: false,
+            waits: [0; 3],
             wait: 0,
             signal: 1,
         });
@@ -206,6 +227,7 @@ impl Planner {
                 segments,
                 node_segments: Vec::with_capacity(capacity),
                 last_copy: 0,
+                last_shared: 0,
                 accesses: Vec::new(),
             },
             hazards: HashMap::new(),
@@ -231,28 +253,42 @@ impl Planner {
     pub fn push(&mut self, node: &NodeAccess) -> Result<(), &'static str> {
         // This selects only the queue. The original node still carries its
         // COPY/FILL dispatch and TRANSFER accesses in Graph's actual encoder.
-        let copy = node.copy && !self.inline_copies;
+        if node.shared && self.inline_copies {
+            return Err("shared queue inside MTP lane");
+        }
+        let shared = node.shared;
+        // Shared COPY/FILL commands execute on its compute-capable queue.
+        let copy = node.copy && !self.inline_copies && !shared;
         let result = &mut self.result;
         let index = result.node_segments.len();
         if index >= self.capacity {
             return Err("native queue plan node capacity");
         }
-        if index == 0 || self.release_next || result.segments.last().unwrap().copy != copy {
+        if index == 0
+            || self.release_next
+            || result.segments.last().unwrap().copy != copy
+            || result.segments.last().unwrap().shared != shared
+        {
             let signal = result.segments.len() as u64 + 1;
             result.segments.push(Segment {
                 copy,
-                wait: u64::from(copy),
+                shared,
+                waits: [u64::from(copy || shared), 0, 0],
+                wait: u64::from(copy || shared),
                 signal,
             });
             if copy {
                 result.last_copy = signal;
+            }
+            if shared {
+                result.last_shared = signal;
             }
         }
         self.release_next = node.release_after;
         let s = result.segments.len() - 1;
         result.node_segments.push(s);
         let segment = &mut result.segments[s];
-        let own = usize::from(copy);
+        let own = if shared { 2 } else { usize::from(copy) };
         for access in &node.accesses {
             if access.buffer == 0 {
                 return Err("native queue plan null buffer");
@@ -265,13 +301,11 @@ impl Planner {
             }
             let regions = self.hazards.entry(access.buffer).or_default();
             let previous_capacity = regions.capacity();
-            segment.wait = segment.wait.max(update_regions(
-                regions,
-                access,
-                own,
-                segment.signal,
-                &mut self.regions,
-            )?);
+            let waits = update_regions(regions, access, own, segment.signal, &mut self.regions)?;
+            for (old, new) in segment.waits.iter_mut().zip(waits) {
+                *old = (*old).max(new);
+            }
+            segment.wait = *segment.waits.iter().max().unwrap();
             // A bound on live intervals alone does not bound old Vec capacities
             // after contraction on many different buffers.
             if regions.capacity() > regions.len().saturating_mul(2) {
@@ -294,10 +328,13 @@ impl Planner {
         }
         if self.serialize {
             for s in 1..self.result.segments.len() {
-                if self.result.segments[s].copy != self.result.segments[s - 1].copy {
-                    self.result.segments[s].wait = self.result.segments[s]
-                        .wait
-                        .max(self.result.segments[s - 1].signal);
+                let previous = &self.result.segments[s - 1];
+                let peer = previous.queue();
+                let signal = previous.signal;
+                let current = &mut self.result.segments[s];
+                if current.queue() != peer {
+                    current.waits[peer] = current.waits[peer].max(signal);
+                    current.wait = *current.waits.iter().max().unwrap();
                 }
             }
         }
@@ -310,8 +347,8 @@ impl Planner {
         }
         for (buffer, regions) in &self.hazards {
             for region in regions {
-                let write = region.hazard.writers != [0; 2];
-                if !write && region.hazard.readers == [0; 2] {
+                let write = region.hazard.writers != [0; 3];
+                if !write && region.hazard.readers == [0; 3] {
                     return Err("native retained empty access history");
                 }
                 accesses.push(Access {
@@ -366,6 +403,24 @@ fn reserve_epoch(next: &mut u64, segments: usize) -> Result<u64, &'static str> {
 
 /// The actual submission uses this dependency, preserving the upload wait at
 /// the original compute header and the plan's later compute/copy release edges.
+fn incoming_dependencies(
+    index: usize,
+    segment: &Segment,
+    timelines: [vk::Semaphore; 3],
+    base: u64,
+    uploads: Option<super::strata_info_transfer::Wait>,
+) -> [Option<super::strata_info_transfer::Wait>; 3] {
+    if index == 0 {
+        return [uploads, None, None];
+    }
+    std::array::from_fn(|peer| {
+        (segment.waits[peer] != 0).then_some(super::strata_info_transfer::Wait {
+            semaphore: timelines[peer],
+            value: base + segment.waits[peer],
+        })
+    })
+}
+#[cfg(test)]
 fn incoming_dependency(
     index: usize,
     segment: &Segment,
@@ -373,14 +428,16 @@ fn incoming_dependency(
     base: u64,
     uploads: Option<super::strata_info_transfer::Wait>,
 ) -> Option<super::strata_info_transfer::Wait> {
-    if index == 0 {
-        uploads
-    } else {
-        (segment.wait != 0).then_some(super::strata_info_transfer::Wait {
-            semaphore: timelines[1 - usize::from(segment.copy)],
-            value: base + segment.wait,
-        })
-    }
+    incoming_dependencies(
+        index,
+        segment,
+        [timelines[0], timelines[1], vk::Semaphore::null()],
+        base,
+        uploads,
+    )
+    .into_iter()
+    .flatten()
+    .next()
 }
 
 /// Recording owns all copy pools and timeline semaphores through the joined
@@ -388,7 +445,8 @@ fn incoming_dependency(
 pub(crate) struct Commands {
     device: ash::Device,
     copy_pool: vk::CommandPool,
-    timelines: [vk::Semaphore; 2],
+    shared_pool: vk::CommandPool,
+    timelines: [vk::Semaphore; 3],
     next_base: u64,
     pub plan: Plan,
     pub commands: Vec<vk::CommandBuffer>,
@@ -399,12 +457,14 @@ impl Commands {
         main_pool: vk::CommandPool,
         header: vk::CommandBuffer,
         copy_family: u32,
+        shared_family: u32,
         plan: Plan,
     ) -> Result<Self, &'static str> {
         let mut result = Self {
             device: device.clone(),
             copy_pool: vk::CommandPool::null(),
-            timelines: [vk::Semaphore::null(); 2],
+            shared_pool: vk::CommandPool::null(),
+            timelines: [vk::Semaphore::null(); 3],
             next_base: 0,
             commands: Vec::with_capacity(plan.segments.len()),
             plan,
@@ -419,6 +479,17 @@ impl Commands {
             )
         }
         .map_err(|_| "native copy command pool")?;
+        if result.plan.last_shared != 0 {
+            result.shared_pool = unsafe {
+                device.create_command_pool(
+                    &vk::CommandPoolCreateInfo::default()
+                        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
+                        .queue_family_index(shared_family),
+                    None,
+                )
+            }
+            .map_err(|_| "native shared command pool")?;
+        }
         for semaphore in &mut result.timelines {
             let mut timeline = vk::SemaphoreTypeCreateInfo::default()
                 .semaphore_type(vk::SemaphoreType::TIMELINE)
@@ -435,7 +506,9 @@ impl Commands {
             let command = unsafe {
                 device.allocate_command_buffers(
                     &vk::CommandBufferAllocateInfo::default()
-                        .command_pool(if segment.copy {
+                        .command_pool(if segment.shared {
+                            result.shared_pool
+                        } else if segment.copy {
                             result.copy_pool
                         } else {
                             main_pool
@@ -458,7 +531,7 @@ impl Commands {
     }
     pub fn submit(
         &mut self,
-        queues: [vk::Queue; 2],
+        queues: [vk::Queue; 3],
         copy_queue: &wgpu::hal::vulkan::KunoTransferQueue,
         fence: vk::Fence,
         uploads: Option<super::strata_info_transfer::Wait>,
@@ -466,7 +539,10 @@ impl Commands {
         // Both native graph copies and the original adaptive worker submit
         // through the SAME actual adopted queue authority. Compute queues stay
         // on their original serialized engine thread; no cross-queue lock.
-        if queues[0] == queues[1] || !copy_queue.is_original(self.device.handle(), queues[1]) {
+        if queues[0] == queues[1]
+            || !copy_queue.is_original(self.device.handle(), queues[1])
+            || (self.plan.last_shared != 0 && (queues[2] == queues[0] || queues[2] == queues[1]))
+        {
             return Err("native original copy submission authority");
         }
         // Reserve before any submission; even a partial failure never reuses a
@@ -476,30 +552,35 @@ impl Commands {
             .plan
             .segments
             .first()
-            .is_none_or(|s| s.copy || s.wait != 0)
+            .is_none_or(|s| s.copy || s.shared || s.wait != 0)
         {
             return Err("native upload dependency requires original compute header");
         }
         for (index, (segment, command)) in self.plan.segments.iter().zip(&self.commands).enumerate()
         {
-            let own = usize::from(segment.copy);
+            let own = segment.queue();
             let signals = [self.timelines[own]];
             let signal_values = [base + segment.signal];
             // Actual INFO transfer completion precedes the original header;
             // its timeline release carries that dependency to every segment.
-            let dependency = incoming_dependency(index, segment, self.timelines, base, uploads);
-            let waits = [dependency.map_or(vk::Semaphore::null(), |d| d.semaphore)];
-            let wait_values = [dependency.map_or(0, |d| d.value)];
-            let stages = [vk::PipelineStageFlags::ALL_COMMANDS];
-            let mut timeline =
-                vk::TimelineSemaphoreSubmitInfo::default().signal_semaphore_values(&signal_values);
-            let mut submit = vk::SubmitInfo::default()
-                .command_buffers(std::slice::from_ref(command))
-                .signal_semaphores(&signals);
-            if dependency.is_some() {
-                timeline = timeline.wait_semaphore_values(&wait_values);
-                submit = submit.wait_semaphores(&waits).wait_dst_stage_mask(&stages);
+            let dependencies = incoming_dependencies(index, segment, self.timelines, base, uploads);
+            let mut waits = [vk::Semaphore::null(); 3];
+            let mut wait_values = [0; 3];
+            let mut wait_count = 0;
+            for dependency in dependencies.into_iter().flatten() {
+                waits[wait_count] = dependency.semaphore;
+                wait_values[wait_count] = dependency.value;
+                wait_count += 1;
             }
+            let stages = [vk::PipelineStageFlags::ALL_COMMANDS; 3];
+            let mut timeline = vk::TimelineSemaphoreSubmitInfo::default()
+                .signal_semaphore_values(&signal_values)
+                .wait_semaphore_values(&wait_values[..wait_count]);
+            let submit = vk::SubmitInfo::default()
+                .command_buffers(std::slice::from_ref(command))
+                .signal_semaphores(&signals)
+                .wait_semaphores(&waits[..wait_count])
+                .wait_dst_stage_mask(&stages[..wait_count]);
             let submit = submit.push_next(&mut timeline);
             unsafe {
                 if segment.copy {
@@ -511,20 +592,27 @@ impl Commands {
             }
             .map_err(|_| "native compute/copy submit")?;
         }
-        // Queue order joins all compute commands. Waiting for the last copy
-        // timeline also joins every earlier copy before the single final fence.
-        let waits = [self.timelines[1]];
-        let values = [base + self.plan.last_copy];
-        let stages = [vk::PipelineStageFlags::ALL_COMMANDS];
-        let mut timeline = vk::TimelineSemaphoreSubmitInfo::default();
-        let mut join = vk::SubmitInfo::default();
-        if self.plan.last_copy != 0 {
-            timeline = timeline.wait_semaphore_values(&values);
-            join = join.wait_semaphores(&waits).wait_dst_stage_mask(&stages);
+        // The original target fence owns all three queues, including peers
+        // with no following compute consumer. Replays retain the same owners.
+        let mut waits = [vk::Semaphore::null(); 2];
+        let mut values = [0; 2];
+        let mut count = 0;
+        for (peer, last) in [(1, self.plan.last_copy), (2, self.plan.last_shared)] {
+            if last != 0 {
+                waits[count] = self.timelines[peer];
+                values[count] = base + last;
+                count += 1;
+            }
         }
-        let join = join.push_next(&mut timeline);
+        let stages = [vk::PipelineStageFlags::ALL_COMMANDS; 2];
+        let mut timeline =
+            vk::TimelineSemaphoreSubmitInfo::default().wait_semaphore_values(&values[..count]);
+        let join = vk::SubmitInfo::default()
+            .wait_semaphores(&waits[..count])
+            .wait_dst_stage_mask(&stages[..count])
+            .push_next(&mut timeline);
         unsafe { self.device.queue_submit(queues[0], &[join], fence) }
-            .map_err(|_| "native dual queue join")
+            .map_err(|_| "native all queue join")
     }
 }
 impl Drop for Commands {
@@ -534,6 +622,9 @@ impl Drop for Commands {
                 if semaphore != vk::Semaphore::null() {
                     self.device.destroy_semaphore(semaphore, None);
                 }
+            }
+            if self.shared_pool != vk::CommandPool::null() {
+                self.device.destroy_command_pool(self.shared_pool, None);
             }
             if self.copy_pool != vk::CommandPool::null() {
                 self.device.destroy_command_pool(self.copy_pool, None);
@@ -550,6 +641,7 @@ mod tests {
         let nodes: Vec<_> = [(0, 4, false), (8, 4, false), (16, 8, true), (16, 8, false)]
             .into_iter()
             .map(|(first, bytes, write)| NodeAccess {
+                shared: false,
                 copy: false,
                 release_after: true,
                 accesses: vec![Access {
@@ -625,6 +717,7 @@ mod tests {
         };
         let nodes: Vec<_> = (0..256)
             .map(|_| NodeAccess {
+                shared: false,
                 copy: next() & 1 != 0,
                 release_after: next() & 1 != 0,
                 accesses: (0..3)
@@ -658,6 +751,7 @@ mod tests {
     fn retained_adjacent_readers_compress_without_unbounded_reserved_capacity() {
         let nodes: Vec<_> = (0..2048)
             .map(|first| NodeAccess {
+                shared: false,
                 copy: false,
                 release_after: true,
                 accesses: vec![Access {
@@ -676,6 +770,7 @@ mod tests {
     }
     fn node(copy: bool, buffer: u64, write: bool) -> NodeAccess {
         NodeAccess {
+            shared: false,
             copy,
             release_after: false,
             accesses: vec![Access {
@@ -761,6 +856,7 @@ mod tests {
     }
     fn range_node(copy: bool, buffer: u64, first: u64, bytes: u64, write: bool) -> NodeAccess {
         NodeAccess {
+            shared: false,
             copy,
             release_after: false,
             accesses: vec![Access {
@@ -939,6 +1035,7 @@ mod info_dependency_tests {
         // completion releases its compute consumer. No fabricated completion.
         let nodes = [
             NodeAccess {
+                shared: false,
                 copy: true,
                 release_after: false,
                 accesses: vec![Access {
@@ -949,6 +1046,7 @@ mod info_dependency_tests {
                 }],
             },
             NodeAccess {
+                shared: false,
                 copy: false,
                 release_after: false,
                 accesses: vec![Access {
@@ -991,6 +1089,7 @@ mod draft_lane_tests {
     fn nodes() -> Vec<NodeAccess> {
         vec![
             NodeAccess {
+                shared: false,
                 copy: true,
                 release_after: false,
                 accesses: vec![
@@ -1009,6 +1108,7 @@ mod draft_lane_tests {
                 ],
             },
             NodeAccess {
+                shared: false,
                 copy: false,
                 release_after: true,
                 accesses: vec![
@@ -1027,6 +1127,7 @@ mod draft_lane_tests {
                 ],
             },
             NodeAccess {
+                shared: false,
                 copy: true,
                 release_after: false,
                 accesses: vec![
@@ -1045,6 +1146,7 @@ mod draft_lane_tests {
                 ],
             },
             NodeAccess {
+                shared: false,
                 copy: true,
                 release_after: false,
                 accesses: vec![Access {
@@ -1131,5 +1233,173 @@ mod draft_lane_tests {
             assert!(p.segments.iter().all(|s| !s.copy && s.wait == 0));
             assert!(p.node_segments.windows(2).all(|s| s[0] <= s[1]));
         }
+    }
+}
+
+#[cfg(test)]
+mod shared_lane_tests {
+    use super::*;
+    use ash::vk::Handle;
+    fn node(queue: usize, accesses: &[(u64, bool)]) -> NodeAccess {
+        NodeAccess {
+            copy: queue == 1,
+            shared: queue == 2,
+            release_after: false,
+            accesses: accesses
+                .iter()
+                .map(|&(buffer, write)| Access {
+                    buffer,
+                    first: 0,
+                    bytes: 32,
+                    write,
+                })
+                .collect(),
+        }
+    }
+    #[test]
+    fn late_shared_fork_overlaps_routed_roles_and_joins_real_fault_and_result_before_combine() {
+        // 11=GR input, 21=global fault, 22=shared fault, 31=routed row,
+        // 32=scaled shared row; genuinely independent original owner IDs.
+        let mut roles = node(0, &[(11, false), (21, true), (31, true)]);
+        roles.release_after = true;
+        let p = plan(
+            &[
+                node(0, &[(11, true), (21, true)]),
+                node(2, &[(11, false), (22, true), (32, true)]),
+                roles,
+                node(0, &[(22, false), (21, true)]),
+                node(0, &[(31, false), (32, false), (21, true), (41, true)]),
+            ],
+            false,
+        )
+        .unwrap();
+        assert_eq!(p.node_segments, [1, 2, 3, 4, 4]);
+        let (pre, shared, routed, combine) = (
+            &p.segments[1],
+            &p.segments[2],
+            &p.segments[3],
+            &p.segments[4],
+        );
+        assert_eq!(shared.waits, [pre.signal, 0, 0]);
+        assert_eq!(routed.waits, [0, 0, 0]); // no later combine edge drags these roles behind shared
+        assert_eq!(combine.waits, [0, 0, shared.signal]);
+        assert_eq!(p.last_shared, shared.signal);
+        assert_eq!(p.last_copy, 0);
+        let timelines = [
+            vk::Semaphore::from_raw(1),
+            vk::Semaphore::from_raw(2),
+            vk::Semaphore::from_raw(3),
+        ];
+        assert_eq!(
+            incoming_dependencies(4, combine, timelines, 100, None)[2],
+            Some(super::super::strata_info_transfer::Wait {
+                semaphore: timelines[2],
+                value: 100 + shared.signal
+            })
+        );
+    }
+    #[test]
+    fn three_queue_byte_hazards_match_independent_pairwise_oracle_and_keep_all_peer_waits() {
+        let mut random = 19u64;
+        let mut next = || {
+            random = random.wrapping_mul(6364136223846793005).wrapping_add(1);
+            random
+        };
+        let nodes: Vec<_> = (0..768)
+            .map(|_| {
+                let q = (next() % 3) as usize;
+                NodeAccess {
+                    copy: q == 1,
+                    shared: q == 2,
+                    release_after: next() & 1 != 0,
+                    accesses: (0..3)
+                        .map(|_| Access {
+                            buffer: 1 + next() % 9,
+                            first: next() % 128,
+                            bytes: 1 + next() % 24,
+                            write: next() & 8 != 0,
+                        })
+                        .collect(),
+                }
+            })
+            .collect();
+        let p = plan(&nodes, false).unwrap();
+        for (j, n) in nodes.iter().enumerate() {
+            let current = &p.segments[p.node_segments[j]];
+            assert!(current.waits.iter().all(|&w| w < current.signal));
+            assert_eq!(current.waits[current.queue()], 0);
+            for (i, old) in nodes[..j].iter().enumerate() {
+                let prior = &p.segments[p.node_segments[i]];
+                if prior.queue() == current.queue() {
+                    continue;
+                }
+                if old.accesses.iter().any(|a| {
+                    n.accesses.iter().any(|b| {
+                        a.buffer == b.buffer
+                            && a.first < b.first + b.bytes
+                            && b.first < a.first + a.bytes
+                            && (a.write || b.write)
+                    })
+                }) {
+                    assert!(current.waits[prior.queue()] >= prior.signal);
+                }
+            }
+        }
+        // One consumer must wait on BOTH peer timelines, never max one away.
+        let p = plan(
+            &[
+                node(1, &[(7, true)]),
+                node(2, &[(8, true)]),
+                node(0, &[(7, false), (8, false)]),
+            ],
+            false,
+        )
+        .unwrap();
+        let join = &p.segments[3];
+        assert!(join.waits[1] > 0 && join.waits[2] > 0);
+        let sem = [
+            vk::Semaphore::from_raw(11),
+            vk::Semaphore::from_raw(12),
+            vk::Semaphore::from_raw(13),
+        ];
+        let deps = incoming_dependencies(3, join, sem, 100, None);
+        assert!(deps[0].is_none());
+        assert_eq!(deps[1].unwrap().semaphore, sem[1]);
+        assert_eq!(deps[2].unwrap().semaphore, sem[2]);
+    }
+    #[test]
+    fn shared_fill_stays_on_compute_peer_and_mtp_cannot_borrow_its_own_lane() {
+        let mut fill = node(2, &[(7, true)]);
+        fill.copy = true;
+        let p = plan(&[fill, node(0, &[(7, false)])], false).unwrap();
+        assert!(p.segments[1].shared && !p.segments[1].copy);
+        assert_eq!(p.last_copy, 0);
+        assert_eq!(p.last_shared, p.segments[1].signal);
+        let mut mtp = Planner::for_lane(1, false, 1).unwrap();
+        assert!(mtp.push(&node(2, &[(7, true)])).is_err());
+        let p = plan(
+            &[
+                node(2, &[(7, false)]),
+                node(0, &[(8, false)]),
+                node(1, &[(9, false)]),
+            ],
+            true,
+        )
+        .unwrap();
+        for pair in p.segments.windows(2) {
+            if pair[0].queue() != pair[1].queue() {
+                assert!(pair[1].waits[pair[0].queue()] >= pair[0].signal);
+            }
+        }
+    }
+    #[test]
+    fn added_queue_metadata_fits_explicit_admission_allowance() {
+        // Max reserved interval cells grew by16 bytes; every retained segment
+        // gains24 wait bytes plus queue tags/alignment and a command-pool owner.
+        let regions = 2 * MAX_REGIONS * 16;
+        let segments = 32769 * 32;
+        assert!(regions + segments < 16 * 1024 * 1024);
+        assert_eq!(std::mem::size_of::<Region>(), 64);
+        assert!(std::mem::size_of::<Segment>() <= 48);
     }
 }

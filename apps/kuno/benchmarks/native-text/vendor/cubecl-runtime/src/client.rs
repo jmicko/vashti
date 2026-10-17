@@ -1433,6 +1433,19 @@ impl<R: Runtime> ComputeClient<R> {
             .unwrap()
     }
 
+    /// Change the queue tag of genuinely enqueued nodes, draining only host tasks.
+    pub fn native_strata_shared_boundary(
+        &self,
+        boundary: crate::server::NativeStrataSharedBoundary,
+    ) -> Result<(), ServerError> {
+        let stream_id = self.stream_id();
+        self.device
+            .submit_blocking(move |server| {
+                server.native_strata_shared_boundary(stream_id, boundary)
+            })
+            .unwrap()
+    }
+
     /// Bind the full original verified-R owner before accepted-prefix commit.
     pub fn prepare_native_strata_draft_scope(
         &self,

@@ -1376,7 +1376,12 @@ impl Plan {
             ),
             (
                 shared_batch::Workspace::allocation_requests(graph)?.to_vec(),
-                262_144,
+                262_144
+                    + if crate::strata_intel_core::enabled() {
+                        32768
+                    } else {
+                        0
+                    },
             ),
         ] {
             if sum(&pages)? != expected {
@@ -5679,57 +5684,73 @@ impl Workspace {
                     .entry("native_ffn_gr_and_router_enqueue")
                     .or_default() += router_enqueue_start.elapsed().as_nanos();
                 let sources = e.strata_global_sources.as_ref().ok_or(error())?.clone();
-                self.global_moe.as_mut().ok_or(error())?.enqueue(
-                    m.graph,
-                    &m.arena,
-                    &sources,
-                    &m.admission,
-                    layer,
-                    prepared.mixed(),
-                    self.outer.block[0],
-                    self.outer.router,
-                    m.b.fault,
-                    cancel,
-                )?;
                 let shared_start = Instant::now();
-                let mut projector = ResidentBatchProjection {
-                    executor: e,
-                    fault: m.b.fault,
-                    dense_q8,
-                };
-                self.shared.prepare(
+                let shared_fault = self.shared.native_fault()?;
+                let shared_planes = dense_q8.ok_or(error())?;
+                self.global_moe
+                    .as_mut()
+                    .ok_or(error())?
+                    .enqueue_with_shared(
+                        m.graph,
+                        &m.arena,
+                        &sources,
+                        &m.admission,
+                        layer,
+                        prepared.mixed(),
+                        self.outer.block[0],
+                        self.outer.router,
+                        m.b.fault,
+                        cancel,
+                        &mut || {
+                            let scope = crate::strata_shared_native::QueueScope::begin(
+                                m.arena.client().map_err(u::fault)?,
+                            )?;
+                            let mut projector = ResidentBatchProjection {
+                                executor: e,
+                                fault: shared_fault,
+                                dense_q8,
+                            };
+                            self.shared.prepare_native(
+                                m.graph,
+                                layer,
+                                &m.arena,
+                                &mut m.public,
+                                &mut projector,
+                                shared_planes,
+                                prepared.mixed(),
+                                self.outer.block[0],
+                                self.outer.block[1],
+                                m.b.fault,
+                                *count,
+                                cancel,
+                            )?;
+                            scope.end()
+                        },
+                    )?;
+                crate::strata_shared_native::release_main(m.arena.client().map_err(u::fault)?)?;
+                self.shared.finish_native(
                     m.graph,
                     layer,
                     &m.arena,
                     &mut m.public,
-                    &mut projector,
                     prepared.mixed(),
                     self.outer.block[0],
                     self.outer.block[1],
                     m.b.fault,
                     *count,
                     cancel,
-                )?;
-                // Intel's selected NO_HOST branch has no CPU jobs to join. Leave
-                // all routed/shared work in the owning window's queued graph;
-                // its normal completion/fault boundary observes the real results.
-                self.global_moe.as_mut().ok_or(error())?.finish_layer(
-                    &m.arena,
-                    layer,
-                    self.outer.block[0],
-                    m.b.fault,
-                )?;
-                self.shared.finish_prepared(
-                    m.graph,
-                    layer,
-                    &m.arena,
-                    &mut m.public,
-                    prepared.mixed(),
-                    self.outer.block[0],
-                    self.outer.block[1],
-                    m.b.fault,
-                    *count,
-                    cancel,
+                    |shared| {
+                        self.global_moe
+                            .as_mut()
+                            .ok_or(error())?
+                            .finish_layer_shared(
+                                &m.arena,
+                                layer,
+                                self.outer.block[1],
+                                m.b.fault,
+                                shared,
+                            )
+                    },
                 )?;
                 *m.phase_ns
                     .entry("native_shared_and_no_host_enqueue")

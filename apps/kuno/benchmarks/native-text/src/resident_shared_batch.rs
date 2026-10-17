@@ -23,7 +23,11 @@ use kuno_text::{
 use std::sync::atomic::AtomicBool;
 use zeroize::Zeroizing;
 
-const N: usize = 5;
+const N: usize = if crate::strata_intel_core::enabled() {
+    6
+} else {
+    5
+};
 const GATE: usize = 0;
 const UP: usize = 1;
 const ACT: usize = 2;
@@ -148,7 +152,8 @@ impl Layout {
         let h = hidden
             .checked_mul(MAX_BATCH)
             .ok_or(Error::ArithmeticOverflow)?;
-        let words = [h, h, h, x, MAX_BATCH];
+        let mut words = [1; N];
+        words[..5].copy_from_slice(&[h, h, h, x, MAX_BATCH]);
         validate_view(MAX_BATCH, 0, width, width, x)?;
         validate_view(MAX_BATCH, 0, hidden, hidden, h)?;
         u::grid(width)?;
@@ -194,6 +199,7 @@ pub struct Workspace {
     ids: [BufferId; N],
     phase: Phase,
     prepared: Option<PreparedStamp>,
+    native_prepared: bool,
 }
 impl Workspace {
     /// The complete captured prepare/finish pairs leave the original scratch
@@ -210,6 +216,7 @@ impl Workspace {
         if !crate::strata_intel_core::enabled()
             || self.binding != graph.binding_id()
             || self.prepared.is_some()
+            || self.native_prepared
         {
             return Err(Error::InvalidFormat("shared native replay boundary"));
         }
@@ -239,19 +246,20 @@ impl Workspace {
         }
         // A failed partial allocation belongs to the caller's poisoned arena.
         let w = layout.words;
-        let ids = [
-            arena.allocate_zeroed(w[0]).map_err(u::fault)?,
-            arena.allocate_zeroed(w[1]).map_err(u::fault)?,
-            arena.allocate_zeroed(w[2]).map_err(u::fault)?,
-            arena.allocate_zeroed(w[3]).map_err(u::fault)?,
-            arena.allocate_zeroed(w[4]).map_err(u::fault)?,
-        ];
+        let mut allocated = Vec::with_capacity(N);
+        for words in w {
+            allocated.push(arena.allocate_zeroed(words).map_err(u::fault)?);
+        }
+        let ids = allocated
+            .try_into()
+            .map_err(|_| Error::InvalidBufferLength)?;
         Ok(Self {
             binding: graph.binding_id(),
             layout,
             ids,
             phase: Phase::Available,
             prepared: None,
+            native_prepared: false,
         })
     }
     pub fn validate_all_consumers_queued(&self) -> Result<()> {
@@ -346,6 +354,111 @@ impl Workspace {
         count: usize,
         cancel: &AtomicBool,
     ) -> Result<()> {
+        self.prepare_impl(
+            graph, layer, arena, public, projector, input, routed, output, fault, count, cancel,
+            false,
+        )
+    }
+    pub(crate) fn native_fault(&self) -> Result<BufferId> {
+        if !crate::strata_intel_core::enabled() {
+            return Err(Error::InvalidBufferLength);
+        }
+        self.ids.get(5).copied().ok_or(Error::InvalidBufferLength)
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn prepare_native(
+        &mut self,
+        graph: BoundGraph<'_, '_>,
+        layer: usize,
+        arena: &PrivateArena,
+        public: &mut PublicVectors,
+        projector: &mut impl BatchedResidentProjector,
+        planes: BufferId,
+        input: BufferId,
+        routed: BufferId,
+        output: BufferId,
+        fault: BufferId,
+        count: usize,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        if !crate::strata_intel_core::enabled() {
+            return Err(Error::InvalidBufferLength);
+        }
+        // Include the original packed scratch in the physical alias proof;
+        // routed GU/DOWN use their own separately admitted global roots.
+        let mut owners = Vec::with_capacity(N + 5);
+        for id in self
+            .ids
+            .into_iter()
+            .chain([planes, input, routed, output, fault])
+        {
+            let mut handle = u::handle(arena, id)?;
+            handle.offset_end = None;
+            owners.push(handle);
+        }
+        physical(arena, &owners)?;
+        self.prepare_impl(
+            graph, layer, arena, public, projector, input, routed, output, fault, count, cancel,
+            true,
+        )?;
+        self.phase = Phase::Poisoned;
+        // Both original projections have consumed the same packed input. The
+        // fused producer replaces only this independent shared scratch image.
+        crate::strata_dense::prepare_swiglu(
+            arena.client().map_err(u::fault)?,
+            self.layout.hidden,
+            u::handle(arena, self.ids[GATE])?,
+            u::handle(arena, self.ids[UP])?,
+            u::handle(arena, planes)?,
+            u::handle(arena, self.native_fault()?)?,
+            count,
+        )?;
+        let tensor = graph.tensor(&format!("blk.{layer}.ffn_down_shexp.weight"))?;
+        let matrix = Matrix::new(tensor)?;
+        projector.enqueue_native_packed(
+            BoundProjection { tensor, matrix },
+            arena,
+            self.ids[ACT],
+            self.ids[DOWN],
+            &BatchSpans::new(count, 0, 0, self.layout.hidden, 0, self.layout.width),
+            cancel,
+        )?;
+        let tensor = graph.tensor(&format!("blk.{layer}.ffn_gate_inp_shexp.weight"))?;
+        projector.enqueue_native_shared_gate(
+            tensor,
+            arena,
+            input,
+            self.ids[SCALE],
+            &BatchSpans::new(count, 0, 0, self.layout.width, 0, 1),
+            cancel,
+        )?;
+        crate::strata_shared_native::scale(
+            arena.client().map_err(u::fault)?,
+            u::handle(arena, self.ids[DOWN])?,
+            u::handle(arena, self.ids[SCALE])?,
+            u::handle(arena, self.native_fault()?)?,
+            count,
+        )?;
+        u::cancel(cancel)?;
+        self.phase = Phase::Prepared;
+        Ok(())
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_impl(
+        &mut self,
+        graph: BoundGraph<'_, '_>,
+        layer: usize,
+        arena: &PrivateArena,
+        public: &mut PublicVectors,
+        projector: &mut impl BatchedResidentProjector,
+        input: BufferId,
+        routed: BufferId,
+        output: BufferId,
+        fault: BufferId,
+        count: usize,
+        cancel: &AtomicBool,
+        native: bool,
+    ) -> Result<()> {
         if self.phase != Phase::Available {
             return Err(Error::InvalidFormat("shared expert batch poisoned"));
         }
@@ -354,7 +467,7 @@ impl Workspace {
         graph.verify_unchanged()?;
         if graph.binding_id() != self.binding
             || layer >= graph.geometry().layers
-            || projector.global_fault() != fault
+            || projector.global_fault() != if native { self.native_fault()? } else { fault }
         {
             return Err(Error::InvalidBufferLength);
         }
@@ -393,6 +506,9 @@ impl Workspace {
         }
         let weight = public.vector(graph, &format!("{base}ffn_gate_inp_shexp.weight"))?;
         self.prove(arena, input, routed, output, fault, &weight)?;
+        if native {
+            u::zero_many(arena, &[self.native_fault()?])?;
+        }
         let spans = BatchSpans::new(count, 0, 0, self.layout.width, 0, self.layout.hidden);
         projector.enqueue_pair(
             [projections[0], projections[1]],
@@ -402,47 +518,91 @@ impl Workspace {
             &spans,
             cancel,
         )?;
-        let client = arena.client().map_err(u::fault)?;
-        let CubeCount::Static(hidden_grid, _, _) = u::grid(self.layout.hidden)? else {
-            return Err(Error::InvalidBufferLength);
-        };
-        activation::launch::<WgpuRuntime>(
-            client,
-            CubeCount::Static(hidden_grid, MAX_BATCH as u32, 1),
-            CubeDim::new_1d(64),
-            u::arg(arena, self.ids[GATE])?,
-            u::arg(arena, self.ids[UP])?,
-            u::arg(arena, self.ids[ACT])?,
-            u::arg(arena, fault)?,
-            count,
-            self.layout.hidden,
-        );
-        let spans = BatchSpans::new(count, 0, 0, self.layout.hidden, 0, self.layout.width);
-        projector.enqueue_batch(
-            projections[2],
-            arena,
-            self.ids[ACT],
-            self.ids[DOWN],
-            &spans,
-            cancel,
-        )?;
-        gate_dot::launch::<WgpuRuntime>(
-            client,
-            CubeCount::Static(1, MAX_BATCH as u32, 1),
-            CubeDim::new_1d(64),
-            u::arg(arena, input)?,
-            u::raw_arg(weight, self.layout.width)?,
-            u::arg(arena, self.ids[SCALE])?,
-            u::arg(arena, fault)?,
-            count,
-            self.layout.width,
-        );
+        if !native {
+            let client = arena.client().map_err(u::fault)?;
+            let CubeCount::Static(hidden_grid, _, _) = u::grid(self.layout.hidden)? else {
+                return Err(Error::InvalidBufferLength);
+            };
+            activation::launch::<WgpuRuntime>(
+                client,
+                CubeCount::Static(hidden_grid, MAX_BATCH as u32, 1),
+                CubeDim::new_1d(64),
+                u::arg(arena, self.ids[GATE])?,
+                u::arg(arena, self.ids[UP])?,
+                u::arg(arena, self.ids[ACT])?,
+                u::arg(arena, fault)?,
+                count,
+                self.layout.hidden,
+            );
+            let spans = BatchSpans::new(count, 0, 0, self.layout.hidden, 0, self.layout.width);
+            projector.enqueue_batch(
+                projections[2],
+                arena,
+                self.ids[ACT],
+                self.ids[DOWN],
+                &spans,
+                cancel,
+            )?;
+            gate_dot::launch::<WgpuRuntime>(
+                client,
+                CubeCount::Static(1, MAX_BATCH as u32, 1),
+                CubeDim::new_1d(64),
+                u::arg(arena, input)?,
+                u::raw_arg(weight, self.layout.width)?,
+                u::arg(arena, self.ids[SCALE])?,
+                u::arg(arena, fault)?,
+                count,
+                self.layout.width,
+            );
+        }
         u::cancel(cancel)?;
         self.prepared = Some((
             Zeroizing::new([input, routed, output, fault]),
             Zeroizing::new([layer, count]),
         ));
+        self.native_prepared = native;
         self.phase = Phase::Prepared;
+        Ok(())
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn finish_native(
+        &mut self,
+        graph: BoundGraph<'_, '_>,
+        layer: usize,
+        arena: &PrivateArena,
+        public: &mut PublicVectors,
+        input: BufferId,
+        routed: BufferId,
+        output: BufferId,
+        fault: BufferId,
+        count: usize,
+        cancel: &AtomicBool,
+        combine: impl FnOnce(Handle) -> Result<()>,
+    ) -> Result<()> {
+        if !self.native_prepared {
+            return Err(Error::InvalidFormat("native shared preparation missing"));
+        }
+        let (ids, coordinates) = consume_prepared(&mut self.phase, &mut self.prepared)?;
+        if *ids != [input, routed, output, fault]
+            || *coordinates != [layer, count]
+            || self.binding != graph.binding_id()
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        u::cancel(cancel)?;
+        graph.verify_unchanged()?;
+        public.validate_native_batch_owner(graph, arena)?;
+        let weight = public.vector(graph, &format!("blk.{layer}.ffn_gate_inp_shexp.weight"))?;
+        self.prove(arena, input, routed, output, fault, &weight)?;
+        crate::strata_shared_native::fold(
+            arena.client().map_err(u::fault)?,
+            u::handle(arena, self.native_fault()?)?,
+            u::handle(arena, fault)?,
+        )?;
+        combine(u::handle(arena, self.ids[DOWN])?)?;
+        u::cancel(cancel)?;
+        self.native_prepared = false;
+        self.phase = Phase::Available;
         Ok(())
     }
     #[allow(clippy::too_many_arguments)]
@@ -459,6 +619,9 @@ impl Workspace {
         count: usize,
         cancel: &AtomicBool,
     ) -> Result<()> {
+        if self.native_prepared {
+            return Err(Error::InvalidFormat("native shared needs joined reduction"));
+        }
         let (ids, coordinates) = consume_prepared(&mut self.phase, &mut self.prepared)?;
         if *ids != [input, routed, output, fault]
             || *coordinates != [layer, count]
@@ -522,8 +685,17 @@ mod tests {
     #[test]
     fn full_pages_cover_all_active_columns_and_reject_growth_before_allocation() {
         let l = Layout::new(2560, 640).unwrap();
-        assert_eq!(l.requests().unwrap(), [32768, 32768, 32768, 131072, 32768]);
-        assert_eq!(l.requests().unwrap().into_iter().sum::<u64>(), 262144);
+        assert_eq!(
+            &l.requests().unwrap()[..5],
+            &[32768, 32768, 32768, 131072, 32768]
+        );
+        if N == 6 {
+            assert_eq!(l.requests().unwrap().get(5), Some(&32768));
+        }
+        assert_eq!(
+            l.requests().unwrap().into_iter().sum::<u64>(),
+            262144 + if N == 6 { 32768 } else { 0 }
+        );
         for count in [1, 3, 5, 8] {
             for (words, width) in [(l.words[GATE], 640), (l.words[DOWN], 2560)] {
                 assert_eq!(

@@ -41,6 +41,35 @@ pub fn validate_view(
 pub trait BatchedResidentProjector {
     /// Sealed stage owners must fold projections into their SAME model fault.
     fn global_fault(&self) -> BufferId;
+    #[allow(clippy::too_many_arguments)]
+    fn enqueue_native_packed(
+        &mut self,
+        _projection: BoundProjection<'_>,
+        _arena: &PrivateArena,
+        _input: BufferId,
+        _output: BufferId,
+        _spans: &BatchSpans,
+        _cancel: &AtomicBool,
+    ) -> Result<()> {
+        Err(Error::InvalidFormat(
+            "native packed shared projection unavailable",
+        ))
+    }
+    /// Native scalar gate is the model's original rank-one tensor, not Matrix.
+    #[allow(clippy::too_many_arguments)]
+    fn enqueue_native_shared_gate(
+        &mut self,
+        _tensor: kuno_text::TensorView<'_>,
+        _arena: &PrivateArena,
+        _input: BufferId,
+        _output: BufferId,
+        _spans: &BatchSpans,
+        _cancel: &AtomicBool,
+    ) -> Result<()> {
+        Err(Error::InvalidFormat(
+            "native shared scalar gate unavailable",
+        ))
+    }
     /// Prompt output is an exact carved view authenticated by the active owner,
     /// never an arbitrary writable handle or an immutable model-cache buffer.
     #[allow(clippy::too_many_arguments)]
@@ -166,6 +195,70 @@ pub struct ResidentBatchProjection<'e, 'f> {
     pub dense_q8: Option<BufferId>,
 }
 impl BatchedResidentProjector for ResidentBatchProjection<'_, '_> {
+    fn enqueue_native_packed(
+        &mut self,
+        projection: BoundProjection<'_>,
+        arena: &PrivateArena,
+        input: BufferId,
+        output: BufferId,
+        spans: &BatchSpans,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        let planes = self.dense_q8.ok_or(Error::InvalidBufferLength)?;
+        if !crate::strata_intel_core::enabled()
+            || [input, output, self.fault].contains(&planes)
+            || input == output
+            || input == self.fault
+            || output == self.fault
+            || u::words(arena, self.fault)? != 1
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        self.executor.enqueue_strata_dense(
+            projection.tensor,
+            &u::handle(arena, input)?,
+            &u::handle(arena, planes)?,
+            &u::handle(arena, output)?,
+            &u::handle(arena, self.fault)?,
+            spans,
+            cancel,
+            false,
+        )
+    }
+    fn enqueue_native_shared_gate(
+        &mut self,
+        tensor: kuno_text::TensorView<'_>,
+        arena: &PrivateArena,
+        input: BufferId,
+        output: BufferId,
+        spans: &BatchSpans,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        u::cancel(cancel)?;
+        self.executor
+            .check_client(arena.client().map_err(u::fault)?)?;
+        if input == output
+            || input == self.fault
+            || output == self.fault
+            || u::words(arena, self.fault)? != 1
+            || !tensor.info().name().ends_with(".ffn_gate_inp_shexp.weight")
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        if !self.executor.enqueue_strata_bf16_projection(
+            tensor,
+            &u::handle(arena, input)?,
+            &u::handle(arena, output)?,
+            &u::handle(arena, self.fault)?,
+            spans,
+            cancel,
+        )? {
+            return Err(Error::InvalidFormat(
+                "native shared gate requires original BF16 projection",
+            ));
+        }
+        u::cancel(cancel)
+    }
     fn enqueue_prompt_view(
         &mut self,
         projection: BoundProjection<'_>,

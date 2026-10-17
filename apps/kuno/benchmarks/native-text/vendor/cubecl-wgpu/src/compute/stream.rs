@@ -1741,6 +1741,26 @@ impl WgpuStream {
             .unwrap()
             .prepare_draft_scope(request, source)
     }
+    pub(crate) fn native_strata_shared_boundary(
+        &mut self,
+        boundary: cubecl_runtime::server::NativeStrataSharedBoundary,
+    ) -> Result<(), ServerError> {
+        self.private_io_active()?;
+        let io = self.transient_io.as_mut().unwrap();
+        let request = io.native_submission_scope()?;
+        let key = io.native_branch_recording()?.ok_or_else(|| {
+            super::transient_io::fault("shared requires original target recording")
+        })?;
+        if key.nonce != request || key.branch.target_geometry().is_none() {
+            return Err(super::transient_io::fault(
+                "shared foreign target recording",
+            ));
+        }
+        self.strata_graph
+            .as_mut()
+            .ok_or_else(|| super::transient_io::fault("shared original graph missing"))?
+            .shared_boundary(boundary, request)
+    }
     pub(crate) fn enter_native_strata_draft_scope(
         &mut self,
         scope: cubecl_runtime::server::NativeStrataDraftScope,

@@ -709,10 +709,19 @@ pub struct StreamErrorMode {
     pub flush: bool,
 }
 
+/// Enqueue boundaries within one authentic target recording; no completion credit.
+#[derive(Clone, Copy, Debug)]
+pub enum NativeStrataSharedBoundary {
+    /// Subsequent target nodes use the independent shared compute queue.
+    Begin,
+    /// Return enqueue tagging to MAIN without waiting on the GPU.
+    End,
+    /// Release the routed segment before a later shared join is enqueued.
+    ReleaseMain,
+}
+
 /// The compute server is responsible for handling resources and computations over resources.
-///
-/// Everything in the server is mutable, therefore it should be solely accessed through the
-/// [`ComputeClient`] for thread safety.
+/// Everything is mutable and accessed through the serialized ComputeClient.
 pub trait ComputeServer:
     Send + core::fmt::Debug + ServerCommunication + device::DeviceService + 'static
 where
@@ -1191,6 +1200,18 @@ where
         &mut self,
         _stream_id: StreamId,
         _submission: NativeStrataSubmission,
+    ) -> Result<(), ServerError> {
+        Err(IoError::UnsupportedIoOperation {
+            backtrace: BackTrace::capture(),
+        }
+        .into())
+    }
+
+    /// Change a target recording queue tag under its authentic request scope.
+    fn native_strata_shared_boundary(
+        &mut self,
+        _stream_id: StreamId,
+        _boundary: NativeStrataSharedBoundary,
     ) -> Result<(), ServerError> {
         Err(IoError::UnsupportedIoOperation {
             backtrace: BackTrace::capture(),

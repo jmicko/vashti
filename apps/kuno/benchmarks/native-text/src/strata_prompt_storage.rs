@@ -404,6 +404,7 @@ mod overlay_tests {
         let mut prefix = Planner::new(1, false).unwrap();
         prefix
             .push(&NodeAccess {
+                shared: false,
                 copy: false,
                 release_after: false,
                 accesses: vec![access(&s.qsa[0], true)],
@@ -414,36 +415,43 @@ mod overlay_tests {
         assert!(!prefix.conflicts(&[access(&roots[2], true)]).unwrap());
         let nodes = [
             NodeAccess {
+                shared: false,
                 copy: false,
                 release_after: false,
                 accesses: vec![access(&s.qsa[0], true)],
             },
             NodeAccess {
+                shared: false,
                 copy: true,
                 release_after: false,
                 accesses: vec![access(&roots[2], true)],
             },
             NodeAccess {
+                shared: false,
                 copy: false,
                 release_after: true,
                 accesses: vec![access(&roots[2], false), access(&s.moe.gu, true)],
             },
             NodeAccess {
+                shared: false,
                 copy: true,
                 release_after: false,
                 accesses: vec![access(&roots[2], true)],
             },
             NodeAccess {
+                shared: false,
                 copy: false,
                 release_after: false,
                 accesses: vec![access(&s.moe.gu, false), access(&s.moe.partial, true)],
             },
             NodeAccess {
+                shared: false,
                 copy: false,
                 release_after: false,
                 accesses: vec![access(&s.moe.partial, false)],
             },
             NodeAccess {
+                shared: false,
                 copy: false,
                 release_after: false,
                 accesses: vec![access(&s.qsa[0], true)],
@@ -600,6 +608,7 @@ mod mixed_image_tests {
             let mut reader = crate::strata_queue_tests::Planner::new(1, false).unwrap();
             reader
                 .push(&crate::strata_queue_tests::NodeAccess {
+                    shared: false,
                     copy: false,
                     release_after: false,
                     accesses: vec![access(image, false)],
@@ -650,6 +659,7 @@ mod native_ple_reuse_tests {
         };
         let mut p = crate::strata_queue_tests::Planner::new(1, false).unwrap();
         p.push(&crate::strata_queue_tests::NodeAccess {
+            shared: false,
             copy: false,
             release_after: false,
             accesses: vec![access(1, false), access(3, false)],
@@ -726,6 +736,7 @@ mod residual_owner_tests {
         };
         let mut p = Planner::new(1, false).unwrap();
         p.push(&NodeAccess {
+            shared: false,
             copy: false,
             release_after: false,
             accesses: vec![access(carry, 1, false)],

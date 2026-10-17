@@ -61,18 +61,24 @@ enum Kernel {
     Route,
     Plan,
     Reduce,
+    SharedReduce,
     PromptRoute,
     PromptReduce,
 }
 impl Kernel {
     fn dim(self) -> CubeDim {
-        CubeDim::new_1d(if self == Self::Plan { 128 } else { 256 })
+        CubeDim::new_1d(if matches!(self, Self::Plan | Self::SharedReduce) {
+            128
+        } else {
+            256
+        })
     }
     fn source(self) -> String {
         match self {
             Self::Route => include_str!("strata_global_route.wgsl").into(),
             Self::Plan => include_str!("strata_global_plan.wgsl").into(),
             Self::Reduce => include_str!("strata_global_reduce.wgsl").into(),
+            Self::SharedReduce => include_str!("strata_global_shared_reduce.wgsl").into(),
             Self::PromptRoute => {
                 crate::strata_prompt::groups::shader_prefix()
                     + include_str!("strata_prompt_route.wgsl")
@@ -90,6 +96,7 @@ impl KernelMetadata for Kernel {
             Self::Route => "StrataGlobalNativeRoutes",
             Self::Plan => "StrataGlobalResidentPlan",
             Self::Reduce => "StrataGlobalRouteReduceAndStamp",
+            Self::SharedReduce => "StrataGlobalSharedReduceAndStamp",
             Self::PromptRoute => "StrataPromptNativeRoutes",
             Self::PromptReduce => "StrataPromptRankReduceAndStamp",
         }
@@ -331,7 +338,7 @@ impl Workspace {
         Ok(())
     }
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn enqueue(
+    pub(crate) fn enqueue_with_shared(
         &mut self,
         graph: BoundGraph<'_, '_>,
         arena: &PrivateArena,
@@ -343,6 +350,7 @@ impl Workspace {
         logits: BufferId,
         fault: BufferId,
         cancel: &AtomicBool,
+        fork: &mut dyn FnMut() -> Result<()>,
     ) -> Result<()> {
         let h = |id| arena.handle(id).cloned().map_err(u::fault);
         self.enqueue_data(
@@ -354,6 +362,7 @@ impl Workspace {
             [h(input)?, h(output)?, h(logits)?],
             fault,
             cancel,
+            Some(fork),
         )
     }
     #[allow(clippy::too_many_arguments)]
@@ -374,7 +383,9 @@ impl Workspace {
         for h in &data {
             crate::strata_prompt::validate_output(h)?;
         }
-        self.enqueue_data(graph, arena, sources, admission, layer, data, fault, cancel)?;
+        self.enqueue_data(
+            graph, arena, sources, admission, layer, data, fault, cancel, None,
+        )?;
         Ok(())
     }
     #[allow(clippy::too_many_arguments)]
@@ -388,6 +399,7 @@ impl Workspace {
         data: [Handle; 3],
         fault: BufferId,
         cancel: &AtomicBool,
+        fork: Option<&mut dyn FnMut() -> Result<()>>,
     ) -> Result<()> {
         u::cancel(cancel)?;
         let active = self.active.as_ref().ok_or_else(reject)?;
@@ -541,6 +553,9 @@ impl Workspace {
             self.layer_pending = true;
             return Ok(());
         }
+        if let Some(fork) = fork {
+            fork()?;
+        }
         // Pinned Intel launcher selects VERIFY_DEVICE_PLAN + VERIFY_NO_HOST.
         // Its resident_plan puts both cached cells and HOST mirror aliases in
         // the primary GPU group list. Every real group is consumed directly;
@@ -561,18 +576,26 @@ impl Workspace {
         self.layer_pending = true;
         Ok(())
     }
-    pub(crate) fn finish_layer(
+    pub(crate) fn finish_layer_shared(
         &mut self,
         arena: &PrivateArena,
         layer: usize,
         output: BufferId,
         fault: BufferId,
+        shared: Handle,
     ) -> Result<()> {
+        if !crate::strata_intel_core::enabled()
+            || crate::strata_prompt::active()
+            || shared.size_in_used() != 8 * 2560 * 4
+        {
+            return Err(reject());
+        }
         self.finish_data(
             arena,
             layer,
             arena.handle(output).cloned().map_err(u::fault)?,
             fault,
+            Some(shared),
         )
     }
     pub(crate) fn finish_prompt(
@@ -586,7 +609,7 @@ impl Workspace {
             return Err(reject());
         }
         crate::strata_prompt::validate_output(&output)?;
-        self.finish_data(arena, layer, output, fault)
+        self.finish_data(arena, layer, output, fault, None)
     }
     fn finish_data(
         &mut self,
@@ -594,6 +617,7 @@ impl Workspace {
         layer: usize,
         output: Handle,
         fault: BufferId,
+        shared: Option<Handle>,
     ) -> Result<()> {
         let active = self.active.as_ref().ok_or_else(reject)?;
         let count = active[0];
@@ -614,16 +638,21 @@ impl Workspace {
                 full(self.ids[0])?,
             ]
         };
+        let native_shared = shared.is_some();
+        let mut buffers = vec![
+            partial.binding(),
+            probability.binding(),
+            status.binding(),
+            map.binding(),
+            output.binding(),
+            full(self.ids[8])?.binding(),
+            full(fault)?.binding(),
+        ];
+        if let Some(shared) = shared {
+            buffers.push(shared.binding());
+        }
         let args = KernelArguments::new()
-            .with_buffers(vec![
-                partial.binding(),
-                probability.binding(),
-                status.binding(),
-                map.binding(),
-                output.binding(),
-                full(self.ids[8])?.binding(),
-                full(fault)?.binding(),
-            ])
+            .with_buffers(buffers)
             .with_info(info(&[
                 count as u32,
                 layer as u32,
@@ -640,10 +669,12 @@ impl Workspace {
             client.launch_unchecked(
                 Box::new(if prompt {
                     Kernel::PromptReduce
+                } else if native_shared {
+                    Kernel::SharedReduce
                 } else {
                     Kernel::Reduce
                 }),
-                CubeCount::Static(10, count as u32, 1),
+                CubeCount::Static(if native_shared { 5 } else { 10 }, count as u32, 1),
                 args,
             );
         }
@@ -904,6 +935,7 @@ pub(crate) fn compiled_sources() -> Vec<CompiledKernel<AutoCompiler>> {
         Kernel::Route,
         Kernel::Plan,
         Kernel::Reduce,
+        Kernel::SharedReduce,
         Kernel::PromptRoute,
         Kernel::PromptReduce,
     ]
@@ -944,6 +976,57 @@ mod direct_quote_tests {
 
 #[cfg(test)]
 mod route_plan_tests {
+    #[test]
+    fn actual_joined_vector_combine_has_native_geometry_and_binds_the_original_shared_result() {
+        use super::*;
+        use wgpu::naga as n;
+        let kernel = Kernel::SharedReduce;
+        let source = kernel.source();
+        let module = n::front::wgsl::parse_str(&source).unwrap();
+        let info = n::valid::Validator::new(
+            n::valid::ValidationFlags::all(),
+            n::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap();
+        assert_eq!(module.entry_points[0].workgroup_size, [128, 1, 1]);
+        assert_eq!(kernel.dim(), CubeDim::new_1d(128));
+        let uses = info.get_entry_point(0);
+        let mut owners = std::collections::BTreeMap::new();
+        for (id, g) in module.global_variables.iter() {
+            if let Some(b) = &g.binding {
+                owners.insert(
+                    b.binding,
+                    (
+                        uses[id].contains(n::valid::GlobalUse::READ),
+                        uses[id].contains(n::valid::GlobalUse::WRITE),
+                    ),
+                );
+            }
+        }
+        assert_eq!(owners.len(), 9);
+        for binding in [0, 1, 2, 3, 7] {
+            assert_eq!(owners[&binding], (true, false));
+        }
+        for binding in [4, 5, 6] {
+            assert!(owners[&binding].1);
+        }
+        assert!(
+            source.contains("if rank==0u {sum=x*weight;}else{sum=fma(x,vec4<f32>(weight),sum);}")
+        );
+        assert!(source.contains("let sh=shared_result[row*640u+id.x];sum+=sh;"));
+        n::back::spv::write_vec(
+            &module,
+            &info,
+            &n::back::spv::Options::default(),
+            Some(&n::back::spv::PipelineOptions {
+                shader_stage: n::ShaderStage::Compute,
+                entry_point: "main".into(),
+            }),
+        )
+        .unwrap();
+    }
+
     use super::*;
 
     #[test]

@@ -1310,6 +1310,24 @@ impl ComputeServer for WgpuServer {
         }
         result
     }
+    fn native_strata_shared_boundary(
+        &mut self,
+        stream_id: StreamId,
+        boundary: cubecl_runtime::server::NativeStrataSharedBoundary,
+    ) -> Result<(), ServerError> {
+        let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
+        self.scheduler.execute_streams(vec![stream_id]);
+        let result = self
+            .scheduler
+            .stream(&stream_id)
+            .native_strata_shared_boundary(boundary);
+        if result.is_ok()
+            && let Some(mutation) = mutation
+        {
+            mutation.accept();
+        }
+        result
+    }
     fn enter_native_strata_draft_scope(
         &mut self,
         stream_id: StreamId,

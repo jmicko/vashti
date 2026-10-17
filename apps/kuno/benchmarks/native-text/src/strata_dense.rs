@@ -136,22 +136,37 @@ pub(crate) fn whole_head_source(rows: usize, members: usize) -> String {
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
-struct PrepareKernel(usize);
+struct PrepareKernel(usize, bool);
 impl PrepareKernel {
     fn source(self) -> String {
-        format!(
+        let mut source = format!(
             "// STRATA_DENSE_PACKED\nconst COLUMNS:u32={}u;const PACKED_WORDS:u32={}u;const BLOCKS:u32={}u;const PLANE_WORDS:u32={}u;\n{}",
             self.0,
             self.0 / 4,
             self.0 / 32,
             self.0 / 2 + self.0 / 16,
             include_str!("strata_dense_prepare.wgsl")
-        )
+        );
+        if self.1 {
+            source = source.replace("@group(0) @binding(3) var<uniform> p:Params;",
+                "@group(0) @binding(3) var<storage,read> up:array<f32>;\n@group(0) @binding(4) var<uniform> p:Params;");
+            source = source.replace(
+                "p.input_first<=arrayLength(&input);",
+                "p.input_first<=arrayLength(&input) && arrayLength(&up)==arrayLength(&input);",
+            );
+            source = source.replace("let x=input[p.input_first+g.y*p.input_stride+block*32u+lane];",
+                "let at=p.input_first+g.y*p.input_stride+block*32u+lane;let gi=input[at];let x=(gi/(1.0+exp(-gi)))*up[at];");
+        }
+        source
     }
 }
 impl KernelMetadata for PrepareKernel {
     fn name(&self) -> &'static str {
-        "StrataSubgroupQ8Prepare"
+        if self.1 {
+            "StrataSubgroupSwiGLUQ8Prepare"
+        } else {
+            "StrataSubgroupQ8Prepare"
+        }
     }
     fn id(&self) -> KernelId {
         KernelId::new::<Self>().info(*self)
@@ -251,12 +266,58 @@ pub(crate) fn prepare(
     // one subgroup per 32-value block, and serialized owning graph lifetime.
     unsafe {
         client.launch_unchecked(
-            Box::new(PrepareKernel(columns)),
+            Box::new(PrepareKernel(columns, false)),
             CubeCount::Static((columns / 128) as u32, spans.count() as u32, 1),
             args,
         );
     }
     PREPARES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    Ok(())
+}
+pub(crate) fn prepare_swiglu(
+    client: &ComputeClient<WgpuRuntime>,
+    columns: usize,
+    gate: Handle,
+    up: Handle,
+    planes: Handle,
+    fault: Handle,
+    count: usize,
+) -> Result<()> {
+    if gate.size_in_used() != up.size_in_used()
+        || fault.size_in_used() != 4
+        || [&gate, &up, &fault]
+            .iter()
+            .any(|h| h.stream != planes.stream)
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    let spans = BatchSpans::new(count, 0, 0, columns, 0, columns);
+    let words = prepare_info(
+        columns,
+        &spans,
+        gate.size_in_used() as usize / 4,
+        planes.size_in_used() as usize / 4,
+    )?;
+    let args = KernelArguments::new()
+        .with_buffer(gate.binding())
+        .with_buffer(planes.binding())
+        .with_buffer(fault.binding())
+        .with_buffer(up.binding())
+        .with_info(MetadataBindingInfo::custom(
+            words
+                .chunks_exact(2)
+                .map(|v| v[0] as u64 | ((v[1] as u64) << 32))
+                .collect(),
+        ));
+    // SAFETY: original disjoint private owners, same native Q8 geometry and
+    // all active rows checked before the fused producer reaches DOWN.
+    unsafe {
+        client.launch_unchecked(
+            Box::new(PrepareKernel(columns, true)),
+            CubeCount::Static((columns / 128) as u32, count as u32, 1),
+            args,
+        );
+    }
     Ok(())
 }
 // This Q8_1 producer is not a Q6 weight operator. Native shared experts have
@@ -301,6 +362,62 @@ pub(crate) fn prepares() -> u64 {
 
 #[cfg(test)]
 mod native_q6_tests {
+    #[test]
+    fn fused_shared_q8_image_uses_both_original_inputs_and_the_same_native_packing_geometry() {
+        use super::*;
+        use wgpu::naga as n;
+        let kernel = PrepareKernel(640, true);
+        let source = kernel.source();
+        let module = n::front::wgsl::parse_str(&source).unwrap();
+        let info = n::valid::Validator::new(
+            n::valid::ValidationFlags::all(),
+            n::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap();
+        assert_eq!(module.entry_points[0].workgroup_size, [128, 1, 1]);
+        let uses = info.get_entry_point(0);
+        let mut owners = std::collections::BTreeMap::new();
+        for (id, g) in module.global_variables.iter() {
+            if let Some(b) = &g.binding {
+                owners.insert(
+                    b.binding,
+                    (
+                        uses[id].contains(n::valid::GlobalUse::READ),
+                        uses[id].contains(n::valid::GlobalUse::WRITE),
+                    ),
+                );
+            }
+        }
+        assert_eq!(owners.len(), 5);
+        assert_eq!(owners[&0], (true, false));
+        assert_eq!(owners[&3], (true, false));
+        assert!(owners[&1].1 && owners[&2].1);
+        n::back::spv::write_vec(
+            &module,
+            &info,
+            &n::back::spv::Options::default(),
+            Some(&n::back::spv::PipelineOptions {
+                shader_stage: n::ShaderStage::Compute,
+                entry_point: "main".into(),
+            }),
+        )
+        .unwrap();
+        assert!(source.contains("let x=(gi/(1.0+exp(-gi)))*up[at]"));
+        // Full20 Q8 blocks, each real lane visited once including the tail
+        // workgroup; same native plane extents consumed by packed DOWN.
+        let mut visits = [0u8; 640];
+        for group in 0..5 {
+            for subgroup in 0..4 {
+                for lane in 0..32 {
+                    visits[(group * 4 + subgroup) * 32 + lane] += 1;
+                }
+            }
+        }
+        assert!(visits.iter().all(|&n| n == 1));
+        assert_eq!(640 / 2 + 640 / 16, 360);
+    }
+
     #[cfg(feature = "strata-intel-core")]
     #[test]
     fn shared_q8_640_column_producer_checks_real_batched_input_and_plane_bounds() {
@@ -674,9 +791,19 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
             );
         }
     }
+    result.push(
+        PrepareKernel(640, true)
+            .compile(
+                &mut AutoCompiler::Wgsl(Default::default()),
+                &Default::default(),
+                ExecutionMode::Unchecked,
+                StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+            )
+            .unwrap(),
+    );
     for columns in [2560, 16384] {
         result.push(
-            PrepareKernel(columns)
+            PrepareKernel(columns, false)
                 .compile(
                     &mut AutoCompiler::Wgsl(Default::default()),
                     &Default::default(),
