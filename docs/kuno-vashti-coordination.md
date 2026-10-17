@@ -5,16 +5,11 @@ This is the shared handoff between the **Build Kuno inference helper** task
 Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
-**Current native-engine resume pointer (2026-10-16):** isolated
-`codex/strata-rust-port`, source `c5fcc20bc44e8dce900ac3bc4d1865477854f2fc`. Read the
-[context/scope and shared-expert handoff](#active-kuno-engine-handoff--context-scope-and-shared-expert-gap-2026-10-16)
-and [completion gate](kuno-strata-rewrite-completion.md). Native admission and
-original run/close/rebind guards now keep reference speculative headroom and full
-accepted state independent of output delivery clipping. 551 CPU cases/72 suites and strict core/off binary lint pass.
-No GPU/speed result. Next required connected block is selected shared-expert
-math and fork/join, including scratch/fault/INFO/queue ownership; currently still
-missing. Whole rewrite incomplete, speed gate closed, goal active CPU-only.
-Required Vashti changes: none. Latest frozen artifact remains older source`0d9e3a52`.
+**Current native-engine resume pointer (2026-10-17):** isolated
+`codex/strata-rust-port`, runtime source `71dceafcd6727bf04cfc85cc6bb3797d08351b97`. Read the
+[original artifact/runtime Q8 handoff](#active-kuno-engine-handoff--original-artifact-and-runtime-q8-2026-10-17)
+and [completion gate](kuno-strata-rewrite-completion.md). Complete rewrite remains
+unfinished; speed gate closed and work CPU-only. Required Vashti changes: none.
 
 ## Ownership
 
@@ -7633,3 +7628,37 @@ caller independently gated. No API/configuration/consumer/frontend change;
 required Vashti changes none. Goal active CPU-only. No GPU/adapter/model/inference/
 service/install/release action; authorized sudo cache refresh only. Canonical and
 inherited cache preserved. No deployment authority or new physical/recovery/speed claim.
+
+
+## Active Kuno engine handoff — original artifact and runtime Q8 (2026-10-17)
+
+Runtime source `71dceafcd6727bf04cfc85cc6bb3797d08351b97`, isolated
+`codex/strata-rust-port`. Preserve the full coupled branch and inherited files.
+Read the [exact artifact/conversion receipt](kuno-strata-rewrite-completion.md#original-artifact-and-runtime-q8-conversion-audit-2026-10-17)
+and [checkpoint](kuno-native-text-checkpoint.md). The active pointer supersedes
+older source/checkpoint claims above; those remain historical receipts.
+
+Actual original target and MTP binding/roles/norms/tokenizer pass CPU inspection.
+The native startup loader now reproduces pinned NumPy F32 reciprocal/multiply/
+add-before-floor Q8 weight conversion. All nine complete used matrices match
+independent packed hashes;24,743 weight codes differ from the old division path.
+Thirty actual-vocabulary public tokenizer cases in both special-token modes pass.
+No converted model file, prompt/image/token history, API/configuration change or
+new GPU owner is introduced. This does not establish physical model correctness.
+
+561 distinct CPU cases/74 suites, strict core/off binary lint and normal build
+pass. Frozen source71dceafc SHA256
+`0193577d5af95f72e213527adc9124f20c28fa309c44ace70bcf0e874679b187`, independently
+verified source/original/frozen hash, mode0500/features; not executed. Shader
+producers unchanged; previous source46e695a7 offline365/139/32 remains evidence.
+Exact logs, initial failures and limits are in the primary receipt.
+
+Next connected source block: authentic MTP shared-expert fork/join, separate
+fault, rounded sigmoid scale and native vec4 ordered-FMA combination, including
+actual family/commit/queue/owner/pricing/erasure dependencies. Current MTP path is
+still serial there. Then complete the remaining full source/math/prompt/sampling/
+state/substitution audit and protected whole-model numerical/context/hot request/
+failure/recovery acceptance before any speed trial. No partial rollback based
+on incidental timing. Whole rewrite incomplete, goal active CPU-only. No GPU/
+model/inference/service/install/release action; authorized sudo refresh only.
+No consumer/frontend changes; required Vashti changes none.

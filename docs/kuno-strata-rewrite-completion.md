@@ -6,28 +6,29 @@ checklist is a source-to-source audit, not a sequence of throughput experiments.
 Each row needs its connected consumer, real ownership/placement and state contract;
 adding an unused helper or optional switch does not complete a row.
 
-**Current CPU-only source:** `811968c38a272916e0bf41620473eb16185dae81`, branch
-`codex/strata-rust-port`. Read the [cold-target scope and queue audit](kuno-strata-rewrite-completion.md#cold-target-scope-and-sharedmtp-source-audit-2026-10-17),
-plus the preceding connected shared-expert receipt. Authentic request ownership
-no longer incorrectly requires a named capture key: position-zero initial target
-and captured later windows retain the same shared/routed compute path. Missing/
-foreign nonces, wrong branch families, MTP lane/active draft scope still reject.
+**Current CPU-only source:** `71dceafcd6727bf04cfc85cc6bb3797d08351b97`, branch
+`codex/strata-rust-port`. Read the [original artifact and runtime Q8 receipt](kuno-strata-rewrite-completion.md#original-artifact-and-runtime-q8-conversion-audit-2026-10-17).
+The actual MTP startup loader now preserves the pinned packer's F32 reciprocal,
+multiply and add-before-floor arithmetic. All nine used converted matrices match
+pinned NumPy byte-for-byte; actual model/tokenizer/binding and once-folded norm
+checks pass. No converted model file or request content is saved.
 
-559 distinct CPU cases/73 suites and strict core/off binary lint pass. New normal
+561 distinct CPU cases/74 suites and strict core/off binary lint pass. Normal
 stable-source frozen artifact SHA256
-`cd6ee7aca6300e4096bf03bd4433ce03df022a438f8160a99eca289a671217ed`, independent source/original/hash/mode0500/
-features verified; not executed. Shader producers are unchanged from source46e695a7
-and its365 offline variants/139 physical checks/32 matrix configurations; not rerun.
+`0193577d5af95f72e213527adc9124f20c28fa309c44ace70bcf0e874679b187`, independently verified source/ordinary/frozen hash,
+mode0500 and default Intel features; binary not executed. Shader producers are
+unchanged from source46e695a7 and its365 offline variants/139 physical checks/32
+matrix configurations; not rerun.
 
-**Whole rewrite incomplete; speed gate closed.** Continue final branch source/
-placement/queue/ownership/pricing/substitution audit, then protected actual
-count1/multirow numerical, family/state/context, retained/hot-request and failure/
-all-resource recovery acceptance. Current queue audit confirms actual source
-fence/nonce/capture call paths, not physical overlap or correctness. CLI remains
-compiled-public/one-request; private process caller independently gated. Goal active
-CPU-only. No GPU/model/inference/service/install/release/API/UI action; sudo cache
-refreshed, no privileged runtime operation. Required Vashti changes: none.
-Canonical/inherited files preserved.
+**Whole rewrite incomplete; speed gate closed.** One confirmed remaining connected
+source gap is MTP shared/routed fork/join (currently serial), including separate
+fault ownership and original scale/combined reduction. Continue the final complete
+source/math/prompt/sampling/state/placement/queue/pricing/substitution audit, then
+protected count1/multirow whole-model numerical, context, retained/hot-request and
+failure/all-resource recovery acceptance. CLI remains compiled-public/one-request;
+private caller independently gated. Goal active CPU-only. No GPU/model/inference/
+service/install/release/API/UI action; authorized sudo refresh only. Vashti changes
+none. Canonical/inherited files preserved.
 
 
 ## Reference and execution scope
@@ -9651,3 +9652,87 @@ install/release action, no privileged operation beyond authorized sudo refresh.
 No API/protocol/configuration/consumer/frontend change; Vashti changes none.
 Canonical/inherited files preserved. No physical correctness, memory recovery,
 privacy-forensics or new performance claim. Full rewrite remains incomplete.
+
+
+## Original artifact and runtime Q8 conversion audit (2026-10-17)
+
+Runtime source `71dceafcd6727bf04cfc85cc6bb3797d08351b97`, pinned MIT upstream
+`fb58e0dbc8399662c0e47c76578c6e878b14f6cf`. This is a source/artifact and CPU
+conversion check, not device inference or speed acceptance.
+
+The actual two original IQ3_S shards bind through `GgufFile::open_shards` and
+`Qwen4Exp::bind`:83,617,662,656 bytes,1,224 tensors,48 layers,512 experts/top10,
+640 FFN. Float types remain484 BF16/292 F32/one F16. All48 scalar shared gates
+are original BF16 rank-one[2560]. The actual tokenizer has248,320 vocabulary
+entries,247,587 merges, qwen35 pretokenizer and EOS248046. Thirty fixed public
+UTF-8/ASCII-control/combining/CJK/emoji/long-piece/chat-control cases in BOTH
+parse-special modes match pinned Python exact token IDs and roundtrip. Raw IDs
+and already-rendered text are the Rust engine boundary: no implicit BOS/EOS or
+chat-template rewriting. Upstream `sycl/src/program/generate.cpp` also consumes
+pretokenized IDs; `serve/server.py` renders its Jinja outside the inference engine.
+This does not assert arbitrary chat-API/template support in Kuno's private caller.
+
+Original `mtp-q2_0.gguf`:889,017,216 bytes/31 tensors binds through actual
+`MtpGraph::bind_strata_q2`, with original target binding identity. Both embedding
+and Q6 head views genuinely belong to the target, not the sidecar. All nine F32
+norm vectors match exactly one `1+w` fold. Header/source identity checks passed;
+full-file SHA authentication was not repeated and remains the protected caller's
+separate responsibility.
+
+Do not misread the reference-graph comment rejecting converted runtime files as
+missing native conversion. Actual `resident_mtp::load_page` already creates Q8_0
+in RAM at startup for the nine used large BF16 projections; GR/router/scalar
+roles retain BF16 and head remains original Q6. The publisher packs ten matrices,
+but its indexer projection/two norms are unused by dense MTP GQA. No runtime
+`.bin` model file or second persistent model copy is introduced.
+
+The real correction replaces per-value division/round with `strata_weight_q8`:
+F32 maximum/127 -> reciprocal -> multiply -> sign*floor(abs+0.5), plus original
+F16 scale storage. F32 addition before floor differs even from ordinary round
+immediately below0.5. Synthetic golden controls distinguish BOTH prior division
+and reciprocal-with-round from the pinned NumPy packer. Invalid shapes/nonfinite
+scales/codes reject before upload. This is public weight conversion, distinct
+from native activation quantizers' own rounding contract.
+
+Read-only CPU audit of every converted row/block covers24,832 rows/2,119,680
+blocks/67,829,760 codes. All nine complete packed matrix SHA256 streams match
+independent pinned NumPy conversion of the original BF16 sidecar;24,743 actual
+weight codes differ from the old division path. Eighteen sampled original blocks
+and ten synthetic controls also match. Converted weights are hashed in bounded
+RAM chunks, never written as model artifacts. These checks prove packed source
+bytes, not downstream GPU arithmetic or output correctness.
+
+Receipts under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-artifact-audit-20261017/{src/main.rs,compare.py,inspection-final-packed.json,whole-matrix-final.log,summary.json}`:
+  actual artifacts/full nine matrix comparison. `src/bin/tokenizer.rs`,
+  `compare-tokenizer.py`, `tokenizer-{rust,summary}.json` retain actual-vocabulary
+  controls. Python regex dependency is isolated in that audit's `.venv`.
+  Initial one-shard refusal and missing dependency observations are retained;
+  final comparison uses both original shards and passes30 cases.
+- `strata-weight-artifact-validate-20261017.py`,
+  `strata-weight-artifact-final-test-build-20261017.log`,
+  `strata-weight-artifact-full-cpu-20261017.log`:561 distinct cases/74 nonempty
+  suites, zero failures. Both rounding boundaries plus malformed/nonfinite/zero/
+  underflow controls are included. Final logs follow the F32 add-before-floor fix;
+  earlier `*-pre-floor.log` are historical.
+- `strata-weight-artifact-{core,off}-clippy-20261017.log`: strict binary Clippy
+  passes. Changed formatting/whitespace pass. No GPU initialization or inference.
+- `strata-weight-artifact-ordinary-20261017.out` and matching directory: normal
+  stable source71dceafc, frozen SHA256
+  `0193577d5af95f72e213527adc9124f20c28fa309c44ace70bcf0e874679b187`.
+  Source/original/frozen hashes, mode0500 and features independently verified;
+  executable not run. Shader producers unchanged; source46e695a7's365/139/32
+  offline evidence is retained, not rerun for a CPU weight-loader correction.
+
+Remaining concrete source gap: pinned `sycl/src/core/mtp.cpp::record_rest` defaults
+`STRATA_MTP_SHARED_BRANCH` on for Intel (non-HIP); it forks shared projection/
+scaling beside routed experts and joins before native vec4/FMA combine. Actual
+Rust `ResidentMtp::native_moe` still enqueues shared after all routed work and
+combines inline with scalar sigmoid. Port these coupled dependencies next: real
+scope-aware shared queue, independent fault, original rounded scale, native
+combined reduction, all-peer fence and exact owner/pricing/erasure. Do not weaken
+existing target/MTP request-nonce/branch or verified-R guards to permit the new
+path. Reuse of the two adopted compute queues must be an explicit backend
+substitution with actual command-family and pending-commit ownership proof.
+Full rewrite and numerical/device/recovery acceptance remain incomplete.
