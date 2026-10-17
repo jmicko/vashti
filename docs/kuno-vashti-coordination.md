@@ -7777,3 +7777,44 @@ concrete gap and CPU-only test/build/compiler evidence. Runtime change is
 `39c8d9e1b37700c0adeab0556e2d5c2123dbaffd`; prior full coupled branch remains selected. All evidence files are
 under `/media/jmicko/faststore/kuno-development/strata-gdn-commit-*20261017*`.
 A handoff does not authorize GPU use, installation, release or another task.
+
+
+## Active Kuno engine handoff — deferred GDN and history-only commit (2026-10-17)
+
+**Current CPU-only source:** `7a0489d38bdce98961901759cbe65d95a1db33ba`, branch
+`codex/strata-rust-port`. Read the [deferred GDN and history-only commit receipt](kuno-strata-rewrite-completion.md#deferred-verification-state-and-history-only-gdn-commit-2026-10-17).
+Actual multirow verified-prefix calls now retain recurrent state in registers and
+leave history untouched until acceptance, matching pinned Strata's ALL_OUT and
+noncommitting convolution. Ordinary full-row/prompt and count-one calls retain
+their actual candidate writes. Both full-row and verification recordings remain
+connected, with static state mode in their original branch identity and genuine
+replay completion. Accepted-prefix commit now runs native history-only 256-thread
+work followed by the previously ported 128-thread/four-column-tile recurrence.
+It no longer repeats convolution/QKV normalization during commit.
+
+576 distinct selected CPU cases/78 nonempty suites, strict core/off binary lint,
+changed formatting and whitespace pass. Stable-source frozen artifact SHA256
+`8bf3271d74778c8b927a97eae76db28cbe9eb1fe31d8343c1010d15777394556`, independently source/ordinary/frozen/mode 0500/default-features
+verified. Only its pre-adapter offline shader branch ran: 368 variants/139 physical
+pointer checks/four product modules/32 matrix configurations pass. These remain
+CPU/compiler results, not numerical/physical execution or throughput proof.
+No new GPU owner, model copy, request content or public API/configuration change.
+
+**Whole rewrite incomplete; speed gate closed.** This closes the previously
+listed provisional GDN recurrent/history write and commit-recomputation source
+gaps. Existing paired OLD/NEXT, separate cached K/V, Vulkan math and finite-fault
+substitutions still require physical acceptance. Next trace QSA KV/indexer/pooled
+history and accepted-prefix handling, then finish the full connected source/
+math/prompt/sampling/state/placement/queue/pricing/substitution audit. Protected
+whole-model count-one/multirow/context/retained/hot-request and failure/all-resource
+recovery acceptance must precede speed. CLI compiled-public/one-request; private
+caller separately gated. Earlier original artifact/Q8/tokenizer/MTP/shared/routed
+receipts still apply. Goal active CPU-only; authorized sudo refresh only. No GPU/
+model inference/service/install/release/frontend action. Vashti changes none.
+Canonical checkout and inherited untracked cache preserved.
+
+Read the linked receipt for exact pinned sources, actual caller/recording/state
+contract, changed source `7a0489d38bdce98961901759cbe65d95a1db33ba`, tests, initial failures, metadata bounds,
+remaining substitutions and required next action. All final evidence is under
+`/media/jmicko/faststore/kuno-development/strata-gdn-deferred-*20261017*`.
+No consumer changes are required. No handoff grants GPU/service/release access.

@@ -1,36 +1,39 @@
-<!-- Current resume: 2026-10-17, source 39c8d9e1b37700c0adeab0556e2d5c2123dbaffd, codex/strata-rust-port.
+<!-- Current resume: 2026-10-17, source 7a0489d38bdce98961901759cbe65d95a1db33ba, codex/strata-rust-port.
 CPU-only continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-17
 
 Working checkout: `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`.
 
-**Current CPU-only source:** `39c8d9e1b37700c0adeab0556e2d5c2123dbaffd`, branch
-`codex/strata-rust-port`. Read the [native tiled GDN commit receipt](kuno-strata-rewrite-completion.md#native-tiled-accepted-prefix-gdn-commit-2026-10-17).
-Actual accepted-prefix GDN recurrence now uses pinned Strata's default state-only
-commit kernel: four 32-column tiles per head, 128 threads per block, native four-row-group
-FMA order. It no longer dispatches the 512-thread output kernel in state-only mode.
-Actual retained key/value/control/original-state roots and paired candidate feed
-the same authenticated accepted-count, fault, family-acceptance and role protocol.
-No new GPU root/model copy, admission or public API change.
+**Current CPU-only source:** `7a0489d38bdce98961901759cbe65d95a1db33ba`, branch
+`codex/strata-rust-port`. Read the [deferred GDN and history-only commit receipt](kuno-strata-rewrite-completion.md#deferred-verification-state-and-history-only-gdn-commit-2026-10-17).
+Actual multirow verified-prefix calls now retain recurrent state in registers and
+leave history untouched until acceptance, matching pinned Strata's ALL_OUT and
+noncommitting convolution. Ordinary full-row/prompt and count-one calls retain
+their actual candidate writes. Both full-row and verification recordings remain
+connected, with static state mode in their original branch identity and genuine
+replay completion. Accepted-prefix commit now runs native history-only 256-thread
+work followed by the previously ported 128-thread/four-column-tile recurrence.
+It no longer repeats convolution/QKV normalization during commit.
 
-572 distinct selected CPU cases/78 nonempty suites and strict core/off binary
-lint pass. Normal stable-source frozen artifact SHA256
-`3a18ce74c197b0a78c00d2e7e70edefaea5cd1926a07847b87b82da32585641c`, independently verified source/ordinary/frozen hash,
-mode 0500 and default Intel features. Only the pre-adapter offline entry ran:
-365 shaders/139 physical-pointer checks/4 rounded-product modules/32 matrix
-configurations pass. These are CPU/compiler results, not device execution proof.
-Earlier routed Q8/product, original artifact/nine packed weight matrices/tokenizer
-and MTP/shared receipts still apply.
+576 distinct selected CPU cases/78 nonempty suites, strict core/off binary lint,
+changed formatting and whitespace pass. Stable-source frozen artifact SHA256
+`8bf3271d74778c8b927a97eae76db28cbe9eb1fe31d8343c1010d15777394556`, independently source/ordinary/frozen/mode 0500/default-features
+verified. Only its pre-adapter offline shader branch ran: 368 variants/139 physical
+pointer checks/four product modules/32 matrix configurations pass. These remain
+CPU/compiler results, not numerical/physical execution or throughput proof.
+No new GPU owner, model copy, request content or public API/configuration change.
 
-**Whole rewrite incomplete; speed gate closed.** Next resolve the multirow
-verification-only provisional GDN state store versus ordinary prompt/full-row
-candidate publication using actual caller/capture authority; do not skip writes
-based on count alone. Then finish the complete connected source/math/prompt/
-sampling/state/placement/queue/pricing/substitution audit and protected count 1/
-multirow numerical/context/retained/hot-request and failure/all-resource recovery
-acceptance before speed. CLI compiled-public/one-request; private caller separately
-gated. Goal active CPU-only, authorized sudo refresh only. No GPU/model inference,
-service/install/release/API/configuration/frontend action. Vashti changes none.
+**Whole rewrite incomplete; speed gate closed.** This closes the previously
+listed provisional GDN recurrent/history write and commit-recomputation source
+gaps. Existing paired OLD/NEXT, separate cached K/V, Vulkan math and finite-fault
+substitutions still require physical acceptance. Next trace QSA KV/indexer/pooled
+history and accepted-prefix handling, then finish the full connected source/
+math/prompt/sampling/state/placement/queue/pricing/substitution audit. Protected
+whole-model count-one/multirow/context/retained/hot-request and failure/all-resource
+recovery acceptance must precede speed. CLI compiled-public/one-request; private
+caller separately gated. Earlier original artifact/Q8/tokenizer/MTP/shared/routed
+receipts still apply. Goal active CPU-only; authorized sudo refresh only. No GPU/
+model inference/service/install/release/frontend action. Vashti changes none.
 Canonical checkout and inherited untracked cache preserved.
 
 **Previous coupled-sampler block (`8a4ee5b`):** actual full and CJK MTP paths

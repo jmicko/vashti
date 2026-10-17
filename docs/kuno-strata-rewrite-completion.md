@@ -6,33 +6,36 @@ checklist is a source-to-source audit, not a sequence of throughput experiments.
 Each row needs its connected consumer, real ownership/placement and state contract;
 adding an unused helper or optional switch does not complete a row.
 
-**Current CPU-only source:** `39c8d9e1b37700c0adeab0556e2d5c2123dbaffd`, branch
-`codex/strata-rust-port`. Read the [native tiled GDN commit receipt](kuno-strata-rewrite-completion.md#native-tiled-accepted-prefix-gdn-commit-2026-10-17).
-Actual accepted-prefix GDN recurrence now uses pinned Strata's default state-only
-commit kernel: four 32-column tiles per head, 128 threads per block, native four-row-group
-FMA order. It no longer dispatches the 512-thread output kernel in state-only mode.
-Actual retained key/value/control/original-state roots and paired candidate feed
-the same authenticated accepted-count, fault, family-acceptance and role protocol.
-No new GPU root/model copy, admission or public API change.
+**Current CPU-only source:** `7a0489d38bdce98961901759cbe65d95a1db33ba`, branch
+`codex/strata-rust-port`. Read the [deferred GDN and history-only commit receipt](kuno-strata-rewrite-completion.md#deferred-verification-state-and-history-only-gdn-commit-2026-10-17).
+Actual multirow verified-prefix calls now retain recurrent state in registers and
+leave history untouched until acceptance, matching pinned Strata's ALL_OUT and
+noncommitting convolution. Ordinary full-row/prompt and count-one calls retain
+their actual candidate writes. Both full-row and verification recordings remain
+connected, with static state mode in their original branch identity and genuine
+replay completion. Accepted-prefix commit now runs native history-only 256-thread
+work followed by the previously ported 128-thread/four-column-tile recurrence.
+It no longer repeats convolution/QKV normalization during commit.
 
-572 distinct selected CPU cases/78 nonempty suites and strict core/off binary
-lint pass. Normal stable-source frozen artifact SHA256
-`3a18ce74c197b0a78c00d2e7e70edefaea5cd1926a07847b87b82da32585641c`, independently verified source/ordinary/frozen hash,
-mode 0500 and default Intel features. Only the pre-adapter offline entry ran:
-365 shaders/139 physical-pointer checks/4 rounded-product modules/32 matrix
-configurations pass. These are CPU/compiler results, not device execution proof.
-Earlier routed Q8/product, original artifact/nine packed weight matrices/tokenizer
-and MTP/shared receipts still apply.
+576 distinct selected CPU cases/78 nonempty suites, strict core/off binary lint,
+changed formatting and whitespace pass. Stable-source frozen artifact SHA256
+`8bf3271d74778c8b927a97eae76db28cbe9eb1fe31d8343c1010d15777394556`, independently source/ordinary/frozen/mode 0500/default-features
+verified. Only its pre-adapter offline shader branch ran: 368 variants/139 physical
+pointer checks/four product modules/32 matrix configurations pass. These remain
+CPU/compiler results, not numerical/physical execution or throughput proof.
+No new GPU owner, model copy, request content or public API/configuration change.
 
-**Whole rewrite incomplete; speed gate closed.** Next resolve the multirow
-verification-only provisional GDN state store versus ordinary prompt/full-row
-candidate publication using actual caller/capture authority; do not skip writes
-based on count alone. Then finish the complete connected source/math/prompt/
-sampling/state/placement/queue/pricing/substitution audit and protected count 1/
-multirow numerical/context/retained/hot-request and failure/all-resource recovery
-acceptance before speed. CLI compiled-public/one-request; private caller separately
-gated. Goal active CPU-only, authorized sudo refresh only. No GPU/model inference,
-service/install/release/API/configuration/frontend action. Vashti changes none.
+**Whole rewrite incomplete; speed gate closed.** This closes the previously
+listed provisional GDN recurrent/history write and commit-recomputation source
+gaps. Existing paired OLD/NEXT, separate cached K/V, Vulkan math and finite-fault
+substitutions still require physical acceptance. Next trace QSA KV/indexer/pooled
+history and accepted-prefix handling, then finish the full connected source/
+math/prompt/sampling/state/placement/queue/pricing/substitution audit. Protected
+whole-model count-one/multirow/context/retained/hot-request and failure/all-resource
+recovery acceptance must precede speed. CLI compiled-public/one-request; private
+caller separately gated. Earlier original artifact/Q8/tokenizer/MTP/shared/routed
+receipts still apply. Goal active CPU-only; authorized sudo refresh only. No GPU/
+model inference/service/install/release/frontend action. Vashti changes none.
 Canonical checkout and inherited untracked cache preserved.
 
 
@@ -86,7 +89,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | Native shared expert and fork/join | `verify.cpp::sh_stream_on/record_window`, `shared_expert.dp.cpp::shared_expert_multi`, native BF16 projection and `native_moe.dp.cpp` | Source `46e695a7` connects selected target shared compute fork, independent native Q8/fault roots, fused SwiGLU packing, original rank-one BF16 gate, vec4 sigmoid scale, ordered combined reduction and real all-peer target fence in one block. Actual cold/capture/replay Nodes, family pools, INFO edges and admission quotes are connected. CPU scheduling/shader interfaces pass; physical arithmetic/overlap, shared-to-MTP queue reuse and complete device/recovery acceptance remain open. See the connected shared-expert receipt below. |
 | Native expert math and grouped rows | `sycl/src/kernels/cuda/iq_kernels.dp.cpp::row_entries`, `native_gu_kernel`, `native_down_kernel` | Packed integer math/BDA roots exist. Separate GU roles, 4/2/1 chunks, activation, intermediate storage and downstream consumers are now selected together in the Intel core; all 158 WGSL/SPIR-V variants validate, including 105 physical-pointer checks; numerical/model execution acceptance remains pending. The global core now uses one per-role launch containing pinned row_entries4/2/1 loops, scalar IQ4_XS, native signed integer finish and XOR reduction; numerical/model execution acceptance remains pending. Historical fixed-chunk kernels are retained separately. Source1a034311 connects native subgroup32 Q8_1 GU preparation and fused direct SwiGLU/Q8 DOWN over the same actual private PART/status/planes. Original four GU/two DOWN formats cover all144 installed routed tensors. Actual rounded products are pinned by the shared native NoContraction postpass. See latest source/frame-grouping substitution receipt; device numerics/whole-model acceptance remain open. |
 | GR write/read/norm/down/up/injection | `sycl/src/kernels/cuda/fused_gr.dp.cpp::fused_gr_read_multi`; `verify.cpp::gr_read_group` | Native pending-write norm, sliced BF16 down/injection, fixed slice reduction and up/mix/commit are now connected and unconditionally selected in the core, including explicit PLE/final boundary writes. Resident original weights and the enlarged private scratch owner are charged together. Structural acceptance passes; numerical/model execution acceptance and final substitution audit remain pending. Source `37dced9` connects default full-prompt F1 row scales, packed BF16 norm/SiLU images, direct original projection consumers and residual-based mix recomputation together; see the packed-GR receipt. Sources `40fe97e` and the latest sole-residual receipt connect mixed images and prompt GR/PLE in-place storage, including actual MTP teacher scratch. Final substitution/numerical/device acceptance remains open. |
-| GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp`, `prefill/kernels.dp.cpp` | Core connects native BF16 alpha/beta, controls, recurrence/norm and accepted-prefix replay. Prompt scope selects contiguous H, causal convolution/history/L2, CB32 recurrence and directly consumed FP16 output. Source 9a7a23b connects prompt-capacity whole-chunk math without per-element status/replay owners, carved AB staging, and native row/value-head recurrent state shared by prompt/decode/repair. The large chunk caller/acceptance is connected in the latest controller receipt; physical execution and final numerical/queue audit remain open. Split verifier mode is an optional upstream path, not selected by the measured server. Source 39c8d9e1 connects default native 128-thread/four-column-tile accepted-prefix state commit over actual retained roots, replacing512-thread state-only output replay. See latest receipt; verification-only provisional state writes versus prompt/full-row publication remain a concrete source/data-movement gap. |
+| GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp`, `prefill/kernels.dp.cpp` | Core connects native BF16 alpha/beta, controls, recurrence/norm and accepted-prefix replay. Prompt scope selects contiguous H, causal convolution/history/L2, CB32 recurrence and directly consumed FP16 output. Source 9a7a23b connects prompt-capacity whole-chunk math without per-element status/replay owners, carved AB staging, and native row/value-head recurrent state shared by prompt/decode/repair. The large chunk caller/acceptance is connected in the latest controller receipt; physical execution and final numerical/queue audit remain open. Split verifier mode is an optional upstream path, not selected by the measured server. Source 39c8d9e1 connects default native 128-thread/four-column-tile accepted-prefix state commit over actual retained roots, replacing512-thread state-only output replay. See latest receipt; Source 7a0489d3 now connects authenticated verification-only deferral for recurrent/history writes, static replay mode and native history-only commit; see the latest receipt. Physical numerical/context/failure acceptance remains open. |
 | QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects INT8 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. The measured server explicitly selects INT8 for target and MTP; source2a3d1ad ports both together and the combined CPU shader/layout checks now pass. Numerical/GPU acceptance is pending. Earlier generic-default FP16 scope claims below are superseded. Numerical/state acceptance remains required. |
 | PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Core connects native BF16 MAX8 projections, normalization/gate/conv/history, deduplicated positional reads and accepted-prefix ownership. Prompt calls now consume a bounded, joined double-buffered source prefetch. The latest controller receipt connects native large chunk geometry, joined uploads, retained tail and exact history acceptance. Sources `595393e` and `57147a8` make actual decode and prompt history GPU-authoritative in existing OLD/NEXT roots, with checked CPU token-only publication, GPU accepted-prefix history and independent PLE capture roles. Default prompt/decode float readbacks and prompt diagnostic tail copies are removed; explicit diagnostics and the legacy CPU oracle remain. Source `131d29c` selects the native scoped accepted-prefix consumer before state/cursor publication; the diagnostic checkpoint path keeps the older schedule. Pending event/graph fidelity and numerical/device acceptance remain open. Prompt loans are disabled in the measured32768-context configuration and are not a completion prerequisite. Never persist request n-grams. |
 | Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. The bounded prompt path now uses logical-ID expert order, checked native transfer nodes, an eight-slot raw ring and two paired dequantization slots. The latest owned-consumer receipt connects full2048-row owners, non-overlapping raw/grouped route packets, causal math/state scopes, the unbatched final prompt input uses normal count1 decode for the first head, and full device MTP teaching covers the preceding prefix (up to8192 matrix rows). Independent transfer/compute queues and real release boundaries are connected. The measured server uses4096 prompt rows and32768 context. Source `bcc30dd` connects4096-row prompt owners/ABI; source `8d301b1` subsequently connects32768 runtime context; full-prefix/device acceptance is open. Source `12a60bf` connects native phase overlays, actual2080MiB admitted roots and256-query score/selection reuse; see the latest prompt-overlay receipt. Packed/in-place prompt scratch is connected in the latest receipts. Source allocation granularity and shared inventory are connected in the latest exact-page receipt. Physical/runtime/HOST pricing and lifetimes still require final review. Its no-borrow selection and nonresident fraction select the existing eight-slot/two-dequant-ring path; alternative loans/ring sizes are not prerequisites. Physical whole-model acceptance remains open. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
@@ -10088,3 +10091,130 @@ required Vashti changes:none. Canonical checkout/inherited cache preserved.
 Goal stays active CPU-only; sudo refresh was authorized and observed successful.
 Complete the listed source gap and remaining whole-branch audit, then protected
 execution acceptance before any live speed trial.
+
+
+## Deferred verification state and history-only GDN commit (2026-10-17)
+
+Runtime source `7a0489d38bdce98961901759cbe65d95a1db33ba`, pinned MIT Intel upstream
+`fb58e0dbc8399662c0e47c76578c6e878b14f6cf`. This closes the concrete GDN source gap
+listed in the preceding receipt and connects its coupled history/recording/commit
+dependencies. Preserve the full branch; no speed result selected this change.
+
+### Actual source and data flow
+
+Pinned `sycl/src/core/verify.cpp:747,964..986` selects self-commit for the ordinary
+one-token path and passes no n_keep for multirow verification. Actual
+`verify_kernels.dp.cpp:484..487` writes recurrent state only for committing calls;
+ALL_OUT verification keeps it in registers. `gdn_conv_l2_multi_kernel:44..99`
+writes history only when its commit argument is true. `capture_commit:1710+`
+uses `gdn_conv_commit` plus the state-only recurrence; the 256-thread history
+wrapper is at 1686..1706, and its kernel at 102..120. No convolution or normalized
+Q/K/V recomputation is part of that commit.
+
+The connected Rust path now follows those dependencies together:
+
+1. `resident_model::batch::Workspace::run_global` derives verification intent
+   from its actual scoped PrefixSelection consumer. `prepare_batch` stamps
+   `Metadata.defer_state = verification && count>1` before the original stage
+   anchor is made. The native/prompt guards and original checked 1..8 extents
+   remain. Legacy ordinary enqueue supplies false. Count alone cannot authorize
+   deferral; count-one still has its self-commit candidates.
+2. Actual GDN enqueue selects `Kernel::ConvVerify` and `Kernel::Verify` only for
+   that authenticated mode. These are source-specialized STORE_HISTORY=false
+   and STORE_STATE=false variants. They retain original normalized Q/K/V,
+   controls, recurrence/readout/norm/output and all local finite checks, but do
+   not store provisional NEXT history/state. Ordinary Conv/Step and the separate
+   large prompt GDN path retain their real state/history writes.
+3. `NativeStrataBranch` includes one static content-free state-mode bool in its
+   derived equality/hash, with checked target-only setter (deferred count-one
+   is rejected). Default constructors stay false. `run_global` records its real
+   mode. Both full-row and verification calls retain original capture/replay;
+   they cannot select each other's command inventory despite identical row,
+   context, roles, request nonce or model owner. No invocation/position/token
+   is inferred from matching parameter bytes. No dynamic GPU INFO field added.
+4. `strata_target_replay::Completed` carries the mode from the exact key whose
+   genuine runtime submission completed; GDN compares it with the original
+   receipt mode along with its existing original fault/position/count/role/
+   source-owner checks. Warm replay still retains genuine inputs and does not
+   manufacture acceptance or current state from the key.
+5. Actual native `strata_gdn_replay::enqueue_prefix` now enqueues
+   `Kernel::ConvCommit` with grid[ceil(C/256),1,1], followed by the previously
+   connected tiled 128-thread recurrence and original complete fault fold.
+   ConvCommit uses original retained RAW and prewindow history to write exactly
+   the last three RAW rows for accepted n; it binds no convolution weights or
+   Q/K/V outputs and repeats no SiLU/L2 math. Real AcceptedCount and Position
+   schema, original capture identity, retained roots and caller proof remain.
+   Diagnostic repair uses this same math with its original opposite root roles
+   and constant accepted count. Count-one native commit still skips the graph.
+6. The original pending-prefix preflight requires the mode expected of the actual
+   verified-prefix transaction. Before any actual role swap,
+   `candidate_commit_extent` refuses deferred receipts without a selected prefix,
+   including all-accept; original join/fault/all-family permits still establish
+   device acceptance. Wrong mode fails original anchor equality. No bool alone
+   proves GPU completion. Failure remains terminal through existing cleanup.
+
+### Substitutions, bounds and persistence
+
+History/state publication still uses the original Rust read-only OLD and paired
+uncommitted NEXT followed by actual accepted role swap, versus upstream in-place
+commit. This already admitted rollback/ownership substitution is preserved.
+Cached normalized K/V are separate original owners rather than contiguous hbuf.
+History commit additionally checks finite retained RAW/history and writes both
+original readiness owners for the accepted span, supporting the existing full
+fault consumer; source native history commit has no such explicit fault outputs.
+It computes only history selection and these finite/readiness checks.
+
+New modes add no GPU root, scratch allocation, state copy, model-byte conversion,
+transfer, hardware queue or GPU INFO field. All old retained buffers/padding are
+still charged and erased. Static host key/receipt/completion metadata gains its
+mode bit; receipt and completion fields are zeroized. Runtime parameter/graph
+metadata accounting uses actual `size_of` and capacities, so no fabricated host
+credit is taken. The selected target/commit/MTP shape inventory remains 122 keys
+within the original 128-branch limit. An optional mixture of additional full-row
+and verification recordings still shares that existing bounded cache; this is
+not a claim of unbounded arbitrary-mode/context residency. Native math/exp,
+physical graph replay/state publication and recovery remain unverified.
+
+Kuno still persists no live prompt, output, request seed/token, state image or
+content hash. This work writes public shader sources, synthetic numeric tests,
+fixed metadata diagnostics and build logs only. No private inference was run.
+
+### Exact CPU-only validation and limitations
+
+Evidence under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-gdn-deferred-final-test-build-20261017.log` and
+  `strata-gdn-deferred-full-cpu-20261017.log`: locked release build and 576 distinct
+  selected cases/78 nonempty suites pass. This is not every repository test.
+  New coverage: real parameter-program cache misses in BOTH cross-mode
+  directions for every multirow count/role; exact selected 122-key bound; original
+  anchor rejecting changed mode and zeroizing it; every accepted-prefix extent
+  refusing ordinary publication of deferred candidates; independent streamed RAW
+  history oracle with exact tile/channel coverage, including partial 256-lane tails.
+  The namespace case runs through both existing vendor-module include sites
+  (two distinct executable case names, one test body); counts do not imply 576
+  independent mechanisms. Prior F64 recurrence/state tiling/AB cases pass unchanged.
+- `strata-gdn-deferred-{core,off}-clippy-20261017.log`: strict locked release
+  binary lint passes; changed-source rustfmt and git whitespace checks pass.
+- `strata-gdn-deferred-ordinary-20261017.out` and its ordinary directory: stable
+  committed source, exact default Intel features, source JSON/file/HEAD, ordinary
+  and mode 0500 frozen SHA256 independently agree (header above).
+- `strata-gdn-deferred-shaders-20261017.log`: only that frozen executable's
+  pre-adapter `--validate-port-shaders` ran; 368 variants/139 physical-pointer
+  checks/four product modules/32 matrix configurations pass using pinned
+  SPIRV-Tools fbe4f3a. Three additional GDN variants account for 365->368.
+- Preliminary `*-initial.log/.out` records 574 passes for the intermediate
+  nonfinal mode/capture design. It is not final acceptance. The subsequent
+  `*-missing-fixtures.log/.out` test build failed because a text edit removed
+  original quote helper fixtures; they were restored verbatim from original
+  HEAD. A new exported method also received its required documentation before
+  the final rebuild. Final source retains BOTH capture paths and all original
+  quote fixtures; neither their assertions nor the resource budget was relaxed.
+
+No physical GPU/model/whole-inference, numerical/device context, hot-request,
+recovery, throughput, install or release claim. Required Vashti changes:none;
+public API/configuration unchanged. Canonical/inherited work is preserved.
+Whole rewrite incomplete, goal active CPU-only. Next QSA source/state audit and
+remaining full-branch math/prompt/sampling/placement/queue/pricing/substitution
+checks, then protected whole-model correctness and all-resource recovery before
+speed. Sudo refresh only was authorized; it is not permission to use the GPUs.
