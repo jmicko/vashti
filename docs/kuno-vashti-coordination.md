@@ -7568,3 +7568,36 @@ whole-model numerical/state/context/hot-reuse/failure/resource-recovery remain.
 No public API/consumer/frontend change; Vashti changes: none. Goal active CPU-only.
 No root/GPU/model/inference/service/install/release action; canonical/inherited
 files preserved. No deployment authority or new performance/recovery claim.
+
+## Active Kuno engine handoff — connected shared expert (2026-10-17)
+
+Runtime source `46e695a7c6462eab86171086d04c742b3e4386de`, isolated `codex/strata-rust-port`.
+Read the [exact source/ownership/quote and validation receipt](kuno-strata-rewrite-completion.md#connected-shared-expert-and-three-queue-target-graph-2026-10-17)
+and [checkpoint](kuno-native-text-checkpoint.md). Keep the FULL coupled branch.
+
+Selected target shared math now forks onto existing compute queue1 after router/
+plan while routed roles run on MAIN. Independent shared fault/Q8 owners, fused
+SwiGLU pack, authentic rank-one BF16 gate, native vec4 scale and ordered combined
+reduction connect together. MAIN release prevents later join from serializing
+routed work. Actual graph Nodes/signatures, three-queue interval hazards, family
+pools, INFO edges and original final fence carry cold/capture/replay. Final fence
+joins all shared/copy work before the queue is reused by MTP. No synthetic
+completion or weakened general fault hazards. Additional private fault32KiB and
+HOST16MiB are explicitly quoted; actual physical admission/overlap remain unverified.
+
+558 distinct CPU cases/73 suites, strict core/off binary lint and normal stable-
+source build pass. Frozen source46e695a7 independently matches its ordinary binary,
+mode0500/features; offline365 shader variants/139 physical checks/32 matrix
+configurations pass. Exact SHA256/artifact/logs are in the linked primary receipt.
+This is CPU/source acceptance, not a live device or inference result. Initial shader reserved-name rejection and
+runner duplicate-suite rejection were repaired; initial logs remain evidence of
+failure, not acceptance. No GPU/numerical/driver/whole-model/throughput acceptance.
+
+Next: final whole-branch source/ownership/placement/queue/pricing/substitution
+audit, protected count1/multirow numerical/family/state/context, retained/hot-request
+and all-resource failure/recovery validation, then speed. Full rewrite incomplete;
+CLI compiled-public/one-request and private process caller independently gated.
+No API/protocol/configuration/consumer/frontend change; required Vashti changes:
+none. Goal active CPU-only. No GPU/model/inference/service/install/release action;
+sudo cache refreshed, no privileged runtime operation. Canonical and inherited
+untracked cache preserved. No deployment authority or new performance/recovery claim.
