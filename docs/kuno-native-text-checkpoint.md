@@ -1,40 +1,39 @@
-<!-- Current resume: 2026-10-17, source e5981a138a58a4209448d8091b1f576c3b1968b4, codex/strata-rust-port.
+<!-- Current resume: 2026-10-17, source 31c46e4719457b0c236bcd6684af9f3ec8821934, codex/strata-rust-port.
 CPU-only continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-17
 
 Working checkout: `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`.
 
-**Current CPU-only source:** `e5981a138a58a4209448d8091b1f576c3b1968b4`, branch
-`codex/strata-rust-port`. Read the [connected native QSA indexer receipt](kuno-strata-rewrite-completion.md#native-qsa-window-indexer-and-direct-pooled-scoring-2026-10-17).
-Actual decode now consumes the native 256-thread serial window indexer, completed
-pooled keys in the original persistent owner and direct causal scoring. The
-per-query retained-prefix copy, separate mean/norm/publication path and two unused
-pooling-buffer clears are no longer selected. Original tail/spare semantics and
-accepted-prefix cache/pooled suffix handling remain connected. Original ownership,
-full-request erase, source-root retention and conservative admission are preserved.
-No new GPU root, model copy, CPU content readback or public API/configuration.
+**Current CPU-only source:** `31c46e4719457b0c236bcd6684af9f3ec8821934`, branch
+`codex/strata-rust-port`. Read the [native window-score receipt](kuno-strata-rewrite-completion.md#native-multi-query-qsa-scoring-2026-10-17).
+Actual decode scoring now uses Strata's default multi-query kernel: fixed 256
+workgroups, eight warps each, early exit before staging, all active queries in 16KiB
+Workgroup memory and each pooled/dead key reused across the window. The real
+producer, grid guard, runtime source/status dependencies and retained replay are
+connected together. Existing four-product/XOR/positive-head score arithmetic and
+native indexer/causal spare/accepted-prefix behavior remain selected.
 
-581 distinct selected CPU cases/80 nonempty suites, strict core/off binary lint,
+583 distinct selected CPU cases/81 nonempty suites, strict core/off binary lint,
 changed formatting and whitespace pass. Stable-source frozen artifact SHA256
-`1254d3ba1cc8fa9107f8c99060dd07c5aa45ac3aab6d4fe892c8ce7f40cceb01`, independently source/ordinary/frozen/mode 0500/default-features
-verified. Only its early offline branch ran: 371 shaders/139 physical-pointer
+`83f99da057bc271ceb36970750c033e658467c7617a891c9ae6d11d74483ac7b`, independently source/ordinary/frozen/mode 0500/default-features
+verified. Only its pre-adapter offline branch ran: 371 variants/139 physical-pointer
 checks/five rounded-product modules/32 matrix configurations pass. These prove
 CPU/compiler acceptance, not physical numerical/model/recovery/throughput parity.
-Earlier original artifact/Q8/tokenizer/MTP/shared/routed/GDN receipts still apply.
+No new GPU heap owner/model copy/CPU content readback/API/configuration. Earlier
+original artifact/Q8/tokenizer/MTP/shared/routed/GDN/indexer receipts still apply.
 
-**Whole rewrite incomplete; speed gate closed.** New source substitution keeps
-at most three pre-window FP16 keys in Workgroup storage from the existing packed
-cache, versus upstream's separate persistent tail/snapshot. The spare is still
-in the existing final pooled slot. Native 256-thread order, math and original
-buffer dependencies are connected; Vulkan math and physical replay/state handling
-remain unverified. Continue QSA projection/norm/KV/selection/attention and source
-placement/data-transfer audit, then complete remaining whole-branch ownership/
-math/prompt/sampling/queue/pricing/substitution checks. Protected count-one/
-multirow/context/retained/hot-request and failure/all-resource recovery acceptance
-must precede speed. CLI compiled-public/one-request; private caller separately
-gated. Goal active CPU-only; authorized sudo refresh only. No GPU/model inference,
-service/install/release/frontend action. Vashti changes none. Canonical checkout
-and inherited untracked cache preserved.
+**Whole rewrite incomplete; speed gate closed.** Actual selected attention's
+warp score/max/exp/value-FMA/chunk merge structure was traced, without claiming
+physical/cache-placement parity. Next audit QSA active scratch clearing and
+host/device KV placement/resolution, plus prompt/selection/source substitutions.
+Do not port the unrelated native_qsa_score scalar routine into this path: actual
+Verifier calls qsa_select::qsa_block_scores, whose default MQ8 mode is now ported.
+Then finish the whole connected source/ownership/math/sampling/queue/pricing audit
+and protected count-one/multirow/context/retained/hot-request/failure/all-resource
+recovery acceptance before speed. CLI compiled-public/one-request; private caller
+separately gated. Goal active CPU-only; authorized sudo refresh only. No GPU/model
+inference/service/install/release/frontend action. Vashti changes none. Canonical
+checkout and inherited untracked cache preserved.
 
 **Previous coupled-sampler block (`8a4ee5b`):** actual full and CJK MTP paths
 mutate penalties once, build fixed 64 lists and merge with request K. Source
