@@ -7818,3 +7818,44 @@ contract, changed source `7a0489d38bdce98961901759cbe65d95a1db33ba`, tests, init
 remaining substitutions and required next action. All final evidence is under
 `/media/jmicko/faststore/kuno-development/strata-gdn-deferred-*20261017*`.
 No consumer changes are required. No handoff grants GPU/service/release access.
+
+
+## Active Kuno engine handoff — native QSA window indexer (2026-10-17)
+
+**Current CPU-only source:** `e5981a138a58a4209448d8091b1f576c3b1968b4`, branch
+`codex/strata-rust-port`. Read the [connected native QSA indexer receipt](kuno-strata-rewrite-completion.md#native-qsa-window-indexer-and-direct-pooled-scoring-2026-10-17).
+Actual decode now consumes the native 256-thread serial window indexer, completed
+pooled keys in the original persistent owner and direct causal scoring. The
+per-query retained-prefix copy, separate mean/norm/publication path and two unused
+pooling-buffer clears are no longer selected. Original tail/spare semantics and
+accepted-prefix cache/pooled suffix handling remain connected. Original ownership,
+full-request erase, source-root retention and conservative admission are preserved.
+No new GPU root, model copy, CPU content readback or public API/configuration.
+
+581 distinct selected CPU cases/80 nonempty suites, strict core/off binary lint,
+changed formatting and whitespace pass. Stable-source frozen artifact SHA256
+`1254d3ba1cc8fa9107f8c99060dd07c5aa45ac3aab6d4fe892c8ce7f40cceb01`, independently source/ordinary/frozen/mode 0500/default-features
+verified. Only its early offline branch ran: 371 shaders/139 physical-pointer
+checks/five rounded-product modules/32 matrix configurations pass. These prove
+CPU/compiler acceptance, not physical numerical/model/recovery/throughput parity.
+Earlier original artifact/Q8/tokenizer/MTP/shared/routed/GDN receipts still apply.
+
+**Whole rewrite incomplete; speed gate closed.** New source substitution keeps
+at most three pre-window FP16 keys in Workgroup storage from the existing packed
+cache, versus upstream's separate persistent tail/snapshot. The spare is still
+in the existing final pooled slot. Native 256-thread order, math and original
+buffer dependencies are connected; Vulkan math and physical replay/state handling
+remain unverified. Continue QSA projection/norm/KV/selection/attention and source
+placement/data-transfer audit, then complete remaining whole-branch ownership/
+math/prompt/sampling/queue/pricing/substitution checks. Protected count-one/
+multirow/context/retained/hot-request and failure/all-resource recovery acceptance
+must precede speed. CLI compiled-public/one-request; private caller separately
+gated. Goal active CPU-only; authorized sudo refresh only. No GPU/model inference,
+service/install/release/frontend action. Vashti changes none. Canonical checkout
+and inherited untracked cache preserved.
+
+Runtime change `e5981a138a58a4209448d8091b1f576c3b1968b4`; exact source/data-flow/bounds/substitution/CPU/compiler
+receipt is linked above. Evidence prefix:
+`/media/jmicko/faststore/kuno-development/strata-qsa-indexer-*20261017*`.
+The whole coupled branch remains selected. No source handoff grants GPU use,
+installation, release or another task message. Required Vashti changes:none.

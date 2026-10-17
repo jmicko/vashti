@@ -1,36 +1,36 @@
 # Strata Rust whole-model port experiment
 
-**Current CPU-only source:** `7a0489d38bdce98961901759cbe65d95a1db33ba`, branch
-`codex/strata-rust-port`. Read the [deferred GDN and history-only commit receipt](kuno-strata-rewrite-completion.md#deferred-verification-state-and-history-only-gdn-commit-2026-10-17).
-Actual multirow verified-prefix calls now retain recurrent state in registers and
-leave history untouched until acceptance, matching pinned Strata's ALL_OUT and
-noncommitting convolution. Ordinary full-row/prompt and count-one calls retain
-their actual candidate writes. Both full-row and verification recordings remain
-connected, with static state mode in their original branch identity and genuine
-replay completion. Accepted-prefix commit now runs native history-only 256-thread
-work followed by the previously ported 128-thread/four-column-tile recurrence.
-It no longer repeats convolution/QKV normalization during commit.
+**Current CPU-only source:** `e5981a138a58a4209448d8091b1f576c3b1968b4`, branch
+`codex/strata-rust-port`. Read the [connected native QSA indexer receipt](kuno-strata-rewrite-completion.md#native-qsa-window-indexer-and-direct-pooled-scoring-2026-10-17).
+Actual decode now consumes the native 256-thread serial window indexer, completed
+pooled keys in the original persistent owner and direct causal scoring. The
+per-query retained-prefix copy, separate mean/norm/publication path and two unused
+pooling-buffer clears are no longer selected. Original tail/spare semantics and
+accepted-prefix cache/pooled suffix handling remain connected. Original ownership,
+full-request erase, source-root retention and conservative admission are preserved.
+No new GPU root, model copy, CPU content readback or public API/configuration.
 
-576 distinct selected CPU cases/78 nonempty suites, strict core/off binary lint,
+581 distinct selected CPU cases/80 nonempty suites, strict core/off binary lint,
 changed formatting and whitespace pass. Stable-source frozen artifact SHA256
-`8bf3271d74778c8b927a97eae76db28cbe9eb1fe31d8343c1010d15777394556`, independently source/ordinary/frozen/mode 0500/default-features
-verified. Only its pre-adapter offline shader branch ran: 368 variants/139 physical
-pointer checks/four product modules/32 matrix configurations pass. These remain
-CPU/compiler results, not numerical/physical execution or throughput proof.
-No new GPU owner, model copy, request content or public API/configuration change.
+`1254d3ba1cc8fa9107f8c99060dd07c5aa45ac3aab6d4fe892c8ce7f40cceb01`, independently source/ordinary/frozen/mode 0500/default-features
+verified. Only its early offline branch ran: 371 shaders/139 physical-pointer
+checks/five rounded-product modules/32 matrix configurations pass. These prove
+CPU/compiler acceptance, not physical numerical/model/recovery/throughput parity.
+Earlier original artifact/Q8/tokenizer/MTP/shared/routed/GDN receipts still apply.
 
-**Whole rewrite incomplete; speed gate closed.** This closes the previously
-listed provisional GDN recurrent/history write and commit-recomputation source
-gaps. Existing paired OLD/NEXT, separate cached K/V, Vulkan math and finite-fault
-substitutions still require physical acceptance. Next trace QSA KV/indexer/pooled
-history and accepted-prefix handling, then finish the full connected source/
-math/prompt/sampling/state/placement/queue/pricing/substitution audit. Protected
-whole-model count-one/multirow/context/retained/hot-request and failure/all-resource
-recovery acceptance must precede speed. CLI compiled-public/one-request; private
-caller separately gated. Earlier original artifact/Q8/tokenizer/MTP/shared/routed
-receipts still apply. Goal active CPU-only; authorized sudo refresh only. No GPU/
-model inference/service/install/release/frontend action. Vashti changes none.
-Canonical checkout and inherited untracked cache preserved.
+**Whole rewrite incomplete; speed gate closed.** New source substitution keeps
+at most three pre-window FP16 keys in Workgroup storage from the existing packed
+cache, versus upstream's separate persistent tail/snapshot. The spare is still
+in the existing final pooled slot. Native 256-thread order, math and original
+buffer dependencies are connected; Vulkan math and physical replay/state handling
+remain unverified. Continue QSA projection/norm/KV/selection/attention and source
+placement/data-transfer audit, then complete remaining whole-branch ownership/
+math/prompt/sampling/queue/pricing/substitution checks. Protected count-one/
+multirow/context/retained/hot-request and failure/all-resource recovery acceptance
+must precede speed. CLI compiled-public/one-request; private caller separately
+gated. Goal active CPU-only; authorized sudo refresh only. No GPU/model inference,
+service/install/release/frontend action. Vashti changes none. Canonical checkout
+and inherited untracked cache preserved.
 
 ## Active direction — finish the complete Rust port before speed testing (2026-10-14)
 

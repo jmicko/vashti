@@ -6,37 +6,37 @@ checklist is a source-to-source audit, not a sequence of throughput experiments.
 Each row needs its connected consumer, real ownership/placement and state contract;
 adding an unused helper or optional switch does not complete a row.
 
-**Current CPU-only source:** `7a0489d38bdce98961901759cbe65d95a1db33ba`, branch
-`codex/strata-rust-port`. Read the [deferred GDN and history-only commit receipt](kuno-strata-rewrite-completion.md#deferred-verification-state-and-history-only-gdn-commit-2026-10-17).
-Actual multirow verified-prefix calls now retain recurrent state in registers and
-leave history untouched until acceptance, matching pinned Strata's ALL_OUT and
-noncommitting convolution. Ordinary full-row/prompt and count-one calls retain
-their actual candidate writes. Both full-row and verification recordings remain
-connected, with static state mode in their original branch identity and genuine
-replay completion. Accepted-prefix commit now runs native history-only 256-thread
-work followed by the previously ported 128-thread/four-column-tile recurrence.
-It no longer repeats convolution/QKV normalization during commit.
+**Current CPU-only source:** `e5981a138a58a4209448d8091b1f576c3b1968b4`, branch
+`codex/strata-rust-port`. Read the [connected native QSA indexer receipt](kuno-strata-rewrite-completion.md#native-qsa-window-indexer-and-direct-pooled-scoring-2026-10-17).
+Actual decode now consumes the native 256-thread serial window indexer, completed
+pooled keys in the original persistent owner and direct causal scoring. The
+per-query retained-prefix copy, separate mean/norm/publication path and two unused
+pooling-buffer clears are no longer selected. Original tail/spare semantics and
+accepted-prefix cache/pooled suffix handling remain connected. Original ownership,
+full-request erase, source-root retention and conservative admission are preserved.
+No new GPU root, model copy, CPU content readback or public API/configuration.
 
-576 distinct selected CPU cases/78 nonempty suites, strict core/off binary lint,
+581 distinct selected CPU cases/80 nonempty suites, strict core/off binary lint,
 changed formatting and whitespace pass. Stable-source frozen artifact SHA256
-`8bf3271d74778c8b927a97eae76db28cbe9eb1fe31d8343c1010d15777394556`, independently source/ordinary/frozen/mode 0500/default-features
-verified. Only its pre-adapter offline shader branch ran: 368 variants/139 physical
-pointer checks/four product modules/32 matrix configurations pass. These remain
-CPU/compiler results, not numerical/physical execution or throughput proof.
-No new GPU owner, model copy, request content or public API/configuration change.
+`1254d3ba1cc8fa9107f8c99060dd07c5aa45ac3aab6d4fe892c8ce7f40cceb01`, independently source/ordinary/frozen/mode 0500/default-features
+verified. Only its early offline branch ran: 371 shaders/139 physical-pointer
+checks/five rounded-product modules/32 matrix configurations pass. These prove
+CPU/compiler acceptance, not physical numerical/model/recovery/throughput parity.
+Earlier original artifact/Q8/tokenizer/MTP/shared/routed/GDN receipts still apply.
 
-**Whole rewrite incomplete; speed gate closed.** This closes the previously
-listed provisional GDN recurrent/history write and commit-recomputation source
-gaps. Existing paired OLD/NEXT, separate cached K/V, Vulkan math and finite-fault
-substitutions still require physical acceptance. Next trace QSA KV/indexer/pooled
-history and accepted-prefix handling, then finish the full connected source/
-math/prompt/sampling/state/placement/queue/pricing/substitution audit. Protected
-whole-model count-one/multirow/context/retained/hot-request and failure/all-resource
-recovery acceptance must precede speed. CLI compiled-public/one-request; private
-caller separately gated. Earlier original artifact/Q8/tokenizer/MTP/shared/routed
-receipts still apply. Goal active CPU-only; authorized sudo refresh only. No GPU/
-model inference/service/install/release/frontend action. Vashti changes none.
-Canonical checkout and inherited untracked cache preserved.
+**Whole rewrite incomplete; speed gate closed.** New source substitution keeps
+at most three pre-window FP16 keys in Workgroup storage from the existing packed
+cache, versus upstream's separate persistent tail/snapshot. The spare is still
+in the existing final pooled slot. Native 256-thread order, math and original
+buffer dependencies are connected; Vulkan math and physical replay/state handling
+remain unverified. Continue QSA projection/norm/KV/selection/attention and source
+placement/data-transfer audit, then complete remaining whole-branch ownership/
+math/prompt/sampling/queue/pricing/substitution checks. Protected count-one/
+multirow/context/retained/hot-request and failure/all-resource recovery acceptance
+must precede speed. CLI compiled-public/one-request; private caller separately
+gated. Goal active CPU-only; authorized sudo refresh only. No GPU/model inference,
+service/install/release/frontend action. Vashti changes none. Canonical checkout
+and inherited untracked cache preserved.
 
 
 ## Reference and execution scope
@@ -90,7 +90,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | Native expert math and grouped rows | `sycl/src/kernels/cuda/iq_kernels.dp.cpp::row_entries`, `native_gu_kernel`, `native_down_kernel` | Packed integer math/BDA roots exist. Separate GU roles, 4/2/1 chunks, activation, intermediate storage and downstream consumers are now selected together in the Intel core; all 158 WGSL/SPIR-V variants validate, including 105 physical-pointer checks; numerical/model execution acceptance remains pending. The global core now uses one per-role launch containing pinned row_entries4/2/1 loops, scalar IQ4_XS, native signed integer finish and XOR reduction; numerical/model execution acceptance remains pending. Historical fixed-chunk kernels are retained separately. Source1a034311 connects native subgroup32 Q8_1 GU preparation and fused direct SwiGLU/Q8 DOWN over the same actual private PART/status/planes. Original four GU/two DOWN formats cover all144 installed routed tensors. Actual rounded products are pinned by the shared native NoContraction postpass. See latest source/frame-grouping substitution receipt; device numerics/whole-model acceptance remain open. |
 | GR write/read/norm/down/up/injection | `sycl/src/kernels/cuda/fused_gr.dp.cpp::fused_gr_read_multi`; `verify.cpp::gr_read_group` | Native pending-write norm, sliced BF16 down/injection, fixed slice reduction and up/mix/commit are now connected and unconditionally selected in the core, including explicit PLE/final boundary writes. Resident original weights and the enlarged private scratch owner are charged together. Structural acceptance passes; numerical/model execution acceptance and final substitution audit remain pending. Source `37dced9` connects default full-prompt F1 row scales, packed BF16 norm/SiLU images, direct original projection consumers and residual-based mix recomputation together; see the packed-GR receipt. Sources `40fe97e` and the latest sole-residual receipt connect mixed images and prompt GR/PLE in-place storage, including actual MTP teacher scratch. Final substitution/numerical/device acceptance remains open. |
 | GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp`, `prefill/kernels.dp.cpp` | Core connects native BF16 alpha/beta, controls, recurrence/norm and accepted-prefix replay. Prompt scope selects contiguous H, causal convolution/history/L2, CB32 recurrence and directly consumed FP16 output. Source 9a7a23b connects prompt-capacity whole-chunk math without per-element status/replay owners, carved AB staging, and native row/value-head recurrent state shared by prompt/decode/repair. The large chunk caller/acceptance is connected in the latest controller receipt; physical execution and final numerical/queue audit remain open. Split verifier mode is an optional upstream path, not selected by the measured server. Source 39c8d9e1 connects default native 128-thread/four-column-tile accepted-prefix state commit over actual retained roots, replacing512-thread state-only output replay. See latest receipt; Source 7a0489d3 now connects authenticated verification-only deferral for recurrent/history writes, static replay mode and native history-only commit; see the latest receipt. Physical numerical/context/failure acceptance remains open. |
-| QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects INT8 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. The measured server explicitly selects INT8 for target and MTP; source2a3d1ad ports both together and the combined CPU shader/layout checks now pass. Numerical/GPU acceptance is pending. Earlier generic-default FP16 scope claims below are superseded. Numerical/state acceptance remains required. |
+| QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects INT8 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. The measured server explicitly selects INT8 for target and MTP; source2a3d1ad ports both together and the combined CPU shader/layout checks now pass. Numerical/GPU acceptance is pending. Earlier generic-default FP16 scope claims below are superseded. Numerical/state acceptance remains required. Source e5981a13 connects native 256-thread serial-window indexer and direct retained pooled scoring; separate per-query copying/mean/norm/publication and unused pooling clears are removed from decode. Original suffix acceptance and full ownership/erase remain. See latest source/substitution receipt; physical numerics and full QSA/placement audit remain open. |
 | PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Core connects native BF16 MAX8 projections, normalization/gate/conv/history, deduplicated positional reads and accepted-prefix ownership. Prompt calls now consume a bounded, joined double-buffered source prefetch. The latest controller receipt connects native large chunk geometry, joined uploads, retained tail and exact history acceptance. Sources `595393e` and `57147a8` make actual decode and prompt history GPU-authoritative in existing OLD/NEXT roots, with checked CPU token-only publication, GPU accepted-prefix history and independent PLE capture roles. Default prompt/decode float readbacks and prompt diagnostic tail copies are removed; explicit diagnostics and the legacy CPU oracle remain. Source `131d29c` selects the native scoped accepted-prefix consumer before state/cursor publication; the diagnostic checkpoint path keeps the older schedule. Pending event/graph fidelity and numerical/device acceptance remain open. Prompt loans are disabled in the measured32768-context configuration and are not a completion prerequisite. Never persist request n-grams. |
 | Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. The bounded prompt path now uses logical-ID expert order, checked native transfer nodes, an eight-slot raw ring and two paired dequantization slots. The latest owned-consumer receipt connects full2048-row owners, non-overlapping raw/grouped route packets, causal math/state scopes, the unbatched final prompt input uses normal count1 decode for the first head, and full device MTP teaching covers the preceding prefix (up to8192 matrix rows). Independent transfer/compute queues and real release boundaries are connected. The measured server uses4096 prompt rows and32768 context. Source `bcc30dd` connects4096-row prompt owners/ABI; source `8d301b1` subsequently connects32768 runtime context; full-prefix/device acceptance is open. Source `12a60bf` connects native phase overlays, actual2080MiB admitted roots and256-query score/selection reuse; see the latest prompt-overlay receipt. Packed/in-place prompt scratch is connected in the latest receipts. Source allocation granularity and shared inventory are connected in the latest exact-page receipt. Physical/runtime/HOST pricing and lifetimes still require final review. Its no-borrow selection and nonresident fraction select the existing eight-slot/two-dequant-ring path; alternative loans/ring sizes are not prerequisites. Physical whole-model acceptance remains open. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
 | Prompt dense/expert matrix backend | Intel oneMKL rounded BF16/FP16 GEMMs | Connected Rust cooperative8x16x16/F32 kernels now consume the actual rounded dense and grouped GU/DOWN images, with enabled device features, SPIR-V native registration and required16 subgroup in both pipeline paths. See the cooperative-matrix receipt; physical numerical/model acceptance remains open. |
@@ -10218,3 +10218,129 @@ Whole rewrite incomplete, goal active CPU-only. Next QSA source/state audit and
 remaining full-branch math/prompt/sampling/placement/queue/pricing/substitution
 checks, then protected whole-model correctness and all-resource recovery before
 speed. Sudo refresh only was authorized; it is not permission to use the GPUs.
+
+
+## Native QSA window indexer and direct pooled scoring (2026-10-17)
+
+Runtime source `e5981a138a58a4209448d8091b1f576c3b1968b4`, pinned MIT Intel upstream
+`fb58e0dbc8399662c0e47c76578c6e878b14f6cf`. This is a connected source rewrite,
+not a speed experiment. Full rewrite remains incomplete; speed gate stays closed.
+
+### Source finding and actual selected path
+
+`sycl/src/core/verify.cpp:1087+` calls
+`native_qsa_indexer_append_steps` for the selected window. Actual
+`sycl/src/kernels/cuda/native_qsa_indexer.dp.cpp:376..465` dispatches ONE 256-thread
+workgroup and its `append<false>` processes all rows in order. The separate C-2
+`append_batch`/`append_blocks` is another producer; do not substitute it for this
+selected decoder. `append:53..179` rounds incoming keys through F16, updates the
+three-row tail, and only for position 0 or a completed four-row block computes
+mean, two-level subgroup32 RMS/gamma and 64-dimension rotation. It retains pooled
+keys and the fixed first-cell dead/spare key. QSA scores consume retained pooled
+values with causal completed-block bounds, using the spare for a partial block.
+
+Prior Rust decode copied every retained pooled prefix into per-query POOL,
+computed new means in a 64-thread kernel, dispatched separate norm/RoPE for the
+new blocks and republished those keys. The new connected path is:
+
+1. Actual `resident_qsa::batch::enqueue_native_qsa_operation(Operation::Pool)`
+   calls `Kernel::Indexer` with one 256-thread workgroup over the real CACHE,
+   CAND, original index norm gamma, persistent POOLED and original fault owners.
+   `strata_qsa_indexer.wgsl` stages at most three required pre-window RAW/F16
+   index keys, consumes each original packed candidate row, updates its local
+   tail and writes only newly completed pooled keys (plus first-cell spare).
+   Each completed block keeps chronological F32 sums, native SCALE FMA0.25,
+   XOR16/8/4/2/1 warp sums, eight-part second warp reduction, shared normalized
+   values and original block-position rotation. Actual ordinary registration
+   and offline validation apply the existing product-rounding postpass here;
+   explicit FMA remains unchanged. Actual native WGSL registration already
+   requires subgroup32 (`strata_graph.rs::register_wgsl_module`); wrong subgroup
+   additionally faults rather than inventing readiness.
+2. `Kernel::IndexerFlags` runs after that actual producer and mirrors its genuine
+   global fault into the original scoped preparation/normalization flags for
+   each query's completed blocks. Original queue dependency analysis sees the
+   real POOLED/fault writes and flag reads; all original status/fault joins and
+   family acceptance remain required. The compatibility flags alone are not
+   completion or numerical authority; later original pack/other status folds
+   still invalidate a window if their source is bad.
+3. Decode's PoolNorm is now a no-op because the actual producer already computed
+   the native normalized/rotated keys. `Kernel::DirectScore` consumes the actual
+   persistent POOLED root, never per-query copies. It uses only blocks completed
+   at that query's own position and the separate retained spare for its partial
+   tail, even when a later row has already completed that same block. Original
+   dot/reduction/top-k/attention paths and source candidate/cache ownership stay.
+4. Native decode skips MEAN/POOL clears in both ordinary and grouped-clear
+   branches. Those two original full owners remain in layout/admission/retention/
+   rebind/full-request erase; they are not refunded, aliased to untracked memory
+   or promoted to public state. Large prompt and feature-off paths keep their
+   original producers and clearing. At 32K/MAX8 the two logical views are 32MiB
+   each; this removes their per-window traffic, not their conservative admission.
+5. Existing accepted-prefix CLEAR/FOLD keeps accepted cache/POS and completed
+   pooled blocks, clears rejected rows/newly completed suffix blocks, and leaves
+   the immutable spare intact. A continuation reconstructs its required at-most
+   three raw keys from that accepted cache. All-accept remains the original
+   no-suffix-clear case. No synthetic tail state or alternate expert/router IDs.
+
+Original INT8 KV packing was also compared with actual
+`sycl/src/kernels/cuda/kv_q8.dp.cpp:36..93`: original 64-value groups, two warp maxima,
+F16 stored scale, codes against THAT rounded scale, nearest-even conversion and
+[-127,127] clamp are retained. Rust combines two independent 64-value groups in
+one 128-thread owner block and interleaves codes/scales in its existing packed
+cache ABI. This is a reviewed launch/storage substitution, not a bit-parity or
+physical-placement receipt. No weight/model format or MTP GQA path is changed.
+
+### Reviewed storage/math substitutions and remaining scope
+
+Source uses a separate persistent 3x128 tail plus a prewindow tail snapshot and
+reappends accepted original keys after restoring it. Rust's existing packed cache
+retains the exact FP16-rounded RAW index keys. The new producer reads only the
+at-most three necessary prefix cells from that original GPU owner into Workgroup
+storage, versus maintaining a duplicate persistent tail. The original accepted
+cache and pooled suffix transactions therefore remain the authoritative rollback
+path. Explicit GPU input/output dependencies are preserved. This adds no HOST
+content mirror, private GPU root, full-cache copy or transfer.
+
+Source places the spare after the last complete block; Rust already retains it
+in the fixed final pooled slot and the scorer explicitly chooses that slot for
+incomplete blocks. The new producer preserves that reviewed ABI substitution.
+Logical block RoPE positions remain 4*b in the selected linear-position 32K model;
+nonidentity RoPE/table modes are not claimed. Vulkan pow/sin/cos/inverseSqrt and
+fused rotation still require device numeric acceptance. This block does not
+close QSA projection/norm/selection/attention, original host/device KV placement,
+physical replay/rollback or whole-branch acceptance by implication.
+
+### CPU-only evidence
+
+Evidence under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-qsa-indexer-final-test-build-20261017.log` and
+  `strata-qsa-indexer-full-cpu-20261017.log`: locked selected release build,
+  581 distinct selected cases/80 nonempty suites pass. Previous 576 cases remain;
+  five added executable cases are the two existing QSA packing/attention oracles
+  and three new native-indexer cases. Not the entire repository test suite.
+- New tests cover every small prefix/window length 1..8 across all block offsets,
+  every accepted prefix followed by a different continuation, exact RAW F16
+  chronological means, causal completed/spare choice and rejected pooled suffix.
+  Two-level subgroup F32 norm/rotation is compared with independent F64 math,
+  explicitly holding the public F32 angle coefficients fixed (not claiming GPU
+  transcendentals parity). Original packed owner/tail addresses are bounded at
+  both early positions and the 32K boundary. These are CPU mirrors/oracles, not
+  physical execution of WGSL or a GPU state-recovery receipt.
+- `strata-qsa-indexer-{core,off}-clippy-20261017.log`: strict locked release binary
+  lint passes. Changed-source rustfmt and git whitespace checks pass.
+- `strata-qsa-indexer-ordinary-20261017.out` and its ordinary build directory:
+  stable committed source, exact default Intel features, independently agreeing
+  HEAD/source-file/JSON/ordinary/frozen hash, mode 0500. SHA256 is in the header.
+- `strata-qsa-indexer-shaders-20261017.log`: only that frozen executable's
+  pre-adapter `--validate-port-shaders` entry ran. 371 variants/139 physical-pointer
+  modules/five rounded-product modules/32 matrix configurations pass with pinned
+  SPIRV-Tools fbe4f3a. Three new QSA variants account for 368->371; original format
+  coverage is not dropped. The same HAL Workgroup normalization/product postpass
+  as actual runtime registration is used. No GPU/model inference or timing trial.
+
+No API/configuration/consumer/frontend changes; required Vashti changes:none.
+No service/install/release action or new persistence path. Canonical checkout
+and inherited untracked cache are preserved. Goal remains active CPU-only;
+sudo refresh only was authorized. Finish the remaining QSA/full-branch source/
+placement/substitution audit, then protected numerical/context/retained/hot-request
+and failure/all-resource recovery acceptance before any speed test.
