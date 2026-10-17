@@ -1,32 +1,33 @@
 # Strata Rust whole-model port experiment
 
-**Current CPU-only source:** `1a034311407a39d06a714090f82e506b5ef5174a`, branch
-`codex/strata-rust-port`. Read the [native routed Q8/fused producer receipt](kuno-strata-rewrite-completion.md#native-routed-q8-and-fused-swiglu-producers-2026-10-17).
-Actual global routed decode now uses subgroup32 Q8_1 preparation and one fused
-SwiGLU/Q8 DOWN producer over the authentic PART/status/planes. The older serial
-quantizer and stabilized separate activation are no longer selected there.
-Native product rounding is enforced by a shared SPIR-V NoContraction postpass
-on routed, shared and MTP fused producers, preserving explicit FMA and interfaces.
-Frame grouping within padded Rust owners is a reviewed backend substitution;
-identical physical launch behavior and device numerics remain unverified.
+**Current CPU-only source:** `39c8d9e1b37700c0adeab0556e2d5c2123dbaffd`, branch
+`codex/strata-rust-port`. Read the [native tiled GDN commit receipt](kuno-strata-rewrite-completion.md#native-tiled-accepted-prefix-gdn-commit-2026-10-17).
+Actual accepted-prefix GDN recurrence now uses pinned Strata's default state-only
+commit kernel: four 32-column tiles per head, 128 threads per block, native four-row-group
+FMA order. It no longer dispatches the 512-thread output kernel in state-only mode.
+Actual retained key/value/control/original-state roots and paired candidate feed
+the same authenticated accepted-count, fault, family-acceptance and role protocol.
+No new GPU root/model copy, admission or public API change.
 
-568 selected CPU cases/77 suites and strict core/off binary lint pass. Normal
-stable-source frozen artifact SHA256
-`d3473d8d509d1ed8e92f98192a7a258160a0008c30f8b0bd01b4c0e2d999a25f`, independently verified source/ordinary/frozen hash,
-mode0500 and default Intel features. Only its pre-adapter offline entry ran:
+572 distinct selected CPU cases/78 nonempty suites and strict core/off binary
+lint pass. Normal stable-source frozen artifact SHA256
+`3a18ce74c197b0a78c00d2e7e70edefaea5cd1926a07847b87b82da32585641c`, independently verified source/ordinary/frozen hash,
+mode 0500 and default Intel features. Only the pre-adapter offline entry ran:
 365 shaders/139 physical-pointer checks/4 rounded-product modules/32 matrix
-configurations pass. The installed target's144 routed role tensors independently
-match all four GU and both DOWN formats. No new private GPU buffer/model copy.
+configurations pass. These are CPU/compiler results, not device execution proof.
+Earlier routed Q8/product, original artifact/nine packed weight matrices/tokenizer
+and MTP/shared receipts still apply.
 
-**Whole rewrite incomplete; speed gate closed.** Finish the complete connected
-source/math/prompt/sampling/state/placement/queue/pricing/substitution audit,
-then protected count1/multirow numerical/context/retained/hot-request and failure/
-all-resource recovery acceptance. Earlier original artifact/nine runtime Q8 weight
-matrix/tokenizer/MTP fork receipts remain applicable; no new GPU/model inference
-or performance result. CLI stays compiled-public/one-request; private caller
-independently gated. Goal active CPU-only; authorized sudo refresh only. No
-service/install/release/API/configuration/frontend change. Vashti changes none.
-Canonical/inherited files preserved.
+**Whole rewrite incomplete; speed gate closed.** Next resolve the multirow
+verification-only provisional GDN state store versus ordinary prompt/full-row
+candidate publication using actual caller/capture authority; do not skip writes
+based on count alone. Then finish the complete connected source/math/prompt/
+sampling/state/placement/queue/pricing/substitution audit and protected count 1/
+multirow numerical/context/retained/hot-request and failure/all-resource recovery
+acceptance before speed. CLI compiled-public/one-request; private caller separately
+gated. Goal active CPU-only, authorized sudo refresh only. No GPU/model inference,
+service/install/release/API/configuration/frontend action. Vashti changes none.
+Canonical checkout and inherited untracked cache preserved.
 
 ## Active direction — finish the complete Rust port before speed testing (2026-10-14)
 

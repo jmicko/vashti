@@ -7738,3 +7738,42 @@ hot-request and failure/all-resource recovery acceptance before speed. Rewrite
 incomplete, goal active CPU-only. CLI compiled-public/one-request; private caller
 independently gated. Sudo refresh only; no service/install/release/API/config/UI
 change. Required Vashti changes none. Source readiness does not prove GPU output.
+
+
+## Active Kuno engine handoff — native tiled GDN commit (2026-10-17)
+
+**Current CPU-only source:** `39c8d9e1b37700c0adeab0556e2d5c2123dbaffd`, branch
+`codex/strata-rust-port`. Read the [native tiled GDN commit receipt](kuno-strata-rewrite-completion.md#native-tiled-accepted-prefix-gdn-commit-2026-10-17).
+Actual accepted-prefix GDN recurrence now uses pinned Strata's default state-only
+commit kernel: four 32-column tiles per head, 128 threads per block, native four-row-group
+FMA order. It no longer dispatches the 512-thread output kernel in state-only mode.
+Actual retained key/value/control/original-state roots and paired candidate feed
+the same authenticated accepted-count, fault, family-acceptance and role protocol.
+No new GPU root/model copy, admission or public API change.
+
+572 distinct selected CPU cases/78 nonempty suites and strict core/off binary
+lint pass. Normal stable-source frozen artifact SHA256
+`3a18ce74c197b0a78c00d2e7e70edefaea5cd1926a07847b87b82da32585641c`, independently verified source/ordinary/frozen hash,
+mode 0500 and default Intel features. Only the pre-adapter offline entry ran:
+365 shaders/139 physical-pointer checks/4 rounded-product modules/32 matrix
+configurations pass. These are CPU/compiler results, not device execution proof.
+Earlier routed Q8/product, original artifact/nine packed weight matrices/tokenizer
+and MTP/shared receipts still apply.
+
+**Whole rewrite incomplete; speed gate closed.** Next resolve the multirow
+verification-only provisional GDN state store versus ordinary prompt/full-row
+candidate publication using actual caller/capture authority; do not skip writes
+based on count alone. Then finish the complete connected source/math/prompt/
+sampling/state/placement/queue/pricing/substitution audit and protected count 1/
+multirow numerical/context/retained/hot-request and failure/all-resource recovery
+acceptance before speed. CLI compiled-public/one-request; private caller separately
+gated. Goal active CPU-only, authorized sudo refresh only. No GPU/model inference,
+service/install/release/API/configuration/frontend action. Vashti changes none.
+Canonical checkout and inherited untracked cache preserved.
+
+Read the detailed receipt linked above for exact pinned source, original
+root/caller/capture/accepted-count dependencies, current substitution, next
+concrete gap and CPU-only test/build/compiler evidence. Runtime change is
+`39c8d9e1b37700c0adeab0556e2d5c2123dbaffd`; prior full coupled branch remains selected. All evidence files are
+under `/media/jmicko/faststore/kuno-development/strata-gdn-commit-*20261017*`.
+A handoff does not authorize GPU use, installation, release or another task.
