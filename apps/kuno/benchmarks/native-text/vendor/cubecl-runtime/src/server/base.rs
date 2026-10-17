@@ -74,6 +74,7 @@ impl PublicTargetSubmissionBacklog {
 pub struct NativeStrataBranch {
     model_owner: u64,
     coupled_sampling: bool,
+    deferred_gdn_state: bool,
     family: u8,
     rows: u8,
     proposals: u8,
@@ -118,6 +119,19 @@ impl NativeStrataBranch {
             _ => Err("native branch phase shape"),
         }
     }
+    /// Static target math inventory, never request data or commit authority.
+    /// Count1 always stores its self-commit candidate.
+    pub fn with_deferred_gdn_state(mut self, deferred: bool) -> Result<Self, &'static str> {
+        if self.family != 1 || deferred && self.rows == 1 {
+            return Err("native target state mode");
+        }
+        self.deferred_gdn_state = deferred;
+        Ok(self)
+    }
+    /// The target's immutable state-write mode; other branch families have none.
+    pub fn target_defers_gdn_state(self) -> Option<bool> {
+        (self.family == 1).then_some(self.deferred_gdn_state)
+    }
     /// Static target geometry only; no request controls or access authority.
     pub fn target_geometry(self) -> Option<(u8, u16, u8)> {
         (self.family == 1).then_some((self.rows, self.context_capacity, self.state_role))
@@ -145,6 +159,7 @@ impl NativeStrataBranch {
         Ok(Self {
             model_owner: 0,
             coupled_sampling: false,
+            deferred_gdn_state: false,
             family: 1,
             rows,
             proposals: 0,
@@ -186,6 +201,7 @@ impl NativeStrataBranch {
         Ok(Self {
             model_owner: 0,
             coupled_sampling: false,
+            deferred_gdn_state: false,
             family: 2,
             rows,
             proposals,
@@ -209,6 +225,7 @@ impl NativeStrataBranch {
         Ok(Self {
             model_owner: 0,
             coupled_sampling: false,
+            deferred_gdn_state: false,
             family: 3,
             rows: 1,
             proposals: step,

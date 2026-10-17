@@ -25,7 +25,10 @@ pub(crate) enum Kernel {
     Ab,
     AbJoin,
     Conv,
+    ConvVerify,
+    ConvCommit,
     Step,
+    Verify,
     Replay,
     CommitFault,
 }
@@ -33,7 +36,8 @@ impl Kernel {
     fn lanes(self) -> u32 {
         match self {
             Self::Ab | Self::AbJoin | Self::CommitFault => 64,
-            Self::Conv | Self::Replay => 128,
+            Self::Conv | Self::ConvVerify | Self::Replay => 128,
+            Self::ConvCommit => 256,
             _ => 512,
         }
     }
@@ -51,11 +55,24 @@ impl Kernel {
         source.push_str(section(match self {
             Self::Ab => "AB",
             Self::AbJoin => "AB_JOIN",
-            Self::Conv => "CONV",
-            Self::Step => "STEP",
+            Self::Conv | Self::ConvVerify => "CONV",
+            Self::ConvCommit => "HISTORY",
+            Self::Step | Self::Verify => "STEP",
             Self::Replay => "REPLAY",
             Self::CommitFault => "COMMIT_FAULT",
         }));
+        if self == Self::Verify {
+            source = source.replace(
+                "const STORE_STATE:bool=true;",
+                "const STORE_STATE:bool=false;",
+            );
+        }
+        if self == Self::ConvVerify {
+            source = source.replace(
+                "const STORE_HISTORY:bool=true;",
+                "const STORE_HISTORY:bool=false;",
+            );
+        }
         source
     }
 }
@@ -72,7 +89,10 @@ impl KernelMetadata for Kernel {
             Self::Ab => "StrataGdnNativeAbMulti",
             Self::AbJoin => "StrataGdnNativeAbJoin",
             Self::Conv => "StrataGdnConvL2",
+            Self::ConvVerify => "StrataGdnVerifyConvL2",
+            Self::ConvCommit => "StrataGdnAcceptedHistory",
             Self::Step => "StrataGdnStepNorm",
+            Self::Verify => "StrataGdnVerifyOutputs",
             Self::Replay => "StrataGdnAcceptedPrefixReplay",
             Self::CommitFault => "StrataGdnCommitFault",
         }
@@ -122,7 +142,10 @@ pub(crate) fn launch_commit(
     handles: Vec<Handle>,
     info: [u32; 8],
 ) -> Result<()> {
-    if !matches!(kernel, Kernel::Conv | Kernel::Replay | Kernel::CommitFault) {
+    if !matches!(
+        kernel,
+        Kernel::ConvCommit | Kernel::Replay | Kernel::CommitFault
+    ) {
         return Err(Error::InvalidBufferLength);
     }
     launch_impl(arena, kernel, grid, handles, info, true)
@@ -143,6 +166,9 @@ fn launch_impl(
         || !(1..=8).contains(&info[0])
         || !(1..=48).contains(&info[4])
         || kernel == Kernel::Ab
+        || kernel == Kernel::Verify && info[0] < 2
+        || kernel == Kernel::ConvVerify && info[0] < 2
+        || kernel == Kernel::ConvCommit && grid != [(info[2] as usize).div_ceil(256), 1, 1]
         || kernel == Kernel::Replay && grid != replay_grid(info[4] as usize)?
         || kernel != Kernel::AbJoin
             && (!(1..=16).contains(&info[3])
@@ -194,7 +220,10 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
         Kernel::Ab,
         Kernel::AbJoin,
         Kernel::Conv,
+        Kernel::ConvVerify,
+        Kernel::ConvCommit,
         Kernel::Step,
+        Kernel::Verify,
         Kernel::Replay,
         Kernel::CommitFault,
     ]
@@ -300,6 +329,50 @@ pub(crate) fn ab(request: Ab<'_>, weights: [Handle; 2]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn history_only_commit_matches_streamed_raw_history_for_every_prefix() {
+        // Distinct raw versus activated values catch accidental use of hbuf.
+        for channels in [128usize, 256, 640, 8192] {
+            let old = (0..channels * 3)
+                .map(|i| i as f32 + 1000.)
+                .collect::<Vec<_>>();
+            let raw = (0..8 * channels)
+                .map(|i| -(i as f32) - 0.5)
+                .collect::<Vec<_>>();
+            for accepted in 1..=8 {
+                let mut streamed = old.clone();
+                for t in 0..accepted {
+                    for c in 0..channels {
+                        streamed[c * 3] = streamed[c * 3 + 1];
+                        streamed[c * 3 + 1] = streamed[c * 3 + 2];
+                        streamed[c * 3 + 2] = raw[t * channels + c];
+                    }
+                }
+                let mut candidate = vec![f32::NAN; old.len()];
+                let mut visits = vec![0u8; channels];
+                for group in 0..channels.div_ceil(256) {
+                    for lane in 0..256 {
+                        let c = group * 256 + lane;
+                        if c >= channels {
+                            continue;
+                        }
+                        visits[c] += 1;
+                        for j in 0..3 {
+                            let at = accepted + j;
+                            candidate[c * 3 + j] = if at < 3 {
+                                old[c * 3 + at]
+                            } else {
+                                raw[(at - 3) * channels + c]
+                            };
+                        }
+                    }
+                }
+                assert_eq!(candidate, streamed);
+                assert!(visits.iter().all(|&n| n == 1));
+            }
+        }
+    }
+
     #[test]
     fn default_commit_tiles_cover_every_native_state_cell_once() {
         assert!(super::replay_grid(0).is_err());

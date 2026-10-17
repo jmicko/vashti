@@ -222,6 +222,7 @@ impl GdnBatchWorkspace {
             .ok_or_else(|| fault("native prefix cache"))?;
         if !crate::strata_intel_core::enabled()
             || !(1..=stamp.count).contains(&accepted)
+            || receipt.metadata.defer_state != (stamp.count > 1)
             || cache.start != stamp.start
             || cache.count != stamp.count
             || cache.chunk != stamp.chunk
@@ -312,16 +313,12 @@ fn enqueue_prefix(
         // Restore actual RAW history and the native recurrence from the
         // separately retained pre-window owners. No output graph runs.
         launch(
-            Kernel::Conv,
-            [p.channels / 128, commit_span.unwrap_or(accepted), 1],
+            Kernel::ConvCommit,
+            [p.channels.div_ceil(256), 1, 1],
             vec![
                 h(cache.ids[0])?,
-                public.convolution.clone(),
                 h(s.buffers.raw_conv[old_role])?,
                 h(s.buffers.raw_conv[1 - old_role])?,
-                h(ids[Q])?,
-                h(ids[K])?,
-                h(ids[V])?,
                 h(ids[STATUS])?,
                 h(ids[STATUS + 1])?,
             ],

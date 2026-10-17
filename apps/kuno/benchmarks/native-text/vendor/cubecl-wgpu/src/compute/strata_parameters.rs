@@ -638,6 +638,64 @@ impl Parameters {
 mod tests {
     use super::*;
     #[test]
+    fn target_state_modes_never_replay_each_others_actual_recording() {
+        for rows in 2..=8 {
+            for role in 0..4 {
+                let full = NativeStrataBranch::target_window_with_state(rows, 4096, role).unwrap();
+                let deferred = full.with_deferred_gdn_state(true).unwrap();
+                assert_eq!(full.target_geometry(), deferred.target_geometry());
+                assert_eq!(full.target_defers_gdn_state(), Some(false));
+                assert_eq!(deferred.target_defers_gdn_state(), Some(true));
+                for (key, other) in [(full, deferred), (deferred, full)] {
+                    let mut p = Parameters::default();
+                    p.begin_invocation(
+                        key,
+                        5,
+                        Some(NativeStrataInvocation::target(63, 7).unwrap()),
+                    )
+                    .unwrap();
+                    let data = [rows as u32, 63, 7]
+                        .into_iter()
+                        .flat_map(u32::to_le_bytes)
+                        .collect::<Vec<_>>();
+                    p.record_info(
+                        &data,
+                        &[NativeStrataParameter {
+                            word: 1,
+                            value: NativeStrataValue::Position { offset: 0 },
+                        }],
+                    )
+                    .unwrap();
+                    p.use_page(17).unwrap();
+                    p.bind_current(17, 0).unwrap();
+                    let recording = p.recording().unwrap().unwrap();
+                    p.submitted().unwrap();
+                    p.end(key, 5).unwrap();
+                    assert_eq!(p.replay_key(key, 5).unwrap(), Some(recording));
+                    assert!(p.replay_key(other, 5).unwrap().is_none());
+                }
+            }
+        }
+        assert!(
+            NativeStrataBranch::target_window(1)
+                .unwrap()
+                .with_deferred_gdn_state(true)
+                .is_err()
+        );
+        assert!(
+            NativeStrataBranch::target_commit(2, 4096, 0)
+                .unwrap()
+                .with_deferred_gdn_state(true)
+                .is_err()
+        );
+        assert!(
+            NativeStrataBranch::mtp_round(2, 2)
+                .unwrap()
+                .with_deferred_gdn_state(true)
+                .is_err()
+        );
+    }
+    #[test]
     fn retained_commit_reuses_original_pages_for_every_accepted_prefix_and_position() {
         let schema = [
             NativeStrataParameter {
@@ -740,7 +798,12 @@ mod tests {
         let mut keys = Vec::new();
         for rows in 1..=8 {
             for role in 0..4 {
-                keys.push(NativeStrataBranch::target_window_with_state(rows, 4096, role).unwrap());
+                keys.push(
+                    NativeStrataBranch::target_window_with_state(rows, 4096, role)
+                        .unwrap()
+                        .with_deferred_gdn_state(rows > 1)
+                        .unwrap(),
+                );
                 if rows > 1 {
                     keys.push(
                         NativeStrataBranch::target_commit(rows, 4096, role)

@@ -5,7 +5,7 @@ use cubecl_runtime::server::{NativeStrataBranch, NativeStrataInvocation};
 
 pub(crate) struct Completed {
     fault: BufferId,
-    controls: Zeroizing<[usize; 5]>, // position, count, state role, route epoch, usage flag
+    controls: Zeroizing<[usize; 6]>, // position, count, state role, route epoch, usage flag, state mode
 }
 impl Drop for Completed {
     fn drop(&mut self) {
@@ -18,6 +18,9 @@ impl Completed {
             return Err(Error::InvalidFormat("native replay transaction mismatch"));
         }
         Ok(())
+    }
+    pub(crate) fn defers_gdn_state(&self) -> bool {
+        self.controls[5] != 0
     }
     pub(crate) fn state_role(&self) -> u8 {
         self.controls[2] as u8
@@ -76,6 +79,9 @@ pub(crate) fn try_submit(
             state_role as usize,
             epoch as usize,
             usage as usize,
+            key.target_defers_gdn_state()
+                .ok_or(Error::InvalidFormat("native replay target state mode"))?
+                as usize,
         ]),
     }))
 }

@@ -52,6 +52,7 @@ fn main(@builtin(global_invocation_id) id:vec3<u32>) {
 }
 // AB_JOIN_END
 // CONV_BEGIN
+const STORE_HISTORY:bool=true;
 @group(0) @binding(0) var<storage,read> raw:array<f32>;
 @group(0) @binding(1) var<storage,read> weights:array<f32>;
 @group(0) @binding(2) var<storage,read> old:array<f32>;
@@ -81,14 +82,41 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
     if head<p.key_heads {query[t*p.key_heads*128u+c]=emit;}
     else if head<2u*p.key_heads {key[t*p.key_heads*128u+(head-p.key_heads)*128u+col]=emit;}
     else {value[t*p.value_heads*128u+(head-2u*p.key_heads)*128u+col]=emit;}
-    if t==p.count-1u {
+    if STORE_HISTORY && t==p.count-1u {
         // The last three RAW inputs, never the activated/normalized values.
         next[c*3u]=history(p.count,c,0u);next[c*3u+1u]=history(p.count,c,1u);next[c*3u+2u]=history(p.count,c,2u);
     }
 }
 // CONV_END
+// HISTORY_BEGIN
+// MIT native gdn_conv_commit_kernel. No convolution, activation or Q/K/V writes.
+@group(0) @binding(0) var<storage,read> raw:array<f32>;
+@group(0) @binding(1) var<storage,read> old:array<f32>;
+@group(0) @binding(2) var<storage,read_write> next:array<f32>;
+@group(0) @binding(3) var<storage,read_write> status:array<u32>;
+@group(0) @binding(4) var<storage,read_write> prepared_status:array<u32>;
+@group(0) @binding(5) var<uniform> p:Params;
+fn history(j:u32,c:u32)->f32 {
+    let at=p.count+j;
+    if at<3u {return old[c*3u+at];}
+    return raw[(at-3u)*p.channels+c];
+}
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid:vec3<u32>) {
+    let c=gid.x;if c>=p.channels {return;}
+    let a=history(0u,c);let b=history(1u,c);let d=history(2u,c);
+    var good=finite(a)&&finite(b)&&finite(d);
+    for(var t=0u;t<p.count;t++) {good=good&&finite(raw[t*p.channels+c]);}
+    next[c*3u]=select(0.0,a,good);next[c*3u+1u]=select(0.0,b,good);next[c*3u+2u]=select(0.0,d,good);
+    for(var t=0u;t<p.count;t++) {
+        status[t*p.channels+c]=select(0u,1u,good);
+        prepared_status[t*p.channels+c]=select(0u,1u,good);
+    }
+}
+// HISTORY_END
 // STEP_BEGIN
 const STATE_ONLY:bool=false;
+const STORE_STATE:bool=true;
 @group(0) @binding(0) var<storage,read> query:array<f32>;
 @group(0) @binding(1) var<storage,read> key:array<f32>;
 @group(0) @binding(2) var<storage,read> value:array<f32>;
@@ -150,7 +178,7 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
         workgroupBarrier();
     }
     let good=atomicLoad(&broken)==0u;
-    for(var r=0u;r<32u;r++) {next[((rg*32u+r)*p.value_heads+head)*128u+col]=select(0.0,state[r],good);}
+    if STORE_STATE {for(var r=0u;r<32u;r++) {next[((rg*32u+r)*p.value_heads+head)*128u+col]=select(0.0,state[r],good);}}
     if rg==0u && !good {for(var t=0u;t<p.count;t++) {status[t*p.value_heads*128u+head*128u+col]=0u;closing_status[t*p.value_heads*128u+head*128u+col]=0u;if !STATE_ONLY {output[t*p.value_heads*128u+head*128u+col]=0.0;}}}
 }
 // STEP_END

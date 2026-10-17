@@ -5384,6 +5384,7 @@ impl Workspace {
                         &attention_spans,
                         *start as u64,
                         m.b.fault,
+                        select.is_some(),
                         cancel,
                     )?);
                 }
@@ -5411,6 +5412,8 @@ impl Workspace {
         // and target-row consumers are invariant for this count/context pair.
         // Input gather/clears and original PLE uploads precede capture. Any
         // remaining required internal submission has its own retained segment.
+        // Math mode is immutable recording identity: full-row calls must not
+        // reuse a verification graph that deliberately omits candidate writes.
         let branch = if purpose == Purpose::AllRowsWithCarry
             && *start != 0
             && m.admission.request_io_reuse_active()
@@ -5431,6 +5434,7 @@ impl Workspace {
                     u16::try_from(m.context).map_err(u::fault)?,
                     state_role.ok_or(error())? | (self.ple.native_capture_history_role()? << 1),
                 )
+                .and_then(|key| key.with_deferred_gdn_state(select.is_some() && *count > 1))
                 .map_err(u::fault)?,
             )
         } else {
@@ -7183,6 +7187,7 @@ mod tests {
             1_114_112
         }) - if hybrid { 1024 * 1024 } else { 0 }
     }
+
     #[test]
     fn scoped_verified_rows_release_original_lease_before_prefix_consumers() {
         use super::{MAX_BATCH, error, select_verified_rows};

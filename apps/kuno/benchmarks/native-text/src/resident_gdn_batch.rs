@@ -229,6 +229,9 @@ struct Metadata {
     input: BufferId,
     output: BufferId,
     fault: BufferId,
+    // Static invocation intent, authenticated by the original stage anchor.
+    // Only the caller owning a verified-prefix consumer may defer publication.
+    defer_state: bool,
 }
 impl Zeroize for Metadata {
     fn zeroize(&mut self) {
@@ -238,11 +241,29 @@ impl Zeroize for Metadata {
         self.input.zeroize();
         self.output.zeroize();
         self.fault.zeroize();
+        self.defer_state.zeroize();
     }
 }
 pub(super) struct StageAnchor(Zeroizing<Metadata>);
 fn anchor_matches(expected: &Metadata, received: &Metadata) -> bool {
     expected == received
+}
+
+fn candidate_commit_extent(
+    deferred: bool,
+    proposed: usize,
+    selected: Option<usize>,
+) -> Result<usize> {
+    if !(1..=MAX_BATCH).contains(&proposed) || deferred && (proposed == 1 || selected.is_none()) {
+        return Err(fault(
+            "native GDN candidate requires accepted-prefix consumer",
+        ));
+    }
+    let accepted = selected.unwrap_or(proposed);
+    if !(1..=proposed).contains(&accepted) {
+        return Err(fault("native GDN candidate acceptance extent"));
+    }
+    Ok(accepted)
 }
 
 /// Original armed transaction before any math is queued. Only the matching
@@ -842,6 +863,7 @@ impl ResidentGdn<'_> {
         start: usize,
         count: usize,
         fault_id: BufferId,
+        defer_state: bool,
     ) -> Result<bool> {
         use crate::strata_gdn::{self as native, Kernel};
         let p = layout.stage.pointwise;
@@ -904,7 +926,11 @@ impl ResidentGdn<'_> {
         match op {
             Operation::Convolution => native::launch(
                 arena,
-                Kernel::Conv,
+                if defer_state {
+                    Kernel::ConvVerify
+                } else {
+                    Kernel::Conv
+                },
                 [p.channels / 128, count, 1],
                 vec![
                     h(ids[QKV])?,
@@ -923,7 +949,11 @@ impl ResidentGdn<'_> {
             Operation::Controls => return Err(fault("native AB producer bypassed")),
             Operation::Recurrence => native::launch(
                 arena,
-                Kernel::Step,
+                if defer_state {
+                    Kernel::Verify
+                } else {
+                    Kernel::Step
+                },
                 [p.shape.value_heads, 1, 1],
                 vec![
                     h(ids[Q])?,
@@ -989,7 +1019,7 @@ impl ResidentGdn<'_> {
             return Err(fault("native GDN prepared projector fault"));
         }
         let prepared = self.prepare_batch_checked(
-            graph, arena, public, workspace, input, output, spans, start, fault_id, cancel,
+            graph, arena, public, workspace, input, output, spans, start, fault_id, false, cancel,
         )?;
         self.enqueue_prepared_checked(
             graph, arena, public, projector, workspace, input, output, spans, prepared, cancel,
@@ -1009,11 +1039,22 @@ impl ResidentGdn<'_> {
         spans: &BatchSpans,
         start: u64,
         fault_id: BufferId,
+        verification: bool,
         cancel: &AtomicBool,
     ) -> Result<PreparedGdnBatch> {
         let attempted = guarded(&workspace.poison.clone(), || {
             self.prepare_batch_checked(
-                graph, arena, public, workspace, input, output, spans, start, fault_id, cancel,
+                graph,
+                arena,
+                public,
+                workspace,
+                input,
+                output,
+                spans,
+                start,
+                fault_id,
+                verification,
+                cancel,
             )
         });
         if attempted.is_err() {
@@ -1033,8 +1074,13 @@ impl ResidentGdn<'_> {
         spans: &BatchSpans,
         start: u64,
         fault_id: BufferId,
+        verification: bool,
         cancel: &AtomicBool,
     ) -> Result<PreparedGdnBatch> {
+        if verification && (!crate::strata_intel_core::enabled() || crate::strata_prompt::active())
+        {
+            return Err(fault("native deferred GDN requires verified-prefix caller"));
+        }
         workspace.healthy(arena, cancel)?;
         workspace.recurrence_policy.validate_count(spans.count())?;
         graph.verify_unchanged()?;
@@ -1118,6 +1164,7 @@ impl ResidentGdn<'_> {
             input,
             output,
             fault: fault_id,
+            defer_state: verification && count > 1,
         });
         self.batch_pending = Some(StageAnchor(Zeroizing::new((*metadata).clone())));
         Ok(PreparedGdnBatch {
@@ -1181,6 +1228,7 @@ impl ResidentGdn<'_> {
                 || public.binding != self.binding
                 || public.layer != self.layer
                 || public.identity != self.public_identity
+                || m.defer_state != completed.defers_gdn_state()
                 || self.native_capture_state_role()? != completed.state_role()
                 || workspace.public_grouped_status.state().0
             {
@@ -1313,6 +1361,7 @@ impl ResidentGdn<'_> {
                     start as usize,
                     count,
                     fault_id,
+                    metadata.defer_state,
                 )? {
                     return Ok(());
                 }
@@ -1625,12 +1674,14 @@ impl ResidentGdn<'_> {
             let stamp = receipt.metadata.stamp;
             // All fallible receipt/extent checks precede the actual swap.
             checked_count(stamp.start, stamp.count, self.layout.max_context)?;
-            acceptance.workspace.policy.commit(stamp)?;
-            self.lifecycle.commit_batch_prefix(
-                stamp.start,
+            let accepted = candidate_commit_extent(
+                receipt.metadata.defer_state,
                 stamp.count,
-                acceptance.accepted_prefix.unwrap_or(stamp.count),
+                acceptance.accepted_prefix,
             )?;
+            acceptance.workspace.policy.commit(stamp)?;
+            self.lifecycle
+                .commit_batch_prefix(stamp.start, stamp.count, accepted)?;
             self.buffers.recurrent.swap(0, 1);
             self.buffers.raw_conv.swap(0, 1);
             self.batch_pending = None;
@@ -2141,6 +2192,43 @@ fn validate_page(offset: u64, size: u64, physical: u64, owned: u64, bound: u64) 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn deferred_candidates_require_the_original_selected_prefix_before_publication() {
+        for proposed in 1..=MAX_BATCH {
+            assert_eq!(
+                candidate_commit_extent(false, proposed, None).unwrap(),
+                proposed
+            );
+            assert!(candidate_commit_extent(true, proposed, None).is_err());
+            for accepted in 1..=proposed {
+                assert_eq!(
+                    candidate_commit_extent(false, proposed, Some(accepted)).unwrap(),
+                    accepted
+                );
+                let checked = candidate_commit_extent(true, proposed, Some(accepted));
+                if proposed == 1 {
+                    assert!(checked.is_err());
+                } else {
+                    assert_eq!(checked.unwrap(), accepted);
+                }
+            }
+            for invalid in [0, proposed + 1] {
+                for deferred in [false, true] {
+                    assert!(candidate_commit_extent(deferred, proposed, Some(invalid)).is_err());
+                }
+            }
+        }
+        for invalid in [0, MAX_BATCH + 1] {
+            assert!(candidate_commit_extent(false, invalid, None).is_err());
+            assert!(candidate_commit_extent(true, invalid, Some(1)).is_err());
+        }
+        let original = metadata(stamp(1, 2, 3, 4, 8));
+        let mut changed = original.clone();
+        changed.defer_state = true;
+        assert!(!anchor_matches(&original, &changed));
+        changed.zeroize();
+        assert!(!changed.defer_state);
+    }
     use super::*;
     #[test]
     fn original_pending_batch_publishes_only_selected_prefix_without_full_cursor() {
@@ -2299,6 +2387,7 @@ mod tests {
             input: BufferId::metadata_fixture(7, 13, 20),
             output: BufferId::metadata_fixture(7, 13, 21),
             fault: BufferId::metadata_fixture(7, 13, 22),
+            defer_state: false,
         }
     }
     #[test]
