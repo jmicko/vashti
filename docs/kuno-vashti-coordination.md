@@ -6,8 +6,8 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-17):** isolated
-`codex/strata-rust-port`, runtime source `71dceafcd6727bf04cfc85cc6bb3797d08351b97`. Read the
-[original artifact/runtime Q8 handoff](#active-kuno-engine-handoff--original-artifact-and-runtime-q8-2026-10-17)
+`codex/strata-rust-port`, runtime source `35f0990fe3d89635797870d477ab80e321d47a31`. Read the
+[MTP shared fork/join handoff](#active-kuno-engine-handoff--mtp-shared-forkjoin-2026-10-17)
 and [completion gate](kuno-strata-rewrite-completion.md). Complete rewrite remains
 unfinished; speed gate closed and work CPU-only. Required Vashti changes: none.
 
@@ -7662,3 +7662,42 @@ failure/recovery acceptance before any speed trial. No partial rollback based
 on incidental timing. Whole rewrite incomplete, goal active CPU-only. No GPU/
 model/inference/service/install/release action; authorized sudo refresh only.
 No consumer/frontend changes; required Vashti changes none.
+
+
+## Active Kuno engine handoff — MTP shared fork/join (2026-10-17)
+
+Runtime source `35f0990fe3d89635797870d477ab80e321d47a31`, isolated `codex/strata-rust-port`.
+Read the [full source, queue substitution, owner and validation receipt](kuno-strata-rewrite-completion.md#connected-mtp-shared-fork-and-native-combination-2026-10-17)
+and [checkpoint](kuno-native-text-checkpoint.md). Preserve the full coupled branch,
+canonical application checkout and inherited untracked cache. Prior source71dceafc
+original artifact/full nine Q8 matrices/tokenizer receipt still applies.
+
+Actual MTP shared projections/scalar/rounded scale now fork beside routed Q2
+experts, with independent private fault and native128-thread vec4 ordered-FMA
+combination after true row/fault joins. Graph authenticates actual target or SAME
+active draft request; shared code creates no request, capture, verified-R scope,
+readiness or completion. Genuine buffers/intervals/INFO/recording/all-peer fence
+and original full cleanup remain. Additional actual private owner is32KiB and
+is included in admission, prepared-front identity, rebind/erasure/padding/close.
+Native32K private plan is62,619,648 bytes. Activation half-away rounding follows
+SYCL round; the earlier NumPy weight-pack rule remains distinct.
+
+Explicit backend substitution uses opposite existing compute queues: target side
+on draft, draft side on MAIN after any already submitted commit there. MTP front/
+router/routed work stays independent. Do not claim identical three-way overlap
+or physical acceptance. No fourth hardware queue or uncharged scratch/model copy.
+Actual Graph family/admission/submission/final-fence paths use the checked peer.
+
+565 selected CPU cases/76 suites, strict core/off binary lint and normal build
+pass. Frozen source35f0990f SHA256 `384fcc563a8499e326274555f7fd74a94a290b03bb75cd949a46a9f74a6b8aff`
+independently verified source/original/frozen/mode0500/features. Only its pre-
+adapter offline shader entry ran:366 variants/139 physical checks/32 matrix
+configurations pass. Exact initial failures, final logs and limits are in the
+receipt. No GPU/model inference, numerical device or throughput result.
+
+Next: complete remaining connected source/math/prompt/sampling/state/placement/
+queue/pricing/substitution audit, then protected whole-model count1/multirow/
+context/retained/hot-request and failure/all-resource recovery before speed.
+Whole rewrite incomplete, goal active CPU-only. CLI compiled-public/one-request;
+private caller independently gated. Authorized sudo refresh only. No service/
+install/release/API/configuration/consumer/UI change; Vashti changes none.

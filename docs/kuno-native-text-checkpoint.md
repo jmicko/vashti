@@ -1,32 +1,36 @@
-<!-- Current resume: 2026-10-17, source 71dceafcd6727bf04cfc85cc6bb3797d08351b97, codex/strata-rust-port.
+<!-- Current resume: 2026-10-17, source 35f0990fe3d89635797870d477ab80e321d47a31, codex/strata-rust-port.
 CPU-only continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-17
 
 Working checkout: `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`.
 
-**Current CPU-only source:** `71dceafcd6727bf04cfc85cc6bb3797d08351b97`, branch
-`codex/strata-rust-port`. Read the [original artifact and runtime Q8 receipt](kuno-strata-rewrite-completion.md#original-artifact-and-runtime-q8-conversion-audit-2026-10-17).
-The actual MTP startup loader now preserves the pinned packer's F32 reciprocal,
-multiply and add-before-floor arithmetic. All nine used converted matrices match
-pinned NumPy byte-for-byte; actual model/tokenizer/binding and once-folded norm
-checks pass. No converted model file or request content is saved.
+**Current CPU-only source:** `35f0990fe3d89635797870d477ab80e321d47a31`, branch
+`codex/strata-rust-port`. Read the [MTP shared fork/join receipt](kuno-strata-rewrite-completion.md#connected-mtp-shared-fork-and-native-combination-2026-10-17),
+plus the preceding original artifact/Q8 conversion audit. The actual MTP path now
+forks shared projection/scaling beside routed experts, retains a distinct fault,
+and joins original rounded shared output into native vec4 ordered-FMA reduction.
+Both authentic target and matching active draft scopes select the opposite
+existing compute queue; original nonce/branch/verified-R/flight guards remain.
+MTP's shared side is ordered after an already submitted MAIN commit on that queue:
+this explicit Vulkan substitution needs physical execution acceptance.
 
-561 distinct CPU cases/74 suites and strict core/off binary lint pass. Normal
+565 distinct CPU cases/76 suites and strict core/off binary lint pass. Normal
 stable-source frozen artifact SHA256
-`0193577d5af95f72e213527adc9124f20c28fa309c44ace70bcf0e874679b187`, independently verified source/ordinary/frozen hash,
-mode0500 and default Intel features; binary not executed. Shader producers are
-unchanged from source46e695a7 and its365 offline variants/139 physical checks/32
-matrix configurations; not rerun.
+`384fcc563a8499e326274555f7fd74a94a290b03bb75cd949a46a9f74a6b8aff`, independently verified source/ordinary/frozen hash,
+mode0500 and default Intel features. Only its pre-adapter offline shader entry
+was executed:366 variants/139 physical checks/32 matrix configurations pass.
+No GPU/model inference or throughput measurement. MTP adds one32KiB private fault
+owner, included in admission/rebind/erasure/full close; no new hardware queue.
 
-**Whole rewrite incomplete; speed gate closed.** One confirmed remaining connected
-source gap is MTP shared/routed fork/join (currently serial), including separate
-fault ownership and original scale/combined reduction. Continue the final complete
+**Whole rewrite incomplete; speed gate closed.** Finish the complete connected
 source/math/prompt/sampling/state/placement/queue/pricing/substitution audit, then
-protected count1/multirow whole-model numerical, context, retained/hot-request and
-failure/all-resource recovery acceptance. CLI remains compiled-public/one-request;
-private caller independently gated. Goal active CPU-only. No GPU/model/inference/
-service/install/release/API/UI action; authorized sudo refresh only. Vashti changes
-none. Canonical/inherited files preserved.
+protected count1/multirow numerical/context/retained/hot-request and failure/
+all-resource recovery acceptance. The earlier nine-matrix Q8 byte equality and
+actual artifact/tokenizer source receipts remain valid; native activation half-away
+rounding now separately follows SYCL round rather than add-before-truncate.
+CLI remains compiled-public/one-request; private caller independently gated.
+Goal active CPU-only. No GPU/model/inference/service/install/release/API/UI action;
+authorized sudo refresh only. Vashti changes none. Canonical/inherited files preserved.
 
 **Previous coupled-sampler block (`8a4ee5b`):** actual full and CJK MTP paths
 mutate penalties once, build fixed 64 lists and merge with request K. Source
