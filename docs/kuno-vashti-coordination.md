@@ -7601,3 +7601,35 @@ No API/protocol/configuration/consumer/frontend change; required Vashti changes:
 none. Goal active CPU-only. No GPU/model/inference/service/install/release action;
 sudo cache refreshed, no privileged runtime operation. Canonical and inherited
 untracked cache preserved. No deployment authority or new performance/recovery claim.
+
+## Active Kuno engine handoff — cold target scope audit (2026-10-17)
+
+Runtime source `811968c38a272916e0bf41620473eb16185dae81`, isolated `codex/strata-rust-port`.
+Read the [actual caller/queue audit and receipts](kuno-strata-rewrite-completion.md#cold-target-scope-and-sharedmtp-source-audit-2026-10-17)
+and [checkpoint](kuno-native-text-checkpoint.md). Preserve the FULL coupled branch.
+
+Actual one-token-prompt target starts at0 with a real InitialWindow request nonce
+and no named capture key. Longer initial prompts may be captured. The new shared
+guard incorrectly required a key; backend preflight now distinguishes original
+runtime scope from optional capture. Named keys still require matching nonce and
+target family; Graph still requires actual MAIN lane/no active MTP scope. Existing
+real descriptors/fault fold/peer waits/final fence/replay/cleanup remain unchanged.
+No fabricated scope/readiness/completion. Source audit records actual32768-task
+Intel runtime construction and genuine target fence/R pin before shared queue1
+is reused for MTP; physical whole-model behavior remains unverified.
+
+559 CPU cases/73 suites, strict core/off binary lint and normal stable-source
+build pass. Frozen source811968c3 SHA256
+`cd6ee7aca6300e4096bf03bd4433ce03df022a438f8160a99eca289a671217ed`, independent source/ordinary/frozen hash/mode0500/
+features verified. Binary not executed. Shader producers unchanged; previous
+source46e695a7 offline365 variants/139 physical checks/32 matrix configurations
+remain evidence, not rerun. Exact logs/limits are in the primary receipt.
+
+Next: finish the complete branch source/artifact/math/prompt/sampling/state/
+placement/queue/pricing/substitution audit, then protected count1/multirow whole-
+model correctness, context, retained/hot-request and failure/all-resource recovery;
+only then speed. Rewrite incomplete; CLI compiled-public/one-request and private
+caller independently gated. No API/configuration/consumer/frontend change;
+required Vashti changes none. Goal active CPU-only. No GPU/adapter/model/inference/
+service/install/release action; authorized sudo cache refresh only. Canonical and
+inherited cache preserved. No deployment authority or new physical/recovery/speed claim.

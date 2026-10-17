@@ -1,30 +1,31 @@
-<!-- Current resume: 2026-10-17, source 46e695a7c6462eab86171086d04c742b3e4386de, codex/strata-rust-port.
+<!-- Current resume: 2026-10-17, source 811968c38a272916e0bf41620473eb16185dae81, codex/strata-rust-port.
 CPU-only continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-17
 
 Working checkout: `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`.
 
-**Current CPU-only source:** `46e695a7c6462eab86171086d04c742b3e4386de`, branch
-`codex/strata-rust-port`. Read the [connected shared-expert receipt](kuno-strata-rewrite-completion.md#connected-shared-expert-and-three-queue-target-graph-2026-10-17).
-Selected target now connects shared/routed compute fork, fused native SwiGLU->Q8,
-original BF16 scalar gate, separately rounded scale and ordered vec4 combine.
-Real three-queue byte hazards, original INFO debt, all-peer target fence, retained
-recordings, independent fault fold and actual allocation/HOST quotes are connected.
+**Current CPU-only source:** `811968c38a272916e0bf41620473eb16185dae81`, branch
+`codex/strata-rust-port`. Read the [cold-target scope and queue audit](kuno-strata-rewrite-completion.md#cold-target-scope-and-sharedmtp-source-audit-2026-10-17),
+plus the preceding connected shared-expert receipt. Authentic request ownership
+no longer incorrectly requires a named capture key: position-zero initial target
+and captured later windows retain the same shared/routed compute path. Missing/
+foreign nonces, wrong branch families, MTP lane/active draft scope still reject.
 
-558 distinct CPU cases/73 suites, strict core/off binary lint and normal stable-
-source build pass. Frozen source46e695a7 independently matches its ordinary binary,
-mode0500/features; offline365 shader variants/139 physical checks/32 matrix
-configurations pass. Exact SHA256/artifact/logs are in the linked primary receipt.
-This is CPU/source acceptance, not a live device or inference result.
+559 distinct CPU cases/73 suites and strict core/off binary lint pass. New normal
+stable-source frozen artifact SHA256
+`cd6ee7aca6300e4096bf03bd4433ce03df022a438f8160a99eca289a671217ed`, independent source/original/hash/mode0500/
+features verified; not executed. Shader producers are unchanged from source46e695a7
+and its365 offline variants/139 physical checks/32 matrix configurations; not rerun.
 
-**Whole rewrite incomplete; speed gate closed.** Finish the complete branch source/
-ownership/placement/queue/pricing/substitution audit and protected whole-model
-numerical/state/context/hot-request/failure/resource-recovery acceptance before
-speed trials. The new shared/MTP queue reuse is source-connected, not physically
-validated. CLI remains compiled-public/one-request; private caller independently
-gated. Goal active CPU-only. No GPU/model/inference/service/install/release/API/UI
-action. Sudo cache refreshed; no privileged runtime operation. Vashti changes:
-none. Canonical/inherited files preserved.
+**Whole rewrite incomplete; speed gate closed.** Continue final branch source/
+placement/queue/ownership/pricing/substitution audit, then protected actual
+count1/multirow numerical, family/state/context, retained/hot-request and failure/
+all-resource recovery acceptance. Current queue audit confirms actual source
+fence/nonce/capture call paths, not physical overlap or correctness. CLI remains
+compiled-public/one-request; private process caller independently gated. Goal active
+CPU-only. No GPU/model/inference/service/install/release/API/UI action; sudo cache
+refreshed, no privileged runtime operation. Required Vashti changes: none.
+Canonical/inherited files preserved.
 
 **Previous coupled-sampler block (`8a4ee5b`):** actual full and CJK MTP paths
 mutate penalties once, build fixed 64 lists and merge with request K. Source

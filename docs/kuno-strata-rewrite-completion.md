@@ -6,27 +6,28 @@ checklist is a source-to-source audit, not a sequence of throughput experiments.
 Each row needs its connected consumer, real ownership/placement and state contract;
 adding an unused helper or optional switch does not complete a row.
 
-**Current CPU-only source:** `46e695a7c6462eab86171086d04c742b3e4386de`, branch
-`codex/strata-rust-port`. Read the [connected shared-expert receipt](kuno-strata-rewrite-completion.md#connected-shared-expert-and-three-queue-target-graph-2026-10-17).
-Selected target now connects shared/routed compute fork, fused native SwiGLU->Q8,
-original BF16 scalar gate, separately rounded scale and ordered vec4 combine.
-Real three-queue byte hazards, original INFO debt, all-peer target fence, retained
-recordings, independent fault fold and actual allocation/HOST quotes are connected.
+**Current CPU-only source:** `811968c38a272916e0bf41620473eb16185dae81`, branch
+`codex/strata-rust-port`. Read the [cold-target scope and queue audit](kuno-strata-rewrite-completion.md#cold-target-scope-and-sharedmtp-source-audit-2026-10-17),
+plus the preceding connected shared-expert receipt. Authentic request ownership
+no longer incorrectly requires a named capture key: position-zero initial target
+and captured later windows retain the same shared/routed compute path. Missing/
+foreign nonces, wrong branch families, MTP lane/active draft scope still reject.
 
-558 distinct CPU cases/73 suites, strict core/off binary lint and normal stable-
-source build pass. Frozen source46e695a7 independently matches its ordinary binary,
-mode0500/features; offline365 shader variants/139 physical checks/32 matrix
-configurations pass. Exact SHA256/artifact/logs are in the linked primary receipt.
-This is CPU/source acceptance, not a live device or inference result.
+559 distinct CPU cases/73 suites and strict core/off binary lint pass. New normal
+stable-source frozen artifact SHA256
+`cd6ee7aca6300e4096bf03bd4433ce03df022a438f8160a99eca289a671217ed`, independent source/original/hash/mode0500/
+features verified; not executed. Shader producers are unchanged from source46e695a7
+and its365 offline variants/139 physical checks/32 matrix configurations; not rerun.
 
-**Whole rewrite incomplete; speed gate closed.** Finish the complete branch source/
-ownership/placement/queue/pricing/substitution audit and protected whole-model
-numerical/state/context/hot-request/failure/resource-recovery acceptance before
-speed trials. The new shared/MTP queue reuse is source-connected, not physically
-validated. CLI remains compiled-public/one-request; private caller independently
-gated. Goal active CPU-only. No GPU/model/inference/service/install/release/API/UI
-action. Sudo cache refreshed; no privileged runtime operation. Vashti changes:
-none. Canonical/inherited files preserved.
+**Whole rewrite incomplete; speed gate closed.** Continue final branch source/
+placement/queue/ownership/pricing/substitution audit, then protected actual
+count1/multirow numerical, family/state/context, retained/hot-request and failure/
+all-resource recovery acceptance. Current queue audit confirms actual source
+fence/nonce/capture call paths, not physical overlap or correctness. CLI remains
+compiled-public/one-request; private process caller independently gated. Goal active
+CPU-only. No GPU/model/inference/service/install/release/API/UI action; sudo cache
+refreshed, no privileged runtime operation. Required Vashti changes: none.
+Canonical/inherited files preserved.
 
 
 ## Reference and execution scope
@@ -9562,3 +9563,91 @@ gated. No API/protocol/configuration/Vashti consumer or frontend change; require
 Vashti changes: none. Goal active CPU-only. No GPU/model/inference/service/install/
 release action, no root operation beyond authorized sudo-cache refresh. Canonical
 checkout and inherited untracked cache preserved; no new recovery/throughput claim.
+
+## Cold target scope and shared/MTP source audit (2026-10-17)
+
+Runtime source `811968c38a272916e0bf41620473eb16185dae81` after `46e695a7`, same isolated
+branch. This corrects a concrete source integration error found by tracing actual
+callers, not by a throughput run. Preserve all prior coupled math and queues.
+
+### Actual cold and captured target ownership
+
+`strata_global_controller` calls `prefill_first_native_window` with the real final
+prompt input. `resident_model_batch::prefill_first_native_window` validates the
+original Prefill authority, opens the actual backend I/O reuse nonce, enters
+`InitialWindow`, and runs `Purpose::AllRowsWithCarry`. Its original family/fault/
+I/O closing audit precedes `end_initial`. It grants no long-generation cursor or
+closed-request/reset credit. Source Authority tests already cover prompt1 and
+longer prompts, initial-only execution and refusal to rearm/close from that state.
+
+The actual native target branch predicate is `purpose==AllRowsWithCarry &&
+start!=0 && request_io_reuse_active`. Thus **a one-token prompt starts at0 and
+has no named recording**; longer initial prompts can have a capture key. Ordinary
+uncaptured LastLogits calls also deliberately have no target capture key. The
+previous shared Stream guard incorrectly required Some(key), so it would reject
+a legitimate scoped uncaptured target before shared work. CPU compilation/full
+shader acceptance did not prove that caller compatibility.
+
+The connected preflight now separates:
+
+- Stream `private_io_active` and `native_submission_scope` establish the actual
+  protected runtime/request nonce. These are unchanged, not caller declarations.
+- `strata_schedule::shared_recording` accepts the absence of a capture key only
+  with a nonzero original request. If a key exists, its nonce must match and its
+  original branch must be target, never MTP or accepted-prefix commit.
+- Graph `shared_queue` independently checks its actual compute lane0 and absence
+  of an active original MTP draft scope. No unkeyed draft-lane exception exists.
+  Existing Begin/End nesting, matched original request, MAIN release, node tags,
+  real byte hazards, all-peer final fence and terminal cleanup remain unchanged.
+
+These preflights create no scope, source lease, readiness or GPU completion. They
+allow actual cold target Nodes to use the same shared schedule as captured ones.
+The source comments use prompt-final uncaptured work as the example; the branch
+predicate above is the precise condition, not a claim that all initial prompts
+are uncaptured. Existing shader math/geometry/private allocations do not change.
+
+### Source review of target/shared-to-MTP continuity
+
+| Requirement | Actual connected source evidence | Remaining device evidence |
+| --- | --- | --- |
+| Whole target recording capacity | `main.rs` runtime constructor and `daslab_language_probe.rs` shared-client construction explicitly select32768 tasks for Intel core, versus ordinary256. Backend Graph/Planner bound32768 actual nodes. This avoids importing the ordinary small-task automatic-flush policy into the selected source configuration. Arbitrary future private callers must select the same admitted runtime. | Observe real cold/named capture segments and direct hot replay; source limits alone do not prove actual graph fits or is single-segment. |
+| Independent shared math and eventual target join | Selected `run_native_intel` forks after actual router/plan, releases MAIN routed segment before fault fold/combined row. `Commands::submit` waits every peer dependency and last copy/shared before the original target fence. Original resources and actual family pools remain in the Recording. | Real queue submission, numerical result and all-peer final-fence behavior under success/failure. |
+| Genuine completion before reusing shared queue for MTP | `Graph::complete_lane_submission(0)` waits the exact target flight's fence before `Book::finish_joined`; `prepare_draft_scope` refuses pending/unsubmitted target work and pins the actual initialized full-R source. Existing compute queue1 then hosts MTP. No book bool is used instead of that fence. | Actual shared target completion and subsequent MTP execution, including unknown/partial submission quarantine. |
+| MTP begins beside accepted-prefix commit with original R | Original `prepare_draft_scope` submits real MAIN->draft readiness before commit, retains managed R/pin, and scopes all draft accesses. Controller Pending observer borrows original verified R and calls `prepare_next_draft`, preserving full accepted inputs and delivery clipping independently. | End-to-end first/later drafts, rejection/commit, correct carries and resource lifetime. |
+| Replay and I/O cannot drop shared owners | Original plan inventory includes every shared descriptor; native I/O reuse excludes named/future/live recording roots and both INFO transfer owners. Existing scoped MTP join leaves MAIN commit debt retained. Shared tag reset occurs only after actual global drain/cleanup. | Retained request reuse, private erasure and full runtime HOST/MAIN accounting/recovery. |
+
+This is a targeted source audit, not completion of the full checklist. Other
+artifact/quantized math/prompt/sampling/state/substitution rows still need their
+final source review and full protected execution acceptance. No source/placement
+or numerical gap is declared solved merely because a helper compiles.
+
+### Validation and current artifact
+
+Receipts under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-shared-cold-scope-final-test-build-20261017.log`, retained runner
+  `strata-shared-cold-scope-validate-20261017.py`, and
+  `strata-shared-cold-scope-full-cpu-20261017.log`: **559 distinct CPU cases/73
+  nonempty suites, zero failed**, retaining all558 prior cases. Added actual
+  backend-preflight case checks uncaptured target/nonzero nonce, every named
+  target width1..8/state role0..3, foreign/zero nonce, MTP/commit branches,
+  wrong compute lanes and original active-draft exclusion. This is policy/state
+  source evidence, not actual GPU or runtime request acceptance.
+- `strata-shared-cold-scope-{core,off}-clippy-20261017.log`: strict locked release
+  **binary** lint passes; changed formatting and whitespace pass. No throughput
+  comparison, shader/body rollback, resource-accounting relaxation or new option.
+- Normal stable-source builder output `strata-shared-cold-scope-ordinary-20261017.out`
+  and directory `strata-shared-cold-scope-ordinary-20261017/` freeze source
+  `811968c38a272916e0bf41620473eb16185dae81` with SHA256
+  `cd6ee7aca6300e4096bf03bd4433ce03df022a438f8160a99eca289a671217ed`. Independent source/ordinary/frozen hash,
+  mode0500 and default Intel features verified. **Frozen binary not executed.**
+  A checked source diff confirms every shader producer/body is unchanged from
+  `46e695a7`, whose365/139/32 offline receipt remains the shader evidence; no
+  unnecessary shader rerun. Do not use the older frozen artifact to test this
+  corrected cold-scope admission.
+
+Goal active CPU-only; speed gate closed. No GPU/adapter/model/inference/service/
+install/release action, no privileged operation beyond authorized sudo refresh.
+No API/protocol/configuration/consumer/frontend change; Vashti changes none.
+Canonical/inherited files preserved. No physical correctness, memory recovery,
+privacy-forensics or new performance claim. Full rewrite remains incomplete.
