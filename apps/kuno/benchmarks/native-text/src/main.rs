@@ -10,6 +10,7 @@ mod strata_dense;
 mod strata_engine;
 mod strata_expert_fused;
 mod strata_shared_native;
+mod strata_weight_q8;
 pub(crate) use strata_expert_fused::global as strata_global_experts;
 mod strata_external_flight;
 mod strata_gdn;

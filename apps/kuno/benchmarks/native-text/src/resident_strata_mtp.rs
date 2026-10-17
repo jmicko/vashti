@@ -1,6 +1,7 @@
 //! Immutable original-GGUF role/page geometry for the explicit Strata draft.
-//! Runtime .bin conversion, dense requantization and vocabulary pruning are
-//! separate candidates. Original public files remain borrowed, never copied.
+//! Intel startup converts the used large BF16 projections to runtime Q8 in RAM;
+//! GR/router/scalar roles retain BF16. Original files stay borrowed/read-only;
+//! no converted model artifact is saved. The compact draft head borrows target Q6.
 use super::*;
 
 pub const SHARDS: usize = 4;

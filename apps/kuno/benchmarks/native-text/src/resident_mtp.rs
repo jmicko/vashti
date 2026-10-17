@@ -1927,25 +1927,8 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
                 tensor.read_row((first + row) as u64, &mut packed)?;
                 tensor.info().dtype().decode(&packed, &mut decoded)?;
                 for (block, values) in decoded.chunks_exact(32).enumerate() {
-                    if values.iter().any(|x| !x.is_finite()) {
-                        return Err(Error::InvalidFormat(
-                            "Strata public runtime conversion nonfinite",
-                        ));
-                    }
-                    let scale = values.iter().map(|x| x.abs()).fold(0f32, f32::max) / 127.;
                     let at = (row * (columns / 32) + block) * 34;
-                    let half = half::f16::from_f32(scale);
-                    if !half.is_finite() {
-                        return Err(Error::InvalidFormat("Strata Q8 weight scale"));
-                    }
-                    source.0[at..at + 2].copy_from_slice(&half.to_bits().to_le_bytes());
-                    for (i, &x) in values.iter().enumerate() {
-                        source.0[at + 2 + i] = if scale == 0. {
-                            0
-                        } else {
-                            (x / scale).round().clamp(-127., 127.) as i8 as u8
-                        };
-                    }
+                    source.0[at..at + 34].copy_from_slice(&crate::strata_weight_q8::block(values)?);
                 }
             }
             validate_source(&source.0[..logical], dtype)?;
