@@ -145,14 +145,14 @@ enum NativeFrontInputs<'a> {
 /// context early or obstructs the original full-owner cleanup path.
 struct PreparedNativeFront {
     binding: Zeroizing<u64>,
-    ids: Zeroizing<[BufferId; 25]>,
+    ids: Zeroizing<[BufferId; 26]>,
     controls: Zeroizing<[usize; 4]>, // count, start, owner cursor, queued-input copies
     pending: Arc<AtomicBool>,
 }
 impl PreparedNativeFront {
     fn arm(
         binding: u64,
-        ids: [BufferId; 25],
+        ids: [BufferId; 26],
         count: usize,
         start: usize,
         cursor: usize,
@@ -179,7 +179,7 @@ impl PreparedNativeFront {
     fn check(
         &self,
         binding: u64,
-        ids: &[BufferId; 25],
+        ids: &[BufferId; 26],
         cursor: usize,
         pending: &Arc<AtomicBool>,
     ) -> Result<()> {
@@ -209,7 +209,7 @@ const _: () = {
 #[cfg(test)]
 mod native_front_preparation_tests {
     use super::*;
-    fn ids(epoch: u64) -> [BufferId; 25] {
+    fn ids(epoch: u64) -> [BufferId; 26] {
         std::array::from_fn(|slot| BufferId::metadata_fixture(17, epoch, slot))
     }
     #[test]
@@ -221,6 +221,10 @@ mod native_front_preparation_tests {
         assert!(p.check(92, &roots, 13, &pending).is_err());
         assert!(p.check(91, &roots, 14, &pending).is_err());
         assert!(p.check(91, &ids(2), 13, &pending).is_err());
+        let mut foreign_shared = roots;
+        foreign_shared[crate::strata_mtp_front::SHARED_FAULT] =
+            ids(2)[crate::strata_mtp_front::SHARED_FAULT];
+        assert!(p.check(91, &foreign_shared, 13, &pending).is_err());
         assert!(
             p.check(91, &roots, 13, &Arc::new(AtomicBool::new(true)))
                 .is_err()
@@ -3539,6 +3543,7 @@ impl ResidentMtp<'_, '_> {
             ids[f::PLANES],
             &AtomicBool::new(false),
             false,
+            self.id(B::Fault),
         )?;
         k::split_query_gate::launch::<WgpuRuntime>(
             self.client()?,
@@ -3771,7 +3776,13 @@ impl ResidentMtp<'_, '_> {
         self.tick(1)?;
         self.finite(B::Block)
     }
-    fn native_bf16_moe_dot(&mut self, name: &'static str, output: B, rows: usize) -> Result<()> {
+    fn native_bf16_moe_dot(
+        &mut self,
+        name: &'static str,
+        output: B,
+        rows: usize,
+        fault: BufferId,
+    ) -> Result<()> {
         let spec = matrices_for(self.graph.profile())
             .iter()
             .find(|s| s.name == name)
@@ -3796,7 +3807,7 @@ impl ResidentMtp<'_, '_> {
                 self.front_public(name)?,
                 u::handle(&self.arena, self.id(B::Mixed))?,
                 u::handle(&self.arena, self.id(output))?,
-                u::handle(&self.arena, self.id(B::Fault))?,
+                u::handle(&self.arena, fault)?,
             ],
             [1, 0, rows as u32, 0, 0, 0, 0, 0],
         )?;
@@ -3809,7 +3820,88 @@ impl ResidentMtp<'_, '_> {
             .as_ref()
             .ok_or(Error::InvalidBufferLength)?
             .ids;
-        self.native_bf16_moe_dot("blk.48.ffn_gate_inp.weight", B::Router, k::EXPERTS)?;
+        let shared_fault = ids[f::SHARED_FAULT];
+        let client = self.client()?.clone();
+        let shared_scope = crate::strata_shared_native::QueueScope::begin(&client)?;
+        let cancel = AtomicBool::new(false);
+        // Gate/up consume one prepared native dense input; routed S2 planes have
+        // separate ownership and scales. Fused SwiGLU writes the actual down
+        // Q8_1 planes, matching Strata's default fused shared producer.
+        self.native_front_project(
+            "blk.48.ffn_gate_shexp.weight",
+            self.id(B::Mixed),
+            self.id(B::SharedGate),
+            1,
+            0,
+            0,
+            ids[f::PLANES],
+            &cancel,
+            true,
+            shared_fault,
+        )?;
+        self.native_front_project(
+            "blk.48.ffn_up_shexp.weight",
+            self.id(B::Mixed),
+            self.id(B::SharedUp),
+            1,
+            0,
+            0,
+            ids[f::PLANES],
+            &cancel,
+            false,
+            shared_fault,
+        )?;
+        m::launch(
+            &self.arena,
+            m::Kernel::SharedActivate,
+            3,
+            vec![
+                u::handle(&self.arena, self.id(B::SharedGate))?,
+                u::handle(&self.arena, self.id(B::SharedUp))?,
+                u::handle(&self.arena, self.id(B::SharedAct))?,
+                u::handle(&self.arena, ids[f::PLANES])?,
+                u::handle(&self.arena, shared_fault)?,
+            ],
+            [1, 0, 0, 0, 0, 0, 0, 0],
+        )?;
+        self.tick(1)?;
+        self.native_front_project(
+            "blk.48.ffn_down_shexp.weight",
+            self.id(B::SharedAct),
+            self.id(B::SharedDown),
+            1,
+            0,
+            0,
+            ids[f::PLANES],
+            &cancel,
+            false,
+            shared_fault,
+        )?;
+        self.native_bf16_moe_dot(
+            "blk.48.ffn_gate_inp_shexp.weight",
+            B::SharedScalar,
+            1,
+            shared_fault,
+        )?;
+        m::launch(
+            &self.arena,
+            m::Kernel::SharedScale,
+            5,
+            vec![
+                u::handle(&self.arena, self.id(B::SharedDown))?,
+                u::handle(&self.arena, self.id(B::SharedScalar))?,
+                u::handle(&self.arena, shared_fault)?,
+            ],
+            [1, 0, 0, 0, 0, 0, 0, 0],
+        )?;
+        self.tick(1)?;
+        shared_scope.end()?;
+        self.native_bf16_moe_dot(
+            "blk.48.ffn_gate_inp.weight",
+            B::Router,
+            k::EXPERTS,
+            self.id(B::Fault),
+        )?;
         m::launch(
             &self.arena,
             m::Kernel::Route,
@@ -3904,66 +3996,20 @@ impl ResidentMtp<'_, '_> {
             }
             self.tick(strata::SHARDS)?;
         }
-        let cancel = AtomicBool::new(false);
-        // Gate/up consume one prepared native dense input; routed S2 planes have
-        // separate ownership and scales. Fused SwiGLU writes the actual down
-        // Q8_1 planes, matching Strata's default fused shared producer.
-        self.native_front_project(
-            "blk.48.ffn_gate_shexp.weight",
-            self.id(B::Mixed),
-            self.id(B::SharedGate),
-            1,
-            0,
-            0,
-            ids[f::PLANES],
-            &cancel,
-            true,
-        )?;
-        self.native_front_project(
-            "blk.48.ffn_up_shexp.weight",
-            self.id(B::Mixed),
-            self.id(B::SharedUp),
-            1,
-            0,
-            0,
-            ids[f::PLANES],
-            &cancel,
-            false,
-        )?;
-        m::launch(
-            &self.arena,
-            m::Kernel::SharedActivate,
-            3,
-            vec![
-                u::handle(&self.arena, self.id(B::SharedGate))?,
-                u::handle(&self.arena, self.id(B::SharedUp))?,
-                u::handle(&self.arena, self.id(B::SharedAct))?,
-                u::handle(&self.arena, ids[f::PLANES])?,
-                u::handle(&self.arena, self.id(B::Fault))?,
-            ],
-            [1, 0, 0, 0, 0, 0, 0, 0],
+        crate::strata_shared_native::release_main(&client)?;
+        crate::strata_shared_native::fold(
+            &client,
+            u::handle(&self.arena, shared_fault)?,
+            u::handle(&self.arena, self.id(B::Fault))?,
         )?;
         self.tick(1)?;
-        self.native_front_project(
-            "blk.48.ffn_down_shexp.weight",
-            self.id(B::SharedAct),
-            self.id(B::SharedDown),
-            1,
-            0,
-            0,
-            ids[f::PLANES],
-            &cancel,
-            false,
-        )?;
-        self.native_bf16_moe_dot("blk.48.ffn_gate_inp_shexp.weight", B::SharedScalar, 1)?;
         m::launch(
             &self.arena,
             m::Kernel::Combine,
-            10,
+            5,
             vec![
                 u::handle(&self.arena, self.id(B::Partials))?,
                 u::handle(&self.arena, self.id(B::SharedDown))?,
-                u::handle(&self.arena, self.id(B::SharedScalar))?,
                 u::handle(&self.arena, self.id(B::Packet))?,
                 u::handle(&self.arena, self.id(B::Readiness))?,
                 u::handle(&self.arena, self.id(B::Block))?,
@@ -4958,6 +5004,7 @@ impl ResidentMtp<'_, '_> {
             ids[f::PLANES],
             cancel,
             true,
+            self.id(B::Fault),
         )?;
         for first in (0..count * k::HC).step_by(8) {
             self.native_front_project(
@@ -4970,6 +5017,7 @@ impl ResidentMtp<'_, '_> {
                 ids[f::PLANES],
                 cancel,
                 true,
+                self.id(B::Fault),
             )?;
         }
         let h = |i| u::handle(&self.arena, ids[i]);
@@ -5017,6 +5065,7 @@ impl ResidentMtp<'_, '_> {
             ids[f::PLANES],
             cancel,
             true,
+            self.id(B::Fault),
         )?;
         self.native_front_project(
             "blk.48.attn_v.weight",
@@ -5028,6 +5077,7 @@ impl ResidentMtp<'_, '_> {
             ids[f::PLANES],
             cancel,
             false,
+            self.id(B::Fault),
         )?;
         let h = |i| u::handle(&self.arena, ids[i]);
         f::launch(
@@ -5102,6 +5152,7 @@ impl ResidentMtp<'_, '_> {
         planes: BufferId,
         cancel: &AtomicBool,
         prepare: bool,
+        fault: BufferId,
     ) -> Result<()> {
         u::cancel(cancel)?;
         let spec = *matrices_for(self.graph.profile())
@@ -5119,7 +5170,7 @@ impl ResidentMtp<'_, '_> {
                 spec.columns,
                 u::handle(&self.arena, input)?,
                 u::handle(&self.arena, planes)?,
-                u::handle(&self.arena, self.id(B::Fault))?,
+                u::handle(&self.arena, fault)?,
                 &spans,
             )?;
         }
@@ -5132,7 +5183,7 @@ impl ResidentMtp<'_, '_> {
                 page.handle.clone(),
                 u::handle(&self.arena, planes)?,
                 u::handle(&self.arena, out)?,
-                u::handle(&self.arena, self.id(B::Fault))?,
+                u::handle(&self.arena, fault)?,
                 output_first + page.first,
                 spec.rows,
                 count,

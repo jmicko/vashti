@@ -709,10 +709,10 @@ pub struct StreamErrorMode {
     pub flush: bool,
 }
 
-/// Enqueue boundaries within one authentic target recording; no completion credit.
+/// Enqueue boundaries within authentic target/draft work; no completion credit.
 #[derive(Clone, Copy, Debug)]
 pub enum NativeStrataSharedBoundary {
-    /// Subsequent target nodes use the independent shared compute queue.
+    /// Subsequent nodes use the opposite adopted compute queue.
     Begin,
     /// Return enqueue tagging to MAIN without waiting on the GPU.
     End,

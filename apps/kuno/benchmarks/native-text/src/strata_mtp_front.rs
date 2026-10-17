@@ -353,7 +353,8 @@ pub(crate) const BLOCK: usize = 21;
 pub(crate) const EXPERT_INPUT: usize = 22;
 pub(crate) const EXPERT_GU: usize = 23;
 pub(crate) const EXPERT_HIDDEN: usize = 24;
-pub(crate) const WORDS: [usize; 25] = [
+pub(crate) const SHARED_FAULT: usize = 25;
+pub(crate) const WORDS: [usize; 26] = [
     8,
     81920,
     20480,
@@ -379,9 +380,10 @@ pub(crate) const WORDS: [usize; 25] = [
     800,
     12800,
     2000,
+    1, // Shared fault folds on the owning draft lane before combine.
 ];
 pub(crate) struct Workspace {
-    pub ids: zeroize::Zeroizing<[BufferId; 25]>,
+    pub ids: zeroize::Zeroizing<[BufferId; 26]>,
 }
 impl Workspace {
     pub fn requests() -> Vec<u64> {

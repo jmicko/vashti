@@ -3,7 +3,7 @@ use super::*;
 // fixture. Synthetic legacy limits do not claim physical-device acceptance.
 fn expected_private_plan() -> u64 {
     if crate::strata_intel_core::enabled() {
-        62_586_880
+        62_619_648
     } else {
         // The non-native Strata port also owns its original32KiB draft window.
         11_698_176 + u64::from(crate::strata_port::enabled()) * 32768

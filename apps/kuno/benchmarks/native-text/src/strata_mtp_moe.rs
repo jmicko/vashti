@@ -24,9 +24,17 @@ pub(crate) enum Kernel {
     RouterDot,
     Route,
     SharedActivate,
+    SharedScale,
     Combine,
 }
 impl Kernel {
+    fn dim(self) -> CubeDim {
+        CubeDim::new_1d(if matches!(self, Self::SharedScale | Self::Combine) {
+            128
+        } else {
+            256
+        })
+    }
     fn source(self) -> String {
         let all = include_str!("strata_mtp_moe.wgsl");
         let section = |name: &str| {
@@ -44,6 +52,7 @@ impl Kernel {
             Self::RouterDot => "DOT",
             Self::Route => "ROUTE",
             Self::SharedActivate => "SHARED",
+            Self::SharedScale => "SCALE",
             Self::Combine => "COMBINE",
         }));
         s.replace(
@@ -67,6 +76,7 @@ impl KernelMetadata for Kernel {
             Self::RouterDot => "StrataMtpNativeBf16Dot",
             Self::Route => "StrataMtpNativeRouter",
             Self::SharedActivate => "StrataMtpNativeSharedSwiGluQ8",
+            Self::SharedScale => "StrataMtpNativeSharedScale",
             Self::Combine => "StrataMtpNativeCombine",
         }
     }
@@ -90,7 +100,7 @@ impl CubeTask<AutoCompiler> for Kernel {
             debug_name: None,
             source: self.source(),
             repr: None,
-            cube_dim: CubeDim::new_1d(256),
+            cube_dim: self.dim(),
             debug_info: None,
         })
     }
@@ -137,6 +147,7 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
         Kernel::RouterDot,
         Kernel::Route,
         Kernel::SharedActivate,
+        Kernel::SharedScale,
         Kernel::Combine,
     ]
     .into_iter()
@@ -154,6 +165,60 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    #[test]
+    fn shared_scale_and_combined_rows_have_native_vec4_geometry_and_original_fault_roles() {
+        use wgpu::naga as n;
+        for (kernel, bindings) in [(Kernel::SharedScale, 4), (Kernel::Combine, 7)] {
+            let source = kernel.source();
+            let module = n::front::wgsl::parse_str(&source).unwrap();
+            let info = n::valid::Validator::new(
+                n::valid::ValidationFlags::all(),
+                n::valid::Capabilities::all(),
+            )
+            .validate(&module)
+            .unwrap();
+            assert_eq!(module.entry_points[0].workgroup_size, [128, 1, 1]);
+            assert_eq!(kernel.dim().x, 128);
+            let entry = info.get_entry_point(0);
+            let mut actual = std::collections::BTreeMap::new();
+            for (id, global) in module.global_variables.iter() {
+                if let Some(binding) = &global.binding {
+                    actual.insert(
+                        binding.binding,
+                        (
+                            entry[id].contains(n::valid::GlobalUse::READ),
+                            entry[id].contains(n::valid::GlobalUse::WRITE),
+                        ),
+                    );
+                }
+            }
+            assert_eq!(actual.len(), bindings);
+            if kernel == Kernel::SharedScale {
+                assert_eq!(actual[&0], (true, true)); // Shared row is stored rounded before combine.
+                assert_eq!(actual[&1], (true, false)); // Original scalar logit.
+                assert!(actual[&2].1); // Separate shared fault; no routed fault dependency.
+            } else {
+                assert_eq!(actual[&0], (true, false)); // Authentic ordered ten routed rows.
+                assert_eq!(actual[&1], (true, false)); // Already scaled shared vec4 row.
+                assert!(actual[&4].1);
+                assert!(actual[&5].1);
+                assert!(
+                    module.entry_points[0]
+                        .function
+                        .expressions
+                        .iter()
+                        .any(|(_, e)| matches!(
+                            e,
+                            n::Expression::Math {
+                                fun: n::MathFunction::Fma,
+                                ..
+                            }
+                        ))
+                );
+            }
+        }
+    }
     // Independent canonical GGUF decoder is the oracle; reproduce the native
     // quantizer/transpose and integer lane arithmetic using public synthetic data.
     fn quant(x: &[f32]) -> Vec<[u32; 10]> {
@@ -164,7 +229,7 @@ mod tests {
                 let mut q = [0i32; 32];
                 for (dst, &x) in q.iter_mut().zip(xs) {
                     let t = x * inv;
-                    *dst = (t + if t >= 0. { 0.5 } else { -0.5 }) as i32;
+                    *dst = t.round() as i32;
                     *dst = (*dst).clamp(-127, 127);
                 }
                 let mut p = [0u32; 10];

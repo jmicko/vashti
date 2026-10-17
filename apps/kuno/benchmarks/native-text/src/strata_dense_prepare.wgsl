@@ -8,10 +8,16 @@ struct Params {input_first:u32,input_stride:u32,planes_stride:u32,count:u32}
 @group(0) @binding(1) var<storage,read_write> planes:array<u32>;
 @group(0) @binding(2) var<storage,read_write> fault:array<atomic<u32>>;
 @group(0) @binding(3) var<uniform> p:Params;
+// SYCL round is half-away. Adding0.5 first in F32 incorrectly rounds the
+// representable value immediately below0.5 up to1. Keep the fractional test.
+fn round_away(v:f32)->f32 {
+    let whole=trunc(v);let extra=select(0.0,1.0,abs(v-whole)>=0.5);
+    return whole+select(-extra,extra,v>=0.0);
+}
 fn q8_code(x:f32,d:f32)->i32 {
     if d==0.0 {return 0;}
     let value=clamp(x/d,-127.0,127.0);
-    return i32(abs(value)+0.5)*select(-1,1,value>=0.0);
+    return i32(round_away(value));
 }
 @compute @workgroup_size(128)
 fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(subgroup_id) sg:u32,

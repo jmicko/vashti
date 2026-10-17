@@ -1748,10 +1748,10 @@ impl WgpuStream {
         self.private_io_active()?;
         let io = self.transient_io.as_mut().unwrap();
         let request = io.native_submission_scope()?;
-        // Prompt-final count1 is intentionally uncaptured; its authentic
-        // InitialWindow scope supplies the nonce. Later captured target windows
-        // must still match their actual branch/request. Graph checks the real
-        // MAIN lane and absence of an active MTP draft scope independently.
+        // Cold target and first draft work may be uncaptured. The real I/O
+        // scope supplies the nonce; named inference branches must still match.
+        // Graph independently checks MAIN/no-draft or an active original draft
+        // scope whose request matches this exact nonce, before side tagging.
         let recording = io
             .native_branch_recording()?
             .map(|key| (key.nonce, key.branch));

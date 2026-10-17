@@ -4,6 +4,12 @@ requires packed_4x8_integer_dot_product;
 struct Params {count:u32,first:u32,rows:u32,r0:u32,r1:u32,r2:u32,r3:u32,r4:u32}
 const ROUTE_FIRST:u32=3073u;
 fn finite(x:f32)->bool {return abs(x)<=3.4028234663852886e38;}
+// SYCL round is half-away. Adding0.5 first in F32 incorrectly rounds the
+// representable value immediately below0.5 up to1. Keep the fractional test.
+fn round_away(v:f32)->f32 {
+    let whole=trunc(v);let extra=select(0.0,1.0,abs(v-whole)>=0.5);
+    return whole+select(-extra,extra,v>=0.0);
+}
 // COMMON_END
 // QUANT_BEGIN
 @group(0) @binding(0) var<storage,read> input:array<f32>;
@@ -20,7 +26,7 @@ fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(subgroup_id) sg:u32,
     let good=subgroupAll(finite(x));let maximum=subgroupMax(select(0.0,abs(x),finite(x)));
     let scale=maximum/127.0;var inv=0.0;if scale>0.0 {inv=1.0/scale;}
     let t=x*inv;var q=0;
-    if good {q=clamp(i32(t+select(-0.5,0.5,t>=0.0)),-127,127);}else{atomicOr(&fault[0],1u);}
+    if good {q=clamp(i32(round_away(t)),-127,127);}else{atomicOr(&fault[0],1u);}
     let bits=bitcast<u32>(q)&255u;
     // Native load_x_chunk transpose: word 4h+f contains x[16h+4b+f].
     let word=lane%8u;let start=(word/4u)*16u+word%4u;
@@ -136,7 +142,7 @@ fn main(@builtin(subgroup_id) sg:u32,@builtin(subgroup_invocation_id) lane:u32,@
 fn q8_code(x:f32,d:f32)->i32 {
     if d==0.0 {return 0;}
     let v=clamp(x/d,-127.0,127.0);
-    return i32(abs(v)+0.5)*select(-1,1,v>=0.0);
+    return i32(round_away(v));
 }
 @compute @workgroup_size(256)
 fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(subgroup_id) sg:u32,
@@ -156,22 +162,34 @@ fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(subgroup_id) sg:u32,
         if !finite(scale){atomicOr(&fault[0],1u);}}
 }
 // SHARED_END
-// COMBINE_BEGIN
-@group(0) @binding(0) var<storage,read> parts:array<f32>;
-@group(0) @binding(1) var<storage,read> shared_values:array<f32>;
-@group(0) @binding(2) var<storage,read> scalar:array<f32>;
-@group(0) @binding(3) var<storage,read> packet:array<u32>;
-@group(0) @binding(4) var<storage,read> readiness:array<u32>;
-@group(0) @binding(5) var<storage,read_write> output:array<f32>;
-@group(0) @binding(6) var<storage,read_write> fault:array<atomic<u32>>;
-@group(0) @binding(7) var<uniform> p:Params;
-@compute @workgroup_size(256)
+// SCALE_BEGIN
+@group(0) @binding(0) var<storage,read_write> shared_values:array<vec4<f32>>;
+@group(0) @binding(1) var<storage,read> scalar:array<f32>;
+@group(0) @binding(2) var<storage,read_write> fault:array<atomic<u32>>;
+@group(0) @binding(3) var<uniform> p:Params;
+@compute @workgroup_size(128)
 fn main(@builtin(global_invocation_id) id:vec3<u32>) {
-    let i=id.x;if i>=2560u {return;}
+    let i=id.x;if i>=640u {return;}
+    let scale=1.0/(1.0+exp(-scalar[0]));let value=shared_values[i]*scale;
+    let good=finite(scalar[0])&&all(abs(value)<=vec4<f32>(3.4028234663852886e38));
+    shared_values[i]=select(vec4<f32>(0.0),value,good);if !good {atomicOr(&fault[0],1u);}
+}
+// SCALE_END
+// COMBINE_BEGIN
+@group(0) @binding(0) var<storage,read> parts:array<vec4<f32>>;
+@group(0) @binding(1) var<storage,read> shared_values:array<vec4<f32>>;
+@group(0) @binding(2) var<storage,read> packet:array<u32>;
+@group(0) @binding(3) var<storage,read> readiness:array<u32>;
+@group(0) @binding(4) var<storage,read_write> output:array<vec4<f32>>;
+@group(0) @binding(5) var<storage,read_write> fault:array<atomic<u32>>;
+@group(0) @binding(6) var<uniform> p:Params;
+@compute @workgroup_size(128)
+fn main(@builtin(global_invocation_id) id:vec3<u32>) {
+    let i=id.x;if i>=640u {return;}
     var sum=parts[i]*bitcast<f32>(packet[ROUTE_FIRST+1u]);
-    for(var rank=1u;rank<10u;rank++) {sum+=parts[rank*2560u+i]*bitcast<f32>(packet[ROUTE_FIRST+rank*2u+1u]);}
-    let sh=shared_values[i]*(1.0/(1.0+exp(-scalar[0])));sum+=sh;var good=finite(sum)&&finite(sh);
+    for(var rank=1u;rank<10u;rank++) {sum=fma(parts[rank*640u+i],vec4<f32>(bitcast<f32>(packet[ROUTE_FIRST+rank*2u+1u])),sum);}
+    sum+=shared_values[i];var good=all(abs(sum)<=vec4<f32>(3.4028234663852886e38));
     for(var rank=0u;rank<10u;rank++) {good=good&&readiness[rank]==1u&&readiness[10u+rank]==1u;}
-    output[i]=select(0.0,sum,good);if !good {atomicOr(&fault[0],1u);}
+    output[i]=select(vec4<f32>(0.0),sum,good);if !good {atomicOr(&fault[0],1u);}
 }
 // COMBINE_END

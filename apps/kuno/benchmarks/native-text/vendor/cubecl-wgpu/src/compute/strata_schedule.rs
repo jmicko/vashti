@@ -2,30 +2,48 @@
 use ash::vk;
 use std::collections::HashMap;
 
-/// Recording is optional for the authentic prompt-final cold target. A
-/// named recording, when present, must belong to this request and target family.
+/// Recording is optional for authentic uncaptured target/draft work. A named
+/// recording must belong to this request and an inference (not commit) family.
 /// This preflight grants neither a runtime scope nor device completion.
 pub(crate) fn shared_recording(
     request: u64,
     recording: Option<(u64, cubecl_runtime::server::NativeStrataBranch)>,
 ) -> Result<(), &'static str> {
     if request == 0
-        || recording
-            .is_some_and(|(nonce, branch)| nonce != request || branch.target_geometry().is_none())
+        || recording.is_some_and(|(nonce, branch)| {
+            nonce != request
+                || (branch.target_geometry().is_none() && branch.mtp_geometry().is_none())
+        })
     {
-        return Err("shared foreign target recording");
+        return Err("shared foreign inference recording");
     }
     Ok(())
 }
 pub(crate) fn shared_queue(
     request: u64,
     lane: usize,
-    draft_active: bool,
+    draft_request: Option<u64>,
 ) -> Result<(), &'static str> {
-    if request == 0 || lane != 0 || draft_active {
-        return Err("shared requires authentic main target scope");
+    // The actual Graph scope, not a caller flag, authenticates draft work.
+    let original = match (lane, draft_request) {
+        (0, None) => true,
+        (1, Some(original)) => original == request,
+        _ => false,
+    };
+    if request == 0 || !original {
+        return Err("shared requires authentic target or draft scope");
     }
     Ok(())
+}
+/// Two adopted compute queues. Target's side uses draft; draft's side uses
+/// MAIN, ordered after already submitted commit work on that physical queue.
+/// No additional hardware queue, ownership grant or completion is fabricated.
+pub(crate) fn shared_peer(lane: usize) -> Result<usize, &'static str> {
+    match lane {
+        0 => Ok(1),
+        1 => Ok(0),
+        _ => Err("shared compute lane"),
+    }
 }
 
 pub(crate) struct Access {
@@ -279,9 +297,6 @@ impl Planner {
     pub fn push(&mut self, node: &NodeAccess) -> Result<(), &'static str> {
         // This selects only the queue. The original node still carries its
         // COPY/FILL dispatch and TRANSFER accesses in Graph's actual encoder.
-        if node.shared && self.inline_copies {
-            return Err("shared queue inside MTP lane");
-        }
         let shared = node.shared;
         // Shared COPY/FILL commands execute on its compute-capable queue.
         let copy = node.copy && !self.inline_copies && !shared;
@@ -1283,11 +1298,11 @@ mod shared_lane_tests {
         }
     }
     #[test]
-    fn cold_target_scope_needs_real_nonce_but_not_a_capture_key_and_never_grants_mtp_access() {
+    fn shared_scope_requires_real_nonce_and_original_target_or_active_draft() {
         use cubecl_runtime::server::NativeStrataBranch as Branch;
         for request in [1, 17, u64::MAX] {
             shared_recording(request, None).unwrap(); // Actual first prompt-final target is uncaptured.
-            shared_queue(request, 0, false).unwrap();
+            shared_queue(request, 0, None).unwrap();
             for rows in 1..=8 {
                 for role in 0..4 {
                     let target = Branch::target_window_with_state(rows, 32768, role).unwrap();
@@ -1297,20 +1312,71 @@ mod shared_lane_tests {
                     );
                 }
             }
-            for wrong in [
+            for branch in [
                 Branch::mtp_round_for_context(1, 3, 32768).unwrap(),
                 Branch::mtp_step_for_context(1, 32768).unwrap(),
-                Branch::target_commit(2, 32768, 0).unwrap(),
             ] {
-                assert!(shared_recording(request, Some((request, wrong))).is_err());
+                shared_recording(request, Some((request, branch))).unwrap();
+                shared_queue(request, 1, Some(request)).unwrap();
+                assert!(
+                    shared_recording(request, Some((request.wrapping_add(1), branch))).is_err()
+                );
+                assert!(shared_queue(request, 1, Some(request.wrapping_add(1))).is_err());
             }
-            assert!(shared_queue(request, 1, false).is_err());
-            assert!(shared_queue(request, 0, true).is_err());
-            assert!(shared_queue(request, 2, false).is_err());
+            assert!(
+                shared_recording(
+                    request,
+                    Some((request, Branch::target_commit(2, 32768, 0).unwrap()))
+                )
+                .is_err()
+            );
+            assert!(shared_queue(request, 1, None).is_err());
+            assert!(shared_queue(request, 0, Some(request)).is_err());
+            assert!(shared_queue(request, 2, None).is_err());
         }
         assert!(shared_recording(0, None).is_err());
-        assert!(shared_queue(0, 0, false).is_err());
+        assert!(shared_queue(0, 0, None).is_err());
         assert!(shared_recording(0, Some((0, Branch::target_window(1).unwrap()))).is_err());
+    }
+    #[test]
+    fn draft_side_uses_original_opposite_compute_and_joins_both_fault_and_scaled_row() {
+        assert_eq!(shared_peer(0).unwrap(), 1);
+        assert_eq!(shared_peer(1).unwrap(), 0);
+        assert!(shared_peer(2).is_err());
+        assert!(shared_queue(0, 1, Some(0)).is_err());
+        let mut routed = node(0, &[(11, false), (21, true), (31, true)]);
+        routed.release_after = true;
+        let mut side = node(2, &[(11, false), (22, true), (32, true)]);
+        side.copy = true; // Actual side fill/copy stays on that compute family.
+        let nodes = [
+            node(0, &[(11, true), (21, true)]),
+            side,
+            routed,
+            node(0, &[(22, false), (21, true)]),
+            node(0, &[(31, false), (32, false), (21, true), (51, true)]),
+        ];
+        for lane in [0, 1] {
+            let mut planner = Planner::for_lane(nodes.len(), false, lane).unwrap();
+            for node in &nodes {
+                planner.push(node).unwrap();
+            }
+            let plan = planner.finish().unwrap();
+            assert_eq!(plan.last_copy, 0);
+            let producer = &plan.segments[plan.node_segments[0]];
+            let side = &plan.segments[plan.node_segments[1]];
+            let routed = &plan.segments[plan.node_segments[2]];
+            let joined = &plan.segments[plan.node_segments[3]];
+            assert_eq!(side.queue(), 2);
+            assert!(side.waits[0] >= producer.signal);
+            assert_eq!(routed.waits[2], 0); // No shared fault alias serializes routed work.
+            assert_ne!(plan.node_segments[2], plan.node_segments[3]);
+            assert!(joined.waits[2] >= side.signal);
+            assert_eq!(plan.last_shared, side.signal);
+            assert!(nodes[4].accesses.iter().any(|a| a.buffer == 32 && !a.write));
+            // The retained cross-flight inventory conservatively includes the
+            // earlier writer; it must not be mislabeled as read-only.
+            assert!(plan.accesses().iter().any(|a| a.buffer == 32 && a.write));
+        }
     }
     #[test]
     fn late_shared_fork_overlaps_routed_roles_and_joins_real_fault_and_result_before_combine() {
@@ -1424,7 +1490,7 @@ mod shared_lane_tests {
         assert_eq!(deps[2].unwrap().semaphore, sem[2]);
     }
     #[test]
-    fn shared_fill_stays_on_compute_peer_and_mtp_cannot_borrow_its_own_lane() {
+    fn shared_fill_stays_on_original_opposite_compute_peer_for_target_and_mtp() {
         let mut fill = node(2, &[(7, true)]);
         fill.copy = true;
         let p = plan(&[fill, node(0, &[(7, false)])], false).unwrap();
@@ -1432,7 +1498,11 @@ mod shared_lane_tests {
         assert_eq!(p.last_copy, 0);
         assert_eq!(p.last_shared, p.segments[1].signal);
         let mut mtp = Planner::for_lane(1, false, 1).unwrap();
-        assert!(mtp.push(&node(2, &[(7, true)])).is_err());
+        mtp.push(&node(2, &[(7, true)])).unwrap();
+        let mtp = mtp.finish().unwrap();
+        assert!(mtp.segments[1].shared && !mtp.segments[1].copy);
+        assert_eq!(shared_peer(1).unwrap(), 0); // Never draft's own physical queue.
+        assert_eq!(mtp.last_copy, 0);
         let p = plan(
             &[
                 node(2, &[(7, false)]),

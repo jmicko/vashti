@@ -912,7 +912,9 @@ impl Graph {
         self.admit_accesses(
             &accesses,
             if node.shared {
-                self.compute_queues[1].queue
+                self.compute_queues
+                    [strata_schedule::shared_peer(self.compute_lane).map_err(fault)?]
+                .queue
             } else {
                 self.queue
             },
@@ -965,7 +967,9 @@ impl Graph {
         self.admit_accesses(
             &accesses,
             if node.shared {
-                self.compute_queues[1].queue
+                self.compute_queues
+                    [strata_schedule::shared_peer(self.compute_lane).map_err(fault)?]
+                .queue
             } else {
                 self.queue
             },
@@ -1033,7 +1037,7 @@ impl Graph {
             })
             .collect()
     }
-    /// Tag genuinely enqueued target nodes; no submission or completion grant.
+    /// Tag genuinely enqueued target/draft nodes; no submission/completion grant.
     pub(crate) fn shared_boundary(
         &mut self,
         boundary: cubecl_runtime::server::NativeStrataSharedBoundary,
@@ -1043,7 +1047,7 @@ impl Graph {
         strata_schedule::shared_queue(
             request,
             self.compute_lane,
-            self.draft_scope.active_request().is_some(),
+            self.draft_scope.active_request(),
         )
         .map_err(fault)?;
         match boundary {
@@ -1656,7 +1660,9 @@ impl Graph {
                 [
                     self.queue,
                     self.copy_queue.raw_identity(),
-                    self.compute_queues[1].queue,
+                    self.compute_queues
+                        [strata_schedule::shared_peer(self.compute_lane).map_err(fault)?]
+                    .queue,
                 ],
                 &self.copy_queue,
                 fence,
@@ -1892,7 +1898,11 @@ impl Graph {
             self.timestamp_bits
         };
         let timestamp_bits = if self.nodes.iter().any(|n| n.shared) {
-            timestamp_bits.min(self.compute_queues[1].timestamp_bits)
+            timestamp_bits.min(
+                self.compute_queues
+                    [strata_schedule::shared_peer(self.compute_lane).map_err(fault)?]
+                .timestamp_bits,
+            )
         } else {
             timestamp_bits
         };
@@ -1961,7 +1971,8 @@ impl Graph {
             self.pool,
             self.command,
             self.copy_family,
-            self.compute_queues[1].family,
+            self.compute_queues[strata_schedule::shared_peer(self.compute_lane).map_err(fault)?]
+                .family,
             plan,
         )
         .map_err(fault)?;
