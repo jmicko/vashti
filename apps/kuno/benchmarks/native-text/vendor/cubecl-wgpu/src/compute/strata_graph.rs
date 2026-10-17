@@ -1040,9 +1040,12 @@ impl Graph {
         request: u64,
     ) -> Result<(), ServerError> {
         use cubecl_runtime::server::NativeStrataSharedBoundary::*;
-        if request == 0 || self.compute_lane != 0 || self.draft_scope.active_request().is_some() {
-            return Err(fault("shared requires authentic main target scope"));
-        }
+        strata_schedule::shared_queue(
+            request,
+            self.compute_lane,
+            self.draft_scope.active_request().is_some(),
+        )
+        .map_err(fault)?;
         match boundary {
             Begin if self.shared_request.is_none() => {
                 self.shared_request = Some(request);

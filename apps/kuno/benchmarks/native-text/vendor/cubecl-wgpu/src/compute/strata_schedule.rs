@@ -2,6 +2,32 @@
 use ash::vk;
 use std::collections::HashMap;
 
+/// Recording is optional for the authentic prompt-final cold target. A
+/// named recording, when present, must belong to this request and target family.
+/// This preflight grants neither a runtime scope nor device completion.
+pub(crate) fn shared_recording(
+    request: u64,
+    recording: Option<(u64, cubecl_runtime::server::NativeStrataBranch)>,
+) -> Result<(), &'static str> {
+    if request == 0
+        || recording
+            .is_some_and(|(nonce, branch)| nonce != request || branch.target_geometry().is_none())
+    {
+        return Err("shared foreign target recording");
+    }
+    Ok(())
+}
+pub(crate) fn shared_queue(
+    request: u64,
+    lane: usize,
+    draft_active: bool,
+) -> Result<(), &'static str> {
+    if request == 0 || lane != 0 || draft_active {
+        return Err("shared requires authentic main target scope");
+    }
+    Ok(())
+}
+
 pub(crate) struct Access {
     pub buffer: u64,
     pub first: u64,
@@ -1255,6 +1281,36 @@ mod shared_lane_tests {
                 })
                 .collect(),
         }
+    }
+    #[test]
+    fn cold_target_scope_needs_real_nonce_but_not_a_capture_key_and_never_grants_mtp_access() {
+        use cubecl_runtime::server::NativeStrataBranch as Branch;
+        for request in [1, 17, u64::MAX] {
+            shared_recording(request, None).unwrap(); // Actual first prompt-final target is uncaptured.
+            shared_queue(request, 0, false).unwrap();
+            for rows in 1..=8 {
+                for role in 0..4 {
+                    let target = Branch::target_window_with_state(rows, 32768, role).unwrap();
+                    shared_recording(request, Some((request, target))).unwrap();
+                    assert!(
+                        shared_recording(request, Some((request.wrapping_add(1), target))).is_err()
+                    );
+                }
+            }
+            for wrong in [
+                Branch::mtp_round_for_context(1, 3, 32768).unwrap(),
+                Branch::mtp_step_for_context(1, 32768).unwrap(),
+                Branch::target_commit(2, 32768, 0).unwrap(),
+            ] {
+                assert!(shared_recording(request, Some((request, wrong))).is_err());
+            }
+            assert!(shared_queue(request, 1, false).is_err());
+            assert!(shared_queue(request, 0, true).is_err());
+            assert!(shared_queue(request, 2, false).is_err());
+        }
+        assert!(shared_recording(0, None).is_err());
+        assert!(shared_queue(0, 0, false).is_err());
+        assert!(shared_recording(0, Some((0, Branch::target_window(1).unwrap()))).is_err());
     }
     #[test]
     fn late_shared_fork_overlaps_routed_roles_and_joins_real_fault_and_result_before_combine() {

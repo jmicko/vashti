@@ -1748,14 +1748,15 @@ impl WgpuStream {
         self.private_io_active()?;
         let io = self.transient_io.as_mut().unwrap();
         let request = io.native_submission_scope()?;
-        let key = io.native_branch_recording()?.ok_or_else(|| {
-            super::transient_io::fault("shared requires original target recording")
-        })?;
-        if key.nonce != request || key.branch.target_geometry().is_none() {
-            return Err(super::transient_io::fault(
-                "shared foreign target recording",
-            ));
-        }
+        // Prompt-final count1 is intentionally uncaptured; its authentic
+        // InitialWindow scope supplies the nonce. Later captured target windows
+        // must still match their actual branch/request. Graph checks the real
+        // MAIN lane and absence of an active MTP draft scope independently.
+        let recording = io
+            .native_branch_recording()?
+            .map(|key| (key.nonce, key.branch));
+        super::strata_schedule::shared_recording(request, recording)
+            .map_err(super::transient_io::fault)?;
         self.strata_graph
             .as_mut()
             .ok_or_else(|| super::transient_io::fault("shared original graph missing"))?
