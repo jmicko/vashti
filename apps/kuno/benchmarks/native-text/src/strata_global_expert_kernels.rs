@@ -17,7 +17,6 @@ enum Op {
     },
     PrepareGu,
     PrepareDown,
-    Activate,
 }
 impl Op {
     fn source(self) -> String {
@@ -28,21 +27,12 @@ impl Op {
                 dtype,
                 row_bytes,
             } => role_source(role, dtype, row_bytes),
-            Self::PrepareGu => {
-                crate::quant_matvec::frozen_gu_integer::strata_global_prepare_source()
-            }
-            Self::PrepareDown => {
-                crate::quant_matvec::frozen_down_integer::strata_global_prepare_source()
-            }
-            Self::Activate => roles::ACTIVATE.replace("p.count>4u", "p.count>8u"),
+            Self::PrepareGu => native_q8::source(false),
+            Self::PrepareDown => native_q8::source(true),
         }
     }
     fn dim(self) -> CubeDim {
-        CubeDim::new_1d(match self {
-            Self::PrepareGu => 128,
-            Self::PrepareDown | Self::Activate => 64,
-            _ => 256,
-        })
+        CubeDim::new_1d(256)
     }
 }
 impl KernelMetadata for Op {
@@ -53,8 +43,7 @@ impl KernelMetadata for Op {
             Self::Role { role: 2, .. } => "StrataGlobalNativeUp",
             Self::Role { .. } => "StrataGlobalNativeDown",
             Self::PrepareGu => "StrataGlobalPrepareGu",
-            Self::PrepareDown => "StrataGlobalPrepareDown",
-            Self::Activate => "StrataGlobalActivation",
+            Self::PrepareDown => "StrataGlobalSwiGluQ8Down",
         }
     }
     fn id(&self) -> KernelId {
@@ -352,85 +341,82 @@ pub(crate) fn role(
     }
     Ok(())
 }
-pub(crate) fn prepare(
+pub(crate) fn prepare_gu(
     client: &ComputeClient<WgpuRuntime>,
     spans: &g::Spans,
     owners: &[Handle; 7],
     scratch: &Handle,
     count: usize,
-    down: bool,
 ) -> Result<()> {
-    if !(1..=8).contains(&count) {
+    let frames = native_q8::GU.frames(count)?;
+    if scratch.size_in_used() != (native_q8::GU.words * 4) as u64 {
         return Err(Error::InvalidBufferLength);
     }
     full(owners.iter().chain([scratch]).cloned())?;
-    let (op, input, first, stride) = if down {
-        (
-            Op::PrepareDown,
-            &owners[2],
-            spans.act_first(),
-            spans.act_stride(),
-        )
-    } else {
-        (
-            Op::PrepareGu,
-            &owners[1],
+    let args = KernelArguments::new()
+        .with_buffer(owners[1].clone().binding())
+        .with_buffer(scratch.clone().binding())
+        .with_info(params([
+            count,
             spans.input_first(),
             spans.input_stride(),
-        )
-    };
-    let mut args = KernelArguments::new().with_buffer(input.clone().binding());
-    if down {
-        args = args.with_buffer(owners[6].clone().binding());
-    }
-    let values = if down {
-        [first, stride, spans.status_first(), 0, 0, 0, 0, count]
-    } else {
-        [0, first, stride, 0, 0, 0, 0, count]
-    };
-    let args = args
-        .with_buffer(scratch.clone().binding())
-        .with_info(params(values));
-    // SAFETY: owning eight-row/rank quantizer checks active/inactive extents;
-    // complete quant planes stay in caller-owned private scratch.
+            0,
+            0,
+            0,
+            0,
+            0,
+        ]));
+    // SAFETY: original complete input/scratch owners; native producer validates
+    // active rows and clears every inactive/header/padding span without aliasing.
     unsafe {
         client.launch_unchecked(
-            Box::new(op),
-            CubeCount::Static(1, if down { 80 } else { 8 }, 1),
+            Box::new(Op::PrepareGu),
+            CubeCount::Static(1, frames as u32, 1),
             args,
         );
     }
     Ok(())
 }
-pub(crate) fn activate(
+pub(crate) fn prepare_down(
     client: &ComputeClient<WgpuRuntime>,
     spans: &g::Spans,
     owners: &[Handle; 7],
+    scratch: &Handle,
     count: usize,
 ) -> Result<()> {
+    let frames = native_q8::DOWN.frames(count)?;
+    if scratch.size_in_used() != (native_q8::DOWN.words * 4) as u64 {
+        return Err(Error::InvalidBufferLength);
+    }
+    full(owners.iter().chain([scratch]).cloned())?;
     let args = KernelArguments::new()
         .with_buffer(owners[3].clone().binding())
-        .with_buffer(owners[2].clone().binding())
         .with_buffer(owners[6].clone().binding())
+        .with_buffer(scratch.clone().binding())
         .with_info(params([
             count,
             spans.partial_first(),
             spans.partial_stride(),
-            spans.act_first(),
-            spans.act_stride(),
             spans.status_first(),
             0,
             0,
+            0,
+            0,
         ]));
-    // SAFETY: activation consumes both completed native role stamps and clears
-    // their dead partial storage before DOWN reuses it.
+    // SAFETY: same actual PART/status/planes owners as both original passes.
+    // The fused native producer consumes both GU stamps, stores the rounded
+    // product, packs Q8_1 and clears dead GU storage before DOWN overwrites it.
     unsafe {
-        client.launch_unchecked(Box::new(Op::Activate), CubeCount::Static(80, 1, 1), args);
+        client.launch_unchecked(
+            Box::new(Op::PrepareDown),
+            CubeCount::Static(1, frames as u32, 1),
+            args,
+        );
     }
     Ok(())
 }
 pub(crate) fn compiled_sources() -> Vec<CompiledKernel<AutoCompiler>> {
-    let mut ops = vec![Op::Fetch, Op::PrepareGu, Op::PrepareDown, Op::Activate];
+    let mut ops = vec![Op::Fetch, Op::PrepareGu, Op::PrepareDown];
     for role in [1, 2, 3] {
         for dtype in if role == 3 {
             vec![crate::quant_matvec::IQ4_NL, crate::quant_matvec::Q2_0]
@@ -474,7 +460,7 @@ mod direct_source_tests {
     fn actual_role_and_explicit_fetch_schemas_bind_original_addresses_without_a_dummy_stage_table()
     {
         let sources = compiled_sources();
-        assert_eq!(sources.len(), 14);
+        assert_eq!(sources.len(), 13);
         for compiled in sources {
             assert!(!compiled.source.contains("stage_addresses"));
             let module = wgpu::naga::front::wgsl::parse_str(&compiled.source).unwrap();

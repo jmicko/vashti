@@ -249,6 +249,9 @@ pub(crate) fn register_module(
     if source.contains("STRATA_PHYSICAL_EXPERTS") {
         words = super::strata_physical::native_expert_shader_words(source)?;
     }
+    if source.contains("STRATA_ROUND_PRODUCTS") {
+        words = super::strata_physical::preserve_native_product_rounding(&words)?;
+    }
     // Retained replay consumes the SAME requirement as the original ordinary
     // Vulkan device/factory. Reject an unmarked device rather than infer it from
     // a shader name/comment or permit varying-size execution of fixed32 math.

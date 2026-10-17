@@ -1035,7 +1035,7 @@ pub(crate) fn validate_shader_set() -> Result<(), Box<dyn std::error::Error>> {
         if compiled.cube_dim != CubeDim::new_1d(module.entry_points[0].workgroup_size[0]) {
             return Err("port metadata/WGSL dimension disagreement".into());
         }
-        n::back::spv::write_vec(
+        let mut words = n::back::spv::write_vec(
             &module,
             &info,
             &n::back::spv::Options {
@@ -1049,9 +1049,20 @@ pub(crate) fn validate_shader_set() -> Result<(), Box<dyn std::error::Error>> {
                 entry_point: "main".into(),
             }),
         )?;
-        if compiled.source.contains("STRATA_PHYSICAL_EXPERTS") {
+        let physical = compiled.source.contains("STRATA_PHYSICAL_EXPERTS");
+        let rounded = compiled.source.contains("STRATA_ROUND_PRODUCTS");
+        if physical || rounded {
             use std::io::Write;
-            let words = cubecl::wgpu::native_expert_shader_words(&compiled.source)?;
+            if physical {
+                words = cubecl::wgpu::native_expert_shader_words(&compiled.source)?;
+            }
+            if rounded {
+                // Match actual native registration before the rounding pass,
+                // including the HAL's checked Workgroup layout normalization.
+                words = wgpu::hal::vulkan::kuno_native_workgroup_layout(&words)
+                    .map_err(|e| format!("rounded product workgroup layout: {e}"))?;
+                words = cubecl::wgpu::preserve_native_product_rounding(&words)?;
+            }
             let mut validate = std::process::Command::new("spirv-val")
                 .args(["--target-env", "vulkan1.3", "-"])
                 .stdin(std::process::Stdio::piped())
@@ -1068,7 +1079,12 @@ pub(crate) fn validate_shader_set() -> Result<(), Box<dyn std::error::Error>> {
             if !validate.wait()?.success() {
                 return Err("physical expert SPIRV validation failed".into());
             }
-            println!("strata_physical_shader_accepted index={index}");
+            if physical {
+                println!("strata_physical_shader_accepted index={index}");
+            }
+            if rounded {
+                println!("strata_rounded_product_shader_accepted index={index}");
+            }
         }
         println!(
             "strata_shader_accepted index={index} workgroup={}",

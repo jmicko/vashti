@@ -562,14 +562,13 @@ impl Workspace {
         // no CPU routing readback, HOST staging or second fetch list is needed.
         let gu = full(self.ids[5])?;
         let down = full(self.ids[6])?;
-        crate::strata_global_experts::prepare(client, &spans, &owners, &gu, count, false)?;
+        crate::strata_global_experts::prepare_gu(client, &spans, &owners, &gu, count)?;
         for role in [1, 2] {
             crate::strata_global_experts::role(
                 client, graph, sources, layer, geometry, &spans, &owners, &gu, count, role,
             )?;
         }
-        crate::strata_global_experts::activate(client, &spans, &owners, count)?;
-        crate::strata_global_experts::prepare(client, &spans, &owners, &down, count, true)?;
+        crate::strata_global_experts::prepare_down(client, &spans, &owners, &down, count)?;
         crate::strata_global_experts::role(
             client, graph, sources, layer, geometry, &spans, &owners, &down, count, 3,
         )?;

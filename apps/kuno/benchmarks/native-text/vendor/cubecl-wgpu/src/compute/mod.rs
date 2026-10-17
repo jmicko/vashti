@@ -20,7 +20,7 @@ pub use strata_graph::{
     native_strata_graph_execution_stats, native_strata_graph_stats, native_strata_operator_profile,
     set_native_strata_profile_active,
 };
-pub use strata_physical::native_expert_shader_words;
+pub use strata_physical::{native_expert_shader_words, preserve_native_product_rounding};
 pub use strata_schedule::NATIVE_QUEUE_HOST_BYTES;
 mod binding_cache;
 mod cleanup_boundary;

@@ -55,6 +55,12 @@ impl Kernel {
             Self::SharedScale => "SCALE",
             Self::Combine => "COMBINE",
         }));
+        if matches!(self, Self::SharedActivate | Self::ActivateQuant) {
+            s.insert_str(
+                0,
+                "// STRATA_ROUND_PRODUCTS: native fused SwiGLU before Q8 sum.\n",
+            );
+        }
         s.replace(
             "ACTIVATE",
             if self == Self::ActivateQuant {

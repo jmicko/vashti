@@ -7,7 +7,7 @@ use cubecl_core::server::ServerError;
 use rspirv::{
     binary::Assemble,
     dr::{Instruction, Operand, load_words},
-    spirv::{AddressingModel, Capability, MemoryAccess, MemoryModel, Op, StorageClass},
+    spirv::{AddressingModel, Capability, Decoration, MemoryAccess, MemoryModel, Op, StorageClass},
 };
 use std::collections::HashMap;
 fn ins(op: Op, ty: Option<u32>, id: Option<u32>, args: Vec<Operand>) -> Instruction {
@@ -332,4 +332,55 @@ pub fn native_expert_shader_words(source: &str) -> Result<Vec<u32>, ServerError>
     )
     .map_err(|_| fault("physical expert SPIRV emission"))?;
     lower(&canonical_workgroup_layout(&words)?)
+}
+
+/// Preserve Strata contract(off)'s separately rounded F32 products. The actual
+/// native registry and CPU validator share this postpass. No IDs, instructions,
+/// descriptor interfaces, placements or explicit FMA operations are changed.
+pub fn preserve_native_product_rounding(words: &[u32]) -> Result<Vec<u32>, ServerError> {
+    let mut module = load_words(words).map_err(|_| fault("native product SPIRV parse"))?;
+    if module.header.is_none() {
+        return Err(fault("native product SPIRV header"));
+    }
+    let existing: std::collections::HashSet<_> = module
+        .annotations
+        .iter()
+        .filter_map(|i| {
+            if i.class.opcode == Op::Decorate
+                && i.operands.get(1) == Some(&Operand::Decoration(Decoration::NoContraction))
+            {
+                i.operands.first().and_then(id)
+            } else {
+                None
+            }
+        })
+        .collect();
+    let products: Vec<_> = module
+        .functions
+        .iter()
+        .flat_map(|f| &f.blocks)
+        .flat_map(|b| &b.instructions)
+        .filter_map(|i| {
+            (i.class.opcode == Op::FMul)
+                .then_some(i.result_id)
+                .flatten()
+        })
+        .filter(|id| !existing.contains(id))
+        .collect();
+    for product in products {
+        module.annotations.push(ins(
+            Op::Decorate,
+            None,
+            None,
+            vec![
+                Operand::IdRef(product),
+                Operand::Decoration(Decoration::NoContraction),
+            ],
+        ));
+    }
+    let mut result = module.assemble();
+    // rspirv assembly stamps its own generator ID. This annotation-only pass
+    // retains the original complete header, including Naga's generator/bound.
+    result[..5].copy_from_slice(&words[..5]);
+    Ok(result)
 }

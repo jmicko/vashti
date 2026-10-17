@@ -148,6 +148,10 @@ impl PrepareKernel {
             include_str!("strata_dense_prepare.wgsl")
         );
         if self.1 {
+            source.insert_str(
+                0,
+                "// STRATA_ROUND_PRODUCTS: native fused SwiGLU before Q8 sum.\n",
+            );
             source = source.replace("@group(0) @binding(3) var<uniform> p:Params;",
                 "@group(0) @binding(3) var<storage,read> up:array<f32>;\n@group(0) @binding(4) var<uniform> p:Params;");
             source = source.replace(

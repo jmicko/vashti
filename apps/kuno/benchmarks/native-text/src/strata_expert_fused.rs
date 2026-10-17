@@ -15,6 +15,8 @@ use kuno_text::{Error, Result};
 #[path = "strata_global_expert_kernels.rs"]
 #[allow(dead_code)] // Global coordinator consumes this complete operator family.
 pub(crate) mod global;
+#[path = "strata_expert_q8.rs"]
+mod native_q8;
 #[path = "strata_expert_roles.rs"]
 mod roles;
 
