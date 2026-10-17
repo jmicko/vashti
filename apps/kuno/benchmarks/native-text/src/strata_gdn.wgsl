@@ -155,6 +155,61 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
 }
 // STEP_END
 
+// REPLAY_BEGIN
+// MIT native gdn_step_commit_kernel, STRATA_GDN_COMMIT_SPLIT defaults on.
+// The original snapshot remains read-only; its existing paired candidate is
+// published only by the parent accepted-prefix/fault/role commit protocol.
+@group(0) @binding(0) var<storage,read> key:array<f32>;
+@group(0) @binding(1) var<storage,read> value:array<f32>;
+@group(0) @binding(2) var<storage,read> controls:array<f32>;
+@group(0) @binding(3) var<storage,read> old:array<f32>;
+@group(0) @binding(4) var<storage,read_write> next:array<f32>;
+@group(0) @binding(5) var<storage,read_write> status:array<u32>;
+@group(0) @binding(6) var<storage,read_write> closing_status:array<u32>;
+@group(0) @binding(7) var<uniform> p:Params;
+var<workgroup> sk:array<f32,128>;
+var<workgroup> partial:array<f32,128>;
+var<workgroup> broken:atomic<u32>;
+@compute @workgroup_size(128)
+fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) tid:u32) {
+    let head=group.x;
+    if head>=p.value_heads || group.y>=4u || group.z!=0u {return;}
+    let local_col=tid%32u;let col=group.y*32u+local_col;let rg=tid/32u;
+    let qh=head%p.key_heads;
+    if tid==0u {atomicStore(&broken,0u);}workgroupBarrier();
+    var state:array<f32,32>;
+    for(var r=0u;r<32u;r++) {
+        state[r]=old[((rg*32u+r)*p.value_heads+head)*128u+col];
+        if !finite(state[r]) {atomicOr(&broken,1u);}
+    }
+    for(var t=0u;t<p.count;t++) {
+        workgroupBarrier();
+        sk[tid]=key[t*p.key_heads*128u+qh*128u+tid];
+        workgroupBarrier();
+        let decay=exp(controls[t*p.value_heads*2u+head]);
+        let beta=controls[t*p.value_heads*2u+p.value_heads+head];
+        var predicted=0.0;
+        for(var r=0u;r<32u;r++) {predicted=fma(state[r],sk[rg*32u+r],predicted);}
+        partial[rg*32u+local_col]=predicted;
+        workgroupBarrier();
+        let combined=partial[local_col]+partial[32u+local_col]+partial[64u+local_col]+partial[96u+local_col];
+        let delta=(value[t*p.value_heads*128u+head*128u+col]-decay*combined)*beta;
+        if !finite(decay)||!finite(beta)||!finite(delta) {atomicOr(&broken,1u);}
+        for(var r=0u;r<32u;r++) {
+            state[r]=fma(decay,state[r],sk[rg*32u+r]*delta);
+            if !finite(state[r]) {atomicOr(&broken,1u);}
+        }
+    }
+    workgroupBarrier();
+    let good=atomicLoad(&broken)==0u;
+    for(var r=0u;r<32u;r++) {next[((rg*32u+r)*p.value_heads+head)*128u+col]=select(0.0,state[r],good);}
+    if rg==0u {for(var t=0u;t<p.count;t++) {
+        let at=t*p.value_heads*128u+head*128u+col;
+        status[at]=select(0u,1u,good);closing_status[at]=select(0u,1u,good);
+    }}
+}
+// REPLAY_END
+
 // COMMIT_FAULT_BEGIN
 @group(0) @binding(0) var<storage,read> state:array<f32>;
 @group(0) @binding(1) var<storage,read> ring:array<f32>;

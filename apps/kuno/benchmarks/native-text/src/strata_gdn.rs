@@ -33,7 +33,7 @@ impl Kernel {
     fn lanes(self) -> u32 {
         match self {
             Self::Ab | Self::AbJoin | Self::CommitFault => 64,
-            Self::Conv => 128,
+            Self::Conv | Self::Replay => 128,
             _ => 512,
         }
     }
@@ -52,17 +52,19 @@ impl Kernel {
             Self::Ab => "AB",
             Self::AbJoin => "AB_JOIN",
             Self::Conv => "CONV",
-            Self::Step | Self::Replay => "STEP",
+            Self::Step => "STEP",
+            Self::Replay => "REPLAY",
             Self::CommitFault => "COMMIT_FAULT",
         }));
-        if matches!(self, Self::Replay) {
-            source = source.replace(
-                "const STATE_ONLY:bool=false;",
-                "const STATE_ONLY:bool=true;",
-            );
-        }
         source
     }
+}
+/// Native default commit: four independent 32-column tiles per value head.
+pub(crate) fn replay_grid(heads: usize) -> Result<[usize; 3]> {
+    if !(1..=48).contains(&heads) {
+        return Err(Error::InvalidBufferLength);
+    }
+    Ok([heads, 4, 1])
 }
 impl KernelMetadata for Kernel {
     fn name(&self) -> &'static str {
@@ -141,6 +143,7 @@ fn launch_impl(
         || !(1..=8).contains(&info[0])
         || !(1..=48).contains(&info[4])
         || kernel == Kernel::Ab
+        || kernel == Kernel::Replay && grid != replay_grid(info[4] as usize)?
         || kernel != Kernel::AbJoin
             && (!(1..=16).contains(&info[3])
                 || info[2] != 128 * (2 * info[3] + info[4])
@@ -297,6 +300,112 @@ pub(crate) fn ab(request: Ab<'_>, weights: [Handle; 2]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn default_commit_tiles_cover_every_native_state_cell_once() {
+        assert!(super::replay_grid(0).is_err());
+        assert!(super::replay_grid(49).is_err());
+        assert_eq!(super::Kernel::Replay.lanes(), 128);
+        for heads in 1..=48 {
+            let [gx, gy, gz] = super::replay_grid(heads).unwrap();
+            assert_eq!((gy, gz), (4, 1));
+            let mut visits = vec![0u8; 128 * heads * 128];
+            for head in 0..gx {
+                for tile in 0..gy {
+                    for tid in 0..128 {
+                        let col = tile * 32 + tid % 32;
+                        let rg = tid / 32;
+                        for r in 0..32 {
+                            visits[((rg * 32 + r) * heads + head) * 128 + col] += 1;
+                        }
+                    }
+                }
+            }
+            assert!(visits.iter().all(|&v| v == 1));
+        }
+    }
+
+    #[test]
+    fn tiled_commit_all_prefixes_match_independent_full_matrix_recurrence() {
+        // Public synthetic fixtures only: multiple value heads sharing each
+        // key head exercise both column tiling and row/value-head state order.
+        let heads = 4;
+        let key_heads = 2;
+        let initial = (0..128 * heads * 128)
+            .map(|i| ((i * 13 % 43) as f32 - 21.) / 193.)
+            .collect::<Vec<_>>();
+        let keys = (0..8 * key_heads * 128)
+            .map(|i| ((i * 7 % 29) as f32 - 14.) / 197.)
+            .collect::<Vec<_>>();
+        let values = (0..8 * heads * 128)
+            .map(|i| ((i * 19 % 53) as f32 - 26.) / 89.)
+            .collect::<Vec<_>>();
+        for accepted in 1..=8 {
+            let mut candidate = vec![f32::NAN; initial.len()];
+            let mut oracle = initial.iter().map(|&v| f64::from(v)).collect::<Vec<_>>();
+            for t in 0..accepted {
+                for head in 0..heads {
+                    let decay = (-0.03 * (t + head + 1) as f32).exp();
+                    let beta = 0.17 + head as f32 / 31.;
+                    for col in 0..128 {
+                        let prediction = (0..128)
+                            .map(|row| {
+                                oracle[(row * heads + head) * 128 + col]
+                                    * f64::from(
+                                        keys[t * key_heads * 128 + (head % key_heads) * 128 + row],
+                                    )
+                            })
+                            .sum::<f64>();
+                        let delta = (f64::from(values[t * heads * 128 + head * 128 + col])
+                            - f64::from(decay) * prediction)
+                            * f64::from(beta);
+                        for row in 0..128 {
+                            let at = (row * heads + head) * 128 + col;
+                            oracle[at] = f64::from(decay) * oracle[at]
+                                + f64::from(
+                                    keys[t * key_heads * 128 + (head % key_heads) * 128 + row],
+                                ) * delta;
+                        }
+                    }
+                }
+            }
+            for head in 0..heads {
+                for tile in 0..4 {
+                    for local_col in 0..32 {
+                        let col = tile * 32 + local_col;
+                        let mut state = std::array::from_fn::<_, 128, _>(|row| {
+                            initial[(row * heads + head) * 128 + col]
+                        });
+                        for t in 0..accepted {
+                            let key = &keys[t * key_heads * 128 + (head % key_heads) * 128..];
+                            let decay = (-0.03 * (t + head + 1) as f32).exp();
+                            let beta = 0.17 + head as f32 / 31.;
+                            let mut partial = [0f32; 4];
+                            for rg in 0..4 {
+                                for r in 0..32 {
+                                    let row = rg * 32 + r;
+                                    partial[rg] = state[row].mul_add(key[row], partial[rg]);
+                                }
+                            }
+                            let prediction = ((partial[0] + partial[1]) + partial[2]) + partial[3];
+                            let delta = (values[t * heads * 128 + head * 128 + col]
+                                - decay * prediction)
+                                * beta;
+                            for row in 0..128 {
+                                state[row] = decay.mul_add(state[row], key[row] * delta);
+                            }
+                        }
+                        for row in 0..128 {
+                            candidate[(row * heads + head) * 128 + col] = state[row];
+                        }
+                    }
+                }
+            }
+            for (&got, expected) in candidate.iter().zip(oracle) {
+                assert!(got.is_finite() && (f64::from(got) - expected).abs() < 2e-7);
+            }
+        }
+    }
+
     #[test]
     fn packed_bf16_ab_window_matches_independent_f64_dot_and_keeps_each_rhs() {
         let columns = 2560usize;

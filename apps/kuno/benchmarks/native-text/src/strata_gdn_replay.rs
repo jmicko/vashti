@@ -328,17 +328,13 @@ fn enqueue_prefix(
         )?;
         launch(
             Kernel::Replay,
-            [p.shape.value_heads, 1, 1],
+            native::replay_grid(p.shape.value_heads)?,
             vec![
-                h(cache.ids[1])?,
                 h(cache.ids[2])?,
                 h(cache.ids[3])?,
                 h(cache.ids[4])?,
                 h(s.buffers.recurrent[old_role])?,
                 h(s.buffers.recurrent[1 - old_role])?,
-                h(ids[Z])?,
-                public.gamma.clone(),
-                h(ids[GATED])?,
                 h(ids[STATUS + 3])?,
                 h(ids[STATUS + 4])?,
             ],
