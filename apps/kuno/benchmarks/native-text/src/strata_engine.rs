@@ -459,7 +459,23 @@ impl<'m, 'f, 'd, 'df> Session<'m, 'f, 'd, 'df> {
                 config,
                 true,
             )
-            .map_err(|_| Failure::Inference)?,
+            .map_err(|error| {
+                // Constructor diagnostics are compile-time labels only. Never
+                // format a backend error, artifact value or request payload.
+                phase("target_construction_error");
+                phase(match error {
+                    kuno_text::Error::InvalidFormat(label)
+                    | kuno_text::Error::LimitExceeded(label) => label,
+                    kuno_text::Error::Io(_) => "target_model_io",
+                    kuno_text::Error::UnsupportedVersion(_) => "target_model_version",
+                    kuno_text::Error::UnsupportedTensorType(_) => "target_tensor_type",
+                    kuno_text::Error::ArithmeticOverflow => "target_size_overflow",
+                    kuno_text::Error::OutOfBounds => "target_range",
+                    kuno_text::Error::InvalidBufferLength => "target_buffer_length",
+                    kuno_text::Error::FileChanged => "target_file_changed",
+                });
+                Failure::Inference
+            })?,
         );
         let t = self.target.as_mut().ok_or(Failure::Inference)?;
         phase("global_sources");
