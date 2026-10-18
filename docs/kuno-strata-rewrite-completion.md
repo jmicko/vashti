@@ -1,5 +1,20 @@
 # Complete Strata Intel inference rewrite: completion gate
 
+**Protected execution preflight (2026-10-18):** the human has authorized B70
+correctness/recovery testing, and shared-shell sudo was verified available. The
+first ordinary execution attempt (`strata-whole-completion-intel-20261018`, frozen
+runtime `fad14f5d`) stopped at its initial clean-state guard **before admission
+pause, adapter creation or model loading**: Intel used21,029,142,528B, one NVIDIA
+compute process, no active/waiting Kuno requests. Kuno/Ollama/Vashti HTTP checks
+passed; recorded kernel fault counts were zero. Two idle models remain cached.
+A question is pending for permission to unload both cached models, since the
+latest hardware authorization covered B70 only and the existing recovery test
+also requires NVIDIA idle. Do not bypass that guard or unload an unrelated job.
+Sudo-refresh helper was stopped; no inference test process remains. Retry with
+a **fresh** output directory after authorized unloading and actual clean-memory
+proof. The earlier unanswered-GPU/expired-sudo checkpoint below is superseded;
+whole-model acceptance and speed trials remain gated. API/Vashti changes: none.
+
 Approved 2026-10-14. This is backend engine work, not gateway/API/UI/release work.
 The user requires a complete coherent Rust port before live speed testing. This
 checklist is a source-to-source audit, not a sequence of throughput experiments.

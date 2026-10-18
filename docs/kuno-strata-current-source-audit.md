@@ -830,11 +830,11 @@ other historical entries. Physical repeat acceptance is still open.
 
 ## Remaining acceptance work
 
-- Obtain renewed B70 availability/authorization and verify protected caller,
-  disabled swap/core dumps, original artifacts and actual clean memory. A
-  question was sent after the CPU-only checkpoint; no GPU work has started.
-  Shared Demons `shell` was checked with `sudo -n -v`: credential unavailable.
-  Finish this CPU checkpoint and stop; do not use a privilege workaround.
+- B70 correctness/recovery testing is authorized as of2026-10-18 and shared-shell
+  sudo was available. First ordinary preflight stopped before loading: cached
+  models occupy both cards despite idle admission. Await permission to unload
+  both, then recheck actual clean memory and use a fresh output directory. See
+  the current coordination/checkpoint note. No whole-model execution occurred.
 - Run protected whole-model prompt/count-one/multirow completion, then independent
   numerical/target-verification and accepted/rejected-prefix state checks.
   Validate actual cold/capture/replay, two-program PLE dependencies, EOS/cap,

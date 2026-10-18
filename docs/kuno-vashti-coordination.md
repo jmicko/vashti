@@ -21,10 +21,20 @@ whole-model completion, then repeat/mixed/numerical/state/footprint/recovery and
 private-caller acceptance. No privilege workarounds, no throughput trials yet.
 Required Vashti/API changes: none; no service/install/release actions ran.
 
-**Access status:** goal blocked pending the unanswered B70 availability request
-and fresh sudo. The shared-shell noninteractive check again reports unavailable;
-no test/compiler processes remain and no protected runs began. Resume from the
-prepared ordinary completion/repeat commands after human access is restored.
+**Protected execution preflight (2026-10-18):** the human has authorized B70
+correctness/recovery testing, and shared-shell sudo was verified available. The
+first ordinary execution attempt (`strata-whole-completion-intel-20261018`, frozen
+runtime `fad14f5d`) stopped at its initial clean-state guard **before admission
+pause, adapter creation or model loading**: Intel used21,029,142,528B, one NVIDIA
+compute process, no active/waiting Kuno requests. Kuno/Ollama/Vashti HTTP checks
+passed; recorded kernel fault counts were zero. Two idle models remain cached.
+A question is pending for permission to unload both cached models, since the
+latest hardware authorization covered B70 only and the existing recovery test
+also requires NVIDIA idle. Do not bypass that guard or unload an unrelated job.
+Sudo-refresh helper was stopped; no inference test process remains. Retry with
+a **fresh** output directory after authorized unloading and actual clean-memory
+proof. The earlier unanswered-GPU/expired-sudo checkpoint below is superseded;
+whole-model acceptance and speed trials remain gated. API/Vashti changes: none.
 
 ## Ownership
 
