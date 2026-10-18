@@ -21,6 +21,11 @@ whole-model completion, then repeat/mixed/numerical/state/footprint/recovery and
 private-caller acceptance. No privilege workarounds, no throughput trials yet.
 Required Vashti/API changes: none; no service/install/release actions ran.
 
+**Access status:** goal blocked pending the unanswered B70 availability request
+and fresh sudo. The shared-shell noninteractive check again reports unavailable;
+no test/compiler processes remain and no protected runs began. Resume from the
+prepared ordinary completion/repeat commands after human access is restored.
+
 ## Ownership
 
 | Area | Default owner |

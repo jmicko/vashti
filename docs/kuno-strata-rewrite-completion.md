@@ -34,7 +34,8 @@ No privilege workaround or protected run. Once authorized/protected, first run
 ordinary whole-model completion; only then the explicit loaded-session repeat.
 Mixed/independent numerical/state/context/footprint/failure/private-caller gates
 remain open before speed. No service/install/release or API/Vashti/frontend
-change. Goal active/incomplete. Canonical checkout and inherited untracked
+change. Goal blocked/incomplete pending B70 authorization and fresh shared-shell sudo.
+Canonical checkout and inherited untracked
 cache preserved.
 
 
