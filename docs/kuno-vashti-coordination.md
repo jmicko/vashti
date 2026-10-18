@@ -7899,3 +7899,46 @@ and CPU/compiler evidence is in the linked receipt. Evidence prefix:
 `/media/jmicko/faststore/kuno-development/strata-qsa-window-score-*20261017*`.
 Full coupled branch remains selected; no consumer implementation is required.
 No handoff authorizes GPU use, installation, release or another task message.
+
+
+## Active Kuno engine handoff — QSA payload clears and KV-mode audit (2026-10-17)
+
+**Current CPU-only source:** `3d7b0752f34d0ecdaee0817a7483d87ecc926a98`, branch
+`codex/strata-rust-port`. Read the [native payload-clear and KV audit receipt](kuno-strata-rewrite-completion.md#native-qsa-live-payload-clear-and-kv-mode-audit-2026-10-17).
+Actual native decode no longer clears fully overwritten temporary payloads before
+their producers. Both individual and grouped schedules retain all 12 readiness/
+append clears exactly once. Prompt/feature-off clearing, initial allocation,
+complete owner retention/pricing and full-request owning erasure are unchanged.
+The saved reference CLI confirms INT8/32K without a KV residency/growth override;
+upstream's fully resident default uses identity pages and a no-op resolver.
+
+585 distinct selected CPU cases/81 nonempty suites, strict core/off binary lint,
+changed formatting and whitespace pass. Stable-source frozen artifact SHA256
+`3a0b8975348577bf8dd0db536810ce4702e67d0e722039abd02f678c12f4aa03`, independently source/ordinary/frozen/mode 0500/default-features
+verified, not executed. All WGSL and all four CubeCL producer functions are
+unchanged from source 31c46e47; its existing 371 shaders/139 physical-pointer checks/
+five product modules/32 matrix configurations remain the compiler receipt.
+No shader or live GPU benchmark was rerun for this host-schedule-only change.
+
+**Whole rewrite incomplete; speed gate closed.** A concrete storage-fidelity gap
+is now quantified: target CACHE still retains 128 F32-expanded raw index words per
+context cell (16MiB/layer at 32K) versus native's bounded three-row tail/snapshot
+and current-window raw keys. The existing suffix rollback is correct by its
+current design, but this full-history storage is not intrinsically required by
+Rust. Next port bounded tail/snapshot/window retention across decode, prompt,
+commit, quote/identity/rebind and complete erasure together; do not merely shrink
+CACHE_WORDS and break one of its real consumers. Keep existing native indexer/
+window scoring and the whole coupled branch. Finish remaining source/placement/
+selection/math/sampling/queue/pricing/substitution audit and protected whole-model
+numerical/context/retained/hot-request/failure/all-resource recovery before speed.
+No new GPU heap owner/model copy/content persistence/API/configuration. CLI stays
+compiled-public/one-request; private caller separately gated. Goal active CPU-only;
+sudo refresh only authorized. No GPU/model inference/service/install/release/UI
+action. Vashti changes none; canonical checkout/inherited cache preserved.
+
+Runtime change `3d7b0752f34d0ecdaee0817a7483d87ecc926a98`. The linked receipt contains the exact overwrite and
+clear contract, reference KV evidence, next bounded-tail/history task, unchanged
+shader provenance and tested artifact. Evidence prefix:
+`/media/jmicko/faststore/kuno-development/strata-qsa-live-payload-*20261017*`.
+No consumer/API changes required. No handoff authorizes GPU use, installation,
+release or another task message.
