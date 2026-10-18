@@ -2,10 +2,7 @@
 use crate::{WgpuResource, stream::WgpuStream};
 use alloc::sync::Arc;
 use cubecl_common::{bytes::Bytes, profile::TimingMethod};
-use cubecl_core::{
-    CubeCount, MemoryConfiguration,
-    server::{MetadataBindingInfo, StreamErrorMode},
-};
+use cubecl_core::{CubeCount, MemoryConfiguration, server::MetadataBindingInfo};
 use cubecl_ir::MemoryDeviceProperties;
 use cubecl_runtime::{
     logging::ServerLogger,
@@ -171,12 +168,7 @@ impl SchedulerStreamBackend for ScheduledWgpuBackend {
     }
 
     fn flush(stream: &mut Self::Stream) {
-        let _ = stream
-            .flush(StreamErrorMode {
-                ignore: true,
-                flush: false,
-            })
-            .ok();
+        stream.flush_scheduled();
     }
 
     fn factory(&mut self) -> &mut Self::Factory {

@@ -73,6 +73,9 @@ pub(crate) struct Parameters {
     active: Option<Active>,
 }
 impl Parameters {
+    pub(crate) fn defer_automatic_submission(&self, request_active: bool) -> bool {
+        request_active || self.active.is_some()
+    }
     /// The original native request/program owns its submission boundaries,
     /// including uncaptured initial and prompt work. The ordinary threshold
     /// cannot cut those programs or manufacture host joins. Explicit stream
@@ -83,7 +86,7 @@ impl Parameters {
         limit: usize,
         request_active: bool,
     ) -> bool {
-        !request_active && self.active.is_none() && tasks >= limit
+        !self.defer_automatic_submission(request_active) && tasks >= limit
     }
     /// Only a fully sealed, typed, single-submission branch can bypass enqueue.
     /// Multiple segments may have host observations between them; they must not
@@ -1228,6 +1231,8 @@ mod tests {
     fn original_native_request_also_keeps_uncaptured_initial_and_prompt_boundaries() {
         let p = Parameters::default();
         assert!(!p.active()); // No invented named/typed/cold-position-zero branch.
+        assert!(p.defer_automatic_submission(true));
+        assert!(!p.defer_automatic_submission(false));
         for tasks in [0, 255, 256, 805, 4096, 32768] {
             assert!(!p.automatic_flush_due(tasks, 256, true));
             assert_eq!(p.automatic_flush_due(tasks, 256, false), tasks >= 256);
@@ -1246,6 +1251,7 @@ mod tests {
         assert!(p.automatic_flush_due(256, 256, false));
         let invocation = NativeStrataInvocation::target(11, 7).unwrap();
         p.begin_invocation(key, 5, Some(invocation)).unwrap();
+        assert!(p.defer_automatic_submission(false));
         let rows = 3 * 256 + 37;
         let mut actual = Vec::new();
         for page in [17, 31] {

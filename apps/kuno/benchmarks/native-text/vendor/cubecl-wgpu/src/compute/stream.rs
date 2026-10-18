@@ -1453,6 +1453,25 @@ impl WgpuStream {
         }
     }
 
+    pub(crate) fn flush_scheduled(&mut self) {
+        // Enqueuing an original native program is not its submission boundary.
+        // In particular Begin/End/ReleaseMain must tag the same queued nodes;
+        // scheduler batch drains must not consume them before those markers.
+        // The protected native owner admits one logical stream. Explicit flush,
+        // readback, input/PLE handoff, branch end and cleanup still submit/join.
+        if self.strata_graph.is_some()
+            && self
+                .transient_io
+                .as_ref()
+                .is_some_and(|io| io.defer_native_scheduler_submission())
+        {
+            return;
+        }
+        let _ = self.flush(StreamErrorMode {
+            ignore: true,
+            flush: false,
+        });
+    }
     fn flush_if_needed(&mut self) {
         // Flush when there are too many tasks, or when too many handles are locked.
         // Locked handles should only accumulate in rare circumstances (where uniforms

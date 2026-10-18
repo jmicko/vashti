@@ -3260,6 +3260,10 @@ impl TransientIo {
         self.branch_parameters
             .automatic_flush_due(tasks, limit, self.reuse_active())
     }
+    pub(crate) fn defer_native_scheduler_submission(&self) -> bool {
+        self.branch_parameters
+            .defer_automatic_submission(self.reuse_active())
+    }
     fn check_branch_metadata(&mut self) -> Result<(), ServerError> {
         self.check_reuse_metadata(
             self.buffers.capacity(),
