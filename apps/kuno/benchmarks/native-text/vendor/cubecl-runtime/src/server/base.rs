@@ -1005,6 +1005,21 @@ where
         .into())
     }
 
+    /// Bounded cleanup scan authorized by the ORIGINAL full owning span.
+    /// A window is never a substitute for full allocation ownership/proof.
+    fn read_private_cleanup_range(
+        &mut self,
+        _owner: CopyDescriptor,
+        _first: u64,
+        _bytes: u64,
+        _stream_id: StreamId,
+    ) -> Result<Bytes, ServerError> {
+        Err(IoError::UnsupportedIoOperation {
+            backtrace: BackTrace::capture(),
+        }
+        .into())
+    }
+
     /// Checked stream-local I/O erasure. Main/public weights are excluded.
     /// Caller must resolve/drop readbacks and serialize all stream enqueues.
     fn sanitize_transient_io(

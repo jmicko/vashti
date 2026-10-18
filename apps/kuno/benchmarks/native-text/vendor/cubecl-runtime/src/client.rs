@@ -716,6 +716,32 @@ impl<R: Runtime> ComputeClient<R> {
             })?
     }
 
+    /// Cleanup-only bounded scan of an ORIGINAL full same-stream owner. The
+    /// backend proves full physical ownership before deriving the read window.
+    /// Caller must inspect every window before crediting the owning span and
+    /// drop/sanitize each returned guarded allocation before the next read.
+    pub fn read_private_cleanup_range(
+        &self,
+        owner: Handle,
+        first: u64,
+        bytes: u64,
+    ) -> Result<Bytes, ServerError> {
+        let len = usize::try_from(owner.size()).map_err(|_| ServerError::Generic {
+            reason: "private cleanup owner span overflow".into(),
+            backtrace: BackTrace::capture(),
+        })?;
+        let stream_id = self.stream_id();
+        let descriptor = crate::transient::private_write_descriptor(owner, stream_id, len)?;
+        self.device
+            .submit_blocking(move |server| {
+                server.read_private_cleanup_range(descriptor, first, bytes, stream_id)
+            })
+            .map_err(|_| ServerError::Generic {
+                reason: "private I/O channel unavailable".into(),
+                backtrace: BackTrace::capture(),
+            })?
+    }
+
     /// Drain and explicitly erase owned stream-local I/O. Outstanding readback
     /// futures/Bytes must be dropped first. Any erasure failure retires the
     /// private stream; caller must retire the entire shared device context.

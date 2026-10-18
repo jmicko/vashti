@@ -437,6 +437,27 @@ pub(crate) fn cleanup_read_bounds(offset: u64, size: u64, backing: u64) -> Resul
     }
     Ok(())
 }
+/// The scan window is derived only AFTER proving the complete physical owner.
+/// This does not admit an interior/suballocated resource as cleanup authority.
+pub(crate) const CLEANUP_READ_WINDOW_BYTES: u64 = 32 * 1024 * 1024;
+pub(crate) fn cleanup_read_window(
+    owner_offset: u64,
+    owner_size: u64,
+    backing: u64,
+    first: u64,
+    bytes: u64,
+) -> Result<(u64, u64), ServerError> {
+    cleanup_read_bounds(owner_offset, owner_size, backing)?;
+    if bytes == 0
+        || bytes > CLEANUP_READ_WINDOW_BYTES
+        || !first.is_multiple_of(4)
+        || !bytes.is_multiple_of(4)
+        || first.checked_add(bytes).is_none_or(|end| end > owner_size)
+    {
+        return Err(fault("private cleanup scan window outside original owner"));
+    }
+    Ok((first, bytes))
+}
 #[derive(Debug)]
 struct Ledger {
     budget: u64,
@@ -4472,7 +4493,7 @@ impl Drop for TransientIo {
 
 #[cfg(test)]
 mod cleanup_read_tests {
-    use super::cleanup_read_bounds;
+    use super::{CLEANUP_READ_WINDOW_BYTES, cleanup_read_bounds, cleanup_read_window};
     #[test]
     fn only_entire_api_visible_pages_can_be_cleanup_audited() {
         for bytes in [32768, 65536, 32 * 1024 * 1024] {
@@ -4484,6 +4505,37 @@ mod cleanup_read_tests {
         assert!(cleanup_read_bounds(0, 0, 0).is_err());
         assert!(cleanup_read_bounds(0, 32767, 32767).is_err());
         assert!(cleanup_read_bounds(u64::MAX, 4, 4).is_err());
+    }
+    #[test]
+    fn bounded_windows_cover_original_large_owner_and_tail_without_subview_authority() {
+        let window = CLEANUP_READ_WINDOW_BYTES;
+        let owner = 2 * window + 32768;
+        let mut inspected = 0;
+        for (first, bytes) in [(0, window), (window, window), (2 * window, 32768)] {
+            assert_eq!(
+                cleanup_read_window(0, owner, owner, first, bytes).unwrap(),
+                (first, bytes)
+            );
+            assert_eq!(first, inspected);
+            inspected += bytes;
+            // A window-sized view of that allocation is still not an owner.
+            assert!(cleanup_read_window(first, bytes, owner, 0, bytes).is_err());
+        }
+        assert_eq!(inspected, owner);
+        for (first, bytes) in [
+            (0, 0),
+            (0, window + 4),
+            (1, 4),
+            (0, 3),
+            (owner, 4),
+            (owner - 4, 8),
+            (u64::MAX - 3, 8),
+        ] {
+            assert!(cleanup_read_window(0, owner, owner, first, bytes).is_err());
+        }
+        assert!(cleanup_read_window(4, owner, owner + 4, 0, window).is_err());
+        assert!(cleanup_read_window(0, owner - 4, owner, 0, window).is_err());
+        assert!(cleanup_read_window(0, owner, owner + 4, 0, window).is_err());
     }
 }
 

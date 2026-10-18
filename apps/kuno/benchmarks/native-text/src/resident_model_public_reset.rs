@@ -547,7 +547,8 @@ impl ResidentModel<'_, '_> {
         let main = self
             .arena
             .erase_retained_public_owners()
-            .map_err(u::fault)?;
+            .map_err(u::fault)
+            .map_err(|error| crate::strata_engine::report_private_reset_error(error))?;
         let source = self
             .io
             .erase_retained_public_owners()

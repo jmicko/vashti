@@ -1062,12 +1062,7 @@ impl PrivateArena {
                 }
                 self.0
                     .client
-                    .read_private_cleanup(
-                        handle
-                            .clone()
-                            .offset_start(first as u64)
-                            .offset_end((span.owned_bytes - first - bytes) as u64),
-                    )
+                    .read_private_cleanup_range(handle.clone(), first as u64, bytes as u64)
                     .map(AuditBytes)
                     .map_err(|_| ArenaError::Cleanup)
             }
