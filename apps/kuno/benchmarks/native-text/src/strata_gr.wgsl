@@ -147,7 +147,7 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
     if p.first>arrayLength(&residual_out) || p.count*10240u>arrayLength(&residual_out)-p.first {return;}
     if p.apply!=0u && arrayLength(&block)!=20480u {return;}
     for(var i=local;i<p.count*320u;i+=256u) {
-        let x=(0.0+down[i])/4.0;let v=x*sigmoid(x);stage[i]=v;
+        let x=(0.0+down[i])/4.0;let v=x/(1.0+exp(-x));stage[i]=v;
         // Each cell has one real global writer; other blocks stage the same
         // values locally instead of racing identical stores to LOW.
         if group.x==0u {low[i]=v;}

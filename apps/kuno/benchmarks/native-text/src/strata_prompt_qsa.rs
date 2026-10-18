@@ -35,7 +35,7 @@ impl Op {
     fn lanes(self) -> u32 {
         if matches!(self, Self::Norm | Self::PoolNorm) {
             256
-        } else if self == Self::PoolMean {
+        } else if matches!(self, Self::PoolMean | Self::Gate | Self::GateFault) {
             128
         } else {
             64
@@ -387,7 +387,7 @@ pub(crate) fn gate(arena: &PrivateArena, p: [u32; 12], h: [Handle; 3]) -> Result
     launch(
         arena,
         Op::Gate,
-        [3072 / 64, p[0] as usize, 1],
+        [3072 / 128, p[0] as usize, 1],
         vec![h[0].clone(), h[1].clone(), packed, h[2].clone()],
         p,
     )

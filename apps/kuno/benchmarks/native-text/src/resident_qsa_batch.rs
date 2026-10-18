@@ -1631,7 +1631,7 @@ impl ResidentQsa<'_> {
                     native::launch(
                         arena,
                         Kernel::Gate,
-                        [qsa::QUERY.div_ceil(64), count, 1],
+                        [qsa::QUERY.div_ceil(256), count, 1],
                         hs(&[PACK, OUT, FLAGS + 10])?,
                         info,
                     )?;

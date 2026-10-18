@@ -74,7 +74,8 @@ impl Kernel {
     fn lanes(self) -> u32 {
         match self {
             Self::Pack | Self::PromptPack | Self::PromptPackFault | Self::PromptTail => 128,
-            Self::Norm
+            Self::Gate
+            | Self::Norm
             | Self::PromptNorm
             | Self::Attention
             | Self::Merge
@@ -524,6 +525,79 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_gate_keeps_rounded_sigmoid_in_decode_and_both_prompt_consumers() {
+        use wgpu::naga as n;
+        // Public fixed rounded denominator. The changed operation can cross
+        // an FP16 tie boundary; no exp-library or physical parity is implied.
+        let a = f32::from_bits(0x3e40_633c);
+        let denominator = f32::from_bits(0x3fe8_cc2c);
+        assert_eq!(
+            half::f16::from_f32(a * (1.0 / denominator)).to_bits(),
+            0x2e9c
+        );
+        assert_eq!(half::f16::from_f32(a / denominator).to_bits(), 0x2e9d);
+        let mut sources = vec![(Kernel::Gate.source(), 256, vec!["y"])];
+        assert_eq!(Kernel::Gate.lanes(), 256);
+        for compiled in super::prompt::sources() {
+            if compiled.source.contains("let ga=raw[gate]") {
+                assert_eq!(compiled.cube_dim, CubeDim::new_1d(128));
+                sources.push((compiled.source, 128, vec!["x", "y"]));
+            }
+        }
+        assert_eq!(sources.len(), 3); // normal + prompt + actual sticky-fault prompt
+        for (source, lanes, names) in sources {
+            let module = n::front::wgsl::parse_str(&source).unwrap();
+            let info = n::valid::Validator::new(
+                n::valid::ValidationFlags::all(),
+                n::valid::Capabilities::all(),
+            )
+            .validate(&module)
+            .unwrap();
+            let entry = &module.entry_points[0];
+            assert_eq!(entry.workgroup_size, [lanes, 1, 1]);
+            for name in names {
+                let handle = *entry
+                    .function
+                    .named_expressions
+                    .iter()
+                    .find(|(_, candidate)| candidate.as_str() == name)
+                    .unwrap()
+                    .0;
+                let n::Expression::Binary {
+                    op: n::BinaryOperator::Multiply,
+                    right,
+                    ..
+                } = entry.function.expressions[handle]
+                else {
+                    panic!("native gate must multiply attention by sigmoid");
+                };
+                assert!(matches!(
+                    entry.function.expressions[right],
+                    n::Expression::Binary {
+                        op: n::BinaryOperator::Divide,
+                        ..
+                    }
+                ));
+            }
+            let words = n::back::spv::write_vec(
+                &module,
+                &info,
+                &n::back::spv::Options {
+                    lang_version: (1, 3),
+                    zero_initialize_workgroup_memory:
+                        n::back::spv::ZeroInitializeWorkgroupMemoryMode::None,
+                    ..Default::default()
+                },
+                Some(&n::back::spv::PipelineOptions {
+                    shader_stage: n::ShaderStage::Compute,
+                    entry_point: "main".into(),
+                }),
+            )
+            .unwrap();
+            assert_eq!(words[0], 0x0723_0203);
+        }
+    }
     #[test]
     fn packed_int8_current_and_committed_geometry_covers_all_real_causal_rows() {
         // Token owners retain both code planes, packed half scales and raw

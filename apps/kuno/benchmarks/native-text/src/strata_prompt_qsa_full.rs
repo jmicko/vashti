@@ -309,7 +309,7 @@ pub(crate) fn run(
     launch(
         arena,
         Op::GateFault,
-        [3072 / 64, count, 1],
+        [3072 / 128, count, 1],
         vec![q[0].clone(), q[9].clone(), packed, fault],
         p,
     )

@@ -130,12 +130,12 @@ fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(local_invocation_index) tid:
 @group(0) @binding(2) var<storage,read_write> packed:array<u32>;
 @group(0) @binding(3) var<storage,read_write> status:array<u32>;
 @group(0) @binding(4) var<uniform> p:Params;
-@compute @workgroup_size(64)
+@compute @workgroup_size(128)
 fn main(@builtin(global_invocation_id) id:vec3<u32>) {
     let t=id.y;let pair=id.x;if t>=p.count||pair>=3072u{return;}
     let i=pair*2u;let gate=t*12288u+(i/256u)*512u+256u+i%256u;
     let a=attention[t*6144u+i];let b=attention[t*6144u+i+1u];let ga=raw[gate];let gb=raw[gate+1u];
-    let x=a/(1.0+exp(-ga));let y=b/(1.0+exp(-gb));let bits=pack2x16float(vec2<f32>(x,y));let back=unpack2x16float(bits);
+    let x=a*(1.0/(1.0+exp(-ga)));let y=b*(1.0/(1.0+exp(-gb)));let bits=pack2x16float(vec2<f32>(x,y));let back=unpack2x16float(bits);
     let oka=finite(a)&&finite(ga)&&finite(x)&&finite(back.x);let okb=finite(b)&&finite(gb)&&finite(y)&&finite(back.y);
     packed[t*3072u+pair]=pack2x16float(vec2<f32>(select(0.0,back.x,oka),select(0.0,back.y,okb)));
     status[t*p.status_stride+i]=select(0u,1u,oka);status[t*p.status_stride+i+1u]=select(0u,1u,okb);

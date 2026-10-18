@@ -154,7 +154,7 @@ fn main(@builtin(global_invocation_id) id:vec3<u32>) {
         let good=finite_value(x)&&finite_value(y)&&finite_value(restored(bits,false,1u))&&finite_value(restored(bits,true,1u));
         low[i]=select(0u,bits,good);if !good {atomicOr(&fault[0],1u);}
     }
-    if p.inject!=0u&&i<p.count*4u {let x=injection[i]/4.0;let v=2.0/(1.0+exp(-x));injection[i]=select(0.0,v,finite_value(v));if !finite_value(v){atomicOr(&fault[0],1u);}}
+    if p.inject!=0u&&i<p.count*4u {let x=injection[i]/4.0;let v=2.0*(1.0/(1.0+exp(-x)));injection[i]=select(0.0,v,finite_value(v));if !finite_value(v){atomicOr(&fault[0],1u);}}
 }
 // GR_LOW_END
 // GR_MIX_BEGIN

@@ -284,10 +284,10 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
 @group(0) @binding(1) var<storage,read_write> output:array<f32>;
 @group(0) @binding(2) var<storage,read_write> status:array<u32>;
 @group(0) @binding(3) var<uniform> p:Params;
-@compute @workgroup_size(64)
+@compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) id:vec3<u32>) {
     let i=id.x;let t=id.y;if t>=p.count || i>=6144u {return;}
-    let x=gate[t*12288u+6144u+i];let a=output[t*6144u+i];let y=a/(1.0+exp(-x));
+    let x=gate[t*12288u+6144u+i];let a=output[t*6144u+i];let y=a*(1.0/(1.0+exp(-x)));
     let ok=finite(x) && finite(a) && finite(y);output[t*6144u+i]=select(0.0,y,ok);status[t*p.status_stride+i]=select(0u,1u,ok);
 }
 // GATE_END

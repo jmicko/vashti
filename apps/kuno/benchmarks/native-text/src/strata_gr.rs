@@ -341,3 +341,95 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
     })
     .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn native_low_activation_keeps_division_in_actual_up_shader() {
+        // Fixed public rounded denominator: division and multiplying by its
+        // rounded reciprocal differ by one F32 ULP even before exp differences.
+        let x = f32::from_bits(0x3e4c_cccd);
+        let denominator = f32::from_bits(0x3fe8_cc2c);
+        assert_eq!((x / denominator).to_bits(), 0x3de1_3646);
+        assert_eq!((x * (1.0 / denominator)).to_bits(), 0x3de1_3645);
+        let source = super::Kernel::Up.source();
+        let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
+        let info = wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap();
+        use wgpu::naga as n;
+        let entry = &module.entry_points[0];
+        assert_eq!(entry.workgroup_size, [256, 1, 1]);
+        let expression = |name: &str| {
+            *entry
+                .function
+                .named_expressions
+                .iter()
+                .find(|(_, candidate)| candidate.as_str() == name)
+                .unwrap()
+                .0
+        };
+        let n::Expression::Binary {
+            op: n::BinaryOperator::Divide,
+            left,
+            ..
+        } = entry.function.expressions[expression("v")]
+        else {
+            panic!("native GR activation must divide by sigmoid denominator");
+        };
+        assert_eq!(left, expression("x"));
+        let words = n::back::spv::write_vec(
+            &module,
+            &info,
+            &n::back::spv::Options {
+                lang_version: (1, 3),
+                zero_initialize_workgroup_memory:
+                    n::back::spv::ZeroInitializeWorkgroupMemoryMode::None,
+                ..Default::default()
+            },
+            Some(&n::back::spv::PipelineOptions {
+                shader_stage: n::ShaderStage::Compute,
+                entry_point: "main".into(),
+            }),
+        )
+        .unwrap();
+        assert_eq!(words[0], 0x0723_0203);
+        let prompt = crate::strata_prompt::sources()
+            .into_iter()
+            .find(|shader| shader.source.contains("let a=down[i*2u]/4.0"))
+            .unwrap();
+        let module = n::front::wgsl::parse_str(&prompt.source).unwrap();
+        n::valid::Validator::new(
+            n::valid::ValidationFlags::all(),
+            n::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap();
+        let entry = &module.entry_points[0];
+        let handle = *entry
+            .function
+            .named_expressions
+            .iter()
+            .find(|(_, name)| name.as_str() == "v")
+            .unwrap()
+            .0;
+        let n::Expression::Binary {
+            op: n::BinaryOperator::Multiply,
+            right,
+            ..
+        } = entry.function.expressions[handle]
+        else {
+            panic!("prompt GR injection must scale its rounded sigmoid");
+        };
+        assert!(matches!(
+            entry.function.expressions[right],
+            n::Expression::Binary {
+                op: n::BinaryOperator::Divide,
+                ..
+            }
+        ));
+    }
+}

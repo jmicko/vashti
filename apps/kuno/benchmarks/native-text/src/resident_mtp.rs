@@ -3634,7 +3634,7 @@ impl ResidentMtp<'_, '_> {
         q::launch(
             &self.arena,
             q::Kernel::Gate,
-            [96, 1, 1],
+            [24, 1, 1],
             vec![
                 u::handle(&self.arena, self.id(B::SplitQuery))?,
                 u::handle(&self.arena, self.id(B::Attended))?,
