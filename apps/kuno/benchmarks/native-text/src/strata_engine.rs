@@ -38,6 +38,33 @@ pub(crate) fn request_end(prompt: usize, outputs: usize) -> Option<usize> {
 }
 pub(crate) const REQUEST_HOST_BYTES: usize = 4 * 1024 * 1024;
 
+// Fixed-public diagnostics only. Preserve the original failure and never
+// format arbitrary backend/callback errors or request data.
+#[track_caller]
+pub(crate) fn report_private_reset_error(error: kuno_text::Error) -> kuno_text::Error {
+    if crate::strata_intel_core::enabled()
+        && std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1")
+    {
+        let label = match &error {
+            kuno_text::Error::InvalidFormat(label) | kuno_text::Error::LimitExceeded(label) => {
+                *label
+            }
+            kuno_text::Error::InvalidBufferLength => "buffer_length",
+            kuno_text::Error::OutOfBounds => "range",
+            kuno_text::Error::FileChanged => "file_changed",
+            _ => "model_error",
+        };
+        let site = std::panic::Location::caller();
+        eprintln!(
+            "native_public_reset_failure source_file={} source_line={} category={}",
+            site.file(),
+            site.line(),
+            label
+        );
+    }
+    error
+}
+
 /// Owned, transient request. No Debug/Serialize; the token allocation and all
 /// sampling values are wiped on every rejection, unwind and ordinary return.
 pub(crate) struct Request {
@@ -585,6 +612,7 @@ impl<'m, 'f, 'd, 'df> Session<'m, 'f, 'd, 'df> {
             // state. A subsequent run must consume these original receipts to
             // bind its new geometry before prefill; public weights stay owned.
             phase("request_private_erasure");
+            phase("draft_private_erasure");
             let draft_erasure = self
                 .draft
                 .as_mut()
@@ -594,10 +622,17 @@ impl<'m, 'f, 'd, 'df> Session<'m, 'f, 'd, 'df> {
                     Ok(receipt)
                 })
                 .transpose()
-                .map_err(|_| Failure::RecoveryRequired)?;
+                .map_err(|error| {
+                    report_private_reset_error(error);
+                    Failure::RecoveryRequired
+                })?;
+            phase("target_private_erasure");
             let target_erasure = t
                 .reset_completed_native_request(e, cancel)
-                .map_err(|_| Failure::RecoveryRequired)?;
+                .map_err(|error| {
+                    report_private_reset_error(error);
+                    Failure::RecoveryRequired
+                })?;
             // Original retained ownership is distinct from a never-used PLE
             // generation0 constructor. Do not manufacture fresh-model authority.
             target_erasure

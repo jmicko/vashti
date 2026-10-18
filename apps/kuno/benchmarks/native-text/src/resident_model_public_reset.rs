@@ -312,7 +312,8 @@ impl ResidentModel<'_, '_> {
         executor: &mut GpuExecutor<'_>,
         cancel: &AtomicBool,
     ) -> Result<NativeRequestResetReceipt> {
-        native_geometry(self.context, self.position)?;
+        native_geometry(self.context, self.position)
+            .map_err(crate::strata_engine::report_private_reset_error)?;
         // Capture the original closed scope before any mutation. A rejection
         // here grants no erasure or recovery credit; successful publication
         // below performs no new fallible metadata lookup.
@@ -326,20 +327,24 @@ impl ResidentModel<'_, '_> {
             .retained_native_scope()?;
         let mut started = false;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.completed_native_projection_boundary(executor)?;
+            self.completed_native_projection_boundary(executor)
+                .map_err(crate::strata_engine::report_private_reset_error)?;
             executor
                 .strata_global_sources
                 .as_ref()
                 .ok_or(rejected())?
-                .validate_graph_ready(self.graph)?;
+                .validate_graph_ready(self.graph)
+                .map_err(crate::strata_engine::report_private_reset_error)?;
             self.native_batch
                 .as_mut()
                 .ok_or(rejected())?
                 .global_moe
                 .as_mut()
                 .ok_or(rejected())?
-                .retain_completed_usage(&self.arena, &self.admission, cancel)?;
+                .retain_completed_usage(&self.arena, &self.admission, cancel)
+                .map_err(crate::strata_engine::report_private_reset_error)?;
             self.reset_retained_checked(executor, cancel, &mut started, Scope::NativeRequest)
+                .map_err(crate::strata_engine::report_private_reset_error)
         }));
         match result {
             Ok(Ok(receipt)) => Ok(NativeRequestResetReceipt {
@@ -368,7 +373,8 @@ impl ResidentModel<'_, '_> {
         erase_started: &mut bool,
         scope: Scope,
     ) -> Result<PublicWarmResetReceipt> {
-        self.completed_native_projection_boundary(executor)?;
+        self.completed_native_projection_boundary(executor)
+            .map_err(crate::strata_engine::report_private_reset_error)?;
         let expected = if scope == Scope::NativeRequest {
             NativeDecodeKernels::FourGdn
         } else {
@@ -386,13 +392,17 @@ impl ResidentModel<'_, '_> {
             || crate::strata_prompt::active()
             || ple_batch::prompt_source::active()
         {
-            return Err(rejected());
+            return Err(crate::strata_engine::report_private_reset_error(rejected()));
         }
         let native = self.native_batch.as_ref().ok_or(rejected())?;
         if scope == Scope::NativeRequest {
-            native_geometry(self.context, self.position)?;
-            if !executor.global_target_scope()? {
-                return Err(rejected());
+            native_geometry(self.context, self.position)
+                .map_err(crate::strata_engine::report_private_reset_error)?;
+            if !executor
+                .global_target_scope()
+                .map_err(crate::strata_engine::report_private_reset_error)?
+            {
+                return Err(crate::strata_engine::report_private_reset_error(rejected()));
             }
             native
                 .public_language_request_io
@@ -406,7 +416,7 @@ impl ResidentModel<'_, '_> {
                 )?;
         }
         if !native.latest_target_checkpoint_reserved {
-            return Err(rejected());
+            return Err(crate::strata_engine::report_private_reset_error(rejected()));
         }
         native
             .target_rows
@@ -426,9 +436,14 @@ impl ResidentModel<'_, '_> {
         }
         // Join the ORIGINAL actual complete fault/I/O before any erasure of
         // Fault could conceal a failed forward. A metadata cursor is not proof.
-        batch_io::read_fault(&self.arena, &self.admission, self.b.fault, cancel)?;
-        self.admission.end_request_io_reuse()?;
-        self.admission.cleanup_abandoned_ordered_sources()?;
+        batch_io::read_fault(&self.arena, &self.admission, self.b.fault, cancel)
+            .map_err(crate::strata_engine::report_private_reset_error)?;
+        self.admission
+            .end_request_io_reuse()
+            .map_err(crate::strata_engine::report_private_reset_error)?;
+        self.admission
+            .cleanup_abandoned_ordered_sources()
+            .map_err(crate::strata_engine::report_private_reset_error)?;
         let native = self.native_batch.as_mut().ok_or(rejected())?;
         let mut gdn_permits: [Option<gdn::PublicWarmGdnReset<'_, '_>>; LAYERS] =
             std::array::from_fn(|_| None);
@@ -521,17 +536,26 @@ impl ResidentModel<'_, '_> {
             .arena
             .erase_retained_public_owners()
             .map_err(u::fault)?;
-        let source = self.io.erase_retained_public_owners().map_err(u::fault)?;
+        let source = self
+            .io
+            .erase_retained_public_owners()
+            .map_err(u::fault)
+            .map_err(crate::strata_engine::report_private_reset_error)?;
         // ALL remaining commits are infallible. Only numerical cursors and the
         // two original host PLE histories change; monotonic stamps/counters and
         // physical ownership survive. No poisoning/retirement bit is cleared.
         commit_after_reset_fence(
             || {
-                self.graph.verify_unchanged()?;
-                executor.check_resident_admission(&self.admission)?;
-                batch_io::read_fault(&self.arena, &self.admission, self.b.fault, cancel)?;
+                self.graph
+                    .verify_unchanged()
+                    .map_err(crate::strata_engine::report_private_reset_error)?;
+                executor
+                    .check_resident_admission(&self.admission)
+                    .map_err(crate::strata_engine::report_private_reset_error)?;
+                batch_io::read_fault(&self.arena, &self.admission, self.b.fault, cancel)
+                    .map_err(crate::strata_engine::report_private_reset_error)?;
                 if executor.ordered_source_pending_bytes() != 0 {
-                    return Err(rejected());
+                    return Err(crate::strata_engine::report_private_reset_error(rejected()));
                 }
                 Ok(())
             },

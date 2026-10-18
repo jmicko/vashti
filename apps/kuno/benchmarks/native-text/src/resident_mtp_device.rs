@@ -87,26 +87,38 @@ impl ResidentMtp<'_, '_> {
         cancel: &AtomicBool,
     ) -> Result<NativeRequestResetReceipt> {
         u::cancel(cancel)?;
-        self.finish_native_request()?;
+        self.finish_native_request()
+            .map_err(crate::strata_engine::report_private_reset_error)?;
         if self.ledger.shared().is_none() || self.native_front_pending.load(Ordering::Acquire) {
             return Err(Error::InvalidFormat("native MTP retained reset scope"));
         }
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
             || -> Result<crate::private_arena::OwnedZeroAudit> {
-                self.physical()?;
-                self.verify_source()?;
+                self.physical()
+                    .map_err(crate::strata_engine::report_private_reset_error)?;
+                self.verify_source()
+                    .map_err(crate::strata_engine::report_private_reset_error)?;
                 // Observe the original fault before rewind/erasure can clear it.
-                self.complete_fault()?;
-                self.rewind(0)?;
+                self.complete_fault()
+                    .map_err(crate::strata_engine::report_private_reset_error)?;
+                self.rewind(0)
+                    .map_err(crate::strata_engine::report_private_reset_error)?;
                 self.poisoned = true;
-                let private = self.arena.erase_retained_public_owners().map_err(error)?;
+                let private = self
+                    .arena
+                    .erase_retained_public_owners()
+                    .map_err(error)
+                    .map_err(crate::strata_engine::report_private_reset_error)?;
                 let (buffers, bytes) = private_owned_geometry()?;
                 if private.bytes != bytes || private.buffers != buffers {
                     return Err(Error::InvalidFormat("native MTP retained reset inventory"));
                 }
-                self.verify_source()?;
-                self.complete_fault()?;
-                self.audit_io()?;
+                self.verify_source()
+                    .map_err(crate::strata_engine::report_private_reset_error)?;
+                self.complete_fault()
+                    .map_err(crate::strata_engine::report_private_reset_error)?;
+                self.audit_io()
+                    .map_err(crate::strata_engine::report_private_reset_error)?;
                 u::cancel(cancel)?;
                 self.position = 0;
                 self.poisoned = false;
