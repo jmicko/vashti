@@ -343,6 +343,11 @@ pub(super) fn check_execution(
     check_runtime(model.arena.client().map_err(u::fault)?)?;
     executor.check_target_rows_policy()?;
     native.validate_target_decode_policy(executor, &model.admission)?;
+    execution_runtime_budget(
+        native.public_target_request_io.is_some(),
+        native.public_language_request_io.is_some(),
+        executor.resident_runtime_io_limit(),
+    )?;
     if native.target_rows.is_none()
         || native.moe.cpu_miss_cap().is_some()
         || native.moe.cpu_gpu_overlap().is_some()
@@ -350,11 +355,24 @@ pub(super) fn check_execution(
         || executor.packed_profile != OriginalPackedProfile::DaslabIq3
         || !executor.token_io_checkpoint
         || !model.admission.deferred_token_io()
-        || executor.resident_runtime_io_limit() != RUNTIME_BYTES
         || !model.admission.transient_io()
         || !model.arena.public_owned_zero_audit_enabled()
         || !model.io.public_owned_zero_audit_enabled()
     {
+        return Err(rejected());
+    }
+    Ok(())
+}
+
+fn execution_runtime_budget(target: bool, language: bool, actual: u64) -> Result<()> {
+    // Select only from the actual, mutually exclusive constructor permits.
+    // This does not grant a larger budget or let caller geometry choose one.
+    let expected = match (target, language) {
+        (true, false) => RUNTIME_BYTES,
+        (false, true) => super::public_language_request_io::RUNTIME_BYTES,
+        _ => return Err(rejected()),
+    };
+    if actual != expected {
         return Err(rejected());
     }
     Ok(())
@@ -503,6 +521,22 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn execution_budget_matches_its_original_constructor_permit() {
+        let language = super::super::public_language_request_io::RUNTIME_BYTES;
+        execution_runtime_budget(true, false, RUNTIME_BYTES).unwrap();
+        execution_runtime_budget(false, true, language).unwrap();
+        for actual in [RUNTIME_BYTES, language, RUNTIME_BYTES + 1, language + 1] {
+            assert!(execution_runtime_budget(false, false, actual).is_err());
+            assert!(execution_runtime_budget(true, true, actual).is_err());
+        }
+        if crate::strata_intel_core::enabled() {
+            assert_eq!(RUNTIME_BYTES, 256 * 1024 * 1024);
+            assert_eq!(language, 512 * 1024 * 1024);
+            assert!(execution_runtime_budget(true, false, language).is_err());
+            assert!(execution_runtime_budget(false, true, RUNTIME_BYTES).is_err());
+        }
+    }
     #[test]
     fn four_request_permission_never_changes_cold_or_closed_scope() {
         let mut authority = Authority::new(13, true, false).unwrap();

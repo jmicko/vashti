@@ -7706,7 +7706,7 @@ mod tests {
     }
     #[test]
     fn scoped_verified_rows_release_original_lease_before_prefix_consumers() {
-        use super::{MAX_BATCH, error, select_verified_rows};
+        use super::{MAX_BATCH, select_verified_rows};
         use std::cell::Cell;
         struct Rows<'a>(&'a Cell<bool>);
         impl Drop for Rows<'_> {
