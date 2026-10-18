@@ -45,6 +45,17 @@ The original execution-check receipts retain their static `benchmark=false` and
 receipt provide the later decision without rewriting historical evidence.
 No Vashti consumer/API change, installation, reset, reboot or release occurred.
 
+The follow-up counter-only candidate `b7cb8e85`/SHA256
+`aa12c4732d21b269beac5745ba876a6df6ca0034607daa9e6a8f93299e00bb9e`
+also passes the two-request362-token repeat/erasure/physical recovery check.
+It only exposes existing aggregate graph counters at three static public phases;
+no inference math, placement, queue work or timestamp-query changes. Warm generation
+records15.8413s native fence wait,0.1704s capture,2077 submissions/1964 replays.
+This is a diagnostic, not a new throughput rate or replacement for the exact
+accepted artifact. Next: profile actual GPU kernels in the selected controller;
+CPU command capture is not the leading candidate. Both test units are terminal,
+admission/services/memory recovered and shared-shell sudo was refreshed.
+
 **Previous execution and numerical checkpoint (2026-10-18):** isolated
 `codex/strata-rust-port`. The human paused the goal and requested a final
 checkpoint before updating ChatGPT. This block is finished; no GPU test remains

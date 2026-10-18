@@ -45,6 +45,17 @@ The original execution-check receipts retain their static `benchmark=false` and
 receipt provide the later decision without rewriting historical evidence.
 No Vashti consumer/API change, installation, reset, reboot or release occurred.
 
+The follow-up counter-only candidate `b7cb8e85`/SHA256
+`aa12c4732d21b269beac5745ba876a6df6ca0034607daa9e6a8f93299e00bb9e`
+also passes the two-request362-token repeat/erasure/physical recovery check.
+It only exposes existing aggregate graph counters at three static public phases;
+no inference math, placement, queue work or timestamp-query changes. Warm generation
+records15.8413s native fence wait,0.1704s capture,2077 submissions/1964 replays.
+This is a diagnostic, not a new throughput rate or replacement for the exact
+accepted artifact. Next: profile actual GPU kernels in the selected controller;
+CPU command capture is not the leading candidate. Both test units are terminal,
+admission/services/memory recovered and shared-shell sudo was refreshed.
+
 **Earlier checkpoint, superseded by the numerical results above:**
 
 Source-audit baseline: `fad14f5dba7395a66cc2c06aea649fe1feeb1ca6`, isolated `codex/strata-rust-port`.
@@ -1017,3 +1028,62 @@ aggregate capture/wait/submit/replay counters at the same three static request
 phases. That distinguishes CPU recording cost from GPU/fence time without
 serializing every kernel with timestamps. Preserve the complete engine. Do not
 return to testing and abandoning isolated coupled components.
+
+
+### Fixed-public native graph counter diagnosis (2026-10-18)
+
+Runtime candidate `b7cb8e85f0f70ec7e913dc071e835bc93aed830c`, frozen artifact
+`strata-public-phase-counters-20261018`, SHA256
+`aa12c4732d21b269beac5745ba876a6df6ca0034607daa9e6a8f93299e00bb9e`.
+The sole native-source difference from accepted299579b5 is20 added lines in the
+fixed-public `daslab_language_probe.rs` caller: read existing process aggregates
+at preflight/final-prompt/erasure and serialize at most6 static snapshots. It
+adds no GPU query, math, owner, scheduling or resource-queue work. Strict core
+Clippy and changed-file formatting pass. All original selected components remain.
+
+Protected `strata-public-phase-counters-retained-20261018` exits0 with identical
+362-token/EOS outputs on one loaded Session,110 windows/31 repairs in the reported
+second request, both request erasures and final close. Independent root after-state
+checks confirm the same physical baseline, all HTTP200, normal admission and
+unchanged zero faults. Active-unit swap0/core0/48.2GiB protection is recorded.
+This did not use `--throughput-check`; the exact accepted-artifact manifest is
+unchanged and still refuses this different artifact for throughput claims.
+
+`phase-counter-deltas.json` derives only monotonic aggregate differences from the
+six actual successful snapshots (original `intel.json` remains unchanged):
+
+| Phase | Submissions | Replays | Recorded compute dispatches | Capture counter | Native fence-wait counter |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| First prefix/preflight |1466 |0 |33849 |0.4341s |3.9270s |
+| First generation |2076 |1964 |344298 |0.1797s |15.8513s |
+| Second prefix/preflight |1468 |0 |33850 |0.4393s |3.9457s |
+| Second generation |2077 |1964 |344346 |0.1704s |15.8413s |
+
+Source `strata_graph.rs::credit` counts actual compute nodes/submissions and
+classifies graph size. The second generation has111 large (>=2048 nodes)
+submissions,103 replays of those large graphs. `CAPTURE_NS` covers the non-replay
+recording path; it does not cover all CPU work or signature generation on hits.
+`WAIT_NS` covers actual native lane-fence waits; it is not a pure GPU kernel
+timer. These are not additive exhaustive categories. Still, the substantial
+native wait and high replay fraction make CPU command recording a poor first
+optimization target. No new per-request wall rate is calculated from counters
+or guessed from log timestamps. The accepted uninstrumented reference remains
+19.7811/20.6089 tokens/s on299579b5.
+
+Next useful work: connect one bounded fixed-public operator-timestamp sample to
+the ACTUAL `strata_global_controller.rs` verification window, preserving original
+commit/draft lifetimes and all components. Existing arming code in the later
+legacy `daslab_language_probe.rs` loop is unreachable for this selected engine.
+Both `strata_engine.rs` and `strata_global_controller.rs` deliberately reject
+`profile_native_target()` today; merely enabling the runner flag does not create
+a valid selected-path profile. Scope/restore the flag on errors, retain genuine
+recording/query-pool ownership and collect only static operator aggregates after
+real fences. Profiled kernels serialize for timestamps and must NOT supply an
+uninstrumented throughput claim. Use that result to choose the next substantive
+GPU change; do not return to unrelated API/cancellation work or remove coupled
+upstream components after an isolated slowdown. No more Ollama baselines needed.
+
+All GPU runs in this checkpoint are terminal and recovered. No source install,
+private caller, frontend, public API, GPU reset/reboot or release changes. The goal
+remains active;30 tokens/s remains unmet. If protected sudo expires, stop cleanly
+and document rather than trying privilege workarounds.
