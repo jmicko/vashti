@@ -2,38 +2,36 @@
 
 Working checkout: `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`.
 
-**Current CPU-only source:** `07ed2a2c88ff02ef3f1bcf5841da104a9d29c436`, branch
-`codex/strata-rust-port`. The [selected engine source-wiring audit](kuno-strata-current-source-audit.md#selected-engine-source-wiring-completeness-decision-2026-10-17)
-is now **passed** for pinned Intel source
-`fb58e0dbc8399662c0e47c76578c6e878b14f6cf`, original DASLab IQ3_S/Q2 MTP,
-`DEVICE_PLAN=1,NO_HOST=1`. This passes the source/call-chain review only;
-**whole rewrite correctness/recovery and speed acceptance remain open**.
+**Current CPU-only source:** `fad14f5dba7395a66cc2c06aea649fe1feeb1ca6`, branch
+`codex/strata-rust-port`. Read the [public retained-session receipt](kuno-strata-rewrite-completion.md#protected-public-loaded-session-repeat-harness-2026-10-17)
+and [source-wiring decision](kuno-strata-current-source-audit.md#selected-engine-source-wiring-completeness-decision-2026-10-17).
+Selected engine wiring remains reviewed/passed; whole-model correctness/recovery
+and speed gates remain open.
 
-The final source trace covers prompt/teacher boundaries, real prediction/R-row
-delivery, accepted-input prefix commit, rejected MTP cache rewind, actual
-pending commit/draft scopes, EOS/cap, receipt-gated request erasure/rebind and
-all-peer close. Earlier dense/expert/prompt matrix/GR/GDN/QSA/PLE/graph owners
-and backend substitutions remain indexed in the audit. The active cooperative
-prompt completion-plane correction remains selected. No source path was removed
-or replaced because of timing.
+Source `fa6e278c` adds an explicit public two-request validation through the SAME
+loaded Session, using actual request reset/rebind and checked all-peer close.
+Default `execute` still runs one request through the same checked wrapper. The
+fixed public repeat compares actual tokens/count/EOS; its wiping comparison is
+never persisted. `--retained-check` requires the coherent Intel core/Q2 protected
+execution-check runner and adds no private inputs, loop or API. Source `fad14f5d`
+corrects core request seed metadata to the actual default0 (legacy other modes
+still424242); no sampler behavior changes.
 
-No runtime change in this audit block. Existing 630 selected CPU cases /87
-suites, strict core/off **binary** Clippy and changed-file formatting pass.
-The unchanged normal frozen artifact SHA256 is
-`444985020026902c60a37b26cd98b0a35dc1e80de652f890c6eaf81b3335e376`;
-its prior offline receipt is397 variants/139 physical-pointer checks/77 rounded
-modules/32 matrix configurations. Those are compiler checks, not device proof;
-they were not rerun for documentation. Tracked sources still match that runtime.
+631 distinct selected CPU cases /88 suites, strict core/off **binary** Clippy,
+changed Rust formatting/whitespace, runner AST/early protected guards pass.
+Normal frozen SHA256 `e4489a546b391b6ecb9a538f1c75fce2fa447dc2c2a64ba4e7cf25e78c0344ee`, mode0500, source/ordinary/frozen
+and requested/resolved features independently checked. Its early pre-adapter
+offline check passes397 variants/139 physical-pointer checks/77 rounded-product
+modules/32 matrix configs. No GPU/repeat run, numerical or recovery acceptance.
 
-**Next:** protected whole-model correctness/state/context/footprint and physical
-recovery acceptance, with no throughput trials yet. B70 availability was requested
-following the CPU-only checkpoint; authorization is pending and no GPU run has
-started. Required sudo must be checked before protected work; stop if unavailable.
-The public launcher remains one request per process, so retained/mixed-session
-acceptance must call the real `Session::load/run/close` owner. Private caller
-acceptance remains separately required before private/production use. Goal
-active/incomplete. No service/install/release or API/Vashti/frontend change.
-Canonical checkout and inherited untracked cache preserved.
+**Stop checkpoint:** B70 availability question still pending; current permission
+remains CPU-only. Shared Demons shell's `sudo -n -v` reports credential unavailable.
+No privilege workaround or protected run. Once authorized/protected, first run
+ordinary whole-model completion; only then the explicit loaded-session repeat.
+Mixed/independent numerical/state/context/footprint/failure/private-caller gates
+remain open before speed. No service/install/release or API/Vashti/frontend
+change. Goal active/incomplete. Canonical checkout and inherited untracked
+cache preserved.
 
 
 

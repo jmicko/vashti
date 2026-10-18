@@ -1,6 +1,6 @@
 # Current Strata source audit
 
-Runtime source: `07ed2a2c88ff02ef3f1bcf5841da104a9d29c436`, isolated `codex/strata-rust-port`.
+Runtime source: `fad14f5dba7395a66cc2c06aea649fe1feeb1ca6`, isolated `codex/strata-rust-port`.
 Pinned Intel upstream: `fb58e0dbc8399662c0e47c76578c6e878b14f6cf`.
 This is the current audit index, alongside the historical evidence in
 [kuno-strata-rewrite-completion.md](kuno-strata-rewrite-completion.md).
@@ -13,7 +13,9 @@ release authorization.
 ## Entry, loading and cleanup: call chain traced
 
 The selected executable's actual `daslab_language_probe.rs` entry constructs the
-owned request and calls `strata_engine::execute`. `Session::load/load_inner`
+owned request and normally calls `strata_engine::execute`; explicit public repeat
+validation calls `with_loaded_session`. Both own the same checked loaded Session.
+`Session::load/load_inner`
 requires the exact Intel device/client, original bound target/draft artifacts,
 protected/exclusive caller contract and disabled operator profiling. It creates
 Tables, GpuExecutor, the actual admitted target and shared Q2 MTP owner; it does
@@ -758,7 +760,7 @@ of these substitutions is still a physical acceptance requirement.
 ## Selected engine source-wiring completeness decision (2026-10-17)
 
 **PASS for the selected engine dependency/call-chain review**, runtime source
-`07ed2a2c88ff02ef3f1bcf5841da104a9d29c436`, pinned MIT Intel source
+`fad14f5dba7395a66cc2c06aea649fe1feeb1ca6`, pinned MIT Intel source
 `fb58e0dbc8399662c0e47c76578c6e878b14f6cf`. The reviewed configuration is Intel
 B70, original DASLab IQ3_S plus original Q2 MTP, `DEVICE_PLAN=1,NO_HOST=1`,
 non-profiled serial serving. This decision addresses completion-gate item 3's
@@ -789,28 +791,60 @@ private/production inference. No public fixture output or internal test count
 proves that private caller exists. API/UI/service/release work is outside this
 engine source decision.
 
-The latest runtime is unchanged by this audit. Existing 630 selected CPU cases,
-87 suites, core/off binary Clippy and normal frozen offline 397/139/77/32 checks
-remain the current receipts; they were not rerun for documentation alone. Tracked
-selected sources were compared with the frozen runtime commit and are unchanged;
-the pinned upstream SYCL tree remains unchanged. See the latest completion receipt
-for artifact identity and the exact limits of those checks.
+The original source walk accepted `07ed2a2c`; the current revision adds the
+public retained-session validation caller below and reviews its shared checked
+close wrapper. Selected inference math/placement/scheduling are unchanged. The
+current source passes631 selected CPU cases/88 suites, core/off binary Clippy
+and normal frozen offline397/139/77/32 checks. These do not prove physical
+execution. The pinned upstream remains unchanged. See the latest completion
+receipt for exact artifact identity and the remaining gates.
+
+### Actual public retained-session validation caller
+
+Source `fa6e278c` adds `with_loaded_session`, the common load/callback/checked-close
+owner now also used by ordinary one-request `execute`. It catches callback
+failure/unwind and closes unless that exact Session already attempted close.
+The callback receives an exclusive borrow; it returns only content-free
+completion. Original process/exclusive-runtime protection remains an unsafe
+caller obligation for its whole duration. No GPU/model/session owner is cloned
+or reconstructed between requests.
+
+The explicit `two-identical-public` selector runs the same compiled fixture twice
+through that original Session. It checks real callback count, exact output-token
+equality and EOS/greedy agreement after the first request has completed its real
+private reset. The bounded public expected-token copy is wiping, as is the first
+output vector before reuse. No comparison tokens enter receipts/logs. One checked
+all-peer close still follows; emitted-token equality never grants erasure or
+physical recovery authority. The ordinary default remains one request.
+
+`--retained-check` in the protected runner requires `--intel-core`, original Q2
+and the existing `--execution-check`; it cannot request private input or unlimited
+repeat. The standalone test lifetime is2400 seconds for two requests versus1200
+for the ordinary case. It does not change Kuno inference/API deadlines, ownership
+quotas or swap/core protection. Normal fixtures request up to512 outputs with
+window4/minimum0.5, greedy target sampling and actual core request seed0.
+Source `fad14f5d` fixes the runner's previously hard-coded424242 seed metadata
+for this core entry; other lab modes retain their separate existing seed. This
+reports actual controls without changing inference or retroactively certifying
+other historical entries. Physical repeat acceptance is still open.
 
 ## Remaining acceptance work
 
 - Obtain renewed B70 availability/authorization and verify protected caller,
   disabled swap/core dumps, original artifacts and actual clean memory. A
   question was sent after the CPU-only checkpoint; no GPU work has started.
-  If required sudo is unavailable, checkpoint and stop without a workaround.
+  Shared Demons `shell` was checked with `sudo -n -v`: credential unavailable.
+  Finish this CPU checkpoint and stop; do not use a privilege workaround.
 - Run protected whole-model prompt/count-one/multirow completion, then independent
   numerical/target-verification and accepted/rejected-prefix state checks.
   Validate actual cold/capture/replay, two-program PLE dependencies, EOS/cap,
   context boundaries, full retained recording footprint and unchanged quotas.
 - Exercise actual loaded-session hot/mixed request reset and failure recovery,
   including original private erasure and physical GPU memory recovery. The
-  current normal public launcher is one request per process, so it alone cannot
-  pass retained-session acceptance. Use the original `Session::load/run/close`
-  owner for that test; do not infer it from host state tests.
+  default public launcher is one request per process. Its new explicit
+  `--retained-check` exercises the actual two-request loaded Session and exact
+  public repeat equality, but has not run on hardware. Mixed prompts/controls,
+  context/failure cases and private-caller acceptance remain additional work.
 - Complete the protected private caller gate before private/production claims.
   Preserve all source-selected dependencies while fixing any device failures.
 - Only after source wiring **and** whole-model correctness/recovery acceptance

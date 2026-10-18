@@ -6,18 +6,20 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-17):** isolated
-`codex/strata-rust-port`, runtime source `07ed2a2c88ff02ef3f1bcf5841da104a9d29c436`. Read the
-[selected engine source-wiring decision](kuno-strata-current-source-audit.md#selected-engine-source-wiring-completeness-decision-2026-10-17)
-and [completion gate](kuno-strata-rewrite-completion.md). Source wiring now
-passes for the pinned Intel/DASLab IQ3_S/Q2 MTP path, including final controller,
-accepted-prefix commit/repair, teacher/output and request/closure ownership.
-Whole rewrite correctness/recovery remains unaccepted; speed gate stays closed.
-Runtime unchanged: existing630 selected CPU cases/87 suites, core/off binary lint
-and frozen offline397/139/77/32 receipts remain current, not new device evidence.
-Work stays CPU-only pending requested B70 availability and valid protected sudo.
-Next require whole-model numerical/state/context/footprint, retained-session and
-physical recovery acceptance. Private caller acceptance remains separately gated.
-Required Vashti/API changes: none; no service/install/release action authorized.
+`codex/strata-rust-port`, runtime source `fad14f5dba7395a66cc2c06aea649fe1feeb1ca6`. Read the
+[public retained-session receipt](kuno-strata-rewrite-completion.md#protected-public-loaded-session-repeat-harness-2026-10-17)
+and [source-wiring decision](kuno-strata-current-source-audit.md#selected-engine-source-wiring-completeness-decision-2026-10-17).
+Selected source wiring passes; whole-model correctness/recovery and speed remain
+gated. The explicit public `--retained-check` now calls two real requests on one
+loaded Rust Session and checks exact public outputs after real reset/rebind;
+default stays one request.631 CPU cases/88 suites, core/off binary lint and frozen
+offline397/139/77/32 pass; the actual GPU repeat has not run. Current core request
+seed metadata is0, correcting the previous runner's inaccurate424242 for this
+entry. CPU-only stop checkpoint: B70 question pending and shared-shell sudo
+credential verified unavailable. Require fresh authorization/protection, ordinary
+whole-model completion, then repeat/mixed/numerical/state/footprint/recovery and
+private-caller acceptance. No privilege workarounds, no throughput trials yet.
+Required Vashti/API changes: none; no service/install/release actions ran.
 
 ## Ownership
 

@@ -6,38 +6,36 @@ checklist is a source-to-source audit, not a sequence of throughput experiments.
 Each row needs its connected consumer, real ownership/placement and state contract;
 adding an unused helper or optional switch does not complete a row.
 
-**Current CPU-only source:** `07ed2a2c88ff02ef3f1bcf5841da104a9d29c436`, branch
-`codex/strata-rust-port`. The [selected engine source-wiring audit](kuno-strata-current-source-audit.md#selected-engine-source-wiring-completeness-decision-2026-10-17)
-is now **passed** for pinned Intel source
-`fb58e0dbc8399662c0e47c76578c6e878b14f6cf`, original DASLab IQ3_S/Q2 MTP,
-`DEVICE_PLAN=1,NO_HOST=1`. This passes the source/call-chain review only;
-**whole rewrite correctness/recovery and speed acceptance remain open**.
+**Current CPU-only source:** `fad14f5dba7395a66cc2c06aea649fe1feeb1ca6`, branch
+`codex/strata-rust-port`. Read the [public retained-session receipt](kuno-strata-rewrite-completion.md#protected-public-loaded-session-repeat-harness-2026-10-17)
+and [source-wiring decision](kuno-strata-current-source-audit.md#selected-engine-source-wiring-completeness-decision-2026-10-17).
+Selected engine wiring remains reviewed/passed; whole-model correctness/recovery
+and speed gates remain open.
 
-The final source trace covers prompt/teacher boundaries, real prediction/R-row
-delivery, accepted-input prefix commit, rejected MTP cache rewind, actual
-pending commit/draft scopes, EOS/cap, receipt-gated request erasure/rebind and
-all-peer close. Earlier dense/expert/prompt matrix/GR/GDN/QSA/PLE/graph owners
-and backend substitutions remain indexed in the audit. The active cooperative
-prompt completion-plane correction remains selected. No source path was removed
-or replaced because of timing.
+Source `fa6e278c` adds an explicit public two-request validation through the SAME
+loaded Session, using actual request reset/rebind and checked all-peer close.
+Default `execute` still runs one request through the same checked wrapper. The
+fixed public repeat compares actual tokens/count/EOS; its wiping comparison is
+never persisted. `--retained-check` requires the coherent Intel core/Q2 protected
+execution-check runner and adds no private inputs, loop or API. Source `fad14f5d`
+corrects core request seed metadata to the actual default0 (legacy other modes
+still424242); no sampler behavior changes.
 
-No runtime change in this audit block. Existing 630 selected CPU cases /87
-suites, strict core/off **binary** Clippy and changed-file formatting pass.
-The unchanged normal frozen artifact SHA256 is
-`444985020026902c60a37b26cd98b0a35dc1e80de652f890c6eaf81b3335e376`;
-its prior offline receipt is397 variants/139 physical-pointer checks/77 rounded
-modules/32 matrix configurations. Those are compiler checks, not device proof;
-they were not rerun for documentation. Tracked sources still match that runtime.
+631 distinct selected CPU cases /88 suites, strict core/off **binary** Clippy,
+changed Rust formatting/whitespace, runner AST/early protected guards pass.
+Normal frozen SHA256 `e4489a546b391b6ecb9a538f1c75fce2fa447dc2c2a64ba4e7cf25e78c0344ee`, mode0500, source/ordinary/frozen
+and requested/resolved features independently checked. Its early pre-adapter
+offline check passes397 variants/139 physical-pointer checks/77 rounded-product
+modules/32 matrix configs. No GPU/repeat run, numerical or recovery acceptance.
 
-**Next:** protected whole-model correctness/state/context/footprint and physical
-recovery acceptance, with no throughput trials yet. B70 availability was requested
-following the CPU-only checkpoint; authorization is pending and no GPU run has
-started. Required sudo must be checked before protected work; stop if unavailable.
-The public launcher remains one request per process, so retained/mixed-session
-acceptance must call the real `Session::load/run/close` owner. Private caller
-acceptance remains separately required before private/production use. Goal
-active/incomplete. No service/install/release or API/Vashti/frontend change.
-Canonical checkout and inherited untracked cache preserved.
+**Stop checkpoint:** B70 availability question still pending; current permission
+remains CPU-only. Shared Demons shell's `sudo -n -v` reports credential unavailable.
+No privilege workaround or protected run. Once authorized/protected, first run
+ordinary whole-model completion; only then the explicit loaded-session repeat.
+Mixed/independent numerical/state/context/footprint/failure/private-caller gates
+remain open before speed. No service/install/release or API/Vashti/frontend
+change. Goal active/incomplete. Canonical checkout and inherited untracked
+cache preserved.
 
 
 
@@ -11599,3 +11597,92 @@ required tests and stop/checkpoint if unavailable. Goal remains active and
 incomplete. Live speed gate stays closed until the whole-model correctness and
 recovery gate passes; source audit, host tests or incidental timing are not a
 substitute. No required Vashti/API changes.
+
+
+## Protected public loaded-session repeat harness (2026-10-17)
+
+Current source `fad14f5dba7395a66cc2c06aea649fe1feeb1ca6`; Rust wrapper/public caller
+`fa6e278c56b6705f62ed9a1a37029487b0b8589c`, final runner metadata correction
+`fad14f5dba7395a66cc2c06aea649fe1feeb1ca6`. Earlier one-shot limitation notes are
+superseded only for the new explicit public repeat option. No physical acceptance
+is implied. Selected inference math, placements, graphs and verifier stay intact.
+
+`strata_engine::with_loaded_session` owns original load, an exclusive callback,
+and checked close on success/error/unwind. One-request `execute` delegates to it;
+the explicit public retained case uses the same Session twice, never a second
+load/context. Existing `Session::run` still enforces original reset receipts,
+rebinds request geometry and erases each request before returning. Callback
+failures outside `run` also owe checked close, rather than hiding recovery behind
+Drop. The same unsafe protected-runtime/artifact/exclusivity obligations persist
+until the entire wrapper returns. This is internal lab orchestration, no API.
+
+The public driver accepts only `KUNO_LAB_LANGUAGE_SESSION=two-identical-public`,
+compiled Intel core and existing public fixture gates. It generates the same
+fixed public request twice. First outputs are kept only in a bounded wiping
+comparison allocation (at most512 token IDs/2048B under the existing4MiB public
+fixture HOST allowance); the original output vector is zeroized before reuse.
+Second callback count, exact tokens, EOS and greedy status must agree before the
+caller returns. Only checked final close permits a successful receipt. No first
+output/comparison payload is logged or persisted. This is a consistency witness,
+not an independent numerical oracle or a private caller.
+
+The protected runner's `--retained-check` requires coherent `--intel-core`, Q2
+and `--execution-check`; no unlimited repetitions or private input overrides.
+Only this standalone two-request test has a2400-second lifetime, twice the
+ordinary1200 seconds. API/inference deadlines, host/VRAM/recording quotas and
+no-swap/core protection are unchanged. Its public record adds actual
+`loaded_session_requests` and `identical_public_repeat_matched`; default one-shot
+reports1/false (repeat not checked). True is written only after comparison and
+checked close succeed. Current core controls remain up to512 outputs/window4,
+minimum0.5, greedy target and actual seed0. The old runner hard-coded424242 in
+its manifest even for this core default0 entry; current metadata now reports0.
+Other legacy modes retain424242. No retroactive seed certification of other
+historical labs, no sampler change and no new timing/throughput result.
+
+CPU/compiler validation (under `/media/jmicko/faststore/kuno-development`):
+
+- `strata-retained-public-final-validate-20261017.py/.log`:631 distinct selected
+  CPU cases /88 nonempty suites pass. Includes real existing request state/
+  erasure bookkeeping plus the new fail-closed public selector test. No host
+  test pretends to run a loaded model or prove physical recovery.
+- `strata-retained-public-final-full-cpu-20261017.log`,
+  `strata-retained-public-final-{core,off}-clippy-20261017.log`: selected tests
+  pass and strict core/off **binary** Clippy passes; rustfmt/whitespace pass.
+- `strata-retained-public-runner-guards-20261017.log`: AST syntax, unknown-option,
+  wrong/missing core/sidecar and mandatory-root early guards pass without any
+  protected helper/GPU work. The runner-only metadata follow-up needs no Rust
+  test rerun; Rust sources equal tested `fa6e278c`.
+- `strata-retained-public-final-ordinary-20261017/`: locked normal release at
+  current source, frozen SHA256 `e4489a546b391b6ecb9a538f1c75fce2fa447dc2c2a64ba4e7cf25e78c0344ee`, mode0500.
+  `strata-retained-public-final-artifact-proof-20261017.json` independently checks
+  actual source/ordinary/frozen identity and requested/resolved features.
+  Requested `strata-rust-port,strata-intel-core`; resolved additionally
+  `direct-device,strata-resident-224,strata-resident-240`.
+- `strata-retained-public-final-artifact-validate-20261017.py/.log` and
+  `strata-retained-public-final-shaders-20261017.log`: actual frozen executable's
+  **early pre-adapter** offline branch passes397 variants/139 physical-pointer
+  validations/77 rounded-product modules/32 matrix configurations. No device,
+  inference, repeat, speed or resource-recovery execution occurred.
+
+Next commands are prepared, **not run**. Require the pending human B70
+availability answer and fresh sudo in the Demons shared `shell`. The live
+noninteractive credential check reported unavailable; there is no waiting sudo
+prompt and no workaround. Existing clean-state guards also require NVIDIA compute
+idle; a rejected readiness check does not authorize unloading another job. Run
+the ordinary completion first with a fresh output:
+
+```sh
+sudo -n python3 /home/jmicko/.codex/worktrees/kuno-image-speed/vashti/apps/kuno/benchmarks/text/run-strata-port.py strata-retained-public-final-ordinary-20261017 strata-whole-completion-intel-20261017 code q2 --intel-core --execution-check
+```
+
+Only after that completes and actual recovery passes, use the retained case:
+
+```sh
+sudo -n python3 /home/jmicko/.codex/worktrees/kuno-image-speed/vashti/apps/kuno/benchmarks/text/run-strata-port.py strata-retained-public-final-ordinary-20261017 strata-hot-repeat-intel-20261017 code q2 --intel-core --execution-check --retained-check
+```
+
+No model load/GPU work, service/config/install/release or Vashti/API changes.
+Canonical checkout and inherited untracked cache preserved. Stop at this clean
+CPU checkpoint with goal active/incomplete. Remaining actual whole-model,
+independent numerical/state, mixed-session/context/failure/footprint/recovery
+and private-caller gates still block overall acceptance and speed measurements.
