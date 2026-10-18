@@ -6,41 +6,35 @@ checklist is a source-to-source audit, not a sequence of throughput experiments.
 Each row needs its connected consumer, real ownership/placement and state contract;
 adding an unused helper or optional switch does not complete a row.
 
-**Current CPU-only source:** `1b8d354d56c501cda08ec6404ce2f5427732e507`, branch
+**Current CPU-only source:** `07ed2a2c88ff02ef3f1bcf5841da104a9d29c436`, branch
 `codex/strata-rust-port`. Read the [current source audit](kuno-strata-current-source-audit.md)
-and [native boundary/placement receipt](kuno-strata-rewrite-completion.md#native-request-submission-boundaries-and-placement-audit-2026-10-17).
-The actual native request/program now keeps its explicit submission boundaries:
-WGPU's ordinary256-task threshold cannot split initial/prompt/target/commit/draft
-work inside original request/branch ownership. Ordinary execution outside those
-states stays unchanged. All node/parameter/retained-metadata/I/O quotas remain;
-no fake completion, new scope/API or cap increase. Actual source trace proves
-target suffix GR alone exceeds that ordinary threshold (376 math nodes).
+and [prompt matrix/source receipt](kuno-strata-rewrite-completion.md#prompt-matrix-completion-plane-and-quantized-consumer-audit-2026-10-17).
+The active cooperative expert DOWN kernel now uses the shared full4096-row
+completion plane; its stale20480 offset disagreed with the reducer's40960.
+The actual compiled-kernel regression fails before the fix and passes after it
+for all eight compiler layout combinations. No new owner, quota or API.
 
-The audit also traces static preload before expert sizing, exact ranked bytes,
-full GPU/HOST pointer owners and private prompt loan/erase/restore. Compiled full
-ranked fixture matches pinned Strata data SHA256. Earlier native GR/QSA arithmetic
-and deferred PLE prefix/read/transfer/suffix stay connected. No API/Vashti change.
+Selected quantized role and prompt grouping/staging/matrix consumers are traced
+against pinned Intel source, including explicit oneMKL-to-Rust cooperative
+matrix and ring/layout substitutions. Additional actual shared/MTP/INFO/
+descriptor ownership and original commit readiness are indexed in the audit.
+Earlier native request boundaries, GR/QSA arithmetic and deferred PLE remain.
 
-629 distinct selected CPU cases /87 nonempty suites pass, with strict core/off
-**binary** Clippy and changed formatting/whitespace. Actual policy/typed-page
-regressions retain/replay two805-record programs across ordinary task thresholds,
-and cover uncaptured request holding and failed-state clear. They grant no
-GPU-fence/physical-memory authority. Frozen ordinary SHA256
-`da0fdadf397c7b98447941efc516b1a297386c1de34084d6536236e23a706b2c`,
-source/ordinary/frozen/mode0500/requested-and-resolved-features independently
-verified; its early pre-adapter offline branch passes397 variants/139 physical
-checks/77 rounded-product modules/32 matrix configs. No GPU/inference/speed ran.
+630 distinct selected CPU cases /87 nonempty suites, strict core/off **binary**
+Clippy and changed-file formatting/whitespace pass. Frozen ordinary SHA256
+`444985020026902c60a37b26cd98b0a35dc1e80de652f890c6eaf81b3335e376` has independently checked source/ordinary/frozen
+identity, mode0500 and requested/resolved features. Its early pre-adapter offline
+branch passes397 variants/139 physical-pointer checks/77 rounded-product modules/
+32 matrix configurations. These are compiler checks, not physical GPU execution.
 
-**Whole rewrite incomplete; speed gate closed.** Continue selected quantized
-arithmetic/prompt matrix consumers and remaining shared/MTP/INFO/descriptor/
-output/resource queue review. Actual full-program/all-shape footprint under
-unchanged quotas still needs protected acceptance. Then require whole-model
-numerics/context/cold/capture/replay, acceptance/repair, EOS/cap, retained mixed
-requests and full recovery before speed. CLI remains compiled-public/one-request;
-private caller separately gated. Goal active CPU-only. Last checked sudo cache
-was expired; this block needed no root. No GPU/service/install/release/frontend
-action. Required API/Vashti changes: none. Canonical checkout and inherited
-untracked cache preserved.
+**Whole rewrite incomplete; speed gate closed.** Finish remaining shared/MTP
+controller, accepted-prefix repair and output/resource closure comparison. Then
+require protected whole-model numerics/context/cold/capture/replay, acceptance/
+repair, EOS/cap, retained mixed requests, full footprint and recovery acceptance.
+CLI remains compiled-public/one-request; private caller separately gated. Goal
+active CPU-only. No GPU/inference/speed, service/install/release or frontend
+change. This block needed no sudo. API/Vashti changes: none. Canonical checkout
+and inherited untracked cache preserved.
 
 
 
@@ -96,11 +90,11 @@ all need a final audit of actual connected dispatches, not just file names.
 | GPU route/group planning and original HOST access | `native_router.dp.cpp::route<512>` / `verify_kernels.dp.cpp::resident_plan_kernel`, selected SYCL `DEVICE_PLAN=1,NO_HOST=1` | Source `0d9e3a52` replaces fused eight-token/serial planning with selected one256-thread block per token (one active32-lane subgroup) and a separate128-thread packed parallel plan scan. Both use the SAME original private map root and native graph dependency tracking. Stable top10, winning-lane normalization, first-occurrence groups and original member order remain connected to direct authentic VRAM/HOST role consumers. Cell-ID/fixed8 plan layout and Vulkan math are explicit backend substitutions, not bit-parity proof. No CPU expert callback or guessed expert IDs. CPU/compiler acceptance passes; protected numerical/whole-model acceptance remains required. |
 | Native shared expert and fork/join | `verify.cpp::sh_stream_on/record_window`, `shared_expert.dp.cpp::shared_expert_multi`, native BF16 projection and `native_moe.dp.cpp` | Source `46e695a7` connects selected target shared compute fork, independent native Q8/fault roots, fused SwiGLU packing, original rank-one BF16 gate, vec4 sigmoid scale, ordered combined reduction and real all-peer target fence in one block. Actual cold/capture/replay Nodes, family pools, INFO edges and admission quotes are connected. CPU scheduling/shader interfaces pass; physical arithmetic/overlap, shared-to-MTP queue reuse and complete device/recovery acceptance remain open. See the connected shared-expert receipt below. |
 | Native quantized dense target and draft | `sycl/src/kernels/cuda/native_mmvq.dp.cpp::native_mmvq`, `try_wide`, `try_wide32` | Sources `ed4541b6`/`e1ba6d5b` connect selected wide Q4_K/Q5_K/IQ4_XS/Q8_0/IQ4_NL alongside Q6_K, exact counts1..8, original packed loads/scales/minima, original contribution groups and XOR reductions. Indexed Q8 retains ID/page guards; all six prompt dequantizers keep the original shared helpers. Actual source/CPU/offline shader acceptance passes; physical numerical/model/recovery acceptance remains open. See the native dense/prompt receipt below. |
-| Native expert math and grouped rows | `sycl/src/kernels/cuda/iq_kernels.dp.cpp::row_entries`, `native_gu_kernel`, `native_down_kernel` | Packed integer math/BDA roots exist. Separate GU roles, 4/2/1 chunks, activation, intermediate storage and downstream consumers are now selected together in the Intel core; all 158 WGSL/SPIR-V variants validate, including 105 physical-pointer checks; numerical/model execution acceptance remains pending. The global core now uses one per-role launch containing pinned row_entries4/2/1 loops, scalar IQ4_XS, native signed integer finish and XOR reduction; numerical/model execution acceptance remains pending. Historical fixed-chunk kernels are retained separately. Source1a034311 connects native subgroup32 Q8_1 GU preparation and fused direct SwiGLU/Q8 DOWN over the same actual private PART/status/planes. Original four GU/two DOWN formats cover all144 installed routed tensors. Actual rounded products are pinned by the shared native NoContraction postpass. See latest source/frame-grouping substitution receipt; device numerics/whole-model acceptance remain open. |
+| Native expert math and grouped rows | `sycl/src/kernels/cuda/iq_kernels.dp.cpp::row_entries`, `native_gu_kernel`, `native_down_kernel` | Packed integer math/BDA roots exist. Separate GU roles, 4/2/1 chunks, activation, intermediate storage and downstream consumers are now selected together in the Intel core; all 158 WGSL/SPIR-V variants validate, including 105 physical-pointer checks; numerical/model execution acceptance remains pending. The global core now uses one per-role launch containing pinned row_entries4/2/1 loops, scalar IQ4_XS, native signed integer finish and XOR reduction; numerical/model execution acceptance remains pending. Historical fixed-chunk kernels are retained separately. Source1a034311 connects native subgroup32 Q8_1 GU preparation and fused direct SwiGLU/Q8 DOWN over the same actual private PART/status/planes. Original four GU/two DOWN formats cover all144 installed routed tensors. The fused SwiGLU/Q8 producers pin their materialized products with the shared native NoContraction postpass; this is not an all-role dot-product decoration claim. See the current source audit for exact scope. See latest source/frame-grouping substitution receipt; device numerics/whole-model acceptance remain open. |
 | GR write/read/norm/down/up/injection | `sycl/src/kernels/cuda/fused_gr.dp.cpp::fused_gr_read_multi`; `verify.cpp::gr_read_group` | Native pending-write norm, sliced BF16 down/injection, fixed slice reduction and up/mix/commit are now connected and unconditionally selected in the core, including explicit PLE/final boundary writes. Resident original weights and the enlarged private scratch owner are charged together. Structural acceptance passes; numerical/model execution acceptance and final substitution audit remain pending. Source `37dced9` connects default full-prompt F1 row scales, packed BF16 norm/SiLU images, direct original projection consumers and residual-based mix recomputation together; see the packed-GR receipt. Sources `40fe97e` and the latest sole-residual receipt connect mixed images and prompt GR/PLE in-place storage, including actual MTP teacher scratch. Final substitution/numerical/device acceptance remains open. |
 | GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp`, `prefill/kernels.dp.cpp` | Core connects native BF16 alpha/beta, controls, recurrence/norm and accepted-prefix replay. Prompt scope selects contiguous H, causal convolution/history/L2, CB32 recurrence and directly consumed FP16 output. Source 9a7a23b connects prompt-capacity whole-chunk math without per-element status/replay owners, carved AB staging, and native row/value-head recurrent state shared by prompt/decode/repair. The large chunk caller/acceptance is connected in the latest controller receipt; physical execution and final numerical/queue audit remain open. Split verifier mode is an optional upstream path, not selected by the measured server. Source 39c8d9e1 connects default native 128-thread/four-column-tile accepted-prefix state commit over actual retained roots, replacing512-thread state-only output replay. See latest receipt; Source 7a0489d3 now connects authenticated verification-only deferral for recurrent/history writes, static replay mode and native history-only commit; see the latest receipt. Physical numerical/context/failure acceptance remains open. |
 | QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects INT8 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. The measured server explicitly selects INT8 for target and MTP; source2a3d1ad ports both together and the combined CPU shader/layout checks now pass. Numerical/GPU acceptance is pending. Earlier generic-default FP16 scope claims below are superseded. Numerical/state acceptance remains required. Source e5981a13 connects native 256-thread serial-window indexer and direct retained pooled scoring; separate per-query copying/mean/norm/publication and unused pooling clears are removed from decode. Original suffix acceptance and full ownership/erase remain. See latest source/substitution receipt; physical numerics and full QSA/placement audit remain open. Source 31c46e47 also connects actual default multi-query scoring, fixed 256 grid and shared query/key reuse; no arithmetic substitution to the unrelated scalar native_qsa_score path. Remaining scratch/KV-placement and protected whole-model acceptance stay open. Source 3d7b0752 removes native payload clears while keeping all status/full-request erasure and existing admission. Saved CLI confirms default fully resident INT8 KV. Sources 22829824/2f928c9e connect bounded tail/snapshot/F32 MAX8 retention across decode, full prompt, normal prefix and diagnostic restore; full-context raw history is removed from actual CACHE/CAND strides and exact admission. See bounded-state receipt. Physical numerical/replay/recovery acceptance and final whole-source audit remain open. |
-| PLE source rows, projection and history | `verify.cpp`, native PLE/BF16 kernels, original ngram/direct reader | Native BF16 projections, postops/materialized gate+conv terms and authoritative GPU history remain. Source `83d690e1` connects the default1M-row eight-way packed cache,256 slots/64 Linux O_DIRECT workers and coordinator to actual request/decode/prompt owners, original inode/stat guards, joined erasure and complete151,453,696B HOST reservation.611 selected CPU/eight core positional cases and actual original cold/warm row checks pass. Target launch before deferred PLE collection/layer1 readiness remains a real schedule gap; physical numerical/whole-model/recovery acceptance remains required. See the connected reader receipt. |
+| PLE source rows, projection and history | `verify.cpp`, native PLE/BF16 kernels, original ngram/direct reader | Native BF16 projections, postops/materialized gate+conv terms and authoritative GPU history remain. Source `83d690e1` connects the default1M-row eight-way packed cache,256 slots/64 Linux O_DIRECT workers and coordinator to actual request/decode/prompt owners, original inode/stat guards, joined erasure and complete151,453,696B HOST reservation.611 selected CPU/eight core positional cases and actual original cold/warm row checks pass. Source2899011f connects target prefix submission before deferred PLE collection/layer1 readiness, and source1b8d354d prevents ordinary automatic flushes from splitting those original programs. Physical numerical/whole-model/recovery acceptance remains required. See the connected reader receipt. |
 | Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. The bounded prompt path now uses logical-ID expert order, checked native transfer nodes, an eight-slot raw ring and two paired dequantization slots. The latest owned-consumer receipt connects full2048-row owners, non-overlapping raw/grouped route packets, causal math/state scopes, the unbatched final prompt input uses normal count1 decode for the first head, and full device MTP teaching covers the preceding prefix (up to8192 matrix rows). Independent transfer/compute queues and real release boundaries are connected. The measured server uses4096 prompt rows and32768 context. Source `bcc30dd` connects4096-row prompt owners/ABI; source `8d301b1` subsequently connects32768 runtime context; full-prefix/device acceptance is open. Source `12a60bf` connects native phase overlays, actual2080MiB admitted roots and256-query score/selection reuse; see the latest prompt-overlay receipt. Packed/in-place prompt scratch is connected in the latest receipts. Source allocation granularity and shared inventory are connected in the latest exact-page receipt. Physical/runtime/HOST pricing and lifetimes still require final review. Its no-borrow selection and nonresident fraction select the existing eight-slot/two-dequant-ring path; alternative loans/ring sizes are not prerequisites. Physical whole-model acceptance remains open. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
 | Prompt dense/expert matrix backend | Intel oneMKL rounded BF16/FP16 GEMMs | Connected Rust cooperative8x16x16/F32 kernels now consume the actual rounded dense and grouped GU/DOWN images, with enabled device features, SPIR-V native registration and required16 subgroup in both pipeline paths. See the cooperative-matrix receipt; physical numerical/model acceptance remains open. |
 | MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native INT8 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Positive-threshold chains now keep hidden carries on device and observe the same token/probability/fault packet as zero-threshold chains; mapped/event scheduling remains open. First/grouped device-source and ids-only target result consumers now exist; the shared-context constructor receipt below supersedes the separate-client blocker. Core construction now selects the actual target client and one combined account. Source9de7fef pins the original target embedding/head once, shares them with MTP and gathers target embeddings on GPU. Actual device/state acceptance is pending. Source0bfbea8 connects the original-order CJK106299-row Q6 draft head, inverse-ID history mapping, compact confidence and coupled sampling; source2a3d1ad connects INT8 caches. Combined CPU checks pass, with full numerical/GPU execution still pending. Source `862f5fa` separates first-front staging and actual observation from capture, and prestages all coupled draft controls once per round. Source `8262367` connects typed MTP phases/4096 boundaries and original model-instance graph namespaces; source `d0670b0` connects direct original MTP replay and capture-derived host/sampler handback. Physical acceptance, commit/event fidelity, numerical/state acceptance and runtime policy remain required. See the latest device-end receipt. Source35f0990f connects actual shared-side fork, independent fault/scaling, original vec4/FMA combination and owning draft fence using the opposite existing compute queue. Its queue sharing with MAIN commit is an explicit backend substitution, not physical overlap proof. See the latest MTP shared receipt. |
@@ -11464,3 +11458,87 @@ physical full-program/all-shape metadata/owner pricing needs acceptance after
 removing artificial256-task cuts. Keep the original quotas and actual failure
 closure; neither an easier subset nor implicit partial replay satisfies the
 complete rewrite. Goal active CPU-only and incomplete.
+
+
+## Prompt matrix completion plane and quantized consumer audit (2026-10-17)
+
+Runtime source `07ed2a2c88ff02ef3f1bcf5841da104a9d29c436`. This continues the faithful
+connected Intel port; it is not a throughput experiment or a partial-path fallback.
+
+The real cooperative `strata_matrix::native::expert` DOWN producer retained
+`status[20480+route]` from an older2048-row prompt ABI. Current shared groups
+support4096 rows/40960 routes; `strata_prompt_reduce.wgsl` consumes
+`status[PROMPT_ROUTES+route]`, where `PROMPT_ROUTES=40960`. The old store leaves
+that completion plane unwritten for short prompts and can overwrite activation
+readiness for larger prompts. This bug was in the active cooperative producer,
+not its unused scalar WGSL diagnostic.
+
+The producer now derives its compile-time base from the same original
+`strata_prompt::groups::ROUTES` definition. Actual private owners, capacities,
+route identity, matrix math, graph resources, reset/erasure and consumer stay
+unchanged. No metadata/VRAM allowance increase or optional fallback.
+
+The regression compiles the actual expert DOWN definition to canonical SPIR-V
+under all eight combinations of standard uniform layout, uniform unsized array
+and explicit shared memory layout. It resolves the original status descriptor,
+activation-status read, integer addition and completion-status store; verifies
+that the offset equals the reducer's shared full-capacity plane; and checks
+boundary route addresses including both sides of20480 and the last40959 route.
+It failed against unchanged production code with actual20480 versus expected
+40960, then passed after the fix. This is compiler/connection evidence, not
+physical arithmetic or live whole-prompt acceptance.
+
+The [current source audit](kuno-strata-current-source-audit.md) now additionally
+maps original `Multi/row_entries` role consumers, signed IQ finishes, scalar
+IQ4_XS and IQ4_NL subcalls, host logical prompt grouping,8-slot/2-image coupled
+expert execution, native BF16/FP16 inputs and F32 matrix outputs. It explicitly
+records cooperative matrix tiling/reduction, ring accounting and output layout
+substitutions. Pinned SYCL's CMake target has no MMQ definition and links the
+fused stub; its actual selected products use FP16/oneMKL. The low-nonresident
+stream-all default cannot apply on the32GiB B70: even the smallest supported
+pair plus only the original dense inventory needs37,053,378,560B at22119 resident
+pairs (the below10% nonresident threshold), exceeding34,359,738,368B before
+remaining owners. This is a conservative source-geometry bound, not a live fit
+measurement. Original selected larger/mixed pairs only increase that requirement.
+The historical expert table's broad NoContraction claim is corrected: actual
+fused SwiGLU/Q8 products are protected; that is not an all-role decoration claim.
+
+The additional shared/MTP audit follows actual target and draft shared producers,
+real scope/end/release/fold consumers, byte-range schedule/final peer joins,
+INFO upload epochs/visibility, original descriptor/flight IDs and precommit R
+readiness. Using the opposite adopted compute queue for the MTP shared branch
+is an explicit backend substitution and not proof of physical overlap. Full
+controller/repair/output closure comparison and physical acceptance remain open.
+
+Validation and artifacts (all under
+`/media/jmicko/faststore/kuno-development`):
+
+- `strata-prompt-status-before-20261017.log`: expected failing regression on
+  original production code; `strata-prompt-status-after-20261017.log`: the same
+  regression passes after the fix.
+- `strata-prompt-status-final-validate-20261017.py/.log`:630 distinct selected CPU
+  cases /87 nonempty suites pass. The full CPU selection includes the new actual
+  cooperative-kernel regression and the existing route/group/layout/queue tests.
+  The unfiltered suite is not run because it contains device tests.
+- `strata-prompt-status-final-full-cpu-20261017.log`,
+  `strata-prompt-status-final-{core,off}-clippy-20261017.log`: no selected CPU
+  failures; strict core/off **binary** Clippy passes. Changed-file rustfmt and
+  `git diff --check` pass. The binary Clippy receipt is not a test-target lint claim.
+- `strata-prompt-status-ordinary-20261017/`: normal locked release binary, no
+  test flags. Frozen SHA256 `444985020026902c60a37b26cd98b0a35dc1e80de652f890c6eaf81b3335e376`, mode0500.
+  Independent `strata-prompt-status-artifact-proof-20261017.json` checks actual
+  source/ordinary/frozen identity and requested/resolved features. Requested:
+  `strata-rust-port,strata-intel-core`; resolved additionally:
+  `direct-device,strata-resident-224,strata-resident-240`.
+- `strata-prompt-status-artifact-validate-20261017.py/.log` and
+  `strata-prompt-status-shaders-20261017.log`: the actual frozen executable's
+  **early pre-adapter** `--validate-port-shaders` branch passes397 shader
+  variants,139 physical-pointer validations,77 rounded-product modules and
+  32 matrix configurations. These validate generated modules, not GPU work.
+
+No GPU/model/speed execution, service/config/install/release or Vashti/API changes.
+Canonical checkout and inherited untracked cache preserved; no sudo required.
+Whole rewrite and physical acceptance remain incomplete; goal active CPU-only.
+Next finish source/controller closure, then obtain the required protected GPU
+acceptance before measuring speed. Neither these tests nor any source percentage
+estimate proves whole-engine numerical, retained-state or recovery correctness.

@@ -2,41 +2,35 @@
 
 Working checkout: `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`.
 
-**Current CPU-only source:** `1b8d354d56c501cda08ec6404ce2f5427732e507`, branch
+**Current CPU-only source:** `07ed2a2c88ff02ef3f1bcf5841da104a9d29c436`, branch
 `codex/strata-rust-port`. Read the [current source audit](kuno-strata-current-source-audit.md)
-and [native boundary/placement receipt](kuno-strata-rewrite-completion.md#native-request-submission-boundaries-and-placement-audit-2026-10-17).
-The actual native request/program now keeps its explicit submission boundaries:
-WGPU's ordinary256-task threshold cannot split initial/prompt/target/commit/draft
-work inside original request/branch ownership. Ordinary execution outside those
-states stays unchanged. All node/parameter/retained-metadata/I/O quotas remain;
-no fake completion, new scope/API or cap increase. Actual source trace proves
-target suffix GR alone exceeds that ordinary threshold (376 math nodes).
+and [prompt matrix/source receipt](kuno-strata-rewrite-completion.md#prompt-matrix-completion-plane-and-quantized-consumer-audit-2026-10-17).
+The active cooperative expert DOWN kernel now uses the shared full4096-row
+completion plane; its stale20480 offset disagreed with the reducer's40960.
+The actual compiled-kernel regression fails before the fix and passes after it
+for all eight compiler layout combinations. No new owner, quota or API.
 
-The audit also traces static preload before expert sizing, exact ranked bytes,
-full GPU/HOST pointer owners and private prompt loan/erase/restore. Compiled full
-ranked fixture matches pinned Strata data SHA256. Earlier native GR/QSA arithmetic
-and deferred PLE prefix/read/transfer/suffix stay connected. No API/Vashti change.
+Selected quantized role and prompt grouping/staging/matrix consumers are traced
+against pinned Intel source, including explicit oneMKL-to-Rust cooperative
+matrix and ring/layout substitutions. Additional actual shared/MTP/INFO/
+descriptor ownership and original commit readiness are indexed in the audit.
+Earlier native request boundaries, GR/QSA arithmetic and deferred PLE remain.
 
-629 distinct selected CPU cases /87 nonempty suites pass, with strict core/off
-**binary** Clippy and changed formatting/whitespace. Actual policy/typed-page
-regressions retain/replay two805-record programs across ordinary task thresholds,
-and cover uncaptured request holding and failed-state clear. They grant no
-GPU-fence/physical-memory authority. Frozen ordinary SHA256
-`da0fdadf397c7b98447941efc516b1a297386c1de34084d6536236e23a706b2c`,
-source/ordinary/frozen/mode0500/requested-and-resolved-features independently
-verified; its early pre-adapter offline branch passes397 variants/139 physical
-checks/77 rounded-product modules/32 matrix configs. No GPU/inference/speed ran.
+630 distinct selected CPU cases /87 nonempty suites, strict core/off **binary**
+Clippy and changed-file formatting/whitespace pass. Frozen ordinary SHA256
+`444985020026902c60a37b26cd98b0a35dc1e80de652f890c6eaf81b3335e376` has independently checked source/ordinary/frozen
+identity, mode0500 and requested/resolved features. Its early pre-adapter offline
+branch passes397 variants/139 physical-pointer checks/77 rounded-product modules/
+32 matrix configurations. These are compiler checks, not physical GPU execution.
 
-**Whole rewrite incomplete; speed gate closed.** Continue selected quantized
-arithmetic/prompt matrix consumers and remaining shared/MTP/INFO/descriptor/
-output/resource queue review. Actual full-program/all-shape footprint under
-unchanged quotas still needs protected acceptance. Then require whole-model
-numerics/context/cold/capture/replay, acceptance/repair, EOS/cap, retained mixed
-requests and full recovery before speed. CLI remains compiled-public/one-request;
-private caller separately gated. Goal active CPU-only. Last checked sudo cache
-was expired; this block needed no root. No GPU/service/install/release/frontend
-action. Required API/Vashti changes: none. Canonical checkout and inherited
-untracked cache preserved.
+**Whole rewrite incomplete; speed gate closed.** Finish remaining shared/MTP
+controller, accepted-prefix repair and output/resource closure comparison. Then
+require protected whole-model numerics/context/cold/capture/replay, acceptance/
+repair, EOS/cap, retained mixed requests, full footprint and recovery acceptance.
+CLI remains compiled-public/one-request; private caller separately gated. Goal
+active CPU-only. No GPU/inference/speed, service/install/release or frontend
+change. This block needed no sudo. API/Vashti changes: none. Canonical checkout
+and inherited untracked cache preserved.
 
 
 

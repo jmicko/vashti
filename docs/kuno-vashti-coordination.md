@@ -6,17 +6,18 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-17):** isolated
-`codex/strata-rust-port`, runtime source `1b8d354d56c501cda08ec6404ce2f5427732e507`. Read the
+`codex/strata-rust-port`, runtime source `07ed2a2c88ff02ef3f1bcf5841da104a9d29c436`. Read the
 [current source audit](kuno-strata-current-source-audit.md),
-[native boundary/placement receipt](kuno-strata-rewrite-completion.md#native-request-submission-boundaries-and-placement-audit-2026-10-17)
-and [completion gate](kuno-strata-rewrite-completion.md). Actual native request/
-program boundaries now override ordinary256-task automatic cuts; all quotas,
-explicit joins and failure/state guards remain.629 selected CPU cases/87 suites,
-core/off binary lint and normal frozen offline shaders pass. Dense/ranked HOST/
-GPU/prompt-lending owners and exact original ranking are traced. Whole rewrite
-incomplete; speed gate closed, work CPU-only. Continue remaining source review,
-then protected whole-program numerical/footprint/recovery acceptance. Required
-Vashti/API changes: none.
+[prompt matrix/source receipt](kuno-strata-rewrite-completion.md#prompt-matrix-completion-plane-and-quantized-consumer-audit-2026-10-17)
+and [completion gate](kuno-strata-rewrite-completion.md). Cooperative prompt
+DOWN now writes the same full-capacity status plane the reducer reads; actual
+compiled-kernel before/after regression passes across all eight compiler layouts.
+Quantized expert/prompt matrix consumers and additional shared/MTP/INFO/descriptor
+owners are traced with explicit backend substitutions.630 selected CPU cases/
+87 suites, core/off binary lint and normal frozen offline shader checks pass.
+Whole rewrite incomplete; speed gate closed, work CPU-only. Finish remaining
+controller/repair/output closure source review, then protected whole-program
+numerical/footprint/recovery acceptance. Required Vashti/API changes: none.
 
 ## Ownership
 

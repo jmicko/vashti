@@ -1,6 +1,6 @@
 # Current Strata source audit
 
-Runtime source: `1b8d354d56c501cda08ec6404ce2f5427732e507`, isolated `codex/strata-rust-port`.
+Runtime source: `07ed2a2c88ff02ef3f1bcf5841da104a9d29c436`, isolated `codex/strata-rust-port`.
 Pinned Intel upstream: `fb58e0dbc8399662c0e47c76578c6e878b14f6cf`.
 This is the current audit index, alongside the historical evidence in
 [kuno-strata-rewrite-completion.md](kuno-strata-rewrite-completion.md).
@@ -270,6 +270,87 @@ artifact caught the removed delimiter dependency; final source preserves all
 original factors/codes helpers and directly includes them in prompt Dequant.
 This does not establish physical
 memory traffic, numerical output, whole-model acceptance or performance.
+
+## Routed expert and prompt matrix consumers: selected source comparison
+
+Pinned `sycl/src/kernels/cuda/iq_kernels.dp.cpp::{Multi,row_dot_multi,row_entries}`
+prepares packed weights once for each 4/2/1 group of actual routed entries.
+`strata_global_expert_kernels::{role_source,role}` selects the same grouped
+consumers over the original VRAM or registered HOST address tables. The generated
+single role dispatch contains all three cardinalities; it does not select just
+one optional chunk kernel. IQ4_XS has no native `Multi` specialization and keeps
+one entry at a time. IQ4_NL DOWN retains two16-value calls per32-value block.
+`strata_expert_roles::source` preserves the signed integer IQ3_XXS/IQ2_S
+scale/truncation expressions before F32 conversion, IQ3_S odd scales, IQ4_XS
+scale-minus32, original Q8_1 activation scales and lane XOR reductions. GU and
+DOWN use the same real original route/member map, private planes and PART roots.
+
+The native explicit `contract(off)` statements in this file are attached to
+the fused SwiGLU/Q8 producers, at the entries and S26 kernels. Rust's actual
+`native_q8` producers have the corresponding rounded-product postpass. This
+does **not** prove every role dot product is decorated NoContraction; the role
+sources have no such marker. Float backend contraction/transcendentals and
+numeric equivalence still require physical acceptance. Do not broaden the
+postpass based on the historical completion table's imprecise wording.
+
+The selected prompt path is a separate, coupled consumer chain:
+
+1. Pinned `prefill.cpp` groups real `(token,rank)` routes by logical expert ID,
+   preserving token/rank order within each expert. Rust
+   `strata_prompt_groups::group` does the same before translating each group to
+   its original physical cell. The map retains each original route, so DOWN
+   results and final top10 reduction stay in original token/rank order.
+2. Native routed-only prefill uses `STAGE=8`, lookahead7 and `DQ=2` dequantized
+   images. Rust `strata_prompt_experts::enqueue` connects eight original raw
+   slots, two FP16 weight images, both GU/DOWN dequantizers, GU matrix multiply,
+   interleaved SwiGLU/FP16 activation, DOWN matrix multiply and reduction. Native
+   source releases a raw slot after dequantization; the Rust DOWN dequantizer's
+   actual release marker and read/copy intervals allow the same dependency.
+3. Native `Gemm::{bf16,f16}` uses oneMKL with BF16/FP16 inputs and F32 outputs.
+   Rust `strata_prompt::project` retains original BF16 weights or dequantizes
+   the selected quantized dense matrix to FP16, packs the actual matching input
+   image, and calls `strata_matrix::dense`. Routed FP16 images call
+   `strata_matrix::expert` directly. The old scalar WGSL GEMM is an offline
+   diagnostic, not the actual core consumer.
+4. Native default `bf16x2_mode=0` does not add a remainder GEMM. Rust's selected
+   one rounded BF16 image follows that default. Packed GR BF16 projection has
+   its own real consumer; the generic prepacked BF16 rejection does not remove
+   the GR path.
+
+Explicit backend/layout substitutions: the Rust FP16/BF16 cooperative matrix
+tile is8x16x16 on a16-lane subgroup with F32 accumulation instead of oneMKL's
+private tiling/reduction. A masked partial tile still writes only actual rows.
+The raw ring advances by logical group, including resident groups, whereas
+native staging advances only for nonresident groups. Resident weights stay in
+VRAM in both; unused slots may shorten copy lookahead without changing the
+eight-slot bound or expert math. Route-indexed Rust DOWN output replaces native
+group-contiguous output plus a slot indirection in the rank-ordered reducer.
+These are connected substitutions, not evidence of equal physical overlap or
+bitwise matrix results.
+
+The selected routed-only ring is not a claim to implement the optional larger
+stream-all ring: pinned `ring_slots` enables its default only below10% nonresident
+pairs. Even the smallest supported pair is1,510,400B;90% of48x512 such pairs
+plus the actual3,644,840,960B dense matrices exceeds a32GiB B70 before remaining
+owners. The selected artifact's larger/mixed pairs cannot cross that threshold
+on this card. The pinned SYCL CMake target builds `moe_fused_stub.cpp` and does not enable
+`STRATA_PREFILL_MMQ`; the `mmq::built()`/fused fallbacks in `prefill.cpp` are
+false. Its selected expert products are the FP16 path even for long prompts.
+Explicit stream-all/peer/AMD alternatives are not the selected configuration
+and are not silently substituted for those products.
+
+Existing selected CPU and offline shader receipts cover original-format role
+generation, route/group validation, stage bounds, pointer/read access and matrix
+compilation. They do not validate physical products or the whole prompt. The
+current audit found and corrected a real additional connected bug: cooperative
+expert DOWN stored completion at the old20480-word status-plane offset while
+the current4096-row reducer reads40960. It now compiles the shared
+`strata_prompt::groups::ROUTES` constant. The actual SPIR-V regression failed
+before the fix (20480 versus40960) and passes after it for all eight compiler
+layout combinations, tracing the original activation-status read through the
+integer addition to the real completion-status store. The rank-ordered reducer
+keeps its original shared plane definition. This corrects source/compiled
+connection; it does not prove physical prompt products or whole-model execution.
 
 ## GR/GDN selected defaults: connected decode and prompt audit
 
@@ -554,22 +635,68 @@ Source substitution is connected; physical overlap, numerical equivalence,
 retained execution and whole-resource recovery are not yet accepted. Exact CPU
 and frozen-artifact evidence is recorded in the completion receipt.
 
+## Shared/MTP queue and INFO ownership: additional actual call-chain trace
+
+Pinned `verify.cpp::record_window` forks the shared expert to `sh_cs_` and waits
+for its join before combining routed and shared results. `mtp.cpp` has its own
+default shared branch, likewise joined before combining. Actual Rust target
+`resident_model_batch::run_global` wraps `prepare_native` in
+`strata_shared_native::QueueScope`, ends that section before routed role work,
+marks its original final MAIN node with `release_main`, then folds the separate
+shared fault and combines. Actual `ResidentMtp::native_moe` connects its own
+separate Q8 planes/fault and the same scope/end/release/fold/combined-output
+sequence. Merely compiling shared math is not the connection being relied on.
+
+`WgpuStream::native_strata_shared_boundary` authenticates the real request nonce
+and any original target/MTP recording. `Graph::shared_boundary` independently
+authenticates MAIN/no-draft versus active original draft scope before tagging
+the actually enqueued nodes. `strata_schedule::{Planner,Commands::submit}` uses
+the nodes' original byte ranges for RAW/WAR/WAW dependencies and ring release
+edges. It submits real compute/copy/shared command buffers with fresh timeline
+epochs and a final owning fence that joins both peer tails, including tails
+with no later compute consumer.
+
+The two adopted compute queues are reused in opposite roles for MTP's shared
+branch. Its shared expert therefore queues behind any already-submitted MAIN
+commit; this is an explicit Vulkan substitution for upstream's separate side
+stream and may limit overlap. It is not permission to drop that commit, add a
+third guessed hardware queue or report physical independence from source tests.
+
+Current INFO copies stay on their original compute lane. Actual
+`Graph::upload_parameters` preflights the copy's original read/write intervals,
+joins conflicting flights, completes the copy-pool owner before reuse and
+submits the current upload. Its actual epoch is attached to the submitted math
+header; final drains retain separate INFO-only visibility debt and submit a
+real visibility dependency, rather than treating a host copy fence as shader
+visibility. Retained recordings own their original descriptor pools/resources,
+family, ranges and stable recording ID. Flight completion re-finds that exact
+ID and waits its original lane fence before credit/reuse. Exported commit
+handles additionally bind original graph, submission and request identity.
+
+`prepare_draft_scope` pins actual verified R and submits the MAIN-to-draft
+readiness dependency **before** accepted-prefix commit. Active draft access
+checks exclude writers to that R. Scoped draft completion joins its own lane
+and actual conflicting peers; ordinary/final closure still drains both lanes.
+This trace does not accept every controller/repair transition, full retained
+recording footprint or physical Vulkan ordering. Those gates remain open.
+
 ## Source review still to finish
 
-- Consolidate selected quantized arithmetic and remaining prompt dense/expert
-  overlays against the pinned
-  call sites and prior receipts. GR/GDN/QSA decode/prompt consumer review is
-  indexed above. Dense/ranked source/loan ownership is traced above; physical
-  placement/numeric/state acceptance is still open. Explicitly
-  accept or resolve every remaining storage, grouping, queue and math
-  substitution; filenames alone do not pass.
+- Complete the remaining shared/MTP controller, accepted-prefix repair and
+  output/resource closure comparison against the original serving loop. The
+  selected quantized role, prompt grouping/matrix, GR/GDN/QSA and dense/source/
+  loan consumers are traced above. Explicitly resolve remaining substitutions
+  as a connected schedule; filenames and isolated helpers alone do not pass.
+  Physical placement/numeric/state acceptance remains open for all of them.
 - Preserve the now-traced per-request126/128 graph lifetime and original
   owner erasure. Physical retained mixed-request execution still needs acceptance.
 - Validate the connected two-program PLE handoff above on the real protected
   device, including cold/capture/replay and failure joins; source connection
   and CPU parameter/reader coverage are not physical fence/overlap proof.
-- Review remaining queue/INFO/descriptor hazards, shared/MTP fork/commit order,
-  sampler state and output/resource closure as one connected schedule.
+- Finish whole-schedule acceptance of the traced queue/INFO/descriptor and
+  shared/MTP fork/commit owners with the controller transitions, sampler state
+  and output/resource closure. The additional trace above is not complete
+  physical hazard, retained-footprint or failure/recovery acceptance.
 
 Then, with renewed GPU authorization and supported protection, require whole-
 model prompt/count1/multirow, acceptance/rejection, EOS/cap, context, retained/
