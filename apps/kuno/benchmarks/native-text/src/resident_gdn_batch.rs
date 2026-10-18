@@ -181,6 +181,10 @@ fn expected_stages(
 fn guarded<T>(poison: &AtomicBool, operation: impl FnOnce() -> Result<T>) -> Result<T> {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(operation)) {
         Ok(Ok(result)) => Ok(result),
+        Ok(Err(cause)) => {
+            poison.store(true, Ordering::Release);
+            Err(cause)
+        }
         _ => {
             poison.store(true, Ordering::Release);
             Err(fault("native GDN batch guarded failure"))
@@ -1229,7 +1233,7 @@ impl ResidentGdn<'_> {
                 || public.layer != self.layer
                 || public.identity != self.public_identity
                 || m.defer_state != completed.defers_gdn_state()
-                || self.native_capture_state_role()? != completed.state_role()
+                || self.native_capture_state_role()? != completed.gdn_state_role()
                 || workspace.public_grouped_status.state().0 != completed.grouped_status_folds()
             {
                 return Err(fault("native GDN replay invocation changed"));
@@ -2628,6 +2632,9 @@ mod tests {
                     })
                 });
                 assert!(attempted.is_err() && poison.load(Ordering::Acquire));
+                if mode == 0 {
+                    assert!(matches!(attempted, Err(Error::InvalidBufferLength)));
+                }
                 assert_eq!(n, failure + 1);
             }
         }

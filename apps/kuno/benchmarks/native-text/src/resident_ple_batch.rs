@@ -1256,6 +1256,11 @@ impl PleBatchWorkspace {
             receipt.metadata.count,
         )?;
         completed.check_fault_owner(&model.arena, model.b.fault)?;
+        if self.native_capture_history_role()? != completed.ple_history_role() {
+            return Err(Error::InvalidFormat(
+                "native PLE replay history role changed",
+            ));
+        }
         if !crate::strata_intel_core::enabled() || crate::strata_prompt::active() {
             return Err(error());
         }

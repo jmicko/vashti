@@ -3,6 +3,12 @@
 use super::*;
 use cubecl_runtime::server::{NativeStrataBranch, NativeStrataInvocation};
 
+// The recording key packs two independent original pointer arrangements.
+// Each family validates its own component, while the key retains both.
+fn state_pair_roles(combined: u8) -> [u8; 2] {
+    [combined & 1, combined >> 1]
+}
+
 pub(crate) struct Completed {
     fault: BufferId,
     controls: Zeroizing<[usize; 7]>, // position, count, state role, route epoch, usage, state mode, fold mode
@@ -25,8 +31,11 @@ impl Completed {
     pub(crate) fn grouped_status_folds(&self) -> bool {
         self.controls[6] != 0
     }
-    pub(crate) fn state_role(&self) -> u8 {
-        self.controls[2] as u8
+    pub(crate) fn gdn_state_role(&self) -> u8 {
+        state_pair_roles(self.controls[2] as u8)[0]
+    }
+    pub(crate) fn ple_history_role(&self) -> u8 {
+        state_pair_roles(self.controls[2] as u8)[1]
     }
     pub(crate) fn route_epoch(&self) -> u32 {
         self.controls[3] as u32
@@ -181,4 +190,23 @@ pub(crate) fn try_submit(
                 as usize,
         ]),
     }))
+}
+
+#[cfg(test)]
+mod state_role_tests {
+    #[test]
+    fn original_recording_key_keeps_gdn_and_ple_pointer_orders_independent() {
+        use cubecl_runtime::server::NativeStrataBranch;
+        // Pure coordinate projection. No joined receipt or GPU authority is
+        // fabricated: production Completed construction remains private.
+        for gdn in 0..=1 {
+            for ple in 0..=1 {
+                let key = NativeStrataBranch::target_window_with_state(4, 32768, gdn | (ple << 1))
+                    .unwrap();
+                let (_, _, combined) = key.target_geometry().unwrap();
+                assert_eq!(super::state_pair_roles(combined), [gdn, ple]);
+            }
+        }
+        assert!(NativeStrataBranch::target_window_with_state(4, 32768, 4).is_err());
+    }
 }
