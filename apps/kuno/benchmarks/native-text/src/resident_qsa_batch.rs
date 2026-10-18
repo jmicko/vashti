@@ -1896,10 +1896,13 @@ impl ResidentQsa<'_> {
                 || public.binding != self.binding
                 || public.layer != self.layer
                 || public.identity != self.public_identity
-                || workspace.public_grouped_status.state().0
+                || workspace.public_grouped_status.state().0 != completed.grouped_status_folds()
             {
                 return Err(fault("native QSA replay invocation changed"));
             }
+            workspace
+                .public_grouped_status
+                .complete_native_replay(arena, m.fault, completed)?;
             Ok(receipt)
         });
         if attempted.is_err() {

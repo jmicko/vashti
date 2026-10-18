@@ -5279,6 +5279,21 @@ fn prepared_shared_overlap(
     !resident_router && cap.is_some() && overlap == Some(true)
 }
 
+fn native_target_replay_allowed(
+    key: cubecl_runtime::server::NativeStrataBranch,
+    grouped: bool,
+    global_fold: bool,
+    numeric_unarmed: bool,
+    lifecycle_unarmed: bool,
+    cancellation_injection: bool,
+) -> bool {
+    key.target_grouped_status_folds() == Some(grouped)
+        && !global_fold
+        && numeric_unarmed
+        && lifecycle_unarmed
+        && !cancellation_injection
+}
+
 impl Workspace {
     #[allow(clippy::too_many_arguments)] // Original execution owners plus scoped prefix selection.
     fn run_global(
@@ -5435,6 +5450,7 @@ impl Workspace {
                     state_role.ok_or(error())? | (self.ple.native_capture_history_role()? << 1),
                 )
                 .and_then(|key| key.with_deferred_gdn_state(select.is_some() && *count > 1))
+                .and_then(|key| key.with_target_grouped_status_folds(grouped_status_folds))
                 .map_err(u::fault)?,
             )
         } else {
@@ -5444,12 +5460,14 @@ impl Workspace {
         // their actual per-layer boundaries. Normal native inference replays a
         // sealed whole window with fresh controls and its real queue fence.
         let replay = if let Some(key) = branch {
-            if !grouped_status_folds
-                && !crate::status_fold_batch::selected()
-                && m.numeric_boundary.is_unarmed()
-                && m.lifecycle_hooks.is_unarmed()
-                && m.cancel_after_attention.is_none()
-            {
+            if native_target_replay_allowed(
+                key,
+                grouped_status_folds,
+                crate::status_fold_batch::selected(),
+                m.numeric_boundary.is_unarmed(),
+                m.lifecycle_hooks.is_unarmed(),
+                m.cancel_after_attention.is_some(),
+            ) {
                 // Retained pointer consumers still require the original
                 // source publication/loan boundary, even without enqueue_data.
                 e.strata_global_sources
@@ -7189,6 +7207,42 @@ mod tests {
     }
 
     #[test]
+    fn normal_grouped_target_replay_remains_enabled_and_observation_guards_stay_closed() {
+        use cubecl_runtime::server::NativeStrataBranch as B;
+        for grouped in [false, true] {
+            for rows in 1..=8 {
+                let key = B::target_window_for_context(rows, 32768)
+                    .unwrap()
+                    .with_target_grouped_status_folds(grouped)
+                    .unwrap();
+                assert!(native_target_replay_allowed(
+                    key, grouped, false, true, true, false
+                ));
+                assert!(!native_target_replay_allowed(
+                    key, !grouped, false, true, true, false
+                ));
+                for guard in 0..4 {
+                    assert!(!native_target_replay_allowed(
+                        key,
+                        grouped,
+                        guard == 0,
+                        guard != 1,
+                        guard != 2,
+                        guard == 3
+                    ));
+                }
+            }
+        }
+        assert!(!native_target_replay_allowed(
+            B::mtp_round(1, 1).unwrap(),
+            false,
+            false,
+            true,
+            true,
+            false
+        ));
+    }
+    #[test]
     fn scoped_verified_rows_release_original_lease_before_prefix_consumers() {
         use super::{MAX_BATCH, error, select_verified_rows};
         use std::cell::Cell;
@@ -7303,38 +7357,35 @@ mod tests {
     #[test]
     fn grouped_status_completion_joins_actual_folds_before_any_commit() {
         use crate::status_fold_batch::Completed;
+        let expected = if crate::strata_intel_core::enabled() {
+            [0, 36, 12]
+        } else {
+            [97, 36, 12]
+        };
         let zero = Completed::default();
         assert_eq!(zero.receipt(false, [0; 3]).unwrap(), (false, zero));
-        let proposal = zero
-            .propose(true, [0; 3], [97, 36, 12], [97, 36, 12])
-            .unwrap();
+        let proposal = zero.propose(true, [0; 3], expected, expected).unwrap();
         assert_eq!(zero, Completed::default()); // Proposal has not published.
-        assert_eq!(
-            proposal.receipt(true, [97, 36, 12]).unwrap(),
-            (true, proposal)
-        );
+        assert_eq!(proposal.receipt(true, expected).unwrap(), (true, proposal));
         for role in 0..3 {
             for delta in [-1i64, 1] {
-                let mut actual = [97, 36, 12];
+                let mut actual = expected;
                 actual[role] = (actual[role] as i64 + delta) as u64;
-                assert!(zero.propose(true, [0; 3], actual, [97, 36, 12]).is_err());
+                assert!(zero.propose(true, [0; 3], actual, expected).is_err());
             }
         }
+        assert!(zero.propose(false, [0; 3], expected, expected).is_err());
         assert!(
-            zero.propose(false, [0; 3], [97, 36, 12], [97, 36, 12])
+            zero.propose(true, [1, 0, 0], [expected[0] + 1, 36, 12], expected)
                 .is_err()
         );
         assert!(
-            zero.propose(true, [1, 0, 0], [98, 36, 12], [97, 36, 12])
-                .is_err()
-        );
-        assert!(
-            zero.propose(true, [0; 3], [97, 36, 12], [97, 35, 13])
+            zero.propose(true, [0; 3], expected, [expected[0], 35, 13])
                 .is_err()
         );
         assert!(zero.receipt(true, [0; 3]).is_err());
-        assert!(proposal.receipt(false, [97, 36, 12]).is_err());
-        assert!(proposal.receipt(true, [97, 36, 11]).is_err());
+        assert!(proposal.receipt(false, expected).is_err());
+        assert!(proposal.receipt(true, [expected[0], 36, 11]).is_err());
     }
     #[test]
     fn grouped_status_scope_stays_full_families_all_rows_and_immutable_before_io() {

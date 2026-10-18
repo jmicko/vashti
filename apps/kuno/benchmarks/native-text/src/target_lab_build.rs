@@ -923,7 +923,11 @@ pub(crate) fn public_grouped_status_folds_record(
         .checked_add(repair_chunks)
         .ok_or("grouped status expected chunk count overflow")?;
     let gr = expected
-        .checked_mul(97)
+        .checked_mul(if crate::strata_intel_core::enabled() {
+            0
+        } else {
+            97
+        })
         .ok_or("grouped status GR count overflow")?;
     let gdn = expected
         .checked_mul(36)
@@ -2773,6 +2777,11 @@ mod tests {
     #[test]
     fn grouped_status_receipt_joins_exact_actual_accepted_verify_and_repair_launches() {
         use crate::status_fold_batch::Completed;
+        let gr_per_chunk = if crate::strata_intel_core::enabled() {
+            0
+        } else {
+            97
+        };
         let zero = Completed {
             chunks: 0,
             gr_dispatches: 0,
@@ -2792,7 +2801,7 @@ mod tests {
             let chunks = verifies + repairs;
             let exact = Completed {
                 chunks,
-                gr_dispatches: chunks * 97,
+                gr_dispatches: chunks * gr_per_chunk,
                 gdn_dispatches: chunks * 36,
                 qsa_dispatches: chunks * 12,
             };
@@ -2801,7 +2810,7 @@ mod tests {
             assert_eq!(
                 got,
                 serde_json::json!({"selected":true,"completed_chunks":chunks,
-                "gr_dispatches":chunks * 97,"gdn_dispatches":chunks * 36,"qsa_dispatches":chunks * 12})
+                "gr_dispatches":chunks * gr_per_chunk,"gdn_dispatches":chunks * 36,"qsa_dispatches":chunks * 12})
             );
             // Each family must independently equal the actual per-chunk count;
             // crediting first prefill, lost repair or one skipped fold rejects.
@@ -2816,7 +2825,7 @@ mod tests {
                     ..exact
                 },
                 Completed {
-                    gr_dispatches: exact.gr_dispatches - 1,
+                    gr_dispatches: exact.gr_dispatches.wrapping_sub(1),
                     ..exact
                 },
                 Completed {

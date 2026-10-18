@@ -314,7 +314,7 @@ impl Workspace {
         completed.check_fault_owner(arena, fault)?;
         if !crate::strata_intel_core::enabled()
             || self.binding != graph.binding_id()
-            || self.public_grouped_status.state().0
+            || self.public_grouped_status.state() != (completed.grouped_status_folds(), 0)
         {
             return Err(Error::InvalidFormat("GR native replay boundary"));
         }

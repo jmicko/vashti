@@ -1230,7 +1230,7 @@ impl ResidentGdn<'_> {
                 || public.identity != self.public_identity
                 || m.defer_state != completed.defers_gdn_state()
                 || self.native_capture_state_role()? != completed.state_role()
-                || workspace.public_grouped_status.state().0
+                || workspace.public_grouped_status.state().0 != completed.grouped_status_folds()
             {
                 return Err(fault("native GDN replay invocation changed"));
             }
@@ -1245,6 +1245,9 @@ impl ResidentGdn<'_> {
                     m.stamp.count,
                     m.stamp.chunk,
                 )?;
+            workspace
+                .public_grouped_status
+                .complete_native_replay(arena, m.fault, completed)?;
             Ok(receipt)
         });
         if attempted.is_err() {

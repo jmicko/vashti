@@ -55,6 +55,25 @@ impl PublicPolicy {
     pub(crate) fn enable(&mut self) {
         self.selected = true;
     }
+    /// Advance the original counter for a fold in a genuinely replayed native
+    /// program. Only the private joined replay receipt supplies its mode; the
+    /// stage caller must first check its original pending owner/sequence ticket.
+    /// This grants no numerical/fault/cursor acceptance and enqueues no new fold.
+    pub(crate) fn complete_native_replay(
+        &mut self,
+        arena: &PrivateArena,
+        fault: BufferId,
+        completed: &crate::resident_model::target_replay::Completed,
+    ) -> Result<()> {
+        completed.check_fault_owner(arena, fault)?;
+        let next = next_native_replay_dispatch(
+            self.selected,
+            completed.grouped_status_folds(),
+            self.dispatched,
+        )?;
+        self.dispatched = next;
+        Ok(())
+    }
     pub(crate) fn launch(
         &mut self,
         arena: &PrivateArena,
@@ -74,6 +93,24 @@ fn next_public_dispatch(selected: bool, current: u64) -> Result<u64> {
         ));
     }
     current.checked_add(1).ok_or(Error::ArithmeticOverflow)
+}
+
+fn next_native_replay_dispatch(selected: bool, recorded: bool, current: u64) -> Result<u64> {
+    if selected != recorded || !selected && current != 0 {
+        return Err(Error::InvalidFormat(
+            "native replay grouped fold policy mismatch",
+        ));
+    }
+    if selected {
+        next_public_dispatch(true, current)
+    } else {
+        Ok(current)
+    }
+}
+fn family_inventory(native: bool) -> [u64; 3] {
+    // Native GR writers fold directly into the sticky model fault. GDN and
+    // QSA still each execute one real grouped check per original layer.
+    [if native { 0 } else { 97 }, 36, 12]
 }
 
 /// Public counts only. A proposal joins every actual original target role and
@@ -96,7 +133,24 @@ impl Completed {
         after: [u64; 3],
         expected: [u64; 3],
     ) -> Result<Self> {
-        let accepted = [97u64, 36, 12].map(|n| self.chunks.checked_mul(n));
+        self.propose_for_mode(
+            crate::strata_intel_core::enabled(),
+            selected,
+            before,
+            after,
+            expected,
+        )
+    }
+    fn propose_for_mode(
+        self,
+        native: bool,
+        selected: bool,
+        before: [u64; 3],
+        after: [u64; 3],
+        expected: [u64; 3],
+    ) -> Result<Self> {
+        let inventory = family_inventory(native);
+        let accepted = inventory.map(|n| self.chunks.checked_mul(n));
         if accepted != self.dispatches().map(Some) {
             return Err(Error::InvalidFormat(
                 "target grouped status prior accepted join",
@@ -115,8 +169,9 @@ impl Completed {
             }
             return Ok(self);
         }
-        // These are the real DASLab48 roles, including FinalAllRows GR.
-        if expected != [97, 36, 12] {
+        // These are the real DASLab48 roles. Native GR writes its sticky
+        // fault directly; legacy GR includes FinalAllRows and both layer halves.
+        if expected != inventory {
             return Err(Error::InvalidFormat(
                 "target grouped status actual family inventory",
             ));
@@ -139,12 +194,21 @@ impl Completed {
         })
     }
     pub(crate) fn receipt(self, selected: bool, actual: [u64; 3]) -> Result<(bool, Self)> {
+        self.receipt_for_mode(crate::strata_intel_core::enabled(), selected, actual)
+    }
+    fn receipt_for_mode(
+        self,
+        native: bool,
+        selected: bool,
+        actual: [u64; 3],
+    ) -> Result<(bool, Self)> {
+        let inventory = family_inventory(native);
         if actual != self.dispatches() || selected == (self.chunks == 0) {
             return Err(Error::InvalidFormat(
                 "target grouped status incomplete receipt",
             ));
         }
-        let expected = [97u64, 36, 12].map(|n| self.chunks.checked_mul(n));
+        let expected = inventory.map(|n| self.chunks.checked_mul(n));
         if expected != self.dispatches().map(Some) {
             return Err(Error::InvalidFormat(
                 "target grouped status accepted family join",
@@ -157,6 +221,93 @@ impl Completed {
 #[cfg(test)]
 mod public_policy_tests {
     use super::*;
+    #[test]
+    fn cold_capture_and_replay_preserve_actual_native_and_legacy_fold_inventories() {
+        for native in [false, true] {
+            let expected = if native { [0, 36, 12] } else { [97, 36, 12] };
+            let mut accepted = Completed::default();
+            for frame in 0..7u64 {
+                let before = accepted.dispatches();
+                let after = std::array::from_fn(|i| before[i] + expected[i]);
+                accepted = accepted
+                    .propose_for_mode(native, true, before, after, expected)
+                    .unwrap();
+                assert_eq!(accepted.chunks, frame + 1);
+                assert_eq!(
+                    accepted.receipt_for_mode(native, true, after).unwrap().1,
+                    accepted
+                );
+                for role in 0..3 {
+                    let mut missing = after;
+                    missing[role] += 1;
+                    assert!(
+                        accepted
+                            .propose_for_mode(native, true, after, missing, expected)
+                            .is_err()
+                    );
+                    let mut wrong = expected;
+                    wrong[role] += 1;
+                    assert!(
+                        accepted
+                            .propose_for_mode(
+                                native,
+                                true,
+                                after,
+                                std::array::from_fn(|i| after[i] + wrong[i]),
+                                wrong
+                            )
+                            .is_err()
+                    );
+                }
+            }
+        }
+        assert_eq!(family_inventory(true), [0, 36, 12]);
+        assert_eq!(family_inventory(false), [97, 36, 12]);
+        assert!(
+            Completed::default()
+                .propose(
+                    true,
+                    [0; 3],
+                    family_inventory(!crate::strata_intel_core::enabled()),
+                    family_inventory(!crate::strata_intel_core::enabled())
+                )
+                .is_err()
+        );
+    }
+    #[test]
+    fn recorded_native_folds_advance_once_only_in_the_original_selected_mode() {
+        for selected in [false, true] {
+            for recorded in [false, true] {
+                for current in [0, 1, 35, 36, 47, 48, 999, u64::MAX] {
+                    let result = next_native_replay_dispatch(selected, recorded, current);
+                    let expected = if selected != recorded || !selected && current != 0 {
+                        None
+                    } else if selected {
+                        current.checked_add(1)
+                    } else {
+                        Some(current)
+                    };
+                    assert_eq!(result.ok(), expected);
+                }
+            }
+        }
+        let before = [0, 36, 12];
+        let mut after = before;
+        for _ in 0..36 {
+            after[1] = next_native_replay_dispatch(true, true, after[1]).unwrap();
+        }
+        for _ in 0..12 {
+            after[2] = next_native_replay_dispatch(true, true, after[2]).unwrap();
+        }
+        let cold = Completed::default()
+            .propose_for_mode(true, true, [0; 3], before, [0, 36, 12])
+            .unwrap();
+        let replay = cold
+            .propose_for_mode(true, true, before, after, [0, 36, 12])
+            .unwrap();
+        assert_eq!(replay.dispatches(), [0, 72, 24]);
+        assert_eq!(replay.chunks, 2);
+    }
     #[test]
     fn immutable_target_policy_does_not_change_the_old_global_flag() {
         let global = selected();

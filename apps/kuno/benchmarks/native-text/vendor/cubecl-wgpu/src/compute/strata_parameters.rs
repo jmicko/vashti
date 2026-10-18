@@ -802,6 +802,8 @@ mod tests {
                     NativeStrataBranch::target_window_with_state(rows, 4096, role)
                         .unwrap()
                         .with_deferred_gdn_state(rows > 1)
+                        .unwrap()
+                        .with_target_grouped_status_folds(true)
                         .unwrap(),
                 );
                 if rows > 1 {
@@ -822,6 +824,11 @@ mod tests {
                 );
             }
         }
+        // First cold final-prompt count1 can precede policy selection. Its
+        // four possible original state roles remain separate from grouped run.
+        for role in 0..4 {
+            keys.push(NativeStrataBranch::target_window_with_state(1, 4096, role).unwrap());
+        }
         for step in 1..=6 {
             keys.push(
                 NativeStrataBranch::mtp_step(step)
@@ -833,8 +840,35 @@ mod tests {
         for (i, key) in keys.iter().enumerate() {
             assert!(!keys[..i].contains(key));
         }
-        assert_eq!(keys.len(), 122);
+        assert_eq!(keys.len(), 126);
         assert!(keys.len() <= MAX_BRANCHES);
+    }
+    #[test]
+    fn target_fold_modes_are_distinct_immutable_recordings_without_request_values() {
+        let mut keys = std::collections::HashSet::new();
+        for rows in 1..=8 {
+            for role in 0..4 {
+                for grouped in [false, true] {
+                    let key = NativeStrataBranch::target_window_with_state(rows, 32768, role)
+                        .unwrap()
+                        .with_deferred_gdn_state(rows > 1)
+                        .unwrap()
+                        .with_target_grouped_status_folds(grouped)
+                        .unwrap();
+                    assert_eq!(key.target_grouped_status_folds(), Some(grouped));
+                    assert!(keys.insert(key));
+                }
+            }
+        }
+        assert_eq!(keys.len(), 64);
+        for key in [
+            NativeStrataBranch::mtp_round(1, 1).unwrap(),
+            NativeStrataBranch::mtp_step(1).unwrap(),
+            NativeStrataBranch::target_commit(2, 32768, 0).unwrap(),
+        ] {
+            assert_eq!(key.target_grouped_status_folds(), None);
+            assert!(key.with_target_grouped_status_folds(true).is_err());
+        }
     }
     #[test]
     fn original_mtp_instances_do_not_share_recordings_on_the_same_request_stream() {

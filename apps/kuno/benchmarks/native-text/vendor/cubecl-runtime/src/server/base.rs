@@ -75,6 +75,7 @@ pub struct NativeStrataBranch {
     model_owner: u64,
     coupled_sampling: bool,
     deferred_gdn_state: bool,
+    grouped_status_folds: bool,
     family: u8,
     rows: u8,
     proposals: u8,
@@ -132,6 +133,19 @@ impl NativeStrataBranch {
     pub fn target_defers_gdn_state(self) -> Option<bool> {
         (self.family == 1).then_some(self.deferred_gdn_state)
     }
+    /// Static target fold inventory. Grouped and individual recordings cannot
+    /// share a program even when their math geometry and physical roots match.
+    pub fn with_target_grouped_status_folds(mut self, grouped: bool) -> Result<Self, &'static str> {
+        if self.family != 1 {
+            return Err("native target fold mode");
+        }
+        self.grouped_status_folds = grouped;
+        Ok(self)
+    }
+    /// The target's immutable fold mode; unrelated branch families have none.
+    pub fn target_grouped_status_folds(self) -> Option<bool> {
+        (self.family == 1).then_some(self.grouped_status_folds)
+    }
     /// Static target geometry only; no request controls or access authority.
     pub fn target_geometry(self) -> Option<(u8, u16, u8)> {
         (self.family == 1).then_some((self.rows, self.context_capacity, self.state_role))
@@ -160,6 +174,7 @@ impl NativeStrataBranch {
             model_owner: 0,
             coupled_sampling: false,
             deferred_gdn_state: false,
+            grouped_status_folds: false,
             family: 1,
             rows,
             proposals: 0,
@@ -202,6 +217,7 @@ impl NativeStrataBranch {
             model_owner: 0,
             coupled_sampling: false,
             deferred_gdn_state: false,
+            grouped_status_folds: false,
             family: 2,
             rows,
             proposals,
@@ -226,6 +242,7 @@ impl NativeStrataBranch {
             model_owner: 0,
             coupled_sampling: false,
             deferred_gdn_state: false,
+            grouped_status_folds: false,
             family: 3,
             rows: 1,
             proposals: step,
