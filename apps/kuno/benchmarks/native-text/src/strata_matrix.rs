@@ -3,6 +3,12 @@
 use cubecl::{prelude::*, server::Handle, wgpu::WgpuRuntime};
 use kuno_text::{Error, Result};
 
+#[cfg(feature = "strata-intel-core")]
+#[path = "strata_matrix_numeric_probe.rs"]
+mod numeric;
+#[cfg(feature = "strata-intel-core")]
+pub(crate) use numeric::cases as public_numeric;
+
 pub(crate) async fn request_device(
     adapter: &wgpu::Adapter,
     descriptor: &wgpu::DeviceDescriptor<'_>,

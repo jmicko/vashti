@@ -30,6 +30,15 @@ const STATUS_GAP: u32 = 0xe1234567;
 const TILE: usize = 8;
 #[path = "strata_dense_numeric_probe.rs"]
 mod dense;
+#[path = "strata_shared_numeric_probe.rs"]
+mod shared_numeric;
+
+pub(crate) fn read_native_public(
+    arena: &PrivateArena,
+    id: BufferId,
+) -> Result<Zeroizing<Vec<u32>>> {
+    native::read_id(arena, id)
+}
 #[path = "strata_gr_numeric_probe.rs"]
 mod native;
 
@@ -1059,6 +1068,11 @@ pub fn run(client: &ComputeClient<WgpuRuntime>, storage_alignment: usize) -> Res
         if crate::strata_intel_core::enabled() {
             let mut reports = native::cases(client, &mut arena, &public)?;
             reports.extend(dense::cases(client, &mut arena, &file)?);
+            #[cfg(feature = "strata-intel-core")]
+            reports.extend(crate::strata_matrix::public_numeric(
+                client, &mut arena, &file,
+            )?);
+            reports.extend(shared_numeric::cases(client, &mut arena, &file)?);
             Ok(reports)
         } else {
             cases(client, &mut arena, graph, &public, &retired)
