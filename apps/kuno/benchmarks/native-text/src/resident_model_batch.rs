@@ -3057,19 +3057,21 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
     ) -> Result<T> {
         let attempt =
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| operation(self, executor)));
-        match attempt {
-            Ok(Ok(value)) => Ok(value),
-            _ => {
-                self.admission
-                    .sequence_poison()
-                    .store(true, Ordering::Release);
-                self.poisoned = true;
-                executor.poison_resident();
-                let _ = self.close();
-                let _ = executor.close_transient_resident();
-                Err(chunk_error!())
-            }
-        }
+        let cause = match attempt {
+            Ok(Ok(value)) => return Ok(value),
+            Ok(Err(cause)) => cause,
+            Err(_) => chunk_error!(), // Never retain a panic payload.
+        };
+        self.admission
+            .sequence_poison()
+            .store(true, Ordering::Release);
+        self.poisoned = true;
+        executor.poison_resident();
+        let _ = self.close();
+        let _ = executor.close_transient_resident();
+        // Match execute_native_chunk: checked terminal cleanup must not erase
+        // the original content-free typed rejection that caused it.
+        Err(cause)
     }
 
     pub(crate) fn begin_lab_oracle_trace(&mut self, executor: &mut GpuExecutor<'f>) -> Result<()> {
