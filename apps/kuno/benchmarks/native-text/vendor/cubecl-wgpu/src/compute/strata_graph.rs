@@ -323,6 +323,12 @@ pub(crate) fn register_spirv_module(
     // The Intel DPAS tile registered by this port uses one16-lane subgroup.
     // Raw instruction validation also rejects malformed/truncated modules.
     let words = super::strata_physical::canonical_workgroup_layout(&kernel.assembled_module)?;
+    // create_module first creates the HAL ShaderModule, which verifies the
+    // device's FloatControls properties. Native replay creates its own Vulkan
+    // module from Program.words, so it must apply the identical FP16 controls.
+    let words = wgpu::hal::vulkan::kuno_cooperative_fp16_preserve(&words)
+        .map_err(|_| fault("native SPIRV FP16 preservation"))?
+        .unwrap_or(words);
     let required_subgroup = wgpu::hal::vulkan::kuno_cooperative_subgroup(&words);
     let mut at = 5;
     let mut cooperative = false;
