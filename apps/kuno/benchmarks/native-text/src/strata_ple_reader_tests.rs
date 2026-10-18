@@ -66,6 +66,13 @@ impl Drop for Fixture {
         let _ = std::fs::remove_file(self.path.with_extension("old"));
     }
 }
+fn wait_for_released_rows(lease: &Lease) {
+    let until = Instant::now() + Duration::from_secs(2);
+    while lease.0.outstanding.load(Ordering::Acquire) != 0 && Instant::now() < until {
+        std::thread::yield_now();
+    }
+    assert_eq!(lease.0.outstanding.load(Ordering::Acquire), 0);
+}
 fn bytes(row: u32, rb: usize) -> Vec<u8> {
     let mut v: Vec<_> = (0..rb)
         .map(|i| (i * 17 + row as usize * 31) as u8)
@@ -333,4 +340,100 @@ fn worst_original_prompt_plan_capacity_and_invalid_rows_remain_bounded() {
     assert!(plan(&too_many, 96, 320001536, &c, &mut raw).is_err());
     assert!(plan(&[u32::MAX], 96, u64::MAX, &c, &mut vec![0; 110]).is_err());
     assert!(plan(&[1], u64::MAX, 320001536, &c, &mut vec![0; 110]).is_err());
+}
+
+#[test]
+fn deferred_delivery_keeps_two_actual_row_owners_charged_until_drop() {
+    let f = Fixture::new(512);
+    let cancel = AtomicBool::new(false);
+    let binding = Binding::Fixture(61);
+    with_source(binding, f.source(), 1024, &cancel, || {
+        let lease = current().unwrap();
+        let a = lease.issue_rows(binding, 90, &[0, 44, 511], &cancel)?;
+        let b = lease.issue_rows(binding, 90, &[91, 46], &cancel)?;
+        // Second issue is accepted while the first result remains uncollected.
+        assert_eq!(lease.0.outstanding.load(Ordering::Acquire), 2);
+        assert!(lease.issue_rows(binding, 90, &[1], &cancel).is_err());
+        let b = b.collect_rows(binding, 90, &cancel)?;
+        let a = a.collect_rows(binding, 90, &cancel)?;
+        assert_eq!(&*a, &f.expected(&[0, 44, 511]));
+        assert_eq!(&*b, &f.expected(&[91, 46]));
+        assert!(lease.issue_rows(binding, 90, &[1], &cancel).is_err());
+        drop(a);
+        let c = lease.issue_rows(binding, 90, &[1], &cancel)?;
+        assert_eq!(&*c.collect_rows(binding, 90, &cancel)?, &f.expected(&[1]));
+        drop(b);
+        wait_for_released_rows(&lease);
+        Ok(())
+    })
+    .unwrap();
+    assert!(current().is_none());
+}
+#[test]
+fn dropped_deferred_ticket_cannot_block_coordinator_or_erase_physical_quota_early() {
+    let f = Fixture::new(512);
+    let cancel = AtomicBool::new(false);
+    let binding = Binding::Fixture(62);
+    with_source(binding, f.source(), 1024, &cancel, || {
+        let lease = current().unwrap();
+        let a = lease.issue_rows(binding, 90, &[0, 44, 511], &cancel)?;
+        drop(a);
+        // This second real job cannot be received until the first job's actual
+        // read/scatter/send/drop has returned, rather than an invented cancel.
+        let b = lease.issue_rows(binding, 90, &[91, 46], &cancel)?;
+        let out = b.collect_rows(binding, 90, &cancel)?;
+        assert_eq!(&*out, &f.expected(&[91, 46]));
+        drop(out);
+        wait_for_released_rows(&lease);
+        Ok(())
+    })
+    .unwrap();
+}
+#[test]
+fn request_cannot_publish_cleanup_while_pending_or_returned_rows_escape() {
+    let f = Fixture::new(64);
+    let cancel = AtomicBool::new(false);
+    let binding = Binding::Fixture(63);
+    let pending = with_source(binding, f.source(), 16, &cancel, || {
+        current().unwrap().issue_rows(binding, 90, &[0], &cancel)
+    });
+    assert!(pending.is_err());
+    assert!(current().is_none());
+    let rows = with_source(binding, f.source(), 16, &cancel, || {
+        current().unwrap().read_rows(binding, 90, &[0], &cancel)
+    });
+    assert!(rows.is_err());
+    assert!(current().is_none());
+}
+#[test]
+fn deferred_collect_refuses_foreign_binding_geometry_and_cancellation() {
+    let f = Fixture::new(64);
+    let cancel = AtomicBool::new(false);
+    let binding = Binding::Fixture(64);
+    for kind in 0..3 {
+        with_source(binding, f.source(), 16, &cancel, || {
+            let lease = current().unwrap();
+            let pending = lease.issue_rows(binding, 90, &[0], &cancel)?;
+            // Wait for the real reply without taking its quota/result owner;
+            // collection still checks identity and cancellation after readiness.
+            let rows = pending.rx.recv().unwrap()?;
+            let (tx, rx) = mpsc::sync_channel(1);
+            tx.send(Ok(rows)).ok().unwrap();
+            let pending = PendingRows { rx, ..pending };
+            let canceled = AtomicBool::new(kind == 2);
+            let result = pending.collect_rows(
+                if kind == 0 {
+                    Binding::Fixture(999)
+                } else {
+                    binding
+                },
+                if kind == 1 { 110 } else { 90 },
+                &canceled,
+            );
+            assert!(result.is_err());
+            wait_for_released_rows(&lease);
+            Ok(())
+        })
+        .unwrap();
+    }
 }

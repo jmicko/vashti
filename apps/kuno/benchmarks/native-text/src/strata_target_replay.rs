@@ -41,6 +41,97 @@ impl Completed {
         Ok(())
     }
 }
+/// An actual submitted original prefix; no numerical/state authority. The
+/// original arena borrow prevents continuing on a different client/context.
+pub(crate) struct Prefix<'a> {
+    arena: &'a PrivateArena,
+    key: NativeStrataBranch,
+    invocation: NativeStrataInvocation,
+    fault: BufferId,
+    controls: Zeroizing<[usize; 7]>,
+    retired: Arc<AtomicBool>,
+    armed: bool,
+}
+impl Drop for Prefix<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.retired.store(true, Ordering::Release);
+        }
+        self.invocation.wipe_private();
+        self.fault.zeroize();
+    }
+}
+impl Prefix<'_> {
+    pub(crate) fn finish(mut self) -> Result<Completed> {
+        self.arena
+            .client()
+            .map_err(u::fault)?
+            .replay_native_strata_target_suffix(self.key, self.invocation)
+            .map_err(u::fault)?;
+        self.armed = false;
+        Ok(Completed {
+            fault: self.fault,
+            controls: std::mem::replace(&mut self.controls, Zeroizing::new([0; 7])),
+        })
+    }
+}
+pub(crate) fn try_prefix<'a>(
+    arena: &'a PrivateArena,
+    key: NativeStrataBranch,
+    invocation: NativeStrataInvocation,
+    fault: BufferId,
+    retired: Arc<AtomicBool>,
+) -> Result<Option<Prefix<'a>>> {
+    if !crate::strata_intel_core::enabled()
+        || u::words(arena, fault)? != 1
+        || key.target_ple_handoff() != Some(true)
+    {
+        return Err(Error::InvalidFormat("native target prefix owner"));
+    }
+    invocation.validate_for(key).map_err(u::fault)?;
+    use cubecl_runtime::server::NativeStrataValue;
+    let position = invocation
+        .value(NativeStrataValue::Position { offset: 0 })
+        .map_err(u::fault)?;
+    let epoch = invocation
+        .value(NativeStrataValue::RouteEpoch)
+        .map_err(u::fault)?;
+    let usage = invocation
+        .value(NativeStrataValue::RouteUsage)
+        .map_err(u::fault)?;
+    let (count, _, state) = key
+        .target_geometry()
+        .ok_or(Error::InvalidFormat("native replay target shape required"))?;
+    if !arena
+        .client()
+        .map_err(u::fault)?
+        .replay_native_strata_target_prefix(key, invocation)
+        .map_err(u::fault)?
+    {
+        return Ok(None);
+    }
+    Ok(Some(Prefix {
+        arena,
+        key,
+        invocation,
+        fault,
+        controls: Zeroizing::new([
+            position as usize,
+            count as usize,
+            state as usize,
+            epoch as usize,
+            usage as usize,
+            key.target_defers_gdn_state()
+                .ok_or(Error::InvalidFormat("native replay target state mode"))?
+                as usize,
+            key.target_grouped_status_folds()
+                .ok_or(Error::InvalidFormat("native replay target fold mode"))?
+                as usize,
+        ]),
+        retired,
+        armed: true,
+    }))
+}
 /// A miss leaves the capture path available. Any failed upload/submission/join
 /// remains an error; callers cannot recover by manufacturing pending receipts.
 pub(crate) fn try_submit(

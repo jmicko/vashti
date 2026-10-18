@@ -91,7 +91,8 @@ impl Parameters {
         else {
             return Ok(None);
         };
-        if !b.sealed || !b.typed || b.segments.len() != 1 {
+        if key.target_ple_handoff() == Some(true) || !b.sealed || !b.typed || b.segments.len() != 1
+        {
             return Ok(None);
         }
         let s = &b.segments[0];
@@ -122,6 +123,141 @@ impl Parameters {
             nonce,
             segment: 0,
         }))
+    }
+    /// Exactly two original math programs; arbitrary multi-segment branches
+    /// remain ineligible for bypass. Transfer-only work is never a segment.
+    pub(crate) fn target_replay_keys(
+        &self,
+        key: NativeStrataBranch,
+        nonce: u64,
+        suffix: bool,
+    ) -> Result<Option<[RecordingKey; 2]>, ServerError> {
+        if nonce == 0 || key.target_ple_handoff() != Some(true) {
+            return Err(fault("native split target shape"));
+        }
+        let b = if suffix {
+            let a = self
+                .active
+                .ok_or_else(|| fault("native target prefix missing"))?;
+            let b = &self.branches[a.branch];
+            if b.key != key
+                || b.nonce != nonce
+                || a.segment != 1
+                || a.records != 0
+                || a.pages != 0
+                || a.invocation.is_none()
+            {
+                return Err(fault("native target prefix transition"));
+            }
+            b
+        } else {
+            if self.active.is_some() {
+                return Err(fault("native target replay requires idle branch"));
+            }
+            let Some(b) = self
+                .branches
+                .iter()
+                .find(|b| b.key == key && b.nonce == nonce)
+            else {
+                return Ok(None);
+            };
+            b
+        };
+        if !b.sealed || !b.typed || b.segments.len() != 2 {
+            if suffix {
+                return Err(fault("native target continuation inventory"));
+            }
+            return Ok(None);
+        }
+        for s in &b.segments {
+            if !s.sealed || s.records.is_empty() || s.pages.is_empty() {
+                return Err(fault("native target unsealed segment"));
+            }
+            for (i, &page) in s.pages.iter().enumerate() {
+                if s.pages[..i].contains(&page)
+                    || !s.records.iter().any(|r| r.owner as usize == page)
+                {
+                    return Err(fault("native target page inventory"));
+                }
+            }
+            for r in &s.records {
+                if r.template == NONE
+                    || r.owner == NONE
+                    || !s.pages.contains(&(r.owner as usize))
+                    || (r.template as usize)
+                        .checked_add(r.bytes as usize)
+                        .is_none_or(|e| e > s.template.0.len())
+                    || (r.first_field as usize)
+                        .checked_add(r.fields as usize)
+                        .is_none_or(|e| e > s.fields.len())
+                {
+                    return Err(fault("native target record inventory"));
+                }
+            }
+        }
+        Ok(Some([
+            RecordingKey {
+                branch: key,
+                nonce,
+                segment: 0,
+            },
+            RecordingKey {
+                branch: key,
+                nonce,
+                segment: 1,
+            },
+        ]))
+    }
+    pub(crate) fn begin_target_replay(
+        &mut self,
+        key: RecordingKey,
+        invocation: NativeStrataInvocation,
+        suffix: bool,
+    ) -> Result<(), ServerError> {
+        invocation.validate_for(key.branch).map_err(fault)?;
+        let keys = self
+            .target_replay_keys(key.branch, key.nonce, suffix)?
+            .ok_or_else(|| fault("native target replay unavailable"))?;
+        if key != keys[usize::from(suffix)] {
+            return Err(fault("native target segment identity"));
+        }
+        let branch = if suffix {
+            let a = self.active.unwrap();
+            if !a
+                .invocation
+                .ok_or_else(|| fault("native target prefix controls missing"))?
+                .same_controls(invocation)
+            {
+                return Err(fault("native target prefix controls changed"));
+            }
+            a.branch
+        } else {
+            self.branches
+                .iter()
+                .position(|b| b.key == key.branch && b.nonce == key.nonce)
+                .ok_or_else(|| fault("native target branch missing"))?
+        };
+        let s = &self.branches[branch].segments[key.segment];
+        for f in &s.fields {
+            invocation.value(f.value).map_err(fault)?;
+        }
+        self.active = Some(Active {
+            branch,
+            segment: key.segment,
+            records: s.records.len(),
+            pages: s.pages.len(),
+            invocation: Some(invocation),
+            phase: NativeStrataPhase::Front,
+        });
+        Ok(())
+    }
+    pub(crate) fn target_ple_transfer_boundary(&self) -> bool {
+        self.active.is_some_and(|a| {
+            self.branches[a.branch].key.target_ple_handoff() == Some(true)
+                && a.segment == 1
+                && a.records == 0
+                && a.pages == 0
+        })
     }
     pub(crate) fn begin_replay(
         &mut self,
@@ -804,6 +940,8 @@ mod tests {
                         .with_deferred_gdn_state(rows > 1)
                         .unwrap()
                         .with_target_grouped_status_folds(true)
+                        .unwrap()
+                        .with_target_ple_handoff(true)
                         .unwrap(),
                 );
                 if rows > 1 {
@@ -827,7 +965,12 @@ mod tests {
         // First cold final-prompt count1 can precede policy selection. Its
         // four possible original state roles remain separate from grouped run.
         for role in 0..4 {
-            keys.push(NativeStrataBranch::target_window_with_state(1, 4096, role).unwrap());
+            keys.push(
+                NativeStrataBranch::target_window_with_state(1, 4096, role)
+                    .unwrap()
+                    .with_target_ple_handoff(true)
+                    .unwrap(),
+            );
         }
         for step in 1..=6 {
             keys.push(
@@ -1068,6 +1211,151 @@ mod tests {
         assert!(p.set_phase(NativeStrataPhase::Draft { index: 0 }).is_err());
         p.set_phase(NativeStrataPhase::Front).unwrap();
         p.clear();
+    }
+    fn split_target() -> (Parameters, NativeStrataBranch, [RecordingKey; 2]) {
+        let key = NativeStrataBranch::target_window(4)
+            .unwrap()
+            .with_target_ple_handoff(true)
+            .unwrap();
+        let mut p = Parameters::default();
+        p.begin_invocation(key, 5, Some(NativeStrataInvocation::target(11, 7).unwrap()))
+            .unwrap();
+        let mut keys = Vec::new();
+        for (owner, constant) in [(17, 123), (31, 456)] {
+            assert_eq!(p.target_ple_transfer_boundary(), owner == 31);
+            p.record_info(&payload(11, 7, constant), &fields()).unwrap();
+            p.use_page(owner).unwrap();
+            p.bind_current(owner, 0).unwrap();
+            assert!(!p.target_ple_transfer_boundary());
+            keys.push(p.recording().unwrap().unwrap());
+            p.submitted().unwrap();
+        }
+        p.end(key, 5).unwrap();
+        (p, key, keys.try_into().unwrap())
+    }
+    #[test]
+    fn split_target_replays_two_original_pages_across_unchanged_transfer_boundary() {
+        let (mut p, key, keys) = split_target();
+        assert!(p.replay_key(key, 5).unwrap().is_none());
+        assert!(
+            p.begin_replay(keys[0], NativeStrataInvocation::target(31, 8).unwrap())
+                .is_err()
+        );
+        assert_eq!(p.target_replay_keys(key, 5, false).unwrap(), Some(keys));
+        let inv = NativeStrataInvocation::target_with_usage(31, 8, false).unwrap();
+        p.begin_target_replay(keys[0], inv, false).unwrap();
+        let mut out = [0u8; 16];
+        p.write_replay_page(17, 16, |at, bytes| {
+            out[at..at + bytes.len()].copy_from_slice(bytes)
+        })
+        .unwrap();
+        assert_eq!(&out[..], &payload(31, 8, 123));
+        assert!(!p.target_ple_transfer_boundary());
+        assert!(p.target_replay_keys(key, 5, true).is_err());
+        p.submitted().unwrap();
+        assert!(p.target_ple_transfer_boundary());
+        let active = p.active.unwrap();
+        let inventory = (
+            p.branches[0].segments.len(),
+            p.branches[0].segments[1].pages.clone(),
+        );
+        // Asking whether an upload is unnamed must not create or advance a
+        // segment. Actual stream submits its Copy/Fill without calling recording.
+        for _ in 0..3 {
+            assert!(p.target_ple_transfer_boundary());
+        }
+        assert_eq!(
+            (
+                p.active.unwrap().segment,
+                p.active.unwrap().records,
+                p.active.unwrap().pages
+            ),
+            (active.segment, active.records, active.pages)
+        );
+        assert_eq!(
+            inventory,
+            (
+                p.branches[0].segments.len(),
+                p.branches[0].segments[1].pages.clone()
+            )
+        );
+        assert_eq!(p.target_replay_keys(key, 5, true).unwrap(), Some(keys));
+        assert!(
+            p.begin_target_replay(
+                keys[1],
+                NativeStrataInvocation::target_with_usage(31, 8, true).unwrap(),
+                true
+            )
+            .is_err()
+        );
+        assert!(
+            p.begin_target_replay(
+                keys[1],
+                NativeStrataInvocation::target_with_usage(32, 8, false).unwrap(),
+                true
+            )
+            .is_err()
+        );
+        p.begin_target_replay(keys[1], inv, true).unwrap();
+        p.write_replay_page(31, 16, |at, bytes| {
+            out[at..at + bytes.len()].copy_from_slice(bytes)
+        })
+        .unwrap();
+        assert_eq!(&out[..], &payload(31, 8, 456));
+        p.submitted().unwrap();
+        p.end(key, 5).unwrap();
+        assert!(p.active.is_none());
+        assert_eq!(p.target_replay_keys(key, 5, false).unwrap(), Some(keys));
+    }
+    #[test]
+    fn split_target_refuses_wrong_owner_nonce_segment_and_missing_continuation() {
+        let (mut p, key, keys) = split_target();
+        let inv = NativeStrataInvocation::target(31, 8).unwrap();
+        assert!(p.target_replay_keys(key, 0, false).is_err());
+        assert!(p.target_replay_keys(key, 6, false).unwrap().is_none());
+        assert!(
+            p.target_replay_keys(key.with_target_ple_handoff(false).unwrap(), 5, false)
+                .is_err()
+        );
+        assert!(p.begin_target_replay(keys[1], inv, false).is_err());
+        assert!(p.begin_target_replay(keys[1], inv, true).is_err());
+        assert!(p.active.is_none());
+        p.begin_target_replay(keys[0], inv, false).unwrap();
+        p.submitted().unwrap();
+        assert!(p.target_replay_keys(key, 6, true).is_err());
+        assert!(
+            p.target_replay_keys(
+                NativeStrataBranch::target_window(3)
+                    .unwrap()
+                    .with_target_ple_handoff(true)
+                    .unwrap(),
+                5,
+                true
+            )
+            .is_err()
+        );
+        p.branches[0].segments[1].sealed = false;
+        assert!(p.target_replay_keys(key, 5, true).is_err());
+        assert!(p.begin_target_replay(keys[1], inv, true).is_err());
+        p.clear();
+        assert!(p.active.is_none());
+        assert!(p.branches.is_empty());
+    }
+    #[test]
+    fn split_target_preflights_both_programs_before_prefix_activation() {
+        let (mut p, key, _) = split_target();
+        p.branches[0].segments[1].records[0].template = NONE;
+        assert!(p.target_replay_keys(key, 5, false).is_err());
+        assert!(p.active.is_none());
+        let (mut p, key, _) = split_target();
+        p.branches[0].segments[1].pages.push(31);
+        assert!(p.target_replay_keys(key, 5, false).is_err());
+        assert!(p.active.is_none());
+        let (mut p, key, _) = split_target();
+        p.branches[0].segments.pop();
+        assert!(p.target_replay_keys(key, 5, false).unwrap().is_none());
+        p.branches[0].sealed = false;
+        assert!(p.target_replay_keys(key, 5, false).unwrap().is_none());
     }
     #[test]
     fn direct_replay_refreshes_verification_usage_policy_in_the_same_branch() {

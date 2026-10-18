@@ -1374,6 +1374,32 @@ impl<R: Runtime> ComputeClient<R> {
             })
             .unwrap()
     }
+    /// Submit only the original target prefix; no completion/state credit.
+    pub fn replay_native_strata_target_prefix(
+        &self,
+        key: crate::server::NativeStrataBranch,
+        invocation: crate::server::NativeStrataInvocation,
+    ) -> Result<bool, ServerError> {
+        let stream_id = self.stream_id();
+        self.device
+            .submit_blocking(move |server| {
+                server.replay_native_strata_target_prefix(stream_id, key, invocation)
+            })
+            .unwrap()
+    }
+    /// Join the original continuation after its source/transfer boundary.
+    pub fn replay_native_strata_target_suffix(
+        &self,
+        key: crate::server::NativeStrataBranch,
+        invocation: crate::server::NativeStrataInvocation,
+    ) -> Result<(), ServerError> {
+        let stream_id = self.stream_id();
+        self.device
+            .submit_blocking(move |server| {
+                server.replay_native_strata_target_suffix(stream_id, key, invocation)
+            })
+            .unwrap()
+    }
     /// Declare the next shape-defined math phase on the same serialized stream.
     pub fn set_native_strata_phase(
         &self,

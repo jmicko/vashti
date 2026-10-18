@@ -76,6 +76,7 @@ pub struct NativeStrataBranch {
     coupled_sampling: bool,
     deferred_gdn_state: bool,
     grouped_status_folds: bool,
+    target_ple_handoff: bool,
     family: u8,
     rows: u8,
     proposals: u8,
@@ -146,6 +147,18 @@ impl NativeStrataBranch {
     pub fn target_grouped_status_folds(self) -> Option<bool> {
         (self.family == 1).then_some(self.grouped_status_folds)
     }
+    /// Immutable two-program target/PLE boundary; never a request value.
+    pub fn with_target_ple_handoff(mut self, split: bool) -> Result<Self, &'static str> {
+        if self.family != 1 {
+            return Err("native target PLE shape");
+        }
+        self.target_ple_handoff = split;
+        Ok(self)
+    }
+    /// Target-only immutable PLE handoff mode; other families have none.
+    pub fn target_ple_handoff(self) -> Option<bool> {
+        (self.family == 1).then_some(self.target_ple_handoff)
+    }
     /// Static target geometry only; no request controls or access authority.
     pub fn target_geometry(self) -> Option<(u8, u16, u8)> {
         (self.family == 1).then_some((self.rows, self.context_capacity, self.state_role))
@@ -175,6 +188,7 @@ impl NativeStrataBranch {
             coupled_sampling: false,
             deferred_gdn_state: false,
             grouped_status_folds: false,
+            target_ple_handoff: false,
             family: 1,
             rows,
             proposals: 0,
@@ -218,6 +232,7 @@ impl NativeStrataBranch {
             coupled_sampling: false,
             deferred_gdn_state: false,
             grouped_status_folds: false,
+            target_ple_handoff: false,
             family: 2,
             rows,
             proposals,
@@ -243,6 +258,7 @@ impl NativeStrataBranch {
             coupled_sampling: false,
             deferred_gdn_state: false,
             grouped_status_folds: false,
+            target_ple_handoff: false,
             family: 3,
             rows: 1,
             proposals: step,
@@ -366,6 +382,16 @@ pub struct NativeStrataInvocation {
     accepted: u32,
 }
 impl NativeStrataInvocation {
+    /// Same original private controls across a submitted prefix/continuation.
+    /// This exposes no values and provides no submission or state authority.
+    pub fn same_controls(self, other: Self) -> bool {
+        self.kind == other.kind
+            && self.position == other.position
+            && self.route_epoch == other.route_epoch
+            && self.route_usage == other.route_usage
+            && self.accepted == other.accepted
+    }
+
     /// Validate fresh target controls before opening the retained shape.
     pub fn target(position: u32, route_epoch: u32) -> Result<Self, &'static str> {
         Self::target_with_usage(position, route_epoch, false)
@@ -1194,6 +1220,29 @@ where
         _invocation: NativeStrataInvocation,
     ) -> Result<bool, ServerError> {
         Ok(false)
+    }
+    /// Retained target prefix only. True means submitted, never joined/model
+    /// completion. A missing complete two-program inventory returns false.
+    fn replay_native_strata_target_prefix(
+        &mut self,
+        _stream_id: StreamId,
+        _key: NativeStrataBranch,
+        _invocation: NativeStrataInvocation,
+    ) -> Result<bool, ServerError> {
+        Ok(false)
+    }
+    /// Original prefix, input transfer and private controls must match. Success
+    /// joins the complete target continuation, not numerical/state acceptance.
+    fn replay_native_strata_target_suffix(
+        &mut self,
+        _stream_id: StreamId,
+        _key: NativeStrataBranch,
+        _invocation: NativeStrataInvocation,
+    ) -> Result<(), ServerError> {
+        Err(IoError::UnsupportedIoOperation {
+            backtrace: BackTrace::capture(),
+        }
+        .into())
     }
     /// Complete and seal that exact shape; this is not an erasure receipt.
     fn end_native_strata_branch(

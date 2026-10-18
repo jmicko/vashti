@@ -1530,6 +1530,118 @@ impl WgpuStream {
             }
         }
     }
+    pub(crate) fn replay_native_strata_target_prefix(
+        &mut self,
+        key: cubecl_runtime::server::NativeStrataBranch,
+        invocation: cubecl_runtime::server::NativeStrataInvocation,
+    ) -> Result<bool, ServerError> {
+        self.replay_target_part(key, invocation, false)
+    }
+    pub(crate) fn replay_native_strata_target_suffix(
+        &mut self,
+        key: cubecl_runtime::server::NativeStrataBranch,
+        invocation: cubecl_runtime::server::NativeStrataInvocation,
+    ) -> Result<(), ServerError> {
+        if !self.replay_target_part(key, invocation, true)? {
+            return Err(super::transient_io::fault(
+                "native target continuation missing",
+            ));
+        }
+        Ok(())
+    }
+    fn replay_target_part(
+        &mut self,
+        key: cubecl_runtime::server::NativeStrataBranch,
+        invocation: cubecl_runtime::server::NativeStrataInvocation,
+        suffix: bool,
+    ) -> Result<bool, ServerError> {
+        self.private_io_active()?;
+        invocation
+            .validate_for(key)
+            .map_err(super::transient_io::fault)?;
+        if key.target_ple_handoff() != Some(true) {
+            return Err(super::transient_io::fault("native split target required"));
+        }
+        if self.strata_graph.is_none() {
+            return Ok(false);
+        }
+        // On continuation this joins the actual prefix/input copy after source
+        // collection. Transfer-only nodes do not consume the next math segment.
+        self.flush(StreamErrorMode {
+            ignore: false,
+            flush: true,
+        })?;
+        let Some(keys) = self
+            .transient_io
+            .as_ref()
+            .unwrap()
+            .target_replay_keys(key, suffix)?
+        else {
+            return Ok(false);
+        };
+        if !keys
+            .iter()
+            .all(|&k| self.strata_graph.as_ref().unwrap().has_recording(k))
+        {
+            if suffix {
+                return Err(super::transient_io::fault(
+                    "native target continuation program missing",
+                ));
+            }
+            return Ok(false);
+        }
+        self.strata_graph
+            .as_mut()
+            .unwrap()
+            .select_branch_queue(Some(key))?;
+        let mutation = self.private_mutation_guard();
+        let scopes = super::transient_io::IoScopes::new(&self.device);
+        let result = (|| {
+            let recording = keys[usize::from(suffix)];
+            let io = self.transient_io.as_mut().unwrap();
+            io.stage_target_replay(recording, invocation, suffix)?;
+            if io.native_branch_recording()? != Some(recording) {
+                return Err(super::transient_io::fault(
+                    "native target parameter identity",
+                ));
+            }
+            let parameters = io.prepare_native_info()?;
+            if parameters.is_empty() {
+                return Err(super::transient_io::fault(
+                    "native target parameters missing",
+                ));
+            }
+            let graph = self.strata_graph.as_mut().unwrap();
+            graph.upload_parameters(parameters)?;
+            graph.replay_recording(recording, suffix, false)?;
+            let io = self.transient_io.as_mut().unwrap();
+            io.native_branch_submitted()?;
+            if suffix {
+                io.end_native_branch(key)?;
+                self.strata_graph
+                    .as_mut()
+                    .unwrap()
+                    .select_branch_queue(None)?;
+                self.mem_manage.memory_cleanup(false);
+                self.mem_manage.release_uniforms();
+                self.flush_errors(StreamErrorMode {
+                    ignore: false,
+                    flush: true,
+                })?;
+            }
+            Ok(true)
+        })();
+        scopes.finish(self.transient_io.as_mut().unwrap());
+        if result.is_err() {
+            self.transient_io
+                .as_mut()
+                .unwrap()
+                .observe_public_submission_failure();
+        } else if let Some(mutation) = mutation {
+            mutation.accept();
+        }
+        result
+    }
     pub(crate) fn replay_native_strata_commit_pending(
         &mut self,
         key: cubecl_runtime::server::NativeStrataBranch,
@@ -1932,17 +2044,26 @@ impl WgpuStream {
                 .upload_parameters(copies)?;
         }
         if pending_native {
-            let branch = self
+            let transfer_boundary = self
                 .transient_io
-                .as_mut()
-                .map(|io| io.native_branch_recording())
-                .transpose()?
-                .flatten();
-            self.strata_graph
-                .as_mut()
-                .unwrap()
-                .execute(wait_native, branch, index.is_some())?;
-            if let Some(io) = self.transient_io.as_mut() {
+                .as_ref()
+                .is_some_and(|io| io.target_ple_transfer_boundary())
+                && self.strata_graph.as_ref().unwrap().queued_transfer_only();
+            let branch = if transfer_boundary {
+                None
+            } else {
+                self.transient_io
+                    .as_mut()
+                    .map(|io| io.native_branch_recording())
+                    .transpose()?
+                    .flatten()
+            };
+            self.strata_graph.as_mut().unwrap().execute(
+                wait_native,
+                if transfer_boundary { None } else { branch },
+                index.is_some(),
+            )?;
+            if !transfer_boundary && let Some(io) = self.transient_io.as_mut() {
                 io.native_branch_submitted()?;
             }
         }

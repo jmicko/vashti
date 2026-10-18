@@ -11,7 +11,7 @@ use std::{
     collections::VecDeque,
     sync::{
         Arc, Condvar, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc,
     },
     time::{Duration, Instant},
@@ -467,9 +467,28 @@ impl Pool {
         }
     }
 }
+struct Permit(Arc<AtomicUsize>);
+impl Drop for Permit {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+/// Actual returned rows retain their allocation permit through decode/scatter.
+/// No Clone, Debug, serialization or detached raw allocation is available.
+pub(crate) struct OwnedRows {
+    data: Zeroizing<Vec<u8>>,
+    _permit: Arc<Permit>,
+}
+impl std::ops::Deref for OwnedRows {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        &self.data
+    }
+}
 struct Gather {
     rows: Zeroizing<Vec<u32>>,
-    reply: mpsc::SyncSender<Result<Zeroizing<Vec<u8>>>>,
+    permit: Arc<Permit>,
+    reply: mpsc::SyncSender<Result<OwnedRows>>,
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Binding {
@@ -482,9 +501,42 @@ struct Endpoint {
     rb: usize,
     tx: mpsc::SyncSender<Gather>,
     stop: Arc<AtomicBool>,
+    outstanding: Arc<AtomicUsize>,
 }
 #[derive(Clone)]
 pub(crate) struct Lease(Arc<Endpoint>);
+/// Owned source operation. Dropping it closes delivery, but its permit remains
+/// with actual queued/reading/returned rows until all of those owners end.
+pub(crate) struct PendingRows {
+    binding: Binding,
+    rb: usize,
+    count: usize,
+    rx: mpsc::Receiver<Result<OwnedRows>>,
+    _permit: Arc<Permit>,
+    stop: Arc<AtomicBool>,
+}
+impl PendingRows {
+    pub(crate) fn collect(
+        self,
+        binding: GraphBindingId,
+        rb: usize,
+        cancel: &AtomicBool,
+    ) -> Result<OwnedRows> {
+        self.collect_rows(Binding::Model(binding), rb, cancel)
+    }
+    fn collect_rows(self, binding: Binding, rb: usize, cancel: &AtomicBool) -> Result<OwnedRows> {
+        canceled(cancel)?;
+        if self.binding != binding || self.rb != rb || self.stop.load(Ordering::Acquire) {
+            return Err(bad());
+        }
+        let result = self.rx.recv().map_err(|_| bad())??;
+        canceled(cancel)?;
+        if result.len() != self.count * rb || self.stop.load(Ordering::Acquire) {
+            return Err(bad());
+        }
+        Ok(result)
+    }
+}
 thread_local! {static CURRENT:RefCell<Option<Lease>>=const{RefCell::new(None)};}
 pub(crate) fn current() -> Option<Lease> {
     CURRENT.with(|s| s.borrow().clone())
@@ -496,22 +548,43 @@ impl Drop for Installed {
     }
 }
 impl Lease {
+    pub(crate) fn issue(
+        &self,
+        binding: GraphBindingId,
+        rb: usize,
+        rows: &[u32],
+        cancel: &AtomicBool,
+    ) -> Result<PendingRows> {
+        self.issue_rows(Binding::Model(binding), rb, rows, cancel)
+    }
     pub(crate) fn gather(
         &self,
         binding: GraphBindingId,
         rb: usize,
         rows: &[u32],
         cancel: &AtomicBool,
-    ) -> Result<Zeroizing<Vec<u8>>> {
-        self.read_rows(Binding::Model(binding), rb, rows, cancel)
+    ) -> Result<OwnedRows> {
+        self.issue(binding, rb, rows, cancel)?
+            .collect(binding, rb, cancel)
     }
+    #[cfg(test)]
     fn read_rows(
         &self,
         binding: Binding,
         rb: usize,
         rows: &[u32],
         cancel: &AtomicBool,
-    ) -> Result<Zeroizing<Vec<u8>>> {
+    ) -> Result<OwnedRows> {
+        self.issue_rows(binding, rb, rows, cancel)?
+            .collect_rows(binding, rb, cancel)
+    }
+    fn issue_rows(
+        &self,
+        binding: Binding,
+        rb: usize,
+        rows: &[u32],
+        cancel: &AtomicBool,
+    ) -> Result<PendingRows> {
         canceled(cancel)?;
         if binding != self.0.binding
             || rb != self.0.rb
@@ -521,19 +594,34 @@ impl Lease {
         {
             return Err(bad());
         }
+        self.0
+            .outstanding
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+                (n < 2).then_some(n + 1)
+            })
+            .map_err(|_| bad())?;
+        let permit = Arc::new(Permit(self.0.outstanding.clone()));
         let mut owned = zeros(rows.len())?;
         owned.copy_from_slice(rows);
-        let (tx, rx) = mpsc::sync_channel(0);
+        // One ready result may wait for the real layer boundary; unlike a
+        // rendezvous reply it never stalls the coordinator/keepalive itself.
+        let (tx, rx) = mpsc::sync_channel(1);
         self.0
             .tx
             .send(Gather {
                 rows: owned,
+                permit: permit.clone(),
                 reply: tx,
             })
             .map_err(|_| bad())?;
-        let result = rx.recv().map_err(|_| bad())?;
-        canceled(cancel)?;
-        result
+        Ok(PendingRows {
+            binding,
+            rb,
+            count: rows.len(),
+            rx,
+            _permit: permit,
+            stop: self.0.stop.clone(),
+        })
     }
 }
 pub(crate) fn with_request<T>(
@@ -575,6 +663,7 @@ fn with_source<T>(
     let (tx, rx) = mpsc::sync_channel::<Gather>(0);
     let (ready, wait) = mpsc::sync_channel(0);
     let stop = Arc::new(AtomicBool::new(false));
+    let outstanding = Arc::new(AtomicUsize::new(0));
     std::thread::scope(|scope| {
         let stopped = stop.clone();
         let worker = std::thread::Builder::new()
@@ -616,7 +705,10 @@ fn with_source<T>(
                                     )?;
                                     pool.execute(&p, &mut raw, &mut cache, cancel)?;
                                     source.verify_file_unchanged()?;
-                                    Ok(raw)
+                                    Ok(OwnedRows {
+                                        data: raw,
+                                        _permit: g.permit.clone(),
+                                    })
                                 })();
                                 let failed = result.is_err();
                                 let _ = g.reply.send(result);
@@ -673,6 +765,7 @@ fn with_source<T>(
                     rb,
                     tx,
                     stop: stop.clone(),
+                    outstanding: outstanding.clone(),
                 }));
                 CURRENT.with(|s| *s.borrow_mut() = Some(lease));
                 let installed = Installed;
@@ -691,6 +784,9 @@ fn with_source<T>(
         stop.store(true, Ordering::Release);
         let joined = worker.join().map_err(|_| bad())?;
         joined?;
+        if outstanding.load(Ordering::Acquire) != 0 {
+            return Err(bad());
+        }
         result
     })
 }

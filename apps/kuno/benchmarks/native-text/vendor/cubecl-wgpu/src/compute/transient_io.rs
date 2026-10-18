@@ -3123,6 +3123,44 @@ impl TransientIo {
             .ok_or_else(|| fault("native replay requires request reuse"))?;
         self.branch_parameters.replay_key(key, nonce)
     }
+    pub(crate) fn target_replay_keys(
+        &self,
+        key: cubecl_runtime::server::NativeStrataBranch,
+        suffix: bool,
+    ) -> Result<Option<[super::strata_parameters::RecordingKey; 2]>, ServerError> {
+        self.active()?;
+        if !self.info_batch || !self.pending_info.is_empty() || self.info_slab.is_some() {
+            return Err(fault(
+                "native target replay requires drained parameter staging",
+            ));
+        }
+        let nonce = self
+            .reuse_scope
+            .nonce
+            .ok_or_else(|| fault("native target replay request missing"))?;
+        self.branch_parameters
+            .target_replay_keys(key, nonce, suffix)
+    }
+    pub(crate) fn target_ple_transfer_boundary(&self) -> bool {
+        self.branch_parameters.target_ple_transfer_boundary()
+    }
+    pub(crate) fn stage_target_replay(
+        &mut self,
+        key: super::strata_parameters::RecordingKey,
+        invocation: cubecl_runtime::server::NativeStrataInvocation,
+        suffix: bool,
+    ) -> Result<(), ServerError> {
+        if self
+            .target_replay_keys(key.branch, suffix)?
+            .map(|k| k[usize::from(suffix)])
+            != Some(key)
+        {
+            return Err(fault("native target replay request changed"));
+        }
+        self.branch_parameters
+            .begin_target_replay(key, invocation, suffix)?;
+        self.stage_replay_pages()
+    }
     /// Bulk-stage fresh controls into the *original* recorded uniform roots.
     /// Full upload sources follow the same ledger, zero-padding and terminal
     /// wipe obligations as the ordinary per-record INFO path.
@@ -3135,6 +3173,9 @@ impl TransientIo {
             return Err(fault("native replay request changed"));
         }
         self.branch_parameters.begin_replay(key, invocation)?;
+        self.stage_replay_pages()
+    }
+    fn stage_replay_pages(&mut self) -> Result<(), ServerError> {
         let pages = self.branch_parameters.replay_pages()?;
         self.check_reuse_metadata(
             self.buffers.capacity(),

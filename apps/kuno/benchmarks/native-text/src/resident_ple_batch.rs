@@ -1,7 +1,8 @@
 //! Native layer1 PLE with original GPU history in the Intel core; legacy
 //! paths retain the separately checked CPU convolution-history owner.
-//! Invocation preparation owns/stages original OLD/EMB before graph capture;
-//! math enqueue consumes that exact prepared transaction without host uploads.
+//! Invocation preparation owns original OLD/EMB; selected native decode issues
+//! source reads before capture and joins/uploads EMB after the layer0 prefix.
+//! Math enqueue consumes that exact prepared transaction without host uploads.
 //! GPU OLD is readonly and NEXT candidate-only; completion/commit stay separate.
 //! Count1 uses the accepted GPU-tail topology, not scalar CPU tail.
 #![allow(dead_code)] // Future all-family coordinator; no default/model hook.
@@ -201,6 +202,7 @@ impl Drop for Anchor {
 /// Staged original inputs and an armed transaction, not a queued/completed
 /// receipt. Dropping this before consumption poisons the same original owner.
 pub(crate) struct PreparedPleBatch {
+    deferred: Option<DeferredEmbedding>,
     receipt: PendingPleBatch,
 }
 pub(crate) struct PendingPleBatch {
@@ -976,7 +978,7 @@ impl PleBatchWorkspace {
             return Err(error());
         }
         let prepared = self.prepare_invocation_checked(
-            model, input, output, spans, start, tokens, positions, cancel,
+            model, input, output, spans, start, tokens, positions, cancel, false,
         )?;
         self.enqueue_prepared_checked(model, projector, input, output, spans, prepared, cancel)
     }
@@ -997,13 +999,67 @@ impl PleBatchWorkspace {
         let poison = self.poison.clone();
         let result = guarded(&poison, || {
             self.prepare_invocation_checked(
-                model, input, output, spans, start, tokens, positions, cancel,
+                model, input, output, spans, start, tokens, positions, cancel, false,
             )
         });
         if result.is_err() {
             model.poisoned = true;
         }
         result
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn prepare_deferred(
+        &mut self,
+        model: &mut ResidentModel<'_, '_>,
+        input: BufferId,
+        output: BufferId,
+        spans: &BatchSpans,
+        start: usize,
+        tokens: &Zeroizing<[u32; MAX_BATCH]>,
+        positions: &Zeroizing<[u32; MAX_BATCH]>,
+        cancel: &AtomicBool,
+    ) -> Result<PreparedPleBatch> {
+        if !crate::strata_intel_core::enabled()
+            || crate::strata_prompt::active()
+            || crate::strata_ple_reader::current().is_none()
+        {
+            return Err(error());
+        }
+        let poison = self.poison.clone();
+        let result = guarded(&poison, || {
+            self.prepare_invocation_checked(
+                model, input, output, spans, start, tokens, positions, cancel, true,
+            )
+        });
+        if result.is_err() {
+            model.poisoned = true;
+        }
+        result
+    }
+    /// Caller has submitted the real prefix before awaiting these actual rows.
+    /// This returns the original prepared owner only after its upload is queued.
+    pub(crate) fn finish_deferred(
+        &self,
+        model: &ResidentModel<'_, '_>,
+        mut prepared: PreparedPleBatch,
+        cancel: &AtomicBool,
+    ) -> Result<PreparedPleBatch> {
+        let mut data = prepared
+            .deferred
+            .take()
+            .ok_or(error())?
+            .collect(model.graph, cancel)?;
+        self.receipt(model, &prepared.receipt, cancel)?;
+        model
+            .arena
+            .client()
+            .map_err(u::fault)?
+            .write_private(
+                model.arena.handle(self.ids[EMB]).map_err(u::fault)?.clone(),
+                std::mem::take(&mut *data),
+            )
+            .map_err(u::fault)?;
+        Ok(prepared)
     }
     /// Consume the staged invocation exactly once. No OLD/EMB upload or source
     /// lookup occurs inside this math-only portion of the captured branch.
@@ -1038,6 +1094,7 @@ impl PleBatchWorkspace {
         tokens: &Zeroizing<[u32; MAX_BATCH]>,
         positions: &Zeroizing<[u32; MAX_BATCH]>,
         cancel: &AtomicBool,
+        defer: bool,
     ) -> Result<PreparedPleBatch> {
         self.healthy(model, cancel)?;
         graph_preflight(model.graph)?;
@@ -1118,20 +1175,40 @@ impl PleBatchWorkspace {
             }
             old
         };
-        let mut embedding = embedding(
-            model.graph,
-            count,
-            start,
-            tokens,
-            &old_tokens,
-            cancel,
-            self.profile,
-        )?;
+        let deferred = if defer {
+            Some(DeferredEmbedding::issue(
+                model.graph,
+                count,
+                tokens,
+                &old_tokens,
+                cancel,
+                self.profile,
+            )?)
+        } else {
+            None
+        };
+        let mut embedding = if defer {
+            Zeroizing::new(Vec::new())
+        } else {
+            embedding(
+                model.graph,
+                count,
+                start,
+                tokens,
+                &old_tokens,
+                cancel,
+                self.profile,
+            )?
+        };
         let arena = &model.arena;
         queue_preparation(cancel, resident_history, |operation| {
             match operation {
                 Operation::Clear(i) => u::zero(arena, self.ids[i])?,
                 Operation::Upload(i) => {
+                    if defer && i == 1 {
+                        return Ok(());
+                    }
+
                     let data = if i == 0 {
                         std::mem::take(&mut *old)
                     } else {
@@ -1149,6 +1226,8 @@ impl PleBatchWorkspace {
             Ok(())
         })?;
         Ok(PreparedPleBatch {
+            deferred,
+
             receipt: PendingPleBatch {
                 metadata,
                 poison: self.poison.clone(),
@@ -1166,6 +1245,9 @@ impl PleBatchWorkspace {
         // Receipt Drop remains armed on every failure, poisoning its original
         // sequence. EMB was staged; core OLD is its actual committed GPU owner
         // and legacy OLD was uploaded before the graph submission.
+        if prepared.deferred.is_some() {
+            return Err(error());
+        }
         let receipt = prepared.receipt;
         self.receipt(model, &receipt, cancel)?;
         completed.check(
@@ -1190,6 +1272,9 @@ impl PleBatchWorkspace {
         prepared: PreparedPleBatch,
         cancel: &AtomicBool,
     ) -> Result<PendingPleBatch> {
+        if prepared.deferred.is_some() {
+            return Err(error());
+        }
         let receipt = prepared.receipt;
         self.receipt(model, &receipt, cancel)?;
         let metadata = &*receipt.metadata;
@@ -1692,6 +1777,62 @@ fn unique_row_plan(rows: &[[u32; 16]]) -> Result<RowReadPlan> {
     }
     Ok(RowReadPlan { unique, slots })
 }
+struct DeferredEmbedding {
+    pending: crate::strata_ple_reader::PendingRows,
+    slots: Zeroizing<Vec<usize>>,
+    profile: OriginalPackedProfile,
+    count: usize,
+}
+impl DeferredEmbedding {
+    fn issue(
+        graph: BoundGraph<'_, '_>,
+        count: usize,
+        tokens: &[u32; MAX_BATCH],
+        old: &[i32; 2],
+        cancel: &AtomicBool,
+        profile: OriginalPackedProfile,
+    ) -> Result<Self> {
+        let mut rows = Zeroizing::new([[0u32; 16]; MAX_BATCH]);
+        let mut previous = Zeroizing::new(*old);
+        for t in 0..count {
+            u::cancel(cancel)?;
+            crate::ple_chunk::rows_into(
+                graph.ple_hash().metadata(),
+                tokens[t],
+                &previous,
+                &mut rows[t],
+            )
+            .map_err(u::fault)?;
+            previous[0] = previous[1];
+            previous[1] = tokens[t] as i32;
+        }
+        let table = graph.tensor("per_layer_token_embd.weight")?;
+        profile.validate_ple(
+            table.info().dtype(),
+            table.info().dimensions(),
+            table.info().row_bytes(),
+        )?;
+        let RowReadPlan { unique, slots } = unique_row_plan(&rows[..count])?;
+        let pending = crate::strata_ple_reader::current().ok_or(error())?.issue(
+            graph.binding_id(),
+            profile.ple_row_bytes(),
+            &unique,
+            cancel,
+        )?;
+        Ok(Self {
+            pending,
+            slots,
+            profile,
+            count,
+        })
+    }
+    fn collect(self, graph: BoundGraph<'_, '_>, cancel: &AtomicBool) -> Result<Zeroizing<Vec<u8>>> {
+        let raw = self
+            .pending
+            .collect(graph.binding_id(), self.profile.ple_row_bytes(), cancel)?;
+        scatter_native(graph, self.profile, self.count, &self.slots, &raw, cancel)
+    }
+}
 fn native_embedding(
     graph: BoundGraph<'_, '_>,
     table: kuno_text::TensorView<'_>,
@@ -1705,8 +1846,20 @@ fn native_embedding(
     if rb != table.info().row_bytes() as usize {
         return Err(error());
     }
-    let raw = if let Some(direct) = direct {
-        direct.gather(graph.binding_id(), rb, &unique, cancel)?
+    enum Read {
+        Direct(crate::strata_ple_reader::OwnedRows),
+        Probe(Zeroizing<Vec<u8>>),
+    }
+    impl AsRef<[u8]> for Read {
+        fn as_ref(&self) -> &[u8] {
+            match self {
+                Self::Direct(x) => x,
+                Self::Probe(x) => x,
+            }
+        }
+    }
+    let owned_raw = if let Some(direct) = direct {
+        Read::Direct(direct.gather(graph.binding_id(), rb, &unique, cancel)?)
     } else {
         // Only standalone operator diagnostics lack the engine request owner.
         // Normal Session execution and its prompt producer share the reader.
@@ -1763,12 +1916,35 @@ fn native_embedding(
             }
         })?;
         graph.verify_unchanged()?;
-        raw
+        Read::Probe(raw)
     };
+    let raw = owned_raw.as_ref();
 
     u::cancel(cancel)?;
-    let output_bytes = if rows.len() > MAX_BATCH {
-        rows.len() * WIDTH * 4
+    scatter_native(graph, profile, rows.len(), &slots, raw, cancel)
+}
+fn scatter_native(
+    graph: BoundGraph<'_, '_>,
+    profile: OriginalPackedProfile,
+    count: usize,
+    slots: &[usize],
+    raw: &[u8],
+    cancel: &AtomicBool,
+) -> Result<Zeroizing<Vec<u8>>> {
+    let table = graph.tensor("per_layer_token_embd.weight")?;
+    let dtype = table.info().dtype();
+    let rb = profile.ple_row_bytes();
+    profile.validate_ple(dtype, table.info().dimensions(), table.info().row_bytes())?;
+    if count == 0
+        || count > crate::strata_prompt::groups::CAPACITY
+        || slots.len() != count * 16
+        || !raw.len().is_multiple_of(rb)
+        || slots.iter().any(|&i| i >= raw.len() / rb)
+    {
+        return Err(error());
+    }
+    let output_bytes = if count > MAX_BATCH {
+        count * WIDTH * 4
     } else {
         BufferLayout::new(words(EMB)).map_err(u::fault)?.owned_bytes
     };
@@ -1782,7 +1958,7 @@ fn native_embedding(
         u::cancel(cancel)?;
         decode_ple_row(
             profile,
-            table.info().dtype(),
+            dtype,
             &raw[slot * rb..(slot + 1) * rb],
             &mut decoded[..],
         )?;
@@ -2828,6 +3004,7 @@ mod tests {
         };
         let staged_poison = Arc::new(AtomicBool::new(false));
         drop(PreparedPleBatch {
+            deferred: None,
             receipt: PendingPleBatch {
                 metadata: Zeroizing::new(metadata.clone()),
                 poison: staged_poison.clone(),

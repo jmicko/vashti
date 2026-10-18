@@ -1741,6 +1741,13 @@ impl Graph {
     /// Packet I/O is an unnamed original recording, even if a caller still
     /// owns an open named math branch. Never replace its retained shape/key
     /// with a fill/copy-only signature or credit I/O as another math invocation.
+    pub(crate) fn queued_transfer_only(&self) -> bool {
+        !self.nodes.is_empty()
+            && self
+                .nodes
+                .iter()
+                .all(|n| matches!(n.dispatch, Dispatch::Copy | Dispatch::Fill))
+    }
     pub(crate) fn execute_readback(&mut self) -> Result<(), ServerError> {
         if self
             .nodes

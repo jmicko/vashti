@@ -5328,6 +5328,8 @@ impl Workspace {
         e.check_resident_admission(&m.admission)?;
         m.graph.verify_unchanged()?;
         u::cancel(cancel)?;
+        let deferred_ple =
+            crate::strata_ple_reader::current().is_some() && !crate::strata_prompt::active();
         let decode_policy = self.decode_kernels()?;
         let grouped_ple_reads = self.ple.public_grouped_reads();
         let (grouped_status_folds, grouped_status_before) = self.grouped_status_state()?;
@@ -5369,17 +5371,31 @@ impl Workspace {
             .begin(m.graph, &m.arena, *count)?;
         // Layer0 performs attention+FFN, hence two residual swaps. The actual
         // layer1 PLE input/output roots are known before its math is queued.
-        // Source/history uploads happen now, outside the retained native graph.
-        let mut ple_invocation = Some(self.ple.prepare_invocation(
-            m,
-            self.outer.residual[0],
-            self.outer.residual[1],
-            &BatchSpans::new(*count, 0, 0, HC * D, 0, HC * D),
-            *start,
-            &ids,
-            &positions,
-            cancel,
-        )?);
+        // Request-owned reads start now; selected decode joins/uploads EMB
+        // after the real layer0 prefix. Uploads stay outside retained math.
+        let mut ple_invocation = Some(if deferred_ple {
+            self.ple.prepare_deferred(
+                m,
+                self.outer.residual[0],
+                self.outer.residual[1],
+                &BatchSpans::new(*count, 0, 0, HC * D, 0, HC * D),
+                *start,
+                &ids,
+                &positions,
+                cancel,
+            )?
+        } else {
+            self.ple.prepare_invocation(
+                m,
+                self.outer.residual[0],
+                self.outer.residual[1],
+                &BatchSpans::new(*count, 0, 0, HC * D, 0, HC * D),
+                *start,
+                &ids,
+                &positions,
+                cancel,
+            )?
+        });
         // Arm each original state transaction before capture. All attention
         // inputs use the same authenticated GR MIXED scratch owner; each layer
         // writes its current values immediately before consuming the invocation.
@@ -5452,6 +5468,7 @@ impl Workspace {
                 )
                 .and_then(|key| key.with_deferred_gdn_state(select.is_some() && *count > 1))
                 .and_then(|key| key.with_target_grouped_status_folds(grouped_status_folds))
+                .and_then(|key| key.with_target_ple_handoff(deferred_ple))
                 .map_err(u::fault)?,
             )
         } else {
@@ -5459,7 +5476,8 @@ impl Workspace {
         };
         // The optional laboratory observation/injection paths deliberately keep
         // their actual per-layer boundaries. Normal native inference replays a
-        // sealed whole window with fresh controls and its real queue fence.
+        // sealed whole window with fresh controls and its real queue fences;
+        // native PLE keeps its source join between two retained math programs.
         let replay = if let Some(key) = branch {
             if native_target_replay_allowed(
                 key,
@@ -5475,15 +5493,44 @@ impl Workspace {
                     .as_ref()
                     .ok_or(error())?
                     .validate_graph_ready(m.graph)?;
-                super::target_replay::try_submit(
-                    &m.arena,
-                    key,
-                    self.global_moe
-                        .as_ref()
-                        .ok_or(error())?
-                        .invocation_controls(*start)?,
-                    m.b.fault,
-                )?
+                if deferred_ple {
+                    let prefix = super::target_replay::try_prefix(
+                        &m.arena,
+                        key,
+                        self.global_moe
+                            .as_ref()
+                            .ok_or(error())?
+                            .invocation_controls(*start)?,
+                        m.b.fault,
+                        m.retired.clone(),
+                    )?;
+                    if let Some(prefix) = prefix {
+                        let ready = self.ple.finish_deferred(
+                            m,
+                            ple_invocation.take().ok_or(error())?,
+                            cancel,
+                        )?;
+                        ple_invocation = Some(ready);
+                        m.arena
+                            .client()
+                            .map_err(u::fault)?
+                            .submit_native_strata_experts()
+                            .map_err(u::fault)?;
+                        Some(prefix.finish()?)
+                    } else {
+                        None
+                    }
+                } else {
+                    super::target_replay::try_submit(
+                        &m.arena,
+                        key,
+                        self.global_moe
+                            .as_ref()
+                            .ok_or(error())?
+                            .invocation_controls(*start)?,
+                        m.b.fault,
+                    )?
+                }
             } else {
                 None
             }
@@ -5569,6 +5616,27 @@ impl Workspace {
                     // PLE consumes the residual directly, so complete the pending
                     // FFN write before its observation/projection/history work.
                     self.gr.flush_pending(&m.arena, m.b.fault, cancel)?;
+                    if deferred_ple {
+                        // Real layer0/GR write submission precedes the source
+                        // join. Upload is an unnamed transfer between the two
+                        // retained math programs, never a fake math segment.
+                        m.arena
+                            .client()
+                            .map_err(u::fault)?
+                            .submit_native_strata_experts()
+                            .map_err(u::fault)?;
+                        let ready = self.ple.finish_deferred(
+                            m,
+                            ple_invocation.take().ok_or(error())?,
+                            cancel,
+                        )?;
+                        ple_invocation = Some(ready);
+                        m.arena
+                            .client()
+                            .map_err(u::fault)?
+                            .submit_native_strata_experts()
+                            .map_err(u::fault)?;
+                    }
                     m.numeric_boundary.observe(
                         numeric_boundaries::Boundary::Input,
                         &m.arena,
